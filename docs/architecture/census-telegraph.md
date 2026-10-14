@@ -14755,9 +14755,10 @@ is seeded FALSE; with it off the route answers `feature_disabled` and every capa
   `artifacts/api-server/src/routes/index.ts:208#router.use(telegraphContextRouter);`).
 - **The policy takes the term (T381).** With the flag ON, in a direct conversation with one other member whose block
   state was read and is clear, the policy reads the kernel's relationship term
-  (`artifacts/api-server/src/domain/telegraph/policies/conversationCapabilityPolicy.ts:364#if (conversationType === "direct" && counterpartId && !blocked && !blockUnreadable && (await isFlagEnabled(sc, "telegraph_context_kernel_enabled"))) {`),
-  and it can only refuse `canCall`, exactly where the call door's messaging floor would
-  (`artifacts/api-server/src/domain/telegraph/policies/conversationCapabilityPolicy.ts:403#if (term.value.messagingFloor !== "allowed") return { refusal: "TELEGRAPH_POLICY_RECIPIENT_PRIVACY", degraded: false };`);
+  (`artifacts/api-server/src/domain/telegraph/policies/conversationCapabilityPolicy.ts:366#if (d.capabilities.canCall && conversationType === "direct" && counterpartId && !blocked && !blockUnreadable && (await isFlagEnabled(sc, "telegraph_context_kernel_enabled"))) {`),
+  only while `canCall` stands granted (the one answer it can change, so a failed read never degrades a set it could
+  not move), and it can only refuse `canCall`, exactly where the call door's messaging floor would
+  (`artifacts/api-server/src/domain/telegraph/policies/conversationCapabilityPolicy.ts:405#if (term.value.messagingFloor !== "allowed") return { refusal: "TELEGRAPH_POLICY_RECIPIENT_PRIVACY", degraded: false };`);
   an unreadable term is false + degraded, with the new reason
   (`artifacts/api-server/src/domain/telegraph/contracts/telegraphReasonCodes.ts:110#TELEGRAPH_DEGRADED_RELATIONSHIP_UNREADABLE`).
   The edit sits below every cited line of the policy, so none moved. Because the POLICY reads it, every caller agrees:
@@ -14775,7 +14776,7 @@ is seeded FALSE; with it off the route answers `feature_disabled` and every capa
 
 | id | Was | Now | Why |
 | --- | --- | --- | --- |
-| T439 | N | **W** | **Formalize a Context Kernel above transport: Relationship, Time, Proximity, Intent, Shared Objects → Policy + Capabilities.** The kernel exists and composes all five through the resolvers that own them (`artifacts/api-server/src/server/telegraph/telegraphContextKernel.ts:294#export async function readConversationContext(args: {`), viewer-scoped, with a non-member's and a blocked pair's answer identical and redacted (`artifacts/api-server/src/test/telegraphContextKernel.test.ts:291#it("K4 a block either way is the minimal context`), proximity only as Nearby serves it and recorded by its budget (`artifacts/api-server/src/test/telegraphContextKernel.test.ts:484#it("K21 Nearby ON: a bucket and nothing finer`), and its relationship term feeding the §14.1 policy (`artifacts/api-server/src/test/telegraphContextKernel.test.ts:619#it("P9 AGREEMENT: across every message-privacy setting and relationship`). **W, not C:** 3826 is applied nowhere and the flag is seeded FALSE (§12.12); the relationship input also needs 3662's flag and proximity needs Nearby; and no conversation surface reads the kernel yet — Compass's §18.3 tools and the conversation header still assemble their own context (B58 TM-6; the GRADING ruling: server-only is W). |
+| T439 | N | **W** | **Formalize a Context Kernel above transport: Relationship, Time, Proximity, Intent, Shared Objects → Policy + Capabilities.** The kernel exists and composes all five through the resolvers that own them (`artifacts/api-server/src/server/telegraph/telegraphContextKernel.ts:294#export async function readConversationContext(args: {`), viewer-scoped, with a non-member's and a blocked pair's answer identical and redacted (`artifacts/api-server/src/test/telegraphContextKernel.test.ts:291#it("K4 a block either way is the minimal context`), proximity only as Nearby serves it and recorded by its budget (`artifacts/api-server/src/test/telegraphContextKernel.test.ts:484#it("K21 Nearby ON: a bucket and nothing finer`), and its relationship term feeding the §14.1 policy (`artifacts/api-server/src/test/telegraphContextKernel.test.ts:628#it("P9 AGREEMENT: across every message-privacy setting and relationship`). **W, not C:** 3826 is applied nowhere and the flag is seeded FALSE (§12.12); the relationship input also needs 3662's flag and proximity needs Nearby; and no conversation surface reads the kernel yet — Compass's §18.3 tools and the conversation header still assemble their own context (B58 TM-6; the GRADING ruling: server-only is W). |
 | T381 | W | W | **Relationship policy is an input to ConversationPolicy, not a replacement.** The "input" half now has a referent, dark: with the kernel's flag ON the policy reads the kernel's relationship term in a direct conversation and lets it refuse `canCall` where the call door's messaging floor does, and nowhere else (`artifacts/api-server/src/test/telegraphContextKernelGuard.test.ts:124#it("the term can only refuse canCall`); block, age, safety and membership stay their own inputs, read before it. **Still W:** the flag is seeded FALSE and 3662's too. |
 
 ### 95.4 Decisions and effects, stated so a reader does not discover them
@@ -14801,30 +14802,32 @@ is seeded FALSE; with it off the route answers `feature_disabled` and every capa
     request with a callee who takes direct messages from friends only;
   - a kernel proximity read IS a Nearby poll: it spends the viewer's Nearby rate limit (20 a minute) and the observation
     budget records it, exactly as GET `/nearby/reachable` would (the GET writes, as Nearby's GET does);
-  - an unreadable relationship term degrades the capability set, and Compass's gate refuses tools on a degraded set
-    (`artifacts/api-server/src/compass/TelegraphConversationTools.ts:184#if (caps.degraded) return refuse("capabilities_unavailable", true);`),
-    for as long as the read fails.
+  - an unreadable relationship term (read only where `canCall` would otherwise be granted) degrades the capability set,
+    and two consumers refuse on a degraded set for as long as the read fails: Compass's gate
+    (`artifacts/api-server/src/compass/TelegraphConversationTools.ts:184#if (caps.degraded) return refuse("capabilities_unavailable", true);`)
+    and the read-receipt route, which answers a direct thread 503 instead of its 403.
 - **Adjacent, not changed (for the lead):** GET `/threads/:id/capabilities` tells a non-member the TYPE of a thread that
   exists (`conversationType: "direct"`) and `"unknown"` for one that does not — the existence oracle its own header says
   it is not. The kernel's route answers `"unknown"` for both (95.2).
 
 ### 95.5 Tests and mutations
 
-- `telegraphContextKernel` **46/46** (A1–A10 the contract; K1–K26 the route and each input's paths; P1–P9 the policy's
+- `telegraphContextKernel` **47/47** (A1–A10 the contract; K1–K26 the route and each input's paths; P1–P9 the policy's
   term, including P9's matrix of six message-privacy settings × six relationships, the projection equal to the call
   gateway's own floor in all 36). `telegraphContextKernelGuard` **12/12**.
 - **Red without the behaviour.** On `bffee713c` neither suite loads (the kernel does not exist). With the kernel present
-  and only the policy at `bffee713c`'s text (the T381 wiring absent), P2, P5, P5b, P8 and P9 fail (41/46 pass).
-- **48 mutants, each alone, each killed** (lane runner, committed files only): 10 in the contract (type told to a
+  and only the policy at `bffee713c`'s text (the T381 wiring absent), P2, P5, P5b, P8 and P9 fail (41/46 pass, measured
+  before P5c was added).
+- **49 mutants, each alone, each killed** (lane runner, committed files only): 10 in the contract (type told to a
   non-member, the block not minimal, an unreadable block read as clear, a pairwise input served in a group, a missing
   reading not degraded, the BLOCKED race, no redaction, the proximity and relationship values spread onto the wire, an
   unreadable gate withheld instead of degraded); 19 in the reads (a thrown block read escaping, a member who left, an
   unreadable roster, a two-person trip thread taken as pairwise, a different plan than GET `/coordination`, the window
   dropped, a plan read error ignored, Nearby's flag, rate limit, budget, budget failure, `proximityPublished` and quantum
   each bypassed, intent expiry / status / vocabulary / owner filters each dropped, rail problems ignored, a thrown input
-  read becoming a 500); 4 in the relationship module; 9 in the policy (flag, direct-only, block-first, degraded mark,
-  refusal applied, `requires_request` read as allowed, an unreadable term granting, a BLOCKED term granting, the resolver
-  imported directly); 2 in the route (OFF and unreadable flag served); 1 in the resolver (floor always allowed); 3 on the
+  read becoming a 500); 4 in the relationship module; 10 in the policy (flag, direct-only, block-first, read only while `canCall`
+  stands, degraded mark, refusal applied, `requires_request` read as allowed, an unreadable term granting, a BLOCKED term
+  granting, the resolver imported directly); 2 in the route (OFF and unreadable flag served); 1 in the resolver (floor always allowed); 3 on the
   guard (a route composing two sources, a predating assembler that stopped assembling, the budget skipped).
 - **Not testable here, stated:** that the time, intent and rail reads use the caller's RLS-scoped client rather than the
   service client — the harness serves both from one fake. The code passes `client` for those three (95.2).
