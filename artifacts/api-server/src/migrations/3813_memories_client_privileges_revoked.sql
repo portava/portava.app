@@ -52,13 +52,14 @@
 --   lib/, packages/, posts-ui/) names it either.
 -- * The API builds one database client, the service client (lib/supabase.ts),
 --   and service_role keeps every privilege it has. This file does not touch it.
--- * Functions: every function that reads memories is EXECUTE-able by
+-- * Functions: every function whose body reads memories is EXECUTE-able by
 --   service_role only (2338 memory_public_feed, 2711 memory_kernel_execute,
---   3497/3725/3726 discovery_trend_post_groups_v2 and rebuild_place_momentum_v2,
---   3674 memory_graph_mirror_memory and memory_graph_backfill_legacy, 3676
+--   3497/3725/3726 discovery_trend_post_groups_v2, 3674
+--   memory_graph_mirror_memory and memory_graph_backfill_legacy, 3676
 --   memory_graph_kernel_execute), or is a trigger function, which no client can
 --   call (2994 memory_relations_owner_matches_source, 3673
---   memory_corrections_guard, 3674 memory_graph_on_memory_write).
+--   memory_corrections_guard). 3674's triggers on memories fire only on the
+--   writes the API's role makes.
 -- * No view reads memories; memories is in no publication the chain creates.
 -- * Policies on OTHER tables read memories as the invoking role:
 --   memory_items_public_read (3672), memory_items_via_memory, memory_likes_read,

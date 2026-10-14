@@ -5578,3 +5578,42 @@ is applied, add an amendment here with the measured superseder.
 sees the request): ≤ 8 attempts, `Retry-After` honoured (≤ 60 s) else 1–30 s backoff, jitter added, ≤ 180 s of
 waiting per request, then the last 429 goes to the caller unchanged. Wired into certify, `check:migration-ledger`,
 `audit:schema` and `check:missing-live-columns`. The applier is unchanged.
+
+## 2026-10-14 — `3813_memories_client_privileges_revoked.sql`, written and NOT applied anywhere (B58 lane MEM-ACL)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3813_memories_client_privileges_revoked.sql` | **not applied** | **not applied** |
+
+**What it is.** Verifier V-716's fix 2 (owner question OQ-716-1, census-highlights-memories §BJ). The baseline grants
+ALL on `public.memories` to `anon` and `authenticated`; 2490 left them SELECT, INSERT, UPDATE and DELETE, and nothing
+in the chain narrowed them. RLS decides rows, never columns: `memories_public_read` let any signed-in user read every
+column of a stranger's published public Memory (exact coordinates, place references, `location_precision`, the
+owner's `allowed_user_ids` / `hidden_user_ids`) past every rule the API applies, and `memories_owner_all` let an owner
+write any column of their own rows (a moderator-removed Memory back to `published`, a hard DELETE past §21's
+lifecycle). 3813 is `REVOKE ALL ON TABLE public.memories FROM PUBLIC, anon, authenticated` and grants nothing back,
+the shape of 2161 (`compass_memories`). No policy, row, function, trigger or `service_role` privilege changes.
+
+**Who it could break, re-verified.** No client tree reads `memories` (no `.from('memories')`, embed, RPC, REST path
+or realtime channel; pinned by `memoriesClientBoundary.test.ts` P-1). The API reads and writes it on the service
+client only. Every chain function whose body reads it is service-role-only or a trigger function (P-2). Seven
+policies on `memory_items`, `memory_likes`, `memory_tags` and `memory_domain_events` read `memories` as the invoking
+role; a client query that reaches one now fails with 42501 instead of reading through (no client issues one).
+
+**Precondition** refuses a client or PUBLIC privilege granted by a non-owner or with a grant option, a session that
+does not act for the owner, a client-readable view over `memories`, and a client-callable SECURITY INVOKER function
+that reads it; it accepts a second apply. **Postcondition** (catalog only, re-runnable): no client or PUBLIC ACL entry
+at table or column level, no effective privilege through membership, no client-readable view over `memories`, RLS
+on, `service_role` keeps its four DML verbs.
+
+**Guard.** `check:client-privilege-boundary` rule 7 (`src/scripts/lib/serverOnlyTables.ts`) replays the client ACL
+of every server-only table (`memories`, `compass_memories`) over the baseline and the chain and fails if a client
+role ends holding anything. `memories` is in `src/security/authorization-contract.json` with no client grant; until
+3813 is applied to `portava-ci`, `check:authorization-contract` reports that database as wider than the entry.
+
+**Order.** Apply no later than PR #716's 3804 (it adds `place_display_name_at_occurrence` to what the door read),
+before `memory_location_precision_enabled` is turned on, and no later than 3673. Owner's decision (OQ-716-1).
+
+**Rollback:** `db/rollback/2026-10-14-3813-memories-client-privileges-revoked-rollback.sql`. It re-grants SELECT,
+INSERT, UPDATE, DELETE to `anon` and `authenticated` (2490's state, never the baseline's ALL), refuses unless RLS is
+on and both baseline policies are present, and deletes 3813's ledger row. **It re-opens the door.**
