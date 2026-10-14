@@ -23,7 +23,7 @@
  */
 import { freshToken } from '../../../services/apiToken.ts';
 import { featureFlagEnabledNow } from '../../../context/featureFlagSnapshot.ts';
-import { LINK_PREVIEW_FLAG, bodyHasExternalLink, isDrawablePreview, isServerMessageId, type WirePreview } from './linkPreviewRules.ts';
+import { LINK_PREVIEW_FLAG, bodyHasExternalLink, isDrawablePreview, isPlainTextKind, isServerMessageId, type WirePreview } from './linkPreviewRules.ts';
 import { LinkPreviewStore } from './linkPreviewStore.ts';
 
 /** The server's per-read cap (`services/telegraph/linkPreviews.ts#LINK_PREVIEW_BATCH_MAX`). */
@@ -89,8 +89,8 @@ export interface WrittenMessage {
   messageId: string;
   /** The body the server stored (or the one just sent); read only to see whether it has a link. */
   body: string | null | undefined;
-  msgType?: string | null;
-  subtype?: string | null;
+  /** A plain text message (`isPlainTextKind` of the stored row). Structured kinds have no preview. */
+  plainText: boolean;
   /** The write's `editedAt` — '' for a fresh send. Each version is asked about once. */
   version: string;
   /** True for a thread with `is_e2ee`, or a message that carries ciphertext. */
@@ -129,7 +129,7 @@ const ASKED_MAX = 2000;
 export function requestPreviewAfterWrite(m: WrittenMessage, deps: SenderDeps = defaultSenderDeps): boolean {
   if (!deps.flagOn()) return false;
   if (m.encrypted) return false;
-  if ((m.msgType ?? 'text') !== 'text' || (m.subtype ?? null) !== null) return false;
+  if (!m.plainText) return false;
   if (!isServerMessageId(m.threadId) || !isServerMessageId(m.messageId)) return false;
   if (!bodyHasExternalLink(m.body)) return false;
   const key = `${m.messageId}\u0000${m.version}`;
@@ -166,8 +166,7 @@ export function previewAfterSend<R extends { ok: boolean; data: unknown }>(threa
         threadId: typeof m.threadId === 'string' ? m.threadId : threadId,
         messageId: m.id,
         body: typeof m.body === 'string' ? m.body : encrypted ? null : sentBody,
-        msgType: typeof m.msgType === 'string' ? m.msgType : null,
-        subtype: typeof m.subtype === 'string' ? m.subtype : null,
+        plainText: isPlainTextKind(m.msgType, m.subtype),
         version: typeof m.editedAt === 'string' ? m.editedAt : '',
         encrypted: encrypted || !!m.ciphertext,
       });
@@ -189,8 +188,7 @@ export function previewAfterEdit<R extends { ok: boolean; data: unknown }>(threa
         threadId,
         messageId,
         body: typeof e.body === 'string' ? e.body : editedBody,
-        msgType: 'text',
-        subtype: null,
+        plainText: true,
         version: e.editedAt,
         encrypted: false,
       });

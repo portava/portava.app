@@ -70,6 +70,11 @@ export interface PreviewableMessage {
   deliveryStatus?: 'sending' | 'sent' | 'failed';
 }
 
+/** A plain text message: no structured kind (the server's `isPreviewableKind`). An absent type is text. */
+export function isPlainTextKind(msgType: unknown, subtype: unknown): boolean {
+  return (msgType ?? 'text') === 'text' && (subtype ?? null) === null;
+}
+
 /**
  * May the device ask about a preview for this message at all? A plain text
  * message (the server's `isPreviewableKind`), stored on the server (a real
@@ -78,7 +83,7 @@ export interface PreviewableMessage {
  */
 export function messageMayHavePreview(m: PreviewableMessage | null | undefined): boolean {
   if (!m) return false;
-  if ((m.msgType ?? 'text') !== 'text' || (m.subtype ?? null) !== null) return false;
+  if (!isPlainTextKind(m.msgType, m.subtype)) return false;
   if (m.deleted) return false;
   if (m.ciphertext || m.e2eeFailed) return false;
   if (m.deliveryStatus === 'sending' || m.deliveryStatus === 'failed') return false;

@@ -212,15 +212,14 @@ describe('bounded retries', () => {
 });
 
 describe('requestPreviewAfterWrite — its own gates, with injected seams', () => {
-  const base = { threadId: THREAD, messageId: MSG, body: BODY, msgType: 'text', subtype: null, version: '', encrypted: false };
+  const base = { threadId: THREAD, messageId: MSG, body: BODY, plainText: true, version: '', encrypted: false };
   const deps = (flagOn: boolean) => ({ post: jest.fn(async () => ({ kind: 'no_preview' as const, reason: 'none' })), flagOn: () => flagOn, schedule: jest.fn(), store: { seed: jest.fn() } });
 
   it('each gate alone refuses', () => {
     const cases: Array<[string, Partial<typeof base>, boolean]> = [
       ['flag off', {}, false],
       ['encrypted', { encrypted: true }, true],
-      ['not text', { msgType: 'gif' }, true],
-      ['a subtype', { subtype: 'post_card' }, true],
+      ['a structured kind', { plainText: false }, true],
       ['no link', { body: 'nothing' }, true],
       ['a client id', { messageId: 'c-1' }, true],
       ['a bad thread id', { threadId: 'x' }, true],
