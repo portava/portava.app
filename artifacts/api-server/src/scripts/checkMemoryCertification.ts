@@ -37,7 +37,7 @@ import { CHAOS_SCENARIO_IDS } from "../services/memoryCertification/chaos.js";
 import {
   formatCertificationReport,
   runCertification,
-} from "../services/memoryCertification/runCertification.js";
+} from "../services/memoryCertification/runCertification.js"; import { SNAPSHOT_REPLAY_SCENARIO_IDS, formatSnapshotReplayReport, runSnapshotReplayCertification } from "../services/memoryCertification/snapshotReplay.js"; // census H35 (3811): the replay from snapshots; on this line so the cited `main` keeps its line
 
 async function main(): Promise<void> {
   const report = await runCertification();
@@ -55,6 +55,13 @@ async function main(): Promise<void> {
   if (report.chaos.length !== CHAOS_SCENARIO_IDS.length) {
     missing.push(`${report.chaos.length} chaos outcomes for ${CHAOS_SCENARIO_IDS.length} scenarios`);
   }
+  // §3 memory_snapshots (3811, census H35): the history a replay starts from.
+  const snapshotReplay = await runSnapshotReplayCertification();
+  console.log(formatSnapshotReplayReport(snapshotReplay));
+  console.log("");
+  if (snapshotReplay.length !== SNAPSHOT_REPLAY_SCENARIO_IDS.length) {
+    missing.push(`${snapshotReplay.length} snapshot-replay outcomes for ${SNAPSHOT_REPLAY_SCENARIO_IDS.length} scenarios`);
+  }
   if (missing.length > 0) {
     console.error(`::error::check:memory-certification measured less than §25 names — ${missing.join("; ")}`);
     process.exit(2);
@@ -64,6 +71,7 @@ async function main(): Promise<void> {
     ...report.fixtures.filter((f) => f.status === "DIVERGED").map((f) => `${f.census_id} ${f.id}: ${f.divergences.join(" | ")}`),
     ...report.invariants.filter((i) => i.status === "VIOLATED").map((i) => `${i.census_id} ${i.id}: ${i.detail}`),
     ...report.chaos.filter((c) => c.status === "BROKEN").map((c) => `${c.census_id} ${c.id}: ${c.detail}`),
+    ...snapshotReplay.filter((o) => o.status === "DIVERGED").map((o) => `${o.census_id} ${o.id}: ${o.divergences.join(" | ")}`),
   ];
   if (failures.length > 0) {
     for (const f of failures) console.error(`::error::${f}`);
