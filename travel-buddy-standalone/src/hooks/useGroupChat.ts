@@ -26,7 +26,7 @@ import {
   telegraphRealtime,
   type TelegraphEvent,
 } from '../services/telegraphRealtimeService.ts';
-import { useReconnectCatchUp } from '../features/telegraph/hooks/useReconnectCatchUp.ts';
+import { useReconnectCatchUp } from '../features/telegraph/hooks/useReconnectCatchUp.ts'; import { useCompactPlaybackSource } from '../features/telegraph/media/useCompactPlaybackSource.ts'; // §6.3 T62
 import { editErrorCopy } from '../features/telegraph/messageActions/messageActionRules.ts'; import { sendFailureFrom } from '../features/telegraph/lifecycle/readState.ts';
 
 function makeClientId(): string {
@@ -177,7 +177,7 @@ export function useGroupChat(
       }
       let changed = false;
       for (const m of incoming) {
-        if (!byId.has(m.id)) changed = true;
+        const had = byId.get(m.id); if (!had || had.deleted !== m.deleted || had.editedAt !== m.editedAt || had.mediaUrl !== m.mediaUrl) changed = true; // §6.3 T62: a row that CHANGED (deleted, edited, media) is news too — it used to be dropped when nothing new arrived
         byId.set(m.id, m);
       }
       if (!changed && byId.size === prev.length) return prev;
@@ -191,7 +191,7 @@ export function useGroupChat(
   // See useReconnectCatchUp for why this is a re-read and not the owner-only
   // `/chat/sync` repair endpoint.
   useReconnectCatchUp(() => { void silentRefresh(); }, !!id);
-
+  useCompactPlaybackSource(thread?.id ?? null, messages, state === 'active' || state === 'loading'); // §6.3 T62: no access / pending / error stops compact playback
   // Helper: clear a user from typing list
   const clearTyping = useCallback((uid: string) => {
     typingTimers.current.delete(uid);

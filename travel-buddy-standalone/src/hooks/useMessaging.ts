@@ -8,7 +8,7 @@
  *   Both hooks pause polling when AppState leaves 'active' and resume on return.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { cursorOf, mergeResumed, resumeFromCursor } from '../features/telegraph/connection/sequenceResume.ts';
+import { cursorOf, mergeResumed, resumeFromCursor } from '../features/telegraph/connection/sequenceResume.ts'; import { useCompactPlaybackSource } from '../features/telegraph/media/useCompactPlaybackSource.ts'; // §6.3 T62 — on this line so no cited line moves
 import { noteThreadCursor } from '../features/telegraph/connection/sequenceCursorStore.ts';
 import { AppState, type AppStateStatus } from 'react-native';
 import {
@@ -371,7 +371,7 @@ export function useThreadMessages(threadId: string | null) {
 
   // T233 (§17.2): catch up from the last acknowledged sequence before the ordinary poll, so a gap longer
   // than one page is closed instead of skipped. No cursor (server capability OFF) ⇒ no request at all.
-  const messagesRef = useRef<Message[]>(messages); messagesRef.current = messages;
+  const messagesRef = useRef<Message[]>(messages); messagesRef.current = messages; useCompactPlaybackSource(threadId, messages); // §6.3 T62: compact playback stops when its message leaves this thread
   useEffect(() => { noteThreadCursor(threadId, cursorOf(messages)); }, [threadId, messages]); // §71: the stream's reconnect replays from here
   const resumeThenPoll = useCallback(async () => {
     if (!threadId || appStateRef.current !== 'active' || sendingRef.current) return;

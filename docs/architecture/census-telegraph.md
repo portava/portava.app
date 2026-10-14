@@ -13941,3 +13941,145 @@ into the insert, `app.ts` registering a verifier, a migration updating `trust_st
 ### 88.5 The headline, restated from the rows
 
 Unchanged by this section; as `check:census-integrity` counts main `9ded8e9cd`: 260 / 180 / 9 / 2 of 451.
+
+## §90 — TELEGRAPH B58 lane TM-3 (2026-10-14): a thread video keeps playing, docked, while the conversation scrolls — one player, mounted outside every list, stopped fail-closed. ONE ROW MOVES (T62 N → C)
+
+Written 2026-10-14 on branch `claude/b58-tm-3` from origin/main `895f6dddc`. APPEND-ONLY. **Evidence is COMPONENT-LEVEL**
+(the real bubble, the real thread hooks, the real store and the real shared player under React Native Testing Library;
+only expo-av's native view is a stand-in, and it COUNTS its mounts). No migration, no flag, no server change, no
+database. Numbered §90 because open PR #710 (wave W lane w-tg-cardtruth) writes §89; renumber on conflict.
+
+### 90.1 The defect, re-verified on `895f6dddc`
+
+- A thread video was a thumbnail whose tap opened a full-screen `Modal` OWNED BY THE BUBBLE, holding the shared
+  `expo-av` player (the bubble's `handleVideoPress` and its `<Modal>` on main). The bubble is a row of an inverted `FlatList` in both
+  thread screens; a list that virtualises the row away unmounts the bubble, and the Modal and the player with it.
+  Nothing anywhere in the client could play a video outside the row that held it: no picture-in-picture, no
+  mini-player, no `expo-video` (only `expo-video-thumbnails`), no `allowsPictureInPicture`. The row's N was accurate.
+- `useGroupChat`'s catch-up merge returned the PREVIOUS array whenever no new id arrived
+  (`if (!byId.has(m.id)) changed = true;` then `if (!changed && …) return prev;`), so a delete or an edit read after a
+  reconnect or a foreground return was dropped until a new message or a reload. Found here because the stop below
+  depends on a group thread actually seeing a delete; fixed line-neutrally (90.2).
+
+### 90.2 What changed
+
+- **One session, one presenter.** `travel-buddy-standalone/src/features/telegraph/media/compactPlaybackStore.ts:157#export function openMessageVideo(`
+  owns the ONE thread-video session; the bubble asks for it and owns nothing
+  (`travel-buddy-standalone/src/components/MessageMediaBubble.tsx:134#openMessageVideo({ mediaRef: mediaUrl`).
+  `travel-buddy-standalone/src/features/telegraph/media/CompactPlaybackHost.tsx:129#<SharedVideoPlayer` renders it,
+  and the root layout mounts the host once, AFTER the Stack and outside every screen and list
+  (`travel-buddy-standalone/app/_layout.tsx:435#<CallSurface /><CompactPlaybackHost />` — line-neutral, import at the
+  foot), the pattern the shipped call pill already uses. §82 declared the root layout NOT-GRADED for this census, and
+  that declaration is left standing: T62's verdict is pinned instead by a scoped suite that READS the layout and fails
+  if the mount is removed or moved inside the Stack (90.3), so a change that breaks the mount fails CI rather than
+  silently ageing this census.
+- **Two presentations, one player.** Full screen and docked (176×99, top-right below the header) restyle the same
+  frame; the player is its first child in both and is keyed on the session
+  (`travel-buddy-standalone/src/features/telegraph/media/CompactPlaybackHost.tsx:130#key={sessionKey}`), so Minimize
+  and Expand never remount it: no reload, no seek, no position hand-off to get wrong. The docked frame's wrapper is
+  `pointerEvents="box-none"`, so the thread underneath keeps scrolling. Labels "Minimize video", "Expand video",
+  "Stop video", each with a hit slop. Tapping the docked video's own thumbnail again brings it back rather than
+  restarting it (`travel-buddy-standalone/src/features/telegraph/media/compactPlaybackStore.ts:173#if (session && session.mediaRef === mediaRef) {`).
+- **The player is unchanged.** It is `SharedVideoPlayer`, as before, so a private-bucket reference is still signed
+  before it reaches the video. It is NOT modified (it is shared by eight surfaces) — which is why there is no
+  position hand-off at all: the planner's design handed `positionMillis` from the modal to a second player, and the
+  shared player exposes no position; keeping one instance makes the hand-off unnecessary.
+- **Where it may play — fail closed** (OWNER QUESTION Q-PB1, default implemented, NOT approved). A session binds at
+  open time to the message SOURCES that hold its video as a live message
+  (`travel-buddy-standalone/src/features/telegraph/media/compactPlaybackStore.ts:170#if (bindings.length === 0) return false;`
+  — a video no open conversation holds never plays). The two thread hooks are the sources
+  (`travel-buddy-standalone/src/hooks/useMessaging.ts:374#useCompactPlaybackSource(threadId, messages)`,
+  `travel-buddy-standalone/src/hooks/useGroupChat.ts:194#useCompactPlaybackSource(thread?.id ?? null, messages, state === 'active' || state === 'loading')`),
+  through `travel-buddy-standalone/src/features/telegraph/media/useCompactPlaybackSource.ts:24#export function useCompactPlaybackSource(`.
+  Playback stops, for good, on: the route (path AND params — `/trip/chat?id=A` is not `?id=B`) leaving the opener's;
+  another account or sign-out (`travel-buddy-standalone/src/features/telegraph/media/compactPlaybackStore.ts:232#export function reconcilePlaybackContext(`);
+  a bound message no longer a live video in its source — unsend, delete, hide, media changed
+  (`travel-buddy-standalone/src/features/telegraph/media/compactPlaybackStore.ts:301#if (!allStillPlayable) stopPlayback('message_gone');`);
+  the source losing access, switching thread or unmounting; realtime `message.unsent` / `message.deleted` naming a
+  bound message, any `user.blocked`, `access.revoked`, and this viewer's own `member.left`
+  (`travel-buddy-standalone/src/features/telegraph/media/compactPlaybackStore.ts:244#export function stopReasonForEvent(`);
+  a known block with a bound sender in either direction
+  (`travel-buddy-standalone/src/features/telegraph/media/compactPlaybackStore.ts:272#export function stopReasonForBlocks(`);
+  the reference no longer signing for this viewer
+  (`travel-buddy-standalone/src/features/telegraph/media/CompactPlaybackHost.tsx:104#stopPlayback('media_error', key)`);
+  playback ending, Stop, and Android back while full screen. It never starts on its own — the viewer's tap is the only
+  entry — and nothing in it animates, so §11.3's reduced-motion setting has no transition here to gate.
+- **The group catch-up merge** now treats a row whose `deleted`, `editedAt` or `mediaUrl` changed as news
+  (`travel-buddy-standalone/src/hooks/useGroupChat.ts:180#const had = byId.get(m.id);`); a catch-up with nothing
+  changed still returns the same array.
+
+### 90.3 Rows
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T62 | N | **C** | §6.3 **Picture-in-picture or compact playback continues while scrolling** — the compact branch of the spec's "or", built and reachable on the mounted thread screens with no flag (message video is live; only kill switches gate it). The host is mounted by the root layout after the Stack, outside every list (90.2), pinned by `travel-buddy-standalone/src/features/telegraph/media/__tests__/compactPlaybackMount.test.ts:27#the root layout mounts the host once, after the Stack`. Asserted against the component: Minimize docks the SAME player — one mount, no unmount, no seek, no reload (`travel-buddy-standalone/src/features/telegraph/media/__tests__/CompactPlaybackHost.component.test.tsx:221#minimize docks the SAME player`); the list scrolling the bubble out of its window leaves it mounted and playing (`travel-buddy-standalone/src/features/telegraph/media/__tests__/CompactPlaybackHost.component.test.tsx:239#keeps playing while the list scrolls the bubble out of its window`); Expand brings the same instance back (`travel-buddy-standalone/src/features/telegraph/media/__tests__/CompactPlaybackHost.component.test.tsx:252#expand brings the same instance back full screen`); and every Q-PB1 stop (90.2) has its own case. 24/24 of the host suite are red against main's bubble. Native picture-in-picture is NOT built (it needs `expo-video`, a config plugin and a native rebuild) and is not claimed. |
+| T61 | ? | **?** | §6.3 **Inline video playback controls** — **evidence correction, verdict unchanged.** The row's pointer (the bubble's line 170 on the measured tree) no longer lands on the player: the bubble owns none. The same shared player, with the same props (`autoplay`, sound on, `onEnd`), is now mounted by the host (`travel-buddy-standalone/src/features/telegraph/media/CompactPlaybackHost.tsx:133#autoplay`). Scrub, mute, full-screen and caption BEHAVIOUR still belong to that shared player, unmodified here, and the row stays where its own reason put it. |
+
+**Why T62 is not in T61's position, stated because the lead asked.** T61 is `?` because what it asks about — scrub,
+mute, full-screen and caption behaviour — lives INSIDE the shared player, is asserted by no test in this tree (two of
+the six clauses are not even implemented), and could only be observed by operating the player on a device. T62 asks
+something else: whether playback SURVIVES the user scrolling. In this app that is decided entirely by where the
+player is mounted and when it is unmounted, re-rendered or reloaded — which is this section's code, and which the
+suite asserts directly against the component (mount and unmount counts of the native view, its source and play
+props, and the absence of any seek or pause call), the same standard T63's seek and speed clauses were accepted on
+(§36.3). What a component test cannot show is that a mounted, playing `expo-av` view keeps decoding while a sibling
+list scrolls on real hardware; that is the library's contract for a view that stays mounted, the same assumption the
+shipped call pill (an identical root-level overlay, `calls/CallSurface`) and every rendering row in this census rest
+on. **Risk, named:** if a verifier rules that "continues" can only be established on a device, the honest grade is W
+(built, device-unproven) — not `?`, because the app-side behaviour IS decidable and decided here. Two device-only
+ceilings are recorded rather than hidden: the full-screen presentation is a root overlay, not a `Modal`, so Android
+TalkBack is not confined to it the way iOS's `accessibilityViewIsModal` confines VoiceOver; and the docked frame sits
+in the top-right below the header, which no test can show clears every screen's header on every device.
+
+### 90.4 Owner question (open; fail-closed default implemented, not approved)
+
+- **Q-PB1 — compact playback scope.** Default implemented: within the opening conversation only; stops on leaving it
+  (route), unsend / delete / hide of the message, block (either direction, or any block made on this account) or
+  leave, sign-out or account change, and a refused signature. The alternative — playback that follows the viewer
+  across the app — is a product and privacy decision (a video from a conversation visible on unrelated screens) and is
+  not built.
+
+### 90.5 Tests and mutations
+
+- NOT-GRADED: travel-buddy-standalone/src/hooks/__tests__/threadHooks.compactPlayback.component.test.ts — the suite this section cites as EVIDENCE for the two thread hooks, not a graded surface.
+
+- `compactPlaybackStore.test.ts` (node:test) 26/26 — binding and refusal, one session across presentations, stale-key
+  safety, every source / route / account / realtime / block stop and its negative.
+- `compactPlaybackMount.test.ts` (node:test) 4/4 — the root mount after `</Stack>`, no list in the host, no player in
+  the bubble, both hooks report as sources.
+- `CompactPlaybackHost.component.test.tsx` (jest) 24/24 — **24/24 red against main's `MessageMediaBubble.tsx`**.
+- `threadHooks.compactPlayback.component.test.ts` (jest) 9/9 — **8/9 red against main's two hooks** (the ninth pins
+  that a catch-up with nothing changed still returns the same array, true on main by design); the group case that
+  needed the merge fix is `travel-buddy-standalone/src/hooks/__tests__/threadHooks.compactPlayback.component.test.ts:174#a catch-up that brings the message back deleted`.
+- **32/32 mutants killed**, each alone and restored: binding (deleted not checked, a not-live source binds, unbound
+  open allowed, same video restarts), stale-key stop, route stop off, account stop off, anonymous stamp allowed,
+  route key ignores params, any unsend stops, `user.blocked` / `access.revoked` ignored, `member.left` for anyone,
+  blocker direction ignored, not-live report / thread switch / message-gone check / unregister stop removed; in the
+  host: no context reconcile, no block-list stop, no realtime stop, no `media_error` stop, the player REMOUNTED per
+  presentation (20 cases red), back not handled, `onEnd` not wired, Minimize inert; the DM hook and the group hook not
+  a source, the group merge fix reverted, the group source always live; the host not mounted, the host inside the
+  Stack.
+- Neighbours: every jest component suite in the standalone app passed with this change (939 suites, 6,096 tests).
+
+### 90.6 Found, not changed (for the lead)
+
+- The client's realtime type list has no `message.unsent` or `message.deleted`, which the server publishes
+  (unsend in `routes/telegraphLifecycle.ts`; delete at `artifacts/api-server/src/routes/groupChat.ts:638#type: 'message.deleted',`). The player listens for both by name; the THREAD views
+  do not — a DM catches a delete on its 3-second poll, and a group chat has no poll, so a remote delete reaches a
+  group thread's bubble only on its next read. Out of T62's scope (T182's territory); playback itself stops on the
+  event.
+- A DM's poll re-reads the newest page only, so a delete of a message OLDER than that page reaches neither the bubble
+  nor the source until the thread is reloaded. The player still stops on the realtime event; with the stream down it
+  stops when the thread next re-reads it, or when the viewer leaves.
+
+### 90.7 The headline, restated from the rows
+
+| bucket | count |
+| --- | --- |
+| BUILT-AND-CORRECT | **261** |
+| BUILT-BUT-WRONG | **180** |
+| NOT-BUILT | **8** |
+| CANNOT-VERIFY | **2** |
+
+451 rows; T62 moves N → C (main `895f6dddc` counted C 260, N 9), as `check:census-integrity` counts this tree.
+CONSTRUCTED 441 of 451 = 97.8 %; CORRECT 261 of 451 = 57.9 %.
