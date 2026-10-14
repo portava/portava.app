@@ -264,11 +264,12 @@ describe("V-716 fix 2 — 3813: public.memories refuses every client role", { sk
     );
     refuse(
       `CREATE VIEW public.memacl_v_${tag} AS SELECT id, location_lat FROM public.memories;\nGRANT SELECT ON public.memacl_v_${tag} TO authenticated;`,
-      new RegExp(`a view over public\\.memories is readable by a client role: memacl_v_${tag} \\(authenticated\\)`),
+      // The local-db replica's default ACL hands anon the new view too, so the list may name both roles.
+      new RegExp(`a view over public\\.memories is readable by a client role: .*memacl_v_${tag} \\(authenticated\\)`),
     );
     refuse(
       `CREATE FUNCTION public.memacl_f_${tag}() RETURNS bigint LANGUAGE sql SECURITY INVOKER AS $f$ SELECT count(*) FROM public.memories $f$;\nGRANT EXECUTE ON FUNCTION public.memacl_f_${tag}() TO authenticated;`,
-      new RegExp(`SECURITY INVOKER function a client role may call reads public\\.memories: memacl_f_${tag}\\(\\)`),
+      new RegExp(`SECURITY INVOKER function a client role may call reads public\\.memories: .*memacl_f_${tag}\\(\\)`),
     );
     accept(`CREATE FUNCTION public.memacl_d_${tag}() RETURNS bigint LANGUAGE sql SECURITY DEFINER AS $f$ SELECT count(*) FROM public.memories $f$;\nGRANT EXECUTE ON FUNCTION public.memacl_d_${tag}() TO authenticated;`);
     accept(unwrapped(ROLLBACK).replace(/DO \$post\$[\s\S]*END \$post\$;/, ""));
