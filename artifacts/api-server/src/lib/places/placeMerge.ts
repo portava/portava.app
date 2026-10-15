@@ -4,10 +4,18 @@
  *
  * THE INVARIANT: no merge or unmerge this API applies to `places` is left
  * without a row in `place_merge_log` that records it, and no failure is ever
- * answered as success. It rests on one fact, checked by grep: this file is the
- * ONLY writer of `places.merged_into_place_id`, and every write here LOGS
- * BEFORE IT MOVES. A write made outside this API (an operator's SQL) is outside
- * the invariant.
+ * answered as success. It rests on three premises, each checked here or by
+ * grep:
+ *   (P1) this file is the ONLY writer of `places.merged_into_place_id` and of
+ *        `places.updated_at` in the API (no trigger maintains either);
+ *   (P2) every write here LOGS BEFORE IT MOVES;
+ *   (P3) every move compare-and-sets on the exact `updated_at` it read and
+ *        writes one STRICTLY later (nextStamp), so a place never returns to a
+ *        stamp it has left, and a compare-and-set armed on an earlier,
+ *        identical state (an ABA) matches nothing.
+ * A write made outside this API (an operator's SQL, the FK's ON DELETE SET
+ * NULL) or by an instance running older code without P3 is outside them; how
+ * each is still caught, or what it can still do, is stated below.
  *
  * WHAT MAIN DID (3c214ca80, measured by src/test/placesMergeLog.test.ts):
  * the handlers wrote the place first and then `await`ed the log insert without
@@ -31,34 +39,45 @@
  *   1. read the place(s) and check every precondition, every read checked;
  *   2. WRITE THE LOG ROW, with an id generated here so it can be withdrawn
  *      without trusting a RETURNING body; if this fails, nothing has changed;
- *   3. move the place with a compare-and-set: the UPDATE matches only the
- *      state step 1 read, so a concurrent change makes it match nothing;
+ *   3. move the place with a compare-and-set on the state step 1 read —
+ *      `merged_into_place_id` AND the exact `updated_at` — writing a stamp
+ *      strictly later (P3); any move since step 1 makes it match nothing;
  *   4. if the move did not happen, WITHDRAW the log row (it records a change
  *      that did not occur). It is withdrawn in exactly two cases:
  *        (a) the UPDATE ran and matched no row — this request changed nothing;
- *        (b) the UPDATE errored, the place is re-read in exactly its starting
- *            state, AND this request's row is still the NEWEST place_merge_log
- *            row for the place. The second half is what makes (b) sound:
- *            because every writer logs before it moves, a request that
- *            reversed this one's committed-but-unacknowledged change (verifier
- *            scenarios X1/X2) left a newer row first. Without it, a starting-
- *            state re-read would withdraw the row of a change that DID happen.
- *      An outcome that cannot be established — a failed re-read, a place
- *      re-read in neither state, or a newer row for the place — KEEPS the row
- *      and answers `*_outcome_unknown`, naming it. The same newest-row test
- *      gates the opposite case: a place re-read in its TARGET state is this
- *      request's success only while its row is the newest; otherwise another
- *      request may have made the change, and the outcome is unknown.
+ *        (b) the UPDATE errored, the place is re-read in its starting state
+ *            WITH the stamp step 1 read, AND this request's row is still the
+ *            NEWEST place_merge_log row for the place. By P3 a place at step
+ *            1's stamp has not moved since, so this request's UPDATE did not
+ *            commit. The newest-row half is a second, independent check: by
+ *            P2, a request that moved the place after reading our committed
+ *            state wrote a newer row first (verifier scenarios X1/X2).
+ *      The mirror case: a place re-read in its TARGET state with the stamp
+ *      THIS request wrote, its row still the newest, is this request's
+ *      success. Anything else — a failed re-read, a place that no longer
+ *      exists, any other state or stamp, a failed log read, an empty log, a
+ *      newer row — KEEPS the row and answers `*_outcome_unknown`, naming it.
  *
- * So no interleaving of this API's own requests leaves an applied change
- * without its row. WHAT REMAINS (a transaction with row locks would close it):
+ * Under P1–P3, no interleaving of this API's own requests leaves an applied
+ * change without its row, and a stale request served late (ABA-M/ABA-U) or one
+ * whose state left and came back (ABA-CAS) answers 409 instead of acting.
+ * WHAT REMAINS (a transaction with row locks would close it):
  *   - a crash, or a failed withdrawal, between steps 2 and 4 leaves a row for a
  *     change that did not happen (the answer names it, the operator log carries
  *     it at error level). Such a row, if it is the place's newest, makes a
  *     later unmerge refuse (409) until an operator removes it;
- *   - two requests making the SAME change in one window: the one whose UPDATE
- *     failed without committing can, if its row is the newer, answer 200 for a
- *     change the other made; the log holds two rows for one change;
+ *   - two requests that read the same stamp in the same millisecond and make
+ *     the same change compute the same new stamp; the one whose UPDATE failed
+ *     without committing can then answer 200 for the change the other made
+ *     (the log holds two rows for one change). With different stamps it
+ *     answers `*_outcome_unknown`;
+ *   - an instance running code older than P3 (a rolling deploy) can still
+ *     act on a stale state; this code then never withdraws a row because of
+ *     it (the stamp differs), but answers `*_outcome_unknown`;
+ *   - a change to `merged_into_place_id` made outside this API without a
+ *     stamp change (an operator's SQL; the FK's ON DELETE SET NULL when a
+ *     survivor is deleted) still fails the compare-and-set, which names
+ *     `merged_into_place_id` too (409) — but that change itself has no row;
  *   - the merge target and the place's merged-in places are checked in step 1
  *     and not locked: a target merged away, or a place merged into this one,
  *     by a concurrent request between steps 1 and 3 yields a two-hop chain,
