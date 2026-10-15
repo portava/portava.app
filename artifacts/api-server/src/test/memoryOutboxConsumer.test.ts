@@ -84,6 +84,7 @@ interface FakeOpts {
   highlights?: Record<string, { owner_id: string }>;
   /** Make the highlights read fail outright. */
   highlightsError?: boolean;
+  sourceRowLimit?: number;
   /**
    * Every `.eq()` this fake was asked to apply, so a test can assert that the
    * consumer NEVER sent a null id to a lookup. That is the exact defect the
@@ -153,6 +154,7 @@ function makeFake(opts: FakeOpts = {}) {
   function makeBuilder(table: string) {
     const filters: Array<(r: any) => boolean> = [];
     let pending: any[] | null = null;   // rows an upsert is returning
+    let countRequested = false;
 
     const rows = () => {
       if (pending !== null) return pending;
@@ -167,11 +169,21 @@ function makeFake(opts: FakeOpts = {}) {
       if (table === "highlights" && opts.highlightsError) {
         return Promise.resolve(fakeDbError("highlights unreadable"));
       }
-      return Promise.resolve({ data: rows(), error: null });
+      const selectedRows = rows();
+      return Promise.resolve({
+        data: countRequested && opts.sourceRowLimit !== undefined
+          ? selectedRows.slice(0, opts.sourceRowLimit)
+          : selectedRows,
+        error: null,
+        count: countRequested ? selectedRows.length : null,
+      });
     };
 
     const b: any = {
-      select: () => b,
+      select: (_columns?: string, options?: { count?: string }) => {
+        countRequested = options?.count === "exact";
+        return b;
+      },
       eq: (c: string, v: any) => { eqCalls.push({ table, column: c, value: v }); filters.push((r) => r[c] === v); return b; },
       in: (c: string, vs: any[]) => { filters.push((r) => vs.includes(r[c])); return b; },
       is: (c: string, v: any) => { filters.push((r) => r[c] === v); return b; },
@@ -419,6 +431,32 @@ describe("§17 at-least-once: the rebuild happens BEFORE the ack", () => {
     assert.ok(memIdx >= 0, "the consumer must read the Memory it is projecting");
     assert.ok(ackIdx >= 0, "the consumer must ack");
     assert.ok(memIdx < ackIdx, "the ack must come AFTER the work, never before");
+  });
+
+  it("does not ack a truncated rebuild and completes it when the full source is available", async () => {
+    const options: FakeOpts = {
+      claim: [row({ id: 8, memory_id: "m1" })],
+      memories: { m1: { owner_id: "u1" }, m2: { owner_id: "u1" } },
+      sourceRowLimit: 1,
+    };
+    const client = makeFake(options);
+
+    const refused = await drainMemoryOutbox(client);
+
+    assert.equal(refused.acked, 0);
+    assert.equal(refused.failed, 1);
+    assert.equal(refused.outcomes[0]?.failureClass, "source_unavailable");
+    assert.equal(client.rpcCalls.filter((call: RpcCall) => call.fn === OUTBOX_ACK_FN).length, 0);
+    assert.equal(client.rpcCalls.filter((call: RpcCall) => call.fn === OUTBOX_FAIL_FN).length, 1);
+    assert.equal(client.tables.memory_derivative_registry.length, 0);
+
+    delete options.sourceRowLimit;
+    const retried = await drainMemoryOutbox(client);
+
+    assert.equal(retried.ok, true);
+    assert.equal(retried.acked, 1);
+    assert.equal(retried.failed, 0);
+    assert.ok(client.tables.memory_derivative_registry.length > 0);
   });
 
   it("the claim comes first of all", async () => {
