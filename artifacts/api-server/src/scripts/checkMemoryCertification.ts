@@ -32,7 +32,7 @@
  * Run: node --import tsx/esm src/scripts/checkMemoryCertification.ts
  */
 import { CERTIFICATION_FIXTURE_IDS } from "../services/memoryCertification/fixtures.js";
-import { INVARIANT_IDS } from "../services/memoryCertification/invariants.js";
+import { DEVELOPER_INVARIANT_IDS, INVARIANT_IDS } from "../services/memoryCertification/invariants.js";
 import { CHAOS_SCENARIO_IDS } from "../services/memoryCertification/chaos.js";
 import {
   formatCertificationReport,
@@ -52,6 +52,9 @@ async function main(): Promise<void> {
   if (report.invariants.length !== INVARIANT_IDS.length) {
     missing.push(`${report.invariants.length} invariant outcomes for ${INVARIANT_IDS.length} invariants`);
   }
+  if (report.developer_invariants.length !== DEVELOPER_INVARIANT_IDS.length) {
+    missing.push(`${report.developer_invariants.length} developer-invariant outcomes for ${DEVELOPER_INVARIANT_IDS.length} §28 invariants`);
+  }
   if (report.chaos.length !== CHAOS_SCENARIO_IDS.length) {
     missing.push(`${report.chaos.length} chaos outcomes for ${CHAOS_SCENARIO_IDS.length} scenarios`);
   }
@@ -63,6 +66,7 @@ async function main(): Promise<void> {
   const failures = [
     ...report.fixtures.filter((f) => f.status === "DIVERGED").map((f) => `${f.census_id} ${f.id}: ${f.divergences.join(" | ")}`),
     ...report.invariants.filter((i) => i.status === "VIOLATED").map((i) => `${i.census_id} ${i.id}: ${i.detail}`),
+    ...report.developer_invariants.filter((i) => i.status === "VIOLATED").map((i) => `${i.census_id} ${i.id}: ${i.detail}`),
     ...report.chaos.filter((c) => c.status === "BROKEN").map((c) => `${c.census_id} ${c.id}: ${c.detail}`),
   ];
   if (failures.length > 0) {

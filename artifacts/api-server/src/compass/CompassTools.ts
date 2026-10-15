@@ -1,7 +1,7 @@
 /**
  * CompassTools — Phase 4 native function calling for the Compass assistant.
  *
- * Forty-six tools the model may call on demand (the OpenAI schemas in
+ * Forty-eight tools the model may call on demand (the OpenAI schemas in
  * COMPASS_TOOL_DEFINITIONS below are the authoritative list).
  *
  * THAT SENTENCE IS EXECUTABLE, BECAUSE IT HAS BEEN WRONG THREE TIMES.
@@ -152,7 +152,7 @@ import { PLAN_ITEM_PRIVACY_COLUMNS, WITHHELD_PLAN_TITLE, planItemAccessFor, read
  * compare. Pinned to `COMPASS_TOOL_DEFINITIONS.length` AND to the header's own
  * number word by `src/test/compassToolCountContract.test.ts`.
  */
-export const COMPASS_TOOL_COUNT_IN_HEADER = 46;
+export const COMPASS_TOOL_COUNT_IN_HEADER = 48; // 46 + memory_propose_merge + memory_propose_split (census-highlights-memories H124, b58 HM-A3)
 // ── Tool definitions (OpenAI function schemas) ────────────────────────────────
 
 export const COMPASS_TOOL_DEFINITIONS = [

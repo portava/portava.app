@@ -50,7 +50,7 @@ import {
   evaluateEligibility,
   type NormalizedEvidence,
 } from "../memoryProjections/evidence.js";
-import { searchMemories } from "../memoryRetrieval/searchMemories.js";
+import { searchMemories } from "../memoryRetrieval/searchMemories.js"; import { resolveNamedPlace } from "../../compass/memoryCompassTruth.js"; import { certMemory, certWorld } from "./world.js"; // §28.3 (H262), appended at the end of this file: one line, so the cited lines keep their numbers
 import {
   LOCATION_PRECISION_LADDER,
   locationPrecisionRank,
@@ -657,3 +657,124 @@ export async function runAllInvariants(): Promise<InvariantOutcome[]> {
  * cite the code rather than restate it.
  */
 export const UNDECLARED_COMMANDS = MEMORY_COMMAND_TYPES_NOT_DECLARED;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// §28 developer invariants — kept OUT of §25's nine
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// §25's list above is the spec's nine sentences verbatim, and
+// src/test/memoryCertificationInvariants.test.ts pins it to them, so a §28 rule
+// does not join it. It runs with the same three-valued status, the same outcome
+// shape and the same "a thrown checker is a VIOLATION" rule, from its own list,
+// and runCertification reports it in its own section.
+
+export const DEVELOPER_INVARIANT_IDS = [
+  "SEMANTIC_SUBSTITUTE_NOT_THE_REQUESTED_PLACE",
+] as const;
+export type DeveloperInvariantId = (typeof DEVELOPER_INVARIANT_IDS)[number];
+
+export interface DeveloperInvariantOutcome extends Omit<InvariantOutcome, "id"> {
+  readonly id: DeveloperInvariantId;
+}
+
+/**
+ * §28.3 "Never query a semantic substitute for an unknown canonical
+ * place/person and pretend it is the requested entity." (census H262)
+ *
+ * The owner's only Memories are in New York and the question is about York —
+ * the exact shape the Compass tools used to get wrong with a substring match.
+ * Two surfaces, both asserted:
+ *   1. §15 `searchMemories` over CompassMemoryProjection, with an ADVERSARIAL
+ *      injected `semanticScorer` that is certain New York is what was meant.
+ *      The deterministic place filter decides membership; the scorer may only
+ *      reorder, so it cannot add a row for a place nobody has a Memory in.
+ *   2. The Compass tools' named-place resolver (`resolveNamedPlace`), which
+ *      `memory_search` and `memory_get_place_history` run before any filter:
+ *      York is UNRESOLVED and admits nothing.
+ * Each paired with a control the same code must answer (New York, case and
+ * spacing aside), so the invariant cannot hold by answering nothing.
+ */
+async function semanticSubstituteNotTheRequestedPlace(): Promise<{ status: InvariantStatus; detail: string }> {
+  const world: CertificationWorld = certWorld({
+    memories: [
+      certMemory({ id: "cert-ny-1", title: "Brooklyn bridge walk", location_city: "New York", location_country: "United States", starts_at: "2026-04-01T12:00:00.000Z" }),
+      certMemory({ id: "cert-ny-2", title: "Village jazz night", location_city: "New York", location_country: "United States", starts_at: "2026-04-02T21:00:00.000Z" }),
+    ],
+  });
+  const client = await seededClient(world);
+  const now = new Date(world.now);
+  const built = await rebuildProjection(client, "CompassMemoryProjection", { owner_id: world.owner_id, viewer_id: world.owner_id }, now);
+  if (!built.ok) return { status: "VIOLATED", detail: `CompassMemoryProjection would not build: ${built.detail}` };
+  if (idsOf(built.value.rows).length !== 2) return { status: "VIOLATED", detail: "fixture is inert: the projection does not carry both New York Memories" };
+
+  // Certain, and wrong: every New York row is "exactly" York to this scorer.
+  const adversary = (_query: string, row: ProjectedRow): number => (/york/i.test(String(row.location_city ?? "")) ? 1 : 0);
+  const search = (place: string) => searchMemories(client, {
+    ownerId: world.owner_id,
+    viewerId: world.owner_id,
+    namespace: "PRIVATE_PERSONAL",
+    authorizedProjection: "CompassMemoryProjection",
+    place,
+    semanticQuery: "York",
+    semanticScorer: adversary,
+    now,
+  });
+
+  const york = await search("York");
+  if (!york.ok) return { status: "VIOLATED", detail: `the York search refused instead of answering: ${york.reason} ${york.detail}` };
+  if (york.value.hits.length > 0 || york.value.deterministic_match_count !== 0) {
+    return { status: "VIOLATED", detail: `searchMemories answered York with ${JSON.stringify(york.value.hits.map((h) => h.memory_id))} — a New York Memory served as the place asked about` };
+  }
+  const control = await search("New York");
+  if (!control.ok || control.value.hits.length !== 2) {
+    return { status: "VIOLATED", detail: `control: the place that exists did not come back (${JSON.stringify(control)}), so the York refusal proves nothing` };
+  }
+
+  const rows = world.memories;
+  const asked = resolveNamedPlace(rows, { city: "York", country: null });
+  if (asked.resolution !== "UNRESOLVED" || rows.some((r) => asked.admits(r))) {
+    return { status: "VIOLATED", detail: `the Compass resolver answered York with ${asked.resolution}` };
+  }
+  const exists = resolveNamedPlace(rows, { city: "  new   YORK ", country: null });
+  if (exists.resolution !== "RESOLVED" || !rows.every((r) => exists.admits(r))) {
+    return { status: "VIOLATED", detail: `control: the Compass resolver did not resolve New York (${exists.resolution}), so its York answer proves nothing` };
+  }
+  return {
+    status: "HELD",
+    detail:
+      "with only New York Memories, a York search returned no row even with a reranker certain New York was meant (deterministic_match_count 0; the reranker may only reorder), and the Compass resolver answered York UNRESOLVED; both controls returned the two New York Memories. " +
+      "CEILING: searchMemories' place filter is passed by no route (lib/inputAssistance/memoryContext.ts calls searchMemories without one); the route-reachable surface is the Compass resolver, reached only through a model tool call (owner decision D-C2), and what the model then SAYS is prompt text",
+  };
+}
+
+const DEVELOPER_DEFINITIONS: ReadonlyArray<Omit<InvariantDefinition, "id"> & { readonly id: DeveloperInvariantId }> = Object.freeze([
+  {
+    id: "SEMANTIC_SUBSTITUTE_NOT_THE_REQUESTED_PLACE", census_id: "H262", spec_line: 737,
+    spec_text: "Never query a semantic substitute for an unknown canonical place/person and pretend it is the requested entity.",
+    surface: "services/memoryRetrieval/searchMemories.ts place filter + compass/memoryCompassTruth.ts resolveNamedPlace",
+    reachable_from_a_route: false,
+    run: semanticSubstituteNotTheRequestedPlace,
+  },
+]);
+
+export async function runDeveloperInvariants(): Promise<DeveloperInvariantOutcome[]> {
+  const out: DeveloperInvariantOutcome[] = [];
+  for (const def of DEVELOPER_DEFINITIONS) {
+    let result: { status: InvariantStatus; detail: string };
+    try {
+      result = await def.run();
+    } catch (err) {
+      result = { status: "VIOLATED", detail: `invariant threw: ${String((err as Error)?.message ?? err)}` };
+    }
+    out.push({
+      id: def.id,
+      census_id: def.census_id,
+      spec_line: def.spec_line,
+      spec_text: def.spec_text,
+      surface: def.surface,
+      reachable_from_a_route: def.reachable_from_a_route,
+      ...result,
+    });
+  }
+  return out;
+}
