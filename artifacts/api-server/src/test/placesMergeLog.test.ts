@@ -46,6 +46,7 @@ import { _setTestServiceClient } from "../lib/supabase.js";
 import { makeFailClosedClient } from "./helpers/failClosedSupabase.js";
 import { makeOracle, type OracleHandle } from "./helpers/postgrestOracle.js";
 import placesCanonicalRouter from "../routes/placesCanonical.js";
+import { instantMicros, nextStamp } from "../lib/places/placeMerge.js";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -853,7 +854,9 @@ describe("POST /admin/places/:id/unmerge", () => {
       fail: failWhen("PATCH", "places"),
     });
     install(w);
-    refused(await unmerge(), 500, "db_error", "unmerge_outcome_unknown", "U15");
+    const r = await unmerge();
+    refused(r, 500, "db_error", "unmerge_outcome_unknown", "U15");
+    assert.ok(String(r.body.message).includes("no longer exists"), `U15: says why — ${r.body.message}`);
     assert.deepEqual(w.log().map((x) => x.action), ["merge", "unmerge"], "U15: the row is kept");
   });
 
@@ -986,5 +989,25 @@ describe("merge → unmerge → merge → unmerge over one stateful catalog", ()
       rows.map((x) => `${x.action}:${x.survivor_place_id.slice(0, 4)}:${x.affected_place_id.slice(0, 4)}`),
       ["merge:bbbb:aaaa", "unmerge:bbbb:aaaa", "merge:cccc:aaaa", "unmerge:cccc:aaaa"],
     );
+  });
+});
+
+// ── THE STAMP ─────────────────────────────────────────────────────────────────
+
+describe("the compare-and-set stamp", () => {
+  it("S1 one instant in PostgREST's microsecond form and in ours compares equal; a microsecond apart does not", () => {
+    assert.equal(instantMicros("2026-10-14T12:00:00.123000+00:00"), instantMicros("2026-10-14T12:00:00.123Z"));
+    assert.equal(instantMicros("2026-10-14T14:00:00.5+02:00"), instantMicros("2026-10-14T12:00:00.500Z"));
+    assert.notEqual(instantMicros("2026-10-14T12:00:00.123001+00:00"), instantMicros("2026-10-14T12:00:00.123Z"));
+    assert.equal(instantMicros(null), null);
+    assert.equal(instantMicros("not a time"), null);
+  });
+
+  it("S2 a move's stamp is STRICTLY later than the one it replaces, even when that one is ahead of this clock", () => {
+    const ahead = "2099-01-01T00:00:00.123456+00:00"; // another instance's clock runs fast
+    const next = nextStamp(ahead);
+    assert.ok(instantMicros(next)! > instantMicros(ahead)!, `${next} must be after ${ahead}`);
+    assert.ok(instantMicros(nextStamp(next))! > instantMicros(next)!, "and again");
+    assert.ok(Math.abs(Date.parse(nextStamp(SEED_STAMP)) - Date.now()) < 60_000, "otherwise it is now");
   });
 });
