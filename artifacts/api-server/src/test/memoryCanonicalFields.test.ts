@@ -149,12 +149,12 @@ function makeClient(store: Record<string, any[]>, ops: Op[], w: World) {
   const unknownCol = (cols: string[]) => cols.find((c) => !memCols.has(c));
   function chain(table: string) {
     const filters: Array<(r: any) => boolean> = [];
-    const flagFilter: string[] = [];
+    const flagFilter: string[] = []; let countExact = false;
     let mode: "select" | "upsert" | "update" | "insert" | "delete" = "select";
     let payload: any = null; let wantRows = false; let single = false; let limitN: number | null = null; let selected: string[] | null = null; let selectText = ""; let conflict: string[] = []; const orders: Array<[string, boolean]> = [];
     const f = (p: (r: any) => boolean) => { filters.push(p); return obj; };
     const obj: any = {
-      select(c?: string) { if (mode !== "select") wantRows = true; if (typeof c === "string") { selectText = c; if (mode === "select") selected = c.split(",").map((k) => k.trim()).filter((k) => k && !k.includes("(")); } return obj; },
+      select(c?: string, options?: { count?: string }) { countExact = options?.count === "exact"; if (mode !== "select") wantRows = true; if (typeof c === "string") { selectText = c; if (mode === "select") selected = c.split(",").map((k) => k.trim()).filter((k) => k && !k.includes("(")); } return obj; },
       upsert(d: any, o?: any) { mode = "upsert"; payload = d; conflict = String(o?.onConflict ?? "").split(",").map((k) => k.trim()).filter(Boolean); return obj; },
       insert(d: any) { mode = "insert"; payload = d; return obj; },
       update(d: any) { mode = "update"; payload = d; return obj; },
@@ -211,10 +211,10 @@ function makeClient(store: Record<string, any[]>, ops: Op[], w: World) {
       }
       if (mode === "delete") { store[table] = all.filter((r) => !matched.includes(r)); return { data: wantRows ? matched : null, error: null }; }
       if (orders.length > 0) matched = [...matched].sort((x, y) => { for (const [c, asc] of orders) { const d = String(x[c] ?? "").localeCompare(String(y[c] ?? "")); if (d !== 0) return asc ? d : -d; } return 0; });
-      if (limitN != null) matched = matched.slice(0, limitN);
+      const count = countExact ? matched.length : null; if (limitN != null) matched = matched.slice(0, limitN);
       const project = (x: any) => (selected && selected.length > 0 && !selected.includes("*") ? Object.fromEntries(selected.filter((k) => k in x).map((k) => [k, x[k]])) : { ...x });
       if (single) return { data: matched[0] ? project(matched[0]) : null, error: null };
-      return { data: matched.map(project), error: null };
+      return { data: matched.map((row, index) => project(table === "memory_items" ? { ...row, id: row.id ?? `fixture-item-${index}` } : row)), error: null, count };
     }
     return obj;
   }

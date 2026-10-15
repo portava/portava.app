@@ -593,3 +593,10 @@ export function applyStaleness(base: number, stale: number): number {
   if (!(stale > 0)) return base;
   return Math.max(0, base - Math.min(1, stale) * STALENESS_DEMOTION);
 }
+
+export const RELATIONSHIP_FIT_BOOST = 0.05;
+
+export function applyRelationshipFit(base: number, isFollowing: boolean): number {
+  if (!isFollowing) return base;
+  return Math.max(base, Math.min(base + RELATIONSHIP_FIT_BOOST, SIGNAL_CEILING));
+}

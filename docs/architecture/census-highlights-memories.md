@@ -5383,7 +5383,7 @@ was `hits.length <= deterministicMatchCount`, and with one matching Memory in th
 numbers are equal, so the field was pinned to nothing. That field is the whole of H111's
 checkability: it is what makes *"the filters decide membership and a semantic pass may only reorder
 what they selected"* an observable claim rather than a comment.
-`artifacts/api-server/src/test/memorySearchRoute.test.ts:311#it("the count is what the FILTERS selected, not what the page returned", async () => {` asks for
+`artifacts/api-server/src/test/memorySearchRoute.test.ts:319#it("the count is what the FILTERS selected, not what the page returned", async () => {` asks for
 a page of 1 over 3 matches and asserts the two are STRICTLY different. H111 is moved on the suite
 WITH that case, not the one without it.
 
@@ -7319,7 +7319,7 @@ Where this section and §AF to §AK disagree, this section is the later statemen
    - A named non-owner viewer's build never carries `only_me`, a viewer that is hidden, or a custom list that does not name the viewer.
    - The reader's own slice of a crew search is built in the reader's own view (`artifacts/api-server/src/services/memory/memorySearchService.ts:674#const target: ResolvedTarget = memberId === viewerId`), so the owner still finds their own private trip Memory.
    - Narrowing now splits `retained` (the owner's own view) from `retainedShared` (a viewer-specific derivative whose viewer keeps access), and logs the latter (`artifacts/api-server/src/services/memoryProjections/narrowingReprojection.ts:171#report.retainedShared += 1`).
-   - Two assertions in `memorySearchRoute.test.ts` encoded the old design. Per the ruling they are INVERTED, not loosened: the shared derivative now must NOT carry the `only_me` row (`artifacts/api-server/src/test/memorySearchRoute.test.ts:622#LAYER 1 (§AL ruling`). The ladder is still proved by planting the row and showing it is withheld.
+   - Two assertions in `memorySearchRoute.test.ts` encoded the old design. Per the ruling they are INVERTED, not loosened: the shared derivative now must NOT carry the `only_me` row (`artifacts/api-server/src/test/memorySearchRoute.test.ts:708#LAYER 1 (§AL ruling`). The ladder is still proved by planting the row and showing it is withheld.
    - The test through the router: `artifacts/api-server/src/test/memoryNarrowingReprojection.test.ts:323#the crew search's TripMemoryProjection (viewer null)`.
 2. **The redrive's untested branches (H2-1, H2-3, H2-5, the batch bound).**
    - An unreadable Memory row leaves the letter open and runs no step (`artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:677#H2-1: the Memory row is UNREADABLE`).
@@ -7404,8 +7404,8 @@ Where this section and §AF to §AM disagree, this section is the later statemen
    - A hit whose row cannot be found is withheld. An unreadable canonical read refuses.
    - The route reports `audienceWithheldCount`.
    - The public derivative itself is NOT narrowed at build time. A hide list must not remove the Memory for everyone else, and the verifier showed that the build-time variant does exactly that.
-   - The tests start at `artifacts/api-server/src/test/memorySearchRoute.test.ts:840#H3-1`.
-2. **H3-2, H-5 for the shared crew scope.** A member's own crew search rebuilds their shared crew derivative when a deletion revoked it (`artifacts/api-server/src/services/memory/memorySearchService.ts:682#if (memberId === viewerId) await reviveDeletionRevokedDerivative`). Any other revocation reason stays revoked. The tests start at `artifacts/api-server/src/test/memorySearchRoute.test.ts:903#H3-2`.
+   - The tests start at `artifacts/api-server/src/test/memorySearchRoute.test.ts:948#H3-1`.
+2. **H3-2, H-5 for the shared crew scope.** A member's own crew search rebuilds their shared crew derivative when a deletion revoked it (`artifacts/api-server/src/services/memory/memorySearchService.ts:682#if (memberId === viewerId) await reviveDeletionRevokedDerivative`). Any other revocation reason stays revoked. The tests start at `artifacts/api-server/src/test/memorySearchRoute.test.ts:1011#H3-2`.
 3. **H3-4, H3-5 and H3-6, cases that were missing.**
    - A photo on another owner's Memory cannot be switched through your own Memory id (`artifacts/api-server/src/test/memoryItemVisibility.test.ts:276#H3-4`).
    - A two-Memory list cover page (`artifacts/api-server/src/test/memoryItemVisibility.test.ts:289#H3-5`).

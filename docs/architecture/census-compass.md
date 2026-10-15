@@ -126,7 +126,7 @@ construction that is inert in production; it counts as built, consistent with ev
 | id | Obligation | V | Evidence |
 |---|---|---|---|
 | CG-01 | `:8` Compass consumes the shared layer; no surface builds its own assistance engine | **W** | The client duplicates the server's starter set: `travel-buddy-standalone/src/…/compass/compassPrompt.ts` re-implements `buildCompassStarters` and `app/(tabs)/ai.tsx:399` calls the client one (census-input-intelligence G359 `W`). Client-side; recorded, not edited. **No longer true, noted 2026-09-27 (census-media §41.3):** e0d858f28 removed the client builder, and the screen now renders the server's starters (`travel-buddy-standalone/app/(tabs)/ai.tsx:413#starters={startersFromSuggestions(starterAssist.suggestions)}`). This row is not CG-01's last statement; §26.13 is. |
-| CG-02 | `:150-152` Compass prompt: contextual starters based on current surface | **C** | census-input-intelligence G88 `C` (`projection.ts:258-304`), confirmed by the client wiring at `travel-buddy-standalone/app/(tabs)/ai.tsx:412-424#<CompassStarters` (G364; corrected 2026-09-27, verdict unmoved: the same block was 398–410 until e0d858f28 moved it 14 lines down). |
+| CG-02 | `:150-152` Compass prompt: contextual starters based on current surface | **C** | census-input-intelligence G88 `C` (`projection.ts:265-311`), confirmed by the client wiring at `travel-buddy-standalone/app/(tabs)/ai.tsx:412-424#<CompassStarters` (G364; corrected 2026-09-27, verdict unmoved: the same block was 398–410 until e0d858f28 moved it 14 lines down). |
 | CG-03 | `:160-163` Context carryover bounded to the task; Compass prompt carries Trip context; no silent preference rewrite | **C** | Trip context is attached server-side on every ask (`compass/CompassTripContext.ts:1-11`, called at `routes/compass.ts:1566-1570`) and as structured refs on starters (G364). Boundedness: `CompassTemporaryIntent.ts:14-20` *"reads no profile and writes nothing, so it CANNOT rewrite a preference"*; `compass/CompassSearchDecayService.ts:5-9` decays a search nudge so it *"doesn't permanently skew"* the feed. |
 | CG-04 | `:213` Compass: convert phrase into structured request/action with referenced entities | **C** | G137 `C` (`semanticIntent.ts:290-327` produces `open_compass` with the parse); the drop is on the *search bar's* client (G305), not Compass's — `travel-buddy-standalone/app/(tabs)/ai.tsx:112-118#if (!prefillMessage` consumes `prefillMessage` (corrected 2026-09-27, verdict unmoved: 98–104 until e0d858f28 moved the effect 14 lines down). |
 | CG-05 | `:216-229` AI-assisted writing for Compass is opt-in, editable, never silently inserted | **C (gated)** | G138/G143 `C`; `compass_ai_writing_enabled` has **no row** in production `feature_flags` (verified 2026-09-07), and `aiWriting.ts:80-90` reads it fail-closed, so no AI writing has run. |
@@ -3276,7 +3276,7 @@ there) nor routed anywhere (feasibility is declared unverified, by design).
 
 ### 26.13 CG-01 — the client consumes the shared layer's starters
 
-The server's set is the one set: `artifacts/api-server/src/lib/inputAssistance/projection.ts:318#export const COMPASS_STARTER_SET` (nine),
+The server's set is the one set: `artifacts/api-server/src/lib/inputAssistance/projection.ts:325#export const COMPASS_STARTER_SET` (nine),
 served through the ordinary gateway at zero characters, each row carrying its `starterId`. The
 client's own list and builder are gone; `travel-buddy-standalone/src/platform/input-assistance/compass/compassPrompt.ts:33#export function startersFromSuggestions`
 adapts served rows to chips and the screen reads them through the shared hook
@@ -3718,10 +3718,10 @@ suggestion's `…` menu → **Dismiss**; tap a quick action (**View plan**, **As
   (`travel-buddy-standalone/src/components/DailyBriefCard.tsx:688#async function dismissSuggestion(`); it used to be removed
   optimistically even when the write failed.
 - **Server defect fixed.** The dismiss route answered `{ ok: true }` when its write failed ("best-effort");
-  it now answers 503 (`artifacts/api-server/src/routes/dailyBrief.ts:1056#if (evtError) { briefLogger.warn(`).
+  it now answers 503 (`artifacts/api-server/src/routes/dailyBrief.ts:1058#if (evtError) { briefLogger.warn(`).
   And a recorded dismissal came back on the next GET, because the brief is cached per user per day and
   nothing read the dismissals: every served brief now passes through
-  `artifacts/api-server/src/routes/dailyBrief.ts:1080#async function applyDismissals(`.
+  `artifacts/api-server/src/routes/dailyBrief.ts:1082#async function applyDismissals(`.
 - A brief whose dismissals could not be read says so (`dismissalsApplied: false` → "something you
   dismissed may show again"); a failed refresh says so; and a GET whose membership read failed
   (`denialReason: db_error`) is an error with Retry, no longer "only available to accepted trip members".

@@ -50,12 +50,12 @@ let gen = 0;
 
 function makeClient(store: Record<string, any[]>, opts: FakeOpts = {}) {
   function chain(table: string) {
-    const filters: Array<(r: any) => boolean> = [];
+    const filters: Array<(r: any) => boolean> = []; let countExact = false;
     let mode: "select" | "upsert" | "update" | "insert" | "delete" = "select";
     let payload: any = null; let onConflict: string[] = []; let wantRows = false; let single = false;
     const f = (p: (r: any) => boolean) => { filters.push(p); return obj; };
     const obj: any = {
-      select() { if (mode !== "select") wantRows = true; return obj; },
+      select(_columns?: string, options?: { count?: string }) { countExact = options?.count === "exact"; if (mode !== "select") wantRows = true; return obj; },
       upsert(d: any, o?: { onConflict?: string }) { mode = "upsert"; payload = d; onConflict = (o?.onConflict ?? "").split(",").filter(Boolean); return obj; },
       insert(d: any) { mode = "insert"; payload = d; return obj; },
       update(d: any) { mode = "update"; payload = d; return obj; },
@@ -87,7 +87,7 @@ function makeClient(store: Record<string, any[]>, opts: FakeOpts = {}) {
       if (mode === "update") { for (const r of matched) Object.assign(r, payload); return { data: wantRows ? matched.map((x) => ({ ...x })) : null, error: null }; }
       if (mode === "delete") { store[table] = all.filter((r) => !matched.includes(r)); return { data: wantRows ? matched : null, error: null }; }
       if (single) return { data: matched[0] ? { ...matched[0] } : null, error: null };
-      return { data: matched.map((x) => ({ ...x })), error: null };
+      return { data: matched.map((row, index) => table === "memory_items" ? { ...row, id: row.id ?? `fixture-item-${index}` } : { ...row }), error: null, count: countExact ? matched.length : null };
     }
     return obj;
   }

@@ -90,6 +90,9 @@ import {
   type ReturnCorridorRisk,
 } from "../services/airport/LayoverSafetyEngine.js";
 import { assessReturnRisk } from "../lib/providers/returnRouteRisk.js";
+import { certifyFeasibility, certifyFeasibilityWithReturnCorridor, feasibilityInputHash, feasibilityInputs, replayFeasibility, type FeasibilityInputs } from "../services/airport/LayoverFeasibility.js";
+import { decisionRecordFor, ledgerRowFor, snapshotIdFor } from "../services/airport/layoverLedger.js";
+import { replayDecision, replayStoredComputation } from "../services/airport/layoverReplay.js";
 
 // ── fixtures ────────────────────────────────────────────────────────────────
 
@@ -677,5 +680,253 @@ describe("layoverReturnRisk asks for both directions and refuses everything it c
     });
     assert.ok(out.unknowns.includes(RETURN_CORRIDOR_UNJUDGEABLE_UNKNOWN));
     assert.equal(out.verdict, "yes");
+  });
+});
+
+function corridorCertificationInputs(): FeasibilityInputs {
+  return feasibilityInputs({
+    id: "airport-tpe", iataCode: "TPE", timezone: "Asia/Taipei", verified: true,
+    domesticBufferMin: 60, internationalBufferMin: 120,
+    immigrationExtraMin: 30, checkedBagsExtraMin: 15, trafficExtraMin: 20,
+  }, {
+    id: "corridor-session", arrivalTime: new Date(NOW).toISOString(),
+    departureTime: new Date(NOW + 12 * 3_600_000).toISOString(), boardingTime: null,
+    flightType: "domestic", immigrationRequired: false, checkedBags: false, wantsToLeave: true,
+  }, {
+    nowMs: NOW,
+    entry: { state: "permitted", status: "visa_free", corridor: { passportCountry: "US", destinationCountry: "TW" } },
+  });
+}
+
+function certificationRisk(): ReturnCorridorRisk {
+  return {
+    returnRouteUnreliable: false, fragileCorridor: false, contributingFactors: [],
+    facts: {
+      independentReturnRoutes: 2, offeredReturnRoutes: 3,
+      bestRouteInterruptibility: "interruptible", allRoutesInterruptibility: "interruptible",
+      minTransferCount: 0, maxTransferCount: 1, stale: false, unmeasured: [],
+    },
+  };
+}
+
+describe("return-corridor certification fingerprint and replay", () => {
+  it("a withdrawn approval cannot retain the earlier hash or snapshot identity", () => {
+    const inputs = corridorCertificationInputs();
+    const approved = certifyFeasibilityWithReturnCorridor(inputs, certificationRisk());
+    const withdrawn = certifyFeasibilityWithReturnCorridor(inputs, {
+      ...certificationRisk(), returnRouteUnreliable: true,
+    });
+    assert.equal(approved.verdict, "yes");
+    assert.equal(withdrawn.verdict, "tight");
+    assert.equal(withdrawn.landsideGate.open, false);
+    assert.equal(withdrawn.windowOnly.rating, "possible_but_risky");
+    assert.deepEqual(withdrawn.deadline, approved.deadline);
+    assert.deepEqual(withdrawn.envelope, approved.envelope);
+    assert.notEqual(withdrawn.inputHash, approved.inputHash);
+    assert.notEqual(snapshotIdFor(inputs.session.id, withdrawn.inputHash), snapshotIdFor(inputs.session.id, approved.inputHash));
+  });
+
+  const changes: Array<[string, (risk: ReturnCorridorRisk) => ReturnCorridorRisk]> = [
+    ["returnRouteUnreliable", risk => ({ ...risk, returnRouteUnreliable: true })],
+    ["unknown reliability", risk => ({ ...risk, returnRouteUnreliable: null })],
+    ["fragileCorridor", risk => ({ ...risk, fragileCorridor: true })],
+    ["unknown fragility", risk => ({ ...risk, fragileCorridor: null })],
+    ["contributingFactors", risk => ({ ...risk, contributingFactors: ["single_route"] })],
+    ["independentReturnRoutes", risk => ({ ...risk, facts: { ...risk.facts, independentReturnRoutes: 1 } })],
+    ["offeredReturnRoutes", risk => ({ ...risk, facts: { ...risk.facts, offeredReturnRoutes: 4 } })],
+    ["bestRouteInterruptibility", risk => ({ ...risk, facts: { ...risk.facts, bestRouteInterruptibility: "committed" } })],
+    ["allRoutesInterruptibility", risk => ({ ...risk, facts: { ...risk.facts, allRoutesInterruptibility: "committed" } })],
+    ["minTransferCount", risk => ({ ...risk, facts: { ...risk.facts, minTransferCount: 1 } })],
+    ["maxTransferCount", risk => ({ ...risk, facts: { ...risk.facts, maxTransferCount: 2 } })],
+    ["stale", risk => ({ ...risk, facts: { ...risk.facts, stale: true } })],
+    ["unmeasured signal", risk => ({ ...risk, facts: { ...risk.facts, unmeasured: [{ signal: "weather", blockedBy: "NO_FEED" }] } })],
+  ];
+  for (const [field, change] of changes) {
+    it(`fingerprints changed ${field} even when the clock is identical`, () => {
+      const inputs = corridorCertificationInputs();
+      const original = certifyFeasibilityWithReturnCorridor(inputs, certificationRisk());
+      const changed = certifyFeasibilityWithReturnCorridor(inputs, change(certificationRisk()));
+      assert.notEqual(changed.inputHash, original.inputHash);
+      assert.equal(changed.inputHash, feasibilityInputHash(changed.inputs));
+      assert.deepEqual(replayFeasibility(JSON.parse(JSON.stringify(changed.inputs))), changed);
+    });
+  }
+
+  it("fingerprints a changed blocker without dropping its unknown signal", () => {
+    const risk = certificationRisk();
+    const measured = { ...risk, facts: { ...risk.facts, unmeasured: [{ signal: "weather", blockedBy: "NO_FEED" }] } };
+    const original = certifyFeasibilityWithReturnCorridor(corridorCertificationInputs(), measured);
+    const changed = certifyFeasibilityWithReturnCorridor(corridorCertificationInputs(), {
+      ...measured, facts: { ...measured.facts, unmeasured: [{ signal: "weather", blockedBy: "EXPIRED" }] },
+    });
+    assert.notEqual(original.inputHash, changed.inputHash);
+    assert.ok(changed.unknowns.some(unknown => unknown.includes("EXPIRED")));
+  });
+
+  it("certifies and replays the named risk through the same pure entry point", () => {
+    const inputs = corridorCertificationInputs();
+    const risk = { ...certificationRisk(), returnRouteUnreliable: true };
+    const record = certifyFeasibilityWithReturnCorridor(inputs, risk);
+    assert.deepEqual(record.inputs.returnCorridorRisk, risk);
+    assert.deepEqual(certifyFeasibility({ ...inputs, returnCorridorRisk: risk }), record);
+    assert.deepEqual(replayFeasibility(JSON.parse(JSON.stringify(record.inputs))), record);
+    const decision = decisionRecordFor(inputs.session.id, record);
+    assert.equal(replayDecision({ sessionId: inputs.session.id, inputs: record.inputs, decision }).status, "match");
+    assert.equal(replayStoredComputation(ledgerRowFor("corridor-user", inputs.session.id, record)).status, "match");
+  });
+
+  it("rejects a stored approval whose corridor facts changed or disappeared", () => {
+    const inputs = corridorCertificationInputs();
+    const record = certifyFeasibilityWithReturnCorridor(inputs, certificationRisk());
+    const decision = decisionRecordFor(inputs.session.id, record);
+    const changed = certifyFeasibilityWithReturnCorridor(inputs, {
+      ...certificationRisk(), facts: { ...certificationRisk().facts, offeredReturnRoutes: 4 },
+    });
+    for (const currentInputs of [changed.inputs, inputs]) {
+      const replay = replayDecision({ sessionId: inputs.session.id, inputs: currentInputs, decision });
+      assert.equal(replay.status, "mismatch");
+      assert.ok(replay.mismatchedFields.includes("inputHash"));
+      const storedReplay = replayStoredComputation({ ...ledgerRowFor("corridor-user", inputs.session.id, record), inputs: currentInputs });
+      assert.equal(storedReplay.status, "mismatch");
+      assert.ok(storedReplay.mismatchedFields.includes("input_hash"));
+    }
+  });
+
+  it("keeps an absent corridor byte-identical without keeping a prior corridor's identity", () => {
+    const inputs = corridorCertificationInputs();
+    const plain = certifyFeasibility(inputs);
+    assert.deepEqual(certifyFeasibilityWithReturnCorridor(inputs, null), plain);
+    assert.equal(Object.hasOwn(plain.inputs, "returnCorridorRisk"), false);
+    const measured = certifyFeasibilityWithReturnCorridor(inputs, certificationRisk());
+    assert.notEqual(measured.inputHash, plain.inputHash);
+    const removed = certifyFeasibilityWithReturnCorridor(measured.inputs, null);
+    assert.notEqual(removed.inputHash, measured.inputHash);
+    assert.deepEqual(replayFeasibility(removed.inputs), removed);
+  });
+
+  it("projects only named risk facts and detaches nested arrays from the provider", () => {
+    const risk = {
+      ...certificationRisk(), contributingFactors: ["single_route"], providerNote: "not an input",
+      facts: { ...certificationRisk().facts, providerNote: "not an input", unmeasured: [{ signal: "weather", blockedBy: "NO_FEED", providerNote: "not an input" }] },
+    };
+    const record = certifyFeasibilityWithReturnCorridor(corridorCertificationInputs(), risk);
+    const clean = { ...certificationRisk(), contributingFactors: ["single_route"], facts: { ...certificationRisk().facts, unmeasured: [{ signal: "weather", blockedBy: "NO_FEED" }] } };
+    assert.deepEqual(record, certifyFeasibilityWithReturnCorridor(corridorCertificationInputs(), clean));
+    const savedInputs = JSON.parse(JSON.stringify(record.inputs));
+    risk.facts.independentReturnRoutes = 0;
+    risk.contributingFactors.push("changed");
+    risk.facts.unmeasured[0].blockedBy = "CHANGED";
+    assert.deepEqual(record.inputs, savedInputs);
+    assert.equal(record.inputHash, feasibilityInputHash(record.inputs));
+    assert.deepEqual(replayFeasibility(record.inputs), record);
+  });
+
+  const malformed: Array<[string, unknown]> = [
+    ["undefined", undefined], ["false", false], ["empty object", {}],
+    ["missing reliability", { ...certificationRisk(), returnRouteUnreliable: undefined }],
+    ["missing fragility", { ...certificationRisk(), fragileCorridor: undefined }],
+    ["missing factors", { ...certificationRisk(), contributingFactors: undefined }],
+    ["missing facts", { ...certificationRisk(), facts: undefined }],
+    ["missing route count", { ...certificationRisk(), facts: { ...certificationRisk().facts, independentReturnRoutes: undefined } }],
+    ["non-finite route count", { ...certificationRisk(), facts: { ...certificationRisk().facts, offeredReturnRoutes: NaN } }],
+    ["negative transfers", { ...certificationRisk(), facts: { ...certificationRisk().facts, minTransferCount: -1 } }],
+    ["missing interruptibility", { ...certificationRisk(), facts: { ...certificationRisk().facts, bestRouteInterruptibility: undefined } }],
+    ["missing staleness", { ...certificationRisk(), facts: { ...certificationRisk().facts, stale: undefined } }],
+    ["missing coverage", { ...certificationRisk(), facts: { ...certificationRisk().facts, unmeasured: undefined } }],
+    ["missing blocker", { ...certificationRisk(), facts: { ...certificationRisk().facts, unmeasured: [{ signal: "weather" }] } }],
+  ];
+  for (const [field, risk] of malformed) {
+    it(`refuses ${field} rather than certifying missing corridor facts`, () => {
+      const inputs = corridorCertificationInputs();
+      assert.throws(() => certifyFeasibilityWithReturnCorridor(inputs, risk as ReturnCorridorRisk), TypeError);
+      const malformedInputs = { ...inputs, returnCorridorRisk: risk } as FeasibilityInputs;
+      assert.throws(() => certifyFeasibility(malformedInputs), TypeError);
+      const decision = decisionRecordFor(inputs.session.id, certifyFeasibility(inputs));
+      const replay = replayDecision({ sessionId: inputs.session.id, inputs: malformedInputs, decision });
+      assert.equal(replay.status, "refused");
+      assert.equal(replay.refusal, "INPUTS_UNUSABLE");
+      const storedReplay = replayStoredComputation({ ...ledgerRowFor("corridor-user", inputs.session.id, certifyFeasibility(inputs)), inputs: malformedInputs });
+      assert.equal(storedReplay.status, "refused");
+      assert.equal(storedReplay.refusal, "INPUTS_UNUSABLE");
+    });
+  }
+
+  for (const enumerable of [true, false]) {
+    it(`materializes inherited corridor risk with enumerable=${enumerable} before hashing`, () => {
+      const inputs = corridorCertificationInputs();
+      const risk = { ...certificationRisk(), returnRouteUnreliable: true };
+      const prototype = Object.defineProperty({}, "returnCorridorRisk", { value: risk, enumerable });
+      const inheritedInputs: FeasibilityInputs = Object.assign(Object.create(prototype), inputs);
+      const record = certifyFeasibility(inheritedInputs);
+      assert.equal(record.verdict, "tight");
+      assert.notEqual(record.inputHash, certifyFeasibility(inputs).inputHash);
+      assert.equal(Object.hasOwn(record.inputs, "returnCorridorRisk"), true);
+      assert.deepEqual(record, certifyFeasibilityWithReturnCorridor(inputs, risk));
+      assert.equal(Object.hasOwn(inheritedInputs, "returnCorridorRisk"), false);
+      const serialized = JSON.stringify(record);
+      risk.returnRouteUnreliable = false;
+      risk.facts.offeredReturnRoutes = 9;
+      assert.equal(JSON.stringify(record), serialized);
+    });
+  }
+
+  it("JSON replay preserves inherited corridor withdrawal and stored decision identity", () => {
+    const inputs = corridorCertificationInputs();
+    const inheritedInputs: FeasibilityInputs = Object.assign(Object.create({
+      returnCorridorRisk: { ...certificationRisk(), returnRouteUnreliable: true },
+    }), inputs);
+    const record = certifyFeasibility(inheritedInputs);
+    const storedInputs = JSON.parse(JSON.stringify(record.inputs));
+    const replayed = replayFeasibility(storedInputs);
+    assert.equal(replayed.verdict, "tight");
+    assert.equal(replayed.landsideGate.open, false);
+    assert.equal(replayed.windowOnly.rating, "possible_but_risky");
+    assert.equal(replayed.inputHash, record.inputHash);
+    assert.deepEqual(replayed, record);
+    const decision = decisionRecordFor(inputs.session.id, record);
+    assert.equal(replayDecision({ sessionId: inputs.session.id, inputs: storedInputs, decision }).status, "match");
+    const storedRow = JSON.parse(JSON.stringify(ledgerRowFor("corridor-user", inputs.session.id, record)));
+    assert.equal(replayStoredComputation(storedRow).status, "match");
+  });
+
+  it("explicit null removes inherited corridor risk and survives JSON replay", () => {
+    const inputs = corridorCertificationInputs();
+    const inheritedInputs: FeasibilityInputs = Object.assign(Object.create({
+      returnCorridorRisk: { ...certificationRisk(), returnRouteUnreliable: true },
+    }), inputs);
+    const withdrawn = certifyFeasibility(inheritedInputs);
+    const removed = certifyFeasibilityWithReturnCorridor(inheritedInputs, null);
+    assert.equal(withdrawn.verdict, "tight");
+    assert.equal(removed.verdict, "yes");
+    assert.notEqual(removed.inputHash, withdrawn.inputHash);
+    assert.equal(Object.hasOwn(removed.inputs, "returnCorridorRisk"), true);
+    assert.equal(removed.inputs.returnCorridorRisk, null);
+    assert.deepEqual(removed, certifyFeasibility({ ...inputs, returnCorridorRisk: null }));
+    assert.deepEqual(removed, certifyFeasibility(Object.assign(inheritedInputs, { returnCorridorRisk: null })));
+    assert.deepEqual(replayFeasibility(JSON.parse(JSON.stringify(removed.inputs))), removed);
+    const storedRow = JSON.parse(JSON.stringify(ledgerRowFor("corridor-user", inputs.session.id, removed)));
+    assert.equal(replayStoredComputation(storedRow).status, "match");
+  });
+
+  it("materializes inherited null consistently with an explicit null input", () => {
+    const inputs = corridorCertificationInputs();
+    const inheritedInputs: FeasibilityInputs = Object.assign(Object.create({ returnCorridorRisk: null }), inputs);
+    const record = certifyFeasibility(inheritedInputs);
+    assert.deepEqual(record, certifyFeasibility({ ...inputs, returnCorridorRisk: null }));
+    assert.deepEqual(certifyFeasibilityWithReturnCorridor(inheritedInputs, null), record);
+    assert.deepEqual(replayFeasibility(JSON.parse(JSON.stringify(record.inputs))), record);
+  });
+
+  it("rejects malformed inherited corridor facts and permits their explicit removal", () => {
+    const inputs = corridorCertificationInputs();
+    const decision = decisionRecordFor(inputs.session.id, certifyFeasibility(inputs));
+    for (const [field, risk] of malformed) {
+      const inheritedInputs: FeasibilityInputs = Object.assign(Object.create({ returnCorridorRisk: risk }), inputs);
+      assert.throws(() => certifyFeasibility(inheritedInputs), TypeError, field);
+      const replay = replayDecision({ sessionId: inputs.session.id, inputs: inheritedInputs, decision });
+      assert.equal(replay.status, "refused", field);
+      assert.equal(replay.refusal, "INPUTS_UNUSABLE", field);
+      assert.deepEqual(certifyFeasibilityWithReturnCorridor(inheritedInputs, null), certifyFeasibility({ ...inputs, returnCorridorRisk: null }), field);
+    }
   });
 });

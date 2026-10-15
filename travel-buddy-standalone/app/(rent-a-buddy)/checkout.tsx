@@ -184,10 +184,10 @@ export default function RentABuddyCheckout() {
   // must be able to press it again without rebuilding the whole form.
   // census-trust TV-2a.
   const [actionableRefusal, setActionableRefusal] =
-    useState<{ body: string; action: BookingRefusalAction } | null>(null); const [ineligibleReason, setIneligibleReason] = useState<string | null>(null); // census-trust §31 (TV-5b): an age refusal, persistent, no retry
-
+    useState<{ body: string; action: BookingRefusalAction } | null>(null); const [ineligibleRefusal, setIneligibleRefusal] = useState<{ context: string; body: string } | null>(null);
+  const ageRequestContext = JSON.stringify([buddy?.id, buddy?.city, buddy?.country, category]);
   const location = zoneIndex != null ? PUBLIC_ZONES[zoneIndex] : customZone;
-
+  const ineligibleReason = ineligibleRefusal?.context === ageRequestContext ? ineligibleRefusal.body : null;
   const load = useCallback(async () => {
     if (!buddyId) return;
     setLoading(true);
@@ -231,11 +231,11 @@ export default function RentABuddyCheckout() {
   }, [blockedRanges]);
 
   const hourlyRate = buddy?.hourlyRateUsd ?? 0;
-
+  useEffect(() => { setIneligibleRefusal(null); }, [ageRequestContext]);
   const submitBooking = async (acceptSafety = false) => {
-    if (!buddy) return;
+    if (!buddy || submitting || unavailableReason || ineligibleReason) return;
     const durationH = Math.max(1, Math.round(duration / 3600));
-    setSubmitting(true);
+    setSubmitting(true); setActionableRefusal(null);
     const res = await createBooking({
       buddyId: buddy.id,
       packageId: selectedPackage?.id,
@@ -268,7 +268,7 @@ export default function RentABuddyCheckout() {
         setUnavailableReason(refusal.body);
         return;
       }
-      if (refusal.kind === 'ineligible') { setIneligibleReason(refusal.body); return; } // census-trust §31 (TV-5b)
+      if (refusal.kind === 'ineligible') { setIneligibleRefusal({ context: ageRequestContext, body: refusal.body }); return; } // census-trust §31 (TV-5b)
       // Genuine failure — routed through the classifier so no raw error code can reach the user.
       Alert.alert('Booking failed', refusal.body);
       return;
@@ -280,7 +280,7 @@ export default function RentABuddyCheckout() {
   };
 
   const handleBook = async () => {
-    if (!buddy || !policyAccepted || unavailableReason) return;
+    if (!buddy || !policyAccepted || submitting || unavailableReason || ineligibleReason) return;
     if (!date.trim()) { Alert.alert('Missing date', 'Please select a booking date.'); return; }
     if (blockedDates.includes(date)) {
       Alert.alert('Date unavailable', 'This Buddy is not available on that date. Please pick another date.');
@@ -589,18 +589,18 @@ export default function RentABuddyCheckout() {
         <Pressable
           style={({ pressed }) => [
             styles.confirmBtn,
-            (!policyAccepted || submitting || !!unavailableReason) && styles.confirmBtnDisabled,
+            (!policyAccepted || submitting || !!unavailableReason || !!ineligibleReason) && styles.confirmBtnDisabled,
             pressed && { opacity: layout.pressedOpacity },
           ]}
           onPress={handleBook}
-          disabled={!policyAccepted || submitting || !!unavailableReason}
+          disabled={!policyAccepted || submitting || !!unavailableReason || !!ineligibleReason}
           testID="checkout-confirm-btn"
         >
           <CalendarCheck size={16} color={color.onInk} />
           <Text style={styles.confirmBtnText}>
             {unavailableReason
               ? 'Not available yet'
-              : submitting ? 'Sending request…' : 'Request Booking'}
+              : ineligibleReason ? 'Age requirement not met' : submitting ? 'Sending request…' : 'Request Booking'}
           </Text>
         </Pressable>
       </View>

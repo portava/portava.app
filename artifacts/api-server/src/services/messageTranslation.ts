@@ -71,51 +71,7 @@ export type LanguageDetectionSource =
   | 'default'
   | 'sender_preference_unreadable';
 
-/**
- * How certain the record is that this translation says what the original said.
- *
- * census-telegraph T240 named `confidence` as one of two fields
- * `MessageTranslation` was missing, and T242 named its absence as the reason
- * the show-original mechanism is driven by a user preference instead of by the
- * translation itself.
- *
- * TWO VALUES, NOT A NUMBER. The only certainty signal this tree actually has is
- * the provider's own `'high' | 'low'` language detection, and inventing a
- * float from it would be a precision the source does not carry. A third value
- * for "not recorded" is deliberately NOT in this type: absence is spelled
- * `null` at every boundary, because a row written before migration 2991 has no
- * reading at all and an enum member called `unknown` would have looked like one.
- */
 export type TranslationConfidence = 'high' | 'low';
-
-/**
- * translationConfidenceOf — the one rule that decides it.
- *
- * HIGH IS REACHABLE ONLY THROUGH THE PROVIDER ARM, and that is the whole
- * content of this function. `translateMessageForThread` resolves the source
- * language down a four-arm ladder: the provider read the text, or the sender's
- * stated preference was used, or the server default was used because the
- * sender stated nothing, or the server default was used because the profile
- * READ FAILED. Only the first of those four looked at the message.
- *
- * A translation out of a guessed source language is a guess. `es → en` run
- * against text that is actually Portuguese produces fluent, confident,
- * wrong English — which is precisely the failure §18.2 describes and asks to
- * be surfaced rather than smoothed over. So the three fallback arms are LOW
- * even if a confidence reading is somehow handed in beside them: the
- * `detectionConfidence` argument is a statement about a detection that, in
- * those arms, did not happen.
- *
- * The TARGET language is not an input. It is the recipient's own stated
- * preference, read from their profile; there is nothing uncertain about it.
- */
-export function translationConfidenceOf(input: {
-  detectionSource: LanguageDetectionSource;
-  detectionConfidence: TranslationConfidence | null;
-}): TranslationConfidence {
-  if (input.detectionSource !== 'provider') return 'low';
-  return input.detectionConfidence === 'high' ? 'high' : 'low';
-}
 
 /**
  * The answer to "what language did the sender say they write in?", carrying the
@@ -181,27 +137,7 @@ export interface TranslationDisplayFields {
   translationStatus: TranslationStatusValue | null;
   translationLabel: string | null;   // e.g. "Translated from Spanish"
   canShowOriginal: boolean;
-  /**
-   * The stored reading, or `null` when none was recorded. `null` is a real
-   * state and not a defect: migration 2991 is applied to no database, so every
-   * row that exists today carries no confidence at all.
-   */
   translationConfidence: TranslationConfidence | null;
-  /**
-   * §18.2 T242 — SHOW BOTH rather than pretend certainty.
-   *
-   * True when a translation is being displayed and the record does not say it
-   * is high-confidence. It is a statement about the TRANSLATION, not about the
-   * viewer: `canShowOriginal` says the original is available to ask for, and
-   * `profiles.show_original_messages` says the viewer likes to see it — this
-   * says the translation is not certain enough to stand alone, which neither of
-   * those two can express.
-   *
-   * UNKNOWN COUNTS AS NOT-HIGH. The requirement is "instead of pretending
-   * certainty", and a missing reading is not evidence of certainty; it is the
-   * absence of evidence. Deciding it the other way would make every row written
-   * before 2991 assert a confidence nobody measured.
-   */
   showOriginalAlongside: boolean;
 }
 
@@ -236,26 +172,16 @@ async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
-/**
- * Detect the source language AND keep what the provider said about its own
- * certainty.
- *
- * This function used to end `return result.language`, and that single
- * discarded field is the whole of census-telegraph T240's missing `confidence`
- * and T242's "there is no confidence value to threshold on".
- * `DetectLanguageResult.confidence` has existed since the provider abstraction
- * was written; nothing downstream could see it.
- */
 async function detectWithRetry(
   text: string,
   maxRetries: number,
-): Promise<{ language: string; confidence: TranslationConfidence }> {
+): Promise<string> {
   const provider = getTranslationProvider();
   let lastErr: unknown;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       const result = await withTimeout(provider.detectLanguage(text), TRANSLATION_TIMEOUT_MS);
-      return { language: result.language, confidence: result.confidence };
+      return result.language;
     } catch (e) {
       lastErr = e;
     }
@@ -442,14 +368,8 @@ export async function translateMessageForThread(
     // a flag, so all three arms are reachable and each says a true thing.
     let sourceLanguage: string;
     let detectionSource: LanguageDetectionSource;
-    // What the PROVIDER said about its own reading, or null when no provider
-    // reading happened. Never defaulted to a value: `translationConfidenceOf`
-    // is the only thing that turns this into a verdict.
-    let detectionConfidence: TranslationConfidence | null = null;
     try {
-      const detected = await detectWithRetry(body, 1);
-      sourceLanguage = detected.language;
-      detectionConfidence = detected.confidence;
+      sourceLanguage = await detectWithRetry(body, 1);
       detectionSource = 'provider';
     } catch {
       if (senderPreferredLanguage) {
@@ -470,11 +390,6 @@ export async function translateMessageForThread(
         detectionSource = 'default';
       }
     }
-
-    // §18.2 T240/T242. Computed ONCE, from the detection ladder's outcome, and
-    // written onto every recipient's row: the uncertainty is a property of how
-    // this MESSAGE's source language was established, not of who is reading it.
-    const messageConfidence = translationConfidenceOf({ detectionSource, detectionConfidence });
 
     // Update the message with detected language.
     await sc
@@ -573,14 +488,14 @@ export async function translateMessageForThread(
         await upsertTranslation(sc, {
           messageId,
           recipientId,
-          sourceLanguage,
+          sourceLanguage: detectionSource === 'provider' ? sourceLanguage : UNKNOWN_LANGUAGE,
           targetLanguage,
           translatedBody: null,
           provider: null,
           providerVersion: null,
           confidence: null,
-          status: 'skipped',
-          errorMessage: null,
+          status: detectionSource === 'provider' ? 'skipped' : 'failed',
+          errorMessage: detectionSource === 'provider' ? null : 'source_language_unverified',
         }, logger);
         continue;
       }
@@ -626,7 +541,7 @@ export async function translateMessageForThread(
           translatedBody: result.translatedText,
           provider: result.provider,
           providerVersion: result.providerVersion,
-          confidence: messageConfidence,
+          confidence: null,
           status: 'translated',
           errorMessage: null,
         }, logger);
@@ -638,7 +553,7 @@ export async function translateMessageForThread(
             target: targetLanguage,
             provider: result.provider,
             providerVersion: result.providerVersion,
-            confidence: messageConfidence,
+            confidence: null,
           },
           'translation_ok',
         );
@@ -714,10 +629,6 @@ export async function retranslateForUser(
     const messageIds = rows.map((r: any) => r.message_id as string);
 
     // Fetch message bodies for these rows.
-    // `language_detection_source` is a plain nullable text column that has
-    // existed since 0009 and is written by the pipeline above on every message,
-    // so naming it here cannot fail on any database. It is read for exactly one
-    // reason: §18.2 T242's confidence, below.
     const { data: messages, error: msgErr } = await sc
       .from('messages')
       .select('id, body, original_language, language_detection_source')
@@ -752,38 +663,19 @@ export async function retranslateForUser(
 
       const sourceLanguage = msg.originalLanguage ?? srcMap[messageId] ?? 'en';
 
-      // §18.2 T240/T242 — THIS SWEEP TAKES NO READING OF ITS OWN.
-      //
-      // A re-translation changes the TARGET language; it re-uses the source
-      // language established when the message was first processed and never
-      // calls `detectLanguage` again. So there is no fresh
-      // `detectionConfidence` to pass, and this deliberately passes `null`
-      // rather than copying forward a reading the sweep did not take.
-      //
-      // Routed through the same one rule as the live pipeline rather than
-      // hard-coding the answer, so that a later lane which DOES re-detect here
-      // only has to supply the second argument. A message whose language was
-      // never provider-detected — or whose `language_detection_source` predates
-      // that column — cannot reach 'high' through this path, which is the
-      // honest outcome: nothing here read the text.
-      const sweepConfidence = translationConfidenceOf({
-        detectionSource: msg.detectionSource ?? 'default',
-        detectionConfidence: null,
-      });
-
       // Same language as target — mark skipped.
       if (sourceLanguage === newTargetLanguage) {
         await upsertTranslation(sc, {
           messageId,
           recipientId: userId,
-          sourceLanguage,
+          sourceLanguage: msg.detectionSource === 'provider' ? sourceLanguage : UNKNOWN_LANGUAGE,
           targetLanguage: newTargetLanguage,
           translatedBody: null,
           provider: null,
           providerVersion: null,
           confidence: null,
-          status: 'skipped',
-          errorMessage: null,
+          status: msg.detectionSource === 'provider' ? 'skipped' : 'failed',
+          errorMessage: msg.detectionSource === 'provider' ? null : 'source_language_unverified',
         }, logger);
         continue;
       }
@@ -814,7 +706,7 @@ export async function retranslateForUser(
           translatedBody: result.translatedText,
           provider: result.provider,
           providerVersion: result.providerVersion,
-          confidence: sweepConfidence,
+          confidence: null,
           status: 'translated',
           errorMessage: null,
         }, logger);
@@ -880,12 +772,6 @@ export function buildDisplayFields(
     target_language: string;
     translated_body: string | null;
     status: TranslationStatusValue;
-    /**
-     * §18.2 T240. OPTIONAL at the type level because migration 2991 is applied
-     * to no database: every caller in this tree today passes a row that has no
-     * such column, and `undefined` and `null` both mean "no reading", which is
-     * handled as NOT-HIGH below rather than as high.
-     */
     confidence?: TranslationConfidence | null;
   } | null,
 ): TranslationDisplayFields {
@@ -1010,14 +896,6 @@ export function buildDisplayFields(
     };
   }
 
-  // §18.2 T242 — THE ONLY ARM WHERE A TRANSLATION IS ACTUALLY BEING SHOWN.
-  //
-  // `confidence` decides whether it stands alone. It is read from the RECORD,
-  // not from `profiles.show_original_messages`: the preference says what this
-  // viewer likes to see, and this says whether the translation is good enough
-  // to be believed without its source. A row with no reading is not a
-  // high-confidence row — see `showOriginalAlongside`'s own comment.
-  const confidence = translationRow.confidence ?? null;
   const sourceName = languageDisplayName(source_language);
   return {
     displayBody: translatedText,
@@ -1025,16 +903,10 @@ export function buildDisplayFields(
     originalLanguage: source_language,
     translated: true,
     translationStatus: 'translated',
-    translationLabel:
-      confidence === 'high'
-        ? `Translated from ${sourceName}`
-        // The label carries the uncertainty too, so a surface that renders only
-        // the label still tells the truth about it rather than presenting an
-        // unsure translation in the same words as a sure one.
-        : `Translated from ${sourceName} — shown with the original`,
+    translationLabel: `Translated from ${sourceName} — quality unverified`,
     canShowOriginal: true,
-    translationConfidence: confidence,
-    showOriginalAlongside: confidence !== 'high',
+    translationConfidence: null,
+    showOriginalAlongside: true,
   };
 }
 

@@ -119,15 +119,15 @@ export class OpenAITranslationProvider implements TranslationProvider {
       max_completion_tokens: 200,
       reasoning_effort: 'minimal' as const,
     });
-    const raw = completion.choices[0]?.message?.content?.trim() ?? '{}';
     try {
-      const parsed = JSON.parse(raw);
+      const parsed = JSON.parse(completion.choices[0]?.message?.content?.trim() ?? '');
+      if (!parsed || Array.isArray(parsed) || !isDetectedLanguage(parsed.language)) throw new Error('invalid_language_detection');
       return {
-        language: parsed.language ?? 'en',
+        language: parsed.language,
         confidence: parsed.confidence === 'high' ? 'high' : 'low',
       };
     } catch {
-      return { language: 'en', confidence: 'low' };
+      throw new Error('invalid_language_detection');
     }
   }
 
@@ -277,4 +277,10 @@ export function _setTranslationProvider(p: TranslationProvider): void {
 }
 export function _clearTranslationProvider(): void {
   _provider = null;
+}
+
+function isDetectedLanguage(value: unknown): value is string {
+  return typeof value === 'string'
+    && /^[a-z]{2}(?:-[a-z0-9]{2,8})*$/i.test(value)
+    && new Intl.DisplayNames(['en'], { type: 'language', fallback: 'none' }).of(value) !== undefined;
 }

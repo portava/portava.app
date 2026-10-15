@@ -7,7 +7,7 @@ import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine";
 const postsLogger = rootLogger.child({ route: "posts" });
 import { nameVisibilitySet, sanitizeIdentity, presentedName } from "../lib/publicIdentity";
 import { recordTrustEvent } from "../services/trust/TrustEventService.js";
-import { decidePostReadable, isPostPublished, needsTripMembershipCheck, needsFollowerCheck } from "../lib/postVisibility.js";
+import { decidePostReadable, isPostPublished, needsTripMembershipCheck, needsFollowerCheck } from "../lib/postVisibility.js"; import { isExcluded, readPairExclusion } from "../lib/exclusionSet.js";
 import {
   requireUser,
   sendError,
@@ -1899,7 +1899,7 @@ router.get("/posts/:postId", async (req, res) => {
     sendError(res, "not_found", "Post not found");
     return;
   }
-
+  if (!isAuthor && isExcluded(await readPairExclusion(sc, user.id, post.author_id), post.author_id)) { sendError(res, "not_found", "Post not found"); return; }
   // VISIBILITY. The read above uses the SERVICE client, so RLS is bypassed and
   // this is the only thing standing between a post id and its contents.
   // POST_COLUMNS has always selected `visibility` and `trip_id`; nothing read
@@ -2698,9 +2698,9 @@ router.get("/posts/:postId/comments", async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
   // Verify post exists and caller has read access
-  const { data: post } = await sc.from("posts").select("id, author_id, visibility, trip_id").eq("id", postId).eq("status", "active").maybeSingle();
-  if (!post) { sendError(res, "not_found", "Post not found"); return; }
-  if (!(await checkEngagePermission(res, post as any, user.id, client))) return;
+  const { data: post, error: postReadErr } = await sc.from("posts").select("id, author_id, visibility, trip_id, post_status").eq("id", postId).eq("status", "active").maybeSingle();
+  if (postReadErr) { sendError(res, "db_error", postReadErr.message); return; } if (!post) { sendError(res, "not_found", "Post not found"); return; }
+  if (post.author_id !== user.id && isExcluded(await readPairExclusion(sc, user.id, post.author_id), post.author_id)) { sendError(res, "not_found", "Post not found"); return; } if (!(await checkPostCommentsReadPermission(res, post as any, user.id, client))) return;
   const isPostAuthor = (post as any).author_id === user.id;
 
   const { data: rows, error: listErr } = await sc
@@ -3706,3 +3706,42 @@ import { runMediaVendorIngest, canonicalModerationAtBirth } from "../lib/media/v
 import { neighborhoodOnlyModePermitted, NEIGHBORHOOD_ONLY_DISABLED_MESSAGE } from "../lib/media/neighborhoodOnlyMode.js";
 // census-media §36 (MD82–MD85): tail import, ESM hoists it.
 import { decidePerspectiveVantageWrite } from "../lib/media/perspectiveVantage.js"; import { postMediaModerationHold, POST_MEDIA_HELD_MESSAGE, POST_MEDIA_UNREADABLE_MESSAGE } from "../lib/media/postMediaModerationHold.js"; import { withholdReleaseTiming } from "../lib/postLocationDisclosureLifetime.js"; // census-media MD269 (a), lead ruling D-82; verifier F6 (release timing)
+
+async function checkPostCommentsReadPermission(
+  res: import("express").Response,
+  post: { author_id: string; visibility: string; trip_id: string | null; post_status?: string | null },
+  userId: string,
+  userClient: SupabaseClient,
+): Promise<boolean> {
+  if (post.author_id === userId) {
+    return checkEngagePermission(res, post, userId, userClient);
+  }
+  if (!isPostPublished(post)) {
+    sendError(res, "not_found", "Post not found");
+    return false;
+  }
+
+  const viewerIsTripMember = needsTripMembershipCheck(post, userId)
+    ? await isAcceptedTripMember(userClient, post.trip_id!, userId)
+    : false;
+  let viewerIsFollower = false;
+  if (needsFollowerCheck(post, userId)) {
+    const { data: followRow, error: followErr } = await userClient
+      .from("user_follows")
+      .select("follower_id")
+      .eq("follower_id", userId)
+      .eq("following_id", post.author_id)
+      .maybeSingle();
+    if (followErr) {
+      sendError(res, "degraded_unavailable", "Could not check whether you follow this author. Please try again.");
+      return false;
+    }
+    viewerIsFollower = !!followRow;
+  }
+
+  if (!decidePostReadable(post, userId, viewerIsTripMember, viewerIsFollower).readable) {
+    sendError(res, "not_found", "Post not found");
+    return false;
+  }
+  return true;
+}

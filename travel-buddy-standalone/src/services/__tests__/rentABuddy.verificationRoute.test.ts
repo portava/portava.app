@@ -229,3 +229,31 @@ describe('census-trust §31 — TV-5b: age refusals are named, never "something 
     assert.equal(classifyBookingRefusal('db_error', 'x').kind, 'failure');
   });
 });
+
+describe('current booking identity refusal contract', () => {
+  it('offers the existing verification screen for identity_verification_required', () => {
+    const refusal = classifyBookingRefusal('identity_verification_required');
+    assert.equal(refusal.kind, 'actionable');
+    assert.notEqual(refusal.body, GENERIC);
+    assert.match(refusal.body, /identity|ID/);
+    assert.doesNotMatch(refusal.body, /try again|verify once|identity_verification_required/i);
+    assert.deepEqual(bookingRefusalAction('identity_verification_required'), {
+      label: 'Verify my ID', route: '/profile/verification',
+    });
+    assert.equal(isBookingUnavailable('identity_verification_required'), false);
+    assert.ok(PORTAVA_ROUTES.some((route) => route.path === 'profile/verification'));
+  });
+
+  it('does not offer the traveller verification for a buddy refusal or unreadable check', () => {
+    for (const code of ['buddy_unavailable', 'payment_verification_unavailable', 'verification_unavailable', 'age_requirement', 'age_verification_unavailable']) {
+      assert.equal(bookingRefusalAction(code), null, code);
+      assert.notEqual(classifyBookingRefusal(code).kind, 'actionable', code);
+    }
+  });
+
+  it('pins the current server code and traveller-only action boundary', () => {
+    const producer = readFileSync(resolve(APP_ROOT, '../artifacts/api-server/src/lib/rentBuddyIdentityEligibility.ts'), 'utf8');
+    assert.match(producer, /code: "identity_verification_required",\s+side: "traveler"/);
+    assert.match(producer, /res\.status\(r\.httpStatus\)\.json\(\{ error: r\.code, side: r\.side, message: r\.message \}\)/);
+  });
+});

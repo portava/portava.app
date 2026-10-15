@@ -104,8 +104,6 @@ function seed(): Record<string, Array<Record<string, unknown>>> {
         id: MSG,
         body: BODY,
         original_language: 'en',
-        // 'provider' is what lets `translationConfidenceOf` produce a non-null
-        // reading at all, so case 1 has a real value to carry rather than null.
         language_detection_source: 'provider',
       },
     ],
@@ -170,8 +168,8 @@ beforeEach(() => {
 
 // ── 1. New schema ────────────────────────────────────────────────────────────
 
-describe('2991 APPLIED — the reading is written, not dropped', () => {
-  it('writes confidence and provider_version, carrying the values the call passed', async () => {
+describe('2991 APPLIED — quality is unknown, provider identity is retained', () => {
+  it('writes null confidence and actual provider_version during retranslation', async () => {
     // `unchecked` stands in for portava-ci, where 2991 IS applied. The live
     // snapshot this double reads predates the migration, so without this the
     // new-schema case is unreachable and only the fallback would ever be tested.
@@ -187,9 +185,8 @@ describe('2991 APPLIED — the reading is written, not dropped', () => {
     assert.ok('provider_version' in sent, 'the engine identity must reach the database');
     assert.equal(
       sent.confidence,
-      'low',
-      'the value the call computed, not a placeholder: this sweep took no reading of its own, ' +
-        'so `translationConfidenceOf` answers LOW and LOW is what must land',
+      null,
+      'retranslation did not measure quality and must not invent a low score',
     );
     assert.equal(
       sent.provider_version,

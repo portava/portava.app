@@ -173,7 +173,6 @@ Processing and EXIF policy: `src/lib/mediaProcessing.ts`. Access: `src/lib/media
 - `retranslateForUser()`
 - `senderLanguageFrom()`
 - `translateMessageForThread()`
-- `translationConfidenceOf()`
 
 ### 9. Current enum literals
 

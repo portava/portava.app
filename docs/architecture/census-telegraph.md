@@ -3234,12 +3234,12 @@ Reporting `0` would hide a decision the traveller has to make. So a failed read
 sets `degraded`, the map is emptied rather than partially filled — a partial map
 reads as "these threads need nothing" — and the route OMITS the field
 (`routes/messaging.ts:1839`) instead of sending a number. The client renders the
-badge only above zero (`components/TelegraphInboxScreen.tsx:250#needsAction > 0`), so absent and
+badge only above zero (`components/TelegraphInboxScreen.tsx:257#needsAction > 0`), so absent and
 zero both render nothing and neither prints a reassurance nobody verified.
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| T260 | W | **C** | §19's inbox line. The unread half was already real; the other half now exists end to end and is measured end to end: `domain/telegraph/policies/needsAction.ts:80` computes it from pending RSVPs and unvoted time options, `routes/messaging.ts:2177#const needsAction = await resolveNeedsAction(sc, {` calls it inside `GET /me/threads` and `:1839` puts `needsActionCount` + `needsActionReasons` on every row, and `components/TelegraphInboxScreen.tsx:250#needsAction` renders "1 needs action" / "N need action". `telegraphNeedsAction.test.ts` drives the REAL Express route, not just the policy, so "wired" is a measured fact. C rather than W because it needs no migration and no flag — every table it reads is from migration 0013 and has had live writers for the whole life of the meetups feature. |
+| T260 | W | **C** | §19's inbox line. The unread half was already real; the other half now exists end to end and is measured end to end: `domain/telegraph/policies/needsAction.ts:80` computes it from pending RSVPs and unvoted time options, `routes/messaging.ts:2177#const needsAction = await resolveNeedsAction(sc, {` calls it inside `GET /me/threads` and `:1839` puts `needsActionCount` + `needsActionReasons` on every row, and `components/TelegraphInboxScreen.tsx:257#needsAction` renders "1 needs action" / "N need action". `telegraphNeedsAction.test.ts` drives the REAL Express route, not just the policy, so "wired" is a measured fact. C rather than W because it needs no migration and no flag — every table it reads is from migration 0013 and has had live writers for the whole life of the meetups feature. |
 
 **Rows looked at that did not move.** T261 stays N. An acknowledgement
 primitive distinct from Seen needs a row per (message, actor, acknowledged_at)
@@ -5035,7 +5035,7 @@ Named so the next lane does not re-derive them.
      `senderLanguage` defaults to `'en'` on a dropped error at four call sites,
      and the value flows into `translateMessageForThread`, which writes
      `messages.language_detection_source = 'sender_preference'`
-     (`artifacts/api-server/src/services/messageTranslation.ts:457#detectionSource = 'sender_preference';`
+     (`artifacts/api-server/src/services/messageTranslation.ts:377#detectionSource = 'sender_preference';`
      — THE ONE CITATION IN THIS DOCUMENT WHOSE ANCHOR TEXT HAD TO CHANGE, and
      §16 says why: the line this paragraph originally named,
      `detectionSource = senderPreferredLanguage ? 'sender_preference' : 'default';`,
@@ -5207,7 +5207,7 @@ not a constraint, and applied migrations are checksummed against the live ledger
 The five sites now BIND the error and hand the pipeline two things instead of
 one: the language the sender stated (`string | null`) and whether the read
 succeeded. One shared interpreter decides what the read established
-(`artifacts/api-server/src/services/messageTranslation.ts:158#export function senderLanguageFrom(`),
+(`artifacts/api-server/src/services/messageTranslation.ts:114#export function senderLanguageFrom(`),
 because five copies of a coalesce is how one defect came to exist in five
 places. All three fallback arms are now reachable, and `'default'` is reachable
 for the first time.
@@ -5287,7 +5287,7 @@ open and is named here rather than discovered later: step 3 of
 `translateMessageForThread` reads the RECIPIENTS' profiles with the same dropped
 error, so an unreadable `profiles` silently gives every recipient
 `preferredLanguage: 'en'`
-(`artifacts/api-server/src/services/messageTranslation.ts:500#const { data: profiles, error: profilesErr } = await sc`
+(`artifacts/api-server/src/services/messageTranslation.ts:415#const { data: profiles, error: profilesErr } = await sc`
 — the FOURTH repointed anchor, same reason; CLOSED by §17.3, which also shows
 the sentence below is too kind to the defect).
 That is a degraded translation rather than a false stored claim — it writes
@@ -5485,7 +5485,7 @@ a thread the sender is alone in. There is no honest row to write instead
 (without the roster there are no recipient ids to key one by), so what the
 failure is owed is a loud, and the pipeline's own "never throws" contract makes
 that a log at error level
-(`artifacts/api-server/src/services/messageTranslation.ts:417#if (membersErr) {`).
+(`artifacts/api-server/src/services/messageTranslation.ts:343#if (membersErr) {`).
 
 ### 17.4 The quoted reply context, and the group chat's translation read
 
@@ -9417,7 +9417,7 @@ FROM the call site rather than written beside it
 so the recorded version cannot drift from the model that produced the text.
 
 **The one rule that decides confidence** — `translationConfidenceOf`
-(`artifacts/api-server/src/services/messageTranslation.ts:112#export function translationConfidenceOf`).
+([historical implementation at 8b2ce063016b38b9b9d5460ee384908fe0163eef](https://github.com/portava/portava.app/blob/8b2ce063016b38b9b9d5460ee384908fe0163eef/artifacts/api-server/src/services/messageTranslation.ts#L112-L118); removed by the bounded T242 correction recorded below).
 HIGH is reachable through the PROVIDER arm alone. The pipeline resolves a source
 language down a four-arm ladder and only the first arm reads the message; a
 translation out of a source language taken from a profile default — or from a
@@ -9427,7 +9427,7 @@ fallback arms are LOW even when a stale reading is handed in beside them.
 
 **The decision T242 asks for** — `buildDisplayFields` now returns
 `translationConfidence` and `showOriginalAlongside`
-(`artifacts/api-server/src/services/messageTranslation.ts:205#showOriginalAlongside: boolean`),
+(`artifacts/api-server/src/services/messageTranslation.ts:141#showOriginalAlongside: boolean`),
 and the second is `confidence !== 'high'` — so **UNKNOWN COUNTS AS NOT-HIGH**.
 The requirement is "instead of pretending certainty", and a missing reading is
 not evidence of certainty; deciding it the other way would make every row
@@ -9441,13 +9441,13 @@ RECORD that a translation failed — could not tell a written row from a rejecte
 one. The error is now read, a failure is logged by name, and the specific
 undefined-column refusal retries once WITHOUT the two new columns while naming
 migration 2991
-(`artifacts/api-server/src/services/messageTranslation.ts:1076#export const CONFIDENCE_MIGRATION_PENDING_MESSAGE`).
+(`artifacts/api-server/src/services/messageTranslation.ts:948#export const CONFIDENCE_MIGRATION_PENDING_MESSAGE`).
 The translation is the product feature and the reading is metadata about it;
 losing the row to keep the metadata would be the wrong trade.
 
 **A storage key that must never become a translation** —
 `isStructuredEnvelopeBody`
-(`artifacts/api-server/src/services/messageTranslation.ts:338#export function isStructuredEnvelopeBody`),
+(`artifacts/api-server/src/services/messageTranslation.ts:264#export function isStructuredEnvelopeBody`),
 consulted before the roster read, before detection and before any provider call.
 A §6.2 VOICE message stores a JSON envelope in `messages.body` and that envelope
 carries `payload.url`, a `post-media/<path>` key for a PRIVATE bucket. This
@@ -9773,7 +9773,7 @@ against stubbed services, and mutations. None of it is production evidence.
 | --- | --- | --- |
 | TEL-F03 cancel a request | A Cancel control on the sender's "Waiting for reply" banner. It asks once, calls the existing compare-and-swap cancel route (`artifacts/api-server/src/routes/messaging.ts:1250#router.post('/message-requests/:requestId/cancel'`), and on success or on "no longer pending" RE-READS the status, so the banner goes because the server says nothing is pending. `useOutgoingRequestStatus` now carries the request id the server already returned. | `travel-buddy-standalone/src/features/telegraph/requests/CancelRequestButton.tsx:26#export function CancelRequestButton(`, `travel-buddy-standalone/app/messages/[id].tsx:2241#<CancelRequestButton requestId={outgoingRequestId}`, `travel-buddy-standalone/src/hooks/useMessaging.ts:100#const [requestId, setRequestId]` |
 | TEL-F07 edit + history | Edit on your own delivered plain-text message, never on an E2EE thread (`travel-buddy-standalone/src/features/telegraph/messageActions/messageActionRules.ts:22#export function canEditMessage(`), through the canonical route only (`travel-buddy-standalone/src/services/messaging.ts:951#export async function editThreadMessage(`). An Edit history sheet over `artifacts/api-server/src/routes/messaging.ts:3831#router.get('/threads/:threadId/messages/:messageId/edits'` keeps a 503 apart from "no earlier version". Recipients now SEE an edit: `message.updated` reached the hook before, but the merge only accepted new ids, so the edited body stayed stale (`travel-buddy-standalone/src/hooks/useMessaging.ts:356#const edited = incomingById.get(m.id);`). In both the thread screen and trip/circle chats. | `travel-buddy-standalone/src/features/telegraph/messageActions/EditHistorySheet.tsx:48#export function EditHistorySheet(`, `travel-buddy-standalone/src/features/telegraph/messageActions/ThreadActionSheets.tsx:54#const r = await editThreadMessage(threadId, editing.id, body);`, `travel-buddy-standalone/src/hooks/useGroupChat.ts:325#const res = await editThreadMessage(tid, messageId, body);` |
-| TEL-F08 Saved messages | `/messages/saved` over `artifacts/api-server/src/routes/messaging.ts:4254#router.get('/me/saved-messages'` (re-authorized per read) with loading, error + Try again, empty and list states, and Remove over the idempotent DELETE (`artifacts/api-server/src/routes/savedMessages.ts:44#/me/saved-messages/:messageId`). Entered from the inbox header and from the "Saved" confirmation. A save the server answered HTTP 200 `{ok:false}` is no longer reported as "Saved" (`travel-buddy-standalone/src/services/messaging.ts:992#function saveOutcome(`); the group chat's silent save failure now says so. | `travel-buddy-standalone/src/features/telegraph/savedMessages/SavedMessagesScreen.tsx:61#export function SavedMessagesScreen(`, `travel-buddy-standalone/src/components/TelegraphInboxScreen.tsx:465#router.push('/messages/saved' as any)` |
+| TEL-F08 Saved messages | `/messages/saved` over `artifacts/api-server/src/routes/messaging.ts:4254#router.get('/me/saved-messages'` (re-authorized per read) with loading, error + Try again, empty and list states, and Remove over the idempotent DELETE (`artifacts/api-server/src/routes/savedMessages.ts:44#/me/saved-messages/:messageId`). Entered from the inbox header and from the "Saved" confirmation. A save the server answered HTTP 200 `{ok:false}` is no longer reported as "Saved" (`travel-buddy-standalone/src/services/messaging.ts:992#function saveOutcome(`); the group chat's silent save failure now says so. | `travel-buddy-standalone/src/features/telegraph/savedMessages/SavedMessagesScreen.tsx:61#export function SavedMessagesScreen(`, `travel-buddy-standalone/src/components/TelegraphInboxScreen.tsx:473#router.push('/messages/saved' as any)` |
 | TEL-F09 report one message | Both chat screens file a message report through the Telegraph route, which snapshots §22 evidence before answering (`artifacts/api-server/src/routes/messaging.ts:4444#await captureMessageEvidence(sc, {`). The route now takes a `reason_code` from the shared vocabulary, computes severity from it, and refuses an unknown code (`artifacts/api-server/src/routes/messaging.ts:4420#const reasonCode = messageReportReasonCode(req.body?.reason_code);`, `artifacts/api-server/src/routes/messaging.ts:4430#severity: reportSeverityFor(reasonCode),`). | `travel-buddy-standalone/src/features/telegraph/messageActions/MessageReportSheet.tsx:65#const r = await reportMessage(`, `travel-buddy-standalone/app/messages/[id].tsx:324#<MessageReportSheet`, `travel-buddy-standalone/src/components/GroupChatScreen.tsx:133#const sent = await reportMessage(message.id, reasonText` |
 | TEL-F10 sync on reconnect | A trip/circle chat re-reads its thread when the realtime stream re-opens after a drop, or when the app returns to the foreground; the DM thread polls at once on foreground return. A catch-up refused as `forbidden` moves the chat to no-access, and a failed FIRST page is the error state, not an empty chat. | `travel-buddy-standalone/src/features/telegraph/hooks/useReconnectCatchUp.ts:56#export function useReconnectCatchUp(`, `travel-buddy-standalone/src/hooks/useGroupChat.ts:193#useReconnectCatchUp(() => { void silentRefresh(); }, !!id);`, `travel-buddy-standalone/src/hooks/useGroupChat.ts:137#if (!msgRes.ok` |
 | TEL-F16 ask | "Ask this conversation" from the thread's content drawer, over `artifacts/api-server/src/server/telegraph/searchRoute.ts:97#/threads/:threadId/ask`. Structured plans and places answer first; a DEGRADED empty is a floor, never "nothing answers that". | `travel-buddy-standalone/src/features/telegraph/ask/AskConversationSheet.tsx:53#export function AskConversationSheet(`, `travel-buddy-standalone/src/features/telegraph/drawer/ContentDrawerSheet.tsx:132#testID="telegraph-drawer-ask"` |
@@ -10941,7 +10941,7 @@ section; this one moves only rows in T1–T239. Numbered §44 because lane C's b
   over four independent reads (`travel-buddy-standalone/src/features/telegraph/inbox/inboxBandsApi.ts:107#export async function fetchInboxBands(`):
   YOUR STATUS, AVAILABLE NEARBY (only when the surface is ENABLED; counts only), NOW (open
   coordination sessions) and UPCOMING (plans). A failed or empty read draws no band, so no band
-  asserts an absence. Mounted on the inbox (`travel-buddy-standalone/src/components/TelegraphInboxScreen.tsx:474#InboxContextBands`).
+  asserts an absence. Mounted on the inbox (`travel-buddy-standalone/src/components/TelegraphInboxScreen.tsx:482#InboxContextBands`).
 - **A measured bandwidth signal.** The transport times each answered GET
   (`travel-buddy-standalone/src/services/messaging.ts:296#noteTelegraphRequest(res.status >= 500`);
   `travel-buddy-standalone/src/features/telegraph/connection/bandwidthSignal.ts:53#export function deriveBandwidthSignal(`
@@ -11283,7 +11283,7 @@ no flag touched, no migration added, nothing written to any database.
 
 ### 43.2 What was built
 
-- **One translation reader for both routes.** `artifacts/api-server/src/services/messageTranslation.ts:1256#export async function readRecipientTranslations(`
+- **One translation reader for both routes.** `artifacts/api-server/src/services/messageTranslation.ts:1128#export async function readRecipientTranslations(`
   asks for `confidence` (migration 2991) and, on a database without the column (42703/PGRST204, the
   writer's own narrow predicate), repeats the read without it and returns `confidence: null`, which the
   decision treats as not-high. Any other error goes to the caller's existing failed-read arm. Both
@@ -11364,7 +11364,7 @@ preview** still showed a translation alone, with no decision forwarded (line 220
 87df318f4; main's Telegraph merge #626 now builds the preview through the same helper:
 `artifacts/api-server/src/routes/messaging.ts:2207#const displayBody = (display.displayBody ?? lm.body ?? '').slice(0, 80);`); and the
 "confidence" the decision reads is the provider's language-DETECTION confidence, not a measure of the
-translation's quality (`artifacts/api-server/src/services/messageTranslation.ts:452#detectionConfidence = detected.confidence;`).
+translation's quality ([historical assignment at 8b2ce063016b38b9b9d5460ee384908fe0163eef](https://github.com/portava/portava.app/blob/8b2ce063016b38b9b9d5460ee384908fe0163eef/artifacts/api-server/src/services/messageTranslation.ts#L452); removed by the bounded T242 correction recorded below).
 `routes/messaging.ts` is lane T1's file and is not edited here. The change T1 must make, and the open
 question, are in lane C's report.
 
@@ -14540,7 +14540,7 @@ is graded up because of a flag.
      - **Client.** The inbox's AVAILABLE NEARBY band reads the route
        (`travel-buddy-standalone/src/features/telegraph/inbox/inboxBandsApi.ts:128#getJson('/api/nearby/reachable')`)
        and is mounted on the inbox
-       (`travel-buddy-standalone/src/components/TelegraphInboxScreen.tsx:474#<InboxContextBands onOpenThread`). While
+       (`travel-buddy-standalone/src/components/TelegraphInboxScreen.tsx:482#<InboxContextBands onOpenThread`). While
        the flag answers `enabled: false`, the band draws nothing
        (`travel-buddy-standalone/src/features/telegraph/__tests__/inboxContextBands.component.test.tsx:119#nearby switched off by its flag draws NO band`).
      - T24 and T25 are W (§31); T26 is W (:12421).
@@ -14977,3 +14977,18 @@ catch, a stale entry, a lazy verdict, a reader without its try, a reader catch a
     CONSTRUCTED 97.8 %, CORRECT 58.1 %.
 
 ---
+
+
+## T242 bounded correction — 2026-10-15, NO ROW MOVES
+
+This is a local correction from base `8b2ce063016b38b9b9d5460ee384908fe0163eef`, not a regrade. **T242 remains W.** All other judgments and counts are unchanged. Earlier sections describe their historical implementations; the two removed-code citations now link to that exact base instead of claiming the removed code still exists at HEAD.
+
+The live pipeline and retranslation sweep now persist unknown translation quality (`confidence: null`), while retaining original text, detected-language provenance and the actual provider version. The reader also treats preexisting `high` and `low` values as unknown: those values came from language detection, not assessment of the translation. Translated messages request the existing original-alongside behavior. The label says **quality unverified**, not that an original is necessarily visible on every consumer (`artifacts/api-server/src/services/messageTranslation.ts:906#translationLabel:`). No quality score, provider contract, owner policy, migration or rollout was invented or changed.
+
+**Inbox display gap corrected:** §47 correctly records that #626 repaired the inbox data path, but combining both bodies in one clipped line could hide the original. The formatter now provides separate lines (`travel-buddy-standalone/src/features/telegraph/inbox/translatedPreview.ts:26#export function translatedPreviewLines(`), and the mounted inbox independently bounds each text (`travel-buddy-standalone/src/components/TelegraphInboxScreen.tsx:274#previewLines.map`). A long translation cannot consume the original's line. Own messages, older-server replies and identical originals do not gain a duplicate; typed and shared-card envelopes remain labels rather than raw contents. The former combined-string helper remains compatible with existing callers. The mounted regression fails before this consumer change and passes afterward; five related client suites pass 43 tests. Device-level confirmation has not been performed.
+
+The providers still supply no translation-quality measurement. Unknown is not a low score and is not high confidence. A future measured-quality signal and any policy that allows a translation to stand alone require an explicit provider/semantic decision; this patch only removes false certainty and conservatively requests the original. It does not establish translation accuracy or promote T240/T242.
+
+Controlled validation covers legacy stored high/low values, absent confidence columns, both chat readers, original-text fallbacks, sender/deleted/empty/identical cases, detection provenance, retranslation, existing client original-alongside behavior and the already-fixed inbox payload. The original confidence regressions were observed red (12 failures); the rendering-independent label assertions were separately red (2 failures). The focused suite is 75 passing tests; the broader worker run includes 134 passing tests and independent review ran 81 plus four probes (overlapping sets, not additive). API source typecheck passes; the test-typecheck gate stays at its existing 862-diagnostic baseline, not zero errors. No production or database operation was run.
+
+**Assumed-source follow-up included in this composed batch:** a failed detection with no readable sender preference assumes English. Such an assumed same-language match now records `failed`, source `und`, and `source_language_unverified`, preserving the original instead of claiming a verified skip. The retranslation reader retains language-detection provenance for the same decision. Provider-established same-language matches still skip. The new 23-case suite demonstrated 18 failures before the correction and six deliberately broken variants were caught. Existing assumed-source metadata and different-language fallbacks are unchanged; this is not complete translation reliability or a T242 promotion.

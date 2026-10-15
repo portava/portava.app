@@ -103,7 +103,7 @@ export function bookingRefusalAction(
   code: string | null | undefined,
 ): BookingRefusalAction | null {
   if (!code) return null;
-  return BOOKING_REFUSAL_ACTIONS[code] ?? null;
+  return BOOKING_REFUSAL_ACTIONS[code === 'identity_verification_required' ? 'verification_required' : code] ?? null;
 }
 
 /**
@@ -132,7 +132,7 @@ export function bookingErrorCopy(
   if (code) {
     const known = BOOKING_UNAVAILABLE_COPY[code];
     if (known) return known;
-    const actionable = BOOKING_ACTIONABLE_COPY[code];
+    const actionable = code === 'identity_verification_required' ? 'Rent a Buddy bookings require a current identity check. Open verification to check your status and continue.' : BOOKING_ACTIONABLE_COPY[code];
     if (actionable) return actionable; const ineligible = BOOKING_INELIGIBLE_COPY[code]; if (ineligible) return ineligible; const knownFailure = BOOKING_FAILURE_COPY[code]; if (knownFailure) return knownFailure; // census-trust §31: one line, so cited lines keep their numbers
   }
   return errorCopy(code, fallback ?? GENERIC_BOOKING_ERROR);

@@ -342,8 +342,8 @@ export interface FeasibilityInputs {
    * `null` is UNRESOLVED, never permitted — see `adviseLeaving`.
    */
   entry: EntryEligibility | null; /** §4 the declared constraint set and §6.1's entry policy — OPTIONAL and ABSENT unless something was declared / the policy is on, so a legacy computation hashes exactly as before. See LayoverConstraints.ts. */ constraints?: ConstraintInput; policy?: LandsidePolicyInput;
+  returnCorridorRisk?: ReturnCorridorRisk | null;
 }
-
 /** Project the domain objects onto the named input set. */
 export function feasibilityInputs(
   airport: FeasibilityAirport,
@@ -611,9 +611,9 @@ function liveExtraEstimate(live: LiveConditions | null, minutes: number): Estima
  * same `inputs` always produce the same record, which is what makes
  * `inputHash` an identity rather than a decoration.
  */
-export function certifyFeasibility(inputs: FeasibilityInputs): LayoverFeasibilityRecord {
+export function certifyFeasibility(sourceInputs: FeasibilityInputs): LayoverFeasibilityRecord {
+  const inputs = namedReturnCorridorInputs(sourceInputs);
   const { airport, nowMs } = inputs; const session = engineSession(inputs.session, inputs.constraints); // what the constraint input charges (declared bag mode, separate tickets) replaces the boolean HERE, once, for every term below
-
   const live = inputs.liveConditions;
 
   // ONE deadline computation. Everything below reads it; nothing recomputes it.
@@ -711,7 +711,7 @@ export function certifyFeasibility(inputs: FeasibilityInputs): LayoverFeasibilit
     ...(live ? [buffers.liveExtra] : []),
   ];
 
-  return {
+  return applyCertifiedReturnCorridor({
     feasibilityVersion: LAYOVER_FEASIBILITY_VERSION,
     engineVersion: LAYOVER_ENGINE_VERSION,
     inputHash: feasibilityInputHash(inputs),
@@ -729,7 +729,7 @@ export function certifyFeasibility(inputs: FeasibilityInputs): LayoverFeasibilit
     disclaimer: advice.disclaimer,
     landside,
     windowOnly: windowOnlyUnderGate(windowOnly, gated.gate, advice.verdict, advice.reasons), landsideGate: gated.gate,
-  };
+  }, inputs.returnCorridorRisk ?? null);
 }
 
 /**
@@ -912,27 +912,27 @@ export function airportIntelligence(r: LayoverFeasibilityRecord): AirportIntelli
  * certification below is still pure: the same `inputs` and the same `risk`
  * always produce the same record.
  *
- * ── THE ONE THING THIS DOES NOT YET DO, STATED RATHER THAN HIDDEN ───────────
- * `risk` is NOT inside `inputHash`, because `feasibilityInputHash` hashes
- * `FeasibilityInputs` and the corridor is not a member of it. So two records —
- * one certified with a corridor and one without — hash identically, and
- * `replayFeasibility(record.inputs)` reproduces the UNADJUSTED verdict. That is
- * a real gap in the §18 replay contract and it is harmless only because the
- * corridor provider refuses on every deployment, so `risk` is `null` on every
- * call that exists. IT MUST BE CLOSED BEFORE A CORRIDOR IS EVER ENABLED: the
- * fix is to make the corridor risk a named member of `FeasibilityInputs`
- * alongside `liveConditions`, which is a ~14-line insertion into this file and
- * moves fourteen line-anchored citations in docs/architecture/census-layover.md
- * — an edit this lane was not permitted to make.
+ * ── THE CORRIDOR IS PART OF THE CERTIFIED INPUTS ──────────────────────────
+ * `certifyFeasibilityWithReturnCorridor` names and copies the risk before
+ * `certifyFeasibility` hashes it. This helper only applies that named input;
+ * it cannot introduce an unrecorded assessment after certification.
+ * `replayFeasibility(record.inputs)` therefore reproduces the adjusted verdict,
+ * its reasons, its gate and its window rating through the same pure path.
+ * Changed or removed facts cannot retain the earlier computation's identity.
+ * Missing or malformed members of a supplied risk refuse certification, while
+ * explicit unknown judgements remain null rather than becoming reliable.
+ * The optional input is absent on legacy calls, whose bytes stay unchanged.
+ * No provider, probe, rollout gate or boarding policy is introduced here.
+ * The corridor's remaining production prerequisites are still external.
  *
  * `risk === null` returns `certifyFeasibility`'s record with nothing touched,
  * which is every call on this tree.
  */
-export function certifyFeasibilityWithReturnCorridor(
-  inputs: FeasibilityInputs,
+function applyCertifiedReturnCorridor(
+  base: LayoverFeasibilityRecord,
   risk: ReturnCorridorRisk | null,
 ): LayoverFeasibilityRecord {
-  const base = certifyFeasibility(inputs);
+
   if (!risk) return base;
 
   // The record publishes the advice FLATTENED, so the advice is reassembled
@@ -990,5 +990,57 @@ export function windowOnlyUnderGate(
     rating: status === "closed" ? "not_recommended" : "possible_but_risky",
     // A demoted rating with no reason is a refusal nobody can explain (App C2).
     warningReason: reasons[reasons.length - 1] ?? windowOnly.warningReason,
+  };
+}
+
+export function certifyFeasibilityWithReturnCorridor(
+  inputs: FeasibilityInputs,
+  risk: ReturnCorridorRisk | null,
+): LayoverFeasibilityRecord {
+  return certifyFeasibility(risk === null && !("returnCorridorRisk" in inputs)
+    ? inputs
+    : { ...inputs, returnCorridorRisk: risk });
+}
+
+function namedReturnCorridorInputs(inputs: FeasibilityInputs): FeasibilityInputs {
+  if (!("returnCorridorRisk" in inputs)) return inputs;
+  return { ...inputs, returnCorridorRisk: namedReturnCorridorRisk(inputs.returnCorridorRisk) };
+}
+
+function namedReturnCorridorRisk(value: unknown): ReturnCorridorRisk | null {
+  if (value === null) return null;
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("Cannot certify missing or malformed return-corridor risk");
+  }
+  const risk = value as ReturnCorridorRisk;
+  const facts = risk.facts;
+  const isNamed = (item: unknown): item is string => typeof item === "string" && item.trim().length > 0;
+  if (
+    ![true, false, null].includes(risk.returnRouteUnreliable) ||
+    ![true, false, null].includes(risk.fragileCorridor) ||
+    !Array.isArray(risk.contributingFactors) || !Array.from(risk.contributingFactors).every(isNamed) ||
+    !facts || typeof facts !== "object" || Array.isArray(facts) ||
+    ![facts.independentReturnRoutes, facts.offeredReturnRoutes, facts.minTransferCount, facts.maxTransferCount]
+      .every(count => Number.isSafeInteger(count) && count >= 0) ||
+    !isNamed(facts.bestRouteInterruptibility) || !isNamed(facts.allRoutesInterruptibility) ||
+    typeof facts.stale !== "boolean" || !Array.isArray(facts.unmeasured) ||
+    !Array.from(facts.unmeasured).every(signal => signal && isNamed(signal.signal) && isNamed(signal.blockedBy))
+  ) {
+    throw new TypeError("Cannot certify missing or malformed return-corridor risk");
+  }
+  return {
+    returnRouteUnreliable: risk.returnRouteUnreliable,
+    fragileCorridor: risk.fragileCorridor,
+    contributingFactors: [...risk.contributingFactors],
+    facts: {
+      independentReturnRoutes: facts.independentReturnRoutes,
+      offeredReturnRoutes: facts.offeredReturnRoutes,
+      bestRouteInterruptibility: facts.bestRouteInterruptibility,
+      allRoutesInterruptibility: facts.allRoutesInterruptibility,
+      minTransferCount: facts.minTransferCount,
+      maxTransferCount: facts.maxTransferCount,
+      stale: facts.stale,
+      unmeasured: facts.unmeasured.map(signal => ({ signal: signal.signal, blockedBy: signal.blockedBy })),
+    },
   };
 }

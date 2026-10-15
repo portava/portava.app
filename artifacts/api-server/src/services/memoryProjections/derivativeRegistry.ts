@@ -20,8 +20,8 @@
  * unbound therefore renders an unreadable table as an empty array, and for a
  * projection that is fatal: a failed derivation becomes the sentence "you have no
  * memories". Every read below binds `error` and every failure returns a structured
- * refusal. There is no try/catch around a supabase read here: such a catch is dead
- * code - the promise resolves, it does not throw.
+ * refusal. Counted source reads also reject incomplete or repeated rows; a
+ * transport rejection is converted to the same structured refusal.
  *
  * Writes bind `.select()` for the same reason in reverse: an UPDATE that matched
  * zero rows errors nothing, so without it this module could report a revocation
@@ -94,7 +94,7 @@ export interface QueryLike {
   upsert: (values: unknown, options?: { onConflict?: string }) => QueryLike;
   update: (values: unknown) => QueryLike;
   then: <R1, R2>(
-    onfulfilled?: ((value: { data: any; error: MinimalPostgrestError | null }) => R1 | PromiseLike<R1>) | null,
+    onfulfilled?: ((value: { data: any; error: MinimalPostgrestError | null; count?: number | null }) => R1 | PromiseLike<R1>) | null,
     onrejected?: ((reason: unknown) => R2 | PromiseLike<R2>) | null,
   ) => Promise<R1 | R2>;
 }
@@ -144,7 +144,7 @@ export async function readProjectionSources(
   let items: MemoryItemRow[] = [];
   let tags: MemoryTagRow[] = [];
   if (ids.length > 0) {
-    const itemRes = await client.from("memory_items").select("memory_id, media_url, media_type, position").in("memory_id", ids);
+    const itemRes = await readCompleteSource(client.from("memory_items").select("id, memory_id, media_url, media_type, position", { count: "exact" }).in("memory_id", ids), ["id"]);
     if (itemRes.error) {
       return {
         ok: false, reason: "source_unavailable", table: "memory_items",
@@ -154,7 +154,7 @@ export async function readProjectionSources(
     }
     items = (itemRes.data ?? []) as MemoryItemRow[];
 
-    const tagRes = await client.from("memory_tags").select("memory_id, tagged_user_id, status").in("memory_id", ids);
+    const tagRes = await readCompleteSource(client.from("memory_tags").select("memory_id, tagged_user_id, status", { count: "exact" }).in("memory_id", ids), ["memory_id", "tagged_user_id"]);
     if (tagRes.error) {
       return {
         ok: false, reason: "source_unavailable", table: "memory_tags",
@@ -723,8 +723,30 @@ async function correctSourcePlaces(
 function readSourceMemories(client: ClientLike, ownerId: string, gates: CanonicalGates) {
   const type = fieldServed(gates.memoryType);
   const name = fieldServed(gates.occurrenceName);
-  if (type && name) return client.from("memories").select(MEMORY_COLUMNS_WITH_TYPE_AND_NAME).eq("owner_id", ownerId);
-  if (type) return client.from("memories").select(MEMORY_COLUMNS_WITH_TYPE).eq("owner_id", ownerId);
-  if (name) return client.from("memories").select(MEMORY_COLUMNS_WITH_NAME).eq("owner_id", ownerId);
-  return client.from("memories").select(MEMORY_COLUMNS).eq("owner_id", ownerId);
+  if (type && name) return readCompleteSource(client.from("memories").select(MEMORY_COLUMNS_WITH_TYPE_AND_NAME, { count: "exact" }).eq("owner_id", ownerId), ["id"]);
+  if (type) return readCompleteSource(client.from("memories").select(MEMORY_COLUMNS_WITH_TYPE, { count: "exact" }).eq("owner_id", ownerId), ["id"]);
+  if (name) return readCompleteSource(client.from("memories").select(MEMORY_COLUMNS_WITH_NAME, { count: "exact" }).eq("owner_id", ownerId), ["id"]);
+  return readCompleteSource(client.from("memories").select(MEMORY_COLUMNS, { count: "exact" }).eq("owner_id", ownerId), ["id"]);
+}
+
+async function readCompleteSource(query: QueryLike, keyColumns: readonly string[]): Promise<{ data: any[] | null; error: MinimalPostgrestError | null }> {
+  const refuse = (message: string) => ({ data: null, error: { message } });
+  try {
+    const { data, error, count } = await query;
+    if (error) return { data: null, error };
+    if (!Array.isArray(data)) return refuse("source read returned no row array");
+    if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0) return refuse("source read returned no exact count");
+    if (data.length !== count) return refuse("source read is incomplete: row count differs from its exact count");
+    const seen = new Set<string>();
+    for (const row of data) {
+      const values = keyColumns.map((column) => row?.[column]);
+      if (values.some((value) => typeof value !== "string" || value.length === 0)) return refuse("source read returned a row without its key");
+      const key = JSON.stringify(values);
+      if (seen.has(key)) return refuse("source read returned a repeated row");
+      seen.add(key);
+    }
+    return { data, error: null };
+  } catch {
+    return refuse("source read rejected before completeness could be checked");
+  }
 }

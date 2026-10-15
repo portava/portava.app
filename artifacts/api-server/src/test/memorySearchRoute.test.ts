@@ -131,16 +131,20 @@ function crewTables(): Record<string, any[]> {
  * member's derivative could not be read must name that member as withheld, not
  * drop them and not report them as having no memories.
  */
-function makeClient(store: Record<string, any[]>, failReads: Set<string>, failScopeKeys: Set<string> = new Set()) {
+function makeClient(
+  store: Record<string, any[]>, failReads: Set<string>, failScopeKeys: Set<string> = new Set(),
+  rowCaps: ReadonlyMap<string, number> = new Map(),
+) {
   function chain(table: string) {
     const filters: Array<(r: any) => boolean> = [];
     const eqValues: any[] = [];
     let single = false, head = false, isWrite = false, selectedAfterWrite = false;
+    let exactCount = false;
     let mode: "insert" | "upsert" | "update" | "delete" | null = null;
     let payload: any = null;
     let conflict: string[] = [];
     const obj: any = {
-      select(_c?: string, o?: any) { if (o?.head) head = true; if (isWrite) selectedAfterWrite = true; return obj; },
+      select(_columns?: string, options?: any) { head = options?.head === true; exactCount = options?.count === "exact"; if (isWrite) selectedAfterWrite = true; return obj; },
       insert(d: any) { isWrite = true; mode = "insert"; payload = d; return obj; },
       update(d: any) { isWrite = true; mode = "update"; payload = d; return obj; },
       upsert(d: any, o?: any) {
@@ -192,8 +196,10 @@ function makeClient(store: Record<string, any[]>, failReads: Set<string>, failSc
         for (const r of matched) Object.assign(r, payload);
         return selectedAfterWrite ? { data: matched, error: null, count: matched.length } : { data: null, error: null, count: null };
       }
-      if (single) return { data: matched[0] ?? null, error: null, count: null };
-      return { data: matched, error: null, count: head ? matched.length : null };
+      const count = exactCount ? matched.length : null;
+      matched = matched.slice(0, rowCaps.get(table));
+      if (single) return { data: matched[0] ?? null, error: null, count };
+      return { data: head ? null : matched, error: null, count };
     }
     return obj;
   }
@@ -206,9 +212,11 @@ function makeClient(store: Record<string, any[]>, failReads: Set<string>, failSc
 
 interface App { baseUrl: string; store: Record<string, any[]>; logged: any[]; close: () => Promise<void> }
 
-async function startApp(opts: { failReads?: Set<string>; store?: Record<string, any[]>; failScopeKeys?: Set<string> } = {}): Promise<App> {
+async function startApp(opts: {
+  failReads?: Set<string>; store?: Record<string, any[]>; failScopeKeys?: Set<string>; rowCaps?: ReadonlyMap<string, number>;
+} = {}): Promise<App> {
   const store = opts.store ?? tables();
-  _setTestClient(makeClient(store, opts.failReads ?? new Set(), opts.failScopeKeys ?? new Set()) as any, true);
+  _setTestClient(makeClient(store, opts.failReads ?? new Set(), opts.failScopeKeys ?? new Set(), opts.rowCaps) as any, true);
   const logged: any[] = [];
   const app = express();
   app.use(express.json());
@@ -554,6 +562,84 @@ describe("§28.11 an unreadable source or registry refuses rather than answering
   });
 });
 
+describe("§28.11 counted Memory sources are complete or refused through the mounted route", () => {
+  function populatedTables() {
+    const store = tables();
+    store.memories.push(memory("dddddddd-dddd-dddd-dddd-dddddddddd04", VIEWER));
+    store.memory_items = [
+      { id: "ffffffff-ffff-ffff-ffff-fffffffffff1", memory_id: M_MINE, media_url: "https://example.com/one.jpg", media_type: "image", position: 0 },
+      { id: "ffffffff-ffff-ffff-ffff-fffffffffff2", memory_id: M_MINE, media_url: "https://example.com/two.jpg", media_type: "image", position: 1 },
+      { id: "ffffffff-ffff-ffff-ffff-fffffffffff3", memory_id: M_PUB, media_url: "https://example.com/other.jpg", media_type: "image", position: 0 },
+    ];
+    store.memory_tags = [
+      { memory_id: M_MINE, tagged_user_id: OWNER, status: "approved" },
+      { memory_id: M_MINE, tagged_user_id: STRANGER, status: "approved" },
+      { memory_id: M_PUB, tagged_user_id: VIEWER, status: "approved" },
+    ];
+    return store;
+  }
+
+  it("complete filtered sources preserve uniquely identified items and approved tags", async () => {
+    const app = await startApp({ store: populatedTables() });
+    try {
+      const response = await search(app, VIEWER, { intent: { kind: "mine" } });
+      assert.equal(response.status, 200);
+      assert.equal(response.body.deterministicMatchCount, 2);
+      const hit = response.body.hits.find((entry: any) => entry.memoryId === M_MINE);
+      assert.ok(hit);
+      assert.equal(hit.row.media_count, 2);
+      assert.deepEqual(new Set(hit.row.people), new Set([OWNER, STRANGER]));
+      assert.equal(app.store[REG].length, 1);
+    } finally { await app.close(); }
+  });
+
+  for (const table of ["memories", "memory_items", "memory_tags"]) {
+    it(`a truncated ${table} read refuses without serving or registering a partial derivative`, async () => {
+      const app = await startApp({ store: populatedTables(), rowCaps: new Map([[table, 1]]) });
+      try {
+        const response = await search(app, VIEWER, { intent: { kind: "mine" } });
+        assert.equal(response.status, 503);
+        assert.equal(response.body.error, "degraded_unavailable");
+        assert.equal(response.body.retryable, true);
+        assert.equal(Object.hasOwn(response.body, "hits"), false);
+        assert.equal(Object.hasOwn(response.body, "deterministicMatchCount"), false);
+        assert.deepEqual(app.store[REG], []);
+        assert.ok(app.logged.some((entry) => entry.o.detail === `${table} unreadable: source read is incomplete: row count differs from its exact count`));
+      } finally { await app.close(); }
+    });
+  }
+
+  for (const table of ["memory_items", "memory_tags"]) {
+    it(`an unreadable ${table} preserves the source error instead of reporting missing counts`, async () => {
+      const app = await startApp({ store: populatedTables(), failReads: new Set([table]) });
+      try {
+        const response = await search(app, VIEWER, { intent: { kind: "mine" } });
+        assert.equal(response.status, 503);
+        assert.equal(response.body.error, "degraded_unavailable");
+        assert.deepEqual(app.store[REG], []);
+        assert.ok(app.logged.some((entry) => entry.o.detail === `${table} unreadable: ${table} unavailable`));
+      } finally { await app.close(); }
+    });
+  }
+
+  for (const identity of ["missing", "duplicate"]) {
+    it(`matching counts do not excuse a ${identity} memory item ID`, async () => {
+      const store = populatedTables();
+      if (identity === "missing") delete store.memory_items[0].id;
+      else store.memory_items[1].id = store.memory_items[0].id;
+      const app = await startApp({ store });
+      try {
+        const response = await search(app, VIEWER, { intent: { kind: "mine" } });
+        assert.equal(response.status, 503);
+        assert.equal(response.body.error, "degraded_unavailable");
+        assert.deepEqual(app.store[REG], []);
+        const detail = identity === "missing" ? "a row without its key" : "a repeated row";
+        assert.ok(app.logged.some((entry) => entry.o.detail === `memory_items unreadable: source read returned ${detail}`));
+      } finally { await app.close(); }
+    });
+  }
+});
+
 /* ══════════════════════════════════════════════════════════════════════════
  * SHARED_CREW — the crew's memory of one trip, and the honesty of a UNION
  *
@@ -713,6 +799,28 @@ describe("§15 SHARED_CREW: a crew search unions the crew's per-owner derivative
 });
 
 describe("§18 / §15 SHARED_CREW partial unions are SERVED and NAMED, never refused whole", () => {
+  it("one member's truncated source withholds only that member and names the incomplete union", async () => {
+    const store = crewTables();
+    store.memory_items = [
+      { id: "ffffffff-ffff-ffff-ffff-fffffffffff1", memory_id: M_CREW_OWNER, media_url: "https://example.com/one.jpg", media_type: "image", position: 0 },
+      { id: "ffffffff-ffff-ffff-ffff-fffffffffff2", memory_id: M_CREW_OWNER, media_url: "https://example.com/two.jpg", media_type: "image", position: 1 },
+    ];
+    const app = await startApp({ store, rowCaps: new Map([["memory_items", 1]]) });
+    try {
+      const response = await search(app, VIEWER, { intent: { kind: "crew_trip", tripId: TRIP } });
+      assert.equal(response.status, 200);
+      assert.deepEqual(ids(response.body), new Set([M_CREW_VIEWER, M_CREW_DEPARTING]));
+      const withheld = memberLine(response.body, OWNER);
+      assert.equal(withheld.state, "withheld");
+      assert.equal(withheld.reason, "derivative_unavailable");
+      assert.equal(withheld.matchCount, null);
+      assert.equal(withheld.detail, "memory_items unreadable: source read is incomplete: row count differs from its exact count");
+      assert.deepEqual(response.body.withheldMembers.map((member: any) => member.memberId), [OWNER]);
+      assert.equal(response.body.unionComplete, false);
+      assert.deepEqual(new Set(app.store[REG].map((entry) => entry.owner_id)), new Set([VIEWER, DEPARTING]));
+    } finally { await app.close(); }
+  });
+
   it("one member's REVOKED derivative withholds that member and serves the rest", async () => {
     const app = await startApp({ store: crewTables() });
     try {

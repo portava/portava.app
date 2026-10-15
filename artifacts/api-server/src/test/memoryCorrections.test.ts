@@ -105,12 +105,12 @@ interface Op { table: string; mode: string }
 function makeClient(store: Record<string, any[]>, ops: Op[], opts: FakeOpts = {}) {
   let idN = 0;
   function chain(table: string) {
-    const filters: Array<(r: any) => boolean> = [];
+    const filters: Array<(r: any) => boolean> = []; let countExact = false;
     let mode: "select" | "upsert" | "update" | "insert" | "delete" = "select";
     let payload: any = null; let wantRows = false; let single = false; let limitN: number | null = null; let selected: string[] | null = null; let conflict: string[] = []; const orders: Array<[string, boolean]> = []; let rangeFrom: number | null = null; let rangeTo = 0;
     const f = (p: (r: any) => boolean) => { filters.push(p); return obj; };
     const obj: any = {
-      select(c?: string) { if (mode !== "select") wantRows = true; else if (table === TABLE && typeof c === "string") selected = c.split(",").map((k) => k.trim()); return obj; }, // VERIFY-H6: a corrections read gets only the columns it selected, as from PostgREST
+      select(c?: string, options?: { count?: string }) { countExact = options?.count === "exact"; if (mode !== "select") wantRows = true; else if (table === TABLE && typeof c === "string") selected = c.split(",").map((k) => k.trim()); return obj; }, // VERIFY-H6: a corrections read gets only the columns it selected, as from PostgREST
       upsert(d: any, o?: any) { mode = "upsert"; payload = d; conflict = String(o?.onConflict ?? "").split(",").map((k) => k.trim()).filter(Boolean); return obj; },
       insert(d: any) { mode = "insert"; payload = d; return obj; },
       update(d: any) { mode = "update"; payload = d; return obj; },
@@ -141,12 +141,12 @@ function makeClient(store: Record<string, any[]>, ops: Op[], opts: FakeOpts = {}
         }
         return { data: wantRows ? written : null, error: null };
       }
-      let matched = all.filter((r) => filters.every((p) => p(r)));
+      let matched = all.filter((r) => filters.every((p) => p(r))); const count = countExact ? matched.length : null;
       if (mode === "update") { for (const r of matched) Object.assign(r, payload); return { data: wantRows ? matched.map((x) => ({ ...x })) : null, error: null }; }
       if (mode === "delete") { store[table] = all.filter((r) => !matched.includes(r)); return { data: wantRows ? matched : null, error: null }; }
       if (orders.length > 0) matched = [...matched].sort((x, y) => { for (const [c, asc] of orders) { const d = String(x[c] ?? "").localeCompare(String(y[c] ?? "")); if (d !== 0) return asc ? d : -d; } return 0; }); if (rangeFrom != null) matched = matched.slice(rangeFrom, rangeTo + 1); if (limitN != null) matched = matched.slice(0, limitN); matched = matched.slice(0, 1000); // H-15: order, range and PostgREST's max-rows cap, as the database answers
       const project = (x: any) => (selected ? Object.fromEntries(selected.filter((k) => k in x).map((k) => [k, x[k]])) : { ...x }); if (single) return { data: matched[0] ? project(matched[0]) : null, error: null };
-      return { data: matched.map(project), error: null };
+      return { data: matched.map((row, index) => project(table === "memory_items" ? { ...row, id: row.id ?? `fixture-item-${index}` } : row)), error: null, count };
     }
     return obj;
   }

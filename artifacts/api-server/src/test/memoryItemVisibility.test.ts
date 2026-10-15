@@ -68,12 +68,12 @@ interface FakeOpts {
 function makeClient(store: Record<string, any[]>, opts: FakeOpts = {}) {
   function chain(table: string) {
     const filters: Array<(r: any) => boolean> = [];
-    const named: string[] = [];
+    const named: string[] = []; let countExact = false;
     let mode: "select" | "update" | "insert" | "delete" | "upsert" = "select";
     let payload: any = null; let selected: string | null = null; let wantRows = false; let single = false; let countMode = false; let onConflict: string[] = [];
     const f = (c: string, p: (r: any) => boolean) => { named.push(c); filters.push(p); return obj; };
     const obj: any = {
-      select(c?: string, o?: any) { if (mode !== "select") wantRows = true; else if (typeof c === "string") selected = c; if (o?.count === "exact" && o?.head) countMode = true; return obj; },
+      select(c?: string, o?: any) { countExact = o?.count === "exact"; if (mode !== "select") wantRows = true; else if (typeof c === "string") selected = c; if (o?.count === "exact" && o?.head) countMode = true; return obj; },
       update(d: any) { mode = "update"; payload = d; return obj; },
       insert(d: any) { mode = "insert"; payload = d; return obj; },
       upsert(d: any, o?: any) { mode = "upsert"; payload = d; onConflict = String(o?.onConflict ?? "").split(",").filter(Boolean); return obj; },
@@ -107,7 +107,7 @@ function makeClient(store: Record<string, any[]>, opts: FakeOpts = {}) {
       if (mode === "delete") return { data: null, error: null };
       if (countMode) return { data: null, error: null, count: matched.length };
       const project = (r: any) => (table === "memory_items" && selected && !/[*()]/.test(selected) ? Object.fromEntries(selected.split(",").map((k) => k.trim()).filter((k) => k in r).map((k) => [k, r[k]])) : { ...r }); /* VERIFY-H4 H4-2: a memory_items read gets only the columns it selected, as from PostgREST */ if (single) return { data: matched[0] ? project(matched[0]) : null, error: null };
-      return { data: matched.map((x) => project(x)), error: null };
+      return { data: matched.map((row, index) => project(table === "memory_items" ? { ...row, id: row.id ?? `fixture-item-${index}` } : row)), error: null, count: countExact ? matched.length : null };
     }
     return obj;
   }

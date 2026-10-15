@@ -25,6 +25,7 @@ import {
   applyTrustConfidence,
   applyFeasibility,
   applyTripFit,
+  applyRelationshipFit,
   applySpamRisk, applyPrivacyRisk, privacyRisk, applyStaleness, staleness,
   gemLocationPrecision,
   type TemporalWindow,
@@ -51,6 +52,7 @@ function tierConfidence(tier: number): number {
 
 /** §15 signals the caller resolved once per request and passes down. */
 export interface ProjectionSignals {
+  allowPersonalization?: boolean;
   /**
    * §18 normalized temporal window parsed from the user's own text, or null
    * when the text carries no time operator. Feeds TemporalFit (§15).
@@ -101,17 +103,22 @@ export function projectSearchResult(
   // so a stuffed, restricted or out-of-task row cannot boost its way back above.
   const confidence = applyFeasibility(
     applyStaleness(applyPrivacyRisk(applySpamRisk(
-      applyTripFit(
-        applyTemporalFit(
-          applyTrustConfidence(
-            tierConfidence(matchTier(r.title, q, r.subtitle)),
-            r.verified,
-            r.isOfficial,
+      applyRelationshipFit(
+        applyTripFit(
+          applyTemporalFit(
+            applyTrustConfidence(
+              tierConfidence(matchTier(r.title, q, r.subtitle)),
+              r.verified,
+              r.isOfficial,
+            ),
+            r.startsAt,
+            signals.temporalWindow ?? null,
           ),
-          r.startsAt,
-          signals.temporalWindow ?? null,
+          signals.tripFit === true,
         ),
-        signals.tripFit === true,
+        signals.allowPersonalization === true &&
+          (r.type === 'travelers' || r.type === 'buddies') &&
+          r.actionState?.isFollowing === true,
       ),
       `${r.title} ${r.subtitle ?? ''}`,
     ), privacyRisk(r)), staleness(r, signals.temporalWindow ?? null, Date.now())),

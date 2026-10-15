@@ -81,9 +81,9 @@ function makeClient(tables: Tables, opts: { failTables?: Set<string> } = {}): Cl
     let mode: "select" | "upsert" | "update" = "select";
     let payload: any = null;
     let onConflict: string[] = [];
-    let selected = false;
+    let selected = false; let countExact = false;
     const obj: any = {
-      select() { selected = true; return obj; },
+      select(_columns?: string, options?: { count?: string }) { selected = true; countExact = options?.count === "exact"; return obj; },
       eq(c: string, v: unknown) { filters.push((r) => r[c] === v); return obj; },
       neq(c: string, v: unknown) { filters.push((r) => r[c] !== v); return obj; },
       contains(c: string, vs: readonly unknown[]) { filters.push((r) => Array.isArray(r[c]) && vs.every((v) => r[c].includes(v))); return obj; },
@@ -92,7 +92,7 @@ function makeClient(tables: Tables, opts: { failTables?: Set<string> } = {}): Cl
       update(v: any) { mode = "update"; payload = v; return obj; },
       then(f: any, r: any) { return run().then(f, r); },
     };
-    async function run(): Promise<{ data: any; error: any }> {
+    async function run(): Promise<{ data: any; error: any; count?: number | null }> {
       // supabase-js resolves on a database error; it does not throw.
       if (fail.has(table)) return { data: null, error: { code: "57014", message: `${table} unavailable` } };
       const rows: any[] = (tables[table] ??= []);
@@ -111,7 +111,7 @@ function makeClient(tables: Tables, opts: { failTables?: Set<string> } = {}): Cl
         for (const r of hit) Object.assign(r, payload);
         return { data: selected ? hit : null, error: null };
       }
-      return { data: rows.filter((r) => filters.every((fn) => fn(r))), error: null };
+      const matched = rows.map((row, index) => table === "memory_items" ? { ...row, id: row.id ?? `fixture-item-${index}` } : row).filter((row) => filters.every((predicate) => predicate(row))); return { data: matched, error: null, count: countExact ? matched.length : null };
     }
     return obj;
   }

@@ -522,3 +522,79 @@ describe("verifier F5: get_route_chain, get_freedom_windows and simulate_plan ar
     assert.deepEqual([...new Set(inBudget.map((x) => x.userId))], [CLEO]);
   });
 });
+
+describe("TR116 daily-brief visibility cache: a hidden plan loses its cached slot", () => {
+  let scenarioNumber = 0;
+  for (const layer of ["memory", "stored"] as const) {
+    for (const change of ["private", "unread scope", "selection revoked"] as const) {
+      it(`${layer}: ${change} invalidates a cached private-place slot`, async (context) => {
+        const now = Date.UTC(2030, 0, ++scenarioNumber, 12);
+        context.mock.timers.enable({ apis: ["Date"], now });
+        const date = new Date().toISOString().slice(0, 10);
+        const rows = seed(CLEO, "off");
+        rows.feature_flags = change === "selection revoked"
+          ? [{ flag: "trip_plan_selected_participants_enabled", enabled: true }]
+          : [];
+        Object.assign(rows.trips[0], { destination_city: null, destination_country: null });
+        if (change === "selection revoked") {
+          rows.trip_plan_items[0].privacy_scope = "selected_participants";
+          rows.trip_plan_item_audience = [{ plan_item_id: HOTEL, trip_id: TRIP, member_id: CLEO }];
+        }
+        const client = makeFakeClient(rows);
+        _setTestClient(client as never, true);
+        _setTestServiceClient(client as never);
+        const getBrief = async () => {
+          const response = await call(harness.base, "GET", `/trips/${TRIP}/daily-brief?date=${date}`, CLEO);
+          assert.equal(response.status, 200, JSON.stringify(response.body));
+          return response.body as any;
+        };
+
+        const first = await getBrief();
+        const slot = first.brief.planPreview.find((item: { id: string }) => item.id === HOTEL);
+        assert.equal(slot?.title, "Private plan", "the initial brief actually carries the private-place slot");
+        assert.equal(slot.startsAt, rows.trip_plan_items[0].starts_at);
+        assert.doesNotMatch(JSON.stringify(first), SECRET);
+        assert.equal(client._store.daily_briefs.length, 1, "the first build also populated the durable cache");
+
+        if (layer === "stored") context.mock.timers.setTime(now + 86_400_001);
+        client._observed.selects.length = 0;
+        const unchanged = await getBrief();
+        assert.equal(unchanged.fromCache, true, "unchanged permissions still use the cache");
+        assert.equal(client._observed.selects.some((read) => read.table === "daily_briefs"), layer === "stored");
+        assert.deepEqual(unchanged.brief.planPreview, first.brief.planPreview);
+
+        if (change === "selection revoked") client._store.trip_plan_item_audience = [];
+        else client._store.trip_plan_items[0].privacy_scope = change === "private" ? "private" : null;
+
+        const narrowed = await getBrief();
+        assert.doesNotMatch(JSON.stringify(narrowed), new RegExp(HOTEL));
+        assert.ok(!narrowed.fromCache, "narrowing slot visibility must rebuild, not serve the old cached brief");
+        assert.deepEqual(narrowed.brief.planPreview.map((item: { id: string }) => item.id), [DINNER]);
+        assert.notEqual(narrowed.brief.privatePlanAccessKey, first.brief.privatePlanAccessKey);
+        const stored = JSON.parse(client._store.daily_briefs[0].brief_json);
+        assert.doesNotMatch(JSON.stringify(stored), new RegExp(HOTEL));
+        const repeated = await getBrief();
+        assert.equal(repeated.fromCache, true);
+        assert.doesNotMatch(JSON.stringify(repeated), new RegExp(HOTEL));
+      });
+    }
+  }
+
+  it("an author's unchanged full access keeps their own cached plan", async (context) => {
+    context.mock.timers.enable({ apis: ["Date"], now: Date.UTC(2030, 0, ++scenarioNumber, 12) });
+    const rows = seed(ANA, "off");
+    rows.feature_flags = [];
+    Object.assign(rows.trips[0], { destination_city: null, destination_country: null });
+    const client = makeFakeClient(rows);
+    _setTestClient(client as never, true);
+    _setTestServiceClient(client as never);
+    const first = await call(harness.base, "GET", `/trips/${TRIP}/daily-brief`, ANA);
+    assert.equal(first.status, 200);
+    assert.match(JSON.stringify(first.body), /Casa Segreta/);
+    client._store.trip_plan_items[0].privacy_scope = "private";
+    const narrowed = await call(harness.base, "GET", `/trips/${TRIP}/daily-brief`, ANA);
+    assert.equal(narrowed.status, 200);
+    assert.equal((narrowed.body as any).fromCache, true);
+    assert.match(JSON.stringify(narrowed.body), /Casa Segreta/);
+  });
+});
