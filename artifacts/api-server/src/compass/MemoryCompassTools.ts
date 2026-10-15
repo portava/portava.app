@@ -97,7 +97,7 @@ import {
   type HistoricalFact,
 } from "../services/memory/historicalTruth.js";
 import { guardMemoryRows } from "../services/memory/memoryReaderGuard.js"; // census H48 H49 H73 H87 H187 H188 H210 (RECON-W A1): the owner's per-Memory controls
-import { hiddenItemKeys, itemKey } from "../services/memory/memoryItemVisibility.js"; import { readPlaceAsk, resolveNamedPlace, unresolvedPlaceAnswer, resolveExactHandle, unresolvedPersonAnswer, originalTextOf, ORIGINAL_LANGUAGE_UNDETERMINED, readMemoryProvenance, evidenceParticipantCounts, PROPOSE_MERGE_MAX_ABSORBED, PROPOSE_SPLIT_MAX_ITEMS, mergeAudiencesDiffer, MEMORY_PROPOSAL_TOOL_DEFINITIONS } from "./memoryCompassTruth.js"; import { isFlagEnabled } from "../lib/featureFlags.js"; // census H80: a photo the owner keeps to themself; census H262 H265 H120 H123 H124 (b58 HM-A3): one line, because the lines below are cited
+import { hiddenItemKeys, itemKey } from "../services/memory/memoryItemVisibility.js"; import { readPlaceAsk, resolveNamedPlace, unresolvedPlaceAnswer, resolveExactHandle, unresolvedPersonAnswer, originalTextOf, ORIGINAL_LANGUAGE_UNDETERMINED, readMemoryProvenance, evidenceParticipantCounts, PROPOSE_MERGE_MAX_ABSORBED, PROPOSE_SPLIT_MAX_ITEMS, mergeAudiencesDiffer, MEMORY_PROPOSAL_TOOL_DEFINITIONS, memoriesNamingPerson, PEOPLE_UNCHECKABLE } from "./memoryCompassTruth.js"; import { isFlagEnabled } from "../lib/featureFlags.js"; // census H80: a photo the owner keeps to themself; census H262 H265 H120 H123 H124 (b58 HM-A3): one line, because the lines below are cited
 
 const log = rootLogger.child({ mod: "memoryCompassTools" });
 
@@ -539,13 +539,13 @@ async function toolMemoryGetShared(sc: SupabaseClient, viewerId: string, args: R
     else if (t.status === "pending") unconfirmed.add(String(t.memory_id));
   }
 
-  const nowMs = Date.now();
+  const nowMs = Date.now(); const ladder = await memoriesNamingPerson(sc, history.rows, viewerId, personId, (r) => (r.owner_id === personId ? null : approved.has(String(r.id)) ? "approved" : unconfirmed.has(String(r.id)) && r.owner_id === viewerId ? "pending" : null), MAX_RESULTS); if (!ladder.ok) { log.error({ detail: ladder.detail, viewerId }, "memory tools: shared-memory people ladder undecidable — refusing"); return refuse(PEOPLE_UNCHECKABLE); } // §10 (FIX-749a): the person, only where GET /memories/:id would show them to this viewer
   const shared = history.rows
-    .filter((r) => approved.has(String(r.id)) || r.owner_id === personId)
+    .filter((r) => r.owner_id === personId || (approved.has(String(r.id)) && ladder.identifiable.has(String(r.id)))) // §10: blocks, crew scope, the owner's ceiling (#736)
     .slice(0, MAX_RESULTS)
     .map((r) => toMemoryFact(r, viewerId, nowMs));
   const pending = history.rows
-    .filter((r) => unconfirmed.has(String(r.id)))
+    .filter((r) => r.owner_id === viewerId && unconfirmed.has(String(r.id)) && ladder.identifiable.has(String(r.id))) // a pending tag is §10's ANONYMOUS_COUNT to everyone but the Memory's owner
     .slice(0, MAX_RESULTS)
     .map((r) => toMemoryFact(r, viewerId, nowMs));
 
@@ -554,8 +554,8 @@ async function toolMemoryGetShared(sc: SupabaseClient, viewerId: string, args: R
     memories: shared,
     unconfirmed_participation: pending,
     participation_rule:
-      "`memories` are Memories where this person's tag is APPROVED (they confirmed being there). `unconfirmed_participation` are Memories where the owner tagged them and they have not confirmed — say 'tagged, not confirmed', never that the person was there.",
-    ...(shared.length === 0 && pending.length === 0 ? { info: "No shared Memory with that person." } : {}),
+      "`memories` are Memories where this person's tag is APPROVED (they confirmed being there) and this user may see them on it, or that this person owns. `unconfirmed_participation` are the user's OWN Memories where they tagged this person and the person has not confirmed — say 'tagged, not confirmed', never that the person was there.",
+    ...(shared.length === 0 && pending.length === 0 ? { info: "No shared Memory with that person is visible to this user." } : {}),
   };
 }
 

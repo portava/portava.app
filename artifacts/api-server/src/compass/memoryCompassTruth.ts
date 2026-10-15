@@ -577,3 +577,74 @@ export const MEMORY_PROPOSAL_TOOL_DEFINITIONS = [
   },
 ];
 
+
+// ═══════════════════════════════════════════════════════════════════════════
+// §10 for memory_get_shared — the person asked about goes through the same
+// ladder (b58 add-on FIX-749a; VERIFY-736 required fix 1)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Said instead of a list when the ladder cannot be decided. Constant: no oracle. */
+export const PEOPLE_UNCHECKABLE =
+  "Who this user may see on these Memories could not be checked right now, so no shared Memory is described. Say that it could not be looked up.";
+
+export type PersonOnMemories =
+  | { ok: true; identifiable: ReadonlySet<string> }
+  | { ok: false; detail: string };
+
+/**
+ * Which of these Memories may tell THIS viewer that `personId` is on them.
+ *
+ * `memory_get_shared` used to answer "you share M with P" for every Memory in
+ * the viewer's history where P had an approved tag, and listed P's PENDING tags
+ * on anybody's Memory. On a Memory the viewer is merely tagged in, that names a
+ * third person past §10's ladder: GET /memories/:id shows that same viewer
+ * nobody when P blocked them (or was blocked), when P's tag is pending (an
+ * ANONYMOUS_COUNT to a third party), when P is crew-scoped and the viewer is
+ * not crew, and — once MEM-POLICY (#736) lands — under the owner's HIDDEN or
+ * ANONYMOUS_COUNT ceiling.
+ *
+ * So each candidate Memory is decided the way the detail read decides it —
+ * `loadParticipantVisibility` + `projectParticipants` (which reads the owner's
+ * ceiling through the row's id once #736 is merged) — and P counts only where
+ * P survives as an IDENTIFIED participant (NAMED, PROFILE_LINKED, or CREW_ONLY
+ * to crew). `statusOf` decides which tag each Memory is judged on and returns
+ * null to skip one.
+ *
+ * FAIL CLOSED, and said: the block read is the definitive `blockedAmong`
+ * (it reports a failure rather than folding it into "blocked"), and an
+ * UNREADABLE owner ceiling, an unreadable block read or a throw is `ok: false`
+ * — the caller says it could not check, never "no shared Memory".
+ * Bounded: stops judging a status once `limit` Memories of it are identified.
+ */
+export async function memoriesNamingPerson<R extends { id: string; owner_id: string; visibility?: string | null; trip_id?: string | null }>(
+  sc: SupabaseClient,
+  rows: readonly R[],
+  viewerId: string,
+  personId: string,
+  statusOf: (row: R) => "approved" | "pending" | null,
+  limit: number,
+): Promise<PersonOnMemories> {
+  const candidates = rows.filter((r) => statusOf(r) !== null);
+  if (candidates.length === 0) return { ok: true, identifiable: new Set() };
+  try {
+    const blocked = await blockedAmong(sc, viewerId, [personId]);
+    if (!blocked.ok) return { ok: false, detail: "blocks unreadable" };
+    const identifiable = new Set<string>();
+    const found: Record<"approved" | "pending", number> = { approved: 0, pending: 0 };
+    for (const row of candidates) {
+      const status = statusOf(row)!;
+      if (found[status] >= limit) continue;
+      const ctx = await loadParticipantVisibility(sc, row, viewerId, [personId]);
+      const ceilingState = (ctx as unknown as { personCeilings?: { state?: unknown } }).personCeilings?.state;
+      if (ceilingState === "unreadable") return { ok: false, detail: "the owner's people ceiling is unreadable" };
+      const projected = projectParticipants({ ...ctx, blockedIds: blocked.blocked }, [{ tagged_user_id: personId, status }]);
+      if (projected.participants.length === 1) {
+        identifiable.add(String(row.id));
+        found[status] += 1;
+      }
+    }
+    return { ok: true, identifiable };
+  } catch (err) {
+    return { ok: false, detail: String((err as { message?: unknown })?.message ?? err) };
+  }
+}

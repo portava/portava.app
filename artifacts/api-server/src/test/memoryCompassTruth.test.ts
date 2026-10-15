@@ -28,6 +28,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 
 import {
   MEMORY_COMPASS_PROMPT_RULES,
@@ -514,5 +515,83 @@ describe("H124 — memory_propose_merge / memory_propose_split", () => {
     const merge = (await call("memory_propose_merge", { survivorId: M_NY_1, absorbedIds: [M_NY_2] }, ALICE, { mergeSplitFlag: true, extra: excluded })).out;
     assert.equal(merge.authorized, false);
     assert.match(merge.reason, /does not bring it up/);
+  });
+});
+
+/* ── FIX-749a (VERIFY-736 required fix 1): memory_get_shared names a person only where the detail read would ── */
+
+const BOB_ON_PEOPLE = { memory_tags: [{ memory_id: M_PEOPLE, tagged_user_id: BOB, status: "approved" }] };
+const withExtra = (...parts: Array<Record<string, any[]>>): Record<string, any[]> => {
+  const out: Record<string, any[]> = {};
+  for (const p of parts) for (const [k, v] of Object.entries(p)) out[k] = [...(out[k] ?? []), ...v];
+  return out;
+};
+
+describe("FIX-749a — memory_get_shared goes through §10's ladder for the person asked about", () => {
+  it("CONTROL — a third party's approved participation the detail read shows is listed", async () => {
+    const { out } = await call("memory_get_shared", { personHandle: "carl" }, BOB, { extra: BOB_ON_PEOPLE });
+    assert.deepEqual(ids(out.memories), [M_PEOPLE]);
+  });
+
+  it("a block between the viewer and the person (either way) keeps the Memory out — GET /memories/:id shows that viewer nobody", async () => {
+    for (const block of [{ blocker_id: BOB, blocked_id: CARL }, { blocker_id: CARL, blocked_id: BOB }]) {
+      const { out } = await call("memory_get_shared", { personHandle: "carl" }, BOB, { extra: withExtra(BOB_ON_PEOPLE, { blocks: [block] }) });
+      assert.deepEqual(out.memories, [], `with ${JSON.stringify(block)} the Memory still said Bob shares it with Carl`);
+    }
+  });
+
+  it("a PENDING tag on someone else's Memory is never named to a third party (it is §10's anonymous count to them)", async () => {
+    const { out } = await call("memory_get_shared", { personHandle: "erin" }, BOB, { extra: BOB_ON_PEOPLE });
+    assert.deepEqual(out.unconfirmed_participation, [], "Erin's unconfirmed tag on Alice's Memory was named to Bob");
+    assert.deepEqual(out.memories, []);
+    assert.match(out.info, /visible to this user/);
+  });
+
+  it("the owner still sees their own pending tag, and their own approved one", async () => {
+    const pend = (await call("memory_get_shared", { personHandle: "erin" }, ALICE)).out;
+    assert.deepEqual(ids(pend.unconfirmed_participation), [M_PEOPLE]);
+    const appr = (await call("memory_get_shared", { personHandle: "carl" }, ALICE)).out;
+    assert.deepEqual(ids(appr.memories), [M_PEOPLE]);
+  });
+
+  it("the owner is not told about a participant who blocked them (rule 1 outranks owning the row), as on the detail read", async () => {
+    const { out } = await call("memory_get_shared", { personHandle: "dave" }, ALICE);
+    assert.deepEqual(out.memories, [], "Dave blocked Alice and was still listed on her Memory");
+  });
+
+  it("an unreadable block check is said, never answered as 'no shared Memory'", async () => {
+    const { out } = await call("memory_get_shared", { personHandle: "carl" }, ALICE, { failing: ["blocks"] });
+    assert.equal(out.authorized, false);
+    assert.match(out.reason, /could not be checked/);
+  });
+});
+
+/*
+ * With MEM-POLICY (#736) on the tree, the owner's person-visibility ceiling is
+ * read by loadParticipantVisibility from the Memory row's id, and these must
+ * hold. Skipped, and saying so, on a tree without it.
+ */
+const MEM_POLICY = existsSync(new URL("../services/memory/memoryVisibilityPolicy.ts", import.meta.url).pathname);
+describe("FIX-749a — the owner's people ceiling (#736) reaches memory_get_shared", { skip: MEM_POLICY ? false : "MEM-POLICY (#736) is not on this tree" }, () => {
+  const ceiling = (rung: string) => ({ memory_visibility_policies: [{ memory_id: M_PEOPLE, owner_id: ALICE, person_visibility_ceiling: rung }] });
+  it("VERIFY-736's scenario: O tags V and P, sets HIDDEN — Compass does not tell V they share M with P", async () => {
+    const { out } = await call("memory_get_shared", { personHandle: "carl" }, BOB, { extra: withExtra(BOB_ON_PEOPLE, ceiling("HIDDEN")) });
+    assert.deepEqual(out.memories, []);
+  });
+  it("ANONYMOUS_COUNT, and CREW_ONLY for a viewer outside the crew, likewise", async () => {
+    for (const rung of ["ANONYMOUS_COUNT", "CREW_ONLY"]) {
+      const { out } = await call("memory_get_shared", { personHandle: "carl" }, BOB, { extra: withExtra(BOB_ON_PEOPLE, ceiling(rung)) });
+      assert.deepEqual(out.memories, [], rung);
+    }
+  });
+  it("an UNREADABLE policy is said, not answered as 'none'; an ABSENT one (3810 unapplied) is the ladder alone", async () => {
+    const down = (await call("memory_get_shared", { personHandle: "carl" }, BOB, { extra: BOB_ON_PEOPLE, failing: ["memory_visibility_policies"] })).out;
+    assert.equal(down.authorized, false);
+    const absent = (await call("memory_get_shared", { personHandle: "carl" }, BOB, { extra: BOB_ON_PEOPLE, absent: ["memory_visibility_policies"] })).out;
+    assert.deepEqual(ids(absent.memories), [M_PEOPLE]);
+  });
+  it("the owner's own view is not capped by their own ceiling", async () => {
+    const { out } = await call("memory_get_shared", { personHandle: "carl" }, ALICE, { extra: ceiling("HIDDEN") });
+    assert.deepEqual(ids(out.memories), [M_PEOPLE]);
   });
 });
