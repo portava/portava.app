@@ -8290,20 +8290,25 @@ and no Memory, Passport or Trip fact is read from any table (OD-INPUT-3). The ta
 place, venue, person, date, day, time, number, food, drink, weather, activity or event"
 (`travelWriting.ts:52#export const TRAVEL_WRITING_TASK`, sent at `aiWriting.ts:340#travel ? TRAVEL_WRITING_TASK : undefined`).
 
-**The check — the requirement's own constraint, enforced rather than asked for** (as of fix round 3, 46.10). Every
-proposal on the two fields must be an ALLOWLIST match (`travelWriting.ts:335#export function inventedFacts(`):
+**The check — the requirement's own constraint, enforced rather than asked for** (as of fix round 3, 46.10, and lane
+IN-G141-R4, 46.11). Every
+proposal on the two fields must be an ALLOWLIST match (`travelWriting.ts:348#export function inventedFacts(`):
 - every word is one the traveller wrote, compared exactly (with or without a possessive; every apostrophe form is one
   apostrophe) — no word is stemmed and no plural is guessed — or one of `CONNECTING_WORDS`
   (`travelWriting.ts:118#export const CONNECTING_WORDS`): function words, `I/me/my/it`, auxiliaries, and words of
   feeling and praise; no `with`, `you`, `may`, `made`, comparative, superlative or transit word; and a vocabulary word
-  that is the un-/dis- inverse of one of theirs ("happy" for their "unhappy") is refused (`travelWriting.ts:273#function inverts(`);
+  that is the un-/dis- inverse of one of theirs ("happy" for their "unhappy") is refused (`travelWriting.ts:285#function inverts(`);
 - a word the traveller capitalised in mid-sentence is a NAME: it is known only capitalised ("dinner with Sunny" gives no
   "a sunny dinner"; shouting in capitals is not a name), and a word capitalised in mid-sentence in the draft must be
   capitalised in the traveller's words (owner question Q-G141-6 is what this costs);
-- a number is the WHOLE numeric token — "." "," ":" "/" "-" "–" between digits, "%" "‰" "°" after them, and a currency
-  sign or a minus/dash before them are part of it ("4.5", "12/3", "18%", "$18", "-5") — and must equal one the traveller
-  wrote; it keeps a word beside it that it had there; the letters of its own token, its unit, its am/pm and its ordinal
-  suffix are mandatory; and it may not GAIN a unit (`travelWriting.ts:296#function groundNumbers(`,
+- a number is the WHOLE numeric token — "." "," ":" between digits; "/" and every dash (any `\p{Pd}`, and "−") between
+  digits, spaced or not; "%" "‰" "°" after them; a minus/dash before them; and a currency sign on EITHER side —
+  touching, across a space when no other number stands across the sign (in "2 $ 18" it binds neither), with up to three
+  letters before it, or glued to a longer word — are part of it ("4.5", "12/3", "12 – 3", "12—3", "18%", "$18", "18 €",
+  "US$18", "-5", "−5"). It is compared without its spaces and with every dash as one dash ("$ 18" is "$18", "12 - 3" is
+  "12–3"), and must equal one the traveller wrote; it keeps a word beside it that it had there; the letters of its own
+  token, its unit, its am/pm and its ordinal suffix are mandatory, and inside a mixed token the number keeps its own sign
+  and dashes ("$18k" never gives "18 k"); and it may not GAIN a unit (`travelWriting.ts:308#function groundNumbers(`,
   `travelWriting.ts:191#const NUMBER_UNITS`);
 - each emoji or flag must be one of the traveller's own emoji as a whole; any other symbol (`% + → = ° $ * † ‡ § ¶ /`…)
   and any invisible format character the traveller did not write is refused; each handle, hashtag and domain (domains in
@@ -8325,7 +8330,7 @@ A `memory.caption` request WITHOUT an id is a new-Memory request and is open by 
 either way, and nothing stored is read or sent. When an id is named, the caption goes to the model only when the
 Memory is the caller's, not deleted, and carries none of DO_NOT_RESURFACE,
 KEEP_PRIVATE_FOREVER, RETAIN_BUT_DO_NOT_PERSONALIZE — the set `memoryReaderGuard.controlsExcluding("compass_tools")`
-derives, the same set MEM-NARR-1 (PR #720) applies (`travelWriting.ts:456#export async function travelWritingGate(`).
+derives, the same set MEM-NARR-1 (PR #720) applies (`travelWriting.ts:469#export async function travelWritingGate(`).
 Any read that fails — an `{error}` result or a throw — refuses. The gateway hands the gate the caller
 (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:796#policy, userId,`).
 
@@ -8347,10 +8352,10 @@ and `inputAssistanceFieldInventory.test.ts` measures it.
 
 ### 46.2 Evidence
 
-- `artifacts/api-server/src/test/inputAssistanceTravelWriting.test.ts`: **315 cases, all green** (fix round 3; 226 at round 2, 165 at round 1, 92 at the first push). On
-  `main` the suite cannot load. With the module present but `aiWriting.ts` and `gateway.ts` as on `main`, **21 fail** —
-  every end-to-end case. With the round-2 validator (`2d8597a1f`) **34 fail**, round 1 (`56145be0b`) **70**, the
-  first push (`be3ea259a`) **155**. The case that IS the requirement:
+- `artifacts/api-server/src/test/inputAssistanceTravelWriting.test.ts`: **426 cases, all green** (lane IN-G141-R4; 315 at fix round 3, 226 at round 2, 165 at round 1, 92 at the first push).
+  On `main` the suite cannot load. With the round-3 validator (`1efdec98c`) **39 of the 426 fail**. Of round 3's 315:
+  with the module present but `aiWriting.ts` and `gateway.ts` as on `main`, **21 fail** — every end-to-end case; with
+  the round-2 validator (`2d8597a1f`) **34 fail**, round 1 (`56145be0b`) **70**, the first push (`be3ea259a`) **155**. The case that IS the requirement:
   `artifacts/api-server/src/test/inputAssistanceTravelWriting.test.ts:131#T1 ${fieldId}: "Sunset sushi at Nobu with Marcus" is dropped` — only "What a great dinner tonight!"
   is served, on both fields.
 - **VERIFY-727 battery, round 1** (`artifacts/api-server/src/test/inputAssistanceTravelWriting.test.ts:583#describe("VERIFY-727 battery`): 52 adversarial — **0 served**;
@@ -8365,6 +8370,13 @@ and `inputAssistanceFieldInventory.test.ts` measures it.
   served**, and **12 served** — 6 of 7 RESIDUAL and 6 of 19 UNNAMED, each named in 46.7 and pinned by name; the **20
   fresh faithful polishes — 20 served**; the **4 faithful-cost probes — 4 refused** (46.7); the **28 e2e drafts — none
   served** on either field. Per-rule round-3 tests: `artifacts/api-server/src/test/inputAssistanceTravelWriting.test.ts:1093#describe("fix round 3`.
+- **VERIFY-727 confirmation battery and Group A, lane IN-G141-R4** (`artifacts/api-server/src/test/inputAssistanceTravelWriting.test.ts:1394#describe("VERIFY-727 confirmation battery`),
+  copied as data: the **25 fresh variants — 0 served**; the **25 more of the same mechanisms — 0 served**; of the **21
+  residual probes**, the confirmation's **10 Group A drafts — 0 served** (all 10 served at `1efdec98c`) and only the 10
+  Group B probes served, each named in 46.7 and pinned by name; the lane's **21 Group A drafts — 0 served** (19 served
+  at `1efdec98c`); the **20 fresh faithful polishes — 19 served** (the one refused is the sanitizer's, 46.7). End to end
+  on both fields: the 25 fresh and the 31 Group A drafts — none served; the probes — exactly Group B served. Per-rule
+  tests: `artifacts/api-server/src/test/inputAssistanceTravelWriting.test.ts:1445#describe("IN-G141-R4`.
 - The suite's own drafts (`artifacts/api-server/src/test/inputAssistanceTravelWriting.test.ts:353#describe("inventedFacts — travel level`), the per-rule round-2 tests
   (`artifacts/api-server/src/test/inputAssistanceTravelWriting.test.ts:836#describe("fix round 2`), and the vocabulary pin
   (`artifacts/api-server/src/test/inputAssistanceTravelWriting.test.ts:423#it("the allowlist itself states nothing`).
@@ -8376,14 +8388,15 @@ and `inputAssistanceFieldInventory.test.ts` measures it.
   pin that the screens send nothing they did not send before
   (`travel-buddy-standalone/app/memory/__tests__/memoryCaption.aiAssist.component.test.tsx:116#it('flag OFF: neither screen offers it`).
 - Mutants, each applied alone and watched go red: **91/91 server** (the gate, the wiring, the route, and every
-  rule of the round-3 validator, including the verifier's surviving m9 and m19) and **14/14 client**. The inventory
+  rule of the round-3 validator, including the verifier's surviving m9 and m19) and **14/14 client**; lane IN-G141-R4
+  adds **21/21** over the new currency and dash rules (each binding, the space strip, the dash fold, the mixed-token run). The inventory
   guard kills 4/4 on the new rows.
 
 ### 46.3 Row
 
 | ID | from | **to** | evidence |
 | --- | --- | --- | --- |
-| G141 | N | **W** | Built, mounted, and enforced on every proposal: the traveller's words only (`artifacts/api-server/src/lib/inputAssistance/travelWriting.ts:335#export function inventedFacts(`), an existing Memory's controls (`artifacts/api-server/src/lib/inputAssistance/travelWriting.ts:456#export async function travelWritingGate(`), opt-in on all three composers. `W`, not `C`, for two reasons, each sufficient: Q-G141-1 (46.6) is open, and `compass_ai_writing_enabled` is FALSE in production. 46.4. |
+| G141 | N | **W** | Built, mounted, and enforced on every proposal: the traveller's words only (`artifacts/api-server/src/lib/inputAssistance/travelWriting.ts:348#export function inventedFacts(`), an existing Memory's controls (`artifacts/api-server/src/lib/inputAssistance/travelWriting.ts:469#export async function travelWritingGate(`), opt-in on all three composers. `W`, not `C`, for two reasons, each sufficient: Q-G141-1 (46.6) is open, and `compass_ai_writing_enabled` is FALSE in production. 46.4. |
 
 ### 46.4 Which grading rule, and why `W`
 
@@ -8434,7 +8447,8 @@ Of 373 rows: **316 BUILT-AND-CORRECT, 45 BUILT-BUT-WRONG, 8 NOT-BUILT, 4 CANNOT-
 ### 46.7 What the check cannot catch (measured residuals, named)
 
 The check guarantees WORDS, not meaning. Each of these uses only the traveller's words and the closed vocabulary, and
-is served today (the delta battery's 10 served residuals and the delta-2 battery's 12, each pinned by name):
+is served today (the delta battery's 10 served residuals, the delta-2 battery's 12, and the VERIFY-727 confirmation
+pass's 10 Group B probes, each pinned by name):
 - **Re-relating the traveller's own words.** Re-ordering ("dinner with Marcus" → "Marcus loved dinner"); swapping their
   own prepositions ("ramen in Tokyo" → "ramen from Tokyo"); moving a negation to another clause; keeping a "no" but
   moving its scope ("no rain, great hike" → "No great hike, rain"); a present and an absent person swapped ("Dinner with
@@ -8455,13 +8469,39 @@ is served today (the delta battery's 10 served residuals and the delta-2 battery
   traveller writes, if dropped, is not seen.
 - **Other languages.** `CONNECTING_WORDS` and the counted words are English: a French or German negation dropped is not
   seen (Q-G141-5).
+- **Named by the VERIFY-727 confirmation pass (LR-B58-8: named and queued, not a blocking round) — its Group B, still
+  served:**
+  - a unit binds to the next TOKEN, across a comma (`groundNumbers` reads token neighbours, not punctuation): "table 4,
+    people everywhere" → "Table, 4 people everywhere" (a table number becomes a head-count); "left at 4, hours of fun" →
+    "Left at 4 hours of fun" (a time becomes a duration) — the family of "left at 6, back at 11" above;
+  - apostrophe-like characters outside the fold: a prime ("can′t believe…" → "I can believe…") and a typed space ("can
+    't believe…": the tokens are `can` and `t`, no negation). 46.1's "every apostrophe form" is the eight it lists;
+  - more absence words outside the list: "zero regrets about Tokyo" → "Regrets about Tokyo!"; "nope. great dinner at
+    Nobu" → "Great dinner at Nobu!";
+  - an ASCII apostrophe after a digit read as a feet/minutes mark: "12 of us at dinner" → "12' of us at dinner" (`′` is
+    refused as a symbol; `'` is not);
+  - punctuation relating two of their names or numbers: "dinner with Marcus and Jen" → "Marcus-Jen dinner"; "room 12, 3
+    of us" → "Room 12 (3)" — the family of "&" above.
+
+  Not a finding: "ramen #tokyo-food" → "Ramen #tokyo" — a hashtag cannot hold a hyphen, so the traveller's tag IS `#tokyo`.
+- **CLOSED, no longer a residual — the confirmation pass's Group A** (lane IN-G141-R4, 46.11): a currency sign after its
+  number, spaced from it, or with letters before it ("18 for 2€ bowls" from "18€ for 2 bowls"; "$ 2" from "$ 18";
+  "US$2", "A$2" from "US$18", "A$18"), and a dash other than - or –, or a spaced one, between two numbers ("Room 12—3",
+  "12‐3", "12‑3", "12 - 3", "12 – 3" from "room 12, 3 of us"). Each is refused now (46.1).
 
 **Faithful polishes refused** — measured costs, each pinned: of the delta battery's 24, 5 (21%): capitalising a
 lower-case name or city (3 — Q-G141-6), "tonite" → "tonight" (by construction), "w/" → "with" (`with` left the
 vocabulary in round 1); of the delta-2 battery's 20 fresh polishes, **none**; and its 4 cost probes, all refused:
-"nobody" → "no one", "1000" → "1,000", "2 hours" → "2 hrs", "dinner with SUNNY" → "Dinner with Sunny". Also refused by
-design: the plural of a singular the traveller wrote, ALL-CAPS in mid-sentence, and a draft that adds a counted word
-of the vocabulary ("hope", "want", "miss", "forget") the traveller did not write.
+"nobody" → "no one", "1000" → "1,000", "2 hours" → "2 hrs", "dinner with SUNNY" → "Dinner with Sunny"; of the
+confirmation pass's 20 fresh polishes, **1**: a caption that OPENS with a negative number ("-5 at dawn on Fuji, worth it" →
+"-5 at dawn on Fuji — so worth it!") — the sanitizer strips a leading `-` as a list marker
+(`artifacts/api-server/src/lib/inputAssistance/aiWriting.ts:168#// drop a leading list marker`), so the check sees "5"
+(named with Group B). Lane IN-G141-R4 changes none of the four rates (14/14, 19/24, 20/20, 19/20); by construction it
+also refuses a polish that puts a dash between two of their numbers ("room 12, 3 of us" → "Room 12 — 3 of us": the
+same string as a range), drops a dash touching a number ("great!—5 of us" → "Great! 5 of us"), moves a sign to the
+other side ("18€" → "€18"), or splits or drops the letters of "US$18". Also refused by design: the plural of a singular
+the traveller wrote, ALL-CAPS in mid-sentence, and a draft that adds a counted word of the vocabulary ("hope", "want",
+"miss", "forget") the traveller did not write.
 
 The task forbids each residual, and the traveller sees and edits every proposal before it is used (§22).
 
@@ -8517,4 +8557,31 @@ Recommended and taken, at no faithful cost: "want", "hope", "if only" and "would
 "delay", "shut", "sold", "forget", "unable" added; un-/dis- inverses refused. The design residuals the round named are
 in 46.7. Per LR-B58-8 the next verification is a confirmation pass; a further class it finds is named here, not a fourth
 blocking round. The grade stays `W` (46.4); the headline is unchanged (46.5).
+
+### 46.11 Lane IN-G141-R4 (VERIFY-727 confirmation, LR-B58-8): Group A closed — NO ROW MOVES
+
+The confirmation pass on `1efdec98c` confirmed round 3 and, per LR-B58-8, named two groups of served residuals rather
+than open a fourth blocking round. Group A was the round-3 currency and dash mechanism in positions that fix did not
+reach; this lane closes it (branch `claude/fix-g141-residuals-r4`, on #727's head):
+- a currency sign after its number, spaced from it, or with letters before it → the sign is part of its number on
+  either side: `\p{Sc}` after a digit; across a space when no other number stands across the sign (in "2 $ 18" it binds
+  neither, and a draft that binds it is refused); up to three letters before it ("US$", "A$", "HK$", "R$", "NZ$"); after
+  a longer word (`artifacts/api-server/src/lib/inputAssistance/travelWriting.ts:229#const NUMBER_PREFIX`);
+- a dash other than - or –, or a spaced one, between two numbers → "/" and every `\p{Pd}` dash and "−" join two digits,
+  spaced or not ("12—3", "12 – 3", "12‒3", "12〜3", "12 / 3"), and any of them leads a negative number ("‐5", "−5");
+  the compared form drops a number's spaces and folds every dash to one
+  (`artifacts/api-server/src/lib/inputAssistance/travelWriting.ts:231#const WORD_RE`, and `tokens`);
+- the same mechanism inside a mixed token → its number keeps its sign and dashes ("$18k" never gives "18 k", "12-3pm"
+  never "3 pm", "18€pp" never "18 pp", "-5c" never "5 c").
+
+Refused: the confirmation's 10 Group A drafts (all served before) and the lane's 21 (19 served before; U+2012 and
+U+2212, which the lead named, included), on both fields end to end. Two spellings are now one, by construction: a
+number's spaces and its dash ("$ 18" → "$18", "12/3 - 12/9" → "12/3–12/9", "−2" → "-2" are served); neither changes a
+number or which numbers are paired. Every earlier battery holds: round 0 (0/52, 0/20, 14/14), delta (0/20, 0/33, 10/28
+named, 19/24), delta-2 (0/24, 0/35, 12 named, 20/20, the 4 cost probes refused, e2e 0/56), and the confirmation's own
+(0/25, 0/25, 10 of 21 probes = Group B, 19/20). Over the suite's 440 battery drafts at both levels, 58 verdicts move
+from served to refused and none from refused to served. The hard level (every other caption) shares the tokens, so it
+refuses the same drafts; its membership-only number check now also takes a mixed token's signed number as the
+traveller's ("$18" of "US$18", as it took "8" of "8pm"). Group B stays named in 46.7. The grade stays `W` (46.4); the
+headline is unchanged (46.5).
 
