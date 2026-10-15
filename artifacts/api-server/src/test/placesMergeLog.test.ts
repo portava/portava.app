@@ -529,7 +529,7 @@ describe("POST /admin/places/:id/unmerge", () => {
     assert.deepEqual(w.writes(), [], "U2: nothing is written");
   });
 
-  it("U3 the NEWEST merge row decides: one naming another survivor refuses; one naming this survivor admits", async () => {
+  it("U3 the NEWEST log row decides: a merge naming another survivor refuses; one naming this survivor admits", async () => {
     const disagree = makeWorld({
       places: [mergedInto(A, B), active(B), active(C)],
       log: [logRow("merge", B, A, T1), logRow("unmerge", B, A, T2), logRow("merge", C, A, T3)],
