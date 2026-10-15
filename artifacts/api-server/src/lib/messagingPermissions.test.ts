@@ -94,6 +94,7 @@ function makeFakeClient(state: FakeState) {
           }
           if (table === 'trip_members') return tripChain(tripRows);
           if (table === 'circle_memberships') return chain(sharedCircle ? { user_id: B } : null);
+          if (table === 'blocks') return tripChain([]); // a block read is a list read: no blocks, not a non-thenable builder (#729 / V-729 fix 1)
           return chain(null);
         },
       };

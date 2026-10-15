@@ -417,7 +417,7 @@ export type ReturnNowStatusCapability = 'enabled' | 'flag_on_readers_not_widened
  *   `crew_notify_not_enabled` (the flag is OFF — its seed), `not_requested`, `not_in_a_crew`,
  *   `crew_unreadable`, `no_crewmate_to_tell`, `blocks_unreadable`, … (`no_crew_storage`: pre-§48.)
  *
- * ── WHAT THIS CLIENT DOES AND DOES NOT DECIDE (census-layover L144, §73) ────
+ * ── WHAT THIS CLIENT DOES AND DOES NOT DECIDE (census-layover L144, §74) ────
  * Whether a crew SHOULD be told that one of its members aborted is a
  * DISCLOSURE ABOUT THAT TRAVELLER and the owner's call (OQ-3): the server holds
  * it behind a flag seeded OFF. This client only OFFERS the traveller's own

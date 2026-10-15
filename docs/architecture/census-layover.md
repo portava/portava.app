@@ -11055,13 +11055,134 @@ In total, 53 run, 52 killed, 1 equivalent.
 
 The grades and the headline are unchanged: **C=85 W=155 N=56 X=0**.
 
-## §73 — 2026-10-14 (B58 lane LAY-6; owner question OQ-3 open, its fail-closed default built): at the one-tap abort a traveller can choose to tell their crew they are heading back — behind a flag seeded OFF. ONE ROW MOVES
+## §73 — 2026-10-14 (B58 lane LAY-2700; found by lane LAY-2): 2700's verdict CHECK refused `entry_unverified`, so persistence would have stored nothing for every roomy layover. Migration 3792 widens it. NO ROW MOVES
+
+Section number: open PR #717 (branch `claude/b58-lay-2`) adds §72; this section takes §73 so the two do not collide.
+Measured on branch `claude/b58-lay-2700` from origin/main `9af376fa4`. Nothing was written to any shared database; every
+database result below is from the CI local-db suite's own harness shape or a PGlite full-chain replica.
+
+### §73.1 The defect
+
+- 2700 declares `verdict` with
+  `artifacts/api-server/src/migrations/2700_layover_certified_feasibility.sql:135#CHECK (verdict IN ('yes','tight','no','stay_airside')),`.
+- The engine's union has five members:
+  `artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:1204#verdict: "yes" | "tight" | "no" | "entry_unverified" | "stay_airside";`.
+  The fifth is returned for every session with 90 or more usable minutes whose corridor is not confirmed
+  (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:1397#return { verdict: "entry_unverified", reasons, reasonCodes, ...common };`).
+  `entry_requirements` is uncurated, so that is every roomy layover.
+- The table's one writer sends the verdict unmapped
+  (`artifacts/api-server/src/services/airport/layoverLedger.ts:513#verdict: record.verdict,`), spread into
+  `artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:455#.insert(certifiedComputationRowFor(userId, sessionId, record));`.
+- So with 2700 and 2992 applied and `layover_decision_persistence_enabled` ON, `persistDecision` fails with 23514 and
+  returns `write_failed`
+  (`artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:468#reason: "write_failed",`). No decision, time
+  budget or return plan is stored for those sessions. L25, L64's stamp, L190, L209–L211, L213 and L217 all read those
+  rows. L212 reads the replan ledger, not this table, and is unaffected.
+- Why nothing saw it: `fakeLayoverDb` models no CHECK, and no `test/db` suite wrote the table.
+
+It was not mapped anywhere before storage: the writer's verdict type is the engine's union (read by the TypeScript
+checker in the suite below), and the row carries it unchanged for every member.
+
+### §73.2 The fix
+
+`artifacts/api-server/src/migrations/3792_layover_certified_verdict_admits_entry_unverified.sql` (band 3792, written and
+not applied anywhere):
+- drops every single-column CHECK on `verdict`, found in the catalog
+  (`artifacts/api-server/src/migrations/3792_layover_certified_verdict_admits_entry_unverified.sql:114#DO $drop$`);
+- adds the five-member CHECK
+  (`artifacts/api-server/src/migrations/3792_layover_certified_verdict_admits_entry_unverified.sql:133#ADD CONSTRAINT layover_certified_computations_verdict_check`),
+  a strict superset of 2700's, so existing rows validate untouched;
+- refuses, naming 2700, on a database without 2700's table
+  (`artifacts/api-server/src/migrations/3792_layover_certified_verdict_admits_entry_unverified.sql:100#RAISE EXCEPTION 'PRECONDITION FAILED (3792): public.layover_certified_computations does not exist`).
+  It must be pressed WITH 2700 and 2992 (2700, then 2992, then 3792) and before the flag is flipped;
+- `$post$` is recomputed from the catalog: exactly one single-column CHECK on `verdict`, a plain enumerated list,
+  admitting all five.
+
+Rollback: `db/rollback/2026-10-14-3792-layover-certified-verdict-admits-entry-unverified-rollback.sql` restores 2700's
+four. It refuses while a stored row carries a widened verdict
+(`db/rollback/2026-10-14-3792-layover-certified-verdict-admits-entry-unverified-rollback.sql:44#RAISE EXCEPTION 'ROLLBACK REFUSED (3792): % stored computation(s)`)
+and while the persistence flag is ON
+(`db/rollback/2026-10-14-3792-layover-certified-verdict-admits-entry-unverified-rollback.sql:38#RAISE EXCEPTION 'ROLLBACK REFUSED (3792): layover_decision_persistence_enabled is ON.`).
+
+### §73.3 Why it cannot recur
+
+`artifacts/api-server/src/test/layoverStoredVocabulary.test.ts` (22 cases) derives both sides mechanically:
+- the writer's vocabulary from the TypeScript checker
+  (`artifacts/api-server/src/test/helpers/layoverStoredVocabulary.ts:80#export function writerVocabularies(): Map<string, string[]> {`);
+- the database's from the NEWEST migration that states the CHECK
+  (`artifacts/api-server/src/test/helpers/layoverStoredVocabulary.ts:224#export function newestCheckVocabulary(table: string, column: string, dir = MIGRATIONS_DIR): CheckVocabulary {`).
+
+The pin is
+`artifacts/api-server/src/test/layoverStoredVocabulary.test.ts:143#it("the NEWEST migration stating the CHECK admits every verdict the writer can send", () => {`.
+A sixth verdict in the engine is red there until a migration admits it (mutant T1). Red without 3792: 3 of 22.
+
+`artifacts/api-server/src/test/db/layoverCertifiedVerdict.db.test.ts` (11 cases, CI local-db job) runs the store's own
+statements on the replayed chain:
+- `artifacts/api-server/src/test/db/layoverCertifiedVerdict.db.test.ts:227#it("a roomy layover with an unconfirmed corridor is STORED, with its time budget and return plan (refused by 2700's CHECK alone)", async () => {`;
+- every verdict in the union is stored, with the fixture set checked against the checker's union;
+- 3792's `$post$` passes alone and refuses five loosenings; its body re-applies as a no-op;
+- the rollback's two refusals, its exact inverse, and its own postcondition, each in a rolled-back transaction.
+
+On a PGlite full-chain replica: 11 of 11 with 3792, and 6 of 11 red on main's chain (every case that needs 3792
+applied). The rehearsal (apply, `$post$` alone, re-apply, controls, rollback, re-apply, refusal without 2700) passed
+33 of 33.
+
+### §73.4 The sweep of every other CHECK on the 2700 and 2992 tables
+
+Each writer was found by scanning production code. The set is pinned at six write sites, so a new writer has to join
+the sweep. None of these needed a fix:
+
+| table | CHECK | what the writer sends | result |
+| --- | --- | --- | --- |
+| `layover_certified_computations` | `verdict` IN (4) | the engine's 5 | **fixed by 3792** |
+| `layover_certified_computations` | `confidence`, `buffer_percentile` | `EstimateConfidence`, `EstimatePercentile` (checker) | ok |
+| `layover_certified_computations` | `total_buffer_min`, `usable_minutes` >= 0; 3623 `snapshot_version` >= 1 | non-negative integers on a 336-record grid; the version is trigger-assigned | ok |
+| `layover_time_budgets` | `buffer_percentile`; ten terms, total, usable, scheduled >= 0 | pass-through percentile; integers >= 0 or NULL on the grid | ok |
+| `layover_return_plans` | `risk_band` IN (4) or NULL; `confidence`; recommended <= hard; activity <= recommended | `riskBandFor` (NULL only for `stay_airside`); recommended equals hard; activity NULL | ok |
+| `layover_constraints` | `baggage_mode`, `entry_permission_state`; `version` >= 1 | `BaggageMode`, `EntryPermissionState`; latest + 1 | ok; the other five CHECKed columns are not sent and take listed defaults |
+| `layover_checkpoints` | `checkpoint_type`, `source`, `confidence`, `dedup_key` length | the two traveller types, `TRAVELLER`, `MEDIUM`, at most 136 characters | ok |
+| `layover_outcomes` | `boarding_outcome`, `anonymization_state`; return <= completion | `BOARDED` / `UNKNOWN`; not sent (default `IDENTIFIED`); both from one clock | ok (see §73.6) |
+
+### §73.5 Mutants
+
+24 run, 24 killed (runner `scratchpad/lay2700/mutate.py`):
+- 10 on the TypeScript side: a sixth verdict, a mapped verdict, out-of-vocabulary checkpoint, outcome, percentile and
+  constraint values, a negative budget term, a second writer, and a reader that takes the oldest migration;
+- 9 on 3792: the old four re-added, no drop, two CHECKs side by side, the refusal and its wording, and four
+  `$post$` weakenings;
+- 5 on the rollback: each refusal, a non-inverse restore, a no-op postcondition, and no drop.
+
+### §73.6 Recorded, not fixed
+
+- `layover_outcomes_return_not_after_completion` holds because the re-entry checkpoint and the close are both stamped
+  by the server's clock, the later one second. Two API instances with skewed clocks could invert them. The outcome
+  write would then fail and be logged as `write_failed`, and the close would still stand.
+- `artifacts/api-server/src/scripts/checkProductionDrift.ts`'s note on `layover_constraints` says 2992 is applied to
+  "NO database". `docs/migrations.md` records 2992 applied to `portava-ci` on 2026-09-26. The note is stale on
+  `portava-ci`; it is right about production.
+
+### §73.7 Rows
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L25 | N | N | The storage is 2700 + 2992 + 3623 (+ 3792), none applied in production; persistence is OFF (H24, lead ruling WAVE-1). 3792 removes a defect that would have emptied it after the press. |
+| L64 | N | N | Same storage, and 3623's flag is FALSE (H24). |
+| L190 | N | N | Reads the same unapplied storage (lead ruling GRADING). |
+| L209 | N | N | Nothing certified is stored in production to count (H24). |
+| L210 | N | N | Computed from `layover_certified_computations`, unapplied in production (H24, §59.2). |
+| L211 | N | N | Same as L210. |
+| L213 | N | N | Same as L210. |
+| L217 | N | N | The stored-row replay reads 2700/2992, unapplied in production, and only while persistence is ON (H24). |
+
+Headline unchanged by this section: **C=85 W=155 N=56 X=0** over 296 on main after §72 (#717, L216 N → W) (`check:census-integrity`).
+
+## §74 — 2026-10-14 (B58 lane LAY-6; owner question OQ-3 open, its fail-closed default built): at the one-tap abort a traveller can choose to tell their crew they are heading back — behind a flag seeded OFF. ONE ROW MOVES
 
 *Measured on branch `claude/b58-lay-6` from origin/main `9af376fa4`, then on `aeae27499` after merging #716 and #717
-(§72, L216/L217). §73 was the next free number on main at that merge, so this section takes it; lane LAY-2700's section
+(§72, L216/L217). §74 was the next free number on main at that merge, so this section takes it; lane LAY-2700's section
 renumbers after it. No database is touched: migration 3786 is a flag seed applied nowhere.*
 
-### §73.1 What was true on `9af376fa4`
+### §74.1 What was true on `9af376fa4`
 
 - The posture published `notifyCrew` (spec §15 "crew/buddy is notified if policy + user settings allow"), and the
   abort sent nothing: `abortToAirport` answered `crewNotified: []` with a hard-coded `crew_notify_not_enabled` on every
@@ -11072,7 +11193,7 @@ renumbers after it. No database is touched: migration 3786 is a flag seed applie
   a DISCLOSURE about that traveller, which the owner has not decided. The crew tables themselves are applied in
   production (2984/2985, 2026-09-16; L28/L29 C).
 
-### §73.2 The decision NOT taken, and the default that is built
+### §74.2 The decision NOT taken, and the default that is built
 
 OQ-3 (PLAN-layover): *is a crew told that a member turned back, and is a standing setting wanted besides the
 per-abort choice?* Nothing here answers it. The plan's fail-closed default is built and switched OFF:
@@ -11117,7 +11238,7 @@ per-abort choice?* Nothing here answers it. The plan's fail-closed default is bu
    PARTIAL abort (500) still tells the crew the traveller asked to tell (they are still heading back) and its body
    says so.
 
-### §73.3 What changed
+### §74.3 What changed
 
 - **Server, new:** `artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts` (the request, the capability
   and the notifier, header states the rules above).
@@ -11149,13 +11270,13 @@ per-abort choice?* Nothing here answers it. The plan's fail-closed default is bu
   (refuses while the flag is TRUE); `scripts/src/beta-flag-policy.json` gains the flag OFF (sync tool);
   `telegraph-phase0-inventory.md` regenerated (migration count). No table, so no deletion fate and no REVOKE.
 
-Files §73.3 names that L144 does not rest on:
+Files §74.3 names that L144 does not rest on:
 
 - NOT-GRADED: db/rollback/2026-10-14-3786-layover-crew-abort-notify-flag-rollback.sql — 3786's rollback, applied nowhere; it removes the flag row only while FALSE. No verdict reads it.
 - NOT-GRADED: scripts/src/beta-flag-policy.json — the beta environment's flag policy, which lists the new flag OFF as the sync tool requires. It configures beta, and no layover row rests on it.
-- NOT-GRADED: scripts/src/beta-bootstrap.test.ts — the beta chain's flag-count pin, moved 196 → 197 for 3786's seed (§73.10). It checks the beta bootstrap's model of the chain, and no layover row rests on it.
+- NOT-GRADED: scripts/src/beta-bootstrap.test.ts — the beta chain's flag-count pin, moved 196 → 197 for 3786's seed (§74.10). It checks the beta bootstrap's model of the chain, and no layover row rests on it.
 
-### §73.4 The essential-safety channel of #701/#709 is untouched (§66, §69)
+### §74.4 The essential-safety channel of #701/#709 is untouched (§66, §69)
 
 - `NotificationRouter.ts`, `NotificationDeduplicationService.ts`, `essentialAttemptBudget.ts`,
   `LayoverOpportunityNotifier.ts` and `LayoverReturnEscalation.ts` are not edited.
@@ -11175,7 +11296,7 @@ Files §73.3 names that L144 does not rest on:
     settings, switch off and on) sends no Expo message in any of the 16 routings
     (`artifacts/api-server/src/services/layover/__tests__/layoverCrewAbortNotice.test.ts:543#routing: in-app only`).
 
-### §73.5 Tests and mutants
+### §74.5 Tests and mutants
 
 - `artifacts/api-server/src/services/layover/__tests__/layoverCrewAbortNotice.test.ts`: 35/35.
   - With main's `LayoverSafeReturnService.ts`, `routes/airport.ts` and `NotificationTemplateService.ts` in place,
@@ -11208,7 +11329,7 @@ Files §73.3 names that L144 does not rest on:
   the sharing read ran only over unblocked crewmates, so the block check ran twice. The sharing read now covers
   every crewmate, each gate stands alone, and S5 is killed.
 
-### §73.6 Reachability, and why the row stops at W
+### §74.6 Reachability, and why the row stops at W
 
 - The path is mounted end to end: return-now in production's router, the overview field, the card's control.
 - But the flag is seeded FALSE and 3786 is applied nowhere, so the capability reads OFF and nobody can reach the
@@ -11216,7 +11337,7 @@ Files §73.3 names that L144 does not rest on:
 - The row's second noun stays unbuilt: no layover↔booking link exists, so no buddy is told. Even with the flag on,
   "crew/buddy" is half built, and the row could not pass W.
 
-### §73.7 Recorded limits (stated, not graded)
+### §74.7 Recorded limits (stated, not graded)
 
 - **In-app only, by design of the default.** A crewmate who does not open the app will not learn of it until they
   do. Whether a push (a lock-screen disclosure) is wanted is part of OQ-3.
@@ -11225,15 +11346,15 @@ Files §73.3 names that L144 does not rest on:
 - **The capability is coarse.** It says "a live crew with someone else in it". It does not say a crewmate will
   clear the gates. The answer at the abort (`no_crewmate_to_tell`) is what decides, and it is told to the traveller.
 
-### §73.8 Row moves
+### §74.8 Row moves
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| L144 | N | W | Built and mounted end to end behind `layover_crew_abort_notify_enabled` (3786, seeded FALSE, applied nowhere), as OQ-3's fail-closed default: per-abort explicit opt-in, crew only, the crew card's gates both ways, minimal in-app text, a count never a person, never failing the abort (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:281#export async function tellCrewOfAbort(`). Pinned by 58 server cases and 13 app cases; 45 mutants killed across the build and fix round 1 (§73.10). W, not C: the flag is OFF (GRADING), the disclosure itself is the owner's open question, and the buddy half has no layover↔booking link to reach. |
+| L144 | N | W | Built and mounted end to end behind `layover_crew_abort_notify_enabled` (3786, seeded FALSE, applied nowhere), as OQ-3's fail-closed default: per-abort explicit opt-in, crew only, the crew card's gates both ways, minimal in-app text, a count never a person, never failing the abort (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:281#export async function tellCrewOfAbort(`). Pinned by 58 server cases and 13 app cases; 45 mutants killed across the build and fix round 1 (§74.10). W, not C: the flag is OFF (GRADING), the disclosure itself is the owner's open question, and the buddy half has no layover↔booking link to reach. |
 
 L142, L28 and L29 do not move: L142 still has no route, and the crew tables are unchanged.
 
-### §73.9 Headline
+### §74.9 Headline
 
 | bucket | was (§72.7) | now |
 | --- | --- | --- |
@@ -11246,7 +11367,7 @@ L142, L28 and L29 do not move: L142 still has no route, and the crew tables are 
 **C=85 W=156 N=55 X=0** over 296 (`check:census-integrity`), after merging `main` `aeae27499` (#717's §72 moved L216
 first).
 
-### §73.10 Fix round 1 (verdict V-723 on `c127f47cf`: ACCEPT after merge-time fixes)
+### §74.10 Fix round 1 (verdict V-723 on `c127f47cf`: ACCEPT after merge-time fixes)
 
 - **F1 (privacy, required): a traveller in trip Ghost Mode was announced.**
   - On `c127f47cf` the traveller's own gate was `publishableUserIds`, which reads only `location_preferences`. Ghost
@@ -11286,9 +11407,9 @@ first).
   - F4: a crewmate whose own session ended but who never left the crew is still told. This is the crew card's own
     membership rule (`left_at IS NULL`).
   - F5: in a crew of two, "A crew member" still identifies the traveller. The owner should decide OQ-3 knowing it.
-- **Merge.** `main` `aeae27499` (#716, #717) is merged. Main's §72 (#717) took that number, and §73 was the next free
-  number on main, so this section is §73 (was §74). The headline is restated after §72: **C=85 W=156 N=55 X=0**
-  (§73.9). `scripts/src/beta-bootstrap.test.ts`'s chain-seeded flag pin goes 196 → 197 (3786). All five `scripts` beta
+- **Merge.** `main` `aeae27499` (#716, #717) is merged. Main's §72 (#717) took that number, and §74 was the next free
+  number on main, so this section is §74 (was §74). The headline is restated after §72: **C=85 W=156 N=55 X=0**
+  (§74.9). `scripts/src/beta-bootstrap.test.ts`'s chain-seeded flag pin goes 196 → 197 (3786). All five `scripts` beta
   suites pass: bootstrap 82, deployment-guard 121, configure 77, smoke 30, owner 63.
 - **Tests.**
   - `layoverCrewAbortNotice` 35 → 46. Of the 10 new cases, 5 are red on `c127f47cf` (F1 ×2, F2, F3 ×2), 4 are

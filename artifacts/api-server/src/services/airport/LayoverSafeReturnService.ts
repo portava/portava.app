@@ -57,7 +57,7 @@ import {
   type FeasibilityAirport,
   type FeasibilitySession,
   type LayoverFeasibilityRecord,
-} from "./LayoverFeasibility.js"; import type { EntryEligibility } from "./layoverEntryGate.js"; import { tellCrewOfAbortWithin, CREW_ABORT_NOTICE_OFF, type CrewAbortNoticeReason, type CrewAbortNoticeRequest } from "../layover/LayoverCrewAbortNotice.js"; // census-layover L144 (§73); same line, so no cited line below moves
+} from "./LayoverFeasibility.js"; import type { EntryEligibility } from "./layoverEntryGate.js"; import { tellCrewOfAbortWithin, CREW_ABORT_NOTICE_OFF, type CrewAbortNoticeReason, type CrewAbortNoticeRequest } from "../layover/LayoverCrewAbortNotice.js"; // census-layover L144 (§74); same line, so no cited line below moves
 
 const logger = rootLogger.child({ service: "LayoverSafeReturnService" });
 
@@ -225,7 +225,7 @@ export interface AbortResult {
   cancelledStopIds: string[];
   /** Every effect that ran, successful or not. Failures are NOT swallowed. */
   effects: AbortEffect[];
-  /** census-layover L144 (§73): how many crewmates hold the "heading back" notice — a COUNT, never a person (crewmates' ids are not published; census §48 `bindingMemberHidden`). 0 with a reason unless the flag is on AND the traveller asked on THIS abort. */
+  /** census-layover L144 (§74): how many crewmates hold the "heading back" notice — a COUNT, never a person (crewmates' ids are not published; census §48 `bindingMemberHidden`). 0 with a reason unless the flag is on AND the traveller asked on THIS abort. */
   crewNotifiedCount: number;
   crewNotifyUnavailableReason: CrewAbortNoticeReason | null;
   statusApplied: boolean;
@@ -380,7 +380,7 @@ export async function abortToAirport(
     cancelledStopIds: cancelled.ids,
     effects,
     crewNotifiedCount: crew.notifiedCount,
-    crewNotifyUnavailableReason: crew.reason, // §73 — was the hard-coded "crew_notify_not_enabled" (§48), which is now the flag-OFF answer of tellCrewOfAbort
+    crewNotifyUnavailableReason: crew.reason, // §74 — was the hard-coded "crew_notify_not_enabled" (§48), which is now the flag-OFF answer of tellCrewOfAbort
     statusApplied,
   };
 }

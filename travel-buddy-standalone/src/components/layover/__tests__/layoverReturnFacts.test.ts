@@ -392,7 +392,7 @@ test('L144: "not enabled" tells the traveller to let their crew know themselves'
   assert.doesNotMatch(line, /nothing set up/i);
 });
 
-// ── §15.1 L144 (census-layover §73) — the server's COUNT and its reasons ────
+// ── §15.1 L144 (census-layover §74) — the server's COUNT and its reasons ────
 //
 // The server now publishes `crewNotifiedCount` (never ids) and, when the flag is
 // on, says why a crew was not told in words a traveller can act on. None of the

@@ -32,7 +32,7 @@ are files, tables, routes, event types and literals, each re-derived on every ru
 
 ### 2. Migrations that touch a messaging table
 
-35 of 778 migration files reference at least one messaging table.
+36 of 782 migration files reference at least one messaging table.
 
 MEASURED ON THE SQL WITH COMMENTS STRIPPED. A table named only in a `--` or
 `/* */` comment is not counted; before this, 13 of the 37 files listed here
@@ -83,6 +83,7 @@ touch no messaging table.
 - `src/migrations/3760_telegraph_thread_notification_policy.sql`
 - `src/migrations/3763_trip_membership_thread_atomic.sql`
 - `src/migrations/3770_trip_hard_delete_thread_guard.sql`
+- `src/migrations/3825_telegraph_message_link_previews.sql`
 
 ### 3. Server routes that read or write a messaging table
 
@@ -106,6 +107,7 @@ touch no messaging table.
 | `src/routes/telegraphGroups.ts` | 7 | message_thread_members, message_threads |
 | `src/routes/telegraphKinds.ts` | 4 | message_thread_members, messages |
 | `src/routes/telegraphLifecycle.ts` | 3 | message_thread_members, messages |
+| `src/routes/telegraphLinkPreview.ts` | 2 | message_thread_members, message_threads, messages |
 | `src/routes/telegraphMemory.ts` | 2 | message_thread_members, messages, saved_messages |
 | `src/routes/telegraphShare.ts` | 2 | message_thread_members, message_threads, messages |
 | `src/routes/telegraphSharedContext.ts` | 4 | message_thread_members, message_threads |
