@@ -650,10 +650,10 @@ export async function generateRecommendations(
   // certified rating and, within a rating, by travel time; `sort` is stable, so
   // every ordering decision made above survives as the tiebreak beneath it.
   //
-  // `certified.deadline` is passed deliberately — see the note on
-  // `rankActivities`. Omitting it derives a SECOND deadline for this request,
-  // at a different instant and without this request's `LiveConditions`, which
-  // is the duplicate-buffer defect `9c26efba` closed.
+  // `certified` — the whole RECORD, deadline AND envelope — is passed deliberately; see the note on
+  // `rankActivities`. Its envelope is the ONE usable time every card is rated against (census-layover
+  // §75: the deadline minus now overstated it before landing). Omitting it certifies NOTHING, and a
+  // second deadline derivation here would be the duplicate-buffer defect `9c26efba` closed.
   const frictionAdjusted = assessable.map((candidate) => {
     // §11's friction, as minutes: the live queue is added to the activity time
     // the safety engine is given, so the CARD's own rating and hard return time
@@ -663,7 +663,7 @@ export async function generateRecommendations(
       ? { ...candidate, activityTimeMin: verdict.adjustedActivityMin }
       : candidate;
   });
-  const ranked = rankActivities(airport, session, frictionAdjusted, nowMs, certified.deadline); const stamp = await recommendationSnapshotStamp(db, session.userId, session.id, certified); // census L64: store THIS record and cite it on every row below; OFF (the seed) / any refusal → `column` is `{}` and rows are byte-identical
+  const ranked = rankActivities(airport, session, frictionAdjusted, nowMs, certified); const stamp = await recommendationSnapshotStamp(db, session.userId, session.id, certified); // census L64: store THIS record and cite it on every row below; OFF (the seed) / any refusal → `column` is `{}` and rows are byte-identical
 
   // Assess each through safety engine
   const rows: any[] = [];
