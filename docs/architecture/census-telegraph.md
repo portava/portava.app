@@ -14945,6 +14945,7 @@ catch, a stale entry, a lazy verdict, a reader without its try, a reader catch a
 - NOT-GRADED: artifacts/api-server/src/test/exclusionSetContract.test.ts — this section's EVIDENCE for the readers of 94.2; no verdict of this census rests on it.
 - NOT-GRADED: artifacts/api-server/src/routes/og.ts — named in 94.4 as one of the swept block readers (its catch denies), not a Telegraph surface.
 - NOT-GRADED: artifacts/api-server/src/lib/keysetRead.ts — named in 94.6 as the remedy for the whole-list cut, not a graded surface.
+- NOT-GRADED: artifacts/api-server/src/lib/messagingPermissions.test.ts — named in 94.7 as the suite the local reach-set missed (its fake was corrected by V-729 fix 1), not a graded surface.
 
 - `exclusionSetContract.test.ts` 30/30. The 11 new cases are red on main: thrown and rejected reads ×3 readers, three
   non-list answers, a row without its id, the cap, and `isBlockedBetween` throwing or rejecting.
