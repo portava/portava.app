@@ -465,7 +465,9 @@ describe('the summary read', () => {
     on('GET', NARR, { status: 404, body: { error: 'not_found', message: 'Memory not found' } });
     await mount();
     await waitFor(() => expect(calls).toHaveLength(1));
+    await new Promise((r) => setTimeout(r, 20));
     expect(screen.queryByTestId('memory-narrative-card')).toBeNull();
+    expect(screen.queryByTestId('memory-narrative-error')).toBeNull(); // not an error either: the server's one 404
   });
 });
 
