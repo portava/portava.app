@@ -298,3 +298,21 @@ test('the offline certification instants reach the map for the stale badge', asy
   expect(props.offline.certifiedAt).toBe(CERTIFIED_AT);
   expect(props.offline.staleAfter).toBe(STALE_AFTER);
 });
+
+// ── census-layover L118 — the time-budget chips the server offers reach the map ──
+// The card's own suite (LayoverMapCard.budgetChips.component.test.tsx) proves a
+// chip press is a server simulation; these prove the screen hands the card the
+// server's offer and the session to simulate against.
+
+test('L118: the overview\'s mapBudgetChips and THIS session reach the map', async () => {
+  const chips = { available: true, withheld: null, certifiedUsableMinutes: 345, budgets: [90, 120, 180, 240] };
+  (global as any).__overview = overview({ mapBudgetChips: chips });
+  const props = await mountAndCapture();
+  expect(props.budgetChips).toEqual(chips);
+  expect(props.sessionId).toBe('sess-1');
+});
+
+test('L118: an overview with no mapBudgetChips (the chip flag OFF) hands the map none', async () => {
+  const props = await mountAndCapture();
+  expect(props.budgetChips).toBeNull();
+});

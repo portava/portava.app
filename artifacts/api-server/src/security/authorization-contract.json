@@ -260,6 +260,47 @@
         { "name": "memories_owner_all", "cmd": "ALL", "permissive": true, "roles": ["public"] },
         { "name": "memories_public_read", "cmd": "SELECT", "permissive": true, "roles": ["public"] }
       ]
+    },
+    "memory_saves": {
+      "note": "3814 (lane MEM-ACL-2, follow-up to 3813 / PR #726; census-highlights-memories §BL): NO client grant at all. memory_saves_own (FOR ALL, USING user_id = auth.uid()) let a signed-in user save ANY Memory id directly, past the block check and canReadMemory that POST /memories/:id/save applies, and the foreign key answered whether the id exists. Every reader and writer is the API on the service client (POST|DELETE /memories/:id/like and /save, the tag and photo routes, the lists that count them); no client tree names the table. The policies stay, unreachable with no grant; the rollback leans on them. Until 3814 is applied to a database, that database is WIDER than this entry and check:authorization-contract reports it there. Offline, src/test/memorySocialClientBoundary.test.ts replays the chain and fails any migration that hands a client role the table back.",
+      "tableGrants": {},
+      "insertCols": {},
+      "updateCols": {},
+      "policies": [
+        { "name": "memory_saves_own", "cmd": "ALL", "permissive": true, "roles": ["public"] }
+      ]
+    },
+    "memory_likes": {
+      "note": "3814 (lane MEM-ACL-2; census-highlights-memories §BL): NO client grant at all. memory_likes_own let a signed-in user like ANY Memory id directly (a private or moderator-removed one included) past the checks POST /memories/:id/like applies, the foreign key answered whether the id exists, and memory_likes_read let any signed-in user read who liked every public Memory past the likers route's block filter. Every reader and writer is the API on the service client (POST|DELETE /memories/:id/like and /save, the tag and photo routes, the lists that count them); no client tree names the table. The policies stay, unreachable with no grant; the rollback leans on them. Until 3814 is applied to a database, that database is WIDER than this entry and check:authorization-contract reports it there. Offline, src/test/memorySocialClientBoundary.test.ts replays the chain and fails any migration that hands a client role the table back.",
+      "tableGrants": {},
+      "insertCols": {},
+      "updateCols": {},
+      "policies": [
+        { "name": "memory_likes_own", "cmd": "ALL", "permissive": true, "roles": ["public"] },
+        { "name": "memory_likes_read", "cmd": "SELECT", "permissive": true, "roles": ["public"] }
+      ]
+    },
+    "memory_tags": {
+      "note": "3814 (lane MEM-ACL-2; census-highlights-memories §BL): NO client grant at all. memory_tags_tagged_update let the tagged person write every column of their tag row, memory_id included, so they could re-point it at any Memory (GET /memories/:id/tags skips canReadMemory for a tagged caller) and probe ids through the foreign key; memory_tags_owner_insert / _owner_delete let an owner tag and untag past the §17 command. Every reader and writer is the API on the service client (POST|DELETE /memories/:id/like and /save, the tag and photo routes, the lists that count them); no client tree names the table. The policies stay, unreachable with no grant; the rollback leans on them. Until 3814 is applied to a database, that database is WIDER than this entry and check:authorization-contract reports it there. Offline, src/test/memorySocialClientBoundary.test.ts replays the chain and fails any migration that hands a client role the table back.",
+      "tableGrants": {},
+      "insertCols": {},
+      "updateCols": {},
+      "policies": [
+        { "name": "memory_tags_owner_delete", "cmd": "DELETE", "permissive": true, "roles": ["public"] },
+        { "name": "memory_tags_owner_insert", "cmd": "INSERT", "permissive": true, "roles": ["public"] },
+        { "name": "memory_tags_owner_read", "cmd": "SELECT", "permissive": true, "roles": ["public"] },
+        { "name": "memory_tags_tagged_update", "cmd": "UPDATE", "permissive": true, "roles": ["public"] }
+      ]
+    },
+    "memory_items": {
+      "note": "3814 (lane MEM-ACL-2; census-highlights-memories §BL): NO client grant at all. memory_items_via_memory (FOR ALL) let an owner insert or rewrite a photo directly, past POST /memories/:id/items's refusal of another user's storage object (H181) and the §17 command; memory_items_public_read let any client role read a public Memory's photos past the API's rules (3672 keeps only_me photos out of it). Every reader and writer is the API on the service client (POST|DELETE /memories/:id/like and /save, the tag and photo routes, the lists that count them); no client tree names the table. The policies stay, unreachable with no grant; the rollback leans on them. Until 3814 is applied to a database, that database is WIDER than this entry and check:authorization-contract reports it there. Offline, src/test/memorySocialClientBoundary.test.ts replays the chain and fails any migration that hands a client role the table back.",
+      "tableGrants": {},
+      "insertCols": {},
+      "updateCols": {},
+      "policies": [
+        { "name": "memory_items_public_read", "cmd": "SELECT", "permissive": true, "roles": ["public"] },
+        { "name": "memory_items_via_memory", "cmd": "ALL", "permissive": true, "roles": ["public"] }
+      ]
     }
   }
 }

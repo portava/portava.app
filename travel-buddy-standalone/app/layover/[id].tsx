@@ -944,7 +944,7 @@ export default function LayoverDashboardScreen() {
               envelope={overview.safeEnvelope ?? null} envelopeGate={overview.safeEnvelopeGate ?? null}
               candidateFeasibility={candidateFeasibility}
               offline={overview.offlineBundle ?? null}
-              nowMs={nowMs}
+              nowMs={nowMs} budgetChips={overview.mapBudgetChips ?? null} sessionId={id ?? null} /* census-layover L118: the server-offered time-budget chips; each press is a server simulation */
             />
             {/* The overview's `othersInCity` is a SECOND count, from the
                 overview route's own `disclosePresence` call. It stays as the

@@ -203,7 +203,7 @@ import {
   recomputeForDisruption,
   type DisruptionEvent,
   type DisruptionState,
-} from "../services/airport/LayoverSafeReturnService.js";
+} from "../services/airport/LayoverSafeReturnService.js"; import { crewAbortNoticeRequest, crewAbortNoticeCapability } from "../services/layover/LayoverCrewAbortNotice.js"; // census-layover L144 (§74); same line, so no cited line below moves
 // §15.2's state machine had no memory. `handleEvent` reads the prior state from
 // `ctx.disruptionStates` (LayoverEventReplanner.ts:884) and nothing has ever
 // populated it, so every request restarted at CONNECTION and the first window
@@ -1395,7 +1395,7 @@ router.post("/airport/sessions/:id/return-now", async (req, res) => {
   const statusEnabled = flagOn && LAYOVER_RETURNING_READERS_WIDENED;
 
   const result = await abortToAirport(sc, {
-    session, airport, record, userId: user.id, nowMs, statusEnabled,
+    session, airport, record, userId: user.id, nowMs, statusEnabled, crewNotice: await crewAbortNoticeRequest(sc, req.body), // census-layover L144: only a literal `tellCrew: true` is consent, and the flag (3786, seeded FALSE) decides whether it is honoured
   });
 
   if (!result.ok) {
@@ -1413,7 +1413,7 @@ router.post("/airport/sessions/:id/return-now", async (req, res) => {
       message: "Your plan could not be fully cleared. Head to the airport now.",
       returnContract: result.returnContract,
       posture: result.posture,
-      effects: result.effects,
+      effects: result.effects, crewNotifiedCount: result.crewNotifiedCount, crewNotifyUnavailableReason: result.crewNotifyUnavailableReason, // census-layover L144: a partial abort still says whether the crew was told
     });
     return;
   }
@@ -1937,7 +1937,7 @@ async function ownedSessionOr(
 }
 
 /** `loadStops` or 503. */
-async function stopsOr503(sc: any, res: any, sessionId: string): Promise<any[] | null> {
+export async function stopsOr503(sc: any, res: any, sessionId: string): Promise<any[] | null> { // exported for routes/layoverSimulate.ts (census-layover L118): the SAME stops read, 503 and all
   const r = await loadStops(sc, sessionId);
   if (!r.ok) {
     sendError(res, "degraded_unavailable", "Your layover plan could not be loaded. Please try again.");
@@ -2282,7 +2282,7 @@ router.get("/airport/sessions/:id/overview", async (req, res) => {
     // The dashboard's copy of the §2.1/§22 disclosure — see GET /:id/safety.
     airportIntelligence: airportIntelligence(record),
     stops: await mapBandedStops(sc, airport, record, stops), // census L67: bandPlanStops, plus the §13 map band under layover_map_bands_enabled
-    planFit,
+    planFit, ...(await mapBudgetChipsField(sc, record, stops)), // census-layover L118: `mapBudgetChips` — the time-budget chips the map may OFFER (only under layover_map_budget_chips_enabled, 3785 seeded FALSE; OFF: no key)
     share: {
       enabled: session.shareCityStatus, intentsEnabled: await isFlagEnabled(sc, "layover_presence_intents_enabled"), // census L129: whether the L1 intents surface exists here; read as a literal for check:flag-polarity
       othersInCity: presence.count, othersInCityWithheld: presence.countWithheld, // D-PRESENCE-K-4: >= k from the hourly snapshot, or null and why
@@ -2291,7 +2291,7 @@ router.get("/airport/sessions/:id/overview", async (req, res) => {
     // posture the client should take now, and a bundle that carries its own
     // certifiedAt/staleAfter/inputHash so an offline client can say how old its
     // answer is instead of presenting a stale deadline as current.
-    safeReturn: safeReturnPosture(record),
+    safeReturn: safeReturnPosture(record), crewAbortNotice: await crewAbortNoticeCapability(sc, user.id, session.id, nowMs, session.tripId ?? null), // census-layover L144: whether "tell my crew" may be OFFERED at the abort (flag + a live crew joined with this session)
     // §8 — the same outer edge, from the same certified window. The dashboard's
     // copy: a traveller who sees fewer landside cards than a city has places
     // can read the bound that removed them.
@@ -5068,7 +5068,7 @@ async function overviewLifecycle(
 
 import { withMapBands } from "../services/airport/layoverMapBands.js";
 
-async function mapBandedStops(sc: any, airport: AirportProfile, record: LayoverFeasibilityRecord, stops: any[]): Promise<any[]> {
+export async function mapBandedStops(sc: any, airport: AirportProfile, record: LayoverFeasibilityRecord, stops: any[]): Promise<any[]> { // exported: POST /simulate (routes/layoverSimulate.ts) runs THIS pipeline over a record narrowed to a time budget (census-layover L118)
   const banded = await bandPlanStops(airport, record, stops);
   const enabled = await isFlagEnabled(sc, "layover_map_bands_enabled");
   if (!enabled) return banded;
@@ -5119,3 +5119,6 @@ router.get("/airport/sessions/:id/decisions/diff", async (req, res) => {
   if (out.reason === "not_found") { sendError(res, "not_found", "Snapshot not found"); return; }
   sendError(res, "degraded_unavailable", "Your layover's decision history could not be read. Please try again.");
 });
+
+// census-layover L118 (time-budget chips) — imported at the TAIL so no cited line above moves; ESM hoists it.
+import { mapBudgetChipsField } from "../services/airport/layoverMapBudget.js";
