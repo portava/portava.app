@@ -107,12 +107,12 @@ router.post("/admin/places/:id/merge", asyncHandler(async (req, res) => {
   // MAIN wrote the place here and then the place_merge_log row, never reading
   // the log insert's result: a failed log write answered 200 over a merge with
   // no record. mergePlace (lib/places/placeMerge.ts) checks every precondition
-  // read (a failed read is 503, not "not found"; an already-merged place is
-  // 409, not re-pointed), WRITES THE LOG ROW FIRST, moves the place only from
-  // the state it read (a concurrent change is 409, not an overwrite), and
-  // withdraws the log row when the move provably did not happen. Every failure
-  // is an error answer.
-  //
+  // read (a failed read is 503, not "not found"; an already-merged place, or one
+  // other places are merged into, is 409), WRITES THE LOG ROW FIRST, moves the
+  // place only from the state it read (a concurrent change is 409, not an
+  // overwrite), and withdraws the row only in the two cases its header names.
+  // An outcome it cannot establish keeps the row. Every failure is an error
+  // answer.
   // place_merge_log is written by this call (3504's ledger cites this line):
   const out = await mergePlace(admin.sc, { placeId: id, intoId, adminId: admin.userId }, req.log);
   if (!out.ok) { sendPlaceMergeRefusal(res, out); return; }
@@ -133,9 +133,9 @@ router.post("/admin/places/:id/unmerge", asyncHandler(async (req, res) => {
 
   // MAIN reverted merged_into_place_id here without reading place_merge_log,
   // then wrote its unmerge row without reading the result. unmergePlace reverses
-  // only a merge the log RECORDS (the newest 'merge' row for this place must
-  // name its current survivor, else 409 and nothing changes) and records the
-  // unmerge before applying it, exactly as the merge does.
+  // only a merge the log RECORDS as current (the newest row for this place must
+  // be a 'merge' naming its survivor, else 409 and nothing changes) and records
+  // the unmerge before applying it, exactly as the merge does.
   const out = await unmergePlace(admin.sc, { placeId: id, adminId: admin.userId }, req.log);
   if (!out.ok) { sendPlaceMergeRefusal(res, out); return; }
 

@@ -2,9 +2,12 @@
  * placeMerge — the admin MERGE and UNMERGE of canonical places
  * (`POST /api/admin/places/:id/merge|unmerge`, routes/placesCanonical.ts).
  *
- * THE INVARIANT: no merge or unmerge is ever applied to `places` without a row
- * in `place_merge_log` that records it, and no failure is ever answered as
- * success.
+ * THE INVARIANT: no merge or unmerge this API applies to `places` is left
+ * without a row in `place_merge_log` that records it, and no failure is ever
+ * answered as success. It rests on one fact, checked by grep: this file is the
+ * ONLY writer of `places.merged_into_place_id`, and every write here LOGS
+ * BEFORE IT MOVES. A write made outside this API (an operator's SQL) is outside
+ * the invariant.
  *
  * WHAT MAIN DID (3c214ca80, measured by src/test/placesMergeLog.test.ts):
  * the handlers wrote the place first and then `await`ed the log insert without
@@ -12,17 +15,18 @@
  * merged (or unmerged) with no record. Unmerge did not read the log at all, so
  * a merge nobody recorded was reversed as if it had been. A failed place read
  * was answered 404 "Place not found"; a failed reference count was logged as
- * `ref_count: 0`; an already-merged place was silently re-pointed; and a place
- * changed by a concurrent request was overwritten.
+ * `ref_count: 0`; an already-merged place was silently re-pointed; a place
+ * other places were merged into could itself be merged away (a two-hop chain
+ * the canonical read follows only one hop of); and a place changed by a
+ * concurrent request was overwritten.
  *
  * WHY THIS ORDER AND NOT A TRANSACTION. The safest shape is one SQL function
- * that locks both rows and writes the change and its log row in one
+ * that locks the rows and writes the change and its log row in one
  * transaction — the shape 3812's `place_split` (PR #744) takes. That needs a
  * migration, and the routes are LIVE: `external_places_enabled` is TRUE in
  * production (the 2026-09-22 snapshot), so moving them onto an unapplied
  * function would break the admin merge until the owner applies it. With what
- * main has — PostgREST, no transaction across two statements — the order that
- * cannot leave an UNLOGGED change is:
+ * main has — PostgREST, no transaction across two statements — the order is:
  *
  *   1. read the place(s) and check every precondition, every read checked;
  *   2. WRITE THE LOG ROW, with an id generated here so it can be withdrawn
@@ -30,30 +34,45 @@
  *   3. move the place with a compare-and-set: the UPDATE matches only the
  *      state step 1 read, so a concurrent change makes it match nothing;
  *   4. if the move did not happen, WITHDRAW the log row (it records a change
- *      that did not occur). The row is withdrawn only when the move PROVABLY
- *      did not happen: the UPDATE matched no row, or, after an UPDATE error,
- *      the place is re-read in exactly the state step 1 read. An error whose
- *      outcome cannot be established (a lost response, a failed re-read) KEEPS
- *      the row and says so — a log row for a change that may not have happened
- *      is the lesser fault; an applied change with no log row is the one this
- *      file exists to prevent.
+ *      that did not occur). It is withdrawn in exactly two cases:
+ *        (a) the UPDATE ran and matched no row — this request changed nothing;
+ *        (b) the UPDATE errored, the place is re-read in exactly its starting
+ *            state, AND this request's row is still the NEWEST place_merge_log
+ *            row for the place. The second half is what makes (b) sound:
+ *            because every writer logs before it moves, a request that
+ *            reversed this one's committed-but-unacknowledged change (verifier
+ *            scenarios X1/X2) left a newer row first. Without it, a starting-
+ *            state re-read would withdraw the row of a change that DID happen.
+ *      An outcome that cannot be established — a failed re-read, a place
+ *      re-read in neither state, or a newer row for the place — KEEPS the row
+ *      and answers `*_outcome_unknown`, naming it. The same newest-row test
+ *      gates the opposite case: a place re-read in its TARGET state is this
+ *      request's success only while its row is the newest; otherwise another
+ *      request may have made the change, and the outcome is unknown.
  *
- * WHAT THIS DOES NOT CLOSE (a transaction would), named rather than implied:
- *   - a crash or a failed withdrawal between steps 2 and 4 leaves a log row for
- *     a change that did not happen (the answer names its id and the operator
- *     log carries it at error level);
- *   - the merge target is checked in step 1 and not locked: a target merged
- *     away by a concurrent request between steps 1 and 3 yields a two-hop
- *     chain, exactly as on main;
- *   - after an UPDATE error, a place re-read in its starting state is taken as
- *     unchanged; a concurrent request that applied and then reversed the same
- *     change inside that window would be withdrawn with it.
+ * So no interleaving of this API's own requests leaves an applied change
+ * without its row. WHAT REMAINS (a transaction with row locks would close it):
+ *   - a crash, or a failed withdrawal, between steps 2 and 4 leaves a row for a
+ *     change that did not happen (the answer names it, the operator log carries
+ *     it at error level). Such a row, if it is the place's newest, makes a
+ *     later unmerge refuse (409) until an operator removes it;
+ *   - two requests making the SAME change in one window: the one whose UPDATE
+ *     failed without committing can, if its row is the newer, answer 200 for a
+ *     change the other made; the log holds two rows for one change;
+ *   - the merge target and the place's merged-in places are checked in step 1
+ *     and not locked: a target merged away, or a place merged into this one,
+ *     by a concurrent request between steps 1 and 3 yields a two-hop chain,
+ *     and A→B racing B→A yields a cycle. Without a race, both shapes are
+ *     refused (`Target is itself merged`, `place_is_survivor`).
  *
- * UNMERGE READS THE LOG. Only a merge the log records is reversed: the NEWEST
- * row with action 'merge' for this place must name its current survivor. No
- * such row → 409 `merge_not_logged`; a newer merge into another place → 409
- * `merge_log_disagrees`. Rows with any other action — 'unmerge', and 'split'
- * once 3812 (PR #744) is applied — are not merge records and are ignored.
+ * UNMERGE READS THE LOG. Only a merge the log records AS THE PLACE'S CURRENT
+ * STATE is reversed: the NEWEST place_merge_log row for this place must be a
+ * 'merge' naming its current survivor. No row, or a newest row that is not a
+ * merge (an 'unmerge' — the merge being reversed was never recorded after it —
+ * or any other action) → 409 `merge_not_logged`; a newest merge into another
+ * place → 409 `merge_log_disagrees`. A 'split' row (3812, PR #744) has the NEW
+ * place as its affected_place_id, so it is never the newest row of a place
+ * being unmerged unless that place was created by the split and never merged.
  *
  * Unmerge still sets `status = 'active'`, as main did. The status a place had
  * before it was merged is not recorded anywhere (place_merge_log has no column
@@ -86,6 +105,16 @@ export function sendPlaceMergeRefusal(res: any, out: PlaceMergeRefusal): void {
 
 type Verb = "merge" | "unmerge";
 
+/** The newest place_merge_log row for a place, any action. `null` data with no error = the place has no row. */
+async function newestLogRow(sc: any, placeId: string): Promise<{ data: { id: string; action: string; survivor_place_id: string } | null; error: unknown }> {
+  const { data, error } = await sc.from("place_merge_log")
+    .select("id, action, survivor_place_id")
+    .eq("affected_place_id", placeId)
+    .order("created_at", { ascending: false }).limit(1);
+  if (error) return { data: null, error };
+  return { data: ((data as Array<{ id: string; action: string; survivor_place_id: string }> | null) ?? [])[0] ?? null, error: null };
+}
+
 /**
  * Step 4. Withdraw the log row of a change that did not happen. A withdrawal
  * that fails leaves a row claiming a change that never occurred: that is said
@@ -107,28 +136,43 @@ async function withdraw(sc: any, logId: string, verb: Verb, placeId: string, log
 
 /**
  * Step 3 failed with an ERROR. Whether the UPDATE committed is unknown (the
- * response may be what was lost), so the place is re-read: back in `before` →
- * not applied, withdraw; in `after` → applied, keep and succeed; anything else,
- * or an unreadable place → keep the row and say the outcome is unknown.
+ * response may be what was lost), so the place is re-read, and then the log:
+ *   - starting state, and this request's row is still the newest → not
+ *     applied: withdraw;
+ *   - target state, and this request's row is still the newest → applied:
+ *     keep and succeed;
+ *   - anything else → keep the row and say the outcome is unknown.
+ * The place is read BEFORE the log, so any move visible in the re-read had its
+ * row written before it (every writer logs first) and is visible to the log read.
  */
 async function settleAfterWriteError(
   sc: any, logId: string, verb: Verb, placeId: string, before: string | null, after: string | null, log: OpLog | undefined, writeErr: unknown,
 ): Promise<PlaceMergeOutcome> {
+  let why = "the place could not be re-read";
   const { data, error } = await sc.from("places").select("id, merged_into_place_id").eq("id", placeId).maybeSingle();
   if (!error && data) {
     const now = (data as any).merged_into_place_id ?? null;
-    if (now === before) {
-      return withdraw(sc, logId, verb, placeId, log, refuse("db_error", `The ${verb} was not applied: the place could not be updated. Nothing was changed.`, `${verb}_write_failed`));
+    why = "the place is in neither its starting nor its target state";
+    if (now === before || now === after) {
+      const newest = await newestLogRow(sc, placeId);
+      why = newest.error ? "place_merge_log could not be read" : "place_merge_log holds a newer row for the place";
+      if (!newest.error && newest.data?.id === logId) {
+        if (now === before) {
+          return withdraw(sc, logId, verb, placeId, log, refuse("db_error", `The ${verb} was not applied: the place could not be updated. Nothing was changed.`, `${verb}_write_failed`));
+        }
+        return { ok: true, logId };
+      }
     }
-    if (now === after) return { ok: true, logId };
+  } else if (!error) {
+    why = "the place no longer exists";
   }
   log?.error(
-    { err: writeErr, rereadErr: error ?? null, placeMergeLogId: logId, placeId, verb },
-    `place ${verb}: the place write failed and its outcome could not be established; place_merge_log row ${logId} is KEPT`,
+    { err: writeErr, rereadErr: error ?? null, placeMergeLogId: logId, placeId, verb, why },
+    `place ${verb}: the place write failed and its outcome could not be established (${why}); place_merge_log row ${logId} is KEPT`,
   );
   return refuse(
     "db_error",
-    `The ${verb} may or may not have been applied: the place write failed and the place could not be re-read in a known state. Its place_merge_log row ${logId} was kept.`,
+    `The ${verb} may or may not have been applied: the place write failed and its outcome could not be established (${why}). Its place_merge_log row ${logId} was kept.`,
     `${verb}_outcome_unknown`,
   );
 }
@@ -154,6 +198,17 @@ export async function mergePlace(
   // Main re-pointed an already-merged place, losing the survivor it had; the
   // log could then not say which merge an unmerge reverses.
   if (loser.merged_into_place_id) return refuse("conflict", "Place is already merged; unmerge it first", "already_merged");
+  // A place other places are merged into is not merged away: C→A then A→B is a
+  // two-hop chain the canonical read follows one hop of. landmarkDedupSweep can
+  // produce exactly that in one --apply run (a survivor later chosen as a loser).
+  const { count: mergedIn, error: mergedInErr } = await sc.from("places")
+    .select("id", { count: "exact", head: true }).eq("merged_into_place_id", placeId);
+  if (mergedInErr || typeof mergedIn !== "number") {
+    return refuse("degraded_unavailable", "The places merged into this place could not be read, so nothing was merged.", "place_read_failed");
+  }
+  if (mergedIn > 0) {
+    return refuse("conflict", "Other places are merged into this place; unmerge them, or merge them into the new survivor, first", "place_is_survivor");
+  }
 
   // ref_count is part of the record. Main logged 0 when this read failed.
   const { count, error: countErr } = await sc.from("external_place_references")
@@ -197,19 +252,16 @@ export async function unmergePlace(
   const survivorId: string | null = (place as any).merged_into_place_id ?? null;
   if (!survivorId) return refuse("invalid_payload", "Place is not merged");
 
-  // Only a RECORDED merge is reversed: the newest 'merge' row for this place.
-  const { data: newest, error: readErr } = await sc.from("place_merge_log")
-    .select("id, survivor_place_id")
-    .eq("affected_place_id", placeId).eq("action", "merge")
-    .order("created_at", { ascending: false }).limit(1);
-  if (readErr) {
+  // Only a merge the log records as the place's CURRENT state is reversed: the
+  // newest row for this place must be a 'merge' naming its survivor.
+  const newest = await newestLogRow(sc, placeId);
+  if (newest.error) {
     return refuse("degraded_unavailable", "place_merge_log could not be read, so nothing was unmerged.", "merge_log_unreadable");
   }
-  const last = ((newest as Array<{ survivor_place_id: string }> | null) ?? [])[0];
-  if (!last) {
-    return refuse("conflict", "place_merge_log has no record of this merge, so it is not reversed here. Nothing was changed.", "merge_not_logged");
+  if (!newest.data || newest.data.action !== "merge") {
+    return refuse("conflict", "place_merge_log does not record this merge (its latest entry for this place is not a merge), so it is not reversed here. Nothing was changed.", "merge_not_logged");
   }
-  if (last.survivor_place_id !== survivorId) {
+  if (newest.data.survivor_place_id !== survivorId) {
     return refuse("conflict", "The newest merge place_merge_log records for this place names a different survivor. Nothing was changed.", "merge_log_disagrees");
   }
 

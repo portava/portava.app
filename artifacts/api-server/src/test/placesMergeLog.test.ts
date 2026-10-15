@@ -239,6 +239,13 @@ const stillMerged = (w: World, id: string, into: string, what: string) => {
   assert.equal(w.place(id).status, "duplicate", `${what}: status must be unchanged`);
 };
 
+const findP = (t: Record<string, Row[]>, id: string): Row => t.places!.find((p) => p.id === id)!;
+/** Another request's complete, LOGGED move of `id` — it logs first, then moves, as every writer here does. */
+function concurrentMove(t: Record<string, Row[]>, action: "merge" | "unmerge", id: string, survivor: string): void {
+  t.place_merge_log!.push({ action, survivor_place_id: survivor, affected_place_id: id, admin_id: CALLER, ref_count: 0 });
+  Object.assign(findP(t, id), action === "merge" ? { merged_into_place_id: survivor, status: "duplicate" } : { merged_into_place_id: null, status: "active" });
+}
+
 // ── MERGE ─────────────────────────────────────────────────────────────────────
 
 describe("POST /admin/places/:id/merge", () => {
@@ -415,6 +422,70 @@ describe("POST /admin/places/:id/merge", () => {
     }
   });
 
+  it("M15 (X1) an applied merge whose response was lost, reversed by a concurrent unmerge before the re-read, KEEPS its row", async () => {
+    // The re-read sees the starting state, but the merge DID happen: a newer row
+    // (the unmerge's) proves another request moved the place since ours.
+    let patched = false;
+    let reverted = false;
+    const w = makeWorld({
+      places: [active(A), active(B)],
+      before: (q, t) => {
+        if (q.method === "PATCH" && q.table === "places") { patched = true; Object.assign(findP(t, A), { merged_into_place_id: B, status: "duplicate" }); return; }
+        if (patched && !reverted && q.method === "GET" && q.table === "places") { reverted = true; concurrentMove(t, "unmerge", A, B); }
+      },
+      fail: failWhen("PATCH", "places"),
+    });
+    install(w);
+    refused(await merge(), 500, "db_error", "merge_outcome_unknown", "M15");
+    unchangedActive(w, A, "M15");
+    assert.deepEqual(w.log().map((x) => x.action), ["merge", "unmerge"], "M15: the applied merge keeps its row; the log matches what happened");
+    assert.ok(!w.writes().includes("DELETE place_merge_log"), "M15: no withdrawal");
+  });
+
+  it("M16 a merge another request made inside the window is not claimed: the outcome is unknown, not 200", async () => {
+    let patched = false;
+    let raced = false;
+    const w = makeWorld({
+      places: [active(A), active(B)],
+      before: (q, t) => {
+        if (q.method === "PATCH" && q.table === "places") { patched = true; return; } // ours does NOT commit
+        if (patched && !raced && q.method === "GET" && q.table === "places") { raced = true; concurrentMove(t, "merge", A, B); }
+      },
+      fail: failWhen("PATCH", "places"),
+    });
+    install(w);
+    refused(await merge(), 500, "db_error", "merge_outcome_unknown", "M16");
+    stillMerged(w, A, B, "M16");
+    assert.equal(w.log().filter((x) => x.action === "merge").length, 2, "M16: both rows stay; ours is not withdrawn on a guess");
+  });
+
+  it("M17 a place other places are merged into is not merged away (no two-hop chain), with or without a race", async () => {
+    const w = makeWorld({ places: [active(A), active(B), active(C)] });
+    install(w);
+    assert.equal((await merge(A, B)).status, 200, "M17: A into B");
+    const r = await merge(B, C); // B is now a survivor: A→B→C would follow one hop only
+    refused(r, 409, "conflict", "place_is_survivor", "M17");
+    unchangedActive(w, B, "M17");
+    assert.deepEqual(w.log().map((x) => `${x.action}:${x.affected_place_id.slice(0, 4)}`), ["merge:aaaa"], "M17: nothing written for B");
+  });
+
+  it("M18 a merged-in read that FAILS refuses the merge as unavailable", async () => {
+    const w = makeWorld({ places: [active(A), active(B)], fail: failWhen("HEAD", "places") });
+    install(w);
+    refused(await merge(), 503, "degraded_unavailable", "place_read_failed", "M18");
+    assert.deepEqual(w.writes(), [], "M18: nothing is written");
+  });
+
+  it("M19 a failed read of ONLY the place being merged away is unavailable, not 'Place not found' (V14)", async () => {
+    const w = makeWorld({
+      places: [active(A), active(B)],
+      fail: (q) => (q.method === "GET" && q.table === "places" && q.url.includes(`id=eq.${A}`) ? BROKEN : null),
+    });
+    install(w);
+    refused(await merge(), 503, "degraded_unavailable", "place_read_failed", "M19");
+    assert.deepEqual(w.writes(), [], "M19: nothing is written");
+  });
+
   it("M12 stays admin-only: a non-admin is refused before the catalog is touched", async () => {
     const w = makeWorld({ places: [active(A), active(B)] });
     install(w, "user");
@@ -587,6 +658,50 @@ describe("POST /admin/places/:id/unmerge", () => {
     refused(r, 500, "db_error", "unmerge_outcome_unknown", "U13 unknown");
     const kept = unknown.log().find((x) => x.action === "unmerge");
     assert.ok(kept && String(r.body.message).includes(kept.id), "U13 unknown: the row is kept and named");
+  });
+
+  it("U14 (X2) an applied unmerge whose response was lost, re-merged by a concurrent request before the re-read, KEEPS its row", async () => {
+    let patched = false;
+    let raced = false;
+    const w = makeWorld({
+      places: [mergedInto(A, B), active(B)],
+      log: [logRow("merge", B, A, T1)],
+      before: (q, t) => {
+        if (q.method === "PATCH" && q.table === "places") { patched = true; Object.assign(findP(t, A), { merged_into_place_id: null, status: "active" }); return; }
+        if (patched && !raced && q.method === "GET" && q.table === "places") { raced = true; concurrentMove(t, "merge", A, B); }
+      },
+      fail: failWhen("PATCH", "places"),
+    });
+    install(w);
+    refused(await unmerge(), 500, "db_error", "unmerge_outcome_unknown", "U14");
+    stillMerged(w, A, B, "U14");
+    assert.deepEqual(w.log().map((x) => x.action), ["merge", "unmerge", "merge"], "U14: the log matches what happened");
+  });
+
+  it("U15 a re-read after a failed unmerge write that finds NO place is an unknown outcome, never 200 (V5)", async () => {
+    let patched = false;
+    const w = makeWorld({
+      places: [mergedInto(A, B), active(B)],
+      log: [logRow("merge", B, A, T1)],
+      before: (q, t) => {
+        if (q.method === "PATCH" && q.table === "places") { patched = true; return; }
+        if (patched && q.method === "GET" && q.table === "places") t.places!.splice(t.places!.findIndex((p) => p.id === A), 1);
+      },
+      fail: failWhen("PATCH", "places"),
+    });
+    install(w);
+    refused(await unmerge(), 500, "db_error", "unmerge_outcome_unknown", "U15");
+    assert.deepEqual(w.log().map((x) => x.action), ["merge", "unmerge"], "U15: the row is kept");
+  });
+
+  it("U16 (X4) a merge re-made after a LOGGED unmerge without its own row is refused: the log's latest word is 'unmerge'", async () => {
+    // Pre-fix residue: merged, unmerged (both logged), then merged into the same
+    // survivor with a log write that silently failed.
+    const w = makeWorld({ places: [mergedInto(A, B), active(B)], log: [logRow("merge", B, A, T1), logRow("unmerge", B, A, T2)] });
+    install(w);
+    refused(await unmerge(), 409, "conflict", "merge_not_logged", "U16");
+    stillMerged(w, A, B, "U16");
+    assert.deepEqual(w.writes(), [], "U16: nothing is written");
   });
 
   it("U12 the refusals main already had are unchanged (not found, not merged, bad id)", async () => {
