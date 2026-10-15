@@ -22,7 +22,7 @@ import {
 } from 'react-native';
 import { ReportSheet } from './ReportSheet.tsx';
 import { router, useFocusEffect } from 'expo-router';
-import { useBlockedIds } from '../context/BlockedIdsContext.tsx';
+import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
 import {
   getTripReviews,
   getEventReviews,
@@ -56,17 +56,11 @@ function Stars({ rating, size = 14 }: { rating: number; size?: number }) {
 
 // ── Review card ───────────────────────────────────────────────────────────────
 
-function ReviewCard({ review, onReport }: { review: Review; onReport?: (reviewId: string, authorId: string | null) => void }) {
-  const { blockedIds, blockerIds } = useBlockedIds();
-
-  function handleAuthorPress() {
-    const reviewer = review.reviewer;
-    if (!reviewer?.handle || review.anonymous) return;
-    const isBlocked = blockedIds.has(reviewer.id) || blockerIds.has(reviewer.id);
-    if (isBlocked) return;
-    router.push(`/u/${reviewer.handle}` as any);
-  }
-
+function ReviewCard({ review, currentUserId, onReport }: {
+  review: Review;
+  currentUserId?: string | null;
+  onReport?: (reviewId: string, authorId: string | null) => void;
+}) {
   const authorTappable = !review.anonymous && !!review.reviewer?.handle;
 
   return (
@@ -81,14 +75,17 @@ function ReviewCard({ review, onReport }: { review: Review; onReport?: (reviewId
           <Text style={s.reviewDate}>{new Date(review.createdAt).toLocaleDateString()}</Text>
         </View>
         {!review.anonymous && review.reviewer ? (
-          <View style={s.reviewerRow}>
-            <Pressable onPress={handleAuthorPress} disabled={!authorTappable}>
-              <Text style={[s.reviewerName, authorTappable && s.reviewerNameTappable]}>
-                {review.reviewer.displayName ?? review.reviewer.handle ?? 'Traveler'}
-              </Text>
-            </Pressable>
+          <UserIdentityLink
+            userId={review.reviewer.id}
+            handle={review.reviewer.handle}
+            currentUserId={currentUserId}
+            style={s.reviewerRow}
+          >
+            <Text style={[s.reviewerName, authorTappable && s.reviewerNameTappable]}>
+              {review.reviewer.displayName ?? review.reviewer.handle ?? 'Traveler'}
+            </Text>
             <VerifiedBadge badge={review.reviewer.identityBadge} size={12} />
-          </View>
+          </UserIdentityLink>
         ) : (
           <Text style={s.reviewerName}>Anonymous</Text>
         )}
@@ -300,6 +297,7 @@ export function ReviewsSection({
           <ReviewCard
             key={r.id}
             review={r}
+            currentUserId={currentUserId}
             onReport={
               // Only offer report for reviews by other users (not own reviews)
               r.reviewer?.id && r.reviewer.id !== currentUserId

@@ -162,6 +162,7 @@ export interface TravelerSearchResult {
   verified?: boolean;
   /** True when this user is an @Portava Official account. */
   isOfficial?: boolean;
+  identityBadge?: { tier: 'id' | 'id_selfie' } | null;
 }
 
 export async function searchUsers(query: string, limit = 20): Promise<FollowResult<TravelerSearchResult[]>> {

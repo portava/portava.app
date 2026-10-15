@@ -22,6 +22,7 @@ import { space, radius, type as t } from '../../../src/theme/tokens';
 import { getMyProfile } from '../../../src/services/profile';
 import type { OwnProfile } from '../../../src/types/models';
 import { TrustScoreInfoSheet } from '../../../src/components/passport/TrustScoreInfoSheet';
+import { EmergencyHelpSheet } from '../../../src/components/safeReturn/EmergencyHelpSheet';
 
 const VERIF_STATUS_LABEL: Record<OwnProfile['verificationStatus'], { label: string; tone: 'ok' | 'pending' | 'off' }> = {
   unverified: { label: 'Not verified', tone: 'off' },
@@ -53,6 +54,7 @@ export default function SafetyVerificationScreen() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [trustSheetVisible, setTrustSheetVisible] = useState(false);
+  const [emergencyHelpVisible, setEmergencyHelpVisible] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -77,6 +79,13 @@ export default function SafetyVerificationScreen() {
         ) : profile ? (
           <VerificationCards profile={profile} onTrustRowPress={() => setTrustSheetVisible(true)} />
         ) : null}
+        <SettingsDivider />
+        <SettingsRow
+          icon={<ShieldCheck size={18} color={PP.ink} />}
+          title="Verification status"
+          subtitle="View your identity check or start verification"
+          onPress={() => router.push('/profile/verification' as any)}
+        />
       </SettingsSection>
 
       {profile && !loading && (
@@ -133,6 +142,13 @@ export default function SafetyVerificationScreen() {
       <SettingsSection title="Safety">
         <SettingsRow
           icon={<LifeBuoy size={18} color={PP.ink} />}
+          title="SOS"
+          subtitle="Emergency help options"
+          onPress={() => setEmergencyHelpVisible(true)}
+        />
+        <SettingsDivider />
+        <SettingsRow
+          icon={<LifeBuoy size={18} color={PP.ink} />}
           title="Emergency Contacts"
           subtitle="People we can reach if something goes wrong"
           onPress={() => router.push('/profile/edit/emergency-contacts' as any)}
@@ -145,6 +161,9 @@ export default function SafetyVerificationScreen() {
           onPress={() => router.push('/profile/edit/location' as any)}
         />
       </SettingsSection>
+      {emergencyHelpVisible && (
+        <EmergencyHelpSheet visible onClose={() => setEmergencyHelpVisible(false)} />
+      )}
     </SettingsScreen>
   );
 }

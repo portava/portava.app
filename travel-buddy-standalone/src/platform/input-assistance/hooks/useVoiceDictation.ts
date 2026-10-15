@@ -71,24 +71,28 @@ export function useVoiceDictation({ fieldId, context, onTranscript, language, re
     return () => {
       cancelled = true;
       mounted.current = false;
-      abortRef.current?.abort();
+      const controller = abortRef.current;
+      abortRef.current = null;
+      controller?.abort();
     };
   }, [port]);
 
   const start = useCallback(async () => {
-    abortRef.current?.abort();
+    const previous = abortRef.current;
     const ctrl = new AbortController();
     abortRef.current = ctrl;
+    previous?.abort();
     setState({ phase: 'listening', partial: null });
     const outcome = await dictateIntoField(
       { fieldId, context, language },
       {
         recognizer: port,
         signal: ctrl.signal,
-        onPartial: (r) => { if (mounted.current) setState({ phase: 'listening', partial: r.text }); },
+        onPartial: (result) => { if (mounted.current && abortRef.current === ctrl) setState({ phase: 'listening', partial: result.text }); },
       },
     );
-    if (!mounted.current) return;
+    if (!mounted.current || abortRef.current !== ctrl) return;
+    abortRef.current = null;
     if (outcome.state === 'accepted') {
       onTranscript(outcome.request.text);
       setState({ phase: 'heard', text: outcome.request.text });

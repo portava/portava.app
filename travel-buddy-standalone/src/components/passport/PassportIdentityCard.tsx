@@ -23,6 +23,7 @@ import { AvatarImage } from '../ui/DisplayMediaImage.tsx';
 import { isTravelBuddyVerified } from '../../lib/verification.ts';
 import { VerifiedStamp } from '../ui/VerifiedStamp.tsx';
 import { VerifiedBadge } from '../trust/VerifiedBadge.tsx'; // census-trust TV-2c
+import { UserIdentityLink } from '../interaction/UserIdentityLink.tsx';
 import { OfficialBadge } from '../OfficialBadge.tsx';
 import { HighlightRing } from '../HighlightRing.tsx';
 import { getPassportStats } from '../../services/passportStamps.ts';
@@ -440,13 +441,18 @@ export function PassportIdentityCard({
 
               {/* Name row — verified stamp replaces CheckCircle2.
                   Mixed case per the approved identity design. */}
-              <View style={s.nameRow}>
+              <UserIdentityLink
+                userId={profile.id}
+                handle={username}
+                currentUserId={isOwner ? profile.id : undefined}
+                style={s.nameRow}
+              >
                 <Text style={s.displayName} numberOfLines={1}>
                   {resolvedName}
                 </Text>
                 {isOfficial ? <OfficialBadge size="md" /> : isVerified ? <VerifiedStamp size="md" /> : null}
                 <VerifiedBadge badge={(profile as PublicProfile).identityBadge} size={18} />
-              </View>
+              </UserIdentityLink>
 
               {handleSubline ? (
                 <Text style={s.handle}>{handleSubline}</Text>

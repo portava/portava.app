@@ -65,14 +65,3 @@ export function parsePostureSource(src: string): OnDiskPosture {
   }
   return "undecided";
 }
-
-/**
- * True when Option A (`authenticated_only`) is the posture in force.
- *
- * The 2481 allowances are conditioned on this being FALSE, and it is false both
- * when Option B holds and when the posture cannot be read — see the fail-closed
- * note above.
- */
-export function isOptionAInForce(): boolean {
-  return sensingPostureOnDisk() === "authenticated_only";
-}

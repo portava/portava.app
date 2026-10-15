@@ -86,6 +86,16 @@ describe("TV-4b — what a restricted account may still reach", () => {
     assert.ok(await requireUser(reqFor("POST", "/api/appeals/"), res()));
   });
 
+  for (const [kind, rows] of [["suspended", suspended], ["banned", banned]] as const) {
+    it(`a ${kind} account can use the current moderation report endpoint`, async () => {
+      _setTestClient(client(rows) as any, true);
+      const out = res();
+      const auth = await requireUser(reqFor("POST", "/api/moderation/report"), out);
+      assert.equal(auth?.user.id, USER, JSON.stringify(out.body));
+      assert.equal(out.statusCode, 0);
+    });
+  }
+
   for (const [method, path] of [
     ["POST", "/api/posts"],
     ["GET", "/api/me/profile"],
@@ -95,6 +105,10 @@ describe("TV-4b — what a restricted account may still reach", () => {
     ["GET", "/api/compass/me/memory/export/extra"],
     ["PATCH", "/api/me/delete-request"],
     ["POST", "/api/reports/123/notes"],
+    ["GET", "/api/moderation/report"],
+    ["POST", "/api/moderation/report/extra"],
+    ["GET", "/api/moderation/reports/mine"],
+    ["POST", "/api/admin/moderation/reports/review"],
     ["POST", "/api/rent-a-buddy/bookings"],
   ] as const) {
     it(`RA3 ${method} ${path} is refused with the structured 403`, async () => {
@@ -130,6 +144,25 @@ describe("TV-4b — what a restricted account may still reach", () => {
     assert.equal(await requireUser(reqFor("POST", "/api/appeals"), out), null);
     assert.equal(out.statusCode, 503);
     assert.equal(out.body.error, "degraded_unavailable");
+  });
+
+  it("an unreadable account state still refuses the current report endpoint", async () => {
+    _setTestClient(client("unreadable") as any, true);
+    const out = res();
+    assert.equal(await requireUser(reqFor("POST", "/api/moderation/report"), out), null);
+    assert.equal(out.statusCode, 503);
+    assert.equal(out.body.error, "degraded_unavailable");
+  });
+
+  it("the current report endpoint never bypasses the auth service's session lock", async () => {
+    _setTestClient({
+      ...client(suspended),
+      auth: { getUser: async () => ({ data: { user: null }, error: { code: "user_banned", message: "User is banned" } }) },
+    } as any, true);
+    const out = res();
+    assert.equal(await requireUser(reqFor("POST", "/api/moderation/report"), out), null);
+    assert.equal(out.statusCode, 403);
+    assert.equal(out.body.reason, "account_restricted");
   });
 
   it("RA5 an unrestricted account is unaffected, listed route or not", async () => {

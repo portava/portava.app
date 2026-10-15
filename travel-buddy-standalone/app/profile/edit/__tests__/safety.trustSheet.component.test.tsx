@@ -66,6 +66,9 @@ import {
   screen,
 } from '@testing-library/react-native';
 import SafetyVerificationScreen from '../safety.tsx';
+import { Linking } from 'react-native';
+import { router } from 'expo-router';
+import { getCountryEssentials, getTripEssentials } from '../../../../src/services/countryEssentials.ts';
 import { getMyProfile } from '../../../../src/services/profile.ts';
 // The basis sentences the sheet prints, from the one place that owns them.
 import { BASIS_NOTE } from '../../../../src/features/passport/useTrustProjection.ts';
@@ -94,6 +97,11 @@ jest.mock('../../../../src/services/profile', () => ({
 }));
 
 const mockGetMyProfile = getMyProfile as jest.Mock;
+
+jest.mock('../../../../src/services/countryEssentials.ts', () => ({
+  ...jest.requireActual('../../../../src/services/countryEssentials.ts'),
+  getCountryEssentials: jest.fn(), getTripEssentials: jest.fn(),
+}));
 
 // ── KeyboardSafeView — not under test ────────────────────────────────────────
 
@@ -178,6 +186,49 @@ afterEach(() => {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('SafetyVerificationScreen — Trust Score sheet', () => {
+  it('opens the existing emergency help without guessing a country or contacting anyone', async () => {
+    mockGetMyProfile.mockResolvedValue({ ok: true, data: makeProfile() });
+    const openUrl = jest.spyOn(Linking, 'openURL').mockResolvedValue(true);
+    try {
+      const ui = await render(<SafetyVerificationScreen />);
+      expect(ui.queryByText('Emergency Help')).toBeNull();
+      await fireEvent.press(ui.getByText('SOS'));
+      await ui.findByTestId('emergency-number-unknown');
+      expect(ui.getByText('Emergency Help')).toBeTruthy();
+      expect(getCountryEssentials).not.toHaveBeenCalled();
+      expect(getTripEssentials).not.toHaveBeenCalled();
+      expect(openUrl).not.toHaveBeenCalled();
+      expect(ui.queryByText(/^Call /)).toBeNull();
+      expect(ui.queryByText('Share your location')).toBeNull();
+      await fireEvent.press(ui.getByTestId('icon-X'));
+      expect(ui.queryByText('Emergency Help')).toBeNull();
+    } finally { openUrl.mockRestore(); }
+  });
+
+  it('keeps verification and SOS reachable when the profile status read fails', async () => {
+    mockGetMyProfile.mockResolvedValue({ ok: false, data: null, message: 'Status unavailable' });
+    const ui = await render(<SafetyVerificationScreen />);
+    await ui.findByText('Status unavailable');
+    await fireEvent.press(ui.getByText('Verification status'));
+    expect(router.push).toHaveBeenCalledWith('/profile/verification');
+    await fireEvent.press(ui.getByText('SOS'));
+    await ui.findByTestId('emergency-number-unknown');
+  });
+
+  it('preserves the existing safety destinations', async () => {
+    mockGetMyProfile.mockResolvedValue({ ok: true, data: makeProfile() });
+    const ui = await render(<SafetyVerificationScreen />);
+    for (const [label, route] of [
+      ['Blocked Users', '/blocked-users'],
+      ['Your Reports', '/profile/edit/reports'],
+      ['Safe Return', '/profile/edit/location'],
+      ['Emergency Contacts', '/profile/edit/emergency-contacts'],
+    ]) {
+      await fireEvent.press(ui.getByText(label));
+      expect(router.push).toHaveBeenLastCalledWith(route);
+    }
+  });
+
   it('opens the sheet when the Trust row is tapped', async () => {
     mockGetMyProfile.mockResolvedValue({
       ok: true,

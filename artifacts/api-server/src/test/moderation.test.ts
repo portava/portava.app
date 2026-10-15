@@ -218,6 +218,36 @@ describe("Moderation routes", () => {
   // ── A. POST /api/moderation/report ────────────────────────────────────────
 
   describe("POST /api/moderation/report", () => {
+    for (const restriction of ["suspended", "banned"] as const) {
+      it(`files a safety report for a ${restriction} account whose token is still accepted`, async () => {
+        const restrictedClient = makeClient({
+          profiles: [{
+            id: ALICE_ID,
+            account_status: "active",
+            user_account_states: [{ state: restriction, expires_at: "2099-01-01T00:00:00.000Z" }],
+          }],
+        });
+        _setTestClient(restrictedClient as any, true);
+        const { status, body } = await req(server, "POST", "/api/moderation/report", {
+          subjectType: "user", subjectId: BOB_ID, category: "safety_concern",
+        }, AUTH);
+        assert.equal(status, 201, JSON.stringify(body));
+        const stored = await restrictedClient.from("moderation_reports").select("*");
+        assert.equal(stored.data.length, 1);
+        assert.equal(stored.data[0].reporter_id, ALICE_ID);
+        assert.equal(stored.data[0].subject_user_id, BOB_ID);
+        assert.equal(stored.data[0].status, "open");
+        assert.equal(body.reportId, stored.data[0].id);
+
+        const selfReport = await req(server, "POST", "/api/moderation/report", {
+          subjectType: "user", subjectId: ALICE_ID, category: "safety_concern",
+        }, AUTH);
+        assert.equal(selfReport.status, 400);
+        const afterRefusal = await restrictedClient.from("moderation_reports").select("*");
+        assert.equal(afterRefusal.data.length, 1);
+      });
+    }
+
     it("returns 401 when unauthenticated", async () => {
       const { status } = await req(server, "POST", "/api/moderation/report", {
         subjectType: "user", subjectId: BOB_ID, category: "spam",

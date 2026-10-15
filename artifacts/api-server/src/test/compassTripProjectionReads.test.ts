@@ -59,8 +59,11 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { createClient } from "@supabase/supabase-js";
 
 import { toolGetCurrentTrip, executeCompassTool } from "../compass/CompassTools.js";
+import { resolveCurrentTrip, resolveUserTrips } from "../compass/CompassCurrentTrip.js";
+import { buildTripCompassProjection } from "../domain/trips/projections/TripCompassProjection.js";
 import { stripComments } from "../scripts/lib/stripComments.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -228,5 +231,117 @@ describe("CT-02 B — an unreadable trip table is never answered as an empty one
     const gone: any = await toolGetCurrentTrip(errorClient({ trips: [], tripMembers: members }), ALICE, TRIP_ID);
     assert.equal(gone.trip, null);
     assert.match(String(gone.info), /No such trip/i);
+  });
+});
+
+type TripReadStage = "membership" | "owned" | "member" | "plan";
+
+function transportClient(failedStage?: TripReadStage, failedBody = "") {
+  const reads: URL[] = [];
+  const client = createClient("http://127.0.0.1:9", "offline-test-key", {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    global: {
+      fetch: async (input, init) => {
+        const url = new URL(String(input));
+        assert.equal(url.origin, "http://127.0.0.1:9");
+        assert.equal(init?.method ?? "GET", "GET");
+        reads.push(url);
+        const table = url.pathname.split("/").at(-1);
+        const stage = table === "trip_members" ? "membership"
+          : table === "trip_plan_items" ? "plan"
+          : table === "trips" && url.searchParams.has("owner_id") ? "owned"
+          : table === "trips" && url.searchParams.get("id")?.startsWith("in.") ? "member"
+          : null;
+        const rows = table === "trip_members"
+          ? [{ trip_id: TRIP_ID, user_id: ALICE, role: "member", status: "accepted" }]
+          : table === "trips" ? [trip()] : [];
+        return new Response(stage === failedStage ? failedBody : JSON.stringify(rows), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    },
+  });
+  return { client, reads };
+}
+
+describe("CT-02 C — real client transport shapes retain the unread state", () => {
+  it("an empty HTTP body is data:null/error:null, unlike a readable empty array", async () => {
+    const { client } = transportClient("membership");
+    const result = await client.from("trip_members").select("trip_id");
+    assert.equal(result.data, null);
+    assert.equal(result.error, null);
+    const readable = await client.from("trip_plan_items").select("id");
+    assert.deepEqual(readable.data, []);
+    assert.equal(readable.error, null);
+  });
+
+  for (const [label, body] of [["empty body", ""], ["JSON null", "null"], ["object", "{}"], ["string", '"not rows"']] as const) {
+    for (const stage of ["membership", "owned", "member"] as const) {
+      it(`${stage}: ${label} refuses the entire selection instead of selecting a partial union`, async () => {
+        const { client } = transportClient(stage, body);
+        const result = await resolveUserTrips(client, ALICE);
+        assert.deepEqual(result, {
+          status: "unread",
+          reason: stage === "membership" ? "trip_members could not be read" : "trips could not be read",
+        });
+        assert.equal((await resolveCurrentTrip(client, ALICE)).status, "unread");
+      });
+    }
+
+    it(`plan: ${label} keeps the real trip but marks its plan unread`, async () => {
+      const { client } = transportClient("plan", body);
+      const result = await buildTripCompassProjection(client, TRIP_ID);
+      assert.equal(result.ok, true);
+      if (!result.ok) return;
+      assert.equal(result.projection.trip.id, TRIP_ID);
+      assert.equal(result.projection.sourceTripVersion, 4);
+      assert.equal(result.projection.planItems.status, "unread");
+    });
+  }
+
+  it("does not continue to owned-trip selection after unread membership", async () => {
+    const { client, reads } = transportClient("membership");
+    assert.equal((await resolveCurrentTrip(client, ALICE)).status, "unread");
+    assert.deepEqual(reads.map((url) => url.pathname), ["/rest/v1/trip_members"]);
+  });
+
+  it("readable arrays still select a trip and project a genuinely empty plan", async () => {
+    const { client } = transportClient();
+    const selected = await resolveCurrentTrip(client, ALICE);
+    assert.equal(selected.status, "ok");
+    if (selected.status === "ok") assert.equal(selected.trip.id, TRIP_ID);
+    const result = await buildTripCompassProjection(client, TRIP_ID);
+    assert.equal(result.ok, true);
+    if (result.ok) assert.deepEqual(result.projection.planItems, { status: "ok", items: [] });
+  });
+
+  it("the current-trip and conflict tools disclose unread membership rather than asserting absence", async () => {
+    const { client } = transportClient("membership");
+    const current: any = await toolGetCurrentTrip(client, ALICE);
+    assert.equal(current.trip, null);
+    assert.match(current.info, /context unavailable.*could not be read/i);
+    const conflicts: any = await executeCompassTool(client, ALICE, null, "check_trip_conflicts", {
+      startDate: "2026-08-05", endDate: "2026-08-10",
+    });
+    assert.equal(conflicts.conflicts, null);
+    assert.match(conflicts.info, /could not be read/i);
+  });
+
+  it("transport fixtures never call ambient fetch for valid or malformed trip reads", async (context) => {
+    const ambientFetch = context.mock.method(globalThis, "fetch", async () => {
+      throw new Error("Unexpected ambient network request");
+    });
+    for (const failedStage of [undefined, "membership", "owned", "member", "plan"] as const) {
+      const { client, reads } = transportClient(failedStage);
+      await resolveCurrentTrip(client, ALICE);
+      await resolveUserTrips(client, ALICE);
+      await buildTripCompassProjection(client, TRIP_ID);
+      await executeCompassTool(client, ALICE, null, "check_trip_conflicts", {
+        startDate: "2026-08-05", endDate: "2026-08-10",
+      });
+      assert.ok(reads.length > 0);
+      assert.equal(ambientFetch.mock.callCount(), 0);
+    }
   });
 });

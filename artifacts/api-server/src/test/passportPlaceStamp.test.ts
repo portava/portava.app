@@ -108,6 +108,33 @@ describe("A. a verified check-in at a canonical place earns a Place stamp", () =
   });
 });
 
+describe("H. P61 activation evidence includes the whole producer path", () => {
+  it("names every upstream capability gate, not only the Place stamp flag", () => {
+    const route = readFileSync(join(SRC, "routes", "hiddenGems.ts"), "utf8");
+    const verifyStart = route.indexOf('router.post("/hidden-gems/:id/verify-visit"');
+    assert.ok(verifyStart >= 0);
+    const awardStart = route.indexOf("void awardPlaceStampForCheckin(sc,", verifyStart);
+    assert.ok(awardStart > verifyStart);
+    const beforeAward = route.slice(verifyStart, awardStart);
+    const upstreamFlags = [
+      ...Array.from(beforeAward.matchAll(/isFlagEnabled\(sc, "([^"]+)"\)/g), (match) => match[1]),
+      ...Array.from(beforeAward.matchAll(/\.eq\("flag", "([^"]+)"\)/g), (match) => match[1]),
+    ];
+    assert.deepEqual(upstreamFlags, [
+      "hidden_gems_enabled",
+      "hidden_gem_verification_enabled",
+      "hidden_gems_passport_enabled",
+    ]);
+
+    const census = readFileSync(join(SRC, "..", "..", "..", "docs", "architecture", "census-passport.md"), "utf8");
+    const activationStart = census.indexOf("## §33 —");
+    assert.ok(activationStart >= 0);
+    const activationEvidence = census.slice(activationStart);
+    for (const flag of [...upstreamFlags, PASSPORT_PLACE_STAMPS_FLAG]) {
+      assert.ok(activationEvidence.includes(`\`${flag}\``), `P61 activation evidence must name ${flag}`);
+    }
+  });
+});
 describe("B. one Place stamp per person per place", () => {
   it("a second check-in at the same place mints nothing; another place in the same city mints a second", async () => {
     const db = fakeDb({ flag: true });

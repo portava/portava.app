@@ -18,8 +18,10 @@ import express from "express";
 
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
+import { _clearAllSeen } from "../lib/suggestionSeenCache.js";
 import { makeFailClosedClient, noopLog } from "./helpers/failClosedSupabase.js";
 import reviewsRouter from "../routes/reviews.js";
+import followsRouter from "../routes/follows.js";
 import {
   readVerifiedBadges as readVerifiedBadgesRaw,
   _resetVerifiedBadgeFlagCache,
@@ -149,6 +151,7 @@ before(async () => {
   app.use(express.json());
   app.use((req, _res, next) => { (req as any).log = noopLog; next(); });
   app.use("/api", reviewsRouter);
+  app.use("/api", followsRouter);
   server = http.createServer(app);
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(server.address() as any).port}`;
@@ -185,4 +188,148 @@ describe("GET /trips/:id/reviews carries each reviewer's identityBadge (TV-2c)",
     const { body } = await tripReviews({ ...ROWS(), feature_flags: [], reviews: [review("r1", A)] });
     assert.ok(!("identityBadge" in body.reviews[0].reviewer), JSON.stringify(body.reviews[0].reviewer));
   });
+});
+
+function travelerRows(): Record<string, any[]> {
+  const rows = ROWS();
+  return {
+    ...rows,
+    blocks: [],
+    profile_privacy_settings: [],
+    user_account_states: [],
+    profiles: rows.profiles.map((profile) => ({
+      ...profile,
+      handle: `traveler-${profile.handle}`,
+      name: "Hidden legal name",
+      avatar_url: "https://example.invalid/avatar.png",
+      account_status: "active",
+      is_private: profile.id === B,
+      verified: profile.id !== A,
+      is_official: false,
+    })),
+  };
+}
+
+type TravelerReadFailure = "attempts" | "badge-profiles" | "badge-flag" | "blocks";
+
+async function travelers(endpoint: string, rows = travelerRows(), failure?: TravelerReadFailure) {
+  const badgeReads: Array<{ table: string; ids: string[] }> = [];
+  const client = makeFailClosedClient({
+    rows,
+    users: { "tok-viewer": VIEWER },
+    failOn: (context) => {
+      const attemptRead = context.table === "identity_verifications";
+      const badgeProfileRead = context.table === "profiles" && context.filters.length === 1
+        && context.filters[0].op === "in" && context.filters[0].col === "id";
+      if (attemptRead || badgeProfileRead) {
+        badgeReads.push({
+          table: context.table,
+          ids: context.filters.find((filter) => filter.op === "in" && filter.col === (attemptRead ? "user_id" : "id"))!.val as string[],
+        });
+      }
+      const fail = (failure === "attempts" && attemptRead)
+        || (failure === "badge-profiles" && badgeProfileRead)
+        || (failure === "badge-flag" && context.table === "feature_flags" && context.eq("flag") === IDENTITY_VERIFIED_BADGE_FLAG)
+        || (failure === "blocks" && context.table === "blocks");
+      return fail ? { message: "unreadable", code: "08006" } : null;
+    },
+  });
+  _resetVerifiedBadgeFlagCache();
+  _clearAllSeen();
+  _setTestClient(client as any, true);
+  _setTestServiceClient(client as any);
+  const response = await fetch(`${base}/api${endpoint}`, { headers: { authorization: "Bearer tok-viewer" } });
+  return { status: response.status, body: await response.json() as any, badgeReads };
+}
+
+for (const endpoint of ["/users/search?q=traveler", "/users/suggestions"]) {
+  describe(`GET ${endpoint} traveler identityBadge projection (TV-2c)`, () => {
+    it("projects only current public tiers, independently of the legacy verified boolean", async () => {
+      const { status, body, badgeReads } = await travelers(endpoint);
+      assert.equal(status, 200);
+      assert.equal(body.users.length, 7);
+      const byId = new Map<string, any>(body.users.map((traveler: any) => [traveler.id, traveler]));
+      assert.deepEqual(byId.get(A).identityBadge, { tier: "id" });
+      assert.deepEqual(byId.get(B).identityBadge, { tier: "id_selfie" });
+      assert.equal(byId.get(A).verified, false);
+      for (const userId of [C, D, E, F, G]) {
+        assert.equal(byId.get(userId).identityBadge, null, userId);
+        assert.equal(byId.get(userId).verified, true, userId);
+      }
+      assert.equal(badgeReads.length, 2, "one batched attempt read and one batched level read");
+      const fields = ["id", "displayName", "username", "avatarUrl", "followerCount", "isFollowing", "isPrivate", "friendRequestPending", "reason", "verified", "isOfficial", "identityBadge"];
+      if (endpoint === "/users/suggestions") fields.push("mutualCount");
+      for (const traveler of body.users) {
+        assert.deepEqual(Object.keys(traveler).sort(), [...fields].sort(), "no private verification facts leave the route");
+        assert.equal(traveler.displayName, null);
+      }
+      for (const field of ["avatarUrl", "followerCount", "reason"]) assert.equal(byId.get(B)[field], null);
+    });
+
+    for (const flagState of ["off", "absent", "unreadable"] as const) {
+      it(`flag ${flagState}: omits the key, preserves every other field, and reads no identity data`, async () => {
+        const enabled = await travelers(endpoint);
+        const rows = travelerRows();
+        if (flagState === "off") rows.feature_flags[0].enabled = false;
+        if (flagState === "absent") rows.feature_flags = [];
+        const result = await travelers(endpoint, rows, flagState === "unreadable" ? "badge-flag" : undefined);
+        assert.equal(result.status, 200);
+        assert.equal(result.body.users.length, 7);
+        assert.deepEqual(result.badgeReads, []);
+        for (const traveler of result.body.users) assert.ok(!("identityBadge" in traveler));
+        assert.deepEqual(result.body.users, enabled.body.users.map(({ identityBadge, ...traveler }: any) => traveler));
+      });
+    }
+
+    for (const failure of ["attempts", "badge-profiles"] as const) {
+      it(`failed ${failure} read withholds every badge without hiding admitted travelers`, async () => {
+        const { status, body, badgeReads } = await travelers(endpoint, travelerRows(), failure);
+        assert.equal(status, 200);
+        assert.equal(body.users.length, 7);
+        assert.equal(badgeReads.length, 2);
+        for (const traveler of body.users) assert.equal(traveler.identityBadge, null);
+      });
+    }
+
+    it("excludes both block directions and discovery opt-outs before reading any badges", async () => {
+      const rows = travelerRows();
+      rows.blocks = [{ blocker_id: VIEWER, blocked_id: A }, { blocker_id: B, blocked_id: VIEWER }];
+      rows.profile_privacy_settings = [{ user_id: C, allow_profile_discovery: false }];
+      rows.profiles = rows.profiles.map((profile) => profile.id === D ? { ...profile, name: "Traveler legal name", handle: "hidden-name-only" } : profile);
+      const { status, body, badgeReads } = await travelers(endpoint, rows);
+      assert.equal(status, 200);
+      const expectedIds = endpoint === "/users/suggestions" ? [D, E, F, G] : [E, F, G];
+      assert.deepEqual(body.users.map((traveler: any) => traveler.id).sort(), [...expectedIds].sort());
+      assert.equal(badgeReads.length, 2);
+      for (const read of badgeReads) assert.deepEqual([...read.ids].sort(), [...expectedIds].sort());
+    });
+
+    it("unreadable blocks retain the existing refusal and never read badge data", async () => {
+      const { status, body, badgeReads } = await travelers(endpoint, travelerRows(), "blocks");
+      assert.deepEqual(badgeReads, []);
+      if (endpoint === "/users/suggestions") {
+        assert.equal(status, 200);
+        assert.deepEqual(body, { users: [] });
+      } else {
+        assert.equal(status, 500);
+        assert.equal(body.error, "db_error");
+        assert.ok(!body.users?.length);
+      }
+    });
+  });
+}
+
+it("GET /users/suggestions reads badges only for the final ten served travelers, not the larger candidate pool", async () => {
+  const rows = travelerRows();
+  rows.profiles.push(...Array.from({ length: 6 }, (_unused, index) => ({
+    ...rows.profiles[0],
+    id: `10000000-0000-4000-a000-${String(index).padStart(12, "0")}`,
+    handle: `traveler-extra-${index}`,
+  })));
+  const { status, body, badgeReads } = await travelers("/users/suggestions", rows);
+  assert.equal(status, 200);
+  assert.equal(body.users.length, 10);
+  assert.equal(badgeReads.length, 2);
+  const servedIds = body.users.map((traveler: any) => traveler.id).sort();
+  for (const read of badgeReads) assert.deepEqual([...read.ids].sort(), servedIds);
 });

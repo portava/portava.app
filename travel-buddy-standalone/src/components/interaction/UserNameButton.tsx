@@ -1,9 +1,9 @@
 import React from 'react';
-import { Pressable, Text, View, StyleSheet } from 'react-native';
+import { Text, StyleSheet } from 'react-native';
 import { useBlockedIds } from '../../context/BlockedIdsContext.tsx';
 import { color, type as t } from '../../theme/tokens.ts';
 import { primaryIdentityText } from '../../lib/displayIdentity.ts';
-import { navigateToProfile } from '../../lib/navigateToProfile.ts';
+import { UserIdentityLink } from './UserIdentityLink.tsx';
 import { VerifiedStamp } from '../ui/VerifiedStamp.tsx';
 import { OfficialBadge } from '../OfficialBadge.tsx';
 
@@ -20,16 +20,12 @@ interface Props {
   verified?: boolean;
   /** When true, renders the Portava Official gold-shield badge after the name. */
   isOfficial?: boolean;
+  identityBadge?: unknown;
 }
 
-export function UserNameButton({ userId, handle, displayName, style, numberOfLines = 1, disabled, currentUserId, verified, isOfficial }: Props) {
-  const { blockedIds, blockerIds, isLoading } = useBlockedIds();
+export function UserNameButton({ userId, handle, displayName, style, numberOfLines = 1, disabled, currentUserId, verified, isOfficial, identityBadge }: Props) {
+  const { blockedIds, blockerIds } = useBlockedIds();
   const isBlocked = blockedIds.has(userId) || blockerIds.has(userId);
-
-  function handlePress() {
-    if (disabled || isBlocked || !handle) return;
-    navigateToProfile(handle, userId, currentUserId);
-  }
 
   if (isBlocked) {
     return (
@@ -40,12 +36,12 @@ export function UserNameButton({ userId, handle, displayName, style, numberOfLin
   }
 
   return (
-    <Pressable onPress={handlePress} disabled={disabled || !handle} style={styles.row}>
+    <UserIdentityLink userId={userId} handle={handle} currentUserId={currentUserId} disabled={disabled} style={styles.row} identityBadge={identityBadge}>
       <Text style={[styles.name, style]} numberOfLines={numberOfLines}>
         {primaryIdentityText({ displayName, handle })}
       </Text>
       {isOfficial ? <OfficialBadge size="sm" /> : verified ? <VerifiedStamp size="sm" /> : null}
-    </Pressable>
+    </UserIdentityLink>
   );
 }
 

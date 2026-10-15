@@ -18,10 +18,6 @@
  *   - `createWebSpeechRecognizer` binds the platform API where the platform
  *     exposes one to JavaScript (web builds: `SpeechRecognition` /
  *     `webkitSpeechRecognition`). No dependency, no key, no spend.
- *   - `createNativeSpeechRecognizer` is the adapter for the native module the
- *     owner has not yet approved (`expo-speech-recognition`). It takes the
- *     module as an ARGUMENT and imports nothing, so this file loads today and
- *     the device build becomes one bootstrap line once the module ships.
  *   - With neither, `NO_SPEECH_RECOGNIZER` answers `unavailable/no_provider` —
  *     never a placeholder transcript.
  *
@@ -293,14 +289,6 @@ export function createWebSpeechRecognizer(scope: unknown = globalThis): SpeechRe
 
 // ── The native module the owner has not yet approved ─────────────────────────
 
-/**
- * The slice of `expo-speech-recognition`'s `ExpoSpeechRecognitionModule` this
- * adapter needs. Declared structurally so nothing here imports a package that
- * is not a dependency. When the owner approves it, the device bootstrap is:
- *
- *   import { ExpoSpeechRecognitionModule } from 'expo-speech-recognition';
- *   installSpeechRecognizer(createNativeSpeechRecognizer(ExpoSpeechRecognitionModule));
- */
 export interface NativeSpeechModuleLike {
   requestPermissionsAsync(): Promise<{ granted: boolean }>;
   isRecognitionAvailable(): boolean;
@@ -314,7 +302,7 @@ export interface NativeSpeechModuleLike {
    * (README read 2026-10-05: https://github.com/jamsch/expo-speech-recognition.)
    * Optional in the type only so an older module is REFUSED, not crashed on.
    */
-  supportsOnDeviceRecognition?(): boolean;
+  supportsOnDeviceRecognition?(language?: string): boolean;
   start(options: { lang?: string; interimResults?: boolean; continuous?: boolean; requiresOnDeviceRecognition?: boolean }): void;
   stop(): void;
   addListener(
@@ -332,14 +320,16 @@ export interface NativeRecognizerConfig {
   cloudConsentGranted?: boolean;
 }
 
+const activeNativeModules = new WeakSet<NativeSpeechModuleLike>();
+
 export function createNativeSpeechRecognizer(
   mod: NativeSpeechModuleLike,
   config: NativeRecognizerConfig = {},
 ): SpeechRecognizerPort {
   const onDeviceOnly = config.cloudConsentGranted !== true;
-  const onDeviceSupported = (): boolean => {
+  const onDeviceSupported = (language = 'en-US'): boolean => {
     try {
-      return typeof mod.supportsOnDeviceRecognition === 'function' && mod.supportsOnDeviceRecognition() === true;
+      return typeof mod.supportsOnDeviceRecognition === 'function' && mod.supportsOnDeviceRecognition(language) === true;
     } catch {
       return false;
     }
@@ -361,52 +351,62 @@ export function createNativeSpeechRecognizer(
     async recognizeOnce(opts: RecognizeOnceOptions = {}): Promise<TranscriptionOutcome> {
       // Checked BEFORE the microphone is asked for: a device that would send the
       // audio away is refused without a permission prompt.
-      if (onDeviceOnly && !onDeviceSupported()) return ON_DEVICE_UNAVAILABLE;
-      let perm: { granted: boolean };
+      if (opts.signal?.aborted) return { ok: false, unavailable: false, reason: 'capture_failed', error: 'Released before listening started.' };
+      if (onDeviceOnly && !onDeviceSupported(opts.language ?? 'en-US')) return ON_DEVICE_UNAVAILABLE;
+      if (activeNativeModules.has(mod)) return { ok: false, unavailable: false, reason: 'provider_error', error: 'Voice input is finishing another request. Try again.' };
+      activeNativeModules.add(mod);
       try {
-        perm = await mod.requestPermissionsAsync();
-      } catch {
-        perm = { granted: false };
-      }
-      if (!perm.granted) return { ok: false, unavailable: true, reason: 'permission_denied', error: ERROR_COPY.permission_denied };
-      return new Promise((resolve) => {
-        let final: TranscriptionResult | null = null;
-        let failure: string | undefined;
-        const subs = [
-          mod.addListener('result', (e) => {
-            const alt = e.results?.[0];
-            if (!alt) return;
-            const out: TranscriptionResult = { text: alt.transcript, confidence: alt.confidence, isFinal: e.isFinal === true, language: opts.language ?? null };
-            if (out.isFinal) final = out;
-            else opts.onPartial?.(out);
-          }),
-          mod.addListener('error', (e) => { failure = e.error ?? 'unknown'; }),
-          mod.addListener('end', () => {
-            subs.forEach((s) => s.remove());
-            opts.signal?.removeEventListener('abort', onAbort);
-            if (final) resolve({ ok: true, result: final });
-            else {
-              const reason = reasonFor(failure ?? 'no-speech');
-              resolve({ ok: false, unavailable: reason === 'permission_denied', reason, error: ERROR_COPY[reason] });
-            }
-          }),
-        ];
-        const onAbort = () => { try { mod.stop(); } catch { /* already stopped */ } };
-        opts.signal?.addEventListener('abort', onAbort);
+        let permission: { granted: boolean };
         try {
-          // OD-INPUT-5: on the device, and NO `recordingOptions` — the module's
-          // `persist` defaults to false, so no raw audio is written anywhere.
-          mod.start({
-            lang: opts.language ?? undefined,
-            interimResults: !!opts.onPartial,
-            continuous: false,
-            requiresOnDeviceRecognition: onDeviceOnly,
-          });
+          permission = await mod.requestPermissionsAsync();
         } catch {
-          subs.forEach((s) => s.remove());
-          resolve({ ok: false, unavailable: true, reason: 'provider_error', error: ERROR_COPY.provider_error });
+          permission = { granted: false };
         }
-      });
+        if (opts.signal?.aborted) return { ok: false, unavailable: false, reason: 'capture_failed', error: 'Released before listening started.' };
+        if (!permission.granted) return { ok: false, unavailable: true, reason: 'permission_denied', error: ERROR_COPY.permission_denied };
+        return await new Promise((resolve) => {
+          let final: TranscriptionResult | null = null;
+          let failure: string | undefined;
+          let settled = false;
+          const subscriptions: Array<{ remove(): void }> = [];
+          const onAbort = () => { try { mod.stop(); } catch {} };
+          const finish = (outcome: TranscriptionOutcome) => {
+            if (settled) return;
+            settled = true;
+            subscriptions.forEach(subscription => subscription.remove());
+            opts.signal?.removeEventListener('abort', onAbort);
+            resolve(outcome);
+          };
+          try {
+            subscriptions.push(mod.addListener('result', (event) => {
+              const alternative = event.results?.[0];
+              if (!alternative || settled) return;
+              const result: TranscriptionResult = { text: alternative.transcript, confidence: alternative.confidence, isFinal: event.isFinal === true, language: opts.language ?? null };
+              if (result.isFinal) final = result;
+              else opts.onPartial?.(result);
+            }));
+            subscriptions.push(mod.addListener('error', (event) => { failure = event.error ?? 'unknown'; }));
+            subscriptions.push(mod.addListener('end', () => {
+              if (final) finish({ ok: true, result: final });
+              else {
+                const reason = reasonFor(failure ?? 'no-speech');
+                finish({ ok: false, unavailable: reason === 'permission_denied', reason, error: ERROR_COPY[reason] });
+              }
+            }));
+            opts.signal?.addEventListener('abort', onAbort);
+            mod.start({
+              lang: opts.language ?? undefined,
+              interimResults: !!opts.onPartial,
+              continuous: false,
+              requiresOnDeviceRecognition: onDeviceOnly,
+            });
+          } catch {
+            finish({ ok: false, unavailable: true, reason: 'provider_error', error: ERROR_COPY.provider_error });
+          }
+        });
+      } finally {
+        activeNativeModules.delete(mod);
+      }
     },
   };
 }

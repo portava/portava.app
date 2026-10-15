@@ -42,8 +42,9 @@ import { VerifiedBadge } from '../trust/VerifiedBadge.tsx';
 export interface UserIdentityLinkProps {
   /** The profile owner's UUID. Pass '' when unavailable (disables block check). */
   userId: string;
-  /** Handle without leading @. Null/undefined → press is a no-op. */
+  /** Handle without leading @. Null/undefined → no-op unless onProfilePress is provided. */
   handle: string | null | undefined;
+  onProfilePress?: () => void;
   /** Not used for routing but kept for future a11y label. */
   displayName?: string | null | undefined;
   /** The currently signed-in user's UUID. Self-taps route to own Passport. */
@@ -80,6 +81,7 @@ export function stopPropagation(e: { stopPropagation?: () => void }) {
 export function UserIdentityLink({
   userId,
   handle,
+  onProfilePress,
   currentUserId,
   disabled,
   style,
@@ -95,12 +97,15 @@ export function UserIdentityLink({
   const isBlocked =
     userId ? (blockedIds.has(userId) || blockerIds.has(userId)) : false;
 
-  function handlePress() {
-    if (disabled || isBlocked || !handle) return;
+  function handlePress(event?: { stopPropagation?: () => void }) {
+    if (onProfilePress) event?.stopPropagation?.();
+    if (disabled || isBlocked || (!handle && !onProfilePress)) return;
     // If the block list is still loading, navigate anyway — the profile screen
     // itself enforces the block on arrival.
     try {
-      if (userId && currentUserId && userId === currentUserId) {
+      if (onProfilePress) {
+        onProfilePress();
+      } else if (userId && currentUserId && userId === currentUserId) {
         // Self-tap → own Passport tab
         router.push('/(tabs)/passport' as any);
       } else {
@@ -114,7 +119,7 @@ export function UserIdentityLink({
   return (
     <Pressable
       onPress={handlePress}
-      disabled={disabled || !handle}
+      disabled={disabled || (!handle && !onProfilePress)}
       testID={testID}
       style={style}
       // Ensure the pressable doesn't eat pointer events when children are interactive

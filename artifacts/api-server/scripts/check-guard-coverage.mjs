@@ -1316,6 +1316,18 @@ const EXEMPT = [
       'EXEMPTION MEANS UNGUARDED, NOT SAFE: removal of the injected transport or use of an environment target ' +
       'voids this exemption and requires the normal guarded database entry point.',
   },
+  {
+    file: 'src/test/compassTripProjectionReads.test.ts',
+    pinnedTestEnv: true,
+    reason:
+      'Registered unit test of unread trip projections over the installed Supabase client. Its client ' +
+      'uses only the literal http://127.0.0.1:9 and offline-test-key, with auth persistence, refresh and ' +
+      'URL session detection disabled. Injected fetch validates the loopback target and GET method and ' +
+      'returns in-memory PostgREST responses; it never forwards a request. The transport sentinel proves ' +
+      'ambient fetch receives zero calls for valid and malformed reads. The package.json test invocation ' +
+      'pin is independently enforced by pinnedTestEnv. EXEMPTION MEANS UNGUARDED, NOT SAFE: changing the ' +
+      'literal target or removing the injected transport voids this exemption and requires a guarded entry point.',
+  },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -328,3 +328,83 @@ test('OD-INPUT-5 web: an engine that answers available() but has NO processLocal
   assert.deepEqual([out.ok, !out.ok && out.reason], [false, 'on_device_unavailable']);
   assert.ok(!log.some((l) => l.startsWith('start')), 'never started');
 });
+
+test('native: a release before permission begins asks for nothing and starts nothing', async () => {
+  const controller = new AbortController();
+  controller.abort();
+  const { mod, seen } = nativeMod();
+  const outcome = await createNativeSpeechRecognizer(mod).recognizeOnce({ signal: controller.signal });
+  assert.equal(outcome.ok, false);
+  assert.equal(seen.asked, 0);
+  assert.equal(seen.started.length, 0);
+});
+
+test('native: the selected language must be supported locally even when the default language is supported', async () => {
+  const { mod, seen } = nativeMod({ supportsOnDeviceRecognition: language => language === 'en-US' });
+  const recognizer = createNativeSpeechRecognizer(mod);
+  assert.equal(await recognizer.isAvailable(), true);
+  const outcome = await recognizer.recognizeOnce({ language: 'vi-VN' });
+  assert.deepEqual([outcome.ok, !outcome.ok && outcome.reason], [false, 'on_device_unavailable']);
+  assert.equal(seen.asked, 0);
+  assert.equal(seen.started.length, 0);
+});
+
+test('native: releasing during the permission prompt never starts capture after permission resolves', async () => {
+  const controller = new AbortController();
+  let grantPermission!: (value: { granted: boolean }) => void;
+  const { mod, seen } = nativeMod({ requestPermissionsAsync: () => new Promise(resolve => { grantPermission = resolve; }) });
+  const outcome = createNativeSpeechRecognizer(mod).recognizeOnce({ signal: controller.signal });
+  controller.abort();
+  grantPermission({ granted: true });
+  assert.equal((await outcome).ok, false);
+  assert.equal(seen.started.length, 0);
+});
+
+test('native: a failed start removes its abort listener and cannot stop a later capture', async () => {
+  const controller = new AbortController();
+  let stops = 0;
+  const { mod } = nativeMod({ start() { throw new Error('start failed'); }, stop() { stops += 1; } });
+  assert.equal((await createNativeSpeechRecognizer(mod).recognizeOnce({ signal: controller.signal })).ok, false);
+  controller.abort();
+  assert.equal(stops, 0);
+});
+
+test('native: a pending permission request excludes concurrent capture, including another adapter', async () => {
+  let grantPermission!: (value: { granted: boolean }) => void;
+  const { mod, seen } = nativeMod({ requestPermissionsAsync: () => new Promise(resolve => { grantPermission = resolve; }) });
+  const first = createNativeSpeechRecognizer(mod).recognizeOnce();
+  const second = createNativeSpeechRecognizer(mod).recognizeOnce();
+  const outcome = await Promise.race([second, new Promise(resolve => setTimeout(() => resolve('still pending'), 20))]);
+  assert.notEqual(outcome, 'still pending');
+  assert.equal((outcome as { ok: boolean }).ok, false);
+  grantPermission({ granted: true });
+  assert.equal((await first).ok, true);
+  assert.equal(seen.started.length, 1);
+});
+
+test('native: stop holds the capture lock until end, so later sessions cannot consume its transcript', async () => {
+  const listeners: Record<string, (event: any) => void> = {};
+  let starts = 0;
+  const { mod } = nativeMod({
+    start() { starts += 1; },
+    addListener(event, listener) { listeners[event] = listener; return { remove() { delete listeners[event]; } }; },
+  });
+  const controller = new AbortController();
+  const port = createNativeSpeechRecognizer(mod);
+  const first = port.recognizeOnce({ signal: controller.signal });
+  await Promise.resolve();
+  controller.abort();
+  const second = port.recognizeOnce();
+  const outcome = await Promise.race([second, new Promise(resolve => setTimeout(() => resolve('still pending'), 20))]);
+  assert.notEqual(outcome, 'still pending');
+  assert.equal((outcome as { ok: boolean }).ok, false);
+  assert.equal(starts, 1);
+  listeners.result({ isFinal: true, results: [{ transcript: 'first only', confidence: 0.9 }] });
+  listeners.end({});
+  assert.deepEqual(await first, { ok: true, result: { text: 'first only', confidence: 0.9, isFinal: true, language: null } });
+  const third = port.recognizeOnce();
+  await Promise.resolve();
+  assert.equal(starts, 2);
+  listeners.end({});
+  assert.equal((await third).ok, false);
+});
