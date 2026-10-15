@@ -6,7 +6,7 @@
     "baseline never sits above reality. Do not hand-edit."
   ],
   "project": "artifacts/api-server/tsconfig.test.json",
-  "total": 862,
+  "total": 861,
   "files": {
     "src/test/accessControl.test.ts": 1,
     "src/test/accountDeletionCascade.test.ts": 1,
@@ -80,7 +80,6 @@
     "src/test/passportStampsCountFallback.test.ts": 1,
     "src/test/passportStampsPagination.test.ts": 1,
     "src/test/passportStatsFromTripCompletion.test.ts": 1,
-    "src/test/photoCeilingExifStrip.test.ts": 1,
     "src/test/placeResolve.test.ts": 2,
     "src/test/placeReviews.test.ts": 14,
     "src/test/placesPhoto.test.ts": 2,
