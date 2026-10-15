@@ -14980,7 +14980,8 @@ catch, a stale entry, a lazy verdict, a reader without its try, a reader catch a
 
 ## §98 — TELEGRAPH B58 lane BLOCKS-2 (2026-10-14): a whole block list is read to its END — keyset-paged past `db-max-rows`, unreadable above a 10,000-row ceiling, never a prefix — and an empty-bodied answer is never "not blocked". NO ROW CHANGES BUCKET
 
-Written 2026-10-14 on branch `claude/fix-blocks-keyset-paging` from origin/main `9ef582d4c` (#729 merged). APPEND-ONLY.
+Written 2026-10-14 on branch `claude/fix-blocks-keyset-paging` from origin/main `9ef582d4c` (#729 merged), with
+origin/main `78028e2d8` (#723, #726) merged in before the push. APPEND-ONLY.
 The follow-up §94.6 deferred: its second and third found-not-fixed items. No migration, no flag, no client change, no
 database. Numbered §98 because open PRs write §95 (#738), §96 (#740) and §97 (#745 and #748, which collide with each
 other); renumber on conflict.
@@ -15084,7 +15085,8 @@ other); renumber on conflict.
   10,001 → unreadable after at most 12. Cap 400, 2,500 rows → 9.
 - **Reach set:** every registered suite that transitively imports `exclusionSet`, `blockGuard`, `blocks`, `keysetRead`,
   `CompassProfileService` or `CompassTools` (import graph walked, `src/lib/*.test.ts` included): **1,032 suites, 21,487
-  tests, 0 failures** on the head. Before the three fake corrections, 14 tests in those three files went red, every one
+  tests, 0 failures** on `099b67b14`, before origin/main `78028e2d8` was merged; the PR body gives the re-run on the
+  merged head. Before the three fake corrections, 14 tests in those three files went red, every one
   on a `null` or non-thenable "no block" answer. A first build that always walked (one more round trip for everyone,
   and a different first request) turned 293 tests in 52 suites red on fakes without `.order`/`.gt`/`.limit` or row ids,
   and the search golden on the changed column list; the byte-identical first read under 150 rows is why none of them
