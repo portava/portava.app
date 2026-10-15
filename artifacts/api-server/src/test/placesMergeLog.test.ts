@@ -650,6 +650,36 @@ describe("POST /admin/places/:id/merge", () => {
     stillMerged(w, A, B, "M25");
   });
 
+  it("M26 a place whose stamp is AHEAD of this instance's clock still merges, and a lost response is still recognised as ours", async () => {
+    const ahead = "2099-01-01T00:00:00.000Z"; // written by an instance whose clock runs fast
+    const w = makeWorld({
+      places: [{ ...active(A), updated_at: ahead }, active(B)],
+      before: (q, t) => { if (q.method === "PATCH" && q.table === "places") Object.assign(findP(t, A), q.body); }, // ours commits
+      fail: failWhen("PATCH", "places"), // its response is lost
+    });
+    install(w);
+    const r = await merge();
+    assert.equal(r.status, 200, `M26: ${JSON.stringify(r.body)}`);
+    stillMerged(w, A, B, "M26");
+    assert.ok(Date.parse(w.place(A).updated_at) > Date.parse(ahead), `M26: the stamp moved forward — ${w.place(A).updated_at}`);
+  });
+
+  it("M27 merged_into changed WITHOUT a stamp change (a writer outside this API) still fails the compare-and-set: 409, row withdrawn", async () => {
+    let raced = false;
+    const w = makeWorld({
+      places: [active(A), active(B), active(C)],
+      before: (q, t) => {
+        if (raced || q.method !== "PATCH" || q.table !== "places") return;
+        raced = true; // an operator's SQL merges A into C and leaves updated_at alone
+        Object.assign(findP(t, A), { merged_into_place_id: C, status: "duplicate" });
+      },
+    });
+    install(w);
+    refused(await merge(), 409, "conflict", "place_changed", "M27");
+    stillMerged(w, A, C, "M27");
+    assert.equal(w.log().length, 0, "M27: our row is withdrawn");
+  });
+
   it("M12 stays admin-only: a non-admin is refused before the catalog is touched", async () => {
     const w = makeWorld({ places: [active(A), active(B)] });
     install(w, "user");
@@ -958,6 +988,24 @@ describe("POST /admin/places/:id/unmerge", () => {
     stillMerged(w, A, B, "U20");
     assert.deepEqual(w.log().map((x) => x.action), ["merge", "unmerge"], "U20: the row is kept");
     assert.ok(!w.writes().includes("DELETE place_merge_log"), "U20: no withdrawal is attempted");
+  });
+
+  it("U21 the survivor deleted between the read and the move (ON DELETE SET NULL, no stamp change) fails the compare-and-set: 409, row withdrawn", async () => {
+    let raced = false;
+    const w = makeWorld({
+      places: [mergedInto(A, B), active(B)],
+      log: [logRow("merge", B, A, T1)],
+      before: (q, t) => {
+        if (raced || q.method !== "PATCH" || q.table !== "places") return;
+        raced = true; // 2028: merged_into_place_id REFERENCES places(id) ON DELETE SET NULL
+        t.places!.splice(t.places!.findIndex((p) => p.id === B), 1);
+        findP(t, A).merged_into_place_id = null;
+      },
+    });
+    install(w);
+    refused(await unmerge(), 409, "conflict", "place_changed", "U21");
+    assert.equal(w.place(A).status, "duplicate", "U21: the place is not written");
+    assert.deepEqual(w.log().map((x) => x.action), ["merge"], "U21: our row is withdrawn");
   });
 
   it("U12 the refusals main already had are unchanged (not found, not merged, bad id)", async () => {
