@@ -57,8 +57,8 @@ function formatTime(iso: string): string {
 
 export function MessageMediaBubble({
   mediaType,
-  mediaUrl,
-  thumbnailUrl,
+  mediaUrl: rawMediaUrl,
+  thumbnailUrl: rawThumbnailUrl,
   durationSeconds,
   mine,
   senderName,
@@ -119,7 +119,7 @@ export function MessageMediaBubble({
     );
   }
 
-  // ── Sent / received media bubble ──────────────────────────────────────────
+  const mediaUrl = telegraphMediaUri(rawMediaUrl); const thumbnailUrl = telegraphMediaUri(rawThumbnailUrl); // ── Sent / received media bubble. census-telegraph T446 (§96, fix round 1): a legacy row's non-storage media is withheld from the render AND from both taps below — nothing opens or plays a host a sender chose
   function handleImagePress() {
     if (mediaUrl) {
       Linking.openURL(mediaUrl).catch(() => {});

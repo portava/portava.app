@@ -64,18 +64,28 @@ export function configuredStorageOrigin(): string | null {
 
 /**
  * The message tree's one door for a media URI: the value itself when it is
- * Portava storage, otherwise null. `origin` defaults to the configured storage
- * origin; a test passes its own.
+ * Portava storage, otherwise null. EXACTLY ONE argument (fix round 1, verifier
+ * S1): the storage origin is always the configured one, so no caller can widen
+ * the rule by passing its own — TypeScript refuses a second argument, and the
+ * message-tree guard accepts only a one-argument call as provenance.
  */
-export function telegraphMediaUri(
-  raw: unknown,
-  origin: string | null = configuredStorageOrigin(),
-): string | null {
+export function telegraphMediaUri(raw: unknown): string | null {
+  return mediaUriForOrigin(raw, configuredStorageOrigin());
+}
+
+/**
+ * The rule itself, with the origin explicit — for the rule's own tests. Not a
+ * provenance door: the guard does not accept a call to this name.
+ */
+export function mediaUriForOrigin(raw: unknown, origin: string | null): string | null {
   if (typeof raw !== 'string') return null;
   const v = raw.trim();
   if (!v || UNSAFE_CHARS.test(v)) return null;
   if (v.startsWith('//') || v.includes('://')) {
     if (!origin) return null;
+    // Parity with the server's WHATWG normalisation (verifier S7): a dot-segment, plain or
+    // percent-encoded, could walk the path off /storage/v1/ on our own host.
+    if (v.includes('..') || /%2e/i.test(v)) return null;
     return v.startsWith(`${origin}/storage/v1/`) ? v : null;
   }
   if (!BARE_STORAGE_REF.test(v) || v.includes('..')) return null;

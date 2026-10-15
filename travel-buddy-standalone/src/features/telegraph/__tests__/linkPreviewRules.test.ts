@@ -12,7 +12,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { telegraphMediaUri, configuredStorageOrigin } from '../linkPreview/telegraphMediaUri.ts';
+import { telegraphMediaUri, mediaUriForOrigin, configuredStorageOrigin } from '../linkPreview/telegraphMediaUri.ts';
 import {
   bodyHasExternalLink,
   bodyVersion,
@@ -40,8 +40,8 @@ test('M1 kept: bare storage refs, and URLs on the configured storage origin unde
     `${ORIGIN}/storage/v1/object/public/stamp-artwork/a.png`,
     `${ORIGIN}/storage/v1/object/sign/post-media/u/a.jpg?token=t`,
     `${ORIGIN}/storage/v1/render/image/sign/post-media/u/a.jpg?token=t&width=400`,
-  ]) assert.equal(telegraphMediaUri(v, ORIGIN), v, v);
-  assert.equal(telegraphMediaUri('  post-media/u/a.jpg  ', ORIGIN), 'post-media/u/a.jpg', 'trimmed');
+  ]) assert.equal(mediaUriForOrigin(v, ORIGIN), v, v);
+  assert.equal(mediaUriForOrigin('  post-media/u/a.jpg  ', ORIGIN), 'post-media/u/a.jpg', 'trimmed');
 });
 
 test('M2 withheld: any other host, and every trick that would move the authority off the storage host', () => {
@@ -62,16 +62,33 @@ test('M2 withheld: any other host, and every trick that would move the authority
     'tracker.example/pixel.gif',                                          // a dotted "bucket" is a host, not a bucket
     'post-media/../../x',
     'post-media/u/a b.jpg',
+    `${ORIGIN}/storage/v1/x\\@tracker.example/`,                     // a backslash anywhere (verifier S6b)
+    `${ORIGIN}/storage/v1/a b.png`,                                   // whitespace anywhere
+    `${ORIGIN}/storage/v1/../../rest/v1/profiles`,                    // a dot-segment off /storage/v1/ (S7)
+    `${ORIGIN}/storage/v1/%2e%2e/%2E%2E/rest/v1/profiles`,             // the same, percent-encoded
     'post-media/u/a\n.jpg',
     '',
     '   ',
-  ]) assert.equal(telegraphMediaUri(v, ORIGIN), null, JSON.stringify(v));
-  for (const v of [null, undefined, 42, {}, ['post-media/a']]) assert.equal(telegraphMediaUri(v, ORIGIN), null);
+  ]) assert.equal(mediaUriForOrigin(v, ORIGIN), null, JSON.stringify(v));
+  for (const v of [null, undefined, 42, {}, ['post-media/a']]) assert.equal(mediaUriForOrigin(v, ORIGIN), null);
+});
+
+test('M2b the production door takes exactly one argument: a second one cannot widen the origin', () => {
+  assert.equal(telegraphMediaUri.length, 1);
+  const was = process.env.EXPO_PUBLIC_SUPABASE_URL;
+  try {
+    process.env.EXPO_PUBLIC_SUPABASE_URL = ORIGIN;
+    // @ts-expect-error — the compiler refuses a second argument; at runtime it is ignored
+    assert.equal(telegraphMediaUri('https://evil.example/storage/v1/x.png', 'https://evil.example'), null);
+    assert.equal(telegraphMediaUri(`${ORIGIN}/storage/v1/x.png`), `${ORIGIN}/storage/v1/x.png`);
+  } finally {
+    if (was === undefined) delete process.env.EXPO_PUBLIC_SUPABASE_URL; else process.env.EXPO_PUBLIC_SUPABASE_URL = was;
+  }
 });
 
 test('M3 no configured storage origin: absolute URLs are all withheld, bare refs still kept', () => {
-  assert.equal(telegraphMediaUri(`${ORIGIN}/storage/v1/object/public/a/b.png`, null), null);
-  assert.equal(telegraphMediaUri('post-media/u/a.jpg', null), 'post-media/u/a.jpg');
+  assert.equal(mediaUriForOrigin(`${ORIGIN}/storage/v1/object/public/a/b.png`, null), null);
+  assert.equal(mediaUriForOrigin('post-media/u/a.jpg', null), 'post-media/u/a.jpg');
 });
 
 test('M4 configuredStorageOrigin reads EXPO_PUBLIC_SUPABASE_URL: scheme + lowercased host (+ port), nothing else', () => {
@@ -153,6 +170,7 @@ test('O1 isOpenablePreviewLink: the https link to exactly the named host — dec
     ['https://example.com:8443/a', 'example.com'],
     ['https://evil.example/a', 'example.com'],
     ['https://evil.exampl/a', 'example.com'],                 // another host of the SAME length: the prefix itself must match
+    ['https://evil.exampl/x?u=https://example.com', 'example.com'], // the named host appears later in the URL (verifier S6a)
     ['https://example.com\\@evil.example/', 'example.com'],
     ['https://example.com/a b', 'example.com'],
     ['javascript:alert(1)', 'example.com'],

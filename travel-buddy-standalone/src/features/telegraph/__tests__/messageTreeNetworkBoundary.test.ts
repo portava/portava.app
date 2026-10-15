@@ -65,6 +65,8 @@ export const ROOTS = [
   'src/components/TelegraphInboxScreen.tsx',
   'app/messages/saved.tsx',
   'src/features/telegraph/components/TelegraphSearchScreen.tsx',
+  // Fix round 1 (verifier F1): mounted at the app root, outside every list, it plays what a bubble's tap hands it.
+  'src/features/telegraph/media/CompactPlaybackHost.tsx',
 ];
 const inScope = (rel: string) =>
   (rel.startsWith('src/components/') || rel.startsWith('src/features/telegraph/') || ROOTS.includes(rel)) &&
@@ -77,13 +79,25 @@ const SINK_COMPONENTS: Record<string, Record<string, string[]>> = {
   'src/components/CachedImage.tsx': { CachedImage: ['source'] },
   'src/components/ui/VideoThumbnail.tsx': { VideoThumbnail: ['posterUri'] },
   'src/components/telegraph/TelegraphPrimitives.tsx': { TelegraphAvatar: ['uri'] },
+  'src/components/ui/SharedVideoPlayer.tsx': { SharedVideoPlayer: ['uri', 'poster'] },
+  'src/components/ui/VideoBlurBackdrop.tsx': { VideoBlurBackdrop: ['uri'] },
 };
 const PACKAGE_SINKS: Record<string, Record<string, string[]>> = {
   'react-native': { Image: ['source'], ImageBackground: ['source'] },
-  'expo-image': { Image: ['source', 'placeholder'] },
+  'expo-image': { Image: ['source', 'placeholder'], ImageBackground: ['source', 'placeholder'] },
   'expo-av': { Video: ['source', 'posterSource'] },
+  // Not used in the tree today; modelled so the guard does not go quiet when one arrives (verifier S2).
+  'react-native-svg': { SvgUri: ['uri'], Image: ['href', 'xlinkHref'] },
+  'react-native-maps': { Marker: ['image', 'icon'], Overlay: ['image'] },
+  'react-native-fast-image': { default: ['source'] },
 };
-const LOADERS = new Set(['prefetch', 'getSize', 'getSizeWithHeaders', 'queryCache', 'loadAsync', 'downloadAsync', 'createDownloadResumable', 'createAsync']);
+/** `<Animated.Image>` and its kin, reached through a named import of `Animated` (verifier S2). */
+const MEMBER_SINKS: Record<string, Record<string, Record<string, string[]>>> = {
+  'react-native': { Animated: { Image: ['source'], ImageBackground: ['source'] } },
+};
+const LOADERS = new Set(['prefetch', 'getSize', 'getSizeWithHeaders', 'queryCache', 'loadAsync', 'downloadAsync', 'createDownloadResumable', 'createAsync',
+  // verifier S2: expo-video's player loads its source on creation; expo-file-system/next downloads; a warmed browser session preloads.
+  'useVideoPlayer', 'createVideoPlayer', 'downloadFileAsync', 'mayInitWithUrlAsync', 'warmUpAsync']);
 const OPENERS = new Set(['openURL', 'openBrowserAsync', 'openAuthSessionAsync']);
 const EFFECTS = new Set(['useEffect', 'useLayoutEffect', 'useInsertionEffect', 'useFocusEffect', 'useMemo', 'setTimeout', 'setInterval', 'setImmediate', 'requestAnimationFrame', 'runAfterInteractions', 'addEventListener', 'queueMicrotask']);
 const PRESS_NAME = /^on\w*Press$/;
@@ -107,6 +121,12 @@ export const IMAGE_PINS: Pin[] = [
   { key: 'src/components/CachedImage.tsx <ExpoImage placeholder={placeholder ? { blurhash: placeholder } : undefined}>', count: 1, why: 'a blurhash string drawn locally while loading — never a URL' },
   { key: 'src/components/ui/VideoThumbnail.tsx <Image source={{ uri: effectivePosterUri }}>', count: 1, why: PRIMITIVE },
   { key: 'src/components/telegraph/TelegraphPrimitives.tsx <Image source={{ uri: effectiveUri }}>', count: 1, why: PRIMITIVE },
+  // The root playback host's player (fix round 1, verifier F1): the host hands it telegraphMediaUri(session.mediaRef/posterRef),
+  // and the store admits a session only through telegraphMediaUri (compactPlaybackStore.ts#openMessageVideo).
+  { key: 'src/components/ui/SharedVideoPlayer.tsx <Video source={{ uri: playbackUri }}>', count: 1, why: PRIMITIVE },
+  { key: 'src/components/ui/SharedVideoPlayer.tsx <DisplayMediaImage uri={posterUri}>', count: 1, why: PRIMITIVE },
+  { key: 'src/components/ui/SharedVideoPlayer.tsx <VideoBlurBackdrop uri={posterUri}>', count: 1, why: PRIMITIVE },
+  { key: 'src/components/ui/VideoBlurBackdrop.tsx <Image source={{ uri }}>', count: 1, why: PRIMITIVE },
   // profile avatars and names (not message-derived)
   { key: 'app/messages/[id].tsx <Avatar uri={creator?.avatarUrl}>', count: 1, why: `${AVATAR} (a meetup creator, GET /meetups/:id)` },
   { key: 'app/messages/[id].tsx <Avatar uri={attendee.avatarUrl}>', count: 1, why: `${AVATAR} (meetup attendees)` },
@@ -148,11 +168,21 @@ export const LOAD_PINS: Pin[] = [
 
 const norm = (s: string) => s.replace(/\s+/g, ' ').trim();
 
+const PLATFORMS = ['', '.native', '.ios', '.android', '.web'];
+function candidates(base: string): string[] {
+  const out = [base];
+  for (const p of PLATFORMS) out.push(`${base}${p}.ts`, `${base}${p}.tsx`, `${base}/index${p}.ts`, `${base}/index${p}.tsx`);
+  return out;
+}
+/** The module a specifier names (its plain file first). */
 function resolveRel(fromRel: string, spec: string, exists: (rel: string) => boolean): string | null {
-  if (!spec.startsWith('.')) return null;
+  return resolveAll(fromRel, spec, exists)[0] ?? null;
+}
+/** EVERY file the bundler may pick for a specifier — `.native`/`.ios`/`.android`/`.web` variants too (verifier S2/P16). */
+function resolveAll(fromRel: string, spec: string, exists: (rel: string) => boolean): string[] {
+  if (!spec.startsWith('.')) return [];
   const base = posix.normalize(posix.join(posix.dirname(fromRel), spec));
-  for (const c of [base, `${base}.ts`, `${base}.tsx`, `${base}/index.ts`, `${base}/index.tsx`]) if (exists(c)) return c;
-  return null;
+  return candidates(base).filter((c) => exists(c));
 }
 
 function moduleSpecifiers(sf: ts.SourceFile): string[] {
@@ -178,8 +208,7 @@ export function closureOf(roots: string[], src: Source, scope: (rel: string) => 
     seen.add(rel);
     const sf = ts.createSourceFile(rel, src.read(rel), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
     for (const spec of moduleSpecifiers(sf)) {
-      const r = resolveRel(rel, spec, src.exists);
-      if (r && scope(r)) stack.push(r);
+      for (const r of resolveAll(rel, spec, src.exists)) if (scope(r)) stack.push(r);
     }
   }
   return [...seen].sort();
@@ -216,14 +245,57 @@ function sinkPropsFor(tag: ts.JsxTagNameExpression, imports: Map<string, Importe
   };
   if (imp) {
     if ('ns' in imp) return member ? fromModule(imp.module, imp.resolved, member) : null;
-    return member ? null : fromModule(imp.module, imp.resolved, imp.name);
+    if (member) return MEMBER_SINKS[imp.module]?.[imp.name]?.[member] ?? null;
+    return fromModule(imp.module, imp.resolved, imp.name);
   }
   // A sink used inside the file that defines it (AvatarImage inside DisplayMediaImage.tsx, …).
   return member === null && SINK_COMPONENTS[rel]?.[local] ? SINK_COMPONENTS[rel][local] : null;
 }
 
+/** Exactly `telegraphMediaUri(<one argument>)` — no second argument, no spread (verifier S1). */
+function isMediaUriCall(e: ts.Expression): boolean {
+  e = skipParens(e);
+  return ts.isCallExpression(e) && ts.isIdentifier(e.expression) && e.expression.text === 'telegraphMediaUri' &&
+    e.arguments.length === 1 && !ts.isSpreadElement(e.arguments[0]);
+}
+function skipParens(e: ts.Expression): ts.Expression {
+  while (ts.isParenthesizedExpression(e)) e = e.expression;
+  return e;
+}
+/** A fallback that names no host: `undefined`, `null`, or the empty string. */
+function isEmptyFallback(e: ts.Expression): boolean {
+  e = skipParens(e);
+  return (ts.isIdentifier(e) && e.text === 'undefined') || e.kind === ts.SyntaxKind.NullKeyword ||
+    (ts.isStringLiteral(e) && e.text === '') || (ts.isNoSubstitutionTemplateLiteral(e) && e.text === '');
+}
 /**
- * `name` is declared in this file ONLY as `const name = telegraphMediaUri(…)` (every declaration of
+ * The WHOLE bound expression carries provenance (verifier S1 — a substring test let
+ * `raw ?? telegraphMediaUri(x)` and `{ uri: raw, cacheKey: telegraphMediaUri(x) }` through):
+ *   telegraphMediaUri(x)                      the call itself
+ *   telegraphMediaUri(x) ?? undefined|null|'' the call with an empty fallback
+ *   name                                      a const assigned from exactly the above
+ *   { uri: <any of the above> }               an image-source object whose ONLY property is that
+ *   require('…')                              a bundled asset
+ *   '…'                                       a string literal that is not a URL
+ */
+function isProvenanced(expr: ts.Expression, sf: ts.SourceFile): boolean {
+  const e = skipParens(expr);
+  if (isMediaUriCall(e)) return true;
+  if (ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken && isMediaUriCall(e.left) && isEmptyFallback(e.right)) return true;
+  if (ts.isIdentifier(e) && constFromMediaUri(sf, e.text)) return true;
+  if (ts.isObjectLiteralExpression(e) && e.properties.length === 1) {
+    const prop = e.properties[0];
+    if (ts.isPropertyAssignment(prop) && prop.name.getText(sf) === 'uri') return isProvenanced(prop.initializer, sf);
+    if (ts.isShorthandPropertyAssignment(prop) && prop.name.text === 'uri') return constFromMediaUri(sf, 'uri');
+    return false;
+  }
+  if (ts.isCallExpression(e) && ts.isIdentifier(e.expression) && e.expression.text === 'require' && e.arguments.length === 1 && ts.isStringLiteral(e.arguments[0])) return true;
+  if (ts.isStringLiteral(e) && !/^(https?:)?\/\//i.test(e.text) && !e.text.includes(':')) return true;
+  return false;
+}
+
+/**
+ * `name` is declared in this file ONLY as `const name = telegraphMediaUri(<one argument>)` (every declaration of
  * that name, so a shadowing declaration with another source cannot borrow the provenance).
  */
 function constFromMediaUri(sf: ts.SourceFile, name: string): boolean {
@@ -234,7 +306,7 @@ function constFromMediaUri(sf: ts.SourceFile, name: string): boolean {
       const list = n.parent;
       const isConst = ts.isVariableDeclarationList(list) && (list.flags & ts.NodeFlags.Const) !== 0;
       const init = n.initializer;
-      if (isConst && init && ts.isCallExpression(init) && ts.isIdentifier(init.expression) && init.expression.text === 'telegraphMediaUri') ok++;
+      if (isConst && init && isMediaUriCall(init)) ok++;
     }
     if ((ts.isParameter(n) || ts.isBindingElement(n)) && ts.isIdentifier(n.name) && n.name.text === name) seen++;
     ts.forEachChild(n, visit);
@@ -353,9 +425,7 @@ export function analyze(files: string[], src: Source): { findings: Finding[]; ke
             const expr = ts.isJsxExpression(attr.initializer) ? attr.initializer.expression : attr.initializer;
             if (!expr) continue;
             const text = norm(expr.getText(sf));
-            if (text.includes('telegraphMediaUri(') || /^require\(/.test(text)) continue;
-            if (ts.isIdentifier(expr) && constFromMediaUri(sf, expr.text)) continue;
-            if (ts.isStringLiteral(expr) && !/^(https?:)?\/\//i.test(expr.text)) continue;
+            if (isProvenanced(expr, sf)) continue;
             const key = `${rel} <${tagText} ${pname}={${text}}>`;
             see(key); add('IMAGE', attr, key);
           }
@@ -378,6 +448,13 @@ export function judge(result: { findings: Finding[]; keys: Map<string, number> }
 }
 
 const ALL_PINS = [...IMAGE_PINS, ...FETCH_PINS, ...LOAD_PINS];
+
+/**
+ * THE CEILING (verifier S3). The pin list may only SHRINK: lower these when a pin goes, never raise them.
+ * 39 entries / 40 sites on the head that set them (fix round 1: the 4 player primitives the playback host
+ * brought into the closure). Raising either is a reviewable decision, not a fix.
+ */
+const PIN_CEILING = { entries: 39, sites: 40 };
 
 // ── 1. the analyzer, on the mutants the plan names ───────────────────────────
 
@@ -484,6 +561,50 @@ test('A9 provenance through a const: `const u = telegraphMediaUri(x)` is allowed
   assert.deepEqual(run(`${head}const A = ({ u }: any) => <DisplayMediaImage uri={u} width={1} height={1} />;\nexport const B = (m: any) => { const u = telegraphMediaUri(m.url); return <A u={u} />; };`, lib).unpinned.map((f) => f.rule), ['IMAGE']);
 });
 
+test('A10 provenance is the WHOLE expression (verifier S1): a raw value beside the call, a second argument, or the call in another key is a finding', () => {
+  const head = `import { Image } from 'react-native';\nimport { DisplayMediaImage } from './ui/DisplayMediaImage.tsx';\nimport { telegraphMediaUri } from '../features/telegraph/linkPreview/telegraphMediaUri.ts';\n`;
+  const lib = { 'src/components/ui/DisplayMediaImage.tsx': 'export const DisplayMediaImage = (p: any) => null;' };
+  const found = (jsx: string) => run(`${head}export const B = ({ raw, x }: any) => ${jsx};`, lib).unpinned.map((f) => f.rule);
+  assert.deepEqual(found(`<DisplayMediaImage uri={raw ?? telegraphMediaUri(x)} width={1} height={1} />`), ['IMAGE']);
+  assert.deepEqual(found(`<DisplayMediaImage uri={telegraphMediaUri(x) ?? raw} width={1} height={1} />`), ['IMAGE']);
+  assert.deepEqual(found(`<DisplayMediaImage uri={telegraphMediaUri(x, 'https://evil.example')} width={1} height={1} />`), ['IMAGE']);
+  assert.deepEqual(found(`<Image source={{ uri: raw, cacheKey: telegraphMediaUri(x) }} />`), ['IMAGE']);
+  assert.deepEqual(found(`<Image source={{ uri: telegraphMediaUri(x), headers: raw }} />`), ['IMAGE']);
+  assert.deepEqual(found(`<DisplayMediaImage uri={'https://tracker.example/p.gif'} width={1} height={1} />`), ['IMAGE']);
+  for (const ok of [
+    `<DisplayMediaImage uri={telegraphMediaUri(x)} width={1} height={1} />`,
+    `<DisplayMediaImage uri={telegraphMediaUri(x) ?? undefined} width={1} height={1} />`,
+    `<DisplayMediaImage uri={(telegraphMediaUri(x) ?? '')} width={1} height={1} />`,
+    `<Image source={{ uri: telegraphMediaUri(x) ?? undefined }} />`,
+  ]) assert.deepEqual(found(ok), [], ok);
+  // A const is provenance only when it is assigned from a ONE-argument call.
+  assert.deepEqual(run(`${head}export const B = ({ x }: any) => { const u = telegraphMediaUri(x, 'https://evil.example'); return <DisplayMediaImage uri={u} width={1} height={1} />; };`, lib).unpinned.map((f) => f.rule), ['IMAGE']);
+});
+
+test('A11 sinks the tree does not use yet are modelled (verifier S2): Animated.Image, expo-image ImageBackground, SvgUri, a map Marker image, expo-video and file downloads', () => {
+  const cases: Array<[string, string]> = [
+    [`import { Animated } from 'react-native';\nexport const B = (m: any) => <Animated.Image source={{ uri: m.url }} />;`, 'IMAGE'],
+    [`import { ImageBackground } from 'expo-image';\nexport const B = (m: any) => <ImageBackground source={m.url} />;`, 'IMAGE'],
+    [`import { SvgUri } from 'react-native-svg';\nexport const B = (m: any) => <SvgUri uri={m.url} />;`, 'IMAGE'],
+    [`import { Marker } from 'react-native-maps';\nexport const B = (m: any) => <Marker image={{ uri: m.url }} />;`, 'IMAGE'],
+    [`import { useVideoPlayer } from 'expo-video';\nexport function B(m: any) { useVideoPlayer(m.url); return null; }`, 'LOAD'],
+    [`import { File } from 'expo-file-system/next';\nexport async function f(m: any) { await File.downloadFileAsync(m.url, 'x'); }`, 'LOAD'],
+    [`import * as WebBrowser from 'expo-web-browser';\nexport async function f(m: any) { await WebBrowser.mayInitWithUrlAsync(m.url); }`, 'LOAD'],
+  ];
+  for (const [body, rule] of cases) assert.deepEqual(run(body).unpinned.map((f) => f.rule), [rule], body);
+});
+
+test('A12 a platform variant (.native / .ios / .android / .web) is in the closure too (verifier P16)', () => {
+  const src = memory({
+    [ROOT]: `import { Card } from './Card';\nexport const B = (m: any) => <Card m={m} />;`,
+    'src/components/Card.native.tsx': `import { Image } from 'react-native';\nexport const Card = ({ m }: any) => <Image source={{ uri: m.url }} />;`,
+    'src/components/Card.web.tsx': `export const Card = (_p: any) => null;`,
+  });
+  const files = closureOf([ROOT], src);
+  assert.ok(files.includes('src/components/Card.native.tsx') && files.includes('src/components/Card.web.tsx'), files.join(','));
+  assert.deepEqual(judge(analyze(files, src), []).unpinned.map((f) => `${f.rule} ${f.file}`), ['IMAGE src/components/Card.native.tsx']);
+});
+
 // ── 2. the real tree ─────────────────────────────────────────────────────────
 
 const disk: Source = {
@@ -511,6 +632,8 @@ test('T1 the closure is the message tree, not an empty set (every surface that d
     'src/features/telegraph/voice/VoiceMessagePlayer.tsx',
     'src/features/telegraph/drawer/ContentDrawerSheet.tsx',
     'src/features/telegraph/savedMessages/SavedMessagesScreen.tsx',
+    'src/features/telegraph/media/compactPlaybackStore.ts',
+    'src/components/ui/SharedVideoPlayer.tsx',
   ]) assert.ok(CLOSURE.includes(f), `${f} is not in the scanned closure`);
 });
 
@@ -539,6 +662,12 @@ test('T3 the drawn preview is text: the link-preview modules import no image sin
   // The two requests: ids in the path or the query, and NO body on the sender's POST.
   assert.match(api, /fetch\(`\$\{apiBase\(\)\}\/api\/threads\/\$\{threadId\}\/link-previews\?ids=\$\{messageIds\.join\(','\)\}`/);
   assert.match(api, /fetch\(`\$\{apiBase\(\)\}\/api\/threads\/\$\{threadId\}\/messages\/\$\{messageId\}\/link-preview`, \{\n\s+method: 'POST',\n\s+headers: \{ Authorization: `Bearer \$\{token\}` \},\n\s+\}\)/);
+});
+
+test('T5 the pin list is under its ceiling — it may shrink, never grow', () => {
+  assert.ok(ALL_PINS.length <= PIN_CEILING.entries, `${ALL_PINS.length} pins > ceiling ${PIN_CEILING.entries}`);
+  const sites = ALL_PINS.reduce((n, p) => n + p.count, 0);
+  assert.ok(sites <= PIN_CEILING.sites, `${sites} pinned sites > ceiling ${PIN_CEILING.sites}`);
 });
 
 test('T4 every pin says why', () => {

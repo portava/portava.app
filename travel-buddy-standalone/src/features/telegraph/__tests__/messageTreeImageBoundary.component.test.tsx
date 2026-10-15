@@ -25,7 +25,7 @@
  */
 import React from 'react';
 import { Image as RNImage, Linking } from 'react-native';
-import { render, screen, waitFor, act } from '@testing-library/react-native';
+import { render, screen, waitFor, act, fireEvent } from '@testing-library/react-native';
 
 const mockSources: unknown[] = [];
 const mockPrefetch = jest.fn();
@@ -74,6 +74,13 @@ import { PortavaObjectMessage } from '../sharing/PortavaObjectMessage.tsx';
 import { TypedMessageRenderer } from '../kinds/TypedMessageRenderer.tsx';
 import { SavedMessagesScreen } from '../savedMessages/SavedMessagesScreen.tsx';
 import type { SharedCardTruth } from '../sharing/shareApi.ts';
+import {
+  _resetCompactPlaybackForTests,
+  getCompactPlayback,
+  openMessageVideo,
+  registerMessageSource,
+  reportMessageSource,
+} from '../media/compactPlaybackStore.ts';
 
 const API = 'https://api.portava.test';
 const STORAGE = 'https://abcd.supabase.co';
@@ -112,6 +119,7 @@ beforeEach(() => {
   });
   jest.spyOn(RNImage, 'prefetch').mockResolvedValue(true as never);
   jest.spyOn(Linking, 'openURL').mockResolvedValue(true as never);
+  (Linking.openURL as unknown as jest.Mock).mockClear(); // jest-expo's Linking is itself a mock: a restored spy keeps its calls
 });
 afterEach(() => { jest.restoreAllMocks(); });
 
@@ -230,6 +238,51 @@ describe('media and typed kinds — strings a sender can store', () => {
     await render(<TypedMessageRenderer msgType="memory_note" body={env('MEMORY_NOTE', { text: `remember ${T('m')}` })} mine={false} />);
     await settle();
     assertNamesNoSenderHost();
+  });
+});
+
+describe('the TAP path — fix round 1 (verifier F1): what the render withholds, a tap neither opens nor plays', () => {
+  beforeEach(() => _resetCompactPlaybackForTests());
+  const legacyVideo = (mediaUrl: string, poster: string | null) => {
+    const source = registerMessageSource();
+    reportMessageSource(source, {
+      threadId: THREAD, live: true,
+      messages: [{ id: MSG, senderId: 'u-2', deleted: false, msgType: 'media', mediaType: 'video', mediaUrl }],
+    });
+    return { mediaUrl, poster };
+  };
+
+  it('a legacy image row on the sender’s host: tapping its withheld bubble opens nothing', async () => {
+    await render(<MessageMediaBubble mediaType="image" mediaUrl={T('photo.jpg')} mine={false} createdAt="2026-10-14T10:00:00Z" />);
+    await settle();
+    await fireEvent.press(screen.getByText('Image unavailable'));
+    expect(Linking.openURL).not.toHaveBeenCalled();
+    assertNamesNoSenderHost();
+  });
+
+  it('a legacy video row on the sender’s host: tapping ▶ plays nothing, and the store refuses that host outright', async () => {
+    const v = legacyVideo(T('clip.mp4'), T('poster.jpg'));
+    await render(<MessageMediaBubble mediaType="video" mediaUrl={v.mediaUrl} thumbnailUrl={v.poster} mine={false} createdAt="2026-10-14T10:00:00Z" />);
+    await settle();
+    await fireEvent.press(screen.getByLabelText('Play video'));
+    expect(getCompactPlayback()).toBeNull();
+    // Even a caller that bypassed the bubble opens no session for a sender-chosen host.
+    expect(openMessageVideo({ mediaRef: v.mediaUrl, posterRef: v.poster })).toBe(false);
+    expect(getCompactPlayback()).toBeNull();
+    assertNamesNoSenderHost();
+  });
+
+  it('positive controls: a storage image opens on a tap; a storage video plays, and a sender-host POSTER on it is dropped', async () => {
+    await render(<MessageMediaBubble mediaType="image" mediaUrl={S('photo.png')} mine={false} createdAt="2026-10-14T10:00:00Z" />);
+    await settle();
+    await fireEvent.press(screen.getByTestId('recorded-image'));
+    expect(Linking.openURL).toHaveBeenCalledWith(S('photo.png'));
+
+    const ref = 'post-media/u-2/clip.mp4';
+    legacyVideo(ref, null);
+    expect(openMessageVideo({ mediaRef: ref, posterRef: T('poster.jpg') })).toBe(true);
+    expect(getCompactPlayback()?.mediaRef).toBe(ref);
+    expect(getCompactPlayback()?.posterRef).toBeNull();
   });
 });
 

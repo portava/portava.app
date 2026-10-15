@@ -42,7 +42,7 @@ import { ActivityIndicator, AppState, BackHandler, Pressable, StyleSheet, View }
 import { useGlobalSearchParams, usePathname } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Maximize2, Minimize2, X } from 'lucide-react-native';
-import { SharedVideoPlayer } from '../../../components/ui/SharedVideoPlayer.tsx';
+import { SharedVideoPlayer } from '../../../components/ui/SharedVideoPlayer.tsx'; import { telegraphMediaUri } from '../linkPreview/telegraphMediaUri.ts'; // T446: one line, so no cited line moves
 import { useSession } from '../../../context/SessionContext.tsx';
 import { useBlockedIds } from '../../../context/BlockedIdsContext.tsx';
 import { forgetPlaybackSignature, recheckPlaybackAuthorization } from './playbackAuthorization.ts';
@@ -185,8 +185,8 @@ export function CompactPlaybackHost() {
         {authorized ? (
           <SharedVideoPlayer
             key={sessionKey}
-            uri={session.mediaRef}
-            poster={session.posterRef ?? undefined}
+            uri={telegraphMediaUri(session.mediaRef) ?? ''}
+            poster={telegraphMediaUri(session.posterRef) ?? undefined}
             autoplay
             muted={false}
             style={expanded ? s.expandedVideo : s.dockedVideo}

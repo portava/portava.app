@@ -158,7 +158,7 @@ export function lastPlaybackStopReason(): PlaybackStopReason | null {
  * carrying this media reference.
  */
 export function openMessageVideo(req: OpenMessageVideoRequest): boolean {
-  const mediaRef = typeof req.mediaRef === 'string' ? req.mediaRef : '';
+  const mediaRef = telegraphMediaUri(req.mediaRef) ?? ''; // census-telegraph T446 (§96): only Portava storage is ever played — a sender-chosen host opens no session
   if (!mediaRef) return false;
 
   const bindings: PlaybackBinding[] = [];
@@ -182,7 +182,7 @@ export function openMessageVideo(req: OpenMessageVideoRequest): boolean {
   setSession({
     key: nextKey++,
     mediaRef,
-    posterRef: req.posterRef ?? null,
+    posterRef: telegraphMediaUri(req.posterRef),
     presentation: 'expanded',
     bindings,
     senderIds: [...senders],
@@ -329,3 +329,6 @@ export function _resetCompactPlaybackForTests(): void {
 export function retainedSourceMessagesForTest(sourceId: number): ReadonlyArray<PlaybackSourceMessage> {
   return sources.get(sourceId)?.messages ?? [];
 }
+
+// At the foot so no line above moves (census-telegraph cites this file by line).
+import { telegraphMediaUri } from '../linkPreview/telegraphMediaUri.ts';

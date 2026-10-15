@@ -221,6 +221,26 @@ describe('every other gate is a gate: no request', () => {
     expect(previewCalls()).toEqual([]);
   });
 
+  it('a mount that forgets the gate is OFF: no `enabled` prop ⇒ nothing drawn, no request (fix round 1, verifier S4)', async () => {
+    await render(
+      <FeatureFlagsProvider>
+        <MessageLinkPreview threadId={THREAD} message={msg(M1)} viewerId={VIEWER} />
+      </FeatureFlagsProvider>,
+    );
+    await waitFor(() => expect(flagsRead().length).toBe(1));
+    await act(async () => { await new Promise((r) => setTimeout(r, 10)); });
+    expect(previewCalls()).toEqual([]);
+    expect(screen.queryByTestId(`telegraph-link-preview-${M1}`)).toBeNull();
+  });
+
+  it('another signed-in viewer forgets the previous viewer’s answers: the same message is read afresh (fix round 1, verifier S5)', async () => {
+    serve = () => ({ status: 200, body: { previews: [okPreview(M1)] } });
+    await mount([msg(M1)], { viewerId: VIEWER });
+    expect(previewCalls().length).toBe(1);
+    await mount([msg(M1)], { viewerId: 'dddddddd-0000-4000-8000-00000000000d' });
+    expect(previewCalls().length).toBe(2);
+  });
+
   it('no thread or no signed-in viewer: nothing', async () => {
     await mount([msg(M1)], { threadId: null });
     await mount([msg(M2)], { viewerId: null });
