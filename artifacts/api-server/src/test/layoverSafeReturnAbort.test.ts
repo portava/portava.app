@@ -303,7 +303,7 @@ describe("§15.1 one-tap abort", () => {
     const r = await abortToAirport(db, {
       session: s, airport: AIRPORT, record: record(s), userId: USER, nowMs: NOW, statusEnabled: false,
     });
-    assert.deepEqual(r.crewNotified, []);
+    assert.equal(r.crewNotifiedCount, 0); assert.equal("crewNotified" in r, false, "census-layover L144 (§74): a COUNT is published, never crewmates' ids");
     assert.equal(r.crewNotifyUnavailableReason, "crew_notify_not_enabled"); // §48: crew storage exists (2984); what is absent is the owner's L144 disclosure decision
     assert.ok(r.effects.includes("crew_notify_unavailable"));
   });
