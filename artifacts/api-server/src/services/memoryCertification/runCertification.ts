@@ -216,8 +216,7 @@ async function runFixture(id: CertificationFixtureId): Promise<FixtureOutcome> {
 export async function runCertification(): Promise<CertificationReport> {
   const fixtures: FixtureOutcome[] = [];
   for (const id of CERTIFICATION_FIXTURE_IDS) fixtures.push(await runFixture(id));
-  const invariants = await runAllInvariants();
-  const developerInvariants = await runDeveloperInvariants();
+  const invariants = await runAllInvariants(); const developerInvariants = await runDeveloperInvariants(); // §28 developer invariants (H262), one line: :256 is cited
   const chaos = await runAllChaosScenarios();
 
   const totals = {
@@ -225,8 +224,7 @@ export async function runCertification(): Promise<CertificationReport> {
     fixtures_diverged: fixtures.filter((f) => f.status === "DIVERGED").length,
     invariants_held: invariants.filter((i) => i.status === "HELD").length,
     invariants_violated: invariants.filter((i) => i.status === "VIOLATED").length,
-    invariants_no_surface: invariants.filter((i) => i.status === "NO_SURFACE").length,
-    developer_invariants_violated: developerInvariants.filter((i) => i.status === "VIOLATED").length,
+    invariants_no_surface: invariants.filter((i) => i.status === "NO_SURFACE").length, developer_invariants_violated: developerInvariants.filter((i) => i.status === "VIOLATED").length,
     chaos_tolerated: chaos.filter((c) => c.status === "TOLERATED").length,
     chaos_broken: chaos.filter((c) => c.status === "BROKEN").length,
     chaos_partial: chaos.filter((c) => c.status === "PARTIAL").length,
@@ -244,14 +242,12 @@ export async function runCertification(): Promise<CertificationReport> {
       retrieval: RETRIEVAL_ENGINE_VERSION,
     }),
     fixtures,
-    invariants,
-    developer_invariants: developerInvariants,
+    invariants, developer_invariants: developerInvariants,
     chaos,
     totals,
     passed:
       totals.fixtures_diverged === 0 &&
-      totals.invariants_violated === 0 &&
-      totals.developer_invariants_violated === 0 &&
+      totals.invariants_violated === 0 && totals.developer_invariants_violated === 0 &&
       totals.chaos_broken === 0,
   };
 }

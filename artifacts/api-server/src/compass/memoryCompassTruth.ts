@@ -245,11 +245,11 @@ export function unresolvedPersonAnswer(asked: string): Record<string, unknown> {
 
 /**
  * BCP 47 "undetermined". `memories` stores no language for a title or caption
- * (no column anywhere in the tree), so none is claimed — the same value
- * MEM-NARR-1 uses for its narrative (census §BI). A guessed language would be
- * an invented fact about the owner's words.
+ * (no column anywhere in the tree), so none is claimed. ONE constant with the
+ * owner's narrative (MEM-NARR-1, census §BI): both halves of H265 say the same
+ * thing about the same words. A guessed language would be an invented fact.
  */
-export const ORIGINAL_LANGUAGE_UNDETERMINED = "und" as const;
+export { ORIGINAL_LANGUAGE_UNDETERMINED } from "../services/memory/memoryNarrative.js";
 
 /**
  * The owner's own title and caption exactly as stored, inside the same

@@ -283,10 +283,7 @@ describe("§16 — the eight accessors exist and the model is offered them", () 
     for (const toolName of Object.values(MEMORY_TOOL_SPEC_NAMES)) {
       assert.ok(MEMORY_COMPASS_TOOL_NAMES.has(toolName), `§16 accessor missing: ${toolName}`);
     }
-    // §16's eight accessors plus the two proposals its LLM boundary permits
-    // ("may propose a merge/split"): memory_propose_merge, memory_propose_split
-    // (census-highlights-memories H124, b58 HM-A3). The spec's eight stay eight.
-    assert.equal(MEMORY_COMPASS_TOOL_DEFINITIONS.length, 10);
+    assert.equal(MEMORY_COMPASS_TOOL_DEFINITIONS.length, 10); // §16's eight accessors + the two proposals its LLM boundary permits ("may propose a merge/split"), census H124 (b58 HM-A3); the spec's eight stay eight
   });
 
   it("all eight are registered in the definition list handed to the model", () => {
@@ -585,15 +582,8 @@ describe("§16 — getMemoryEvidence says what the evidence store holds, and not
   it("reports the store's state first and does not dress attachments as proof", async () => {
     const { client } = makeClient();
     const out: any = await executeMemoryCompassTool(client, ALICE, "memory_get_evidence", { memoryId: M_OWN_PUBLIC });
-    // This fake answers every table it does not hold with no rows, so the store
-    // reads as present and holding nothing for this Memory. The absent and the
-    // unreadable store are driven in memoryCompassTruth.test.ts (b58 HM-A3);
-    // what this asserts is that the old sentence — "No migration in this
-    // repository creates it", false since 2320 — is gone.
-    assert.equal(out.evidence_store, "present");
-    assert.deepEqual(out.provenance, []);
-    assert.match(out.evidence_store_reason, /memory_evidence/);
-    assert.doesNotMatch(out.evidence_store_reason, /No migration in this repository/);
+    assert.equal(out.evidence_store, "present"); assert.deepEqual(out.provenance, []); // this fake answers a table it does not hold with no rows; absent/unreadable stores: memoryCompassTruth.test.ts (b58 HM-A3)
+    assert.match(out.evidence_store_reason, /memory_evidence/); assert.doesNotMatch(out.evidence_store_reason, /No migration in this repository/); // false since 2320
     assert.equal(out.attached_artifacts.length, 1);
     assert.match(out.caveat, /NOT §6-normalized evidence/);
     assert.equal(out.confirmed_participants, 0);
@@ -679,11 +669,7 @@ describe("§16/§9 — a participant is resolved by exact handle, never by resem
   it("getSharedMemories does not resolve a near-miss handle either", async () => {
     const { client } = makeClient();
     const out: any = await executeMemoryCompassTool(client, ALICE, "memory_get_shared", { personHandle: "car" });
-    // §28.3 (H262, b58 HM-A3): a handle nobody has is UNRESOLVED, with no
-    // Memories and no person — said, not refused, and never Carl.
-    assert.equal(out.resolution, "UNRESOLVED");
-    assert.equal(out.person, null);
-    assert.deepEqual(out.memories, []);
+    assert.equal(out.resolution, "UNRESOLVED"); assert.equal(out.person, null); assert.deepEqual(out.memories, []); // §28.3 (H262, b58 HM-A3): a handle nobody has is UNRESOLVED — said, not refused, and never Carl
     const ok: any = await executeMemoryCompassTool(client, ALICE, "memory_get_shared", { personHandle: "carl" });
     assert.equal(ok.person, "carl");
   });
