@@ -65,6 +65,7 @@ const GROUP = "00000000-0000-4000-8000-0000000000a3";
 const DM_BE = "00000000-0000-4000-8000-0000000000a4";
 const TRIP_PAIR = "00000000-0000-4000-8000-0000000000a5"; // a trip thread of exactly A and B — pairwise in size, not a direct conversation
 const DM_RB = "00000000-0000-4000-8000-0000000000a6";
+const DM_THREE = "00000000-0000-4000-8000-0000000000a7"; // a "direct" row with three active members (not a pair)
 const MISSING = "00000000-0000-4000-8000-0000000000a9";
 
 const PLAN_PAST = "70000000-0000-4000-8000-000000000001";
@@ -98,7 +99,7 @@ function world(flags: WorldFlags = {}, over: Partial<Record<string, any[]>> = {}
     feature_flags: ff,
     message_threads: [
       thread(DM_AB, "direct"), thread(DM_AC, "direct"), thread(GROUP, "group"), thread(DM_BE, "direct"),
-      thread(TRIP_PAIR, "trip", { trip_id: TRIP2 }), thread(DM_RB, "direct"),
+      thread(TRIP_PAIR, "trip", { trip_id: TRIP2 }), thread(DM_RB, "direct"), thread(DM_THREE, "direct"),
     ],
     message_thread_members: [
       member(DM_AB, A), member(DM_AB, B),
@@ -107,6 +108,7 @@ function world(flags: WorldFlags = {}, over: Partial<Record<string, any[]>> = {}
       member(DM_BE, B), member(DM_BE, E),
       member(TRIP_PAIR, A), member(TRIP_PAIR, B),
       member(DM_RB, R), member(DM_RB, B),
+      member(DM_THREE, A), member(DM_THREE, B), member(DM_THREE, D),
     ],
     blocks: [{ blocker_id: C, blocked_id: A }],
     user_message_settings: [], user_friendships: [], user_follows: [], trip_members: [], circle_memberships: [],
@@ -321,13 +323,38 @@ describe("K — GET /threads/:threadId/context, the flag and the gate", () => {
     assert.deepEqual(r.body.degradedReasons, ["TELEGRAPH_DEGRADED_MEMBERSHIP_UNREADABLE"]);
   });
 
-  it("K7 a member who LEFT gets the non-member shape", async () => {
+  it("K7 a member who LEFT gets a stranger's body, byte for byte — LEFT_THREAD is not told (V-738 fix 9)", async () => {
     const rows = world();
     rows.message_thread_members = rows.message_thread_members!.map((m) => (m.thread_id === DM_AB && m.user_id === A ? { ...m, left_at: iso(-HOUR) } : m));
     use(rows);
+    const left = await ctx(DM_AB);
+    assert.equal(left.status, 200, JSON.stringify(left.body));
+    for (const n of CONTEXT_INPUTS) assert.deepEqual(left.body.inputs[n], { status: "withheld", reason: "TELEGRAPH_AUTH_NOT_MEMBER", value: null }, n);
+    const stranger = await ctx(DM_BE);
+    assert.deepEqual(strip(left.body), strip(stranger.body), "a departed member is told something a stranger is not");
+    assert.ok(!JSON.stringify(left.body).includes("LEFT_THREAD"));
+  });
+
+  it("K7b the OTHER member left: not a pair any more — no block read, nothing about them served (V-738 V3)", async () => {
+    const rows = world({ nearby: true }, nearbyRows());
+    rows.message_thread_members = rows.message_thread_members!.map((m) => (m.thread_id === DM_AB && m.user_id === B ? { ...m, left_at: iso(-HOUR) } : m));
+    rows.user_follows = [{ follower_id: A, following_id: B }, { follower_id: B, following_id: A }];
+    const c = use(rows);
     const r = await ctx(DM_AB);
-    for (const n of CONTEXT_INPUTS) assert.equal(r.body.inputs[n].status, "withheld", n);
-    assert.equal(r.body.conversationType, "unknown");
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.deepEqual(r.body.inputs.relationship, { status: "not_consulted", reason: "KERNEL_PAIRWISE_ONLY", value: null });
+    assert.deepEqual(r.body.inputs.proximity, { status: "not_consulted", reason: "KERNEL_PAIRWISE_ONLY", value: null });
+    assert.ok(!c._observed.selects.some((s) => s.table === "blocks"), "the departed member's block state was read as if they were the pair");
+    assert.ok(!c._observed.selects.some((s) => s.table === "user_location_state"), "Nearby was polled for a departed member");
+  });
+
+  it("K7c a 'direct' conversation with three active members is not a pair (V-738 V8)", async () => {
+    const c = use(world({ nearby: true }, nearbyRows()));
+    const r = await ctx(DM_THREE);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.deepEqual(r.body.inputs.relationship, { status: "not_consulted", reason: "KERNEL_PAIRWISE_ONLY", value: null });
+    assert.deepEqual(r.body.inputs.proximity, { status: "not_consulted", reason: "KERNEL_PAIRWISE_ONLY", value: null });
+    assert.ok(!c._observed.selects.some((s) => s.table === "blocks"));
   });
 
   it("K8 malformed id 400, no token 401", async () => {
@@ -420,6 +447,7 @@ describe("K — each input: read, degraded, not consulted, withheld", () => {
     const r = await ctx(DM_AB);
     assert.equal(r.body.inputs.time.value.coordination.planId, PLAN_NEXT);
     assert.equal(r.body.inputs.time.value.coordination.state, "COMPLETE");
+    assert.equal(r.body.inputs.time.value.coordination.coordinating, false, "a COMPLETE plan is not coordinating (V-738 V6)");
     assert.equal(r.body.inputs.time.value.historyVisibleFrom, null);
     assert.ok(!c._observed.selects.some((s) => s.table === "message_thread_members" && s.sel.includes("visible_from_at")),
       "with the §14.3 flag off the window column was named");
@@ -501,6 +529,31 @@ describe("K — proximity is Nearby's answer, narrowed to one person", () => {
     }));
     const r = await ctx(DM_AB);
     assert.equal(r.body.inputs.proximity.value?.bucket, "far", "the kernel served proximity past Nearby's budget");
+  });
+
+  it("K22b the partner's bucket, never another candidate's: two circle members, either one nearer (V-738 V2)", async () => {
+    const fresh = iso(-60_000);
+    const world2 = (bNear: boolean) => {
+      const rows = nearbyRows();
+      rows.circle_memberships = [{ user_id: A, other_id: B }, { user_id: A, other_id: D }];
+      rows.location_preferences = [...rows.location_preferences!, { user_id: D, location_mode: "nearby", sharing_paused: false, discovery_visibility: "everyone" }];
+      rows.user_privacy_settings = [...rows.user_privacy_settings!, { user_id: D, allow_location_sharing: true }];
+      rows.profile_privacy_settings = [...rows.profile_privacy_settings!, { user_id: D, allow_profile_discovery: true }];
+      rows.user_availability = [...rows.user_availability!, { user_id: D, open_to_meet: true }];
+      rows.quick_availability_status = [...rows.quick_availability_status!, { user_id: D, status: "free_now", expires_at: iso(2 * HOUR) }];
+      const near = { lat: LAT + 0.01, lng: LNG + 0.01 };
+      const far = { lat: LAT + 3, lng: LNG + 3 };
+      rows.user_location_state = [
+        { user_id: A, lat: LAT, lng: LNG, last_known_at: fresh },
+        { user_id: B, ...(bNear ? near : far), last_known_at: fresh },
+        { user_id: D, ...(bNear ? far : near), last_known_at: fresh },
+      ];
+      return world({ nearby: true }, rows);
+    };
+    use(world2(true));
+    assert.equal((await ctx(DM_AB)).body.inputs.proximity.value?.bucket, "same_area");
+    use(world2(false));
+    assert.equal((await ctx(DM_AB)).body.inputs.proximity.value?.bucket, "far", "another candidate's bucket was served as the partner's");
   });
 
   it("K23 the budget unreadable is degraded — never a bucket served unrecorded", async () => {

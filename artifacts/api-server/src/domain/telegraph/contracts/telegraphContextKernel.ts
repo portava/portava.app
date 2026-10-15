@@ -33,9 +33,9 @@
  * no reader can hand back a "floor" built from a failed read.
  *
  * ── THE GATE OUTRANKS EVERY INPUT ───────────────────────────────────────────
- * A viewer who is not an active member gets every input withheld, with the
- * same reason a thread that does not exist gets (the capability route's rule:
- * 200, never a membership oracle). A block EITHER WAY in a direct conversation
+ * A viewer who is not an active member — never one, or one who LEFT — gets every
+ * input withheld with exactly the body a thread that does not exist gets (200,
+ * never a membership oracle; contextForWire). A block EITHER WAY in a direct conversation
  * withholds all five — the minimal context — and the reason is redacted on the
  * wire to the non-member's reason, so the endpoint is not a block oracle (§15.3:
  * "No subsystem may independently rediscover a blocked relationship"). A block
@@ -283,9 +283,9 @@ export function composeConversationContext(args: {
 
 // ── the wire ─────────────────────────────────────────────────────────────────
 
-/** A reason as it may be told: internal-only Telegraph codes are redacted. */
+/** A reason as it may be told: internal-only Telegraph codes are redacted, and a member who LEFT is told a stranger's reason (one refused shape). */
 export function contextReasonForWire(reason: ContextReason): ContextReason {
-  return isTelegraphReason(reason) ? redactForWire(reason) : reason;
+  return reason === "TELEGRAPH_AUTH_LEFT_THREAD" ? "TELEGRAPH_AUTH_NOT_MEMBER" : isTelegraphReason(reason) ? redactForWire(reason) : reason;
 }
 
 function wireInput<T, W>(input: ContextInput<T>, project: (v: T) => W): { status: ContextInputStatus; reason: ContextReason | null; value: W | null } {

@@ -12,9 +12,9 @@
  * member of a direct conversation, their own history window, the plan, intents
  * and shared objects as their own surfaces already show them, and the other
  * member's proximity only as Nearby would serve it to them. A viewer who is not
- * an active member gets 200 with every input withheld and the conversation type
- * "unknown" — the same answer a conversation that does not exist gets, so the
- * endpoint is not a membership oracle (server/telegraph/capabilityRoute.ts's
+ * an active member — never one, or one who left — gets 200 with every input
+ * withheld and the type "unknown": byte for byte the body a conversation that does
+ * not exist gets, so the endpoint is not a membership oracle (capabilityRoute.ts's
  * rule). A block either way in a direct conversation withholds all five, and the
  * reason is redacted to the non-member's (`contextForWire` → `redactForWire`),
  * so it is not a block oracle either.

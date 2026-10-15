@@ -15,8 +15,10 @@
  *       §30A.1 route that is its own surface), and the kernel's relationship
  *       module only by the kernel and the policy;
  *   G3  no module outside the kernel composes conversation context from two or
- *       more of the context sources — except a CLOSED, SHRINK-ONLY list of the
- *       assemblers that predate it, each with its reason, each still one;
+ *       more of the context sources — except a CLOSED list of the assemblers that
+ *       predate it, held at PREDATING_MAX, each with its reason, each still one.
+ *       The scan sees static, re-exported, dynamic `import()` and `require()`
+ *       specifiers; it does not see a specifier computed at run time;
  *   G4  the kernel's proximity read is Nearby's own chain (same limiter and
  *       ceiling, same quantum, loader, signal contract and budget, in order),
  *       and the kernel neither reads `messages` nor can carry a coordinate.
@@ -74,9 +76,20 @@ function modules(): string[] {
 
 /** The src-relative modules a file imports (relative specifiers only), without extension. */
 function importsOf(rel: string): string[] {
-  const src = read(rel);
+  return importsOfSource(rel, read(rel));
+}
+
+/**
+ * Every LITERAL module specifier a source names: `import … from`, `export … from`
+ * (a re-exporting hub is caught at the hub), a bare `import "…"`, a dynamic
+ * `import("…")` and `require("…")` (V-738 fix 8: the dynamic form used to pass
+ * unseen). NOT seen, stated: a specifier computed at run time (`import(name)`),
+ * and a source reached through another module's function — there is no
+ * cross-module data flow here; that module is judged where it imports.
+ */
+export function importsOfSource(rel: string, src: string): string[] {
   const out: string[] = [];
-  for (const m of src.matchAll(/from\s+["']([^"']+)["']/g)) {
+  for (const m of src.matchAll(/(?:\bfrom\s+|\bimport\s*\(\s*|\bimport\s+|\brequire\s*\(\s*)["']([^"']+)["']/g)) {
     const spec = m[1]!;
     if (!spec.startsWith(".")) continue;
     out.push(posix(normalize(join(dirname(rel), spec))).replace(/\.js$/, "").replace(/\.ts$/, ""));
@@ -172,7 +185,10 @@ const SOURCES: Record<string, string[]> = {
  * Assemblers that predate the kernel. CLOSED and SHRINK-ONLY: an entry is
  * removed when its module stops assembling (TM-6 routes the first two through
  * the kernel); a new assembler is never added here — it reads the kernel.
+ * PREDATING_MAX pins the count (V-738 fix 8: a fourth entry with a long reason
+ * used to pass): lower it when an entry goes; never raise it.
  */
+const PREDATING_MAX = 3; // SHRINK-ONLY: lower when TM-6 routes one through the kernel; never raise
 const PREDATING_ASSEMBLERS: Record<string, string> = {
   "compass/TelegraphConversationTools.ts":
     "Compass's §18.3 getConversationContext / getParticipantAvailability compose canMessage's edges and availability windows; B58 TM-6 routes them through the kernel and removes this entry.",
@@ -182,11 +198,25 @@ const PREDATING_ASSEMBLERS: Record<string, string> = {
     "the Nearby loader: §30A.2's ReachablePersonProjection IS a composition of relationship and availability, and it is the kernel's PROXIMITY SOURCE — the kernel reads it, so it cannot read the kernel. Permanent.",
 };
 
+const familiesOf = (imports: string[]) => Object.keys(SOURCES).filter((f) => SOURCES[f]!.some((s) => imports.includes(s)));
+
+/** Everything wrong with a predating list against the measured assemblers. Pure, so a planted list can be judged. */
+function predatingProblems(list: Record<string, string>, assemblers: ReadonlyMap<string, string[]>): string[] {
+  const problems: string[] = [];
+  const n = Object.keys(list).length;
+  if (n > PREDATING_MAX) problems.push(`${n} predating assemblers, ceiling ${PREDATING_MAX}: the list only shrinks — route the new one through the kernel`);
+  if (n < PREDATING_MAX) problems.push(`${n} predating assemblers, ceiling ${PREDATING_MAX}: an entry went — lower PREDATING_MAX to ${n}`);
+  for (const [m, why] of Object.entries(list)) {
+    if (!assemblers.has(m)) problems.push(`stale entry (no longer assembles — delete it): ${m}`);
+    if (why.length < 60) problems.push(`${m}: a reason, not a label`);
+  }
+  return problems;
+}
+
 describe("G3 — one assembler: no module outside the kernel composes context from two sources", () => {
   const assemblers = new Map<string, string[]>();
   for (const m of modules()) {
-    const imports = importsOf(m);
-    const families = Object.keys(SOURCES).filter((f) => SOURCES[f]!.some((s) => imports.includes(s)));
+    const families = familiesOf(importsOf(m));
     if (families.length >= 2) assemblers.set(m, families);
   }
 
@@ -199,10 +229,23 @@ describe("G3 — one assembler: no module outside the kernel composes context fr
     assert.deepEqual(rogue, [], `new conversation-context assembler(s) — compose through ${KERNEL} instead: ${rogue.map((m) => `${m} [${assemblers.get(m)!.join(", ")}]`).join("; ")}`);
   });
 
-  it("the predating list only shrinks: every entry still assembles (remove the ones that stopped)", () => {
-    const stale = Object.keys(PREDATING_ASSEMBLERS).filter((m) => !assemblers.has(m));
-    assert.deepEqual(stale, [], `stale entries (the module no longer assembles — delete them): ${stale.join(", ")}`);
-    for (const [m, why] of Object.entries(PREDATING_ASSEMBLERS)) assert.ok(why.length >= 60, `${m}: a reason, not a label`);
+  it("the predating list only shrinks: exactly PREDATING_MAX entries, every one still assembling, each with a reason", () => {
+    assert.deepEqual(predatingProblems(PREDATING_ASSEMBLERS, assemblers), []);
+  });
+
+  it("PLANTED: a fourth predating entry with a long reason is refused by the ceiling", () => {
+    const planted = { ...PREDATING_ASSEMBLERS, "routes/__planted.ts": "a planted fourth entry whose reason is long enough to pass the label check, which used to be enough" };
+    const withPlant = new Map(assemblers).set("routes/__planted.ts", ["relationship", "sharedObjects"]);
+    assert.ok(predatingProblems(planted, withPlant).some((p) => p.includes("ceiling")), "a fourth entry passed");
+  });
+
+  it("PLANTED: a dynamic import() of two sources is an assembler; a computed specifier is not seen (stated)", () => {
+    const dynamic = 'export async function f() { const a = await import("../services/telegraph/sharedContext.js"); const b = await import("../lib/messagingPermissions.js"); return [a, b]; }';
+    assert.deepEqual(familiesOf(importsOfSource("routes/__planted.ts", dynamic)).sort(), ["relationship", "sharedObjects"]);
+    const reexport = 'export * from "../services/telegraph/sharedContext.js"; export { canMessage } from "../lib/messagingPermissions.js";';
+    assert.deepEqual(familiesOf(importsOfSource("routes/__hub.ts", reexport)).sort(), ["relationship", "sharedObjects"]);
+    const computed = 'const name = "../services/telegraph/sharedContext.js"; export const f = () => import(name);';
+    assert.deepEqual(importsOfSource("routes/__planted.ts", computed), [], "the stated blind spot changed — update the header");
   });
 });
 

@@ -28,7 +28,7 @@
  *                  kernel reads no message: it does not re-classify chat.
  *   SHARED OBJECTS §3's rail (services/telegraph/sharedContext.ts
  *                  buildSharedContextProjection) over the same participants and
- *                  the same viewer-scoped client GET /shared-context uses.
+ *                  the same client (and viewer) GET /shared-context passes it.
  *
  * ── ORDER, AND WHY ──────────────────────────────────────────────────────────
  * Membership first (a non-member is told nothing, not even the conversation's
@@ -44,12 +44,12 @@
  * own GET does). Serving a bucket outside the budget would be the unbounded
  * observation §4.3 forbids, through a second door.
  *
- * ── CLIENTS ─────────────────────────────────────────────────────────────────
- * `sc` (service role) for what the capability and Nearby routes read with it:
- * the thread, membership, roster, blocks, relationship, proximity. `client`
- * (the caller's, RLS-scoped) for what the coordination, suggestion and rail
- * routes read with it: the plan, the stored intents, the rail — so the kernel
- * can never see a row those surfaces would not show this viewer.
+ * ── CLIENTS: ONE SERVICE CLIENT, SCOPED BY THE GATE AND THE PREDICATES ──────
+ * `requireUser` hands every route the SERVICE client (lib/http.ts); nothing on
+ * this path is RLS-scoped. `client` is that same client the coordination,
+ * suggestion and rail routes read with, so the kernel sees what they see: rows
+ * scoped by membership (the gate, first) and by each read's own predicates
+ * (`user_id` = viewer on intents, `chat_thread_id` on plans, the rail's viewer).
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 
