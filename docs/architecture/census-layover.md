@@ -11055,3 +11055,123 @@ In total, 53 run, 52 killed, 1 equivalent.
 
 The grades and the headline are unchanged: **C=85 W=155 N=56 X=0**.
 
+## §73 — 2026-10-14 (B58 lane LAY-2700; found by lane LAY-2): 2700's verdict CHECK refused `entry_unverified`, so persistence would have stored nothing for every roomy layover. Migration 3792 widens it. NO ROW MOVES
+
+Section number: open PR #717 (branch `claude/b58-lay-2`) adds §72; this section takes §73 so the two do not collide.
+Measured on branch `claude/b58-lay-2700` from origin/main `9af376fa4`. Nothing was written to any shared database; every
+database result below is from the CI local-db suite's own harness shape or a PGlite full-chain replica.
+
+### §73.1 The defect
+
+- 2700 declares `verdict` with
+  `artifacts/api-server/src/migrations/2700_layover_certified_feasibility.sql:135#CHECK (verdict IN ('yes','tight','no','stay_airside')),`.
+- The engine's union has five members:
+  `artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:1204#verdict: "yes" | "tight" | "no" | "entry_unverified" | "stay_airside";`.
+  The fifth is returned for every session with 90 or more usable minutes whose corridor is not confirmed
+  (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:1397#return { verdict: "entry_unverified", reasons, reasonCodes, ...common };`).
+  `entry_requirements` is uncurated, so that is every roomy layover.
+- The table's one writer sends the verdict unmapped
+  (`artifacts/api-server/src/services/airport/layoverLedger.ts:513#verdict: record.verdict,`), spread into
+  `artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:455#.insert(certifiedComputationRowFor(userId, sessionId, record));`.
+- So with 2700 and 2992 applied and `layover_decision_persistence_enabled` ON, `persistDecision` fails with 23514 and
+  returns `write_failed`
+  (`artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:468#reason: "write_failed",`). No decision, time
+  budget or return plan is stored for those sessions. L25, L64's stamp, L190, L209–L211, L213 and L217 all read those
+  rows. L212 reads the replan ledger, not this table, and is unaffected.
+- Why nothing saw it: `fakeLayoverDb` models no CHECK, and no `test/db` suite wrote the table.
+
+It was not mapped anywhere before storage: the writer's verdict type is the engine's union (read by the TypeScript
+checker in the suite below), and the row carries it unchanged for every member.
+
+### §73.2 The fix
+
+`artifacts/api-server/src/migrations/3792_layover_certified_verdict_admits_entry_unverified.sql` (band 3792, written and
+not applied anywhere):
+- drops every single-column CHECK on `verdict`, found in the catalog
+  (`artifacts/api-server/src/migrations/3792_layover_certified_verdict_admits_entry_unverified.sql:114#DO $drop$`);
+- adds the five-member CHECK
+  (`artifacts/api-server/src/migrations/3792_layover_certified_verdict_admits_entry_unverified.sql:133#ADD CONSTRAINT layover_certified_computations_verdict_check`),
+  a strict superset of 2700's, so existing rows validate untouched;
+- refuses, naming 2700, on a database without 2700's table
+  (`artifacts/api-server/src/migrations/3792_layover_certified_verdict_admits_entry_unverified.sql:100#RAISE EXCEPTION 'PRECONDITION FAILED (3792): public.layover_certified_computations does not exist`).
+  It must be pressed WITH 2700 and 2992 (2700, then 2992, then 3792) and before the flag is flipped;
+- `$post$` is recomputed from the catalog: exactly one single-column CHECK on `verdict`, a plain enumerated list,
+  admitting all five.
+
+Rollback: `db/rollback/2026-10-14-3792-layover-certified-verdict-admits-entry-unverified-rollback.sql` restores 2700's
+four. It refuses while a stored row carries a widened verdict
+(`db/rollback/2026-10-14-3792-layover-certified-verdict-admits-entry-unverified-rollback.sql:44#RAISE EXCEPTION 'ROLLBACK REFUSED (3792): % stored computation(s)`)
+and while the persistence flag is ON
+(`db/rollback/2026-10-14-3792-layover-certified-verdict-admits-entry-unverified-rollback.sql:38#RAISE EXCEPTION 'ROLLBACK REFUSED (3792): layover_decision_persistence_enabled is ON.`).
+
+### §73.3 Why it cannot recur
+
+`artifacts/api-server/src/test/layoverStoredVocabulary.test.ts` (22 cases) derives both sides mechanically:
+- the writer's vocabulary from the TypeScript checker
+  (`artifacts/api-server/src/test/helpers/layoverStoredVocabulary.ts:80#export function writerVocabularies(): Map<string, string[]> {`);
+- the database's from the NEWEST migration that states the CHECK
+  (`artifacts/api-server/src/test/helpers/layoverStoredVocabulary.ts:224#export function newestCheckVocabulary(table: string, column: string, dir = MIGRATIONS_DIR): CheckVocabulary {`).
+
+The pin is
+`artifacts/api-server/src/test/layoverStoredVocabulary.test.ts:143#it("the NEWEST migration stating the CHECK admits every verdict the writer can send", () => {`.
+A sixth verdict in the engine is red there until a migration admits it (mutant T1). Red without 3792: 3 of 22.
+
+`artifacts/api-server/src/test/db/layoverCertifiedVerdict.db.test.ts` (11 cases, CI local-db job) runs the store's own
+statements on the replayed chain:
+- `artifacts/api-server/src/test/db/layoverCertifiedVerdict.db.test.ts:227#it("a roomy layover with an unconfirmed corridor is STORED, with its time budget and return plan (refused by 2700's CHECK alone)", async () => {`;
+- every verdict in the union is stored, with the fixture set checked against the checker's union;
+- 3792's `$post$` passes alone and refuses five loosenings; its body re-applies as a no-op;
+- the rollback's two refusals, its exact inverse, and its own postcondition, each in a rolled-back transaction.
+
+On a PGlite full-chain replica: 11 of 11 with 3792, and 6 of 11 red on main's chain (every case that needs 3792
+applied). The rehearsal (apply, `$post$` alone, re-apply, controls, rollback, re-apply, refusal without 2700) passed
+33 of 33.
+
+### §73.4 The sweep of every other CHECK on the 2700 and 2992 tables
+
+Each writer was found by scanning production code. The set is pinned at six write sites, so a new writer has to join
+the sweep. None of these needed a fix:
+
+| table | CHECK | what the writer sends | result |
+| --- | --- | --- | --- |
+| `layover_certified_computations` | `verdict` IN (4) | the engine's 5 | **fixed by 3792** |
+| `layover_certified_computations` | `confidence`, `buffer_percentile` | `EstimateConfidence`, `EstimatePercentile` (checker) | ok |
+| `layover_certified_computations` | `total_buffer_min`, `usable_minutes` >= 0; 3623 `snapshot_version` >= 1 | non-negative integers on a 336-record grid; the version is trigger-assigned | ok |
+| `layover_time_budgets` | `buffer_percentile`; ten terms, total, usable, scheduled >= 0 | pass-through percentile; integers >= 0 or NULL on the grid | ok |
+| `layover_return_plans` | `risk_band` IN (4) or NULL; `confidence`; recommended <= hard; activity <= recommended | `riskBandFor` (NULL only for `stay_airside`); recommended equals hard; activity NULL | ok |
+| `layover_constraints` | `baggage_mode`, `entry_permission_state`; `version` >= 1 | `BaggageMode`, `EntryPermissionState`; latest + 1 | ok; the other five CHECKed columns are not sent and take listed defaults |
+| `layover_checkpoints` | `checkpoint_type`, `source`, `confidence`, `dedup_key` length | the two traveller types, `TRAVELLER`, `MEDIUM`, at most 136 characters | ok |
+| `layover_outcomes` | `boarding_outcome`, `anonymization_state`; return <= completion | `BOARDED` / `UNKNOWN`; not sent (default `IDENTIFIED`); both from one clock | ok (see §73.6) |
+
+### §73.5 Mutants
+
+24 run, 24 killed (runner `scratchpad/lay2700/mutate.py`):
+- 10 on the TypeScript side: a sixth verdict, a mapped verdict, out-of-vocabulary checkpoint, outcome, percentile and
+  constraint values, a negative budget term, a second writer, and a reader that takes the oldest migration;
+- 9 on 3792: the old four re-added, no drop, two CHECKs side by side, the refusal and its wording, and four
+  `$post$` weakenings;
+- 5 on the rollback: each refusal, a non-inverse restore, a no-op postcondition, and no drop.
+
+### §73.6 Recorded, not fixed
+
+- `layover_outcomes_return_not_after_completion` holds because the re-entry checkpoint and the close are both stamped
+  by the server's clock, the later one second. Two API instances with skewed clocks could invert them. The outcome
+  write would then fail and be logged as `write_failed`, and the close would still stand.
+- `artifacts/api-server/src/scripts/checkProductionDrift.ts`'s note on `layover_constraints` says 2992 is applied to
+  "NO database". `docs/migrations.md` records 2992 applied to `portava-ci` on 2026-09-26. The note is stale on
+  `portava-ci`; it is right about production.
+
+### §73.7 Rows
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L25 | N | N | The storage is 2700 + 2992 + 3623 (+ 3792), none applied in production; persistence is OFF (H24, lead ruling WAVE-1). 3792 removes a defect that would have emptied it after the press. |
+| L64 | N | N | Same storage, and 3623's flag is FALSE (H24). |
+| L190 | N | N | Reads the same unapplied storage (lead ruling GRADING). |
+| L209 | N | N | Nothing certified is stored in production to count (H24). |
+| L210 | N | N | Computed from `layover_certified_computations`, unapplied in production (H24, §59.2). |
+| L211 | N | N | Same as L210. |
+| L213 | N | N | Same as L210. |
+| L217 | N | N | The stored-row replay reads 2700/2992, unapplied in production, and only while persistence is ON (H24). |
+
+Headline unchanged by this section: **C=85 W=155 N=56 X=0** over 296 on main after §72 (#717, L216 N → W) (`check:census-integrity`).

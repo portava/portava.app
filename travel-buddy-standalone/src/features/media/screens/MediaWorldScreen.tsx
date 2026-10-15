@@ -26,7 +26,7 @@ import { ChangingNowCard } from '../components/ChangingNowCard.tsx';
 import { MediaTimelineScreen } from './MediaTimelineScreen.tsx';
 import { LensStateView } from '../components/LensStateView.tsx';
 import { MediaMapScreen } from './MediaMapScreen.tsx';
-import type { MediaMapCluster } from '../state/mediaMapStore.ts';
+import type { MediaMapCluster } from '../state/mediaMapStore.ts'; import { NowCrowdFlowSection } from '../components/CrowdFlowCard.tsx'; // §22 "where the night is moving" (census-media MD162 §51): imported on this line so no cited line below moves
 
 export interface MediaWorldScreenProps {
   state: WorldViewState;
@@ -94,6 +94,17 @@ export function MediaWorldScreen({
           <CityVisualPulse zones={world.cityVisualState} onSelectZone={onSelectZone} />
         </View>
       ) : null}
+
+      {/* §22 WHERE THE NIGHT IS MOVING (census-media MD162 §51): the gateway's
+          crowd flows, each end paired with its zone's recent perspectives.
+          Renders nothing unless a served flow pairs — never "nothing is moving". */}
+      <NowCrowdFlowSection
+        city={city ?? world.city?.name ?? null}
+        center={center}
+        refreshKey={world.generatedAt ?? null}
+        onOpenEnd={onOpenCluster}
+        style={styles.section}
+      />
 
       {world.forYouNow.length > 0 ? (
         <View style={styles.section}>
