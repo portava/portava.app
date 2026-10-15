@@ -270,7 +270,7 @@ describe("§9.1 ordering — safety is the primary key, preference is the tiebre
       // Long trip that still fits inside the certified window: `safe`.
       { title: "Long but fits", travelTimeMin: 120, activityTimeMin: 60, insideAirport: false, verified: true },
     ];
-    const ranked = rankActivities(AIRPORT, s, candidates, NOW);
+    const ranked = rankActivities(AIRPORT, s, candidates, NOW, certifySessionFeasibility(AIRPORT, s, { nowMs: NOW, entry: null })); // §75: rated against the record
 
     assert.equal(ranked[0]!.assessment.rating, "safe");
     assert.equal(ranked[1]!.assessment.rating, "not_recommended");
@@ -281,36 +281,36 @@ describe("§9.1 ordering — safety is the primary key, preference is the tiebre
   it("rankActivities rates against the deadline it is HANDED, not one it re-derives", () => {
     // ── READ THIS BEFORE TRUSTING THE TEST ABOVE ─────────────────────────────
     // "every card carries the ONE certified hard return" does NOT catch a
-    // `rankActivities` call that omits the certified deadline. Measured, not
-    // assumed: dropping `certified.deadline` from the service's call left 7/7
-    // green. `computeReturnDeadline` is pure in (airport, session, live) and
-    // does not read the clock, so a second derivation with no live conditions
-    // returns the identical instant.
+    // `rankActivities` call that omits the certified record when nothing moves
+    // the deadline: `computeReturnDeadline` is pure in (airport, session, live)
+    // and reads no clock, so a live-blind second derivation returns the same
+    // instant. Live conditions are where the two differ, so the pin is here.
     //
-    // The parameter is therefore load-bearing ONLY when live conditions exist
-    // — which is the day L81's producer lands and not before. This case is the
-    // pin for that day, written at the engine where the difference is
-    // reachable, and it is the honest form of the claim: the service's call is
-    // correct by construction and unpinned by the service's own suite.
+    // census-layover §75 made the parameter the whole RECORD (deadline AND
+    // envelope) and removed the fallback: without it the DISPLAY deadline is
+    // still derived (live-blind, as before) but NOTHING is certified. So this
+    // case now pins both halves — the handed record's deadline is the one on
+    // the card, and a call with no record cannot rate a card `safe` or
+    // `possible_but_risky` against a window of its own.
     const s = session();
     const live: LiveConditions = {
       securityWaitExtraMin: 45, immigrationWaitExtraMin: 0, groundTransportExtraMin: 0,
       reasonCodes: [], observedAt: null, expiresAt: null,
     };
-    const certified = computeReturnDeadline(AIRPORT, s, live);
+    const certified = certifySessionFeasibility(AIRPORT, s, { nowMs: NOW, entry: null, liveConditions: live }); assert.equal(certified.deadline.hardReturnTime.getTime(), computeReturnDeadline(AIRPORT, s, live).hardReturnTime.getTime());
     const candidate = { title: "Riverside Cafe", travelTimeMin: 15, activityTimeMin: 30, insideAirport: false, verified: false };
 
     const handed = rankActivities(AIRPORT, s, [candidate], NOW, certified);
     const rederived = rankActivities(AIRPORT, s, [candidate], NOW);
-
-    assert.equal(handed[0]!.assessment.hardReturnTime.getTime(), certified.hardReturnTime.getTime());
+    assert.equal(handed[0]!.assessment.rating, "safe", "positive control: the handed record certifies this card"); assert.equal(rederived[0]!.assessment.rating, "not_recommended", "no record, no certification");
+    assert.equal(handed[0]!.assessment.hardReturnTime.getTime(), certified.deadline.hardReturnTime.getTime());
     assert.notEqual(
       rederived[0]!.assessment.hardReturnTime.getTime(),
-      certified.hardReturnTime.getTime(),
-      "positive control: without the parameter the function derives its own, live-blind deadline",
+      certified.deadline.hardReturnTime.getTime(),
+      "positive control: without the record the function derives its own, live-blind deadline",
     );
     assert.equal(
-      certified.hardReturnTime.getTime(),
+      certified.deadline.hardReturnTime.getTime(),
       rederived[0]!.assessment.hardReturnTime.getTime() - 45 * 60_000,
       "the whole 45-minute live wait must be the difference",
     );
@@ -334,7 +334,7 @@ describe("§9.1 ordering — safety is the primary key, preference is the tiebre
       { title: "further",  travelTimeMin: 25, activityTimeMin: 30, insideAirport: false, verified: true },
       { title: "nearer",   travelTimeMin: 15, activityTimeMin: 30, insideAirport: false, verified: true },
       { title: "unstated", travelTimeMin: null, activityTimeMin: 30, insideAirport: false, verified: true },
-    ], NOW);
+    ], NOW, certifySessionFeasibility(AIRPORT, s, { nowMs: NOW, entry: null }));
     assert.equal(ranked[0]!.assessment.rating, "safe");
     assert.equal(ranked[1]!.assessment.rating, "safe");
     const order = ranked.map((r) => r.title);

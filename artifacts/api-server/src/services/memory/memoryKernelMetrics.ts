@@ -70,7 +70,7 @@ export const MEMORY_KERNEL_METRICS = {
 } as const;
 
 /** Bumped on any change to how a figure below is derived (§28.13). */
-export const MEMORY_KERNEL_METRICS_ENGINE_VERSION = "memory-kernel-metrics@2";
+export const MEMORY_KERNEL_METRICS_ENGINE_VERSION = "memory-kernel-metrics@3"; // @3: the sample no longer lists the two §BK names as notMeasurable
 
 /**
  * §24 metrics this module deliberately does NOT emit, each with the measured
@@ -82,10 +82,10 @@ export const MEMORY_METRICS_NOT_MEASURABLE = {
   // candidate_split_rate and candidate_merge_rate left this list on 2026-10-10:
   // SPLIT_MEMORY / MERGE_MEMORY are declared (migration 3676) and counted by
   // countCandidateGraphCommand below.
-  false_memory_rate:
-    "Defined as corrected-over-surfaced INFERRED assertions. Nothing in this tree surfaces an inferred Memory assertion to a user: the candidate pipeline's storage (memory_evidence / memory_episodes, migration 2320) is unapplied, so the denominator is not merely zero, it is unobservable.",
-  do_again_conversion:
-    "Do Again exists (services/memory/memoryActionService.ts compileDoAgain) but its CONVERSION — the trip save that follows a plan — is written by the Trips route from the client's picker, and nothing ties that save back to the compile; a count of compiles alone would be a denominator presented as a rate (census H107/H222).",
+  // false_memory_rate and do_again_conversion left this list on 2026-10-14 (census §BK, H217/H222): both are
+  // computed by services/memory/memoryQualityMetrics.ts — the inbox's surfaced assertions against the kept Memory's
+  // stored values, and served Do Again plans against trip_saved_places — which reports UNPRODUCIBLE, never 0, where a
+  // figure cannot be measured (the time half of false_memory_rate has no client correction surface, so its total is).
 } as const;
 
 export type MemoryMetricNotMeasurable = keyof typeof MEMORY_METRICS_NOT_MEASURABLE;

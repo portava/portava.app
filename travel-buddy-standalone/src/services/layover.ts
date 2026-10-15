@@ -391,7 +391,7 @@ export type AbortEffect =
   | 'status_write_failed'
   | 'ledger_recorded'
   | 'ledger_write_failed'
-  | 'crew_notify_unavailable';
+  | 'crew_notify_unavailable' | /** census-layover L144: at least one crewmate holds the 'heading back' notice */ 'crew_notified';
 
 export type ReturnNowStatusCapability = 'enabled' | 'flag_on_readers_not_widened' | 'flag_off';
 
@@ -413,17 +413,17 @@ export type ReturnNowStatusCapability = 'enabled' | 'flag_on_readers_not_widened
  * it had not been taught, and `returnToAirportNow` casts the body whole, so a
  * narrowed union would be a lie the compiler could not catch.
  *
- * KNOWN MEMBERS TODAY (the first names an owner decision; this client takes none):
- *   `crew_notify_not_enabled`  what the server sends since §48; the owner has
- *                      not enabled the L144 disclosure. (`no_crew_storage`: pre-§48.)
+ * KNOWN MEMBERS (the server's CREW_ABORT_NOTICE_REASONS, LayoverCrewAbortNotice.ts):
+ *   `crew_notify_not_enabled` (the flag is OFF — its seed), `not_requested`, `not_in_a_crew`,
+ *   `crew_unreadable`, `no_crewmate_to_tell`, `blocks_unreadable`, … (`no_crew_storage`: pre-§48.)
  *
- * ── WHAT THIS CLIENT DELIBERATELY DOES NOT DECIDE ────────────────────────────
+ * ── WHAT THIS CLIENT DOES AND DOES NOT DECIDE (census-layover L144, §74) ────
  * Whether a crew SHOULD be told that one of its members aborted is a
- * DISCLOSURE ABOUT THAT TRAVELLER, not plumbing, and it is the owner's call —
- * so nothing here initiates a notification, offers a control that would, or
- * asks the server to send one. This type and `describeCrewNotification` only
- * let the ABORTING TRAVELLER read back what the server says already happened
- * about them, which they are owed either way.
+ * DISCLOSURE ABOUT THAT TRAVELLER and the owner's call (OQ-3): the server holds
+ * it behind a flag seeded OFF. This client only OFFERS the traveller's own
+ * per-abort choice when the overview says the server would honour it
+ * (`crewAbortNotice.available`), unticked, and sends `tellCrew: true` only when
+ * ticked; `describeCrewNotification` reads back what the server did.
  */
 export type CrewNotifyUnavailableReason = string;
 
@@ -436,8 +436,8 @@ export interface ReturnNowSuccess {
   posture: SafeReturnPosture;
   cancelledStopIds: string[];
   effects: AbortEffect[];
-  /** User ids the server says it told. Empty is an ANSWER, not a placeholder. */
-  crewNotified: string[];
+  /** census-layover L144: how many crewmates the server says hold the notice — a count, never ids (absent on a pre-L144 server). */
+  crewNotifiedCount?: number; /** pre-L144 servers only: always empty there. */ crewNotified?: string[];
   crewNotifyUnavailableReason: CrewNotifyUnavailableReason | null;
   statusApplied: boolean;
   statusCapability: ReturnNowStatusCapability;
@@ -459,7 +459,7 @@ export type ReturnNowOutcome =
       message: string;
       returnContract: ReturnContract;
       posture: SafeReturnPosture;
-      effects: AbortEffect[];
+      effects: AbortEffect[]; /** census-layover L144: a partial abort still says whether the crew was told (absent on a pre-L144 server). */ crewNotifiedCount?: number; crewNotifyUnavailableReason?: CrewNotifyUnavailableReason | null;
     }
   | { kind: 'already_ended'; message: string }
   | { kind: 'offline' }
@@ -584,7 +584,7 @@ export interface LayoverOverview {
   /** §2.1/§22 — how much of THIS airport went into those numbers. */
   airportIntelligence: LayoverAirportIntelligence;
   /** §15 — the posture the surface should take now. */
-  safeReturn: SafeReturnPosture;
+  safeReturn: SafeReturnPosture; /** census-layover L144 — whether the abort may OFFER "tell my crew" (flag on + a live crew joined with this session). Absent on a pre-L144 server: not offered. */ crewAbortNotice?: { available: boolean; reason: string | null };
   /** §16 — the bundle that lets an offline client say how old its answer is. */
   offlineBundle: LayoverOfflineBundle;
   /**
@@ -1127,14 +1127,14 @@ export async function setReturnDeadline(
  * WHAT IS IN THE BODY. A body carrying a return contract is never reported as
  * a bare error, whatever the status line said.
  *
- * Nothing here guards against a double tap; the caller owns the press. The
+ * `tellCrew` (census-layover L144) is sent ONLY when the traveller ticked it for THIS abort. Nothing here guards against a double tap; the caller owns the press. The
  * server is idempotent-safe either way (see the route's comment), and a guard
  * living in the service would silently swallow a deliberate retry.
  */
-export async function returnToAirportNow(sessionId: string): Promise<ReturnNowOutcome> {
+export async function returnToAirportNow(sessionId: string, opts: { tellCrew?: boolean } = {}): Promise<ReturnNowOutcome> {
   let res: Response;
   try {
-    res = await authedFetch(airportUrl('sessions', sessionId, 'return-now'), { method: 'POST' });
+    res = await authedFetch(airportUrl('sessions', sessionId, 'return-now'), { method: 'POST', ...(opts.tellCrew === true ? { body: JSON.stringify({ tellCrew: true }) } : {}) });
   } catch {
     // No response at all: airplane mode, dead tunnel, DNS. The caller falls
     // back to the last certified deadline it already holds.
@@ -1159,7 +1159,7 @@ export async function returnToAirportNow(sessionId: string): Promise<ReturnNowOu
         : 'Your plan could not be fully cleared. Head to the airport now.',
       returnContract: body.returnContract as ReturnContract,
       posture: body.posture as SafeReturnPosture,
-      effects: Array.isArray(body.effects) ? (body.effects as AbortEffect[]) : [],
+      effects: Array.isArray(body.effects) ? (body.effects as AbortEffect[]) : [], ...(typeof body.crewNotifiedCount === 'number' ? { crewNotifiedCount: body.crewNotifiedCount } : {}), ...(body.crewNotifyUnavailableReason !== undefined ? { crewNotifyUnavailableReason: typeof body.crewNotifyUnavailableReason === 'string' ? body.crewNotifyUnavailableReason : null } : {}),
     };
   }
 

@@ -31,7 +31,7 @@ import {
   listCandidates,
   rejectCandidate,
   type DecideOutcome,
-} from "../services/memory/episodeCandidates.js";
+} from "../services/memory/episodeCandidates.js"; import { noteCandidatesSurfaced } from "../services/memory/memoryQualityMetrics.js"; // §24 false_memory_rate (H217, census §BK): what the inbox SHOWS is what is surfaced; on this line so :53 holds
 
 const router = Router();
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -61,7 +61,7 @@ router.get("/me/memory-candidates", asyncHandler(async (req: Request, res: Respo
     storeRefusal(res, out.reason);
     return;
   }
-  res.json({ candidates: out.candidates });
+  noteCandidatesSurfaced(auth.user.id, out.candidates); res.json({ candidates: out.candidates }); // H217: the time window and the place shown here are the inferred assertions false_memory_rate counts
 }));
 
 router.post("/me/memory-candidates/detect", asyncHandler(async (req: Request, res: Response) => {
