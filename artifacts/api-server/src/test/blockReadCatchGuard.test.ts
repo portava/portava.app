@@ -67,8 +67,7 @@ const READERS = new Set([
   "isBlockedBetween", "fetchBlockedSet",
   "readBlockExclusions", "readPairExclusion", "readGroupBlockExclusions",
   "identityWithheldAcrossBlocks", "readerFacesFor",
-  "withheldLocationIds", "withholdLocationAcrossBlocks", "dropBlockedSenders",
-  "readBlockDirection", // §98: one direction of a block list, keyset-paged; a thrown read still rejects into the caller's catch
+  "withheldLocationIds", "withholdLocationAcrossBlocks", "dropBlockedSenders", "readBlockDirection", // §98: readBlockDirection is one direction of a block list, read whole; a thrown read still rejects into the caller's catch
 ]);
 
 /** How a site is closed. Each value says what a thrown block read turns into there. */

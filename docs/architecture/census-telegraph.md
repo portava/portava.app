@@ -14977,3 +14977,133 @@ catch, a stale entry, a lazy verdict, a reader without its try, a reader catch a
     CONSTRUCTED 97.8 %, CORRECT 58.1 %.
 
 ---
+
+## §98 — TELEGRAPH B58 lane BLOCKS-2 (2026-10-14): a whole block list is read to its END — keyset-paged past `db-max-rows`, unreadable above a 10,000-row ceiling, never a prefix — and an empty-bodied answer is never "not blocked". NO ROW CHANGES BUCKET
+
+Written 2026-10-14 on branch `claude/fix-blocks-keyset-paging` from origin/main `9ef582d4c` (#729 merged). APPEND-ONLY.
+The follow-up §94.6 deferred: its second and third found-not-fixed items. No migration, no flag, no client change, no
+database. Numbered §98 because open PRs write §95 (#738), §96 (#740) and §97 (#745 and #748, which collide with each
+other); renumber on conflict.
+
+### 98.1 The defect, re-verified on `9ef582d4c`
+
+- **CUT, the whole-list half.** §94 chunked the scoped (`among`) read; the WHOLE-LIST reads stayed one range-less read
+  each, which PostgREST cuts at `db-max-rows` (1000 hosted) with no error and in no particular order. A viewer with more
+  than 1,000 block relationships was answered with 1,000 of them and every other block read as "not blocked":
+  `readBlockExclusions` without `among` (stories, tags, hashtags, friends and trips invitable, unread counts,
+  TaggingService), `fetchBlockedSet` (≈60 call sites: discovery, search, the map, Trail), `readGroupBlockExclusions` over
+  a group's members, and Compass's profile lists and per-tool hidden-user refresh. Measured on main through the real
+  client (98.4): 1,001 and 2,500 relationships answer `ok: true` with 1,000 ids; a blocked user whose row is the 1,500th
+  is SHOWN by `get_whos_around`; the Compass profile holds 1,000 of 1,500 blocked users.
+- **`data: null` with no error IS a real-client outcome.** §94.6 and VERIFY-729 judged it fake-only. It is not:
+  postgrest-js 2.108.2 (`PostgrestBuilder.processResponse`, the version in the lockfile) resolves
+  `{ data: null, error: null }` for a 2xx with an EMPTY body ("Prefer: return=minimal") and for a 404 with an empty
+  body, which its issue-#295 workaround rewrites to `status 204`. Driven through the real `createClient` (98.4, "the
+  premise"): `isBlockedBetween` read it as "not blocked", `fetchBlockedSet` (`data ?? []`) as "nobody is blocked", and
+  `lib/keysetRead` (`data ?? []`) as the END of a walk, passing the pages read so far off as the set. No healthy
+  PostgREST sends either; a gateway, proxy or misroute can, and the client hands it on without an error.
+
+### 98.2 What changed
+
+- **`pagedBlockRows`** (`artifacts/api-server/src/lib/exclusionSet.ts:333#async function pagedBlockRows(`). FIRST the
+  read every caller always made, byte for byte (same columns and filter, so a recording of it still matches). An answer
+  shorter than `BLOCK_AMONG_CHUNK` cannot have been cut and IS the set
+  (`artifacts/api-server/src/lib/exclusionSet.ts:337#if (res.data.length < BLOCK_AMONG_CHUNK) return res.data;`): the
+  module is only correct where `db-max-rows` is at least 150 (the scoped chunking already rests on it; hosted is 1000),
+  so nearly every viewer still costs ONE round trip. An answer that long MAY be a prefix, and the set is read again by
+  keyset on the primary key `id` through the shared helper
+  (`artifacts/api-server/src/lib/exclusionSet.ts:338#const read = await readAllByIdKeyset(keyed, BLOCK_LIST_CEILING);`)
+  to an EMPTY page — a short page is not the end, because a server cap below the page size makes every page short.
+- **The ceiling** (`artifacts/api-server/src/lib/exclusionSet.ts:308#export const BLOCK_LIST_CEILING = 10_000;`): ten
+  full pages. One row past it is UNREADABLE (`artifacts/api-server/src/lib/exclusionSet.ts:340#if (read.truncated) return exclusionsUnavailable(OVER_CEILING)`),
+  which every caller already serves fail-closed. Cost at the hosted cap: 1 round trip under 150 rows, else
+  1 + ⌈rows/1000⌉ + 1, at most 12.
+- **Who reads through it.** The whole-list read (`artifacts/api-server/src/lib/exclusionSet.ts:222#const rows = await pagedBlockRows(`),
+  both directions of the group read (`artifacts/api-server/src/lib/exclusionSet.ts:287#pagedBlockRows(() => sc.from("blocks").select("blocker_id, blocked_id").in("blocker_id"`),
+  `fetchBlockedSet`, now one call into the definition of record, line-neutral
+  (`artifacts/api-server/src/lib/blocks.ts:34#const set = await readBlockExclusions(sc, userId);`), and Compass's two
+  sites through `readBlockDirection` (`artifacts/api-server/src/lib/exclusionSet.ts:355#export async function readBlockDirection(`),
+  which keeps the `{ data, error }` shape so each caller's error handling is unchanged
+  (`artifacts/api-server/src/compass/CompassProfileService.ts:106#readBlockDirection(db, "blocker_id", userId),`,
+  `artifacts/api-server/src/compass/CompassTools.ts:700#readBlockDirection(sc, "blocker_id", userId),`, both
+  line-neutral).
+- **`lib/keysetRead.ts`, the shared helper.** A page that is not a row list is a failed read, not the end of the set
+  (`artifacts/api-server/src/lib/keysetRead.ts:52#if (!Array.isArray(data)) return { ok: false`); and a server that
+  ignored the cursor stops at the first repeated page (`artifacts/api-server/src/lib/keysetRead.ts:65#if (String(tail) === last) return { ok: false`)
+  instead of re-reading page 1 until `maxRows` — or forever for a caller with no `maxRows`. Its two other callers
+  (`lib/intelProjectionScheduler.ts`, `lib/trailServe.ts`) gain the same: the scheduler's live-key read decides an
+  EXPIRY, and a `null` page used to end it on a prefix.
+- **`isBlockedBetween`**, line-neutral: an answer that is not a row list denies, with the error branch's two counters
+  (`artifacts/api-server/src/lib/blockGuard.ts:53#if (!Array.isArray(data)) return deniedAfterThrow();`). It now agrees
+  with `readPairExclusion`, which reads the same query and already answered "unreadable".
+- **The guard.** `readBlockDirection` joins THE READERS' name list (`blockReadCatchGuard`), so the two Compass sites stay
+  sites. Ledger: `CompassProfileService`'s allSettled re-judged (`rethrows` still holds; fingerprint updated), and the
+  `reads` field of it, `refreshHiddenUsers` and `fetchBlockedSet` corrected. No new try or catch around a block read.
+- **Three unfaithful fakes corrected** (assertions unchanged, edits line-neutral): `inviteLinkPreview.test.ts` (two
+  clients), `tripsExpansion.test.ts` and `rentBuddyCountryParity.test.ts` answered `isBlockedBetween`'s `.limit(1)`
+  list read with `null` or a non-thenable; they answer `[]`, the real "no block".
+
+### 98.3 Found, not fixed (for the lead)
+
+- **Seventeen direct whole-list block reads in ten modules keep their own range-less read** and are cut the same way:
+  `compass/CompassFallbackFeedBuilder.ts` (×2, one per direction), `lib/circleAccessGuard.ts` (×2), `routes/airport.ts`
+  (×2), `routes/compass.ts` (×3), `routes/follows.ts` (×2), `routes/highlights.ts` (×2 pairs), `routes/memories.ts`,
+  `routes/pulse.ts` (×2 pairs), `services/ranking/CreatorActivityScoreService.ts`. Each is a swap to `readBlockExclusions`
+  / `readBlockDirection` plus its own suites' fakes; several files are line-cited and held by other lanes. BLOCKS-3.
+- **`GET /me/blocker-ids` hands the client at most 500 ids** (`routes/blocks.ts`, `.limit(500)`), with no flag saying
+  it stopped. If the client uses it to exclude, a user blocked by more than 500 people gets a prefix there too.
+- **Scoped reads outside the readers are unchunked:** `routes/highlights.ts`, `routes/mediaFeed.ts`, `routes/stamps.ts`,
+  `routes/telegraphSharedContext.ts`, `services/memory/memoryReadPolicy.ts` and `services/wall/WallProjectionService.ts`
+  send their whole candidate list in one `.in()`; past ~1,000 candidates the §94.1 CUT applies to them.
+- **Test fidelity.** `telegraphCertificationHarness.makeFakeClient` compares `.gt()` by `Date.parse`, so a keyset cursor
+  on a uuid filters everything out and a walk there ends after page 1. No suite walks past 150 rows on it today; the
+  new suite uses its own PostgREST emulator behind the real client.
+
+### 98.4 Tests, mutants, rows
+
+- NOT-GRADED: artifacts/api-server/src/test/blockListKeysetPaging.test.ts — this section's EVIDENCE (98.1, 98.2), not a graded surface.
+- NOT-GRADED: artifacts/api-server/src/test/inviteLinkPreview.test.ts — a fake corrected in 98.2, not a graded surface.
+- NOT-GRADED: artifacts/api-server/src/test/tripsExpansion.test.ts — a fake corrected in 98.2, not a graded surface.
+- NOT-GRADED: artifacts/api-server/src/test/rentBuddyCountryParity.test.ts — a fake corrected in 98.2, not a graded surface.
+- NOT-GRADED: artifacts/api-server/src/lib/intelProjectionScheduler.ts — named in 98.2 as a caller of the shared keyset helper, an Input Intelligence surface, not a Telegraph one.
+- NOT-GRADED: artifacts/api-server/src/lib/trailServe.ts — named in 98.2 as a caller of the shared keyset helper, a Trail surface, not a Telegraph one.
+- NOT-GRADED: artifacts/api-server/src/routes/pulse.ts — named in 98.3 as a module with its own whole-list block read (BLOCKS-3), not a Telegraph surface.
+- NOT-GRADED: artifacts/api-server/src/routes/mediaFeed.ts — named in 98.3 as a module with an unchunked scoped block read, not a Telegraph surface.
+- NOT-GRADED: artifacts/api-server/src/services/memory/memoryReadPolicy.ts — named in 98.3 as a module with an unchunked scoped block read, a Memories surface, not a Telegraph one.
+
+- `blockListKeysetPaging.test.ts` 47/47 (`artifacts/api-server/src/test/blockListKeysetPaging.test.ts:204#describe("whole-list reads return EVERY block relationship`).
+  Every read goes through the REAL `@supabase/supabase-js` client, whose `fetch` is a PostgREST emulator applying
+  `db-max-rows` as PostgREST does. With main's six source files swapped in, **29 are red**: the full set at 1,001 and
+  2,500 (readBlockExclusions, fetchBlockedSet), the group and direction reads, the Compass profile and `get_whos_around`,
+  the server cap of 400, the stated ceiling, the ceiling and one past it, a failed or empty-bodied later page, the
+  ignored cursor, `isBlockedBetween` and `fetchBlockedSet` under an empty-bodied 404 and 200 (`readPairExclusion`,
+  asserted beside them, already answered unreadable on main), and the call counts at 150 rows and above. The 18 green on both are the controls: 0, 1, 149, 150, 999 and 1,000 rows read
+  whole by both readers, mutual blocks, one read under 150 rows, a blocked pair blocked and an unblocked one not, and
+  the premise that the real client resolves `data: null, error: null`.
+- Measured round trips at the hosted cap: 0, 1, 149 rows → 1; 150, 999, 1,000 → 3; 1,001 → 4; 2,500 → 5; 10,000 → 12;
+  10,001 → unreadable after at most 12. Cap 400, 2,500 rows → 9.
+- **Reach set:** every registered suite that transitively imports `exclusionSet`, `blockGuard`, `blocks`, `keysetRead`,
+  `CompassProfileService` or `CompassTools` (import graph walked, `src/lib/*.test.ts` included): **1,032 suites, 21,487
+  tests, 0 failures** on the head. Before the three fake corrections, 14 tests in those three files went red, every one
+  on a `null` or non-thenable "no block" answer. A first build that always walked (one more round trip for everyone,
+  and a different first request) turned 293 tests in 52 suites red on fakes without `.order`/`.gt`/`.limit` or row ids,
+  and the search golden on the changed column list; the byte-identical first read under 150 rows is why none of them
+  changes.
+- **Mutants, 17 of 17 killed** (each alone, worktree-asserted, restored from git): trust the first read always; trust a
+  first read shorter than 1,000 instead of 150; serve a truncated walk; a failed walk falls back to the first read; a
+  non-list first answer is no rows; the ceiling raised; keysetRead's non-list page ends the walk; no cursor-repeat check;
+  `isBlockedBetween` reads a non-list as not blocked; `fetchBlockedSet` turns unreadable into an empty set;
+  `readBlockDirection` turns unreadable into an empty direction; each Compass site reverted to its range-less read; the
+  group read unpaged; the walk re-reads without the key; the inbound direction dropped from the walk; the guard's
+  READERS lose `readBlockDirection`.
+- **Rows: NO ROW CHANGES.**
+  - T220 stays **W**, narrower: `fetchBlockedSet`, `CompassProfileService` and `refreshHiddenUsers` now read through
+    the definition of record, so the files that query `blocks` directly fall from 28 to 25, and from 25 to 23 outside
+    `lib/blockGuard.ts` and `lib/exclusionSet.ts` (one of them, `scripts/checkSilentSupabaseReads.ts`, names the table
+    without reading it). Twenty-two modules keep their own read.
+  - T324 and T350 stay **C**, re-derived: their verdicts rest on the pairwise guard denying on every failure, and the
+    one failure it read as "not blocked" (98.1, the empty-bodied answer) now denies too.
+  - Headline restated from `check:census-integrity` on this tree, unchanged by this section: 262 C / 183 W / 4 N / 2 ?
+    of 451. CONSTRUCTED 98.7 %, CORRECT 58.1 %.
+
+---
