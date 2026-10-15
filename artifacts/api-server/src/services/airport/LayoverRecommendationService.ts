@@ -32,7 +32,7 @@ import type { GeoPoint } from "../../domain/trips/contracts/TravelTimeProvider.j
 import {
   certifySessionFeasibility,
   certificationHeader,
-} from "./LayoverFeasibility.js"; import { resolveLayoverEntry, layoverAirportCountry } from "./layoverEntryGate.js";
+} from "./LayoverFeasibility.js"; import { resolveLayoverEntry, layoverAirportCountry } from "./layoverEntryGate.js"; import { applyLayoverRankingMode } from "./layoverRankingMode.js";
 import { sanitizeRecommendation, type SafeRecommendation } from "./LayoverPrivacyGuard.js"; import { recommendationSnapshotStamp } from "../layover/LayoverDecisionStore.js"; // census L64 (3623)
 // §13 L117/L122 — the feasibility state a candidate PIN carries. Attached after
 // the privacy sanitiser and deliberately coordinate-free; see that module.
@@ -673,8 +673,8 @@ export async function generateRecommendations(
   // `travel_time_source` for exactly the figures they cannot.
   const sources: TravelTimeSource[] = [];
   let sortOrder = 0;
-
-  for (const candidate of ranked) {
+  const ranking = await applyLayoverRankingMode(db, session, ranked, { keyOf: recommendationKey, live: live.byKey }); // census L78/L242: `layover_ranking_mode` legacy (the seed) or ANY failure → `ranking.served` IS `ranked`; shadow → compared and counted, `ranked` served; on → re-ordered within each safety rating only
+  for (const candidate of ranking.served) {
     const key = recommendationKey(candidate);
     const activityTimeMin = candidate.activityTimeMin;
     // WHAT GOES IN THE TWO NOT-NULL COLUMNS. `travel_time_min` and
@@ -823,7 +823,7 @@ export async function generateRecommendations(
         // and deadlines written above came out of, and `inputHash` is what makes
         // a replay checkable rather than a re-derivation that happens to agree.
         ...certificationHeader(certified),
-        stableIds: Boolean(opts.stableIds), ...(stamp.snapshotId !== null ? { snapshotId: stamp.snapshotId } : stamp.reason !== "stamp_disabled" ? { snapshotStampRefused: stamp.reason } : {}), // census L64: nothing at all with the flag OFF
+        stableIds: Boolean(opts.stableIds), ...ranking.event, ...(stamp.snapshotId !== null ? { snapshotId: stamp.snapshotId } : stamp.reason !== "stamp_disabled" ? { snapshotStampRefused: stamp.reason } : {}), // census L64: nothing at all with the flag OFF
         inputs: {
           airportId: airport.id,
           iataCode: airport.iataCode,

@@ -399,7 +399,7 @@ const CLASSIFIED = [
       'behaviour. Its companion EMERGENCY STOP is a separate flag, disable_discovery_pde, classified by the ' +
       'disable_* convention and read through isKillSwitchEngaged — deliberately NOT folded into this row, ' +
       'because a stop must be readable and engageable independently of the setting it protects.',
-  },
+  }, { flag: 'layover_ranking_mode', kind: 'CONFIG', reason: 'NOT A BOOLEAN GATE: census-layover L242/L78 (B58 LAY-4, migration 3784). The layover ranking rollout mode, DISCOVERY_ENGINE_MODE\'s shape — enabled is the master, metadata.mode selects legacy | shadow | on, metadata.cohort says who. Read through getFlagRow by lib/layoverRolloutMode.ts, and EVERY unusable state (absent row, enabled=false, missing or unknown mode, unreadable row, a throw) resolves to legacy, which is today\'s order, byte for byte; an unusable cohort includes nobody. on re-orders cards only within a safety rating and is the owner\'s call.' }, // one line, so the lines cited below hold
   {
     flag: 'SEARCH_SIGNAL_DECAY_DAYS',
     kind: 'CONFIG',

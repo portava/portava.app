@@ -842,7 +842,7 @@ describe("the chain-seed parser (beta-chain-seeds.ts): which reference rows the 
     const plans = planReferenceTables(model);
     const ff = plans.find((p) => p.table === "feature_flags")!;
     const seeded = Object.keys(ff.chainSeeded);
-    assert.equal(seeded.length, 200, "pinned (2026-10-14): a migration that seeds a flag moves this; read what it seeds, then update"); // 199 -> 200: 3785 seeds layover_map_budget_chips_enabled (FALSE; B58 LAY-5); 198 -> 199: 3786 seeds layover_crew_abort_notify_enabled (FALSE; B58 LAY-6); 197 -> 198: 3802 seeds memory_narrative_ai_enabled (FALSE; B58 MEM-NARR-1); 196 -> 197: 3825 seeds telegraph_link_previews_enabled (FALSE; B58 TM-1); 194 -> 196 was 3803/3804 (B58 MEM-CANON, PR #716)
+    assert.equal(seeded.length, 201, "pinned (2026-10-14): a migration that seeds a flag moves this; read what it seeds, then update"); // 200 -> 201: 3784 seeds layover_ranking_mode (FALSE, mode legacy; B58 LAY-4); 199 -> 200: 3785 seeds layover_map_budget_chips_enabled (FALSE; B58 LAY-5); 198 -> 199: 3786 seeds layover_crew_abort_notify_enabled (FALSE; B58 LAY-6); 197 -> 198: 3802 seeds memory_narrative_ai_enabled (FALSE; B58 MEM-NARR-1); 196 -> 197: 3825 seeds telegraph_link_previews_enabled (FALSE; B58 TM-1); 194 -> 196 was 3803/3804 (B58 MEM-CANON, PR #716)
     const chain = loadChainSource();
     const live = seededFlagPopulation([...chain.files], chain.read);
     for (const f of live.keys()) assert.ok(f in ff.chainSeeded, `${f} is left in feature_flags by the chain but not keyed`);
