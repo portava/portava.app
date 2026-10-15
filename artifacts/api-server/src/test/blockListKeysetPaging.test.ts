@@ -452,7 +452,8 @@ describe("the real client resolves { data: null, error: null } for an empty-bodi
 
   it("the premise: postgrest-js really resolves a .limit(1) list read to data null, error null on a 404 with an empty body", async () => {
     const { client } = blocksServer([], { fault: () => EMPTY_404() });
-    const res = await client.from("blocks").select("blocker_id").or(`and(blocker_id.eq.${A},blocked_id.eq.${B})`).limit(1);
+    // Widened on purpose: the client's own types say a resolved read without an error carries data, which is the claim under test.
+    const res: { data: unknown; error: unknown; status: number } = await client.from("blocks").select("blocker_id").or(`and(blocker_id.eq.${A},blocked_id.eq.${B})`).limit(1);
     assert.equal(res.error, null);
     assert.equal(res.data, null);
     assert.equal(res.status, 204, "postgrest-js rewrites an empty 404 to 204 No Content (its issue #295 workaround)");
