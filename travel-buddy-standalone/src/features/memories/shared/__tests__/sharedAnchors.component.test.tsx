@@ -179,6 +179,17 @@ describe('I: the invite list is the server\'s list; a non-owner sees no invite c
     expect(await screen.findByText(NOT_SHARED_YET)).toBeTruthy();
   });
 
+  it('an invited person leaves the list as soon as the server accepts, before the re-read returns — no second invitation from a second tap', async () => {
+    on('GET', LIST, anchorsBody(), 'hang');
+    on('GET', invitablePath(M), peopleBody({ userId: C, handle: 'cy' }, { userId: B, handle: 'bea' }));
+    on('POST', `/api/memories/${M}/shared-anchor/invites`, { status: 201, body: { anchorId: A1, invitee: { userId: C, status: 'invited' } } });
+    await ownerPanel();
+    await fireEvent.press(await screen.findByTestId(`shared-anchor-invite-${C}`));
+    await waitFor(() => expect(screen.queryByTestId(`shared-anchor-invite-${C}`)).toBeNull());
+    expect(screen.getByTestId(`shared-anchor-invite-${B}`)).toBeTruthy();
+    expect(posts()).toHaveLength(1);
+  });
+
   it('an empty server list shows no invite control and no one — nothing is inferred from anywhere else', async () => {
     on('GET', LIST, anchorsBody());
     on('GET', invitablePath(M), peopleBody());
@@ -403,6 +414,15 @@ describe('R: every refusal is one neutral sentence', () => {
     await fireEvent.press(await screen.findByTestId('shared-anchor-decline'));
     expect((await screen.findByTestId('shared-anchor-refused')).props.children).toBe(NEUTRAL_REFUSAL);
     expect(screen.getByTestId('shared-anchor-invitation')).toBeTruthy();
+  });
+
+  it('a failed invitable read is never "nobody can be invited": the owner is told it could not load', async () => {
+    on('GET', LIST, anchorsBody(lone()));
+    on('GET', invitablePath(M), { status: 503, body: { error: 'degraded_unavailable' } });
+    await ownerPanel();
+    await screen.findByTestId('shared-anchor-load-error');
+    expect(screen.queryByText(NOT_SHARED_YET)).toBeNull();
+    expect(screen.queryByTestId('shared-anchor-invite-list')).toBeNull();
   });
 
   it('a failed list read is never "nothing here" for the owner: it says it could not load, with a retry', async () => {

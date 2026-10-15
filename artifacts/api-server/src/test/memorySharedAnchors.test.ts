@@ -675,6 +675,23 @@ describe("V: who can be invited — the list the app renders, so the app never i
     }
   });
 
+  it("an unreadable read of WHO WAS ALREADY ASKED (the second read of the members table) is a 503, never the list without that exclusion", async () => {
+    const a = await start({ flag: "on" });
+    await invite(a, MH, B);
+    const db = makeDb(a.store, a.ops, a.w);
+    let membersReads = 0;
+    _setTestClient({
+      ...db,
+      from: (t: string) => (t === "memory_shared_anchor_members" && ++membersReads === 2
+        ? makeDb(a.store, a.ops, { ...a.w, failReads: new Set([t]) }).from(t)
+        : db.from(t)),
+    } as any, true);
+    const r = await invitable(a, MH);
+    assert.equal(membersReads, 2, "the link read, then the already-asked read");
+    assert.equal(r.status, 503);
+    assert.equal(r.body.people, undefined);
+  });
+
   it("only the host invites: a member whose own Memory is linked to someone else's anchor is offered nobody", async () => {
     const a = await start({ flag: "on" });
     const anchorId = (await invite(a, MH, B)).body.anchorId;
