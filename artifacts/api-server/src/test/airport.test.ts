@@ -28,7 +28,7 @@ import {
   computeWindow,
   adviseLeaving,
   estimateExitDelay,
-} from "../services/airport/LayoverSafetyEngine.js";
+} from "../services/airport/LayoverSafetyEngine.js"; import { certifySessionFeasibility } from "../services/airport/LayoverFeasibility.js"; // census-layover §75
 import {
   wallTimeToUtc,
   localHour,
@@ -361,7 +361,7 @@ describe("LayoverSessionService", () => {
 
 describe("LayoverSafetyEngine", () => {
   const airport = makeAirportProfile();
-
+  const T = Date.now(); const recordAt = (s: any) => certifySessionFeasibility(airport as any, s, { nowMs: T, entry: null }); // census-layover §75: a card is certified only against its record
   function makeSession(layoverMinutes = 360, opts: any = {}): any {
     const now  = Date.now();
     return {
@@ -423,7 +423,7 @@ describe("LayoverSafetyEngine", () => {
     const session = makeSession(120);
     const a = assess(airport, session, {
       title: "Airport lounge", travelTimeMin: 0, activityTimeMin: 30, insideAirport: true,
-    });
+    }, T, recordAt(session));
     assert.equal(a.rating, "safe");
   });
 
@@ -432,7 +432,7 @@ describe("LayoverSafetyEngine", () => {
     // Activity needs 90 min + 60 min travel + 60 min buffer = way too long
     const a = assess(airport, session, {
       title: "City tour", travelTimeMin: 60, activityTimeMin: 120, insideAirport: false,
-    });
+    }, T, recordAt(session));
     assert.ok(
       a.rating === "not_recommended" || a.rating === "possible_but_risky",
       `Expected not_recommended or possible_but_risky, got ${a.rating}`,
@@ -443,7 +443,7 @@ describe("LayoverSafetyEngine", () => {
     const session = makeSession(480, { flightType: "domestic" }); // 8h layover
     const a = assess(airport, session, {
       title: "City visit", travelTimeMin: 20, activityTimeMin: 60, insideAirport: false, verified: true,
-    });
+    }, T, recordAt(session));
     assert.equal(a.rating, "safe", `Expected safe, got ${a.rating}: ${a.warningReason}`);
   });
 
@@ -451,7 +451,7 @@ describe("LayoverSafetyEngine", () => {
     const session = makeSession(480, { wantsToLeave: false });
     const a = assess(airport, session, {
       title: "City tour", travelTimeMin: 30, activityTimeMin: 60, insideAirport: false,
-    });
+    }, T, recordAt(session));
     assert.equal(a.rating, "airport_only");
   });
 
@@ -462,7 +462,7 @@ describe("LayoverSafetyEngine", () => {
       { title: "Airport cafe", travelTimeMin: 0, activityTimeMin: 30, insideAirport: true },
       { title: "Near lunch", travelTimeMin: 15, activityTimeMin: 45, insideAirport: false, verified: true },
     ];
-    const ranked = rankActivities(airport, session, candidates);
+    const ranked = rankActivities(airport, session, candidates, T, recordAt(session));
     assert.equal(ranked[0].title, "Airport cafe", "inside-airport should rank first");
     // ── THIS CASE DOES NOT PIN ITS OWN TITLE, MEASURED 2026-09-13 ────────────
     // Every candidate above is ordered the same way by rating and by travel
