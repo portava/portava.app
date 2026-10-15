@@ -109,6 +109,10 @@ interface FakeOpts {
   failRead?: Record<string, { code?: string; message: string }>;
   /** A WRITE for which this answers true resolves with an error. */
   failWrite?: (table: string, mode: string, payload: any) => boolean;
+  /** A READ this answers with an error for (by table, columns and `.eq` filters) resolves with it — finer than `failRead`. */
+  failQuery?: (q: { table: string; columns: string[]; eqs: Record<string, unknown> }) => { code?: string; message: string } | null;
+  /** A READ of this table resolves with this body and no error (a shape PostgREST should never send). */
+  weird?: Record<string, unknown>;
   claim?: any[];
 }
 
@@ -118,12 +122,13 @@ function makeDb(store: Record<string, any[]>, opts: FakeOpts = {}) {
   function chain(table: string) {
     const filters: Array<(r: any) => boolean> = [];
     let mode = "select"; let columns: string[] = []; let payload: any = null; let onConflict: string[] = []; let wantRows = false; let single = false;
+    const eqs: Record<string, unknown> = {};
     const f = (p: (r: any) => boolean) => { filters.push(p); return obj; };
     const obj: any = {
       select(cols?: string) { if (mode !== "select") wantRows = true; else columns = String(cols ?? "*").split(",").map((c) => c.trim()); return obj; },
       upsert(d: any, o?: { onConflict?: string }) { mode = "upsert"; payload = d; onConflict = (o?.onConflict ?? "").split(",").filter(Boolean); return obj; },
       update(d: any) { mode = "update"; payload = d; return obj; },
-      eq: (c: string, v: any) => f((r) => r[c] === v),
+      eq: (c: string, v: any) => { eqs[c] = v; return f((r) => r[c] === v); },
       neq: (c: string, v: any) => f((r) => r[c] !== v),
       in: (c: string, vs: any[]) => f((r) => vs.includes(r[c])),
       is: (c: string, v: any) => f((r) => (v === null ? r[c] == null : r[c] === v)),
@@ -134,6 +139,9 @@ function makeDb(store: Record<string, any[]>, opts: FakeOpts = {}) {
     };
     async function run(): Promise<any> {
       if (mode === "select" && opts.failRead?.[table]) { log.push({ table, mode, columns, rows: [] }); return { data: null, error: opts.failRead[table] }; }
+      const queryError = mode === "select" ? opts.failQuery?.({ table, columns, eqs }) ?? null : null;
+      if (queryError) { log.push({ table, mode, columns, rows: [] }); return { data: null, error: queryError }; }
+      if (mode === "select" && opts.weird && table in opts.weird) { log.push({ table, mode, columns, rows: [] }); return { data: opts.weird[table], error: null }; }
       if (mode !== "select" && opts.failWrite?.(table, mode, payload)) return { data: null, error: { message: `${table} ${mode} failed`, code: "57014" } };
       const all = (store[table] ??= []);
       if (mode === "upsert") {
@@ -271,7 +279,25 @@ describe("H203 — the public index reads only what it may publish (red on main)
     const r = await rebuildProjection(makeDb(store, { failRead: { memories: { code: "57014", message: "timeout" } } }), "PublicMemoryProjection", PUBLIC_SCOPE, NOW);
     assert.equal(r.ok, false);
     assert.equal(!r.ok && r.table, "memories");
+    assert.equal(!r.ok && r.retryable, true, "an outage is retryable");
     assert.equal(reg(store, PUBLIC_KEY), undefined);
+    const absent = await rebuildProjection(makeDb(seed(), { failRead: { memories: { code: "42P01", message: 'relation "public.memories" does not exist' } } }), "PublicMemoryProjection", PUBLIC_SCOPE, NOW);
+    assert.equal(!absent.ok && absent.retryable, false, "a missing table is not");
+    const shapeless = await rebuildProjection(makeDb(seed(), { weird: { memories: { rows: [] } } }), "PublicMemoryProjection", PUBLIC_SCOPE, NOW);
+    assert.equal(shapeless.ok, false, "a body that is not a row array is a refusal, never an empty index");
+    assert.equal(!shapeless.ok && shapeless.table, "memories");
+  });
+
+  it("the ITEMS read and the hidden-photo read fail closed each on its own (a count over items nobody could read is never published)", async () => {
+    const itemsOnly = (q: { table: string; eqs: Record<string, unknown> }) => (q.table === "memory_items" && !("visibility" in q.eqs) ? { code: "57014", message: "items timeout" } : null);
+    const hiddenOnly = (q: { table: string; eqs: Record<string, unknown> }) => (q.table === "memory_items" && "visibility" in q.eqs ? { code: "57014", message: "hidden timeout" } : null);
+    for (const [label, failQuery] of [["items", itemsOnly], ["hidden photos", hiddenOnly]] as const) {
+      const store = seed();
+      const r = await rebuildProjection(makeDb(store, { failQuery }), "PublicMemoryProjection", PUBLIC_SCOPE, NOW);
+      assert.equal(r.ok, false, `${label} unreadable must refuse`);
+      assert.equal(!r.ok && r.table, "memory_items", label);
+      assert.equal(reg(store, PUBLIC_KEY), undefined, label);
+    }
   });
 });
 
