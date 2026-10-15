@@ -290,7 +290,7 @@ function makeClient() {
           const blocker = this._eq("blocker_id");
           const blocked = this._eq("blocked_id");
           const hit = state.blocks.find((b) => b.blocker_id === blocker && b.blocked_id === blocked);
-          return { data: hit ? { id: "block-1" } : null, error: null };
+          return { data: this._maybeSingle ? (hit ? { id: "block-1" } : null) : (hit ? [{ id: "block-1" }] : []), error: null }; // a list read's "no block" is [], never null (census-telegraph §98)
         }
 
         if (t === "rent_buddy_offers") {

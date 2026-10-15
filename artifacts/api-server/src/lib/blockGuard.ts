@@ -50,7 +50,7 @@ export async function isBlockedBetween(
     // SEE, and an unknown folded into either column would hide that.
     return true; // fail closed — an unreadable blocks table denies
   }
-  const blocked = Array.isArray(data) && data.length > 0;
+  if (!Array.isArray(data)) return deniedAfterThrow(); const blocked = data.length > 0; // §98: not a row list is the same unknown as a throw — postgrest-js resolves `{ data: null, error: null }` for a 404 or 2xx with an empty body
   // Both answers are `ok` for the §28 metric, and that is not a shortcut: the
   // target is "blocked direct deliveries = 0", and a refusal IS zero deliveries.
   // This counter cannot observe a leak — a delivery to a blocked pair would mean
@@ -63,11 +63,11 @@ export async function isBlockedBetween(
 }
 
 /**
- * census-telegraph §94. A THROWN read used to escape `isBlockedBetween` as an
- * exception, so whether it denied depended on the caller: the thread read's
- * capability resolver let it out as a 500 while a RETURNED error, two lines
- * apart in the same function, was served as "blocked". It is now the same
- * unknown with the same answer and the same two counters as the error branch.
+ * census-telegraph §94/§98. A THROWN read used to escape `isBlockedBetween`, and
+ * an answer that was not a row list (`data: null` with no error) read as "not
+ * blocked": the guard answered without KNOWING. Both are now the same unknown
+ * as a RETURNED error, with the same answer and the same two counters as the
+ * error branch: denied, and counted as the guard running blind.
  */
 function deniedAfterThrow(): true {
   recordTelegraphMetric("block_enforcement_failures", "violation");

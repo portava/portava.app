@@ -67,7 +67,7 @@ const READERS = new Set([
   "isBlockedBetween", "fetchBlockedSet",
   "readBlockExclusions", "readPairExclusion", "readGroupBlockExclusions",
   "identityWithheldAcrossBlocks", "readerFacesFor",
-  "withheldLocationIds", "withholdLocationAcrossBlocks", "dropBlockedSenders",
+  "withheldLocationIds", "withholdLocationAcrossBlocks", "dropBlockedSenders", "readBlockDirection", // §98: readBlockDirection is one direction of a block list, read whole; a thrown read still rejects into the caller's catch
 ]);
 
 /** How a site is closed. Each value says what a thrown block read turns into there. */
@@ -282,7 +282,7 @@ function scanTree(): { files: number; reads: number; sites: CatchSite[] } {
   const sites: CatchSite[] = [];
   for (const f of files) {
     const text = readFileSync(join(SRC, f), "utf8");
-    if (!/blocks|isBlockedBetween|fetchBlockedSet|Exclusion|AcrossBlocks|BlockedSenders|readerFacesFor|withheldLocationIds/.test(text)) continue;
+    if (!/blocks|isBlockedBetween|fetchBlockedSet|Exclusion|AcrossBlocks|BlockedSenders|readerFacesFor|withheldLocationIds|readBlockDirection/.test(text)) continue;
     const sf = ts.createSourceFile(f, text, ts.ScriptTarget.Latest, true);
     const count = (n: ts.Node): void => { if (isBlockRead(n)) reads += 1; ts.forEachChild(n, count); };
     count(sf);

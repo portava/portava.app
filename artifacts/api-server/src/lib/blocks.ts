@@ -7,11 +7,11 @@
  * against this set.
  *
  * fetchBlockedSet returns EVERY user id that either blocked `userId` or was
- * blocked by them. It returns null on read error — callers MUST treat null as
- * "show nobody" (fail-closed), never as "no blocks". This mirrors the contract
- * lib/mapTravelers already relies on: never leak when block state is uncertain.
+ * blocked by them, or null when the list could not be read — callers MUST treat
+ * null as "show nobody" (fail-closed), never as "no blocks" (lib/mapTravelers).
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { readBlockExclusions } from "./exclusionSet.js";
 
 /**
  * Bidirectional blocked-user set for `userId`.
@@ -23,17 +23,17 @@ export async function fetchBlockedSet(
   userId: string,
 ): Promise<Set<string> | null> {
   try {
-    const { data, error } = await sc
-      .from("blocks")
-      .select("blocker_id, blocked_id")
-      .or(`blocker_id.eq.${userId},blocked_id.eq.${userId}`);
-    if (error) return null;
-    const set = new Set<string>();
-    for (const b of (data ?? []) as any[]) {
-      if (b.blocker_id === userId) set.add(b.blocked_id as string);
-      else set.add(b.blocker_id as string);
-    }
-    return set;
+    // ONE definition of the whole-list read (census-telegraph §98): lib/exclusionSet's,
+    // keyset-paged to the END of the list. This read was range-less, so past
+    // PostgREST's db-max-rows (1000 hosted) block relationships it held a PREFIX
+    // and everyone after it read as "not blocked"; and it read `data ?? []`, so
+    // `{ data: null, error: null }` — what postgrest-js resolves for a 404 or a 2xx
+    // with an empty body — was "nobody is blocked". Every failure (an error on any
+    // page, a page that is not a row list, a row without its counter-party, a list
+    // past BLOCK_LIST_CEILING) is unreadable there, and null here.
+    const set = await readBlockExclusions(sc, userId);
+    if (!set.ok) return null;
+    return new Set(set.ids);
   } catch {
     return null;
   }

@@ -19,17 +19,17 @@
       "key": "compass/CompassProfileService.ts::buildProfile::allSettled#1",
       "kind": "allSettled",
       "reads": [
-        "from(\"blocks\")"
+        "readBlockDirection"
       ],
-      "fingerprint": "83d5084860df355a",
+      "fingerprint": "ac7900daeabf4e34",
       "closedBy": "rethrows",
-      "why": "A REJECTED blocks read (allSettled status 'rejected') sets safetyListErrored and buildProfile throws 'block/mute safety-list load failed — failing closed'; no profile with an empty exclusion list is built."
+      "why": "A REJECTED blocks read (allSettled status 'rejected') sets safetyListErrored and buildProfile throws 'block/mute safety-list load failed — failing closed'; no profile with an empty exclusion list is built. Re-judged §98: both directions are readBlockDirection (keyset-paged); a failed page, a non-list page or a list past BLOCK_LIST_CEILING resolves { data: null, error } and is refused the same way."
     },
     {
       "key": "compass/CompassTools.ts::refreshHiddenUsers::catch#1",
       "kind": "catch",
       "reads": [
-        "from(\"blocks\")"
+        "readBlockDirection"
       ],
       "fingerprint": "fba48987e9171cc7",
       "closedBy": "keeps-snapshot",
@@ -59,7 +59,7 @@
       "key": "lib/blocks.ts::fetchBlockedSet::catch#1",
       "kind": "catch",
       "reads": [
-        "from(\"blocks\")"
+        "readBlockExclusions"
       ],
       "fingerprint": "9a64ef9f58d225a0",
       "closedBy": "answers-unreadable",

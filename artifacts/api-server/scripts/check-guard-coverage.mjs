@@ -1304,6 +1304,23 @@ const EXEMPT = [
       'test line pins a loopback URL with no ref). EXEMPTION MEANS UNGUARDED, NOT SAFE — if this file ever builds ' +
       'a client, or gives the src/index.ts child a real ref or a service key, the exemption is void.',
   },
+
+  {
+    file: 'src/test/blockListKeysetPaging.test.ts',
+    pinnedTestEnv: true,
+    reason:
+      'Registered unit test for the whole-list block readers (census-telegraph §98), over a REAL createClient for '
+      + 'the reason notificationPushTokenRegistryUnreadable.test.ts gives: what is being proved is what postgrest-js '
+      + 'itself does with a capped, empty-bodied or failed page — it resolves { data: null, error: null } for a 404 '
+      + 'or 2xx with an empty body, and it retries a rejected GET — and a hand-written double cannot answer that. It '
+      + 'names NO Supabase credential variable: the URL and key are the in-file literals "http://127.0.0.1:9" and '
+      + '"dummy", and every client is handed an injected fetch, a PostgREST emulator over in-memory rows, as its '
+      + 'ONLY transport, so no request can leave the process whatever the environment holds. Importing the CI front '
+      + 'door would refuse (the curated test line pins a loopback URL with no project ref). pinnedTestEnv is set '
+      + 'because CI invokes it through the test script. EXEMPTION MEANS UNGUARDED, NOT SAFE -- if the injected fetch '
+      + 'is ever removed, or either literal ever comes from the environment, the exemption is void and this file must '
+      + 'import the guard.',
+  },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────

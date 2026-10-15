@@ -66,6 +66,7 @@
  */
 import type { Request, Response } from "express";
 import { sendError } from "./http.js";
+import { readAllByIdKeyset } from "./keysetRead.js";
 
 /**
  * The result of reading an exclusion table.
@@ -132,10 +133,9 @@ export function isExcluded(set: ExclusionSet, id: string | null | undefined): bo
  *              (1000 hosted) was ONE `.in()` read, cut at the cap with no error,
  *              and every block past the cap was missed. See BLOCK_AMONG_CHUNK.
  *
- * The WHOLE-LIST read (no `among`) is still one range-less read, so a viewer
- * with more than `db-max-rows` block relationships still gets a prefix. That is
- * recorded in census-telegraph §94 as found-not-fixed: paging it (lib/keysetRead)
- * costs every caller a second round trip and is its own change.
+ * The WHOLE-LIST read (no `among`) and the group read used to be one range-less
+ * read each, cut at the same cap: they are keyset-paged to the END of the set
+ * (census-telegraph §98, pagedBlockRows), unreadable past BLOCK_LIST_CEILING.
  */
 const NOT_ROWS = "blocks read answered something other than a row list";
 const NO_COUNTERPARTY = "a blocks row did not name its counter-party";
@@ -219,14 +219,14 @@ async function readBlockExclusionsOnce(sc: any, viewerId: string, among: readonl
     return { ok: true, ids };
   }
 
-  const res = await sc
-    .from("blocks")
-    .select("blocker_id, blocked_id")
-    .or(`blocker_id.eq.${viewerId},blocked_id.eq.${viewerId}`);
-  if (res?.error) return exclusionsUnavailable(res.error);
-  if (!Array.isArray(res?.data)) return exclusionsUnavailable(NOT_ROWS);
+  const rows = await pagedBlockRows( // the read callers always made; then, only if it may be cut, the keyset walk whose rows carry the key
+    () => sc.from("blocks").select("blocker_id, blocked_id").or(`blocker_id.eq.${viewerId},blocked_id.eq.${viewerId}`),
+    () => sc.from("blocks").select("id, blocker_id, blocked_id").or(`blocker_id.eq.${viewerId},blocked_id.eq.${viewerId}`));
+  // The whole list read to its end, every page a row list — or no list at all
+  // (pagedBlockRows, below): never a prefix of it.
+  if (!Array.isArray(rows)) return rows;
   const ids = new Set<string>();
-  for (const r of res.data as any[]) {
+  for (const r of rows) {
     const blocker = idOf(r?.blocker_id);
     const blocked = idOf(r?.blocked_id);
     if (blocker === null || blocked === null) return exclusionsUnavailable(NO_COUNTERPARTY);
@@ -284,12 +284,12 @@ export async function readGroupBlockExclusions(
   if (memberIds.length === 0) return exclusions([]);
   try {
     const [asBlocker, asBlocked] = await Promise.all([
-      sc.from("blocks").select("blocker_id, blocked_id").in("blocker_id", memberIds as string[]),
-      sc.from("blocks").select("blocker_id, blocked_id").in("blocked_id", memberIds as string[]),
+      pagedBlockRows(() => sc.from("blocks").select("blocker_id, blocked_id").in("blocker_id", memberIds as string[]), () => sc.from("blocks").select("id, blocker_id, blocked_id").in("blocker_id", memberIds as string[])),
+      pagedBlockRows(() => sc.from("blocks").select("blocker_id, blocked_id").in("blocked_id", memberIds as string[]), () => sc.from("blocks").select("id, blocker_id, blocked_id").in("blocked_id", memberIds as string[])),
     ]);
-    const outIds = counterParties(asBlocker, "blocked_id");
+    const outIds = Array.isArray(asBlocker) ? counterParties({ data: asBlocker }, "blocked_id") : asBlocker;
     if (!Array.isArray(outIds)) return outIds;
-    const inbIds = counterParties(asBlocked, "blocker_id");
+    const inbIds = Array.isArray(asBlocked) ? counterParties({ data: asBlocked }, "blocker_id") : asBlocked;
     if (!Array.isArray(inbIds)) return inbIds;
     const ids = new Set<string>([...outIds, ...inbIds]);
     for (const id of memberIds) ids.delete(id); // members themselves stay
@@ -297,6 +297,72 @@ export async function readGroupBlockExclusions(
   } catch (err) {
     return exclusionsUnavailable(err);
   }
+}
+
+/**
+ * The most rows ONE paged `blocks` read walks: ten full pages of KEYSET_PAGE
+ * (lib/keysetRead). A viewer — or, for the group read, a group's members — with
+ * more block relationships than this is answered UNREADABLE, which every caller
+ * already serves fail-closed; never the first 10,000 passed off as the list.
+ */
+export const BLOCK_LIST_CEILING = 10_000;
+const OVER_CEILING = `more than ${BLOCK_LIST_CEILING} block relationships: the list is not read past its ceiling`;
+
+/**
+ * Every row a `blocks` filter matches — census-telegraph §98. A range-less read
+ * is cut at PostgREST's `db-max-rows` (1000 hosted) with no error, so a viewer
+ * with more block relationships than that was answered with a PREFIX, read as
+ * the whole list: everyone past row 1,000 shown as "not blocked".
+ *
+ * FIRST `first`: the range-less read every caller always made, byte for byte
+ * (the same columns, so a recording of the old read still matches). An answer shorter than
+ * BLOCK_AMONG_CHUNK cannot have been cut: this module is only correct where
+ * `db-max-rows` is at least that (the scoped read's chunking already rests on
+ * it; hosted is 1000), so a viewer with fewer than 150 relationships — nearly
+ * everyone — still costs ONE round trip. An answer that long MAY be a prefix,
+ * and the set is then read again from the start by keyset on the primary key
+ * `id` (lib/keysetRead) to an EMPTY page: at the hosted cap, 1 + ⌈rows/1000⌉ + 1
+ * round trips, at most 12 below the ceiling.
+ *
+ * `keyed` returns a FRESH select with the same filter whose rows also carry `id`. A returned
+ * error, an answer that is not a row list (on any page), a cursor the server did
+ * not honour, a row without an id, and a list past BLOCK_LIST_CEILING are each
+ * the unreadable result. Rejects only when a read throws: every reader of record
+ * calls it under its own catch.
+ */
+async function pagedBlockRows(first: () => any, keyed: () => any): Promise<any[] | Extract<ExclusionSet, { ok: false }>> {
+  const res = await first();
+  if (res?.error) return exclusionsUnavailable(res.error) as Extract<ExclusionSet, { ok: false }>;
+  if (!Array.isArray(res?.data)) return exclusionsUnavailable(NOT_ROWS) as Extract<ExclusionSet, { ok: false }>;
+  if (res.data.length < BLOCK_AMONG_CHUNK) return res.data;
+  const read = await readAllByIdKeyset(keyed, BLOCK_LIST_CEILING);
+  if (!read.ok) return exclusionsUnavailable(read.error) as Extract<ExclusionSet, { ok: false }>;
+  if (read.truncated) return exclusionsUnavailable(OVER_CEILING) as Extract<ExclusionSet, { ok: false }>;
+  return read.rows;
+}
+
+/**
+ * ONE direction of `userId`'s block list, read to its END — for the sites that
+ * keep the two directions apart (Compass's profile and its per-tool hidden-user
+ * refresh), which read each direction range-less and so held a prefix past
+ * 1,000 rows. It resolves the shape of the supabase read it replaces,
+ * `{ data, error }`, so each caller's error handling is unchanged; but `data` is
+ * the WHOLE direction (rows naming the counter-party: `blocked_id` for the
+ * `blocker_id` side, `blocker_id` for the other), or `null` WITH an `error` (any unreadable result of
+ * pagedBlockRows): never a prefix, never `null` without one. A thrown read still
+ * rejects, as the read it replaces could, into the caller's own catch.
+ */
+export async function readBlockDirection(
+  sc: any,
+  side: "blocker_id" | "blocked_id",
+  userId: string,
+): Promise<{ data: any[]; error: null } | { data: null; error: { message: string } }> {
+  if (!sc || !userId) return { data: null, error: { message: "no client or user" } };
+  // The first read is the one each site made, byte for byte: only the counter-party column.
+  const rows = side === "blocker_id"
+    ? await pagedBlockRows(() => sc.from("blocks").select("blocked_id").eq("blocker_id", userId), () => sc.from("blocks").select("id, blocked_id").eq("blocker_id", userId))
+    : await pagedBlockRows(() => sc.from("blocks").select("blocker_id").eq("blocked_id", userId), () => sc.from("blocks").select("id, blocker_id").eq("blocked_id", userId));
+  return Array.isArray(rows) ? { data: rows, error: null } : { data: null, error: { message: rows.reason } };
 }
 
 /**
