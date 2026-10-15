@@ -66,6 +66,7 @@ import {
   type MediaVendorAdapters,
 } from "../lib/media/vendors/mediaVendorStages.js";
 import { resetCanonicalSchemaMemo } from "../lib/media/mediaSchemaCapability.js";
+import { applyCanonicalModerationDecision } from "../services/media/MediaModerationService.js";
 
 const A = "a0000000-0000-4000-a000-000000000001";
 const B = "b0000000-0000-4000-a000-000000000002";
@@ -369,7 +370,7 @@ describe("MD280 — a caption track is kept only if it is valid WebVTT, whole", 
   });
 
   it("the refusing default transcribes nothing; a vendor's malformed VTT is refused, not stored", async () => {
-    const subject = { assetId: A, bucket: "b", path: "p.mp4", durationMs: 3000 };
+    const subject = { sourceVersion: 1, assetId: A, bucket: "b", path: "p.mp4", durationMs: 3000 };
     const r = await captionTrackFor(REFUSING_CAPTION_SOURCE, subject);
     assert.equal(r.ok ? null : r.reason, "not_configured");
     const bad: MediaCaptionSource = {
@@ -387,7 +388,7 @@ describe("MD280 — a caption track is kept only if it is valid WebVTT, whole", 
 type Row = Record<string, any>;
 
 /** In-memory store: feature_flags, media_assets (with the §36 schema probe answering "present"), and Storage. */
-function makeStore(flags: Record<string, boolean>, assets: Row[] = []) {
+function makeStore(flags: Record<string, boolean>, assets: Row[] = [], failUpdate?: (patch: Row) => boolean) {
   const uploads: Array<{ bucket: string; path: string; body: string; upsert: boolean }> = [];
   const updates: Array<{ table: string; patch: Row }> = [];
   const flagReads: string[] = [];
@@ -403,6 +404,7 @@ function makeStore(flags: Record<string, boolean>, assets: Row[] = []) {
         if (f) flagReads.push(String(f[1]));
       }
       if (update) {
+        if (failUpdate?.(update)) return { data: null, error: { code: "57014", message: "statement timeout" } };
         const hit = rows().filter(match);
         for (const r of hit) Object.assign(r, update, { version: (r.version ?? 1) + 1 });
         updates.push({ table: name, patch: update });
@@ -482,7 +484,7 @@ describe("§37 stages — every stage is OFF until its own flag is on", () => {
   it("all four flags off (the seed): four flag reads, no vendor call, no write", async () => {
     const store = makeStore({});
     const { adapters, calls } = spyAdapters();
-    const report = await runMediaVendorIngest(store.sc, { assetId: A, bucket: "post-media", path: "u/1.mp4", mediaType: "video", durationMs: 3000 }, adapters);
+    const report = await runMediaVendorIngest(store.sc, { sourceVersion: 1, assetId: A, bucket: "post-media", path: "u/1.mp4", mediaType: "video", durationMs: 3000 }, adapters);
     assert.deepEqual(calls, []);
     assert.deepEqual(store.updates, []);
     assert.deepEqual(store.uploads, []);
@@ -499,7 +501,7 @@ describe("§37 stages — every stage is OFF until its own flag is on", () => {
     ] as const) {
       const store = makeStore({ [flag]: true }, [ASSET_ROW()]);
       const { adapters, calls } = spyAdapters();
-      await runMediaVendorIngest(store.sc, { assetId: A, bucket: "post-media", path: "u/1.mp4", mediaType: "video", durationMs: 3000 }, adapters);
+      await runMediaVendorIngest(store.sc, { sourceVersion: 1, assetId: A, bucket: "post-media", path: "u/1.mp4", mediaType: "video", durationMs: 3000 }, adapters);
       assert.deepEqual(calls, expected, flag);
       resetCanonicalSchemaMemo();
     }
@@ -511,7 +513,7 @@ describe("§37 stages — every stage is OFF until its own flag is on", () => {
     const { adapters } = spyAdapters();
     const report = await runMediaVendorIngest(
       store.sc,
-      { assetId: A, bucket: "post-media", path: "u/1.mp4", mediaType: "video", durationMs: 3000 },
+      { sourceVersion: 1, assetId: A, bucket: "post-media", path: "u/1.mp4", mediaType: "video", durationMs: 3000 },
       { ...adapters, classifier: REFUSING_MODERATION_CLASSIFIER },
     );
     assert.equal(asset.moderation_status, "limited", "a held file is non-distributable (§36 limited)");
@@ -531,7 +533,7 @@ describe("§37 stages — every stage is OFF until its own flag is on", () => {
         return allow;
       },
     };
-    await runMediaVendorIngest(store.sc, { assetId: A, bucket: "post-media", path: "u/1.mp4", mediaType: "video", durationMs: 3000 }, { ...adapters, classifier: deciding });
+    await runMediaVendorIngest(store.sc, { sourceVersion: 1, assetId: A, bucket: "post-media", path: "u/1.mp4", mediaType: "video", durationMs: 3000 }, { ...adapters, classifier: deciding });
     assert.deepEqual(seenWhileDeciding, ["limited"], "the file is not distributable while the classifier decides");
     assert.equal(asset.moderation_status, "active");
   });
@@ -539,28 +541,28 @@ describe("§37 stages — every stage is OFF until its own flag is on", () => {
   it("transcode and captions are video-only; an image never reaches them", async () => {
     const store = makeStore({ [MEDIA_TRANSCODE_STAGE_FLAG]: true, [MEDIA_CAPTIONS_STAGE_FLAG]: true });
     const { adapters, calls } = spyAdapters();
-    await runMediaVendorIngest(store.sc, { assetId: A, bucket: "post-media", path: "u/1.jpg", mediaType: "image", durationMs: null }, adapters);
+    await runMediaVendorIngest(store.sc, { sourceVersion: 1, assetId: A, bucket: "post-media", path: "u/1.jpg", mediaType: "image", durationMs: null }, adapters);
     assert.deepEqual(calls, []);
   });
 
   it("captions ON: a valid track is stored at the DERIVED path and never overwrites (upsert false); an invalid one is not stored", async () => {
     const store = makeStore({ [MEDIA_CAPTIONS_STAGE_FLAG]: true });
     const { adapters } = spyAdapters();
-    const report = await runMediaVendorIngest(store.sc, { assetId: A, bucket: "post-media", path: "u/1.mp4", mediaType: "video", durationMs: 3000 }, adapters);
+    const report = await runMediaVendorIngest(store.sc, { sourceVersion: 1, assetId: A, bucket: "post-media", path: "u/1.mp4", mediaType: "video", durationMs: 3000 }, adapters);
     assert.deepEqual(store.uploads.map((u) => [u.bucket, u.path, u.upsert]), [["post-media", "u/1.mp4.captions.vtt", false]]);
     assert.equal(report.captions.state === "ran" && report.captions.result.ok, true);
 
     const store2 = makeStore({ [MEDIA_CAPTIONS_STAGE_FLAG]: true });
     const bad = spyAdapters();
     bad.adapters.captions = { ...bad.adapters.captions, async transcribe() { return { ok: true, value: { vtt: "not vtt", language: null } }; } };
-    await runMediaVendorIngest(store2.sc, { assetId: A, bucket: "post-media", path: "u/1.mp4", mediaType: "video", durationMs: 3000 }, bad.adapters);
+    await runMediaVendorIngest(store2.sc, { sourceVersion: 1, assetId: A, bucket: "post-media", path: "u/1.mp4", mediaType: "video", durationMs: 3000 }, bad.adapters);
     assert.deepEqual(store2.uploads, []);
   });
 
   it("a stage with no canonical asset id refuses rather than sending an unaddressable file", async () => {
     const store = makeStore({ [MEDIA_VISION_STAGE_FLAG]: true, [MEDIA_TRANSCODE_STAGE_FLAG]: true });
     const { adapters, calls } = spyAdapters();
-    const report = await runMediaVendorIngest(store.sc, { assetId: null, bucket: "post-media", path: "u/1.mp4", mediaType: "video", durationMs: null }, adapters);
+    const report = await runMediaVendorIngest(store.sc, { sourceVersion: 1, assetId: null, bucket: "post-media", path: "u/1.mp4", mediaType: "video", durationMs: null }, adapters);
     assert.deepEqual(calls, []);
     assert.equal(report.vision.state === "ran" && !report.vision.result.ok, true);
   });
@@ -627,7 +629,7 @@ function canonicalWriteClient(flags: Record<string, boolean>, probe: "present" |
         },
         upsert(row: Record<string, unknown>) {
           upserts.push({ ...row });
-          return { select() { return { single: () => Promise.resolve({ data: { id: "asset-born" }, error: null }) }; } };
+          return { select(columns: string) { return { single: () => Promise.resolve({ data: { id: "asset-born", ...(columns.split(",").map((column) => column.trim()).includes("version") ? { version: 7 } : {}) }, error: null }) }; } };
         },
       };
     },
@@ -641,6 +643,23 @@ const BORN_INPUT = {
 };
 
 describe("§37.8 — MD269 (c): born held while the stage is on, byte-identical while it is off", () => {
+  it("captures the original write version and measured duration in the same canonical write", async () => {
+    const store = canonicalWriteClient({ media_canonical_enabled: true });
+    const result = await recordMediaAssetDetailed(store.client, { ...BORN_INPUT, moderationStatus: "limited", durationMs: 3123 });
+    assert.equal(result.assetVersion, 7);
+    assert.equal(store.upserts.length, 1);
+    assert.equal(store.upserts[0]!.duration_ms, 3123);
+    assert.equal(store.upserts[0]!.moderation_status, "limited");
+  });
+
+  it("never invents a measured duration when its input is absent or invalid", async () => {
+    for (const durationMs of [undefined, null, 0, -1, 1.5, NaN, Infinity, 2147483648]) {
+      const store = canonicalWriteClient({ media_canonical_enabled: true });
+      await recordMediaAssetDetailed(store.client, { ...BORN_INPUT, durationMs });
+      assert.equal(store.upserts.length, 1);
+      assert.equal(Object.hasOwn(store.upserts[0]!, "duration_ms"), false);
+    }
+  });
   afterEach(() => resetCanonicalSchemaMemo());
 
   it("canonicalModerationAtBirth: stage off → {} (spreads to nothing); on → { moderationStatus: 'limited' }", async () => {
@@ -668,5 +687,346 @@ describe("§37.8 — MD269 (c): born held while the stage is on, byte-identical 
     assert.equal(r.outcome, "written_degraded");
     assert.equal("moderation_status" in d.upserts[0]!, false);
     assert.ok(r.droppedColumns.includes("moderation_status"), "the drop is reported, not silent");
+  });
+});
+
+describe("automated moderation is bound to its own canonical hold", () => {
+  afterEach(() => resetCanonicalSchemaMemo());
+  const subject = { sourceVersion: 1, assetId: A, bucket: "post-media", path: "u/1.mp4", mediaType: "video" as const, durationMs: 3000 };
+
+  it("never retries an existing rejection as a new approval", async () => {
+    const asset = ASSET_ROW("rejected");
+    const store = makeStore({ [MEDIA_MODERATION_STAGE_FLAG]: true }, [asset]);
+    const { adapters, calls } = spyAdapters();
+    await runMediaVendorIngest(store.sc, subject, adapters);
+    assert.equal(asset.moderation_status, "rejected");
+    assert.equal(asset.version, 1);
+    assert.deepEqual(calls, []);
+    assert.deepEqual(store.updates, []);
+  });
+
+  it("does not claim a storage key belonging to a different asset", async () => {
+    const asset: Row = { ...ASSET_ROW(), id: B };
+    const store = makeStore({ [MEDIA_MODERATION_STAGE_FLAG]: true }, [asset]);
+    const { adapters, calls } = spyAdapters();
+    await runMediaVendorIngest(store.sc, subject, adapters);
+    assert.equal(asset.moderation_status, "processing");
+    assert.equal(asset.version, 1);
+    assert.deepEqual(calls, []);
+    assert.deepEqual(store.updates, []);
+  });
+
+  for (const action of ["reject", "flag", "remove"] as const) {
+    it(`cannot undo a moderator's ${action} while classification runs`, async () => {
+      const asset = ASSET_ROW("limited");
+      const store = makeStore({ [MEDIA_MODERATION_STAGE_FLAG]: true }, [asset]);
+      const { adapters } = spyAdapters();
+      let reviewedVersion: number | undefined;
+      adapters.classifier.classify = async () => {
+        const result = await applyCanonicalModerationDecision(store.sc as any, { bucket: subject.bucket, path: subject.path, decision: action });
+        assert.equal(result, "applied");
+        reviewedVersion = asset.version;
+        return allow;
+      };
+      await runMediaVendorIngest(store.sc, subject, adapters);
+      assert.equal(asset.moderation_status, { reject: "rejected", flag: "limited", remove: "removed" }[action]);
+      assert.equal(asset.version, reviewedVersion);
+    });
+  }
+
+  it("does not apply an answer to an asset recreated under the same storage key", async () => {
+    const asset = ASSET_ROW();
+    const store = makeStore({ [MEDIA_MODERATION_STAGE_FLAG]: true }, [asset]);
+    const { adapters } = spyAdapters();
+    adapters.classifier.classify = async () => {
+      asset.id = B;
+      asset.version = 1;
+      return allow;
+    };
+    await runMediaVendorIngest(store.sc, subject, adapters);
+    assert.equal(asset.moderation_status, "limited");
+    assert.equal(asset.version, 1);
+  });
+
+  it("does not rebase an initial hold after losing its compare-and-set", async () => {
+    const asset = ASSET_ROW();
+    let raced = false;
+    const store = makeStore({ [MEDIA_MODERATION_STAGE_FLAG]: true }, [asset], () => {
+      if (!raced) { raced = true; asset.version++; }
+      return false;
+    });
+    const { adapters, calls } = spyAdapters();
+    const report = await runMediaVendorIngest(store.sc, subject, adapters);
+    assert.equal(asset.moderation_status, "processing");
+    assert.equal(asset.version, 2);
+    assert.deepEqual(calls, []);
+    assert.equal(report.moderation.state === "ran" && report.moderation.result.recorded, "conflict");
+  });
+
+  it("does not rebase a stale approval after losing its compare-and-set", async () => {
+    const asset = ASSET_ROW();
+    let raced = false;
+    const store = makeStore({ [MEDIA_MODERATION_STAGE_FLAG]: true }, [asset], (patch) => {
+      if (patch.moderation_status === "active" && !raced) {
+        raced = true;
+        asset.version++;
+        asset.moderation_status = "rejected";
+      }
+      return false;
+    });
+    const { adapters } = spyAdapters();
+    const report = await runMediaVendorIngest(store.sc, subject, adapters);
+    assert.equal(asset.moderation_status, "rejected");
+    assert.equal(asset.version, 3);
+    assert.equal(report.moderation.state === "ran" && report.moderation.result.recorded, "conflict");
+  });
+
+  it("a duplicate ingestion cannot claim a new hold from the same upload version", async () => {
+    const asset = ASSET_ROW("limited");
+    const store = makeStore({ [MEDIA_MODERATION_STAGE_FLAG]: true }, [asset]);
+    const { adapters } = spyAdapters();
+    let newerVersion: number | undefined;
+    adapters.classifier.classify = async () => {
+      const newer = await runMediaVendorIngest(store.sc, subject, { ...adapters, classifier: REFUSING_MODERATION_CLASSIFIER });
+      assert.equal(newer.moderation.state === "ran" && newer.moderation.result.recorded, "conflict");
+      newerVersion = asset.version;
+      return allow;
+    };
+    const older = await runMediaVendorIngest(store.sc, subject, adapters);
+    assert.equal(asset.moderation_status, "active");
+    assert.equal(asset.version, (newerVersion as number) + 1);
+    assert.equal(older.moderation.state === "ran" && older.moderation.result.recorded, "applied");
+  });
+
+  it("a retry cannot mint new authority after a human rehold", async () => {
+    const asset = ASSET_ROW("limited");
+    const store = makeStore({ [MEDIA_MODERATION_STAGE_FLAG]: true }, [asset]);
+    const { adapters } = spyAdapters();
+    let reviewedVersion: number | undefined;
+    let duplicateCalls = 0;
+    adapters.classifier.classify = async () => {
+      assert.equal(await applyCanonicalModerationDecision(store.sc as any, { bucket: subject.bucket, path: subject.path, decision: "flag" }), "applied");
+      reviewedVersion = asset.version;
+      const duplicate = spyAdapters().adapters;
+      duplicate.classifier.classify = async () => { duplicateCalls++; return allow; };
+      await runMediaVendorIngest(store.sc, subject, duplicate);
+      return allow;
+    };
+    await runMediaVendorIngest(store.sc, subject, adapters);
+    assert.equal(asset.moderation_status, "limited");
+    assert.equal(asset.version, reviewedVersion);
+    assert.equal(duplicateCalls, 0);
+  });
+
+  it("a job without the original upload version cannot acquire a hold", async () => {
+    const asset = ASSET_ROW("limited");
+    const store = makeStore({ [MEDIA_MODERATION_STAGE_FLAG]: true }, [asset]);
+    const { adapters, calls } = spyAdapters();
+    await runMediaVendorIngest(store.sc, { ...subject, sourceVersion: undefined }, adapters);
+    assert.equal(asset.version, 1);
+    assert.equal(asset.moderation_status, "limited");
+    assert.deepEqual(calls, []);
+    assert.deepEqual(store.updates, []);
+  });
+
+  it("still allows a deliberate moderator to reverse a rejection", async () => {
+    const asset = ASSET_ROW("rejected");
+    const store = makeStore({}, [asset]);
+    assert.equal(await applyCanonicalModerationDecision(store.sc as any, { bucket: subject.bucket, path: subject.path, decision: "approve" }), "applied");
+    assert.equal(asset.moderation_status, "active");
+    assert.equal(asset.version, 2);
+  });
+});
+
+describe("Media provider contracts — malformed attestations and stateful failures", () => {
+  afterEach(() => resetCanonicalSchemaMemo());
+
+  for (const malformed of [
+    { ok: true },
+    { ok: false },
+    { ok: false, reason: "approved" },
+    { ok: false, reason: "error", detail: { private: "not a string" } },
+  ]) {
+    it(`refuses a malformed vendor envelope: ${JSON.stringify(malformed)}`, async () => {
+      const result = await callVendor(async () => malformed as unknown as VendorAnswer<unknown>);
+      assert.equal(result.ok ? "accepted" : result.reason, "invalid_answer");
+    });
+  }
+
+  it("does not invoke a classifier or clear the row when the initial hold write fails; a later retry can succeed", async () => {
+    const asset = ASSET_ROW();
+    let failHold = true;
+    const store = makeStore({ [MEDIA_MODERATION_STAGE_FLAG]: true }, [asset], (patch) => failHold && patch.moderation_status === "limited");
+    const { adapters, calls } = spyAdapters();
+    const subject = { sourceVersion: 1, assetId: A, bucket: "post-media", path: "u/1.mp4", mediaType: "video" as const, durationMs: 3000 };
+    const first = await runMediaVendorIngest(store.sc, subject, adapters);
+    assert.equal(asset.moderation_status, "processing");
+    assert.deepEqual(calls, [], "a failed hold is not permission to send the file to a classifier");
+    assert.equal(first.moderation.state === "ran" && first.moderation.result.recorded, "failed");
+    assert.equal(first.moderation.state === "ran" && first.moderation.result.decision.stage === "on" && first.moderation.result.decision.decision, "flag");
+    failHold = false;
+    await runMediaVendorIngest(store.sc, subject, adapters);
+    assert.equal(asset.moderation_status, "active");
+    assert.deepEqual(calls, ["classify:file"]);
+    assert.deepEqual(store.updates.map(({ patch }) => patch.moderation_status), ["limited", "active"]);
+  });
+
+  for (const scenario of ["missing_id", "missing_row", "removed", "owner_deleted"] as const) {
+    it(`does not classify without a recorded hold: ${scenario}`, async () => {
+      const asset = ASSET_ROW(scenario === "missing_id" || scenario === "missing_row" ? "processing" : scenario);
+      const store = makeStore({ [MEDIA_MODERATION_STAGE_FLAG]: true }, scenario === "missing_row" ? [] : [asset]);
+      const { adapters, calls } = spyAdapters();
+      const report = await runMediaVendorIngest(store.sc, { sourceVersion: 1, assetId: scenario === "missing_id" ? null : A, bucket: "post-media", path: "u/1.mp4", mediaType: "video", durationMs: 3000 }, adapters);
+      assert.deepEqual(calls, []);
+      assert.deepEqual(store.updates, []);
+      assert.equal(asset.moderation_status, scenario === "missing_id" || scenario === "missing_row" ? "processing" : scenario);
+      assert.equal(report.moderation.state === "ran" && report.moderation.result.recorded, scenario === "missing_id" ? "skipped_no_asset" : scenario === "missing_row" ? "no_asset" : "refused_transition");
+    });
+  }
+
+  it("does not attest vision ingestion when the accepted field is missing or malformed", async () => {
+    for (const value of [null, {}, { accepted: "true" }]) {
+      const store = makeStore({ [MEDIA_VISION_STAGE_FLAG]: true });
+      const { adapters } = spyAdapters();
+      adapters.vision.ingest = async () => ({ ok: true, value } as unknown as VendorAnswer<{ accepted: boolean }>);
+      const report = await runMediaVendorIngest(store.sc, { sourceVersion: 1, assetId: A, bucket: "post-media", path: "u/1.jpg", mediaType: "image", durationMs: null }, adapters);
+      assert.equal(report.vision.state === "ran" && (report.vision.result.ok ? "accepted" : report.vision.result.reason), "invalid_answer");
+      assert.deepEqual(store.uploads, []);
+    }
+  });
+
+  it("reports a thrown caption storage write as failed, not an OFF stage, and can retry", async () => {
+    const store = makeStore({ [MEDIA_CAPTIONS_STAGE_FLAG]: true });
+    const originalFrom = store.sc.storage.from;
+    let failWrite = true;
+    store.sc.storage.from = (bucket) => ({
+      async upload(path, body, options) {
+        if (failWrite) throw new Error("storage unavailable");
+        return originalFrom(bucket).upload(path, body, options);
+      },
+    });
+    const { adapters } = spyAdapters();
+    const subject = { sourceVersion: 1, assetId: A, bucket: "post-media", path: "u/1.mp4", mediaType: "video" as const, durationMs: 3000 };
+    const failed = await runMediaVendorIngest(store.sc, subject, adapters);
+    assert.equal(store.uploads.length, 0);
+    assert.equal(failed.captions.state, "ran");
+    assert.equal(failed.captions.state === "ran" && (failed.captions.result.ok ? "stored" : failed.captions.result.reason), "error");
+    failWrite = false;
+    const retried = await runMediaVendorIngest(store.sc, subject, adapters);
+    assert.equal(retried.captions.state === "ran" && retried.captions.result.ok, true);
+    assert.equal(store.uploads.length, 1);
+    assert.equal(store.uploads[0]!.upsert, false);
+  });
+
+  it("does not label malformed scene or similarity payloads as answered searches", async () => {
+    const { adapters } = spyAdapters();
+    adapters.vision.sceneSignals = async () => ({ ok: true, value: {} } as VendorAnswer<any>);
+    adapters.vision.similarMedia = async () => ({ ok: true, value: null } as VendorAnswer<any>);
+    const scene = await sceneCandidatesFor(adapters.vision, [{ mediaId: A, storageKey: "post-media/u/1.jpg" }]);
+    const similar = await similarMediaFor(adapters.vision, { mediaId: SEED, storageKey: "post-media/u/seed.jpg" }, 10);
+    assert.equal(scene.ok ? "answered" : scene.reason, "invalid_answer");
+    assert.equal(similar.ok ? "answered" : similar.reason, "invalid_answer");
+  });
+
+  it("binds scene candidates to the original request even if an adapter mutates its input", async () => {
+    const { adapters } = spyAdapters();
+    const items = [{ mediaId: A, storageKey: "post-media/u/1.jpg" }];
+    adapters.vision.sceneSignals = async ({ items: supplied }) => {
+      supplied[0]!.mediaId = B;
+      return { ok: true, value: [{ mediaId: B, kind: "crowd_level", value: "social", confidence: 1 }] };
+    };
+    const result = await sceneCandidatesFor(adapters.vision, items);
+    assert.ok(result.ok);
+    assert.deepEqual(result.value, { candidates: [], dropped: 1 });
+    assert.equal(items[0]!.mediaId, A);
+  });
+
+  it("keeps the original similarity seed excluded even if an adapter mutates its input", async () => {
+    const { adapters } = spyAdapters();
+    const seed = { mediaId: SEED, storageKey: "post-media/u/seed.jpg" };
+    adapters.vision.similarMedia = async ({ seed: supplied }) => {
+      supplied.mediaId = A;
+      return { ok: true, value: [{ mediaId: SEED, score: 1 }, { mediaId: B, score: 0.8 }] };
+    };
+    const result = await similarMediaFor(adapters.vision, seed, 10);
+    assert.ok(result.ok);
+    assert.deepEqual(result.value, { ids: [B], dropped: 1 });
+    assert.equal(seed.mediaId, SEED);
+  });
+
+  for (const hours of ["9".repeat(309), "9007199254740991"]) {
+    it(`rejects unrepresentable WebVTT timestamps (${hours.length} hour digits)`, () => {
+      const result = parseWebVtt(`WEBVTT\n\n00:00.000 --> ${hours}:00:00.000\nwords\n`);
+      assert.equal(result.ok ? "accepted" : result.reason, "bad_timing");
+    });
+  }
+
+  it("refuses a track with a cue swallowed into the header instead of storing only its later cues", () => {
+    const result = parseWebVtt("WEBVTT\n00:00.000 --> 00:01.000\nlost words\n\n00:01.000 --> 00:02.000\nkept words\n");
+    assert.equal(result.ok ? "accepted" : result.reason, "bad_timing");
+  });
+
+  it("refuses transcoding and ladder retrieval without signed-playback capability", async () => {
+    const { adapters, calls } = spyAdapters();
+    adapters.transcoder = { ...adapters.transcoder, capabilities: { hls: true, dash: false, signedPlayback: false } };
+    adapters.transcoder.ladder = async () => { calls.push("ladder"); return refused("unsupported"); };
+    const submitted = await submitForTranscode(adapters.transcoder, { assetId: A, bucket: "post-media", path: "u/1.mp4", durationMs: 3000 });
+    const ladder = await adaptiveLadderFor(adapters.transcoder, A);
+    assert.equal(submitted.ok ? "submitted" : submitted.reason, "unsupported");
+    assert.equal(ladder.ok ? "accepted" : ladder.reason, "unsupported");
+    assert.deepEqual(calls, []);
+  });
+
+  it("refuses a ladder whose protocol the adapter did not declare", async () => {
+    const { adapters } = spyAdapters();
+    adapters.transcoder.ladder = async () => ({ ok: true, value: {
+      protocol: "dash", manifestUrl: "https://stream.example/manifest.mpd",
+      renditions: [{ height: 360, bitrateKbps: 800 }, { height: 720, bitrateKbps: 2500 }],
+    } });
+    const result = await adaptiveLadderFor(adapters.transcoder, A);
+    assert.equal(result.ok ? "accepted" : result.reason, "invalid_answer");
+  });
+
+  it("a caption retry cannot overwrite the already stored track", async () => {
+    const store = makeStore({ [MEDIA_CAPTIONS_STAGE_FLAG]: true });
+    const objects = new Map<string, string>();
+    store.sc.storage.from = (bucket) => ({
+      async upload(path, body, options) {
+        assert.equal(options.upsert, false);
+        const key = `${bucket}/${path}`;
+        if (objects.has(key)) return { error: { statusCode: "409", message: "The resource already exists" } } as any;
+        objects.set(key, body.toString("utf8"));
+        return { error: null };
+      },
+    });
+    const { adapters } = spyAdapters();
+    const subject = { sourceVersion: 1, assetId: A, bucket: "post-media", path: "u/1.mp4", mediaType: "video" as const, durationMs: 3000 };
+    const first = await runMediaVendorIngest(store.sc, subject, adapters);
+    assert.equal(first.captions.state === "ran" && first.captions.result.ok, true);
+    adapters.captions.transcribe = async () => ({ ok: true, value: { vtt: VTT.replace("Hello there", "different words"), language: "en" } });
+    const second = await runMediaVendorIngest(store.sc, subject, adapters);
+    assert.equal(second.captions.state === "ran" && (second.captions.result.ok ? "stored" : second.captions.result.reason), "error");
+    assert.deepEqual([...objects.entries()], [["post-media/u/1.mp4.captions.vtt", VTT]]);
+  });
+
+  it("a late classifier approval cannot resurrect a file deleted while classification runs", async () => {
+    const asset = ASSET_ROW();
+    const store = makeStore({ [MEDIA_MODERATION_STAGE_FLAG]: true }, [asset]);
+    const { adapters } = spyAdapters();
+    adapters.classifier.classify = async () => {
+      asset.moderation_status = "owner_deleted";
+      asset.version++;
+      return allow;
+    };
+    const report = await runMediaVendorIngest(store.sc, { sourceVersion: 1, assetId: A, bucket: "post-media", path: "u/1.mp4", mediaType: "video", durationMs: 3000 }, adapters);
+    assert.equal(asset.moderation_status, "owner_deleted");
+    assert.equal(report.moderation.state === "ran" && report.moderation.result.recorded, "refused_transition");
+    assert.deepEqual(store.updates.map(({ patch }) => patch.moderation_status), ["limited"]);
+  });
+
+  it("valid empty scene and similarity results remain distinct from provider refusal", async () => {
+    const { adapters } = spyAdapters();
+    assert.deepEqual(await sceneCandidatesFor(adapters.vision, [{ mediaId: A, storageKey: null }]), { ok: true, value: { candidates: [], dropped: 0 } });
+    assert.deepEqual(await similarMediaFor(adapters.vision, { mediaId: SEED, storageKey: null }, 10), { ok: true, value: { ids: [], dropped: 0 } });
   });
 });

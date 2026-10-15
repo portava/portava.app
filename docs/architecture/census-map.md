@@ -2003,7 +2003,7 @@ The task named `media_assets.id` as the preferred reference, if the asset
 exists at capture time. It is refused on both counts:
 
 - **It may not exist.** The upload route writes the canonical row
-  fire-and-forget, `` `artifacts/api-server/src/routes/posts.ts:269#void recordMediaAsset(sc, {` ``,
+  fire-and-forget, `` `artifacts/api-server/src/routes/posts.ts:269#canonicalModerationAtBirth(sc).then((atBirth) => recordMediaAssetDetailed(sc, { ...atBirth,` ``,
   and only while `media_canonical_enabled` is on.
 - **It is not opaque.** `media_assets.owner_user_id` is one join away for any
   reader of this table. The byte gate itself reads it

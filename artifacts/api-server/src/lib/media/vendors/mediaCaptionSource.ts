@@ -81,7 +81,8 @@ function parseTimestamp(s: string): number | null {
   const m = TIME_RE.exec(s);
   if (!m) return null;
   const h = m[1] ? Number(m[1]) : 0;
-  return ((h * 60 + Number(m[2])) * 60 + Number(m[3])) * 1000 + Number(m[4]);
+  const timestampMs = ((h * 60 + Number(m[2])) * 60 + Number(m[3])) * 1000 + Number(m[4]);
+  return Number.isSafeInteger(timestampMs) ? timestampMs : null;
 }
 
 /**
@@ -100,7 +101,10 @@ export function parseWebVtt(
   const cues: CaptionCue[] = [];
   let i = 1;
   // The header block runs to the first blank line.
-  while (i < lines.length && lines[i]!.trim() !== "") i++;
+  while (i < lines.length && lines[i]!.trim() !== "") {
+    if (lines[i]!.includes("-->")) return { ok: false, reason: "bad_timing", line: i + 1 };
+    i++;
+  }
   while (i < lines.length) {
     while (i < lines.length && lines[i]!.trim() === "") i++;
     if (i >= lines.length) break;

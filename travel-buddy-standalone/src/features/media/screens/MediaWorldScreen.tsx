@@ -56,9 +56,10 @@ export function MediaWorldScreen({
   const world = state.data;
   const showEmptyOrLoading =
     state.status === 'loading' || state.status === 'empty' || state.status === 'error' || !world;
+  let emptyState: React.ReactNode = null;
 
   if (showEmptyOrLoading && mode !== 'map') { // Map, like Time, loads its own projection
-    return (
+    emptyState = (
       <LensStateView
         status={state.status === 'idle' ? 'loading' : state.status}
         title={state.status === 'error' ? 'The world is quiet right now' : 'Nothing changing yet'}
@@ -70,6 +71,7 @@ export function MediaWorldScreen({
         onRetry={onReload}
       />
     );
+    if (state.status !== 'empty' || !world) return emptyState;
   }
 
   if (mode === 'map') {
@@ -104,6 +106,7 @@ export function MediaWorldScreen({
         refreshKey={world.generatedAt ?? null}
         onOpenEnd={onOpenCluster}
         style={styles.section}
+        emptyState={emptyState}
       />
 
       {world.forYouNow.length > 0 ? (

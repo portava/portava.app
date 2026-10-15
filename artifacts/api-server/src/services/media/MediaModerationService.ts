@@ -115,21 +115,55 @@ export type CanonicalModerationOutcome =
 /** How many times a lost compare-and-set is re-read and re-applied. */
 export const MODERATION_CAS_ATTEMPTS = 3;
 
+type CanonicalModerationInput = { bucket: string | null | undefined; path: string | null | undefined; decision: MediaModerationDecision };
+
+export type AutomatedModerationHold = { assetId: string; version: number };
+
+type AutomatedModerationContext =
+  | { phase: "hold"; assetId: string; sourceVersion: number | null | undefined }
+  | { phase: "verdict"; hold: AutomatedModerationHold };
+
+type CanonicalModerationWriteResult = { outcome: CanonicalModerationOutcome; hold?: AutomatedModerationHold };
+
+export async function beginAutomatedCanonicalModeration(
+  sc: SupabaseClient,
+  input: Omit<CanonicalModerationInput, "decision"> & { assetId: string; sourceVersion: number | null | undefined },
+): Promise<CanonicalModerationWriteResult> {
+  return writeCanonicalModerationDecision(sc, { ...input, decision: "flag" }, { phase: "hold", assetId: input.assetId, sourceVersion: input.sourceVersion });
+}
+
+export async function completeAutomatedCanonicalModeration(
+  sc: SupabaseClient,
+  input: CanonicalModerationInput & { hold: AutomatedModerationHold },
+): Promise<CanonicalModerationOutcome> {
+  const result = await writeCanonicalModerationDecision(sc, input, { phase: "verdict", hold: input.hold });
+  return result.outcome;
+}
+
 /**
  * Apply one decision to the canonical asset stored at (bucket, path).
  * Never throws; the outcome is the whole report.
  */
 export async function applyCanonicalModerationDecision(
   sc: SupabaseClient,
-  input: { bucket: string | null | undefined; path: string | null | undefined; decision: MediaModerationDecision },
+  input: CanonicalModerationInput,
 ): Promise<CanonicalModerationOutcome> {
+  const result = await writeCanonicalModerationDecision(sc, input);
+  return result.outcome;
+}
+
+async function writeCanonicalModerationDecision(
+  sc: SupabaseClient,
+  input: CanonicalModerationInput,
+  automation?: AutomatedModerationContext,
+): Promise<CanonicalModerationWriteResult> {
   const bucket = String(input.bucket ?? "").trim();
   const path = String(input.path ?? "").trim();
-  if (!bucket || !path) return "no_asset";
+  if (!bucket || !path) return { outcome: "no_asset" };
   const to = stateForDecision(input.decision);
   try {
     const schema = await probeCanonicalAssetSchema(sc);
-    if (schema.state !== "present") return "refused_schema";
+    if (schema.state !== "present") return { outcome: "refused_schema" };
     for (let attempt = 0; attempt < MODERATION_CAS_ATTEMPTS; attempt++) {
       const { data, error } = await sc
         .from("media_assets")
@@ -137,26 +171,40 @@ export async function applyCanonicalModerationDecision(
         .eq("storage_bucket", bucket)
         .eq("storage_path", path)
         .maybeSingle();
-      if (error) return "failed";
-      if (!data) return "no_asset";
+      if (error) return { outcome: "failed" };
+      if (!data) return { outcome: "no_asset" };
       const row = data as { id: string; moderation_status?: unknown; version?: unknown };
       // A legacy value is read in §36 terms; an unknown one is refused rather
       // than guessed at, because a guess could be the state that resurrects.
       const from = toCanonicalModerationStatus(row.moderation_status);
-      if (!from) return "refused_transition";
-      if (from === to) return "applied";
-      if (!canTransition(from, to)) return "refused_transition";
-      const written = await casUpdateMediaAsset(sc, row.id, row.version, {
+      if (!from || !canTransition(from, to)) return { outcome: "refused_transition" };
+      if (automation) {
+        if (from === "rejected" || from === "removed" || from === "owner_deleted") return { outcome: "refused_transition" };
+        const expectedId = automation.phase === "hold" ? automation.assetId : automation.hold.assetId;
+        if (row.id !== expectedId) return { outcome: "conflict" };
+        if (typeof row.version !== "number" || !Number.isSafeInteger(row.version) || row.version < 1 || row.version >= 2147483647) {
+          return { outcome: "failed" };
+        }
+        if (automation.phase === "hold" && row.version !== automation.sourceVersion) return { outcome: "conflict" };
+        if (automation.phase === "verdict" && (from !== "limited" || row.version !== automation.hold.version)) {
+          return { outcome: "conflict" };
+        }
+      } else if (from === to && to !== "limited") {
+        return { outcome: "applied" };
+      }
+      const expectedVersion = row.version;
+      const written = await casUpdateMediaAsset(sc, row.id, expectedVersion, {
         moderation_status: to,
         updated_at: new Date().toISOString(),
       });
-      if (written === "written") return "applied";
-      if (written === "failed") return "failed";
+      if (written === "written") return { outcome: "applied", hold: { assetId: row.id, version: (expectedVersion as number) + 1 } };
+      if (written === "failed") return { outcome: "failed" };
+      if (automation) return { outcome: "conflict" };
       // conflict: somebody moved the row after our read — re-read and re-decide.
     }
-    return "conflict";
+    return { outcome: "conflict" };
   } catch (err) {
     logger.warn({ err, bucket, path }, "canonical moderation decision threw — nothing written");
-    return "failed";
+    return { outcome: "failed" };
   }
 }

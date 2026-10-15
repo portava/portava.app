@@ -107,12 +107,13 @@ export interface NowCrowdFlowSectionProps {
   refreshKey?: string | null;
   onOpenEnd?: (cluster: MediaMapCluster) => void;
   style?: StyleProp<ViewStyle>;
+  emptyState?: React.ReactNode;
 }
 
 /** The NOW lens's mount: reads, pairs, and renders the card — or nothing. */
-export function NowCrowdFlowSection({ city, center, refreshKey = null, onOpenEnd, style }: NowCrowdFlowSectionProps) {
+export function NowCrowdFlowSection({ city, center, refreshKey = null, onOpenEnd, style, emptyState = null }: NowCrowdFlowSectionProps) {
   const cards = useMediaCrowdFlow({ city, center, refreshKey });
-  if (cards.length === 0) return null;
+  if (cards.length === 0) return emptyState;
   return (
     <View style={style}>
       <CrowdFlowCard cards={cards} onOpenEnd={onOpenEnd} />

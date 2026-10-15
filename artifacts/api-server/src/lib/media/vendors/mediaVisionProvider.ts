@@ -251,9 +251,11 @@ export async function sceneCandidatesFor(
       ? refused("not_configured", "no vision provider is configured")
       : refused("unsupported", `${provider.name} does not produce scene signals`);
   }
-  const answer = await callVendor(() => provider.sceneSignals({ items }));
+  const askedFor = new Set(items.map((item) => item.mediaId));
+  const answer = await callVendor(() => provider.sceneSignals({ items: items.map((item) => ({ ...item })) }));
   if (!answer.ok) return answer;
-  return { ok: true, value: deriveVisualEvidenceCandidates(provider.name, answer.value, new Set(items.map((i) => i.mediaId))) };
+  if (!Array.isArray(answer.value)) return refused("invalid_answer", "the provider did not return scene signals");
+  return { ok: true, value: deriveVisualEvidenceCandidates(provider.name, answer.value, askedFor) };
 }
 
 /** Ask the index for media that look like `seed`. The caller must already have gated `seed` for the viewer. */
@@ -267,7 +269,9 @@ export async function similarMediaFor(
       ? refused("not_configured", "no visual index is configured")
       : refused("unsupported", `${provider.name} has no visual index`);
   }
-  const answer = await callVendor(() => provider.similarMedia({ seed, limit }));
+  const seedMediaId = seed.mediaId;
+  const answer = await callVendor(() => provider.similarMedia({ seed: { ...seed }, limit }));
   if (!answer.ok) return answer;
-  return { ok: true, value: validateSimilarMedia(answer.value, seed.mediaId, limit) };
+  if (!Array.isArray(answer.value)) return refused("invalid_answer", "the provider did not return similar media");
+  return { ok: true, value: validateSimilarMedia(answer.value, seedMediaId, limit) };
 }

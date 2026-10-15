@@ -137,6 +137,7 @@ export async function submitForTranscode(t: MediaTranscoder, subject: TranscodeS
       ? refused("not_configured", "no transcoder is configured")
       : refused("unsupported", `${t.name} produces no adaptive format`);
   }
+  if (t.capabilities.signedPlayback !== true) return refused("unsupported", `${t.name} does not support private playback`);
   const answer = await callVendor(() => t.submit(subject));
   if (!answer.ok) return answer;
   const jobId = (answer.value as { jobId?: unknown } | null)?.jobId;
@@ -151,8 +152,10 @@ export async function adaptiveLadderFor(t: MediaTranscoder, assetId: string): Pr
       ? refused("not_configured", "no transcoder is configured")
       : refused("unsupported", `${t.name} produces no adaptive format`);
   }
+  if (t.capabilities.signedPlayback !== true) return refused("unsupported", `${t.name} does not support private playback`);
   const answer = await callVendor(() => t.ladder({ assetId }));
   if (!answer.ok) return answer;
   const ladder = validateRenditionLadder(answer.value);
+  if (ladder && t.capabilities[ladder.protocol] !== true) return refused("invalid_answer", "the ladder uses an undeclared protocol");
   return ladder ? { ok: true, value: ladder } : refused("invalid_answer", "the ladder failed validation");
 }

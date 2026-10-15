@@ -41,12 +41,12 @@ export function MediaWorldHeader({
       </View>
       <View style={styles.actions}>
         {onSearch ? (
-          <Pressable style={styles.iconBtn} onPress={onSearch} hitSlop={8} accessibilityLabel="Search media">
+          <Pressable style={styles.iconBtn} onPress={onSearch} hitSlop={8} accessibilityRole="button" accessibilityLabel="Search media">
             <Search size={20} color={color.onInk} strokeWidth={2} />
           </Pressable>
         ) : null}
         {onCompass ? (
-          <Pressable style={styles.iconBtn} onPress={onCompass} hitSlop={8} accessibilityLabel="Ask Compass">
+          <Pressable style={styles.iconBtn} onPress={onCompass} hitSlop={8} accessibilityRole="button" accessibilityLabel="Ask Compass">
             <Compass size={20} color={color.onInk} strokeWidth={2} />
           </Pressable>
         ) : null}

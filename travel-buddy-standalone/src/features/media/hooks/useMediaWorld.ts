@@ -11,6 +11,7 @@ import { useCallback, useEffect, useReducer, useRef } from 'react';
 import {
   INITIAL_WORLD_STATE,
   worldReducer,
+  type WorldAction,
   type WorldViewState,
 } from '../state/worldState.ts';
 import { fetchWorld, type WorldParams } from '../services/mediaProjection.ts';
@@ -20,8 +21,25 @@ export interface UseMediaWorldResult {
   reload: () => void;
 }
 
+interface ScopedWorldState {
+  scope: string;
+  state: WorldViewState;
+}
+
+function worldScope(params: WorldParams): string {
+  return JSON.stringify([params.cityId ?? null, params.city ?? null, params.lat ?? null, params.lng ?? null]);
+}
+
+function scopedWorldReducer(current: ScopedWorldState, update: { scope: string; action: WorldAction }): ScopedWorldState {
+  return {
+    scope: update.scope,
+    state: worldReducer(current.scope === update.scope ? current.state : INITIAL_WORLD_STATE, update.action),
+  };
+}
+
 export function useMediaWorld(params: WorldParams = {}): UseMediaWorldResult {
-  const [state, dispatch] = useReducer(worldReducer, INITIAL_WORLD_STATE);
+  const scope = worldScope(params);
+  const [scopedState, dispatch] = useReducer(scopedWorldReducer, { scope, state: INITIAL_WORLD_STATE });
   const abortRef = useRef<AbortController | null>(null);
   // Keep the latest params in a ref so reload() has a stable identity.
   const paramsRef = useRef(params);
@@ -31,10 +49,11 @@ export function useMediaWorld(params: WorldParams = {}): UseMediaWorldResult {
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
-    dispatch({ type: 'load_start' });
+    const requestScope = worldScope(paramsRef.current);
+    dispatch({ scope: requestScope, action: { type: 'load_start' } });
     void fetchWorld({ ...paramsRef.current, signal: controller.signal }).then((result) => {
       if (controller.signal.aborted) return;
-      dispatch({ type: 'load_result', result, at: Date.now() });
+      dispatch({ scope: requestScope, action: { type: 'load_result', result, at: Date.now() } });
     });
   }, []);
 
@@ -45,5 +64,5 @@ export function useMediaWorld(params: WorldParams = {}): UseMediaWorldResult {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [load, params.cityId, params.city, params.lat, params.lng]);
 
-  return { state, reload: load };
+  return { state: scopedState.scope === scope ? scopedState.state : INITIAL_WORLD_STATE, reload: load };
 }

@@ -62,6 +62,7 @@ export interface GemsModeState extends MediaModeState {
 }
 
 const DEFAULT_MODE_STATE: MediaModeState = { scrollOffset: 0 };
+const DEFAULT_ENABLED_MODES: MediaMode[] = ['watch', 'grid', 'gems'];
 
 const DEFAULT_GEMS_STATE: GemsModeState = {
   scrollOffset: 0,
@@ -143,7 +144,7 @@ interface MediaStoreProviderProps {
 export function MediaStoreProvider({
   children,
   defaultMode = 'watch',
-  enabledModes = ['watch', 'grid', 'gems'],
+  enabledModes = DEFAULT_ENABLED_MODES,
   flagsLoading = false, openOnDefault = false,
 }: MediaStoreProviderProps) {
   // selectedMode and modeStates are kept in separate useState calls so
@@ -159,20 +160,23 @@ export function MediaStoreProvider({
   useEffect(() => {
     if (flagsLoading) return; // defer until flags are ready
     if (restoredRef.current) return; // only restore once per provider lifetime
-    restoredRef.current = true;
+    let cancelled = false;
+    const restore = (candidate: MediaMode) => {
+      if (cancelled || restoredRef.current) return;
+      restoredRef.current = true;
+      setSelectedMode(pickValidMode(candidate, enabledModes));
+    };
 
     AsyncStorage.getItem(STORAGE_KEY)
       .then((stored) => {
         const candidate = openOnDefault ? defaultMode : ((stored as MediaMode | null) ?? defaultMode);
-        setSelectedMode((cur) => pickValidMode(candidate, enabledModes) || cur);
+        restore(candidate);
       })
       .catch(() => {
-        setSelectedMode((cur) => pickValidMode(defaultMode, enabledModes) || cur);
+        restore(defaultMode);
       });
-  // enabledModes intentionally captured at restore-time (snapshot), not tracked.
-  // Ongoing reconciliation is handled by Step 2 below.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [flagsLoading]);
+    return () => { cancelled = true; };
+  }, [defaultMode, enabledModes, flagsLoading, openOnDefault]);
 
   // Step 2 — Reconcile selectedMode whenever enabledModes changes after flags load.
   // This handles: flags arriving after mount, or a flag being toggled at runtime.
@@ -184,8 +188,7 @@ export function MediaStoreProvider({
 
     const key = enabledModes.join(',');
     if (key === prevEnabledRef.current && restoredRef.current) {
-      // Same set as before — no reconciliation needed (handles first-render case
-      // before Step 1 restore fires, which sets restoredRef.current = true).
+      // Same set as before — no reconciliation needed.
       prevEnabledRef.current = key;
       return;
     }
@@ -197,6 +200,7 @@ export function MediaStoreProvider({
   }, [enabledModes, flagsLoading]);
 
   const setMode = useCallback((mode: MediaMode) => {
+    restoredRef.current = true;
     setSelectedMode(mode);
     AsyncStorage.setItem(STORAGE_KEY, mode).catch(() => {});
   }, []);

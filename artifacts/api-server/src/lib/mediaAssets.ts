@@ -135,6 +135,7 @@ export interface RecordAssetInput {
   thumbnailUrl?: string | null;
   /** §6 source, or MEDIA_SOURCE_UNDECLARED where the spec does not settle it. Every production call states it (census-media §35, MD37; src/test/mediaAssetSourceDeclared.test.ts). */
   sourceType?: MediaSourceType;
+  durationMs?: number | null;
   processingStatus?: string;
   /** §6 capturedAt (may precede uploadedAt); feeds provenance + eligibility. */
   capturedAt?: string | null;
@@ -220,6 +221,7 @@ export type CanonicalWriteOutcome =
 export interface RecordAssetResult {
   /** The media_assets id, or null when nothing was written. */
   assetId: string | null;
+  assetVersion?: number | null;
   outcome: CanonicalWriteOutcome;
   /**
    * §6 columns dropped to make the write land. Non-empty ONLY for
@@ -381,6 +383,7 @@ export async function recordMediaAssetDetailed(
       size_bytes: input.sizeBytes,
       width: input.width ?? null,
       height: input.height ?? null,
+      ...(typeof input.durationMs === "number" && Number.isSafeInteger(input.durationMs) && input.durationMs > 0 && input.durationMs <= 2147483647 ? { duration_ms: input.durationMs } : {}),
       thumbnail_path: input.thumbnailPath ?? null,
       thumbnail_url: input.thumbnailUrl ?? null,
       source_type: input.sourceType ?? MEDIA_SOURCE_UNDECLARED,
@@ -403,7 +406,7 @@ export async function recordMediaAssetDetailed(
 
     const first = await upsertAssetRow(sc, row);
     if (!first.error) {
-      return { assetId: first.id, outcome: "written", droppedColumns: [], errorCode: null, schemaState: "present" };
+      return { assetId: first.id, assetVersion: first.version, outcome: "written", droppedColumns: [], errorCode: null, schemaState: "present" };
     }
 
     const errorCode = String((first.error as any)?.code ?? "") || null;
@@ -496,15 +499,16 @@ async function writeDegraded(
 async function upsertAssetRow(
   sc: SupabaseClient,
   row: Record<string, unknown>,
-): Promise<{ id: string | null; error: unknown }> {
+): Promise<{ id: string | null; version?: number | null; error: unknown }> {
   try {
     const { data, error } = await sc
       .from("media_assets")
       .upsert(row, { onConflict: "storage_bucket,storage_path" })
-      .select("id")
+      .select("id, version")
       .single();
     if (error) return { id: null, error };
-    return { id: ((data as any)?.id ?? null) as string | null, error: null };
+    const version: unknown = (data as any)?.version;
+    return { id: ((data as any)?.id ?? null) as string | null, version: typeof version === "number" && Number.isSafeInteger(version) && version > 0 ? version : null, error: null };
   } catch (error) {
     return { id: null, error };
   }
