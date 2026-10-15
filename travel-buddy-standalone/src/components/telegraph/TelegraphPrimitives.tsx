@@ -8,7 +8,7 @@ import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
 import { Users, Globe } from 'lucide-react-native';
 import { color, space, type as t } from '../../theme/tokens.ts';
 import { TG, TG_AVATAR, TG_SPACING } from '../../theme/telegraphTokens.ts';
-import { useHydratedMedia } from '../../services/mediaUrl.ts';
+import { useHydratedMedia } from '../../services/mediaUrl.ts'; import { avatarImageUri } from '../../lib/avatarImageUri.ts'; // PRIV-FIX-3 (census-telegraph §97)
 
 // ── TelegraphAvatar ───────────────────────────────────────────────────────────
 
@@ -21,7 +21,7 @@ interface TelegraphAvatarProps {
 }
 
 /** Person / trip / circle avatar with an initial fallback. */
-export function TelegraphAvatar({ kind = 'single', uri, name, size = TG_AVATAR.row }: TelegraphAvatarProps) {
+export function TelegraphAvatar({ kind = 'single', uri: rawUri, name, size = TG_AVATAR.row }: TelegraphAvatarProps) { const uri = avatarImageUri(rawUri); // PRIV-FIX-3 (census-telegraph §97): Portava storage or nothing
   const r = kind === 'single' ? size / 2 : size * 0.3;
   const base = { width: size, height: size, borderRadius: r };
 

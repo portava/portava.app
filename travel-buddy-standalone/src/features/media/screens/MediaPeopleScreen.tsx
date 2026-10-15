@@ -16,7 +16,7 @@ import React, { useCallback } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { BadgeCheck } from 'lucide-react-native';
 import { avatar, color, radius, space } from '../../../theme/tokens.ts';
-import { CachedImage } from '../../../components/CachedImage.tsx';
+import { CachedImage } from '../../../components/CachedImage.tsx'; import { avatarImageUri } from '../../../lib/avatarImageUri.ts'; // PRIV-FIX-3 (census-telegraph §97): an avatar is Portava storage or nothing
 import type { MediaProjection } from '../types/media.ts';
 import type { PeopleLensGroup, PeopleLensProjection } from '../types/peopleLens.ts';
 import { peopleOffline } from '../../../services/media/mediaOffline.ts'; // §39: offline, the Trip Crew perspectives cached
@@ -81,8 +81,8 @@ function PeopleGroupSection({
   return (
     <View style={styles.group}>
       <View style={styles.header}>
-        {c.avatarUrl ? (
-          <CachedImage source={{ uri: c.avatarUrl }} style={styles.avatar} resizeMode="cover" fallbackBg={color.mute} />
+        {avatarImageUri(c.avatarUrl) ? (
+          <CachedImage source={{ uri: avatarImageUri(c.avatarUrl) ?? undefined }} style={styles.avatar} resizeMode="cover" fallbackBg={color.mute} />
         ) : (
           <View style={[styles.avatar, styles.avatarFallback]} />
         )}

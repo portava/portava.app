@@ -20,7 +20,7 @@ const { Marker } = _ml as typeof import('@maplibre/maplibre-react-native');
 import { color, avatar, dot } from '../../theme/tokens.ts';
 import { primaryIdentityText } from '../../lib/displayIdentity.ts';
 import type { MapTraveler } from '../../services/mapTravelers.ts';
-import { useHydratedMedia } from '../../services/mediaUrl.ts';
+import { useHydratedMedia } from '../../services/mediaUrl.ts'; import { avatarImageUri } from '../../lib/avatarImageUri.ts'; // PRIV-FIX-3 (census-telegraph §97): an avatar is Portava storage or nothing
 
 // ── Clustering (pure, grid-based) ─────────────────────────────────────────────
 
@@ -99,13 +99,13 @@ function TravelerAvatarMarker({ traveler, onPress }: {
   traveler: MapTraveler;
   onPress: (t: MapTraveler) => void;
 }) {
-  const [imgFailed, setImgFailed] = useState(false);
+  const [imgFailed, setImgFailed] = useState(false); const safeAvatarUrl = avatarImageUri(traveler.avatarUrl); // PRIV-FIX-3: storage or nothing
   // Route profile-media avatar URLs through the signed-URL hydration layer so
   // this map-marker surface stays functional when media_private_buckets_enabled
   // is toggled ON. The bare <Image> is kept as the render leaf to preserve the
   // freshDot overlay and the white-border ring that live in the same wrapper.
-  const { resolved } = useHydratedMedia(traveler.avatarUrl && !imgFailed ? [traveler.avatarUrl] : []);
-  const hydratedAvatarUrl = (traveler.avatarUrl && resolved[traveler.avatarUrl]) ?? traveler.avatarUrl;
+  const { resolved } = useHydratedMedia(safeAvatarUrl && !imgFailed ? [safeAvatarUrl] : []);
+  const hydratedAvatarUrl = (safeAvatarUrl && resolved[safeAvatarUrl]) ?? safeAvatarUrl;
   const showImage = !!hydratedAvatarUrl && !imgFailed;
   return (
     <Pressable onPress={() => onPress(traveler)} hitSlop={6}>

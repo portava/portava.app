@@ -22,7 +22,7 @@ import type { SuggestGroup } from '../../services/discovery.ts';
 import type { UnifiedSearchResult, SearchHistoryEntry } from '../../services/discovery.ts';
 import { color, space, radius, type as t, avatar } from '../../theme/tokens.ts';
 import { PlainBottomFiller } from '../../hooks/useBottomInset.ts'; import { SEARCH_PARTIAL_NOTICE } from '../../services/discoveryCoverageNotice.ts';
-import { DisplayMediaImage } from '../ui/DisplayMediaImage.tsx';
+import { DisplayMediaImage } from '../ui/DisplayMediaImage.tsx'; import { avatarImageUri } from '../../lib/avatarImageUri.ts'; // PRIV-FIX-3 (census-telegraph §97): an avatar is Portava storage or nothing
 import { ActionSuggestionRow } from '../../platform/input-assistance/components/ActionSuggestionRow.tsx';
 import type { InputSuggestion } from '../../platform/input-assistance/types/inputSuggestion.ts';
 
@@ -49,7 +49,7 @@ interface Props {
 }
 
 function SuggestionAvatar({ item }: { item: UnifiedSearchResult }) {
-  const uri = item.avatarUrl ?? item.imageUrl ?? null;
+  const uri = (item.avatarUrl ? avatarImageUri(item.avatarUrl) : item.imageUrl) ?? null; // PRIV-FIX-3: a person's avatar is Portava storage or initials; a place's image is unchanged
   const fallback = (
     <View style={styles.avatarFallback}>
       {item.fallbackInitials ? (

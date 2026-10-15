@@ -27,7 +27,7 @@ import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, MapPin, Clock, UserPlus, MessageCircle, ShieldAlert } from 'lucide-react-native';
 import { color, space, radius, type as t, avatar, icon } from '../../theme/tokens.ts';
-import { CachedImage } from '../../components/CachedImage.tsx';
+import { CachedImage } from '../../components/CachedImage.tsx'; import { avatarImageUri } from '../../lib/avatarImageUri.ts'; // PRIV-FIX-3 (census-telegraph §97): an avatar is Portava storage or nothing
 import { VerifiedStamp } from '../../components/ui/VerifiedStamp.tsx';
 import { resolveEventPassport, type EventPassportProjectionView } from './eventPassport.ts';
 import { shareRemainingLabel } from './eventPassportShareUtils.ts';
@@ -164,9 +164,9 @@ export function EventPassportBody({
   return (
     <ScrollView contentContainerStyle={s.body}>
       <View style={s.card}>
-        {passport.identity.avatarUrl ? (
+        {avatarImageUri(passport.identity.avatarUrl) ? (
           <CachedImage
-            source={{ uri: passport.identity.avatarUrl }}
+            source={{ uri: avatarImageUri(passport.identity.avatarUrl) ?? undefined }}
             style={s.avatar}
             fallbackLabel=""
             accessibilityLabel={`${passport.identity.firstName ?? 'Traveler'}'s photo`}

@@ -21,7 +21,7 @@ import {
   ActivityIndicator,
   StyleSheet,
 } from 'react-native';
-import { CachedImage } from './CachedImage.tsx';
+import { CachedImage } from './CachedImage.tsx'; import { avatarImageUri } from '../lib/avatarImageUri.ts'; // PRIV-FIX-3 (census-telegraph §97): an avatar is Portava storage or nothing
 import { Hash, User, Briefcase, MapPin, Users, Calendar } from 'lucide-react-native';
 import {
   type AnyMentionSuggestion,
@@ -75,12 +75,12 @@ function formatUsageCount(n: number): string {
 // ── Row components ────────────────────────────────────────────────────────────
 
 function EntityRow({
-  item,
+  item: rawItem,
   onPress,
 }: {
   item: EntityTagSuggestion;
   onPress: () => void;
-}) {
+}) { const item = rawItem.type === 'user' ? { ...rawItem, avatarUrl: avatarImageUri(rawItem.avatarUrl) } : rawItem; // PRIV-FIX-3: a person's avatar is Portava storage or the type glyph (the image expression below is unchanged)
   return (
     <Pressable style={styles.row} onPress={onPress}>
       <View style={styles.avatarWrap}>
