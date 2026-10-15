@@ -78,10 +78,10 @@
 
 import {
   HIGHLIGHT_DOMAIN_EVENT_TYPES, MEMORY_DOMAIN_EVENT_TYPES,
-  isMemoryEventType,
+  isMemoryEventType, readEventPayload, // H203 (B58 MEM-INDEX): the event store is read only through its boundary (check:memory-table-ownership)
   type MemoryEventType,
 } from "../../lib/memoryOutbox.js";
-import { rebuildProjection } from "./derivativeRegistry.js";
+import { readRegistration, rebuildProjection } from "./derivativeRegistry.js"; import { revokeOne } from "./narrowingReprojection.js"; // H203 (B58 MEM-INDEX): one line, so cited lines hold
 import type { ProjectionId, ProjectionScope } from "./projectionRegistry.js";
 import {
   buildProjectionLagSample,
@@ -357,7 +357,7 @@ async function rebuildForEvent(
 
     let result: Awaited<ReturnType<typeof rebuildProjection>>;
     try {
-      result = await rebuildProjection(sc, projectionId, scope, now);
+      result = await rebuildSubscribedProjection(sc, row, projectionId, scope, now); // H203 (B58 MEM-INDEX): the PUBLIC index at its own scope, with H-4's fallback decided from the event payload (one line: cited lines below hold)
     } catch (err) {
       // Our own code threw. Distinct from a refusal, and retryable.
       failed += 1;
@@ -692,5 +692,105 @@ export async function readHighlightProjectionScope(
   return {
     ok: true,
     scope: { owner_id: data.owner_id, viewer_id: data.owner_id, trip_id: null, place_id: null },
+  };
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// H203 (B58 cluster MEM-INDEX): THE PUBLIC INDEX, AND THE EVENT PAYLOAD.
+//
+// Appended, like the Highlight half above, so every line the census cites holds.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * The scope the PUBLIC index is built, registered and SERVED at: one per owner,
+ * for no viewer — exactly the key `memorySearchService` resolves for a "public"
+ * search (`PublicMemoryProjection|owner:<id>`).
+ *
+ * Before H203 this consumer rebuilt PublicMemoryProjection at the EVENT's
+ * scope — viewer = owner, plus the Memory's trip and place. That registration
+ * is one no search reads, under a different key for every trip and place, and
+ * its `media_count` counted the owner's hidden photos (`itemHiddenFrom` never
+ * hides a photo from its owner): a "public" artifact built for the owner. The
+ * index the public search serves was refreshed only when a search found it
+ * stale.
+ */
+export function publicIndexScope(ownerId: string): ProjectionScope {
+  return { owner_id: ownerId, viewer_id: null, trip_id: null, place_id: null, person_id: null };
+}
+
+/**
+ * Did this event take its Memory OUT of the public index — said by the event's
+ * §23 payload, never by the Memory's row?
+ *
+ * The index admits a published (§5 `ACTIVE`), `public` Memory, so the payload
+ * says the Memory left it when it STATES an audience other than `public`
+ * (2711 states one for CHANGE_VISIBILITY and CREATE_MEMORY) or a lifecycle
+ * state other than `ACTIVE` (archive, delete, a draft). An UNSTATED field says
+ * nothing: a CHANGE_VISIBILITY that only edits the hide list states no
+ * audience, and the public index admits a public Memory whatever its hide list
+ * says (the public search applies it at read time). A payload that is not an
+ * object is treated as LEFT — fail closed.
+ */
+export function payloadLeftPublicIndex(payload: unknown): boolean {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) return true;
+  const p = payload as { visibility?: unknown; to_state?: unknown };
+  if (p.visibility !== undefined && p.visibility !== null && p.visibility !== "public") return true;
+  if (p.to_state !== undefined && p.to_state !== null && p.to_state !== "ACTIVE") return true;
+  return false;
+}
+
+/**
+ * Rebuild ONE subscribed projection for one event.
+ *
+ * Every projection but the public index is rebuilt exactly as before, at the
+ * event's scope. The PUBLIC index is rebuilt at `publicIndexScope`, from the
+ * registry's PUBLIC read (publicIndexSources.ts: public, published rows, the
+ * public columns), so the rebuild that drops a narrowed Memory never reads it.
+ * The payload is read through the event store's own boundary
+ * (lib/memoryOutbox.ts `readEventPayload`): the claim returns only the event id.
+ *
+ * Lead ruling H-4: a derivative is REBUILT for its new audience and revoked
+ * only as the fail-closed fallback. So when that rebuild FAILS and the event's
+ * payload says the Memory left the public index (or the payload cannot be
+ * read), the public registration — if it carries the Memory — is REVOKED and
+ * emptied by narrowingReprojection's revoke, and the event is complete: the
+ * decision reads the payload and the registry, never the Memory's row. Any
+ * other failure stays a failure and the outbox retries it: revoking after a
+ * WIDENING would end that owner's public search for good (a REVOKED derivative
+ * is never rebuilt) for a rebuild that could still succeed. A revocation
+ * reason is the event's name (`memory_deleted: …` is H-5's revivable one).
+ */
+export async function rebuildSubscribedProjection(
+  sc: any,
+  row: ClaimedOutboxRow,
+  projectionId: ProjectionId,
+  scope: ProjectionScope,
+  now: Date,
+): Promise<Awaited<ReturnType<typeof rebuildProjection>>> {
+  if (projectionId !== "PublicMemoryProjection") return rebuildProjection(sc, projectionId, scope, now);
+  const target = publicIndexScope(scope.owner_id);
+  const built = await rebuildProjection(sc, projectionId, target, now);
+  if (built.ok || typeof row.memory_id !== "string") return built;
+
+  const event = await readEventPayload(sc, row.event_id);
+  if (event.ok && !payloadLeftPublicIndex(event.payload)) return built;
+
+  const reg = await readRegistration(sc, projectionId, target);
+  // Not registered: nothing carries the Memory. Unreadable: nothing can be
+  // revoked. Either way the rebuild's failure stands, and is retried.
+  if (!reg.ok) return built;
+  if (!(reg.value.source_memory_ids ?? []).includes(row.memory_id)) return built;
+  if (reg.value.revocation_state === "REVOKED" || reg.value.revocation_state === "PURGED") {
+    return { ok: true, value: { registration: reg.value, rows: [], was_revoked: true } };
+  }
+  const reason = `${row.type.replace(".", "_")}: re-derivation failed`;
+  if (typeof reg.value.id !== "string" || !(await revokeOne(sc, reg.value.id, reason, now))) return built;
+  return {
+    ok: true,
+    value: {
+      registration: { ...reg.value, revocation_state: "REVOKED", revoked_at: now.toISOString(), revocation_reason: reason, payload_json: [], row_count: 0 },
+      rows: [],
+      was_revoked: true,
+    },
   };
 }
