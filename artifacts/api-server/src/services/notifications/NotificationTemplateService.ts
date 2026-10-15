@@ -1177,6 +1177,23 @@ export const TEMPLATES: NotificationTemplate[] = [
     body: () => 'You declined to feature this post. No worries — your content is still great!',
     actionUrl: ({ postId }) => postId ? `/post/${postId}` : '/',
   }),
+
+  // ── Layover crew (census-layover L144) ─────────────────────────────────────
+  // A crewmate turned back to the airport and CHOSE, on that abort, to tell the
+  // crew (services/layover/LayoverCrewAbortNotice.ts; flag
+  // layover_crew_abort_notify_enabled, seeded FALSE by 3786). IN-APP ONLY: no
+  // push, so no lock-screen preview carries it. The text is the whole
+  // disclosure — no reason, time or place; `actor` is the name only when the
+  // traveller shows their real name, otherwise "A crew member". Appended LAST so
+  // every template row routerDecisionMatrix.ts indexes before it keeps its index.
+  tpl({
+    eventType: 'layover.crew.member_heading_back',
+    category: 'airport',
+    defaultPriority: 'normal',
+    defaultChannels: ['in_app'],
+    title: () => 'Your layover crew',
+    body: ({ actor }) => `${actor ?? 'A crew member'} is heading back to the airport.`,
+  }),
 ];
 
 const TEMPLATE_MAP = new Map<string, NotificationTemplate>(
