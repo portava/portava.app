@@ -123,11 +123,11 @@ interface State {
 function fixture(): Record<string, any[]> {
   return {
     highlights: [
-      { id: HL_LIVE, owner_id: BOB, caption: "Sunset from the roof", location_name: "Rooftop", location_city: "Hue", visibility: "public", expires_at: soon(), deleted_at: null, archived_at: null, media_url: "https://x/h1.jpg", media_type: "image", updated_at: "2026-05-01T00:00:00.000Z" },
-      { id: HL_EXPIRED, owner_id: BOB, caption: "Yesterday", location_name: null, location_city: "Hue", visibility: "public", expires_at: past(), deleted_at: null, archived_at: null, media_url: "https://x/h2.jpg", media_type: "image", updated_at: "2026-05-01T00:00:00.000Z" },
-      { id: HL_CIRCLE, owner_id: BOB, caption: "Circle only", location_name: null, location_city: "Hue", visibility: "circle_only", expires_at: soon(), deleted_at: null, archived_at: null, media_url: "https://x/h3.jpg", media_type: "image", updated_at: "2026-05-01T00:00:00.000Z" },
-      { id: HL_UNDATED, owner_id: BOB, caption: "Broken clock", location_name: null, location_city: "Hue", visibility: "public", expires_at: "not a date", deleted_at: null, archived_at: null, media_url: "https://x/h4.jpg", media_type: "image", updated_at: "2026-05-01T00:00:00.000Z" },
-      { id: HL_ARCHIVED, owner_id: BOB, caption: "Filed away", location_name: null, location_city: "Hue", visibility: "public", expires_at: soon(), deleted_at: null, archived_at: "2026-05-05T00:00:00.000Z", media_url: "https://x/h5.jpg", media_type: "image", updated_at: "2026-05-05T00:00:00.000Z" },
+      { id: HL_LIVE, owner_id: BOB, caption: "Sunset from the roof", location_name: "Rooftop", location_city: "Hue", visibility: "public", expires_at: soon(), deleted_at: null, archived_at: null, media_url: "post-media/x/h1.jpg", media_type: "image", updated_at: "2026-05-01T00:00:00.000Z" },
+      { id: HL_EXPIRED, owner_id: BOB, caption: "Yesterday", location_name: null, location_city: "Hue", visibility: "public", expires_at: past(), deleted_at: null, archived_at: null, media_url: "post-media/x/h2.jpg", media_type: "image", updated_at: "2026-05-01T00:00:00.000Z" },
+      { id: HL_CIRCLE, owner_id: BOB, caption: "Circle only", location_name: null, location_city: "Hue", visibility: "circle_only", expires_at: soon(), deleted_at: null, archived_at: null, media_url: "post-media/x/h3.jpg", media_type: "image", updated_at: "2026-05-01T00:00:00.000Z" },
+      { id: HL_UNDATED, owner_id: BOB, caption: "Broken clock", location_name: null, location_city: "Hue", visibility: "public", expires_at: "not a date", deleted_at: null, archived_at: null, media_url: "post-media/x/h4.jpg", media_type: "image", updated_at: "2026-05-01T00:00:00.000Z" },
+      { id: HL_ARCHIVED, owner_id: BOB, caption: "Filed away", location_name: null, location_city: "Hue", visibility: "public", expires_at: soon(), deleted_at: null, archived_at: "2026-05-05T00:00:00.000Z", media_url: "post-media/x/h5.jpg", media_type: "image", updated_at: "2026-05-05T00:00:00.000Z" },
     ],
     user_stamps: [
       { id: STAMP_PUBLIC, user_id: BOB, stamp_definition_id: STAMP_DEF, title_override: null, city: "Hue", country: "VN", visibility: "public", display_on_passport: true, is_revoked: false, earned_at: "2026-04-01T00:00:00.000Z" },
@@ -136,7 +136,7 @@ function fixture(): Record<string, any[]> {
       { id: STAMP_PRIVATE, user_id: BOB, stamp_definition_id: STAMP_DEF, title_override: "Private award", city: "Hue", country: "VN", visibility: "private", display_on_passport: true, is_revoked: false, earned_at: "2026-04-04T00:00:00.000Z" },
     ],
     stamp_definitions: [
-      { id: STAMP_DEF, name: "First Perfume River crossing", icon_url: "https://x/s.png", universal_artwork_url: null },
+      { id: STAMP_DEF, name: "First Perfume River crossing", icon_url: "post-media/x/s.png", universal_artwork_url: null },
     ],
     neighborhood_areas: [
       { id: HOOD, name: "Old town", city_name: "Hue", country: "VN", confidence: "high", source: "osm", computed_at: "2026-03-01T00:00:00.000Z" },
@@ -166,11 +166,11 @@ function fixture(): Record<string, any[]> {
       { id: LAY_CANCELLED, user_id: ALICE, trip_id: null, manual_airport_name: "Changi", manual_city: "Singapore", manual_iata: "SIN", arrival_time: "2026-06-01T02:00:00.000Z", departure_time: "2026-06-01T11:00:00.000Z", status: "cancelled", updated_at: "2026-05-05T00:00:00.000Z" },
     ],
     media_assets: [
-      { id: MEDIA_PUBLIC, owner_user_id: BOB, caption: "The alley", alt_text: null, media_type: "image", thumbnail_url: "https://x/m1t.jpg", public_url: "https://x/m1.jpg", visibility: "public", moderation_status: "approved", processing_status: "ready", updated_at: "2026-05-01T00:00:00.000Z" },
-      { id: MEDIA_INHERIT, owner_user_id: BOB, caption: "Inside a private memory", alt_text: null, media_type: "image", thumbnail_url: "https://x/m2t.jpg", public_url: "https://x/m2.jpg", visibility: "inherit", moderation_status: "approved", processing_status: "ready", updated_at: "2026-05-02T00:00:00.000Z" },
-      { id: MEDIA_FLAGGED, owner_user_id: BOB, caption: "Under review", alt_text: null, media_type: "video", thumbnail_url: "https://x/m3t.jpg", public_url: "https://x/m3.mp4", visibility: "public", moderation_status: "flagged", processing_status: "ready", updated_at: "2026-05-03T00:00:00.000Z" },
-      { id: MEDIA_MINE, owner_user_id: ALICE, caption: "My own upload", alt_text: null, media_type: "image", thumbnail_url: null, public_url: "https://x/m4.jpg", visibility: "inherit", moderation_status: "pending", processing_status: "ready", updated_at: "2026-05-04T00:00:00.000Z" },
-      { id: MEDIA_REJECTED, owner_user_id: ALICE, caption: "Taken down", alt_text: null, media_type: "image", thumbnail_url: null, public_url: "https://x/m5.jpg", visibility: "public", moderation_status: "rejected", processing_status: "ready", updated_at: "2026-05-05T00:00:00.000Z" },
+      { id: MEDIA_PUBLIC, owner_user_id: BOB, caption: "The alley", alt_text: null, media_type: "image", thumbnail_url: "post-media/x/m1t.jpg", public_url: "post-media/x/m1.jpg", visibility: "public", moderation_status: "approved", processing_status: "ready", updated_at: "2026-05-01T00:00:00.000Z" }, // census-telegraph T446 (B58 TM-1): image fixtures are storage refs — shareables.ts#proj withholds any other host
+      { id: MEDIA_INHERIT, owner_user_id: BOB, caption: "Inside a private memory", alt_text: null, media_type: "image", thumbnail_url: "post-media/x/m2t.jpg", public_url: "post-media/x/m2.jpg", visibility: "inherit", moderation_status: "approved", processing_status: "ready", updated_at: "2026-05-02T00:00:00.000Z" },
+      { id: MEDIA_FLAGGED, owner_user_id: BOB, caption: "Under review", alt_text: null, media_type: "video", thumbnail_url: "post-media/x/m3t.jpg", public_url: "post-media/x/m3.mp4", visibility: "public", moderation_status: "flagged", processing_status: "ready", updated_at: "2026-05-03T00:00:00.000Z" },
+      { id: MEDIA_MINE, owner_user_id: ALICE, caption: "My own upload", alt_text: null, media_type: "image", thumbnail_url: null, public_url: "post-media/x/m4.jpg", visibility: "inherit", moderation_status: "pending", processing_status: "ready", updated_at: "2026-05-04T00:00:00.000Z" },
+      { id: MEDIA_REJECTED, owner_user_id: ALICE, caption: "Taken down", alt_text: null, media_type: "image", thumbnail_url: null, public_url: "post-media/x/m5.jpg", visibility: "public", moderation_status: "rejected", processing_status: "ready", updated_at: "2026-05-05T00:00:00.000Z" },
       { id: MEDIA_PROCESSING, owner_user_id: ALICE, caption: "Still uploading", alt_text: null, media_type: "video", thumbnail_url: null, public_url: null, visibility: "public", moderation_status: "approved", processing_status: "uploading", updated_at: "2026-05-06T00:00:00.000Z" },
       { id: MEDIA_REMOVED, owner_user_id: ALICE, caption: "Gone from storage", alt_text: null, media_type: "image", thumbnail_url: null, public_url: null, visibility: "public", moderation_status: "approved", processing_status: "removed", updated_at: "2026-05-07T00:00:00.000Z" },
     ],
@@ -582,7 +582,7 @@ describe("§5 Media — the fifth family, and what 'inherit' has to mean", () =>
     const r = await resolveOne({}, "MEDIA", MEDIA_PUBLIC, ALICE);
     assert.equal(r.available, true);
     assert.equal(r.available === true && r.projection.title, "The alley");
-    assert.equal(r.available === true && r.projection.imageUrl, "https://x/m1t.jpg");
+    assert.equal(r.available === true && r.projection.imageUrl, "post-media/x/m1t.jpg");
   });
 
   it("VISIBILITY 'inherit' DEGRADES rather than resolving permissively", async () => {

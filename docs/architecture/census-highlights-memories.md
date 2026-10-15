@@ -8682,3 +8682,212 @@ Branch `claude/b58-mem-canon`. Two migrations were WRITTEN and applied to no dat
 | total | 266 | 266 |
 
 **2 moves, both N → W.** 266 = 71 C / 176 W / 17 N / 2 X. CONSTRUCTED% is (71 + 176) / 266 = 92.9 %.
+
+## §BI — 2026-10-14 (B58 cluster MEM-NARR-1): §2 MemoryNarrativeService and §18 NarrativeDerivative — the owner's deterministic summary, and an optional AI draft behind a flag, a separate opt-in and the owner's controls (migration 3802, unapplied). 3 rows move N → W
+
+Branch `claude/b58-mem-narr-1`. One migration was WRITTEN and applied to no database: 3802. Its flag is seeded FALSE. **All three moves are to W and none to C**: H172 by rule A.2 (the opt-in's storage is unapplied, the flag is off); H14 because its "editable" half is the client (cluster MEM-NARR-2, not built) and whether the deterministic renderer alone is §2's service is the lead's ruling Q-NARR-5; H265 because only the narrative half of "summaries" preserves the owner's words — Compass still summarizes Memories (`MEMORY_COMPASS_PROMPT_RULES`) through prompt text that preserves nothing (§M.3 item 3; cluster MEM-COMPASS-2).
+
+### §BI.1 What was missing
+
+- **H14.** No narrative service existed: nothing generated a summary of a Memory from its facts.
+- **H172.** `NarrativeDerivative` was declared `NOT_CONFIGURED` with a builder returning `[]`, and no narrator was wired.
+- **H265.** No summary of a Memory carried the owner's words, and no field said what language they were in.
+
+### §BI.2 What was built
+
+1. **The facts and the deterministic renderer** (pure, `artifacts/api-server/src/services/memory/memoryNarrative.ts`).
+   - The facts are the OWNER's own record of ONE Memory: title and caption verbatim, the day it started, the stored city and country, how many items, how many APPROVED tags as a number (`artifacts/api-server/src/services/memory/memoryNarrative.ts:198#export function collectNarrativeFacts`). Never a venue name (the catalog's name is the current one, H71's defect; §BH's occurrence-time name is behind its own flag and is not one of these facts yet), a coordinate, a tagged person, an item caption or a trip title. The owner's place corrections (3673) are not consulted: they act on place ids, which no fact uses, so city and country are sent as stored.
+   - The date is never more precise than the record: the place's own time zone when a coordinate exists, otherwise only what every zone from UTC−12 to UTC+14 agrees on (month, year, or nothing); `created_at` is never the date (`artifacts/api-server/src/services/memory/memoryNarrative.ts:167#export function occurrenceDate`).
+   - Every clause of the summary names the facts it states, and the text between clauses is one of four fixed separators, so a reader can check mechanically that nothing else was said (`artifacts/api-server/src/services/memory/memoryNarrative.ts:260#export function renderDeterministicNarrative`).
+   - **H265.** Every narrative carries `original_text` exactly as stored and `original_language: "und"` — no language is stored for a Memory, so none is claimed (`artifacts/api-server/src/services/memory/memoryNarrative.ts:304#original_text: { title`, `artifacts/api-server/src/services/memory/memoryNarrative.ts:66#export const ORIGINAL_LANGUAGE_UNDETERMINED`).
+2. **§18 NarrativeDerivative is BUILDABLE** with the same renderer (`artifacts/api-server/src/services/memoryProjections/projectionRegistry.ts:459#availability: "BUILDABLE", // B58 MEM-NARR-1`), owner-only by construction (`artifacts/api-server/src/services/memoryProjections/projectionRegistry.ts:894#if ((input.scope.viewer_id ?? null) !== input.scope.owner_id) return [];`). **No outbox event subscribes it**, so it is derived on request and never registered: no narrative text is stored anywhere (open owner question Q-NARR-4; fail-closed default). The registry edit is line-neutral; the builder is appended.
+3. **The routes** (`artifacts/api-server/src/routes/memoryNarrative.ts`, mounted on an existing line of `routes/index.ts`). Owner only: someone else's Memory, a missing one and a deleted one are the same 404; any failed read is 503, never a summary over a partial read.
+   - `GET /memories/:id/narrative` serves the deterministic summary and whether an AI draft is on offer (`artifacts/api-server/src/routes/memoryNarrative.ts:76#router.get("/memories/:id/narrative"`). It calls no model and writes nothing.
+   - `POST /memories/:id/narrative/ai` (`artifacts/api-server/src/routes/memoryNarrative.ts:104#router.post("/memories/:id/narrative/ai"`).
+   - `GET`/`PUT`/`DELETE /me/memory-narrative-ai-consent` (`artifacts/api-server/src/routes/memoryNarrative.ts:214#router.put("/me/memory-narrative-ai-consent"`).
+4. **The AI draft's gates, each fail-closed, the model never called on a refusal** (`artifacts/api-server/src/services/memory/memoryNarrativeService.ts:242#export async function narrativeAiGate`):
+   - the flag `memory_narrative_ai_enabled` (3802, FALSE): off or absent ⇒ 404 `feature_disabled` before any Memory table is read; unreadable ⇒ 503;
+   - the opt-in `memory_narrative_ai_consent` (3802): its OWN table (the 3780/3782 pattern, copied, so no other purpose's grant counts), valid only at the CURRENT disclosure version (`artifacts/api-server/src/services/memory/memoryNarrativeService.ts:170#export function narrativeAiConsentValid`); unreadable ⇒ 503, never "not consented";
+   - the owner's controls on THIS Memory (3671): DO_NOT_RESURFACE, KEEP_PRIVATE_FOREVER and RETAIN_BUT_DO_NOT_PERSONALIZE keep it from the model — the set derived from `memoryReaderGuard`'s model-mediated reader (`artifacts/api-server/src/services/memory/memoryNarrativeService.ts:219#controlsExcluding("compass_tools")`), proposed ruling W-HM-PRIV-1's reading, taken as the default for Q-NARR-3. The refusal names the setting to its owner. This does NOT decide OD-1012-PRIV-3's open Compass half, and no Compass file was touched.
+5. **What the model is sent** — the owner's own facts only, the city and country AS STORED, clamped by the Memory's §10 publication rung when that gate is on (country ⇒ the country alone, hidden ⇒ none; gate off ⇒ the stored city and country, the pre-2338 reading; an unreadable gate sends none), no coordinate, no tagged person, no zero count (`artifacts/api-server/src/services/memory/memoryNarrative.ts:336#export function aiPlaceText`, `artifacts/api-server/src/services/memory/memoryNarrative.ts:344#export function narrativeAiFacts`) — through the EXISTING path, `getOpenAI()` → gpt-5-mini, with a timeout (`artifacts/api-server/src/services/memory/memoryNarrativeService.ts:287#getOpenAI().chat.completions.create`). No new provider.
+6. **§1 / §28.4 / §28.16: every draft is checked against the facts it was sent, as an ALLOWLIST** (`artifacts/api-server/src/services/memory/memoryNarrative.ts:547#export function checkAiNarrative`). The first version was a blocklist and the PR #720 verifier measured 50 of 81 adversarial drafts accepted while inventing people, venues, weather, emoji, selective quotes and other languages; fix round 1 rebuilt it. What it now GUARANTEES:
+   - only letters, marks, ASCII digits, whitespace and ordinary punctuation — no emoji, no symbol, no `@ # / & %`, no other digits (`artifacts/api-server/src/services/memory/memoryNarrative.ts:446#const ALLOWED_PUNCTUATION`);
+   - a quoted span (straight or curly, single or double) is the owner's WHOLE title or WHOLE caption, exactly (only a final full stop may differ); an unmatched quotation mark is refused (`artifacts/api-server/src/services/memory/memoryNarrative.ts:448#const QUOTE_MARKS`);
+   - outside quotes, a title or caption word is accepted only inside a contiguous occurrence of the WHOLE title or WHOLE caption, so the owner's words cannot be re-cut ("Not the best night ever" never yields "the best night ever") (`artifacts/api-server/src/services/memory/memoryNarrative.ts:481#function occurrences`);
+   - every number is bound by the grammar of the facts: a digit or number word right before "photos"/"people" equals that count, and each count is stated once (`artifacts/api-server/src/services/memory/memoryNarrative.ts:601#const countedKinds`); a day is the date's day next to its month, or "the 13th" only when nothing counted follows (`artifacts/api-server/src/services/memory/memoryNarrative.ts:628#const theDay`); a year is the date's year; any other number, number word or ordinal is refused;
+   - a count noun without a number says ONE ("a person") or MORE THAN ONE ("photos") and must agree with the fact (`artifacts/api-server/src/services/memory/memoryNarrative.ts:442#const SINGULAR_COUNT_NOUNS`); the date's month only inside the date, so "a march" is refused; "wrote"/"titled" only right before the owner's own words ("titled": the title) (`artifacts/api-server/src/services/memory/memoryNarrative.ts:432#const ATTRIBUTING_WORDS`);
+   - every other word is a word of the place fact or one of 31 fixed connecting words (`artifacts/api-server/src/services/memory/memoryNarrative.ts:421#export const NARRATIVE_FUNCTION_WORDS`) — none of which names a person, place, time, quantity, feeling, activity or negation. So drafts are English-only apart from the owner's own words and the stored place.
+   What it CANNOT guarantee: what accepted words say ABOUT EACH OTHER — a relation asserted between true facts ("Vietnam is in Da Nang.", "2 people from Vietnam"), order ("Sunset walk to Vietnam from Da Nang"), and homonyms of place words ("a bath in Bath, England"); that residual is open owner question Q-NARR-7. Fix round 2 closed the three binding holes the verifier found in fix round 1 ("You wrote Vietnam.", "the 13th person", "a person" when two were tagged) and two of the residuals it named (a repeated count, the month's homonyms). A refused draft — or a model that fails — is the deterministic summary with the reason (`artifacts/api-server/src/services/memory/memoryNarrativeService.ts:300#const check = checkAiNarrative(content, facts);`). The refused text is neither sent back nor logged.
+7. **Migration 3802** (`artifacts/api-server/src/migrations/3802_memory_narrative_ai_consent.sql:60#CREATE TABLE IF NOT EXISTS public.memory_narrative_ai_consent`): cascades from `auth.users`, RLS on with no policy, every client privilege revoked (`artifacts/api-server/src/migrations/3802_memory_narrative_ai_consent.sql:75#REVOKE ALL ON public.memory_narrative_ai_consent`), a grant must be stamped (CHECK), the flag seeded FALSE; self-contained postconditions. Rollback `db/rollback/2026-10-14-3802-memory-narrative-ai-consent-rollback.sql` refuses while the flag is on or anyone has chosen, and re-runs as a no-op. Deletion disposition ERASED_BY_CASCADE; deletion-graph snapshot regenerated; beta flag policy OFF (sync tool); drift ratchet entry.
+
+### §BI.3 The tests
+
+- `artifacts/api-server/src/test/memoryNarrative.test.ts`, **89 cases**, over the real router with a table-backed fake that records every read and write, and a stubbed model (`_setTestOpenAI`; no real model is called).
+  - Every clause a fact; title and caption byte-identical; a Thai caption verbatim; `original_language` "und" (`artifacts/api-server/src/test/memoryNarrative.test.ts:246#every clause names the facts it rests on`, `artifacts/api-server/src/test/memoryNarrative.test.ts:256#H265: the owner's words keep their own script`).
+  - The date: the place's zone, then the bounded ladder; never `created_at` (`artifacts/api-server/src/test/memoryNarrative.test.ts:270#without a coordinate the date is only as precise`).
+  - **The draft check, as tables.** All 83 drafts of the verifier's adversarial battery: the 80 that state something not in the facts are ALL refused, the 3 faithful ones accepted, with 9 more faithful drafts (`artifacts/api-server/src/test/memoryNarrative.test.ts:322#const INVENTING`); and 35 single-fault drafts, one per rule, each asserting the rule that refused it (`artifacts/api-server/src/test/memoryNarrative.test.ts:444#const SINGLE_FAULT`). The verifier's second battery, all 61 drafts verbatim (invisible characters as `\u` escapes): the 35 false ones refused, the 20 true ones accepted, the 4 Q-NARR-7 relations/order cases asserted as the named residual, and the 2 drafts with verbs outside the allowlist refused by design (`artifacts/api-server/src/test/memoryNarrative.test.ts:512#const BATTERY_2`).
+  - Route ≡ derivative, owner-only, never subscribed (`artifacts/api-server/src/test/memoryNarrative.test.ts:603#is BUILDABLE and derives, for the owner, exactly what the route renders`).
+  - Failed reads are 503 (`artifacts/api-server/src/test/memoryNarrative.test.ts:659#never a summary over a failed read`); the flag OFF reads no Memory table and calls no model (`artifacts/api-server/src/test/memoryNarrative.test.ts:689#flag OFF (the seed)`); consent absent / withdrawn / older words / another purpose's / table absent ⇒ 403 (`artifacts/api-server/src/test/memoryNarrative.test.ts:706#no consent, a withdrawn one`); each of the three controls ⇒ 403 naming it (`artifacts/api-server/src/test/memoryNarrative.test.ts:738#W-HM-PRIV-1's model-mediated reading`).
+  - What is sent: no coordinate, no tagged person, no item caption, no other person's Memory, no write (`artifacts/api-server/src/test/memoryNarrative.test.ts:767#sends the owner's own facts only`); "with Marcus at Nobu" ⇒ `unsupported_fact` and the deterministic summary (`artifacts/api-server/src/test/memoryNarrative.test.ts:798#a draft that invents 'with Marcus at Nobu' is refused`); an "improved" caption ⇒ `altered_owner_text` (`artifacts/api-server/src/test/memoryNarrative.test.ts:806#a draft that 'improves' the owner's caption is refused`); a failed model ⇒ the deterministic summary (`artifacts/api-server/src/test/memoryNarrative.test.ts:813#§28.17: a model that fails`).
+- **Fails without the behaviour.** On `origin/main` `9af376fa4` the suite cannot load (its route and services do not exist). With the new modules present and only the registry as on main, the 2 derivative cases fail. The first (blocklist) draft check accepts 50 of the 80 inventing drafts. **44 of 44 TS mutants killed**, one per key branch: the owner check; the deleted state; a failed count read as zero; an unreadable flag read as off; the consent version; an unreadable consent read as none; unreadable controls read as clear; the wrong reader's control set; the draft accepted unchecked; the route skipping the controls gate; skipping the consent gate; reading the Memory before the flag; a grant without the flag; a grant without the displayed version; the exact place sent regardless of rung; an unreadable precision gate sending a place; the place's zone ignored; a day stated without a zone; `created_at` as the date; `original_text` trimmed; the derivative built for any viewer; zero counts sent; and, in the allowlist, each of its 15 rules: the symbol check, the unmatched quote, a selective quote, straight single quotes, the owner's words re-cut, an unknown word accepted (the blocklist default), a count not bound to its fact, number words outside counts, any year, a day not tied to its month, any day, any month, "people" or "photos" without that count, place words taken from anywhere; and fix round 2's seven: attribution unchecked, "titled" before the caption, "the Nth" counting something, "the Nth of" without the month, a singular or a plural count noun without a number, the month's homonym, a repeated count.
+- **The SQL.** `artifacts/api-server/src/test/db/memoryNarrativeAiConsent.db.test.ts` runs on the replayed chain in CI's local-db job (not runnable here: no Postgres). Rehearsed on PGlite over a fixture with Supabase's default ACL: 16 of 16 steps (apply, re-apply, `$pre$` and `$post$` alone, the behaviour, both rollback refusals, rollback, rollback again, re-apply); **8 of 8 SQL mutants killed** (REVOKE dropped, RLS off, cascade dropped, flag seeded TRUE, stamp CHECK dropped, `anon` SELECT granted back, the rollback discarding choices, the rollback ignoring the flag).
+- **Changed, not weakened.** `artifacts/api-server/src/test/memoryProjectionRegistry.test.ts`'s refusal case now derives its list from the NOT_CONFIGURED declarations and pins SearchEmbedding in it; `artifacts/api-server/src/test/memoryOutboxConsumer.test.ts` keeps its assertion that no event subscribes NarrativeDerivative, now for the stated reason that subscribing it would store narrative text.
+
+### §BI.4 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| H14 | N | W | The owner's summary of a Memory is generated from its structured facts, every clause naming them, and served by `GET /memories/:id/narrative`; an AI draft is optional and checked against the same facts (§BI.2 items 1, 3–6). W: the "editable" half is the client (MEM-NARR-2, not built — a draft is saved only through the owner's own PATCH), and Q-NARR-5 (is the deterministic renderer alone §2's service) is the lead's ruling |
+| H172 | N | W | `NarrativeDerivative` is BUILDABLE (deterministic, owner-only, never stored) and the optional AI summary exists behind the flag, the opt-in and the owner's controls; every draft passes an ALLOWLIST over the facts it was sent — every word a fact, a bound number or one of 31 connecting words; quotes only the whole title or caption (§BI.2 items 2, 4–6). W: 3802 is unapplied and `memory_narrative_ai_enabled` is FALSE (rule A.2); the processor and what is sent are open owner questions Q-NARR-1/Q-NARR-2, and meaning made by word order is Q-NARR-7 |
+| H265 | N | W | Every narrative carries the owner's words verbatim and `original_language: "und"`, and a draft that rewrites them inside quotes is refused (§BI.2 items 1 and 6). W: Compass's summaries still preserve nothing (prompt text, D-C2; cluster MEM-COMPASS-2), and no translation path exists to preserve anything through |
+
+### §BI.5 Rows read, reason restated, NOT moved
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H266 | BUILT-BUT-WRONG | The narrative surface now HAS a deterministic fallback renderer: a refused or failed AI draft is the template summary (§BI.2 item 6). W: Compass's fallback is still a sentence, not a renderer (§M.1), so the row's rule does not yet hold on every AI presentation |
+| H3 | BUILT-BUT-WRONG | The narrative path's "may not manufacture" half is now mechanical (`checkAiNarrative`). W: Compass's is prompt text, and there is still no supported evidence store (H24) |
+| H192 | BUILT-BUT-WRONG | No "cached narrative" exists to revoke: NarrativeDerivative is never registered and no AI text is stored (Q-NARR-4). W for the other destinations, as before |
+
+### §BI.6 Owner questions (fail-closed defaults implemented, none approved)
+
+- **Q-NARR-1** Is OpenAI, through the Replit AI-integrations proxy, approved as a processor for private Memory content? Default: flag OFF; nothing is sent.
+- **Q-NARR-2** What may be sent? Default: the owner's own title and caption (verbatim — which may name people in the owner's own words), the date, the city and country AS STORED (clamped by the §10 rung only while that gate is on; the owner's place corrections are not consulted, because they act on place ids), and non-zero counts; never a coordinate, a tagged person, an item caption or another person's text.
+- **Q-NARR-3** Do DO_NOT_RESURFACE / KEEP_PRIVATE_FOREVER / RETAIN_BUT_DO_NOT_PERSONALIZE Memories go to the model when their owner asks? Default: no (W-HM-PRIV-1's model-mediated reading). It mirrors, and does not decide, OD-1012-PRIV-3's open half.
+- **Q-NARR-4** Retention of generated text. Default: nothing is stored — not the facts sent, not the draft, not the template; NarrativeDerivative is never registered.
+- **Q-NARR-5** Does the deterministic renderer satisfy §2's MemoryNarrativeService (H14 → C once the client exists)? The lead rules.
+- **Q-NARR-6** The disclosure text (`artifacts/api-server/src/services/memory/memoryNarrative.ts:80#export const MEMORY_NARRATIVE_AI_DISCLOSURE_TEXT`) is an ENGINEERING DRAFT; it needs legal review before the flag is turned on. It now says the city and country are sent "as stored" (it said "at the location setting you chose", untrue while the §10 gate is off). Changing it after any grant means a new version, which invalidates every earlier grant.
+- **Q-NARR-7** The draft check cannot judge what accepted words say ABOUT EACH OTHER: a relation asserted between true facts with allowed words ("Vietnam is in Da Nang.", "2 people from Vietnam", "the people of Vietnam"), order ("Sunset walk to Vietnam from Da Nang"), and homonyms of place words ("a bath in Bath, England"). A repeated count and the month's homonyms ARE refused (fix round 2). Default: accepted as the residual, because every word is a fact and the owner sees the draft beside the template and their own words; dropping "is"/"was" would remove the "is in" relations at the cost of refusing "This Memory is from…". An enable condition the owner may tighten (for example, template-only until a reviewed sample of real drafts).
+
+### §BI.7 Headline
+
+| bucket | was (§BH) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 71 | 71 |
+| BUILT-BUT-WRONG | 176 | 179 |
+| NOT-BUILT | 17 | 14 |
+| CANNOT-VERIFY | 2 | 2 |
+| total | 266 | 266 |
+
+**3 moves, all N → W.** 266 = 71 C / 179 W / 14 N / 2 X. CONSTRUCTED% is (71 + 179) / 266 = 94.0 %. (Restated after merging `origin/main` `51c3f30b4`, which brought §BH's two moves.)
+
+## §BJ — 2026-10-14 (B58 lane MEM-ACL; verifier V-716 fix 2, owner question OQ-716-1): canonical `memories` refuses every client role (migration 3813, unapplied), and check:client-privilege-boundary rule 7 fails the re-grant shapes it reads. NO ROW MOVES
+
+### §BJ.1 The door, re-verified on `origin/main` `9af376fa4` (and again after merging `95935612d`)
+
+- **The grants.** The baseline grants the whole table to both client roles (`artifacts/api-server/baseline/20260819_baseline_structure.sql:36638#GRANT ALL ON TABLE public.memories TO anon;`, `artifacts/api-server/baseline/20260819_baseline_structure.sql:36639#GRANT ALL ON TABLE public.memories TO authenticated;`). 2490 took back TRUNCATE, REFERENCES, TRIGGER and MAINTAIN from every table and left SELECT, INSERT, UPDATE and DELETE. No other migration narrows them: replayed over the baseline and the whole chain without 3813, both roles end holding exactly those four (`artifacts/api-server/src/test/memoriesClientBoundary.test.ts:74#A-1 (anti-vacuity, the defect)`).
+- **The policies decide rows, never columns.** `memories_public_read` admits any signed-in non-owner to a published public Memory (`artifacts/api-server/baseline/20260819_baseline_structure.sql:29106#CREATE POLICY memories_public_read`), and `memories_owner_all` admits the owner to every column of their own rows, for every command (`artifacts/api-server/baseline/20260819_baseline_structure.sql:29099#CREATE POLICY memories_owner_all`). V-716 named 0067 as their source; the chain's copy is the baseline's, and no chain migration adds, alters or drops a policy on `memories`.
+- **Executed** (PGlite, a PostgreSQL 16.4 build whose ACLs carry MAINTAIN, over the baseline's DDL, grants and policies for `memories` and the four tables whose policies read it, 2490 applied as production has it). Before 3813, through the PostgREST role and JWT settings:
+  - a stranger read `place_id`, `canonical_location_id`, `location_lat`, `location_lng`, `location_precision` and `hidden_user_ids` of a city-rung public Memory. A filter on `location_lat` answered without a select list;
+  - the owner set a moderator-removed Memory back to `published`, set `location_precision`, inserted a published public Memory directly, and hard-deleted one. The last skips §21's soft delete, dead letters and derivative revocation;
+  - a stranger read the photo URLs of a public Memory through `memory_items_public_read`.
+- **What the API applies and PostgREST did not.** The precision rung (2338), the Hidden-Gem ceiling, the owner's place corrections and rejections (H-16, H-17 through `placesForViewer`), the hidden list and blocks. `memories_public_read` checks neither of the last two. 3804 (#716, merged, unapplied) adds `place_display_name_at_occurrence` to the read, and 3803's `memory_type` to the owner's writes. §BH.6 records the same door as OQ-716-1.
+
+### §BJ.2 What changed
+
+1. **3813** (`artifacts/api-server/src/migrations/3813_memories_client_privileges_revoked.sql:191#REVOKE ALL ON TABLE public.memories FROM PUBLIC, anon, authenticated;`). It is shaped like 2161 (`compass_memories`) and 3653, and grants nothing back.
+   - **Precondition.** It refuses four states:
+     - a client or PUBLIC privilege granted by a role other than the owner, or with a grant option, because this REVOKE would not remove it cleanly;
+     - a session that does not act for the owner;
+     - a view or materialized view over `memories` that a client role can read;
+     - a SECURITY INVOKER function that a client role may call and that reads `memories`, because it would start failing. Trigger functions are never client-callable.
+   - It accepts a second apply.
+   - It raises a NOTICE that lists the policies on other tables that read `memories` as the invoking role.
+   - **Postcondition.** It reads only the catalog, so it can be re-run alone. It asserts: no client or PUBLIC entry in the table ACL or in any column ACL; no effective privilege through any membership; no client-readable view over `memories`; RLS still on; `service_role` still holds its four DML verbs.
+   - **Changes nothing else.** No policy, row, function, trigger, or `service_role` privilege changes.
+   - **Rollback.** It re-grants SELECT, INSERT, UPDATE and DELETE (2490's state, never the baseline's ALL) and clears the ledger row. It refuses unless RLS is on and both policies are present.
+2. **Rule 7 of `check:client-privilege-boundary`** (`artifacts/api-server/src/scripts/lib/serverOnlyTables.ts:95#export const SERVER_ONLY_TABLES`). It covers `memories` (since 3813) and `compass_memories` (since 2161). It does not prove that no migration can grant either table back. It fails on the shapes it reads, which are these three:
+   - **The replay.** It replays every GRANT and REVOKE that reaches the table, over the baseline and then the chain:
+     - named, quoted, or `ALL TABLES IN SCHEMA public`;
+     - written out, as an EXECUTE operand in a single literal (`'…'`, or `$tag$…$tag$`, where the delimiter ends the statement), or from a FOREACH loop over a literal array;
+     - for `anon`, `authenticated` and `PUBLIC`, with or without the legacy `GROUP` keyword;
+     - at table and column level.
+
+     CREATE TABLE, DROP TABLE and `ALTER TABLE x RENAME TO <table>` are modelled; a rename is treated as a fresh table under Supabase's default client privileges. It fails if a client role ends the chain holding anything.
+   - **The string rule (after the closing migration).** Any string that begins with GRANT is read up to the next `;`, whatever its quoting (`'…'`, `E'…'`, `$tag$…$tag$`), and including concatenations and variables. It fails when the string names the table (or a run-time target) and grants to a client role, PUBLIC, `GROUP` or a run-time grantee.
+   - **Membership.** A `GRANT some_role TO anon | authenticated | PUBLIC` anywhere in the baseline or the chain fails.
+   - **Why it is needed.** Rules 1 to 4 let a plain `GRANT SELECT ON public.memories TO authenticated` through.
+   - **Vacuity.** On the real tree it refuses a replay that did not see the table opened, or did not see the closing file revoke it from both roles.
+   - **Known limits, stated in the file.** It does not read a GRANT whose word GRANT is itself split across pieces, a GRANT built by a function the migration calls, or `SET SCHEMA`, nor `ALTER TABLE … OWNER TO` a client role, `SELECT … INTO public.memories`, or a name spaced round the dot (`public . memories`). The string rule reads only files after the closing migration, so a dynamic membership grant before it is unseen. Views over the table are rule 5's.
+   - **Fix round 1 (VERIFY-726 fix 2).** On `4a1cec32b`, nine planted shapes went green: `EXECUTE $q$…$q$`, three concatenated EXECUTEs, `format(E'…')`, `format($q$…$q$)`, a swap-table rename, role membership, and `TO GROUP`. All nine are red now. None exists in the chain. Delta fix (VERIFY-726 delta, lead): the FOREACH-literal exemption now covers only what the replay expands (`EXECUTE format(` written directly, every argument the loop variable or a `'…'` literal, no `%n$`); six variants of 2762/2763's loop (`lower(t)`, `%1$I`, `pg_catalog.format`, `EXECUTE (format(…))`, `t::text`, `s := format(…); EXECUTE s`) were green and are red now, the real tree still passes.
+3. **The live guard.** `memories` is in the authorization contract with no client grant, no client-writable column, and the baseline's two policies. A test pins that every server-only table is contracted with no client grant, so the offline rule and `check:authorization-contract` agree. Until 3813 is applied to a database, that check reports the database as wider than the entry. **Its blind spots:** it reads `information_schema.role_table_grants` by grantee name, and of the column privileges only INSERT and UPDATE. So it never sees a role-membership grant or a column-level SELECT, and it sees a table grant only after main applies it to portava-ci. 3813's postcondition is not blind to either: it asks `has_table_privilege` and `has_any_column_privilege`, which follow membership and columns, on the database it is applied to.
+
+### §BJ.3 The client-path audit (the premise of OQ-716-1)
+
+- **No client code reads `memories`.**
+  - `travel-buddy-standalone` names a table in `.from('<table>')` in ten files, and none of them is `memories`.
+  - Its one storage call is the `post-media` bucket, and its one realtime channel is on `generated_visuals`. It calls no RPC.
+  - The other trees (root `app/` and `src/`, `lib/`, `packages/`, `posts-ui/`) do not name the table either.
+  - This is pinned, with anti-vacuity counts (`artifacts/api-server/src/test/memoriesClientBoundary.test.ts:368#P-1: no client source names memories as a table`).
+- **The API builds one database client, the service client.** Its pin is `handRolledAuthAccountState.test.ts`.
+- **Functions.** Every chain function whose body reads `memories` is either revoked from `anon` and `authenticated` or is a trigger function (`artifacts/api-server/src/test/memoriesClientBoundary.test.ts:402#P-2: every chain function whose body reads memories`). The ones revoked: `memory_public_feed`, `memory_kernel_execute`, `discovery_trend_post_groups_v2`, `memory_graph_mirror_memory`, `memory_graph_backfill_legacy`, `memory_graph_kernel_execute`. The two trigger functions: `memory_relations_owner_matches_source` and `memory_corrections_guard`.
+- **Views and publications.** No view reads `memories`, and the chain creates no publication.
+- **What fails closed.** Seven policies on other tables read `memories` as the invoking role: `memory_items_public_read`, `memory_items_via_memory`, `memory_likes_read`, the three `memory_tags_owner_*` policies, and `memory_domain_events_owner_select`. After 3813 a client query that reaches one of them fails with 42501 instead of reading through. That includes a client `INSERT … RETURNING` on `memory_likes` and any client INSERT into `memory_tags`: in both, the SELECT policy or the WITH CHECK subquery brings `memories` into the plan (VERIFY-726, executed). No client queries those tables, and the API's role bypasses RLS. This closes the PostgREST photo door §AM.1 described for an authenticated reader.
+- **Sibling work.** Neither #716 (mem-canon, merged into this branch) nor mem-narr-1 adds a client read of `memories`. Their new `.from("memories")` calls are all API-server code.
+
+### §BJ.4 Evidence
+
+- **`artifacts/api-server/src/test/memoriesClientBoundary.test.ts`** has 84 tests (41 before fix round 1) and is registered.
+  - The chain fold, red without 3813 (A-1, A-2, A-3).
+  - The file and rollback shapes (B-1 to B-3).
+  - Rule 7 on 13 shapes that re-open the table and 9 that do not, its vacuity, and its CLI wiring (C-0 to C-6).
+  - Fix round 1 adds these tests:
+    - C-7: the 27 planted shapes, which are VERIFY-726's R1–R14 and B1–B11 plus B12–B17 written here, and 7 controls;
+    - C-8: the real tree, where the string rule reads ≥ 10 GRANT strings, leaves 2762/2763's two FOREACH templates to the replay, and finds nothing;
+    - C-9: the replay alone on `$q$…$q$`, `TO GROUP` and `RENAME TO`;
+    - the CLI on a membership grant.
+  - **Red on the pre-fix parser** (`4a1cec32b`'s rule 7): 19 of the 84 fail. These are B1–B9, B12–B16, C-8, the three C-9 cases and the CLI membership case. B17 (the table renamed away keeps its grant) is red either way, and mutant N4 pins it.
+  - The premise (P-1 to P-3) and the contract (K-1, K-2).
+  - **Red on main** (3813, rule 7 and the contract entry removed): A-2, A-3, K-1 and K-2 fail. The B and C suites cannot load, because the file is absent.
+- **`artifacts/api-server/src/test/db/memoriesClientBoundary.db.test.ts`** (M0 to M6) runs in CI's local-db job:
+  - the read door shut for a stranger, the owner's own key and anon (M1);
+  - the write door shut, with the rows unchanged (M2);
+  - the dependent policies failing closed while the API's role still reads (M3);
+  - the postcondition alone, and the precondition accepting the real chain and naming the seven policies (M4);
+  - the rollback to 2490's exact four privileges and back (M5);
+  - each precondition refusal (M6).
+  - **Not run on a PostgreSQL server here** (none on this machine). It was run through a psql stand-in over PGlite (PostgreSQL 16.4) on a fixture of the touched objects: 7/7 green with 3813, and 6/7 red without it. M6 tests the precondition itself, so it passes either way.
+- **The rehearsal** (PGlite, the lane report): 79 steps green, with 2490 applied (production's state) and without it (the local-db replica's state: PostgreSQL 16 cannot replay 2490's MAINTAIN, so the client roles still hold all seven classic privileges there before 3813).
+- **Mutants.**
+  - SQL: 24 of 24 killed. These cover the REVOKE (four), the precondition (nine), the postcondition (six) and the rollback (five). The postcondition's column-ACL check (Q6) is killed by its message only: the effective-privilege check holds the same property, so the two checks are a redundant pair.
+  - Rule 7: 14 of 15 killed. The survivor is equivalent: dropping the `GRANT OPTION FOR` skip changes nothing, because the privilege parser already rejects that clause.
+  - Rule 7 fix round 1: 14 of 14 killed. The mutants are: the `$tag$` terminator; the GROUP strip; RENAME TO modelled; rename-away treated as a drop; membership not wired; dollar-quoted strings not read; run-time target or run-time grantee not a hit; the loop-template exemption dropped or ignoring `||`; a missing grantee or a missing ON not a hit; the string rule reading the wrong side of the closing file; the CLI's membership text.
+
+### §BJ.5 Rows read, reason restated, NOT moved
+
+Rule A.2 holds every row below where it is: 3813 is written and applied to no database. What each row now has at the database layer, and what still stops it:
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H198 | BUILT-BUT-WRONG | Once 3813 is applied, the database refuses every client role on canonical `memories`, the owner's own key included, so the API's service role is the only door (§BJ.2). Rule 7 fails CI on a migration that would re-grant it. W: 3813 is unapplied (rule A.2), and the row's own ceiling stands: the door the API keeps decides in TypeScript, not RLS |
+| H49 | BUILT-BUT-WRONG | The PostgREST read that skipped `placesForViewer` (H-16, H-17) is closed at the database layer once 3813 is applied (§BJ.1). W: 3673, 3725, 3726 and 3813 are unapplied (rule A.2) |
+| H48 | BUILT-BUT-WRONG | As H49: a stranger can no longer read the stored place past the owner's assertion through PostgREST, once 3813 is applied. W: 3673 and 3813 are unapplied |
+| H73 | BUILT-BUT-WRONG | As H48 |
+| H208 | BUILT-BUT-WRONG | `location_lat` / `location_lng` and the place ids were readable straight from PostgREST whatever the owner's rung (§BJ.1). 3813 closes that path. W: 3813 is unapplied, and the row's stated blocker is unchanged |
+| H201 | BUILT-BUT-WRONG | As H208: the direct read of a Memory's exact coordinates is closed by 3813, unapplied. The row's stated blocker is unchanged |
+| H71 | BUILT-BUT-WRONG | §BH.2 item 5's ceiling is the read door: any signed-in non-owner reads `place_display_name_at_occurrence` straight from PostgREST, past `placesForViewer` and `protectMemoryRow`. It also covers the write door: the owner writes the name on INSERT or on a place change. Both close at the database layer once 3813 is applied, and the API becomes the name's only reader and writer. W: 3803, 3804 and 3813 are unapplied (rule A.2) |
+| H40 | BUILT-BUT-WRONG | The owner's direct PostgREST write of `memory_type` is refused once 3813 is applied, so the API's writers (POST/PATCH, TRIP, EPISODE) are the only writers. W: 3803 and 3813 are unapplied (rule A.2) |
+| H80 | BUILT-BUT-WRONG | `memory_items_public_read` reads `memories` as the invoking role, so after 3813 a client read of `memory_items` fails closed: the PostgREST photo door §AM.1 described closes with it (§BJ.3). W: 3672 and 3813 are unapplied, and §AN's media counts note still stands |
+| H241 | BUILT-AND-CORRECT | **Read, NOT moved, and contested on the Memory surface.** The invariant holds on the four API reads (H.4). The production snapshot of 2026-09-22 has `memory_location_precision_enabled` FALSE, so the API stores and honours no rung on a Memory today, and PostgREST therefore exceeds nothing the API serves. The door would falsify this row on the Memory surface the day the flag is turned on while 3813 is unapplied. That sequencing is OQ-716-1(b) below, not a regrade |
+
+### §BJ.6 Owner decisions
+
+- **OQ-716-1 (owner): apply 3813.** The fail-closed default is implemented as a written, unapplied migration. Applying it to production is the owner's press. Three sequencing points follow from §BJ.1 and are proposed, not approved:
+  - (a) apply 3813 no later than #716's 3804, which is what V-716 asked;
+  - (b) apply it before `memory_location_precision_enabled` is turned on;
+  - (c) apply it no later than 3673, so that rejections reach PostgREST readers too.
+- **Proposed ruling W-MEM-ACL-1 (implemented as the default).** No client role holds any privilege on `memories`, and that includes the owner's own key: the owner reads and writes their Memories through the API. If a client path ever needs the table, it goes through the API or through a SECURITY DEFINER function with its own checks, never through a re-grant. Rule 7 and the contract both have to be edited, in one reviewed change, to say otherwise.
+- **Adjacent doors, NOT closed here and listed for a follow-up lane:**
+  - `memory_saves`, `memory_likes`, `memory_tags` and `memory_items` keep the baseline's GRANT ALL, as 2490 narrowed it. Their reads now fail closed through `memories`, but some writes do not:
+    - `memory_saves_own` (FOR ALL) lets a user save any Memory id directly;
+    - `memory_likes_own` lets a user insert a like for any Memory id, which also answers whether that id exists, through its foreign key;
+    - `memory_tags_tagged_update` lets a tagged user update any column of their tag row.
+  - A REVOKE of those four tables needs the same client-path audit. It is not done here.
+
+### §BJ.7 Scope
+
+The baseline's NOT-GRADED declaration is §BH.7's; §BJ.1 cites the same grants and the two policies, and grades no row on the baseline either.
+
+- NOT-GRADED: artifacts/api-server/src/test/handRolledAuthAccountState.test.ts — §BJ.3 names it as the existing pin that the API builds only the service client; another lane's suite, no row here rests on it
+
+**Headline unchanged by §BJ. With §BI (#720, 3 rows N → W) merged before it on main: 266 = 71 C / 179 W / 14 N / 2 X** (`check:census-integrity`).
