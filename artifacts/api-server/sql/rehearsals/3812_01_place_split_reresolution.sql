@@ -139,6 +139,10 @@ BEGIN
   PERFORM pg_temp.refused('T5 deleted', format(ins, 'c3812000-0000-4000-8000-000000000003', A, s, P, cands, P, p2, 'pending', NULL), 'the Memory is deleted');
   PERFORM pg_temp.refused('T5 elsewhere', format(ins, 'c3812000-0000-4000-8000-000000000005', A, s, P, cands, P, p2, 'pending', NULL), 'no longer stores the split place');
   PERFORM pg_temp.refused('T5 not a split', format(ins, 'c3812000-0000-4000-8000-000000000002', A, 'a3812000-0000-4000-8000-000000000001', P, cands, P, p2, 'pending', NULL), 'is not a split');
+  -- a MERGE row naming exactly these two places is still not a split
+  INSERT INTO public.place_merge_log (id, action, survivor_place_id, affected_place_id) VALUES ('a3812000-0000-4000-8000-000000000003', 'merge', P::uuid, p2::uuid);
+  PERFORM pg_temp.refused('T5 merge of the same places', format(ins, 'c3812000-0000-4000-8000-000000000002', A, 'a3812000-0000-4000-8000-000000000003', P, cands, P, p2, 'pending', NULL), 'is not a split');
+  DELETE FROM public.place_merge_log WHERE id = 'a3812000-0000-4000-8000-000000000003';
   PERFORM pg_temp.refused('T5 candidate', format(ins, 'c3812000-0000-4000-8000-000000000002', A, s, P, format('{%s,%s}', P, 'f3812000-0000-4000-8000-000000000009'), P, 'f3812000-0000-4000-8000-000000000009', 'pending', NULL), 'is not a split');
   PERFORM pg_temp.refused('T5 born decided', format(ins, 'c3812000-0000-4000-8000-000000000002', A, s, P, cands, P, p2, 'dismissed', now()), 'written pending');
   PERFORM pg_temp.refused('T5 no memory', format(ins, 'c3812000-0000-4000-8000-0000000000ff', A, s, P, cands, P, p2, 'pending', NULL), 'does not exist');

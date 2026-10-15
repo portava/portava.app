@@ -105,6 +105,7 @@ function ok(r: { status: number; stdout: string; stderr: string }, label: string
   assert.match(r.stdout, /CASE-OK/, `${label}: the case did not reach its end`);
 }
 
+const MERGE_ID = randomUUID();
 const proposal = (memoryKey: string, ownerKey: string, suggested: string, reason: string) => `
 INSERT INTO public.memory_place_reresolution_proposals (memory_id, owner_id, split_id, split_from_place_id, candidate_place_ids, suggested_place_id, evidence)
 VALUES (pg_temp.id('${memoryKey}'), pg_temp.id('${ownerKey}'), pg_temp.id('SPLIT'), pg_temp.id('P'), ARRAY[pg_temp.id('P'), pg_temp.id('P2')], ${suggested},
@@ -151,6 +152,8 @@ BEGIN
   PERFORM pg_temp.refused('D2 owner', format(ins, pg_temp.id('MB'), pg_temp.id('A'), S, P, P, P2, NULL, good), 'not the Memory''s owner');
   PERFORM pg_temp.refused('D2 deleted', format(ins, pg_temp.id('MDEL'), pg_temp.id('A'), S, P, P, P2, NULL, good), 'the Memory is deleted');
   PERFORM pg_temp.refused('D2 elsewhere', format(ins, pg_temp.id('MELSE'), pg_temp.id('A'), S, P, P, P2, NULL, good), 'no longer stores the split place');
+  INSERT INTO public.place_merge_log (id, action, survivor_place_id, affected_place_id) VALUES ('${MERGE_ID}', 'merge', P, P2);
+  PERFORM pg_temp.refused('D2 a merge of the same places', format(ins, pg_temp.id('M2'), pg_temp.id('A'), '${MERGE_ID}', P, P, P2, NULL, good), 'is not a split');
   PERFORM pg_temp.refused('D2 coordinate', format(ins, pg_temp.id('M2'), pg_temp.id('A'), S, P, P, P2, NULL, good || '{"lat":10}'), 'evidence_shape');
   PERFORM pg_temp.refused('D2 distance', format(ins, pg_temp.id('M2'), pg_temp.id('A'), S, P, P, P2, NULL, jsonb_set(good, '{candidates,0,within_bound}', '31.4')), 'evidence_shape');
   PERFORM pg_temp.refused('D2 unbacked suggestion', format(ins, pg_temp.id('M2'), pg_temp.id('A'), S, P, P, P2, P2, good), 'suggested_iff_resolved');
