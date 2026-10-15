@@ -108,6 +108,34 @@ export const SERVER_ONLY_TABLES: readonly ServerOnlyTable[] = [
       "Compass memories: RLS has no policy and every access is service-role (routes/compass.ts); a client grant was a " +
       "cross-user read and a stored prompt injection (2161)",
   },
+  {
+    table: "memory_saves",
+    closedBy: "3814_memory_social_client_privileges_revoked.sql",
+    why:
+      "Memory saves: a signed-in client could save ANY Memory id directly, and the FK answered 23503 vs success — an existence " +
+      "oracle on private and removed Memories; the API checks blocks and canReadMemory (3814, census-highlights-memories §BL)",
+  },
+  {
+    table: "memory_likes",
+    closedBy: "3814_memory_social_client_privileges_revoked.sql",
+    why:
+      "Memory likes: a client could like ANY Memory id (same existence oracle) and read who liked a public Memory past the " +
+      "API's block filter (3814, §BL)",
+  },
+  {
+    table: "memory_tags",
+    closedBy: "3814_memory_social_client_privileges_revoked.sql",
+    why:
+      "Memory tags: a tagged person could re-point their tag row's memory_id at any Memory, and an owner could insert a tag " +
+      "already approved (3814, §BL)",
+  },
+  {
+    table: "memory_items",
+    closedBy: "3814_memory_social_client_privileges_revoked.sql",
+    why:
+      "Memory items: an owner could attach another user's storage object as a photo past the API's foreign_storage refusal " +
+      "(3814, §BL)",
+  },
 ];
 
 const ROLES = ["anon", "authenticated", "public"] as const;
