@@ -14669,3 +14669,142 @@ These are the 451 rows on main after #721 (§92: T306 and T310 N → W) and #719
 `check:census-integrity` counts them: 262 / 183 / 4 / 2 (main before either stood at 262 / 179 / 8 / 2, after §90's T62 N → C).
 - CONSTRUCTED 445 of 451 = 98.7 %; CORRECT 262 of 451 = 58.1 %.
 - #719 merged last, so this restatement is the headline (§91.6 and the first lines of this section give each branch's own count).
+
+## §93 — TELEGRAPH B58 lane RECAP-HOST (2026-10-14): the recap's people include the plan's host, unless the host declined their own plan. NO ROW CHANGES BUCKET
+
+Written 2026-10-14 on branch `claude/fix-recap-host` from origin/main `95935612d` (main `51c3f30b4` merged in). APPEND-ONLY
+once merged. Found by the independent verification of lane TM-7 (`05f4714e5`, "Outside TM-7"). Numbered §93 because open
+PRs #719 (lane TM-1) and #721 (lane TM-7) write §91 and §92; renumber on conflict. No migration, no flag, no client
+change, no database. **Revised in fix round 1 (93.8)** after the Opus verification of `f83aad3d5`: the first head counted
+a host who had declined their own plan, and it added a recap-only block filter that lead ruling LR-B58-6 removes. The
+text below states the final head; 93.8 states what changed and why.
+
+### 93.1 The defect, re-verified on `95935612d`
+
+- `GET /threads/:threadId/recap` read the plan with `.select("id, title, starts_at, ends_at, status, chat_thread_id")`
+  and then added `plan.creator_id` to the night's people. `creator_id` was not selected, so against PostgREST it is
+  always `undefined`: the host branch was dead in production.
+- The host has no other way in. A creator never gets a `meetup_invites` row from an invitation: both invite paths drop
+  the caller from the invitee list
+  (`artifacts/api-server/src/routes/meetups.ts:215#candidateIds = b.inviteeIds.filter((id) => id !== user.id)`
+  on create, and `artifacts/api-server/src/routes/meetups.ts:593#let candidateIds = parsed.data.userIds.filter((id) => id !== user.id)`
+  on `/invites`). A host has a row only if they RSVP'd to their own plan. So a host who had not RSVP'd was missing from
+  `counts.people` and from the headline's "N people".
+- Why no test saw it: the suite's fake answered every read with the WHOLE seeded row, whatever was selected (the blind
+  spot `src/test/helpers/selectProjection.ts` documents), and its fixture also gave the host a `going` invite, so the
+  host path was never exercised. None of §10.19's four mutations touched it.
+- The rest of the file was swept for the same class (a read of a field the select did not name) and none was found. The
+  draft route's message read names every field that it, `isSharedCardRow`, `sharedCardTitleFor` and
+  `withholdLocationAcrossBlocks` read. Both membership reads name `left_at`, plus `visible_from_at` through
+  `membershipSelect` when the bound is on. The `memories` insert returns the six fields it serialises. The recap's
+  invite and message reads name every field used.
+
+### 93.2 What changed
+
+- `artifacts/api-server/src/routes/telegraphMemory.ts:222#chat_thread_id, creator_id`: the plan read selects
+  `creator_id` (a literal list, as `check:write-path-columns` requires).
+- `artifacts/api-server/src/routes/telegraphMemory.ts:252#EVERY status, as GET /meetups/:id reads them`: the invite read
+  takes every status, as `GET /meetups/:id` does, so the host's OWN row is seen.
+- `artifacts/api-server/src/routes/telegraphMemory.ts:261#const hostCounts = Boolean(plan.creator_id) && (!hostRow || isGoing(hostRow));`:
+  the people are every `going`/`maybe` invitee, plus the host when the host has NO invite row or a `going`/`maybe` one.
+  A host who RSVP'd `declined` to their own plan is not counted. The app offers the creator that choice: the RSVP card is
+  gated only on `!isCancelled && isAuthed` (`travel-buddy-standalone/app/meetup/[id].tsx:761#!isCancelled && isAuthed`).
+  The viewer counts only when they were on the plan.
+- **No block filter** (lead ruling LR-B58-6). The count is the audience `GET /meetups/:id` already shows, unfiltered
+  (§89.7: the meetup routes read no `blocks`), so the recap adds no new signal. Q-RH1 (93.4) is the owner's.
+- The suite's fake now honours the select list through the shared projector. Each line was edited in place, so nothing
+  cited in the file moves; the new cases are appended at the end. §92 (open PR #721) cites
+  `artifacts/api-server/src/test/telegraphMemory.test.ts:435#recaps a completed plan and writes nothing`, which is
+  unchanged.
+- Line-neutral: the route keeps its line count, so every line of it that this census (§10, §89) and
+  `docs/ops/telegraph-history-bound-deployment.md` cite still lands on what it cites.
+
+### 93.3 Rows
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T121 | C | **C** | **End-of-night recap surface**: evidence correction, verdict unchanged. The route, the sheet and the header entry §10 cites are real and unchanged. On `95935612d` the headline's people count was short by the host whenever the host had not RSVP'd (93.1). That is fixed here, pinned by `artifacts/api-server/src/test/telegraphMemory.test.ts:530#a host with no invite row is one of the night's people`. |
+| T122 | C | **C** | **Derived from confirmed session context, an invitation to curate**: holds at C after this change (fix round 1 included). Stated honestly: on `95935612d` this row's clause "people are the plan's confirmed participants" was NOT true in production for a host without an invite row. Its evidence never exercised that case, so by this census's own rule the row was overstated (W) on main until this change. It is C now on new evidence. The host is counted from the selected `creator_id` (`artifacts/api-server/src/routes/telegraphMemory.ts:222#chat_thread_id, creator_id`), shown red on main against a fake that returns only the selected columns. A host who declined their own plan is not a confirmed participant and is not counted (`artifacts/api-server/src/test/telegraphMemory.test.ts:553#a host who RSVP'd DECLINED to their own plan is not counted`, red on this branch's first head). A `maybe` invitee is counted and a pending one is not (`artifacts/api-server/src/test/telegraphMemory.test.ts:559#a maybe invitee is counted; a pending or declined one is not`). A member who was not on the plan is not counted, even in their own recap (`artifacts/api-server/src/test/telegraphMemory.test.ts:568#a member who was not on the plan is not counted`). Mutants are in 93.8. The window, `no_completed_plan` and `wrote: "nothing"` clauses are untouched. |
+
+T310 (§92, open PR #721) cites T121/T122 at C. It stays W either way, as the TM-7 verification already found.
+
+### 93.4 Owner question Q-RH1 (open; LR-B58-6 holds main's behaviour until the owner decides)
+
+**Should a block between the viewer and a person on the plan change who is counted?** The choice is to filter BOTH
+surfaces or NEITHER. Filtering only the recap is ruled out (LR-B58-6).
+
+- **What exists today.** `GET /meetups/:id` reads no `blocks` (§89.7). It shows unfiltered going/maybe/declined
+  counts, the host's handle and avatar, and up to four going attendees' handles and avatars. The recap carries no
+  identity at all: no id, name, handle, face, excerpt or media URL, only counts and source message ids.
+- **NEITHER (implemented, main's behaviour).** The recap counts the same audience the meetup page shows. Cost: a viewer
+  in a block with someone on the plan sees that person counted in "N people". This is no more than the meetup page
+  beside it already shows, and less, since the recap names nobody.
+- **BOTH.** Filter the recap's count and `GET /meetups/:id`'s counts, host and attendee list, in both directions.
+  Cost: a change to the meetups surface, and its own decision about a block with the HOST, whose plan page the viewer
+  can still open. Filtering both keeps the two numbers equal, so neither page betrays the other.
+- **Recap only (rejected, built on `f83aad3d5` and removed).** The recap count drops below host + going + maybe on the
+  plan page exactly when someone on the plan is in a block with the viewer. That is a new "someone here blocked you"
+  signal that main did not have. The verifier's analysis (VERIFY-RH, FIX-2) is the basis for LR-B58-6.
+
+### 93.5 Tests and mutations
+
+- NOT-GRADED: artifacts/api-server/src/test/helpers/selectProjection.ts — the shared test projector the suite's fake now uses; test machinery, not a surface this census grades.
+- NOT-GRADED: travel-buddy-standalone/app/meetup/[id].tsx — cited in 93.2 only to show the app lets a plan's creator RSVP `declined` to their own plan; the meetup screen is not a surface this census grades.
+
+- `telegraphMemory.test.ts` passes 35/35: 24 existing and 11 new. The fake's projection is pinned by a self-test
+  (`artifacts/api-server/src/test/telegraphMemory.test.ts:524#the fake answers with the selected columns only`).
+  - Against main `51c3f30b4`'s route with the column-faithful fake: 30 pass / 5 fail, every case whose host has no
+    invite row. With the OLD whole-row fake, main's route PASSES those, which reproduces the blind spot (and counts
+    the `declined` host instead).
+  - Against this branch's first head `f83aad3d5`: 33 pass / 2 fail (the `declined` host and the LR-B58-6 cases).
+  - LR-B58-6 is pinned: a block in either direction, or an unreadable `blocks` table, leaves the count unchanged
+    (`artifacts/api-server/src/test/telegraphMemory.test.ts:576#the count is the meetup page's audience`).
+  - Membership still gates the endpoint: a host who left the thread, and a host who is not a member of it, are both
+    refused (`artifacts/api-server/src/test/telegraphMemory.test.ts:594#hosting the plan does not open the recap to a non-member`).
+- Mutants for the final head are in 93.8.
+- Neighbours, by explicit path, 227/227:
+  - `telegraphCardTruthDoors`
+  - `telegraphConversationMemoryBoundary`
+  - `telegraphIdentityAcrossBlocks`
+  - `telegraphLocationAcrossBlocks`
+  - `telegraphSharedCardReaders`
+  - `selectProjection`
+
+### 93.6 Found, not changed (for the lead)
+
+- `identityWithheldAcrossBlocks` fails open if a block read THROWS rather than resolving an error. No suite throws.
+  This gap predates the PR (verifier V6), and the recap no longer calls the helper.
+- Corrected in fix round 1: the first head's 93.6 said a host who declined their own plan "is still counted … the
+  original design of this route". That was wrong. Production never counted a declined host, because `creator_id` was
+  never returned; the first head started counting one. The final head does not (93.2).
+
+### 93.7 The headline, restated from the rows
+
+Unchanged by this section, which moves no bucket. Merged after §91 (#719) and §92 (#721), as `check:census-integrity`
+counts the merged rows on main `0bea6f282`: 262 / 183 / 4 / 2 of 451. CONSTRUCTED 445 of 451 = 98.7 %; CORRECT 262 of
+451 = 58.1 %.
+
+### 93.8 Fix round 1 (Opus verification of `f83aad3d5`, ACCEPT-WITH-FIXES) — NO ROW CHANGES BUCKET
+
+- **FIX-1, the declined host.** `f83aad3d5` added `creator_id` unconditionally. A host whose own invite row said
+  `declined` was counted: 2 people where main counted 1. Now the host counts only with no invite row or a
+  `going`/`maybe` one, and the invite read takes every status to see that row (93.2).
+- **LR-B58-6, the block filter.** `f83aad3d5` passed the people through `identityWithheldAcrossBlocks`. That is removed,
+  together with its import, so no unused code remains. The count follows the meetup page's audience as on main. Q-RH1
+  is rewritten as the owner's choice (93.4).
+- **FIX-3, test gaps.** These are now pinned:
+  - the viewer is counted only when on the plan (verifier V3);
+  - a `maybe` invitee is counted (V4).
+- **Mutants on the final head: 10 of 10 killed**, each run alone and then restored:
+  - a declined host counted (1 red);
+  - `creator_id` dropped from the select (5 red);
+  - the host counted only with an invite row, which is main's production behaviour (5 red);
+  - every invite row counted whatever its status (9 red);
+  - `maybe` dropped (2 red);
+  - the viewer always counted (2 red);
+  - a recap-only block filter re-added (1 red);
+  - a declined host counted in their own recap only (1 red);
+  - the membership gate ignoring `left_at` (1 red);
+  - the host let past the membership gate (2 red).
+- Not carried over: the first round's block-filter mutants test code that no longer exists.
+- T122's C rests on the evidence in 93.3. The headline is unchanged (93.7).
