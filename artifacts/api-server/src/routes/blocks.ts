@@ -7,11 +7,11 @@ import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEng
 import { invalidateCompassHomeCache } from "./compassHome.js";
 import { resolveInteractionPermissions } from "../services/interactionPermissions.js";
 import { nameVisibilitySet, presentedName } from "../lib/publicIdentity.js";
-import { _clearMediaAccessCache } from "../lib/mediaAccess.js";
+import { _clearMediaAccessCache } from "../lib/mediaAccess.js"; import { readAllByIdKeyset } from "../lib/keysetRead.js"; // census-media §54: on this line, so no cited line moves
 
 const router = Router();
 
-const UUID = /^[0-9a-f-]{36}$/i;
+const UUID = /^[0-9a-f-]{36}$/i; const BLOCKER_IDS_CEILING = 10_000; // GET /me/blocker-ids reads at most this many rows, then refuses — never a prefix (lib/exclusionSet BLOCK_LIST_CEILING's value on PR #754; owner question Q-BLOCKS2-1)
 
 /* ===========================================================================
  * POST /users/:userId/block  — block a user
@@ -299,20 +299,20 @@ router.get("/me/blocker-ids", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { client, user } = auth;
-
-  const { data: rows, error } = await client
-    .from("blocks")
-    .select("blocker_id")
-    .eq("blocked_id", user.id)
-    .limit(500);
-
-  if (error) {
-    req.log.error({ err: error }, "Failed to fetch blocker-ids");
-    sendError(res, "db_error", error.message);
+  // census-media §54 (B58 lane POSTS-LIKERS; BLOCKS-2's "not fixed" item 2). The WHOLE list, or a refusal. This read
+  // was `.limit(500)` and answered the first 500 ids as all of them, and PostgREST cuts any read at db-max-rows with
+  // no error. lib/keysetRead walks by `id` until an EMPTY page; a page that fails fails the whole read (no prefix).
+  const read = await readAllByIdKeyset(() => client.from("blocks").select("id, blocker_id").eq("blocked_id", user.id), BLOCKER_IDS_CEILING);
+  if (!read.ok) {
+    req.log.error({ err: read.error }, "Failed to fetch blocker-ids");
+    sendError(res, "db_error", (read.error as { message?: string } | null)?.message ?? "Failed to fetch blocker-ids");
     return;
   }
+  // Past the ceiling the list is not served at all: a 200 is always the complete set, and the client's !ok path
+  // (BlockedIdsContext) already marks the list "not known" rather than "nobody blocked you".
+  if (read.truncated) { req.log.error({ ceiling: BLOCKER_IDS_CEILING }, "blocker-ids: more rows than the ceiling — refusing rather than serving a prefix"); sendError(res, "degraded_unavailable", "The list of accounts that blocked you could not be read completely"); return; }
 
-  res.status(200).json({ ids: (rows ?? []).map((r: any) => r.blocker_id as string) });
+  res.status(200).json({ ids: read.rows.map((r: any) => r.blocker_id as string) });
 });
 
 /* ===========================================================================

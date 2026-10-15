@@ -105,6 +105,7 @@ function makeFakeClient(state: FakeState = {}) {
       eq(col: string, val: any)           { filters.push((r) => r[col] === val); return b; },
       neq(col: string, val: any)          { filters.push((r) => r[col] !== val); return b; },
       in(col: string, vals: any[])        { filters.push((r) => vals.includes(r[col])); return b; },
+      gt(col: string, val: any)           { filters.push((r) => r[col] > val); return b; }, // GET /me/blocker-ids walks by key (census-media §54)
       is(col: string, val: any)           { filters.push((r) => val === null ? r[col] == null : r[col] === val); return b; },
       or(_filter: string)                 { return b; },
       limit(_n: number)                   { return b; },
@@ -305,7 +306,7 @@ describe("blocks routes", () => {
 
     it("4b. returns IDs of users who have blocked the caller", async () => {
       setClients(makeFakeClient({
-        blocks: [{ blocker_id: OTHER_ID, blocked_id: USER_ID }],
+        blocks: [{ id: "blk-4b", blocker_id: OTHER_ID, blocked_id: USER_ID }],
       }));
       const r = await req("GET", "/me/blocker-ids");
       assert.equal(r.status, 200);
@@ -314,7 +315,7 @@ describe("blocks routes", () => {
 
     it("4c. does not include IDs the caller blocked (only inbound blocks)", async () => {
       setClients(makeFakeClient({
-        blocks: [{ blocker_id: USER_ID, blocked_id: TARGET_ID }],
+        blocks: [{ id: "blk-4c", blocker_id: USER_ID, blocked_id: TARGET_ID }],
       }));
       const r = await req("GET", "/me/blocker-ids");
       assert.equal(r.status, 200);
