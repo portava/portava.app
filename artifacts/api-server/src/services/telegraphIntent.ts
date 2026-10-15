@@ -252,3 +252,21 @@ export function detectIntent(body: string): IntentResult | null {
   if (!best || best.confidence < THRESHOLD) return null;
   return best;
 }
+
+/**
+ * The IntentType vocabulary as a runtime list. The record below is keyed by the
+ * type, so TypeScript refuses a member left out or a stray one added: the list
+ * cannot drift from the union. Read by the Telegraph Context Kernel (§30A.19,
+ * census-telegraph §95), which validates stored `telegraph_chat_suggestions.intent_type`
+ * values against it rather than repeating them.
+ */
+const INTENT_TYPE_SET: Record<IntentType, true> = {
+  find_place: true, suggest_activity: true, create_meetup: true, add_to_plan: true,
+  time_poll: true, availability_match: true, nightlife: true, food: true,
+  attraction: true, beach: true, transport: true, general_plan: true,
+  layover_activity: true, layover_food: true, layover_meetup: true,
+};
+export const INTENT_TYPES = Object.keys(INTENT_TYPE_SET) as readonly IntentType[];
+export function isIntentType(v: unknown): v is IntentType {
+  return typeof v === "string" && Object.prototype.hasOwnProperty.call(INTENT_TYPE_SET, v);
+}

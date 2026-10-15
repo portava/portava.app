@@ -5825,3 +5825,33 @@ grant; until 3814 is applied to `portava-ci`, `check:authorization-contract` rep
 INSERT, UPDATE and DELETE on the four to both client roles (2490's state, never ALL or PUBLIC) and clears the ledger row.
 It refuses unless each table has RLS and its baseline policies, and unless `memory_items_public_read` still hides an
 `only_me` photo (3672) where the column exists. It re-opens every door above.
+
+## 2026-10-14 — `3826_telegraph_context_kernel_flag.sql`, written and NOT applied anywhere (B58 cluster TM-5)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3826_telegraph_context_kernel_flag.sql` | **not applied** | **not applied** |
+
+**What it is.** census-telegraph T439 (§30A.19, the Context Kernel) and the "input to ConversationPolicy" half of T381
+(§30A.1). Seeds `telegraph_context_kernel_enabled` **FALSE** only (beta policy: OFF). No table, column, function or
+grant: the kernel composes its five inputs on read (`server/telegraph/telegraphContextKernel.ts`) through resolvers
+that already exist, and stores nothing.
+
+**What reads it.** `GET /api/threads/:threadId/context` (`server/telegraph/telegraphContextRoute.ts`, three-valued:
+off → `feature_disabled`, unreadable → 503) and the §14.1 capability policy, which with the flag ON takes the
+kernel's relationship term in a direct conversation and lets it refuse `canCall` where the call door's messaging
+floor would (`isFlagEnabled`: an unreadable flag is off, the projection every deployment serves today).
+
+**Without it.** No row means off: the route answers `feature_disabled` and reads nothing else, and every capability
+is decided exactly as before 3826.
+
+**Order.** None required. The kernel's relationship input also needs `telegraph_relationship_context_enabled` (3662)
+ON, and its proximity input needs Nearby ON (`nearby_reachable_enabled`, with 3651 applied first for the observation
+budget); with either off that input answers `not_consulted`.
+
+**Postconditions** recompute from the flag row only (no session state).
+
+**Prefix band.** 3826 is in the B58 telegraph+media band (3825-3839).
+
+**Rollback:** `db/rollback/2026-10-14-3826-telegraph-context-kernel-flag-rollback.sql` deletes the flag row (and its
+ledger row). Turning the flag off is equivalent and is almost always what is wanted.

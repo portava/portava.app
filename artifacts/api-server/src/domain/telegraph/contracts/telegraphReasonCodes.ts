@@ -107,6 +107,7 @@ export const TELEGRAPH_REASON_CODES = [
   "TELEGRAPH_DEGRADED_BLOCKS_UNREADABLE",
   "TELEGRAPH_DEGRADED_THREAD_UNREADABLE",
   "TELEGRAPH_DEGRADED_TRUST_UNREADABLE",
+  "TELEGRAPH_DEGRADED_RELATIONSHIP_UNREADABLE", // §30A.19: the Context Kernel's relationship term could not be read (T381, 3826)
   "TELEGRAPH_DEGRADED_SCHEMA_ABSENT",    // the column/table this answer needs is not migrated
 ] as const;
 

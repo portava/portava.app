@@ -51,7 +51,7 @@ import {
   type ConversationCapabilityName,
   type ResolvedConversationCapabilities,
 } from "../contracts/conversationCapabilities.js";
-import type { TelegraphReason } from "../contracts/telegraphReasonCodes.js";
+import type { TelegraphReason } from "../contracts/telegraphReasonCodes.js"; import { type ContextInput, type KernelRelationshipValue } from "../contracts/telegraphContextKernel.js"; import { readKernelRelationship } from "../../../server/telegraph/telegraphContextRelationship.js"; import { isFlagEnabled } from "../../../lib/featureFlags.js"; // census-telegraph §95 (T439/T381): the Context Kernel's relationship term, behind telegraph_context_kernel_enabled (3826)
 
 const log = rootLogger.child({ mod: "telegraphCapabilities" });
 
@@ -349,6 +349,25 @@ export async function resolveConversationCapabilities(
   if (conversationType === "direct") deny(d, "canSeeGroupReadReceipts", "TELEGRAPH_POLICY_MEMBERSHIP_DERIVED");
   // D-24: the restriction term that stood here is removed; see the comment above.
   else grant(d, "canSeeGroupReadReceipts");
+  // ── §30A.19 / §30A.1 (census-telegraph T439, T381): the Context Kernel's ──
+  // relationship term — an INPUT to this policy, never a replacement for the
+  // eight inputs above. Consulted only with `telegraph_context_kernel_enabled` ON
+  // (3826, seeded FALSE: OFF decides every capability exactly as before), only in
+  // a direct conversation with one other active member whose block state was
+  // read and is clear, and it can only REFUSE canCall: the call door's messaging
+  // floor (lib/calls/callPermissionEngine.ts canUserStartCall step 5, through
+  // lib/calls/callGatewayAdapter.ts — `canMessage(caller, callee).allowed`) is
+  // exactly the term's `messagingFloor`, so the projection stops offering a call
+  // the door refuses. An unreadable term is false + degraded, never a grant. It is
+  // read only while canCall stands granted — the one answer it can change — so a
+  // failed read never degrades a set it could not have moved. An unreadable kernel
+  // FLAG reads as off (isFlagEnabled), as the §14.3 flag above does: the
+  // projection is not the gate, and off is what every deployment serves.
+  if (d.capabilities.canCall && conversationType === "direct" && counterpartId && !blocked && !blockUnreadable && (await isFlagEnabled(sc, "telegraph_context_kernel_enabled"))) {
+    const call = kernelCallTerm(await readKernelRelationship(sc, viewerId, counterpartId));
+    if (call.degraded) markDegraded("TELEGRAPH_DEGRADED_RELATIONSHIP_UNREADABLE");
+    if (call.refusal !== null && d.capabilities.canCall) deny(d, "canCall", call.refusal);
+  }
 
   // A thread admin is a real role in message_thread_members; nothing in §14.1
   // keys off it today, and recording that is better than a dangling read.
@@ -367,3 +386,22 @@ export async function resolveConversationCapabilities(
 }
 
 export { MOST_PRECISE_LOCATION_LEVEL };
+
+/**
+ * §30A.19 (census-telegraph T381): what the kernel's relationship term does to
+ * canCall. PURE. Only a READ term can refuse, and only where the call door would:
+ *   - a relationship the resolver saw as BLOCKED (a block the policy's own read
+ *     missed — a race) refuses as the block does (redacted on the wire);
+ *   - a messaging floor that is not a full allow (`requires_request` or
+ *     `denied`) refuses with the recipient-privacy reason — the call door's
+ *     `messaging_not_permitted`;
+ *   - a term that could not be read refuses as degraded.
+ * A term that was not consulted (the relationship's own flag off) changes nothing.
+ */
+export function kernelCallTerm(term: ContextInput<KernelRelationshipValue>): { refusal: TelegraphReason | null; degraded: boolean } {
+  if (term.status === "degraded") return { refusal: "TELEGRAPH_DEGRADED_RELATIONSHIP_UNREADABLE", degraded: true };
+  if (term.status !== "read") return { refusal: null, degraded: false };
+  if (term.value.state === "BLOCKED") return { refusal: "TELEGRAPH_AUTH_BLOCKED", degraded: false };
+  if (term.value.messagingFloor !== "allowed") return { refusal: "TELEGRAPH_POLICY_RECIPIENT_PRIVACY", degraded: false };
+  return { refusal: null, degraded: false };
+}

@@ -42,7 +42,7 @@ import dailyBriefRouter from "./dailyBrief";
 import telegraphCommandsRouter from "./telegraphCommands";
 import telegraphFeedbackRouter from "./telegraphFeedback";
 // Telegraph §14.1 / §21 / §18.3 — the domain kernel's own server surface.
-import telegraphCapabilityRouter from "../server/telegraph/capabilityRoute";
+import telegraphCapabilityRouter from "../server/telegraph/capabilityRoute"; import telegraphContextRouter from "../server/telegraph/telegraphContextRoute"; // census-telegraph T439 §30A.19 Context Kernel (flag seeded FALSE, 3826)
 import telegraphSearchRouter from "../server/telegraph/searchRoute";
 import telegraphReadReceiptsRouter from "../server/telegraph/readReceiptsRoute";
 import telegraphKernelCommandRouter from "../server/telegraph/commandRoute";
@@ -205,7 +205,7 @@ router.use(telegraphFeedbackRouter);
 // at the top of `server/telegraph/commandRoute.ts`.
 router.use(telegraphKernelCommandRouter);
 router.use(telegraphCommandsRouter);
-router.use(telegraphCapabilityRouter);
+router.use(telegraphCapabilityRouter); router.use(telegraphContextRouter);
 router.use(telegraphSearchRouter);
 router.use(telegraphReadReceiptsRouter);
 router.use(messagingRouter);

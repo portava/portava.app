@@ -425,6 +425,16 @@
       "fingerprint": "ed79b0c205323d49",
       "closedBy": "withholds",
       "why": "A thrown block read while telling the crew that a traveller turned back lands in tellCrewOfAbort's catch, which answers untold: no crewmate is told, and the abort itself still answers ok with its ledger row (census-layover §74, L144)."
+    },
+    {
+      "key": "server/telegraph/telegraphContextKernel.ts::readGate::catch#1",
+      "kind": "catch",
+      "reads": [
+        "readPairExclusion"
+      ],
+      "fingerprint": "d077803f3bda9a99",
+      "closedBy": "answers-unreadable",
+      "why": "pair = exclusionsUnavailable(err): a thrown pair read in the Context Kernel's gate becomes the ok:false sentinel, so pairBlock is 'unreadable' and composeConversationContext answers the minimal context — all five inputs withheld as TELEGRAPH_DEGRADED_BLOCKS_UNREADABLE, degraded: true — and no input is read (census-telegraph §95; src/test/telegraphContextKernel.test.ts K5 pins the thrown case byte-for-byte against the returned one)."
     }
   ]
 }
