@@ -620,7 +620,7 @@ const invitableIds = (r: { body: any }) => (r.body.people as any[]).map((p) => p
 
 describe("V: who can be invited — the list the app renders, so the app never infers eligibility", () => {
   it("the owner gets exactly the APPROVED-tag people (never a pending tag, an untagged person or themself), each with a handle and nothing else", async () => {
-    const a = await start({ flag: "on" });
+    const a = await start({ flag: "on" }, { mutate: (s) => s.memory_tags.push({ memory_id: MH, tagged_user_id: H, status: "approved" }) }); // a self-tag row is never an invitee
     const r = await invitable(a, MH);
     assert.equal(r.status, 200);
     assert.deepEqual(invitableIds(r), [B, C].sort(), "D's tag is pending, E has none, H is the owner");
