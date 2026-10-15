@@ -114,6 +114,10 @@ interface FakeOpts {
   /** memory_kernel_enabled ON, with 2711's ADD_MEDIA modelled. */
   kernel?: boolean;
   beforeUpdate?: (table: string, store: Record<string, any[]>) => void;
+  /** A table that exists without some of the columns the code names (a store of the wrong shape). */
+  missingColumns?: Record<string, readonly string[]>;
+  /** The 3672 probe (a select naming memory_items.visibility) fails as unreadable — the table is there. */
+  failItemVisibilityProbe?: boolean;
 }
 
 function makeClient(store: Record<string, any[]>, opts: FakeOpts, receipts = new Map<string, any>()) {
@@ -150,6 +154,10 @@ function makeClient(store: Record<string, any[]>, opts: FakeOpts, receipts = new
       if (opts.absent?.has(table)) return err(`relation "public.${table}" does not exist`, "42P01");
       if (mode === "select" && opts.failReads?.has(table)) return err(`${table} unavailable`, "57014");
       if (mode !== "select" && opts.failWrites?.has(`${table}:${mode}`)) return err(`${table} ${mode} failed`, "57014");
+      for (const col of opts.missingColumns?.[table] ?? []) {
+        if (mode === "select" && new RegExp(`\\b${col}\\b`).test(cols)) return err(`column ${table}.${col} does not exist`, "42703");
+      }
+      if (opts.failItemVisibilityProbe && table === "memory_items" && mode === "select" && /\bvisibility\b/.test(cols)) return err("canceling statement due to statement timeout", "57014");
       // 3672 not applied: the column is not there, for a read and for a write.
       if (table === "memory_items" && !opts.itemVisibility) {
         if (mode === "select" && /\bvisibility\b/.test(cols)) return err("column memory_items.visibility does not exist", "42703");
@@ -429,6 +437,29 @@ describe("H180 detection — a capture inside a Memory the owner already has is 
     assert.deepEqual([k.status, k.body.error], [404, "feature_disabled"]);
   });
 
+  it("3806 of the WRONG SHAPE (a column this code names is missing) is not deployed — never `ready`", async () => {
+    app = await start({ missingColumns: { [TABLE]: ["basis"] } });
+    const r = await detect(app);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.report.convergence.state, "not_deployed");
+    assert.equal(proposals(app).length, 0);
+    assert.equal(eveningEpisodes(app).length, 1, "the detector behaves as before 3806");
+    assert.deepEqual((await inbox(app)).body.convergence, { state: "not_deployed" });
+  });
+
+  it("a Memory's window is its OWN photos' span: another person's capture behind one of its items widens nothing", async () => {
+    app = await start({
+      mutate: (s) => {
+        Object.assign(s.memories[0], { starts_at: null, ends_at: null });
+        // An item whose URL is also a row of ANOTHER person's media, captured late in the evening.
+        s.media_assets.push(media(9, "2026-03-02T23:00:00.000Z", { owner_user_id: OTHER, public_url: url(9, OTHER) }));
+        s.memory_items.push({ id: "91000000-0000-4000-8000-000000000009", memory_id: M, media_url: url(9, OTHER), media_type: "image/jpeg", caption: null, position: 1 });
+      },
+    });
+    await detect(app);
+    assert.equal(proposals(app).length, 0, "one own photo is a point, not 19:05–23:00");
+  });
+
   it("3806 UNREADABLE: detection refuses (503) and writes nothing — never a duplicate candidate it could not rule out; the inbox says unavailable", async () => {
     app = await start({ failReads: new Set([TABLE]) });
     const r = await detect(app);
@@ -560,6 +591,17 @@ describe("H180 Keep — only the owner's Keep attaches, through §17 ADD_MEDIA, 
     assert.equal(itemsOf(app, M).find((i) => i.media_url === url(2)).visibility, null);
   });
 
+  it("who would see a kept photo cannot be read (3672 probe unreadable): the inbox says unavailable and Keep refuses (503) before claiming anything", async () => {
+    app = await start();
+    await detect(app);
+    reclient(app, { failItemVisibilityProbe: true });
+    assert.deepEqual((await inbox(app)).body.convergence, { state: "unavailable" });
+    const r = await keep(app, M, [a(2)]);
+    assert.equal(r.status, 503);
+    assert.equal(proposal(app, M, 2).state, "proposed", "nothing claimed");
+    assert.equal(itemsOf(app, M).length, 1);
+  });
+
   it("an attach that fails after the claim leaves an INTERRUPTED Keep in the inbox; Keep again finishes it with one item", async () => {
     app = await start();
     await detect(app);
@@ -682,6 +724,21 @@ describe("H180 Dismiss — the durable negative", () => {
     assert.equal(itemsOf(app, M).length, 1, "no photo behind a dismissal");
   });
 
+  it("ONE DECISION WINS: a Keep that claims between Dismiss's read and its write makes the Dismiss change nothing (409)", async () => {
+    let raced = false;
+    app = await start({
+      beforeUpdate: (table, st) => {
+        if (table !== TABLE || raced) return;
+        raced = true;
+        Object.assign(st[TABLE].find((x) => x.media_asset_id === a(2)), { state: "kept", decided_at: "2026-10-05T00:00:00.000Z" });
+      },
+    });
+    await detect(app);
+    const d = await dismiss(app, M, [a(2)]);
+    assert.deepEqual([d.status, d.body.reason], [409, "nothing_to_dismiss"]);
+    assert.equal(proposal(app, M, 2).state, "kept");
+  });
+
   it("a kept photo cannot be dismissed (409): remove it from the Memory instead", async () => {
     app = await start();
     await detect(app);
@@ -721,6 +778,16 @@ describe("H180 late captures of a KEPT episode", () => {
     const k = await keep(app, memoryId, [a(8)]);
     assert.equal(k.status, 200, JSON.stringify(k.body));
     assert.equal(itemsOf(app, memoryId).length, 4);
+  });
+
+  it("a late photo of a kept episode whose Memory is no longer published is not proposed", async () => {
+    app = await start();
+    const { memoryId } = await keptEvening(app);
+    app.store.memories.find((x) => x.id === memoryId).state = "archived";
+    app.store.media_assets.push(media(8, "2026-03-02T20:50:00.000Z"));
+    const r = await detect(app);
+    assert.equal(r.status, 200);
+    assert.equal(proposals(app).length, 0);
   });
 
   it("A RETRIED KEEP OF THE EPISODE NO LONGER ATTACHES THE LATE PHOTO the owner was never shown", async () => {
