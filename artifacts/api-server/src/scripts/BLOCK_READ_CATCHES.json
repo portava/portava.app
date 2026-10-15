@@ -1,0 +1,420 @@
+{
+  "//": [
+    "blockReadCatchGuard ledger (census-telegraph §94). One entry per place a THROWN block read can land: a try whose block holds a block read, a .catch() chained on one, an allSettled over one.",
+    "closedBy says what the thrown read turns into there; why says how. fingerprint is the handler's code with comments removed: any code change to it is CHANGED and must be re-judged here.",
+    "Seeded 2026-10-14 on branch claude/fix-blocks-fail-open by reading every handler. Re-print sites with BLOCK_READ_CATCHES_PRINT=1 node --import tsx/esm --test src/test/blockReadCatchGuard.test.ts"
+  ],
+  "sites": [
+    {
+      "key": "compass/CompassNotificationEngine.ts::evaluateNotification::catch#1",
+      "kind": "catch",
+      "reads": [
+        "from(\"blocks\")"
+      ],
+      "fingerprint": "6577d22e14843e24",
+      "closedBy": "denies",
+      "why": "A thrown blocked-sender check suppresses the push (decide('suppressed_blocked_sender', 'block_state_unknown')); nothing is sent to or about a person whose block state is unknown."
+    },
+    {
+      "key": "compass/CompassProfileService.ts::buildProfile::allSettled#1",
+      "kind": "allSettled",
+      "reads": [
+        "from(\"blocks\")"
+      ],
+      "fingerprint": "83d5084860df355a",
+      "closedBy": "rethrows",
+      "why": "A REJECTED blocks read (allSettled status 'rejected') sets safetyListErrored and buildProfile throws 'block/mute safety-list load failed — failing closed'; no profile with an empty exclusion list is built."
+    },
+    {
+      "key": "compass/CompassTools.ts::refreshHiddenUsers::catch#1",
+      "kind": "catch",
+      "reads": [
+        "from(\"blocks\")"
+      ],
+      "fingerprint": "fba48987e9171cc7",
+      "closedBy": "keeps-snapshot",
+      "why": "With a snapshot profile the catch returns it unchanged (the hidden set read at ask time, never widened); with no snapshot it rethrows and executeCompassTool's catch answers 'Tool execution failed'."
+    },
+    {
+      "key": "compass/CompassTools.ts::groupBlockUnion::catch#1",
+      "kind": "catch",
+      "reads": [
+        "readGroupBlockExclusions"
+      ],
+      "fingerprint": "aa90cd64194645db",
+      "closedBy": "answers-unreadable",
+      "why": "Returns exclusionsUnavailable(e); the group-recommendation tool then declines with 'Group block state could not be read' (pinned in exclusionSetContract.test.ts §6)."
+    },
+    {
+      "key": "lib/blockGuard.ts::isBlockedBetween::catch#1",
+      "kind": "catch",
+      "reads": [
+        "from(\"blocks\")"
+      ],
+      "fingerprint": "0e94bf899c05597b",
+      "closedBy": "denies",
+      "why": "THE READER: a thrown read returns deniedAfterThrow() — true (blocked) with the same two counters as a returned error. Also pinned with no ledger escape by THE READERS rule."
+    },
+    {
+      "key": "lib/blocks.ts::fetchBlockedSet::catch#1",
+      "kind": "catch",
+      "reads": [
+        "from(\"blocks\")"
+      ],
+      "fingerprint": "9a64ef9f58d225a0",
+      "closedBy": "answers-unreadable",
+      "why": "THE READER: a thrown read returns null, which every caller must treat as 'show nobody' (submitterIsVisible withholds every authored row). Pinned by THE READERS rule."
+    },
+    {
+      "key": "lib/calls/callGatewayAdapter.ts::isBlockedEither::catch#1",
+      "kind": "catch",
+      "reads": [
+        "readPairExclusion"
+      ],
+      "fingerprint": "0a055c11ec1c71b4",
+      "closedBy": "denies",
+      "why": "A thrown pair read returns true (treated as blocked), so a call between the pair is refused."
+    },
+    {
+      "key": "lib/discoveryTrendExplanation.ts::eligibleListPlaces::catch#1",
+      "kind": "catch",
+      "reads": [
+        "fetchBlockedSet"
+      ],
+      "fingerprint": "9a64ef9f58d225a0",
+      "closedBy": "answers-unreadable",
+      "why": "Returns null, the function's 'eligibility could not be read' answer; the caller reports a failure instead of listing places (resolves-not-throws-ok comment at the site)."
+    },
+    {
+      "key": "lib/exclusionSet.ts::readPairExclusion::catch#1",
+      "kind": "catch",
+      "reads": [
+        "from(\"blocks\")"
+      ],
+      "fingerprint": "dedb619c9def3c27",
+      "closedBy": "answers-unreadable",
+      "why": "THE READER: returns exclusionsUnavailable(err); isExcluded answers true for every id. Pinned by THE READERS rule and exclusionSetContract.test.ts §7."
+    },
+    {
+      "key": "lib/exclusionSet.ts::readGroupBlockExclusions::catch#1",
+      "kind": "catch",
+      "reads": [
+        "from(\"blocks\")"
+      ],
+      "fingerprint": "dedb619c9def3c27",
+      "closedBy": "answers-unreadable",
+      "why": "THE READER: returns exclusionsUnavailable(err); isExcluded answers true for every id. Pinned by THE READERS rule and exclusionSetContract.test.ts §7."
+    },
+    {
+      "key": "lib/inputAssistance/pasteEventLinks.ts::readLinkedEvent::catch#1",
+      "kind": "catch",
+      "reads": [
+        "fetchBlockedSet"
+      ],
+      "fingerprint": "0f78357fdc65007b",
+      "closedBy": "answers-unreadable",
+      "why": "Returns { ok: false }; the pasted event link is not resolved into a card, so no event by a blocked host is previewed."
+    },
+    {
+      "key": "lib/inputAssistance/savedEntities.ts::buildSavedPlaceSuggestions::catch#1",
+      "kind": "catch",
+      "reads": [
+        "fetchBlockedSet"
+      ],
+      "fingerprint": "38c652b95c9e1555",
+      "closedBy": "withholds",
+      "why": "Calls opts.onUnreadable() and returns [] — no saved-place suggestion is served, and the lane reports itself unreadable."
+    },
+    {
+      "key": "lib/inputAssistance/searchPage.ts::generateMapSearchPage::catch#1",
+      "kind": "catch",
+      "reads": [
+        "fetchBlockedSet"
+      ],
+      "fingerprint": "d741a5bd142e9caf",
+      "closedBy": "refuses",
+      "why": "Returns { suggestions: [], refusal: transient_db/search_failed } — the page is a refusal, not an unfiltered list."
+    },
+    {
+      "key": "lib/inputAssistance/zeroStatePlaces.ts::buildNearbyPlaceSuggestions::catch#1",
+      "kind": "catch",
+      "reads": [
+        "fetchBlockedSet"
+      ],
+      "fingerprint": "85593af8ba6cf4c4",
+      "closedBy": "answers-unreadable",
+      "why": "Returns unreadable(opts, 'nearby_places') — the lane is reported unreadable and serves no nearby places."
+    },
+    {
+      "key": "lib/mediaAccess.ts::decide::catch#1",
+      "kind": "catch",
+      "reads": [
+        "fetchBlockedSet"
+      ],
+      "fingerprint": "88234e4338bb9bde",
+      "closedBy": "falls-through-to-deny",
+      "why": "The empty catch falls through to step 4 'Nothing references it → DENY (fail-closed)': the generated visual is not served."
+    },
+    {
+      "key": "lib/telegraphEvents.ts::presenceAudience::catch#1",
+      "kind": "catch",
+      "reads": [
+        "readBlockExclusions"
+      ],
+      "fingerprint": "8688aa6dad7ba2a5",
+      "closedBy": "answers-unreadable",
+      "why": "Sets blocks = { ok: false }; a presence-class event is then DROPPED for every member (P-T6, pinned by telegraphPresenceAcrossBlocks.test.ts)."
+    },
+    {
+      "key": "routes/airport.ts::cityPresence::catch#1",
+      "kind": "catch",
+      "reads": [
+        "from(\"blocks\")"
+      ],
+      "fingerprint": "172bb0e6c5cb5bcf",
+      "closedBy": "refuses",
+      "why": "Returns refuse('presence_threw') — layover city presence serves nobody and says so."
+    },
+    {
+      "key": "routes/airport.ts::crewMemberCards::catch#1",
+      "kind": "catch",
+      "reads": [
+        "readBlockExclusions"
+      ],
+      "fingerprint": "e202e67972db8644",
+      "closedBy": "withholds",
+      "why": "Returns cards: [], visibleIds: [], degraded: true, blockedRelation: true — the crew is served without any member card."
+    },
+    {
+      "key": "routes/airport.ts::get /airport/sessions/:id/buddies::catch#1",
+      "kind": "catch",
+      "reads": [
+        "from(\"blocks\")"
+      ],
+      "fingerprint": "3b67dc4345bebc8d",
+      "closedBy": "withholds",
+      "why": "Sets rows = [] and pushes degradedReasons 'blocks_unreadable' — no buddy is served."
+    },
+    {
+      "key": "routes/compass.ts::get /compass/recommendations::catch#1",
+      "kind": "catch",
+      "reads": [
+        "from(\"blocks\")"
+      ],
+      "fingerprint": "1daec5e7b859a8ea",
+      "closedBy": "refuses",
+      "why": "Answers { recommendations: [], error: 'block_check_failed' } — an empty list that says the block check failed."
+    },
+    {
+      "key": "routes/compass.ts::get /compass/recommendations::catch#2",
+      "kind": "catch",
+      "reads": [
+        "from(\"blocks\")"
+      ],
+      "fingerprint": "1daec5e7b859a8ea",
+      "closedBy": "refuses",
+      "why": "Answers { recommendations: [], error: 'block_check_failed' } — an empty list that says the block check failed."
+    },
+    {
+      "key": "routes/compass.ts::get /compass/recommendations::catch#3",
+      "kind": "catch",
+      "reads": [
+        "from(\"blocks\")"
+      ],
+      "fingerprint": "27a7788e19684c4f",
+      "closedBy": "withholds",
+      "why": "Answers { recommendations: [] } after logging 'block-list fetch threw; returning empty' — nobody is recommended."
+    },
+    {
+      "key": "routes/discovery.ts::get /discovery/feed::catch#1",
+      "kind": "catch",
+      "reads": [
+        "fetchBlockedSet"
+      ],
+      "fingerprint": "c19c6fbed9a25fd7",
+      "closedBy": "open-known",
+      "why": "KNOWINGLY OPEN for event posts: a thrown resolution leaves blockedIds empty and fetchEventPostsForDiscovery filters on exactly that set, so blocked authors' event posts are served (places stay closed via placeBlockedIds). Documented posture, reported as a product decision in docs/verification/privacy-authorization.md §5 (open item 3); re-recorded in census-telegraph §94."
+    },
+    {
+      "key": "routes/discovery.ts::get /discovery/community::catch#1",
+      "kind": "catch",
+      "reads": [
+        "fetchBlockedSet"
+      ],
+      "fingerprint": "df63aeaeb442828f",
+      "closedBy": "refuses",
+      "why": "sendDiscoveryRefusal(transient_db, community_assembly_failed) — the community list is a refusal, not an unfiltered list."
+    },
+    {
+      "key": "routes/discoverySearch.ts::get /discovery/search::catch#1",
+      "kind": "catch",
+      "reads": [
+        "fetchBlockedSet"
+      ],
+      "fingerprint": "ef6741d8e7d17476",
+      "closedBy": "refuses",
+      "why": "sendDiscoveryRefusal(transient_db, search_failed) — search answers a refusal, not unfiltered results."
+    },
+    {
+      "key": "routes/discoverySearch.ts::get /discovery/suggest::catch#1",
+      "kind": "catch",
+      "reads": [
+        "fetchBlockedSet"
+      ],
+      "fingerprint": "8b7f150491f04d71",
+      "closedBy": "refuses",
+      "why": "sendDiscoveryRefusal(transient_db, suggest_failed) — suggest answers a refusal, not unfiltered groups."
+    },
+    {
+      "key": "routes/follows.ts::get /users/search::catch#1",
+      "kind": "catch",
+      "reads": [
+        "from(\"blocks\")"
+      ],
+      "fingerprint": "1d080d3d71314aed",
+      "closedBy": "refuses",
+      "why": "Sets blockQueryFailed; the handler then answers db_error 'block state could not be read; nothing was searched'."
+    },
+    {
+      "key": "routes/follows.ts::get /users/suggestions::catch#1",
+      "kind": "catch",
+      "reads": [
+        "from(\"blocks\")"
+      ],
+      "fingerprint": "db3c50ca8b87d9d6",
+      "closedBy": "withholds",
+      "why": "Sets blockStateUnknown; the handler then answers { users: [] } — no suggestion is served."
+    },
+    {
+      "key": "routes/mapTravelers.ts::get /map/travelers::catch#1",
+      "kind": "catch",
+      "reads": [
+        "fetchBlockedSet"
+      ],
+      "fingerprint": "f7c299ff3875d28b",
+      "closedBy": "refuses",
+      "why": "sendError db_error 'Could not load map travelers' — no traveller is placed on the map."
+    },
+    {
+      "key": "routes/mediaFeed.ts::get /media/gems-feed::catch#1",
+      "kind": "catch",
+      "reads": [
+        "from(\"blocks\")"
+      ],
+      "fingerprint": "956fe962b371d5e9",
+      "closedBy": "withholds",
+      "why": "Notes the failed source and sets allRows = [] — the gems feed is served empty and says which read failed (census-media §47)."
+    },
+    {
+      "key": "routes/messaging.ts::get /me/unread-counts::catch#1",
+      "kind": "catch",
+      "reads": [
+        "readBlockExclusions"
+      ],
+      "fingerprint": "1b878cee465590e4",
+      "closedBy": "withholds",
+      "why": "newHighlights stays at its 0 default and 'newHighlights' is pushed to degraded — the block-scoped badge is withheld, the other counts are untouched."
+    },
+    {
+      "key": "routes/messaging.ts::get /threads/:threadId/messages::catch#1",
+      "kind": "catch",
+      "reads": [
+        "identityWithheldAcrossBlocks",
+        "withholdLocationAcrossBlocks"
+      ],
+      "fingerprint": "1206cac4baae938b",
+      "closedBy": "withholds",
+      "why": "Sets replyLinkageUnreadable; replyContextMap stays empty, so every reply renders without its quote or quoted sender's name."
+    },
+    {
+      "key": "routes/og.ts::blocked::catch#1",
+      "kind": "catch",
+      "reads": [
+        "isBlockedBetween"
+      ],
+      "fingerprint": "0a055c11ec1c71b4",
+      "closedBy": "denies",
+      "why": "Returns true — cannot establish block state, so the link preview is withheld."
+    },
+    {
+      "key": "routes/pulse.ts::get /pulse::catch#1",
+      "kind": "catch",
+      "reads": [
+        "from(\"blocks\")"
+      ],
+      "fingerprint": "4465444d2a3cf28a",
+      "closedBy": "withholds",
+      "why": "Sets blockFetchFailed; the handler answers { posts: [], total: 0 } (fail-closed) — no post is served."
+    },
+    {
+      "key": "routes/pulse.ts::get /pulse/live::catch#1",
+      "kind": "catch",
+      "reads": [
+        "from(\"blocks\")"
+      ],
+      "fingerprint": "f515053a27344d19",
+      "closedBy": "withholds",
+      "why": "Sets blockFetchFailed; the handler answers { items: [] } — the live rail is served empty."
+    },
+    {
+      "key": "routes/telegraph.ts::post /telegraph/recommend::catch#1",
+      "kind": "catch",
+      "reads": [
+        "readBlockExclusions"
+      ],
+      "fingerprint": "88234e4338bb9bde",
+      "closedBy": "withholds",
+      "why": "The empty catch leaves enrichedRecommendations as the undecorated text: no tagSpans entry (a live mention) is emitted for anyone."
+    },
+    {
+      "key": "services/ranking/CreatorActivityScoreService.ts::_fetchBlockedIds::catch#1",
+      "kind": "catch",
+      "reads": [
+        "from(\"blocks\")"
+      ],
+      "fingerprint": "0847226a2a022c88",
+      "closedBy": "answers-unreadable",
+      "why": "Adds 'blocks' to degraded and returns null; the aggregator zeroes the block-scoped signals (pinned in exclusionSetContract.test.ts §4)."
+    },
+    {
+      "key": "services/telegraph/identityAcrossBlocks.ts::identityWithheldAcrossBlocks::catch#1",
+      "kind": "catch",
+      "reads": [
+        "readBlockExclusions"
+      ],
+      "fingerprint": "8a6bb767969cf615",
+      "closedBy": "answers-unreadable",
+      "why": "Sets set = { ok: false }: unreadable, every other identity withheld (§45d.3). V-RH V6 mutated exactly this catch; readBlockExclusions no longer rejects, so this is defence in depth, pinned here by fingerprint."
+    },
+    {
+      "key": "services/telegraph/locationAcrossBlocks.ts::withheldLocationIds::catch#1",
+      "kind": "catch",
+      "reads": [
+        "readBlockExclusions"
+      ],
+      "fingerprint": "a93f8986f2522bfd",
+      "closedBy": "answers-unreadable",
+      "why": "Sets blocked = null; every other sender's LOCATION row is then withheld (blocked === null withholds all)."
+    },
+    {
+      "key": "services/wall/LiveForYouService.ts::buildEventStateLiveCandidates::catch#1",
+      "kind": "catch",
+      "reads": [
+        "fetchBlockedSet"
+      ],
+      "fingerprint": "580346414c60c2ec",
+      "closedBy": "withholds",
+      "why": "Returns [] — no event strip item is produced when the producer, including its block read, throws."
+    },
+    {
+      "key": "services/wall/WallProjectionService.ts::loadBlockedAuthorIds::catch#1",
+      "kind": "catch",
+      "reads": [
+        "from(\"blocks\")"
+      ],
+      "fingerprint": "ba95bc9b6989be2d",
+      "closedBy": "withholds",
+      "why": "Returns new Set(unique) — every candidate author is treated as blocked, so the Wall shows none of them."
+    }
+  ]
+}

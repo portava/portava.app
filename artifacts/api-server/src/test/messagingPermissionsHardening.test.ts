@@ -91,7 +91,7 @@ function makeClient(o: Opts) {
 
   return {
     from: (table: string) => {
-      if (table === "blocks") return builder(table, () => ({ data: o.blockRow ?? null, error: null }));
+      if (table === "blocks") return builder(table, () => ({ data: o.blockRow ?? [], error: null })); // the real shape: a `.limit(1)` list read answers [] for "no block", never null (census-telegraph §94: a null answer is unreadable)
       if (table === "user_message_settings") return builder(table, () => ({ data: o.settings ?? null, error: null }));
       if (table === "user_friendships") return builder(table, () => ({ data: o.isFriend ? { user_a: A } : null, error: null }));
       if (table === "user_follows") { followCall++; return builder(table, () => ({ data: null, error: null })); }
