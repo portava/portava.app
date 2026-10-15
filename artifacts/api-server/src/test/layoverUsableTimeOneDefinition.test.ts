@@ -237,8 +237,8 @@ describe("airside — a dwell is rated against the layover's own span, clipped t
     for (const c of airside) {
       if (c.safetyRating === "safe") assert.ok((c.activityTimeMin ?? Number.POSITIVE_INFINITY) + 15 <= 60, `"${c.title}" (${c.activityTimeMin} min) rated safe on a 60-minute connection`);
     }
-    // ...and a dwell the connection does hold is still offered as safe.
-    assert.ok(airside.some((c: any) => c.safetyRating === "safe"), "every airside card was downgraded");
+    // ...and a dwell the connection DOES hold is downgraded only for the unknown boarding time (census-layover §80, V-728 R2), never for its length.
+    const held = airside.filter((c: any) => c.activityTimeMin + 15 <= 60); assert.ok(held.length > 0, "positive control"); for (const c of held) assert.equal(c.warningReason, Engine.BOARDING_TIME_UNKNOWN_WARNING, `"${c.title}" downgraded for its length`);
   });
 
   it("CONTROL: at touchdown the rating is the one the clock always gave", () => {
@@ -249,7 +249,7 @@ describe("airside — a dwell is rated against the layover's own span, clipped t
     const b = Engine.assess(AIRPORT, atTouchdown, pod, NOW, certify(atTouchdown));
     assert.equal(a.rating, "possible_but_risky");
     assert.equal(b.rating, a.rating, "three hours early and at touchdown are the same 60-minute layover");
-    const lounge = Engine.assess(AIRPORT, early, { ...pod, activityTimeMin: 30 }, NOW, certify(early));
+    const boarded = { ...early, boardingTime: early.departureTime }; const lounge = Engine.assess(AIRPORT, boarded, { ...pod, activityTimeMin: 30 }, NOW, certify(boarded)); // §80: "safe" airside needs a STATED boarding time
     assert.equal(lounge.rating, "safe");
   });
 
@@ -265,7 +265,7 @@ describe("airside — a dwell is rated against the layover's own span, clipped t
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe("fail closed — without a readable record for THIS instant, nothing is certified", () => {
-  const s = session(-120, 540); // landed two hours ago, seven hours left: every card fits
+  const s = session(-120, 540, { boardingTime: new Date(NOW + 390 * MIN).toISOString() }); // landed two hours ago, seven hours left: every card fits (boarding stated: census-layover §80)
   const fits = stated(15, 60);
   const lounge = { title: "lounge", travelTimeMin: 0, activityTimeMin: 30, insideAirport: true };
 

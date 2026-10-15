@@ -183,8 +183,8 @@ describe("L293a/b — the recommendation producer states no journey it has not m
     }
   });
 
-  it("the airside cards ARE still safe in a wide window — this fix refuses to rate, it does not refuse everything", async () => {
-    const recs = cards(await generateRecommendations(makeLayoverDb(tables()), AIRPORT, session(), Date.now(), {}));
+  it("the airside cards ARE still safe in a wide window (boarding time stated, census-layover §80) — this fix refuses to rate, it does not refuse everything", async () => {
+    const recs = cards(await generateRecommendations(makeLayoverDb(tables()), AIRPORT, session({ boardingTime: new Date(Date.now() + 11 * 3_600_000).toISOString() }), Date.now(), {}));
     const airside = recs.filter((r) => r.insideAirport);
     assert.ok(airside.some((r) => r.safetyRating === "safe"),
       `every airside card was downgraded: ${JSON.stringify(airside.map((r) => [r.title, r.safetyRating]))}`);
@@ -246,9 +246,9 @@ describe("assess — an unstated landside leg can never be certified", () => {
   });
 
   it("AIRSIDE 0 IS A FACT — an inside-airport candidate is still safe with 0 travel", () => {
-    const a = Engine.assess(AIRPORT, wide(), {
+    const boarded = { ...wide(), boardingTime: wide().departureTime }; const a = Engine.assess(AIRPORT, boarded, { // §80 (V-728 R2): airside "safe" needs a STATED boarding time; = departure, so every figure is unchanged
       title: "Lounge", travelTimeMin: 0, activityTimeMin: 30, insideAirport: true,
-    } as any, T, rec(wide()));
+    } as any, T, rec(boarded));
     assert.equal(a.rating, "safe");
     assert.equal((a as any).statedTravelMin, 0);
     assert.equal((a as any).requiredMinutesIsLowerBound, false);
