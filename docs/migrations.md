@@ -5579,6 +5579,79 @@ sees the request): ≤ 8 attempts, `Retry-After` honoured (≤ 60 s) else 1–30
 waiting per request, then the last 429 goes to the caller unchanged. Wired into certify, `check:migration-ledger`,
 `audit:schema` and `check:missing-live-columns`. The applier is unchanged.
 
+## 2026-10-14 — `3802` (Memory narratives, B58 cluster MEM-NARR-1), written and NOT applied anywhere
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3802_memory_narrative_ai_consent.sql` | **not applied** | **not applied** |
+
+**`3802` — the optional AI summary of a Memory (census-highlights-memories H172, H14, H265; §BI).**
+`memory_narrative_ai_consent` (one row per user, the 3780/3782 consent shape in its OWN table so no other
+purpose's grant counts here; service_role only, every client privilege revoked, RLS on with no policy; the
+server stamps the disclosure version and timestamps; absent = off; a grant must be stamped, by CHECK) and the
+flag `memory_narrative_ai_enabled` seeded FALSE. The table cascades from `auth.users`, so account deletion
+erases it (`lib/deletionDispositions.ts` ERASED_BY_CASCADE). It stores no Memory content and no generated text:
+`POST /memories/:id/narrative/ai` sends nothing unless the flag is on, the person's grant is valid at the
+current disclosure version, and the Memory carries none of DO_NOT_RESURFACE / KEEP_PRIVATE_FOREVER /
+RETAIN_BUT_DO_NOT_PERSONALIZE (3671); the deterministic summary (`GET /memories/:id/narrative`) needs no
+migration.
+
+**Pre/postconditions** in the file, self-contained (the `$post$` block recomputes everything from the catalog).
+**Rollback:** `db/rollback/2026-10-14-3802-memory-narrative-ai-consent-rollback.sql` — refuses while the flag is
+TRUE or while anyone's choice is recorded; re-runs as a no-op (its table-existence test is a NESTED `IF`: the
+one-line `to_regclass(...) IS NOT NULL AND EXISTS (SELECT … FROM t)` form fails 42P01 on a re-run, measured on
+PGlite against 3782's rollback). **Rehearsed** on PGlite over a fixture of the touched objects (roles with
+Supabase's default ACL, `auth.users`, `feature_flags`, `schema_migration_ledger`): apply, re-apply, `$pre$` and
+`$post$` alone, the behaviour (no client privilege, unstamped grant refused, account deletion cascades), both
+rollback refusals, rollback, rollback again, re-apply — 16 of 16 steps; 8 of 8 SQL mutants killed. The chain
+half is `src/test/db/memoryNarrativeAiConsent.db.test.ts` (CI local-db job).
+**Activation** is an owner decision (open questions Q-NARR-1..6; the disclosure text is an engineering draft that
+needs legal review): apply 3802, then turn the flag on.
+
+## 2026-10-14 — `3792_layover_certified_verdict_admits_entry_unverified.sql`, written and NOT applied anywhere (B58 lane LAY-2700)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3792_layover_certified_verdict_admits_entry_unverified.sql` | **not applied** | **not applied** |
+
+**The defect it fixes (a press blocker, found by lane LAY-2).** 2700's `layover_certified_computations.verdict`
+CHECK (`2700_layover_certified_feasibility.sql:135`) admits `yes`, `tight`, `no` and `stay_airside`. The engine also
+certifies `entry_unverified` (`LayoverSafetyEngine.ts:1397`) for every session with 90 or more usable minutes whose
+entry corridor is not confirmed. `entry_requirements` is uncurated, so that is every roomy layover. `ledgerRowFor`
+(`layoverLedger.ts:513`) sends the verdict unmapped. With 2700 and 2992 applied and
+`layover_decision_persistence_enabled` ON, `persistDecision` fails with 23514 and stores no decision, time budget or
+return plan for those sessions.
+
+**What it changes.** It drops every single-column CHECK on `verdict` (found in the catalog; 2700's is inline and
+auto-named) and adds `layover_certified_computations_verdict_check` admitting the engine's five verdicts. The new set
+is a strict superset of 2700's, so existing rows validate untouched. It changes no column, row, index, policy, grant,
+trigger or flag.
+
+**Press order: WITH 2700 and 2992, before the flip.** 2700 and 2992 are applied to `portava-ci` and not to
+production. On a database without 2700 the `$pre$` block refuses, naming 2700, and creates nothing. Production must
+press 2700, then 2992, then 3792, and only then flip `layover_decision_persistence_enabled` (2992's step 5). Flipping
+after 2700 and 2992 but before 3792 stores nothing for every roomy layover with an unconfirmed corridor.
+
+**Safe to leave unapplied while the flag is OFF.** With the flag OFF nothing writes the table, so the narrow CHECK is
+never reached.
+
+**Proof.**
+- `src/test/layoverStoredVocabulary.test.ts` reads the writer's verdict type with the TypeScript checker
+  (`ReturnType<typeof ledgerRowFor>["verdict"]`) and requires the NEWEST migration that states the CHECK to admit every
+  member, so a sixth verdict is red until a migration admits it. It also sweeps every other enumerated and range CHECK
+  on the 2700 and 2992 tables against what each writer sends. All of those hold.
+- `src/test/db/layoverCertifiedVerdict.db.test.ts` (CI local-db job, the real chain): `persistDecision` stores a
+  decision for each of the five verdicts; 3792's `$post$` passes alone and refuses five loosenings; re-applying the body
+  is a no-op; the rollback's refusals and its exact inverse, each inside a rolled-back transaction.
+- PGlite rehearsal on a full-chain replica: 33/33. That covers red-before (23514 on `entry_unverified`), apply over a
+  table holding a 2700-era row, `$post$` run alone (split-session), idempotent re-apply, five `$post$` negative
+  controls, both rollback refusals, rollback, re-run as a no-op, red again, re-apply, and the refusal without 2700.
+  Mutants: 24 of 24 killed (10 TypeScript, 9 on 3792, 5 on the rollback).
+
+**Rollback.** `db/rollback/2026-10-14-3792-layover-certified-verdict-admits-entry-unverified-rollback.sql` restores
+2700's four-value CHECK under the same name and deletes 3792's ledger row. It refuses while any stored computation
+carries a verdict outside the four, and while `layover_decision_persistence_enabled` is ON. Turn the flag OFF first.
+
 ## 2026-10-14 — `3803_memory_type.sql` and `3804_memory_place_occurrence_name.sql`, written and NOT applied anywhere (B58 cluster MEM-CANON)
 
 | | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
@@ -5664,6 +5737,53 @@ before `memory_location_precision_enabled` is turned on, and no later than 3673.
 **Rollback:** `db/rollback/2026-10-14-3813-memories-client-privileges-revoked-rollback.sql`. It re-grants SELECT,
 INSERT, UPDATE, DELETE to `anon` and `authenticated` (2490's state, never the baseline's ALL), refuses unless RLS is
 on and both baseline policies are present, and deletes 3813's ledger row. **It re-opens the door.**
+
+## 2026-10-14 — `3825_telegraph_message_link_previews.sql`, written and NOT applied anywhere (B58 cluster TM-1)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3825_telegraph_message_link_previews.sql` | **not applied** | **not applied** |
+
+**What it is.** census-telegraph T404 (§30A.8, controlled server-side URL previews) and T446 (§30A.20, previews cause
+no recipient-side network disclosure). One service-role-only table (RLS on, no policy, every client privilege
+REVOKEd — rule 4), `message_link_previews`: one text-only preview per plaintext message (`status` ok | none, the
+ORIGINAL link and host, title, description, site name, the sha256 `source_digest` of the body it was made from).
+`telegraph_store_link_preview(...)` (SECURITY INVOKER, service_role only) is the only writer: under FOR SHARE on the
+message row it re-checks the message is live, in the named thread, in a non-E2EE thread and still carries that body,
+and inserts at most one row (`stored | exists | message_gone | stale | e2ee`). The trigger
+`telegraph_link_preview_drop_on_change` (AFTER UPDATE OF body, deleted_at, row-level; SECURITY DEFINER, pinned
+search_path, no client EXECUTE) deletes a message's preview in the same transaction as its edit, unsend or delete.
+Flag `telegraph_link_previews_enabled` seeded FALSE (beta policy: OFF).
+
+**What reads and writes it.** Only `routes/telegraphLinkPreview.ts`, only with the flag ON: the SENDER's
+`POST /threads/:id/messages/:id/link-preview` (within 15 minutes of writing the message; the server takes the first
+external https link from the STORED body — no URL is accepted from a client — and fetches it once through
+`lib/outboundPreviewFetch.ts`), and members' `GET /threads/:id/link-previews?ids=…`, which never fetches. The trigger
+is NOT flag-gated.
+
+**Without it.** The flag is off, so nothing reads it. With the flag ON and 3825 absent, the POST's stored-preview
+read fails and it answers 503 before any fetch; the GET answers 503 on its preview read. Never a fetch without a
+place to store it, never a preview served without its checks.
+
+**Deletion fate.** ERASED_BY_CASCADE (`lib/deletionDispositions.ts`, registered in POST_BASELINE_TABLES): no person
+column; every row CASCADEs from `public.messages` (account deletion erases the account's messages) and from
+`message_threads`, and the trigger removes it with its message's edit / unsend / delete. No separate retention
+period (owner question Q-LP4, fail-closed default).
+
+**Proof.** `src/test/db/telegraphLinkPreviews.db.test.ts` (CI local-db job): the writer's five outcomes, the CHECKs,
+edit / the real §7.4 unsend (3000) / tombstone / `deleted_at` alone each removing the row inside the same
+transaction, unrelated updates keeping it, hard delete / thread delete / the account-deletion messages step
+cascading, the writer's FOR SHARE row lock, the drop running as its owner for a role that may edit messages but holds
+nothing on the table, and an `authenticated` session reading nothing and unable to call the writer. Rehearsed on the PGlite
+full-chain replica: apply, `$pre$` and `$post$` each alone (split-session), idempotent re-apply, six postcondition
+negative controls, rollback, re-apply (20/20); the db suite 13/13 there (0/11 without 3825, before the FOR SHARE and
+owner-rights cases were added).
+
+**Prefix band.** 3825 is in the B58 telegraph+media band (3825-3839).
+
+**Rollback:** `db/rollback/2026-10-14-3825-telegraph-message-link-previews-rollback.sql` drops the trigger, both
+functions, the table and the flag row it seeded. It destroys every stored preview; turning the flag off is almost
+always what is wanted instead.
 
 ## 2026-10-14 — `3787_layover_crew_location_grants.sql`, written and NOT applied anywhere (B58 lane LAY-C1)
 
