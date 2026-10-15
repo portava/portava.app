@@ -432,6 +432,8 @@ describe("MEM-POLICY follow-up — evidence participant counts honour blocks and
     const { out } = await call("memory_get_evidence", { memoryId: M_NY_1 }, ALICE);
     assert.equal(out.confirmed_participants, 0);
     assert.equal(out.participants_unavailable, undefined);
+    // A count is only of the people this viewer may see; the payload says a 0 is not "nobody was there".
+    assert.match(out.caveat, /a 0 is NOT a statement that nobody else was there/);
   });
 });
 

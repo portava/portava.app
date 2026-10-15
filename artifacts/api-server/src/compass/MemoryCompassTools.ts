@@ -97,7 +97,7 @@ import {
   type HistoricalFact,
 } from "../services/memory/historicalTruth.js";
 import { guardMemoryRows } from "../services/memory/memoryReaderGuard.js"; // census H48 H49 H73 H87 H187 H188 H210 (RECON-W A1): the owner's per-Memory controls
-import { hiddenItemKeys, itemKey } from "../services/memory/memoryItemVisibility.js"; import { readPlaceAsk, resolveNamedPlace, unresolvedPlaceAnswer, resolveExactHandle, unresolvedPersonAnswer, originalTextOf, ORIGINAL_LANGUAGE_UNDETERMINED, readMemoryProvenance, evidenceParticipantCounts, MEMORY_MERGE_SPLIT_FLAG, PROPOSE_MERGE_MAX_ABSORBED, PROPOSE_SPLIT_MAX_ITEMS, mergeAudiencesDiffer, MEMORY_PROPOSAL_TOOL_DEFINITIONS } from "./memoryCompassTruth.js"; import { isFlagEnabled } from "../lib/featureFlags.js"; // census H80: a photo the owner keeps to themself; census H262 H265 H120 H123 H124 (b58 HM-A3): one line, because the lines below are cited
+import { hiddenItemKeys, itemKey } from "../services/memory/memoryItemVisibility.js"; import { readPlaceAsk, resolveNamedPlace, unresolvedPlaceAnswer, resolveExactHandle, unresolvedPersonAnswer, originalTextOf, ORIGINAL_LANGUAGE_UNDETERMINED, readMemoryProvenance, evidenceParticipantCounts, PROPOSE_MERGE_MAX_ABSORBED, PROPOSE_SPLIT_MAX_ITEMS, mergeAudiencesDiffer, MEMORY_PROPOSAL_TOOL_DEFINITIONS } from "./memoryCompassTruth.js"; import { isFlagEnabled } from "../lib/featureFlags.js"; // census H80: a photo the owner keeps to themself; census H262 H265 H120 H123 H124 (b58 HM-A3): one line, because the lines below are cited
 
 const log = rootLogger.child({ mod: "memoryCompassTools" });
 
@@ -762,7 +762,7 @@ async function toolMemoryGetEvidence(sc: SupabaseClient, viewerId: string, args:
         }
       : {}),
     caveat:
-      "`attached_artifacts` are files attached to the Memory. They are NOT §6-normalized evidence: nothing here says a photo was captured at the place or the time the Memory claims. Do not describe them as proof. `unidentified_participants` were tagged and may not be identified to this user: never say who, and never say they were there.",
+      "`attached_artifacts` are files attached to the Memory. They are NOT §6-normalized evidence: nothing here says a photo was captured at the place or the time the Memory claims. Do not describe them as proof. `unidentified_participants` were tagged and may not be identified to this user: never say who, and never say they were there. The participant counts cover only the people this user may see, so a 0 is NOT a statement that nobody else was there.",
   };
 }
 
@@ -1130,7 +1130,7 @@ export async function executeMemoryCompassTool(
 const MERGE_SPLIT_OFF = "Merging and splitting Memories is not available yet, so nothing can be proposed. Say so.";
 
 async function toolMemoryProposeMerge(sc: SupabaseClient, viewerId: string, args: Record<string, unknown>): Promise<unknown> {
-  if (!(await isFlagEnabled(sc, MEMORY_MERGE_SPLIT_FLAG))) return refuse(MERGE_SPLIT_OFF);
+  if (!(await isFlagEnabled(sc, "memory_merge_split_enabled"))) return refuse(MERGE_SPLIT_OFF); // the literal check:flag-polarity reads; == memoryCompassTruth.MEMORY_MERGE_SPLIT_FLAG == routes/memoryGraph.ts (pinned by memoryCompassTruthUnits.test.ts)
   const survivorId = String(args["survivorId"] ?? "");
   const absorbed = Array.isArray(args["absorbedIds"]) ? (args["absorbedIds"] as unknown[]).map((x) => String(x ?? "")) : [];
   if (!UUID_RE.test(survivorId)) return refuse("A survivorId is required and must be a UUID.");
@@ -1181,7 +1181,7 @@ async function toolMemoryProposeMerge(sc: SupabaseClient, viewerId: string, args
 }
 
 async function toolMemoryProposeSplit(sc: SupabaseClient, viewerId: string, args: Record<string, unknown>): Promise<unknown> {
-  if (!(await isFlagEnabled(sc, MEMORY_MERGE_SPLIT_FLAG))) return refuse(MERGE_SPLIT_OFF);
+  if (!(await isFlagEnabled(sc, "memory_merge_split_enabled"))) return refuse(MERGE_SPLIT_OFF); // the literal check:flag-polarity reads; == memoryCompassTruth.MEMORY_MERGE_SPLIT_FLAG == routes/memoryGraph.ts (pinned by memoryCompassTruthUnits.test.ts)
   const memoryId = String(args["memoryId"] ?? "");
   if (!UUID_RE.test(memoryId)) return refuse("A memoryId is required and must be a UUID.");
   const itemIds = Array.isArray(args["itemIds"]) ? (args["itemIds"] as unknown[]).map((x) => String(x ?? "")) : [];
