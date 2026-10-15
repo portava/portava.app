@@ -205,19 +205,19 @@ const SAFETY_ORDER = { safe: 0, possible_but_risky: 1, not_recommended: 2, airpo
  */
 describe("§6.1 L52 — a longer travel leg never expands the safe envelope", () => {
   const NOW = Date.parse("2030-06-15T00:00:00.000Z");
-  const a = airport();
+  const a = airport(); const rec = (s: FeasibilitySession) => certifySessionFeasibility(a, s, { nowMs: NOW, entry: null }); // census-layover §75: rated only against a record
 
   for (const activityTimeMin of [5, 30, 120]) {
     for (const verified of [true, false]) {
       it(`travelTimeMin ↑ (activity ${activityTimeMin}, verified ${verified}) never improves the rating`, () => {
-        const s = session({ wantsToLeave: true });
+        const s = session({ wantsToLeave: true }); const record = rec(s);
         let prevRating = -1;
         let prevRequired = -1;
         let sawWorse = false;
         for (let travel = 1; travel <= 300; travel++) {
           const r = assess(a, s, {
             title: "c", travelTimeMin: travel, activityTimeMin, insideAirport: false, verified,
-          }, NOW);
+          }, NOW, record);
           const rank = SAFETY_ORDER[r.rating];
           assert.ok(rank >= prevRating, `travel=${travel}: rating improved from rank ${prevRating} to ${rank} (${r.rating})`);
           assert.ok(r.requiredMinutes >= prevRequired, `travel=${travel}: requiredMinutes fell`);
@@ -233,16 +233,16 @@ describe("§6.1 L52 — a longer travel leg never expands the safe envelope", ()
   it("the two ABSENCES the old sweep swallowed are refusals, not the safe end of the continuum", () => {
     const s = session({ wantsToLeave: true });
     // A landside zero: no journey was ever stated. Not "safe at 0 minutes".
-    const noLeg = assess(a, s, { title: "c", travelTimeMin: 0, activityTimeMin: 30, insideAirport: false, verified: true }, NOW);
+    const noLeg = assess(a, s, { title: "c", travelTimeMin: 0, activityTimeMin: 30, insideAirport: false, verified: true }, NOW, rec(s));
     assert.equal(SAFETY_ORDER[noLeg.rating], 2, `landside 0 rated ${noLeg.rating}`);
     assert.equal(noLeg.requiredMinutesIsLowerBound, true);
     // A zero duration: the column's CHECK is 5..720, so nobody chose this.
-    const noDwell = assess(a, s, { title: "c", travelTimeMin: 30, activityTimeMin: 0, insideAirport: false, verified: true }, NOW);
+    const noDwell = assess(a, s, { title: "c", travelTimeMin: 30, activityTimeMin: 0, insideAirport: false, verified: true }, NOW, rec(s));
     assert.equal(SAFETY_ORDER[noDwell.rating], 2, `activity 0 rated ${noDwell.rating}`);
     assert.equal(noDwell.requiredMinutesIsLowerBound, true);
     // And a stated one-minute leg is the FIRST point of the swept domain, so
     // the sweep above starts where the property it asserts begins to hold.
-    const stated = assess(a, s, { title: "c", travelTimeMin: 1, activityTimeMin: 30, insideAirport: false, verified: true }, NOW);
+    const stated = assess(a, s, { title: "c", travelTimeMin: 1, activityTimeMin: 30, insideAirport: false, verified: true }, NOW, rec(s));
     assert.equal(stated.requiredMinutesIsLowerBound, false);
   });
 });
