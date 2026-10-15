@@ -225,11 +225,12 @@ $PSQL -f src/migrations/3811_memory_snapshots.sql
 $PSQL -f sql/rehearsals/3811_01_memory_snapshots.sql       # prints one "T<n> pass" row per block
 ```
 
-Measured 2026-10-14, 30 of 30 steps passing: apply and re-apply; the `$post$` and `$pre$` blocks alone (the live
-applier's split-session shape); 3813 applied on top; the `$post$` REFUSING thirteen broken states (a client table or
-column grant, PUBLIC, a server INSERT, no server DELETE, a policy, RLS off, the writer disabled, the guard dropped, an
-INVOKER writer, a client EXECUTE, a widened whitelist, a missing cascade) and the `$pre$` refusing a foreign table of the
-same name; T1–T14; the rollback REFUSING with history present (no acknowledgement, a wrong one), succeeding with
+Measured 2026-10-14 (fix round 1), 32 of 32 steps passing: apply and re-apply; the `$post$` and `$pre$` blocks alone
+(the live applier's split-session shape); 3813 applied on top; the `$post$` REFUSING thirteen broken states (a client
+table or column grant, PUBLIC, a server INSERT, no server DELETE, a policy, RLS off, the writer disabled, the guard
+dropped, an INVOKER writer, a client EXECUTE, a widened whitelist, a missing cascade); the `$pre$` refusing three
+same-named tables 3811 did not write (no key; a constraint merely NAMED `memory_snapshots_pkey`, VERIFY-737 P34, which
+used to pass and leave every Memory write failing; 3811's key without the facts whitelist); T1–T15; the rollback REFUSING with history present (no acknowledgement, a wrong one), succeeding with
 `portava.rollback_3811_discard_history = 'discard'` and deleting 3811's ledger row, re-running as a no-op, a Memory
 write working with no trigger, and 3811 re-applying and versioning again.
 
@@ -252,7 +253,11 @@ write working with no trigger, and 3811 re-applying and versioning again.
   account.
 - **T14** negative controls: with the writer disabled a place change records nothing; with the guard disabled a live
   Memory's history can be deleted.
+- **T15** owner question Q-H35-e, AS BUILT: a pick named in the owner's own words and prose typed as a place reference
+  stay in their versions after the owner clears the place, cannot be deleted while the Memory is live, and go when the
+  Memory is deleted. This pins the disclosure; the choice is the owner's.
 
-**40 of 40 SQL mutants killed** (26 on the writer, guard, grants and keys; 10 on the postcondition; 4 on the rollback).
+**40 of 40 SQL mutants killed** (plus, in fix round 1, the `$pre$` reverted to the name-only check and the `$pre$`
+without its whitelist clause: both killed) (26 on the writer, guard, grants and keys; 10 on the postcondition; 4 on the rollback).
 The account-deletion branch of the guard (Q17) survived the first run, because on this fixture `memories`' cascade
 fires first; T13b and db D7 were added for it and kill it.

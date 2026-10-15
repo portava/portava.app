@@ -222,4 +222,30 @@ DO $$ BEGIN
   PERFORM pg_temp.pass('T14');
 END $$;
 
+-- T15 Q-H35-e, AS BUILT: owner-controlled place text is RETAINED. A pick named in the owner's own words, and prose typed
+-- as a place reference, stay in their versions after the owner clears the place; nobody may delete those versions while
+-- the Memory is live; deleting the Memory (§21) removes them. This pins the disclosure, it does not endorse it.
+DO $$ BEGIN
+  INSERT INTO public.memories (id, owner_id, title, place_id, place_display_name_at_occurrence)
+  VALUES ('c3811000-0000-4000-8000-000000000061', 'e1100000-0000-4000-8000-000000000001', 'home', 'fsq:pick', 'Mums house, 12 Elm Street');
+  UPDATE public.memories SET place_id = 'TEXT-IN-PLACE-ID: my ex lives here' WHERE id = 'c3811000-0000-4000-8000-000000000061';
+  UPDATE public.memories SET place_id = NULL, place_display_name_at_occurrence = NULL WHERE id = 'c3811000-0000-4000-8000-000000000061';
+  PERFORM pg_temp.ck((SELECT place_id IS NULL AND place_display_name_at_occurrence IS NULL FROM public.memories WHERE id = 'c3811000-0000-4000-8000-000000000061'), 'T15 setup: the owner cleared the place on the Memory');
+  PERFORM pg_temp.ck(EXISTS (SELECT 1 FROM public.memory_snapshots WHERE memory_id = 'c3811000-0000-4000-8000-000000000061' AND facts ->> 'place_display_name_at_occurrence' = 'Mums house, 12 Elm Street'), 'T15 the owner-typed name is kept in its version');
+  PERFORM pg_temp.ck(EXISTS (SELECT 1 FROM public.memory_snapshots WHERE memory_id = 'c3811000-0000-4000-8000-000000000061' AND facts ->> 'place_id' LIKE 'TEXT-IN-PLACE-ID:%'), 'T15 prose typed as a place reference is kept in its version');
+  BEGIN
+    PERFORM set_config('role', 'service_role', true);
+    DELETE FROM public.memory_snapshots WHERE memory_id = 'c3811000-0000-4000-8000-000000000061' AND facts::text LIKE '%Elm Street%';
+    RAISE EXCEPTION 'EXPECTATION FAILED: T15 a version of a live Memory was retracted';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  PERFORM set_config('role', 'none', true);
+  UPDATE public.memories SET state = 'deleted' WHERE id = 'c3811000-0000-4000-8000-000000000061';
+  PERFORM set_config('role', 'service_role', true);
+  DELETE FROM public.memory_snapshots WHERE memory_id = 'c3811000-0000-4000-8000-000000000061';
+  PERFORM set_config('role', 'none', true);
+  PERFORM pg_temp.ck(NOT EXISTS (SELECT 1 FROM public.memory_snapshots WHERE facts::text LIKE '%Elm Street%' OR facts::text LIKE '%my ex lives here%'), 'T15 deleting the Memory removes the text');
+  PERFORM pg_temp.pass('T15');
+END $$;
+
 SELECT line FROM pg_temp.rehearsal_log ORDER BY n;

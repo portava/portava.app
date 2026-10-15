@@ -25,31 +25,31 @@
 --   starts_at, ends_at               the time window (UTC, millisecond ISO text)
 --   source_mode, memory_type         provenance (3674) and the §4 type (3803)
 --   item_count                       how many items the Memory held at the write
--- A column added by a later migration is in `facts` only where the column
--- exists on the database (a missing one is omitted, never null-filled). NO
--- title, NO caption, NO coordinate, NO city or country text, NO person (not the
--- allowed or hidden lists): free text and location stay in the Memory, which
--- the owner can edit or delete, and never in a history the owner cannot edit.
--- item_count is counted when the MEMORY is written; adding an item without a
--- Memory write does not version it (the trigger is on memories only).
---   engine_versions  {"snapshot": "memory-snapshot@1"} — the extractor that
---                    produced `facts`, so a replay knows how to read them.
---   cause            {command_id?, correction_id?} — read from the transaction
---                    settings portava.memory_command_id and
---                    portava.memory_correction_id when a writer set them (a
---                    uuid; anything else is ignored). NO WRITER SETS THEM TODAY:
---                    2711's kernel is not edited here, so cause is {} on every
---                    current path until a writer opts in.
+-- A later migration's column is in `facts` only where it exists (never null-filled).
+-- NOT STORED: title, caption, coordinates, city/country text, people (the allowed/
+-- hidden lists). BUT TWO FACTS ARE OWNER-CONTROLLED TEXT: place_id is free text (the
+-- API takes any string <= 200; a pick is "fsq:…", and nothing stops prose), and
+-- place_display_name_at_occurrence is the owner's own words for a pick (<= 300,
+-- 3804 rule 3). Each version KEEPS them for the Memory's life: the owner cannot
+-- retract a version (the guard below refuses it while the Memory is live); only
+-- deleting the Memory (§21) or the account removes them. Open owner question
+-- Q-H35-e: keep both as built / store canonical uuid place ids only and no name /
+-- let the owner retract. item_count is counted at the MEMORY write (an item alone
+-- does not version). engine_versions {"snapshot": "memory-snapshot@1"} names the
+-- extractor. cause {command_id?, correction_id?} is read from the transaction
+-- settings portava.memory_command_id / portava.memory_correction_id when a writer
+-- set a uuid (anything else is ignored). NO WRITER SETS THEM TODAY (2711 is not
+-- edited here), so cause is {} on every current path.
 --
 -- ── 2. WHO WRITES IT: AN AFTER ROW TRIGGER ON memories ───────────────────────
--- memory_snapshot_record() fires AFTER INSERT OR UPDATE on public.memories, so
--- it covers every writer — the API's direct writes, 2711's kernel, 3676's merge
--- and split, and anything else — without editing any of them. It writes a new
--- version ONLY when the facts differ from the newest version (a title edit or an
--- updated_at touch writes nothing), and NOTHING for a row whose state is
--- 'deleted': a deleted Memory accrues no history, and §21's lifecycle purges what
--- it had (services/memory/memoryDeletionLifecycle.ts, RAW_EVIDENCE_PURGED). Per
--- Memory, versions are serialised by the row lock the Memory write holds.
+-- memory_snapshot_record() fires AFTER INSERT OR UPDATE on public.memories: every
+-- writer (the API, 2711's kernel, 3676's merge/split) without editing any. A new
+-- version ONLY when the facts differ from the newest (a title edit writes nothing),
+-- none for a 'deleted' row (§21's RAW_EVIDENCE_PURGED purges what it had). One
+-- version per changing WRITE: 2711's create (INSERT, then its precision UPDATE) can
+-- leave two. Versions are serialised by the Memory row lock. FAIL-CLOSED: an error
+-- inside the trigger fails the Memory write itself (a Memory write never lands
+-- unrecorded); none is expected — the PK is serialised, the FKs hold by construction.
 --
 -- ── 3. THE CAP: 50 VERSIONS, THE OLDEST PRUNED (Q-H35) ───────────────────────
 -- After writing version n the trigger deletes versions <= n - 50, so a Memory
@@ -103,11 +103,11 @@ BEGIN
   IF to_regclass('public.memory_items') IS NULL THEN
     RAISE EXCEPTION 'PRECONDITION FAILED (3811): public.memory_items does not exist — item_count reads it.';
   END IF;
-  -- A second apply is accepted; a table of this name with another key is not.
+  -- A second apply is accepted; a same-named table 3811 did not write (another key, or no facts whitelist) is not.
   IF to_regclass('public.memory_snapshots') IS NOT NULL
-     AND NOT EXISTS (SELECT 1 FROM pg_constraint
-                      WHERE conrelid = to_regclass('public.memory_snapshots') AND conname = 'memory_snapshots_pkey' AND contype = 'p') THEN
-    RAISE EXCEPTION 'PRECONDITION FAILED (3811): public.memory_snapshots exists without memory_snapshots_pkey — a table nobody wrote down is in the way.';
+     AND (NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = to_regclass('public.memory_snapshots') AND conname = 'memory_snapshots_pkey' AND contype = 'p' AND pg_get_constraintdef(oid) = 'PRIMARY KEY (memory_id, version)')
+          OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = to_regclass('public.memory_snapshots') AND conname = 'memory_snapshots_facts_whitelist' AND contype = 'c')) THEN
+    RAISE EXCEPTION 'PRECONDITION FAILED (3811): public.memory_snapshots exists without 3811''s key PRIMARY KEY (memory_id, version) or its facts whitelist — a table nobody wrote down is in the way, and applying over it would leave every Memory write failing.';
   END IF;
 END $pre$;
 

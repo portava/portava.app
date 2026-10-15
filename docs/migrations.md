@@ -5796,7 +5796,11 @@ no flag, no row written. `public.memory_snapshots` (PRIMARY KEY `(memory_id, ver
 `cause` jsonb; `created_at`) holds one row per change of a Memory's FACTS. A CHECK limits `facts` to the whitelist
 `state, visibility, location_precision, place_id, canonical_location_id, place_display_name_at_occurrence, starts_at,
 ends_at, source_mode, memory_type, item_count` (open owner question Q-H35's fail-closed default: never a title, caption,
-coordinate, city/country text or person) and `cause` to `{command_id?, correction_id?}`.
+coordinate, city/country text or person) and `cause` to `{command_id?, correction_id?}`. **Two of those facts are
+owner-controlled text** (VERIFY-737): `place_id` (free text up to 200 characters at the API) and
+`place_display_name_at_occurrence` (the owner's words for a pick, up to 300). Each version keeps them for the Memory's
+life: when the owner clears the place, the earlier version still holds it, and only deleting the Memory or the account
+removes it (owner question Q-H35-e: keep / canonical uuid ids only and no name / owner retraction).
 - `memory_snapshot_record()` — AFTER INSERT OR UPDATE ON `public.memories`, FOR EACH ROW, so every writer (the API, the
   2711 kernel, 3676's merge/split) is covered without editing any of them. A version is written only when the facts
   differ from the newest one, never for a row whose `state` is `deleted`, and the oldest beyond 50 are pruned (the rule
@@ -5806,7 +5810,11 @@ coordinate, city/country text or person) and `cause` to `{command_id?, correctio
 - `memory_snapshots_guard()` — BEFORE UPDATE OR DELETE ON `memory_snapshots`, FOR EACH ROW: every UPDATE refused;
   a DELETE only after the Memory's soft delete (§21), inside the `memories` / `auth.users` cascades, or by the cap.
 - Both functions SECURITY DEFINER (the writer inserts into a table the API's role cannot INSERT into), `search_path`
-  pinned to `pg_catalog, pg_temp`, EXECUTE revoked from PUBLIC / anon / authenticated, `RETURNS trigger`.
+  pinned to `pg_catalog, pg_temp`, EXECUTE revoked from PUBLIC / anon / authenticated, `RETURNS trigger`. An error
+  inside the writer fails the Memory write itself (fail-closed). One version per changing WRITE: 2711's create (INSERT
+  then its precision UPDATE) can leave two.
+- `$pre$` refuses an existing `memory_snapshots` without 3811's key definition and its facts whitelist (a same-named
+  table would otherwise let the triggers commit over it and every Memory write fail).
 - RLS on, no policy; REVOKE ALL from PUBLIC, anon, authenticated, service_role, then GRANT SELECT, DELETE to
   service_role (no INSERT, no UPDATE: the server cannot forge or rewrite a version).
 
@@ -5820,9 +5828,10 @@ either side of it (3813's precondition accepts trigger functions over `memories`
 applied or not.
 
 **Proof.** `src/test/db/memorySnapshots.db.test.ts` (CI local-db job, the real chain, D1–D8).
-`sql/rehearsals/3811_00_seed.sql` + `3811_01_memory_snapshots.sql` on PGlite over a fixture of the touched objects: 30/30
-steps (apply, re-apply, `$post$` / `$pre$` alone, 13 postcondition and precondition refusals, T1–T14 with T13b, the
-rollback refusing twice and succeeding, the ledger row, a no-op re-run, re-apply). 40/40 SQL mutants killed.
+`sql/rehearsals/3811_00_seed.sql` + `3811_01_memory_snapshots.sql` on PGlite over a fixture of the touched objects: 32/32
+steps (apply, re-apply, `$post$` / `$pre$` alone, 13 postcondition and 3 precondition refusals, T1–T15 with T13b, the
+rollback refusing twice and succeeding, the ledger row, a no-op re-run, re-apply). 40/40 SQL mutants killed, and both
+fix-round `$pre$` mutants. The db suite D1–D8 ran on PostgreSQL in CI (run 38643772054); D9 added in fix round 1.
 API: `src/test/memorySnapshots.test.ts`.
 
 **Rollback:** `db/rollback/2026-10-14-3811-memory-snapshots-rollback.sql` drops the writer trigger first, then the

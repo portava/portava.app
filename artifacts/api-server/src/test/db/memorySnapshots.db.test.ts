@@ -25,6 +25,9 @@
  *   D7  account deletion takes the history, whichever of its two cascades fires first
  *   D8  the rollback refuses while history exists, drops everything when told
  *       to, and 3811 re-applied is today's catalog (inside BEGIN … ROLLBACK)
+ *   D9  owner question Q-H35-e, AS BUILT: owner-typed place text (a pick's name,
+ *       prose in place_id) stays in its version after the owner clears the place,
+ *       cannot be retracted while the Memory is live, and goes with the Memory
  */
 import { describe, test, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -253,6 +256,22 @@ describe("3811 on the full chain: memory_snapshots, its writer and its guard", {
     assert.ok(out.includes("memory=1"), `anti-vacuity: the Memory row still stands (${out.join(" ")})`);
     assert.ok(out.includes("left=0"), `the account's history outlived it: ${out.join(" ")}`);
     deleteUser(u2);
+  });
+
+  test("D9 Q-H35-e AS BUILT: owner-typed place text stays in its version after the owner clears the place; only deleting the Memory removes it", () => {
+    const m = newMemory({ place_id: "fsq:pick", place_display_name_at_occurrence: "Mums house, 12 Elm Street" });
+    asService(`UPDATE public.memories SET place_id = 'TEXT-IN-PLACE-ID: my ex lives here' WHERE id = '${m}';`);
+    asService(`UPDATE public.memories SET place_id = NULL, place_display_name_at_occurrence = NULL WHERE id = '${m}';`);
+    assert.equal(scalar(`SELECT coalesce(place_id, '<null>') || '|' || coalesce(place_display_name_at_occurrence, '<null>') FROM public.memories WHERE id = '${m}'`), "<null>|<null>", "setup: the Memory no longer carries either text");
+    // At least one version each: on the full chain 3804's trigger drops the name on the place change, so exactly one.
+    assert.ok(Number(scalar(`SELECT count(*) FROM public.memory_snapshots WHERE memory_id = '${m}' AND facts ->> 'place_display_name_at_occurrence' = 'Mums house, 12 Elm Street'`)) >= 1, "the owner-typed name is kept in its version");
+    assert.ok(Number(scalar(`SELECT count(*) FROM public.memory_snapshots WHERE memory_id = '${m}' AND facts ->> 'place_id' LIKE 'TEXT-IN-PLACE-ID:%'`)) >= 1, "prose typed as a place reference is kept in its version");
+    const retract = psql(`SET LOCAL ROLE service_role;\nDELETE FROM public.memory_snapshots WHERE memory_id = '${m}' AND facts::text LIKE '%Elm Street%';`, { single: true });
+    assert.notEqual(retract.status, 0, "a version of a live Memory was retracted");
+    assert.match(retract.stderr, /deleted only by the cap/);
+    asService(`UPDATE public.memories SET state = 'deleted' WHERE id = '${m}';`);
+    asService(`DELETE FROM public.memory_snapshots WHERE memory_id = '${m}';`);
+    assert.equal(scalar(`SELECT count(*) FROM public.memory_snapshots WHERE memory_id = '${m}'`), "0", "deleting the Memory removes the text");
   });
 
   test("D8 the rollback refuses while history exists, drops all of 3811 when told to, and 3811 re-applied is today's catalog", () => {
