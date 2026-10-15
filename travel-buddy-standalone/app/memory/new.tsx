@@ -35,7 +35,7 @@ import {
   createMemory, addMemoryItem,
   type MemoryVisibility, type MemoryLocationPrecision,
 } from '../../src/services/memories';
-import { useMediaPicker } from '../../src/hooks/useMediaPicker.ts';
+import { useMediaPicker } from '../../src/hooks/useMediaPicker.ts'; import { CaptionAiAssist } from '../../src/components/CaptionAiAssist.tsx'; import { AI_WRITING_FIELD_IDS } from '../../src/platform/input-assistance/compass/compassFields.ts'; // G141 — on this line so no cited line moves
 import { GlobalPlacePicker } from '../../src/components/selectors/GlobalPlacePicker';
 import { placeToLocationFields } from '../../src/lib/location/locationPayload';
 import type { Place } from '../../src/lib/location/placeTypes'; import { MemoryTypePicker } from '../../src/features/memories/canonical/MemoryTypePicker.tsx'; import { occurrenceNameOfPick, type MemoryType } from '../../src/features/memories/canonical/memoryCanonical.ts'; // H40/H71; on this line so no cited line moves
@@ -278,6 +278,14 @@ export default function NewMemoryScreen() {
             numberOfLines={4}
             textAlignVertical="top"
             editable={!busy}
+          />
+          {/* census G141 — opt-in AI polish of the traveller's own words; adds no place, person, date or count (shows nothing while compass_ai_writing_enabled is off) */}
+          <CaptionAiAssist
+            fieldId={AI_WRITING_FIELD_IDS.memoryCaption}
+            text={caption}
+            onInsert={setCaption}
+            disabled={busy}
+            testID="memory-create-caption-ai"
           />
         </View>
 

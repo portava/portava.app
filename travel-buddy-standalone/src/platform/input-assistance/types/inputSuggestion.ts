@@ -165,6 +165,12 @@ export interface InputSessionContext {
   endDate?: string;
   /** Current app surface, for context-aware zero-state (§14, §56). */
   surface?: string;
+  /**
+   * census G141 — the EXISTING Memory a `memory.caption` field edits. The server
+   * reads it only to check that the Memory is the caller's and that its owner's
+   * controls allow AI; no Memory content is read. Absent on a new Memory.
+   */
+  memoryId?: string;
 }
 
 /**

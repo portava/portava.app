@@ -41,7 +41,7 @@
  */
 import type { InputContext, AssistanceType, EntityType, OfflineInputPolicy, PrivacyClass } from '../types/inputContext.ts';
 import type { InputAssistanceMode } from '../types/fieldPolicy.ts';
-import { getContextDescriptor } from './inputContexts.ts';
+import { getContextDescriptor } from './inputContexts.ts'; import { TRAVEL_CAPTION_INVENTORY } from './travelCaptionInventory.ts'; // G141 — on this line so no cited line moves
 
 /**
  * How far a field has travelled along the §50/§51 migration.
@@ -276,7 +276,7 @@ export const FIELD_INVENTORY: readonly FieldInventoryRecord[] = [
       'Registered and unmounted. This is the field whose client/server allowPersonalization disagreement would have transmitted raw caption text; it is latent precisely because nothing mounts it.',
     ],
     migrationStatus: UNMOUNTED,
-  },
+  }, ...TRAVEL_CAPTION_INVENTORY, // G141: postcard.caption + memory.caption (contexts/travelCaptionInventory.ts), spread here so no cited line moves
   {
     fieldId: 'event.description',
     context: 'event_description',

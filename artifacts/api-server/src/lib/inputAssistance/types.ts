@@ -323,7 +323,7 @@ export interface MapResultProjection {
 
 export interface SuggestSessionContext {
   tripId?: string;
-  cityId?: string;
+  cityId?: string; /** census G141 — the existing Memory a `memory.caption` field edits; read only to check it is the caller's and that its controls allow AI (travelWriting.ts). */ memoryId?: string;
 }
 
 // ── §23/§55 creation draft (Phase 5) ──────────────────────────────────────────

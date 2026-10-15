@@ -17,7 +17,7 @@ import { color, space, radius, type as t } from '../../src/theme/tokens';
 import {
   getMemory, updateMemory, type Memory, type MemoryVisibility,
 } from '../../src/services/memories';
-import { GlobalPlacePicker } from '../../src/components/selectors/GlobalPlacePicker';
+import { GlobalPlacePicker } from '../../src/components/selectors/GlobalPlacePicker'; import { CaptionAiAssist } from '../../src/components/CaptionAiAssist.tsx'; import { AI_WRITING_FIELD_IDS } from '../../src/platform/input-assistance/compass/compassFields.ts'; // G141 — on this line so no cited line moves
 import { placeToLocationFields } from '../../src/lib/location/locationPayload';
 import type { Place } from '../../src/lib/location/placeTypes'; import { MemoryTypePicker } from '../../src/features/memories/canonical/MemoryTypePicker.tsx'; import { isMemoryType, memoryPlaceLine, occurrenceNameOfPick, type MemoryType } from '../../src/features/memories/canonical/memoryCanonical.ts'; // H40/H71; on this line so no cited line moves
 
@@ -217,6 +217,16 @@ export default function EditMemoryScreen() {
             multiline
             numberOfLines={4}
             textAlignVertical="top"
+          />
+          {/* census G141 — opt-in AI polish of the owner's own words. This Memory's id goes with it so the server can
+              apply its controls (DO_NOT_RESURFACE / KEEP_PRIVATE_FOREVER / RETAIN_BUT_DO_NOT_PERSONALIZE refuse). */}
+          <CaptionAiAssist
+            fieldId={AI_WRITING_FIELD_IDS.memoryCaption}
+            text={caption}
+            onInsert={setCaption}
+            memoryId={id}
+            disabled={saving}
+            testID="memory-edit-caption-ai"
           />
         </View>
 

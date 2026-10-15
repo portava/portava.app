@@ -35,7 +35,7 @@ import { normalizePickedAsset, prepareImageForUpload } from '../services/media/m
 import { isResumableMediaUploadEnabled } from '../services/media/uploadTransportFlag.ts';
 import { color, space, radius, type as t, shadow, avatar } from '../theme/tokens.ts';
 import { KeyboardSafeView } from './ui/KeyboardSafeView.tsx';
-import { useMediaPicker } from '../hooks/useMediaPicker.ts';
+import { useMediaPicker } from '../hooks/useMediaPicker.ts'; import { CaptionAiAssist } from './CaptionAiAssist.tsx'; import { AI_WRITING_FIELD_IDS } from '../platform/input-assistance/compass/compassFields.ts'; // G141 — on this line so no cited line moves
 import { GlobalPlacePicker } from './selectors/GlobalPlacePicker.tsx';
 import type { Place } from '../lib/location/placeTypes.ts';
 import { postcardLocationFields } from './postcardLocation.ts'; import { layoverPostcardPlaceLabel, type LayoverPostcardSource } from './layover/layoverPostcard.ts'; // census-layover L275 — placeToLocationFields is reached through postcardLocationFields
@@ -628,6 +628,13 @@ export function PostcardComposer({ visible, onClose, onSuccess, layover = null }
                     setMentionLoading(isLoading);
                     setMentionVisible(!!trigger && (items.length > 0 || isLoading));
                   }}
+                />
+                {/* census G141 — opt-in AI polish of the traveller's own words; adds no place, person, date or count (shows nothing while compass_ai_writing_enabled is off) */}
+                <CaptionAiAssist
+                  fieldId={AI_WRITING_FIELD_IDS.postcardCaption}
+                  text={caption}
+                  onInsert={setCaption}
+                  testID="postcard-caption-ai"
                 />
 
                 {/* City — universal canonical location picker */}

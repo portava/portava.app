@@ -793,7 +793,7 @@ export async function generateSuggestions(
   ) {
     const aiRows = await buildAiAssistedWriting(sc, {
       context,
-      policy,
+      policy, userId, // G141: whose Memory a memory.caption request names (travelWriting.ts)
       text: trimmed,
       draft: draft ?? {},
       sessionContext,
