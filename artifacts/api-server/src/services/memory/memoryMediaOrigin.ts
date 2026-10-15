@@ -168,3 +168,67 @@ export function memoryItemMediaUrlAccepted(mediaUrl: string, storageOrigin: stri
 
 /** The refusal a route shows for any other URL. */
 export const MEMORY_MEDIA_URL_REFUSAL = "That photo link can't be used. Upload the photo, or use an https link.";
+
+// ── Lane MEM-MEDIA-ADD (2026-10-14, B58; found by lane MEM-SEGMENTS) ──────────
+// The reference POST /api/media/upload answers is a Memory item's media too.
+// Appended so every line the census cites above holds.
+//
+// THE DEFECT. The app adds a photo by uploading it to POST /api/media/upload
+// and sending that answer's `url` verbatim to POST /memories/:id/items
+// (travel-buddy-standalone/src/services/memories.ts addMemoryItem). The upload
+// answers the BARE KEY `post-media/<uid>/<ms>.<ext>` (routes/posts.ts
+// `mediaRelayUrl`) — the canonical reference for an object in a private
+// bucket; a public URL of it loads for nobody. The items route parsed
+// `mediaUrl` with `z.string().url()`, which a bare key is not, so every photo
+// added from the app was answered 400 and nothing was written.
+//
+// THE RULE, AND WHY IT IS THIS NARROW. The route accepts the upload's own form
+// and nothing wider: exactly three segments, the upload's bucket, a lowercase
+// uuid (the only form `user.id` takes, so an upper-cased variant — a DIFFERENT
+// object key — is refused rather than folded), and one file name of
+// `[A-Za-z0-9._-]` that does not start with a dot and contains no `..`. So
+// traversal, percent-encoding (an encoded slash or dot never decodes into a
+// path here, because `%` is not admitted at all), queries, fragments,
+// backslashes, whitespace, nested paths, other buckets and other prefixes are
+// all refused by SHAPE. Whose uid it is, is NOT decided here: this names the
+// owner, and the route's existing classifyMemoryMediaUrl refuses any key whose
+// owner is not the caller (`foreign_storage`), exactly as it already did for
+// the absolute spellings of the same object.
+//
+// Every reader of memory_items.media_url already resolves this form to the same
+// (bucket, path) the upload stored: POST /api/media/sign (lib/mediaUrl
+// appStorageUrlInfo), the app's hydration (src/services/mediaUrl.ts
+// extractBucket), storageRefOf above, and account deletion
+// (lib/storagePath resolveStoragePath). It is also the form the candidate
+// pipeline already writes (services/memory/episodeCandidates.ts inserts
+// media_assets.public_url, which the upload sets to this same key).
+
+/** The bucket POST /api/media/upload stores into and names first in its answer (routes/posts.ts STORAGE_BUCKET). */
+export const UPLOAD_KEY_BUCKET = "post-media";
+
+/**
+ * The longest file name admitted. The upload names its object `<ms>.<ext>` and
+ * its derivatives `<ms>.thumb.jpg`, `<ms>.feed.jpg`, `<ms>.poster.jpg` — all far
+ * shorter. A bound, not a contract: nothing legitimate is near it.
+ */
+export const UPLOAD_KEY_FILE_MAX = 128;
+
+const UPLOAD_KEY_UID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const UPLOAD_KEY_FILE_RE = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
+
+/**
+ * The uid a bare upload key names when `ref` is EXACTLY
+ * `post-media/<lowercase uid>/<file>`, and null for anything else (including
+ * every absolute URL, which keeps memoryItemMediaUrlAccepted's rule). Pure;
+ * never throws.
+ */
+export function uploadKeyOwner(ref: unknown): string | null {
+  if (typeof ref !== "string") return null;
+  const segs = ref.split("/");
+  if (segs.length !== 3) return null;
+  const [bucket, uid, file] = segs as [string, string, string];
+  if (bucket !== UPLOAD_KEY_BUCKET) return null;
+  if (!UPLOAD_KEY_UID_RE.test(uid)) return null;
+  if (file.length > UPLOAD_KEY_FILE_MAX || !UPLOAD_KEY_FILE_RE.test(file) || file.includes("..")) return null;
+  return uid;
+}

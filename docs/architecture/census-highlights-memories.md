@@ -8803,3 +8803,101 @@ The baseline's NOT-GRADED declaration is §BH.7's; §BJ.1 cites the same grants 
 - NOT-GRADED: artifacts/api-server/src/test/handRolledAuthAccountState.test.ts — §BJ.3 names it as the existing pin that the API builds only the service client; another lane's suite, no row here rests on it
 
 **Headline unchanged from §BH: 266 = 71 C / 176 W / 17 N / 2 X.**
+
+## §BT — 2026-10-14 (B58 lane MEM-MEDIA-ADD; found by lane MEM-SEGMENTS): a photo can be added to a Memory from the app again — the items route accepts the reference the upload answers, only under the caller's own uid. 1 row moves C → W (H191, re-examined)
+
+### §BT.1 The defect, re-verified on `origin/main` `3c214ca80`
+
+- **The app's two calls.** The app uploads a photo to `POST /api/media/upload` and sends that answer's `url` unchanged as `mediaUrl` (`travel-buddy-standalone/src/services/memories.ts:314#return typeof json?.url === 'string' ? json.url : null;`, `travel-buddy-standalone/src/services/memories.ts:529#export async function addMemoryItemFromUrl(`).
+- **What the upload answers.** It answers the bare key `post-media/<uid>/<ms>.<ext>` (`artifacts/api-server/src/routes/posts.ts:266#const mediaRelayUrl =`), since 2026-07-26. The bucket is private, so a public URL of the object would load for nobody.
+- **What the route did.** `POST /memories/:id/items` parsed `mediaUrl` with `z.string().url()`. A bare key is not a URL, so the route answered `400 {"error":"invalid_payload","message":"Invalid url"}` and wrote nothing.
+- **For how long.** Every photo the app tried to add to a Memory was refused, from 2026-08-11 (when the app moved to the server upload) until this section. That covers the create screen (§AA) and the detail screen's add button.
+- **Why no suite saw it.** The app's suites fake `fetch`. The server's suites post `https://` fixtures. Nothing put the two halves together.
+- **Measured, not inferred.** The real upload route's answer, sent through the real items route with the app's body, is a 400 on `main` (§BT.3).
+
+### §BT.2 What changed
+
+1. **The route (same line).** `mediaUrl` now passes main's absolute-URL rule, unchanged, OR `uploadKeyOwner` (`artifacts/api-server/src/routes/memories.ts:301#memoryItemMediaUrlAccepted(v, configuredStorageOrigin()) || uploadKeyOwner(v) !== null`). Its import is on the existing line 102.
+2. **The rule is narrow** (`artifacts/api-server/src/services/memory/memoryMediaOrigin.ts:225#export function uploadKeyOwner(`, appended at the file's tail). It accepts exactly the upload's own form:
+   - three segments;
+   - the upload's bucket (`artifacts/api-server/src/services/memory/memoryMediaOrigin.ts:207#export const UPLOAD_KEY_BUCKET = "post-media";`);
+   - a lowercase uid, the only form `user.id` takes;
+   - one file name of `[A-Za-z0-9._-]` that does not start with a dot and has no `..`.
+
+   It refuses by shape: traversal, percent-encoding (`%` is not admitted, so an encoded slash or dot never decodes into a path), a query, a fragment, a backslash, whitespace, a nested path, another bucket, another prefix (including the retired `memories/<uid>/`) and an upper-cased uid.
+3. **Whose uid is not decided by the rule.** The route's existing ownership check refuses any key whose uid is not the caller's, as `foreign_storage` (`artifacts/api-server/src/routes/memories.ts:2096#if (origin.verdict === "foreign_storage") {`), exactly as it did for the absolute spellings (§J.4).
+4. **Absolute URLs keep main's rule.** That is §AU's rule: `https:` from anywhere, which is still the open product question in memoryMediaOrigin.ts, and `http:` only on the configured storage origin. The one visible change is the message for a string that is neither a URL nor a key: the route's fixed refusal instead of zod's "Invalid url".
+5. **Account deletion reads the new spelling (same lines).** `collect_memory_media_paths` read public URLs only, so the key the route now accepts would have outlived its account. It now resolves every `post-media` spelling (`artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:623#const ref = resolveStoragePath(it?.media_url, POST_MEDIA_BUCKET);`). It keeps a path only when the path's owner segment is the erased user and the path has no `..` (`artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:629#if (path && !path.includes("..") && ownerFromPath(path) === userId) {`).
+   - This is the rule `collectOwnedReference` already applies to stories and messages.
+   - It refuses a traversal that main's `startsWith("memories/<uid>/")` let through.
+6. **Every other reader already resolves this form to the object the upload stored.** Each is pinned:
+   - `POST /api/media/sign`'s parser, which is how the owner's app hydrates the photo, and `storageRefOf`, which the in-flight renditions (H182) and segments (H184) readers use: both by this section's suite (§BT.3);
+   - the app's hydration, which signs a bare `post-media/<uid>/<ms>.jpg` reference and never passes it through raw: by its existing suite (`travel-buddy-standalone/src/services/__tests__/mediaUrl.service.test.ts:213#a bare post-media/<path> reference is signed, never passed through raw`).
+
+   The candidate pipeline already writes this same form (`artifacts/api-server/src/services/memory/episodeCandidates.ts:823#const item = { id: itemId, memory_id: memoryId, media_url: url`, where `url` is `media_assets.public_url`, which the upload sets to the key).
+   - Non-owner reads are unchanged and the same for both spellings: `lib/mediaAccess.ts` has no `memory_items` branch (§J.4).
+   - `media_canonical_enabled` and its measured duration are untouched.
+7. **The app is not changed.** It already sends the canonical reference, and it must not send a public URL of a private object.
+
+### §BT.3 Evidence
+
+- **`artifacts/api-server/src/test/memoryItemUploadKey.test.ts`** has 16 tests and is registered. The real `POST /api/media/upload` runs on a real JPEG. Its answer is sent through the real `POST /memories/:id/items` with the body `addMemoryItemFromUrl` builds and an `Idempotency-Key`.
+  - **The defect:** `artifacts/api-server/src/test/memoryItemUploadKey.test.ts:195#the upload answers a bare post-media key under the caller's uid, and the items route ACCEPTS it verbatim`.
+  - **Refused by shape**, 36 references, each 400 with the fixed refusal and nothing written: `artifacts/api-server/src/test/memoryItemUploadKey.test.ts:279#traversal, encoding, other buckets, other shapes`.
+  - **Another user's key is refused for ownership:** `artifacts/api-server/src/test/memoryItemUploadKey.test.ts:229#another user's key is refused for OWNERSHIP`.
+  - Main's absolute-URL behaviour is pinned unchanged (four cases), as are the readers' parsers.
+  - **What removing an item does** (§BT.4): `artifacts/api-server/src/test/memoryItemUploadKey.test.ts:386#the row goes, and the UPLOAD's object is left in storage`.
+- **`artifacts/api-server/src/test/accountDeletionCascade.test.ts`** gains three cases:
+  - the key is collected and removed (`artifacts/api-server/src/test/accountDeletionCascade.test.ts:772#collects and removes post-media/<uid>/<file>`);
+  - the legacy, flat and signed URLs are still removed;
+  - another user's object, a traversal, another bucket and an external URL are never removed (`artifacts/api-server/src/test/accountDeletionCascade.test.ts:800#never removes another user's object`).
+- **Red on main.** Main's three source files under this branch's tests: **11 of 50 fail**. These are the two upload-then-attach cases, the ownership refusal (main answers "Invalid url"), the shape refusals (main's message), the derivative controls, the three pure-rule cases and the three account-deletion cases. The 39 that pass are the "unchanged" guards and the two item-delete cases, which pin what main already does. **Green: 50 of 50**, these two files with the two item-delete cases. **Neighbours: 261 of 261** across `memoryMediaOrigin`, `memories`, `memoryCommandRoutes`, `accountDeletionPagination`, `memoriesTripCrewAndWrites`, `memoryItemVisibility` and the two upload suites `mediaCapturedAtWriter` and `mediaUploadHardening`, plus these two.
+- **Mutants: 23 of 23 killed**:
+  - three on the route: the key branch dropped, the foreign refusal skipped, accept-all;
+  - fifteen on the rule: the type guard; the segment count; the bucket; the uid check, its case and its anchors; the length ceiling and its boundary; the charset, a leading dot, `%`, and each anchor; the dot-dot check; the wrong bucket constant;
+  - five on account deletion: back to public-URL-only parsing; the traversal check dropped; the owner check dropped; the owner check narrowed to `memories/` only; the owner check narrowed to the flat prefix only.
+
+### §BT.4 Rows: one moved, four restated
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| H191 | C | W | **Graded C while the path it covered had no writer.** `DELETE /memories/:id/items/:itemId` removes a storage object only under the retired direct-upload prefix (`artifacts/api-server/src/routes/memories.ts:2273#const ownerPrefix =`). No writer has produced that prefix since 2026-08-11. The objects an item now carries are not removed with it, and a test pins this (§BT.3): the upload's `<uid>/` key (the app, after this section), the candidate pipeline's key, and a flat absolute URL. So §21's "remove asset and derivatives" fails for every item a current writer makes. The renditions lane (H182, in flight) also leaves the upload's original to "the asset's lifecycle". With `media_canonical_enabled` FALSE in production there is no asset row, so after the item goes nothing references the object, and account deletion cannot find it either. The fail-closed default is kept (bytes stay; OQ-MMA-1). The Memory survives, as the row asks |
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H176 | BUILT-AND-CORRECT | **Re-examined: it was graded C (`ebe72b346`, 2026-09-07) while the app's attach was refused,** so for the app no media upload ever completed after its Memory. The row's sentence is about ORDER (the Memory exists first, and media arrive independently), and that held. Its evidence was stale and unanchored (C.5 item 7). It is now anchored: the Memory is created by `artifacts/api-server/src/routes/memories.ts:433#router.post("/memories"`, and a photo uploaded later attaches to the existing Memory through ADD_MEDIA (`artifacts/api-server/src/routes/memories.ts:2118#commandType: "ADD_MEDIA",`), proven with the upload's real answer (`artifacts/api-server/src/test/memoryItemUploadKey.test.ts:195#the upload answers a bare post-media key`; mutant R1 kills it). C stands on this branch; on `main` before it, the C was false for the app |
+| H177 | BUILT-AND-CORRECT | The defect exercised this row every time: each refused attach wrote nothing, and the Memory's facts stood (§AA: "n of m photos didn't upload", and the person lands on the Memory). The route still refuses before the command (`artifacts/api-server/src/routes/memories.ts:301#memoryItemMediaUrlAccepted(v, configuredStorageOrigin()) || uploadKeyOwner(v) !== null`). C |
+| H136 | BUILT-BUT-WRONG | ADD_MEDIA is now reachable from the app. W stands on its stated blocker, which is unchanged: 2710 is unapplied and `memory_kernel_enabled` has no row (D.1 group (c)) |
+| H181 | BUILT-BUT-WRONG | The accepted key enters no staged pipeline either: there is no `phash`, thumbnail or moderation state on `memory_items`, and no `media_assets` row while `media_canonical_enabled` is FALSE. W, as §AU |
+
+### §BT.5 Owner questions (fail-closed defaults implemented, none approved)
+
+- **OQ-MMA-1. Should removing a photo from a Memory delete the uploaded object?**
+  - **Default implemented:** no. The bytes stay, which is today's behaviour for every non-legacy item.
+  - **Why it cannot be decided here.** A `<uid>/` object may also be named by another of the owner's rows: a post, a story, a Highlight, another Memory, a message. Deleting it on item removal destroys those views, and any moderation evidence they carry.
+  - **Building it** needs a live-reference check across every table that may name the object, in every spelling, like the story retention purge.
+  - It decides H191.
+- **OQ-MMA-2. Should account deletion sweep the user's whole `post-media/<uid>/` prefix?** Uploads that no row names are never erased today:
+  - a removed item's object (OQ-MMA-1);
+  - any upload whose attach failed, which was every app-added photo before this section;
+  - an abandoned upload.
+
+  The default is unchanged (collect by reference only).
+- **OQ-MMA-3. External `https` Memory media.** The route still accepts any `https` URL, as it always has. That is memoryMediaOrigin.ts's open product question, restated, not changed.
+
+### §BT.6 Scope
+
+- NOT-GRADED: artifacts/api-server/src/test/accountDeletionCascade.test.ts — §BT.3 cites three appended cases as evidence for §BT.2 item 5 (account deletion reads the newly accepted key); the suite is account deletion's, and no row here is graded on it alone
+- NOT-GRADED: travel-buddy-standalone/src/services/__tests__/mediaUrl.service.test.ts — §BT.2 item 6 cites the app's existing hydration suite only to show a reader already signs the bare key; unchanged here, and no row rests on it
+
+### §BT.7 Headline
+
+| bucket | was (§BJ) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 71 | 70 |
+| BUILT-BUT-WRONG | 176 | 177 |
+| NOT-BUILT | 17 | 17 |
+| CANNOT-VERIFY | 2 | 2 |
+| total | 266 | 266 |
+
+**1 move, C → W (H191).** 266 = 70 C / 177 W / 17 N / 2 X. CONSTRUCTED% is (70 + 177) / 266 = 92.9 %.
