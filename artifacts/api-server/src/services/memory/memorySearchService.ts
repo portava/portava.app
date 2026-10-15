@@ -71,7 +71,7 @@ import {
   rebuildProjection,
 } from "../memoryProjections/derivativeRegistry.js"; import { reviveDeletionRevokedDerivative } from "../memoryProjections/narrowingReprojection.js"; // one line: cited by line
 import type { ProjectionId, ProjectionScope } from "../memoryProjections/projectionRegistry.js";
-import { acceptedCrewOfTrip, canReadMemory } from "./memoryReadPolicy.js";
+import { acceptedCrewOfTrip, canReadMemory } from "./memoryReadPolicy.js"; import { readBlockExclusions, isExcluded, exclusionsUnavailable, type ExclusionSet } from "../../lib/exclusionSet.js"; // §BQ: one line, so cited lines hold
 import {
   searchMemories,
   RETRIEVAL_ENGINE_VERSION,
@@ -235,7 +235,7 @@ export type SearchServiceFailure =
   | "audience_unavailable";
 
 export type MemorySearchServiceResult =
-  | { readonly ok: true; readonly value: Extract<SearchResult, { ok: true }>["value"] & { readonly target: ResolvedTarget; /** §23 hits withheld from this reader at read time (H3-1). */ readonly audience_withheld_count: number } }
+  | { readonly ok: true; readonly value: Extract<SearchResult, { ok: true }>["value"] & { readonly target: ResolvedTarget; /** §23 hits withheld from this reader at read time (H3-1). */ readonly audience_withheld_count: number; /** census-highlights-memories §BU: FALSE only when the viewer's block state could not be read, so every person but the viewer was withheld from each hit's `people`, the people filter and the counts. A REAL block is never signalled. */ readonly people_complete: boolean } }
   | { readonly ok: false; readonly reason: SearchServiceFailure; readonly detail: string; readonly retryable: boolean };
 
 function refuse(reason: SearchServiceFailure, detail: string, retryable = false): MemorySearchServiceResult {
@@ -410,7 +410,7 @@ export async function runMemorySearch(
     return refuse("registry_unavailable", prepared.detail, prepared.retryable);
   }
 
-  const input: SearchMemoriesInput = {
+  const blockState = { unreadable: false }; const input: SearchMemoriesInput = { // §BU: blockState is set by viewerPeopleWithholder below
     ownerId: target.scope.owner_id,
     viewerId,
     namespace: target.namespace,
@@ -424,7 +424,7 @@ export async function runMemorySearch(
     semanticQuery: request.query ?? null,
     limit: request.limit,
     scope: target.scope,
-    now,
+    now, withholdPeople: viewerPeopleWithholder(client, viewerId, blockState), // census-highlights-memories §BU: the owner's own "mine" timeline names people too, and GET /memories/:id hides a person blocked in either direction from the owner (participantRungFor rule 1), so the search asks the same question, per read, BEFORE the people filter, ranking and counts; unreadable ⇒ every person but the viewer withheld
   };
 
   const result = await searchMemories(client, input);
@@ -472,10 +472,10 @@ export async function runMemorySearch(
       return row ? canReadMemory(sc, row, viewerId, "public_feed") : Promise.resolve(false);
     }));
     const cleared = result.value.hits.filter((_h, i) => verdicts[i]);
-    return { ok: true, value: { ...result.value, hits: cleared, target, audience_withheld_count: result.value.hits.length - cleared.length } };
+    return { ok: true, value: { ...result.value, hits: cleared, target, audience_withheld_count: result.value.hits.length - cleared.length, people_complete: !blockState.unreadable } };
   }
 
-  return { ok: true, value: { ...result.value, target, audience_withheld_count: 0 } };
+  return { ok: true, value: { ...result.value, target, audience_withheld_count: 0, people_complete: !blockState.unreadable } };
 }
 
 /* ============================================================================
@@ -802,6 +802,55 @@ export async function runCrewMemorySearch(
       partial_policy: CREW_UNION_PARTIAL_POLICY,
       member_bound: CREW_UNION_MEMBER_LIMIT,
     },
+  };
+}
+
+/**
+ * census-highlights-memories §BQ — whom THIS viewer may see named in the crew
+ * search's shared derivative.
+ *
+ * THE DEFECT. `TripMemoryProjection.people` is every approved participant, and
+ * the crew derivative is built once for the crew, never per reader. Nothing on
+ * the read path consulted `blocks`, so the viewer was handed — by id — people
+ * they had blocked and people who had blocked them; a `people` filter naming one
+ * of them matched; and `deterministic_match_count`, each member's `matchCount`
+ * and the `person_relevance` dimension betrayed them with no id on the wire.
+ * §10 rule 1 is BLOCK → HIDDEN, ahead of everything, including the viewer's
+ * ownership of the Memory (memoryParticipantVisibility.ts `participantRungFor`).
+ *
+ * THE RULE. A person with a block in EITHER direction with the viewer is
+ * withheld; the viewer is never withheld from themselves. The read is the shared
+ * definition of record (`readBlockExclusions`, scoped to the ids the rows name)
+ * and the test is `isExcluded`, which answers "excluded" for an unreadable set —
+ * so an unreadable read withholds every other person by construction.
+ *
+ * FAIL CLOSED, AND SAID. A RESOLVED error is the reader's `ok: false`. A THROWN
+ * read (a torn-down client, a fetch that rejects) is caught here and is the same
+ * unknown with the same answer. Either sets `state.unreadable`, which the union
+ * reports as `people_complete: false` and `union_complete: false`: the Memories
+ * are still served, their people are not, and the answer says it is partial. A
+ * REAL block sets nothing — it is silent, as it is on every other surface.
+ *
+ * NOT HERE: a malformed answer (`data` not a row list, a row that names no
+ * counter-party). On this branch `readBlockExclusions` reads either as "nobody
+ * is blocked" for EVERY caller; open PR #729 makes the reader answer `ok: false`
+ * for both, and this caller inherits that with no change.
+ */
+function viewerPeopleWithholder(
+  sc: any,
+  viewerId: string,
+  state: { unreadable: boolean },
+): (personIds: readonly string[]) => Promise<(personId: string) => boolean> {
+  return async (personIds) => {
+    const others = [...new Set(personIds)].filter((id) => id !== viewerId);
+    let set: ExclusionSet;
+    try {
+      set = await readBlockExclusions(sc, viewerId, { among: others });
+    } catch (err) {
+      set = exclusionsUnavailable(err);
+    }
+    if (!set.ok) state.unreadable = true;
+    return (personId) => personId !== viewerId && isExcluded(set, personId);
   };
 }
 
