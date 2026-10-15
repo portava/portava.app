@@ -26,7 +26,7 @@ import { MemorySocialBar } from '../../src/features/memories/social/MemorySocial
 import { useSession } from '../../src/context/SessionContext';
 import { useMediaPicker } from '../../src/hooks/useMediaPicker.ts';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
-import { PlainBottomFiller } from '../../src/hooks/useBottomInset';
+import { PlainBottomFiller } from '../../src/hooks/useBottomInset'; import { MemoryNarrativeCard } from '../../src/features/memories/narrative/MemoryNarrativeCard.tsx'; // H14/H172/H265 (MEM-NARR-2); on this line so no cited line moves
 import { useMemoryViewedTelemetry } from '../../src/features/passport/useMemoryViewedTelemetry.ts'; import { MEMORY_TYPE_LABELS, isMemoryType, memoryPlaceLine } from '../../src/features/memories/canonical/memoryCanonical.ts'; // H40/H71; on this line so no cited line moves
 
 const { width: SCREEN_W } = Dimensions.get('window');
@@ -373,7 +373,7 @@ export default function MemoryDetailScreen() {
                 <Text style={s.metaChip} testID="memory-detail-type">{MEMORY_TYPE_LABELS[memory.memoryType]}</Text>
               </>
             ) : null}
-          </View>
+          </View><MemoryNarrativeCard memory={memory} isOwner={isOwner} />{/* §2/§18/§28.16 (census H14, H172, H265; MEM-NARR-2): the owner's summary from this Memory's own facts and the opt-in AI draft; renders nothing for anyone else. On this line so no cited line moves */}
 
           {/* Like / save / share (HM-F09, HM-F13), people (HM-F12), own history (HM-F11) */}
           <MemorySocialBar memory={memory} isOwner={isOwner} />
