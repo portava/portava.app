@@ -986,7 +986,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/2721_highlight_projection_policies.sql",
     "artifacts/api-server/src/migrations/2722_highlight_sources.sql",
     "artifacts/api-server/src/migrations/2723_highlight_class_lifecycle_and_pin.sql",
-    "artifacts/api-server/src/migrations/2730_memory_derivative_registry.sql",
+    "artifacts/api-server/src/migrations/2730_memory_derivative_registry.sql", "artifacts/api-server/src/migrations/3812_place_split_memory_reresolution.sql", "db/rollback/2026-10-14-3812-place-split-memory-reresolution-rollback.sql", "artifacts/api-server/sql/rehearsals/3812_00_seed.sql", "artifacts/api-server/sql/rehearsals/3812_01_place_split_reresolution.sql", "artifacts/api-server/src/routes/memoryPlaceSplit.ts", "artifacts/api-server/src/test/memoryPlaceSplitReresolution.test.ts", "artifacts/api-server/src/test/db/memoryPlaceSplitReresolution.db.test.ts", // ADDED 2026-10-14 by B58 MEM-PLACE-SPLIT (census §BS, H72), line-neutral; the service is already counted (services/memory/)
     "artifacts/api-server/src/test/memoriesPublicFeedPrivacy.test.ts",
     "artifacts/api-server/src/server/trips/outboxWorker.ts",
     // WIDENED 2026-09-13 by section C, which built §16's eight Compass Memory

@@ -108,6 +108,15 @@ export const SERVER_ONLY_TABLES: readonly ServerOnlyTable[] = [
       "Compass memories: RLS has no policy and every access is service-role (routes/compass.ts); a client grant was a " +
       "cross-user read and a stored prompt injection (2161)",
   },
+  {
+    table: "memory_place_reresolution_proposals",
+    closedBy: "3812_place_split_memory_reresolution.sql",
+    why:
+      "§9 split re-resolution proposals (census H72, B58 MEM-PLACE-SPLIT): created by 3812 with RLS on, no policy and every " +
+      "client privilege revoked; written only by the API's re-resolution job and read only by GET /me/memory-place-proposals " +
+      "(owner only), and no client tree names the table — a client grant would tell a stranger which Memory was within 75 m " +
+      "of which venue",
+  },
 ];
 
 const ROLES = ["anon", "authenticated", "public"] as const;

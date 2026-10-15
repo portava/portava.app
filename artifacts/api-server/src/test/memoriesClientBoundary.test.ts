@@ -334,12 +334,12 @@ describe("rule 7 (lib/serverOnlyTables.ts) — fires on every shape that hands m
     it("FAILS on a role-membership grant to a client role, naming both tables", () => {
       const { code, out } = run("member", "GRANT memreader TO authenticated;");
       assert.notEqual(code, 0, out);
-      assert.match(out, /server-only tables public\.memories, public\.compass_memories are client-reachable through role membership/);
+      assert.match(out, /server-only tables public\.memories, public\.compass_memories, public\.memory_place_reresolution_proposals are client-reachable through role membership/);
     });
     it("passes the same grant on another table", () => {
       const { code, out } = run("other", "GRANT SELECT ON TABLE public.trips TO authenticated;");
       assert.equal(code, 0, out);
-      assert.match(out, /rule 7: memories, compass_memories/);
+      assert.match(out, /rule 7: memories, compass_memories, memory_place_reresolution_proposals/);
     });
   });
 });

@@ -237,7 +237,7 @@ export const ERASED_BY_CASCADE: readonly string[] = [
   // episode cascade — so a memory the user forgets cannot survive in evidence
   // even if the episode delete were to fail.
   "memory_episodes",
-  "memory_evidence",
+  "memory_evidence", "memory_place_reresolution_proposals", /* 3812 (B58 MEM-PLACE-SPLIT, census H72, unapplied): memory_id REFERENCES public.memories ON DELETE CASCADE (AccountDeletionService hard-deletes every Memory by owner_id) and owner_id REFERENCES auth.users ON DELETE CASCADE (its final auth.admin.deleteUser); per Memory, 3812's memory_place_reresolution_purge trigger deletes a Memory's proposals in the same statement as its soft delete (§21), so no service step names it. Candidate ids, the suggestion and booleans only — never a coordinate, distance or name. On this line so cited lines hold. */
   // Input-assistance opt-ins and outcome counters (migrations 3780 / 3782).
   // Each is keyed by user_id REFERENCES auth.users(id) ON DELETE CASCADE — the
   // wall_telemetry_events mechanism, not a profiles-keyed one — so the rows go
@@ -919,7 +919,7 @@ export const POST_BASELINE_TABLES: readonly string[] = [
   // Provenance spine, added by migration 2320 (post-baseline). Classified in
   // ERASED_BY_CASCADE above.
   "memory_episodes",
-  "memory_evidence",
+  "memory_evidence", "memory_place_reresolution_proposals", // 3812 (B58 MEM-PLACE-SPLIT, post-baseline, unapplied): classified ERASED_BY_CASCADE above
   "intel_observations",
   "intel_claims",
   "intel_evidence",
