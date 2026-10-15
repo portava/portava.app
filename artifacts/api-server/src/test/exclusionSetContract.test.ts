@@ -31,6 +31,8 @@ import {
   exclusions,
   exclusionsUnavailable,
 } from "../lib/exclusionSet.js";
+import { isBlockedBetween } from "../lib/blockGuard.js";
+import { makeFakeClient } from "./telegraphCertificationHarness.js";
 import { enrichSpans } from "../lib/enrichSpans.js";
 import { processTagging } from "../services/tagging/TaggingService.js";
 import { CreatorSignalAggregator } from "../services/ranking/CreatorActivityScoreService.js";
@@ -362,5 +364,129 @@ describe("executeCompassTool get_group_recommendation: an unreadable block union
     );
     assert.deepEqual(out?.candidates, []);
     assert.equal(out?.info, "Group block state could not be read, so no group recommendation was made.");
+  });
+});
+
+// ══ 7. Every OTHER way the block read can fail (census-telegraph §94) ══════════
+//
+// The reader answered `ok: false` for exactly one failure: a RETURNED `{ error }`.
+// Three more reached its callers as something else:
+//
+//   * a read that THREW — a torn-down client, a builder bug, a fetch that
+//     rejects — propagated as an exception, so the answer depended on whether
+//     the caller happened to wrap the call. `identityWithheldAcrossBlocks` did;
+//     a verifier's mutant that deleted its catch survived every suite (V-RH V6),
+//     because no suite ever threw. A thrown read is now `ok: false` at the
+//     reader, the same answer as a returned error, whoever calls it;
+//   * an answer that is NOT a row list (`data: null` with no error, a string, an
+//     object) — `data ?? []` read it as "nobody is blocked";
+//   * a row that does not name its counter-party — skipped, so a block row (a
+//     DENY) was dropped as if it were absent;
+// and a fourth, the cap: a scoped read over more candidates than PostgREST's
+// `db-max-rows` (1000 hosted) was ONE `.in()` read, cut at the cap with no
+// error, and every block past the cap was missed. The scoped read is now asked
+// in chunks (lib/exclusionSet.ts BLOCK_AMONG_CHUNK); a block row is UNIQUE per pair, so a chunk's
+// answer can never reach the cap.
+
+/** `blocks` misbehaves in one named way; every other table is the fake's. */
+function blocksMisbehave(
+  inner: any,
+  how: "throw" | "reject" | { data: unknown },
+): any {
+  return {
+    ...inner,
+    from(t: string) {
+      if (t !== "blocks") return inner.from(t);
+      if (how === "throw") throw new TypeError("blocks: the client was torn down before the read was sent");
+      const settle = () => how === "reject"
+        ? Promise.reject(new Error("blocks: socket hang up"))
+        : Promise.resolve({ data: how.data, error: null, count: null });
+      const chain: any = new Proxy({}, {
+        get(_t, p) {
+          if (p === "then") return (f: any, r: any) => settle().then(f, r);
+          if (p === "catch" || p === "finally") return undefined;
+          return () => chain;
+        },
+      });
+      return chain;
+    },
+  };
+}
+
+describe("ExclusionSet contract: a THROWN read is unreadable, never an exception the caller must remember to catch", () => {
+  for (const how of ["throw", "reject"] as const) {
+    it(`readBlockExclusions (whole list and scoped): a read that ${how}s answers ok:false`, async () => {
+      const c = blocksMisbehave(makeClient({ blocks: BLOCK_ROWS }), how);
+      const whole = await readBlockExclusions(c, ME);
+      assert.equal(whole.ok, false, "the whole-list read rejected instead of answering unreadable");
+      assert.equal(isExcluded(whole, FRIEND), true);
+      const scoped = await readBlockExclusions(c, ME, { among: [FRIEND, BLOCKED] });
+      assert.equal(scoped.ok, false, "the scoped read rejected instead of answering unreadable");
+    });
+
+    it(`readPairExclusion and readGroupBlockExclusions: a read that ${how}s answers ok:false`, async () => {
+      const c = blocksMisbehave(makeClient({ blocks: BLOCK_ROWS }), how);
+      assert.equal((await readPairExclusion(c, ME, FRIEND)).ok, false);
+      assert.equal((await readGroupBlockExclusions(c, [ME])).ok, false);
+    });
+  }
+});
+
+describe("ExclusionSet contract: an answer that is not a list of attributable rows is unreadable", () => {
+  for (const [label, data] of [
+    ["data: null with no error", null],
+    ["a string", "blocked_id"],
+    ["an object", { blocked_id: BLOCKED }],
+  ] as Array<[string, unknown]>) {
+    it(`${label}: ok:false on the scoped read, the whole-list read and the pair read`, async () => {
+      const c = blocksMisbehave(makeClient({}), { data });
+      assert.equal((await readBlockExclusions(c, ME, { among: [FRIEND, BLOCKED] })).ok, false, "scoped");
+      assert.equal((await readBlockExclusions(c, ME)).ok, false, "whole list");
+      assert.equal((await readPairExclusion(c, ME, BLOCKED)).ok, false, "pair");
+      assert.equal((await readGroupBlockExclusions(c, [ME])).ok, false, "group");
+    });
+  }
+
+  it("a row that does not name its counter-party is a block we cannot attribute: ok:false, not dropped", async () => {
+    // The scoped outbound read selects `blocked_id`; this row is a block whose
+    // counter-party did not come back. Skipping it read as "not blocked".
+    const scoped = await readBlockExclusions(blocksMisbehave(makeClient({}), { data: [{ blocked_id: null }] }), ME, { among: [BLOCKED] });
+    assert.equal(scoped.ok, false, "a DENY row was dropped as if it were absent");
+    const whole = await readBlockExclusions(blocksMisbehave(makeClient({}), { data: [{ blocker_id: ME, blocked_id: "" }] }), ME);
+    assert.equal(whole.ok, false);
+    const group = await readGroupBlockExclusions(blocksMisbehave(makeClient({}), { data: [{ blocker_id: ME }] }), [ME]);
+    assert.equal(group.ok, false);
+  });
+
+  it("CONTROL: an empty row list is a real 'nobody is blocked', and a well-formed answer is unchanged", async () => {
+    const empty = await readBlockExclusions(blocksMisbehave(makeClient({}), { data: [] }), ME, { among: [FRIEND] });
+    assert.equal(empty.ok, true);
+    assert.equal(isExcluded(empty, FRIEND), false);
+    const pair = await readPairExclusion(blocksMisbehave(makeClient({}), { data: [] }), ME, FRIEND);
+    assert.equal(pair.ok, true);
+    assert.equal(isExcluded(pair, FRIEND), false);
+  });
+});
+
+describe("ExclusionSet contract: a scoped read is never cut at PostgREST's db-max-rows", () => {
+  it("1,200 candidates who all blocked the viewer, served by a database that caps every read at 1,000: all 1,200 are excluded", async () => {
+    const many = Array.from({ length: 1200 }, (_, i) => `eeeeeeee-0000-4000-a000-${String(i).padStart(12, "0")}`);
+    const sc = makeFakeClient({ blocks: many.map((id) => ({ blocker_id: id, blocked_id: ME })) }, { maxRows: 1000 });
+    const set = await readBlockExclusions(sc, ME, { among: many });
+    assert.equal(set.ok, true);
+    const missed = many.filter((id) => !isExcluded(set, id));
+    assert.equal(missed.length, 0, `${missed.length} blocks past the cap were read as "not blocked"`);
+  });
+});
+
+describe("isBlockedBetween: a thrown read denies, exactly as a returned error does", () => {
+  for (const how of ["throw", "reject"] as const) {
+    it(`a read that ${how}s answers true (blocked), not an exception`, async () => {
+      assert.equal(await isBlockedBetween(blocksMisbehave(makeClient({}), how), ME, FRIEND), true);
+    });
+  }
+  it("CONTROL: a readable table still answers false for an unblocked pair and true for a blocked one", async () => {
+    assert.equal(await isBlockedBetween(makeClient({ blocks: BLOCK_ROWS }), ME, FRIEND), false);
+    assert.equal(await isBlockedBetween(makeClient({ blocks: BLOCK_ROWS }), ME, BLOCKED), true);
   });
 });

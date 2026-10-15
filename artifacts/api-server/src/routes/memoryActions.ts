@@ -41,7 +41,7 @@ import {
   viewerPlaceFor,
   type ActionUnavailableReason,
   type MemoryForAction,
-} from "../services/memory/memoryActionService.js";
+} from "../services/memory/memoryActionService.js"; import { noteDoAgainCompiled } from "../services/memory/memoryQualityMetrics.js"; // §24 do_again_conversion (H222, census §BK); on this line so :94 and :127 hold
 import type { MemoryPrecisionGate } from "../lib/memoryPrecisionGate.js";
 
 const router = Router();
@@ -201,7 +201,7 @@ router.get("/memories/:id/actions/:action", asyncHandler(async (req: Request, re
     refuse(res, plan.refused);
     return;
   }
-  res.json({ compiled: plan });
+  noteDoAgainCompiled({ viewerId: user.id, memoryId: memory.id, placeId: plan.addToTrip.id }); res.json({ compiled: plan }); // H222: a served plan; its conversion is the viewer's trip save of this place (addToTrip.id is what TripWishlistPicker saves as placeId)
 }));
 
 export default router;

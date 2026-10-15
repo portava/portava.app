@@ -203,7 +203,7 @@ import {
   recomputeForDisruption,
   type DisruptionEvent,
   type DisruptionState,
-} from "../services/airport/LayoverSafeReturnService.js";
+} from "../services/airport/LayoverSafeReturnService.js"; import { crewAbortNoticeRequest, crewAbortNoticeCapability } from "../services/layover/LayoverCrewAbortNotice.js"; // census-layover L144 (§74); same line, so no cited line below moves
 // §15.2's state machine had no memory. `handleEvent` reads the prior state from
 // `ctx.disruptionStates` (LayoverEventReplanner.ts:884) and nothing has ever
 // populated it, so every request restarted at CONNECTION and the first window
@@ -1395,7 +1395,7 @@ router.post("/airport/sessions/:id/return-now", async (req, res) => {
   const statusEnabled = flagOn && LAYOVER_RETURNING_READERS_WIDENED;
 
   const result = await abortToAirport(sc, {
-    session, airport, record, userId: user.id, nowMs, statusEnabled,
+    session, airport, record, userId: user.id, nowMs, statusEnabled, crewNotice: await crewAbortNoticeRequest(sc, req.body), // census-layover L144: only a literal `tellCrew: true` is consent, and the flag (3786, seeded FALSE) decides whether it is honoured
   });
 
   if (!result.ok) {
@@ -1413,7 +1413,7 @@ router.post("/airport/sessions/:id/return-now", async (req, res) => {
       message: "Your plan could not be fully cleared. Head to the airport now.",
       returnContract: result.returnContract,
       posture: result.posture,
-      effects: result.effects,
+      effects: result.effects, crewNotifiedCount: result.crewNotifiedCount, crewNotifyUnavailableReason: result.crewNotifyUnavailableReason, // census-layover L144: a partial abort still says whether the crew was told
     });
     return;
   }
@@ -2291,7 +2291,7 @@ router.get("/airport/sessions/:id/overview", async (req, res) => {
     // posture the client should take now, and a bundle that carries its own
     // certifiedAt/staleAfter/inputHash so an offline client can say how old its
     // answer is instead of presenting a stale deadline as current.
-    safeReturn: safeReturnPosture(record),
+    safeReturn: safeReturnPosture(record), crewAbortNotice: await crewAbortNoticeCapability(sc, user.id, session.id, nowMs, session.tripId ?? null), // census-layover L144: whether "tell my crew" may be OFFERED at the abort (flag + a live crew joined with this session)
     // §8 — the same outer edge, from the same certified window. The dashboard's
     // copy: a traveller who sees fewer landside cards than a city has places
     // can read the bound that removed them.
