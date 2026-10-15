@@ -10,7 +10,7 @@
 // whose auto-refresh timer outlives the suite; this file needs only the token.
 jest.mock('../../../../services/apiToken.ts', () => ({ freshToken: () => Promise.resolve('tok') }));
 
-import { listMemoryCandidates, confirmMemoryCandidate, rejectMemoryCandidate, detectMemoryCandidates } from '../memoryCandidatesApi.ts';
+import { listMemoryCandidates, confirmMemoryCandidate, rejectMemoryCandidate, detectMemoryCandidates, keepConvergence, dismissConvergence } from '../memoryCandidatesApi.ts';
 
 const realFetch = globalThis.fetch;
 let calls: Array<{ url: string; init: RequestInit | undefined }> = [];
@@ -59,4 +59,41 @@ it('every Keep of one candidate carries the SAME key — a second tap or a retry
   await confirmMemoryCandidate('ep-7', null);
   const keys = calls.map((c) => (c.init!.headers as Record<string, string>)['Idempotency-Key']);
   expect(keys).toEqual(['memory-candidate:ep-7', 'memory-candidate:ep-7']);
+});
+
+// ── H180: photos for a Memory the owner already has ─────────────────────────
+
+const GROUP = { memoryId: 'mem-1', title: 'Fado night', startsAt: null, endsAt: null, visibility: 'public', attachAudience: 'memory', basis: 'memory_window', photos: [{ assetId: 'a-1', previewUrl: 'post-media/u/p1.jpg', capturedAt: null, state: 'proposed' }] };
+
+it('H180: the inbox carries `convergence`; a server without it is not_deployed; a malformed one is unavailable — the candidates stand either way', async () => {
+  respond(200, { candidates: [], convergence: { state: 'ready', groups: [GROUP] } });
+  const ready = await listMemoryCandidates() as any;
+  expect(ready.ok).toBe(true);
+  expect(ready.convergence.state).toBe('ready');
+  expect(ready.convergence.groups[0]).toMatchObject({ memoryId: 'mem-1', visibility: 'public', attachAudience: 'memory' });
+  respond(200, { candidates: [] });
+  expect(((await listMemoryCandidates()) as any).convergence).toEqual({ state: 'not_deployed' });
+  respond(200, { candidates: [], convergence: { state: 'ready', groups: [{ ...GROUP, attachAudience: 'everyone' }] } });
+  const odd = await listMemoryCandidates() as any;
+  expect(odd.ok).toBe(true);
+  expect(odd.convergence).toEqual({ state: 'unavailable' });
+  respond(200, { candidates: [], convergence: { state: 'unavailable' } });
+  expect(((await listMemoryCandidates()) as any).convergence).toEqual({ state: 'unavailable' });
+});
+
+it('H180: Add sends the photos and the audience the owner was shown; a changed audience comes back with the audience it is now', async () => {
+  respond(200, { ok: true, memoryId: 'mem-1', kept: [{ assetId: 'a-1', itemId: 'i-1', itemAudience: 'memory' }], skipped: [] });
+  const r = await keepConvergence('mem-1', ['a-1'], 'public');
+  expect(r).toEqual({ ok: true, kept: [{ assetId: 'a-1', itemId: 'i-1', itemAudience: 'memory' }], skipped: [] });
+  expect(calls[0]!.url).toBe('https://api.test/api/me/memory-convergence/mem-1/keep');
+  expect(JSON.parse(String(calls[0]!.init!.body))).toEqual({ assetIds: ['a-1'], confirmAudience: 'public' });
+  respond(409, { error: 'conflict', message: 'Confirm who can see this Memory before adding photos to it.', reason: 'audience_unconfirmed', currentAudience: 'friends_only' });
+  expect(await keepConvergence('mem-1', ['a-1'], 'only_me')).toEqual({ ok: false, kind: 'conflict', message: 'Confirm who can see this Memory before adding photos to it.', reason: 'audience_unconfirmed', currentAudience: 'friends_only' });
+});
+
+it('H180: Not this Memory sends the photos to dismiss', async () => {
+  respond(200, { ok: true, memoryId: 'mem-1', dismissed: ['a-1'], alreadyDismissed: [], refused: [] });
+  expect(await dismissConvergence('mem-1', ['a-1'])).toEqual({ ok: true, dismissed: ['a-1'] });
+  expect(calls[0]!.url).toBe('https://api.test/api/me/memory-convergence/mem-1/dismiss');
+  expect(JSON.parse(String(calls[0]!.init!.body))).toEqual({ assetIds: ['a-1'] });
 });
