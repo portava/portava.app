@@ -5755,3 +5755,50 @@ owner-rights cases were added).
 **Rollback:** `db/rollback/2026-10-14-3825-telegraph-message-link-previews-rollback.sql` drops the trigger, both
 functions, the table and the flag row it seeded. It destroys every stored preview; turning the flag off is almost
 always what is wanted instead.
+
+## 2026-10-14 — `3812_place_split_memory_reresolution.sql`, written and NOT applied anywhere (B58 cluster MEM-PLACE-SPLIT)
+
+**What it is.** census-highlights-memories H72 (§BS), spec §9 "Entity splits trigger re-resolution from retained
+evidence". Three parts:
+- `place_merge_log_action_check` admits `'split'` beside `'merge'` and `'unmerge'` (the precondition refuses a
+  database with any other CHECK on `action`).
+- `place_split(uuid, jsonb, uuid[], uuid)` (SECURITY INVOKER, pinned search_path, EXECUTE for service_role only) is
+  the one atomic writer of a split: only while `memory_place_split_reresolution_enabled` AND `external_places_enabled`
+  are ON, under a row lock on the source P, it refuses a merged-away row and any named reference that is not P's,
+  creates P2 from the admin's name and position (descriptive fields copied from P unless given), moves exactly the named
+  provider references and logs `split` (survivor P, affected P2).
+- `memory_place_reresolution_proposals`: one owner-only proposal per Memory and split (UNIQUE), RLS on, no policy,
+  every client privilege REVOKEd (rule 4; rule 7 lists it), service_role SELECT/INSERT/UPDATE and NO DELETE. CHECKs
+  keep coordinates, distances and names out of `evidence` and allow a suggestion only when the rule concluded one. The
+  guard trigger (SECURITY DEFINER) writes a proposal only for the owner's live Memory that still stores the split place
+  (locked FOR SHARE), of a real split into a candidate, born pending; afterwards only the decision changes, once, and
+  `accepted` only when the Memory already stores that place. The purge trigger on `memories` (AFTER UPDATE OF state,
+  WHEN the state becomes `deleted`; SECURITY DEFINER) deletes a Memory's proposals in the same statement as its soft
+  delete. Flag `memory_place_split_reresolution_enabled` seeded FALSE (beta policy: OFF).
+
+**What reads and writes it.** `routes/memoryPlaceSplit.ts` and `services/memory/memoryPlaceSplitReresolution.ts`:
+the admin's `POST /admin/places/:id/split` (then the re-resolution job) and `POST /admin/places/splits/:id/reresolve`;
+the owner's `GET /me/memory-place-proposals` and `POST /memory-place-proposals/:id/accept|dismiss`. The job reads only
+the Memories that stored the split place and only their retained evidence; it never writes `memories` or
+`memory_corrections` (the owner changes the place through `PATCH /memories/:id`).
+
+**Without it.** The flag row is absent, so the admin split answers 404 `feature_disabled`, the job is inert and the
+owner routes answer as if unmounted. Nothing reads the table.
+
+**Deletion fate.** ERASED_BY_CASCADE (`lib/deletionDispositions.ts`, registered in POST_BASELINE_TABLES): memory_id
+CASCADEs from `memories` and owner_id from `auth.users`; the purge trigger removes a soft-deleted Memory's proposals.
+Deletion graph snapshot 408 tables.
+
+**Proof.** `src/test/db/memoryPlaceSplitReresolution.db.test.ts` (CI local-db job, D1-D7, every case in a rolled-back
+transaction) and `src/test/memoryPlaceSplitReresolution.test.ts` (40, the API over a port of the SQL). Rehearsed on
+PGlite over a fixture of the touched objects (`sql/rehearsals/3812_00_seed.sql`, `3812_01_place_split_reresolution.sql`):
+42/42 steps, 18 `$post$` negative controls, 3813 on top, rollback both ways. The db suite through a PGlite psql
+stand-in: 7/7 with 3812, 7/7 red without.
+
+**Prefix band.** 3812 is in the B58 memories band (3802-3819).
+
+**Rollback:** `db/rollback/2026-10-14-3812-place-split-memory-reresolution-rollback.sql` refuses while the flag is ON
+or any proposal exists (they are the only record of what owners were asked and decided). It drops the purge trigger
+first, then the table and the three functions, the flag and the ledger row. It restores `(merge, unmerge)` only when
+no `split` row exists; with one, the widened CHECK is KEPT and a NOTICE says so (the catalog's split history and the
+places it created stay).

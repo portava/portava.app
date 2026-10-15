@@ -8803,3 +8803,103 @@ The baseline's NOT-GRADED declaration is §BH.7's; §BJ.1 cites the same grants 
 - NOT-GRADED: artifacts/api-server/src/test/handRolledAuthAccountState.test.ts — §BJ.3 names it as the existing pin that the API builds only the service client; another lane's suite, no row here rests on it
 
 **Headline unchanged from §BH: 266 = 71 C / 176 W / 17 N / 2 X.**
+
+## §BS — 2026-10-14 (B58 cluster MEM-PLACE-SPLIT): an admin place split now triggers owner-only re-resolution of every Memory that stored the place, from the evidence the Memory retained (migration 3812, unapplied). 1 row moves N → W
+
+Branch `claude/b58-mem-place-split`. 3812 is WRITTEN and applied to no database; `memory_place_split_reresolution_enabled` is seeded FALSE. **The move is to W, not C**, by rule A.2: the code is built and the storage is unapplied. The label §BS is taken after §BI (#720), §BK (#725), §BL (#731), §BM (#735), §BN (#736), §BO (#737), §BP (MEM-SEGMENTS), §BQ (#739) and §BR (expected for MEM-RENDITIONS), all in flight; renumber on conflict and restate §BS.7's headline after each merge.
+
+### §BS.1 What was missing
+
+- **H72** (`:418`, restated at `:8178`: "The place catalog has no entity-split operation to trigger re-resolution"). Spec §9 (spec:317): "Entity splits trigger re-resolution from retained evidence."
+- The catalog had an admin merge and its lossless unmerge only (`artifacts/api-server/src/routes/placesCanonical.ts:94#router.post("/admin/places/:id/merge"`), and its audit log admitted two actions (`artifacts/api-server/src/migrations/2028_canonical_places.sql:63#CHECK (action IN ('merge','unmerge'))`). Unmerge already re-resolves by construction, because a Memory keeps its own `place_id`. A true split (one row turns out to be two venues) had no operation and no re-resolution.
+
+### §BS.2 What was built
+
+1. **3812, the split.**
+   - `place_merge_log` admits `'split'` (`artifacts/api-server/src/migrations/3812_place_split_memory_reresolution.sql:107#ALTER TABLE public.place_merge_log ADD CONSTRAINT place_merge_log_action_check`). The precondition refuses a database carrying any other CHECK on `action`.
+   - `place_split` is the one atomic writer (`artifacts/api-server/src/migrations/3812_place_split_memory_reresolution.sql:117#CREATE OR REPLACE FUNCTION public.place_split`). It runs only while BOTH flags are on, checked in SQL as well as by the route (`artifacts/api-server/src/migrations/3812_place_split_memory_reresolution.sql:136#flag = 'memory_place_split_reresolution_enabled' AND enabled`).
+   - Under a row lock on P it refuses a merged-away row (`artifacts/api-server/src/migrations/3812_place_split_memory_reresolution.sql:158#IF v_src.merged_into_place_id IS NOT NULL`) and any named reference that is not P's (`artifacts/api-server/src/migrations/3812_place_split_memory_reresolution.sql:166#IF v_owned <> v_wanted THEN`).
+   - It keeps P, creates P2 from the admin's name and position (descriptive fields not given are copied from P), moves exactly the named provider references, and logs `split` with survivor P and affected P2 (`artifacts/api-server/src/migrations/3812_place_split_memory_reresolution.sql:188#INSERT INTO public.place_merge_log (action`).
+   - SECURITY INVOKER, `search_path` pinned, EXECUTE for `service_role` only.
+2. **3812, the proposals** (`artifacts/api-server/src/migrations/3812_place_split_memory_reresolution.sql:197#CREATE TABLE IF NOT EXISTS public.memory_place_reresolution_proposals`).
+   - One row per Memory and split (UNIQUE), owner-only, `state` pending → accepted | dismissed.
+   - **A suggestion exists exactly when the rule concluded one** (`artifacts/api-server/src/migrations/3812_place_split_memory_reresolution.sql:220#memory_place_reresolution_proposals_suggested_iff_resolved`).
+   - **No coordinate, distance or name can be stored** (`artifacts/api-server/src/migrations/3812_place_split_memory_reresolution.sql:224#memory_place_reresolution_proposals_evidence_shape`): four top-level keys, a known reason, and per candidate only its id and two booleans.
+   - **The guard** (`artifacts/api-server/src/migrations/3812_place_split_memory_reresolution.sql:252#CREATE OR REPLACE FUNCTION public.memory_place_reresolution_proposals_guard`): a proposal is born pending, for the owner's own Memory, locked FOR SHARE, not deleted (`artifacts/api-server/src/migrations/3812_place_split_memory_reresolution.sql:277#IF v_state = 'deleted' THEN`), still storing the split place (`artifacts/api-server/src/migrations/3812_place_split_memory_reresolution.sql:280#IF v_place IS DISTINCT FROM NEW.split_from_place_id`), of a real split into a candidate. Afterwards only the decision changes, once, and `accepted` only when the Memory already stores that place (`artifacts/api-server/src/migrations/3812_place_split_memory_reresolution.sql:313#IF v_place IS DISTINCT FROM NEW.accepted_place_id`).
+   - **The purge**: a Memory's soft delete deletes its proposals in the same statement (`artifacts/api-server/src/migrations/3812_place_split_memory_reresolution.sql:343#WHEN (NEW.state = 'deleted'`), SECURITY DEFINER, so the deleting role needs no privilege on the table. Hard delete and account erasure cascade.
+   - **Access**: RLS on, no policy, every client privilege revoked (`artifacts/api-server/src/migrations/3812_place_split_memory_reresolution.sql:348#REVOKE ALL ON public.memory_place_reresolution_proposals FROM PUBLIC, anon, authenticated, service_role;`); `service_role` holds SELECT, INSERT, UPDATE and no DELETE (`artifacts/api-server/src/migrations/3812_place_split_memory_reresolution.sql:349#GRANT SELECT, INSERT, UPDATE ON`).
+   - The flag is seeded FALSE (`artifacts/api-server/src/migrations/3812_place_split_memory_reresolution.sql:357#('memory_place_split_reresolution_enabled', false`). Catalog-only, self-contained postconditions.
+   - Rollback `db/rollback/2026-10-14-3812-place-split-memory-reresolution-rollback.sql`: refuses while the flag is ON or any proposal exists; restores `(merge, unmerge)` only when no `split` row exists, and otherwise KEEPS the widened CHECK (audit history is not rewritten).
+3. **The rule** (`artifacts/api-server/src/services/memory/memoryPlaceSplitReresolution.ts:158#export function decideProposal`), owner question Q-H72's fail-closed default.
+   - The bound is 75 m (`artifacts/api-server/src/services/memory/memoryPlaceSplitReresolution.ts:63#export const RERESOLUTION_BOUND_M = 75;`), the catalog resolver's own same-venue distance (`artifacts/api-server/src/lib/places/placeResolve.ts:203#export const MERGE_DISTANCE_KM = 0.075;`).
+   - Two candidates within the bound are unresolved (`artifacts/api-server/src/services/memory/memoryPlaceSplitReresolution.ts:179#if (within.length > 1) return decided("several_within_bound");`). The one within must also match by name (`artifacts/api-server/src/services/memory/memoryPlaceSplitReresolution.ts:182#if (only.name_match !== true) return decided("name_mismatch");`), normalized with the catalog's normalizer (`artifacts/api-server/src/lib/canonicalLocations.ts:90#export function normalizeLocationName`), and an empty normalization never matches (`artifacts/api-server/src/services/memory/memoryPlaceSplitReresolution.ts:146#return n.length > 0 ? n : null;`).
+   - Every other case — no coordinates, an unlocated candidate, none within, no occurrence name — is unresolved, `suggested_place_id = NULL` (§28.3, H74: never a guess). Only then is a candidate suggested (`artifacts/api-server/src/services/memory/memoryPlaceSplitReresolution.ts:183#return decided("unique_within_bound_name_match", only.place_id);`).
+4. **The job** (`artifacts/api-server/src/services/memory/memoryPlaceSplitReresolution.ts:292#export async function runSplitReresolution`).
+   - Flags off: inert, nothing read past the flags (`artifacts/api-server/src/services/memory/memoryPlaceSplitReresolution.ts:295#if (gate === "off") return { state: "inert" };`).
+   - It reads only the live Memories whose STORED `place_id` is the split place (`artifacts/api-server/src/services/memory/memoryPlaceSplitReresolution.ts:331#.eq("place_id", from)`), in keyset pages, and only their retained evidence: `location_lat/lng` and `place_display_name_at_occurrence` (3804; absent ⇒ no Memory has a name, so every proposal is unresolved).
+   - A Memory with ANY owner place correction gets no proposal (`artifacts/api-server/src/services/memory/memoryPlaceSplitReresolution.ts:352#if (corrections.byMemory.has(m.id))`), and one whose corrections cannot be read gets none either (`artifacts/api-server/src/services/memory/memoryPlaceSplitReresolution.ts:350#if (corrections.state !== "ok")`) — H73.
+   - Idempotent (`artifacts/api-server/src/services/memory/memoryPlaceSplitReresolution.ts:368#ignoreDuplicates: true`). **It never writes `memories` or `memory_corrections`.**
+5. **The routes** (new `artifacts/api-server/src/routes/memoryPlaceSplit.ts`, mounted on `routes/index.ts`'s last line; `routes/placesCanonical.ts` is not edited).
+   - `POST /admin/places/:id/split` (`artifacts/api-server/src/routes/memoryPlaceSplit.ts:84#router.post("/admin/places/:id/split"`): requireAdmin, then both flags (off ⇒ 404 `feature_disabled`, nothing written; unreadable ⇒ 503), then the split, then the job (`artifacts/api-server/src/routes/memoryPlaceSplit.ts:96#const job = await runSplitReresolution(ctx.sc, out.splitId);`). The admin sees counts only, never a Memory, owner or coordinate.
+   - `POST /admin/places/splits/:splitId/reresolve` re-runs the job.
+   - The owner's routes fall through as if unmounted while a flag is off (`artifacts/api-server/src/routes/memoryPlaceSplit.ts:143#next("route");`): `GET /me/memory-place-proposals` (`artifacts/api-server/src/routes/memoryPlaceSplit.ts:164#router.get("/me/memory-place-proposals"`) serves the owner's pending proposals with the candidates' public names and no coordinates, only while the Memory still stores the split place and carries no correction (`artifacts/api-server/src/services/memory/memoryPlaceSplitReresolution.ts:438#const offered = standing.filter`).
+   - **Accept goes through the existing PATCH.** The owner changes the place with `PATCH /memories/:id`, which records it as their correction (`artifacts/api-server/src/routes/memories.ts:1815#const commandType = commandTypeForPatch(d); const placeCorrections`); `POST /memory-place-proposals/:id/accept` (`artifacts/api-server/src/routes/memoryPlaceSplit.ts:176#router.post("/memory-place-proposals/:id/accept"`) only records the decision, and refuses until the Memory stores the chosen place (`artifacts/api-server/src/services/memory/memoryPlaceSplitReresolution.ts:494#if ((mem as any).place_id !== placeId) return { kind: "memory_not_changed" };`). Dismiss leaves the Memory as it is. Someone else's proposal is the same 404 as a missing one.
+6. **Registrations.** Rule 7's `SERVER_ONLY_TABLES` (data only), the authorization contract, ERASED_BY_CASCADE (deletion graph 408), the production-drift ratchet, the beta flag policy (OFF), the chain-seeded flag pin, the test line, the telegraph inventory and this census's scope.
+7. **Not built.** The owner prompt on the Memory screen (the brief made it optional). The owner surface is the API above.
+
+### §BS.3 Evidence
+
+- **Route suite** `artifacts/api-server/src/test/memoryPlaceSplitReresolution.test.ts`, 40/40, over the real router and a table-backed fake porting 3812's function, guard and CHECKs.
+  - The brief's required cases: split P into P1/P2, and the Memory at P1 is suggested P1 (`artifacts/api-server/src/test/memoryPlaceSplitReresolution.test.ts:400#S: split P into P1 (kept) and P2`); equidistant (inside the bound and outside it), name-incompatible, no point and no name are all `null` (`artifacts/api-server/src/test/memoryPlaceSplitReresolution.test.ts:423#U: equidistant`); an owner-corrected Memory gets none (`artifacts/api-server/src/test/memoryPlaceSplitReresolution.test.ts:438#C: a Memory with any owner place correction gets NO proposal`); NO `memories` or `memory_corrections` write, every write spied (`artifacts/api-server/src/test/memoryPlaceSplitReresolution.test.ts:462#W: the job never writes memories or memory_corrections`); flags off ⇒ split refused with nothing written and the job inert (`artifacts/api-server/src/test/memoryPlaceSplitReresolution.test.ts:606#the job alone, flags off`).
+  - Also: an end-to-end accept over the REAL `PATCH /memories/:id` (`artifacts/api-server/src/test/memoryPlaceSplitReresolution.test.ts:736#end to end over the REAL PATCH /memories/:id`); paging over 1,010 Memories; idempotent re-run; a Memory deleted between read and write; unreadable corrections, flags and owner reads; the owner-only read with no coordinates (`artifacts/api-server/src/test/memoryPlaceSplitReresolution.test.ts:665#the owner reads only their own pending proposals`); accept/dismiss refusals and races; mounted through `routes/index.ts`.
+  - **Red on `origin/main` `3c214ca80`:** with only the suite copied in it cannot load (`routes/memoryPlaceSplit.js` is absent); with the new service and route copied in, 1 of 40 fails: the API-router mount.
+- **db suite** `artifacts/api-server/src/test/db/memoryPlaceSplitReresolution.db.test.ts`, D1–D7, every case inside one rolled-back transaction (CI's local-db job, the full chain). Through a lane-private psql stand-in over PGlite 0.2.17 on a fixture of the touched objects: **7/7 green with 3812, 7/7 red without it.**
+- **Rehearsal** `artifacts/api-server/sql/rehearsals/3812_00_seed.sql` + `3812_01_place_split_reresolution.sql`, 42/42 steps on PGlite: apply and re-apply; `$pre$`/`$post$` alone; 18 broken states `$post$` must refuse and one `$pre$` refusal; T1–T13 (T12 the negative controls: with the guard or the purge disabled the refused cases land); 3813 applied on top; the rollback refusing twice, keeping the CHECK over split rows, a no-op re-run, restoring `(merge, unmerge)` without split rows, and re-apply.
+- **Mutants** (lane-private runner, worktree-asserted, committed files only): TS 41/44 killed; the three survivors are single layers of the layered owner scope (query filter, in-memory filter, owner-scoped Memory read), and the two combined mutants removing every layer are killed. SQL 28/28. Rollback 5/5. Not covered: the FOR SHARE race (one session cannot race itself) and `<=` versus `<` at exactly 75 m.
+
+### §BS.4 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| H72 | N | W | An admin place split (3812 `place_split`, atomic, logged `split`) re-resolves every live Memory that stored the place from its retained evidence only — coordinates and the occurrence-time name — suggesting a row only when exactly one candidate is within 75 m and name-compatible, else unresolved; owner-corrected Memories get none; the job never writes `memories`; the owner accepts through the existing PATCH (§BS.2 items 1–5, §BS.3). W: 3812 is unapplied and `memory_place_split_reresolution_enabled` is FALSE; Q-H72 (the bound and the name rule) is an open owner question |
+
+### §BS.5 Rows read, reason restated, NOT moved
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H73 | BUILT-BUT-WRONG | A split's automatic re-resolution never overrides the owner: a Memory with any place correction gets no proposal, and a correction made later hides an open one. W as before: 3673 is unapplied |
+| H74 | BUILT-AND-CORRECT | Unchanged, and the new surface keeps it: a name never decides on its own. A suggestion needs a unique candidate within 75 m FIRST, then exact equality of normalized names, never similarity |
+| H68 | BUILT-BUT-WRONG | A split leaves the Memory's own `place_id` and occurrence name untouched until the owner acts; an unresolved proposal is the nearest thing to `unresolved_place_ref`, but it is per split, not a field of `MemoryPlaceRef`. W |
+
+### §BS.6 Owner questions (fail-closed defaults implemented, none approved)
+
+- **Q-H72, the bound and the name rule.** Implemented: exactly one candidate within 75 m AND equal normalized names, else unresolved. Consequences stated, not hidden:
+  - two venues closer than about 75 m apart can never be told apart by position, so every Memory near both is unresolved;
+  - a Memory recorded under the conflated name ("Cafe A") that lies at the new venue is `name_mismatch`, unresolved;
+  - a name in a script the catalog normalizer folds to nothing (Thai, Japanese) never matches, so those Memories are unresolved.
+- **Q-H72-b, who splits.** Implemented: admin only, behind both flags.
+- **Q-H72-c, which Memories.** Implemented: those whose STORED `place_id` is the split place. A Memory that reaches the place only through `canonical_location_id` gets no proposal; if P2 shares P's canonical location, the existing resolver answers `ambiguous` for it (refused, not guessed). A `removed` Memory is not offered.
+- **Q-H72-d, the new row's fields.** Implemented: the admin's name and position; category, address, city, neighbourhood, country and canonical location copied from P unless given.
+- **Q-H72-e, the client prompt.** Not built; the owner surface is the API.
+- **Applying 3812 and enabling the flag are the owner's press.** `external_places_enabled` is TRUE in production (snapshot 2026-09-22), so the new flag is the only gate.
+
+### §BS.6a Scope
+
+- NOT-GRADED: artifacts/api-server/src/routes/placesCanonical.ts — §BS.1 cites the existing merge route to say what was missing; this lane does not edit it and grades no row on it
+- NOT-GRADED: artifacts/api-server/src/lib/places/placeResolve.ts — §BS.2 cites the resolver's 75 m same-venue distance that Q-H72's default reuses; the Places lane's file, no row here rests on it
+- NOT-GRADED: artifacts/api-server/src/lib/canonicalLocations.ts — §BS.2 cites the catalog normalizer the name rule reuses; no row here rests on it
+- NOT-GRADED: artifacts/api-server/src/migrations/2028_canonical_places.sql — §BS.1 cites place_merge_log's original two-action CHECK, which 3812 widens; the catalog's migration, no row here rests on it
+
+### §BS.7 Headline
+
+| bucket | was (§BJ on main) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 71 | 71 |
+| BUILT-BUT-WRONG | 176 | 177 |
+| NOT-BUILT | 17 | 16 |
+| CANNOT-VERIFY | 2 | 2 |
+| total | 266 | 266 |
+
+**1 move, N → W.** 266 = 71 C / 177 W / 16 N / 2 X (`check:census-integrity` on this branch). In-flight §BI, §BK–§BR each restate it; re-measure after every merge.
+
+---

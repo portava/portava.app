@@ -210,3 +210,44 @@ present), succeeding once cleared, re-running as no-ops, and both files re-apply
 capture, the no-place rule dropped, the catalog overriding a writer's text, EXECUTE granted, a stored default on
 `memory_type`, the MOMENT default dropped, a fourteenth type, the trigger's column list narrowed, and a default on the
 name column.
+
+## 3812 — the place split and Memory re-resolution proposals (2026-10-14, B58 MEM-PLACE-SPLIT)
+
+Census-highlights-memories §BS (H72). Rehearsed on PGlite 0.2.17 over a fixture of exactly the objects the file touches
+(roles with Supabase's default ACL modelled, `auth.users`, `profiles`, `feature_flags`, `schema_migration_ledger`,
+`canonical_locations`, `places` and `external_place_references` as the baseline declares them, `place_merge_log` with
+the baseline's named CHECK, `memories` with 3804's column), never on a real database. The full chain runs the same
+SQL in CI's local-db job (`src/test/db/memoryPlaceSplitReresolution.db.test.ts`).
+
+```bash
+$PSQL -f sql/rehearsals/3812_00_seed.sql                   # BEFORE 3812: merge/unmerge history, places, Memories
+$PSQL -f src/migrations/3812_place_split_memory_reresolution.sql
+$PSQL -f sql/rehearsals/3812_01_place_split_reresolution.sql   # one session: it uses pg_temp helpers
+```
+
+Measured 2026-10-14, 42 of 42 steps passing: the `$pre$` refusing another CHECK on `action`; apply and re-apply; `$pre$`
+and `$post$` each alone (the live applier's split session); 18 broken states the `$post$` must refuse (a client grant, a
+policy, RLS off, service_role DELETE or missing INSERT, the evidence CHECK or a cascade dropped, the guard or purge
+disabled / unconditional / on every column / INVOKER, place_split DEFINER or executable by anon or not by
+service_role, service_role unable to insert places, the narrow CHECK back, the flag missing); T1–T13; 3813 applied on
+top; then the rollback refusing (flag ON; a proposal), succeeding with a split row present and KEEPING the widened
+CHECK, re-running as a no-op, re-apply, restoring `(merge, unmerge)` once no split row exists, and re-apply.
+
+- **T1** the merge/unmerge history survives; `rename` is refused. **T2/T2b** either flag off ⇒ `disabled`, nothing written.
+- **T3** six refusals write nothing; the split keeps P, creates P2 with P's descriptive fields, moves exactly the named reference, logs `split`.
+- **T4** born pending; ON CONFLICT DO NOTHING inserts no second proposal. **T5** the guard refuses another owner, a
+  deleted Memory, another place, a non-split row (including a MERGE of the same two places), a wrong candidate, a decided
+  birth, a missing Memory.
+- **T6** the CHECKs refuse a stored coordinate, a distance, a candidate name, nested objects, an unknown or missing
+  reason, missing candidates, a textual bound, a suggestion the rule did not make (and the reverse), a suggestion that
+  is not a candidate, eleven candidates, a NULL candidate.
+- **T7** accepted only once the Memory stores the place; a decision is final; nothing else may change.
+- **T8** a soft delete purges, archiving does not, other Memories untouched. **T9** the same as the service role that
+  holds no DELETE. **T10** anon and authenticated hold nothing and cannot split. **T11/T13** hard delete and account
+  erasure leave no proposal.
+- **T12** negative controls: with the guard disabled a proposal for a deleted Memory lands; with the purge disabled a
+  soft delete leaves one.
+
+**Mutants:** SQL 28/28 killed (the guard's seven rules, the purge's condition and rights, every evidence CHECK, the
+suggestion rule, place_split's flag, merged-row, reference, copy, name and type checks, grants, uniqueness, `$pre$`),
+rollback 5/5. Not covered: the FOR SHARE race (one session cannot race itself).
