@@ -5783,3 +5783,34 @@ is the store-outage door, not a live layover; the row's requirement is graded on
 126 + 12 + 1 + 2 = 141.
 
 - NOT-GRADED: artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts — §58.1 cites lane R's structural pin in prose; census-layover grades that door (L3/L101), no Compass row is graded on it.
+
+## §59 — 2026-10-15: unread rowsets are not empty trips. NO ROW MOVES
+
+Bounded integration against `5b2a20fdaaafb6805467b4284ae2ac2e63ccdf70`, not a new full-census
+measurement. `head_commit`, totals and all twelve assigned W verdicts remain unchanged.
+Only the changed source and the worker's explicitly scoped evidence were read for this correction;
+untouched historical assertions and deployment states are not newly verified.
+
+CT-02's membership, owned-trip and member-trip list reads now require arrays, including when the
+client returns no error. An empty HTTP body, JSON null, object or string must take the existing
+unread outcome rather than select an empty or partial union
+(`artifacts/api-server/src/compass/CompassCurrentTrip.ts:224#if (memberErr || !Array.isArray(memberRows))`,
+`artifacts/api-server/src/compass/CompassCurrentTrip.ts:257#if (error || !Array.isArray(data))`,
+`artifacts/api-server/src/compass/CompassCurrentTrip.ts:271#if (error || !Array.isArray(data))`).
+The typed projection likewise preserves the real trip but marks a non-array plan unread
+(`artifacts/api-server/src/domain/trips/projections/TripCompassProjection.ts:195#if (itemsErr || !Array.isArray(items))`).
+Readable empty arrays still mean empty. Selection, permissions, windows, caps and wire vocabulary
+are unchanged. This does not complete §55's raw-read-to-typed-contract migration.
+
+All remain W: **CX-03, CX-05, CX-11, CT-02, CT-08, CT-09, CPH-01, CPH-08, CPH-EVAL,
+CCL-01, CCL-05, CPV2-03**. The decision/opportunity/operational-projection/kernel work already
+present still needs authorized schema/configuration/flag rollout and enabled-path proof; live search
+and routing additionally need approved provider configuration, budget and live/outage evidence.
+CPH-01 still needs a successful authorized real-model evaluation. CPH-EVAL's missing historical
+artifacts and CCL-01's past sequencing cannot be repaired by a new mock pass. CCL-05's ranking
+implementation is not missing; opportunity activation remains distinct. CT-02 still needs equivalent
+typed multi-trip/count/roster contracts and consumer migration, not a capped projection substitution.
+
+Exact local test provenance and remaining integration paths are in
+`docs/ops/small-area-corrections-20261015.md`. No provider, database or model was contacted by this
+integration-evidence pass; earlier census measurements are not re-certified.

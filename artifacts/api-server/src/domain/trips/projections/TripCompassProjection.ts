@@ -192,8 +192,8 @@ export async function buildTripCompassProjection(
 
   let planItems: Layer<CompassPlanItem>;
   let planItemsTruncated = false;
-  if (itemsErr) {
-    log.warn({ err: itemsErr.message, tripId }, "compass projection: plan items unread");
+  if (itemsErr || !Array.isArray(items)) {
+    log.warn({ err: itemsErr?.message ?? "invalid rowset", tripId }, "compass projection: plan items unread");
     planItems = unread("trip_plan_items could not be read");
   } else {
     const scanned = withholdPrivatePlanItems((items ?? []) as any[], opts.viewerId ? await planItemAccessFor(sc, tripId, opts.viewerId) : ownerOnlyAccess("")); // census-trips §81

@@ -221,7 +221,7 @@ export async function resolveMemberTripIds(
       .select("trip_id, role, status")
       .eq("user_id", userId)
       .in("role", opts.roles as string[]);
-    if (memberErr) return { status: "unread", reason: "trip_members could not be read" };
+    if (memberErr || !Array.isArray(memberRows)) return { status: "unread", reason: "trip_members could not be read" };
     const rows = ((memberRows ?? []) as any[]).filter((r) =>
       opts.acceptedOnly === true ? r.status == null || r.status === "accepted" : true,
     );
@@ -254,7 +254,7 @@ export async function resolveUserTrips(
       .select(TRIP_COLUMNS)
       .eq("owner_id", userId)
       .in("status", statuses as string[]);
-    if (error) return { status: "unread", reason: "trips could not be read" };
+    if (error || !Array.isArray(data)) return { status: "unread", reason: "trips could not be read" };
     owned = (data ?? []) as any[];
   } catch {
     return { status: "unread", reason: "trips could not be read" };
@@ -268,7 +268,7 @@ export async function resolveUserTrips(
         .select(TRIP_COLUMNS)
         .in("id", memberTripIds)
         .in("status", statuses as string[]);
-      if (error) return { status: "unread", reason: "trips could not be read" };
+      if (error || !Array.isArray(data)) return { status: "unread", reason: "trips could not be read" };
       memberTrips = (data ?? []) as any[];
     } catch {
       return { status: "unread", reason: "trips could not be read" };

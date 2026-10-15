@@ -16613,7 +16613,7 @@ None had a latest-request guard, so a slow answer for an earlier query overwrote
 - The `disable_profile_search` stop keeps its 200 and carries the refusal envelope: `artifacts/api-server/src/routes/follows.ts:691#sendDiscoveryRefusal(res, { users: [] }, discoveryRefusal("feature_disabled", "profile_search_stopped"`.
 - Every path still serves no row. A healthy body is byte-identical to the pre-fix golden: `artifacts/api-server/src/test/userSearchFailureHonesty.test.ts:186#it("G1.`.
 
-**Client service** (`travel-buddy-standalone/src/services/follows.ts`, in place; D-TMP-2). A refusal, or a 200 with no list, is `ok: false`: `travel-buddy-standalone/src/services/follows.ts:185#if ((body as any)?.refusal) return { ok: false`.
+**Client service** (`travel-buddy-standalone/src/services/follows.ts`, in place; D-TMP-2). A refusal, or a 200 with no list, is `ok: false`: `travel-buddy-standalone/src/services/follows.ts:186#if ((body as any)?.refusal) return { ok: false`.
 
 **Surfaces** (D-TMP-3). Each shows a failed state with Retry, keeps a true "none found", and drops answers for a superseded query:
 - Find Travelers: `travel-buddy-standalone/app/discover.tsx:91#if (seq !== searchSeqRef.current) return;`. Its suggestions also no longer turn a failed read into "You've seen everyone for now".

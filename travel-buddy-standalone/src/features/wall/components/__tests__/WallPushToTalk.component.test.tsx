@@ -12,6 +12,7 @@
  * runs on-device, and that the microphone indicator clears on release.
  */
 import React from 'react';
+import { AppState, type AppStateStatus } from 'react-native';
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 
 // Same thin SmartInput stub as WallHeader.smartInput: the field is a plain
@@ -127,9 +128,7 @@ describe('W71 — the Wall microphone is push-to-talk, on the shared engine', ()
     expect(rec.sessions[1].aborted).toBe(false);
   });
 
-  it('a release that lands before the recognizer has started starts NOTHING (real adapters miss a pre-aborted signal)', async () => {
-    // Like both platform adapters: the abort listener is attached at start, so a
-    // signal that is ALREADY aborted is never seen. And availability is slow.
+  it('a release that lands before the recognizer has started starts NOTHING', async () => {
     let releaseAvailability!: () => void;
     const gate = new Promise<void>((r) => { releaseAvailability = r; });
     const started: string[] = [];
@@ -157,6 +156,28 @@ describe('W71 — the Wall microphone is push-to-talk, on the shared engine', ()
     await settle();
     expect(started).toEqual([]);
     expect(field().props.value).toBe('');
+  });
+
+  it('normal pressOut preserves the final result delivered after capture has stopped', async () => {
+    let signal!: AbortSignal;
+    let finish!: () => void;
+    const recognizer = holdingRecognizer('unused');
+    recognizer.recognizeOnce = (options = {}) => {
+      signal = options.signal!;
+      return new Promise(resolve => {
+        finish = () => resolve({ ok: true, result: { text: 'late final words', confidence: 0.95, isFinal: true, language: 'en-US' } });
+      });
+    };
+    const onSetIntent = jest.fn();
+    await render(<WallHeader voiceRecognizer={recognizer} onSetIntent={onSetIntent} />);
+    await settle();
+    await act(async () => { await fireEvent(ptt(), 'pressIn'); });
+    await act(async () => { await fireEvent(ptt(), 'pressOut'); });
+    expect(signal.aborted).toBe(true);
+    expect(field().props.value).toBe('');
+    await act(async () => { finish(); });
+    expect(field().props.value).toBe('late final words');
+    expect(onSetIntent).not.toHaveBeenCalled();
   });
 
   it('with no recognizer on this build, a hold starts nothing and says why', async () => {
@@ -199,6 +220,68 @@ describe('W71 — the Wall microphone is push-to-talk, on the shared engine', ()
     expect(ptt().props.accessibilityLabel).toBe('Hold to talk');
     expect(ptt().props.accessibilityHint).toMatch(/hold to speak, release to stop/i);
     expect(ptt().props.accessibilityHint).toMatch(/on this device/);
+  });
+});
+
+describe('W71 — capture ends when the Wall cannot keep a hold', () => {
+  let listeners: Set<(state: AppStateStatus) => void>;
+  let removeListener: jest.Mock;
+
+  beforeEach(() => {
+    listeners = new Set();
+    removeListener = jest.fn();
+    jest.spyOn(AppState, 'addEventListener').mockImplementation((event, listener) => {
+      if (event === 'change') listeners.add(listener);
+      return { remove() { listeners.delete(listener); removeListener(); } };
+    });
+  });
+
+  afterEach(() => { jest.restoreAllMocks(); });
+
+  it.each(['background', 'inactive'] as const)('%s stops a hold; becoming active requires a new hold', async (nextState) => {
+    const recognizer = holdingRecognizer('coffee nearby');
+    await render(<WallHeader voiceRecognizer={recognizer} />);
+    await settle();
+    await act(async () => { await fireEvent(ptt(), 'pressIn'); });
+    expect(recognizer.sessions).toHaveLength(1);
+    await act(async () => { listeners.forEach(listener => listener(nextState)); });
+    expect(recognizer.sessions[0].aborted).toBe(true);
+    await act(async () => { await fireEvent(ptt(), 'pressIn'); });
+    expect(recognizer.sessions).toHaveLength(1);
+    await act(async () => { listeners.forEach(listener => listener('active')); });
+    expect(recognizer.sessions).toHaveLength(1);
+    await act(async () => { await fireEvent(ptt(), 'pressIn'); });
+    expect(recognizer.sessions).toHaveLength(2);
+    expect(recognizer.sessions[1].aborted).toBe(false);
+    await act(async () => { await fireEvent(ptt(), 'pressOut'); });
+    expect(recognizer.sessions[1].aborted).toBe(true);
+    expect(field().props.value).toBe('coffee nearby');
+  });
+
+  it('becoming disabled stops capture without waiting for pressOut or restarting on enable', async () => {
+    const recognizer = holdingRecognizer('night market');
+    const view = await render(<WallHeader voiceRecognizer={recognizer} />);
+    await settle();
+    await act(async () => { await fireEvent(ptt(), 'pressIn'); });
+    await view.rerender(<WallHeader voiceRecognizer={recognizer} intentPending />);
+    expect(recognizer.sessions[0].aborted).toBe(true);
+    await view.rerender(<WallHeader voiceRecognizer={recognizer} />);
+    expect(recognizer.sessions).toHaveLength(1);
+    await act(async () => { await fireEvent(ptt(), 'pressOut'); });
+    expect(recognizer.sessions).toHaveLength(1);
+    await act(async () => { await fireEvent(ptt(), 'pressIn'); });
+    expect(recognizer.sessions).toHaveLength(2);
+  });
+
+  it('unmount stops the active hold and removes the app-state listener', async () => {
+    const recognizer = holdingRecognizer('not delivered');
+    const view = await render(<WallHeader voiceRecognizer={recognizer} />);
+    await settle();
+    await act(async () => { await fireEvent(ptt(), 'pressIn'); });
+    await view.unmount();
+    expect(recognizer.sessions[0].aborted).toBe(true);
+    expect(removeListener).toHaveBeenCalledTimes(1);
+    expect(listeners.size).toBe(0);
   });
 });
 

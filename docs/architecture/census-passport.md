@@ -196,7 +196,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| P13 | Travel hero/cover with a circular profile photo overlapping the hero | **W** | A cover exists (`src/components/passport/PassportIdentityCard.tsx:48` `coverUploading`, `:427` change-cover control) and the avatar is circular with a gold ring (`:681#goldRing:` + `:687#avatarPressable`; the `:655` this row used to cite is a 34 px overlay chip, not the portrait — repaired 2026-09-14), but the composition is a **cream document card with a vertical spine and a left-column avatar** (`:3`, `:392-413`), not a portrait overlapping a hero image. Coherent with the paper metaphor; a literal divergence from §3. Same family as §27. **NOT TOUCHED BY THE 2026-09-14 PALETTE RULING, and this is the ruling's own worked counter-example** (`docs/architecture/brand-palette-decision.md` §4): the row fails on a COMPOSITION — a document card with a vertical spine (`travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:358#<View style={s.spine}>`) and a left-column avatar (`travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:673#leftCol:`) where §3 asks for a portrait overlapping a hero image. Not one clause of it names a colour, so there was no palette half to close, and the ruling says so directly: *"the mockup approves the palette only — not a new layout."* **Re-read at this tree on 2026-09-14 and the reading is unchanged.** **Stays W**; it moves when someone builds the overlapping-portrait composition or an owner amends §3, and neither is a palette question. See §15.2. |
+| P13 | Travel hero/cover with a circular profile photo overlapping the hero | **W** | A cover exists (`src/components/passport/PassportIdentityCard.tsx:48` `coverUploading`, `:427` change-cover control) and the avatar is circular with a gold ring (`:687#goldRing:` + `:693#avatarPressable`; the historical line 655 (now `travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:661#width: avatar.s34, height: avatar.s34,`) this row used to cite is a 34 px overlay chip, not the portrait — repaired 2026-09-14), but the composition is a **cream document card with a vertical spine and a left-column avatar** (`:3`, `:392-413`), not a portrait overlapping a hero image. Coherent with the paper metaphor; a literal divergence from §3. Same family as §27. **NOT TOUCHED BY THE 2026-09-14 PALETTE RULING, and this is the ruling's own worked counter-example** (`docs/architecture/brand-palette-decision.md` §4): the row fails on a COMPOSITION — a document card with a vertical spine (`travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:359#<View style={s.spine}>`) and a left-column avatar (`travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:679#leftCol:`) where §3 asks for a portrait overlapping a hero image. Not one clause of it names a colour, so there was no palette half to close, and the ruling says so directly: *"the mockup approves the palette only — not a new layout."* **Re-read at this tree on 2026-09-14 and the reading is unchanged.** **Stays W**; it moves when someone builds the overlapping-portrait composition or an owner amends §3, and neither is a palette question. See §15.2. |
 | P14 | Name, @handle, verification mark, home country and optional home base immediately visible | C | `PassportProjectionService.buildIdentity:683-696` returns all five, each behind its own gate (`:679-681`); rendered by `PassportIdentityCard`. |
 | P15 | Current travel state and Availability/Open to Plans near the top, not buried | C | `src/components/passport/TravelerStateChip.tsx` and `AvailabilityChip.tsx` render in the identity band; server side `buildTravelerState:717` and `buildAvailability:862`. |
 | P16 | Trust summary as a concise score/label with drill-down | C | `buildTrust:975` returns label + publicLevel + confidence + domains, numeric score only for self (`:1010-1017`); drill-down via `TrustScoreInfoSheet` and `/passport/trust`. |
@@ -435,8 +435,8 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | P129 | Purple as the Passport identity accent | C | **RULED AND CLOSED 2026-09-14 — verified row by row, not on the ruling alone; see §15.1.** This clause is a pure accent-colour assignment: it names a colour for a role and asserts nothing about layout, hierarchy, type, spacing or contrast, so there is no second half to survive the amendment. `docs/architecture/brand-palette-decision.md` ratifies **Seal red `#D32F2F`** by name and supersedes *"every spec sentence naming purple, navy or indigo as a brand accent"*, of which `docs/specs/Portava_Passport_Engineering_Architecture_and_Design_Spec.txt:274#Purple as the Passport identity accent.` is one — cited here beside the amendment, as that document's §3 requires, because the supplied spec bytes are deliberately not edited. **The ratified colour is what ships.** `travel-buddy-standalone/src/theme/passportTokens.ts:15#seal:         '#D32F2F',` is the accent, and it carries the identity device itself — the verified-passport seal — at `travel-buddy-standalone/src/components/passport/PassportVerifiedSeal.tsx:35#<ShieldCheck size={iconSize} color={PP.seal} strokeWidth={1.8} />` and in that component's rings and arc lettering (`travel-buddy-standalone/src/components/passport/PassportVerifiedSeal.tsx:56#borderColor: PP.seal,`). **And it is the ONLY accent in the palette**, which is what makes "identity accent" the right description rather than a generous one: counted at this tree, the Passport tree's `PP.*` reads are 60 `inkMuted`, 47 `ink`, 36 `borderLight`, 30 `paper`, 17 `paperDeep` — all neutral surface and text — against **6** `PP.seal` and 2 `PP.gold`. One bold device on quiet paper, which is the direction `travel-buddy-standalone/src/theme/passportTokens.ts:2#Passport palette — clean white/cream paper, black ink, red seal.` declares. **WHAT WOULD TURN THIS RED:** `PP.seal` ceasing to be `#D32F2F`, the seal device losing it, or an owner reversal of `docs/architecture/brand-palette-decision.md` supplying a purple hex. No test pins the hex; that is a real and named gap — see §15.5. |
 | P130 | Gold for premium/earned travel identity and collectible stamps | C | `passportTokens.ts:17-18` `gold: '#D4AF37'` / `goldLight`, used for the gold-ring avatar (`PassportIdentityCard.tsx:3`) and premium stamp treatment. |
 | P131 | Green for verification and positive trust states | C | `PassportStampCollection.tsx:60` `verified: { color: '#2E7D5B' }`; `PassportHero.tsx:406` `rgba(13,155,111,0.10)` for the positive pill. |
-| P132 | Blue/teal for availability and social context | C | **THIS ROW'S EVIDENCE WAS FALSE, AND THE REQUIREMENT IS MET. Closed 2026-09-14; see §15.1 and §15.4.** The row said *"there is no blue/teal availability accent in `passportTokens.ts` at all"*. True, and irrelevant — it looked in one of the two palettes. `docs/architecture/brand-palette-decision.md` §2 ratifies **both** (*"Two palettes, both ratified … the shared theme tokens and the Passport document palette are not being merged by this decision"*), and the Passport's availability and shared-context SCREENS import the shared set, not `PP`: `travel-buddy-standalone/src/features/passport/AvailabilityScreen.tsx:50#import { color, space, radius, type as t, avatar, icon } from '../../theme/tokens.ts';` and `travel-buddy-standalone/src/features/passport/SharedContextScreen.tsx:43#import { color, space, radius, type as t, avatar, icon } from '../../theme/tokens.ts';`. **Teal-ink is the ratified colour and it is the one carrying these two roles.** The token is `travel-buddy-standalone/src/theme/tokens.ts:14#deep: '#0A3D4A', // teal-ink — destination accents`, named in the ruling. AVAILABILITY: the screen states the mapping in its own header — `travel-buddy-standalone/src/features/passport/AvailabilityScreen.tsx:24#(color.deep) carries availability / social context per §27` — and then applies it: the window label at `travel-buddy-standalone/src/features/passport/AvailabilityScreen.tsx:652#color: color.deep,`, the open-to-meet switch track (`travel-buddy-standalone/src/features/passport/AvailabilityScreen.tsx:347#trackColor={{ true: color.deep, false: color.haze }}`), and the selected day/window chips (`travel-buddy-standalone/src/features/passport/AvailabilityScreen.tsx:681#backgroundColor: color.deep,`, `travel-buddy-standalone/src/features/passport/AvailabilityScreen.tsx:723#backgroundColor: color.deep,`). SOCIAL CONTEXT: the "YOU TWO" summary device is a teal disc at `travel-buddy-standalone/src/features/passport/SharedContextScreen.tsx:378#backgroundColor: color.deep,`, and the traveler-state pill's `social` tone — which is what `traveling`, `exploring`, `at_event` and `with_crew` all resolve to (`travel-buddy-standalone/src/lib/travelerState.ts:73#return 'social';`) — is cyan-teal at `travel-buddy-standalone/src/components/passport/TravelerStateChip.tsx:56#social:   { bg: '#EEF6FA', border: 'rgba(14,116,144,0.35)', text: '#155E75', dot: '#0E7490' },`. **The one colour that is NOT teal, named rather than omitted:** `open_to_plans` resolves to the `positive` tone and renders green (`travel-buddy-standalone/src/components/passport/TravelerStateChip.tsx:55#positive: { bg: '#F0FAF4', border: 'rgba(34,197,94,0.35)', text: '#166534', dot: '#22C55E' },`). That is §27's OTHER colour clause reaching the same state — the ruling preserves *"semantic status colours"* in terms — and it does not reopen this row; §15.4 argues it in full and says what would. The legacy green `AvailabilityChip` is not evidence either way: **no caller anywhere passes `availabilityChip`**, so `travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:464#chipState={availabilityChip ?? null}` is always `null` and the component returns without rendering. **WHAT WOULD TURN THIS RED:** the availability screen or the shared-context summary moving off `color.deep`, or the `social` tone ceasing to be a blue-teal. Nothing pins either; see §15.5. |
-| P133 | Travel hero image, circular overlapping portrait, rounded cards, restrained glass | **W** | Rounded cards yes; a cover image yes; but the portrait sits in a left column of a document card rather than overlapping a hero (`PassportIdentityCard.tsx:392-413`), and there is no glass treatment. Two of four. **NEVER DEPENDED ON THE PALETTE — re-read 2026-09-14 and left alone.** Both surviving failures are composition and treatment, not colour: the portrait sits in the document card's left column rather than overlapping the hero (`travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:673#leftCol:`), and there is no glass treatment anywhere in the Passport tree. `docs/architecture/brand-palette-decision.md` amends colour clauses only and closes nothing here. §12.1 and §12.4 grouped this row with the four colour rows under D-DESIGN; that grouping was wrong on this row and on P13, which is why the ruling moved two rows and not five. **Stays W** at two of four. See §15.2. |
+| P132 | Blue/teal for availability and social context | C | **THIS ROW'S EVIDENCE WAS FALSE, AND THE REQUIREMENT IS MET. Closed 2026-09-14; see §15.1 and §15.4.** The row said *"there is no blue/teal availability accent in `passportTokens.ts` at all"*. True, and irrelevant — it looked in one of the two palettes. `docs/architecture/brand-palette-decision.md` §2 ratifies **both** (*"Two palettes, both ratified … the shared theme tokens and the Passport document palette are not being merged by this decision"*), and the Passport's availability and shared-context SCREENS import the shared set, not `PP`: `travel-buddy-standalone/src/features/passport/AvailabilityScreen.tsx:50#import { color, space, radius, type as t, avatar, icon } from '../../theme/tokens.ts';` and `travel-buddy-standalone/src/features/passport/SharedContextScreen.tsx:43#import { color, space, radius, type as t, avatar, icon } from '../../theme/tokens.ts';`. **Teal-ink is the ratified colour and it is the one carrying these two roles.** The token is `travel-buddy-standalone/src/theme/tokens.ts:14#deep: '#0A3D4A', // teal-ink — destination accents`, named in the ruling. AVAILABILITY: the screen states the mapping in its own header — `travel-buddy-standalone/src/features/passport/AvailabilityScreen.tsx:24#(color.deep) carries availability / social context per §27` — and then applies it: the window label at `travel-buddy-standalone/src/features/passport/AvailabilityScreen.tsx:652#color: color.deep,`, the open-to-meet switch track (`travel-buddy-standalone/src/features/passport/AvailabilityScreen.tsx:347#trackColor={{ true: color.deep, false: color.haze }}`), and the selected day/window chips (`travel-buddy-standalone/src/features/passport/AvailabilityScreen.tsx:681#backgroundColor: color.deep,`, `travel-buddy-standalone/src/features/passport/AvailabilityScreen.tsx:723#backgroundColor: color.deep,`). SOCIAL CONTEXT: the "YOU TWO" summary device is a teal disc at `travel-buddy-standalone/src/features/passport/SharedContextScreen.tsx:378#backgroundColor: color.deep,`, and the traveler-state pill's `social` tone — which is what `traveling`, `exploring`, `at_event` and `with_crew` all resolve to (`travel-buddy-standalone/src/lib/travelerState.ts:73#return 'social';`) — is cyan-teal at `travel-buddy-standalone/src/components/passport/TravelerStateChip.tsx:56#social:   { bg: '#EEF6FA', border: 'rgba(14,116,144,0.35)', text: '#155E75', dot: '#0E7490' },`. **The one colour that is NOT teal, named rather than omitted:** `open_to_plans` resolves to the `positive` tone and renders green (`travel-buddy-standalone/src/components/passport/TravelerStateChip.tsx:55#positive: { bg: '#F0FAF4', border: 'rgba(34,197,94,0.35)', text: '#166534', dot: '#22C55E' },`). That is §27's OTHER colour clause reaching the same state — the ruling preserves *"semantic status colours"* in terms — and it does not reopen this row; §15.4 argues it in full and says what would. The legacy green `AvailabilityChip` is not evidence either way: **no caller anywhere passes `availabilityChip`**, so `travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:470#chipState={availabilityChip ?? null}` is always `null` and the component returns without rendering. **WHAT WOULD TURN THIS RED:** the availability screen or the shared-context summary moving off `color.deep`, or the `social` tone ceasing to be a blue-teal. Nothing pins either; see §15.5. |
+| P133 | Travel hero image, circular overlapping portrait, rounded cards, restrained glass | **W** | Rounded cards yes; a cover image yes; but the portrait sits in a left column of a document card rather than overlapping a hero (`PassportIdentityCard.tsx:392-413`), and there is no glass treatment. Two of four. **NEVER DEPENDED ON THE PALETTE — re-read 2026-09-14 and left alone.** Both surviving failures are composition and treatment, not colour: the portrait sits in the document card's left column rather than overlapping the hero (`travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:679#leftCol:`), and there is no glass treatment anywhere in the Passport tree. `docs/architecture/brand-palette-decision.md` amends colour clauses only and closes nothing here. §12.1 and §12.4 grouped this row with the four colour rows under D-DESIGN; that grouping was wrong on this row and on P13, which is why the ruling moved two rows and not five. **Stays W** at two of four. See §15.2. |
 | P134 | Colour is never the only status indicator; pair it with text/iconography | C | `PassportStampCollection.tsx:56-85` pairs each verification colour with a distinct glyph **and** an accessibility label; verification pills, availability check+label and trust standing pills all carry text. |
 
 ### §28 Mobile Component Structure
@@ -1085,7 +1085,7 @@ are not.
 
 | id | re-executed finding | verdict |
 |---|---|---|
-| P13 | Confirmed unmoved, with two citations repaired. The composition is still a cream document card with a vertical spine (`travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:358#<View style={s.spine}>`) and a LEFT-COLUMN avatar (`travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:673#leftCol:`), not a portrait overlapping a hero. The avatar is circular and gold-ringed — but **not at the `:655` this row cites**, which is a 34 px absolute-positioned overlay chip; the real evidence is `travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:681#goldRing:` and `:687#avatarPressable` (`borderRadius: AVATAR_SIZE / 2`). D-DESIGN. **Still unmoved 2026-09-14, and now for a stated reason rather than a pending decision: the palette ruling does not reach a composition (§15.2).** | W |
+| P13 | Confirmed unmoved, with two citations repaired. The composition is still a cream document card with a vertical spine (`travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:359#<View style={s.spine}>`) and a LEFT-COLUMN avatar (`travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:679#leftCol:`), not a portrait overlapping a hero. The avatar is circular and gold-ringed — but **not at the historical line 655 (now `travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:661#width: avatar.s34, height: avatar.s34,`) this row cites**, which is a 34 px absolute-positioned overlay chip; the real evidence is `travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:687#goldRing:` and `:693#avatarPressable` (`borderRadius: AVATAR_SIZE / 2`). D-DESIGN. **Still unmoved 2026-09-14, and now for a stated reason rather than a pending decision: the palette ruling does not reach a composition (§15.2).** | W |
 | P42 | **Evidence false — see §14.2.** Compass is two of two; Discovery is zero of one and is the whole of what remains. Discovery's people path is not a ranker at all (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:553#.order("name", { ascending: true })` — an alphabetical name-match search that weights no interest term either way), so the clause binds on Discovery's CONTENT ranker, and that ranker is on an explicit owner hold: `docs/discovery/ROADMAP.md:222#RANKER WORK GOES ON EXPLICIT HOLD`, which `census-discovery.md` A18 grades `N — owner hold`. The blocker is an owner ruling, not a contended file. | W |
 | P45 | Confirmed unchanged at `artifacts/api-server/src/services/passport/PassportProjectionService.ts:1232#measuredValue(k)` and `artifacts/api-server/src/services/passport/PassportProjectionService.ts:1132#if (score >= 50) return "Established";`. §13.2's `basis` is live and reaches the trips variant (`artifacts/api-server/src/services/passport/PassportConsumerProjections.ts:792#basis: d.basis`). Re-measured: **`trust.domains` still has no client consumer at all** — a repo-wide grep over `travel-buddy-standalone/src` for `trustDomains` and `domains[` returns **0**, and `useTrustProjection.ts` still builds its own six rows from capability flags. D-WORD, plus a client surface. | W |
 | P50 | Confirmed unchanged and deliberately so: `artifacts/api-server/src/services/passport/PassportProjectionService.ts:2504#export function passportTrustConfidence`. `evidenceWeight` / `evidenceCount` / `confidenceBasis` reach the projection beside it and make the two 82s distinguishable; the BAND is still travel-derived, and because `confidence === "low"` is what selects the non-stigmatizing "New Traveler" copy (`artifacts/api-server/src/services/passport/PassportProjectionService.ts:1389#"New Traveler · Verified"`), recalibrating the band changes the word a person is shown. D-WORD. | W |
@@ -1250,7 +1250,7 @@ not "is this row in §27?" but **"is the thing this row fails on a colour?"**
 
 | id | fails on | palette half | remainder | verdict |
 |---|---|---|---|---|
-| P13 | composition | **none — there was never a colour clause in it** | a document card with a vertical spine (`travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:358#<View style={s.spine}>`) and a left-column avatar (`travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:673#leftCol:`) where §3 asks for a circular portrait overlapping a travel hero. The component says so in its own first lines: `travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:3#Premium cream/ivory document card with vertical spine, gold-ring avatar,` | **W** |
+| P13 | composition | **none — there was never a colour clause in it** | a document card with a vertical spine (`travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:359#<View style={s.spine}>`) and a left-column avatar (`travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:679#leftCol:`) where §3 asks for a circular portrait overlapping a travel hero. The component says so in its own first lines: `travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:3#Premium cream/ivory document card with vertical spine, gold-ring avatar,` | **W** |
 | P128 | theme **and** surface colour | **closed** — the light paper surfaces are ratified | *"Dark-mode first"*. §15.3. | **W** |
 | P133 | composition and treatment | **none** | portrait in the left column, not overlapping a hero; and no glass treatment — `blurview`, `backdropFilter`, `expo-blur` and `glass` return **0** across `src/components/passport/` and `src/features/passport/`. Two of four, unchanged. | **W** |
 
@@ -1337,7 +1337,7 @@ independently, with the chip pairing tone with a glyph and a label. **It does no
 and here is what would:** an owner saying the availability role is teal-only, at which point one
 tone entry changes. The legacy green `AvailabilityChip` is not evidence in either direction —
 **no caller anywhere passes `availabilityChip`**, so
-`travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:464#chipState={availabilityChip ?? null}`
+`travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:470#chipState={availabilityChip ?? null}`
 is always `null` and the component renders nothing.
 
 ### 15.5 What these two `C` rows do NOT have, said plainly
@@ -1442,7 +1442,7 @@ reader itself remains unbuilt and small.
 
 | id | re-executed at this tree | what would move it | owner | verdict |
 |---|---|---|---|---|
-| P13 | Unchanged: `travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:358#<View style={s.spine}>` and `travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:673#leftCol:`. | A layout ruling. `docs/architecture/brand-palette-decision.md` is live and declines this in terms — *"the mockup approves the palette only — not a new layout."* Building the §3 composition against a ratified paper identity would be a guess, not a fix. | **Owner / design** | W |
+| P13 | Unchanged: `travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:359#<View style={s.spine}>` and `travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:679#leftCol:`. | A layout ruling. `docs/architecture/brand-palette-decision.md` is live and declines this in terms — *"the mockup approves the palette only — not a new layout."* Building the §3 composition against a ratified paper identity would be a guess, not a fix. | **Owner / design** | W |
 | P42 | Unchanged: Discovery's people path is an alphabetical name match, and its content ranker is on the hold at `docs/discovery/ROADMAP.md:222#RANKER WORK GOES ON EXPLICIT HOLD`. | Lifting that hold. Nothing in this census's paths is involved; Compass is already two of two. | **Owner** (the Discovery hold) | W |
 | P50 | Unchanged: `artifacts/api-server/src/services/passport/PassportProjectionService.ts:2504#export function passportTrustConfidence`. §16.1 did not touch it and deliberately so. | Recalibrating the band against migration 2371's `evidence_weight` / `evidence_count`. `confidence === "low"` is what selects the non-stigmatizing copy (`artifacts/api-server/src/services/passport/PassportProjectionService.ts:1389#"New Traveler · Verified"`), so this changes the word a person is shown. `D-WORD`. | **Owner / product** | W |
 | P59 | Re-executed with counting greps: `canProvideVisaBuddyService`, `VisaBuddy` and `visa_buddy` return **0** across both trees outside the guard test itself, and `buildOwnerCapabilities` still returns six keys. | A product decision that a seventh capability should exist and gate something. Today it would gate nothing and be read by nothing. `VISA_BUDDY_CAPABILITY` on the blocker ledger. | **Owner / product** | N |
@@ -2283,7 +2283,7 @@ defects that path actually hits.
   screen shows "—" (`travel-buddy-standalone/app/u/[username].tsx:725#const stampsEarned: number | null`).
 - `artifacts/api-server/src/services/passport/PassportMapService.ts:434#async function readAllActiveUserStamps(`
   — the whole read behind `buildStats`; the stats row shows "—" for a failed or `readFailed` read
-  (`travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:295#statsFailed ? '—'`).
+  (`travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:296#statsFailed ? '—'`).
 - `artifacts/api-server/src/services/passport/EventPassportService.ts:96#| "unavailable";` —
   every failed read or write refuses as `unavailable` (still never a passport); the routes answer
   it as a retryable 500 (`artifacts/api-server/src/routes/passport.ts:1893#case "unavailable": sendError(res, "db_error"`).
@@ -2706,7 +2706,7 @@ to the verdicts §26.1 gave them.
 | --- | --- | --- | --- |
 | P59 | **N** | **C** | **D-41: no Visa Buddy.** §11 is amended to six capabilities. The six are derived at `artifacts/api-server/src/services/passport/PassportProjectionService.ts:759#export function buildOwnerCapabilities(`, and each gates something that exists (this row's own body). **TESTED:** `artifacts/api-server/src/test/passportProjection.test.ts:626#it("buildOwnerCapabilities derives exactly the six` — now P59's acceptance test, not only its tripwire. A seventh key turns it red. The two artefacts that frame the "no" stay pinned in the same suite: `VISA_HELP` is a scam family, and the entry-requirements disclaimer stands. |
 | P159 | **W** | **C** | **D-83: the "deeper Experience Graph" is dropped as a separate surface.** On the Passport, §9 Intelligence is Travel DNA and the yearbook, as built. Travel DNA: `artifacts/api-server/src/services/passport/PassportTravelIdentityService.ts:548#export function filterTravelIdentityForViewer(` (P89). The yearbook: `artifacts/api-server/src/services/passport/PassportYearbookService.ts:655#export async function buildYearbook(`, served owner-private at `artifacts/api-server/src/routes/passport.ts:1663#router.get("/passport/:userId/yearbook"`. **TESTED:** `artifacts/api-server/src/test/passportYearbookRoute.test.ts:139#it("withholds another traveller's yearbook` (10 cases, all red when the route is removed) and `artifacts/api-server/src/test/passportTravelIdentity.test.ts:97#it("emits named Travel DNA traits`. |
-| P13 | **W** | **C** | **D-32: keep the document card.** The spec's travel hero with an overlapping portrait is withdrawn, so §3 asks for the shipped composition: a vertical spine (`travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:358#<View style={s.spine}>`) and a left-column avatar (`travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:673#leftCol:`). **TESTED:** `travel-buddy-standalone/src/components/passport/__tests__/PassportRatifiedIdentity.decision.component.test.ts:216#it('keeps the vertical spine and the left-column avatar'`. Removing the spine turns it red. |
+| P13 | **W** | **C** | **D-32: keep the document card.** The spec's travel hero with an overlapping portrait is withdrawn, so §3 asks for the shipped composition: a vertical spine (`travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:359#<View style={s.spine}>`) and a left-column avatar (`travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:679#leftCol:`). **TESTED:** `travel-buddy-standalone/src/components/passport/__tests__/PassportRatifiedIdentity.decision.component.test.ts:216#it('keeps the vertical spine and the left-column avatar'`. Removing the spine turns it red. |
 | P128 | **W** | **C** | **D-32: the light paper identity, not dark-mode first.** The colour half was closed on 2026-09-14 (§15.3). The theme half is now ruled: one light theme (`travel-buddy-standalone/src/theme/passportTokens.ts:8#paper:        '#FFFFFF',`), and no Passport surface reads the device colour scheme. **TESTED:** `travel-buddy-standalone/src/components/passport/__tests__/PassportRatifiedIdentity.decision.component.test.ts:107#it('does not read the device colour scheme anywhere in the Passport surfaces'`. Adding `useColorScheme` to the card turns it red. |
 | P133 | **W** | **C** | **D-32: the two clauses §26.1 left open are withdrawn.** The overlapping portrait goes with P13, and restrained glass — "genuinely UNDECIDED" in §26.1 — is withdrawn too. Rounded cards and a cover image were already present (two of four). **TESTED:** the composition case cited on P13, and the new glass pin `travel-buddy-standalone/src/components/passport/__tests__/PassportRatifiedIdentity.decision.component.test.ts:251#it('no Passport surface uses a blur/glass material'`. A `BlurView` on the card turns it red. |
 
@@ -2760,7 +2760,7 @@ longer wait on that acceptance. `head_commit` is NOT re-declared.*
 - **The act:** a GPS-verified, non-suspicious hidden-gem visit, at the gem's `canonical_place_id`.
   Plan geofence check-ins carry no canonical place, and there is no QR check-in at a place in this tree,
   so neither earns one yet.
-- **Tests:** `artifacts/api-server/src/test/passportPlaceStamp.test.ts:111#describe("B. one Place stamp per person per place"`
+- **Tests:** `artifacts/api-server/src/test/passportPlaceStamp.test.ts:138#describe("B. one Place stamp per person per place"`
   (8 tests). Eight mutations were run, and each one turned a test red.
 
 ### 33.2 Restated, not moved
@@ -2792,7 +2792,7 @@ longer wait on that acceptance. `head_commit` is NOT re-declared.*
   false clause and an activation prerequisite. The guard now withholds it from every caller but the owner
   (`artifacts/api-server/src/services/passport/PassportPrivacyGuard.ts:163#if (stamp.stamp_type === "place" && callerCtx !== "owner") {`).
   One case per context, plus the hotel-blur and other-type cases:
-  `artifacts/api-server/src/test/passportPlaceStamp.test.ts:203#describe("G. verifier N1`.
+  `artifacts/api-server/src/test/passportPlaceStamp.test.ts:230#describe("G. verifier N1`.
   Removing the clause turns four cases red (public, circle, trip-crew, and a circle-only stamp seen by its circle). §32.2, §33.1, D-84, the `PlaceStampService` header and 3800's
   flag description are corrected.
 - **N5 — 3800 could have changed how a NULL-city stamp deduplicates.** Two definitions of
@@ -2801,7 +2801,7 @@ longer wait on that acceptance. `head_commit` is NOT re-declared.*
   `pg_get_indexdef` and accepts exactly those two forms, or the partial form of either on a replay. It
   rebuilds the same column list with the `'place'` predicate, and refuses anything else. The postcondition
   and the rollback know the same two partial forms. Test:
-  `artifacts/api-server/src/test/passportPlaceStamp.test.ts:171#describe("F. verifier N5`.
+  `artifacts/api-server/src/test/passportPlaceStamp.test.ts:198#describe("F. verifier N5`.
 - **Activation prerequisites, completed.** P61's activation list (§33.2) gains one item. The one writer runs
   from the hidden-gem verify-visit, which returns before it unless `hidden_gems_passport_enabled` is on.
   So activation needs 2880 and 3800 applied, and both `hidden_gems_passport_enabled` and
@@ -2820,7 +2820,7 @@ longer wait on that acceptance. `head_commit` is NOT re-declared.*
   `neighborhood` along with `place_id`, so it holds by construction
   (`artifacts/api-server/src/services/passport/PassportPrivacyGuard.ts:164#return { ...stamp, place_id: null, neighborhood: null };`).
   The owner keeps both. The N1 cases now assert it for public, circle and trip-crew callers, and for a
-  circle-only stamp (`artifacts/api-server/src/test/passportPlaceStamp.test.ts:203#describe("G. verifier N1`).
+  circle-only stamp (`artifacts/api-server/src/test/passportPlaceStamp.test.ts:230#describe("G. verifier N1`).
   Without the change those four cases turn red.
 - **3800's provenance.** 3800's header, `docs/migrations.md` and §34 said 0042 defines the COALESCE form of
   `passport_stamps_dedup_idx`. 0042 defines no such index. That form is named only as a sentence in 2880's
@@ -2830,3 +2830,94 @@ longer wait on that acceptance. `head_commit` is NOT re-declared.*
 | ID | Was | Now | Why |
 |---|---|---|---|
 | P61 | **W** | **W** | §33.2 and §34; the guard now withholds the neighborhood too. The headline in §33.3 stands. |
+
+## §37 — 2026-10-15 Passport correction triage and complete activation prerequisites
+
+*Detached checkout at reviewed #759 head `5fad1c98c91bc783b2a12cefbb759f61e4d190f7`.
+`head_commit` is NOT re-declared. Section 36 is reserved for the existing open #748's
+Passport avatar evidence; this pass does not duplicate that work. No database was accessed,
+no migration applied and no flag changed.*
+
+### 37.1 The three assigned rows remain W
+
+| ID | Was | Now | Current requirement |
+|---|---|---|---|
+| P42 | **W** | **W** | Passport's intent supply and Compass weighting are already built. Discovery's content-ranker term is still missing behind the explicit owner hold. The owner must lift the hold before that lane implements and tests it, or explicitly rule that the requirement covers people-ranking only. Neither ruling is inferred here. |
+| P61 | **W** | **W** | The Place-stamp implementation exists, but its complete activation path is §37.2. The user-designated protected-place limitation remains unresolved; this is not unconditional activation permission or proof of deployment. |
+| P77 | **W** | **W** | Four specified views exist. The existing Memory participant policy is usable, but the Passport scrapbook has no established link to the canonical Memory whose consent it would project. §37.3 identifies the missing contract; no participant identity or visibility rule is invented. |
+
+P42's hold remains at `docs/discovery/ROADMAP.md:222#RANKER WORK GOES ON EXPLICIT HOLD`.
+The closure alternatives in §14.4 still apply. The Passport-side tests prove the explicit-intent
+weighting helper; they do not certify an absent Discovery integration.
+
+### 37.2 P61 activation prerequisites
+
+Sections 33–35 list the two stamp-specific activation flags but omit two upstream route gates.
+The only caller is still the GPS hidden-gem verify-visit route. The complete path requires:
+
+1. Apply and verify 2880's Place vocabulary, then 3800's place-keyed deduplication and flag seed,
+   in the isolated beta environment first. The owner controls those steps; this pass performed neither.
+2. Verify all four capability gates on that environment:
+
+| Gate | Where it blocks the path | Checked-in beta policy, not live state |
+|---|---|---|
+| `hidden_gems_enabled` | Verify-visit entry, before recording a check-in | ON |
+| `hidden_gem_verification_enabled` | Verify-visit entry, before recording a check-in | ON |
+| `hidden_gems_passport_enabled` | Passport side effect, before calling the Place-stamp writer | ON |
+| `passport_place_stamps_enabled` | Place-stamp service, before protected-zone and stamp reads | OFF |
+
+The route gates are at `artifacts/api-server/src/routes/hiddenGems.ts:941#if (!await isFlagEnabled(sc, "hidden_gems_enabled"))`,
+`artifacts/api-server/src/routes/hiddenGems.ts:944#if (!await isFlagEnabled(sc,` and
+`artifacts/api-server/src/routes/hiddenGems.ts:967#.from("feature_flags").select("enabled")`; the last gate is in
+`artifacts/api-server/src/services/passport/PlaceStampService.ts:71#export async function awardPlaceStampForCheckin(`.
+The ON entries above are existing repository policy, not requests to flip additional flags.
+
+3. Exercise a successful, non-suspicious GPS visit to an active gem with a non-null canonical place;
+   prove one stamp per person/place, no award in a protected zone or on unreadable policy/preferences,
+   and no venue/neighborhood disclosure to a non-owner. A service mock is not deployed/device proof.
+4. Resolve the limitation already recorded in §33.2: only platform protected zones are read. There is
+   no per-traveller store for the user's own designated protected places. Do not certify that part of
+   D-84/OD-MAP-3 as implemented, or silently treat activation as resolving it. Plan geofences have no
+   canonical place and there is no place QR check-in producer; neither earns a Place stamp today.
+
+Regression: `artifacts/api-server/src/test/passportPlaceStamp.test.ts:111#describe("H. P61 activation evidence`.
+It reads the sole producer's upstream flag names and requires all of them, plus the service flag,
+in the activation evidence. Before this correction it fails on the omitted base hidden-gem gate.
+The existing runtime cases still cover awarding, deduplication, fail-closed policy reads and redaction.
+
+### 37.3 P77 is a source-link contract gap, not permission to copy a participant list
+
+The older §17.5/§26.1 description needs narrowing: the canonical Memory participant ladder now exists
+at `artifacts/api-server/src/services/memory/memoryParticipantVisibility.ts:304#export function projectParticipants(`.
+It uses tag consent, bidirectional blocks, crew membership and name visibility. Reuse that policy;
+do not create a Passport-specific substitute.
+
+However, `artifacts/api-server/src/services/passport/PassportMemoryService.ts:261#export async function loadMemoriesRead(`
+reads **passport_memories**, not **memories**. The schema's `memory_tags.memory_id` foreign key names
+**memories**. The current Passport writers create manual, city-visit, geofence, hidden-gem and
+safe-return scrapbook records; none establishes a canonical Memory association. The optional
+`source_id` field is not a documented canonical Memory foreign key. Matching UUIDs, trip membership,
+city/time proximity or a guessed source type would fabricate participant evidence.
+
+The separately registered `PassportMemoryProjection` consumes canonical Memories, but the Passport
+scrapbook route does not consume it and its current fields contain no participants. That registration
+does not bridge the two identities. The client DTO still has no participant field and the existing
+four-view component test explicitly asserts the People tab's absence.
+
+To implement P77 without inventing visibility, the owning lane must establish the authoritative
+consent-bearing source/association (or an approved replacement of the legacy feed), including the
+handling of unmapped legacy rows and revocation/deletion. Then project through the existing audience
+and participant policy, wire the DTO and People grouping, and test the full consumer path. Memory
+spec §22 explicitly forbids fabricating participant links during backfill. Until then, P77 is
+**unresolved**, not code-corrected or merely waiting for a flag.
+
+Open-PR reconciliation checked all 44 open PR file lists. #736 changes the canonical participant
+ceiling; #739/#748 address Memory people/block handling; #751 adds the shared-anchor client.
+None supplies the Passport scrapbook association. #521's MemoriesTab change is the already-present
+unreadable state, not a People view. Those lanes and the shared Memory source registry are untouched.
+
+### 37.4 Headline unchanged
+
+**169 requirements · 165 BUILT-AND-CORRECT · 3 BUILT-BUT-WRONG · 0 NOT-BUILT · 1 CANNOT-VERIFY.**
+This is a documentary correction with a regression test, not a runtime implementation or an upgrade
+of any assigned row to C. No live deployment or device state was re-measured.

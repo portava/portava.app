@@ -22,10 +22,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { runInNewContext } from "node:vm";
 import {
   parsePostureSource,
   sensingPostureOnDisk,
-  isOptionAInForce,
 } from "../scripts/lib/sensingPostureOnDisk.js";
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -36,7 +36,7 @@ const COLUMNS = "scripts/checkMissingLiveColumns.ts";
 const MIGRATION = "2481_sensing_sessions_option_a_issuer.sql";
 /** The gated form both auditors must use: the skip added inside the posture check. */
 const GUARDED_SKIP = new RegExp(
-  String.raw`if\s*\(\s*!isOptionAInForce\(\)\s*\)\s*\{[^}]*2481_sensing_sessions_option_a_issuer\.sql[^}]*\}`,
+  String.raw`if\s*\(\s*sensingPostureOnDisk\(\)\s*===\s*"anonymous_capable"\s*\)\s*\{[^}]*2481_sensing_sessions_option_a_issuer\.sql[^}]*\}`,
   "s",
 );
 
@@ -54,7 +54,6 @@ describe("the 2481 auditor reconciliation is derived from the posture", () => {
 
   test("Option B is in force today, so the allowances are active", () => {
     assert.equal(sensingPostureOnDisk(), "anonymous_capable");
-    assert.equal(isOptionAInForce(), false);
   });
 
   test("Option A turns both allowances back off", () => {
@@ -67,8 +66,7 @@ describe("the 2481 auditor reconciliation is derived from the posture", () => {
 
   test("anything unrecognisable is 'undecided', which grants nothing", () => {
     // Fail-closed: a posture that cannot be established must not silence a
-    // security-posture auditor. Neither of these is Option A, so neither reports
-    // isOptionAInForce() true — but neither is Option B either, and the
+    // security-posture auditor. None of these establishes Option B, and the
     // allowances below are written to require an ESTABLISHED Option B.
     for (const src of [
       "",
@@ -82,7 +80,30 @@ describe("the 2481 auditor reconciliation is derived from the posture", () => {
 });
 
 describe("the reconciliation is exactly two entries, both conditional", () => {
-  test("auditMigrationsVsLive skips 2481 only when Option A is not in force", () => {
+  for (const file of [AUDIT, COLUMNS]) {
+    for (const [label, source, expectedSkip] of [
+      ["Option B", 'export const SENSING_AUTH_POSTURE: SensingAuthPosture = "anonymous_capable";', true],
+      ["Option A", 'export const SENSING_AUTH_POSTURE: SensingAuthPosture = "authenticated_only";', false],
+      ["undecided", 'export const SENSING_AUTH_POSTURE: SensingAuthPosture = "undecided";', false],
+      ["missing source", "", false],
+      ["unknown posture", 'export const SENSING_AUTH_POSTURE: SensingAuthPosture = "made_up";', false],
+      ["renamed constant", 'export const SENSING_AUTH_POSTURE_RENAMED: SensingAuthPosture = "anonymous_capable";', false],
+    ] as const) {
+      test(`${file}: the executable 2481 gate ${expectedSkip ? "grants" : "refuses"} the skip for ${label}`, () => {
+        const gate = read(file).match(/if\s*\([^{}]*\)\s*\{\s*SKIP_FILES\.add\("2481_sensing_sessions_option_a_issuer\.sql"\);\s*\}/)?.[0];
+        assert.ok(gate, "expected the executable 2481 exclusion gate");
+        const posture = parsePostureSource(source);
+        const skipped = new Set<string>();
+        runInNewContext(gate, {
+          SKIP_FILES: skipped,
+          sensingPostureOnDisk: () => posture,
+        });
+        assert.equal(skipped.has(MIGRATION), expectedSkip);
+      });
+    }
+  }
+
+  test("auditMigrationsVsLive skips 2481 only when Option B is established", () => {
     const src = read(AUDIT);
     assert.ok(src.includes(MIGRATION), "the auditor must name the file it skips");
     assert.match(src, GUARDED_SKIP, "2481's skip must be derived from the posture, not pinned");
@@ -136,7 +157,7 @@ describe("the reconciliation is exactly two entries, both conditional", () => {
     });
   }
 
-  test("checkMissingLiveColumns skips 2481 only when Option A is not in force", () => {
+  test("checkMissingLiveColumns skips 2481 only when Option B is established", () => {
     // The mechanism changed after #511 and #512 merged in parallel. #512 was
     // right that the FILE is the unit: ALLOWLIST means "pending a live apply,
     // remove once certified", and 2481 is never to be applied. #511's ALLOWLIST

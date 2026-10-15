@@ -67,7 +67,7 @@ import { fetchWithThrottleRetry } from "./lib/managementApiThrottle.js";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { isOptionAInForce } from "./lib/sensingPostureOnDisk.js";
+import { sensingPostureOnDisk } from "./lib/sensingPostureOnDisk.js";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = resolve(__dir, "../migrations");
@@ -334,7 +334,7 @@ const SKIP_FILES = new Set<string>([
 // sensing stack's importer set, which sensingCensusRederivation.test.ts §9.1
 // guards on purpose. scripts/lib/sensingPostureOnDisk.ts carries the reasoning
 // and fails closed — an unreadable posture grants nothing.
-if (!isOptionAInForce()) {
+if (sensingPostureOnDisk() === "anonymous_capable") {
   SKIP_FILES.add("2481_sensing_sessions_option_a_issuer.sql");
 }
 

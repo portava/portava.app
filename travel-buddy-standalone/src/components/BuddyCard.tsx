@@ -5,6 +5,7 @@ import { Star, CheckCircle, Globe, Zap, Clock, Bookmark, BookmarkCheck, MapPin }
 import { color, space, radius, type as t, shadow, layout } from '../theme/tokens.ts';
 import { VerifiedStamp } from './ui/VerifiedStamp.tsx';
 import { VerifiedBadge } from './trust/VerifiedBadge.tsx'; // census-trust TV-2c
+import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
 import { Stamp } from './ui.tsx';
 import type { BuddyProfile } from '../services/rentABuddy.ts';
 import { saveBuddy, unsaveBuddy } from '../services/rentABuddy.ts';
@@ -120,9 +121,16 @@ export function BuddyCard({
       {/* Body */}
       <View style={styles.body}>
         <View style={styles.nameRow}>
-          <Text style={styles.name} numberOfLines={1}>{buddy.displayName ?? 'Local Buddy'}</Text>
-          {buddy.verified ? <VerifiedStamp size="sm" /> : null}
-          <VerifiedBadge badge={buddy.identityBadge} size={13} />
+          <UserIdentityLink
+            userId={buddy.userId}
+            handle={null}
+            onProfilePress={onPress ?? handleViewProfile}
+            style={styles.identityRow}
+          >
+            <Text style={styles.name} numberOfLines={1}>{buddy.displayName ?? 'Local Buddy'}</Text>
+            {buddy.verified ? <VerifiedStamp size="sm" /> : null}
+            <VerifiedBadge badge={buddy.identityBadge} size={13} />
+          </UserIdentityLink>
           <View style={styles.ratingRow}>
             <Star size={11} color={color.warn} fill={color.warn} />
             <Text style={styles.rating}>{stars}</Text>
@@ -277,6 +285,7 @@ const styles = StyleSheet.create({
   availText: { fontSize: 9, fontWeight: '800', color: '#fff', fontFamily: 'Courier', letterSpacing: 0.5 },
   body: { padding: space.md, gap: space.xs },
   nameRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  identityRow: { flex: 1, flexDirection: 'row', alignItems: 'center' },
   name: { ...t.bodyStrong, color: color.ink, flex: 1, marginRight: space.sm },
   ratingRow: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   rating: { ...t.small, fontWeight: '700', color: color.ink },

@@ -23,10 +23,11 @@
  * Run with: pnpm test:component
  */
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
+import { act, render, renderHook, screen, fireEvent, waitFor } from '@testing-library/react-native';
 import { VoiceDictationButton } from '../VoiceDictationButton.tsx';
 import { PasteReviewSheet } from '../../paste/PasteReviewSheet.tsx';
-import { clearSpeechRecognizer, createNativeSpeechRecognizer, installSpeechRecognizer, type NativeSpeechModuleLike } from '../speechRecognizer.ts';
+import { clearSpeechRecognizer, createNativeSpeechRecognizer, installSpeechRecognizer, type NativeSpeechModuleLike, type SpeechRecognizerPort } from '../speechRecognizer.ts';
+import { useVoiceDictation } from '../../hooks/useVoiceDictation.ts';
 
 // NOTE: exhaustive — the real token helper reaches the Supabase client.
 jest.mock('../../../../services/apiToken.ts', () => ({ freshToken: async () => 'tok' }));
@@ -80,6 +81,27 @@ function scriptedModule(): NativeSpeechModuleLike {
     },
     stop() {},
     addListener(event, cb) { listeners[event] = cb; return { remove() { delete listeners[event]; } }; },
+  };
+}
+
+function deferredRecognizer(): SpeechRecognizerPort & {
+  sessions: Array<{ signal?: AbortSignal; partial(text: string): void; finish(text: string): void }>;
+} {
+  const sessions: Array<{ signal?: AbortSignal; partial(text: string): void; finish(text: string): void }> = [];
+  return {
+    providerId: 'native-speech',
+    onDeviceOnly: true,
+    sessions,
+    async isAvailable() { return true; },
+    recognizeOnce({ signal, onPartial } = {}) {
+      return new Promise(resolve => {
+        sessions.push({
+          signal,
+          partial(text) { onPartial?.({ text, confidence: 0.95, isFinal: false, language: 'en-US' }); },
+          finish(text) { resolve({ ok: true, result: { text, confidence: 0.95, isFinal: true, language: 'en-US' } }); },
+        });
+      });
+    },
   };
 }
 
@@ -162,4 +184,64 @@ test('dictating into the paste box feeds the same extract pipeline a typed paste
   await waitFor(() => expect(bodies).toHaveLength(1));
   expect(bodies[0].url).toBe('https://portava.test/api/input-assistance/extract');
   expect(bodies[0].body).toMatchObject({ context: 'trip_destination', text: 'Da Nang then Hoi An' });
+});
+
+test('a superseded session cannot replace the current partial', async () => {
+  const recognizer = deferredRecognizer();
+  const onTranscript = jest.fn();
+  const { result } = await renderHook(() => useVoiceDictation({ fieldId: 'trip.destination', context: 'trip_destination', onTranscript, recognizer }));
+  await act(async () => { void result.current.start(); });
+  await act(async () => { void result.current.start(); });
+  expect(recognizer.sessions[0].signal?.aborted).toBe(true);
+  await act(async () => { recognizer.sessions[1].partial('current words'); });
+  await act(async () => { recognizer.sessions[0].partial('stale words'); });
+  expect(result.current.state).toEqual({ phase: 'listening', partial: 'current words' });
+  expect(onTranscript).not.toHaveBeenCalled();
+});
+
+test('a superseded final cannot overwrite a newer final, and completed sessions ignore late partials', async () => {
+  const recognizer = deferredRecognizer();
+  const onTranscript = jest.fn();
+  const { result } = await renderHook(() => useVoiceDictation({ fieldId: 'trip.destination', context: 'trip_destination', onTranscript, recognizer }));
+  await act(async () => { void result.current.start(); });
+  await act(async () => { void result.current.start(); });
+  await act(async () => { recognizer.sessions[1].finish('new destination'); });
+  await act(async () => { recognizer.sessions[0].finish('old destination'); });
+  expect(onTranscript.mock.calls).toEqual([['new destination']]);
+  await act(async () => { recognizer.sessions[1].partial('late partial'); });
+  expect(result.current.state).toEqual({ phase: 'heard', text: 'new destination' });
+});
+
+test('unmount stops dictation and ignores subsequent partials and final results', async () => {
+  const recognizer = deferredRecognizer();
+  const onTranscript = jest.fn();
+  const view = await renderHook(() => useVoiceDictation({ fieldId: 'trip.destination', context: 'trip_destination', onTranscript, recognizer }));
+  await act(async () => { void view.result.current.start(); });
+  await view.unmount();
+  expect(recognizer.sessions[0].signal?.aborted).toBe(true);
+  await act(async () => {
+    recognizer.sessions[0].partial('after unmount');
+    recognizer.sessions[0].finish('after unmount');
+  });
+  expect(onTranscript).not.toHaveBeenCalled();
+});
+
+test('replacing the recognizer invalidates its pending callbacks without restarting capture', async () => {
+  const previous = deferredRecognizer();
+  const replacement = deferredRecognizer();
+  const onTranscript = jest.fn();
+  const { result, rerender } = await renderHook(
+    ({ recognizer }: { recognizer: SpeechRecognizerPort }) => useVoiceDictation({ fieldId: 'trip.destination', context: 'trip_destination', onTranscript, recognizer }),
+    { initialProps: { recognizer: previous } },
+  );
+  await act(async () => { void result.current.start(); });
+  await rerender({ recognizer: replacement });
+  expect(previous.sessions[0].signal?.aborted).toBe(true);
+  await act(async () => {
+    previous.sessions[0].partial('previous recognizer');
+    previous.sessions[0].finish('previous recognizer');
+  });
+  expect(onTranscript).not.toHaveBeenCalled();
+  expect(result.current.state).toEqual({ phase: 'idle' });
+  expect(replacement.sessions).toHaveLength(0);
 });

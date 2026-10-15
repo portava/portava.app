@@ -135,6 +135,8 @@ export function TravelerRow({ user, isOwnProfile = false, onFollowed, onBlockSuc
           style={styles.name}
           verified={user.verified}
           isOfficial={user.isOfficial}
+          identityBadge={user.identityBadge}
+          currentUserId={isOwnProfile ? user.id : undefined}
         />
         {handleSubline ? (
           <Text style={styles.handle} numberOfLines={1}>{handleSubline}</Text>

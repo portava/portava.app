@@ -5258,10 +5258,10 @@ nothing caught it; its effect was on the hosted app only.**
 **Dictation (GII-F09).** A platform-recognizer seam beside the clip-based
 transcription port: the browser's own `SpeechRecognition` is bound where the
 platform exposes it
-(`travel-buddy-standalone/src/platform/input-assistance/voice/speechRecognizer.ts:216#export function createWebSpeechRecognizer`),
+(`travel-buddy-standalone/src/platform/input-assistance/voice/speechRecognizer.ts:212#export function createWebSpeechRecognizer`),
 the native module the owner has not approved has an adapter that imports
 nothing and keeps audio on the device by default
-(`travel-buddy-standalone/src/platform/input-assistance/voice/speechRecognizer.ts:403#requiresOnDeviceRecognition: onDeviceOnly`),
+(`travel-buddy-standalone/src/platform/input-assistance/voice/speechRecognizer.ts:401#requiresOnDeviceRecognition: onDeviceOnly`),
 and with neither the answer is `unavailable/no_provider` before the microphone
 is asked for. The transcript enters the typed path's own builder and refusals
 (`travel-buddy-standalone/src/platform/input-assistance/voice/voiceIntake.ts:383#return voiceIntakeRequest(outcome.result, opts);`).
@@ -5351,7 +5351,13 @@ G163, G133) against §33's 287 C / 44 W / 38 N / 4 X.
 
 ### §34.5 APPROVAL REQUIRED — II-TM-A1: a native speech recognizer
 
-- **Recommended action.** Approve `expo-speech-recognition` (the release matching Expo SDK 54) as a dependency with its config plugin; add `NSSpeechRecognitionUsageDescription` and widen the `NSMicrophoneUsageDescription` string in `travel-buddy-standalone/app.json` to mention dictation (`RECORD_AUDIO` is already declared); install at bootstrap with `installSpeechRecognizer(createNativeSpeechRecognizer(ExpoSpeechRecognitionModule))` (`travel-buddy-standalone/src/platform/input-assistance/voice/speechRecognizer.ts:335#export function createNativeSpeechRecognizer`), keeping `requiresOnDeviceRecognition: true`. It is a NATIVE module: it needs a new development/store build — an OTA update cannot add it, and Expo Go cannot load it. Cost $0; no key.
+**HISTORICAL PROPOSAL — SUPERSEDED by §47 (2026-10-15). Do not execute the direct-module
+bootstrap recommendation below.** It is preserved as the earlier proposal, not current safe
+installation guidance or authorization. The unpatched native module does not establish the
+selected-locale/API-level on-device guarantee; dependency/bootstrap/plugin/vendor-patch delivery is
+excluded. The old "If approved" outcome and browser-fallback description are not present-day proof.
+
+- **Recommended action.** Approve `expo-speech-recognition` (the release matching Expo SDK 54) as a dependency with its config plugin; add `NSSpeechRecognitionUsageDescription` and widen the `NSMicrophoneUsageDescription` string in `travel-buddy-standalone/app.json` to mention dictation (`RECORD_AUDIO` is already declared); install at bootstrap with `installSpeechRecognizer(createNativeSpeechRecognizer(ExpoSpeechRecognitionModule))` (`travel-buddy-standalone/src/platform/input-assistance/voice/speechRecognizer.ts:325#export function createNativeSpeechRecognizer`), keeping `requiresOnDeviceRecognition: true`. It is a NATIVE module: it needs a new development/store build — an OTA update cannot add it, and Expo Go cannot load it. Cost $0; no key.
 - **What the owner is deciding.** (1) The dependency and the native rebuild. (2) Consent: on-device only (the adapter's default — audio never leaves the phone, but some languages/devices will then report unavailable) versus allowing the OS to send audio to Apple/Google for recognition. (3) Whether the browser recognizer (bound automatically on web builds today — Chrome's sends audio to Google) should stay bound; the hosted testing app ships no web build, so it affects development only.
 - **If approved:** dictation works on the next native build, through the same intake and pipeline proven here; G163 can then move with one device run on record. **If declined:** the microphone stays visible and says voice input is unavailable on native builds; the OS keyboard's own dictation still types into every field like a keyboard. **Recovery:** delete the bootstrap line (and the dependency); the seam falls back to `NO_SPEECH_RECOGNIZER` with no other change.
 
@@ -5661,7 +5667,7 @@ CENSUS_STALENESS_ACKNOWLEDGED.json under this census, with the argument.
 | OD-INPUT-2 | per-user outcome counters: 30 days, then delete | UTC-day buckets (3780) deleted whole by a flagless sweep on the existing timer (`artifacts/api-server/src/lib/inputAssistance/outcomeLearning.ts:315#export async function runInputOutcomeRetentionSweep`), and the reader applies the same window (`artifacts/api-server/src/lib/inputAssistance/outcomeLearning.ts:265#p_since: outcomeWindowStartDay(o.now),` into `artifacts/api-server/src/migrations/3780_input_outcome_learning.sql:193#AND k.bucket_day >= p_since` *(repointed 2026-10-05: verifier fix 1 replaced the client-side `.gte` with the one-round-trip read, §38)*) | `artifacts/api-server/src/test/inputOutcomeLearning.test.ts:643#the reader ignores a bucket that is 30 days old` |
 | OD-INPUT-3 | Compass memory only through a separate opt-in, with inspect and revoke | three gates in order — the field's policy, the flag, the person's own opt-in (3782) — each a reason to read nothing (`artifacts/api-server/src/lib/inputAssistance/memoryContext.ts:94#export async function memoryContextGate`); inspect returns exactly what would be used (`artifacts/api-server/src/lib/inputAssistance/memoryContext.ts:243#export async function inspectMemoryContext`) | `artifacts/api-server/src/test/inputMemoryContext.test.ts:278#not opted in: the curated starters exactly` |
 | OD-INPUT-4 | buddy payments: adults who pass identity, onboarding and safety checks, supported markets | not this lane's: the buddy predicates are lane B's Rent-a-Buddy schema (37.3) | — |
-| OD-INPUT-5 | on-device OS speech first; the cloud only with separate consent; no raw audio kept | the browser recognizer is used only when the engine reports on-device availability and accepts `processLocally` (`travel-buddy-standalone/src/platform/input-assistance/voice/speechRecognizer.ts:159#async function webOnDeviceAvailable`); the native adapter checks on-device support before any permission prompt (`travel-buddy-standalone/src/platform/input-assistance/voice/speechRecognizer.ts:364#if (onDeviceOnly && !onDeviceSupported()) return ON_DEVICE_UNAVAILABLE;`) and never passes recording options | `travel-buddy-standalone/src/platform/input-assistance/voice/__tests__/speechRecognizer.test.ts:287#a device WITHOUT on-device support is refused before the microphone is asked for` |
+| OD-INPUT-5 | on-device OS speech first; the cloud only with separate consent; no raw audio kept | the browser recognizer is used only when the engine reports on-device availability and accepts `processLocally` (`travel-buddy-standalone/src/platform/input-assistance/voice/speechRecognizer.ts:155#async function webOnDeviceAvailable`); the native adapter checks on-device support before any permission prompt (`travel-buddy-standalone/src/platform/input-assistance/voice/speechRecognizer.ts:355#if (onDeviceOnly && !onDeviceSupported(opts.language ?? 'en-US')) return ON_DEVICE_UNAVAILABLE;`) and never passes recording options | `travel-buddy-standalone/src/platform/input-assistance/voice/__tests__/speechRecognizer.test.ts:287#a device WITHOUT on-device support is refused before the microphone is asked for` |
 | OD-INPUT-6 | no paid typeahead provider in the initial release | nothing built, by decision (37.3) | — |
 | OD-INPUT-7 | p95 under 500 ms; local suggestions immediately while slower results load | already true for the cached prefix and the zero-state; NOT extended to the shipped dictionary — a first build was reverted (37.3, G212) | — |
 | OD-INPUT-8 | privacy-incident certification signed off by a privacy lead and a security lead independent of the feature team | nothing in the tree can supply it, and nothing claims to (37.3, G371) | — |
@@ -5831,7 +5837,7 @@ tree; the full-suite record is in the lane report.
    `travel-buddy-standalone/src/platform/input-assistance/voice/__tests__/voiceIntake.test.ts:430#installing a transcriber cannot bypass the consent`),
    and every clip is discarded after transcription. The inert `rec.processLocally !== true` test is
    replaced by a real one: an engine with no `processLocally` attribute is not used
-   (`travel-buddy-standalone/src/platform/input-assistance/voice/speechRecognizer.ts:244#if (!('processLocally' in rec)) {`).
+   (`travel-buddy-standalone/src/platform/input-assistance/voice/speechRecognizer.ts:240#if (!('processLocally' in rec)) {`).
 8. **Deletion.** The three user-keyed tables are `ERASED_BY_CASCADE`, by `user_id REFERENCES
    auth.users (id) ON DELETE CASCADE` firing when AccountDeletionService calls `auth.admin.deleteUser`
    (`artifacts/api-server/src/lib/deletionDispositions.ts:248#"input_outcome_consent",`). `check:deletion-coverage`
@@ -5881,7 +5887,7 @@ tree; the full-suite record is in the lane report.
 * **G163 (`W`, stays) — "no silent cloud path", restated.** True of the code that exists: the gate is in
   the port (finding 7). But iOS and Android have NO recogniser at all — `expo-speech-recognition` is not a
   dependency, and the native adapter takes a module nobody installs
-  (`travel-buddy-standalone/src/platform/input-assistance/voice/speechRecognizer.ts:294#The native module the owner has not yet approved`).
+  (`travel-buddy-standalone/src/platform/input-assistance/voice/speechRecognizer.ts:290#The native module the owner has not yet approved`).
   Dictation on a phone is a build gap, not a privacy property.
 * **G212 (`W`, stays).** See 38.1.
 * **G370 (`W`, stays).** Its source is now the 3783 aggregate (finding 5); awaits 3783 applied and a number.
@@ -5923,11 +5929,11 @@ without passing a recognizer — the trip-destination button among them (`Destin
 
 The rule now lives in the resolver, so every consumer inherits it. It returns the installed recognizer
 ONLY when that recognizer declares the literal `onDeviceOnly: true`
-(`travel-buddy-standalone/src/platform/input-assistance/voice/speechRecognizer.ts:113#return installed && declaresOnDeviceOnly(installed) ? installed : NO_SPEECH_RECOGNIZER;`),
+(`travel-buddy-standalone/src/platform/input-assistance/voice/speechRecognizer.ts:109#return installed && declaresOnDeviceOnly(installed) ? installed : NO_SPEECH_RECOGNIZER;`),
 and it never consults the browser engine. `web-speech`, anything undeclared, and the native adapter
 in its cloud-consent posture all resolve to `NO_SPEECH_RECOGNIZER`. The native adapter makes the
 declaration only in its on-device posture
-(`travel-buddy-standalone/src/platform/input-assistance/voice/speechRecognizer.ts:353#...(onDeviceOnly ? { onDeviceOnly: true as const } : {}),`).
+(`travel-buddy-standalone/src/platform/input-assistance/voice/speechRecognizer.ts:343#...(onDeviceOnly ? { onDeviceOnly: true as const } : {}),`).
 **There is no cloud path.** The separate-consent route a cloud recognizer would need does not exist
 yet; building it is an owner decision. The declaration is the one the Wall's push-to-talk already
 checks, so that check is now redundant rather than different.
@@ -5935,7 +5941,7 @@ checks, so that check is now redundant rather than different.
 Proven with the most permissive browser engine available (it has the on-device controls and answers
 "available"). On the global, the destination button shows unavailable, and the engine is never
 constructed, asked or started
-(`travel-buddy-standalone/src/platform/input-assistance/voice/__tests__/voiceDictation.component.test.tsx:104#a browser engine on the global is NEVER used`;
+(`travel-buddy-standalone/src/platform/input-assistance/voice/__tests__/voiceDictation.component.test.tsx:126#a browser engine on the global is NEVER used`;
 the resolver-level case is `travel-buddy-standalone/src/platform/input-assistance/voice/__tests__/speechRecognizer.test.ts:153#a browser engine on the global is NEVER used`).
 An installed recognizer is returned only with the literal declaration
 (`travel-buddy-standalone/src/platform/input-assistance/voice/__tests__/speechRecognizer.test.ts:176#an installed recognizer is returned ONLY when it declares onDeviceOnly: true`).
@@ -8330,3 +8336,37 @@ section 18's explicit crew/follow operators remain G116's separate contract.
 
 Of 373 rows: **317 BUILT-AND-CORRECT, 43 BUILT-BUT-WRONG, 9 NOT-BUILT, 4 CANNOT-VERIFY**.
 Only G98 moves. Other verdicts and their settlement conditions are unchanged.
+
+## §47 — 2026-10-15: native bootstrap guidance superseded; JS safety is not native proof
+
+This is a bounded evidence correction against `5b2a20fdaaafb6805467b4284ae2ac2e63ccdf70`, not
+a regrade, new `head_commit` or re-verification of the preceding historical assertions.
+The shared JS recognizer now checks abort before/after permission, holds a per-module capture lock
+until `end`, removes stale listeners after failure and passes the selected language into the capability
+query. Those changes address lifecycle/session isolation at the adapter boundary; synthetic-module
+tests are not an OS or device privacy witness. The integrated shared hook admits partial/final
+callbacks only for the current mounted session, invalidates before aborting a superseded session and
+cleans up on recognizer replacement/unmount. Normal stop preserves the current final result. The
+Wall control stops a hold on disable/background/inactive without automatic restart. Exact files and
+reported regressions are in `docs/ops/small-area-corrections-20261015.md`.
+
+**§34.5's direct `ExpoSpeechRecognitionModule` bootstrap recommendation is unsafe as written and
+is superseded, not conditionally ready to install.** Parent review found that unpatched 3.1.3 uses
+default-locale capability on iOS rather than the selected locale, and Android API 31/32 can report
+local support although local-recognizer selection starts only on API 33+. A selected-language
+argument and `requiresOnDeviceRecognition` option alone are not proof of upstream compliance.
+This pass records that review finding without claiming an independent native/vendor reproduction.
+
+The subsequent independent native-readiness report also reproduces iOS deferred startup surviving
+stop/abort, even after `end`, and initializer error without terminal `end`. Extracted/stubbed Swift
+scenarios establish a native lifecycle defect, not device acceptance. That cancellation/termination
+contract must be corrected before integration; JS checks do not cancel already-launched native tasks.
+Shim-backed Swift compilation is not real Expo linking, and Android JDK 17/SDK 36 were unavailable.
+Thus code correctness and real native integration, not just device proof, remain blocking.
+
+Native dependency, bootstrap, config plugin and provisional vendor patch are **excluded** from this
+release. No native import, package or lock change is authorized by this section. A reviewed adapter
+contract and upstream/native resolution, owner approval, a native build and actual locale/API-level
+device proof are still needed. No cloud fallback or consent-policy change is introduced. Existing
+resolver refusal remains preferable to an unproved local-processing claim. All Input verdicts and
+W71 are unchanged; no untouched historical assertion is newly certified.

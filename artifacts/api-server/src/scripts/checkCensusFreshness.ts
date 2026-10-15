@@ -1252,6 +1252,10 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   // not by services/trust. Listing only the service would have made this census
   // look fresh while the reads it grades moved underneath it.
   "census-trust.md": [
+    "artifacts/api-server/src/routes/follows.ts",
+    "travel-buddy-standalone/src/components/TravelerRow.tsx",
+    "travel-buddy-standalone/src/components/interaction/UserNameButton.tsx",
+    "travel-buddy-standalone/src/services/follows.ts",
     // ADDED 2026-10-10 by wave lane INPUT-MISC (§40): the public verified badge — its proof suites, the component, and the surfaces TV-2c is graded on.
     "travel-buddy-standalone/src/components/trust/VerifiedBadge.tsx", "artifacts/api-server/src/test/identityVerifiedBadges.test.ts", "artifacts/api-server/src/routes/passport.ts", "travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx", "travel-buddy-standalone/src/components/events/EventAttendancePanel.tsx", "travel-buddy-standalone/src/components/trust/__tests__/VerifiedBadge.component.test.tsx", "travel-buddy-standalone/src/components/__tests__/ReviewsSection.identityBadge.component.test.tsx",
     // ── ADDED 2026-09-22 by the RE-MEASUREMENT LANE, with §24 ──────────────
@@ -2688,6 +2692,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryMapView.transportLayer.component.test.tsx",
   ],
   "census-sensing.md": [
+    "artifacts/api-server/src/scripts/lib/sensingPostureOnDisk.ts",
     // ADDED 2026-09-14 on the Sensing lane's standing request. The scope covered
     // `services/intel/` and `routes/intel.ts` but not `routes/intelReadModels.ts`,
     // which now carries S49's evidence — the seven truth classes read against the

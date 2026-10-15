@@ -69,7 +69,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { FROZEN_LEGACY_FILES, findRogueFrozenFiles } from "./frozenLegacyFiles.js";
 import { FROZEN_ROOT_FILES } from "./frozenRootFiles.js";
 import { isMissing, type Claim, type LiveSchema } from "./lib/schemaClaimResolution.js";
-import { isOptionAInForce } from "./lib/sensingPostureOnDisk.js";
+import { sensingPostureOnDisk } from "./lib/sensingPostureOnDisk.js";
 import { partitionClaims, staleEntries } from "./lib/conditionalClaims.js";
 
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -245,7 +245,7 @@ const SKIP_FILES = new Set([
 // next CI migrate. It reads like stale bookkeeping and it is load-bearing.
 // Deleting it as "a ledger row for a migration that clearly did not run" would
 // reintroduce the Option A constraint #510 removed. Leave it.
-if (!isOptionAInForce()) {
+if (sensingPostureOnDisk() === "anonymous_capable") {
   SKIP_FILES.add("2481_sensing_sessions_option_a_issuer.sql");
 }
 

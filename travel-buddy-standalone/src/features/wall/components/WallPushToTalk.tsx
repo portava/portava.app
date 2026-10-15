@@ -14,13 +14,7 @@
  *   honest none — it never falls back to the browser's Web Speech API, whose
  *   default is remote processing. This control re-checks the same declaration
  *   (`isOnDeviceOnly` IS the resolver's `declaresOnDeviceOnly`), so an injected
- *   recognizer cannot route around it either. No recognizer is installed in
- *   this app today, so on every build the Wall's microphone says, truthfully,
- *   that it is not available. (History: the first version, 2026-10-05, used
- *   whatever the resolver returned while the resolver still fell back to Web
- *   Speech, so on the web build it would have sent a person's voice to the
- *   browser vendor with no consent asked — independent verification, finding
- *   1.) There is no consent screen because no path here sends audio anywhere.
+ *   recognizer cannot route around it either.
  * - Push-to-talk: listening runs only while the control is HELD. Press-in
  *   starts the recognizer; release stops it and whatever was final is used. A
  *   release before the recognizer has even started starts nothing
@@ -35,11 +29,11 @@
  *   microphone.
  *
  * WHAT A DEVICE MUST STILL SHOW (not provable here): an on-device native
- * recognizer (none is a dependency of this app), that release ends capture at
- * once, and that the microphone indicator clears on release.
+ * recognizer, that release ends capture at once, and that the microphone
+ * indicator clears on release.
  */
 import React from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, AppState, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Mic, MicOff } from 'lucide-react-native';
 import { color, icon as iconToken, radius, type as t } from '../../../theme/tokens.ts';
 import type { InputContext } from '../../../platform/input-assistance/types/inputContext.ts';
@@ -59,15 +53,6 @@ export interface WallPushToTalkProps {
 
 /**
  * A release that lands BEFORE the recognizer has started must start nothing.
- *
- * useVoiceDictation awaits the recognizer's availability check before calling
- * `recognizeOnce`, and both platform adapters attach their abort listener only
- * when they start — so an AbortSignal that fired during that wait is never
- * seen, and the recognizer would go on listening after the finger lifted. That
- * is the one thing push-to-talk must never do. This wrapper refuses to start a
- * session whose signal is already aborted. (The adapters' own window — the
- * native permission prompt is awaited before the listener exists — is lane D's
- * file and is recorded there as a dependency.)
  */
 export function pushToTalkPort(inner: SpeechRecognizerPort): SpeechRecognizerPort {
   const onDevice = isOnDeviceOnly(inner);
@@ -117,6 +102,7 @@ function WallPushToTalkControl({ fieldId, context, onTranscript, disabled = fals
   const { state, start, stop } = useVoiceDictation({ fieldId, context, onTranscript, recognizer: port });
   const [explain, setExplain] = React.useState(false);
   const holding = React.useRef(false);
+  const appState = React.useRef(AppState.currentState);
 
   const unavailable = state.phase === 'unavailable';
   const listening = state.phase === 'listening';
@@ -125,16 +111,28 @@ function WallPushToTalkControl({ fieldId, context, onTranscript, disabled = fals
   const available = !checking && !unavailable;
 
   const onPressIn = () => {
-    if (disabled || checking) return;
+    if (disabled || checking || appState.current === 'background' || appState.current === 'inactive') return;
     if (unavailable) { setExplain(true); return; }
     holding.current = true;
     void start();
   };
-  const onPressOut = () => {
+  const onPressOut = React.useCallback(() => {
     if (!holding.current) return;
     holding.current = false;
     stop();
-  };
+  }, [stop]);
+
+  React.useEffect(() => {
+    if (disabled) onPressOut();
+  }, [disabled, onPressOut]);
+
+  React.useEffect(() => {
+    const subscription = AppState.addEventListener('change', nextState => {
+      appState.current = nextState;
+      if (nextState !== 'active') onPressOut();
+    });
+    return () => subscription.remove();
+  }, [onPressOut]);
 
   const message =
     unavailable ? (explain ? WALL_PTT_UNAVAILABLE : null)

@@ -6537,3 +6537,32 @@ fake capture loop that records the `submit` the installer gives it, and a fake t
 Five mutations of the installer each turn the test red. §33.1's "the device obeys it" is now proven by
 behaviour, not only by source tripwires. No row moves; S18, S24, S32 and S39 stay `W` for §33.3's reasons.
 
+## §36 — 2026-10-15: unknown posture grants no audit exemption. NO ROW MOVES
+
+Bounded integration against `5b2a20fdaaafb6805467b4284ae2ac2e63ccdf70`; `head_commit` and all
+verdicts are unchanged. The two schema auditors formerly skipped Option-A migration 2481 whenever
+Option A was not established, which also exempted unreadable/unrecognized posture. They now require
+the positive `sensingPostureOnDisk() === "anonymous_capable"` condition
+(`artifacts/api-server/src/scripts/auditMigrationsVsLive.ts:248#if (sensingPostureOnDisk()`,
+`artifacts/api-server/src/scripts/checkMissingLiveColumns.ts:337#if (sensingPostureOnDisk()`).
+The obsolete negative helper was removed; the existing literal parser still returns `undecided` for
+unknown input (`artifacts/api-server/src/scripts/lib/sensingPostureOnDisk.ts:60#export function parsePostureSource`).
+The regression executes each extracted gate in a local VM, not either database auditor.
+This repairs fail-closed readiness bookkeeping, not sensing ingestion or activation. It is never
+permission to apply 2481 under Option B. No sensing policy, importer, grant, schema or flag changed.
+
+All thirteen remain W: **S18, S19, S24, S26, S32, S39, S49, S66, S92, S97, S111, S112, S118**.
+S18/S24/S32/S39 still need legal approval of split wording, owner-controlled 3703/release/flag and
+pepper provisioning, genuine separate grants and device/contribution evidence; surfacing also needs
+its separately approved policy, publication prerequisites and real cohort/consumer evidence.
+S19/S97/S111/S118 need the coordinated identity/nullable-subject cutover and actual storage/catalog
+proof, not an inference from migration-ledger absence. S26 already has OD-MAP-7's 180-day maximum;
+retention activation and real expiry evidence, not a new ruling, remain. S49/S66 need authorized
+surface activation and truthful protected-zone/safety-qualified served evidence. S92/S112 need
+session/memory/provenance prerequisites, authorized activation, a real eligible closed session and
+erasure/recompute evidence. §35's installer tests are already present, not an outstanding code gap.
+
+Worker-local fixture results and this pass's metadata checks are separated in
+`docs/ops/small-area-corrections-20261015.md`. No database auditor, migration, deployment or native
+device was run here. Historical live observations remain dated observations, not newly checked facts.
+

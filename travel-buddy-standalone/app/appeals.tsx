@@ -84,6 +84,7 @@ export default function AppealsScreen() {
 
   const [appeals, setAppeals]         = useState<Appeal[]>([]);
   const [loading, setLoading]         = useState(true);
+  const [appealsFailed, setAppealsFailed] = useState(false);
   const [submitting, setSubmitting]   = useState(false);
   const [showForm, setShowForm]       = useState(!!params.targetType);
   // OD-TRUST-4: the person's active Trust restrictions. `null` until loaded;
@@ -100,22 +101,29 @@ export default function AppealsScreen() {
   const targetType  = formTarget?.type ?? (params.targetType as AppealTargetType | undefined) ?? 'account_warning';
   const targetId    = formTarget?.id ?? params.targetId ?? '';
 
-  const load = useCallback(async () => {
+  const loadAppeals = useCallback(async () => {
+    setLoading(true);
     try {
       const res = await getMyAppeals();
+      if (!Array.isArray(res.appeals)) throw new Error('Appeal history unavailable');
       setAppeals(res.appeals);
+      setAppealsFailed(false);
     } catch {
-      // silent — show empty state
+      setAppealsFailed(true);
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  const load = useCallback(async () => {
+    await loadAppeals();
     try {
       setRestrictions(await getMyRestrictions());
       setRestrictionsFailed(false);
     } catch {
       setRestrictionsFailed(true);
     }
-  }, []);
+  }, [loadAppeals]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -262,6 +270,13 @@ export default function AppealsScreen() {
 
         {loading ? (
           <ActivityIndicator color="#11110F" style={{ marginTop: 24 }} />
+        ) : appealsFailed ? (
+          <View style={s.emptyState}>
+            <Text style={s.emptyBody}>We couldn't load your appeals right now.</Text>
+            <TouchableOpacity style={s.newAppealBtn} onPress={loadAppeals} accessibilityLabel="Retry appeal history">
+              <Text style={s.newAppealBtnText}>Try again</Text>
+            </TouchableOpacity>
+          </View>
         ) : appeals.length === 0 ? (
           <View style={s.emptyState}>
             <Text style={s.emptyIcon}>📋</Text>

@@ -920,8 +920,8 @@ router.get("/users/search", async (req, res) => {
         isOfficial: (p.is_official as boolean) ?? false,
       };
     });
-
-  res.status(200).json({ users });
+  const badges = await readVerifiedBadges(sc, users.map((traveler) => traveler.id));
+  res.status(200).json({ users: users.map((traveler) => ({ ...traveler, ...identityBadgeField(badges, traveler.id) })) });
 });
 
 /* ===========================================================================
@@ -1523,8 +1523,8 @@ router.get("/users/suggestions", async (req, res) => {
   // Record served IDs so the next fallback request excludes them.
   const servedIds = users.map((u: any) => u.id as string);
   if (servedIds.length > 0) markAsSeen(user.id, servedIds);
-
-  res.status(200).json({ users });
+  const badges = await readVerifiedBadges(sc, servedIds);
+  res.status(200).json({ users: users.map((traveler) => ({ ...traveler, ...identityBadgeField(badges, traveler.id) })) });
 });
 
 /* ===========================================================================
@@ -2040,3 +2040,4 @@ router.get("/users/by-handle/:handle", async (req, res) => {
 });
 
 export default router;
+import { readVerifiedBadges, identityBadgeField } from "../services/identityVerification/verifiedBadges.js";

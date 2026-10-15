@@ -23,6 +23,7 @@ import { attendanceMark, attendanceMarkingOpen, type AttendanceMark } from '../.
 import { Avatar } from '../ui.tsx';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import { VerifiedBadge } from '../trust/VerifiedBadge.tsx'; // census-trust TV-2c
+import { UserIdentityLink } from '../interaction/UserIdentityLink.tsx';
 
 interface Props {
   event: Pick<EventDetail, 'id' | 'state'>;
@@ -111,10 +112,10 @@ export function EventAttendancePanel({ event }: Props) {
           <View key={r.userId} style={s.row} testID={`attendance-row-${r.userId}`}>
             <Avatar uri={r.avatarUrl ?? ''} size={36} />
             <View style={{ flex: 1 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <UserIdentityLink userId={r.userId} handle={r.handle} style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <Text style={s.name} numberOfLines={1}>{r.displayName ?? (r.handle ? `@${r.handle}` : 'Traveler')}</Text>
                 <VerifiedBadge badge={r.identityBadge} size={12} />
-              </View>
+              </UserIdentityLink>
               <View style={s.markRow}>
                 {m === 'checked_in' && <MapPinCheck size={12} color={color.success} />}
                 <Text style={[s.mark, m === 'no_show' && { color: '#DC2626' }, m === 'confirmed' && { color: color.success }]}>

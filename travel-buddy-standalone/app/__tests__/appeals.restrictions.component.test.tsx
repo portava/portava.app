@@ -108,6 +108,37 @@ beforeEach(() => {
 afterEach(() => alertSpy.mockRestore());
 
 describe('Appeals screen — the person\'s Trust restrictions (OD-TRUST-4)', () => {
+  it.each([401, 403, 503])('does not call an unread appeal history empty after HTTP %s, and can retry', async (status) => {
+    const originalFetch = fetchMock.getMockImplementation()!;
+    let refuseHistory = true;
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (new URL(url, 'http://api.test').pathname === '/api/appeals/me' && refuseHistory) {
+        return toResponse({ status, body: { error: 'unavailable' } });
+      }
+      return originalFetch(url, init);
+    });
+    const ui = await render(<AppealsScreen />);
+    await ui.findByText("We couldn't load your appeals right now.");
+    expect(ui.queryByText('No appeals yet')).toBeNull();
+    await ui.findByText(HOSTING);
+    refuseHistory = false;
+    await fireEvent.press(ui.getByLabelText('Retry appeal history'));
+    await ui.findByText('No appeals yet');
+    expect(ui.queryByText("We couldn't load your appeals right now.")).toBeNull();
+    expect(posted).toEqual([]);
+  });
+
+  it.each([null, {}, { appeals: null }, { appeals: {} }])('treats malformed appeal history as unread, not empty: %p', async (body) => {
+    const originalFetch = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
+      new URL(url, 'http://api.test').pathname === '/api/appeals/me'
+        ? toResponse({ status: 200, body }) : originalFetch(url, init));
+    const ui = await render(<AppealsScreen />);
+    await ui.findByText("We couldn't load your appeals right now.");
+    expect(ui.queryByText('No appeals yet')).toBeNull();
+    expect(posted).toEqual([]);
+  });
+
   it('R1 shows each restriction\'s sentence verbatim with its end', async () => {
     const ui = await render(<AppealsScreen />);
     await waitFor(() => expect(ui.getByText(HOSTING)).toBeTruthy());
