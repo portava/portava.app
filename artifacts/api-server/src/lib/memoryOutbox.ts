@@ -281,3 +281,25 @@ export async function readUnpublishedOutbox(
   }
   return { ok: true, rows: data as MemoryOutboxRow[] };
 }
+
+/**
+ * One event's §23 payload, by event id — for a §18 consumer that must act on
+ * what an event SAID without reading the Memory to learn it (B58 MEM-INDEX,
+ * census H203: the public index's narrowing fallback acts on the stated
+ * audience and lifecycle state). `memory_outbox_claim` (2994) hands a consumer
+ * the event id, not the payload, and this file is the event store's one
+ * application boundary (check:memory-table-ownership rule 4).
+ *
+ * Discriminated, for readUnpublishedOutbox's reason: an unreadable store and
+ * an absent row are refusals the caller fails closed on, never an empty
+ * payload that reads as "the event said nothing".
+ */
+export async function readEventPayload(
+  sc: any,
+  eventId: string,
+): Promise<{ ok: true; payload: unknown } | { ok: false; detail: string }> {
+  const { data, error } = await sc.from("memory_domain_events").select("payload_json").eq("event_id", eventId).maybeSingle();
+  if (error) return { ok: false, detail: error.message ?? String(error) };
+  if (!data) return { ok: false, detail: `no event row for ${eventId}` };
+  return { ok: true, payload: data.payload_json };
+}

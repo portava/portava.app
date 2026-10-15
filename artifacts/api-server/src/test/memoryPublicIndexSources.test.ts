@@ -33,6 +33,8 @@ import {
 } from "../services/memoryProjections/derivativeRegistry.js";
 import { drainMemoryOutbox, OUTBOX_CLAIM_FN, OUTBOX_ACK_FN, OUTBOX_FAIL_FN } from "../services/memoryProjections/outboxConsumer.js";
 import { getProjectionDefinition, scopeKeyOf } from "../services/memoryProjections/projectionRegistry.js";
+// The event store is addressed by its boundary's own name (lib/memoryOutbox.ts), never a second spelling of it.
+import { MEMORY_EVENT_TABLE } from "../lib/memoryOutbox.js";
 
 // ── the world ────────────────────────────────────────────────────────────────
 
@@ -96,7 +98,7 @@ function seed(): Record<string, any[]> {
       { owner_id: OWNER, memory_id: KEPT, control: "KEEP_PRIVATE_FOREVER" },
       { owner_id: OWNER, memory_id: PUB_B, control: "DO_NOT_RESURFACE" },
     ],
-    memory_domain_events: [],
+    [MEMORY_EVENT_TABLE]: [],
     [DERIVATIVE_REGISTRY_TABLE]: [],
   };
 }
@@ -359,7 +361,7 @@ describe("H203 — the outbox worker keeps the PUBLIC index from the event paylo
 
   it("a drained narrowing rebuilds the index the public search SERVES (`PublicMemoryProjection|owner:<id>`) — it no longer carries the Memory", async () => {
     const store = await narrowedWorld();
-    store.memory_domain_events.push(event("e-1", NARROWED));
+    store[MEMORY_EVENT_TABLE]!.push(event("e-1", NARROWED));
     const d = await drainMemoryOutbox(makeDb(store, { claim: [claimed()] }), { now: NOW });
     assert.ok(d.ok, d.detail ?? "");
     const pub = reg(store, PUBLIC_KEY);
@@ -384,7 +386,7 @@ describe("H203 — the outbox worker keeps the PUBLIC index from the event paylo
   it("the narrowing's PUBLIC rebuild never reads the narrowed Memory — no body, no coordinate, no list", async () => {
     const { rebuildSubscribedProjection } = await import("../services/memoryProjections/outboxConsumer.js");
     const store = await narrowedWorld();
-    store.memory_domain_events.push(event("e-1", NARROWED));
+    store[MEMORY_EVENT_TABLE]!.push(event("e-1", NARROWED));
     const db = makeDb(store);
     const r = await rebuildSubscribedProjection(db, claimed() as any, "PublicMemoryProjection", { owner_id: OWNER, viewer_id: OWNER, trip_id: TRIP, place_id: PLACE }, NOW);
     assert.ok(r.ok);
@@ -400,7 +402,7 @@ describe("H203 — the outbox worker keeps the PUBLIC index from the event paylo
     async function attempt(payloadRow: unknown | "absent", over: Record<string, unknown> = {}, failRead?: FakeOpts["failRead"]) {
       const { rebuildSubscribedProjection } = await import("../services/memoryProjections/outboxConsumer.js");
       const store = await narrowedWorld();
-      if (payloadRow !== "absent") store.memory_domain_events.push(event("e-1", payloadRow));
+      if (payloadRow !== "absent") store[MEMORY_EVENT_TABLE]!.push(event("e-1", payloadRow));
       const db = makeDb(store, { failWrite: failPublicUpsert, failRead });
       const r = await rebuildSubscribedProjection(db, claimed(over) as any, "PublicMemoryProjection", { owner_id: OWNER, viewer_id: OWNER, trip_id: TRIP, place_id: null }, NOW);
       return { r, store, db, pub: reg(store, PUBLIC_KEY) };
@@ -413,7 +415,7 @@ describe("H203 — the outbox worker keeps the PUBLIC index from the event paylo
       assert.deepEqual(pub.payload_json, []);
       assert.equal(pub.row_count, 0);
       assert.equal(pub.revocation_reason, "memory_visibility_changed: re-derivation failed");
-      assert.ok(db.log.some((q: Query) => q.table === "memory_domain_events" && q.columns.join() === "payload_json"), "the decision read the payload");
+      assert.ok(db.log.some((q: Query) => q.table === MEMORY_EVENT_TABLE && q.columns.join() === "payload_json"), "the decision read the payload");
       assert.ok(!db.log.some((q: Query) => q.table === "memories" && memoryIdsIn(q).includes(PUB_A)), "the decision read the Memory");
     });
 
@@ -439,7 +441,7 @@ describe("H203 — the outbox worker keeps the PUBLIC index from the event paylo
     });
 
     it("FAIL CLOSED: the payload unreadable, or absent, is treated as a narrowing", async () => {
-      const unreadable = await attempt(NARROWED, {}, { memory_domain_events: { code: "57014", message: "timeout" } });
+      const unreadable = await attempt(NARROWED, {}, { [MEMORY_EVENT_TABLE]: { code: "57014", message: "timeout" } });
       assert.equal(unreadable.pub.revocation_state, "REVOKED");
       const absent = await attempt("absent");
       assert.equal(absent.pub.revocation_state, "REVOKED");
@@ -450,7 +452,7 @@ describe("H203 — the outbox worker keeps the PUBLIC index from the event paylo
     it("a registration that never carried the Memory is not revoked (the narrowing does not reach it); an unreadable registry revokes nothing — the failure stands", async () => {
       const { rebuildSubscribedProjection } = await import("../services/memoryProjections/outboxConsumer.js");
       const store = await narrowedWorld();
-      store.memory_domain_events.push(event("e-1", NARROWED));
+      store[MEMORY_EVENT_TABLE]!.push(event("e-1", NARROWED));
       const r1 = await rebuildSubscribedProjection(makeDb(store, { failWrite: failPublicUpsert }), claimed({ memory_id: PRIV }) as any, "PublicMemoryProjection", { owner_id: OWNER }, NOW);
       assert.equal(r1.ok, false);
       assert.equal(reg(store, PUBLIC_KEY).revocation_state, "ACTIVE");
@@ -463,7 +465,7 @@ describe("H203 — the outbox worker keeps the PUBLIC index from the event paylo
       const failBoth = (t: string, m: string, p: any) => failPublicUpsert(t, m, p) || (t === DERIVATIVE_REGISTRY_TABLE && m === "update");
       const { rebuildSubscribedProjection } = await import("../services/memoryProjections/outboxConsumer.js");
       const store = await narrowedWorld();
-      store.memory_domain_events.push(event("e-1", NARROWED));
+      store[MEMORY_EVENT_TABLE]!.push(event("e-1", NARROWED));
       const r = await rebuildSubscribedProjection(makeDb(store, { failWrite: failBoth }), claimed() as any, "PublicMemoryProjection", { owner_id: OWNER }, NOW);
       assert.equal(r.ok, false);
       assert.equal(reg(store, PUBLIC_KEY).revocation_state, "ACTIVE");
@@ -473,7 +475,7 @@ describe("H203 — the outbox worker keeps the PUBLIC index from the event paylo
       const { rebuildSubscribedProjection } = await import("../services/memoryProjections/outboxConsumer.js");
       const sourceDown = { memories: { code: "57014", message: "statement timeout" } };
       const store = await narrowedWorld();
-      store.memory_domain_events.push(event("e-1", NARROWED));
+      store[MEMORY_EVENT_TABLE]!.push(event("e-1", NARROWED));
       const r1 = await rebuildSubscribedProjection(makeDb(store, { failRead: sourceDown }), claimed() as any, "PublicMemoryProjection", { owner_id: OWNER }, NOW);
       assert.ok(r1.ok && r1.value.was_revoked);
       assert.equal(reg(store, PUBLIC_KEY).revocation_state, "REVOKED");
@@ -486,11 +488,11 @@ describe("H203 — the outbox worker keeps the PUBLIC index from the event paylo
     it("every OTHER projection's failure is untouched by the payload: it fails, it is never revoked here", async () => {
       const { rebuildSubscribedProjection } = await import("../services/memoryProjections/outboxConsumer.js");
       const store = seed();
-      store.memory_domain_events.push(event("e-1", NARROWED));
+      store[MEMORY_EVENT_TABLE]!.push(event("e-1", NARROWED));
       const db = makeDb(store, { failWrite: (t, m) => t === DERIVATIVE_REGISTRY_TABLE && m === "upsert" });
       const r = await rebuildSubscribedProjection(db, claimed() as any, "MemoryTimelineProjection", { owner_id: OWNER, viewer_id: OWNER }, NOW);
       assert.equal(r.ok, false);
-      assert.ok(!db.log.some((q: Query) => q.table === "memory_domain_events"), "a non-public failure reads no payload");
+      assert.ok(!db.log.some((q: Query) => q.table === MEMORY_EVENT_TABLE), "a non-public failure reads no payload");
     });
   });
 

@@ -78,7 +78,7 @@
 
 import {
   HIGHLIGHT_DOMAIN_EVENT_TYPES, MEMORY_DOMAIN_EVENT_TYPES,
-  isMemoryEventType,
+  isMemoryEventType, readEventPayload, // H203 (B58 MEM-INDEX): the event store is read only through its boundary (check:memory-table-ownership)
   type MemoryEventType,
 } from "../../lib/memoryOutbox.js";
 import { readRegistration, rebuildProjection } from "./derivativeRegistry.js"; import { revokeOne } from "./narrowingReprojection.js"; // H203 (B58 MEM-INDEX): one line, so cited lines hold
@@ -740,28 +740,14 @@ export function payloadLeftPublicIndex(payload: unknown): boolean {
 }
 
 /**
- * The event's payload from the event store (2710's `memory_domain_events`,
- * privacy-filtered by construction: ids and vocabulary, never the Memory's
- * title, caption, coordinates, lists or media — lib/memoryOutbox.ts).
- * `memory_outbox_claim` (2994) returns the event id, not the payload.
- */
-export async function readEventPayload(
-  sc: any,
-  eventId: string,
-): Promise<{ ok: true; payload: unknown } | { ok: false; detail: string }> {
-  const { data, error } = await sc.from("memory_domain_events").select("payload_json").eq("event_id", eventId).maybeSingle();
-  if (error) return { ok: false, detail: error.message ?? String(error) };
-  if (!data) return { ok: false, detail: `no memory_domain_events row for ${eventId}` };
-  return { ok: true, payload: data.payload_json };
-}
-
-/**
  * Rebuild ONE subscribed projection for one event.
  *
  * Every projection but the public index is rebuilt exactly as before, at the
  * event's scope. The PUBLIC index is rebuilt at `publicIndexScope`, from the
  * registry's PUBLIC read (publicIndexSources.ts: public, published rows, the
  * public columns), so the rebuild that drops a narrowed Memory never reads it.
+ * The payload is read through the event store's own boundary
+ * (lib/memoryOutbox.ts `readEventPayload`): the claim returns only the event id.
  *
  * Lead ruling H-4: a derivative is REBUILT for its new audience and revoked
  * only as the fail-closed fallback. So when that rebuild FAILS and the event's
