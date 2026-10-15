@@ -116,6 +116,37 @@ async function newestLogRow(sc: any, placeId: string): Promise<{ data: { id: str
 }
 
 /**
+ * The instant a timestamptz string names, in MICROSECONDS. PostgREST answers
+ * `2026-10-14T12:00:00.123456+00:00`; this file writes `…:00.123Z`. Comparing
+ * strings would call those two spellings of one instant different.
+ */
+export function instantMicros(s: unknown): number | null {
+  if (typeof s !== "string") return null;
+  const m = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}(?::?\d{2})?)?$/.exec(s.trim());
+  if (!m) return null;
+  let zone = m[4] ?? "Z";
+  if (zone !== "Z") zone = zone.length === 3 ? `${zone}:00` : zone.length === 5 ? `${zone.slice(0, 3)}:${zone.slice(3)}` : zone;
+  const secondsMs = Date.parse(`${m[1]}T${m[2]}${zone}`);
+  if (!Number.isFinite(secondsMs)) return null;
+  return secondsMs * 1000 + Number((m[3] ?? "").padEnd(6, "0").slice(0, 6));
+}
+
+/**
+ * The `updated_at` a move writes: now, but always STRICTLY later than the stamp
+ * the move compares against. No trigger maintains `places.updated_at`; the two
+ * moves in this file are its only writers in the API (by grep), and each
+ * compare-and-sets on the exact stamp it read. So along every chain of moves
+ * the stamp strictly increases — even two moves in one millisecond, or on API
+ * instances whose clocks disagree — and a stale compare-and-set armed on an
+ * earlier, identical state (an ABA) can never match again.
+ */
+export function nextStamp(prev: string | null): string {
+  const p = instantMicros(prev);
+  const floorMs = p === null ? 0 : Math.floor(p / 1000) + 1;
+  return new Date(Math.max(Date.now(), floorMs)).toISOString();
+}
+
+/**
  * Step 4. Withdraw the log row of a change that did not happen. A withdrawal
  * that fails leaves a row claiming a change that never occurred: that is said
  * in the answer, with the row's id, and logged at error level.
@@ -137,27 +168,39 @@ async function withdraw(sc: any, logId: string, verb: Verb, placeId: string, log
 /**
  * Step 3 failed with an ERROR. Whether the UPDATE committed is unknown (the
  * response may be what was lost), so the place is re-read, and then the log:
- *   - starting state, and this request's row is still the newest → not
- *     applied: withdraw;
- *   - target state, and this request's row is still the newest → applied:
- *     keep and succeed;
+ *   - UNTOUCHED: the starting state WITH the exact stamp step 1 read, and this
+ *     request's row is still the newest → not applied: withdraw;
+ *   - OURS: the target state WITH the stamp this request wrote, and this
+ *     request's row is still the newest → applied: keep and succeed;
  *   - anything else → keep the row and say the outcome is unknown.
- * The place is read BEFORE the log, so any move visible in the re-read had its
- * row written before it (every writer logs first) and is visible to the log read.
+ * The stamps are what make the two states mean something. Every move here sets
+ * `updated_at` strictly later than the stamp it compared against (nextStamp),
+ * so a place cannot come back to a stamp it has left: a place re-read at
+ * step 1's stamp has not moved since, and one at our stamp was moved by us
+ * (or by a request that read the same stamp in the same millisecond and made
+ * the same change). The newest-row test is kept as a second, independent
+ * check: the place is read BEFORE the log, so any move visible in the re-read
+ * had its row written before it (every writer logs first).
  */
 async function settleAfterWriteError(
-  sc: any, logId: string, verb: Verb, placeId: string, before: string | null, after: string | null, log: OpLog | undefined, writeErr: unknown,
+  sc: any, logId: string, verb: Verb, placeId: string, before: string | null, after: string | null,
+  stamp0: string | null, ourStamp: string, log: OpLog | undefined, writeErr: unknown,
 ): Promise<PlaceMergeOutcome> {
   let why = "the place could not be re-read";
-  const { data, error } = await sc.from("places").select("id, merged_into_place_id").eq("id", placeId).maybeSingle();
+  const { data, error } = await sc.from("places").select("id, merged_into_place_id, updated_at").eq("id", placeId).maybeSingle();
   if (!error && data) {
     const now = (data as any).merged_into_place_id ?? null;
-    why = "the place is in neither its starting nor its target state";
-    if (now === before || now === after) {
+    const at = instantMicros((data as any).updated_at);
+    const untouched = now === before && at !== null && at === instantMicros(stamp0);
+    const ours = now === after && at !== null && at === instantMicros(ourStamp);
+    why = "the place is neither untouched since it was read nor in the state this request wrote";
+    if (untouched || ours) {
       const newest = await newestLogRow(sc, placeId);
-      why = newest.error ? "place_merge_log could not be read" : "place_merge_log holds a newer row for the place";
+      why = newest.error ? "place_merge_log could not be read"
+        : !newest.data ? "place_merge_log holds no row for the place"
+        : "place_merge_log holds a newer row for the place";
       if (!newest.error && newest.data?.id === logId) {
-        if (now === before) {
+        if (untouched) {
           return withdraw(sc, logId, verb, placeId, log, refuse("db_error", `The ${verb} was not applied: the place could not be updated. Nothing was changed.`, `${verb}_write_failed`));
         }
         return { ok: true, logId };
@@ -185,13 +228,13 @@ export async function mergePlace(
 ): Promise<PlaceMergeOutcome> {
   const { placeId, intoId, adminId } = args;
   const [loserRead, survivorRead] = await Promise.all([
-    sc.from("places").select("id, merged_into_place_id").eq("id", placeId).maybeSingle(),
+    sc.from("places").select("id, merged_into_place_id, updated_at").eq("id", placeId).maybeSingle(),
     sc.from("places").select("id, merged_into_place_id").eq("id", intoId).maybeSingle(),
   ]);
   if (loserRead.error || survivorRead.error) {
     return refuse("degraded_unavailable", "The places could not be read, so nothing was merged.", "place_read_failed");
   }
-  const loser = loserRead.data as { merged_into_place_id: string | null } | null;
+  const loser = loserRead.data as { merged_into_place_id: string | null; updated_at?: string | null } | null;
   const survivor = survivorRead.data as { merged_into_place_id: string | null } | null;
   if (!loser || !survivor) return refuse("not_found", "Place not found");
   if (survivor.merged_into_place_id) return refuse("invalid_payload", "Target is itself merged; merge into the survivor");
@@ -226,12 +269,16 @@ export async function mergePlace(
     return refuse("db_error", "The merge was not applied: it could not be recorded in place_merge_log. Nothing was changed.", "merge_log_write_failed");
   }
 
-  // Step 3: move the place only from the state step 1 read (not merged).
-  const { data: moved, error: moveErr } = await sc.from("places")
-    .update({ merged_into_place_id: intoId, status: "duplicate", updated_at: new Date().toISOString() })
-    .eq("id", placeId).is("merged_into_place_id", null)
+  // Step 3: move the place only from the state step 1 read — not merged, AND
+  // the exact stamp read, so a stale compare-and-set (ABA) matches nothing.
+  const stamp0 = loser.updated_at ?? null;
+  const ourStamp = nextStamp(stamp0);
+  const mergeMove = sc.from("places")
+    .update({ merged_into_place_id: intoId, status: "duplicate", updated_at: ourStamp })
+    .eq("id", placeId).is("merged_into_place_id", null);
+  const { data: moved, error: moveErr } = await (stamp0 === null ? mergeMove.is("updated_at", null) : mergeMove.eq("updated_at", stamp0))
     .select("id");
-  if (moveErr) return settleAfterWriteError(sc, logId, "merge", placeId, null, intoId, log, moveErr);
+  if (moveErr) return settleAfterWriteError(sc, logId, "merge", placeId, null, intoId, stamp0, ourStamp, log, moveErr);
   if (affectedRows(moved) !== 1) {
     return withdraw(sc, logId, "merge", placeId, log, refuse("conflict", "The place changed while it was being merged; nothing was merged.", "place_changed"));
   }
@@ -246,7 +293,7 @@ export async function unmergePlace(
 ): Promise<PlaceMergeOutcome> {
   const { placeId, adminId } = args;
   const { data: place, error: placeErr } = await sc.from("places")
-    .select("id, merged_into_place_id").eq("id", placeId).maybeSingle();
+    .select("id, merged_into_place_id, updated_at").eq("id", placeId).maybeSingle();
   if (placeErr) return refuse("degraded_unavailable", "The place could not be read, so nothing was unmerged.", "place_read_failed");
   if (!place) return refuse("not_found", "Place not found");
   const survivorId: string | null = (place as any).merged_into_place_id ?? null;
@@ -274,12 +321,15 @@ export async function unmergePlace(
     return refuse("db_error", "The unmerge was not applied: it could not be recorded in place_merge_log. Nothing was changed.", "unmerge_log_write_failed");
   }
 
-  // Step 3: only from the survivor step 1 read.
-  const { data: moved, error: moveErr } = await sc.from("places")
-    .update({ merged_into_place_id: null, status: "active", updated_at: new Date().toISOString() })
-    .eq("id", placeId).eq("merged_into_place_id", survivorId)
+  // Step 3: only from the survivor AND the exact stamp step 1 read.
+  const stamp0: string | null = (place as any).updated_at ?? null;
+  const ourStamp = nextStamp(stamp0);
+  const unmergeMove = sc.from("places")
+    .update({ merged_into_place_id: null, status: "active", updated_at: ourStamp })
+    .eq("id", placeId).eq("merged_into_place_id", survivorId);
+  const { data: moved, error: moveErr } = await (stamp0 === null ? unmergeMove.is("updated_at", null) : unmergeMove.eq("updated_at", stamp0))
     .select("id");
-  if (moveErr) return settleAfterWriteError(sc, logId, "unmerge", placeId, survivorId, null, log, moveErr);
+  if (moveErr) return settleAfterWriteError(sc, logId, "unmerge", placeId, survivorId, null, stamp0, ourStamp, log, moveErr);
   if (affectedRows(moved) !== 1) {
     return withdraw(sc, logId, "unmerge", placeId, log, refuse("conflict", "The place changed while it was being unmerged; nothing was unmerged.", "place_changed"));
   }

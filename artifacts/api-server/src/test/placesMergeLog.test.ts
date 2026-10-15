@@ -59,7 +59,8 @@ const FLAG = "external_places_enabled";
 type Row = Record<string, any>;
 type DbError = { code: string; message: string };
 
-const active = (id: string): Row => ({ id, name: `place ${id.slice(0, 4)}`, status: "active", merged_into_place_id: null });
+const SEED_STAMP = "2026-10-01T09:00:00.000Z";
+const active = (id: string): Row => ({ id, name: `place ${id.slice(0, 4)}`, status: "active", merged_into_place_id: null, updated_at: SEED_STAMP });
 const mergedInto = (id: string, into: string): Row => ({ ...active(id), status: "duplicate", merged_into_place_id: into });
 const logRow = (action: string, survivor: string, affected: string, at: string): Row => ({
   id: randomUUID(), action, survivor_place_id: survivor, affected_place_id: affected,
@@ -244,6 +245,30 @@ const findP = (t: Record<string, Row[]>, id: string): Row => t.places!.find((p) 
 function concurrentMove(t: Record<string, Row[]>, action: "merge" | "unmerge", id: string, survivor: string): void {
   t.place_merge_log!.push({ action, survivor_place_id: survivor, affected_place_id: id, admin_id: CALLER, ref_count: 0 });
   Object.assign(findP(t, id), action === "merge" ? { merged_into_place_id: survivor, status: "duplicate" } : { merged_into_place_id: null, status: "active" });
+  findP(t, id).updated_at = laterStamp();
+}
+/** A stamp later than every seeded one, as a real move would write. */
+const laterStamp = (): string => new Date((clock += 1000)).toISOString();
+/**
+ * Serve a PATCH LATE: evaluate the request's own PostgREST filters (eq / is)
+ * against the row as it is NOW and apply its body if they hold — a request
+ * whose PATCH was held up in transit and committed after other requests ran.
+ * Its filters are the code under test's own compare-and-set.
+ */
+function serveLate(t: Record<string, Row[]>, req: SeenRequest): boolean {
+  const u = new URL(req.url);
+  const row = t[req.table]!.find((r) =>
+    [...u.searchParams.entries()].filter(([k]) => k !== "select").every(([k, v]) => {
+      const dot = v.indexOf(".");
+      const op = v.slice(0, dot);
+      const lit = v.slice(dot + 1);
+      if (op === "eq") return String(r[k]) === lit;
+      if (op === "is") return lit === "null" ? r[k] == null : String(r[k]) === lit;
+      throw new Error(`serveLate: unsupported filter ${k}=${v}`);
+    }));
+  if (!row) return false;
+  Object.assign(row, req.body);
+  return true;
 }
 
 // ── MERGE ─────────────────────────────────────────────────────────────────────
@@ -309,7 +334,7 @@ describe("POST /admin/places/:id/merge", () => {
       before: (q, t) => {
         if (raced || q.method === "GET" || q.method === "HEAD") return;
         raced = true; // someone else merges A into C just before our first write
-        Object.assign(t.places!.find((p) => p.id === A)!, { merged_into_place_id: C, status: "duplicate" });
+        Object.assign(t.places!.find((p) => p.id === A)!, { merged_into_place_id: C, status: "duplicate", updated_at: laterStamp() });
       },
     });
     install(w);
@@ -387,7 +412,7 @@ describe("POST /admin/places/:id/merge", () => {
     const w = makeWorld({
       places: [active(A), active(B)],
       before: (q, t) => {
-        if (q.method === "PATCH" && q.table === "places") Object.assign(t.places!.find((p) => p.id === A)!, { merged_into_place_id: B, status: "duplicate" });
+        if (q.method === "PATCH" && q.table === "places") Object.assign(t.places!.find((p) => p.id === A)!, q.body); // ours commits
       },
       fail: failWhen("PATCH", "places"),
     });
@@ -407,7 +432,7 @@ describe("POST /admin/places/:id/merge", () => {
         before: (q, t) => {
           if (q.method !== "PATCH" || q.table !== "places") return;
           patched = true;
-          if (what === "elsewhere") Object.assign(t.places!.find((p) => p.id === A)!, { merged_into_place_id: C, status: "duplicate" });
+          if (what === "elsewhere") Object.assign(t.places!.find((p) => p.id === A)!, { merged_into_place_id: C, status: "duplicate", updated_at: laterStamp() });
         },
         fail: (q) => (q.method === "PATCH" && q.table === "places") || (what === "reread fails" && patched && q.method === "GET" && q.table === "places") ? BROKEN : null,
       });
@@ -430,7 +455,7 @@ describe("POST /admin/places/:id/merge", () => {
     const w = makeWorld({
       places: [active(A), active(B)],
       before: (q, t) => {
-        if (q.method === "PATCH" && q.table === "places") { patched = true; Object.assign(findP(t, A), { merged_into_place_id: B, status: "duplicate" }); return; }
+        if (q.method === "PATCH" && q.table === "places") { patched = true; Object.assign(findP(t, A), q.body); return; } // ours commits
         if (patched && !reverted && q.method === "GET" && q.table === "places") { reverted = true; concurrentMove(t, "unmerge", A, B); }
       },
       fail: failWhen("PATCH", "places"),
@@ -484,6 +509,144 @@ describe("POST /admin/places/:id/merge", () => {
     install(w);
     refused(await merge(), 503, "degraded_unavailable", "place_read_failed", "M19");
     assert.deepEqual(w.writes(), [], "M19: nothing is written");
+  });
+
+  it("M20 (ABA-CAS) a merge whose compare-and-set was armed on a state that left and came back matches nothing: 409, row withdrawn", async () => {
+    // Ours logs, then stalls; R0 merges A into B and R1 unmerges it, both logged.
+    // A is back to "not merged" — but with a later stamp, so our stale CAS misses.
+    let raced = false;
+    const w = makeWorld({
+      places: [active(A), active(B)],
+      before: (q, t) => {
+        if (raced || q.method !== "PATCH" || q.table !== "places") return;
+        raced = true;
+        concurrentMove(t, "merge", A, B);
+        concurrentMove(t, "unmerge", A, B);
+      },
+    });
+    install(w);
+    refused(await merge(), 409, "conflict", "place_changed", "M20");
+    unchangedActive(w, A, "M20");
+    assert.deepEqual(w.log().map((x) => x.action), ["merge", "unmerge"], "M20: only R0's and R1's rows; ours is withdrawn");
+  });
+
+  it("M21 (ABA-M) a stale unmerge served LATE cannot reverse our committed merge: 200, our row kept, the log matches", async () => {
+    // Rx (an unmerge run through this same route) reads A→B, logs, and its PATCH
+    // is held up in transit; R0's unmerge lands meanwhile. Our merge then commits
+    // with its response lost, and Rx's PATCH is served before our re-read. Rx's
+    // compare-and-set names the stamp it read, which our merge replaced.
+    let phase: "rx" | "ours" = "rx";
+    let r0 = false;
+    let rxPatch: SeenRequest | null = null;
+    let ourPatched = false;
+    let servedLate: boolean | null = null;
+    const w = makeWorld({
+      places: [mergedInto(A, B), active(B)],
+      log: [logRow("merge", B, A, T1)],
+      before: (q, t) => {
+        if (phase === "rx") {
+          if (!r0 && q.method === "POST" && q.table === "place_merge_log") { r0 = true; concurrentMove(t, "unmerge", A, B); }
+          if (q.method === "PATCH" && q.table === "places") rxPatch = q; // held up: served late, below
+          return;
+        }
+        if (q.method === "PATCH" && q.table === "places") { ourPatched = true; Object.assign(findP(t, A), q.body); return; } // ours commits
+        if (ourPatched && servedLate === null && q.method === "GET" && q.table === "places") servedLate = serveLate(t, rxPatch!);
+      },
+      fail: (q) => {
+        if (q.method === "PATCH" && q.table === "places") return BROKEN; // Rx: held up; ours: response lost
+        if (phase === "rx" && rxPatch && q.method === "GET" && q.table === "places") return BROKEN; // Rx keeps its row
+        return null;
+      },
+    });
+    install(w);
+    refused(await unmerge(), 500, "db_error", "unmerge_outcome_unknown", "M21 Rx");
+    phase = "ours";
+    const r = await merge();
+    assert.equal(r.status, 200, `M21: ${JSON.stringify(r.body)}`);
+    assert.equal(servedLate, false, "M21: Rx's late compare-and-set matched nothing");
+    stillMerged(w, A, B, "M21");
+    const newest = [...w.log()].sort((x, y) => (x.created_at < y.created_at ? 1 : -1))[0]!;
+    assert.deepEqual([newest.action, newest.survivor_place_id], ["merge", B], "M21: the newest row is our merge, matching the place");
+    assert.equal((await unmerge()).status, 200, "M21: and the merge it records can be reversed");
+  });
+
+  it("M22 an instance WITHOUT the stamp compare-and-set (a rolling deploy) reversing our committed merge is an unknown outcome, never a withdrawal", async () => {
+    // The re-read sees the starting state, but with a stamp that is not the one
+    // step 1 read: the place moved, so the row is kept.
+    let patched = false;
+    let reversed = false;
+    const w = makeWorld({
+      places: [active(A), active(B)],
+      log: [logRow("merge", B, A, T1), logRow("unmerge", B, A, T2)],
+      before: (q, t) => {
+        if (q.method === "PATCH" && q.table === "places") { patched = true; Object.assign(findP(t, A), q.body); return; } // ours commits
+        if (patched && !reversed && q.method === "GET" && q.table === "places") {
+          reversed = true; // an older stale unmerge, no new row, a fresh stamp
+          Object.assign(findP(t, A), { merged_into_place_id: null, status: "active", updated_at: laterStamp() });
+        }
+      },
+      fail: failWhen("PATCH", "places"),
+    });
+    install(w);
+    refused(await merge(), 500, "db_error", "merge_outcome_unknown", "M22");
+    assert.ok(!w.writes().includes("DELETE place_merge_log"), "M22: no withdrawal");
+    assert.deepEqual(w.log().map((x) => x.action), ["merge", "unmerge", "merge"], "M22: the applied merge keeps its row");
+  });
+
+  it("M23 a failed place_merge_log read in the settle step is an unknown outcome: row kept, no DELETE (D3)", async () => {
+    let patched = false;
+    const w = makeWorld({
+      places: [active(A), active(B)],
+      before: (q) => { if (q.method === "PATCH" && q.table === "places") patched = true; }, // ours does NOT commit
+      fail: (q) => (q.method === "PATCH" && q.table === "places") || (patched && q.method === "GET" && q.table === "place_merge_log") ? BROKEN : null,
+    });
+    install(w);
+    const r = await merge();
+    refused(r, 500, "db_error", "merge_outcome_unknown", "M23");
+    unchangedActive(w, A, "M23");
+    assert.equal(w.log().length, 1, "M23: the row is kept");
+    assert.ok(!w.writes().includes("DELETE place_merge_log"), "M23: no withdrawal is attempted");
+    assert.ok(String(r.body.message).includes("place_merge_log could not be read"), `M23: says why — ${r.body.message}`);
+  });
+
+  it("M24 our row gone from the log (an operator deleted it) is an unknown outcome, never a withdrawal or a success (D4)", async () => {
+    let patched = false;
+    const w = makeWorld({
+      places: [active(A), active(B)],
+      before: (q, t) => {
+        if (q.method === "PATCH" && q.table === "places") { patched = true; return; }
+        if (patched && q.method === "GET" && q.table === "places") t.place_merge_log!.length = 0;
+      },
+      fail: failWhen("PATCH", "places"),
+    });
+    install(w);
+    const r = await merge();
+    refused(r, 500, "db_error", "merge_outcome_unknown", "M24");
+    assert.ok(!w.writes().includes("DELETE place_merge_log"), "M24: no withdrawal is attempted");
+    assert.ok(String(r.body.message).includes("holds no row"), `M24: says why — ${r.body.message}`);
+  });
+
+  it("M25 (X3) the same merge made by another request whose row is OLDER than ours is not claimed: unknown, not 200", async () => {
+    // R read the same state, logged first, and its PATCH committed; ours did not.
+    // The place is in the target state, ours is the newest row — but the stamp
+    // is R's, not the one this request wrote.
+    let patched = false;
+    let raced = false;
+    const w = makeWorld({
+      places: [active(A), active(B)],
+      log: [logRow("merge", B, A, T1)], // R's row: older than ours
+      before: (q, t) => {
+        if (q.method === "PATCH" && q.table === "places") { patched = true; return; } // ours does NOT commit
+        if (patched && !raced && q.method === "GET" && q.table === "places") {
+          raced = true;
+          Object.assign(findP(t, A), { merged_into_place_id: B, status: "duplicate", updated_at: laterStamp() });
+        }
+      },
+      fail: failWhen("PATCH", "places"),
+    });
+    install(w);
+    refused(await merge(), 500, "db_error", "merge_outcome_unknown", "M25");
+    stillMerged(w, A, B, "M25");
   });
 
   it("M12 stays admin-only: a non-admin is refused before the catalog is touched", async () => {
@@ -607,7 +770,7 @@ describe("POST /admin/places/:id/unmerge", () => {
       before: (q, t) => {
         if (raced || q.method === "GET" || q.method === "HEAD") return;
         raced = true; // someone else unmerged A and merged it into C just before our first write
-        Object.assign(t.places!.find((p) => p.id === A)!, { merged_into_place_id: C, status: "duplicate" });
+        Object.assign(t.places!.find((p) => p.id === A)!, { merged_into_place_id: C, status: "duplicate", updated_at: laterStamp() });
       },
     });
     install(w);
@@ -637,7 +800,7 @@ describe("POST /admin/places/:id/unmerge", () => {
       places: [mergedInto(A, B), active(B)],
       log: [logRow("merge", B, A, T1)],
       before: (q, t) => {
-        if (q.method === "PATCH" && q.table === "places") Object.assign(t.places!.find((p) => p.id === A)!, { merged_into_place_id: null, status: "active" });
+        if (q.method === "PATCH" && q.table === "places") Object.assign(t.places!.find((p) => p.id === A)!, q.body); // ours commits
       },
       fail: failWhen("PATCH", "places"),
     });
@@ -667,7 +830,7 @@ describe("POST /admin/places/:id/unmerge", () => {
       places: [mergedInto(A, B), active(B)],
       log: [logRow("merge", B, A, T1)],
       before: (q, t) => {
-        if (q.method === "PATCH" && q.table === "places") { patched = true; Object.assign(findP(t, A), { merged_into_place_id: null, status: "active" }); return; }
+        if (q.method === "PATCH" && q.table === "places") { patched = true; Object.assign(findP(t, A), q.body); return; } // ours commits
         if (patched && !raced && q.method === "GET" && q.table === "places") { raced = true; concurrentMove(t, "merge", A, B); }
       },
       fail: failWhen("PATCH", "places"),
@@ -702,6 +865,96 @@ describe("POST /admin/places/:id/unmerge", () => {
     refused(await unmerge(), 409, "conflict", "merge_not_logged", "U16");
     stillMerged(w, A, B, "U16");
     assert.deepEqual(w.writes(), [], "U16: nothing is written");
+  });
+
+  it("U17 (ABA-CAS) an unmerge whose compare-and-set was armed on a state that left and came back matches nothing: 409, row withdrawn", async () => {
+    let raced = false;
+    const w = makeWorld({
+      places: [mergedInto(A, B), active(B)],
+      log: [logRow("merge", B, A, T1)],
+      before: (q, t) => {
+        if (raced || q.method !== "PATCH" || q.table !== "places") return;
+        raced = true;
+        concurrentMove(t, "unmerge", A, B);
+        concurrentMove(t, "merge", A, B);
+      },
+    });
+    install(w);
+    refused(await unmerge(), 409, "conflict", "place_changed", "U17");
+    stillMerged(w, A, B, "U17");
+    assert.deepEqual(w.log().map((x) => x.action), ["merge", "unmerge", "merge"], "U17: ours is withdrawn; the log matches the place");
+  });
+
+  it("U18 (ABA-U) a stale merge served LATE cannot reverse our committed unmerge: 200, our row kept, the log matches", async () => {
+    let phase: "rx" | "ours" = "rx";
+    let r0 = false;
+    let rxPatch: SeenRequest | null = null;
+    let ourPatched = false;
+    let servedLate: boolean | null = null;
+    const w = makeWorld({
+      places: [active(A), active(B)],
+      log: [logRow("merge", B, A, T1), logRow("unmerge", B, A, T2)],
+      before: (q, t) => {
+        if (phase === "rx") {
+          if (!r0 && q.method === "POST" && q.table === "place_merge_log") { r0 = true; concurrentMove(t, "merge", A, B); }
+          if (q.method === "PATCH" && q.table === "places") rxPatch = q;
+          return;
+        }
+        if (q.method === "PATCH" && q.table === "places") { ourPatched = true; Object.assign(findP(t, A), q.body); return; } // ours commits
+        if (ourPatched && servedLate === null && q.method === "GET" && q.table === "places") servedLate = serveLate(t, rxPatch!);
+      },
+      fail: (q) => {
+        if (q.method === "PATCH" && q.table === "places") return BROKEN;
+        if (phase === "rx" && rxPatch && q.method === "GET" && q.table === "places") return BROKEN;
+        return null;
+      },
+    });
+    install(w);
+    refused(await merge(), 500, "db_error", "merge_outcome_unknown", "U18 Rx");
+    phase = "ours";
+    const r = await unmerge();
+    assert.equal(r.status, 200, `U18: ${JSON.stringify(r.body)}`);
+    assert.equal(servedLate, false, "U18: Rx's late compare-and-set matched nothing");
+    unchangedActive(w, A, "U18");
+    const newest = [...w.log()].sort((x, y) => (x.created_at < y.created_at ? 1 : -1))[0]!;
+    assert.equal(newest.action, "unmerge", "U18: the newest row is our unmerge, matching the place");
+  });
+
+  it("U19 an instance WITHOUT the stamp compare-and-set re-merging after our committed unmerge is an unknown outcome, never a withdrawal", async () => {
+    let patched = false;
+    let reversed = false;
+    const w = makeWorld({
+      places: [mergedInto(A, B), active(B)],
+      log: [logRow("merge", B, A, T1)],
+      before: (q, t) => {
+        if (q.method === "PATCH" && q.table === "places") { patched = true; Object.assign(findP(t, A), q.body); return; } // ours commits
+        if (patched && !reversed && q.method === "GET" && q.table === "places") {
+          reversed = true;
+          Object.assign(findP(t, A), { merged_into_place_id: B, status: "duplicate", updated_at: laterStamp() });
+        }
+      },
+      fail: failWhen("PATCH", "places"),
+    });
+    install(w);
+    refused(await unmerge(), 500, "db_error", "unmerge_outcome_unknown", "U19");
+    assert.ok(!w.writes().includes("DELETE place_merge_log"), "U19: no withdrawal");
+    assert.deepEqual(w.log().map((x) => x.action), ["merge", "unmerge"], "U19: the applied unmerge keeps its row");
+  });
+
+  it("U20 a failed place_merge_log read in the settle step is an unknown outcome: row kept, no DELETE (D3)", async () => {
+    let patched = false;
+    const w = makeWorld({
+      places: [mergedInto(A, B), active(B)],
+      log: [logRow("merge", B, A, T1)],
+      before: (q) => { if (q.method === "PATCH" && q.table === "places") patched = true; },
+      fail: (q) => (q.method === "PATCH" && q.table === "places") || (patched && q.method === "GET" && q.table === "place_merge_log") ? BROKEN : null,
+    });
+    install(w);
+    const r = await unmerge();
+    refused(r, 500, "db_error", "unmerge_outcome_unknown", "U20");
+    stillMerged(w, A, B, "U20");
+    assert.deepEqual(w.log().map((x) => x.action), ["merge", "unmerge"], "U20: the row is kept");
+    assert.ok(!w.writes().includes("DELETE place_merge_log"), "U20: no withdrawal is attempted");
   });
 
   it("U12 the refusals main already had are unchanged (not found, not merged, bad id)", async () => {
