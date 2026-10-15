@@ -33,7 +33,7 @@ import { _setTestClient } from "../lib/http.js";
 import { _resetRateLimit } from "../lib/rateLimit.js";
 import memorySharedAnchorsRouter from "../routes/memorySharedAnchors.js";
 import apiRouter from "../routes/index.js";
-import { blocksAmong, MEMORY_SHARED_ANCHORS_FLAG } from "../services/memory/memorySharedAnchors.js";
+import { blocksAmong, MEMORY_SHARED_ANCHORS_FLAG, SHARED_ANCHORS_APP_PATH } from "../services/memory/memorySharedAnchors.js";
 
 const H = "a5000000-0000-4000-8000-000000000001"; // the host: owns MH (only_me); B and C approved tags, D a pending one
 const B = "a5000000-0000-4000-8000-000000000002"; // owns MB (only_me)
@@ -286,12 +286,12 @@ const ROUTES: Array<[string, string, unknown]> = [
   ["GET", "/memory-shared-anchors/c5000000-0000-4000-8000-000000000001", undefined],
   ["POST", "/memory-shared-anchors/c5000000-0000-4000-8000-000000000001/accept", { memoryId: MB }],
   ["POST", "/memory-shared-anchors/c5000000-0000-4000-8000-000000000001/decline", {}],
-  ["POST", "/memory-shared-anchors/c5000000-0000-4000-8000-000000000001/leave", {}],
+  ["POST", "/memory-shared-anchors/c5000000-0000-4000-8000-000000000001/leave", {}], ["GET", `/memories/${MH}/shared-anchor/invitable`, undefined], // MEM-ANCHOR-2's seventh, on this line so no cited line moves
 ];
 
 describe("F: flag OFF or absent — every route answers as if the feature does not exist, and nothing is written", () => {
   for (const flag of ["absent", "off"] as const) {
-    it(`flag ${flag}: each of the six routes is indistinguishable from an app without the router, signed in or not, and reads nothing past the flag`, async () => {
+    it(`flag ${flag}: each of the seven routes is indistinguishable from an app without the router, signed in or not, and reads nothing past the flag`, async () => {
       const without = await start({ flag }, { mounted: false }); // started first: the last start() owns the test client
       const withRouter = await start({ flag });
       for (const [method, p, body] of ROUTES) {
@@ -610,5 +610,104 @@ describe("blocksAmong (the shared reader, read fail-closed)", () => {
     store.blocks.push({ blocker_id: B, blocked_id: H });
     const r = await blocksAmong(makeDb(store, ops, { flag: "on" }), H, [B, C]);
     assert.ok(r.ok && r.blocked.has(B) && !r.blocked.has(C));
+  });
+});
+
+// ── MEM-ANCHOR-2 (the client half) — the one read the app needed that the server half did not have ──
+
+const invitable = (a: App, memoryId: string, actor = H) => call(a, "GET", `/memories/${memoryId}/shared-anchor/invitable`, actor);
+const invitableIds = (r: { body: any }) => (r.body.people as any[]).map((p) => p.userId).sort();
+
+describe("V: who can be invited — the list the app renders, so the app never infers eligibility", () => {
+  it("the owner gets exactly the APPROVED-tag people (never a pending tag, an untagged person or themself), each with a handle and nothing else", async () => {
+    const a = await start({ flag: "on" });
+    const r = await invitable(a, MH);
+    assert.equal(r.status, 200);
+    assert.deepEqual(invitableIds(r), [B, C].sort(), "D's tag is pending, E has none, H is the owner");
+    assert.deepEqual(r.body.people, [{ userId: B, handle: "user2" }, { userId: C, handle: "user3" }]);
+    assert.deepEqual(writes(a), [], "a read writes nothing");
+  });
+
+  it("another person's Memory, a deleted one, a missing one: the invite's own 404, naming nobody", async () => {
+    const a = await start({ flag: "on" });
+    const notMine = await invitable(a, MH, C);
+    assert.equal(notMine.status, 404);
+    assert.deepEqual(notMine.body, (await invite(a, MH, B, C)).body, "the same body as the invite's refusal");
+    assert.equal((await invitable(a, MH_DELETED)).status, 404);
+    assert.equal((await invitable(a, MISSING)).status, 404);
+    assert.equal((await invitable(a, "not-a-uuid")).status, 404);
+    assert.ok(!a.ops.some((o) => o.table === "memory_tags"), "nobody's tags are read for a Memory that is not the caller's");
+  });
+
+  it("anyone already asked is left out, whatever they answered — invited, accepted, declined and left look the same", async () => {
+    const a = await start({ flag: "on" }, { mutate: (s) => { s.memory_tags.push({ memory_id: MH, tagged_user_id: E, status: "approved" }, { memory_id: MH, tagged_user_id: X, status: "approved" }); } });
+    assert.deepEqual(invitableIds(await invitable(a, MH)), [B, C, E, X].sort());
+    const anchorId = (await invite(a, MH, B)).body.anchorId;
+    assert.deepEqual(invitableIds(await invitable(a, MH)), [C, E, X].sort(), "B, only invited, is already asked");
+    await invite(a, MH, C); await invite(a, MH, E); await invite(a, MH, X);
+    await accept(a, anchorId, B); await decline(a, anchorId, C); await accept(a, anchorId, E); await leave(a, anchorId, E);
+    assert.equal(a.store.memory_shared_anchors.length, 1, "the anchor lives (H and B accepted, X invited)");
+    assert.deepEqual((await invitable(a, MH)).body, { people: [] }, "accepted, declined, left and invited are one exclusion");
+  });
+
+  it("a block in either direction leaves the person out; an unreadable or a THROWN block read is a 503, never a list", async () => {
+    for (const [blocker, blocked] of [[H, B], [B, H]]) {
+      const a = await start({ flag: "on" }, { mutate: (s) => s.blocks.push({ blocker_id: blocker, blocked_id: blocked }) });
+      assert.deepEqual(invitableIds(await invitable(a, MH)), [C]);
+    }
+    for (const w of [{ flag: "on" as const, failReads: new Set(["blocks"]) }, { flag: "on" as const, throwOn: new Set(["blocks"]) }]) {
+      const a = await start(w);
+      const r = await invitable(a, MH);
+      assert.equal(r.status, 503);
+      assert.equal(r.body.error, "degraded_unavailable");
+      assert.equal(r.body.people, undefined);
+    }
+  });
+
+  it("an unreadable Memory, tag or membership read is a 503, never an empty list", async () => {
+    for (const table of ["memories", "memory_tags", "memory_shared_anchor_members", "memory_shared_anchors"]) {
+      const a = await start({ flag: "on" });
+      if (table !== "memories" && table !== "memory_tags") await invite(a, MH, B);
+      a.w.failReads = new Set([table]);
+      const r = await invitable(a, MH);
+      assert.equal(r.status, 503, table);
+      assert.equal(r.body.people, undefined, table);
+    }
+  });
+
+  it("only the host invites: a member whose own Memory is linked to someone else's anchor is offered nobody", async () => {
+    const a = await start({ flag: "on" });
+    const anchorId = (await invite(a, MH, B)).body.anchorId;
+    assert.deepEqual(invitableIds(await invitable(a, MB, B)), [X], "before B links MB, X (approved on MB) can be invited");
+    await accept(a, anchorId, B, MB);
+    assert.deepEqual((await invitable(a, MB, B)).body, { people: [] });
+    assert.equal((await invite(a, MB, X, B)).body.reason, "not_host", "the invite agrees");
+  });
+
+  it("the list and the invite agree: everyone listed can be invited (201), and after inviting they are no longer listed", async () => {
+    const a = await start({ flag: "on" });
+    for (const p of (await invitable(a, MH)).body.people as any[]) assert.equal((await invite(a, MH, p.userId)).status, 201);
+    assert.deepEqual((await invitable(a, MH)).body, { people: [] });
+  });
+
+  it("anonymous: 401 with the flag ON (the gate is the flag first, as for every route here)", async () => {
+    const a = await start({ flag: "on" });
+    assert.equal((await call(a, "GET", `/memories/${MH}/shared-anchor/invitable`, null)).status, 401);
+  });
+
+  it("mounted on the real API router: the list answers through routes/index.ts exactly as through this router", async () => {
+    const a = await start({ flag: "on" }, { mounted: "api" });
+    assert.deepEqual(invitableIds(await invitable(a, MH)), [B, C].sort());
+  });
+});
+
+describe("N: the in-app notice opens the app's invitations list", () => {
+  it("the notice's link is the constant /memory/together — no Memory id, no anchor id, nobody else in it", async () => {
+    const a = await start({ flag: "on" });
+    await invite(a, MH, B);
+    const [note] = a.store.notifications;
+    assert.equal(note.action_url, SHARED_ANCHORS_APP_PATH);
+    assert.equal(SHARED_ANCHORS_APP_PATH, "/memory/together");
+    for (const id of [MH, H, C, a.store.memory_shared_anchors[0].id]) assert.ok(!String(note.action_url).includes(id));
   });
 });

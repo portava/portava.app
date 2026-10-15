@@ -1,7 +1,7 @@
 /**
  * §5 "Remember this together" over HTTP — the shared-experience anchor's server
  * half. Census-highlights-memories H53 (B58 cluster MEM-ANCHOR-1; migration 3805,
- * unapplied; the client is cluster MEM-ANCHOR-2, not built).
+ * unapplied; the client is cluster MEM-ANCHOR-2, travel-buddy-standalone/src/features/memories/shared/).
  *
  *   POST /memories/:id/shared-anchor/invites  { userId }   the HOST invites a person
  *                                                          holding an APPROVED tag on
@@ -12,7 +12,7 @@
  *                                                          see it
  *   POST /memory-shared-anchors/:anchorId/accept { memoryId? }  accept, optionally
  *                                                          linking the caller's OWN Memory
- *   POST /memory-shared-anchors/:anchorId/decline
+ *   POST /memory-shared-anchors/:anchorId/decline           (GET /memories/:id/shared-anchor/invitable, MEM-ANCHOR-2: at the end)
  *   POST /memory-shared-anchors/:anchorId/leave            at any time
  *
  * THE FLAG COMES FIRST, BEFORE AUTHENTICATION. `memory_shared_anchors_enabled`
@@ -38,7 +38,7 @@ import {
   acceptInvitation,
   anchorViewFor,
   declineInvitation,
-  inviteToSharedAnchor,
+  inviteToSharedAnchor, invitableFor,
   leaveSharedAnchor,
   listAnchorsFor,
   notifyInvitedInApp,
@@ -177,6 +177,25 @@ router.post("/memory-shared-anchors/:anchorId/leave", whenEnabled, asyncHandler(
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
   sendRespond(req, res, anchorId, "left", await leaveSharedAnchor(sc, anchorId, auth.user.id));
+}));
+
+// ── GET /memories/:id/shared-anchor/invitable (B58 cluster MEM-ANCHOR-2) ──────
+// Who the OWNER of Memory :id can invite right now — the list the app renders,
+// so the app never infers eligibility from tag statuses itself. Behind the same
+// flag gate as every route above; a Memory that is not the caller's own and live
+// is the invite's own 404; an unreadable read (blocks included) is a 503, never
+// a list. The rules are `invitableFor` in services/memory/memorySharedAnchors.ts.
+router.get("/memories/:id/shared-anchor/invitable", whenEnabled, asyncHandler(async (req: Request, res: Response) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const memoryId = String(req.params.id ?? "");
+  if (!UUID_RE.test(memoryId)) { sendError(res, "not_found", "Memory not found"); return; }
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+  const out = await invitableFor(sc, memoryId, auth.user.id);
+  if (out.kind === "not_found") { sendError(res, "not_found", "Memory not found"); return; }
+  if (out.kind === "unreadable") { unavailable(req, res, out.detail); return; }
+  res.json({ people: out.people });
 }));
 
 export default router;

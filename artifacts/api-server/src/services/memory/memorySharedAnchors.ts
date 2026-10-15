@@ -232,7 +232,7 @@ export async function notifyInvitedInApp(
       sourceType: "memory_shared_anchor",
       sourceId: anchorId,
       actorId: inviterId,
-      metadata: { anchorId },
+      metadata: { anchorId }, actionUrl: SHARED_ANCHORS_APP_PATH, // MEM-ANCHOR-2: a tap opens the app's invitations list; a constant path, no id in it
     });
     if (result.refusal) {
       logger.warn({ anchorId, refusal: result.refusal }, "memory shared anchor: in-app invitation notice not written");
@@ -537,3 +537,103 @@ export async function listAnchorsFor(sc: any, viewerId: string): Promise<AnchorL
   }
   return { kind: "ok", anchors };
 }
+
+// ── Who can be invited (B58 cluster MEM-ANCHOR-2) ────────────────────────────
+
+export type InvitableResult =
+  | { readonly kind: "ok"; readonly people: readonly AnchorPerson[] }
+  | { readonly kind: "not_found" }
+  | { readonly kind: "unreadable"; readonly detail: string };
+
+/**
+ * Who the owner of Memory `memoryId` can invite right now: the list the app
+ * renders under "Remember this together", so the app never infers eligibility
+ * from tag statuses itself. The rules are `inviteToSharedAnchor`'s, read without
+ * writing anything:
+ *   - the Memory is the caller's own and live, else the invite's own 404;
+ *   - a person holding an APPROVED tag on it, never the caller;
+ *   - nobody blocked in either direction. An unreadable or thrown block read
+ *     refuses the whole list (`unreadable`, the route's 503), never a list that
+ *     might name a blocked person;
+ *   - nobody already asked into this Memory's anchor, whatever their row says.
+ *     invited, accepted, declined and left are ONE exclusion: the host learns
+ *     "already asked" (exactly what the invite's 409 says), never how anyone
+ *     answered;
+ *   - the Memory is linked to an anchor someone ELSE hosts ⇒ nobody (only the
+ *     host invites; the invite would answer 409 not_host).
+ * It names nobody the owner's own tag list does not already name: §10's ladder
+ * names an approved, unblocked participant to the owner and hides a blocked one
+ * (memoryParticipantVisibility.ts, branch 1).
+ */
+export async function invitableFor(sc: any, memoryId: string, ownerId: string): Promise<InvitableResult> {
+  const { data: memory, error: memoryErr } = await sc
+    .from("memories")
+    .select("id, owner_id, state")
+    .eq("id", memoryId)
+    .maybeSingle();
+  if (memoryErr) return { kind: "unreadable", detail: `memories: ${memoryErr.message ?? memoryErr.code ?? "error"}` };
+  if (!memory || (memory as any).owner_id !== ownerId || NOT_LIVE_STATES.has(String((memory as any).state))) {
+    return { kind: "not_found" };
+  }
+
+  const { data: tags, error: tagsErr } = await sc
+    .from("memory_tags")
+    .select("tagged_user_id")
+    .eq("memory_id", memoryId)
+    .eq("status", "approved");
+  if (tagsErr) return { kind: "unreadable", detail: `memory_tags: ${tagsErr.message ?? tagsErr.code ?? "error"}` };
+  if (tags != null && !Array.isArray(tags)) return { kind: "unreadable", detail: "memory_tags answered no list" };
+  let candidates = [...new Set(((tags ?? []) as any[])
+    .map((t) => t?.tagged_user_id)
+    .filter((id): id is string => typeof id === "string" && id.length > 0 && id !== ownerId))];
+  if (candidates.length === 0) return { kind: "ok", people: [] };
+
+  const { data: link, error: linkErr } = await sc
+    .from("memory_shared_anchor_members")
+    .select("anchor_id")
+    .eq("memory_id", memoryId)
+    .eq("status", "accepted")
+    .maybeSingle();
+  if (linkErr) return { kind: "unreadable", detail: `memory_shared_anchor_members: ${linkErr.message ?? linkErr.code ?? "error"}` };
+  if (link) {
+    const anchorId = String((link as any).anchor_id);
+    const { data: anchor, error: anchorErr } = await sc
+      .from("memory_shared_anchors")
+      .select("created_by")
+      .eq("id", anchorId)
+      .maybeSingle();
+    if (anchorErr) return { kind: "unreadable", detail: `memory_shared_anchors: ${anchorErr.message ?? anchorErr.code ?? "error"}` };
+    if (anchor) {
+      if ((anchor as any).created_by !== ownerId) return { kind: "ok", people: [] };
+      const { data: asked, error: askedErr } = await sc
+        .from("memory_shared_anchor_members")
+        .select("user_id")
+        .eq("anchor_id", anchorId);
+      if (askedErr) return { kind: "unreadable", detail: `memory_shared_anchor_members: ${askedErr.message ?? askedErr.code ?? "error"}` };
+      if (asked != null && !Array.isArray(asked)) return { kind: "unreadable", detail: "memory_shared_anchor_members answered no list" };
+      const already = new Set(((asked ?? []) as any[]).map((r) => String(r?.user_id)));
+      candidates = candidates.filter((id) => !already.has(id));
+      if (candidates.length === 0) return { kind: "ok", people: [] };
+    }
+  }
+
+  const blocks = await blocksAmong(sc, ownerId, candidates);
+  if (!blocks.ok) {
+    logger.warn({ memoryId, reason: blocks.reason }, "memory shared anchor: block state unreadable — refusing the invitable list rather than serving one that might name a blocked person");
+    return { kind: "unreadable", detail: blocks.reason };
+  }
+  const open = candidates.filter((id) => !blocks.blocked.has(id));
+  const handles = await handlesOf(sc, open);
+  const people: AnchorPerson[] = open
+    .map((userId) => ({ userId, handle: handles.get(userId) ?? null }))
+    .sort((a, b) => (a.handle ?? "￿").localeCompare(b.handle ?? "￿") || a.userId.localeCompare(b.userId));
+  return { kind: "ok", people };
+}
+
+/**
+ * Where the in-app invitation notice takes the invitee when tapped: the app's
+ * "Remember together" list (travel-buddy-standalone/app/memory/together.tsx,
+ * MEM-ANCHOR-2), where Accept and Decline are. A constant: the notice carries
+ * no Memory id and no other member in its link, as in its body.
+ */
+export const SHARED_ANCHORS_APP_PATH = "/memory/together";
