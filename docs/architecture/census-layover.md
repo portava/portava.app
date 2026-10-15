@@ -11635,3 +11635,216 @@ No row moves.
 | total | 296 | 296 |
 
 **C=85 W=156 N=55 X=0** over 296 (`check:census-integrity`, restated on merging `main` `f57202703`, which carries §73 and §74 — L144 N → W).
+
+## §76 — 2026-10-14 (B58 lane LAY-5): §13's time-budget chips are a server simulation over the certified record — a chip can only narrow it, and the map draws the server's bands as sent. ONE ROW MOVES
+
+*Section number: `main` has §72; open PRs hold §73 (#722), §74 (#723) and §75 (#728); this section takes §76 and renumbers
+if one of those lands under another number. Built on branch `claude/b58-lay-5` from `origin/main` `aeae27499`, restated after
+merging `a8712e707` (#721). Migration 3785 (flag seed only), applied to no database. Nothing was written to any database.*
+
+L118 is spec:456, §13: *"Changing time-budget chips triggers simulation/replanning, not local visual filtering alone."*
+The body grades it N: there were no chips, and the recommendation filter chips that do exist are pure client-side
+`Array.filter` on `insideAirport` (`travel-buddy-standalone/src/components/layover/LayoverRecsSection.tsx:41#if (filter === 'inside')`). §41.3 held it there: *"`POST /api/airport/sessions/:id/simulate` does not
+exist."*
+
+### §76.1 What was true on `aeae27499`
+
+- No time-budget control existed on any layover surface, and no route re-banded a plan under a budget.
+- The §13 map bands (L67, §59) existed on the server, from the certified usable minutes, the landside gate and each stop's
+  stated legs, and reached the map card on every overview behind `layover_map_bands_enabled` (3633, seeded FALSE, unapplied).
+- The recommendation list's filter chips are still the local `Array.filter` the body quotes. They are not time-budget
+  chips and this pass leaves them alone.
+
+### §76.2 What changed
+
+**One definition of usable time.** A chip narrows the certified record's `envelope.usableMinutes`, the figure #728 (§75)
+makes the ONE definition, and nothing else: no deadline minus now, no second derivation. The simulation does not call
+`assess` or `rankActivities`, so #728's change to their fifth parameter does not touch it.
+
+**The rule** (`artifacts/api-server/src/services/airport/layoverMapBudget.ts:134#export function mapBudgetRefusal(`):
+- an unreadable record (usable minutes not a finite, non-negative whole number) is refused, `uncertified`;
+- a budget above the certified figure is refused, `above_certified`, naming the figure
+  (`artifacts/api-server/src/services/airport/layoverMapBudget.ts:142#if (budgetMinutes > certified) {`). A chip can only
+  narrow;
+- a budget below 90 minutes is refused, `below_floor`
+  (`artifacts/api-server/src/services/airport/layoverMapBudget.ts:148#if (budgetMinutes < MAP_BUDGET_FLOOR_MIN) {`). The
+  floor is not a new number: it is `LANDSIDE_AVAILABLE_FLOOR_MIN`, the rung where `adviseLeaving` first answers `yes`
+  (`artifacts/api-server/src/services/airport/layoverMapBudget.ts:49#export const MAP_BUDGET_FLOOR_MIN = LANDSIDE_AVAILABLE_FLOOR_MIN;`).
+  Below it the engine's verdict changes category and the landside gate with it, so a record narrowed in one term would
+  carry a gate the engine would not certify for that window. That is why the simulation stops there instead of
+  re-deriving a verdict.
+
+**The simulation** is the overview's own band pipeline over the certified record with ONE term narrowed
+(`artifacts/api-server/src/services/airport/layoverMapBudget.ts:163#export function narrowRecordToBudget<`). The deadline,
+the gate, the verdict and the inputs are the record's own objects.
+- `POST /api/airport/sessions/:id/simulate { budgetMinutes }` is a new router module, mounted on the existing lines of
+  `routes/index.ts` (:74 and :240), so no cited line moves
+  (`artifacts/api-server/src/routes/layoverSimulate.ts:64#router.post("/airport/sessions/:id/simulate"`).
+- It certifies once, exactly as every layover read does (`consumerLayoverRecord ?? certifySessionFeasibility`), and runs
+  `mapBandedStops`: the envelope's geometric band re-cut at the budget, the certified plan fit, and `mapBandForStop`
+  (`artifacts/api-server/src/routes/layoverSimulate.ts:107#const banded = await mapBandedStops(sc, airport, narrowed, stops);`).
+  The function is exported from `routes/airport.ts` for this route, with the `export` keyword added on its own line
+  (`artifacts/api-server/src/routes/airport.ts:5071#export async function mapBandedStops(`), and so is the stops read
+  (`artifacts/api-server/src/routes/airport.ts:1940#export async function stopsOr503(`).
+- It stores nothing. `persistDecision` is not called, because a simulated band is a hypothetical, not what the traveller
+  was told as certified. The answer says `stored: false` and carries the certified record's own header.
+- Both `layover_map_budget_chips_enabled` (3785, seeded FALSE) and `layover_map_bands_enabled` (3633) must be ON; either
+  OFF is a 404. A flip of the bands flag between the route's gate and the pipeline's own read is refused rather than
+  served as unbanded stops (`artifacts/api-server/src/routes/layoverSimulate.ts:110#if (banded.some((s) => !("mapBand" in s))) {`).
+
+**The offer.** `GET /overview` publishes `mapBudgetChips` on the existing `planFit` line
+(`artifacts/api-server/src/routes/airport.ts:2285#planFit, ...(await mapBudgetChipsField(sc, record, stops)),`). With the
+chip flag OFF there is no key at all, and the overview is what it was. When ON, the overview offers the ladder rungs (90,
+120, 180, 240, 360, 480) that are strictly below the certified figure
+(`artifacts/api-server/src/services/airport/layoverMapBudget.ts:91#export function mapBudgetChipsFor(`). It withholds the
+chips, with the reason, when:
+- the record is unreadable;
+- the landside gate is closed (every landside stop is BLOCKED at any budget, and §13 suppresses exploration-first
+  affordances) (`artifacts/api-server/src/services/airport/layoverMapBudget.ts:99#if (landsideStatusOf(record) === "closed") return withheld("landside_closed");`);
+- no stop is outside the airport;
+- nothing on the ladder is below the certified figure;
+- the map bands are OFF (`map_bands_off`).
+
+**The map.** The chips render only on the server's `available`
+(`travel-buddy-standalone/src/components/layover/LayoverMapBudgetChips.tsx:54#export function useMapBudgetSimulation(`).
+- A press calls the server (`travel-buddy-standalone/src/components/layover/LayoverMapBudgetChips.tsx:78#void simulateMapBudget(sessionId, budget).then(`).
+- Under an active chip, every part of the card (pins, the blocked list, the route strip) draws the server's simulated
+  stops as sent (`travel-buddy-standalone/src/components/layover/LayoverMapCard.tsx:211#const stops = budgetSim.stops ?? certifiedStops;`).
+  The chip row sits above the band list on a line that was blank
+  (`travel-buddy-standalone/src/components/layover/LayoverMapCard.tsx:417#<LayoverMapBudgetChips sim={budgetSim} />`).
+- While a request is in flight, after a refusal, and offline, the certified bands stay on the map, with the server's
+  sentence. Nothing is filtered on the device.
+- The latest press wins. A changed plan under an active chip is simulated again on the server. A budget the server stops
+  offering clears the chip. "All" is the certified time and makes no call.
+- The client refuses a 200 for another budget, or with a stop that does not carry the server's band
+  (`travel-buddy-standalone/src/services/layover.ts:2688#export async function simulateMapBudget(`).
+- The screen hands the card the overview's offer and the session, on an existing line
+  (`travel-buddy-standalone/app/layover/[id].tsx:947#budgetChips={overview.mapBudgetChips ?? null}`).
+
+Every edit to a line-cited file (`routes/airport.ts`, `routes/index.ts`, `LayoverMapCard.tsx`, `app/layover/[id].tsx`,
+client `services/layover.ts`) is line-neutral. The one new import in `routes/airport.ts` is at the tail, after its last line.
+
+### §76.3 Tests and mutants
+
+- **New server suite** `artifacts/api-server/src/test/layoverMapBudget.test.ts`, 43 cases:
+  - **Parity.** A record narrowed to B bands every stop exactly as a session CERTIFIED with B usable minutes does: the
+    map band, the envelope band, the gate and the plan fit. The sweep covers three entry states, three layovers, eight
+    budgets and 50 stops, each banded as one plan and alone; SAFE, TIGHT and BLOCKED all occur
+    (`artifacts/api-server/src/test/layoverMapBudget.test.ts:263#a record narrowed to B bands every stop exactly as a session certified with B usable minutes, swept`).
+    The simulation is the certification at that budget, not a second rule.
+  - **Monotonicity.** A smaller budget never yields a looser band, swept in 15-minute steps
+    (`artifacts/api-server/src/test/layoverMapBudget.test.ts:306#swept over budgets, stops, entries and layovers: the band rank never drops as the budget shrinks`).
+    The geometry is re-cut at the budget: a stop whose stated leg understates the straight-line bound is BLOCKED by the
+    budget's ring (`artifacts/api-server/src/test/layoverMapBudget.test.ts:343#the geometry is re-cut at the budget`).
+  - **The narrowed copy is still a readable record for its own instant** under #728's predicate: a finite
+    `deadline.cutoffMs`, the same `inputs.nowMs`, the airside span untouched, and usable minutes never above the certified
+    figure (`artifacts/api-server/src/test/layoverMapBudget.test.ts:231#the narrowed copy stays a READABLE record for its own instant`).
+    The simulation hands the copy to no rating function. A source scan pins that neither the route nor the module calls
+    `assess` or `rankActivities`.
+  - **The record is the session's own.** The engine carries no session identity yet (verifier V-728 R1). So the route
+    loads the session from the URL for its owner and certifies that session itself, and a body carrying a record, a
+    figure or another session id is refused by name
+    (`artifacts/api-server/src/test/layoverMapBudget.test.ts:602#the record is the one certified for the session in the URL`).
+  - **The floor is the engine's.** 89 certified minutes answer `tight`, and 90 answer `yes`
+    (`artifacts/api-server/src/test/layoverMapBudget.test.ts:136#the floor is where the certifier's verdict changes category (89 is not 90)`).
+  - **Over the real router:**
+    - each flag OFF is a 404;
+    - the city stop needs 120 minutes, so it is BLOCKED at a 90-minute budget, and on the overview the same stop is not
+      (`artifacts/api-server/src/test/layoverMapBudget.test.ts:447#every landside stop is banded against the BUDGET`);
+    - nothing is stored (`artifacts/api-server/src/test/layoverMapBudget.test.ts:476#nothing is stored: no decision, no event, no stop write, no snapshot`);
+    - the refusals answer 409 and 400, another traveller's session is a 404, and an unreadable read is a 503;
+    - the flag flip is refused;
+    - the overview's offer is absent while the flag is OFF
+      (`artifacts/api-server/src/test/layoverMapBudget.test.ts:557#chip flag OFF (the seed): the overview carries no mapBudgetChips key at all`),
+      and every chip it offers is accepted;
+    - the route certifies once, reads the clock once, and calls no `assess`, `rankActivities`, `computeWindow`,
+      `computeReturnDeadline`, `adviseLeaving`, `mapBandForStop` or `persistDecision`.
+- **New client suites:**
+  - the card, 12 cases, including the server's answer drawn as sent where a budget filter would decide the opposite
+    (`travel-buddy-standalone/src/components/layover/__tests__/LayoverMapCard.budgetChips.component.test.tsx:157#asks the server, and draws its answer as sent`);
+  - the service, 7 cases;
+  - the dashboard wiring, +2 cases in `layoverDashboard.mapEnvelope.component.test.tsx`.
+- **Red on `main`.**
+  - With `main`'s `routes/airport.ts` (plus the two `export` keywords only, so the suite can load) and no simulate route,
+    19 of the 43 server cases fail. The 24 that pass test the new module itself.
+  - With `main`'s `LayoverMapCard.tsx` and `app/layover/[id].tsx`, 11 of the 19 card and dashboard cases fail.
+  - With `main`'s client `services/layover.ts`, 7 of 7 service cases fail.
+  - On `main` itself, the new suites cannot load.
+- **Mutants: 43 run, 43 killed.** The runner is lane-private and asserts its worktree.
+  - Server, 26:
+    - the ladder offering the certified figure;
+    - each withholding removed;
+    - a fractional or negative figure read as certified;
+    - each refusal removed or its boundary moved;
+    - narrowing as a no-op, or mutating the certified record;
+    - either flag ignored;
+    - the route banding the certified record, or reading the plan fit at it;
+    - the refusal ignored or sent as a 200;
+    - the flip guard removed;
+    - the body not strict;
+    - a second certification;
+    - the overview's key never published, published with the flag OFF, or offered with the bands OFF.
+  - Client, 17:
+    - the server's stops ignored;
+    - **a local filter by the budget in their place, the plan's named mutant**;
+    - a press that never reaches the server;
+    - a late answer overwriting the latest press;
+    - a refusal not shown;
+    - chips without the server's yes;
+    - a changed plan not simulated again;
+    - a withdrawn budget not cleared;
+    - "All" calling the server;
+    - an unoffered budget sent;
+    - the statement shown early;
+    - the service accepting another budget or an unbanded stop, OFF reported as a refusal, or the request carrying more
+      than the budget;
+    - the screen dropping the offer or the session.
+  - Of these, K10 (an unoffered budget sent) SURVIVED the first run, because no UI path can press one. It is now pinned
+    on the hook directly, and K14 was re-run with a unique anchor.
+
+### §76.4 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L118 | N | W | Changing a time-budget chip on the map is a server simulation: `POST /airport/sessions/:id/simulate` re-bands the plan through the overview's own band pipeline over the certified record, with its usable minutes narrowed to the budget (`artifacts/api-server/src/routes/layoverSimulate.ts:107#const banded = await mapBandedStops(sc, airport, narrowed, stops);`). It is the certification at that budget (`artifacts/api-server/src/test/layoverMapBudget.test.ts:263#a record narrowed to B bands every stop exactly as a session certified with B usable minutes, swept`), and the map draws the answer as sent, never a local filter (`travel-buddy-standalone/src/components/layover/__tests__/LayoverMapCard.budgetChips.component.test.tsx:157#asks the server, and draws its answer as sent`). W, not C: both flags are FALSE (3785 and 3633, neither applied to production), the travel minutes behind a band are stated, not routed (L67's limit), and the only pins the map draws are plan stops. |
+
+### §76.5 Recorded, not moved
+
+- **L67** stays W. The chips move L67's bands and inherit L67's ceiling: the bands are behind 3633, and the minutes are
+  stated.
+- **L115** stays W. The non-recalculation half still holds: the map consumes server bands under a chip as well.
+- **L116 and L121** stay W. The envelope DIAGRAM on the card is still the certified ring. The ring the simulation cuts at
+  the budget decides the bands below it and is not drawn. Drawing it would be a second ring with its own scale (owner
+  question OQ-L118-4).
+- **L117 and L122** stay W. A recommendation is banded on a pin only through `rec.id`, and
+  `layover_stable_recommendation_ids_enabled` is FALSE. Re-banding the recommendation LIST under a budget would go through
+  `assess` / `rankActivities`, whose fifth parameter #728 changes. It is not built (OQ-L118-3).
+
+### §76.6 Owner questions (fail-closed defaults built, none decided)
+
+- **OQ-L118-1, the ladder.** Default: 90, 120, 180, 240, 360 and 480 minutes, offered only strictly below the certified
+  figure, plus "All" for the certified time.
+- **OQ-L118-2, what a chip means.** Default: "if you had only B usable minutes". Each band is the band a layover certified
+  with B minutes would get. Below the 90-minute floor the engine's own verdict changes, so budgets under it are refused
+  rather than re-derived. A "time I want to spend out" reading would give the same bands above the floor.
+- **OQ-L118-3, the recommendation list.** Should the list re-rate under a chip? Default: no. The chips move the map's plan
+  stops only. The list keeps its certified ratings and its local inside/outside filter.
+- **OQ-L118-4, the ring.** Should the envelope diagram contract with the chip? Default: no. The diagram is the certified
+  envelope (L121).
+- **OQ-L118-5, a closed gate.** Default: no chips. Every landside stop is BLOCKED at any budget, and §13 suppresses
+  exploration-first affordances.
+
+### §76.7 Headline
+
+One row moves (L118 N → W).
+
+| bucket | was (§75, main) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 85 | 85 |
+| BUILT-BUT-WRONG | 156 | 157 |
+| NOT-BUILT | 55 | 54 |
+| CANNOT-VERIFY | 0 | 0 |
+| total | 296 | 296 |
+
+**C=85 W=157 N=54 X=0** over 296 (`check:census-integrity`, restated on merging `main` `78028e2d8`, which carries §73–§75).
+

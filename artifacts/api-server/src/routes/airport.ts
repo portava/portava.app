@@ -1937,7 +1937,7 @@ async function ownedSessionOr(
 }
 
 /** `loadStops` or 503. */
-async function stopsOr503(sc: any, res: any, sessionId: string): Promise<any[] | null> {
+export async function stopsOr503(sc: any, res: any, sessionId: string): Promise<any[] | null> { // exported for routes/layoverSimulate.ts (census-layover L118): the SAME stops read, 503 and all
   const r = await loadStops(sc, sessionId);
   if (!r.ok) {
     sendError(res, "degraded_unavailable", "Your layover plan could not be loaded. Please try again.");
@@ -2282,7 +2282,7 @@ router.get("/airport/sessions/:id/overview", async (req, res) => {
     // The dashboard's copy of the §2.1/§22 disclosure — see GET /:id/safety.
     airportIntelligence: airportIntelligence(record),
     stops: await mapBandedStops(sc, airport, record, stops), // census L67: bandPlanStops, plus the §13 map band under layover_map_bands_enabled
-    planFit,
+    planFit, ...(await mapBudgetChipsField(sc, record, stops)), // census-layover L118: `mapBudgetChips` — the time-budget chips the map may OFFER (only under layover_map_budget_chips_enabled, 3785 seeded FALSE; OFF: no key)
     share: {
       enabled: session.shareCityStatus, intentsEnabled: await isFlagEnabled(sc, "layover_presence_intents_enabled"), // census L129: whether the L1 intents surface exists here; read as a literal for check:flag-polarity
       othersInCity: presence.count, othersInCityWithheld: presence.countWithheld, // D-PRESENCE-K-4: >= k from the hourly snapshot, or null and why
@@ -5068,7 +5068,7 @@ async function overviewLifecycle(
 
 import { withMapBands } from "../services/airport/layoverMapBands.js";
 
-async function mapBandedStops(sc: any, airport: AirportProfile, record: LayoverFeasibilityRecord, stops: any[]): Promise<any[]> {
+export async function mapBandedStops(sc: any, airport: AirportProfile, record: LayoverFeasibilityRecord, stops: any[]): Promise<any[]> { // exported: POST /simulate (routes/layoverSimulate.ts) runs THIS pipeline over a record narrowed to a time budget (census-layover L118)
   const banded = await bandPlanStops(airport, record, stops);
   const enabled = await isFlagEnabled(sc, "layover_map_bands_enabled");
   if (!enabled) return banded;
@@ -5119,3 +5119,6 @@ router.get("/airport/sessions/:id/decisions/diff", async (req, res) => {
   if (out.reason === "not_found") { sendError(res, "not_found", "Snapshot not found"); return; }
   sendError(res, "degraded_unavailable", "Your layover's decision history could not be read. Please try again.");
 });
+
+// census-layover L118 (time-budget chips) — imported at the TAIL so no cited line above moves; ESM hoists it.
+import { mapBudgetChipsField } from "../services/airport/layoverMapBudget.js";
