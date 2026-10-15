@@ -179,10 +179,20 @@ It sets Supabase Auth `disable_signup=true`, `site_url=https://portava-beta.repl
 and `uri_allow_list=travelbuddy://**,https://portava-beta.replit.app/**`, sets every
 feature flag to the policy in one audited transaction, then reads both back.
 
-It reads and plans the flags **before** writing anything. If a policy flag is
-missing from the database, it exits 1 with nothing written: neither Auth nor
-any flag. It also exits 1 if anything reads back differently. Re-dispatch it
-whenever the policy changes.
+It reads and plans the flags **before** writing anything. A missing flag seeded
+by the migration chain refuses the entire operation with nothing written.
+Missing pre-baseline flags can be recreated from their parsed migration
+definitions, but only after Auth is closed and verified; STOP flags are created
+engaged and capabilities OFF. Existing rows are never overwritten by the repair.
+
+Before any write, it reads the Auth configuration to check the token's read
+access. A denied Auth read or write stops the run before any flag repair or
+audited flag update. The token needs both `auth_config_read` and
+`auth_config_write` for **portava-beta**; do not broaden the shared CI token.
+A successful dry run proves read access, **not** write access. The apply checks
+the Auth write by reading it back before any flag write. If a later flag repair
+fails, Auth remains closed and the run fails; that is not a completed setup.
+Re-dispatch it whenever the policy changes.
 
 Last, it reads (never writes) the client grants on `public.profiles` and
 exits 1 while `anon` or `authenticated` hold a TABLE-level SELECT or UPDATE

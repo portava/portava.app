@@ -417,3 +417,94 @@ describe("no phrase, no change", () => {
     }
   });
 });
+
+describe("G98 RelationshipFit — implicit follows through the real gateway", () => {
+  function relationshipClient() {
+    return client((state) => ({
+      ...state,
+      rows: {
+        ...state.rows,
+        profiles: [profile(ALICE, false), profile(DAN, false)],
+        blocks: [],
+        user_follows: [{ follower_id: VIEWER, following_id: DAN }],
+      },
+    }));
+  }
+
+  it("ranks a followed person first without an operator and keeps the same candidates and reads", async () => {
+    const followed = relationshipClient();
+    const plain = relationshipClient();
+    plain.state.rows.user_follows = [];
+    const baseline = await serve(plain.sc, "global_search", "zork");
+    const ranked = await serve(followed.sc, "global_search", "zork");
+    assert.deepEqual(baseline.users, [ALICE, DAN]);
+    assert.deepEqual(ranked.users, [DAN, ALICE]);
+    assert.deepEqual([...ranked.users].sort(), [...baseline.users].sort());
+    assert.deepEqual(followed.calls.selects, plain.calls.selects);
+    assert.deepEqual(followed.calls.writes, []);
+    assert.deepEqual(
+      ranked.suggestions.filter((row) => row.entityType !== "user"),
+      baseline.suggestions.filter((row) => row.entityType !== "user"),
+    );
+    const selected = ranked.suggestions.find((row) => row.entityId === DAN)!;
+    const control = baseline.suggestions.find((row) => row.entityId === DAN)!;
+    assert.ok(selected.confidence! > control.confidence!);
+    assert.deepEqual({ ...selected, confidence: control.confidence }, control);
+    assert.equal(ranked.refusal, null);
+  });
+
+  it("uses only the viewer's outgoing follows, not followers or another person's graph", async () => {
+    const { sc, state, filters } = relationshipClient();
+    state.rows.user_follows = [
+      { follower_id: DAN, following_id: VIEWER },
+      { follower_id: FRANK, following_id: DAN },
+    ];
+    assert.deepEqual((await serve(sc, "global_search", "zork")).users, [ALICE, DAN]);
+    const reads = filters.filter((filter) => filter.table === "user_follows");
+    assert.ok(reads.some((filter) => filter.op === "eq" && filter.col === "follower_id" && filter.val === VIEWER));
+    assert.ok(reads.some((filter) => filter.op === "in" && filter.col === "following_id"));
+  });
+
+  it("does not boost a followed person in the non-personalized username field", async () => {
+    const followed = relationshipClient();
+    const plain = relationshipClient();
+    plain.state.rows.user_follows = [];
+    const personalized = await serve(followed.sc, "username", "zork");
+    const control = await serve(plain.sc, "username", "zork");
+    assert.equal(resolvePolicy("username")!.allowPersonalization, false);
+    assert.ok(personalized.users.includes(DAN));
+    assert.deepEqual(personalized.suggestions, control.suggestions);
+  });
+
+  for (const reverse of [false, true]) {
+    it(`cannot restore a person blocked ${reverse ? "by" : "from"} the viewer`, async () => {
+      const { sc, state } = relationshipClient();
+      state.rows.blocks = [{ blocker_id: reverse ? DAN : VIEWER, blocked_id: reverse ? VIEWER : DAN }];
+      assert.deepEqual((await serve(sc, "global_search", "zork")).users, [ALICE]);
+    });
+  }
+
+  it("cannot restore a followed person who opted out of discovery", async () => {
+    const { sc, state } = relationshipClient();
+    state.rows.profile_privacy_settings = [{ user_id: DAN, allow_profile_discovery: false }];
+    assert.deepEqual((await serve(sc, "global_search", "zork")).users, [ALICE]);
+  });
+
+  it("gives no relationship boost when the existing follow read fails", async () => {
+    const failed = relationshipClient();
+    failed.state.errorTables.user_follows = { code: "57014", message: "timeout" };
+    const plain = relationshipClient();
+    plain.state.rows.user_follows = [];
+    assert.deepEqual(
+      (await serve(failed.sc, "global_search", "zork")).suggestions,
+      (await serve(plain.sc, "global_search", "zork")).suggestions,
+    );
+  });
+
+  it("uses the current request's relationship state after an unfollow", async () => {
+    const { sc, state } = relationshipClient();
+    assert.deepEqual((await serve(sc, "global_search", "zork")).users, [DAN, ALICE]);
+    state.rows.user_follows = [];
+    assert.deepEqual((await serve(sc, "global_search", "zork")).users, [ALICE, DAN]);
+  });
+});

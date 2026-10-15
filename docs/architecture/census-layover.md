@@ -7472,15 +7472,15 @@ So on production every landside leg is still
 for field what `noRoutedProvider` produced, with one added `detail`. Built and
 unreachable is `W`.
 
-### The precondition that MUST be closed before the corridor is ever enabled
+### The certification-hash precondition (closed in code; rollout still gated)
 
-**The corridor risk is not a named input of `feasibilityInputHash`.** A
-certified record therefore would not change its hash when the risk that shaped
-it changed, which is exactly the property that makes a certified record worth
-storing. It is harmless only because `risk` is `null` on every call that exists
-today. This is not a nice-to-have: **enabling `LAYOVER_ROUTED_CORRIDOR_ENABLED`
-before this is closed would start certifying records whose inputs the hash does
-not cover.** Recorded here rather than left in a code comment.
+**2026-10-15: corridor risk is now a named input of `feasibilityInputHash`.**
+`returnCorridorRisk` records both judgements, contributing factors and every
+named risk fact; changing or removing them changes the certification identity.
+Certification and replay consume the same copied input, and malformed supplied
+facts refuse certification rather than reusing an approval. Absent-corridor
+calls retain their previous bytes. **#757/Q-R2-1 remains owner-held.**
+**L60/L68/L69/L70/L71/L282 stay W; no provider, probe or rollout is enabled.**
 
 ### What is NOT claimed
 

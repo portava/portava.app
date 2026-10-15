@@ -303,3 +303,43 @@ describe('SearchScreen — an experience is a category + time scoped search unde
     expect(within(r.getByTestId('group-query')).getByText('Rooftop Bar · tonight')).toBeTruthy();
   });
 });
+
+import { GLOBAL_SEARCH_CAPABILITIES } from '../../src/platform/input-assistance/contexts/clientCapabilities.ts';
+
+describe('SearchScreen — G98 implicit relationship order reaches general-search typeahead', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    sharedSuggestionCache.clear?.();
+    mockSearchUnified.mockResolvedValue({ ok: true, data: { results: [], nextCursor: null, timeLabel: null } });
+  });
+
+  it.each([true, false])('preserves the returned People order with followsDan=%s and no operator', async (followsDan) => {
+    const personTemplate = MIXED.find((row) => row.entityType === 'user')!;
+    const people: InputSuggestion[] = ['alice', 'dan'].map((name) => ({
+      ...personTemplate,
+      id: `global_search:user:${name}`,
+      entityId: name,
+      label: `Zork ${name}`,
+      subtitle: `@zork_${name}`,
+      destination: { route: `/passport/${name}`, entityType: 'user', entityId: name },
+      confidence: followsDan && name === 'dan' ? 0.9 : 0.85,
+    }));
+    const returned = followsDan ? [people[1]!, people[0]!] : people;
+    mockRequest.mockResolvedValue({ ok: true, suggestions: returned, requestId: 'req-g98', policyVersion: 'input-2026-08' });
+
+    const screen = await render(<SearchScreen />);
+    fireEvent.changeText(screen.getByPlaceholderText('Search travelers, trips, events, places…'), 'zork');
+    const group = await screen.findByTestId('group-travelers', undefined, PAST_DEBOUNCE);
+    expect(mockRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ context: 'global_search', fieldId: 'discovery.search', text: 'zork', client: GLOBAL_SEARCH_CAPABILITIES }),
+      expect.anything(),
+    );
+    expect(within(group).getAllByTestId(/^row-/).map((row) => row.props.testID)).toEqual(
+      returned.map((row) => `row-${row.entityId}`),
+    );
+    expect(within(group).getAllByText(/^Zork /).map((row) => row.props.children)).toEqual(
+      returned.map((row) => row.label),
+    );
+    expect(mockSearchUnified).not.toHaveBeenCalled();
+  });
+});

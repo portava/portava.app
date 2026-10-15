@@ -324,6 +324,8 @@ function stubApi(opts: {
   auth?: Record<string, unknown>;
   /** What GET /config/auth returns after a PATCH (default: what was patched). */
   authAfterPatch?: (patched: any) => Record<string, unknown>;
+  authReadStatus?: number;
+  authWriteStatus?: number;
   /** Mutate the flags just after the apply (to simulate a read-back mismatch). */
   afterApply?: (flags: Record<string, boolean>) => void;
   /** What the profiles client-grant read (3740) answers. Default: the boundary holds. */
@@ -342,6 +344,10 @@ function stubApi(opts: {
     const body = init.body ? JSON.parse(init.body) : undefined;
     calls.push({ method: init.method, path, body });
     const reply = (x: unknown) => ({ ok: true, status: 200, text: async () => JSON.stringify(x) });
+    const authStatus = init.method === "GET" ? opts.authReadStatus : opts.authWriteStatus;
+    if (path === "/config/auth" && authStatus !== undefined) {
+      return { ok: false, status: authStatus, text: async () => JSON.stringify({ message: "auth config access refused" }) };
+    }
     if (path === "/config/auth" && init.method === "PATCH") {
       auth = opts.authAfterPatch ? opts.authAfterPatch(body) : { ...auth, ...body };
       return reply(auth);
@@ -398,24 +404,25 @@ function run(api: ReturnType<typeof stubApi>, over: { argv?: string[]; env?: Nod
 }
 
 describe("beta-configure — the right calls, in order", () => {
-  it("reads and plans the flags FIRST, then PATCHes auth (three fields), reads it back, applies the flags in one statement, reads back", async () => {
+  it("reads and plans the flags FIRST, checks Auth read access, then PATCHes auth (three fields), reads it back, applies the flags in one statement, reads back", async () => {
     const api = stubApi({});
     const { code, errors } = await run(api);
     assert.equal(code, 0, errors.join("\n"));
     assert.deepEqual(api.calls.map((c) => `${c.method} ${c.path}`), [
       "POST /database/query",
+      "GET /config/auth",
       "PATCH /config/auth",
       "GET /config/auth",
       "POST /database/query",
       "POST /database/query",
       "POST /database/query",
     ]);
-    assert.match(api.calls[5].body.query, /^SELECT to_regclass\('public\.profiles'\) IS NOT NULL AS profiles_exists/, "the 3740 grant read is last");
+    assert.match(api.calls[6].body.query, /^SELECT to_regclass\('public\.profiles'\) IS NOT NULL AS profiles_exists/, "the 3740 grant read is last");
     assert.match(api.calls[0].body.query, /^SELECT flag, enabled FROM public\.feature_flags/, "the first request is the read, before any write");
-    assert.match(api.calls[3].body.query, /^WITH changed AS \(/);
-    assert.deepEqual(api.calls[1].body, BETA_AUTH_CONFIG);
-    assert.deepEqual(Object.keys(api.calls[1].body).sort(), ["disable_signup", "site_url", "uri_allow_list"]);
-    assert.equal(api.calls[1].body.disable_signup, true);
+    assert.match(api.calls[4].body.query, /^WITH changed AS \(/);
+    assert.deepEqual(api.calls[2].body, BETA_AUTH_CONFIG);
+    assert.deepEqual(Object.keys(api.calls[2].body).sort(), ["disable_signup", "site_url", "uri_allow_list"]);
+    assert.equal(api.calls[2].body.disable_signup, true);
     // the resulting state
     assert.deepEqual(api.flags, { disable_signups: true, invite_only_beta: true, rent_buddy_enabled: false, stories_enabled: false });
     assert.deepEqual(api.audit.map((a) => a.flag).sort(), ["disable_signups", "invite_only_beta", "rent_buddy_enabled"]);
@@ -647,7 +654,7 @@ describe("beta-configure step f — no tester account on a database where the an
     const api = stubApi({});
     const { code, errors } = await run(api);
     assert.equal(code, 0, errors.join("\n"));
-    const q = api.calls[5].body.query as string;
+    const q = api.calls[6].body.query as string;
     const code_ = q.replace(/'(?:[^']|'')*'/g, "''"); // string literals ('SELECT', 'UPDATE' privilege names) masked
     assert.match(code_, /^SELECT /);
     assert.ok(!code_.includes(";"), "one statement");
@@ -1055,26 +1062,73 @@ describe("b2 · the step against the stub", () => {
     ["stories_enabled", { flag: "stories_enabled", seededIn: "0068_stories.sql:165", seededValue: true, description: "Stories", metadata: null }],
   ]);
 
-  it("creates the missing pre-baseline rows (STOP engaged, capability OFF), re-reads, then configures; ON arrives only through the audited apply", async () => {
+  for (const authReadStatus of [401, 403, 500]) {
+    it(`auth config read ${authReadStatus} refuses before any flag repair or Auth write`, async () => {
+      const api = stubApi({ flags: { rent_buddy_enabled: true }, authReadStatus });
+      const initialAuth = { ...api.auth };
+      const { code, errors } = await run(api, { definitions: DEFS });
+      assert.equal(code, 1);
+      assert.match(errors.join("\n"), new RegExp(`GET /config/auth → ${authReadStatus}`));
+      assert.deepEqual(api.calls.map((call) => `${call.method} ${call.path}`), ["POST /database/query", "GET /config/auth"]);
+      assert.deepEqual(api.flags, { rent_buddy_enabled: true });
+      assert.deepEqual(api.auth, initialAuth);
+      assert.deepEqual(api.audit, []);
+    });
+  }
+
+  it("auth config write 403 refuses before any flag repair", async () => {
+    const api = stubApi({ flags: { rent_buddy_enabled: true }, authWriteStatus: 403 });
+    const initialAuth = { ...api.auth };
+    const { code, errors } = await run(api, { definitions: DEFS });
+    assert.equal(code, 1);
+    assert.match(errors.join("\n"), /PATCH \/config\/auth → 403/);
+    assert.deepEqual(api.flags, { rent_buddy_enabled: true });
+    assert.deepEqual(api.auth, initialAuth);
+    assert.deepEqual(api.audit, []);
+    assert.ok(api.calls.every((call) => call.path === "/config/auth" || call.body.query.startsWith("SELECT ")));
+  });
+
+  it("auth read-back must confirm closed sign-up before any flag repair", async () => {
+    const api = stubApi({ flags: { rent_buddy_enabled: true }, authAfterPatch: (patched) => ({ ...patched, disable_signup: false }) });
+    const { code, errors } = await run(api, { definitions: DEFS });
+    assert.equal(code, 1);
+    assert.match(errors.join("\n"), /auth config read-back differs/);
+    assert.deepEqual(api.flags, { rent_buddy_enabled: true });
+    assert.deepEqual(api.audit, []);
+    assert.ok(api.calls.every((call) => call.path === "/config/auth" || call.body.query.startsWith("SELECT ")));
+  });
+
+  it("--dry-run reports denied Auth access without repairing flags or PATCHing", async () => {
+    const api = stubApi({ flags: { rent_buddy_enabled: true }, authReadStatus: 403 });
+    const { code, errors } = await run(api, { argv: ["--confirm=CONFIGURE-BETA", "--dry-run"], definitions: DEFS });
+    assert.equal(code, 1);
+    assert.match(errors.join("\n"), /GET \/config\/auth → 403/);
+    assert.deepEqual(api.calls.map((call) => `${call.method} ${call.path}`), ["POST /database/query", "GET /config/auth"]);
+    assert.deepEqual(api.flags, { rent_buddy_enabled: true });
+    assert.equal(api.auth.disable_signup, false);
+  });
+
+  it("closes and verifies Auth before creating missing pre-baseline rows (STOP engaged, capability OFF); ON arrives only through the audited apply", async () => {
     const api = stubApi({ flags: { rent_buddy_enabled: true } });
     const { code, errors } = await run(api, { definitions: DEFS });
     assert.equal(code, 0, errors.join("\n"));
     assert.deepEqual(api.calls.map((c) => `${c.method} ${c.path}`), [
-      "POST /database/query", // read
-      "POST /database/query", // b2 insert
-      "POST /database/query", // re-read
+      "POST /database/query",
+      "GET /config/auth",
       "PATCH /config/auth",
       "GET /config/auth",
-      "POST /database/query", // audited apply
-      "POST /database/query", // read-back
-      "POST /database/query", // profiles boundary
+      "POST /database/query",
+      "POST /database/query",
+      "POST /database/query",
+      "POST /database/query",
+      "POST /database/query",
     ]);
-    assert.ok(api.calls[1].body.query.startsWith(FLAG_REPAIR_SQL_PREFIX));
-    assert.match(api.calls[1].body.query, /\('disable_signups', true, /);
-    assert.match(api.calls[1].body.query, /\('invite_only_beta', false, /);
-    assert.match(api.calls[1].body.query, /\('stories_enabled', false, /, "a TRUE seed is created OFF");
-    assert.doesNotMatch(api.calls[1].body.query, /rent_buddy_enabled/, "an existing row is not in the insert");
-    assert.match(api.calls[2].body.query, /^SELECT flag, enabled FROM public\.feature_flags/);
+    assert.ok(api.calls[4].body.query.startsWith(FLAG_REPAIR_SQL_PREFIX));
+    assert.match(api.calls[4].body.query, /\('disable_signups', true, /);
+    assert.match(api.calls[4].body.query, /\('invite_only_beta', false, /);
+    assert.match(api.calls[4].body.query, /\('stories_enabled', false, /, "a TRUE seed is created OFF");
+    assert.doesNotMatch(api.calls[4].body.query, /rent_buddy_enabled/, "an existing row is not in the insert");
+    assert.match(api.calls[5].body.query, /^SELECT flag, enabled FROM public\.feature_flags/);
     assert.deepEqual(api.flags, { disable_signups: true, invite_only_beta: true, rent_buddy_enabled: false, stories_enabled: false });
     assert.deepEqual([...api.audit].sort((a, b) => (a.flag < b.flag ? -1 : 1)), [
       { flag: "invite_only_beta", old: false, new: true },
@@ -1104,12 +1158,15 @@ describe("b2 · the step against the stub", () => {
     assert.equal(api.calls.length, 1);
   });
 
-  it("the check is repeated on the re-read: an insert that created nothing exits 1 before Auth", async () => {
+  it("the check is repeated on the re-read: an insert that created nothing exits 1 with Auth closed and no existing flag changed", async () => {
     const api = stubApi({ flags: { rent_buddy_enabled: false }, repairCreatesNothing: true });
     const { code, errors } = await run(api, { definitions: DEFS });
     assert.equal(code, 1);
     assert.match(errors.join("\n"), /still not in public\.feature_flags after the pre-baseline repair/);
-    assert.equal(api.calls.filter((c) => c.method === "PATCH").length, 0);
+    assert.equal(api.calls.filter((c) => c.method === "PATCH").length, 1);
+    assert.equal(api.auth.disable_signup, true);
+    assert.deepEqual(api.flags, { rent_buddy_enabled: false });
+    assert.deepEqual(api.audit, []);
     assert.ok(!api.calls.some((c) => c.body?.query?.startsWith("WITH changed AS (")));
   });
 

@@ -1686,3 +1686,125 @@ describe("§9 trust order as eleven positions (G53) — the comparator", () => {
     }
   });
 });
+
+import { GLOBAL_SEARCH_CAPABILITIES } from "../../../../travel-buddy-standalone/src/platform/input-assistance/contexts/clientCapabilities.ts";
+
+describe("G98 RelationshipFit — POST /input-assistance/suggest", () => {
+  const ALICE = "e1000000-0000-4000-a000-000000000001";
+  const DAN = "e4000000-0000-4000-a000-000000000004";
+
+  async function people(context: "global_search" | "username", followsDan: boolean) {
+    setup({
+      profiles: [[ALICE, "alice"], [DAN, "dan"]].map(([id, name]) => ({
+        id, handle: `zork_${name}`, username: `zork_${name}`, name: `Zork ${name}`,
+        display_name: null, avatar_url: null, is_private: false,
+        home_city: "Lisbon", home_country: "Portugal", account_status: "active",
+        verified: false, is_official: false, show_profile_picture_publicly: true,
+      })),
+      blocks: [], user_privacy_settings: [], profile_privacy_settings: [],
+      user_follows: followsDan ? [{ follower_id: ME, following_id: DAN }] : [],
+      friend_requests: [], user_friendships: [], canonical_locations: [],
+    });
+    const response = await suggest({
+      context, text: "zork",
+      ...(context === "global_search" ? { fieldId: "discovery.search", client: GLOBAL_SEARCH_CAPABILITIES } : {}),
+    });
+    assert.equal(response.status, 200);
+    const body = await response.json() as { policyVersion: string; suggestions: InputSuggestion[]; refusal?: unknown };
+    assert.equal(body.policyVersion, POLICY_VERSION);
+    assert.ok(!body.refusal);
+    const rows = body.suggestions.filter((row) => row.entityType === "user");
+    assert.equal(rows.length, 2);
+    return rows;
+  }
+
+  it("ranks the followed person above an otherwise equal candidate without an operator, unlike the no-follow control", async () => {
+    const baseline = await people("global_search", false);
+    assert.deepEqual(baseline.map((row) => row.entityId), [ALICE, DAN]);
+    assert.equal(baseline[0]!.confidence, baseline[1]!.confidence);
+
+    const ranked = await people("global_search", true);
+    assert.deepEqual(ranked.map((row) => row.entityId), [DAN, ALICE]);
+    assert.ok(ranked[0]!.confidence! > ranked[1]!.confidence!);
+    assert.deepEqual(ranked[1], baseline[0]);
+    assert.deepEqual({ ...ranked[0], confidence: baseline[1]!.confidence }, baseline[1]);
+    assert.equal("actionState" in ranked[0]!, false);
+    assert.equal("isFollowing" in ranked[0]!, false);
+  });
+
+  it("does not change people scores or order when the field disallows personalization", async () => {
+    const baseline = await people("username", false);
+    assert.deepEqual(baseline.map((row) => row.entityId), [ALICE, DAN]);
+    assert.deepEqual(await people("username", true), baseline);
+  });
+});
+
+describe("G98 RelationshipFit — followed people in personalized input fields", () => {
+  function project(over: Partial<SearchResult> = {}, allowPersonalization = true) {
+    return projectSearchResult(
+      result({ id: "person", type: "travelers", title: "Rosa Rivers", privacyState: { isPrivate: false }, ...over }),
+      "global_search", POLICY_VERSION, "Rosa", { allowPersonalization },
+    );
+  }
+
+  for (const type of ["travelers", "buddies"] as const) {
+    it(`boosts a followed ${type} row without projecting the relationship evidence`, () => {
+      const plain = project({ type });
+      const followed = project({ type, actionState: { isFollowing: true } });
+      assert.ok(followed.confidence! > plain.confidence!);
+      assert.deepEqual({ ...followed, confidence: plain.confidence }, plain);
+      assert.equal("actionState" in followed, false);
+      assert.equal("isFollowing" in followed, false);
+    });
+  }
+
+  it("requires the field's explicit personalization permission", () => {
+    const followed = { actionState: { isFollowing: true } };
+    assert.deepEqual(project(followed, false), project({}, false));
+    const row = result({ id: "person", type: "travelers", title: "Rosa Rivers", ...followed });
+    assert.deepEqual(
+      projectSearchResult(row, "global_search", POLICY_VERSION, "Rosa"),
+      projectSearchResult({ ...row, actionState: null }, "global_search", POLICY_VERSION, "Rosa"),
+    );
+  });
+
+  it("treats absent, false and malformed follow states as neutral", () => {
+    const states: SearchResult["actionState"][] = [null, {}, { isFollowing: false }, { isFollowing: "true" }, { isFollowing: 1 }, { isRequestSent: true }];
+    for (const actionState of states) {
+      assert.deepEqual(project({ actionState }), project());
+    }
+  });
+
+  it("never treats a non-person action state as a follow relationship", () => {
+    for (const type of ["places", "events", "cities", "trips", "hidden_gems"] as const) {
+      assert.deepEqual(project({ type, actionState: { isFollowing: true } }), project({ type }));
+    }
+  });
+
+  it("caps accumulated boosts below exact matches and preserves exact confidence", () => {
+    const followed = result({
+      id: "followed", type: "travelers", title: "Rosa Rivers", verified: true, isOfficial: true,
+      actionState: { isFollowing: true }, privacyState: { isPrivate: false },
+    });
+    const prefix = projectSearchResult(followed, "global_search", POLICY_VERSION, "Rosa", {
+      allowPersonalization: true, tripFit: true,
+    });
+    assert.equal(prefix.confidence, SIGNAL_CEILING);
+    const exact = projectSearchResult({ ...followed, title: "Rosa" }, "global_search", POLICY_VERSION, "Rosa", {
+      allowPersonalization: true, tripFit: true,
+    });
+    assert.equal(exact.confidence, 0.99);
+    assert.deepEqual(orderSuggestions([prefix, exact], 2, { query: "Rosa" }).map((row) => row.label), ["Rosa", "Rosa Rivers"]);
+  });
+
+  it("applies privacy penalties after the relationship boost reaches its ceiling", () => {
+    const row = result({
+      id: "private", type: "travelers", title: "Rosa Rivers", verified: true, isOfficial: true,
+      actionState: { isFollowing: true }, privacyState: { isPrivate: true },
+    });
+    const projected = projectSearchResult(row, "global_search", POLICY_VERSION, "Rosa", {
+      allowPersonalization: true, tripFit: true,
+    });
+    assert.equal(projected.confidence, SIGNAL_CEILING - PRIVACY_RISK_DEMOTION);
+  });
+});

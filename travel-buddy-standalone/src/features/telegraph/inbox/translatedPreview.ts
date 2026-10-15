@@ -20,11 +20,15 @@ export interface TranslatedPreviewInput {
 }
 
 export function translatedPreviewText(p: TranslatedPreviewInput): string {
+  return translatedPreviewLines(p).join(' · ');
+}
+
+export function translatedPreviewLines(p: TranslatedPreviewInput): string[] {
   const shown = p.displayBody ?? p.body;
-  if (p.translated !== true) return shown;
+  if (p.translated !== true) return [shown];
   const original = (p.body ?? '').trim();
   if (p.showOriginalAlongside === true && original !== '' && original !== shown.trim()) {
-    return `${TRANSLATED_PREVIEW_PREFIX}${shown}${ORIGINAL_PREVIEW_SEPARATOR}${original}`;
+    return [`${TRANSLATED_PREVIEW_PREFIX}${shown}`, `Original: ${original}`];
   }
-  return `${TRANSLATED_PREVIEW_PREFIX}${shown}`;
+  return [`${TRANSLATED_PREVIEW_PREFIX}${shown}`];
 }

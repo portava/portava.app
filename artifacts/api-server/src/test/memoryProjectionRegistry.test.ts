@@ -52,7 +52,7 @@ import {
   type ProjectionId,
 } from "../services/memoryProjections/projectionRegistry.js";
 import { scoreSignificance } from "../services/memoryProjections/significance.js";
-
+import { createClient } from "@supabase/supabase-js";
 const OWNER = "33333333-3333-4333-8333-333333333333";
 const FRIEND = "44444444-4444-4444-8444-444444444444";
 const BLOCKED = "55555555-5555-4555-8555-555555555555";
@@ -128,10 +128,10 @@ function makeClient(tables: Tables, opts: FakeOpts = {}): ClientLike & { tables:
     let mode: "select" | "upsert" | "update" = "select";
     let payload: any = null;
     let onConflict: string[] = [];
-    let selected = false;
+    let selected = false; let countExact = false;
 
     const obj: any = {
-      select() { selected = true; return obj; },
+      select(_columns?: string, options?: { count?: string }) { selected = true; countExact = options?.count === "exact"; return obj; },
       eq(c: string, v: unknown) { filters.push((r) => r[c] === v); return obj; },
       neq(c: string, v: unknown) { filters.push((r) => r[c] !== v); return obj; },
       contains(c: string, vs: readonly unknown[]) { filters.push((r) => Array.isArray(r[c]) && vs.every((v) => r[c].includes(v))); return obj; },
@@ -143,7 +143,7 @@ function makeClient(tables: Tables, opts: FakeOpts = {}): ClientLike & { tables:
       then(f: any, r: any) { return run().then(f, r); },
     };
 
-    async function run(): Promise<{ data: any; error: any }> {
+    async function run(): Promise<{ data: any; error: any; count?: number | null }> {
       if (missing.has(table)) {
         return { data: null, error: { code: "42P01", message: `relation "public.${table}" does not exist` } };
       }
@@ -171,8 +171,8 @@ function makeClient(tables: Tables, opts: FakeOpts = {}): ClientLike & { tables:
         for (const r of hit) Object.assign(r, payload);
         return { data: selected ? hit : null, error: null };
       }
-      const hits = rows.filter((r) => filters.every((fn) => fn(r)));
-      return { data: opts.maxRows != null ? hits.slice(0, opts.maxRows) : hits, error: null };
+      const hits = rows.map((row, index) => table === "memory_items" ? { ...row, id: row.id ?? `fixture-item-${index}` } : row).filter((row) => filters.every((predicate) => predicate(row)));
+      return { data: opts.maxRows != null ? hits.slice(0, opts.maxRows) : hits, error: null, count: countExact ? hits.length : null };
     }
 
     return obj;
@@ -838,5 +838,189 @@ describe("section 10: audience shapes the projection, not a post-filter", () => 
     const b = scopeKeyOf("ProfileHighlightProjection", { owner_id: OWNER, viewer_id: BLOCKED });
     assert.notEqual(a, b);
     assert.equal(a, scopeKeyOf("ProfileHighlightProjection", { owner_id: OWNER, viewer_id: FRIEND }));
+  });
+});
+
+interface SourceReadFault {
+  table: string;
+  count?: string;
+  body?: unknown;
+  errorCode?: string;
+  reject?: boolean;
+}
+
+function cappedSourceClient(tables: Tables, cap = 1000, fault?: SourceReadFault) {
+  const requests: Array<{ table: string; method: string; counted: boolean }> = [];
+  const client = createClient("http://127.0.0.1:9", "offline-fixture", {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    global: {
+      fetch: async (input, init) => {
+        const url = new URL(String(input));
+        const table = url.pathname.split("/").at(-1)!;
+        const counted = new Headers(init?.headers).get("prefer")?.includes("count=exact") === true;
+        const method = init?.method ?? "GET";
+        requests.push({ table, method, counted });
+        assert.equal(method, "GET", "an incomplete derivation must never write a registry payload");
+        if (fault?.table === table && fault.reject) throw new Error("offline transport failed");
+        if (fault?.table === table && fault.errorCode) {
+          return new Response(JSON.stringify({ code: fault.errorCode, message: "fixture source unreadable" }), { status: 503 });
+        }
+        const matches = (tables[table] ?? []).filter((row) => [...url.searchParams].every(([column, value]) => {
+          if (value.startsWith("eq.")) return String(row[column]) === value.slice(3);
+          if (value.startsWith("in.(")) return value.slice(4, -1).split(",").includes(String(row[column]));
+          return true;
+        }));
+        const columns = url.searchParams.get("select")?.split(",");
+        const rows = matches.slice(0, cap).map((row) => columns ? Object.fromEntries(columns.filter((column) => column in row).map((column) => [column, row[column]])) : row);
+        const body = fault?.table === table && "body" in fault ? fault.body : rows;
+        const count = fault?.table === table && fault.count !== undefined ? fault.count : String(matches.length);
+        return new Response(JSON.stringify(body), {
+          headers: { "content-type": "application/json", ...(counted ? { "content-range": `0-${Math.max(0, rows.length - 1)}/${count}` } : {}) },
+        });
+      },
+    },
+  });
+  const withoutRetries = {
+    from: (table: string) => {
+      const builder = client.from(table);
+      const select = builder.select.bind(builder);
+      builder.select = ((...args: Parameters<typeof select>) => select(...args).retry(false)) as typeof builder.select;
+      return builder;
+    },
+  };
+  return { client: withoutRetries as unknown as ClientLike, requests };
+}
+
+function countedSources(itemCount = 1): Tables {
+  return {
+    memories: [memory({ id: "source-memory", visibility: "public" })],
+    memory_items: Array.from({ length: itemCount }, (_, index) => ({ id: `item-${index}`, memory_id: "source-memory", media_url: `${index}.jpg`, media_type: "image/jpeg", position: index })),
+    memory_tags: [{ memory_id: "source-memory", tagged_user_id: FRIEND, status: "approved" }],
+    [DERIVATIVE_REGISTRY_TABLE]: [],
+  };
+}
+
+describe("shared derivative sources never certify a capped or duplicated prefix", () => {
+  for (const table of ["memories", "memory_items", "memory_tags"]) {
+    it(`${table}: more than the 1000-row cap refuses instead of deriving exact counts`, async () => {
+      const tables = countedSources();
+      if (table === "memories") tables.memories = Array.from({ length: 1001 }, (_, index) => memory({ id: `memory-${index}`, visibility: "public" }));
+      if (table === "memory_items") tables.memory_items = countedSources(1001).memory_items;
+      if (table === "memory_tags") tables.memory_tags = Array.from({ length: 1001 }, (_, index) => ({ memory_id: "source-memory", tagged_user_id: `person-${index}`, status: "approved" }));
+      const { client, requests } = cappedSourceClient(tables);
+      const result = await deriveProjection(client, "MemoryTimelineProjection", OWNER_SCOPE);
+      assert.equal(result.ok, false);
+      if (result.ok) return;
+      assert.equal(result.reason, "source_unavailable");
+      assert.equal(result.table, table);
+      assert.equal(result.retryable, true);
+      assert.equal("value" in result, false);
+      assert.equal(requests.filter((request) => request.table === table).length, 1);
+    });
+
+    it(`${table}: a repeated page cannot pass as the complete set`, async () => {
+      const tables = countedSources();
+      tables[table] = [tables[table][0], { ...tables[table][0] }];
+      const { client } = cappedSourceClient(tables);
+      const result = await deriveProjection(client, "MemoryTimelineProjection", OWNER_SCOPE);
+      assert.equal(result.ok, false);
+      if (!result.ok) assert.equal(result.table, table);
+    });
+
+    for (const fault of [{ count: "*" }, { count: "NaN" }, { count: "-1" }, { count: "0" }, { count: "2" }, { count: "9007199254740992" }, { body: null }, { body: {} }, { body: [{}] }, { body: [null] }, { errorCode: "57014" }, { reject: true }]) {
+      it(`${table}: unreadable or uncounted source ${JSON.stringify(fault)} is not empty history`, async () => {
+        const { client } = cappedSourceClient(countedSources(), 1000, { table, ...fault });
+        const result = await deriveProjection(client, "MemoryTimelineProjection", OWNER_SCOPE);
+        assert.equal(result.ok, false);
+        if (!result.ok) {
+          assert.equal(result.reason, "source_unavailable");
+          assert.equal(result.table, table);
+          assert.equal(result.retryable, true);
+        }
+      });
+    }
+
+    it(`${table}: a missing table still retains its non-retryable classification`, async () => {
+      const { client } = cappedSourceClient(countedSources(), 1000, { table, errorCode: "42P01" });
+      const result = await deriveProjection(client, "MemoryTimelineProjection", OWNER_SCOPE);
+      assert.equal(result.ok, false);
+      if (!result.ok) assert.equal(result.retryable, false);
+    });
+  }
+
+  it("a configured cap smaller than 1000 is also incomplete", async () => {
+    const { client } = cappedSourceClient(countedSources(4), 2);
+    const result = await deriveProjection(client, "NarrativeDerivative", OWNER_SCOPE);
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.table, "memory_items");
+  });
+
+  it("a duplicated 500-row page cannot replace the missing half of an exact 1000-item response", async () => {
+    const tables = countedSources(1000);
+    const firstPage = tables.memory_items.slice(0, 500);
+    const { client } = cappedSourceClient(tables, 1000, { table: "memory_items", body: [...firstPage, ...firstPage] });
+    const result = await deriveProjection(client, "MemoryTimelineProjection", OWNER_SCOPE);
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.table, "memory_items");
+  });
+
+  it("distinct item keys can share a URL and position without losing their count", async () => {
+    const tables = countedSources(2);
+    tables.memory_items[1] = { ...tables.memory_items[0], id: "second-item" };
+    const { client } = cappedSourceClient(tables);
+    const result = await deriveProjection(client, "MemoryTimelineProjection", OWNER_SCOPE);
+    assert.ok(result.ok);
+    assert.equal(result.value.rows[0].media_count, 2);
+  });
+
+  it("exactly 1000 items is complete, not refused just because the page is full", async () => {
+    const { client, requests } = cappedSourceClient(countedSources(1000));
+    const result = await deriveProjection(client, "MemoryTimelineProjection", OWNER_SCOPE);
+    assert.ok(result.ok);
+    assert.equal(result.value.rows[0].media_count, 1000);
+    for (const table of ["memories", "memory_items", "memory_tags"]) {
+      assert.equal(requests.find((request) => request.table === table)?.counted, true);
+    }
+    assert.equal(JSON.stringify(result.value.rows).includes('"id":"item-'), false);
+  });
+
+  it("an exactly empty owner has empty history without loading unrelated sources", async () => {
+    const { client, requests } = cappedSourceClient({ memories: [] });
+    const result = await deriveProjection(client, "MemoryTimelineProjection", OWNER_SCOPE);
+    assert.ok(result.ok);
+    assert.deepEqual(result.value.rows, []);
+    assert.equal(requests.some((request) => request.table === "memory_items" || request.table === "memory_tags"), false);
+  });
+
+  for (const state of ["ACTIVE", "REVOKED"]) it(`an incomplete rebuild leaves the ${state} registration untouched and staleness cannot say FRESH`, async () => {
+    const tables = countedSources(1001);
+    tables[DERIVATIVE_REGISTRY_TABLE] = [{ id: "existing", revocation_state: state, payload_json: [] }];
+    const before = structuredClone(tables[DERIVATIVE_REGISTRY_TABLE]);
+    const { client, requests } = cappedSourceClient(tables);
+    assert.equal((await rebuildProjection(client, "MemoryTimelineProjection", OWNER_SCOPE, NOW)).ok, false);
+    assert.equal((await projectionStaleness(client, "MemoryTimelineProjection", OWNER_SCOPE)).ok, false);
+    assert.deepEqual(tables[DERIVATIVE_REGISTRY_TABLE], before);
+    assert.equal(requests.some((request) => request.method !== "GET"), false);
+  });
+
+  it("complete reads preserve occurrence order, hidden-photo filtering and owner-only access", async () => {
+    const tables = countedSources(3);
+    tables.memories.push(memory({ id: "private", visibility: "only_me", starts_at: "2026-05-03T12:00:00.000Z" }));
+    tables.memory_items[1].visibility = "only_me";
+    const { client } = cappedSourceClient(tables);
+    const owner = await deriveProjection(client, "MemoryTimelineProjection", OWNER_SCOPE);
+    const publicView = await deriveProjection(client, "PublicMemoryProjection", { owner_id: OWNER, viewer_id: FRIEND });
+    assert.ok(owner.ok && publicView.ok);
+    assert.deepEqual(owner.value.rows.map((row) => row.memory_id), ["private", "source-memory"]);
+    assert.equal(owner.value.rows.find((row) => row.memory_id === "source-memory")?.media_count, 3);
+    assert.deepEqual(publicView.value.rows.map((row) => [row.memory_id, row.media_count]), [["source-memory", 2]]);
+  });
+  it("the counted-source fixture never uses the ambient network transport", async (context) => {
+    const ambientFetch = context.mock.method(globalThis, "fetch", async () => { throw new Error("ambient network forbidden"); });
+    const { client, requests } = cappedSourceClient(countedSources(3));
+    const result = await deriveProjection(client, "MemoryTimelineProjection", OWNER_SCOPE);
+    assert.ok(result.ok);
+    assert.ok(requests.length > 0);
+    assert.equal(ambientFetch.mock.callCount(), 0);
   });
 });

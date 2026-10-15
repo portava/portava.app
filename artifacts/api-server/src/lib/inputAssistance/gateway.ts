@@ -687,6 +687,7 @@ export async function generateSuggestions(
             seenIds.add(r.id); openOnMap ??= buildOpenOnMapRow(r, context, policy, POLICY_VERSION);
             suggestions.push(
               projectSearchResult(r, context, POLICY_VERSION, q, {
+                allowPersonalization: personalizationOn,
                 temporalWindow,
                 demoted: verdict.demotedIds.has(r.id),
                 tripFit: verdict.tripFitIds.has(r.id),

@@ -115,7 +115,7 @@ function makeClient(store: Record<string, Row[]>, opts: { failReads?: string[]; 
     const filters: Array<(r: Row) => boolean> = [];
     let columns: string[] | null = null;
     let countHead = false;
-    let single = false;
+    let single = false; let countExact = false;
     let op = "select";
     let values: any = null;
     let onConflict = "id";
@@ -123,7 +123,7 @@ function makeClient(store: Record<string, Row[]>, opts: { failReads?: string[]; 
       select(cols?: string, o?: { count?: string; head?: boolean }) {
         if (op === "select") {
           if (typeof cols === "string" && cols.trim() !== "*") columns = cols.split(",").map((c) => c.trim());
-          if (o?.count && o?.head) countHead = true;
+          if (o?.count && o?.head) countHead = true; countExact = o?.count === "exact";
         }
         return q;
       },
@@ -160,7 +160,7 @@ function makeClient(store: Record<string, Row[]>, opts: { failReads?: string[]; 
       if (countHead) return { data: null, count: rows.length, error: null };
       const project = (r: Row) => (columns ? Object.fromEntries(columns.filter((c) => c in r).map((c) => [c, r[c]])) : { ...r });
       if (single) return { data: rows[0] ? project(rows[0]) : null, error: null };
-      return { data: rows.map(project), error: null };
+      return { data: rows.map((row, index) => project(table === "memory_items" ? { ...row, id: row.id ?? `fixture-item-${index}` } : row)), error: null, count: countExact ? rows.length : null };
     }
     return q;
   }

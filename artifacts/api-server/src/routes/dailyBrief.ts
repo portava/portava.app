@@ -43,7 +43,7 @@ import { defaultExplicit, defaultInferred } from "../lib/preferenceLearning.js";
 import { getWeatherContext, type WeatherContext, type DailyWeather } from "../lib/weatherCache.js";
 import { getLocalContext, type LocalContext } from "../lib/localContext.js";
 import { getEventsNearDestination, type EventsContext } from "../lib/eventsCache.js";
-import { withholdPrivatePlanItems, PLAN_ITEM_PRIVACY_COLUMNS, ownerOnlyAccess, canSeePlanItemLocation } from "../domain/trips/policies/privateAnchorAccess.js";
+import { withholdPrivatePlanItems, PLAN_ITEM_PRIVACY_COLUMNS, ownerOnlyAccess, planItemVisibility } from "../domain/trips/policies/privateAnchorAccess.js";
 import { planItemAccessFor } from "../server/trips/privateAnchorShares.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { createHash } from "node:crypto";
@@ -72,10 +72,12 @@ async function privatePlanAccessKey(tripId: string | null, userId: string): Prom
   const { data, error } = await sc.from("trip_plan_items").select("id, creator_id, location_is_private, removed_at, privacy_scope").eq("trip_id", tripId); // §90: a plan scoped private changes what the brief may carry too
   if (error || !Array.isArray(data)) return UNREAD_ACCESS_KEY;
   const withheld = (data as Array<{ id: string; creator_id: string | null; location_is_private: boolean | null; removed_at: string | null; privacy_scope?: string | null }>)
-    .filter((r) => !canSeePlanItemLocation(a, r))
-    .map((r) => String(r.id))
+    .flatMap((row) => {
+      const visibility = planItemVisibility(a, row);
+      return visibility === "full" ? [] : [`${row.id}:${visibility}`];
+    })
     .sort();
-  return createHash("sha256").update(`${[...a.grants.keys()].sort().join(",")}|${withheld.join(",")}`).digest("hex").slice(0, 16);
+  return createHash("sha256").update(`plan-visibility-v2|${[...a.grants.keys()].sort().join(",")}|${withheld.join(",")}`).digest("hex").slice(0, 16);
 }
 
 /** An access digest that could not be computed. It never matches a cached brief, so nothing cached is served on it. */

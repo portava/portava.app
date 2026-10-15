@@ -1304,6 +1304,18 @@ const EXEMPT = [
       'test line pins a loopback URL with no ref). EXEMPTION MEANS UNGUARDED, NOT SAFE — if this file ever builds ' +
       'a client, or gives the src/index.ts child a real ref or a service key, the exemption is void.',
   },
+  {
+    file: 'src/test/memoryProjectionRegistry.test.ts',
+    pinnedTestEnv: true,
+    reason:
+      'Registered unit test of counted source completeness over the installed Supabase client. The client ' +
+      'receives only the in-file literals http://127.0.0.1:9 and offline-fixture, with auth persistence and ' +
+      'refresh disabled. Its injected fetch implements capped PostgREST responses entirely in memory; no ' +
+      'ambient fetch or credential is used. The transport sentinel test verifies the ambient fetch is never ' +
+      'called. The existing package.json invocation pin is independently checked through pinnedTestEnv. ' +
+      'EXEMPTION MEANS UNGUARDED, NOT SAFE: removal of the injected transport or use of an environment target ' +
+      'voids this exemption and requires the normal guarded database entry point.',
+  },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────

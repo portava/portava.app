@@ -1,91 +1,71 @@
-/**
- * §18 T240 / T242 — the two `MessageTranslation` fields that were missing, and
- * the decision they exist to drive.
- *
- * census-telegraph T240: *"Six of eight fields … **Missing `providerVersion`
- * and `confidence`** — and the absence of `confidence` is what makes T242
- * fail."*  T242: *"the mechanism exists … but it is driven by a **user
- * preference** … There is no confidence value to threshold on."*
- *
- * The confidence signal was NOT absent from this tree. `DetectLanguageResult`
- * has carried `confidence: 'high' | 'low'` since the provider abstraction was
- * written (`lib/translation.ts`), and `detectWithRetry` threw it away one line
- * after receiving it — `return result.language`. So the value existed at the
- * provider boundary, was discarded before any caller could see it, and the
- * census correctly measured its absence from the record.
- *
- * WHAT IS ASSERTED HERE
- * =====================
- *   1. `translationConfidenceOf` — the pure rule. HIGH is reachable only when
- *      the PROVIDER read the text and said so. Every fallback arm is LOW,
- *      because a source language taken from a profile default (or from a read
- *      that FAILED) is a guess, and a translation out of a guessed source
- *      language is not a certain translation.
- *   2. `buildDisplayFields` — T242's decision. A translation that is not known
- *      to be high-confidence is presented WITH its original rather than in
- *      place of it, and that decision is taken from the confidence value, not
- *      from `profiles.show_original_messages`.
- *   3. UNKNOWN IS NOT HIGH. A row written before migration 2991 carries no
- *      confidence at all. Treating that as certain is exactly the "pretending
- *      certainty" T242 forbids, so it shows both.
- *   4. `providerVersion` — the engine identity travels with the translation and
- *      is the SAME string the provider actually ran, not a literal beside it.
- *
- * MUTATION REQUIREMENT, stated so a later reader can check this file is still
- * doing its job:
- *   - relaxing `translationConfidenceOf` to return 'high' on any non-provider
- *     arm must fail "a guessed source language can never yield a high-confidence
- *     translation".
- *   - flipping `showOriginalAlongside` to `confidence === 'low'` (so UNKNOWN
- *     reads as certain) must fail "an unrecorded confidence is not a high one".
- *   - dropping `providerVersion` from the mock provider must fail "the provider
- *     names the engine that actually ran".
- */
-import { describe, it } from 'node:test';
+import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
   buildDisplayFields,
-  translationConfidenceOf,
+  translateMessageForThread,
+  __resetConfidenceColumnProbe,
   isMissingTranslationConfidenceColumn,
   CONFIDENCE_MIGRATION_PENDING_MESSAGE,
 } from '../services/messageTranslation.js';
-import { MockTranslationProvider } from '../lib/translation.js';
+import { MockTranslationProvider, _setTestTranslationProvider } from '../lib/translation.js';
+import { makeFakeClient } from './telegraphCertificationHarness.js';
 
-describe('§18 T240 — translationConfidenceOf is the confidence the record was missing', () => {
-  it('is HIGH only when the provider read the text and said high', () => {
-    assert.equal(
-      translationConfidenceOf({ detectionSource: 'provider', detectionConfidence: 'high' }),
-      'high',
-    );
+describe('T242 — language detection is not a translation-quality measurement', () => {
+  afterEach(() => {
+    _setTestTranslationProvider(null);
+    __resetConfidenceColumnProbe();
   });
 
-  it('is LOW when the provider read the text and was unsure', () => {
-    assert.equal(
-      translationConfidenceOf({ detectionSource: 'provider', detectionConfidence: 'low' }),
-      'low',
-    );
-  });
+  for (const scenario of [
+    { detection: 'high', preference: null, unreadable: false, source: 'provider', language: 'es' },
+    { detection: 'low', preference: null, unreadable: false, source: 'provider', language: 'es' },
+    { detection: null, preference: 'it', unreadable: false, source: 'sender_preference', language: 'it' },
+    { detection: null, preference: null, unreadable: false, source: 'default', language: 'en' },
+    { detection: null, preference: null, unreadable: true, source: 'sender_preference_unreadable', language: 'en' },
+  ] as const) {
+    it(`writes unknown quality for ${scenario.source}/${scenario.detection}, preserving original and provenance`, async () => {
+      const original = 'Nos vemos en el muelle a las ocho.';
+      const translated = 'Rendez-vous au quai à huit heures.';
+      _setTestTranslationProvider({
+        async detectLanguage() {
+          if (scenario.detection === null) throw new Error('detector_unavailable');
+          return { language: 'es', confidence: scenario.detection };
+        },
+        async translateText(text, source, target) {
+          assert.equal(text, original);
+          assert.equal(source, scenario.language);
+          assert.equal(target, 'fr');
+          return { translatedText: translated, provider: 'test', providerVersion: 'test-v1' };
+        },
+      });
+      const client = makeFakeClient({
+        messages: [{ id: 'message', body: original }],
+        message_thread_members: [{ thread_id: 'thread', user_id: 'recipient' }],
+        profiles: [{ id: 'recipient', preferred_language: 'fr', auto_translate_messages: true }],
+        message_translations: [],
+      });
 
-  it('a guessed source language can never yield a high-confidence translation', () => {
-    // All three fallback arms of the detection ladder. None of them read the
-    // message text, so none of them can license certainty about it — even if a
-    // stale confidence value were somehow handed in alongside.
-    for (const source of ['sender_preference', 'default', 'sender_preference_unreadable'] as const) {
-      assert.equal(
-        translationConfidenceOf({ detectionSource: source, detectionConfidence: 'high' }),
-        'low',
-        `${source} must not be able to claim high confidence`,
-      );
-    }
-  });
+      await translateMessageForThread(client as any, {
+        messageId: 'message', body: original, senderId: 'sender', threadId: 'thread',
+        senderPreferredLanguage: scenario.preference,
+        senderPreferenceUnreadable: scenario.unreadable,
+      });
 
-  it('a missing confidence reading is LOW, not absent', () => {
-    assert.equal(
-      translationConfidenceOf({ detectionSource: 'provider', detectionConfidence: null }),
-      'low',
-    );
-  });
+      const stored = client._store.message_translations[0];
+      assert.equal(stored.status, 'translated');
+      assert.equal(stored.confidence, null);
+      assert.equal(stored.translated_body, translated);
+      assert.equal(stored.provider_version, 'test-v1');
+      assert.equal(client._store.messages[0].body, original);
+      assert.equal(client._store.messages[0].original_language, scenario.language);
+      assert.equal(client._store.messages[0].language_detection_source, scenario.source);
+      const display = buildDisplayFields({ body: original, deleted: false, senderId: 'sender' }, 'recipient', stored);
+      assert.equal(display.translationConfidence, null);
+      assert.equal(display.showOriginalAlongside, true);
+      assert.equal(display.originalBody, original);
+    });
+  }
 });
 
 describe('§18 T242 — a translation that is not certain is shown WITH its original', () => {
@@ -102,10 +82,10 @@ describe('§18 T242 — a translation that is not certain is shown WITH its orig
     };
   }
 
-  it('LOW confidence asks for both, and says which is which', () => {
+  it('legacy LOW detection confidence is unknown translation quality and asks for both', () => {
     const d = buildDisplayFields(msg, me, row('low'));
     assert.equal(d.translated, true);
-    assert.equal(d.translationConfidence, 'low');
+    assert.equal(d.translationConfidence, null);
     assert.equal(d.showOriginalAlongside, true);
     // Both texts are present and distinguishable — the translation never
     // replaces the original on the wire.
@@ -113,11 +93,12 @@ describe('§18 T242 — a translation that is not certain is shown WITH its orig
     assert.equal(d.originalBody, 'hola');
   });
 
-  it('HIGH confidence does not force the original alongside', () => {
+  it('legacy HIGH detection confidence cannot hide the original or claim quality', () => {
     const d = buildDisplayFields(msg, me, row('high'));
     assert.equal(d.translated, true);
-    assert.equal(d.translationConfidence, 'high');
-    assert.equal(d.showOriginalAlongside, false);
+    assert.equal(d.translationConfidence, null);
+    assert.equal(d.showOriginalAlongside, true);
+    assert.equal(d.translationLabel, 'Translated from Spanish — quality unverified');
     // Still AVAILABLE — T241's "the original is never replaced" is unchanged.
     assert.equal(d.canShowOriginal, true);
     assert.equal(d.originalBody, 'hola');
@@ -129,7 +110,24 @@ describe('§18 T242 — a translation that is not certain is shown WITH its orig
     assert.equal(d.showOriginalAlongside, true);
   });
 
-  it('the decision is the confidence value and nothing else — no preference is read', () => {
+  it('an older record without confidence keeps the existing display contract', () => {
+    const display = buildDisplayFields(msg, me, {
+      source_language: 'es', target_language: 'en', translated_body: 'hello', status: 'translated',
+    });
+    assert.deepEqual(display, {
+      displayBody: 'hello',
+      originalBody: 'hola',
+      originalLanguage: 'es',
+      translated: true,
+      translationStatus: 'translated',
+      translationLabel: 'Translated from Spanish — quality unverified',
+      canShowOriginal: true,
+      translationConfidence: null,
+      showOriginalAlongside: true,
+    });
+  });
+
+  it('unknown translation quality does not depend on a viewer preference', () => {
     // buildDisplayFields takes three arguments and none of them is a profile.
     // Stated as an assertion rather than as a comment so a later signature
     // change that smuggles a preference in has to break this line.
@@ -141,10 +139,53 @@ describe('§18 T242 — a translation that is not certain is shown WITH its orig
       const d = buildDisplayFields(msg, me, { ...row('low'), status });
       assert.equal(d.showOriginalAlongside, false, `${status} must not ask for both`);
       assert.equal(d.translated, false);
+      assert.equal(d.displayBody, msg.body);
+      assert.equal(d.originalBody, msg.body);
+      assert.equal(d.translationConfidence, null);
+      assert.equal(d.translationLabel, null);
+      assert.equal(d.translationStatus, status);
     }
     // The sender's own message, and a message with no translation row.
     assert.equal(buildDisplayFields(msg, 'sender', row('low')).showOriginalAlongside, false);
     assert.equal(buildDisplayFields(msg, me, null).showOriginalAlongside, false);
+  });
+
+  it('empty or identical derivatives preserve original text without claiming a translation', () => {
+    for (const translatedBody of [null, '', 'hola', ' hola ']) {
+      const display = buildDisplayFields(msg, me, { ...row('high'), translated_body: translatedBody });
+      assert.equal(display.displayBody, msg.body);
+      assert.equal(display.originalBody, msg.body);
+      assert.equal(display.translated, false);
+      assert.equal(display.translationConfidence, null);
+      assert.equal(display.translationLabel, null);
+      assert.equal(display.showOriginalAlongside, false);
+      assert.equal(display.canShowOriginal, false);
+    }
+  });
+
+  it('own messages and missing derivatives retain the original without translation metadata', () => {
+    for (const display of [
+      buildDisplayFields(msg, 'sender', row('high')),
+      buildDisplayFields(msg, me, null),
+    ]) {
+      assert.equal(display.displayBody, msg.body);
+      assert.equal(display.originalBody, msg.body);
+      assert.equal(display.translated, false);
+      assert.equal(display.translationConfidence, null);
+      assert.equal(display.translationStatus, null);
+      assert.equal(display.translationLabel, null);
+      assert.equal(display.showOriginalAlongside, false);
+      assert.equal(display.canShowOriginal, false);
+    }
+  });
+
+  it('an absent original cannot expose a stale derivative', () => {
+    const display = buildDisplayFields({ ...msg, body: null }, me, row('high'));
+    assert.equal(display.displayBody, null);
+    assert.equal(display.originalBody, null);
+    assert.equal(display.translated, false);
+    assert.equal(display.translationConfidence, null);
+    assert.equal(display.showOriginalAlongside, false);
   });
 
   it('a deleted message discloses neither body, whatever the confidence says', () => {

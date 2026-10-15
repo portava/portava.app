@@ -233,3 +233,59 @@ describe('Telegraph inbox — the needs-action badge', () => {
     expect(queryByText('1 needs action')).toBeTruthy();
   });
 });
+
+describe('Telegraph inbox — original and translated preview lines', () => {
+  const original = 'Nos vemos en el muelle antes de salir hacia el aeropuerto';
+  const translated = 'Meet me at the pier before we leave for the airport and remember your passport';
+
+  function translatedThread(over: Record<string, unknown> = {}) {
+    return thread({
+      lastMessagePreview: {
+        body: original, displayBody: translated, senderId: 'u2',
+        createdAt: '2026-05-01T00:00:00.000Z', msgType: 'text', subtype: null,
+        translated: true, showOriginalAlongside: true, ...over,
+      },
+    });
+  }
+
+  it('renders long translation and original as independently bounded text lines', async () => {
+    const screen = await renderInbox([translatedThread()]);
+    const translationLine = screen.getByText(`Translated · ${translated}`);
+    const originalLine = screen.getByText(`Original: ${original}`);
+    expect(translationLine).not.toBe(originalLine);
+    expect(translationLine.props.numberOfLines).toBe(1);
+    expect(originalLine.props.numberOfLines).toBe(1);
+    expect(screen.queryByText(`Translated · ${translated} · Original: ${original}`)).toBeNull();
+  });
+
+  it('keeps the sender preview in their own words only', async () => {
+    const screen = await renderInbox([translatedThread({ senderId: 'u1' })]);
+    expect(screen.getByText(original)).toBeTruthy();
+    expect(screen.queryByText(`Original: ${original}`)).toBeNull();
+    expect(screen.queryByText(`Translated · ${translated}`)).toBeNull();
+  });
+
+  it('does not invent an original line when older servers omit the decision', async () => {
+    const screen = await renderInbox([translatedThread({ translated: undefined, showOriginalAlongside: undefined })]);
+    expect(screen.getByText(translated)).toBeTruthy();
+    expect(screen.queryByText(`Original: ${original}`)).toBeNull();
+  });
+
+  it('does not repeat identical original and displayed text', async () => {
+    const screen = await renderInbox([translatedThread({ body: translated })]);
+    expect(screen.getByText(`Translated · ${translated}`)).toBeTruthy();
+    expect(screen.queryByText(`Original: ${translated}`)).toBeNull();
+  });
+
+  it.each([
+    ['voice', null, 'Voice message'],
+    ['system', 'post_card', 'Shared a post'],
+    ['booking_card', null, 'Booking update'],
+  ])('does not expose a %s envelope through an original preview', async (msgType, subtype, label) => {
+    const body = '{"privateStorageKey":"do-not-display"}';
+    const screen = await renderInbox([translatedThread({ msgType, subtype, body })]);
+    expect(screen.getByText(label!)).toBeTruthy();
+    expect(screen.queryByText(`Original: ${body}`)).toBeNull();
+    expect(screen.queryByText(`Translated · ${translated}`)).toBeNull();
+  });
+});

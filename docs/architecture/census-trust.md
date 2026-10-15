@@ -4485,3 +4485,83 @@ denominator is unchanged.
 - NOT-GRADED: artifacts/api-server/src/test/moderationActionReportLink.test.ts — §41.1's proof for TV-4a, which stays W; whoever moves TV-4a on it must add it to this census's watched scope in the same change.
 - NOT-GRADED: travel-buddy-standalone/src/services/adminUsers.ts — §41.2 cites it only to say the user-moderation screen's service takes no report yet; no Trust verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/routes/adminMedia.ts — census-media's file; §41.1 cites its content-moderation door, and no Trust verdict rests on it.
+
+## §42 — 2026-10-15 (bounded client correction): checkout recognises the current identity refusal and stops offering an age-refused booking. NO ROW MOVES
+
+Baseline: `8b2ce063016b38b9b9d5460ee384908fe0163eef`. This is one existing flow:
+Rent a Buddy checkout → booking request → server refusal → verification or an age-requirement state.
+It changes neither the server gates nor their deployment prerequisites.
+
+### 42.1 Fresh source findings and correction
+
+§31.2/§32.3 supersede §19.1's claim that no client names an age refusal. Those earlier client fixes
+exist. Two checkout defects nevertheless remain at this baseline:
+
+- The shared booking-party gate emits `identity_verification_required` for the traveller, not the
+  older `verification_required` understood by the client. The real booking service preserves the code,
+  but the classifier answered it as a generic failure. It now offers the existing `/profile/verification`
+  screen with copy that asks for a current check, without promising that one check lasts forever
+  (`travel-buddy-standalone/src/services/rentABuddyBookingErrors.ts:106#return BOOKING_REFUSAL_ACTIONS[code === 'identity_verification_required'`).
+- The age-requirement banner existed, but Request Booking remained enabled. An earlier verification
+  action also survived a later age refusal, outage, feature closure or successful booking. Submission
+  now clears that stale action, and an age refusal disables and guards further submissions with the
+  same age-relevant request context, including the safety-tutorial submission path (see §42.4)
+  (`travel-buddy-standalone/app/(rent-a-buddy)/checkout.tsx:236#if (!buddy || submitting || unavailableReason || ineligibleReason) return;`).
+
+An actionable verification refusal still preserves the form and permits a new explicit request after
+visiting verification. Opening verification does not send a booking or claim success. Only a successful
+booking response with an ID navigates to that booking. Missing DOB retains its existing profile action;
+an unreadable age check retains its retryable failure. No provider, permissions, flags, account setup,
+database writes or production actions were exercised.
+
+### 42.2 Bounded offline evidence
+
+- `travel-buddy-standalone/src/services/__tests__/rentABuddy.verificationRoute.test.ts`: 17 tests;
+  the new current-code test failed before the fix (`failure`, not `actionable`). It also pins the
+  server's traveller-only error contract and keeps buddy refusals and unavailable checks out of that action.
+- `travel-buddy-standalone/app/(rent-a-buddy)/__tests__/checkout.ageRefusal.component.test.tsx`:
+  initially 9 tests; 7 failed before the fix, all 9 passed after. The added cases use the real booking client and
+  classifier with mocked HTTP, not mocked classification. They exercise both identity codes, the real
+  verification route, preserved request data, no success navigation on refusal, successful resubmission,
+  stale-action replacement and the disabled age-refusal button.
+
+Both production source edits preserve line counts. No full suite, typecheck, live provider, device or
+deployed-path verification is claimed. The 2026-10-15 open-PR inventory claims no exact refusal fix;
+open #603 independently changes checkout's commission guards. Integration must retain both those
+guards and this age-refusal guard, not choose one side of the overlapping lines.
+
+### 42.3 Remaining criteria and scope
+
+TV-5b remains **W**: the events-list silent-filter/verify-to-access condition in §31.2 remains untouched
+and needs the recorded product decision. This correction does not establish that the booking-party
+gate is currently reachable past production's provider/rollout gates. TV-5a remains **W**: no Safety
+hub change, new SOS provider or invented community-guidelines destination/copy is included. The shared
+`verification_unavailable` code still conflates deployment closure and an unreadable identity check;
+separating those server contracts and their client treatment is outside this bounded correction.
+§41.5's totals remain unchanged.
+
+- NOT-GRADED: travel-buddy-standalone/app/(rent-a-buddy)/__tests__/checkout.ageRefusal.component.test.tsx — §42.2's bounded regression proof; no Trust verdict moves on it.
+
+### 42.4 Review correction: age refusals follow the request context, not the whole checkout
+
+Independent review found that §42.1's initial disabling logic also blocked a subsequent city booking
+after a nightlife age refusal. The server can apply different minimum ages to those categories
+(`artifacts/api-server/src/routes/rentABuddy.ts:1882#const minAge = category === "nightlife"`).
+
+Checkout now records the buddy, service city/country and category associated with an age refusal
+(`travel-buddy-standalone/app/(rent-a-buddy)/checkout.tsx:188#const ageRequestContext = JSON.stringify`).
+Changing that context clears the refusal; a late response for a different context cannot disable the
+current form. Selecting a city package changes its category and permits a new explicit request, not
+automatic booking or assumed eligibility. The server still decides that new request. Package-ID-only
+changes with the same category, notes, meetup spot and unchanged selections do not clear the block.
+The submitting and unavailable guards remain intact. The shared error classifier is unchanged by this
+review correction; malformed-envelope behavior remains outside its scope.
+
+Bounded offline evidence: the mounted checkout suite now has 14 tests. Before this correction, the
+category-change, package-category-change and late-old-response cases failed on the persistent age
+banner (3 failed, 11 passed). Afterward, all 14 pass using the real booking service and classifier with
+mocked HTTP. Controls pin unchanged-context blocking, same-category package changes, no duplicate
+submission while pending, preserved form data, no navigation before a successful response and an
+unavailable refusal that remains blocked across category changes. Source line counts remain unchanged;
+no full suite, typecheck, live service or publication was run. §42.3's remaining criteria and W verdicts
+are unchanged.

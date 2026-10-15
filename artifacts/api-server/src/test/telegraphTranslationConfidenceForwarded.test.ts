@@ -1,49 +1,3 @@
-/**
- * Telegraph §18.2 / census T242 — a low-confidence translation shows the
- * original beside it, on the wire, from BOTH thread readers.
- *
- * The census held T242 at W for one stated reason: `buildDisplayFields` takes
- * the show-both decision from the stored `confidence` and from nothing else,
- * but no reader forwarded it. `routes/messaging.ts` (GET
- * /threads/:threadId/messages) and `routes/groupChat.ts` (GET
- * /trips/:tripId/chat, GET /circles/:circleId/chat) each selected four named
- * fields and `status` out of `message_translations`, so `confidence` never
- * reached the decision, and copied seven named fields out of the display
- * object, so `showOriginalAlongside` never reached the client. The decision was
- * computed and thrown away.
- *
- * What is asserted here is the RESPONSE of the real routes, through the
- * certification harness:
- *
- *   - a translation stored with `confidence = 'low'` reaches the recipient with
- *     `showOriginalAlongside: true`, its `translationConfidence`, and BOTH
- *     bodies (`displayBody` translated, `originalBody` original);
- *   - one stored `'high'` reaches it with `showOriginalAlongside: false`, so the
- *     flag is conditioned on the reading and not always on;
- *   - on a database WITHOUT migration 2991 (the state of every database today)
- *     the confidence read is refused with 42703. That must NOT be reported as
- *     "translations unreadable" (`translationStatus: 'failed'`): the reader
- *     retries without the column, the translation is still shown, and an
- *     unrecorded confidence is treated as not-high — so the original is shown
- *     alongside rather than the translation being presented as certain;
- *   - any OTHER read error is still the existing failed-read arm
- *     (`translationStatus: 'failed'`), so the fallback is narrow;
- *   - the sender never gets the flag for their own message.
- *
- * SHOWN RED before green: with `routes/messaging.ts` and `routes/groupChat.ts`
- * at `2e46835263` (the four-field select, the seven-field copy) ALL EIGHT fail —
- * including the three controls, because each asserts the flag is PRESENT and
- * false, and the old payload did not carry it at all (absent is not false to an
- * older client). Two targeted mutants of `readRecipientTranslations`, each
- * applied alone and restored: (1) no fallback on 42703 — the three 2991-absent
- * cases fail; (2) every error read as a missing column — the other-error
- * control fails.
- *
- * Run:
- *   SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy \
- *     node --import tsx/esm --test src/test/telegraphTranslationConfidenceForwarded.test.ts
- */
-
 import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 
@@ -201,25 +155,26 @@ function incoming(body: unknown, id: string): WireMessage {
 }
 
 describe("§18.2 T242 — GET /threads/:threadId/messages forwards the show-both decision", () => {
-  it("THE POINT: a LOW-confidence translation arrives with showOriginalAlongside and both bodies", async () => {
+  it("legacy LOW detection confidence arrives as unknown quality with both bodies", async () => {
     use(makeFakeClient(seed("low")));
     const r = await call(dm.base, "GET", `/threads/${THREAD}/messages`, BOB);
     assert.equal(r.status, 200, JSON.stringify(r.body));
     const m = incoming(r.body, MSG);
     assert.equal(m.translationStatus, "translated");
-    assert.equal(m.translationConfidence, "low");
+    assert.equal(m.translationConfidence, null);
     assert.equal(m.showOriginalAlongside, true);
     assert.equal(m.displayBody, TRANSLATED);
     assert.equal(m.originalBody, ORIGINAL);
   });
 
-  it("CONTROL: a HIGH-confidence translation arrives with showOriginalAlongside false", async () => {
+  it("legacy HIGH detection confidence cannot hide the original in a DM", async () => {
     use(makeFakeClient(seed("high")));
     const r = await call(dm.base, "GET", `/threads/${THREAD}/messages`, BOB);
     assert.equal(r.status, 200, JSON.stringify(r.body));
     const m = incoming(r.body, MSG);
-    assert.equal(m.translationConfidence, "high");
-    assert.equal(m.showOriginalAlongside, false);
+    assert.equal(m.translationConfidence, null);
+    assert.equal(m.showOriginalAlongside, true);
+    assert.equal(m.originalBody, ORIGINAL);
     assert.equal(m.displayBody, TRANSLATED);
   });
 
@@ -268,15 +223,26 @@ describe("§18.2 T242 — GET /threads/:threadId/messages forwards the show-both
 });
 
 describe("§18.2 T242 — GET /trips/:tripId/chat forwards the same decision", () => {
-  it("THE POINT: a LOW-confidence translation arrives with showOriginalAlongside in the trip chat", async () => {
+  it("legacy LOW detection confidence arrives as unknown quality in the trip chat", async () => {
     use(makeFakeClient(seed("low")));
     const r = await call(trip.base, "GET", `/trips/${TRIP}/chat`, BOB);
     assert.equal(r.status, 200, JSON.stringify(r.body));
     const m = incoming(r.body, TRIP_MSG);
-    assert.equal(m.translationConfidence, "low");
+    assert.equal(m.translationConfidence, null);
     assert.equal(m.showOriginalAlongside, true);
     assert.equal(m.displayBody, TRANSLATED);
     assert.equal(m.originalBody, ORIGINAL);
+  });
+
+  it("legacy HIGH detection confidence cannot hide the original in a trip chat", async () => {
+    use(makeFakeClient(seed("high")));
+    const response = await call(trip.base, "GET", `/trips/${TRIP}/chat`, BOB);
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    const message = incoming(response.body, TRIP_MSG);
+    assert.equal(message.translationConfidence, null);
+    assert.equal(message.showOriginalAlongside, true);
+    assert.equal(message.displayBody, TRANSLATED);
+    assert.equal(message.originalBody, ORIGINAL);
   });
 
   it("THE POINT: without 2991 the trip chat still shows the translation, with the original alongside", async () => {

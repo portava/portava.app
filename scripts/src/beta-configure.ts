@@ -21,15 +21,16 @@
  *      CHAIN_START_PREFIX (the structure-only baseline never carries those rows,
  *      and the portava-ci reference snapshot lacks exactly these 128 — see
  *      preBaselineFlagDefinitions in beta-config-core.ts). If EVERY missing flag
- *      is such a flag, step b2 inserts exactly those rows from their migration
- *      definitions (ON CONFLICT DO NOTHING: no existing row is touched), STOPs
- *      ENGAGED and everything else OFF, then reads every row again and repeats
- *      this check on what the database now holds. One missing flag the chain
+ *      is such a flag, step b2 plans those rows from their migration definitions.
+ *      After Auth is closed and verified, step d inserts them (ON CONFLICT DO
+ *      NOTHING: no existing row is touched), STOPs ENGAGED and everything else
+ *      OFF, then reads every row again and repeats this check. One missing flag the chain
  *      seeds refuses the whole step with nothing written.
  *      --dry-run prints the rows b2 would create and plans on top of them.
- *   c. auth — PATCH /config/auth, then GET and compare (exit 1 on any difference,
- *      before any flag is written).
- *   d. flags — one transaction sets every row and audits each flip.
+ *   c. auth — GET /config/auth before any write, then PATCH, GET and compare
+ *      (exit 1 on any difference, before any flag is written).
+ *   d. flags — create the planned pre-baseline rows and verify their presence,
+ *      then one transaction sets every row and audits each flip.
  *   e. read-back — every row equals its target, or exit 1.
  *   f. the profiles boundary (migrations 3740, PR #647, and 3742, PR #653) —
  *      READ-ONLY. Exit 1 while anon/authenticated hold TABLE-level SELECT/UPDATE
@@ -127,6 +128,7 @@ export async function runBetaConfigure(deps: ConfigureDeps): Promise<0 | 1 | 2> 
     log("── b · feature flags (read and plan; nothing written yet)");
     let before = parseFlagRows(await api.query(FLAG_STATE_SQL));
     let plan = planFlagApply(before, policy);
+    let repairs: ReturnType<typeof planPreBaselineFlagRepair>["create"] = [];
     if (plan.missing.length > 0) {
       // ── b2. pre-baseline rows: create them from their definitions, or refuse ──
       const repair = planPreBaselineFlagRepair(plan.missing, policy, deps.definitions ?? preBaselineFlagDefinitions());
@@ -138,24 +140,12 @@ export async function runBetaConfigure(deps: ConfigureDeps): Promise<0 | 1 | 2> 
             `Not creatable from a pre-baseline definition: ${repair.refused.map((r) => `${r.flag} (${r.why})`).join("; ")}.`,
         );
       }
-      log(`── b2 · ${repair.create.length} pre-baseline flag row(s) absent (the structure-only baseline carries no rows; created from their migration definitions, ON CONFLICT DO NOTHING)`);
-      for (const r of repair.create) log(`  ${r.flag} := ${r.enabled}${r.enabled ? " (STOP, engaged)" : ""} — defined at ${r.seededIn} (seeded ${r.seededValue})`);
-      if (dryRun) {
-        log(`  DRY RUN: would create ${repair.create.length} row(s); planning on top of them`);
-        before = [...before, ...repair.create.map((r) => ({ flag: r.flag, enabled: r.enabled }))].sort((a, b) => (a.flag < b.flag ? -1 : 1));
-      } else {
-        const created = parseFlagRows(await api.query(buildFlagRepairSql(repair.create)));
-        log(`  created ${created.length} row(s) in one statement; no existing row touched`);
-        before = parseFlagRows(await api.query(FLAG_STATE_SQL));
-      }
+      repairs = repair.create;
+      log(`── b2 · ${repairs.length} pre-baseline flag row(s) absent (planned from their migration definitions; no rows created yet)`);
+      for (const definition of repairs) log(`  ${definition.flag} := ${definition.enabled}${definition.enabled ? " (STOP, engaged)" : ""} — defined at ${definition.seededIn} (seeded ${definition.seededValue})`);
+      log(`  ${dryRun ? "DRY RUN: " : ""}would create ${repairs.length} row(s) after Auth is closed and verified; planning on top of them`);
+      before = [...before, ...repairs.map((definition) => ({ flag: definition.flag, enabled: definition.enabled }))].sort((left, right) => left.flag.localeCompare(right.flag));
       plan = planFlagApply(before, policy);
-      if (plan.missing.length > 0) {
-        return fail(
-          `${plan.missing.length} policy flag(s) are still not in public.feature_flags after the pre-baseline repair ` +
-            `(${plan.missing.join(", ")}). Only the repair's inserts were written (STOPs engaged, the rest OFF) — not Auth, ` +
-            "and no existing flag.",
-        );
-      }
     }
     if (plan.unknown.length > 0) {
       log(`::warning::${plan.unknown.length} flag(s) in the database are not in the policy and are forced OFF: ${plan.unknown.join(", ")}`);
@@ -164,8 +154,9 @@ export async function runBetaConfigure(deps: ConfigureDeps): Promise<0 | 1 | 2> 
 
     // ── c. auth ──────────────────────────────────────────────────────────────
     log("── c · auth config");
+    const currentAuth = await api.getAuthConfig();
     if (dryRun) {
-      const now = authConfigProblems(await api.getAuthConfig());
+      const now = authConfigProblems(currentAuth);
       log(now.length ? `  would change: ${now.join("; ")}` : "  already as required");
       const grant = profilesGrantProblems(await api.query(PROFILES_CLIENT_GRANT_SQL));
       log(grant.length ? `::warning::step f would FAIL — profiles boundary (3740 + 3742): ${grant.join("; ")}` : "  profiles boundary: as 3740 and 3742 leave it");
@@ -183,6 +174,19 @@ export async function runBetaConfigure(deps: ConfigureDeps): Promise<0 | 1 | 2> 
 
     // ── d. flags: apply ──────────────────────────────────────────────────────
     log("── d · feature flags (apply)");
+    if (repairs.length > 0) {
+      const created = parseFlagRows(await api.query(buildFlagRepairSql(repairs)));
+      log(`  created ${created.length} pre-baseline row(s) in one statement; no existing row touched`);
+      before = parseFlagRows(await api.query(FLAG_STATE_SQL));
+      plan = planFlagApply(before, policy);
+      if (plan.missing.length > 0) {
+        return fail(
+          `${plan.missing.length} policy flag(s) are still not in public.feature_flags after the pre-baseline repair ` +
+            `(${plan.missing.join(", ")}). Auth was closed and verified; only the repair's inserts were written ` +
+            "(STOPs engaged, the rest OFF), and no existing flag was changed.",
+        );
+      }
+    }
     const flipped = (await api.query(buildFlagApplySql(onFlags))).map((r) => String(r.flag));
     log(`  applied in one transaction; ${flipped.length} audited flip(s)`);
 

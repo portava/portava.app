@@ -237,9 +237,9 @@ export function certificationClient(
     let mode: "select" | "upsert" | "update" = "select";
     let payload: unknown = null;
     let conflictKeys: string[] = [];
-    let selected = false;
+    let selected = false; let countExact = false;
 
-    const run = async (): Promise<{ data: unknown; error: { code?: string; message?: string } | null }> => {
+    const run = async (): Promise<{ data: unknown; error: { code?: string; message?: string } | null; count?: number | null }> => {
       if (fail.has(table)) {
         return { data: null, error: { code: failCode, message: `${table} is unavailable in this scenario` } };
       }
@@ -268,11 +268,11 @@ export function certificationClient(
         for (const r of hit) Object.assign(r, payload as Record<string, unknown>);
         return { data: selected ? hit : null, error: null };
       }
-      return { data: rows.filter((r) => predicates.every((p) => p(r))), error: null };
+      const matched = rows.map((row, index) => table === "memory_items" ? { ...row, id: row.id ?? `fixture-item-${index}` } : row).filter((row) => predicates.every((predicate) => predicate(row))); return { data: matched, error: null, count: countExact ? matched.length : null };
     };
 
     const obj: QueryLike = {
-      select() { selected = true; return obj; },
+      select(_columns, options) { selected = true; countExact = options?.count === "exact"; return obj; },
       eq(column, value) { predicates.push((r) => r[column] === value); return obj; },
       neq(column, value) { predicates.push((r) => r[column] !== value); return obj; }, contains(column, values) { predicates.push((r) => Array.isArray(r[column]) && (values as readonly unknown[]).every((v) => (r[column] as unknown[]).includes(v))); return obj; },
       in(column, values) {

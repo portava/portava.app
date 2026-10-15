@@ -30,7 +30,7 @@ import { errorCopy } from '../lib/errorCopy.ts'; import { typedKindPreviewLabel 
 // Telegraph §21 — object-aware, authorization-scoped message search. A
 // different question from this screen's own thread filter; see the row that
 // opens it.
-import { TelegraphSearchScreen } from '../features/telegraph/components/TelegraphSearchScreen.tsx'; import { InboxHeaderActions } from '../features/telegraph/components/InboxHeaderActions.tsx'; import { InboxContextBands } from '../features/telegraph/inbox/InboxContextBands.tsx'; import { translatedPreviewText } from '../features/telegraph/inbox/translatedPreview.ts'; // §2.1 bands, §18.2 preview — share a line so no cited line moves
+import { TelegraphSearchScreen } from '../features/telegraph/components/TelegraphSearchScreen.tsx'; import { InboxHeaderActions } from '../features/telegraph/components/InboxHeaderActions.tsx'; import { InboxContextBands } from '../features/telegraph/inbox/InboxContextBands.tsx'; import { translatedPreviewLines } from '../features/telegraph/inbox/translatedPreview.ts'; // §2.1 bands, §18.2 preview — share a line so no cited line moves
 
 type FilterKey = 'all' | 'direct' | 'trips' | 'circles' | 'unread' | 'requests';
 
@@ -64,19 +64,26 @@ export function systemMessageInboxPreview(
   lmp: NonNullable<ThreadSummary['lastMessagePreview']>,
   isMine: boolean,
 ): string {
+  return systemMessageInboxPreviewLines(lmp, isMine).join(' · ');
+}
+
+function systemMessageInboxPreviewLines(
+  lmp: NonNullable<ThreadSummary['lastMessagePreview']>,
+  isMine: boolean,
+): string[] {
   // §6.2's typed kinds FIRST, keyed on msgType: their `subtype` is a discriminator WITHIN the kind and
   // COLLIDES with this table's keys — an ACTION proposing a meetup would otherwise read "Created a
   // meetup". Argument in features/telegraph/inbox/typedPreviewLabels.ts. Shared cards below store msgType 'system' with the card kind in `subtype`; a few older ones key off msgType instead.
-  const typed = typedKindPreviewLabel(lmp.msgType, lmp.subtype); if (typed) return isMine ? `You: ${typed}` : typed;
+  const typed = typedKindPreviewLabel(lmp.msgType, lmp.subtype); if (typed) return [isMine ? `You: ${typed}` : typed];
   const kind = lmp.msgType === 'booking_card' ? 'booking_card' : (lmp.subtype ?? lmp.msgType);
   if (kind === 'circle_status_card') {
-    return circleCardInboxPreview(lmp.body);
+    return [circleCardInboxPreview(lmp.body)];
   }
   const label = kind ? SYSTEM_MESSAGE_LABELS[kind] : undefined;
   if (label) {
-    return isMine ? `You: ${label}` : label;
+    return [isMine ? `You: ${label}` : label];
   }
-  return isMine ? lmp.body : translatedPreviewText(lmp); // §18.2 T242: a translation is marked, and an uncertain one keeps its original
+  return isMine ? [lmp.body] : translatedPreviewLines(lmp);
 }
 
 function timeAgo(iso: string): string {
@@ -187,7 +194,7 @@ function ThreadRow({ item, userId }: { item: ThreadSummary; userId: string | nul
 
   const lmp = item.lastMessagePreview;
   const isMine = lmp?.senderId === userId;
-  const previewText = lmp ? systemMessageInboxPreview(lmp, isMine) : '';
+  const previewLines = lmp ? systemMessageInboxPreviewLines(lmp, isMine) : [];
   const lastAt = lmp?.createdAt;
   const isMuted = !!item.mutedAt;
   const unread = item.unreadCount ?? 0;
@@ -255,7 +262,7 @@ function ThreadRow({ item, userId }: { item: ThreadSummary; userId: string | nul
           </View>
         ) : null}
 
-        {previewText ? (
+        {previewLines.some(Boolean) ? (
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
             {isAi && (
               <View style={s.aiBadge}>
@@ -263,12 +270,13 @@ function ThreadRow({ item, userId }: { item: ThreadSummary; userId: string | nul
                 <Text style={s.aiBadgeText}>AI</Text>
               </View>
             )}
-            <Text
-              style={[s.preview, unread > 0 && s.previewBold]}
-              numberOfLines={1}
-            >
-              {previewText}
-            </Text>
+            <View style={{ flex: 1 }}>
+              {previewLines.map((previewLine, index) => (
+                <Text key={index} style={[s.preview, { flex: 0 }, unread > 0 && s.previewBold]} numberOfLines={1}>
+                  {previewLine}
+                </Text>
+              ))}
+            </View>
           </View>
         ) : null}
 

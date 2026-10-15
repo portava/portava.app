@@ -10133,7 +10133,7 @@ an OFF flag. The lead re-verifies before any row moves.
   E1–E6 on CI's local-db job only (no PostgreSQL here; it skips locally) and by 3976's postconditions.
 - **R2 — a cached daily brief kept a place after a public→private flip.** The cache digest now covers which items
   the viewer may not see (`artifacts/api-server/src/routes/dailyBrief.ts:74#const withheld =`), and a digest that
-  cannot be computed never matches (`artifacts/api-server/src/routes/dailyBrief.ts:85#if (current === UNREAD_ACCESS_KEY) return false;`).
+  cannot be computed never matches (`artifacts/api-server/src/routes/dailyBrief.ts:87#if (current === UNREAD_ACCESS_KEY) return false;`).
   `tripPrivateAnchorReaders.test.ts` daily-brief 8 and 9, each mutation-proven.
 - **R4 — `POST /trips/:tripId/plan/reorder` had no Trust gate.** It now has §84's
   (`artifacts/api-server/src/routes/trips.ts:2494#if (!reorderAuth.allowed)`); door `plan-reorder-batch`.

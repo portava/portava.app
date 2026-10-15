@@ -160,3 +160,17 @@ describe('SearchSuggestionsPanel — a refusal is not an empty corpus', () => {
     expect(text).not.toContain(SEARCH_PARTIAL_NOTICE);
   });
 });
+
+describe('SearchSuggestionsPanel — G98 server-ranked People order', () => {
+  it.each([['dan', 'alice'], ['alice', 'dan']])('renders %s before %s without reordering', (first, second) => {
+    const items = [first, second].map((name) => ({
+      ...resultFixture(name, `Zork ${name}`), type: 'travelers',
+    }));
+    const tree = create(panel({ query: 'zork', groups: [{ type: 'travelers', label: 'People', items }] }));
+    const rendered = textOf(tree);
+    expect(rendered).toContain(`Zork ${first}`);
+    expect(rendered).toContain(`Zork ${second}`);
+    expect(rendered.indexOf(`Zork ${first}`)).toBeLessThan(rendered.indexOf(`Zork ${second}`));
+    act(() => { tree.unmount(); });
+  });
+});
