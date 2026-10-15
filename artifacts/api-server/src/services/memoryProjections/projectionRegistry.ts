@@ -887,13 +887,13 @@ function narrativeFields(): readonly string[] {
  * renderer, over the same facts, as GET /memories/:id/narrative, so the route and
  * the derivative cannot disagree. Owner-only by construction: any other viewer,
  * and a shared (viewer-less) build, gets nothing. Counts are the owner's own
- * view: every item (itemHiddenFrom never hides from the owner) and every APPROVED
- * tag, as a number.
+ * view: every item by its stored kind (itemHiddenFrom never hides from the owner)
+ * and every APPROVED tag, as a number.
  */
 function narrativeDerivativeRows(input: ProjectionInput): ProjectedRow[] {
   if ((input.scope.viewer_id ?? null) !== input.scope.owner_id) return [];
   return ownerVisible(input).map((m) => {
-    const n = renderDeterministicNarrative(m, { photos: mediaCount(input, m.id), people: approvedTagsFor(input, m.id).length });
+    const n = renderDeterministicNarrative(m, { items: input.items.filter((i) => i.memory_id === m.id && !itemHiddenFrom(input, i)), people: approvedTagsFor(input, m.id).length }); // NARR-PHOTOS: the item ROWS, so each is counted as what its media_type says
     return project({ ...m, ...n, memory_id: m.id }, narrativeFields());
   });
 }

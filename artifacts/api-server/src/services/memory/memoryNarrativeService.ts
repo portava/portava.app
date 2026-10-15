@@ -6,11 +6,13 @@
  * CENSUS: census-highlights-memories H14, H172, H265 (B58 cluster MEM-NARR-1).
  *
  * ── THE DETERMINISTIC SUMMARY (always available, the default) ───────────────
- * `loadOwnerNarrativeSource` reads ONE Memory for its OWNER: the row, how many
- * items it holds, how many tags were approved. Any failed read is `unreadable`
- * (the route answers 503) — a summary built over a failed count would say
- * "no photos" about a Memory full of them (§28.11). Someone else's Memory, a
- * missing one and a deleted one are the same `not_found`. Nothing is written.
+ * `loadOwnerNarrativeSource` reads ONE Memory for its OWNER: the row, the
+ * stored `media_type` of EVERY item it holds (so a video is counted as a video,
+ * never as a photo — lane NARR-PHOTOS), how many tags were approved. Any failed
+ * or partial read is `unreadable` (the route answers 503) — a summary built over
+ * a failed count would say "no photos" about a Memory full of them (§28.11).
+ * Someone else's Memory, a missing one and a deleted one are the same
+ * `not_found`. Nothing is written.
  *
  * ── THE OPTIONAL AI DRAFT — every gate fails closed, in this order ───────────
  *   1. FLAG `memory_narrative_ai_enabled` (3802, seeded FALSE): off or absent ⇒
@@ -50,11 +52,13 @@ import {
   aiSupportingFactIds,
   buildNarrativeAiMessages,
   checkAiNarrative,
+  countNarrativeItems,
   narrativeAiFacts,
   renderDeterministicNarrative,
   type AiNarrativeRejection,
   type MemoryNarrative,
   type NarrativeCounts,
+  type NarrativeItemRow,
   type NarrativeMemoryRow,
   type OriginalText,
 } from "./memoryNarrative.js";
@@ -86,6 +90,24 @@ function countOf(res: { count?: number | null; error?: { message?: unknown } | n
 }
 
 /**
+ * EVERY row of a read that asked for its exact count, or a refusal. A page cut
+ * short (PostgREST's row cap) would under-count, so fewer rows than the count is
+ * `unreadable`, never "that is all of them". (The app adds at most 10 items to a
+ * Memory, far under the cap; past it the summary refuses rather than miscount.)
+ */
+function everyRowOf(
+  res: { data?: unknown; count?: number | null; error?: { message?: unknown } | null } | null | undefined,
+  what: string,
+): { ok: true; rows: NarrativeItemRow[] } | { ok: false; detail: string } {
+  const counted = countOf(res, what);
+  if (!counted.ok) return counted;
+  const data = res!.data;
+  if (!Array.isArray(data)) return { ok: false, detail: `${what}: no rows returned` };
+  if (data.length !== counted.n) return { ok: false, detail: `${what}: ${data.length} of ${counted.n} rows read` };
+  return { ok: true, rows: data as NarrativeItemRow[] };
+}
+
+/**
  * ONE Memory, for its OWNER only. Three answers, never two: a Memory that could
  * not be READ is `unreadable`, not `not_found`.
  */
@@ -102,13 +124,14 @@ export async function loadOwnerNarrativeSource(sc: any, memoryId: string, ownerI
 
   const [tags, items] = await Promise.all([
     sc.from("memory_tags").select("memory_id", { count: "exact", head: true }).eq("memory_id", memoryId).eq("status", "approved"),
-    sc.from("memory_items").select("memory_id", { count: "exact", head: true }).eq("memory_id", memoryId),
+    // Each item's stored type, not a bare count: a video is not a photo.
+    sc.from("memory_items").select("media_type", { count: "exact" }).eq("memory_id", memoryId),
   ]);
   const people = countOf(tags, "memory_tags");
   if (!people.ok) return { state: "unreadable", detail: people.detail };
-  const photos = countOf(items, "memory_items");
-  if (!photos.ok) return { state: "unreadable", detail: photos.detail };
-  return { state: "ok", memory: row, counts: { photos: photos.n, people: people.n }, precisionGate };
+  const stored = everyRowOf(items, "memory_items");
+  if (!stored.ok) return { state: "unreadable", detail: stored.detail };
+  return { state: "ok", memory: row, counts: { items: stored.rows, people: people.n }, precisionGate };
 }
 
 /** The deterministic summary over a loaded source. Pure; the route's default. */
@@ -282,6 +305,8 @@ export type AiNarrativeOutcome =
 export async function draftAiNarrative(source: Extract<NarrativeSource, { state: "ok" }>): Promise<AiNarrativeOutcome> {
   const deterministic = renderDeterministicNarrative(source.memory, source.counts);
   const facts = narrativeAiFacts(source.memory, source.counts, source.precisionGate);
+  // What each item IS, for the check only: the model is sent the item count alone.
+  const items = countNarrativeItems(source.counts.items);
   let content = "";
   try {
     const completion: any = await getOpenAI().chat.completions.create(
@@ -297,7 +322,7 @@ export async function draftAiNarrative(source: Extract<NarrativeSource, { state:
   } catch (err) {
     return { accepted: false, fallback_reason: "model_unavailable", deterministic, detail: String((err as { message?: unknown })?.message ?? err) };
   }
-  const check = checkAiNarrative(content, facts);
+  const check = checkAiNarrative(content, facts, items);
   if (!check.ok) return { accepted: false, fallback_reason: check.reason, deterministic, detail: check.detail };
   return {
     accepted: true,
@@ -306,7 +331,7 @@ export async function draftAiNarrative(source: Extract<NarrativeSource, { state:
       memory_id: source.memory.id,
       renderer: NARRATIVE_AI_RENDERER,
       summary: check.summary,
-      supporting_fact_ids: aiSupportingFactIds(source.memory.id, facts),
+      supporting_fact_ids: aiSupportingFactIds(source.memory.id, facts, items),
       original_text: deterministic.original_text,
       original_language: deterministic.original_language,
       editable: true,

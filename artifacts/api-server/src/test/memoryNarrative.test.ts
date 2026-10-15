@@ -26,7 +26,7 @@
 import { describe, it, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
-import { readFileSync } from "node:fs";
+import { readFileSync } from "node:fs"; import { createHash } from "node:crypto"; // NARR-PHOTOS (§9 below): one line, this file is cited by line
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestOpenAI } from "../lib/openai.js";
@@ -40,11 +40,11 @@ import {
   NARRATIVE_RENDERER,
   NARRATIVE_SEPARATORS,
   aiPlaceText,
-  checkAiNarrative,
+  checkAiNarrative, MEMORY_NARRATIVE_AI_DISCLOSURE_TEXT, NARRATIVE_AI_SYSTEM_PROMPT, aiSupportingFactIds, countNarrativeItems, itemsText, narrativeItemKind, // NARR-PHOTOS: one line
   narrativeAiFacts,
   occurrenceDate,
   renderDeterministicNarrative,
-  type NarrativeAiFacts,
+  type NarrativeAiFacts, type NarrativeItemCounts, type NarrativeItemRow,
   type NarrativeMemoryRow,
 } from "../services/memory/memoryNarrative.js";
 import { NARRATIVE_AI_EXCLUDING_CONTROLS } from "../services/memory/memoryNarrativeService.js";
@@ -110,11 +110,11 @@ const VALID_CONSENT: Row = { user_id: OWNER, enabled: true, consent_version: MEM
 interface Fake { reads: string[]; writes: Array<{ table: string; op: string; values: unknown }> }
 
 /** A table-backed fake that resolves `{ data, error }` the way supabase-js does, and records every read and write. */
-function makeClient(store: Record<string, Row[]>, opts: { failReads?: string[]; absent?: string[]; failWrites?: string[] }, fake: Fake) {
+function makeClient(store: Record<string, Row[]>, opts: { failReads?: string[]; absent?: string[]; failWrites?: string[]; truncate?: Record<string, number> }, fake: Fake) {
   function chain(table: string) {
     const filters: Array<(r: Row) => boolean> = [];
     let columns: string[] | null = null;
-    let countHead = false;
+    let countHead = false; let wantCount = false;
     let single = false;
     let op = "select";
     let values: any = null;
@@ -123,7 +123,7 @@ function makeClient(store: Record<string, Row[]>, opts: { failReads?: string[]; 
       select(cols?: string, o?: { count?: string; head?: boolean }) {
         if (op === "select") {
           if (typeof cols === "string" && cols.trim() !== "*") columns = cols.split(",").map((c) => c.trim());
-          if (o?.count && o?.head) countHead = true;
+          if (o?.count && o?.head) countHead = true; else if (o?.count) wantCount = true;
         }
         return q;
       },
@@ -160,7 +160,7 @@ function makeClient(store: Record<string, Row[]>, opts: { failReads?: string[]; 
       if (countHead) return { data: null, count: rows.length, error: null };
       const project = (r: Row) => (columns ? Object.fromEntries(columns.filter((c) => c in r).map((c) => [c, r[c]])) : { ...r });
       if (single) return { data: rows[0] ? project(rows[0]) : null, error: null };
-      return { data: rows.map(project), error: null };
+      return { data: rows.map(project).slice(0, opts.truncate?.[table] ?? rows.length), count: wantCount ? rows.length : null, error: null };
     }
     return q;
   }
@@ -173,7 +173,7 @@ function makeClient(store: Record<string, Row[]>, opts: { failReads?: string[]; 
 interface ModelCall { params: any; opts: any }
 interface App { baseUrl: string; store: Record<string, Row[]>; fake: Fake; calls: ModelCall[]; close: () => Promise<void> }
 
-async function startApp(o: { mutate?: (s: Record<string, Row[]>) => void; failReads?: string[]; absent?: string[]; failWrites?: string[]; reply?: string | (() => Promise<string>) } = {}): Promise<App> {
+async function startApp(o: { mutate?: (s: Record<string, Row[]>) => void; failReads?: string[]; absent?: string[]; failWrites?: string[]; truncate?: Record<string, number>; reply?: string | (() => Promise<string>) } = {}): Promise<App> {
   const store = tables();
   o.mutate?.(store);
   const fake: Fake = { reads: [], writes: [] };
@@ -244,7 +244,7 @@ function assertClausesAreFacts(n: ReturnType<typeof renderDeterministicNarrative
 
 describe("H14: the deterministic summary states the owner's own facts and nothing else", () => {
   it("every clause names the facts it rests on; title and caption appear byte-identical; nothing is stored", () => {
-    const n = renderDeterministicNarrative(row(), { photos: 4, people: 2 });
+    const n = renderDeterministicNarrative(row(), { items: imageItems(4), people: 2 });
     assertClausesAreFacts(n);
     assert.equal(n.renderer, NARRATIVE_RENDERER);
     assert.ok(n.summary.includes(`“${TITLE}”`) && n.summary.includes(`“${CAPTION}”`), n.summary);
@@ -255,7 +255,7 @@ describe("H14: the deterministic summary states the owner's own facts and nothin
 
   it("H265: the owner's words keep their own script and are never trimmed inside, translated or guessed a language", () => {
     const padded = `  ${THAI_CAPTION}\n`;
-    const n = renderDeterministicNarrative(row({ title: null, caption: padded, location_lat: null, location_lng: null }), { photos: 0, people: 0 });
+    const n = renderDeterministicNarrative(row({ title: null, caption: padded, location_lat: null, location_lng: null }), { items: [], people: 0 });
     assertClausesAreFacts(n);
     assert.ok(n.summary.includes(`“${THAI_CAPTION}”`));
     assert.equal(n.original_text.caption, padded, "original_text is the stored value, byte for byte");
@@ -275,13 +275,13 @@ describe("H14: the deterministic summary states the owner's own facts and nothin
   });
 
   it("created_at is when the Memory was MADE: with no start time there is no date fact", () => {
-    const n = renderDeterministicNarrative(row({ starts_at: null }), { photos: 0, people: 0 });
+    const n = renderDeterministicNarrative(row({ starts_at: null }), { items: [], people: 0 });
     assert.ok(!n.facts.some((f) => f.kind === "occurred_on"));
     assert.ok(!/2025/.test(n.summary), n.summary);
   });
 
   it("a Memory with nothing to say says so, citing nothing", () => {
-    const n = renderDeterministicNarrative(row({ title: "  ", caption: null, starts_at: null, location_city: null, location_country: null }), { photos: 0, people: 0 });
+    const n = renderDeterministicNarrative(row({ title: "  ", caption: null, starts_at: null, location_city: null, location_country: null }), { items: [], people: 0 });
     assert.equal(n.summary, EMPTY_NARRATIVE_SUMMARY);
     assert.deepEqual([n.segments, n.supporting_fact_ids, n.facts], [[], [], []]);
   });
@@ -300,7 +300,7 @@ describe("H172: the AI facts are the owner's own, at the Memory's §10 rung, wit
   });
 
   it("no coordinate, no zero counts", () => {
-    const f = narrativeAiFacts(row(), { photos: 0, people: 0 }, "off");
+    const f = narrativeAiFacts(row(), { items: [], people: 0 }, "off");
     assert.deepEqual(f, { title: TITLE, caption: CAPTION, date: "13 March 2025", place: "Da Nang, Vietnam", photos: null, people: null });
   });
 });
@@ -429,10 +429,10 @@ const FAITHFUL: Array<[string, NarrativeAiFacts]> = [
 ];
 
 describe("§1 / §28.16: an AI draft is an ALLOWLIST over the facts it was sent", () => {
-  const verdict = (t: string, facts: NarrativeAiFacts = F_FACTS) => { const c = checkAiNarrative(t, facts); return c.ok ? "ok" : `${c.reason}: ${c.detail}`; };
+  const verdict = (t: string, facts: NarrativeAiFacts = F_FACTS) => { const c = checkAiNarrative(t, facts, photosOnly(facts)); return c.ok ? "ok" : `${c.reason}: ${c.detail}`; };
 
   it(`every one of the ${INVENTING.length} inventing drafts (the verifier's battery) is refused`, () => {
-    const accepted = INVENTING.filter(([t, facts]) => checkAiNarrative(t, facts).ok).map(([t]) => t);
+    const accepted = INVENTING.filter(([t, facts]) => checkAiNarrative(t, facts, photosOnly(facts)).ok).map(([t]) => t);
     assert.deepEqual(accepted, [], "these state something the facts do not hold");
   });
 
@@ -577,21 +577,21 @@ describe("the verifier's second battery: binding holes closed, the residual name
   const of = (kind: B2Kind) => BATTERY_2.filter((r) => r[3] === kind);
   it("has all 61 drafts", () => assert.equal(BATTERY_2.length, 61));
   it("every draft that states something false is refused", () => {
-    const accepted = of("REFUSE").filter(([, t, facts]) => checkAiNarrative(t, facts).ok).map(([n]) => n);
+    const accepted = of("REFUSE").filter(([, t, facts]) => checkAiNarrative(t, facts, photosOnly(facts)).ok).map(([n]) => n);
     assert.deepEqual(accepted, []);
   });
   it("every faithful draft is accepted", () => {
-    for (const [n, t, facts] of of("ACCEPT")) { const c = checkAiNarrative(t, facts); assert.ok(c.ok, `${n}: ${c.ok ? "" : c.detail}`); }
+    for (const [n, t, facts] of of("ACCEPT")) { const c = checkAiNarrative(t, facts, photosOnly(facts)); assert.ok(c.ok, `${n}: ${c.ok ? "" : c.detail}`); }
   });
   it("Q-NARR-7's residual — relations and order between true facts — is accepted, exactly these four", () => {
-    assert.deepEqual(of("RESIDUAL").filter(([, t, facts]) => checkAiNarrative(t, facts).ok).map(([n]) => n.split(" ")[0]), ["N8", "N9", "N11", "N12"]);
+    assert.deepEqual(of("RESIDUAL").filter(([, t, facts]) => checkAiNarrative(t, facts, photosOnly(facts)).ok).map(([n]) => n.split(" ")[0]), ["N8", "N9", "N11", "N12"]);
   });
   it("Q-NARR-7's other residual — a homonym of a place word — is accepted; the month's homonyms are not", () => {
-    assert.equal(checkAiNarrative("A bath in Bath, England in May 2025.", B2_F_MAY).ok, true, "'bath' is the place's own word");
-    assert.equal(checkAiNarrative("A bath in Bath, England in May.", B2_F_MAY).ok, false, "'May' alone is not the date");
+    assert.equal(checkAiNarrative("A bath in Bath, England in May 2025.", B2_F_MAY, photosOnly(B2_F_MAY)).ok, true, "'bath' is the place's own word");
+    assert.equal(checkAiNarrative("A bath in Bath, England in May.", B2_F_MAY, photosOnly(B2_F_MAY)).ok, false, "'May' alone is not the date");
   });
   it("verbs outside the allowlist are refused by design (the template is served)", () => {
-    for (const [n, t, facts] of of("OVER_REFUSED")) assert.equal(checkAiNarrative(t, facts).ok, false, n);
+    for (const [n, t, facts] of of("OVER_REFUSED")) assert.equal(checkAiNarrative(t, facts, photosOnly(facts)).ok, false, n);
   });
 });
 
@@ -606,7 +606,7 @@ describe("H172: NarrativeDerivative is the same deterministic summary, owner-onl
     const r = await deriveProjection(client(), "NarrativeDerivative", { owner_id: OWNER, viewer_id: OWNER });
     assert.ok(r.ok, JSON.stringify(r));
     const mem = r.value.rows.find((x) => x.memory_id === MEM)!;
-    const expected = renderDeterministicNarrative(memory(MEM, {}) as any, { photos: 4, people: 2 });
+    const expected = renderDeterministicNarrative(memory(MEM, {}) as any, { items: imageItems(4), people: 2 });
     assert.equal(mem.summary, expected.summary);
     assert.deepEqual(mem.supporting_fact_ids, expected.supporting_fact_ids);
     assert.deepEqual(Object.keys(mem).sort(), [...def.field_whitelist].sort());
@@ -927,5 +927,241 @@ describe("migration 3802: one purpose, one table, service_role only, the flag OF
   it("the rollback refuses while the flag is on or anyone has chosen", () => {
     assert.match(rollback, /ROLLBACK REFUSED \(3802\): memory_narrative_ai_enabled is TRUE/);
     assert.match(rollback, /ROLLBACK REFUSED \(3802\): memory_narrative_ai_consent holds recorded choices/);
+  });
+});
+
+// ── 9. NARR-PHOTOS: a Memory's items are counted as what they are ─────────────
+//
+// census-highlights-memories §BX (lane NARR-PHOTOS; found by MEM-NARR-2). PR #720
+// counted every `memory_items` row and called each one a photo — "4 photos" about
+// 3 photos and a video — in the deterministic summary, in §18's derivative, in
+// the disclosure ("how many photos"), and in any AI draft that said the item
+// count (sent as `photos`) as photos, which the check accepted.
+
+/** n items stored the way the app stores a picked image. */
+function imageItems(n: number): NarrativeItemRow[] {
+  return Array.from({ length: n }, () => ({ media_type: "image/jpeg" }));
+}
+/** The #720 batteries describe its fixture, whose items are all images: their item count is all photos. */
+function photosOnly(f: NarrativeAiFacts): NarrativeItemCounts {
+  return { photos: f.photos ?? 0, videos: 0, other: 0 };
+}
+const typed = (...mediaTypes: unknown[]): NarrativeItemRow[] => mediaTypes.map((media_type) => ({ media_type }));
+/** The fixture's 4 items become 3 photos and 1 video (as app/memory/[id].tsx stores a picked video). */
+const MIXED = (s: Record<string, Row[]>) => { s.memory_items![3]!.media_type = "video/mp4"; };
+const MIXED_SUMMARY = "“Sunset walk”, 13 March 2025, in Da Nang, Vietnam. 3 photos and 1 video, with 2 people. You wrote: “Best bánh mì of the trip.”";
+
+describe("NARR-PHOTOS: what an item is comes from its stored media_type, and nothing is guessed", () => {
+  const KINDS: Array<[unknown, "photo" | "video" | "other"]> = [
+    ["image/jpeg", "photo"], ["image/heic", "photo"], ["IMAGE/PNG", "photo"], ["  image/webp ", "photo"], ["image", "photo"],
+    ["image/svg+xml", "photo"], ["video/mp4", "video"], ["video/quicktime", "video"], ["Video/MP4; codecs=avc1", "video"], ["video", "video"],
+    ["audio/mpeg", "other"], ["application/pdf", "other"], ["imagery/x", "other"], ["videos/mp4", "other"], ["image/", "other"],
+    ["image/jpeg/x", "other"], ["photo", "other"], ["", "other"], [null, "other"], [undefined, "other"], [42, "other"],
+  ];
+  for (const [mediaType, kind] of KINDS) {
+    it(`${JSON.stringify(mediaType) ?? "undefined"} is ${kind}`, () => assert.equal(narrativeItemKind(mediaType), kind));
+  }
+
+  it("counts every row once, by kind", () => {
+    assert.deepEqual(countNarrativeItems(typed("image/jpeg", "video/mp4", "image", "audio/mpeg", null, "video")), { photos: 2, videos: 2, other: 2 });
+    assert.deepEqual(countNarrativeItems([]), { photos: 0, videos: 0, other: 0 });
+  });
+
+  const PHRASES: Array<[NarrativeItemCounts, string]> = [
+    [{ photos: 3, videos: 1, other: 0 }, "3 photos and 1 video"],
+    [{ photos: 0, videos: 1, other: 0 }, "1 video"],
+    [{ photos: 0, videos: 2, other: 0 }, "2 videos"],
+    [{ photos: 1, videos: 0, other: 0 }, "1 photo"],
+    [{ photos: 4, videos: 0, other: 0 }, "4 photos"],
+    [{ photos: 1, videos: 2, other: 0 }, "1 photo and 2 videos"],
+    [{ photos: 2, videos: 1, other: 1 }, "2 photos, 1 video and 1 other item"],
+    [{ photos: 1, videos: 0, other: 2 }, "1 photo and 2 other items"],
+    [{ photos: 0, videos: 0, other: 1 }, "1 item"],
+    [{ photos: 0, videos: 0, other: 3 }, "3 items"],
+    [{ photos: 0, videos: 0, other: 0 }, ""],
+  ];
+  for (const [c, phrase] of PHRASES) {
+    it(`${JSON.stringify(c)} is said "${phrase}"`, () => assert.equal(itemsText(c), phrase));
+  }
+});
+
+describe("NARR-PHOTOS: the deterministic summary names each kind as stored", () => {
+  it("3 photos and a video are '3 photos and 1 video' — every clause a fact, never '4 photos'", () => {
+    const n = renderDeterministicNarrative(row(), { items: typed("image/jpeg", "image/jpeg", "image/heic", "video/mp4"), people: 2 });
+    assertClausesAreFacts(n);
+    assert.equal(n.summary, MIXED_SUMMARY);
+    assert.ok(!n.summary.includes("4 photos"), n.summary);
+    const byKind = Object.fromEntries(n.facts.map((f) => [f.kind, f.text]));
+    assert.deepEqual([byKind.photo_count, byKind.video_count, byKind.other_item_count], ["3", "1", undefined]);
+    const clause = n.segments.find((s) => s.text === "3 photos and 1 video")!;
+    assert.deepEqual(clause.fact_ids, [`${MEM}:photo_count`, `${MEM}:video_count`], "the clause names both facts it states");
+  });
+
+  it("a word for a kind appears only when an item of that kind is stored", () => {
+    const cases: Array<[NarrativeItemRow[], string]> = [
+      [typed("video/mp4"), "1 video"],
+      [typed("video/mp4", "video/quicktime"), "2 videos"],
+      [typed("audio/mpeg"), "1 item"],
+      [typed("image/png", "application/pdf", "video/mp4"), "1 photo, 1 video and 1 other item"],
+    ];
+    for (const [items, phrase] of cases) {
+      const n = renderDeterministicNarrative(row({ caption: null }), { items, people: 0 });
+      assertClausesAreFacts(n);
+      assert.ok(n.summary.includes(`. ${phrase}.`), `${n.summary} (expected ${phrase})`);
+      const c = countNarrativeItems(items);
+      assert.equal(/\bphotos?\b/.test(n.summary), c.photos > 0, n.summary);
+      assert.equal(/\bvideos?\b/.test(n.summary), c.videos > 0, n.summary);
+    }
+  });
+
+  it("the renderer and builder versions moved with the output", () => {
+    assert.equal(NARRATIVE_RENDERER, "deterministic@2");
+  });
+});
+
+describe("NARR-PHOTOS: the route and §18's derivative read each item's type", () => {
+  it("GET: a Memory of 3 photos and a video is summarized as exactly that", async () => {
+    app = await startApp({ mutate: MIXED });
+    const r = await call(app, "GET", `/api/memories/${MEM}/narrative`, OWNER);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.narrative.summary, MIXED_SUMMARY);
+    assertClausesAreFacts(r.body.narrative);
+    assert.deepEqual(app.fake.writes, []);
+  });
+
+  it("the derivative says the same as the route, for the owner", async () => {
+    const store = tables();
+    MIXED(store);
+    const r = await deriveProjection(makeClient(store, {}, { reads: [], writes: [] }) as any, "NarrativeDerivative", { owner_id: OWNER, viewer_id: OWNER });
+    assert.ok(r.ok, JSON.stringify(r));
+    assert.equal(r.value.rows.find((x) => x.memory_id === MEM)!.summary, MIXED_SUMMARY);
+  });
+
+  it("a read of the items cut short (fewer rows than their count) is 503 — never a summary that under-counts", async () => {
+    app = await startApp({ truncate: { memory_items: 2 } });
+    const r = await call(app, "GET", `/api/memories/${MEM}/narrative`, OWNER);
+    assert.deepEqual([r.status, r.body.error], [503, "degraded_unavailable"]);
+    await app.close();
+    app = await startApp({ mutate: open, truncate: { memory_items: 3 } });
+    assert.equal((await call(app, "POST", `/api/memories/${MEM}/narrative/ai`, OWNER)).status, 503);
+    assert.equal(app.calls.length, 0, "nothing is sent over a partial read");
+  });
+});
+
+describe("NARR-PHOTOS: the AI draft — the item count is sent as one number, and its noun must be true of every item", () => {
+  const MIXED_KINDS: NarrativeItemCounts = { photos: 3, videos: 1, other: 0 };
+  const verdict = (t: string, f: NarrativeAiFacts, items: NarrativeItemCounts) => { const c = checkAiNarrative(t, f, items); return c.ok ? "ok" : `${c.reason}: ${c.detail}`; };
+
+  it("what is sent is unchanged in shape: the same six keys, `photos` the number of every item", async () => {
+    app = await startApp({ mutate: (s) => { open(s); MIXED(s); }, reply: "A sunset walk." });
+    const r = await call(app, "POST", `/api/memories/${MEM}/narrative/ai`, OWNER);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    const sent = JSON.parse(String(app.calls[0]!.params.messages[1].content).replace(/^Facts \(JSON\):\n/, ""));
+    assert.deepEqual(Object.keys(sent).sort(), ["caption", "date", "people", "photos", "place", "title"]);
+    assert.equal(sent.photos, 4, "3 photos and 1 video, as ONE number");
+    assert.ok(!JSON.stringify(app.calls[0]!.params.messages).includes("video/mp4"), "what kind each item is, is not sent");
+    assert.deepEqual(Object.keys(narrativeAiFacts(row(), { items: typed("video/mp4"), people: 0 }, "off")), ["title", "caption", "date", "place", "photos", "people"]);
+  });
+
+  it("'4 photos' about 3 photos and a video is refused, and the summary that says it right is served", async () => {
+    app = await startApp({ mutate: (s) => { open(s); MIXED(s); } }); // the stub's default draft says "with 2 people and 4 photos"
+    const r = await call(app, "POST", `/api/memories/${MEM}/narrative/ai`, OWNER);
+    assert.equal(r.status, 200);
+    assert.deepEqual([r.body.accepted, r.body.fallback_reason], [false, "unsupported_fact"]);
+    assert.equal(r.body.narrative.summary, MIXED_SUMMARY);
+  });
+
+  it("'4 items' about 3 photos and a video is accepted, resting on both item facts", async () => {
+    app = await startApp({ mutate: (s) => { open(s); MIXED(s); }, reply: "A sunset walk in Da Nang, Vietnam on 13 March 2025, with 2 people and 4 items." });
+    const r = await call(app, "POST", `/api/memories/${MEM}/narrative/ai`, OWNER);
+    assert.equal(r.body.accepted, true, JSON.stringify(r.body));
+    assert.deepEqual(r.body.narrative.supporting_fact_ids, [`${MEM}:title`, `${MEM}:occurred_on`, `${MEM}:place`, `${MEM}:photo_count`, `${MEM}:video_count`, `${MEM}:people_count`, `${MEM}:caption`]);
+    assert.match(r.body.narrative.renderer, /^ai:gpt-5-mini@2$/);
+  });
+
+  // ONE fault per draft; the facts are F_FACTS (photos: 4) unless named.
+  const KIND_TABLE: Array<[string, NarrativeItemCounts, string, NarrativeAiFacts?]> = [
+    ["A sunset walk with 4 photos.", MIXED_KINDS, "unsupported_fact: kind: 4 photos"],
+    ["A sunset walk with 4 pictures.", MIXED_KINDS, "unsupported_fact: kind: 4 pictures"],
+    ["A sunset walk with 4 videos.", MIXED_KINDS, "unsupported_fact: kind: 4 videos"],
+    ["A sunset walk with four photos.", MIXED_KINDS, "unsupported_fact: kind: four photos"],
+    ["A sunset walk with photos.", MIXED_KINDS, "unsupported_fact: kind: photos"],
+    ["A sunset walk with 4 items.", MIXED_KINDS, "ok"],
+    ["A sunset walk with four items.", MIXED_KINDS, "ok"],
+    ["A sunset walk with items.", MIXED_KINDS, "ok"],
+    ["A sunset walk with 3 photos and 1 video.", MIXED_KINDS, "unsupported_fact: count: 3 photos"],
+    ["A sunset walk with 5 items.", MIXED_KINDS, "unsupported_fact: count: 5 items"],
+    ["4 items and 4 items.", MIXED_KINDS, "unsupported_fact: repeated: 4 items"],
+    ["4 items and 4 photos.", { photos: 4, videos: 0, other: 0 }, "unsupported_fact: repeated: 4 photos"],
+    ["A sunset walk with 4 photos.", { photos: 4, videos: 0, other: 0 }, "ok"],
+    ["A sunset walk with 4 videos.", { photos: 4, videos: 0, other: 0 }, "unsupported_fact: kind: 4 videos"],
+    ["A sunset walk with 4 photos.", { photos: 3, videos: 0, other: 0 }, "unsupported_fact: kind: 4 photos"], // kinds that do not count the number sent speak for nothing
+    ["2 videos in Da Nang, Vietnam.", { photos: 0, videos: 2, other: 0 }, "ok", { ...F_FACTS, photos: 2 }],
+    ["2 photos in Da Nang, Vietnam.", { photos: 0, videos: 2, other: 0 }, "unsupported_fact: kind: 2 photos", { ...F_FACTS, photos: 2 }],
+    ["A video from Da Nang, Vietnam.", { photos: 0, videos: 1, other: 0 }, "ok", { ...F_FACTS, photos: 1 }],
+    ["A photo from Da Nang, Vietnam.", { photos: 0, videos: 1, other: 0 }, "unsupported_fact: kind: photo", { ...F_FACTS, photos: 1 }],
+    ["A video from Da Nang, Vietnam.", { photos: 0, videos: 2, other: 0 }, "unsupported_fact: count: video", { ...F_FACTS, photos: 2 }],
+    ["2 items in Da Nang, Vietnam.", { photos: 0, videos: 0, other: 2 }, "ok", { ...F_FACTS, photos: 2 }],
+    ["2 photos in Da Nang, Vietnam.", { photos: 0, videos: 0, other: 2 }, "unsupported_fact: kind: 2 photos", { ...F_FACTS, photos: 2 }],
+    ["2 videos in Da Nang, Vietnam.", { photos: 0, videos: 0, other: 2 }, "unsupported_fact: kind: 2 videos", { ...F_FACTS, photos: 2 }],
+    ["A video in Da Nang, Vietnam.", { photos: 0, videos: 0, other: 0 }, "unsupported_fact: word: video", { ...F_FACTS, photos: null }],
+    ["The 13th video in Da Nang, Vietnam.", MIXED_KINDS, "unsupported_fact: number: 13th"],
+  ];
+  for (const [draft, items, expected, facts] of KIND_TABLE) {
+    it(`${JSON.stringify(items)} — "${draft}" ⇒ ${expected}`, () => assert.equal(verdict(draft, facts ?? F_FACTS, items), expected));
+  }
+
+  it("the model is told the count is photos AND videos, to be said as items", () => {
+    assert.match(NARRATIVE_AI_SYSTEM_PROMPT, /"photos" is how many photos AND videos the Memory holds, counted together: write it as items \("4 items", "1 item"\), never as photos or videos/);
+    assert.ok(!NARRATIVE_AI_SYSTEM_PROMPT.includes("\"4 photos\""), "the prompt no longer models a count of items as photos");
+  });
+
+  it("aiSupportingFactIds cites the kinds the count rests on, and only when the count was sent", () => {
+    assert.deepEqual(aiSupportingFactIds(MEM, { ...F_FACTS, title: null, caption: null, date: null, place: null, people: null }, MIXED_KINDS), [`${MEM}:photo_count`, `${MEM}:video_count`]);
+    assert.deepEqual(aiSupportingFactIds(MEM, { ...F_FACTS, title: null, caption: null, date: null, place: null, people: null, photos: null }, MIXED_KINDS), []);
+  });
+});
+
+describe("NARR-PHOTOS: the disclosure says what is sent, and a grant to the old words does not cover the new ones", () => {
+  // sha256 of each disclosure text ever served. Changing the words without a new
+  // version fails here — #720's rule: a grant is consent to the words it was given under.
+  const SERVED: Readonly<Record<string, string>> = {
+    memory_narrative_ai_v1: "e01b1b5c0a2a5fdd6886498dac1a36a6f845283561ff7037b0a6df098595aedd",
+    memory_narrative_ai_v2: "9f03d4ea9813b84f07ee6a7c15bc6284ccb0afeaf9cd677d6ab4b29be893ffb1",
+  };
+  const V1 = "memory_narrative_ai_v1";
+
+  it("v2 says the items are sent as ONE number of photos and videos, and never 'how many photos'", () => {
+    assert.equal(MEMORY_NARRATIVE_AI_DISCLOSURE_VERSION, "memory_narrative_ai_v2");
+    assert.equal(createHash("sha256").update(MEMORY_NARRATIVE_AI_DISCLOSURE_TEXT, "utf8").digest("hex"), SERVED[MEMORY_NARRATIVE_AI_DISCLOSURE_VERSION], "the words changed: give them a new version");
+    assert.notEqual(SERVED[V1], SERVED[MEMORY_NARRATIVE_AI_DISCLOSURE_VERSION]);
+    assert.match(MEMORY_NARRATIVE_AI_DISCLOSURE_TEXT, /how many items it holds \(its photos and videos, counted together as one number\)/);
+    assert.match(MEMORY_NARRATIVE_AI_DISCLOSURE_TEXT, /the captions on photos and videos, and anything someone else wrote are never sent/);
+    assert.ok(!/how many photos/.test(MEMORY_NARRATIVE_AI_DISCLOSURE_TEXT));
+  });
+
+  it("a grant recorded under v1 is no grant: the draft is refused, the offer asks again, and the model is never called", async () => {
+    const v1Grant = (s: Record<string, Row[]>) => { s.feature_flags.push(AI_ON); s.memory_narrative_ai_consent.push({ ...VALID_CONSENT, consent_version: V1 }); };
+    app = await startApp({ mutate: v1Grant });
+    const post = await call(app, "POST", `/api/memories/${MEM}/narrative/ai`, OWNER);
+    assert.deepEqual([post.status, post.body.reason], [403, "consent_required"]);
+    const offer = await call(app, "GET", `/api/memories/${MEM}/narrative`, OWNER);
+    assert.deepEqual(offer.body.ai, { available: false, reason: "consent_required" });
+    const consent = await call(app, "GET", "/api/me/memory-narrative-ai-consent", OWNER);
+    assert.deepEqual([consent.body.enabled, consent.body.consentVersion, consent.body.currentDisclosureVersion, consent.body.disclosureText],
+      [false, V1, MEMORY_NARRATIVE_AI_DISCLOSURE_VERSION, MEMORY_NARRATIVE_AI_DISCLOSURE_TEXT]);
+    assert.equal(app.calls.length, 0);
+  });
+
+  it("re-granting names the version displayed: v1 is a 409 that writes nothing; v2 is stamped v2 and the draft runs", async () => {
+    app = await startApp({ mutate: (s) => { s.feature_flags.push(AI_ON); s.memory_narrative_ai_consent.push({ ...VALID_CONSENT, consent_version: V1 }); } });
+    const stale = await call(app, "PUT", "/api/me/memory-narrative-ai-consent", OWNER, { enabled: true, disclosureVersion: V1 });
+    assert.equal(stale.status, 409);
+    assert.deepEqual(app.fake.writes, []);
+    const fresh = await call(app, "PUT", "/api/me/memory-narrative-ai-consent", OWNER, { enabled: true, disclosureVersion: MEMORY_NARRATIVE_AI_DISCLOSURE_VERSION });
+    assert.deepEqual([fresh.status, fresh.body.enabled, fresh.body.consentVersion], [200, true, MEMORY_NARRATIVE_AI_DISCLOSURE_VERSION]);
+    assert.equal(app.store.memory_narrative_ai_consent!.find((r) => r.user_id === OWNER)!.consent_version, MEMORY_NARRATIVE_AI_DISCLOSURE_VERSION);
+    assert.equal((await call(app, "POST", `/api/memories/${MEM}/narrative/ai`, OWNER)).status, 200);
+    assert.equal(app.calls.length, 1);
   });
 });

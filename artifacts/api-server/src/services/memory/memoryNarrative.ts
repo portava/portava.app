@@ -33,7 +33,11 @@
  *                           `created_at` is when the Memory was MADE, not when it
  *                           happened, so it is never used as the date;
  *   place                 — the stored city and country;
- *   photo_count           — how many items the Memory holds;
+ *   photo_count, video_count, other_item_count
+ *                         — how many of its items are photos, videos, or
+ *                           neither, as each item's stored `media_type` says
+ *                           (`narrativeItemKind`; never guessed — an item whose
+ *                           type says neither is only ever called an "item");
  *   people_count          — how many people the owner tagged AND who approved.
  * Never: a venue name (the catalog's name is the CURRENT one, possibly renamed
  * since — H71 — and MEM-CANON's occurrence-time name, 3804, is behind its own
@@ -53,13 +57,18 @@ import { publicationPrecision } from "../../lib/memoryLocationPrecision.js";
 
 // ── Names ─────────────────────────────────────────────────────────────────────
 
-/** The deterministic renderer. Bump it when the template's output changes. */
-export const NARRATIVE_RENDERER = "deterministic@1";
-/** §18 NarrativeDerivative's builder version (projectionRegistry.ts). */
-export const NARRATIVE_BUILDER_VERSION = "narrative@1";
+/**
+ * The deterministic renderer. Bump it when the template's output changes.
+ * @2 (lane NARR-PHOTOS): items are counted by what they are ("3 photos and 1
+ * video"); @1 called every item a photo.
+ */
+export const NARRATIVE_RENDERER = "deterministic@2";
+/** §18 NarrativeDerivative's builder version (projectionRegistry.ts). @2: the @2 renderer. */
+export const NARRATIVE_BUILDER_VERSION = "narrative@2";
 /** The existing model (lib/openai.ts, as aiWriting.ts and Compass use it). No new provider. */
 export const NARRATIVE_AI_MODEL = "gpt-5-mini";
-export const NARRATIVE_AI_RENDERER = `ai:${NARRATIVE_AI_MODEL}@1`;
+/** @2: the prompt says the item count as "items", and the check binds item nouns to the items' kinds. */
+export const NARRATIVE_AI_RENDERER = `ai:${NARRATIVE_AI_MODEL}@2`;
 /** Seeded FALSE by migration 3802. */
 export const MEMORY_NARRATIVE_AI_FLAG = "memory_narrative_ai_enabled";
 /** No language is stored for a Memory; BCP 47 "undetermined". Never guessed. */
@@ -71,21 +80,28 @@ export const ORIGINAL_LANGUAGE_UNDETERMINED = "und";
  *
  * ENGINEERING DRAFT (open owner question Q-NARR-6). It needs LEGAL REVIEW before
  * memory_narrative_ai_enabled is turned on; changing the words means a new
- * version, so every earlier grant stops being valid for the new text. (Revised
- * in fix round 1 of PR #720 — "as stored", not "at the location setting you
- * chose", which is untrue while the §10 gate is off — while still v1: no
- * database holds 3802, so nobody has granted against any text.)
+ * version, so every earlier grant stops being valid for the new text
+ * (`narrativeAiConsentValid` accepts only a grant stamped with THIS version).
+ *   v1 — PR #720. (Revised in its fix round 1 — "as stored", not "at the
+ *        location setting you chose", which is untrue while the §10 gate is off
+ *        — while still v1: no database held 3802, so nobody had granted.)
+ *   v2 — lane NARR-PHOTOS. v1 said "how many photos": the number sent counts
+ *        every item, videos too. v2 says what is sent — the number of items,
+ *        photos and videos together, as ONE number — and that the captions on
+ *        videos, like those on photos, are never sent. A v1 grant does not cover
+ *        these words: the owner is asked again.
  */
-export const MEMORY_NARRATIVE_AI_DISCLOSURE_VERSION = "memory_narrative_ai_v1";
+export const MEMORY_NARRATIVE_AI_DISCLOSURE_VERSION = "memory_narrative_ai_v2";
 export const MEMORY_NARRATIVE_AI_DISCLOSURE_TEXT =
   "Optional AI summaries. When you ask for one, Portava sends a few facts about that one Memory to an AI " +
   "service (OpenAI, through our hosting provider's AI integration) to draft a short summary: your title and " +
   "caption exactly as you wrote them, the date, the city and country as stored with the Memory (less, or " +
-  "none, if you set its location to show less), and " +
-  "how many photos and tagged people it has. Map coordinates, the names of people you tagged, photo captions " +
-  "and anything someone else wrote are never sent. Memories you set to not resurface, to keep private forever, " +
-  "or to not personalize are never sent. The draft is checked against those facts, shown only to you, and " +
-  "not saved by Portava unless you choose to use it. You can turn this off at any time.";
+  "none, if you set its location to show less), how many tagged people it has, and how many items it holds " +
+  "(its photos and videos, counted together as one number). Map coordinates, the names of people you tagged, " +
+  "the captions on photos and videos, and anything someone else wrote are never sent. Memories you set to not " +
+  "resurface, to keep private forever, or to not personalize are never sent. The draft is checked against " +
+  "those facts, shown only to you, and not saved by Portava unless you choose to use it. You can turn this " +
+  "off at any time.";
 
 // ── Inputs ────────────────────────────────────────────────────────────────────
 
@@ -104,16 +120,76 @@ export interface NarrativeMemoryRow {
   location_precision?: unknown;
 }
 
+/** One stored `memory_items` row as a narrative reads it: its `media_type`, nothing else. */
+export interface NarrativeItemRow {
+  media_type?: unknown;
+}
+
 export interface NarrativeCounts {
-  /** Items on the Memory (the owner's own view: every item). */
-  photos: number;
+  /**
+   * EVERY item on the Memory (the owner's own view), as stored — the rows, not
+   * a number, so what each item IS is decided in one place
+   * (`countNarrativeItems`) and never assumed by a caller.
+   */
+  items: readonly NarrativeItemRow[];
   /** Tags the owner made that the tagged person APPROVED. A count; never who. */
   people: number;
 }
 
+// ── Items, by what they are (lane NARR-PHOTOS) ────────────────────────────────
+
+/**
+ * What a stored item IS, as far as its `media_type` says — and no further. The
+ * column is free text (baseline: `text DEFAULT 'image/jpeg'`; POST
+ * /memories/:id/items accepts any 1–100 characters). The app writes the
+ * picker's MIME type ("image/heic", "video/mp4": app/memory/new.tsx,
+ * app/memory/[id].tsx), and the seed scripts the bare words "image" / "video".
+ * A MIME type's top-level type is case-insensitive and may carry parameters
+ * ("video/mp4; codecs=avc1"). An image is what the app calls a photo. Anything
+ * else — another top-level type, a blank, a typo, "imagery/x" — is `other`:
+ * counted, and only ever called an "item". Nothing here guesses.
+ */
+export type NarrativeItemKind = "photo" | "video" | "other";
+
+const IMAGE_OR_VIDEO_TYPE = /^(image|video)(?:\/[a-z0-9][a-z0-9!#$&^_.+-]*)?(?:\s*;.*)?$/;
+
+export function narrativeItemKind(mediaType: unknown): NarrativeItemKind {
+  if (typeof mediaType !== "string") return "other";
+  const m = IMAGE_OR_VIDEO_TYPE.exec(mediaType.trim().toLowerCase());
+  if (m === null) return "other";
+  return m[1] === "image" ? "photo" : "video";
+}
+
+export interface NarrativeItemCounts {
+  photos: number;
+  videos: number;
+  /** Items whose stored type says neither: counted, never named a photo or a video. */
+  other: number;
+}
+
+export function countNarrativeItems(items: readonly NarrativeItemRow[]): NarrativeItemCounts {
+  const c: NarrativeItemCounts = { photos: 0, videos: 0, other: 0 };
+  for (const item of items) {
+    const kind = narrativeItemKind(item?.media_type);
+    if (kind === "photo") c.photos += 1;
+    else if (kind === "video") c.videos += 1;
+    else c.other += 1;
+  }
+  return c;
+}
+
 // ── Facts ─────────────────────────────────────────────────────────────────────
 
-export type NarrativeFactKind = "title" | "occurred_on" | "place" | "photo_count" | "people_count" | "caption";
+export type NarrativeFactKind =
+  | "title" | "occurred_on" | "place" | "photo_count" | "video_count" | "other_item_count" | "people_count" | "caption";
+
+/** The item facts, in the order a summary names them. */
+const ITEM_FACT_KINDS = ["photo_count", "video_count", "other_item_count"] as const;
+
+/** The item facts a Memory has: one per kind it holds at least one of. */
+function itemFactKinds(c: NarrativeItemCounts): Array<(typeof ITEM_FACT_KINDS)[number]> {
+  return ITEM_FACT_KINDS.filter((k) => (k === "photo_count" ? c.photos : k === "video_count" ? c.videos : c.other) > 0);
+}
 
 export interface NarrativeFact {
   /** `${memory_id}:${kind}` — stable across renders of the same Memory. */
@@ -203,7 +279,10 @@ export function collectNarrativeFacts(m: NarrativeMemoryRow, counts: NarrativeCo
   if (date) out.push({ fact_id: factId(m.id, "occurred_on"), kind: "occurred_on", text: date.text });
   const place = placeText(m);
   if (place) out.push({ fact_id: factId(m.id, "place"), kind: "place", text: place });
-  if (counts.photos > 0) out.push({ fact_id: factId(m.id, "photo_count"), kind: "photo_count", text: String(counts.photos) });
+  const items = countNarrativeItems(counts.items);
+  if (items.photos > 0) out.push({ fact_id: factId(m.id, "photo_count"), kind: "photo_count", text: String(items.photos) });
+  if (items.videos > 0) out.push({ fact_id: factId(m.id, "video_count"), kind: "video_count", text: String(items.videos) });
+  if (items.other > 0) out.push({ fact_id: factId(m.id, "other_item_count"), kind: "other_item_count", text: String(items.other) });
   if (counts.people > 0) out.push({ fact_id: factId(m.id, "people_count"), kind: "people_count", text: String(counts.people) });
   const caption = present(m.caption);
   if (caption) out.push({ fact_id: factId(m.id, "caption"), kind: "caption", text: caption.trim() });
@@ -250,6 +329,19 @@ function plural(n: number, one: string, many: string): string {
 }
 
 /**
+ * The items, each kind named only as its items' stored type says: "4 photos",
+ * "1 video", "3 photos and 1 video", "2 photos, 1 video and 1 other item",
+ * "2 items" (a type that says neither). Empty when there are no items.
+ */
+export function itemsText(c: NarrativeItemCounts): string {
+  const parts: string[] = [];
+  if (c.photos > 0) parts.push(plural(c.photos, "photo", "photos"));
+  if (c.videos > 0) parts.push(plural(c.videos, "video", "videos"));
+  if (c.other > 0) parts.push(parts.length > 0 ? plural(c.other, "other item", "other items") : plural(c.other, "item", "items"));
+  return parts.length <= 1 ? (parts[0] ?? "") : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
+}
+
+/**
  * The template. Every clause is a segment naming the facts it states, worded
  * as the fact plus the template's own fixed words ("A Memory from", "in",
  * "with", "You wrote:"); the text between clauses is one of
@@ -272,10 +364,11 @@ export function renderDeterministicNarrative(m: NarrativeMemoryRow, counts: Narr
   if (first.length > 0) segs.push(first);
 
   const second: { text: string; fact_ids: string[] }[] = [];
-  const photos = by.get("photo_count");
+  // One clause for the items, naming every item fact it states ("3 photos and 1 video").
+  const itemFacts = ITEM_FACT_KINDS.flatMap((k) => by.get(k) ?? []);
   const people = by.get("people_count");
-  if (photos) second.push({ text: plural(counts.photos, "photo", "photos"), fact_ids: [photos.fact_id] });
-  if (people) second.push({ text: `${photos ? "with" : "With"} ${plural(counts.people, "person", "people")}`, fact_ids: [people.fact_id] });
+  if (itemFacts.length > 0) second.push({ text: itemsText(countNarrativeItems(counts.items)), fact_ids: itemFacts.map((f) => f.fact_id) });
+  if (people) second.push({ text: `${itemFacts.length > 0 ? "with" : "With"} ${plural(counts.people, "person", "people")}`, fact_ids: [people.fact_id] });
   if (second.length > 0) segs.push(second);
 
   // The owner's caption closes the summary in their own words, with their own
@@ -315,12 +408,17 @@ export function renderDeterministicNarrative(m: NarrativeMemoryRow, counts: Narr
  * it than the owner sees: the place at the Memory's §10 publication rung (the
  * model is not the owner), never a coordinate, never a name of a tagged person,
  * never a count of zero (nothing to say is said by omission).
+ *
+ * `photos` keeps its PR #720 name (the app's disclosure list is pinned to these
+ * keys) but is the number of ITEMS — photos and videos counted together, as ONE
+ * number, exactly as the disclosure says. What kind each item is, is not sent.
  */
 export interface NarrativeAiFacts {
   title: string | null;
   caption: string | null;
   date: string | null;
   place: string | null;
+  /** How many items the Memory holds — photos and videos together — as ONE number. Not "how many photos". */
   photos: number | null;
   people: number | null;
 }
@@ -347,18 +445,18 @@ export function narrativeAiFacts(m: NarrativeMemoryRow, counts: NarrativeCounts,
     caption: present(m.caption)?.trim() ?? null,
     date: occurrenceDate(m)?.text ?? null,
     place: aiPlaceText(m, gate),
-    photos: counts.photos > 0 ? counts.photos : null,
+    photos: counts.items.length > 0 ? counts.items.length : null,
     people: counts.people > 0 ? counts.people : null,
   };
 }
 
-/** The fact ids an AI draft rests on: exactly the facts it was sent. */
-export function aiSupportingFactIds(memoryId: string, f: NarrativeAiFacts): string[] {
+/** The fact ids an AI draft rests on: exactly the facts it was sent (the item count rests on every item fact). */
+export function aiSupportingFactIds(memoryId: string, f: NarrativeAiFacts, items: NarrativeItemCounts): string[] {
   const ids: string[] = [];
   if (f.title !== null) ids.push(factId(memoryId, "title"));
   if (f.date !== null) ids.push(factId(memoryId, "occurred_on"));
   if (f.place !== null) ids.push(factId(memoryId, "place"));
-  if (f.photos !== null) ids.push(factId(memoryId, "photo_count"));
+  if (f.photos !== null) for (const k of itemFactKinds(items)) ids.push(factId(memoryId, k));
   if (f.people !== null) ids.push(factId(memoryId, "people_count"));
   if (f.caption !== null) ids.push(factId(memoryId, "caption"));
   return ids;
@@ -367,7 +465,9 @@ export function aiSupportingFactIds(memoryId: string, f: NarrativeAiFacts): stri
 export const NARRATIVE_AI_SYSTEM_PROMPT =
   "You draft a one-sentence summary of one travel Memory for the person who owns it, in English, at most 40 " +
   "words, using ONLY the facts in the user message. Use the title exactly as written, and the place, the date " +
-  "and the counts exactly as given (\"2 people\", \"4 photos\"); join them only with simple words such as a, " +
+  "and the counts exactly as given. \"people\" is a number of people (\"2 people\", \"1 person\"). \"photos\" is " +
+  "how many photos AND videos the Memory holds, counted together: write it as items (\"4 items\", \"1 item\"), " +
+  "never as photos or videos. Join the facts only with simple words such as a, " +
   "the, in, on, at, from, with, and. Add no other word: no person, name, pronoun, place, venue, time, food, " +
   "activity, weather, season, feeling or outcome. Do not quote, paraphrase or translate the caption. No " +
   "quotation marks, emoji, hashtags, @-mentions or links. Reply with the summary text only.";
@@ -435,12 +535,35 @@ const ATTRIBUTING_WORDS: Readonly<Record<string, ReadonlySet<OwnerTextKind>>> = 
 });
 type OwnerTextKind = "title" | "caption";
 
-/** Nouns a count binds to, accepted only when that count is one of the facts. */
-const PHOTO_NOUNS: ReadonlySet<string> = new Set(["photo", "photos", "picture", "pictures", "item", "items"]);
+/**
+ * Nouns a count binds to, accepted only when that count is one of the facts.
+ * The `photos` fact is the number of ITEMS, photos and videos together, so a
+ * noun for it must also be TRUE of every item it counts (`itemNounFits`):
+ * "item(s)" always is; "photo(s)"/"picture(s)" only when every item is a photo,
+ * and "video(s)" only when every item is a video — as the STORED items say.
+ */
+const ITEM_NOUNS: ReadonlySet<string> = new Set(["item", "items"]);
+const PHOTO_ONLY_NOUNS: ReadonlySet<string> = new Set(["photo", "photos", "picture", "pictures"]);
+const VIDEO_ONLY_NOUNS: ReadonlySet<string> = new Set(["video", "videos"]);
+const isItemNoun = (t: string): boolean => ITEM_NOUNS.has(t) || PHOTO_ONLY_NOUNS.has(t) || VIDEO_ONLY_NOUNS.has(t);
 const PEOPLE_NOUNS: ReadonlySet<string> = new Set(["person", "people"]);
 /** A singular count noun with no number before it asserts a count of ONE ("a person"). */
-const SINGULAR_COUNT_NOUNS: ReadonlySet<string> = new Set(["photo", "picture", "item", "person"]);
-const isCountNoun = (t: string): boolean => PHOTO_NOUNS.has(t) || PEOPLE_NOUNS.has(t);
+const SINGULAR_COUNT_NOUNS: ReadonlySet<string> = new Set(["photo", "picture", "video", "item", "person"]);
+const isCountNoun = (t: string): boolean => isItemNoun(t) || PEOPLE_NOUNS.has(t);
+
+/**
+ * Is `noun` true of EVERY item the `photos` fact counts? "item(s)": yes.
+ * "photo(s)"/"picture(s)": only when every stored item is a photo; "video(s)":
+ * only when every one is a video. The kinds speak for the number only when they
+ * count exactly the number sent; otherwise only "item(s)" is accepted.
+ */
+function itemNounFits(noun: string, f: NarrativeAiFacts, items: NarrativeItemCounts): boolean {
+  if (ITEM_NOUNS.has(noun)) return true;
+  if (f.photos === null || items.photos + items.videos + items.other !== f.photos) return false;
+  if (PHOTO_ONLY_NOUNS.has(noun)) return items.photos === f.photos;
+  if (VIDEO_ONLY_NOUNS.has(noun)) return items.videos === f.photos;
+  return false;
+}
 
 /** Characters a draft may contain besides letters, marks, ASCII digits and whitespace. Everything else (emoji, symbols, @ # / & %, other digits) is refused. */
 const ALLOWED_PUNCTUATION = new Set([".", ",", ";", ":", "!", "?", "(", ")", "-", "–", "—", "…", "'", "’", "‘", "\"", "“", "”", "«", "»", "„", "「", "」", "『", "』"]);
@@ -510,16 +633,20 @@ function countValue(token: string): number | null {
  *      so the owner's words cannot be re-cut ("Not the best night" never yields
  *      "the best night").
  *   4. Numbers: every number is bound by the grammar of the facts — a digit or
- *      number word immediately before "photos"/"people" (or their singulars)
- *      must equal that count, and each count is stated once ("4 photos and 4
- *      photos" is refused); a day must be the date's day next to its month, or
- *      "the 13th" when nothing counted follows ("the 13th person", "the 13th of
- *      the people" are refused); a year must be the date's year. Any other
- *      number, number word or ordinal is refused.
+ *      number word immediately before "items"/"photos"/"videos"/"people" (or
+ *      their singulars) must equal that count, and each count is stated once
+ *      ("4 items and 4 photos" is refused); a day must be the date's day next
+ *      to its month, or "the 13th" when nothing counted follows ("the 13th
+ *      person", "the 13th of the people" are refused); a year must be the
+ *      date's year. Any other number, number word or ordinal is refused.
  *   5. Counts without a number: a singular count noun ("a person", "a photo")
  *      says ONE and is accepted only when that count is 1; a plural ("photos")
  *      says more than one and needs a count of at least 2; neither is accepted
  *      when that count is not a fact.
+ *   4b/5b. The noun of the item count must be true of every item it counts
+ *      (`items`, the STORED kinds — never sent): "item(s)" always; "photo(s)" /
+ *      "picture(s)" only when every item is a photo; "video(s)" only when every
+ *      item is a video. "4 photos" about 3 photos and a video is refused.
  *   6. The date's month only inside the date (next to its day or year, or "the
  *      13th of March"): alone, "march" or "may" is a homonym the facts do not
  *      state.
@@ -544,7 +671,7 @@ function countValue(token: string): number | null {
  * Every word is true; what they assert together is the model's. Refused drafts
  * cost the owner nothing: the caller serves the template.
  */
-export function checkAiNarrative(raw: string, f: NarrativeAiFacts): AiNarrativeCheck {
+export function checkAiNarrative(raw: string, f: NarrativeAiFacts, items: NarrativeItemCounts): AiNarrativeCheck {
   let text = String(raw ?? "").normalize("NFC").trim();
   const wrapped = /^[“"]([^“”"]*)[”"]$/u.exec(text);
   if (wrapped) text = wrapped[1]!.trim();
@@ -610,9 +737,11 @@ export function checkAiNarrative(raw: string, f: NarrativeAiFacts): AiNarrativeC
     const word = NUMBER_WORDS[token];
     const count = countValue(token);
     if (count !== null && isCountNoun(next)) {
-      const kind = PHOTO_NOUNS.has(next) ? "photos" : "people";
-      const fact = kind === "photos" ? f.photos : f.people;
+      const kind = isItemNoun(next) ? "items" : "people";
+      const fact = kind === "items" ? f.photos : f.people;
       if (fact === null || count !== fact) return { ok: false, reason: "unsupported_fact", detail: `count: ${token} ${next}` };
+      // "4 photos" about 3 photos and a video: the number is right, the noun is not.
+      if (kind === "items" && !itemNounFits(next, f, items)) return { ok: false, reason: "unsupported_fact", detail: `kind: ${token} ${next}` };
       // Each count is stated once: "4 photos and 4 photos" reads as more than the facts hold.
       if (countedKinds.has(kind)) return { ok: false, reason: "unsupported_fact", detail: `repeated: ${token} ${next}` };
       countedKinds.add(kind);
@@ -637,12 +766,13 @@ export function checkAiNarrative(raw: string, f: NarrativeAiFacts): AiNarrativeC
       return { ok: false, reason: "unsupported_fact", detail: `word: ${token}` };
     }
     if (isCountNoun(key)) {
-      const fact = PHOTO_NOUNS.has(key) ? f.photos : f.people;
+      const fact = isItemNoun(key) ? f.photos : f.people;
       if (fact === null) return { ok: false, reason: "unsupported_fact", detail: `word: ${token}` };
       // After a bound number it was checked above. Without one, a singular says ONE and a plural says MORE THAN ONE.
       if (countValue(prev) === null && (SINGULAR_COUNT_NOUNS.has(key) ? fact !== 1 : fact < 2)) {
         return { ok: false, reason: "unsupported_fact", detail: `count: ${token}` };
       }
+      if (isItemNoun(key) && !itemNounFits(key, f, items)) return { ok: false, reason: "unsupported_fact", detail: `kind: ${token}` };
       continue;
     }
     const attributes = ATTRIBUTING_WORDS[key];
