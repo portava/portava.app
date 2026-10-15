@@ -1525,6 +1525,13 @@
       "evidence": []
     },
     {
+      "flag": "layover_crew_location_sharing_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3787_layover_crew_location_grants.sql:247, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
+      "evidence": []
+    },
+    {
       "flag": "layover_crowd_reports_enabled",
       "kind": "CAPABILITY",
       "enabled": true,

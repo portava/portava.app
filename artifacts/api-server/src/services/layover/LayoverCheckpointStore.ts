@@ -202,11 +202,11 @@ export async function readTravellerCheckpoints(
     .gt("expires_at", new Date(nowMs).toISOString())
     .order("observed_at", { ascending: false })
     .limit(50);
-  if (error) {
+  if (error || !Array.isArray(data)) { // a malformed resolved answer is unreadable, never "no checkpoints" (V-734; census-layover L166/L203's re-entry terminator reads this)
     logger.warn({ err: error, sessionId }, "layover checkpoints unreadable — refusing rather than reporting none");
     return { ok: false, reason: "read_failed" };
   }
-  return { ok: true, checkpoints: ((data ?? []) as Record<string, unknown>[]).map(toCheckpoint) };
+  return { ok: true, checkpoints: (data as Record<string, unknown>[]).map(toCheckpoint) };
 }
 
 // ── census L43 — RETURNING → AIRPORT_REENTERED: landside discovery stops ─────

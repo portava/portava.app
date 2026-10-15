@@ -87,7 +87,7 @@ export const ERASED_BY_CASCADE: readonly string[] = [
   "layover_return_plans",
   "layover_checkpoints",
   "layover_outcomes",
-  "layover_certified_computations", "layover_event_pseudonymisation_dead_letters", // 3622 (PR-R-L163a): session id, failure text and times; erased with its session (ON DELETE CASCADE)
+  "layover_certified_computations", "layover_event_pseudonymisation_dead_letters", "layover_crew_location_grants", // 3622 (PR-R-L163a): session id, failure text and times; erased with its session (ON DELETE CASCADE). 3787 (B58 LAY-C1, census-layover L166/L203): a crew location grant names its granter's session_id REFERENCES layover_sessions ON DELETE CASCADE (and crew_id CASCADE), so delete_layover_sessions takes it; granted_by_user_id -> profiles never fires (tombstone)
   // IG-02 intel tables. Registered here in the SAME change that creates them:
   // a new user-keyed table gets a deletion fate on day one, which is the whole
   // point of this manifest. Their append-only triggers permit DELETE only inside
@@ -1008,7 +1008,7 @@ export const POST_BASELINE_TABLES: readonly string[] = [
   "layover_return_plans",
   "layover_checkpoints",
   "layover_outcomes",
-  "layover_certified_computations", "layover_event_pseudonymisation_dead_letters", // 3622 (PR-R-L163a): session id, failure text and times; erased with its session (ON DELETE CASCADE)
+  "layover_certified_computations", "layover_event_pseudonymisation_dead_letters", "layover_crew_location_grants", // 3622 (PR-R-L163a): session id, failure text and times; erased with its session (ON DELETE CASCADE). 3787 (B58 LAY-C1, census-layover L166/L203): a crew location grant names its granter's session_id REFERENCES layover_sessions ON DELETE CASCADE (and crew_id CASCADE), so delete_layover_sessions takes it; granted_by_user_id -> profiles never fires (tombstone)
 ];
 
 /** Columns that make a table user-keyed for the purposes of this manifest. */

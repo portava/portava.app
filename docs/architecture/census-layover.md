@@ -11175,3 +11175,274 @@ the sweep. None of these needed a fix:
 | L217 | N | N | The stored-row replay reads 2700/2992, unapplied in production, and only while persistence is ON (H24). |
 
 Headline unchanged by this section: **C=85 W=155 N=56 X=0** over 296 on main after §72 (#717, L216 N → W) (`check:census-integrity`).
+
+## §78 — 2026-10-14 (B58 lane LAY-C1; lead ruling LR-B58-1; owner questions OQ-1 and OQ-2 at their fail-closed defaults): the precise crew-sharing control and its grant store are built, ported from PR #569, behind a flag seeded OFF. NO ROW MOVES
+
+*Section number: `main` has up to §73 (#722, merged; #723's §73 renumbers). In flight: §75 (#728), §76 (LAY-5,
+#730) and §77 (LAY-R). This section takes §78 and renumbers if any of those land differently. Built on branch
+`claude/b58-lay-c1` from `origin/main` `02b18aed8`. Migration 3787 is written and applied to NO database. Nothing was
+written to any database.*
+
+L166 is spec:554, *"Precise crew sharing: separate explicit control, off by default"*. L203 is spec:612, *"Crew
+membership/location rows require membership and explicit permission"*. The body grades both N: L166 "No precise
+sharing exists to control"; L203 first "No crew tables", corrected by §28.2 and §48.3 to "the membership half is
+enforced in application code; the location half has no grant store".
+
+### §78.1 What was true on `02b18aed8`
+
+- **The ladder existed and had no row source.** `evaluateCrewLocationShare`
+  (`artifacts/api-server/src/services/airport/LayoverCrewService.ts:376#export function evaluateCrewLocationShare(`) and
+  `locationPrecisionFor` (`artifacts/api-server/src/services/airport/LayoverCrewService.ts:421#export function locationPrecisionFor(input: {`)
+  ran only in tests. No grant store existed, so no caller could have passed anything but `grant: null`.
+- **No control existed.** The only sharing switch on the layover surface is the city-level `share_city_status`
+  (`artifacts/api-server/src/migrations/0127_layover_system.sql:82#share_city_status`), a different and coarser thing.
+- **PR #569** (OPEN, another session's, stale since 2026-10-03) carries a grant store as migration 3516, a store
+  module, grant/revoke handlers inside `routes/airport.ts`, and a client control. Lead ruling LR-B58-1: port its grant
+  half by content into the layover band on a fresh branch, re-verified; do not touch #569.
+
+### §78.2 What changed
+
+**Storage — migration 3787** (`artifacts/api-server/src/migrations/3787_layover_crew_location_grants.sql:177#CREATE TABLE IF NOT EXISTS public.layover_crew_location_grants (`).
+#569's table ported by content: who said yes, to which crew, from which session, from when, until when, and whether
+they revoked. It holds permission and no coordinate. `expires_at` is NOT NULL with no default, and two CHECKs (a
+positive window; revocation not before the grant). The newest-grant index is not partial, so a revocation is read and
+never skipped. RLS is on, every client privilege is revoked
+(`artifacts/api-server/src/migrations/3787_layover_crew_location_grants.sql:222#REVOKE ALL ON public.layover_crew_location_grants FROM PUBLIC, anon, authenticated;`),
+and there are four RESTRICTIVE client denials. Postconditions run after `COMMIT` as catalog assertions. New against
+#569: `public.` on the CREATE, a postcondition for no client table grant (PUBLIC included), and the flag
+`layover_crew_location_sharing_enabled` seeded FALSE
+(`artifacts/api-server/src/migrations/3787_layover_crew_location_grants.sql:248#layover_crew_location_sharing_enabled`).
+The rollback refuses while the flag is TRUE and reports the consent rows it drops. Registered: ERASED_BY_CASCADE
+(the session cascade) and POST_BASELINE, the `checkProductionDrift.ts` unapplied entry, the authorization contract
+(no client grant, the four denials), `beta-flag-policy.json` OFF through its sync tool, and `check:client-privilege-boundary`
+rule 7's server-only registry (after merging #726), so a later client GRANT on the table fails CI statically.
+
+**The store** (`artifacts/api-server/src/services/layover/LayoverCrewLocationGrantStore.ts:182#export async function newestGrantsForCrew(`).
+- The newest grant per member, read whatever its revocation state, now carrying its session.
+- A failed read is `{ ok: false }`, never an empty map.
+- An unreadable NEWEST row still supersedes older rows
+  (`artifacts/api-server/src/services/layover/LayoverCrewLocationGrantStore.ts:217#First-wins still applies: an unreadable NEWEST row must not let an`).
+- L203's membership half, at the write: a live membership of THIS crew, read before any write
+  (`artifacts/api-server/src/services/layover/LayoverCrewLocationGrantStore.ts:338#if (!mem) return { ok: false, reason: "not_a_member" };`),
+  from the SAME session the traveller is in the crew with
+  (`artifacts/api-server/src/services/layover/LayoverCrewLocationGrantStore.ts:340#return { ok: false, reason: "session_not_in_crew" };`).
+- A double tap is one grant. At most `MAX_GRANTS_PER_MEMBER` rows per member per crew
+  (`artifacts/api-server/src/services/layover/LayoverCrewLocationGrantStore.ts:73#export const MAX_GRANTS_PER_MEMBER = GRANT_READ_LIMIT / 12;`):
+  the read limit shared by the largest crew, so the crew read can never cut a member's newest grant.
+- The window is OQ-2's default, with no invented ceiling: `min(crew expiry, the granter's certified hard return)`
+  (`artifacts/api-server/src/services/layover/LayoverCrewLocationGrantStore.ts:271#export function boundedGrantWindow(input: {`).
+- Revocation revokes every unrevoked row, for one crew or for all crews
+  (`artifacts/api-server/src/services/layover/LayoverCrewLocationGrantStore.ts:393#export async function revokeCrewLocation(`).
+  An absent store (42P01 / PGRST205) has nothing to revoke.
+
+**The decision** (`artifacts/api-server/src/services/layover/LayoverCrewLocationShare.ts:146#export function memberShareState(`).
+- The ladder's §14.1 terminators come first:
+  - crew dissolved: a crew that is not `open` ends the share NOW
+    (`artifacts/api-server/src/services/layover/LayoverCrewLocationShare.ts:129#if (f.crew.status !== "open") signals.crewDissolvedAtMs = nowMs;`);
+  - airport re-entry: the first `AIRPORT_REENTRY` at or after the grant, from 2992's checkpoints
+    (`artifacts/api-server/src/services/layover/LayoverCrewLocationShare.ts:179#export function reentryAfter(`);
+  - boarding; session expired (a session that is not live ends it NOW); revoked; the grant's TTL.
+- Then the fail-closed conditions:
+  - not a current member; a grant from another session;
+  - a grant from before the current membership began, so sharing never restarts on a rejoin or a restore
+    (`artifacts/api-server/src/services/layover/LayoverCrewLocationShare.ts:162#if (f.held.grant.grantedAtMs < joinedMs) return ended("granted_before_membership");`);
+  - the session unreadable;
+  - re-entry unverifiable, because 2992 is absent, its persistence flag is off, or the read failed
+    (`artifacts/api-server/src/services/layover/LayoverCrewLocationShare.ts:164#if (!f.reentry.ok) return ended("reentry_unverifiable");`);
+  - uncertified, or the CURRENT certified hard return has passed;
+  - the sharing gate closed: paused, off, ghost mode, or unreadable
+    (`artifacts/api-server/src/services/layover/LayoverCrewLocationShare.ts:167#if (!f.sharingAllowed) return ended("sharing_gate_closed");`).
+- `crewOwnLocationShare` is `yourShare`
+  (`artifacts/api-server/src/services/layover/LayoverCrewLocationShare.ts:260#export async function crewOwnLocationShare(`).
+  With the flag OFF it reads nothing.
+- `preciseCrewLocationVisible` is OQ-1's default
+  (`artifacts/api-server/src/services/layover/LayoverCrewLocationShare.ts:369#export async function preciseCrewLocationVisible(`):
+  - both people current members of the same open crew;
+  - no block in either direction; a failed, THROWN or malformed block read is not shared (fix round 1, §78.10)
+    (`artifacts/api-server/src/services/layover/LayoverCrewLocationShare.ts:393#if (blocked === null) return no("blocks_unreadable");`);
+  - a mutual follow in D-103's shape
+    (`artifacts/api-server/src/services/layover/LayoverCrewLocationShare.ts:398#if (!mutual) return no("not_mutual");`);
+  - a live grant from the target;
+  - and the ladder's own `precise` as the last word
+    (`artifacts/api-server/src/services/layover/LayoverCrewLocationShare.ts:407#const ladder = locationPrecisionFor({`).
+  - Nothing calls it in production yet. Its consumer is the position read LAY-C2 adds.
+
+**The routes**: a new router (`artifacts/api-server/src/routes/layoverCrewLocation.ts:98#router.post("/airport/sessions/:id/crew/location-grant"`),
+mounted on the same line as its neighbours in `routes/index.ts`.
+- POST is refused while the flag is OFF
+  (`artifacts/api-server/src/routes/layoverCrewLocation.ts:104#if (!(await isFlagEnabled(sc, "layover_crew_location_sharing_enabled"))) {`).
+- It then requires:
+  - a live layover;
+  - the crew's own session (`artifacts/api-server/src/routes/layoverCrewLocation.ts:125#if (membership.sessionId !== session.id) {`);
+  - the sharing gate (`artifacts/api-server/src/routes/layoverCrewLocation.ts:131#const gate = await evaluateSharingGate(sc, { userId, tripId: session.tripId });`);
+  - verifiable re-entry (`artifacts/api-server/src/routes/layoverCrewLocation.ts:137#const checkpoints = await readTravellerCheckpoints(sc, session.id, nowMs);`).
+- It bounds the window with the crew feature's one certification wrapper.
+- DELETE (`artifacts/api-server/src/routes/layoverCrewLocation.ts:183#router.delete("/airport/sessions/:id/crew/location-grant"`)
+  is never gated, because a revocation can only reduce what is shared. A revocation that failed is reported as
+  possibly still on.
+- Both answer with GET /crew's own payload.
+
+**`yourShare` on the crew payload.** Line-neutral in `routes/airport.ts`
+(`artifacts/api-server/src/routes/airport.ts:3108#const share = await crewOwnLocationShare(`,
+`artifacts/api-server/src/routes/airport.ts:3150#yourShare: share.yourShare`).
+- An unreadable store answers `yourShare: null` with `location_grants_unreadable`
+  (`artifacts/api-server/src/routes/airport.ts:3152#degradedReasons: [...cards.degradedReasons, ...share.degradedReasons],`),
+  never "not sharing".
+- No crewmate's rung is published (§78.3 item 1).
+
+**Leave and disband revoke.** `artifacts/api-server/src/services/layover/LayoverCrewStore.ts:574#const revoked = await revokeCrewLocation(`
+and `artifacts/api-server/src/services/layover/LayoverCrewStore.ts:591#const revokedAll = await revokeCrewLocationGrantsForCrew(`.
+Neither ever blocks the leave.
+
+**The control** (`travel-buddy-standalone/src/components/layover/LayoverCrewLocationShareControl.tsx:61#export function LayoverCrewLocationShareControl(`),
+rendered in the crew card (`travel-buddy-standalone/src/components/layover/LayoverCrewSection.tsx:222#<LayoverCrewLocationShareControl`).
+- It is separate from `share_city_status`.
+- It renders NOTHING when the server says the feature is off, or does not send the field
+  (`travel-buddy-standalone/src/components/layover/LayoverCrewLocationShareControl.tsx:63#if (view.kind === 'hidden') return null;`).
+- It grants only on a press, and it shows the server's verdict, end time and reason.
+- `null` is UNKNOWN, with Stop as the only action. It derives no time.
+
+### §78.3 Re-verification of #569 — what the port changed, and why
+
+1. **#569's `locationRungs` printed EVERY member's user id.** That includes a crewmate across a block and one with
+   sharing paused, which would undo §48's identity gate on the crew card. It is not ported. The audience decision
+   exists (§78.2) and publishes nothing until there is a position to attach it to.
+2. **The grant's session was the URL's, unchecked.** A traveller with two layovers could bound a grant by the wrong
+   hard return, so the grant must now come from the session they are in the crew with.
+3. **An unreadable newest row was dropped**, which let an OLDER, superseded grant stand in for it. It now
+   supersedes.
+4. **Dissolution and session expiry were derived from `updated_at`**, which #569's own comment called fragile in the
+   unsafe (late) direction. A non-open crew or a non-live session now ends the share NOW.
+5. **No revocation on leave or disband, and no membership check at read time.** A grant from someone who had left
+   was in ladder terms still a grant. Now leave and disband revoke, and the read requires a current membership that
+   began before the grant.
+6. **Airport re-entry was never supplied** ("a named gap"). It is now read from 2992's checkpoints, and unverifiable
+   means NOT active. So the feature is inert until 2992 is applied and `layover_decision_persistence_enabled` is ON,
+   whatever this flag says.
+7. **No flag; unbounded rows per member; no sharing-gate check** (paused, off, ghost mode). All three are added.
+
+### §78.4 Tests and mutants
+
+- `artifacts/api-server/src/services/layover/__tests__/layoverCrewLocationShare.test.ts`, 56 cases:
+  - every terminator and every fail-closed condition, one by one;
+  - re-entry before, at and after the grant;
+  - the store's read, write, cap and revocation;
+  - the OQ-1 audience gate by gate, including a thrown block read
+    (`artifacts/api-server/src/services/layover/__tests__/layoverCrewLocationShare.test.ts:489#an UNREADABLE or THROWN block read is not shared`)
+    and one-way follows
+    (`artifacts/api-server/src/services/layover/__tests__/layoverCrewLocationShare.test.ts:515#D-103: a ONE-WAY follow either way is not mutual`).
+- `artifacts/api-server/src/test/layoverCrewLocationGrantRoute.test.ts`, 24 cases over HTTP:
+  - OFF and absent flag (`artifacts/api-server/src/test/layoverCrewLocationGrantRoute.test.ts:207#describe("L166 'off by default'`);
+  - the explicit grant and its derived ceiling;
+  - L203's refusals (`artifacts/api-server/src/test/layoverCrewLocationGrantRoute.test.ts:316#describe("L203 — membership AND explicit permission`);
+  - `yourShare`'s honesty;
+  - leave and disband revocation.
+- Client, `travel-buddy-standalone/src/components/layover/__tests__/LayoverCrewSection.locationShare.component.test.tsx`, 8 cases.
+- `artifacts/api-server/src/test/db/layoverCrewLocationGrants.db.test.ts` is #569's real-PostgreSQL probe, G0–G11,
+  renumbered, plus G12 (the flag is seeded FALSE). It runs in CI's local-db job. This machine has no PostgreSQL, so it
+  was not run here.
+- **Red on `main`.**
+  - The two server suites cannot load: the modules they test are absent.
+  - Client: 6 of 8 fail. The 2 that pass are the absence controls.
+  - With `main`'s `routes/airport.ts` plus a 3-line export shim, 9 of the 24 route cases fail (every `yourShare` case).
+  - With `main`'s `LayoverCrewStore.ts`, 2 fail (the leave and disband revocations).
+- **Mutants: 71 run, 69 killed, 2 equivalent.**
+  - Killed:
+    - store: 11;
+    - decision: 19;
+    - audience: 14;
+    - `yourShare`: 3;
+    - routes: 8;
+    - payload: 2;
+    - crew store: 3;
+    - client: 8;
+    - the rule-7 registry: 1 (the grant table unregistered; the planted GRANT goes uncaught).
+  - Equivalent:
+    - D19, the sharing gate's `degraded` ignored: every degraded input already reads closed (`loadPreferences` falls
+      back closed, and an unreadable ghost mode reads ON);
+    - R2, the route's session check removed: the store refuses the same request with the same answer.
+
+### §78.5 Row verdicts (held)
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L166 | N | N | The control is built: it is separate from `share_city_status`, the server refuses a grant while the flag is OFF, and the card hides the control (`artifacts/api-server/src/test/layoverCrewLocationGrantRoute.test.ts:207#describe("L166 'off by default'`). It stays N under H24 and lead ruling WAVE-1. Its storage, 3787, is applied to no database, so production can hold no grant. Its flag is seeded FALSE. It is also inert until 2992 is applied with persistence ON (re-entry must be verifiable) and until a position store exists (LAY-C2). After the press and the flag: a C candidate. |
+| L203 | N | N | Both halves are built. The grant WRITE requires a live membership of the crew from the same session, read before writing (`artifacts/api-server/src/services/layover/LayoverCrewLocationGrantStore.ts:338#if (!mem) return { ok: false, reason: "not_a_member" };`). The READ decision requires a current membership, a live explicit grant from the target, and OQ-1's audience (`artifacts/api-server/src/services/layover/LayoverCrewLocationShare.ts:369#export async function preciseCrewLocationVisible(`). It stays N under H24: 3787 is unapplied. After the press: C or W. Enforcement is in application code over a service-role-only table, and the L202 precedent graded that W. |
+
+### §78.6 Owner questions (defaults implemented, none decided)
+
+- **OQ-1** (audience). The default built: precise only to current members of the same crew, with no block either
+  way, a live grant from the target, AND a mutual follow. Never to non-members.
+- **OQ-2** (duration). No ceiling is invented. The grant is bounded by the crew's life and the certified hard return,
+  and ends at the earliest §14.1 terminator or at the current hard return.
+- **OQ-LC1-a** (new). Within a grant's window, a traveller who pauses sharing or turns on ghost mode and then turns it
+  back off, or an operator who turns the flag off and on, finds the unrevoked grant in force again. The alternative is
+  that any pause revokes. The default is not to revoke, because the pause is the traveller's own switch. Whether that
+  counts as "restarting automatically" is the owner's call.
+- **OQ-LC1-b** (new). `layover_crews.status = 'closed'` has no writer anywhere. It is read here as dissolved, which
+  ends shares. Confirm or define it.
+- **OQ-9** (lead, answered by LR-B58-1). Port by content. #569 is untouched.
+
+### §78.7 Neighbours (H7)
+
+- **L124, L132 and L158 stay N.** There is no position store (LAY-C2). §78.2's audience decision is the gate that
+  store must call.
+- **L8, L136 and L137 are untouched.** No coordinate store was added. 3787's postcondition re-asserts that neither
+  the grant store nor 2984's crew tables carry a coordinate column.
+- **L202 stays W.**
+
+### §78.8 Cited, not graded (check:census-scope-coverage)
+
+- NOT-GRADED: scripts/src/beta-flag-policy.json — §78.2 names it only as where the sync tool listed `layover_crew_location_sharing_enabled` OFF for beta. It is the beta's flag policy; no layover verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/layoverConstraintsApi.test.ts — §78.10 names it only as the ratchet that caught fix round 1's comment length on `routes/airport.ts`. It is the constraints API suite; no L166/L203 verdict rests on it.
+
+### §78.9 Headline
+
+No row moves. **C=85 W=155 N=56 X=0** over 296 (`check:census-integrity`), unchanged from §72.7.
+
+### §78.10 Fix round 1 (verification V-734 on `fcfd246b7`: accept with fixes; both grades stand)
+
+`main` `7bef154f6` was merged in first. The beta pin is now 199, main's 198 plus one.
+
+1. **CI red, a ratchet.** The same-line export comment on `certifyCrewMemberRecord(` pushed its `return` 227
+   characters away. `layoverConstraintsApi.test.ts` allows 200. The comment is now 56 characters
+   (`artifacts/api-server/src/routes/airport.ts:3027#export function certifyCrewMemberRecord(`).
+   `crewViewerLandside`'s comment was removed, because the same ratchet requires `(` to be followed directly by `sc: any`.
+   `routes/airport.ts` still has 5121 lines. The 73 suites that read the airport, crew or checkpoint sources pass,
+   2267/2267, and `layoverConstraintsApi.test.ts` is 45/45.
+2. **A malformed block answer read as "nobody is blocked".**
+   - The cause is `main`'s `readBlockExclusions`, which reads `(data ?? [])`. Any of `{data:null,error:null}`,
+     `data:"garbage"`, `undefined`, or a row without the id columns therefore graded a blocked pair `visible`.
+   - The audience now reads the two raw edges itself
+     (`artifacts/api-server/src/services/layover/LayoverCrewLocationShare.ts:345#async function blockedEitherWay(`).
+   - Each answer goes through `strictEdge`: no error, an array, and every row naming exactly the two ids asked for
+     (`artifacts/api-server/src/services/layover/LayoverCrewLocationShare.ts:310#function strictEdge(`).
+   - Anything else is `blocks_unreadable`. The follow edges are read the same way.
+3. **A malformed grant answer read as "never granted", which means "not sharing".**
+   - `answerOf` makes a thrown or missing answer an error.
+   - `wellFormedGrantRows` makes non-array `data`, or a row that cannot be attributed, a FAILED read
+     (`artifacts/api-server/src/services/layover/LayoverCrewLocationGrantStore.ts:140#export function wellFormedGrantRows(`).
+   - The effect: `yourShare` is `null` with `location_grants_unreadable`, the grant history refuses the grant, and a
+     revocation whose answer is not an array is `write_failed`, never "stopped".
+   - The re-entry terminator's source had the same flaw. `readTravellerCheckpoints` now treats a non-array answer as
+     `read_failed` (one line, so no cited line moves).
+- **Tests.**
+  - The unit suite is 72 (+16): four malformed block shapes plus a control, malformed follows, malformed grant
+    shapes, history and revocation, malformed checkpoints, and `yourShare`.
+  - The route suite is 25 (+1).
+  - Red before the fix: with the pre-fix production files, 15/72 unit, 1/25 route and 1/45 constraints cases fail.
+- **Mutants: 84 run, 82 killed, 2 equivalent (D19, R2, as before).**
+  - 13 are new: strict edges, grant-row shape, `answerOf`, revocation shape, main's checkpoint read, and both
+    ratchet comments.
+  - 7 earlier mutants were re-anchored to the rewritten code and are killed.
+- **Recorded for LAY-C2, not built:**
+  - The audience's `reason` strings are private to the TARGET (`blocked`, `no_live_grant:user_revoked`,
+    `sharing_gate_closed`, …). A position read must collapse them to a yes/no on the wire.
+  - "Never auto-restarted" rests on two facts: `leaveCrew` is the only way a membership ends, and it revokes; and
+    a restore creates a new membership row. A future kick or appeal path that clears `left_at` must revoke too.
+- **OQ-LC1-a, the verifier's judgement for the owner.**
+  - A pause or ghost-mode cycle is the traveller's own switch, not a restart.
+  - The FLAG cycle is closer to a third-party restart: while the flag is OFF the traveller cannot see an unrevoked
+    grant in the app.
+  - Cheap closures, NOT built: a `granted_before_flag_enabled` terminator read from `feature_flags.updated_at`, or
+    "turning the flag OFF revokes live grants".

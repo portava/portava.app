@@ -5784,3 +5784,47 @@ owner-rights cases were added).
 **Rollback:** `db/rollback/2026-10-14-3825-telegraph-message-link-previews-rollback.sql` drops the trigger, both
 functions, the table and the flag row it seeded. It destroys every stored preview; turning the flag off is almost
 always what is wanted instead.
+
+## 2026-10-14 — `3787_layover_crew_location_grants.sql`, written and NOT applied anywhere (B58 lane LAY-C1)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3787_layover_crew_location_grants.sql` | **not applied** | **not applied** |
+
+**What it is.** Census-layover L166 / L203 (§78). The §14 L4 crew location GRANT store, ported by content from
+open PR #569's `3516` (lead ruling LR-B58-1), plus the flag `layover_crew_location_sharing_enabled` seeded FALSE.
+`public.layover_crew_location_grants` holds permission, never a position: who said yes, to which crew, from which
+session, from when, until when, and whether they revoked. `expires_at` is NOT NULL with no default. Two named CHECKs:
+a positive window, and revocation not before the grant. The newest-grant index is not partial. RLS is on, every client
+privilege is revoked (`FROM PUBLIC, anon, authenticated`), `service_role` gets the four DML verbs, and there are four
+RESTRICTIVE client-deny policies. No row is written to the new table.
+
+**Safe to leave unapplied.** With the flag row absent, `isFlagEnabled` reads OFF: the grant route refuses, GET /crew
+reports `yourShare.available: false` without reading the table, and leaving a crew treats an absent store (42P01 /
+PGRST205) as nothing to revoke.
+
+**Not useful alone.** A share is never in force while airport re-entry cannot be verified, so it also needs 2992
+applied with `layover_decision_persistence_enabled` ON. It is a permission that nothing reads until a position
+store exists (LAY-C2). Turning the flag on is the owner's decision (OQ-1, OQ-2).
+
+**Postcondition** (after COMMIT, catalog only, re-runnable):
+- RLS is on, with 0 permissive and exactly 4 restrictive policies;
+- `service_role` holds SELECT, INSERT and UPDATE;
+- no client table or column grant (PUBLIC included);
+- `expires_at` is NOT NULL with no default;
+- both CHECKs are present by name;
+- no coordinate column on the grant store or on 2984's crew tables;
+- the flag row exists.
+
+**Guards:**
+- `check:client-privilege-boundary` rule 4, and rule 7 (`src/scripts/lib/serverOnlyTables.ts`, now listing it);
+- `src/security/authorization-contract.json` (no client grant, the four denials). Until 3787 is applied to
+  `portava-ci`, `check:authorization-contract` reports those policies as missing there.
+
+**Proof.** `src/test/db/layoverCrewLocationGrants.db.test.ts` (CI local-db job, the real chain, G0–G12; #569's probe
+renumbered, plus the flag seed). The API suites are `layoverCrewLocationShare.test.ts` and
+`layoverCrewLocationGrantRoute.test.ts`.
+
+**Rollback:** `db/rollback/2026-10-14-3787-layover-crew-location-grants-rollback.sql`. It refuses while the flag is
+TRUE, reports the consent rows it will drop, then drops the policies, the index and the table, deletes the FALSE flag
+row and deletes 3787's ledger row.

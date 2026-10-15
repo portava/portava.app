@@ -38,12 +38,12 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ActivityIndicator, TextInput } from 'react-native';
 import { Users, UserPlus, LogOut, AlertTriangle, RefreshCw } from 'lucide-react-native';
 import { CREW_EACH_CHECKS_OWN, MEETING_POINT_PLACE_NEEDED, MEETING_POINT_PLACE_OPTIONS, crewOwnGateNote } from './layoverEnvelopeFacts.ts'; import { color, space, radius, type as t } from '../../theme/tokens.ts';
-import { fmtClock } from './layoverFormat.ts';
+import { fmtClock } from './layoverFormat.ts'; import { LayoverCrewLocationShareControl } from './LayoverCrewLocationShareControl.tsx'; // census-layover L166: same line, so cited lines below hold
 import {
   createLayoverCrew,
   getLayoverCrew,
   joinLayoverCrew,
-  leaveLayoverCrew,
+  leaveLayoverCrew, shareLocationWithCrew, stopSharingLocationWithCrew,
   type CrewActionOutcome,
   type CrewInfeasibilityReason,
   type CrewState,
@@ -216,6 +216,17 @@ export function LayoverCrewSection({ sessionId, timezone, refreshKey = 0 }: Prop
           <Text style={styles.hiddenNote}>Some crewmate details could not be loaded.</Text>
         ) : null}
 
+        {/* census-layover L166 — the precise-sharing control: separate from the
+            people section's city toggle, off by default, rendered only when the
+            server offers it (`yourShare.available`), and deciding nothing. */}
+        <LayoverCrewLocationShareControl
+          share={state.yourShare}
+          timezone={timezone}
+          busy={busy}
+          onShare={() => { void apply('location-share', () => shareLocationWithCrew(sessionId)); }}
+          onStop={() => { void apply('location-stop', () => stopSharingLocationWithCrew(sessionId)); }}
+        />
+
         <Pressable
           onPress={() => { void apply('leave', () => leaveLayoverCrew(sessionId)); }}
           disabled={busy !== null}
@@ -345,8 +356,8 @@ export function LayoverCrewSection({ sessionId, timezone, refreshKey = 0 }: Prop
               </View>
             ) : null}
             {/* A LABEL, never a position. §14's crew-member map element is gated
-                on an explicit temporary location permission whose grant store
-                does not exist, so nothing here collects a coordinate. */}
+                on an explicit temporary location permission (3787 stores that
+                permission, never a position), so nothing here collects a coordinate. */}
             <View style={styles.composerActions}>
               <Pressable
                 onPress={() => { setComposing(false); setNotice(null); }}

@@ -710,9 +710,9 @@ describe("every table this lane's migrations create has a stated deletion fate (
   // check:deletion-coverage reads the 2026-08-19 baseline, so a post-baseline
   // table that is absent from BOTH deletionDispositions lists is invisible to
   // it (checkDeletionCoverage.ts header, "post-baseline tables"). This closes
-  // that blind spot for the 3780-3799 band: each table is read from the SQL.
+  // that blind spot for the 3780-3783 band (lead ruling LR-B58-4): each table is read from the SQL.
   const MIGRATIONS = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "migrations");
-  const band = fs.readdirSync(MIGRATIONS).filter((f) => /^37[89]\d_.*\.sql$/.test(f)).sort();
+  const band = fs.readdirSync(MIGRATIONS).filter((f) => /^378[0-3]_.*\.sql$/.test(f)).sort(); // LR-B58-4: the Input lane's band is 3780-3783 (checkProductionDrift.ts "Lane D, Input Intelligence (3780-3783)"); 3784-3799 is the layover band (3790 creates airport_timing_aggregates), so the scan is narrowed to its owner's band, never evaded
   const tables = band.flatMap((f) => {
     const sql = fs.readFileSync(path.join(MIGRATIONS, f), "utf8");
     return [...sql.matchAll(/CREATE TABLE IF NOT EXISTS public\.(\w+)\s*\(([\s\S]*?)\n\);/g)].map((m) => ({
