@@ -327,4 +327,21 @@ describe("CT-02 C — real client transport shapes retain the unread state", () 
     assert.equal(conflicts.conflicts, null);
     assert.match(conflicts.info, /could not be read/i);
   });
+
+  it("transport fixtures never call ambient fetch for valid or malformed trip reads", async (context) => {
+    const ambientFetch = context.mock.method(globalThis, "fetch", async () => {
+      throw new Error("Unexpected ambient network request");
+    });
+    for (const failedStage of [undefined, "membership", "owned", "member", "plan"] as const) {
+      const { client, reads } = transportClient(failedStage);
+      await resolveCurrentTrip(client, ALICE);
+      await resolveUserTrips(client, ALICE);
+      await buildTripCompassProjection(client, TRIP_ID);
+      await executeCompassTool(client, ALICE, null, "check_trip_conflicts", {
+        startDate: "2026-08-05", endDate: "2026-08-10",
+      });
+      assert.ok(reads.length > 0);
+      assert.equal(ambientFetch.mock.callCount(), 0);
+    }
+  });
 });
