@@ -44,7 +44,7 @@ import { toggleSave } from '../services/discoveryBookmarks.ts'; import { saveDis
 import { useShareRevocation, revokedLabel } from '../features/telegraph/sharing/useShareRevocation.ts';
 import { legacySourceTypeToObjectType, normalizeLegacySourceId, type SharedCardTruth } from '../features/telegraph/sharing/shareApi.ts';
 import { legacyCardMode, offeredCardActions, objectKindLabel, REFERENCE_COPY } from '../features/telegraph/sharing/legacyCardView.ts';
-import { postCoordinationKind } from '../features/telegraph/coordination/coordinationApi.ts';
+import { postCoordinationKind } from '../features/telegraph/coordination/coordinationApi.ts'; import { telegraphMediaUri } from '../features/telegraph/linkPreview/telegraphMediaUri.ts'; // T446: one line, so no cited line moves
 
 type Href = Parameters<typeof router.push>[0];
 
@@ -163,7 +163,7 @@ export function DiscoveryCardMessage({ body, mine, threadId = null, messageId = 
   const offered = offeredCardActions(mode, live ? live.actions : []);
   const shownTitle = projection ? projection.title : payload.title;
   const shownPlace = projection ? projection.subtitle : payload.city;
-  const shownImage = projection ? projection.imageUrl : payload.imageUrl;
+  const shownImage = telegraphMediaUri(projection ? projection.imageUrl : payload.imageUrl); // T446: the snapshot's imageUrl is the SENDER's string — Portava storage or no image
   const shownBlurb = projection ? null : payload.blurb;
   const shownPrice = projection ? null : payload.priceLevel;
   const chipLabel = projection ? objectKindLabel(projection.objectType) : payload.category;

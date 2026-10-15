@@ -14977,3 +14977,204 @@ catch, a stale entry, a lazy verdict, a reader without its try, a reader catch a
     CONSTRUCTED 97.8 %, CORRECT 58.1 %.
 
 ---
+
+## §96 — TELEGRAPH B58 cluster TM-2 (2026-10-14): link previews reach the client — the sender's device asks the server once after a send, recipients draw only the stored text, and the message tree cannot load an image from a host a sender chose (guarded). NO ROW CHANGES BUCKET (T404 and T446 restated W; T446 flips to C in whichever of #740 / #748 merges second)
+
+Written 2026-10-14 on branch `claude/b58-tm-2` from origin/main `bffee713c` (#719, §91, merged); fix round 1 on origin/main
+`7408f62e6`, where §93 (#724) and §94 (#729) are merged and §95 (#738, TM-5) is still open. APPEND-ONLY; this is §96,
+renumber on conflict. **Evidence is CONTROLLED**:
+the real components, the real flags provider, store, API client and `services/messaging.ts` transport under jest-expo
+with `fetch` and the image loader RECORDED; a TypeScript-compiler guard over the message tree. No migration; the flag is
+TM-1's `telegraph_link_previews_enabled`, seeded FALSE by 3825, which is applied to no production database.
+
+### 96.1 Re-verified on `bffee713c`
+
+- **No client calls either of §91's doors**, and no bubble draws a preview: a URL in a message renders as text
+  (`components/RichText.tsx` has no link handling at all).
+- **The recipient-side disclosure T446 forbids was live on the client anyway, through images.** The hydration layer
+  returns "non-storage URLs … unchanged" (`src/services/mediaUrl.ts`), and every image primitive hands that string to
+  the native loader. So any image URL a SENDER could put in a field the tree draws made every recipient's device contact
+  that host when the bubble drew:
+  - **GIF and MEDIA_ALBUM envelopes**: the kinds route stores any string as a GIF's `url` / `stillUrl` and an album
+    asset's `url` / `thumbnailUrl` (`artifacts/api-server/src/services/telegraph/messageKinds.ts:62#url: z.string().min(1).max(2048),`,
+    `artifacts/api-server/src/services/telegraph/messageKinds.ts:47#url: z.string().min(1).max(2048),`), and
+    `TypedMessageRenderer` drew them. The app has no GIF picker, but the route takes any client's envelope.
+  - **legacy shared cards with no resolve** (no thread, or a source type with no §5 family): the card drew the
+    sender's own JSON — `imageUrl` (discovery), `thumbnail` and `authorAvatar` (post);
+  - **a server projection's `imageUrl` from a server that predates §91's rule**, and a legacy `media_url` row.
+- The census's §12 decision (the T404 / T446 rows of its regrade table) not to add a "no network call from message rendering"
+  ratchet still stands for the BLANKET form; the provenance-aware form it describes is what 96.2 builds.
+
+### 96.2 What changed
+
+- **The bubble's slot** (`travel-buddy-standalone/src/features/telegraph/linkPreview/MessageLinkPreview.tsx:41#export function MessageLinkPreview(`),
+  mounted once in each bubble — the thread screen's `MessageBubble`, direct and group threads
+  (`travel-buddy-standalone/app/messages/[id].tsx:1029#<MessageLinkPreview threadId={threadId} message={item} viewerId={currentUserId} enabled={linkPreviews} />`)
+  and the trip/circle chat's `GroupMessageBubble`
+  (`travel-buddy-standalone/src/components/GroupChatScreen.tsx:371#<MessageLinkPreview threadId={item.threadId} message={item} viewerId={viewerId} enabled={linkPreviews} />`).
+  It asks and draws NOTHING unless every gate is open
+  (`travel-buddy-standalone/src/features/telegraph/linkPreview/MessageLinkPreview.tsx:43#const active = enabled === true && flagOn`):
+  the flag ON in the answer the app already fetched (OFF costs no request); the screen's gate — not in a raised safety
+  mode, not shed by data saver or a constrained connection, and on the thread screen the server has affirmatively said
+  the thread is NOT end-to-end encrypted
+  (`travel-buddy-standalone/app/messages/[id].tsx:1257#const linkPreviewsOn = !safetyQuiet && dataSaver.mayLoad('mediaPreview') && !treatAsE2eeForEdit(conversationProjection);`;
+  group: `travel-buddy-standalone/src/components/GroupChatScreen.tsx:442#const linkPreviewsOn = !safetyQuiet && dataSaver.mayLoad('mediaPreview');`,
+  with the safety bar now telling the group screen its mode,
+  `travel-buddy-standalone/src/components/GroupChatScreen.tsx:740#onModeChange={(s) => setSafetyQuiet(s.deprioritizeEntertainment)}`);
+  and the message itself — stored, live, plain text, a link, no ciphertext
+  (`travel-buddy-standalone/src/features/telegraph/linkPreview/linkPreviewRules.ts:88#if (m.ciphertext || m.e2eeFailed) return false;`).
+- **The read is §91's storage-only GET, message ids only, one per render pass per thread**
+  (`travel-buddy-standalone/src/features/telegraph/linkPreview/linkPreviewApi.ts:42#export async function fetchLinkPreviews(`;
+  the batching, `travel-buddy-standalone/src/features/telegraph/linkPreview/linkPreviewStore.ts:97#void Promise.resolve().then(() => this.flush());`).
+  A miss on a body written under two minutes ago is asked once more (the sender's request may still be fetching),
+  never a third time (`travel-buddy-standalone/src/features/telegraph/linkPreview/linkPreviewStore.ts:150#private maybeRecheck(`);
+  another signed-in viewer forgets everything (`travel-buddy-standalone/src/features/telegraph/linkPreview/linkPreviewStore.ts:81#setViewer(viewerId: string | null): void {`).
+- **The drawn preview is text**: the original host first, then site name, title and description; no image component is
+  imported. The link opens only on a tap, and only as the https link to exactly the host shown
+  (`travel-buddy-standalone/src/features/telegraph/linkPreview/ExternalUrlPreview.tsx:43#if (openable) void Linking.openURL(preview.url)`;
+  `travel-buddy-standalone/src/features/telegraph/linkPreview/linkPreviewRules.ts:130#export function isOpenablePreviewLink(`).
+- **The sender's request**: after the server accepted a send or an edit, `services/messaging.ts` hands the stored
+  message over (`travel-buddy-standalone/src/services/messaging.ts:577#previewAfterSend(threadId, r, body, isE2ee === true)`,
+  `travel-buddy-standalone/src/services/messaging.ts:952#previewAfterEdit(threadId, messageId, body, r)`) — both
+  line-neutral — and `requestPreviewAfterWrite`
+  (`travel-buddy-standalone/src/features/telegraph/linkPreview/linkPreviewApi.ts:129#export function requestPreviewAfterWrite(`)
+  makes ONE bodiless POST per message version: only with the flag ON in the provider's last answer
+  (`travel-buddy-standalone/src/features/telegraph/linkPreview/linkPreviewApi.ts:130#if (!deps.flagOn()) return false;`;
+  the provider records it, `travel-buddy-standalone/src/context/FeatureFlagsContext.tsx:59#recordFeatureFlagSnapshot(body.flags)`),
+  never for E2EE (`travel-buddy-standalone/src/features/telegraph/linkPreview/linkPreviewApi.ts:131#if (m.encrypted) return false;`),
+  retried only on 429 / 5xx / no network and at most three attempts in all
+  (`travel-buddy-standalone/src/features/telegraph/linkPreview/linkPreviewApi.ts:144#n < SENDER_RETRY_DELAYS_MS.length`).
+  A recipient's device has no code path to the POST.
+- **The message tree's images are Portava storage or nothing — NOT flag-gated, live on every build — and so is
+  what a TAP opens or plays (fix round 1).** The media bubble computes the withheld value once and every use takes it:
+  the render, the image tap and the video tap
+  (`travel-buddy-standalone/src/components/MessageMediaBubble.tsx:122#const mediaUrl = telegraphMediaUri(rawMediaUrl);`);
+  the playback store admits a session only through the same rule
+  (`travel-buddy-standalone/src/features/telegraph/media/compactPlaybackStore.ts:161#const mediaRef = telegraphMediaUri(req.mediaRef) ?? '';`),
+  and the root playback host hands its player the wrapped value
+  (`travel-buddy-standalone/src/features/telegraph/media/CompactPlaybackHost.tsx:188#uri={telegraphMediaUri(session.mediaRef) ?? ''}`).
+  The door takes exactly one argument — the configured origin, never a caller's.
+  `telegraphMediaUri` (`travel-buddy-standalone/src/features/telegraph/linkPreview/telegraphMediaUri.ts:72#export function telegraphMediaUri(`)
+  is §91's server rule (`storageImageOrNull`) on the client, decided by PREFIX (`<configured storage origin>/storage/v1/`
+  or a bare `<bucket>/<path>`), because React Native's `URL` is a regex polyfill and the native loaders parse again.
+  It now gates: the media bubble's image and video poster
+  (`travel-buddy-standalone/src/components/MessageMediaBubble.tsx:148#uri={telegraphMediaUri(mediaUrl)}`,
+  `travel-buddy-standalone/src/components/MessageMediaBubble.tsx:157#posterUri={telegraphMediaUri(thumbnailUrl)}`);
+  the discovery card (`travel-buddy-standalone/src/components/DiscoveryCardMessage.tsx:166#const shownImage = telegraphMediaUri(`);
+  the post card's live image, legacy thumbnail and the sender-serialised author avatar
+  (`travel-buddy-standalone/src/components/PostCardMessage.tsx:213#<Avatar uri={telegraphMediaUri(payload.authorAvatar)}`,
+  `travel-buddy-standalone/src/components/PostCardMessage.tsx:231#uri={telegraphMediaUri(payload.thumbnail)}`);
+  the PORTAVA_OBJECT card (`travel-buddy-standalone/src/features/telegraph/sharing/PortavaObjectMessage.tsx:83#<DisplayMediaImage uri={telegraphMediaUri(projection?.imageUrl)}`);
+  GIFs and albums (`travel-buddy-standalone/src/features/telegraph/kinds/TypedMessageRenderer.tsx:184#const uri = telegraphMediaUri(`,
+  `travel-buddy-standalone/src/features/telegraph/kinds/TypedMessageRenderer.tsx:226#uri={telegraphMediaUri(a.thumbnailUrl ?? a.url)}`).
+  Every edit to these TG-A7a / TM-3 files is one line, line-neutral (imports appended to existing import lines).
+- **The guard** (`travel-buddy-standalone/src/features/telegraph/__tests__/messageTreeNetworkBoundary.test.ts:641#test('T2 THE BOUNDARY`):
+  the import closure (125+ files, TypeScript-parsed, every `.native`/`.ios`/`.android`/`.web` variant followed) of
+  every surface that draws or plays a message — the thread screen, the trip/circle chat, the inbox, saved messages,
+  search, and the root playback host (fix round 1) — within `src/components/` and `src/features/telegraph/`. Every
+  `fetch(` names the API base defined from `EXPO_PUBLIC_API_BASE_URL` (so T339 / T411's re-authorization through our API
+  is allowed by construction); no socket constructor, no `prefetch` / `getSize` / `downloadAsync` / … loader, no web
+  view; `Linking.openURL` only inside a press handler, never an effect, timer or render
+  (`travel-buddy-standalone/src/features/telegraph/__tests__/messageTreeNetworkBoundary.test.ts:515#test('A6 mutant`);
+  every image sink binds an expression that IS a one-argument `telegraphMediaUri(…)` call (optionally `?? undefined`
+  / `null` / `''`, or the only key of `{ uri: … }`, or a `const` assigned from exactly that) — structural, not a
+  substring (fix round 1) — a `require()` asset, or a PINNED site with its reason and count — the primitives' own bindings, profile avatars, the viewer's own Compass tray,
+  highlight media, the playback player's own bindings, and the sender's local picked files. The pin list may only
+  shrink, and a ceiling now enforces it (39 entries / 40 sites).
+
+### 96.3 Rows
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T404 | W | W | **External URL previews are fetched through a controlled server-side preview service; recipients must not silently contact arbitrary sender-provided domains.** The client half is built and mounted on both thread surfaces: the sender's device asks the server once after a send (`travel-buddy-standalone/src/features/telegraph/__tests__/linkPreviewSender.component.test.ts:87#it('a text message with a link`), recipients read the stored text through our API with message ids only (`travel-buddy-standalone/src/features/telegraph/__tests__/linkPreviewSlot.component.test.tsx:139#it('one GET of the stored previews`). **Still W, restated, not moved (LR-B58-7):** 3825 is applied to no production database and the flag is seeded FALSE (§12.12) — with the flag OFF nothing is drawn and no request is made (`travel-buddy-standalone/src/features/telegraph/__tests__/linkPreviewSlot.component.test.tsx:120#it('the server says OFF`). **C when** the owner applies 3825 and turns the flag on (Q-LP1). |
+| T446 | W | W | **External previews cannot cause recipient-side network disclosure to arbitrary sender-controlled domains.** A prohibition that now holds in code whatever the flag (the T367 precedent, :10310): on the server a recipient's read has no network dependency (§91, R1); on the client the preview is drawn from stored text and opens only on a tap (`travel-buddy-standalone/src/features/telegraph/linkPreview/ExternalUrlPreview.tsx:43#if (openable) void Linking.openURL(preview.url)`), and — live on every build, with the flag OFF too — no message-derived image reaches the loader unless it is Portava storage: every message surface rendered with a sender-chosen host in every field records no request and no image source naming it (`travel-buddy-standalone/src/features/telegraph/__tests__/messageTreeImageBoundary.component.test.tsx:213#it('GIF: neither`; red on main in 8 of 13 cases). A concrete artifact refuses the violation in the whole message tree (`travel-buddy-standalone/src/features/telegraph/__tests__/messageTreeNetworkBoundary.test.ts:641#test('T2 THE BOUNDARY`). **Still W on this PR (verifier F2, lead ruling):** the PREVIEW feature structurally cannot disclose, but the census reads T446 as the whole message tree, and on this head the SENDER's profile avatar drawn beside a group bubble, an inbox row and the reader chips is still a sender-controlled fetch (`profiles.avatar_url` is owner-writable, 96.6). **T446 flips to C in whichever of #740 / #748 merges second**, its evidence then citing `telegraphMediaUri` (this section), `avatarImageUri` (#748's avatar door in `Avatar` / `AvatarImage` / `TelegraphAvatar` / `useReaderAvatars`) and migration 3827 (#748, refusing new non-storage avatar writes) together. |
+
+### 96.4 Decisions, stated so a reader does not discover them
+
+Every default is an OWNER QUESTION, implemented fail-closed and not approved (b58/PLAN-telegraph-media.md §4):
+- **Q-LP6 (safety mode, data saver, low bandwidth): suppressed.** "Safety mode" is read as the server's own §15.2 list
+  — previews are put away exactly when the mode deprioritises ENTERTAINMENT, the same signal that holds the AI tray
+  and GIF entry on the thread screen; the group chat now listens to the same bar. Data saver and a measured constrained
+  connection shed them on the `mediaPreview` rung.
+- **Q-LP3 (E2EE): none, and the device does not even ask.** On the thread screen a preview needs the server's
+  affirmative "not end-to-end encrypted" (unknown ⇒ none); per message, a ciphertext or a failed decryption ⇒ none; the
+  sender never asks for an E2EE send. The group chat has no capability read: there the per-message test and the
+  server's own refusal (§91) carry it.
+- **Q-LP9, on the client: a non-storage image in the message tree is withheld** (the designed fallback, or no image
+  block where the card has one). **Q-TM2-1 (new): GIF provider hosts.** No GIF provider is configured, so every
+  non-storage GIF is withheld; adopting a provider (Giphy, Tenor) means an owner decision to allow its host here and
+  on the server. **Q-TM2-2 (new): the kinds route still STORES any URL** in a GIF or album envelope; the client now
+  refuses to draw it. Validating it at write time is a server change outside this cluster.
+- **Re-asking a miss.** A young miss is re-asked once after 8 s; a recipient who opens a message within seconds of its
+  send may see the preview a moment later, and a failing server is never polled.
+
+### 96.5 Tests and mutations
+
+Suites by explicit path (round 0; fix round 1's counts are in 96.8): `messageTreeNetworkBoundary` (node:test) **13/13** — A1–A9 run the analyzer over synthetic
+sources and each named mutant turns it red (a direct `fetch(url)`, `<Image source={{ uri: rawUrl }}>` from
+react-native, expo-image and a namespace import, an app primitive bound to a raw URL through an intermediate file, a
+spread onto a sink, `Image.prefetch` / `getSize` / `downloadAsync`, a `WebView`, `openURL` in an effect / timer / at
+render, a look-alike API base, a `let`-borrowed provenance), T1–T4 on the real tree; `linkPreviewRules` (node:test)
+**17/17**; `linkPreviewSlot.component` **16/16**; `linkPreviewSender.component` **13/13**;
+`messageTreeImageBoundary.component` **13/13**. **Red on main** (`bffee713c`'s files, the new suites unchanged): the
+image boundary 8 of 13 red (every sender-host case; the five text/positive cases green), the guard's T2 red, the sender
+suite 7 of 13 red (main's `sendMessage` makes no preview request), the slot suite's wiring and snapshot pins 3 red, and
+every new suite fails to load without the `linkPreview` modules. **41 TypeScript mutants, each alone, each killed** (lane-private runner, tree restored clean after each): the media rule keeping everything, dropping its prefix or its `..` check; the slot ignoring the flag or the screen gate; E2EE, optimistic and failed messages not excluded; an open-link check of "any https"; the sender's request ignoring the flag or E2EE, retrying without bound or on a final refusal, asking twice, carrying the link in a body, or losing the encrypted flag, asking about a structured kind, or calling every kind plain text; the store reading per bubble, rechecking without bound, keeping a previous viewer's answers or letting one land late; the preview opening on render or drawing a remote image; each of the nine `telegraphMediaUri` call sites unwrapped; the thread screen's E2EE term, the group's safety signal and the thread screen's mount each removed; the send and edit hand-offs removed; the provider not recording the flag; and the guard's own mutants in the real tree (a direct `fetch` of the body, `Image.prefetch`, a `WebView`). One first-round mutant (an unconditional microtask flush) was EQUIVALENT — the first flush drains the queue — and was replaced by a synchronous per-bubble read, which two suites kill; two survivors (a same-length host passing the open-link check, an old viewer's late answer) were killed after cases were added.
+
+### 96.6 Adjacent findings (not rows of this cluster; for the lead)
+
+- **A profile's `avatar_url` is owner-writable** (2078 revoked only `role`:
+  `artifacts/api-server/src/migrations/2078_profiles_role_not_self_writable.sql:198#avatar_url, city`), and the
+  group chat, the inbox and the reader chips draw profile avatars through the same pass-through hydration. A sender who
+  points their own avatar at a host they control learns every viewer's address and viewing time. It is not a preview,
+  so it is outside T446's words (the plan's §6 finding); the guard pins those sites with this reason, and the fix
+  (validate the write, or route avatars through `telegraphMediaUri`) is a separate follow-up.
+- **§91.6 is empty on main**: the heading survived #719's merge-up and its body did not (§92.9 refers to it).
+
+- NOT-GRADED: travel-buddy-standalone/src/services/mediaUrl.ts — cited in 96.1 only to quote the hydration layer's pass-through of non-storage URLs, which this cluster does not change; it is the shared media layer, not a Telegraph surface.
+- NOT-GRADED: travel-buddy-standalone/src/context/FeatureFlagsContext.tsx — cited in 96.2 only as where the app's existing flag fetch records the snapshot the send path reads (two existing lines extended); the flags provider is watched by census-discovery, and the behaviour this census grades is pinned by linkPreviewSlot.component and linkPreviewSender.component.
+- NOT-GRADED: artifacts/api-server/src/migrations/2078_profiles_role_not_self_writable.sql — cited in 96.6 only for the adjacent avatar finding; profile grants are not a Telegraph row.
+
+### 96.7 The headline, restated from the rows
+
+| bucket | count |
+| --- | --- |
+| BUILT-AND-CORRECT | **262** |
+| BUILT-BUT-WRONG | **183** |
+| NOT-BUILT | **4** |
+| CANNOT-VERIFY | **2** |
+
+No row changes bucket in this section (fix round 1 holds T446 at W), so the headline is main's: 262 / 183 / 4 / 2 of
+451, as `check:census-integrity` counts this branch merged with origin/main `7408f62e6` (§93 and §94 move no bucket either).
+CONSTRUCTED 445 of 451 = 98.7 %; CORRECT 262 of 451 = 58.1 %.
+Whichever of §93–§96 merges last restates the headline.
+
+### 96.8 Fix round 1 (Fable verdict on `fcd5486ae`: ACCEPT-WITH-FIXES)
+
+- **F1 — the tap path.** The bubble withheld a non-storage image and poster from the render but handed the RAW strings
+  to its taps: `Linking.openURL(mediaUrl)` for an image, and `openMessageVideo({ mediaRef: mediaUrl, posterRef })` for
+  a video, which the root `CompactPlaybackHost` played through `SharedVideoPlayer` (stream and poster) from the
+  sender's host. Now the bubble shadows both props with their wrapped values on one line, so the render and both
+  handlers see only storage, and a withheld tap is a no-op. The store refuses a non-storage `mediaRef` and drops a
+  non-storage poster. The host wraps both values at its call site. The host is a guard ROOT, so a `fetch(mediaRef)`
+  planted there is red, and the player's four primitive bindings are pinned with that reason. New cases tap the
+  withheld image and the withheld ▶ (nothing opens, no session, the store refuses even a direct call), plus positive
+  controls (a storage image opens on a tap; a storage video plays and its sender-host poster is dropped).
+- **F2 — T446 held at W** (96.3); the headline is main's (96.7).
+- **S1** — `telegraphMediaUri(raw)` takes exactly one argument (`mediaUriForOrigin` is the rule's test door, which the
+  guard does not accept). The guard requires the WHOLE bound expression to be the call (A10: `raw ?? call`,
+  `call ?? raw`, a two-argument call, the call under another key, and a const from a two-argument call are each red).
+- **S2** — modelled sinks the tree does not use yet: `Animated.Image` / `ImageBackground`, expo-image `ImageBackground`,
+  `SvgUri`, a map `Marker` image, expo-video's player, `downloadFileAsync`, `mayInitWithUrlAsync` (A11). Platform
+  variants are followed (A12).
+- **S3** — a pin ceiling, 39 entries / 40 sites, that may be lowered and never raised (T5).
+- **S4** — a mount without the `enabled` prop draws nothing and asks nothing. **S5** — a viewer switch at the hook
+  re-reads.
+- **S6** — a same-length host before the named one is not openable; a backslash or whitespace anywhere in a storage
+  URL is withheld. **S7** — `..` and `%2e` in a storage-origin URL are withheld (the server's WHATWG parse refuses them
+  too).
+- Suites after fix round 1: `messageTreeNetworkBoundary` **17/17** (A10–A12 and T5 added), `linkPreviewRules` **18/18**,
+  `linkPreviewSlot.component` **18/18**, `linkPreviewSender.component` **13/13**, `messageTreeImageBoundary.component`
+  **16/16** (the three tap cases added); TM-3's `CompactPlaybackHost.component` and `threadHooks.compactPlayback.component`
+  and the media node suites green on the new store door.
+- **Fix round 1 mutants: 59 of 59 killed**, each alone (same lane-private runner; tree clean after each). They are the 41 of round 0, re-run on this head, with the two media-bubble render mutants restated as the shadow removed and as render and store unwrapped together, plus 18 new ones. The new 18: the store admitting any `mediaRef` or keeping a raw poster; the host handing the player a raw ref or poster; a `fetch(mediaRef)` planted in the host (the verifier's M16); the image tap opening the raw URL; the guard back to a substring test, accepting a two-argument call or any `??` fallback, not modelling `Animated.Image`, not following platform variants, or not rooting the host; `telegraphMediaUri` taking a caller origin again (the verifier's M14); the dot-segment parity and `UNSAFE_CHARS` dropped (the verifier's M2); the slot gate defaulting ON (the verifier's M4); the hook not resetting the viewer (the verifier's M11); and the open-link check by `includes` (the verifier's M10).

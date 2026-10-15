@@ -14,7 +14,7 @@ import { DisplayMediaImage } from '../../../components/ui/DisplayMediaImage.tsx'
 import { space, radius, type as t } from '../../../theme/tokens.ts';
 import { useTelegraphPalette, type TelegraphPalette } from '../theme/telegraphTheme.ts';
 import { parsePortavaObjectBody } from './shareApi.ts';
-import { useShareRevocation, revokedLabel } from './useShareRevocation.ts';
+import { useShareRevocation, revokedLabel } from './useShareRevocation.ts'; import { telegraphMediaUri } from '../linkPreview/telegraphMediaUri.ts'; // T446: one line, so no cited line moves
 
 const CARD_MAX_WIDTH = 280;
 
@@ -79,8 +79,8 @@ export function PortavaObjectMessage({ body, mine, threadId, messageId }: Portav
       }}
     >
       <Text style={styles.kind}>{prettyType(parsed.objectType).toUpperCase()}</Text>
-      {projection?.imageUrl ? (
-        <DisplayMediaImage uri={projection.imageUrl} width={CARD_MAX_WIDTH - space.md * 2} height={110} style={styles.image} />
+      {telegraphMediaUri(projection?.imageUrl) ? (
+        <DisplayMediaImage uri={telegraphMediaUri(projection?.imageUrl)} width={CARD_MAX_WIDTH - space.md * 2} height={110} style={styles.image} />
       ) : null}
       <Text style={styles.title} numberOfLines={2}>
         {title}

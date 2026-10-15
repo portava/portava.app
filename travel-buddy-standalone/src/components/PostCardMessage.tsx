@@ -39,7 +39,7 @@ import { Avatar } from './ui/Avatar.tsx';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 import { TG } from '../theme/telegraphTokens.ts';
 import { useShareRevocation, revokedLabel } from '../features/telegraph/sharing/useShareRevocation.ts'; import type { SharedCardTruth } from '../features/telegraph/sharing/shareApi.ts';
-import { legacyCardMode, REFERENCE_COPY } from '../features/telegraph/sharing/legacyCardView.ts';
+import { legacyCardMode, REFERENCE_COPY } from '../features/telegraph/sharing/legacyCardView.ts'; import { telegraphMediaUri } from '../features/telegraph/linkPreview/telegraphMediaUri.ts'; // T446: one line, so no cited line moves
 
 type Href = Parameters<typeof router.push>[0];
 
@@ -157,9 +157,9 @@ export function PostCardMessage({ body, mine, threadId = null, messageId = null,
             <Text style={[card.authorName, mine && card.authorNameMine]} numberOfLines={1}>@{handle}</Text>
           </UserIdentityLink>
         ) : null}
-        {p.imageUrl ? (
+        {telegraphMediaUri(p.imageUrl) ? (
           <DisplayMediaImage
-            uri={p.imageUrl}
+            uri={telegraphMediaUri(p.imageUrl)}
             width={CARD_MAX_WIDTH}
             height={THUMBNAIL_HEIGHT}
             resizeMode="cover"
@@ -210,7 +210,7 @@ export function PostCardMessage({ body, mine, threadId = null, messageId = null,
           {/* Avatar hydrates the private-bucket URL and degrades to initials.
               The bare <Image> here rendered an empty circle on every shared
               post once profile-media went private. */}
-          <Avatar uri={payload.authorAvatar} name={authorLabel} kind="person" size={AVATAR_SIZE} />
+          <Avatar uri={telegraphMediaUri(payload.authorAvatar)} name={authorLabel} kind="person" size={AVATAR_SIZE} />
           <View style={{ flex: 1 }}>
             <Text style={[card.authorName, mine && card.authorNameMine]} numberOfLines={1}>
               {authorLabel}
@@ -226,9 +226,9 @@ export function PostCardMessage({ body, mine, threadId = null, messageId = null,
 
       {/* Thumbnail — the shared post's own media, so a post-media reference
           that needs hydrating and a visible state when it cannot be shown. */}
-      {payload.thumbnail ? (
+      {telegraphMediaUri(payload.thumbnail) ? (
         <DisplayMediaImage
-          uri={payload.thumbnail}
+          uri={telegraphMediaUri(payload.thumbnail)}
           width={CARD_MAX_WIDTH}
           height={THUMBNAIL_HEIGHT}
           resizeMode="cover"

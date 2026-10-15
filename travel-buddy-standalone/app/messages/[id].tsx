@@ -54,7 +54,7 @@ import { DiscoveryCardMessage } from '../../src/components/DiscoveryCardMessage'
 import { PostCardMessage } from '../../src/components/PostCardMessage';
 import { ThreadSafetySheet } from '../../src/components/ThreadSafetySheet';
 import { SharedContextRail, shouldCollapseOnScroll } from '../../src/features/telegraph/index.ts';
-import { PortavaObjectMessage } from '../../src/features/telegraph/sharing/PortavaObjectMessage.tsx'; import { OriginalAlongside } from '../../src/features/telegraph/translation/OriginalAlongside.tsx';
+import { PortavaObjectMessage } from '../../src/features/telegraph/sharing/PortavaObjectMessage.tsx'; import { OriginalAlongside } from '../../src/features/telegraph/translation/OriginalAlongside.tsx'; import { MessageLinkPreview } from '../../src/features/telegraph/linkPreview/MessageLinkPreview.tsx'; // T404 link previews: shares a line so no cited line moves
 import { TypedMessageRenderer, rendersTypedKind } from '../../src/features/telegraph/kinds/TypedMessageRenderer.tsx';
 import { rendersKnownMessageType, safeUnknownBody } from '../../src/features/telegraph/kinds/unsupportedPayload.ts';
 import { parseKindEnvelope as parseTelegraphKindEnvelope } from '../../src/features/telegraph/kinds/kindsApi.ts';
@@ -755,7 +755,7 @@ function MessageBubble({
   currentUserId,
   isCircleMember,
   onCircleCardPress,
-  threadId,
+  threadId, linkPreviews,
 }: {
   item: Message;
   mine: boolean;
@@ -779,7 +779,7 @@ function MessageBubble({
   isCircleMember?: boolean | null;
   onCircleCardPress?: () => void;
   /** Telegraph §5.3: the thread a shared card is being rendered in. */
-  threadId?: string | null;
+  threadId?: string | null; /** census-telegraph T404/T446: the screen's link-preview gate (safety mode, data saver, the thread's E2EE answer). */ linkPreviews?: boolean;
 }) {
   const [pickerPayload, setPickerPayload] = useState<AddToTripPayload | null>(null);
   const [showOriginal, setShowOriginal] = useState(defaultShowOriginal || !autoTranslate);
@@ -1026,7 +1026,7 @@ function MessageBubble({
           style={[styles.bubbleText, mine && styles.bubbleTextMine]}
           mentionColor={mine ? 'rgba(255,255,255,0.90)' : undefined}
           hashtagColor={mine ? 'rgba(255,255,255,0.80)' : undefined}
-        /><OriginalAlongside item={item} view={{ mine, autoTranslate, showingOriginal: showOriginal }} />
+        /><OriginalAlongside item={item} view={{ mine, autoTranslate, showingOriginal: showOriginal }} /><MessageLinkPreview threadId={threadId} message={item} viewerId={currentUserId} enabled={linkPreviews} />
 
         {(groupEnd || item.editedAt) ? (
           <Text style={[styles.bubbleTime, mine && styles.bubbleTimeMine]}>
@@ -1254,7 +1254,7 @@ export default function TelegraphThread() {
   const mediaPicker = useMessageMediaPicker();
   // Telegraph §16.2 / §17.4 — the degradation ladder. Consulted here for
   // media; the AI tray consults it for `ai`.
-  const dataSaver = useDataSaver();
+  const dataSaver = useDataSaver(); const linkPreviewsOn = !safetyQuiet && dataSaver.mayLoad('mediaPreview') && !treatAsE2eeForEdit(conversationProjection); // census-telegraph T404/T446 (Q-LP3, Q-LP6): no previews in a raised safety mode, under data saver or a constrained connection, or unless the server has said this thread is NOT end-to-end encrypted
   const [showMediaPickerSheet, setShowMediaPickerSheet] = useState(false);
 
   function handleBlockPress() {
@@ -2191,7 +2191,7 @@ export default function TelegraphThread() {
                 onRetryTranslation={!mine && m.id ? () => { retryTranslation(m.id).catch(() => {}); } : undefined}
                 currentUserId={userId ?? undefined}
                 isCircleMember={isCircleMember}
-                onCircleCardPress={m.msgType === 'circle_status_card' ? onCircleCardPress : undefined}
+                onCircleCardPress={m.msgType === 'circle_status_card' ? onCircleCardPress : undefined} linkPreviews={linkPreviewsOn}
               />
               {/*
                 Telegraph §22: the traveller-facing half of the travel-scam

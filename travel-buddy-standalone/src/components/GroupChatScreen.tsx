@@ -54,7 +54,7 @@ import { getTripMembers, getCircleMembers, type FriendUser } from '../services/f
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
 import { MessageEntrance, useMessageEntranceGate } from './MessageEntrance.tsx';
-import { SharedContextRail } from '../features/telegraph/index.ts'; import { OriginalAlongside } from '../features/telegraph/translation/OriginalAlongside.tsx';
+import { SharedContextRail } from '../features/telegraph/index.ts'; import { OriginalAlongside } from '../features/telegraph/translation/OriginalAlongside.tsx'; import { MessageLinkPreview } from '../features/telegraph/linkPreview/MessageLinkPreview.tsx'; import { useDataSaver } from '../features/telegraph/hooks/useDataSaver.ts'; // T404 link previews: one line, so no cited line moves
 import { PortavaObjectMessage } from '../features/telegraph/sharing/PortavaObjectMessage.tsx';
 import { TelegraphConnectionBanner } from '../features/telegraph/connection/TelegraphConnectionBanner.tsx'; import { OwnMessageStatusRow } from '../features/telegraph/lifecycle/OwnMessageStatusRow.tsx'; import { useReaderAvatars } from '../features/telegraph/lifecycle/useReaderAvatars.ts'; import { failedSendCopy, type OwnMessageStatus, type SendFailure } from '../features/telegraph/lifecycle/readState.ts'; import { SafetyModeBar } from '../features/telegraph/safety/SafetyModeBar.tsx'; import { senderLabelFor } from '../features/telegraph/layers/SemanticLayersStrip.tsx'; // §15.2 on the group surface too
 import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
@@ -300,7 +300,7 @@ function GroupMessageBubble({
   autoTranslate,
   defaultShowOriginal,
   deliveryStatus, sendFailure,
-  onRetry,
+  onRetry, viewerId, linkPreviews,
 }: {
   item: Message;
   mine: boolean;
@@ -312,7 +312,7 @@ function GroupMessageBubble({
   autoTranslate: boolean;
   defaultShowOriginal: boolean;
   deliveryStatus?: 'sending' | 'sent' | 'failed' | null; sendFailure?: SendFailure | null;
-  onRetry?: () => void;
+  onRetry?: () => void; /** census-telegraph T404/T446: who is viewing, and the screen's link-preview gate (safety mode, data saver). */ viewerId?: string | null; linkPreviews?: boolean;
 }) {
   const [showOriginal, setShowOriginal] = useState(defaultShowOriginal || !autoTranslate);
 
@@ -368,7 +368,7 @@ function GroupMessageBubble({
             </View>
           </View>
         ) : null}
-        <Text style={[styles.bubbleText, mine && styles.bubbleTextMine]}>{bodyToShow}</Text><OriginalAlongside item={item} view={{ mine, autoTranslate, showingOriginal: showOriginal }} />
+        <Text style={[styles.bubbleText, mine && styles.bubbleTextMine]}>{bodyToShow}</Text><OriginalAlongside item={item} view={{ mine, autoTranslate, showingOriginal: showOriginal }} /><MessageLinkPreview threadId={item.threadId} message={item} viewerId={viewerId} enabled={linkPreviews} />
         <Text style={[styles.bubbleTime, mine && styles.bubbleTimeMine]}>
           {formatTime(item.createdAt)}
           {item.editedAt ? '  ·  edited' : ''}
@@ -439,7 +439,7 @@ interface Props {
 export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
   // Mute state for the header toggle — persisted via the existing
   // muteThread service (beta-audit: replaces the 'coming soon' stub).
-  const [threadMuted, setThreadMuted] = useState(false);
+  const [threadMuted, setThreadMuted] = useState(false); const [safetyQuiet, setSafetyQuiet] = useState(false); const dataSaver = useDataSaver(); const linkPreviewsOn = !safetyQuiet && dataSaver.mayLoad('mediaPreview'); // census-telegraph T404/T446 (Q-LP6): no link previews in a raised safety mode or under data saver; E2EE is per message (ciphertext) and the server's own refusal
   const insets = useSafeAreaInsets();
   const { userId } = useSession();
   const { state, thread, messages, sending, errorMessage, reload, send, retrySend, notifyTyping, typingUserIds, edit } = useGroupChat(type, id); const [editingMsg, setEditingMsg] = useState<Message | null>(null); const [historyMsg, setHistoryMsg] = useState<Message | null>(null); // WP-08
@@ -737,7 +737,7 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
           "at the top of EACH conversation". Renders nothing when the pair (or
           crew) shares no canonical mutual state, and nothing when the read
           failed. */}
-      {thread?.id ? <SafetyModeBar threadId={thread.id} refreshKey={messages[messages.length - 1]?.id ?? null} senderLabel={(uid) => senderLabelFor(messages, uid, userId ?? null)} /> : null}{thread?.id ? <SharedContextRail threadId={thread.id} /> : null}<TelegraphConnectionBanner />{/* §30A.15 */}
+      {thread?.id ? <SafetyModeBar threadId={thread.id} refreshKey={messages[messages.length - 1]?.id ?? null} senderLabel={(uid) => senderLabelFor(messages, uid, userId ?? null)} onModeChange={(s) => setSafetyQuiet(s.deprioritizeEntertainment)} /> : null}{thread?.id ? <SharedContextRail threadId={thread.id} /> : null}<TelegraphConnectionBanner />{/* §30A.15 */}
 
       <FlatList
         ref={listRef}
@@ -842,7 +842,7 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
                 autoTranslate={autoTranslate}
                 defaultShowOriginal={defaultShowOriginal}
                 deliveryStatus={mine ? (m.deliveryStatus ?? null) : null} sendFailure={mine ? (m.sendFailure ?? null) : null}
-                onRetry={mine && m.clientId ? () => retrySend(m.clientId!) : undefined}
+                onRetry={mine && m.clientId ? () => retrySend(m.clientId!) : undefined} viewerId={userId} linkPreviews={linkPreviewsOn}
               />
             </MessageEntrance>
           );

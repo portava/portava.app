@@ -24,7 +24,7 @@ import {
 import { X, AlertCircle, RefreshCw } from 'lucide-react-native';
 import { DisplayMediaImage } from './ui/DisplayMediaImage.tsx';
 import { VideoThumbnail } from './ui/VideoThumbnail.tsx';
-import { openMessageVideo } from '../features/telegraph/media/compactPlaybackStore.ts';
+import { openMessageVideo } from '../features/telegraph/media/compactPlaybackStore.ts'; import { telegraphMediaUri } from '../features/telegraph/linkPreview/telegraphMediaUri.ts'; // T446: drawn media is Portava storage or nothing
 import { color, radius, space, type as t } from '../theme/tokens.ts';
 import { TG } from '../theme/telegraphTokens.ts';
 
@@ -57,8 +57,8 @@ function formatTime(iso: string): string {
 
 export function MessageMediaBubble({
   mediaType,
-  mediaUrl,
-  thumbnailUrl,
+  mediaUrl: rawMediaUrl,
+  thumbnailUrl: rawThumbnailUrl,
   durationSeconds,
   mine,
   senderName,
@@ -119,7 +119,7 @@ export function MessageMediaBubble({
     );
   }
 
-  // ── Sent / received media bubble ──────────────────────────────────────────
+  const mediaUrl = telegraphMediaUri(rawMediaUrl); const thumbnailUrl = telegraphMediaUri(rawThumbnailUrl); // ── Sent / received media bubble. census-telegraph T446 (§96, fix round 1): a legacy row's non-storage media is withheld from the render AND from both taps below — nothing opens or plays a host a sender chose
   function handleImagePress() {
     if (mediaUrl) {
       Linking.openURL(mediaUrl).catch(() => {});
@@ -145,7 +145,7 @@ export function MessageMediaBubble({
       {mediaType === 'image' ? (
         <Pressable onPress={handleImagePress} style={s.imageWrap}>
           <DisplayMediaImage
-            uri={mediaUrl}
+            uri={telegraphMediaUri(mediaUrl)}
             width={BUBBLE_MEDIA_WIDTH}
             height={180}
             resizeMode="cover"
@@ -154,7 +154,7 @@ export function MessageMediaBubble({
         </Pressable>
       ) : (
         <VideoThumbnail
-          posterUri={thumbnailUrl ?? null}
+          posterUri={telegraphMediaUri(thumbnailUrl)}
           duration={durationSeconds ?? null}
           style={s.videoThumb}
           onPress={handleVideoPress}
