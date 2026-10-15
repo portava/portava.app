@@ -415,6 +415,16 @@
       "fingerprint": "ba95bc9b6989be2d",
       "closedBy": "withholds",
       "why": "Returns new Set(unique) — every candidate author is treated as blocked, so the Wall shows none of them."
+    },
+    {
+      "key": "services/layover/LayoverCrewAbortNotice.ts::tellCrewOfAbort::catch#1",
+      "kind": "catch",
+      "reads": [
+        "readBlockExclusions"
+      ],
+      "fingerprint": "ed79b0c205323d49",
+      "closedBy": "withholds",
+      "why": "A thrown block read while telling the crew that a traveller turned back lands in tellCrewOfAbort's catch, which answers untold: no crewmate is told, and the abort itself still answers ok with its ledger row (census-layover §74, L144)."
     }
   ]
 }

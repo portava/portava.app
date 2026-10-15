@@ -40,7 +40,7 @@ import {
   summarizeCertification,
   type PostureTone,
 } from './layoverReturnFacts.ts';
-import { fmtClock, fmtDur } from './layoverFormat.ts'; import { LayoverCheckpointControl, checkpointCapability } from './LayoverCheckpointControl.tsx';
+import { fmtClock, fmtDur } from './layoverFormat.ts'; import { LayoverCheckpointControl, checkpointCapability } from './LayoverCheckpointControl.tsx'; import { LayoverCrewAbortToggle } from './LayoverCrewAbortToggle.tsx'; // census-layover L144; same line, so no cited line moves
 
 interface Props {
   overview: LayoverOverview;
@@ -88,15 +88,15 @@ export function LayoverSafeReturnCard({ overview, nowMs, canAbort, abort: contro
   /**
    * §15.1 L144 — what the server says happened to the crew, read off the
    * fields rather than re-derived and rendered only on the path that carries
-   * them. A PARTIAL abort's 500 body is not an `AbortResult` and has neither
-   * field, so it produces no crew line at all: absence is silence here, never
+   * them. A PARTIAL abort's 500 body is not an `AbortResult`; since L144 it carries
+   * both fields too (a pre-L144 server's has neither: absence is silence here, never
    * "your crew was not told", which would be this card answering for the
-   * server.
+   * server).
    */
-  const crewNotice = outcome?.kind === 'ok'
+  const crewNotice = outcome?.kind === 'ok' || (outcome?.kind === 'partial' && outcome.crewNotifyUnavailableReason !== undefined)
     ? describeCrewNotification({
-        crewNotified: outcome.result.crewNotified ?? [],
-        crewNotifyUnavailableReason: outcome.result.crewNotifyUnavailableReason ?? null,
+        crewNotifiedCount: outcome.kind === 'ok' ? (outcome.result.crewNotifiedCount ?? outcome.result.crewNotified?.length ?? 0) : (outcome.crewNotifiedCount ?? 0),
+        crewNotifyUnavailableReason: (outcome.kind === 'ok' ? outcome.result.crewNotifyUnavailableReason : outcome.crewNotifyUnavailableReason) ?? null,
       })
     : null;
 
@@ -145,7 +145,7 @@ export function LayoverSafeReturnCard({ overview, nowMs, canAbort, abort: contro
         </Text>
       </View>
 
-      {/* ── §15.1 the control ── */}
+      {/* ── §15.1 the control ── */}{canAbort ? <LayoverCrewAbortToggle overview={overview} controller={controller} /> : null}{/* census-layover L144: the traveller's own per-abort choice, offered only when the server would honour it */}
       {canAbort ? (
         <Pressable
           accessibilityRole="button"
@@ -235,8 +235,8 @@ export function LayoverSafeReturnCard({ overview, nowMs, canAbort, abort: contro
                 : null)
             : null}
           {/* §15.1 L144 — who was told about this traveller's abort. It is
-              reported, not offered: this card has no control that notifies a
-              crew, and whether a crew should be notified at all is not decided
+              reported here; the only control is the traveller's own per-abort
+              choice above (LayoverCrewAbortToggle), and whether a crew may be told at all is the owner's flag, not decided
               on the client. See `describeCrewNotification`. */}
           {crewNotice ? (
             <Text style={styles.contractSub} testID="abort-crew-notice">{crewNotice}</Text>
