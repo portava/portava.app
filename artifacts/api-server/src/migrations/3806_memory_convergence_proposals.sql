@@ -182,8 +182,15 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'public.memory_convergence_proposals'::regclass
                    AND conname = 'memory_convergence_proposals_state_check'
                    AND pg_get_constraintdef(oid) LIKE '%proposed%' AND pg_get_constraintdef(oid) LIKE '%kept%'
-                   AND pg_get_constraintdef(oid) LIKE '%dismissed%') THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3806): the state CHECK (proposed | kept | dismissed) is missing.';
+                   AND pg_get_constraintdef(oid) LIKE '%dismissed%'
+                   AND (SELECT count(*) FROM regexp_matches(pg_get_constraintdef(oid), '''[a-z_]+''', 'g')) = 3) THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3806): the state CHECK is not exactly (proposed | kept | dismissed).';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'public.memory_convergence_proposals'::regclass
+                   AND conname = 'memory_convergence_proposals_basis_check'
+                   AND pg_get_constraintdef(oid) LIKE '%confirmed_episode%' AND pg_get_constraintdef(oid) LIKE '%memory_window%'
+                   AND (SELECT count(*) FROM regexp_matches(pg_get_constraintdef(oid), '''[a-z_]+''', 'g')) = 2) THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3806): the basis CHECK is not exactly (confirmed_episode | memory_window).';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'public.memory_convergence_proposals'::regclass
                    AND conname = 'memory_convergence_proposals_decision_stamped') THEN
