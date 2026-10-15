@@ -28,7 +28,7 @@ import {
   computeReturnDeadline,
   layoverCutoffMs,
 } from "../services/airport/LayoverSafetyEngine.js";
-import { localHour, wallTimeToUtc } from "../services/airport/AirportTime.js";
+import { localHour, wallTimeToUtc } from "../services/airport/AirportTime.js"; import { certifySessionFeasibility } from "../services/airport/LayoverFeasibility.js"; // census-layover §75
 import type { AirportProfile } from "../services/airport/AirportProfileService.js";
 import type { LayoverSession } from "../services/airport/LayoverSessionService.js";
 
@@ -98,8 +98,8 @@ describe("layover hard-return deadline — named regression pairs", () => {
     const dLater   = wallTimeToUtc(TZ, "2026-06-15T20:00")!.getTime();
     const now      = wallTimeToUtc(TZ, "2026-06-15T09:00")!.getTime();
 
-    const aEarlier = assess(airport, sessionAt(dEarlier, boarding), CANDIDATE, now);
-    const aLater   = assess(airport, sessionAt(dLater, boarding), CANDIDATE, now);
+    const aEarlier = assess(airport, sessionAt(dEarlier, boarding), CANDIDATE, now, certifySessionFeasibility(airport, sessionAt(dEarlier, boarding), { nowMs: now, entry: null }));
+    const aLater   = assess(airport, sessionAt(dLater, boarding), CANDIDATE, now, certifySessionFeasibility(airport, sessionAt(dLater, boarding), { nowMs: now, entry: null })); assert.ok(aEarlier.usableMinutes > 0, "positive control: a certified window");
 
     assert.ok(
       aLater.hardReturnTime.getTime() >= aEarlier.hardReturnTime.getTime(),

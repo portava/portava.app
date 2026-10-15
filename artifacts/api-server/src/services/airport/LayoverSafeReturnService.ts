@@ -29,9 +29,9 @@
  * There is no routing provider on this tree, so "fastest certified route"
  * cannot be produced and `returnContract.route` is `null` with a named reason
  * rather than a plausible-looking line — spec §2.1, "missing live intelligence
- * degrades VISIBLY; never fabricate freshness." There is no crew storage
- * (census L28), so `crewNotified` is an empty list with a named reason, not a
- * silent success. There is no gate/terminal feed (census L80), so the pinned
+ * degrades VISIBLY; never fabricate freshness." A crew is told only behind a flag
+ * AND the traveller's own per-abort choice (census L144, LayoverCrewAbortNotice.ts);
+ * otherwise `crewNotifiedCount` is 0 with a named reason, not a silent success. There is no gate/terminal feed (census L80), so the pinned
  * context carries the airport's `terminalInfo` when the profile has one and
  * `null` when it does not.
  *
@@ -57,7 +57,7 @@ import {
   type FeasibilityAirport,
   type FeasibilitySession,
   type LayoverFeasibilityRecord,
-} from "./LayoverFeasibility.js"; import type { EntryEligibility } from "./layoverEntryGate.js";
+} from "./LayoverFeasibility.js"; import type { EntryEligibility } from "./layoverEntryGate.js"; import { tellCrewOfAbortWithin, CREW_ABORT_NOTICE_OFF, type CrewAbortNoticeReason, type CrewAbortNoticeRequest } from "../layover/LayoverCrewAbortNotice.js"; // census-layover L144 (§74); same line, so no cited line below moves
 
 const logger = rootLogger.child({ service: "LayoverSafeReturnService" });
 
@@ -212,7 +212,7 @@ export type AbortEffect =
   | "status_write_failed"
   | "ledger_recorded"
   | "ledger_write_failed"
-  | "crew_notify_unavailable";
+  | "crew_notify_unavailable" | /** census-layover L144: at least one crewmate now holds the "heading back" notice (LayoverCrewAbortNotice.ts) */ "crew_notified";
 
 export interface AbortResult {
   ok: boolean;
@@ -225,9 +225,9 @@ export interface AbortResult {
   cancelledStopIds: string[];
   /** Every effect that ran, successful or not. Failures are NOT swallowed. */
   effects: AbortEffect[];
-  /** Empty, with a reason: crews exist (2984), but telling one is a disclosure the owner has not enabled (L144, §48). */
-  crewNotified: string[];
-  crewNotifyUnavailableReason: "crew_notify_not_enabled" | null;
+  /** census-layover L144 (§74): how many crewmates hold the "heading back" notice — a COUNT, never a person (crewmates' ids are not published; census §48 `bindingMemberHidden`). 0 with a reason unless the flag is on AND the traveller asked on THIS abort. */
+  crewNotifiedCount: number;
+  crewNotifyUnavailableReason: CrewAbortNoticeReason | null;
   statusApplied: boolean;
 }
 
@@ -315,7 +315,7 @@ export async function abortToAirport(
     record: LayoverFeasibilityRecord;
     userId: string;
     nowMs: number;
-    statusEnabled: boolean;
+    statusEnabled: boolean; /** census-layover L144: the traveller's per-abort choice and the flag, read by the route (`crewAbortNoticeRequest`). Omitted = nobody is told. */ crewNotice?: CrewAbortNoticeRequest; /** Tests only: the crew notice's bound (default CREW_ABORT_NOTICE_DEADLINE_MS). */ crewNoticeDeadlineMs?: number;
   },
 ): Promise<AbortResult> {
   const effects: AbortEffect[] = [];
@@ -368,8 +368,8 @@ export async function abortToAirport(
   } else {
     effects.push("ledger_recorded");
   }
-
-  effects.push("crew_notify_unavailable");
+  // census-layover L144 — AFTER the ledger, outside `ok`, and BOUNDED: telling the crew never fails or holds the abort, and a failed abort is still a traveller heading back.
+  const crew = await tellCrewOfAbortWithin(db, { userId, sessionId: session.id, nowMs, request: input.crewNotice ?? CREW_ABORT_NOTICE_OFF, tripId: session.tripId }, input.crewNoticeDeadlineMs); effects.push(crew.notifiedCount > 0 ? "crew_notified" : "crew_notify_unavailable");
 
   return {
     ok: cancelled.ok && !statusFailed && !ledgerError,
@@ -379,8 +379,8 @@ export async function abortToAirport(
     posture,
     cancelledStopIds: cancelled.ids,
     effects,
-    crewNotified: [],
-    crewNotifyUnavailableReason: "crew_notify_not_enabled", // §48 — was "no_crew_storage", false since 2984
+    crewNotifiedCount: crew.notifiedCount,
+    crewNotifyUnavailableReason: crew.reason, // §74 — was the hard-coded "crew_notify_not_enabled" (§48), which is now the flag-OFF answer of tellCrewOfAbort
     statusApplied,
   };
 }

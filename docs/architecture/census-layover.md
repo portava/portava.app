@@ -6732,7 +6732,7 @@ census exists to find.
 
 | where | what it still says |
 | --- | --- |
-| `artifacts/api-server/src/services/airport/LayoverSafeReturnService.ts:383#crewNotifyUnavailableReason: "crew_notify_not_enabled",` | abort returns `crewNotified: []` with this reason, hard-coded — the field is typed `"no_crew_storage" \| null`, so the *type* says no other reason is possible (L144) — **SUPERSEDED by §48**: the reason was `"no_crew_storage"`; it now names the owner's undecided disclosure. Anchor re-pointed |
+| `artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:292#if (!request.enabled) return untold("crew_notify_not_enabled");` | abort returns `crewNotified: []` with this reason, hard-coded — the field is typed `"no_crew_storage" \| null`, so the *type* says no other reason is possible (L144) — **SUPERSEDED by §48**: the reason was `"no_crew_storage"`; it now names the owner's undecided disclosure. Anchor re-pointed; **SUPERSEDED by §73**: the reason is no longer hard-coded — `crew_notify_not_enabled` is now the flag-OFF answer of `tellCrewOfAbort`, and the abort publishes `crewNotifiedCount`, never ids. Anchor re-pointed again |
 | `artifacts/api-server/src/services/airport/LayoverDegradedService.ts:173#crewMeetingPoint: crewMeetingPointOf(input.crew),` | the offline bundle publishes no meeting point, though `layover_crews.meeting_point_label` now exists and is already shown on the online crew screen (L154) — **SUPERSEDED by §48**: this line read `unavailable("no_crew_storage")`; anchor re-pointed at what replaced it |
 | `artifacts/api-server/src/services/airport/LayoverDegradedService.ts:124#crewMeetingPoint: OfflineCapability<string>;` | and types it so a value can never be supplied — **SUPERSEDED by §48**: this line read `OfflineCapability<never>`; anchor re-pointed |
 
@@ -8497,8 +8497,8 @@ was written to any hosted database. Paths are repository-relative, as in §41.
    (`travel-buddy-standalone/src/components/layover/LayoverOfflinePlanCard.tsx:151#layover-cached-plan-crew-point`).
    `crew_unreadable` is said as a failed read, never as "you are not in a crew".
 8. **The abort said the wrong reason** (L144).
-   `artifacts/api-server/src/services/airport/LayoverSafeReturnService.ts:383#crewNotifyUnavailableReason: "crew_notify_not_enabled",`.
-   Nothing is sent; see 48.3.
+   `artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:292#if (!request.enabled) return untold("crew_notify_not_enabled");` (**SUPERSEDED by §73**: this cited the hard-coded reason in `LayoverSafeReturnService.ts`; it is now the flag-OFF answer of `tellCrewOfAbort`. Anchor re-pointed).
+   Nothing is sent; see 48.3. (§73: still nothing while `layover_crew_abort_notify_enabled` is OFF, its seed.)
 
 ### 48.2 Row moves
 
@@ -10965,7 +10965,7 @@ That event lives in `layover_events`, which is 0127's table and exists on every 
 - **Known limits, recorded (verification V-717), no code here:**
   - **F-A, a latent divergence the monitor will surface; it needs its own lane.**
     - `assess` rates a landside card against the deadline minus now
-      (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:757#const usableMin      = Math.max(0, availableMin - bufferMin);`).
+      (`LayoverSafetyEngine.ts` line 757, `Math.max(0, availableMin - bufferMin)`, as it stood at `aeae27499`). **Fixed by §75**: the line now reads the record's figure (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:757#const usableMin      = window ? window.usableMinutes : 0;`).
     - The record certifies the deadline minus the later of now and the earliest landside exit
       (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:1145#const windowStartMs  = Math.max(nowMs, earliestOutMs);`).
     - Before the traveller can be landside the two differ. The verifier measured 463 against 218 usable minutes,
@@ -11055,3 +11055,583 @@ In total, 53 run, 52 killed, 1 equivalent.
 
 The grades and the headline are unchanged: **C=85 W=155 N=56 X=0**.
 
+## §73 — 2026-10-14 (B58 lane LAY-2700; found by lane LAY-2): 2700's verdict CHECK refused `entry_unverified`, so persistence would have stored nothing for every roomy layover. Migration 3792 widens it. NO ROW MOVES
+
+Section number: open PR #717 (branch `claude/b58-lay-2`) adds §72; this section takes §73 so the two do not collide.
+Measured on branch `claude/b58-lay-2700` from origin/main `9af376fa4`. Nothing was written to any shared database; every
+database result below is from the CI local-db suite's own harness shape or a PGlite full-chain replica.
+
+### §73.1 The defect
+
+- 2700 declares `verdict` with
+  `artifacts/api-server/src/migrations/2700_layover_certified_feasibility.sql:135#CHECK (verdict IN ('yes','tight','no','stay_airside')),`.
+- The engine's union has five members:
+  `artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:1204#verdict: "yes" | "tight" | "no" | "entry_unverified" | "stay_airside";`.
+  The fifth is returned for every session with 90 or more usable minutes whose corridor is not confirmed
+  (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:1397#return { verdict: "entry_unverified", reasons, reasonCodes, ...common };`).
+  `entry_requirements` is uncurated, so that is every roomy layover.
+- The table's one writer sends the verdict unmapped
+  (`artifacts/api-server/src/services/airport/layoverLedger.ts:513#verdict: record.verdict,`), spread into
+  `artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:455#.insert(certifiedComputationRowFor(userId, sessionId, record));`.
+- So with 2700 and 2992 applied and `layover_decision_persistence_enabled` ON, `persistDecision` fails with 23514 and
+  returns `write_failed`
+  (`artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:468#reason: "write_failed",`). No decision, time
+  budget or return plan is stored for those sessions. L25, L64's stamp, L190, L209–L211, L213 and L217 all read those
+  rows. L212 reads the replan ledger, not this table, and is unaffected.
+- Why nothing saw it: `fakeLayoverDb` models no CHECK, and no `test/db` suite wrote the table.
+
+It was not mapped anywhere before storage: the writer's verdict type is the engine's union (read by the TypeScript
+checker in the suite below), and the row carries it unchanged for every member.
+
+### §73.2 The fix
+
+`artifacts/api-server/src/migrations/3792_layover_certified_verdict_admits_entry_unverified.sql` (band 3792, written and
+not applied anywhere):
+- drops every single-column CHECK on `verdict`, found in the catalog
+  (`artifacts/api-server/src/migrations/3792_layover_certified_verdict_admits_entry_unverified.sql:114#DO $drop$`);
+- adds the five-member CHECK
+  (`artifacts/api-server/src/migrations/3792_layover_certified_verdict_admits_entry_unverified.sql:133#ADD CONSTRAINT layover_certified_computations_verdict_check`),
+  a strict superset of 2700's, so existing rows validate untouched;
+- refuses, naming 2700, on a database without 2700's table
+  (`artifacts/api-server/src/migrations/3792_layover_certified_verdict_admits_entry_unverified.sql:100#RAISE EXCEPTION 'PRECONDITION FAILED (3792): public.layover_certified_computations does not exist`).
+  It must be pressed WITH 2700 and 2992 (2700, then 2992, then 3792) and before the flag is flipped;
+- `$post$` is recomputed from the catalog: exactly one single-column CHECK on `verdict`, a plain enumerated list,
+  admitting all five.
+
+Rollback: `db/rollback/2026-10-14-3792-layover-certified-verdict-admits-entry-unverified-rollback.sql` restores 2700's
+four. It refuses while a stored row carries a widened verdict
+(`db/rollback/2026-10-14-3792-layover-certified-verdict-admits-entry-unverified-rollback.sql:44#RAISE EXCEPTION 'ROLLBACK REFUSED (3792): % stored computation(s)`)
+and while the persistence flag is ON
+(`db/rollback/2026-10-14-3792-layover-certified-verdict-admits-entry-unverified-rollback.sql:38#RAISE EXCEPTION 'ROLLBACK REFUSED (3792): layover_decision_persistence_enabled is ON.`).
+
+### §73.3 Why it cannot recur
+
+`artifacts/api-server/src/test/layoverStoredVocabulary.test.ts` (22 cases) derives both sides mechanically:
+- the writer's vocabulary from the TypeScript checker
+  (`artifacts/api-server/src/test/helpers/layoverStoredVocabulary.ts:80#export function writerVocabularies(): Map<string, string[]> {`);
+- the database's from the NEWEST migration that states the CHECK
+  (`artifacts/api-server/src/test/helpers/layoverStoredVocabulary.ts:224#export function newestCheckVocabulary(table: string, column: string, dir = MIGRATIONS_DIR): CheckVocabulary {`).
+
+The pin is
+`artifacts/api-server/src/test/layoverStoredVocabulary.test.ts:143#it("the NEWEST migration stating the CHECK admits every verdict the writer can send", () => {`.
+A sixth verdict in the engine is red there until a migration admits it (mutant T1). Red without 3792: 3 of 22.
+
+`artifacts/api-server/src/test/db/layoverCertifiedVerdict.db.test.ts` (11 cases, CI local-db job) runs the store's own
+statements on the replayed chain:
+- `artifacts/api-server/src/test/db/layoverCertifiedVerdict.db.test.ts:227#it("a roomy layover with an unconfirmed corridor is STORED, with its time budget and return plan (refused by 2700's CHECK alone)", async () => {`;
+- every verdict in the union is stored, with the fixture set checked against the checker's union;
+- 3792's `$post$` passes alone and refuses five loosenings; its body re-applies as a no-op;
+- the rollback's two refusals, its exact inverse, and its own postcondition, each in a rolled-back transaction.
+
+On a PGlite full-chain replica: 11 of 11 with 3792, and 6 of 11 red on main's chain (every case that needs 3792
+applied). The rehearsal (apply, `$post$` alone, re-apply, controls, rollback, re-apply, refusal without 2700) passed
+33 of 33.
+
+### §73.4 The sweep of every other CHECK on the 2700 and 2992 tables
+
+Each writer was found by scanning production code. The set is pinned at six write sites, so a new writer has to join
+the sweep. None of these needed a fix:
+
+| table | CHECK | what the writer sends | result |
+| --- | --- | --- | --- |
+| `layover_certified_computations` | `verdict` IN (4) | the engine's 5 | **fixed by 3792** |
+| `layover_certified_computations` | `confidence`, `buffer_percentile` | `EstimateConfidence`, `EstimatePercentile` (checker) | ok |
+| `layover_certified_computations` | `total_buffer_min`, `usable_minutes` >= 0; 3623 `snapshot_version` >= 1 | non-negative integers on a 336-record grid; the version is trigger-assigned | ok |
+| `layover_time_budgets` | `buffer_percentile`; ten terms, total, usable, scheduled >= 0 | pass-through percentile; integers >= 0 or NULL on the grid | ok |
+| `layover_return_plans` | `risk_band` IN (4) or NULL; `confidence`; recommended <= hard; activity <= recommended | `riskBandFor` (NULL only for `stay_airside`); recommended equals hard; activity NULL | ok |
+| `layover_constraints` | `baggage_mode`, `entry_permission_state`; `version` >= 1 | `BaggageMode`, `EntryPermissionState`; latest + 1 | ok; the other five CHECKed columns are not sent and take listed defaults |
+| `layover_checkpoints` | `checkpoint_type`, `source`, `confidence`, `dedup_key` length | the two traveller types, `TRAVELLER`, `MEDIUM`, at most 136 characters | ok |
+| `layover_outcomes` | `boarding_outcome`, `anonymization_state`; return <= completion | `BOARDED` / `UNKNOWN`; not sent (default `IDENTIFIED`); both from one clock | ok (see §73.6) |
+
+### §73.5 Mutants
+
+24 run, 24 killed (runner `scratchpad/lay2700/mutate.py`):
+- 10 on the TypeScript side: a sixth verdict, a mapped verdict, out-of-vocabulary checkpoint, outcome, percentile and
+  constraint values, a negative budget term, a second writer, and a reader that takes the oldest migration;
+- 9 on 3792: the old four re-added, no drop, two CHECKs side by side, the refusal and its wording, and four
+  `$post$` weakenings;
+- 5 on the rollback: each refusal, a non-inverse restore, a no-op postcondition, and no drop.
+
+### §73.6 Recorded, not fixed
+
+- `layover_outcomes_return_not_after_completion` holds because the re-entry checkpoint and the close are both stamped
+  by the server's clock, the later one second. Two API instances with skewed clocks could invert them. The outcome
+  write would then fail and be logged as `write_failed`, and the close would still stand.
+- `artifacts/api-server/src/scripts/checkProductionDrift.ts`'s note on `layover_constraints` says 2992 is applied to
+  "NO database". `docs/migrations.md` records 2992 applied to `portava-ci` on 2026-09-26. The note is stale on
+  `portava-ci`; it is right about production.
+
+### §73.7 Rows
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L25 | N | N | The storage is 2700 + 2992 + 3623 (+ 3792), none applied in production; persistence is OFF (H24, lead ruling WAVE-1). 3792 removes a defect that would have emptied it after the press. |
+| L64 | N | N | Same storage, and 3623's flag is FALSE (H24). |
+| L190 | N | N | Reads the same unapplied storage (lead ruling GRADING). |
+| L209 | N | N | Nothing certified is stored in production to count (H24). |
+| L210 | N | N | Computed from `layover_certified_computations`, unapplied in production (H24, §59.2). |
+| L211 | N | N | Same as L210. |
+| L213 | N | N | Same as L210. |
+| L217 | N | N | The stored-row replay reads 2700/2992, unapplied in production, and only while persistence is ON (H24). |
+
+Headline unchanged by this section: **C=85 W=155 N=56 X=0** over 296 on main after §72 (#717, L216 N → W) (`check:census-integrity`).
+
+## §74 — 2026-10-14 (B58 lane LAY-6; owner question OQ-3 open, its fail-closed default built): at the one-tap abort a traveller can choose to tell their crew they are heading back — behind a flag seeded OFF. ONE ROW MOVES
+
+*Measured on branch `claude/b58-lay-6` from origin/main `9af376fa4`, then on `aeae27499` after merging #716 and #717
+(§72, L216/L217). §74 was the next free number on main at that merge, so this section takes it; lane LAY-2700's section
+renumbers after it. No database is touched: migration 3786 is a flag seed applied nowhere.*
+
+### §74.1 What was true on `9af376fa4`
+
+- The posture published `notifyCrew` (spec §15 "crew/buddy is notified if policy + user settings allow"), and the
+  abort sent nothing: `abortToAirport` answered `crewNotified: []` with a hard-coded `crew_notify_not_enabled` on every
+  abort, whatever the traveller wanted (§48.1 item 8).
+- The abort route read no request body, and the client offered no control (§28.3 and the client's own docblock said
+  so on purpose).
+- §28.3 / §48.3 held the row at N on a decision rather than on plumbing: telling a crew that a member turned back is
+  a DISCLOSURE about that traveller, which the owner has not decided. The crew tables themselves are applied in
+  production (2984/2985, 2026-09-16; L28/L29 C).
+
+### §74.2 The decision NOT taken, and the default that is built
+
+OQ-3 (PLAN-layover): *is a crew told that a member turned back, and is a standing setting wanted besides the
+per-abort choice?* Nothing here answers it. The plan's fail-closed default is built and switched OFF:
+
+1. **Flag.** `layover_crew_abort_notify_enabled`, seeded FALSE by 3786
+   (`artifacts/api-server/src/migrations/3786_layover_crew_abort_notify_flag.sql:40#layover_crew_abort_notify_enabled`),
+   read through the shared fail-closed reader. OFF, absent or unreadable: nothing beyond the flag is read and the
+   abort answers `crew_notify_not_enabled`, as before
+   (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:292#if (!request.enabled) return untold("crew_notify_not_enabled");`).
+2. **Per abort, explicit.** Only the literal boolean `tellCrew: true` on that abort's body is consent
+   (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:139#export function tellCrewRequested(`;
+   `artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:293#if (!request.requested) return untold("not_requested");`).
+   No standing setting; the posture's `notifyCrew` is not consent. The app's box is unticked and resets at every
+   press.
+3. **Crew only.** The other live members of the crew the traveller joined WITH THIS SESSION
+   (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:163#membership.sessionId !== sessionId`).
+   No buddy, trip member or follower.
+4. **The crew card's gates, both ways.** A block in either direction removes a crewmate
+   (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:312#const recipients = own.others.filter((m) => !blocked.ids.has(m.userId) && allowed.has(m.userId));`),
+   and so does the crewmate's own paused or off sharing. The traveller's own standing choices tell nobody when they
+   refuse: the layover surface's §17 gate, `location_preferences` (paused, mode off) AND Ghost Mode on this layover's
+   trip, either unreadable = refused
+   (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:190#const gate = await evaluateSharingGate(db, { userId, tripId: tripId ?? null });`;
+   fix round 1, F1 — before it, only `location_preferences` was read).
+   An unreadable block list or sharing table tells nobody
+   (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:304#if (!blocked.ok) return untold("blocks_unreadable");`,
+   `artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:310#if (sharing.degraded) return untold("sharing_preferences_unreadable");`).
+   So the recipients are never more than the faces the traveller already sees on `GET /crew`.
+5. **Minimal text, in-app only.** "Your layover crew" / "<name> is heading back to the airport.", the name only when
+   the traveller shows their real name, otherwise "A crew member"
+   (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:229#if (!allowed.has(userId)) return CREW_ABORT_NOTICE_FALLBACK_NAME;`).
+   No reason, time, place, actor id or metadata. The source id is an opaque digest of crew + session
+   (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:268#export function crewAbortNoticeSourceId(`).
+   The template has no push channel
+   (`artifacts/api-server/src/services/notifications/NotificationTemplateService.ts:1190#eventType: 'layover.crew.member_heading_back',`).
+6. **A count, never a person.** The abort publishes `crewNotifiedCount` and a named reason; crewmates' ids are not on
+   the wire (`artifacts/api-server/src/services/airport/LayoverSafeReturnService.ts:382#crewNotifiedCount: crew.notifiedCount,`;
+   the `bindingMemberHidden` precedent, §48).
+7. **Never fails or holds the abort.** The notice runs after the ledger, outside `ok`, and inside a bound
+   (fix round 1, F3: `artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:363#export async function tellCrewOfAbortWithin(`)
+   (`artifacts/api-server/src/services/airport/LayoverSafeReturnService.ts:372#const crew = await tellCrewOfAbortWithin(`). A
+   PARTIAL abort (500) still tells the crew the traveller asked to tell (they are still heading back) and its body
+   says so.
+
+### §74.3 What changed
+
+- **Server, new:** `artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts` (the request, the capability
+  and the notifier, header states the rules above).
+- **Server, line-neutral:** `LayoverSafeReturnService.ts` gains an import on an existing line, the `crew_notified`
+  effect, the two result fields, the `crewNotice` input, and the call; every cited line holds.
+  `routes/airport.ts`: the return-now handler reads the body
+  (`artifacts/api-server/src/routes/airport.ts:1398#crewNotice: await crewAbortNoticeRequest(sc, req.body)`), its 500
+  body carries the crew fields
+  (`artifacts/api-server/src/routes/airport.ts:1416#crewNotifiedCount: result.crewNotifiedCount`), and `GET /overview`
+  publishes whether the choice may be offered
+  (`artifacts/api-server/src/routes/airport.ts:2294#crewAbortNotice: await crewAbortNoticeCapability(`; flag on, a
+  live crew joined with this session, someone else in it). The import shares an existing line. No route is added.
+- **The old hard-coded reason.** §28.3's table row and §48.1 item 8 cited it in `LayoverSafeReturnService.ts`;
+  both anchors are re-pointed to the flag-OFF branch above, with a SUPERSEDED note.
+- **App:** `travel-buddy-standalone/src/components/layover/LayoverCrewAbortToggle.tsx` (rendered only for an
+  explicit server yes:
+  `travel-buddy-standalone/src/components/layover/LayoverCrewAbortToggle.tsx:37#return overview.crewAbortNotice?.available === true;`;
+  a checkbox stating the whole disclosure), on the card beside the abort control
+  (`travel-buddy-standalone/src/components/layover/LayoverSafeReturnCard.tsx:148#<LayoverCrewAbortToggle overview={overview} controller={controller} />`).
+  `useSafeReturnAbort` reads the choice at the press and resets it
+  (`travel-buddy-standalone/src/components/layover/useSafeReturnAbort.ts:73#const tellCrewNow = tellCrewRef.current === true;`),
+  so the footer CTA and the map anchor honour the same choice. An unticked press is exactly the old call.
+  `returnToAirportNow` sends the body only when ticked
+  (`travel-buddy-standalone/src/services/layover.ts:1137#opts.tellCrew === true`).
+  `describeCrewNotification` reads the server's count
+  (`travel-buddy-standalone/src/components/layover/layoverReturnFacts.ts:419#const notified = typeof input.crewNotifiedCount === 'number'`),
+  says a partial send as both, and says every reason without naming a block or a crewmate's settings.
+- **Seeds and registries:** 3786 + `db/rollback/2026-10-14-3786-layover-crew-abort-notify-flag-rollback.sql`
+  (refuses while the flag is TRUE); `scripts/src/beta-flag-policy.json` gains the flag OFF (sync tool);
+  `telegraph-phase0-inventory.md` regenerated (migration count). No table, so no deletion fate and no REVOKE.
+
+Files §74.3 names that L144 does not rest on:
+
+- NOT-GRADED: db/rollback/2026-10-14-3786-layover-crew-abort-notify-flag-rollback.sql — 3786's rollback, applied nowhere; it removes the flag row only while FALSE. No verdict reads it.
+- NOT-GRADED: scripts/src/beta-flag-policy.json — the beta environment's flag policy, which lists the new flag OFF as the sync tool requires. It configures beta, and no layover row rests on it.
+- NOT-GRADED: scripts/src/beta-bootstrap.test.ts — the beta chain's flag-count pin, moved 196 → 197 for 3786's seed (§74.10). It checks the beta bootstrap's model of the chain, and no layover row rests on it.
+
+### §74.4 The essential-safety channel of #701/#709 is untouched (§66, §69)
+
+- `NotificationRouter.ts`, `NotificationDeduplicationService.ts`, `essentialAttemptBudget.ts`,
+  `LayoverOpportunityNotifier.ts` and `LayoverReturnEscalation.ts` are not edited.
+- The notice has its own event type, source type `layover_crew_abort`, an app-route action url (`/layover/<the
+  crewmate's own session>`), and `essential` unset. A crewmate's superseding read and essential dedup cannot see it
+  (`artifacts/api-server/src/services/layover/__tests__/layoverCrewAbortNotice.test.ts:531#a crewmate's return-warning superseding read and essential dedup do not see the crew notice`).
+- **The router golden was regenerated, and why its diff is large.** The new template changes `TEMPLATES`, which
+  `routerRegression` requires the golden to cover. The golden was regenerated by its own documented procedure:
+  77aac9e50's `NotificationRouter.ts`, `lib/push.ts` and `LayoverReturnEscalation.ts` over the branch tree. On the
+  unchanged tree that procedure reproduced all 352 committed digests exactly.
+  - A digest covers the decision KEYS, which carry the matrix row index. So every type whose rows come after the
+    appended template re-digests: 231 synthetic types and the four `layover.return.*` types. The 117 template types
+    before it keep their digests.
+  - Branch versus the regenerated golden differs in exactly the three intended `layover.return.*` types, as before.
+    The new type's digest is the same under main's router and the branch's.
+  - `routerRegression` passes 5/5. Routing the new template through the whole matrix (default and urgent, four
+    settings, switch off and on) sends no Expo message in any of the 16 routings
+    (`artifacts/api-server/src/services/layover/__tests__/layoverCrewAbortNotice.test.ts:543#routing: in-app only`).
+
+### §74.5 Tests and mutants
+
+- `artifacts/api-server/src/services/layover/__tests__/layoverCrewAbortNotice.test.ts`: 35/35.
+  - With main's `LayoverSafeReturnService.ts`, `routes/airport.ts` and `NotificationTemplateService.ts` in place,
+    26 of 35 are red; the 9 that hold are the consent parser, the fail-closed flag read, the capability and the
+    no-notice controls.
+  - Pins, among them: flag OFF + asked tells nobody and reads no crew
+    (`artifacts/api-server/src/services/layover/__tests__/layoverCrewAbortNotice.test.ts:225#FLAG OFF + asked`);
+    a count and no ids (`artifacts/api-server/src/services/layover/__tests__/layoverCrewAbortNotice.test.ts:275#each other live crewmate gets ONE in-app notice`);
+    the text is the whole disclosure (`artifacts/api-server/src/services/layover/__tests__/layoverCrewAbortNotice.test.ts:293#the text is the whole disclosure`);
+    blocks both ways (`artifacts/api-server/src/services/layover/__tests__/layoverCrewAbortNotice.test.ts:340#a crewmate who BLOCKED the traveller is not told`);
+    an unreadable ledger is not "already told"
+    (`artifacts/api-server/src/services/layover/__tests__/layoverCrewAbortNotice.test.ts:485#an UNREADABLE notifications ledger`);
+    a failed notice never fails the abort
+    (`artifacts/api-server/src/services/layover/__tests__/layoverCrewAbortNotice.test.ts:456#every notice write fails: the abort is still ok`).
+- `artifacts/api-server/src/test/layoverCrewAbortNoticeRoute.test.ts`: 9/9, all 9 red with main's three files
+  (body read, `"true"` is not consent, flag OFF, the partial 500, the overview capability).
+- `test/layoverSafeReturnAbort.test.ts` 32/32: its "never claims a crew was notified" case now also pins that no
+  ids field exists (line-neutral).
+- App: the card suite +7 (30/30; 4 of the 7 red on main's client files, the other 3 are controls that hold there)
+  and the facts suite +5 (36/36; 4 red on main). All 48 layover component suites (`app/layover`,
+  `src/components/layover`): 422/422. Mobile typecheck clean.
+- **Mutants: 34, all killed** (server 25, app 9). Among them: the flag ignored, the opt-in ignored, any session's
+  crew, the traveller told about themselves, blocks ignored, an unreadable block list read as none, the sharing
+  gates (each side), the name rule, a duplicate counted as told without a read, the source type set to
+  `layover_return`, the action url set to the API path, an actor id, truthy consent, push on the template, the
+  abort's `ok` reading the notice, the notice skipped on a partial abort, the route not passing the choice, the
+  500 body without the fields, the overview without the capability, ids published; app: always offered, ticked by
+  default, no reset, always sent, the partial line dropped (two ways), the count ignored, the partial suffix
+  dropped, offered on an ended session. The first run left S5 (blocks ignored) alive. It was an equivalent mutant:
+  the sharing read ran only over unblocked crewmates, so the block check ran twice. The sharing read now covers
+  every crewmate, each gate stands alone, and S5 is killed.
+
+### §74.6 Reachability, and why the row stops at W
+
+- The path is mounted end to end: return-now in production's router, the overview field, the card's control.
+- But the flag is seeded FALSE and 3786 is applied nowhere, so the capability reads OFF and nobody can reach the
+  behaviour. A flag-OFF build grades W (GRADING; L67 precedent, §59.3).
+- The row's second noun stays unbuilt: no layover↔booking link exists, so no buddy is told. Even with the flag on,
+  "crew/buddy" is half built, and the row could not pass W.
+
+### §74.7 Recorded limits (stated, not graded)
+
+- **In-app only, by design of the default.** A crewmate who does not open the app will not learn of it until they
+  do. Whether a push (a lock-screen disclosure) is wanted is part of OQ-3.
+- **Duplicates.** The 30-minute window is the shared pipeline's. A traveller who aborts again more than 30 minutes
+  later, and ticks again, tells the crew again.
+- **The capability is coarse.** It says "a live crew with someone else in it". It does not say a crewmate will
+  clear the gates. The answer at the abort (`no_crewmate_to_tell`) is what decides, and it is told to the traveller.
+
+### §74.8 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L144 | N | W | Built and mounted end to end behind `layover_crew_abort_notify_enabled` (3786, seeded FALSE, applied nowhere), as OQ-3's fail-closed default: per-abort explicit opt-in, crew only, the crew card's gates both ways, minimal in-app text, a count never a person, never failing the abort (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:281#export async function tellCrewOfAbort(`). Pinned by 58 server cases and 13 app cases; 45 mutants killed across the build and fix round 1 (§74.10). W, not C: the flag is OFF (GRADING), the disclosure itself is the owner's open question, and the buddy half has no layover↔booking link to reach. |
+
+L142, L28 and L29 do not move: L142 still has no route, and the crew tables are unchanged.
+
+### §74.9 Headline
+
+| bucket | was (§72.7) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 85 | 85 |
+| BUILT-BUT-WRONG | 155 | 156 |
+| NOT-BUILT | 56 | 55 |
+| CANNOT-VERIFY | 0 | 0 |
+| total | 296 | 296 |
+
+**C=85 W=156 N=55 X=0** over 296 (`check:census-integrity`), after merging `main` `aeae27499` (#717's §72 moved L216
+first).
+
+### §74.10 Fix round 1 (verdict V-723 on `c127f47cf`: ACCEPT after merge-time fixes)
+
+- **F1 (privacy, required): a traveller in trip Ghost Mode was announced.**
+  - On `c127f47cf` the traveller's own gate was `publishableUserIds`, which reads only `location_preferences`. Ghost
+    Mode on the layover's trip (`trip_crew_location_preferences`, read by `evaluateSharingGate` → `readTripGhostMode`)
+    was never read. A traveller in Ghost Mode who ticked the box was announced, against this module's own rule that
+    the standing choice is the stricter one.
+  - Now the traveller passes the layover surface's §17 gate, with the session's trip
+    (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:190#const gate = await evaluateSharingGate(db, { userId, tripId: tripId ?? null });`).
+    It runs first, before any crew read
+    (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:295#const refused = await travellerRefusal(db, userId, input.tripId);`).
+    Unreadable is refused (`sharing_preferences_unreadable`). The abort passes `session.tripId`.
+  - The crewmates' own sharing read is unchanged and stays its own gate.
+- **F2: the choice is not offered to a traveller whose own gate refuses.** The capability asks the same gate
+  (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:212#const refused = await travellerRefusal(db, userId, tripId);`).
+  The overview passes the session's trip (`artifacts/api-server/src/routes/airport.ts:2294#crewAbortNoticeCapability(sc, user.id, session.id, nowMs, session.tripId ?? null)`,
+  line-neutral).
+- **F3: the notice is bounded inside the abort.**
+  - `tellCrewOfAbortWithin` races the notice against `CREW_ABORT_NOTICE_DEADLINE_MS`
+    (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:354#export const CREW_ABORT_NOTICE_DEADLINE_MS`, 2.5 s).
+    Past it the abort answers `notify_timed_out`, and nobody is reported told.
+  - No notice STARTS after the bound
+    (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:320#if (input.cancelled?.()) return untold("notify_timed_out");`,
+    checked once, before the creates). A notice that had already started (its duplicate check, then its insert) may
+    still land after the traveller was answered. *Corrected in fix round 2 (V-723 delta): round 1 said "no crewmate is
+    told after the traveller was answered", which is false for a notice already in flight. The verifier's probe stalled
+    `notifications` 60 ms per op with a 100 ms bound and got `notify_timed_out`, count 0, no row at the answer, and 2
+    rows 900 ms later.*
+  - Both cases are pinned:
+    (`artifacts/api-server/src/services/layover/__tests__/layoverCrewAbortNotice.test.ts:698#IN FLIGHT (fix round 2)`)
+    — both notices started before the answer, none after it, and both landed after it.
+    (`artifacts/api-server/src/services/layover/__tests__/layoverCrewAbortNotice.test.ts:721#CANCELLED before any notice starts`)
+    — the bound passes during the prior-notice read, no notice starts, and nothing is ever written.
+    Two mutants are killed: the check removed, and the creates run one after another with no check between them.
+  - That is why the app says it as unconfirmed, never as "not told"
+    (`travel-buddy-standalone/src/components/layover/layoverReturnFacts.ts:426#if (reason === 'notify_timed_out')`).
+- **F4 and F5 are recorded for OQ-3, not changed.**
+  - F4: a crewmate whose own session ended but who never left the crew is still told. This is the crew card's own
+    membership rule (`left_at IS NULL`).
+  - F5: in a crew of two, "A crew member" still identifies the traveller. The owner should decide OQ-3 knowing it.
+- **Merge.** `main` `aeae27499` (#716, #717) is merged. Main's §72 (#717) took that number, and §74 was the next free
+  number on main, so this section is §74 (was §74). The headline is restated after §72: **C=85 W=156 N=55 X=0**
+  (§74.9). `scripts/src/beta-bootstrap.test.ts`'s chain-seeded flag pin goes 196 → 197 (3786). All five `scripts` beta
+  suites pass: bootstrap 82, deployment-guard 121, configure 77, smoke 30, owner 63.
+- **Tests.**
+  - `layoverCrewAbortNotice` 35 → 46. Of the 10 new cases, 5 are red on `c127f47cf` (F1 ×2, F2, F3 ×2), 4 are
+    controls, and 1 is the bound's constant. A crewmates'-sharing-unreadable case was added after re-running the
+    first round's mutants.
+  - The route suite 9 → 12; both Ghost Mode doors are pinned with a control. Facts +1.
+- **Mutants.** 11 new, all killed: Ghost Mode's trip ignored; degraded ignored; the notifier skipping the traveller
+  gate; the abort dropping `tripId`; the old `publishableUserIds` gate; the capability skipping the gate; the
+  overview passing no trip; no race; no cancellation check; an unbounded abort; timed-out said as "not told".
+- **Mutants re-run.** The first round's 34 were re-run on the fixed code. S8 (the old traveller check) no longer
+  exists, and F1c/F1e replace it. S7 (the crewmates' sharing read unreadable) survived, because the traveller's own
+  read now fails first in that fixture. A case that fails only the crewmates' batch read kills it. 33/33 of the
+  ones that apply are killed.
+
+## §75 — 2026-10-14 (B58 lane LAY-USABLE; verifier V-717 finding F-A): one definition of usable time — every card is rated against the certified record's envelope, and with no record nothing is certified. NO ROW MOVES
+
+*Built on branch `claude/fix-layover-usable-time` from origin/main `51c3f30b4`, and restated after merging `main`
+`aeae27499` (#717, §72). No migration, no flag, no stored column and no database are touched. Every edit to a
+line-cited file is line-neutral, so every cited line in `LayoverSafetyEngine.ts`, `LayoverRecommendationService.ts`,
+`LayoverFeasibility.ts` and `LayoverCompassService.ts` keeps its number.*
+
+### §75.1 The defect, re-verified on `main`
+
+- §72.5 recorded the verifier's F-A as a known limit. `assess` rated a card against the deadline minus NOW:
+  `LayoverSafetyEngine.ts` lines 754 and 757, `Math.max(0, availableMin - bufferMin)`, as they stood at `aeae27499`.
+- The certified record certifies the deadline minus the LATER of now and the earliest instant the traveller can be
+  landside (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:1145#const windowStartMs  = Math.max(nowMs, earliestOutMs);`,
+  `artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:1146#const usableMinutes  = Math.max(0, Math.round((windowEndMs - windowStartMs) / 60000));`).
+  The earliest exit is arrival plus `estimateExitDelay`
+  (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:1101#const exitDelayMin  = estimateExitDelay(session);`).
+- The two agree once the traveller can be landside, and before that the clock's figure counts hours spent in the air.
+  Re-measured by this lane's suite, run against `main`'s production files:
+  - **The record contradicted itself.** A session landing in 3 h (8 h connection, immigration, checked bags)
+    certifies 218 usable minutes. Its OWN landside probe, a stated 238-minute out-and-back, was rated `safe`
+    (`artifacts/api-server/src/test/layoverUsableTimeOneDefinition.test.ts:102#the record's OWN landside rating never certifies`).
+  - The service path (`rankActivities`) rated the same card the same way. On a landside card this cannot fire on
+    today's producer: a discovery card's dwell is null
+    (`artifacts/api-server/src/services/airport/LayoverRecommendationService.ts:349#activityTimeMin: null,`) and the
+    provider is `noRoutedProvider`. The day both exist, the §72 monitor would have reported the engine's own `safe`
+    as `EXCEEDS_CERTIFIED_WINDOW`.
+- The sweep below found the same error at two more sites. One of them is **reachable today**.
+
+### §75.2 Which definition is the authority
+
+The record's, and the spec says so in four places:
+
+- §6 calls the feasibility service "the safety authority" that "returns a certified time/risk envelope"
+  (`docs/specs/Portava_Layover_Development_Architecture_Spec_v3.txt:208#This service is the safety authority`;
+  census L45, C).
+- §6's ladder deducts deplaning, immigration/customs, baggage and exit friction BEFORE it reaches
+  "= usable experience time" (`docs/specs/Portava_Layover_Development_Architecture_Spec_v3.txt:220#= usable experience time`;
+  census L46, W). The envelope charges those terms through `exitDelayMin`. The clock's figure charged none of them.
+- §2.1 forbids a second budget: "All surfaces consume the same certified LayoverSnapshot / RecommendationContract;
+  no duplicate time-budget logic" (`docs/specs/Portava_Layover_Development_Architecture_Spec_v3.txt:66#no duplicate time-budget logic`).
+- §6.1's first invariant and §8's feasibility rule are card-level
+  (`docs/specs/Portava_Layover_Development_Architecture_Spec_v3.txt:222#recommendation.expected_airport_return_at <= return_plan.hard_return_by`,
+  `docs/specs/Portava_Layover_Development_Architecture_Spec_v3.txt:284#candidate_feasible iff:`). A traveller cannot
+  depart before the exit, so a card's expected return is at least the earliest exit plus its out-and-back. Only the
+  envelope's figure enforces that.
+
+So `envelope.usableMinutes` is the one definition, and `assess` consumes it. This is also census L76's contract
+reading (one `hardReturnBy`, one `returnBufferMinutes` per card, both the record's) and L293's rule (a lower bound may
+only refuse). Both are kept unchanged in §75.4.
+
+### §75.3 What changed
+
+**The engine** (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts`):
+- `assess`'s fifth parameter is the certified RECORD, not a bare deadline
+  (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:714#export interface CertifiedTimeBudget`).
+  A `LayoverFeasibilityRecord` satisfies the type as it is, so callers hand in the record itself.
+- The record is read only if it is this instant's and it is readable: a deadline with a finite cutoff is present, `inputs.nowMs`
+  equals the rating instant, and both `usableMinutes` and `totalMinutes` are finite and not negative (V-728 fix 1)
+  (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:755#const window         = certified && Number.isFinite(cutoffMs) && record?.inputs?.nowMs === nowMs`).
+- **Landside** cards are rated against the record's usable minutes
+  (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:757#const usableMin      = window ? window.usableMinutes : 0;`).
+- **Airside** cards are rated against the layover's own span, clipped to now
+  (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:758#const airsideMin     = window ? Math.min(availableMin, window.totalMinutes) : 0;`,
+  `artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:783#} else if (airsideMin < statedActivity + 15) {`).
+- **Fail closed.** With no readable record for this instant, every card is `not_recommended`, landside or airside,
+  with a sentence that names the cause
+  (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:777#if (window === null) { rating = "not_recommended"; warningReason = UNCERTIFIED_WINDOW_WARNING; }`,
+  `artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:707#export const UNCERTIFIED_WINDOW_WARNING =`).
+  The deadline it still returns is for display; it certifies nothing.
+- `rankActivities` takes the record and has no fallback derivation left
+  (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:948#const certified = certifiedRecord ?? null;`).
+- The record's deadline is still the deadline every card carries: the destructure #717 cites is unchanged
+  (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:753#const { cutoffMs, breakdown, hardReturnTime } = certified ?? computeReturnDeadline(airport, session, live);`).
+
+**The callers:**
+- The recommendation service passes the record it certified
+  (`artifacts/api-server/src/services/airport/LayoverRecommendationService.ts:666#const ranked = rankActivities(airport, session, frictionAdjusted, nowMs, certified);`).
+- The record's own landside probe is rated against the record being built
+  (`artifacts/api-server/src/services/airport/LayoverFeasibility.ts:634#? { ...assess(airport, session, candidate, nowMs, { deadline, envelope, inputs }), probe: probe! }`).
+
+**The sweep.** Every other site of usable-time arithmetic was opened:
+- **Divergent, and fixed here:**
+  - The airside branch compared a dwell with the deadline minus now. A 60-minute sleep pod on a 60-minute connection
+    was `safe` when the traveller asked before landing. **This is reachable today**: airside dwells are stated, and the
+    route regenerates on every load. It is driven through the producer
+    (`artifacts/api-server/src/test/layoverUsableTimeOneDefinition.test.ts:227#THE PRODUCER: a 60-minute sleep pod`).
+  - Compass with no snapshot spoke `cutoff − now − buffer` as "about N minutes of usable time". Production has no
+    `layover_snapshot_consumers_enabled` row in its flag snapshot, so that is the production path. It now speaks the
+    record's figure
+    (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:250#const usableMin = input.snapshot ? input.snapshot.usableMinutes : record.envelope.usableMinutes;`).
+    Three hours before landing it said 590 where the record certifies 365
+    (`artifacts/api-server/src/test/layoverUsableTimeOneDefinition.test.ts:337#three hours before landing`). The
+    sentence is reached only on a certified `yes`, which needs a confirmed corridor, and `entry_requirements` is
+    uncurated, so this one is latent.
+  - The record's own landside probe (above). No production route passes a probe, so `record.landside` is null on
+    every production record.
+- **Already the record's, unchanged:**
+  - `assessWindowOnly` (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:872#const usableMin    = window.usableMinutes;`)
+    and `adviseLeaving`.
+  - The §9.1 fetch gates (`artifacts/api-server/src/services/airport/LayoverRecommendationService.ts:494#const usableMinutes = certified.envelope.usableMinutes;`)
+    and the §8 envelope cut from them.
+  - Crew branches (`artifacts/api-server/src/services/airport/LayoverCrewService.ts:264#const u = m.record.envelope.usableMinutes;`).
+  - Plan fit (`artifacts/api-server/src/services/airport/LayoverConstraints.ts:830#const usableMinutes = record.envelope.usableMinutes;`).
+  - The snapshot (`artifacts/api-server/src/services/airport/LayoverSnapshot.ts:434#usableMinutes: record.envelope.usableMinutes,`)
+    and every consumer that reads it.
+  - The baggage counterfactual, which calls the same `computeWindow`
+    (`artifacts/api-server/src/services/airport/LayoverConstraints.ts:598#const bestWindow = computeWindow(`).
+- **Not usable time, correctly worded, unchanged:**
+  - Safe Return's `minutesToHardReturn` is a countdown to the hard return, and it is true before landing.
+  - Compass's "about N minutes until boarding" is a clock statement about boarding
+    (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:248#const availMin  = input.snapshot ?`).
+  - The offline card's figure is the certified window less its age, which only errs short.
+
+### §75.4 Safety properties kept
+
+- **L293:** with a record, an unstated leg is still never certified, and the warning still names the missing
+  measurement (`artifacts/api-server/src/test/layoverUsableTimeOneDefinition.test.ts:320#L293 still holds WITH a record`).
+  L293's own suite now hands every case a record. Without one, those cases would have passed through the new
+  fail-closed branch instead of L293's.
+- **Hard return and buffer:** every card carries the record's deadline and total buffer
+  (`artifacts/api-server/src/test/layoverFeasibilityRecord.test.ts:264#assess() against the certified record reuses its deadline AND its envelope`).
+- **§6.1 L52:** the travel-leg sweep now runs against the record's envelope. Before §75 it ran against the clock's
+  figure, though §9 described it as swept over the envelope.
+- **Nobody already landside loses a card.** Once the exit delay has passed, the two definitions are the same number
+  (`artifacts/api-server/src/test/layoverUsableTimeOneDefinition.test.ts:206#once the traveller can be landside, the two definitions COINCIDE`).
+- **The airside clock still clips.** With 10 minutes left of a 60-minute connection, a 30-minute dwell is not `safe`
+  (`artifacts/api-server/src/test/layoverUsableTimeOneDefinition.test.ts:256#late in the layover the CLOCK still clips the span`).
+
+### §75.5 L216: the monitor stops reporting the engine's own ratings
+
+- Swept over 60 sessions, from 4 h after landing to 5 h before, the §72 monitor reads ZERO on every check against the
+  engine's own ratings. That includes `EXCEEDS_CERTIFIED_WINDOW`, which needs a certified landside card and saw more
+  than 20 of them (`artifacts/api-server/src/test/layoverUsableTimeOneDefinition.test.ts:175#L216's own monitor reads ZERO violations`).
+- On `main` that sweep cannot even run: `rankActivities` took a bare deadline.
+- So when a routed provider and a stated dwell exist, L216 counts only real regressions, not the generator's own
+  arithmetic. §72.5's F-A bullet now says "fixed by §75", and its citation of the old line reads "as it stood at
+  `aeae27499`".
+
+### §75.6 Evidence
+
+- **New suite**, `artifacts/api-server/src/test/layoverUsableTimeOneDefinition.test.ts`, 18/18 green.
+  - Against `main`'s four production files, 16 of 18 fail.
+  - Five fail by assertion, on behaviour: the record's probe rated `safe` (238 against 218); the producer's pod rated
+    `safe`; `assess` and `rankActivities` with no record rated `safe`; Compass said 590 for 365.
+  - Eleven fail with a TypeError, because `main`'s fifth parameter is a bare deadline.
+  - The two that pass on `main` are a precondition and the "COINCIDE" control.
+- **Compass at the route:** C3 now pins both flag arms to the record's figure, and that the old figure differed in
+  its window (`artifacts/api-server/src/test/layoverSnapshotConsumers.test.ts:322#it("OFF and ON both speak the record's usable minutes`).
+  It fails on `main` by assertion: the OFF arm said the clock's figure.
+- **Existing suites updated** to hand `assess` / `rankActivities` the record they are rated against: `airport.test.ts`,
+  `layoverUnmeasuredJourney.test.ts`, `layoverRecommendationGate.test.ts`, `layoverFeasibilityRecord.test.ts`,
+  `layoverFeasibilityInvariants.test.ts` and `layoverDeadlineMonotonicity.test.ts`. Every edit is line-for-line, so
+  every cited case in them keeps its line.
+  - `layoverRecommendationGate.test.ts`'s "HANDED" case now pins both halves: the handed record's deadline is on the card,
+    and with no record nothing is certified
+    (`artifacts/api-server/src/test/layoverRecommendationGate.test.ts:281#rankActivities rates against the deadline it is HANDED`).
+- **Neighbours:** 1,437/1,437 across 65 server suites after merging `aeae27499`. These are the recommendation,
+  contract, admin-metrics, feasibility, scenario-matrix, decision-diff, replay, live, envelope, constraint, compass,
+  snapshot, crew, safe-return and replan suites.
+- `check:layover-decision-diff` is clean against the unchanged golden. No certified record output on the corpus moved.
+- **20 mutants, 20 killed.** The runner asserts it runs in this worktree.
+  - M1: the clock's `usableMin` restored.
+  - M2, M10, M11: the airside branch on the clock alone, on the span alone, and through the window on the clock.
+  - M3, M18, M19, M20: the fail-closed branch removed; the clock's figure leaking when uncertified; `airport_only`
+    answered when uncertified; the warning dropped.
+  - M4, M5, M6: the instant check removed, widened to later records, and widened to earlier records.
+  - M7, M8, M9: the readability check removed; its non-negative half removed; its deadline-present half removed.
+  - M12: `rankActivities` dropping the record.
+  - M13, M14: the service passing only the deadline, or nothing.
+  - M15, M16: the probe given only the deadline, or a re-derived window.
+  - M17: Compass's flag-off fallback restored.
+
+### §75.7 Recorded, not moved
+
+- **No row moves.** The census's rules move a row only on a requirement newly met with its evidence, and none is newly
+  met.
+  - The landside half of the defect was unreachable on today's producer.
+  - The reachable airside half sits under no row this pass can raise. L77 (§9.1 hard gate) stays W, and this pass
+    does not re-grade it.
+  - **L216** stays W (§72): no exporter is bound, and only the card's subset of L76 is checked.
+  - **L76** stays W.
+  - **L45** stays C, and the sentence it quotes is now what `assess` obeys.
+  - **L46** stays W (six ladder terms are one constant; transport needs a provider).
+  - **L47** stays C. It is graded at plan level, where plan fit always read the record. Its card-level form held only
+    after the exit before §75 (latent, unreachable) and now holds at every instant.
+  - **L52** stays C, re-pinned against the record. **L293** stays C.
+- **census-discovery A13.** Its "duplicate budget" clause names the Compass flag-off fallback this pass removed.
+  - Four historical rows cited that line. They now read "as it stood at `51c3f30b4`".
+  - Its §81 row cited C3's old title, which is now de-anchored to the new title.
+  - A13's grade is census-discovery's to move, and it is not moved here.
+- **`LAYOVER_ENGINE_VERSION` is not bumped.** Its own rule ties it to certified outputs, so "a stored
+  `hardReturnTime` / `returnState` can be traced". Every certified record output any production path computes is
+  byte-identical: deadline, buffer, envelope, verdict, window rating, tier, return state, `inputHash`. The decision
+  golden is unchanged. The only record field that can move is `landside`, and it is null on every production record.
+  What changed is how a CARD consumes the record. A card's rating is not stored under the version. Whether the lead
+  reads card ratings as certified outputs is a lead call; if so, the bump is mechanical (the version string and a
+  golden regeneration, since the version is inside `inputHash`).
+
+### §75.8 Headline
+
+No row moves.
+
+| bucket | was (§74, main) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 85 | 85 |
+| BUILT-BUT-WRONG | 156 | 156 |
+| NOT-BUILT | 55 | 55 |
+| CANNOT-VERIFY | 0 | 0 |
+| total | 296 | 296 |
+
+**C=85 W=156 N=55 X=0** over 296 (`check:census-integrity`, restated on merging `main` `f57202703`, which carries §73 and §74 — L144 N → W).
