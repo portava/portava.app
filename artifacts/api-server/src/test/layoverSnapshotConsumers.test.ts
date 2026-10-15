@@ -319,7 +319,7 @@ describe("C3 — the in-layover Compass answer reads usableMinutes off the certi
     return Number(m[1]);
   }
 
-  it("OFF keeps the legacy `cutoff − now − buffer`; ON is the snapshot's figure; the two differ here", async () => {
+  it("OFF and ON both speak the record's usable minutes; the legacy `cutoff − now − buffer` is gone (census-layover §75), and it differed here", async () => {
     const dbOff = stage({ ...EARLY, consumers: false });
     const off = await send("POST", `/api/airport/sessions/${SESSION}/compass`, { question: "Can I leave the airport?" });
     assert.equal(off.status, 200, off.raw);
@@ -332,8 +332,8 @@ describe("C3 — the in-layover Compass answer reads usableMinutes off the certi
     assert.equal(on.status, 200, on.raw);
 
     assert.equal(usableIn(at(on.body, "answer")), snap.snapshot.usableMinutes, "ON must publish the snapshot's usable minutes");
-    assert.notEqual(usableIn(at(off.body, "answer")), snap.snapshot.usableMinutes,
-      "fixture: in this window the legacy re-derivation and the snapshot must differ, or C3 proves nothing");
+    assert.equal(usableIn(at(off.body, "answer")), snap.snapshot.usableMinutes, "OFF must publish the record's usable minutes too"); const rec = snap.snapshot.certifiedRecord;
+    assert.notEqual(Math.max(0, Math.round((rec.deadline.cutoffMs - NOW) / 60_000) - rec.deadline.breakdown.totalBuffer), snap.snapshot.usableMinutes, "fixture: in this window the old re-derivation and the record must differ, or C3 proves nothing");
     assert.equal(at(on.body, "certification", "inputHash"), snap.snapshot.certification.inputHash,
       "ON must certify exactly the snapshot's inputs");
   });

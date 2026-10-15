@@ -194,19 +194,19 @@ describe("L293a/b — the recommendation producer states no journey it has not m
 // ── B. assess() FAILS CLOSED on an unstated leg ─────────────────────────────
 
 describe("assess — an unstated landside leg can never be certified", () => {
-  const wide = () => session();
+  const S = session(), T = Date.now(), wide = () => S; const rec = (s: LayoverSession) => Feasibility.certifySessionFeasibility(AIRPORT, s, { nowMs: T, entry: null }); // census-layover §75: a card is certified only against its record
 
   it("travelTimeMin: null is never safe and never possible_but_risky, however wide the window", () => {
     const a = Engine.assess(AIRPORT, wide(), {
       title: "Night Market", travelTimeMin: null, activityTimeMin: 60, insideAirport: false, verified: true,
-    } as any);
+    } as any, T, rec(wide()));
     assert.ok(a.rating !== "safe" && a.rating !== "possible_but_risky", `rated ${a.rating}`);
   });
 
   it("the warning names the REAL cause — not a time it never measured", () => {
     const a = Engine.assess(AIRPORT, wide(), {
       title: "Night Market", travelTimeMin: null, activityTimeMin: 60, insideAirport: false, verified: true,
-    } as any);
+    } as any, T, rec(wide()));
     assert.equal(typeof Engine.UNMEASURED_TRAVEL_WARNING, "string",
       "LayoverSafetyEngine must export UNMEASURED_TRAVEL_WARNING — the sentence the traveller is shown");
     assert.equal(a.warningReason, Engine.UNMEASURED_TRAVEL_WARNING, `warning was: ${a.warningReason}`);
@@ -217,7 +217,7 @@ describe("assess — an unstated landside leg can never be certified", () => {
   it("an unstated DWELL also fails closed, with its own sentence", () => {
     const a = Engine.assess(AIRPORT, wide(), {
       title: "Night Market", travelTimeMin: 20, activityTimeMin: null, insideAirport: false, verified: true,
-    } as any);
+    } as any, T, rec(wide()));
     assert.ok(a.rating !== "safe" && a.rating !== "possible_but_risky", `rated ${a.rating}`);
     assert.equal(typeof Engine.UNSTATED_ACTIVITY_WARNING, "string",
       "LayoverSafetyEngine must export UNSTATED_ACTIVITY_WARNING");
@@ -227,7 +227,7 @@ describe("assess — an unstated landside leg can never be certified", () => {
   it("requiredMinutes is published as a LOWER BOUND when a term is unstated", () => {
     const a = Engine.assess(AIRPORT, wide(), {
       title: "x", travelTimeMin: null, activityTimeMin: null, insideAirport: false,
-    } as any);
+    } as any, T, rec(wide()));
     assert.equal((a as any).requiredMinutesIsLowerBound, true);
     assert.equal((a as any).statedTravelMin, null);
     assert.equal((a as any).statedActivityMin, null);
@@ -238,7 +238,7 @@ describe("assess — an unstated landside leg can never be certified", () => {
   it("a fully stated landside candidate is unchanged — every existing number survives", () => {
     const a = Engine.assess(AIRPORT, wide(), {
       title: "x", travelTimeMin: 20, activityTimeMin: 60, insideAirport: false, verified: true,
-    } as any);
+    } as any, T, rec(wide()));
     assert.equal((a as any).requiredMinutesIsLowerBound, false);
     assert.equal((a as any).statedTravelMin, 20);
     assert.equal(a.requiredMinutes, 20 * 2 + 60 + a.returnBufferMin);
@@ -248,7 +248,7 @@ describe("assess — an unstated landside leg can never be certified", () => {
   it("AIRSIDE 0 IS A FACT — an inside-airport candidate is still safe with 0 travel", () => {
     const a = Engine.assess(AIRPORT, wide(), {
       title: "Lounge", travelTimeMin: 0, activityTimeMin: 30, insideAirport: true,
-    } as any);
+    } as any, T, rec(wide()));
     assert.equal(a.rating, "safe");
     assert.equal((a as any).statedTravelMin, 0);
     assert.equal((a as any).requiredMinutesIsLowerBound, false);
@@ -260,7 +260,7 @@ describe("assess — an unstated landside leg can never be certified", () => {
     assert.equal(statedDurationMin({ durationMin: 0 }), null);
     const a = Engine.assess(AIRPORT, wide(), {
       title: "x", travelTimeMin: 0, activityTimeMin: 60, insideAirport: false,
-    } as any);
+    } as any, T, rec(wide()));
     assert.ok(a.rating !== "safe" && a.rating !== "possible_but_risky", `rated ${a.rating} on a free landside journey`);
   });
 
@@ -268,15 +268,15 @@ describe("assess — an unstated landside leg can never be certified", () => {
     const tight = session({ departureTime: new Date(Date.now() + 4 * 3_600_000).toISOString(), layoverMinutes: 235 });
     const a = Engine.assess(AIRPORT, tight, {
       title: "x", travelTimeMin: 90, activityTimeMin: 120, insideAirport: false, verified: true,
-    } as any);
+    } as any, T, rec(tight));
     assert.equal(a.rating, "not_recommended");
     assert.notEqual(a.warningReason, Engine.UNMEASURED_TRAVEL_WARNING);
   });
 
   it("`wantsToLeave: false` still answers airport_only, not the unmeasured refusal", () => {
-    const a = Engine.assess(AIRPORT, session({ wantsToLeave: false }), {
+    const stay = session({ wantsToLeave: false }); const a = Engine.assess(AIRPORT, stay, {
       title: "x", travelTimeMin: null, activityTimeMin: null, insideAirport: false,
-    } as any);
+    } as any, T, rec(stay));
     assert.equal(a.rating, "airport_only");
   });
 
@@ -297,18 +297,18 @@ describe("assess — an unstated landside leg can never be certified", () => {
       { title: "unstated", travelTimeMin: null, activityTimeMin: 30, insideAirport: false },
       { title: "far",      travelTimeMin: 40,   activityTimeMin: 30, insideAirport: false },
       { title: "near",     travelTimeMin: 10,   activityTimeMin: 30, insideAirport: false },
-    ] as any);
+    ] as any, T, rec(s));
     assert.deepEqual(ranked.map((r) => r.assessment.rating), ["airport_only", "airport_only", "airport_only"],
       "positive control: the ratings must TIE, or this case is testing the rating key again");
     assert.deepEqual(ranked.map((r) => r.title), ["near", "far", "unstated"]);
   });
 
   it("rankActivities orders unstated legs LAST within a rating, and produces no NaN", () => {
-    const ranked = Engine.rankActivities(AIRPORT, session(), [
+    const s = session(); const ranked = Engine.rankActivities(AIRPORT, s, [
       { title: "unstated", travelTimeMin: null, activityTimeMin: null, insideAirport: false },
       { title: "far",      travelTimeMin: 40,   activityTimeMin: 30,   insideAirport: false, verified: true },
       { title: "near",     travelTimeMin: 10,   activityTimeMin: 30,   insideAirport: false, verified: true },
-    ] as any);
+    ] as any, T, rec(s));
     const order = ranked.map((r) => r.title);
     assert.ok(order.indexOf("unstated") > order.indexOf("near"),
       `unstated legs must not sort ahead of measured ones: ${JSON.stringify(order)}`);
