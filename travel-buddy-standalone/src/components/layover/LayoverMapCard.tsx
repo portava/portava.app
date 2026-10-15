@@ -76,7 +76,7 @@ import { color, space, radius, dot, type as t } from '../../theme/tokens.ts';
 import type {
   CandidateFeasibility,
   LayoverSafeEnvelope,
-  PlanStop,
+  PlanStop, MapBudgetChips,
   PublicAirport,
 } from '../../services/layover.ts';
 import { fmtClock, fmtDur } from './layoverFormat.ts'; import { STOP_NOT_ON_OFFER, describeEnvelope, type EnvelopeGate } from './layoverEnvelopeFacts.ts';
@@ -85,7 +85,7 @@ import { fmtClock, fmtDur } from './layoverFormat.ts'; import { STOP_NOT_ON_OFFE
 // the fail-closed `known: false`. A second rule here (`Date.parse(staleAfter)
 // <= now`) answers FRESH for an unparseable instant, because `NaN <= now` is
 // false — wrong in the direction that shows an undateable deadline as live.
-import { bundleFreshness } from './layoverReturnFacts.ts';
+import { bundleFreshness } from './layoverReturnFacts.ts'; import { LayoverMapBudgetChips, useMapBudgetSimulation } from './LayoverMapBudgetChips.tsx'; // census-layover L118
 
 /**
  * What the airport element needs in order to BE a return CTA anchor. Every
@@ -133,7 +133,7 @@ interface Props {
    */
   offline?: { certifiedAt: string; staleAfter: string } | null;
   /** Injected so the stale badge is testable without a fake clock. */
-  nowMs?: number;
+  nowMs?: number; /** census-layover L118 — the time-budget chips the server offers (`overview.mapBudgetChips`) and the session a chip simulates against. Absent: no chips, and the card is what it was. */ budgetChips?: MapBudgetChips | null; sessionId?: string | null;
 }
 
 // ── The envelope diagram's scale ─────────────────────────────────────────────
@@ -198,7 +198,7 @@ function toPlace(partial: Partial<DiscoveryPlace> & { id: string; name: string; 
 }
 
 export function LayoverMapCard({
-  airport, stops, airportReturn, envelope, envelopeGate, candidateFeasibility, offline, nowMs,
+  airport, stops: certifiedStops, airportReturn, envelope, envelopeGate, candidateFeasibility, offline, nowMs, budgetChips, sessionId,
 }: Props) {
   const hasAirportCoords =
     airport.lat != null && airport.lng != null && !(airport.lat === 0 && airport.lng === 0);
@@ -208,7 +208,7 @@ export function LayoverMapCard({
   const [selectedPlace, setSelectedPlace] = useState<DiscoveryPlace | null>(null);
   const [placeSheetVisible, setPlaceSheetVisible] = useState(false);
   // The airport sheet — opened when the user taps the airport, wherever it is.
-  const [airportSheetOpen, setAirportSheetOpen] = useState(false);
+  const [airportSheetOpen, setAirportSheetOpen] = useState(false); const budgetSim = useMapBudgetSimulation(sessionId, budgetChips, certifiedStops); const stops = budgetSim.stops ?? certifiedStops; // census-layover L118: under an active chip every part of this card draws the SERVER's simulated stops, as sent
 
   const handleSelectPlace = (place: DiscoveryPlace) => {
     // The airport is not a place you add to a plan; it is the place you have to
@@ -414,7 +414,7 @@ export function LayoverMapCard({
           </Text>
         </View>
       )}
-
+      <LayoverMapBudgetChips sim={budgetSim} />{/* census-layover L118 — §13 time-budget chips: each press is a server simulation, never a local filter */}
       {/* ── §13 CANDIDATE PIN BANDS (L122) and BLOCKED AREAS (L117, L125) ── */}
       {banded.length > 0 ? (
         <View style={styles.bands}>
