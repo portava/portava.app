@@ -8966,3 +8966,84 @@ Branch `claude/b58-mem-metrics` (PR #725, including verifier fix round 1). No mi
 | total | 266 | 266 |
 
 **2 moves, both N → W.** 266 = 71 C / 181 W / 12 N / 2 X. CONSTRUCTED% is (71 + 181) / 266 = 94.7 %. (Restated on merging `origin/main` `7bef154f6`, which carries §BH, §BI (three N → W) and §BJ before this section; `check:census-integrity`.)
+
+## §BL — 2026-10-14 (B58 lane MEM-ACL-2; follow-up to §BJ.6's "adjacent doors" and VERIFY-726): `memory_saves`, `memory_likes`, `memory_tags` and `memory_items` refuse every client role (migration 3814, unapplied), and a static suite keeps them refused. NO ROW MOVES
+
+### §BL.1 The doors, re-verified on `origin/main` `aeae27499`
+
+- **The grants.** The baseline grants all four tables to both client roles (`artifacts/api-server/baseline/20260819_baseline_structure.sql:36665#GRANT ALL ON TABLE public.memory_saves TO anon;`, `artifacts/api-server/baseline/20260819_baseline_structure.sql:36666#GRANT ALL ON TABLE public.memory_saves TO authenticated;`, and the same pair for each of the other three: `artifacts/api-server/baseline/20260819_baseline_structure.sql:36656#GRANT ALL ON TABLE public.memory_likes TO anon;`, `artifacts/api-server/baseline/20260819_baseline_structure.sql:36674#GRANT ALL ON TABLE public.memory_tags TO anon;`, `artifacts/api-server/baseline/20260819_baseline_structure.sql:36647#GRANT ALL ON TABLE public.memory_items TO anon;`, each followed by its `authenticated` line). 2490 took back TRUNCATE, REFERENCES, TRIGGER and MAINTAIN and left SELECT, INSERT, UPDATE and DELETE. No other migration names a client role on any of the four: replayed over the baseline and the whole chain without 3814, both roles end holding exactly those four on each table (`artifacts/api-server/src/test/memorySocialClientBoundary.test.ts:337#A-2 THE POINT`, whose A-1 twin is the anti-vacuity half).
+- **The policies decide rows, never columns or targets.**
+  - `memory_saves_own` and `memory_likes_own` are FOR ALL with `user_id = auth.uid()` and nothing about the Memory (`artifacts/api-server/baseline/20260819_baseline_structure.sql:29165#CREATE POLICY memory_saves_own`, `artifacts/api-server/baseline/20260819_baseline_structure.sql:29143#CREATE POLICY memory_likes_own`). A signed-in user saves or likes ANY Memory id. `memory_id`'s foreign key is checked as the table's owner, so an id that does not exist answers 23503 and one that exists succeeds: an existence oracle on private and moderator-removed Memories.
+  - `memory_likes_read` admits any role to the likes of a published public Memory (`artifacts/api-server/baseline/20260819_baseline_structure.sql:29150#CREATE POLICY memory_likes_read`): who liked what, past the block filter the API's likers route applies.
+  - `memory_tags_tagged_update` checks only `tagged_user_id` (`artifacts/api-server/baseline/20260819_baseline_structure.sql:29205#CREATE POLICY memory_tags_tagged_update`), so the tagged person writes every other column, `memory_id` included. A row re-pointed at another Memory makes its writer "tagged" there.
+  - `memory_tags_owner_insert` and `memory_items_via_memory` check only that the caller owns the Memory (`artifacts/api-server/baseline/20260819_baseline_structure.sql:29187#CREATE POLICY memory_tags_owner_insert`, `artifacts/api-server/baseline/20260819_baseline_structure.sql:29128#CREATE POLICY memory_items_via_memory`): an owner tags anyone at any status, and attaches any URL as a photo.
+- **What the API applies and PostgREST did not.**
+  - Like and save read the Memory, check blocks and `canReadMemory`, and answer `not_found` for an invisible Memory and a missing one alike (`artifacts/api-server/src/routes/memories.ts:2467#router.post("/memories/:id/like"`, `artifacts/api-server/src/routes/memories.ts:2552#router.post("/memories/:id/save"`).
+  - `GET /memories/:id/tags` skips `canReadMemory` for a tagged caller (`artifacts/api-server/src/routes/memories.ts:2326#const isTagged = !isOwner`). Correct for an honest tag row; a re-pointed one turns it into a read of a private Memory's participants.
+  - `POST /memories/:id/items` refuses another user's storage object before the §17 command (`artifacts/api-server/src/routes/memories.ts:2096#if (origin.verdict === "foreign_storage")`).
+- **Executed** (PGlite, PostgreSQL 16.4, over the baseline's DDL, grants and policies for `memories` and the four tables, 3672 applied; four states: 2490 on and off, 3813 on and off). Before 3814, through the PostgREST role and JWT settings, each of these succeeded:
+  - a stranger saved a private Memory and liked a moderator-removed one; a missing id answered 23503 on both tables and on a tag re-point;
+  - a stranger read who liked a public Memory, and read its photos;
+  - a tagged person re-pointed their own tag row at a private Memory and approved it in the same statement;
+  - an owner tagged someone directly, already `approved`, attached another user's storage object as a photo, and rewrote a photo's URL;
+  - anon held SELECT on `memory_saves` (it read no row: the policy compares with `auth.uid()`); where 2490 is not applied (CI's PG16 replica), a signed-in user TRUNCATEd `memory_saves`.
+- **3813 is not enough.** With 3813 applied, every path that runs a policy reading `memories` fails with 42501. These do not, and stay open: the save door (its one policy never reads `memories`), a plain like INSERT and its oracle (`memory_likes_own` decides it alone), and a tag re-point issued without a WHERE clause (only `memory_tags_tagged_update` decides it), with its oracle.
+
+### §BL.2 What changed
+
+1. **3814** (`artifacts/api-server/src/migrations/3814_memory_social_client_privileges_revoked.sql:232#REVOKE ALL ON TABLE public.memory_saves, public.memory_likes, public.memory_tags, public.memory_items`) revokes everything from PUBLIC, `anon` and `authenticated` and grants nothing back. With no privilege, a client INSERT is refused before any foreign key is checked, so an existing id and a missing one get the same answer: the oracle closes with the door.
+   - **Precondition**, per table. It refuses: a client or PUBLIC privilege granted by a non-owner or with a grant option; a session that does not act for the owner; a client-readable view over the table; a client-callable SECURITY INVOKER function that reads or writes it; a SECURITY INVOKER trigger function that reads or writes it and fires on a table a client role can write; a policy on another table a client role can use that reads it. A second apply is accepted.
+   - **Postcondition**, per table, catalog only: no client or PUBLIC entry in the table or any column ACL, no effective privilege through any membership, no client-readable view, RLS on, `service_role` keeps SELECT, INSERT, UPDATE and DELETE.
+   - **Changes nothing else**: no policy, row, function, trigger or `service_role` privilege.
+   - **Independent of 3813** in either order; each precondition accepts the other's end state (rehearsed both ways).
+2. **Rollback** (`db/rollback/2026-10-14-3814-memory-social-client-privileges-revoked-rollback.sql:73#GRANT SELECT, INSERT, UPDATE, DELETE`) re-grants 2490's four privileges on the four tables to both client roles, never ALL and never PUBLIC, and deletes the ledger row. It refuses unless every table has RLS on and all nine baseline policies, and unless `memory_items_public_read` still keeps an `only_me` photo (3672) from strangers wherever the column exists.
+3. **The static guard** (`artifacts/api-server/src/test/memorySocialClientBoundary.test.ts:307#function breaches`). For each table it replays every client GRANT, REVOKE, CREATE and DROP over the baseline and the chain, at table and column level, and fails if `anon`, `authenticated` or PUBLIC ends holding anything. After 3814 it also reports what a replay cannot resolve: a GRANT in a dollar-quoted, `E''`, concatenated or `format()` EXECUTE whose target or grantee is built at run time, a role-membership grant to a client role, and a table renamed into one of the four names. It is a test, not rule 7 of `check:client-privilege-boundary`: rule 7 is PR #726's and unmerged. The merge path is data only (§BL.6).
+4. **The live guard.** The four tables are in `artifacts/api-server/src/security/authorization-contract.json` with no client grant and their baseline policies. Until 3814 is applied to a database, `check:authorization-contract` reports that database as wider than the entries.
+
+### §BL.3 The client-path audit (the premise of OQ-MEM-ACL-2-1)
+
+- **No client code reads or writes the four.** `travel-buddy-standalone` names eight tables in `.from('<table>')`, none of them these; it calls no RPC, its one realtime channel is on `generated_visuals` and its one storage bucket is `post-media`. Its like and save buttons call `POST|DELETE /memories/:id/like` and `/save`. The other trees (root `app/` and `src/`, `lib/`, `packages/`, `posts-ui/`, the `*-backend` folders) do not name them. Pinned with anti-vacuity counts (`artifacts/api-server/src/test/memorySocialClientBoundary.test.ts:494#P-1: no client source names one of the four as a table`).
+- **The API builds one database client, the service client**; an existing guard pins that no other API file builds one.
+- **Functions.** Every chain function whose body reads or writes the four is revoked from both client roles (`memory_kernel_execute`, `memory_graph_mirror_memory`, `memory_graph_kernel_execute`) or is a SECURITY DEFINER trigger function (`artifacts/api-server/src/test/memorySocialClientBoundary.test.ts:534#P-3: every chain function whose body reads or writes one of the four`). The baseline defines none.
+- **Views, publications, policies.** No view reads the four, the chain creates no publication, and no policy on another table reads them (P-4).
+- **No live suite** reads them with a client key.
+
+### §BL.4 Evidence
+
+- **`artifacts/api-server/src/test/memorySocialClientBoundary.test.ts`**, 62 tests, registered:
+  - the chain fold per table, red without 3814 (A-1 to A-5);
+  - 23 shapes that re-open a table after 3814 and 15 that do not (13 planted after it, plus a table grant and a column grant planted before it), including VERIFY-726's nine (G-*);
+  - the file and rollback shapes (B-*), the premise (P-*), the contract (K-*).
+  - **Red on main** (3814 and the contract entries absent): A-2 ×4, A-3, A-5, every G-green, B-* and K-1 ×4 fail.
+- **`artifacts/api-server/src/test/db/memorySocialClientBoundary.db.test.ts`** (S0 to S8) runs in CI's local-db job: the four doors shut for a stranger, an owner and anon, with an existing private id and a missing one refused identically (S1 to S4); the API's role still reads and writes every table (S5); the postcondition alone and the precondition on the real chain (S6); the rollback to exactly 2490's four privileges and back (S7); each precondition refusal (S8). **Not run on a PostgreSQL server here** (none on this machine): through a psql stand-in over PGlite (PostgreSQL 16.4) on a fixture of the touched objects it is 9/9 green with 3814 and 7/9 red without it (S5 and S8 do not depend on 3814).
+- **The rehearsal** (PGlite, the lane report): 259 steps green across the four 2490/3813 states.
+- **Mutants**, each applied alone to this worktree and killed by the static suite or the rehearsal: SQL 24/24 (the REVOKE ×4, `$pre$` ×12, `$post$` ×8); rollback 8/8; the guard 18/18 after A-5 and G-order-columns were added for the two that first survived (a closing file that revokes nothing; a table REVOKE that kept column grants). The postcondition's table-ACL and column-ACL checks are killed by their messages only: the effective-privilege check holds the same property, a redundant pair as in 3813.
+
+### §BL.5 Rows read, reason restated, NOT moved
+
+Rule A.2 holds every row below where it is: 3814 is written and applied to no database.
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H198 | BUILT-BUT-WRONG | Once 3814 is applied, the database refuses every client role on the four Memory side tables as well, so for saves, likes, tags and photos the service role is the only door (§BL.2). W: 3814 is unapplied (rule A.2), and the row's own ceiling stands: the door the API keeps decides in TypeScript, not RLS |
+| H181 | BUILT-BUT-WRONG | The ownership leg `POST /memories/:id/items` enforces had a PostgREST bypass: `memory_items_via_memory` let an owner attach another user's storage object directly (§BL.1). 3814 closes it. W: 3814 is unapplied, and the staged media pipeline is still unbuilt |
+| H80 | BUILT-BUT-WRONG | The client read of `memory_items` closes at the database layer for every client role once 3814 is applied, whatever 3672's filter says. W: 3672 and 3814 are unapplied (rule A.2), and §AN's media counts note still stands |
+| H84 | BUILT-BUT-WRONG | The blocking half had a PostgREST bypass on likes: a blocked user liked a blocker's Memory directly, and `memory_likes_read` listed likers past the likers route's block set. 3814 closes both. W stands on the deletion half (owner decision D6) and on 3814 being unapplied |
+| H209 | BUILT-AND-CORRECT | **Read, NOT moved, and contested at the database layer.** `canSeeParticipant` is right over honest tag rows. A tagged person who re-points their row (§BL.1, executed) is then "tagged" on a Memory they cannot read, and `GET /memories/:id/tags` skips `canReadMemory` for them: it would answer with the participant list a participant may see instead of `not_found` (read from the route, not executed through it). That is a forged input, not a wrong predicate, and 3814 removes it. Sequencing is OQ-MEM-ACL-2-1, not a regrade |
+| H185 | BUILT-AND-CORRECT | **Read, NOT moved.** "An explicit social-graph primitive with consent" holds on the API's tag paths. Directly, an owner could insert a tag at `approved` for someone who never consented, and a tagged person could attach themselves to someone else's Memory. 3814 closes both; the row is about face recognition, which is untouched |
+
+### §BL.6 Owner decisions
+
+- **OQ-MEM-ACL-2-1 (owner): apply 3814.** The fail-closed default is implemented as a written, unapplied migration. Applying it to production is the owner's press. Proposed, not approved:
+  - (a) apply 3814 with or straight after 3813. It is privilege-only and independent of 3813 in either order, so it can be pressed alone, first;
+  - (b) apply it before any surface shows a like or save count to someone other than the owner as a trust signal.
+- **Proposed ruling W-MEM-ACL-2-1 (implemented as the default).** No client role holds any privilege on `memory_saves`, `memory_likes`, `memory_tags` or `memory_items`, the owner's own key included. A client path that needs one goes through the API or a SECURITY DEFINER function with its own checks, never a re-grant.
+- **Merge path, not a decision.** When PR #726 merges, the four tables go into `SERVER_ONLY_TABLES` (closed by 3814) as data, and rule 7 reads them too.
+
+### §BL.7 Scope
+
+Every file §BL grades is watched by this census (CENSUS_SCOPE, added line-neutrally). The baseline's NOT-GRADED declaration is §BH.7's; §BL.1 cites grants and policies from it and grades no row on it.
+
+- NOT-GRADED: artifacts/api-server/src/security/authorization-contract.json — the live guard's data; §BL.2 item 4 names the four entries this lane adds, and no row here rests on it
+
+**Headline unchanged by §BL: 266 = 71 C / 181 W / 12 N / 2 X** (main after §BK; `check:census-integrity`).
