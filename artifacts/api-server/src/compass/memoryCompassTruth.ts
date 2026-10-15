@@ -457,7 +457,7 @@ export type EvidenceParticipantCounts =
  */
 export async function evidenceParticipantCounts(
   sc: SupabaseClient,
-  memory: { id?: unknown; owner_id: string; visibility?: string | null; trip_id?: string | null },
+  memory: { id?: string | null; owner_id: string; visibility?: string | null; trip_id?: string | null },
   viewerId: string,
   tagRows: ReadonlyArray<{ tagged_user_id?: unknown; status?: unknown }>,
 ): Promise<EvidenceParticipantCounts> {
