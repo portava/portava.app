@@ -45,7 +45,8 @@ import { executeCompassTool } from "../compass/CompassTools.js";
 import type { CompassProfile } from "../compass/types.js";
 
 const { readBlockExclusions, readGroupBlockExclusions, readPairExclusion } = exclusionSet;
-const CEILING: number = (exclusionSet as any).BLOCK_LIST_CEILING ?? 10_000;
+/** The stated ceiling (census-telegraph §98). Pinned below; fixtures are sized from THIS, never from the module. */
+const CEILING = 10_000;
 const readBlockDirection: (sc: any, side: "blocker_id" | "blocked_id", userId: string) => Promise<{ data: any[] | null; error: any }> =
   (exclusionSet as any).readBlockDirection ?? (async () => { throw new Error("readBlockDirection does not exist on this tree"); });
 
@@ -250,6 +251,10 @@ describe("the number of round trips is bounded: 1 under 150 rows, else 1 + ⌈ro
       assert.equal(calls.blocks ?? 0, want);
     });
   }
+
+  it(`the ceiling is the stated ${CEILING} rows`, () => {
+    assert.equal((exclusionSet as any).BLOCK_LIST_CEILING, CEILING);
+  });
 
   it(`exactly the ceiling (${CEILING}) is read whole, in ${CEILING / 1000 + 2} reads`, async () => {
     const { rows, expected } = blockList(CEILING);
