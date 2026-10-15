@@ -51,6 +51,7 @@ const M_THAI = "33333333-0000-4000-8000-000000000006";
 const M_PEOPLE = "33333333-0000-4000-8000-000000000007";
 const M_FRIENDS = "33333333-0000-4000-8000-000000000008";
 const M_BOB = "33333333-0000-4000-8000-000000000009";
+const M_BOB_PUBLIC = "33333333-0000-4000-8000-00000000000a";
 const EPISODE = "44444444-0000-4000-8000-000000000001";
 const ITEM_1 = "55555555-0000-4000-8000-000000000001";
 const ITEM_2 = "55555555-0000-4000-8000-000000000002";
@@ -85,6 +86,7 @@ function fixture(): Record<string, any[]> {
       memory({ id: M_PEOPLE, title: "Boat day", location_city: "Phuket", location_country: "Thailand", starts_at: "2026-01-10T12:00:00.000Z" }),
       memory({ id: M_FRIENDS, title: "Rooftop dinner", visibility: "only_me", location_city: "Bangkok", location_country: "Thailand", starts_at: "2026-01-12T12:00:00.000Z" }),
       memory({ id: M_BOB, owner_id: BOB, visibility: "only_me", title: "Bob's own" }),
+      memory({ id: M_BOB_PUBLIC, owner_id: BOB, visibility: "public", title: "Bob in New York", location_city: "New York", location_country: "United States" }),
     ],
     memory_tags: [
       { memory_id: M_PEOPLE, tagged_user_id: CARL, status: "approved" },
@@ -386,6 +388,14 @@ describe("H120/H123 — memory_get_evidence reads §3.3's memory_evidence where 
     assert.match(out.evidence_store_reason, /not kept from a detected episode/);
   });
 
+  it("memory_episodes unreadable beside a readable memory_evidence is half a spine: `unavailable`, never 'none'", async () => {
+    const { out } = await call("memory_get_evidence", { memoryId: M_PEOPLE }, ALICE, { extra: SPINE, failing: ["memory_episodes"] });
+    assert.equal(out.evidence_store, "unavailable");
+    assert.equal(out.provenance, undefined);
+    const absentHalf = (await call("memory_get_evidence", { memoryId: M_PEOPLE }, ALICE, { extra: SPINE, absent: ["memory_episodes"] })).out;
+    assert.equal(absentHalf.evidence_store, "unavailable", "an absent memory_episodes beside a present memory_evidence is not 'not deployed'");
+  });
+
   it("for anyone but the owner: `owner_only`, and memory_evidence is not even read (no 'was it auto-detected' oracle)", async () => {
     const { out, reads } = await call("memory_get_evidence", { memoryId: M_PEOPLE }, BOB, { extra: SPINE });
     assert.equal(out.evidence_store, "owner_only");
@@ -466,6 +476,16 @@ describe("H124 — memory_propose_merge / memory_propose_split", () => {
     const missing = (await call("memory_propose_merge", { survivorId: M_NY_1, absorbedIds: ["99999999-0000-4000-8000-000000000000"] }, ALICE, { mergeSplitFlag: true })).out;
     assert.equal(other.authorized, false);
     assert.deepEqual(other, missing);
+  });
+
+  it("…including another person's PUBLIC Memory the viewer can read (readable is not mergeable)", async () => {
+    const pub = (await call("memory_propose_merge", { survivorId: M_NY_1, absorbedIds: [M_BOB_PUBLIC] }, ALICE, { mergeSplitFlag: true })).out;
+    const missing = (await call("memory_propose_merge", { survivorId: M_NY_1, absorbedIds: ["99999999-0000-4000-8000-000000000000"] }, ALICE, { mergeSplitFlag: true })).out;
+    assert.equal(pub.authorized, false);
+    assert.deepEqual(pub, missing);
+    const split = (await call("memory_propose_split", { memoryId: M_BOB_PUBLIC, itemIds: [ITEM_BOB] }, ALICE, { mergeSplitFlag: true })).out;
+    assert.equal(split.authorized, false);
+    assert.match(split.reason, /Only the owner/);
   });
 
   it("a split proposes moving the owner's chosen items and leaves the rest; nothing is written", async () => {

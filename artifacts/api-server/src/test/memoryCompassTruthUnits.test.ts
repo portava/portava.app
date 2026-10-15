@@ -92,7 +92,7 @@ describe("resolveNamedPlace", () => {
 });
 
 describe("resolveExactHandle — a literal pattern, checked equal in code", () => {
-  function profiles(rows: Array<{ id: string; handle: string }>, opts: { error?: boolean } = {}) {
+  function profiles(rows: Array<{ id: string; handle: string }>, opts: { error?: boolean; loose?: boolean } = {}) {
     const patterns: string[] = [];
     const sc: any = {
       from(_t: string) {
@@ -103,6 +103,7 @@ describe("resolveExactHandle — a literal pattern, checked equal in code", () =
           limit() { return q; },
           then(res: any) {
             if (opts.error) return res({ data: null, error: { message: "down" } });
+            if (opts.loose) return res({ data: rows, error: null }); // a database that ignored the pattern
             // PostgREST semantics: an unescaped `_` is one character.
             let re = "";
             for (let i = 0; i < pat.length; i++) {
@@ -125,6 +126,10 @@ describe("resolveExactHandle — a literal pattern, checked equal in code", () =
     assert.deepEqual(patterns, ["jo\\_n"]);
     const { sc: sc2 } = profiles([{ id: "1", handle: "john" }]);
     assert.equal((await resolveExactHandle(sc2, "jo_n")).state, "no_such_handle");
+  });
+  it("checks equality in code too: a database answering a looser pattern still never yields a different handle", async () => {
+    const { sc } = profiles([{ id: "1", handle: "john" }], { loose: true });
+    assert.equal((await resolveExactHandle(sc, "jo_n")).state, "no_such_handle");
   });
   it("refuses wildcard-shaped input without querying at all", async () => {
     for (const raw of ["c*", "%arl", "a b", "x\\y", ""]) {
@@ -208,6 +213,8 @@ describe("H266 §28.17 — renderMemoryToolFallback", () => {
   it("renders nothing when no memory tool answered, so other turns keep their own fallback", () => {
     assert.equal(renderMemoryToolFallback([]), null);
     assert.equal(renderMemoryToolFallback([{ name: "search_places", result: { places: [] } }]), null);
+    // A Telegraph refusal has the same { authorized: false } shape and is NOT about the user's Memories.
+    assert.equal(renderMemoryToolFallback([{ name: "telegraph_get_conversation_context", result: { authorized: false, reason: "Not a participant." } }]), null);
     assert.equal(renderMemoryToolFallback(null), null);
   });
 
