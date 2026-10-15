@@ -26,14 +26,14 @@
  * redaction is applied here rather than in the policy because the POLICY's
  * callers include the census and the tests, which must see the honest answer.
  *
- * 200 FOR A REFUSAL, ON PURPOSE
- * =============================
- * A viewer who is not a member gets 200 with every capability false. A 403
- * would make the endpoint itself a membership oracle: `GET .../capabilities`
- * returning 403 for thread X and 200 for thread Y tells an unauthenticated
- * scanner which thread ids exist and which they are in. Every capability false
- * is the same answer for "this thread does not exist", "you were removed" and
- * "you were blocked".
+ * 200 FOR A REFUSAL, AND THE SAME BYTES (census-telegraph §97)
+ * =============================================================
+ * A viewer with no membership row gets 200 and EXACTLY the body a thread that
+ * does not exist gets: type "unknown", nothing read, every capability false.
+ * The viewer's own row is read FIRST (undisclosedAnswerFor, below); nothing about
+ * the thread is read for a non-member (the policy told one the real type and
+ * `inputsRead`: an existence oracle). A failed row read answers degraded, alike
+ * for both. Members and former members (who have a row) are answered unchanged.
  */
 
 import { Router } from "express";
@@ -44,7 +44,7 @@ import { asyncHandler } from "../../lib/asyncHandler.js";
 import { logger as rootLogger } from "../../lib/logger.js";
 import {
   CONVERSATION_CAPABILITY_NAMES,
-  type ConversationCapabilityName,
+  type ConversationCapabilityName, allDenied, // allDenied: the non-member answer (census-telegraph §97)
 } from "../../domain/telegraph/contracts/conversationCapabilities.js";
 import { redactForWire } from "../../domain/telegraph/contracts/telegraphReasonCodes.js";
 import { resolveConversationCapabilities } from "../../domain/telegraph/policies/conversationCapabilityPolicy.js";
@@ -70,7 +70,7 @@ router.get(
     }
 
     const sc = getServiceClient();
-    if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+    if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; } const undisclosed = await undisclosedAnswerFor(sc, threadId, user.id); if (undisclosed) { res.status(200).json(undisclosed); return; } // census-telegraph §97: no membership row → the non-existent thread's answer, byte for byte
 
     const resolved = await resolveConversationCapabilities(sc, {
       viewerId: user.id,
@@ -116,5 +116,42 @@ router.get(
     });
   }),
 );
+
+/**
+ * census-telegraph §97 — the answer for a viewer with no membership row in this
+ * thread, decided BEFORE anything about the thread is read, so it cannot depend
+ * on whether the thread exists. `null` = the viewer has a row (a member, or a
+ * former member, who already knows the thread): the policy answers, unchanged.
+ *
+ * The not-member body is the one this route has always sent for a thread that
+ * does not exist (the policy's `refuse("TELEGRAPH_AUTH_NOT_MEMBER", "unknown")`
+ * before any input is read, then conversationFacts' UNDISCLOSED). A failed read
+ * of the row is not "not a member" — it answers degraded, and identically
+ * whether or not the thread exists. Reasons go through redactForWire like every
+ * other reason this route sends.
+ */
+async function undisclosedAnswerFor(sc: any, threadId: string, viewerId: string): Promise<Record<string, unknown> | null> {
+  const { data, error } = await sc
+    .from("message_thread_members")
+    .select("user_id")
+    .eq("thread_id", threadId)
+    .eq("user_id", viewerId)
+    .maybeSingle();
+  if (!error && data) return null;
+  const unreadable = Boolean(error);
+  if (unreadable) log.warn({ threadId, viewerId }, "capabilities: the viewer's membership row could not be read — answering degraded, thread unread");
+  const reason = redactForWire(unreadable ? "TELEGRAPH_DEGRADED_MEMBERSHIP_UNREADABLE" : "TELEGRAPH_AUTH_NOT_MEMBER");
+  const { capabilities, reasons } = allDenied(reason);
+  return {
+    conversationId: threadId,
+    conversationType: "unknown",
+    capabilities,
+    reasons,
+    inputsRead: [],
+    degraded: unreadable,
+    degradedReasons: unreadable ? [reason] : [],
+    conversation: { memberCount: null, isE2ee: null, transportClass: null, degraded: unreadable },
+  };
+}
 
 export default router;
