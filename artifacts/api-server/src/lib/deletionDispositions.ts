@@ -251,7 +251,7 @@ export const ERASED_BY_CASCADE: readonly string[] = [
   // OD-MAP-6 sensing consents (migration 3703): user_id REFERENCES
   // auth.users(id) ON DELETE CASCADE, the same mechanism as the three above, so
   // the rows go with AccountDeletionService's final auth.admin.deleteUser.
-  "sensing_consent_grants",
+  "sensing_consent_grants", "memory_snapshots", /* 3811 (B58 MEM-SNAPSHOTS, census H35, unapplied): memory_id REFERENCES public.memories ON DELETE CASCADE (AccountDeletionService hard-deletes every Memory by owner_id) and owner_id REFERENCES auth.users ON DELETE CASCADE (its final auth.admin.deleteUser); per Memory, the §21 lifecycle (memoryDeletionLifecycle RAW_EVIDENCE_PURGED -> memorySnapshots.eraseSnapshotsForDeletedMemory) purges a deleted Memory's versions, and 3811's guard refuses any other DELETE of a live Memory's version except the 50-version cap; facts only, never title, caption, coordinates or people. On this line so cited lines hold. */
   // CPH-08-ADAPT live-search quota (migration 3704): user_id REFERENCES
   // auth.users(id) ON DELETE CASCADE — the same mechanism.
   "compass_live_search_usage",
@@ -961,7 +961,7 @@ export const POST_BASELINE_TABLES: readonly string[] = [
   "input_memory_context_consent", "message_content_capabilities", "message_forwards", "message_link_previews", "memory_deletion_dead_letters", "memory_resurfacing_preferences", "memory_corrections", "nearby_proximity_observations", "availability_audience_policies", "nearby_consents", "eta_coordination_grants", "memory_relations", "memory_id_redirects", "telegraph_thread_member_mutes", "memory_narrative_ai_consent" /* 3802 (B58 MEM-NARR-1, unapplied): user_id REFERENCES auth.users ON DELETE CASCADE, the 3782 mechanism; on this line so cited lines hold */, // 3661 (lane T-GRP) classified ERASED_BY_CASCADE above. 3670, 3671, 3673, 2994 + 3674 (post-baseline, unapplied): classified in ERASED_BY_CASCADE above. One line so cited lines below hold. | lane T, migrations 3651 / 3652 (unapplied), classified ERASED_BY_CASCADE above
   // OD-MAP-6 sensing consents, added by migration 3703 (post-baseline).
   // Classified in ERASED_BY_CASCADE above.
-  "sensing_consent_grants",
+  "sensing_consent_grants", "memory_snapshots", // 3811 (B58 MEM-SNAPSHOTS, post-baseline, unapplied): classified ERASED_BY_CASCADE above
   // CPH-08-ADAPT live-search quota, added by migration 3704 (post-baseline).
   // Classified in ERASED_BY_CASCADE above.
   "compass_live_search_usage",

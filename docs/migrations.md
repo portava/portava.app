@@ -5784,3 +5784,57 @@ owner-rights cases were added).
 **Rollback:** `db/rollback/2026-10-14-3825-telegraph-message-link-previews-rollback.sql` drops the trigger, both
 functions, the table and the flag row it seeded. It destroys every stored preview; turning the flag off is almost
 always what is wanted instead.
+
+## 2026-10-14 — `3811_memory_snapshots.sql`, written and NOT applied anywhere (B58 cluster MEM-SNAPSHOTS)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3811_memory_snapshots.sql` | **not applied** | **not applied** |
+
+**What it adds (census-highlights-memories §BO, H35).** Additive only: one table, two trigger functions, two triggers;
+no flag, no row written. `public.memory_snapshots` (PRIMARY KEY `(memory_id, version)`; `facts`, `engine_versions`,
+`cause` jsonb; `created_at`) holds one row per change of a Memory's FACTS. A CHECK limits `facts` to the whitelist
+`state, visibility, location_precision, place_id, canonical_location_id, place_display_name_at_occurrence, starts_at,
+ends_at, source_mode, memory_type, item_count` (open owner question Q-H35's fail-closed default: never a title, caption,
+coordinate, city/country text or person) and `cause` to `{command_id?, correction_id?}`. **Two of those facts are
+owner-controlled text** (VERIFY-737): `place_id` (free text up to 200 characters at the API) and
+`place_display_name_at_occurrence` (the owner's words for a pick, up to 300). Each version keeps them for the Memory's
+life: when the owner clears the place, the earlier version still holds it, and only deleting the Memory or the account
+removes it (owner question Q-H35-e: keep / canonical uuid ids only and no name / owner retraction).
+- `memory_snapshot_record()` — AFTER INSERT OR UPDATE ON `public.memories`, FOR EACH ROW, so every writer (the API, the
+  2711 kernel, 3676's merge/split) is covered without editing any of them. A version is written only when the facts
+  differ from the newest one, never for a row whose `state` is `deleted`, and the oldest beyond 50 are pruned (the rule
+  that never loses the newest). A later column (2338, 3674, 3803, 3804) is a fact only where it exists. Times are UTC
+  ISO text at millisecond precision whatever the session's zone. `cause` reads the transaction settings
+  `portava.memory_command_id` / `portava.memory_correction_id` when a writer sets a uuid; NO WRITER SETS THEM TODAY.
+- `memory_snapshots_guard()` — BEFORE UPDATE OR DELETE ON `memory_snapshots`, FOR EACH ROW: every UPDATE refused;
+  a DELETE only after the Memory's soft delete (§21), inside the `memories` / `auth.users` cascades, or by the cap.
+- Both functions SECURITY DEFINER (the writer inserts into a table the API's role cannot INSERT into), `search_path`
+  pinned to `pg_catalog, pg_temp`, EXECUTE revoked from PUBLIC / anon / authenticated, `RETURNS trigger`. An error
+  inside the writer fails the Memory write itself (fail-closed). One version per changing WRITE: 2711's create (INSERT
+  then its precision UPDATE) can leave two.
+- `$pre$` refuses an existing `memory_snapshots` without 3811's key definition and its facts whitelist (a same-named
+  table would otherwise let the triggers commit over it and every Memory write fail).
+- RLS on, no policy; REVOKE ALL from PUBLIC, anon, authenticated, service_role, then GRANT SELECT, DELETE to
+  service_role (no INSERT, no UPDATE: the server cannot forge or rewrite a version).
+
+**From the moment it is applied** every Memory write records history: there is no flag. Memories last written before
+the apply have no version until their next write (no backfill, Q-H35). Readers: `GET /memories/:id/history` (owner
+only; anyone else gets the 404 a missing Memory gets) and the §25 replay (`check:memory-certification`). §21's
+RAW_EVIDENCE_PURGED purges and confirms a deleted Memory's history.
+
+**Order.** No prerequisite beyond the baseline (`memories`, `memory_items`, `auth.users`). It is compatible with 3813
+either side of it (3813's precondition accepts trigger functions over `memories`), and with 3803/3804/3674/2338
+applied or not.
+
+**Proof.** `src/test/db/memorySnapshots.db.test.ts` (CI local-db job, the real chain, D1–D8).
+`sql/rehearsals/3811_00_seed.sql` + `3811_01_memory_snapshots.sql` on PGlite over a fixture of the touched objects: 33/33
+steps (apply, re-apply, `$post$` / `$pre$` alone, 13 postcondition and 4 precondition refusals, T1–T15 with T13b, the
+rollback refusing twice and succeeding, the ledger row, a no-op re-run, re-apply). 40/40 SQL mutants killed, and the three
+fix-round `$pre$` mutants. The db suite D1–D8 ran on PostgreSQL in CI (run 38643772054); D9 added in fix round 1.
+API: `src/test/memorySnapshots.test.ts`.
+
+**Rollback:** `db/rollback/2026-10-14-3811-memory-snapshots-rollback.sql` drops the writer trigger first, then the
+table, both functions and 3811's ledger row. It REFUSES while any version exists unless the session sets
+`portava.rollback_3811_discard_history = 'discard'`: the history cannot be re-derived from the Memories, which hold
+only their current facts. Nothing else is lost — 3811 copies no title, caption, coordinate or person.

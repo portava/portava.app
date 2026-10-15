@@ -8966,3 +8966,110 @@ Branch `claude/b58-mem-metrics` (PR #725, including verifier fix round 1). No mi
 | total | 266 | 266 |
 
 **2 moves, both N → W.** 266 = 71 C / 181 W / 12 N / 2 X. CONSTRUCTED% is (71 + 181) / 266 = 94.7 %. (Restated on merging `origin/main` `7bef154f6`, which carries §BH, §BI (three N → W) and §BJ before this section; `check:census-integrity`.)
+
+## §BO — 2026-10-14 (B58 cluster MEM-SNAPSHOTS): §3 `memory_snapshots` — a Memory's FACT history, written by a trigger on every Memory write, read by its owner and replayed by the §25 harness (migration 3811, unapplied). 1 row moves N → W
+
+Branch `claude/b58-mem-snapshots`. One migration was WRITTEN and applied to no database: 3811. It seeds no flag (the plan names none) and writes no row. **The move is to W and not to C**, by rule A.2: the code is built and the storage is unapplied.
+
+### §BO.1 What was missing
+
+- **H35** (`:1224`, restated NOT-BUILT at §AZ.5 `:8176`): no `memory_snapshots` of any kind. §25's replay was the in-memory harness only. §AZ.5 found a snapshot table unnecessary for merge and split, which does not discharge spec `:172-173` ("Versioned fact/evidence snapshots for replay").
+
+### §BO.2 What was built
+
+1. **The table, facts only** (open owner question Q-H35; the plan's default is implemented). **Two of those facts are owner-controlled text** (item 1's last bullet, Q-H35-e).
+   - One row per version of one Memory's facts, keyed `PRIMARY KEY (memory_id, version)`.
+   - A CHECK holds `facts` to the whitelist (`artifacts/api-server/src/migrations/3811_memory_snapshots.sql:125#CONSTRAINT memory_snapshots_facts_whitelist CHECK (`): state, visibility, precision rung, place references and the place's name then, time window, source mode, type, item count. No title, caption, coordinate, city/country text or person can be stored by any writer, the table owner included.
+   - **But two whitelisted facts are OWNER-CONTROLLED TEXT, kept for the Memory's life and not retractable by the owner** (VERIFY-737 fix 1). `place_id` is free text: the API accepts any string up to 200 characters with no shape check (`artifacts/api-server/src/routes/memories.ts:266#placeId: z.string().max(200)`), and a place id is a location at venue precision. `place_display_name_at_occurrence` is the owner's own words for a provider pick, up to 300 characters (3804 rule 3). Each version keeps what it had: when the owner later clears or changes the place, the Memory forgets it but the earlier version does not, and nobody may delete that version while the Memory is live (the guard, item 3). Only deleting the Memory (§21) or the account removes it. Executed: `artifacts/api-server/src/test/db/memorySnapshots.db.test.ts` D9 and the rehearsal's T15. The plan asked for "place ids + occurrence name", so this is disclosed, not reversed; the choice is owner question **Q-H35-e** (§BO.6).
+   - `cause` is held to `{command_id?, correction_id?}` the same way.
+2. **The writer: a trigger on every Memory write** (`artifacts/api-server/src/migrations/3811_memory_snapshots.sql:210#AFTER INSERT OR UPDATE ON public.memories`). It covers the API's direct writes, 2711's kernel and 3676's merge/split without editing any of them.
+   - A version is written only when the facts change (`artifacts/api-server/src/migrations/3811_memory_snapshots.sql:182#IF v_last IS NOT NULL AND v_last = v_facts THEN`), so a title edit writes nothing.
+   - None is written for a deleted Memory (`artifacts/api-server/src/migrations/3811_memory_snapshots.sql:158#IF NEW.state = 'deleted' THEN`).
+   - A column a later migration adds is a fact only where it exists (`artifacts/api-server/src/migrations/3811_memory_snapshots.sql:174#IF v_row ? 'memory_type' THEN`). Times are UTC at millisecond precision whatever the session's zone.
+   - **The cap: the oldest is pruned** (`artifacts/api-server/src/migrations/3811_memory_snapshots.sql:202#s.version <= v_version - 50;`). Stopping at 50 instead would freeze the history while the Memory kept changing, so its newest version would stop being the Memory and every later replay would diverge. Pruning the oldest is the rule that never loses the latest.
+   - **Fail-closed.** An error inside the trigger fails the Memory write itself, so a Memory write never lands unrecorded. None is expected: the key is serialised by the Memory's row lock, and both foreign keys hold by construction.
+   - **One version per changing write**, not per command: 2711's create (an INSERT, then its precision UPDATE in the same transaction) can leave two versions, and the route's canonical-field follow-up a third. Replay-correct; it uses the cap faster.
+   - **SECURITY DEFINER**, because it writes a table the API's role may not INSERT into; as INVOKER, a write by such a role would fail the Memory write itself. `search_path` is pinned, EXECUTE is revoked from the client roles, and it is `RETURNS trigger` (3813's precondition accepts it by construction).
+   - `cause` reads `portava.memory_command_id` / `portava.memory_correction_id` when a writer sets a uuid (`artifacts/api-server/src/migrations/3811_memory_snapshots.sql:188#current_setting('portava.memory_command_id', true)`). **No writer sets them today**: 2711 is not edited here, so `cause` is `{}` on every current path.
+3. **The guard: append-only.** Every UPDATE is refused (`artifacts/api-server/src/migrations/3811_memory_snapshots.sql:222#memory_snapshots is append-only`). A DELETE is allowed only after the Memory's soft delete (§21), inside the `memories` and `auth.users` cascades, or by the cap (`artifacts/api-server/src/migrations/3811_memory_snapshots.sql:228#OR OLD.version <= (SELECT max(s.version)`).
+4. **Access.** RLS on, no policy; every client privilege revoked (`artifacts/api-server/src/migrations/3811_memory_snapshots.sql:244#REVOKE ALL ON public.memory_snapshots FROM PUBLIC, anon, authenticated, service_role;`); service_role holds SELECT and DELETE only (`artifacts/api-server/src/migrations/3811_memory_snapshots.sql:245#GRANT SELECT, DELETE ON public.memory_snapshots TO service_role;`), so the server can neither forge nor rewrite a version. Registered in rule 7's SERVER_ONLY_TABLES and in the authorization contract.
+5. **Reader 1: the owner's history** (`artifacts/api-server/src/routes/memoryHistory.ts:38#router.get("/memories/:id/history"`), mounted on an existing line (`artifacts/api-server/src/routes/index.ts:268#import memoryHistoryRouter`).
+   - Someone else's Memory, a missing one and a deleted one get the same 404 after the same single read (`artifacts/api-server/src/routes/memoryHistory.ts:53#row.owner_id !== auth.user.id`). A failed read is a 503.
+   - Rows are read for the owner only, and a stored non-fact is never served (`artifacts/api-server/src/services/memory/memorySnapshots.ts:205#export async function readMemoryHistory`).
+   - `history.state` separates `not_deployed` (3811 unapplied), `none_recorded` (not written since: no backfill) and `recorded`.
+6. **Reader 2: the §25 replay** (`artifacts/api-server/src/services/memoryCertification/snapshotReplay.ts:95#export async function replayMemoryFromSnapshots(`).
+   - A history replays when its versions are contiguous (a pruned prefix only at exactly the cap), every version holds facts only, names a known extractor, differs from the one before, belongs to the owner, and the newest is the Memory now. A deleted Memory replays only with no version left.
+   - check:memory-certification runs nine scenarios and fails on a divergence (`artifacts/api-server/src/scripts/checkMemoryCertification.ts:59#const snapshotReplay = await runSnapshotReplayCertification();`). Four of them are CONTROLS the replay must refuse, each for a named reason.
+   - **CEILING:** that world models 3811's trigger and guard in TypeScript. The db suite runs the same replay over the SQL on the full chain.
+7. **§21 purges it** (`artifacts/api-server/src/services/memory/memoryDeletionLifecycle.ts:247#const snapshots = await eraseSnapshotsForDeletedMemory`), in RAW_EVIDENCE_PURGED with the evidence and the corrections.
+   - The purge is confirmed by a read; failure is retried and dead-lettered by name; an unapplied 3811 is named in `notDeployed`.
+   - `not_applicable` now needs 2320, 3673 AND 3811 absent: two existing fixtures that meant "nothing deployed" name 3811 too (line-neutral).
+   - Account deletion: the two cascades. Deletion fate in `lib/deletionDispositions.ts` (ERASED_BY_CASCADE).
+
+### §BO.3 The tests
+
+- **Route suite.** `artifacts/api-server/src/test/memorySnapshots.test.ts`, 27 cases, over the real routers and a fake carrying the harness's model of the trigger and guard.
+  - PATCH the place twice ⇒ versions 1..3 with the place history (`artifacts/api-server/src/test/memorySnapshots.test.ts:241#POST, PATCH place, PATCH place`).
+  - DELETE ⇒ zero versions remain (`artifacts/api-server/src/test/memorySnapshots.test.ts:281#DELETE /memories/:id`).
+  - The property over every column the chain gives `memories` (`artifacts/api-server/src/test/memorySnapshots.test.ts:316#only whitelisted keys ever appear`), and the SQL's whitelist, extractor and cap held equal to the TypeScript.
+  - The cap (`artifacts/api-server/src/test/memorySnapshots.test.ts:369#55 place changes`).
+  - A non-owner who may read the Memory gets a missing Memory's 404 (`artifacts/api-server/src/test/memorySnapshots.test.ts:385#a non-owner`).
+  - Absent is not empty (`artifacts/api-server/src/test/memorySnapshots.test.ts:420#3811 unapplied`); the replay scenarios (`artifacts/api-server/src/test/memorySnapshots.test.ts:494#every certification scenario`).
+  - **Red on main** `bffee713c`: with only the suite copied in, it cannot load (the route module is absent). With the new modules, the route and the migration copied in too, **7 of 26** fail: the API-router mount, the DELETE purge and the five §21 step-4 cases. The 27th case was added after the mutation run.
+- **The SQL, executed.** `artifacts/api-server/src/test/db/memorySnapshots.db.test.ts`, D1–D9, runs in CI's local-db job on the full chain. It covers the history, the property over the catalog's columns, the cap, the purge refused while live and complete after the soft delete, RLS and grants, the replay and the TS/SQL extractor parity, both account-deletion orders, the rollback, and (D9) the owner-typed place text kept in its version (Q-H35-e, as built).
+  - **Run on PostgreSQL in CI:** run 38643772054, job 116125630027 (`api-server · kernel SQL executed on a throwaway database`) reported `ok 43 - 3811 on the full chain`, with D1–D8 each `ok` (VERIFY-737 R7). D9 was added in fix round 1. Locally (no PostgreSQL server on this machine) the suite runs through a psql stand-in over PGlite on a fixture of the touched objects: 9/9 green with 3811, and red without it.
+- **The rehearsal.** `artifacts/api-server/sql/rehearsals/3811_01_memory_snapshots.sql`: 33/33 steps on PGlite (sql/rehearsals/README.md, section 3811). This includes the thirteen postcondition refusals, four precondition refusals (a foreign table with no key; one with a constraint merely NAMED `memory_snapshots_pkey`; one with the whitelist's name but another key definition; 3811's key without the facts whitelist), T1–T15 with T13b, and the rollback refusing, succeeding and re-applying.
+- **Mutants.** **SQL: 40 of 40 killed** (writer, guard, grants, keys, postcondition, rollback). The guard's account-deletion branch survived the first run, because on the fixture the `memories` cascade fires first; T13b and D7 now take that cascade out of the way and kill it. **TS: 35 of 35 killed** (§21 step 4, purge, history reader, route, whitelist, extractor, replay, the world model). The extractor's UTC rendering and absent-column rule survived the first run; a unit case now holds them. **Fix round 1:** the tightened `$pre$` is held by three new rehearsal steps. Three mutants are killed: the name-only check, the whitelist clause dropped, and the check removed (§BO.9). The name-only mutant first survived, because the P34 table also lacked the whitelist; the step with the whitelist's name and another key now kills it. **Not covered:** check:memory-certification's failure branch for a diverging scenario is not exercised by any test.
+
+### §BO.4 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| H35 | N | W | `memory_snapshots` exists as written storage with a writer (3811's trigger on every Memory write) and two readers (the owner's `GET /memories/:id/history`, the §25 replay run by check:memory-certification). It holds the whitelisted facts only — two of which, `place_id` and the occurrence name, are owner-controlled text kept for the Memory's life (Q-H35-e) — keeps the newest 50, is append-only and is purged by §21 and by account deletion (§BO.2, §BO.3). W: 3811 is unapplied (rule A.2). `cause` is empty until a writer sets the command or correction id. Q-H35 and Q-H35-e are open |
+
+### §BO.5 Rows read, reason restated, NOT moved
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H190 | BUILT-BUT-WRONG | §21's RAW_EVIDENCE_PURGED also purges a deleted Memory's fact history, confirmed by a read (§BO.2 item 7). W stands as §AP/§AQ state it, on 2320, 3673 and now 3811 being unapplied |
+| H193 | BUILT-BUT-WRONG | A failed snapshot purge is retried and dead-lettered by name like any step-4 failure. W stands on 3670 being unapplied |
+
+### §BO.6 Owner questions (fail-closed defaults implemented, none approved)
+
+- **Q-H35 (contents and retention).** Implemented: the whitelisted facts only (no title, caption, coordinates, city/country text or people), purged with the Memory, newest 50 kept. Alternatives: a time bound; a different cap.
+- **Q-H35-e (owner-controlled place text in the history; VERIFY-737 fix 1).** As built, `place_id` (free text up to 200 characters) and `place_display_name_at_occurrence` (the owner's words for a pick, up to 300) are kept in each version for the Memory's life and cannot be retracted by the owner short of deleting the Memory. Three options:
+  - (a) keep both as built — the plan asked for "place ids + occurrence name";
+  - (b) the fail-closed alternative: store a place reference only when it is a canonical catalog uuid, and no occurrence name;
+  - (c) let the owner retract: an owner-initiated deletion of a version or of the place history, which the guard would then admit.
+  Not changed here, because (a) is the plan's binding design; the owner chooses.
+- **Q-H35-b (backfill).** Implemented: none. A Memory last written before 3811 has no version until its next write. The alternative is a version 1 for every live Memory at apply time.
+- **Q-H35-c (no flag).** The plan names no flag, so the trigger records from the moment 3811 is applied. If the owner wants it gated, a variant is available on request: a `memory_snapshots_enabled` flag seeded FALSE and read by the trigger. It is not built here.
+- **Q-H35-d (cause).** Whether the kernel's owners (2711/3676) set `portava.memory_command_id`, and whether PATCH sets `portava.memory_correction_id`, in the transaction that writes. Until then `cause` is empty.
+- **Applying 3811** is the owner's press. It needs nothing beyond the baseline, and works with 3813, 3803, 3804, 3674 and 2338 applied or not.
+- **Stated limitation (VERIFY-737 R5, pre-existing class).** An appeal that restores a DELETED Memory (`resolveAppeal.ts` sets `state = 'published'` with no state filter) after §21's purge starts a fresh history at version 1, with nothing resurrected. If the restore lands before the purge, the old history continues and the later purge is refused for a live Memory, so it fails and dead-letters. The evidence purge has the same shape.
+
+### §BO.7 Scope
+
+All nine 3811 files are in this census's scope (`checkCensusFreshness.ts` CENSUS_SCOPE, line-neutral).
+
+- NOT-GRADED: artifacts/api-server/src/services/appeals/resolveAppeal.ts — §BO.6 names it only to state a pre-existing limitation (an appeal restores a deleted Memory with no state filter); the appeals path is another census's subject, and no row here rests on it
+
+### §BO.8 Headline
+
+| bucket | was (§BK) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 71 | 71 |
+| BUILT-BUT-WRONG | 181 | 182 |
+| NOT-BUILT | 12 | 11 |
+| CANNOT-VERIFY | 2 | 2 |
+| total | 266 | 266 |
+
+**1 move, N → W.** 266 = 71 C / 182 W / 11 N / 2 X, re-measured in fix round 1 on this branch after merging main `f57202703` (§BI #720 and §BK #725 on main). §BL, §BM and §BN are still in flight and each restates this headline: whichever merges later re-measures it.
+
+### §BO.9 Fix round 1 (VERIFY-737, ACCEPT-WITH-FIXES)
+
+- **Fix 1 (honesty), done.** `place_id` and `place_display_name_at_occurrence` are disclosed as owner-controlled text kept for the Memory's life and not retractable by the owner. This is stated in 3811's header (line-neutral), §BO.2 item 1, §BO.4 and the PR body, and is now owner question Q-H35-e. It is pinned as built by db D9 and rehearsal T15.
+- **R1, done.** `$pre$` now refuses an existing `memory_snapshots` unless it carries 3811's key definition `PRIMARY KEY (memory_id, version)` AND the facts whitelist CHECK (same lines, line-neutral). The verifier's P34 table, whose constraint is merely NAMED `memory_snapshots_pkey`, previously passed: the triggers committed and every Memory write then failed. Three rehearsal steps hold the new check, and three `$pre$` mutants are killed.
+- **R2, R4 and R7, done** (§BO.2 item 2, §BO.3). R5 is stated as a limitation (§BO.6).
+- **Not done:** R3, value-shape checks in the CHECKs. Only the table owner can write such a value, and the reader drops it. R6, concurrency, is reasoned, not executed.
+- **Merge-time:** the deletion graph is regenerated on the merged tree (409 tables), the telegraph inventory too (783), §BO.8 is re-measured, and the test line and the acknowledgements are unions.

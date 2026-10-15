@@ -342,13 +342,13 @@ describe("§21 RAW_EVIDENCE_PURGED — deleting a Memory kept from a candidate",
   });
 
   it("2320 not deployed: `not_applicable` with its reason, attempted once — never `done`, never dead-lettered", async () => {
-    app = await start({ absent: new Set(["memory_evidence", "memory_episodes", "memory_corrections"]) }); // H-13: step 4 also targets 3673, so "not deployed" means neither store is
+    app = await start({ absent: new Set(["memory_evidence", "memory_episodes", "memory_corrections", "memory_snapshots"]) }); // H-13 + 3811 (census H35): step 4 also targets 3673 and 3811, so "not deployed" means none of the stores is
     assert.equal((await call(app, "DELETE", `/api/memories/${PLAIN_MEMORY}`)).status, 204);
     const report = lifecycleReport(app);
     const purge = step(report, "RAW_EVIDENCE_PURGED");
     assert.equal(purge.outcome, "not_applicable");
     assert.equal(purge.attempts, 1);
-    assert.match(purge.detail, /memory_evidence is not deployed/); assert.match(purge.detail, /memory_corrections is not deployed/);
+    assert.match(purge.detail, /memory_evidence is not deployed/); assert.match(purge.detail, /memory_corrections is not deployed/); assert.match(purge.detail, /memory_snapshots is not deployed/);
     assert.equal(report.deadLettered, false);
   });
 });

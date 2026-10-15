@@ -331,10 +331,10 @@ describe("rule 7 (lib/serverOnlyTables.ts) — fires on every shape that hands m
       assert.notEqual(code, 0, out);
       assert.match(out, /server-only table public\.compass_memories is client-reachable/);
     });
-    it("FAILS on a role-membership grant to a client role, naming both tables", () => {
+    it("FAILS on a role-membership grant to a client role, naming every server-only table", () => {
       const { code, out } = run("member", "GRANT memreader TO authenticated;");
       assert.notEqual(code, 0, out);
-      assert.match(out, /server-only tables public\.memories, public\.compass_memories are client-reachable through role membership/);
+      assert.match(out, /server-only tables public\.memories, public\.compass_memories, public\.memory_snapshots are client-reachable through role membership/); // the list grows with SERVER_ONLY_TABLES: 3811's table added by B58 MEM-SNAPSHOTS (census-highlights-memories §BO)
     });
     it("passes the same grant on another table", () => {
       const { code, out } = run("other", "GRANT SELECT ON TABLE public.trips TO authenticated;");

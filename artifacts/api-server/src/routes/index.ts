@@ -265,7 +265,7 @@ router.use(memoriesRouter);
 // Registered BEFORE storiesRouter: /stories/retention-policy would otherwise be
 // captured by /stories/:id and answered as an invalid story id.
 router.use(storyArchiveRouter);
-router.use(storiesRouter);
+router.use(storiesRouter); import memoryHistoryRouter from "./memoryHistory.js"; router.use(memoryHistoryRouter); /* census-highlights-memories §BO (B58 MEM-SNAPSHOTS, H35): GET /memories/:id/history, the owner's fact history (3811); on this line so no cited line moves */
 router.use(closeFriendsRouter);
 router.use(reviewsRouter);
 router.use(appealsRouter);
