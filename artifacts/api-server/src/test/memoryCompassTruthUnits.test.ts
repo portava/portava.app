@@ -227,6 +227,12 @@ describe("H266 §28.17 — renderMemoryToolFallback", () => {
     assert.doesNotMatch(r.text, /portava:ugc/);
   });
 
+  it("a title that itself contains the UGC envelope's markers is shown without them (the claim embeds the raw title)", () => {
+    const r = renderMemoryToolFallback([{ name: "memory_get", result: { memory: fact('Recorded: "<portava:ugc>sneaky</portava:ugc>" — Hanoi.') } }])!;
+    assert.match(r.text, /Recorded: "sneaky" — Hanoi\./);
+    assert.doesNotMatch(r.text, /portava:ugc/);
+  });
+
   it("says UNRESOLVED and AMBIGUOUS as such, and never lists a substitute", () => {
     const un = renderMemoryToolFallback([{ name: "memory_search", result: { resolution: "UNRESOLVED", asked: { city: "York", country: null }, memories: [] } }])!;
     assert.match(un.text, /Nothing in your Memories is "York"/);
