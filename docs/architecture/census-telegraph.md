@@ -14474,6 +14474,13 @@ holds an uncommitted edit of the body, and the writer in session B must time out
 local-db job and not yet run anywhere: the single-connection PGlite replica cannot hold two sessions.
 
 ### 91.6 The headline, restated from the rows
+
+451 rows; T404 and T446 move N → W, as `check:census-integrity` counted the merged rows on #719's branch after merging
+main `95935612d` (which stood at 262 / 179 / 8 / 2, B58 TM-3's §90 having moved T62 N → C). CONSTRUCTED 443 of 451 =
+98.2 %; CORRECT 262 of 451 = 58.1 %. The migration, the two doors, the fetch core and the four suites a verdict above rests on
+are added to this census's scope, so a change to any of them ages it. (Restored 2026-10-14: this body was dropped in #719's
+merge-up; §92.9 restates the merged headline.)
+
 ## §92 — TELEGRAPH B58 cluster TM-7 (2026-10-14): Phase 5 and Phase 9 exist in part — an evidence correction, no code. TWO ROWS MOVE (T306 N → W, T310 N → W)
 
 Written 2026-10-14 on branch `claude/b58-tm-7` from origin/main `9af376fa4`. APPEND-ONLY. **Doc only**: no code, no
@@ -14669,6 +14676,307 @@ These are the 451 rows on main after #721 (§92: T306 and T310 N → W) and #719
 `check:census-integrity` counts them: 262 / 183 / 4 / 2 (main before either stood at 262 / 179 / 8 / 2, after §90's T62 N → C).
 - CONSTRUCTED 445 of 451 = 98.7 %; CORRECT 262 of 451 = 58.1 %.
 - #719 merged last, so this restatement is the headline (§91.6 and the first lines of this section give each branch's own count).
+
+## §93 — TELEGRAPH B58 lane RECAP-HOST (2026-10-14): the recap's people include the plan's host, unless the host declined their own plan. NO ROW CHANGES BUCKET
+
+Written 2026-10-14 on branch `claude/fix-recap-host` from origin/main `95935612d` (main `51c3f30b4` merged in). APPEND-ONLY
+once merged. Found by the independent verification of lane TM-7 (`05f4714e5`, "Outside TM-7"). Numbered §93 because open
+PRs #719 (lane TM-1) and #721 (lane TM-7) write §91 and §92; renumber on conflict. No migration, no flag, no client
+change, no database. **Revised in fix round 1 (93.8)** after the Opus verification of `f83aad3d5`: the first head counted
+a host who had declined their own plan, and it added a recap-only block filter that lead ruling LR-B58-6 removes. The
+text below states the final head; 93.8 states what changed and why.
+
+### 93.1 The defect, re-verified on `95935612d`
+
+- `GET /threads/:threadId/recap` read the plan with `.select("id, title, starts_at, ends_at, status, chat_thread_id")`
+  and then added `plan.creator_id` to the night's people. `creator_id` was not selected, so against PostgREST it is
+  always `undefined`: the host branch was dead in production.
+- The host has no other way in. A creator never gets a `meetup_invites` row from an invitation: both invite paths drop
+  the caller from the invitee list
+  (`artifacts/api-server/src/routes/meetups.ts:215#candidateIds = b.inviteeIds.filter((id) => id !== user.id)`
+  on create, and `artifacts/api-server/src/routes/meetups.ts:593#let candidateIds = parsed.data.userIds.filter((id) => id !== user.id)`
+  on `/invites`). A host has a row only if they RSVP'd to their own plan. So a host who had not RSVP'd was missing from
+  `counts.people` and from the headline's "N people".
+- Why no test saw it: the suite's fake answered every read with the WHOLE seeded row, whatever was selected (the blind
+  spot `src/test/helpers/selectProjection.ts` documents), and its fixture also gave the host a `going` invite, so the
+  host path was never exercised. None of §10.19's four mutations touched it.
+- The rest of the file was swept for the same class (a read of a field the select did not name) and none was found. The
+  draft route's message read names every field that it, `isSharedCardRow`, `sharedCardTitleFor` and
+  `withholdLocationAcrossBlocks` read. Both membership reads name `left_at`, plus `visible_from_at` through
+  `membershipSelect` when the bound is on. The `memories` insert returns the six fields it serialises. The recap's
+  invite and message reads name every field used.
+
+### 93.2 What changed
+
+- `artifacts/api-server/src/routes/telegraphMemory.ts:222#chat_thread_id, creator_id`: the plan read selects
+  `creator_id` (a literal list, as `check:write-path-columns` requires).
+- `artifacts/api-server/src/routes/telegraphMemory.ts:252#EVERY status, as GET /meetups/:id reads them`: the invite read
+  takes every status, as `GET /meetups/:id` does, so the host's OWN row is seen.
+- `artifacts/api-server/src/routes/telegraphMemory.ts:261#const hostCounts = Boolean(plan.creator_id) && (!hostRow || isGoing(hostRow));`:
+  the people are every `going`/`maybe` invitee, plus the host when the host has NO invite row or a `going`/`maybe` one.
+  A host who RSVP'd `declined` to their own plan is not counted. The app offers the creator that choice: the RSVP card is
+  gated only on `!isCancelled && isAuthed` (`travel-buddy-standalone/app/meetup/[id].tsx:761#!isCancelled && isAuthed`).
+  The viewer counts only when they were on the plan.
+- **No block filter** (lead ruling LR-B58-6). The count is the audience `GET /meetups/:id` already shows, unfiltered
+  (§89.7: the meetup routes read no `blocks`), so the recap adds no new signal. Q-RH1 (93.4) is the owner's.
+- The suite's fake now honours the select list through the shared projector. Each line was edited in place, so nothing
+  cited in the file moves; the new cases are appended at the end. §92 (open PR #721) cites
+  `artifacts/api-server/src/test/telegraphMemory.test.ts:435#recaps a completed plan and writes nothing`, which is
+  unchanged.
+- Line-neutral: the route keeps its line count, so every line of it that this census (§10, §89) and
+  `docs/ops/telegraph-history-bound-deployment.md` cite still lands on what it cites.
+
+### 93.3 Rows
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T121 | C | **C** | **End-of-night recap surface**: evidence correction, verdict unchanged. The route, the sheet and the header entry §10 cites are real and unchanged. On `95935612d` the headline's people count was short by the host whenever the host had not RSVP'd (93.1). That is fixed here, pinned by `artifacts/api-server/src/test/telegraphMemory.test.ts:530#a host with no invite row is one of the night's people`. |
+| T122 | C | **C** | **Derived from confirmed session context, an invitation to curate**: holds at C after this change (fix round 1 included). Stated honestly: on `95935612d` this row's clause "people are the plan's confirmed participants" was NOT true in production for a host without an invite row. Its evidence never exercised that case, so by this census's own rule the row was overstated (W) on main until this change. It is C now on new evidence. The host is counted from the selected `creator_id` (`artifacts/api-server/src/routes/telegraphMemory.ts:222#chat_thread_id, creator_id`), shown red on main against a fake that returns only the selected columns. A host who declined their own plan is not a confirmed participant and is not counted (`artifacts/api-server/src/test/telegraphMemory.test.ts:553#a host who RSVP'd DECLINED to their own plan is not counted`, red on this branch's first head). A `maybe` invitee is counted and a pending one is not (`artifacts/api-server/src/test/telegraphMemory.test.ts:559#a maybe invitee is counted; a pending or declined one is not`). A member who was not on the plan is not counted, even in their own recap (`artifacts/api-server/src/test/telegraphMemory.test.ts:568#a member who was not on the plan is not counted`). Mutants are in 93.8. The window, `no_completed_plan` and `wrote: "nothing"` clauses are untouched. |
+
+T310 (§92, open PR #721) cites T121/T122 at C. It stays W either way, as the TM-7 verification already found.
+
+### 93.4 Owner question Q-RH1 (open; LR-B58-6 holds main's behaviour until the owner decides)
+
+**Should a block between the viewer and a person on the plan change who is counted?** The choice is to filter BOTH
+surfaces or NEITHER. Filtering only the recap is ruled out (LR-B58-6).
+
+- **What exists today.** `GET /meetups/:id` reads no `blocks` (§89.7). It shows unfiltered going/maybe/declined
+  counts, the host's handle and avatar, and up to four going attendees' handles and avatars. The recap carries no
+  identity at all: no id, name, handle, face, excerpt or media URL, only counts and source message ids.
+- **NEITHER (implemented, main's behaviour).** The recap counts the same audience the meetup page shows. Cost: a viewer
+  in a block with someone on the plan sees that person counted in "N people". This is no more than the meetup page
+  beside it already shows, and less, since the recap names nobody.
+- **BOTH.** Filter the recap's count and `GET /meetups/:id`'s counts, host and attendee list, in both directions.
+  Cost: a change to the meetups surface, and its own decision about a block with the HOST, whose plan page the viewer
+  can still open. Filtering both keeps the two numbers equal, so neither page betrays the other.
+- **Recap only (rejected, built on `f83aad3d5` and removed).** The recap count drops below host + going + maybe on the
+  plan page exactly when someone on the plan is in a block with the viewer. That is a new "someone here blocked you"
+  signal that main did not have. The verifier's analysis (VERIFY-RH, FIX-2) is the basis for LR-B58-6.
+
+### 93.5 Tests and mutations
+
+- NOT-GRADED: artifacts/api-server/src/test/helpers/selectProjection.ts — the shared test projector the suite's fake now uses; test machinery, not a surface this census grades.
+- NOT-GRADED: travel-buddy-standalone/app/meetup/[id].tsx — cited in 93.2 only to show the app lets a plan's creator RSVP `declined` to their own plan; the meetup screen is not a surface this census grades.
+
+- `telegraphMemory.test.ts` passes 35/35: 24 existing and 11 new. The fake's projection is pinned by a self-test
+  (`artifacts/api-server/src/test/telegraphMemory.test.ts:524#the fake answers with the selected columns only`).
+  - Against main `51c3f30b4`'s route with the column-faithful fake: 30 pass / 5 fail, every case whose host has no
+    invite row. With the OLD whole-row fake, main's route PASSES those, which reproduces the blind spot (and counts
+    the `declined` host instead).
+  - Against this branch's first head `f83aad3d5`: 33 pass / 2 fail (the `declined` host and the LR-B58-6 cases).
+  - LR-B58-6 is pinned: a block in either direction, or an unreadable `blocks` table, leaves the count unchanged
+    (`artifacts/api-server/src/test/telegraphMemory.test.ts:576#the count is the meetup page's audience`).
+  - Membership still gates the endpoint: a host who left the thread, and a host who is not a member of it, are both
+    refused (`artifacts/api-server/src/test/telegraphMemory.test.ts:594#hosting the plan does not open the recap to a non-member`).
+- Mutants for the final head are in 93.8.
+- Neighbours, by explicit path, 227/227:
+  - `telegraphCardTruthDoors`
+  - `telegraphConversationMemoryBoundary`
+  - `telegraphIdentityAcrossBlocks`
+  - `telegraphLocationAcrossBlocks`
+  - `telegraphSharedCardReaders`
+  - `selectProjection`
+
+### 93.6 Found, not changed (for the lead)
+
+- `identityWithheldAcrossBlocks` fails open if a block read THROWS rather than resolving an error. No suite throws.
+  This gap predates the PR (verifier V6), and the recap no longer calls the helper.
+- Corrected in fix round 1: the first head's 93.6 said a host who declined their own plan "is still counted … the
+  original design of this route". That was wrong. Production never counted a declined host, because `creator_id` was
+  never returned; the first head started counting one. The final head does not (93.2).
+
+### 93.7 The headline, restated from the rows
+
+Unchanged by this section, which moves no bucket. Merged after §91 (#719) and §92 (#721), as `check:census-integrity`
+counts the merged rows on main `0bea6f282`: 262 / 183 / 4 / 2 of 451. CONSTRUCTED 445 of 451 = 98.7 %; CORRECT 262 of
+451 = 58.1 %.
+
+### 93.8 Fix round 1 (Opus verification of `f83aad3d5`, ACCEPT-WITH-FIXES) — NO ROW CHANGES BUCKET
+
+- **FIX-1, the declined host.** `f83aad3d5` added `creator_id` unconditionally. A host whose own invite row said
+  `declined` was counted: 2 people where main counted 1. Now the host counts only with no invite row or a
+  `going`/`maybe` one, and the invite read takes every status to see that row (93.2).
+- **LR-B58-6, the block filter.** `f83aad3d5` passed the people through `identityWithheldAcrossBlocks`. That is removed,
+  together with its import, so no unused code remains. The count follows the meetup page's audience as on main. Q-RH1
+  is rewritten as the owner's choice (93.4).
+- **FIX-3, test gaps.** These are now pinned:
+  - the viewer is counted only when on the plan (verifier V3);
+  - a `maybe` invitee is counted (V4).
+- **Mutants on the final head: 10 of 10 killed**, each run alone and then restored:
+  - a declined host counted (1 red);
+  - `creator_id` dropped from the select (5 red);
+  - the host counted only with an invite row, which is main's production behaviour (5 red);
+  - every invite row counted whatever its status (9 red);
+  - `maybe` dropped (2 red);
+  - the viewer always counted (2 red);
+  - a recap-only block filter re-added (1 red);
+  - a declined host counted in their own recap only (1 red);
+  - the membership gate ignoring `left_at` (1 red);
+  - the host let past the membership gate (2 red).
+- Not carried over: the first round's block-filter mutants test code that no longer exists.
+- T122's C rests on the evidence in 93.3. The headline is unchanged (93.7).
+
+## §94 — TELEGRAPH B58 lane BLOCKS-FAILOPEN (2026-10-14): every way a block read can fail — returned, THROWN, not a row list, or cut at the row cap — answers "unreadable" at the shared readers, and a guard holds every catch around a block read. NO ROW CHANGES BUCKET
+
+Written 2026-10-14 on branch `claude/fix-blocks-fail-open` from origin/main `51c3f30b4`. APPEND-ONLY. A SECURITY lane,
+opened on finding V6 of the verification of PR #724 (V-RH). No migration, no flag, no client change, no database.
+Numbered §94 because open PRs #719, #721 and #724 write §91, §92 and §93; renumber on conflict.
+
+### 94.1 The finding, re-verified on `51c3f30b4`
+
+- **V6 as reported is a test gap, not a live leak.** The verifier replaced the catch in `identityWithheldAcrossBlocks`
+  with "nobody is blocked" and every suite stayed green, because no suite ever THREW. On main that catch is present
+  and answers "unreadable" (`artifacts/api-server/src/services/telegraph/identityAcrossBlocks.ts:62#} catch (err) {`).
+  The new suite (94.7) shows it: with the block read throwing or rejecting, the helper, `GET /me/threads`, both
+  availability lists, both receipt routes and the receipt faces were already fail-closed on main.
+- **The asymmetry the finding names is live one level down,** in the shared readers the helper and about forty other
+  sites depend on. Each was red on main:
+  1. **THROWN.** `readBlockExclusions`, `readPairExclusion`, `readGroupBlockExclusions` and `isBlockedBetween`
+     handled a RETURNED error and let a THROWN read (a torn-down client, a builder bug, a rejected fetch) escape, so
+     the answer depended on whether each caller remembered a catch. On a DM, `GET /threads/:id/messages` reaches
+     `artifacts/api-server/src/domain/telegraph/policies/conversationCapabilityPolicy.ts:173#blocked = await isBlockedBetween(sc, viewerId, counterpartId);`,
+     where a returned error is served as "blocked" and a thrown one was a 500.
+  2. **NOT ROWS.** `data: null` with no error, or a string, was read as "nobody is blocked". Identities were SERVED on
+     all seven surfaces of 94.3.
+  3. **NO ID.** A row that did not name its counter-party was skipped, so a DENY row was dropped as if absent.
+     Identities were SERVED on all seven surfaces.
+  4. **CUT.** The scoped (`among`) read sent every candidate in one `.in()`. Over 1,200 candidates on a database that
+     caps a read at 1,000 rows, 200 blocks were read as "not blocked". The identity helper itself was safe (it asks in
+     chunks of 150); other `among` callers pass their whole list.
+
+  Shapes 2 and 3 are not produced by a healthy PostgREST. They are what an unfaithful fake, a proxy or a later
+  refactor produces, and the reader is this tree's definition of record for "could not check is never no block".
+
+### 94.2 What changed
+
+- `artifacts/api-server/src/lib/exclusionSet.ts:187#export async function readBlockExclusions(` never rejects: its
+  read runs at `artifacts/api-server/src/lib/exclusionSet.ts:194#return await readBlockExclusionsOnce(sc, viewerId, opts?.among);`
+  under a catch answering `exclusionsUnavailable(err)`. `readPairExclusion` (`artifacts/api-server/src/lib/exclusionSet.ts:250#export async function readPairExclusion(`)
+  and `readGroupBlockExclusions` (`artifacts/api-server/src/lib/exclusionSet.ts:279#export async function readGroupBlockExclusions(`)
+  do the same.
+- Each direction's answer passes `artifacts/api-server/src/lib/exclusionSet.ts:152#function counterParties(`: an
+  answer that is not a row list is unreadable (`artifacts/api-server/src/lib/exclusionSet.ts:154#if (!Array.isArray(res?.data)) return exclusionsUnavailable(NOT_ROWS)`),
+  and so is a row without its counter-party (`artifacts/api-server/src/lib/exclusionSet.ts:158#if (id === null) return exclusionsUnavailable(NO_COUNTERPARTY)`).
+  The whole-list read applies the same rule (`artifacts/api-server/src/lib/exclusionSet.ts:232#if (blocker === null || blocked === null) return exclusionsUnavailable(NO_COUNTERPARTY);`).
+- `artifacts/api-server/src/lib/exclusionSet.ts:172#export const BLOCK_AMONG_CHUNK = 150;` The scoped read is asked
+  in chunks. `blocks` is UNIQUE per pair, so one direction's read returns at most 150 rows, below `db-max-rows`.
+- `isBlockedBetween`, edited LINE-NEUTRALLY: the try opens on the guard line (`artifacts/api-server/src/lib/blockGuard.ts:32#if (!userA || !userB) return false; try {`)
+  and closes at `artifacts/api-server/src/lib/blockGuard.ts:62#return blocked; } catch { return deniedAfterThrow(); }`.
+  `deniedAfterThrow` records the error branch's two counters and denies. Every line cited before (`:25-40`, `:38`,
+  `:46`) still holds what it held.
+- `identityAcrossBlocks.ts` is unchanged. Its catch is now defence in depth (the reader no longer rejects), and the
+  guard of 94.5 holds it by fingerprint.
+- One test fake corrected: `artifacts/api-server/src/test/messagingPermissionsHardening.test.ts:94#if (table === "blocks") return builder(table, () => ({ data: o.blockRow ?? [], error: null }));`
+  answers `[]` for "no block", the real shape of a `.limit(1)` list read, instead of `null`. It is the same correction
+  §54 made to `accessControl`'s fake. Its assertions are unchanged.
+
+### 94.3 Every caller of `identityWithheldAcrossBlocks`, audited
+
+| caller | what it does with "unreadable" | verdict |
+| --- | --- | --- |
+| `GET /me/threads` (`artifacts/api-server/src/routes/messaging.ts:2037#const allowedMemberNames = await nameVisibilitySetChunked(sc, memberUserIds);`) | every other member keeps only `{ id }`, and it warns | ok |
+| `GET /threads/:id/messages`, senders (`artifacts/api-server/src/routes/messaging.ts:2357#const senderIdentity = await identityWithheldAcrossBlocks(`) | every other sender's profile is null | ok |
+| the same, quoted senders (`artifacts/api-server/src/routes/messaging.ts:2509#const qAllowed = await nameVisibilitySet(`) | name and handle withheld | ok |
+| trip and circle availability (`artifacts/api-server/src/routes/availability.ts:841#identityWithheldAcrossBlocks(sc, viewerId, others),`) | every other member hidden: no identity, no availability | ok |
+| `GET /threads/:id/receipts` (`artifacts/api-server/src/routes/telegraphLifecycle.ts:187#const messages = ((rows as any[]) ?? []) as LifecycleMessage[];`) | 503 `degraded_unavailable` | ok |
+| receipt faces (`artifacts/api-server/src/routes/telegraphLifecycle.ts:211#const faces = await readerFacesFor(`) | other faces null, `degraded: true` | ok |
+| `GET /threads/:id/read-receipts` (`artifacts/api-server/src/server/telegraph/readReceiptsRoute.ts:122#const crossBlock = await identityWithheldAcrossBlocks(`) | 503 `degraded_unavailable` | ok |
+
+Every caller passes the SERVICE client (`requireUser`'s client or `getServiceClient()`), so both directions of
+`blocks` are readable; a user client would see only its own blocks (`users_view_own_blocks`) and miss everyone who
+blocked the viewer. No caller needed a fix. Each is now pinned under a thrown, a rejected and two malformed reads.
+
+### 94.4 The other block readers, swept for the same asymmetry
+
+- `readBlockExclusions`, `readPairExclusion`, `readGroupBlockExclusions`, `isBlockedBetween`: asymmetric, FIXED (94.2).
+- `fetchBlockedSet` (`lib/blocks.ts`): symmetric, a catch answers `null` like an error. ok.
+- `withheldLocationIds`, `dropBlockedSenders`, `presenceAudience` (`lib/telegraphEvents.ts`), `groupBlockUnion`
+  (Compass), `isBlockedEither` (calls), `routes/og.ts`: each answers a throw as it answers an error. ok.
+- `CompassProfileService.buildProfile`: a rejected and a returned failure both throw. `refreshHiddenUsers`: both keep
+  the snapshot. Symmetric. ok.
+- Every `try`, `.catch` and `allSettled` around a block read in the tree, 41 in all, is judged in the guard's ledger
+  (94.5). Forty are closed. One is knowingly open (94.6).
+
+### 94.5 The guard
+
+No guard covered this class. `check:silent-supabase-reads` (S2) and `check:unchecked-supabase-reads` treat a catch
+around a supabase read as dead code. That is right for a returned error and blind to a throw, and extending them would
+contradict their own thesis. So the guard is new:
+`artifacts/api-server/src/test/blockReadCatchGuard.test.ts:309#it("every place a thrown block read can land is judged in the ledger, and no judgement is stale"`
+holds every place a thrown block read can land against `artifacts/api-server/src/scripts/BLOCK_READ_CATCHES.json`.
+Each of the ledger's 41 entries records a verdict (`closedBy`), a reason, and a fingerprint of the handler's code with
+comments removed. The guard reports four failures:
+
+- NEW: a site with no entry.
+- CHANGED: a fingerprint moved. V6 exactly; killed in 94.7.
+- STALE: an entry with no site.
+- UNJUDGED: an entry with no valid verdict or reason.
+
+One rule has no ledger escape (`artifacts/api-server/src/test/blockReadCatchGuard.test.ts:315#it("THE READERS answer a thrown read with their unreadable value — no ledger escape"`):
+the five readers' catches must answer `exclusionsUnavailable(err)`, `true` or `null`. Knowingly-open sites are capped by
+a shrink-only count (`artifacts/api-server/src/test/blockReadCatchGuard.test.ts:92#const OPEN_KNOWN_MAX = 1;`) and
+must cite where they were reported. The guard also refuses a vacuous scan (fewer than 1,000 files, 100 reads or 30
+sites). It runs in `api-server-tests` through the `test` script. Planted violations go red: a new open catch, the V6
+catch, a stale entry, a lazy verdict, a reader without its try, a reader catch answering open.
+
+### 94.6 Found, not fixed (for the lead)
+
+- **`GET /discovery/feed` event posts are knowingly fail-OPEN on the block list**
+  (`artifacts/api-server/src/routes/discovery.ts:2648#const viewerBlocks = await fetchBlockedSet(sc, viewerId);`).
+  A returned error or a throw leaves `blockedIds` empty, and the event-post pipeline filters on exactly that set. This
+  is symmetric, so it is not this lane's asymmetry. It is a documented posture already reported to the lead as a
+  product decision (`docs/verification/privacy-authorization.md` §5, open item 3). The ledger records it as
+  `open-known`, the cap's one site.
+- **Whole-list block reads are still cut at `db-max-rows`.** Affected: `readBlockExclusions` without `among` (seven
+  callers), `fetchBlockedSet`, `CompassProfileService`, `refreshHiddenUsers`, and `readGroupBlockExclusions` over a
+  group's members. A viewer with more than 1,000 block relationships gets a prefix. The fix is keyset paging
+  (`lib/keysetRead.ts`), at one more round trip per read; it is its own change.
+- **`isBlockedBetween` reads a non-list answer (`data: null`, no error) as "not blocked".** Not changed here: about
+  forty call sites, and many suites' fakes model "no block" as `null` (94.2's correction is one). The right rule is
+  "unreadable", and the fakes must be made faithful first.
+- **`readerFacesFor`'s profile and friendship reads** can still throw out of `GET /threads/:id/receipts` as a 500.
+  That is closed (the faces are decorative and nothing is served), so it is not changed.
+
+### 94.7 Tests, mutants, rows
+
+- NOT-GRADED: artifacts/api-server/src/test/identityAcrossBlocksThrownRead.test.ts — this section's EVIDENCE for the seven callers of 94.3 under a failed block read, not a graded surface.
+- NOT-GRADED: artifacts/api-server/src/test/blockReadCatchGuard.test.ts — the guard of 94.5, machinery this census names, not a graded surface.
+- NOT-GRADED: artifacts/api-server/src/scripts/BLOCK_READ_CATCHES.json — the guard's ledger, machinery.
+- NOT-GRADED: artifacts/api-server/src/test/exclusionSetContract.test.ts — this section's EVIDENCE for the readers of 94.2; no verdict of this census rests on it.
+- NOT-GRADED: artifacts/api-server/src/routes/og.ts — named in 94.4 as one of the swept block readers (its catch denies), not a Telegraph surface.
+- NOT-GRADED: artifacts/api-server/src/lib/keysetRead.ts — named in 94.6 as the remedy for the whole-list cut, not a graded surface.
+- NOT-GRADED: artifacts/api-server/src/lib/messagingPermissions.test.ts — named in 94.7 as the suite the local reach-set missed (its fake was corrected by V-729 fix 1), not a graded surface.
+
+- `exclusionSetContract.test.ts` 30/30. The 11 new cases are red on main: thrown and rejected reads ×3 readers, three
+  non-list answers, a row without its id, the cap, and `isBlockedBetween` throwing or rejecting.
+- `identityAcrossBlocksThrownRead.test.ts` 40/40, 18 of them red on main: the two thrown-read thread cases, and every
+  surface under both malformed answers. Its seven CONTROLs (no fault, identity shown) are green on both trees.
+- `blockReadCatchGuard.test.ts` 11/11. `messagingPermissionsHardening.test.ts` 21/21 (8 red before its fake was
+  corrected; the reader, not the assertion, changed).
+- Neighbours: the 913 registered suites that transitively import `exclusionSet` or `blockGuard`, run locally through
+  the heavy-check slot. 19,574 tests; the 8 above failed, and that reach-set MISSED `src/lib/messagingPermissions.test.ts` (12 red in CI, same fake fix, V-729). CI on the head is the full-suite
+  evidence.
+- **Mutants, 14 of 14 killed,** each run alone and restored from git:
+  - a thrown read answers "nobody" (readBlockExclusions, readPairExclusion, readGroupBlockExclusions);
+  - a thrown read rejects again;
+  - a non-list answer read as no rows (scoped, whole-list, pair);
+  - a row without its id skipped (scoped, whole-list);
+  - no chunking;
+  - the inbound direction dropped;
+  - `isBlockedBetween` answers `false` on a throw;
+  - `deniedAfterThrow` answers `false`;
+  - V6 exactly. V6 is now killed only by the guard (CHANGED): the reader never rejects, so that catch is
+    behaviourally unreachable, and the fingerprint is what holds it.
+- **Rows: NO ROW CHANGES.**
+  - T220 stays **W**. This section hardens the shared helpers that row asks subsystems to consult; it consolidates
+    none of the modules that keep their own read.
+  - T295, T324 and T350 stay **C**, re-derived. Their verdicts rested on the fail-closed answer to a RETURNED error,
+    which is unchanged. That answer now also covers a throw and a malformed answer, and T295's faces are pinned
+    under both.
+  - Headline restated from `check:census-integrity` on this tree, unchanged: 262 C / 179 W / 8 N / 2 ? of 451.
+    CONSTRUCTED 97.8 %, CORRECT 58.1 %.
+
+---
 
 ## §96 — TELEGRAPH B58 cluster TM-2 (2026-10-14): link previews reach the client — the sender's device asks the server once after a send, recipients draw only the stored text, and the message tree cannot load an image from a host a sender chose (guarded). ONE ROW MOVES (T446 W → C); T404 restated W
 

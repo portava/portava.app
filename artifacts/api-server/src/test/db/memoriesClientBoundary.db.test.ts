@@ -190,9 +190,9 @@ describe("V-716 fix 2 — 3813: public.memories refuses every client role", { sk
   });
 
   it("M3 — policies that read memories as the invoking role now fail closed (42501), and the API's role still reads those tables", () => {
-    assertDenied({ role: "authenticated", uid: S }, `SELECT media_url FROM public.memory_items WHERE memory_id = '${PUB}';`);
-    assertDenied({ role: "authenticated", uid: S }, `SELECT count(*) FROM public.memory_likes WHERE memory_id = '${PUB}';`);
-    assertDenied({ role: "authenticated", uid: S }, `SELECT count(*) FROM public.memory_tags WHERE memory_id = '${PUB}';`);
+    assertDenied({ role: "authenticated", uid: S }, `SELECT media_url FROM public.memory_items WHERE memory_id = '${PUB}';`, "(memories|memory_items)"); // 3814 (#731) denies the side table itself first; 3813 alone denies via the memories policy
+    assertDenied({ role: "authenticated", uid: S }, `SELECT count(*) FROM public.memory_likes WHERE memory_id = '${PUB}';`, "(memories|memory_likes)"); // 3814 (#731) denies the side table itself first; 3813 alone denies via the memories policy
+    assertDenied({ role: "authenticated", uid: S }, `SELECT count(*) FROM public.memory_tags WHERE memory_id = '${PUB}';`, "(memories|memory_tags)"); // 3814 (#731) denies the side table itself first; 3813 alone denies via the memories policy
     assertDenied({ role: "authenticated", uid: A }, `SELECT count(*) FROM public.memory_domain_events WHERE memory_id = '${PUB}';`);
     assert.deepEqual(asService(`SELECT media_url FROM public.memory_items WHERE id = '${ITEM}';`), ["https://example.test/memacl.jpg"]);
   });

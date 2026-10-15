@@ -631,7 +631,7 @@ export function certifyFeasibility(inputs: FeasibilityInputs): LayoverFeasibilit
       }
     : null;
   const landside = candidate
-    ? { ...assess(airport, session, candidate, nowMs, deadline), probe: probe! }
+    ? { ...assess(airport, session, candidate, nowMs, { deadline, envelope, inputs }), probe: probe! } // census-layover §75: rated against THIS record's envelope, the usable time it certifies
     : null;
   // Same deadline object, not a second derivation. See `windowOnly`.
   const windowOnlyByClock = assessWindowOnly(airport, session, envelope, nowMs, deadline);

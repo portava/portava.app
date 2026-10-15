@@ -5579,6 +5579,35 @@ sees the request): ≤ 8 attempts, `Retry-After` honoured (≤ 60 s) else 1–30
 waiting per request, then the last 429 goes to the caller unchanged. Wired into certify, `check:migration-ledger`,
 `audit:schema` and `check:missing-live-columns`. The applier is unchanged.
 
+## 2026-10-14 — `3802` (Memory narratives, B58 cluster MEM-NARR-1), written and NOT applied anywhere
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3802_memory_narrative_ai_consent.sql` | **not applied** | **not applied** |
+
+**`3802` — the optional AI summary of a Memory (census-highlights-memories H172, H14, H265; §BI).**
+`memory_narrative_ai_consent` (one row per user, the 3780/3782 consent shape in its OWN table so no other
+purpose's grant counts here; service_role only, every client privilege revoked, RLS on with no policy; the
+server stamps the disclosure version and timestamps; absent = off; a grant must be stamped, by CHECK) and the
+flag `memory_narrative_ai_enabled` seeded FALSE. The table cascades from `auth.users`, so account deletion
+erases it (`lib/deletionDispositions.ts` ERASED_BY_CASCADE). It stores no Memory content and no generated text:
+`POST /memories/:id/narrative/ai` sends nothing unless the flag is on, the person's grant is valid at the
+current disclosure version, and the Memory carries none of DO_NOT_RESURFACE / KEEP_PRIVATE_FOREVER /
+RETAIN_BUT_DO_NOT_PERSONALIZE (3671); the deterministic summary (`GET /memories/:id/narrative`) needs no
+migration.
+
+**Pre/postconditions** in the file, self-contained (the `$post$` block recomputes everything from the catalog).
+**Rollback:** `db/rollback/2026-10-14-3802-memory-narrative-ai-consent-rollback.sql` — refuses while the flag is
+TRUE or while anyone's choice is recorded; re-runs as a no-op (its table-existence test is a NESTED `IF`: the
+one-line `to_regclass(...) IS NOT NULL AND EXISTS (SELECT … FROM t)` form fails 42P01 on a re-run, measured on
+PGlite against 3782's rollback). **Rehearsed** on PGlite over a fixture of the touched objects (roles with
+Supabase's default ACL, `auth.users`, `feature_flags`, `schema_migration_ledger`): apply, re-apply, `$pre$` and
+`$post$` alone, the behaviour (no client privilege, unstamped grant refused, account deletion cascades), both
+rollback refusals, rollback, rollback again, re-apply — 16 of 16 steps; 8 of 8 SQL mutants killed. The chain
+half is `src/test/db/memoryNarrativeAiConsent.db.test.ts` (CI local-db job).
+**Activation** is an owner decision (open questions Q-NARR-1..6; the disclosure text is an engineering draft that
+needs legal review): apply 3802, then turn the flag on.
+
 ## 2026-10-14 — `3792_layover_certified_verdict_admits_entry_unverified.sql`, written and NOT applied anywhere (B58 lane LAY-2700)
 
 | | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
@@ -5755,3 +5784,44 @@ owner-rights cases were added).
 **Rollback:** `db/rollback/2026-10-14-3825-telegraph-message-link-previews-rollback.sql` drops the trigger, both
 functions, the table and the flag row it seeded. It destroys every stored preview; turning the flag off is almost
 always what is wanted instead.
+
+## 2026-10-14 — `3814_memory_social_client_privileges_revoked.sql`, written and NOT applied anywhere (B58 lane MEM-ACL-2)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3814_memory_social_client_privileges_revoked.sql` | **not applied** | **not applied** |
+
+**What it is.** The follow-up to 3813 (PR #726) that its report and VERIFY-726 asked for (owner question
+OQ-MEM-ACL-2-1, census-highlights-memories §BL). The baseline grants ALL on `memory_saves`, `memory_likes`,
+`memory_tags` and `memory_items` to `anon` and `authenticated`; 2490 left SELECT, INSERT, UPDATE and DELETE, and nothing
+in the chain narrowed them. The policies decide rows only: a signed-in user saved or liked ANY Memory id (the foreign
+key, checked as the owner, answered whether the id exists), read who liked a public Memory, re-pointed their own tag row
+at another Memory (`memory_tags_tagged_update` writes every column), and an owner inserted tags and photos past the API's
+checks. 3814 is `REVOKE ALL ON TABLE public.memory_saves, public.memory_likes, public.memory_tags, public.memory_items FROM
+PUBLIC, anon, authenticated` and grants nothing back. No policy, row, function, trigger or `service_role` privilege
+changes. 3813 alone does not close the save door, a plain like INSERT or a tag re-point without a WHERE clause.
+
+**Who it could break, re-verified.** No client tree reads or writes the four (no `.from()`, embed, RPC, REST path or
+realtime channel; the like and save buttons call the API). The API uses the service client only. Every chain function
+whose body touches them is service-role-only or a SECURITY DEFINER trigger function; no view, publication or policy on
+another table reads them. Pinned by `memorySocialClientBoundary.test.ts` P-1 to P-4.
+
+**Precondition** (per table) refuses a client or PUBLIC privilege granted by a non-owner or with a grant option, a
+session that does not act for the owner, a client-readable view, a client-callable SECURITY INVOKER function that reads
+or writes the table, a SECURITY INVOKER trigger that does so on a client-writable table, and a policy on a client-usable
+table that reads it; it accepts a second apply. **Postcondition** (catalog only, re-runnable): no client or PUBLIC ACL
+entry at table or column level, no effective privilege through membership, no client-readable view, RLS on,
+`service_role` keeps its four DML verbs.
+
+**Guard.** Until #726's rule 7 merges, `src/test/memorySocialClientBoundary.test.ts` replays the client ACL of each
+table over the baseline and the chain and fails if a client role ends holding anything; after 3814 it also fails on a
+run-time-built GRANT (dollar-quoted, `E''`, concatenated or `format()`), a role-membership grant to a client role, and a
+table renamed into one of the four names. The four are in `src/security/authorization-contract.json` with no client
+grant; until 3814 is applied to `portava-ci`, `check:authorization-contract` reports that database as wider.
+
+**Order.** Independent of 3813 in either order (rehearsed both ways). Press it alone or straight after 3813.
+
+**Rollback.** `db/rollback/2026-10-14-3814-memory-social-client-privileges-revoked-rollback.sql` re-grants SELECT,
+INSERT, UPDATE and DELETE on the four to both client roles (2490's state, never ALL or PUBLIC) and clears the ledger row.
+It refuses unless each table has RLS and its baseline policies, and unless `memory_items_public_read` still hides an
+`only_me` photo (3672) where the column exists. It re-opens every door above.
