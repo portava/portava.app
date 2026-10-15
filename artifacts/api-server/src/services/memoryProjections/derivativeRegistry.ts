@@ -27,7 +27,7 @@
  * zero rows errors nothing, so without it this module could report a revocation
  * that revoked nothing.
  */
-
+import { readPublicProjectionSources, sourceScopeOf } from "./publicIndexSources.js"; // H203 (B58 MEM-INDEX): the PUBLIC audience's source read (on what was a blank line, so every cited line holds)
 import type {
   HighlightPolicyRow, HighlightSourceRow, MemoryItemRow,
   MemorySourceRow,
@@ -124,7 +124,7 @@ export async function readProjectionSources(
   client: ClientLike,
   scope: ProjectionScope, opts: { includeHighlights?: boolean; placeCorrections?: boolean } = {},
 ): Promise<ProjectionResult<ProjectionSources>> {
-  const canonGates = await readCanonicalGates(client); const memRes = await readSourceMemories(client, scope.owner_id, canonGates); // H40/H71: the type / occurrence name are read only where their flag is ON
+  if (scope.audience === "PUBLIC") return readPublicProjectionSources(client, scope.owner_id, opts); /* H203 (B58 MEM-INDEX): a PUBLIC build never reads a private row — readPublicProjectionSources below */ const canonGates = await readCanonicalGates(client); const memRes = await readSourceMemories(client, scope.owner_id, canonGates); // H40/H71: the type / occurrence name are read only where their flag is ON
   if (memRes.error) {
     return {
       ok: false, reason: "source_unavailable", table: "memories",
@@ -201,7 +201,7 @@ export async function deriveProjection(
   scope: ProjectionScope,
   opts: { significance?: ReadonlyMap<string, SignificanceExplanation> } = {},
 ): Promise<ProjectionResult<DerivedProjection>> {
-  const def = getProjectionDefinition(projectionId);
+  const def = getProjectionDefinition(projectionId); scope = sourceScopeOf(def, scope); // H203 (B58 MEM-INDEX): the DEFINITION, never the caller, says whom the source read is for
   if (!def) {
     return { ok: false, reason: "unknown_projection", detail: `no definition for ${projectionId}`, retryable: false };
   }
@@ -406,7 +406,7 @@ export interface StalenessVerdict {
  * function returns a failure, because "I could not check" reported as FRESH is
  * the defect this whole module exists to prevent.
  */
-export async function projectionStaleness(
+export async function projectionStaleness(client: ClientLike, projectionId: ProjectionId, scope: ProjectionScope): Promise<ProjectionResult<StalenessVerdict>> { return stalenessAgainstSources(client, projectionId, sourceScopeOf(getProjectionDefinition(projectionId), scope)); } /* H203 (B58 MEM-INDEX): the staleness read is the build's read — same audience stamp; one line, so the lines below hold */ async function stalenessAgainstSources(
   client: ClientLike,
   projectionId: ProjectionId,
   scope: ProjectionScope,

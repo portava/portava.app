@@ -114,7 +114,7 @@ export interface ProjectionScope {
   viewer_id?: string | null;
   trip_id?: string | null;
   place_id?: string | null;
-  person_id?: string | null;
+  person_id?: string | null; /** H203 (B58 MEM-INDEX): the definition's audience, STAMPED by the registry (derivativeRegistry deriveProjection / projectionStaleness) from the definition — a caller's value is overwritten. It decides the SOURCE read (§23, §28.6: PUBLIC reads only public, published rows) and is not part of the scope key. */ audience?: ProjectionAudience;
 }
 
 export interface ProjectionInput {

@@ -93,7 +93,7 @@ export function parseScopeKey(scopeKey: string): { projectionId: ProjectionId; s
   return { projectionId: projection as ProjectionId, scope };
 }
 
-async function revokeOne(client: ClientLike, id: string, reason: string, now: Date): Promise<boolean> {
+/** Revoke and empty ONE registration by id; true only when the write confirms that one row. Exported for the outbox consumer's H-4 fallback on the PUBLIC index (H203, outboxConsumer.ts). */ export async function revokeOne(client: ClientLike, id: string, reason: string, now: Date): Promise<boolean> {
   const { data, error } = await client
     .from("memory_derivative_registry") // = DERIVATIVE_REGISTRY_TABLE, written as a literal so check:write-path-columns can verify the columns (a dynamic table name is a blind spot); pinned equal by test/memoryNarrowingReprojection.test.ts
     .update({ revocation_state: "REVOKED", revoked_at: now.toISOString(), revocation_reason: reason, payload_json: [], row_count: 0 })
