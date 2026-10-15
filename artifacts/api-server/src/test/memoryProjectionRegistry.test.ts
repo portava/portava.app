@@ -201,7 +201,7 @@ describe("section 18: every projection in the spec table is registered", () => {
 
   it("a projection with no backend refuses; it does not report an empty derivative", async () => {
     const client = makeClient(fixture());
-    for (const id of ["SearchEmbedding", "NarrativeDerivative"] as ProjectionId[]) {
+    const unbuilt = PROJECTION_DEFINITIONS.filter((d) => d.availability === "NOT_CONFIGURED").map((d) => d.id); assert.ok(unbuilt.includes("SearchEmbedding"), "no embedding backend exists; SearchEmbedding must still refuse"); for (const id of unbuilt as ProjectionId[]) { // B58 MEM-NARR-1 (census §BI): derived from the declarations, so nothing declared NOT_CONFIGURED can quietly build; NarrativeDerivative is BUILDABLE now (test/memoryNarrative.test.ts). One line so cited lines below hold.
       const r = await deriveProjection(client, id, OWNER_SCOPE);
       assert.equal(r.ok, false, `${id} pretended to build`);
       if (!r.ok) {
