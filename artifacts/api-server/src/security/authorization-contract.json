@@ -260,6 +260,13 @@
         { "name": "memories_owner_all", "cmd": "ALL", "permissive": true, "roles": ["public"] },
         { "name": "memories_public_read", "cmd": "SELECT", "permissive": true, "roles": ["public"] }
       ]
+    },
+    "memory_place_reresolution_proposals": {
+      "note": "3812 (B58 MEM-PLACE-SPLIT, census-highlights-memories H72 / §BS): after an admin place split, one owner-only proposal per Memory that stored the split place (candidate ids, the suggestion, and booleans: never a coordinate, distance or name). NO client grant and NO policy: RLS on with no policy, every client privilege revoked in the migration that creates the table, service_role holding exactly SELECT, INSERT and UPDATE (no DELETE: 3812's SECURITY DEFINER purge trigger removes a soft-deleted Memory's proposals, and the cascades do the rest). Written only by the API's re-resolution job, decided only through POST /memory-place-proposals/:id/accept|dismiss, read only by GET /me/memory-place-proposals (owner only); no client tree names the table. Until 3812 is applied to a database the table is absent there and this entry holds vacuously.",
+      "tableGrants": {},
+      "insertCols": {},
+      "updateCols": {},
+      "policies": []
     }
   }
 }
