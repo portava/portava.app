@@ -53,7 +53,7 @@
  * when that write was confirmed. Absent table (3670 unapplied) ⇒ false + why.
  */
 
-import { reprojectDerivativesAfterNarrowing, DELETION_REVOCATION_REASON } from "../memoryProjections/narrowingReprojection.js"; import { isTableAbsentError } from "../../lib/tableAbsence.js"; import { eraseEvidenceForMemory } from "./memoryEvidenceErasure.js"; import { eraseCorrectionsForDeletedMemory } from "./memoryCorrections.js"; // one line: cited by line
+import { reprojectDerivativesAfterNarrowing, DELETION_REVOCATION_REASON } from "../memoryProjections/narrowingReprojection.js"; import { isTableAbsentError } from "../../lib/tableAbsence.js"; import { eraseEvidenceForMemory } from "./memoryEvidenceErasure.js"; import { eraseCorrectionsForDeletedMemory } from "./memoryCorrections.js"; import { eraseConvergenceForMemory } from "./memoryConvergenceStore.js"; // one line: cited by line
 import {
   revokeMemoryAudienceCaches,
   type MemoryAudienceState,
@@ -244,14 +244,14 @@ export async function runMemoryDeletionLifecycle(
   //    memoryEvidenceErasure follows the link, retires the episode (so its
   //    photos are never proposed again) and purges every row it rests on.
   steps.push(await runStep("RAW_EVIDENCE_PURGED", async () => {
-    const erased = await eraseEvidenceForMemory(sc, { ownerId: opts.ownerId, memoryId: opts.memoryId, now }); const corrections = await eraseCorrectionsForDeletedMemory(sc, { memoryId: opts.memoryId }); // lead ruling H-13: the deleted Memory's place corrections (3673) go in this same §21 state, both purges attempted every time
-    if (erased.state === "absent" && corrections.state === "absent") {
-      return { outcome: "not_applicable", detail: `${RAW_EVIDENCE_TABLE} is not deployed: ${erased.detail}; memory_corrections is not deployed: ${corrections.detail}`, facts: {} };
+    const erased = await eraseEvidenceForMemory(sc, { ownerId: opts.ownerId, memoryId: opts.memoryId, now }); const corrections = await eraseCorrectionsForDeletedMemory(sc, { memoryId: opts.memoryId }); const convergence = await eraseConvergenceForMemory(sc, { ownerId: opts.ownerId, memoryId: opts.memoryId }); // H180 (3806): the deleted Memory's convergence proposals and dismissals go in this same state, every purge attempted every time; lead ruling H-13: the deleted Memory's place corrections (3673) go in this same §21 state, both purges attempted every time
+    if (erased.state === "absent" && corrections.state === "absent" && convergence.state === "absent") {
+      return { outcome: "not_applicable", detail: `${RAW_EVIDENCE_TABLE} is not deployed: ${erased.detail}; memory_corrections is not deployed: ${corrections.detail}; memory_convergence_proposals is not deployed: ${convergence.detail}`, facts: {} };
     }
-    if (erased.state === "failed" || corrections.state === "failed") {
-      return { outcome: "failed", retryable: true, detail: [erased.state === "failed" ? erased.detail : "", corrections.state === "failed" ? corrections.detail : ""].filter(Boolean).join(" | "), facts: { episodes: erased.state === "failed" ? erased.episodes.length : 0, correctionsFailed: corrections.state === "failed" } };
+    if (erased.state === "failed" || corrections.state === "failed" || convergence.state === "failed") {
+      return { outcome: "failed", retryable: true, detail: [erased.state === "failed" ? erased.detail : "", corrections.state === "failed" ? corrections.detail : "", convergence.state === "failed" ? convergence.detail : ""].filter(Boolean).join(" | "), facts: { episodes: erased.state === "failed" ? erased.episodes.length : 0, correctionsFailed: corrections.state === "failed", convergenceFailed: convergence.state === "failed" } };
     }
-    return { outcome: "done", facts: { purged: erased.state === "done" ? erased.purged : 0, episodesRetired: erased.state === "done" ? erased.retired : 0, correctionsPurged: corrections.state === "done" ? corrections.purged : 0, notDeployed: [erased.state === "absent" ? RAW_EVIDENCE_TABLE : "", corrections.state === "absent" ? "memory_corrections" : ""].filter(Boolean) } };
+    return { outcome: "done", facts: { purged: erased.state === "done" ? erased.purged : 0, episodesRetired: erased.state === "done" ? erased.retired : 0, correctionsPurged: corrections.state === "done" ? corrections.purged : 0, convergencePurged: convergence.state === "done" ? convergence.purged : 0, notDeployed: [erased.state === "absent" ? RAW_EVIDENCE_TABLE : "", corrections.state === "absent" ? "memory_corrections" : "", convergence.state === "absent" ? "memory_convergence_proposals" : ""].filter(Boolean) } };
   }));
 
   // 5. DELETED. Not an announcement — a READ. The soft delete is written by the

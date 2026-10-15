@@ -76,7 +76,7 @@ import { EPISODES_TABLE, EVIDENCE_TABLE, parseEpisodeRow, type MemoryEpisode } f
 import { classifyMemoryMediaUrl } from "./memoryMediaOrigin.js";
 import { countCandidateDecision, countCandidateEvaluation } from "./memoryKernelMetrics.js";
 import { dispatchMemoryCommand } from "./MemoryDomainService.js";
-import { lifecycleStateOf } from "../../lib/memoryCommandBus.js"; import { retireEpisodesAndPurgeEvidence } from "./memoryEvidenceErasure.js"; import { CANDIDATE_MEMORY_TYPE, memoryTypeForWrite, readCanonicalGates, reconcileCanonicalFields } from "./memoryCanonicalFields.js"; // one line: lines below are cited
+import { lifecycleStateOf } from "../../lib/memoryCommandBus.js"; import { retireEpisodesAndPurgeEvidence } from "./memoryEvidenceErasure.js"; import { CANDIDATE_MEMORY_TYPE, memoryTypeForWrite, readCanonicalGates, reconcileCanonicalFields } from "./memoryCanonicalFields.js"; import { convergeOntoTripMemories, proposeOntoKeptMemory, type ConvergenceDetectReport } from "./memoryConvergenceStore.js"; // one line: lines below are cited
 
 const log = rootLogger.child({ mod: "episodeCandidates" });
 
@@ -201,7 +201,7 @@ export interface DetectedCandidateSummary {
   /** Evidence rows this run added (a replay may add captures it had not seen). */
   evidenceAdded: number;
   /** Set when an overlapping episode the owner already DECIDED against made this run write nothing. */
-  suppressedBy: string | null;
+  suppressedBy: string | null; /** H180 (3806): photos this run PROPOSED to the Memory a kept episode is linked to — never attached; 0 when none, or 3806 absent. */ convergenceProposed: number;
 }
 
 export interface DetectReport {
@@ -212,7 +212,7 @@ export interface DetectReport {
   /** Media in the window with no capture time — left out, never dated by upload. */
   capturesWithoutTime: number;
   /** Captures already in one of the owner's Memories — not proposed again. */
-  capturesAlreadyInMemories: number;
+  capturesAlreadyInMemories: number; /** H180 (3806): captures inside the window of a Memory the owner already has on this trip — proposed to it, NOT made candidates. */ convergence: ConvergenceDetectReport;
   normalizationRejected: Array<{ sourceId: string; reason: string }>;
   ineligible: Array<{ startedAt: string; reason: string | null; detail: string }>;
   candidates: DetectedCandidateSummary[];
@@ -313,10 +313,10 @@ export async function detectTripCandidates(
   const already = await urlsAlreadyInMemories(sc, input.ownerId, timed.map((m) => m.public_url).filter((u): u is string => Boolean(u)));
   if (!already.ok) return { ok: false, reason: "unavailable", detail: already.detail };
   const fresh = timed.filter((m) => !(m.public_url && already.urls.has(m.public_url)));
-
+  const conv = await convergeOntoTripMemories(sc, { ownerId: input.ownerId, tripId: input.tripId, captures: fresh }); if (!conv.ok) return { ok: false, reason: conv.reason, detail: conv.detail }; // H180 (3806): a capture taken inside a Memory the owner already has on this trip is proposed to THAT Memory, not grouped into a second candidate; unreadable ⇒ 503
   const normalized: NormalizedEvidence[] = [];
   const normalizationRejected: DetectReport["normalizationRejected"] = [];
-  for (const m of fresh) {
+  for (const m of conv.rest) {
     const n = normalizeEvidence(signalFromMedia(m, input.tripId), input.now);
     if (n.ok) normalized.push(n.evidence);
     else normalizationRejected.push({ sourceId: m.id, reason: n.reason });
@@ -331,7 +331,7 @@ export async function detectTripCandidates(
     detectorVersion: EPISODE_DETECTOR_VERSION,
     capturesRead: media.length,
     capturesWithoutTime: withoutTime,
-    capturesAlreadyInMemories: timed.length - fresh.length,
+    capturesAlreadyInMemories: timed.length - fresh.length, convergence: conv.report,
     normalizationRejected,
     ineligible: [],
     candidates: [],
@@ -346,7 +346,7 @@ export async function detectTripCandidates(
       continue;
     }
     const stored = await storeCandidate(sc, {
-      ownerId: input.ownerId, episode: ep, evidence, city: win.city, country: win.country,
+      ownerId: input.ownerId, episode: ep, evidence, city: win.city, country: win.country, converge: conv.ready,
     });
     if (!stored.ok) return { ok: false, reason: stored.reason, detail: stored.detail };
     report.candidates.push(stored.summary);
@@ -367,7 +367,7 @@ export async function detectTripCandidates(
  */
 async function storeCandidate(
   sc: SupabaseClient,
-  input: { ownerId: string; episode: DetectedEpisode; evidence: NormalizedEvidence[]; city: string | null; country: string | null },
+  input: { ownerId: string; episode: DetectedEpisode; evidence: NormalizedEvidence[]; city: string | null; country: string | null; converge?: boolean },
 ): Promise<{ ok: true; summary: DetectedCandidateSummary } | { ok: false; reason: "unavailable" | "write_failed"; detail: string }> {
   const digest = detectionDigest(input.ownerId, input.episode);
   type Row = { id: string; started_at: string; ended_at: string | null; state: string };
@@ -389,7 +389,7 @@ async function storeCandidate(
       ok: true,
       summary: {
         episodeId: episodeRow.id, startedAt: episodeRow.started_at, endedAt: episodeRow.ended_at,
-        captureCount: input.evidence.length, created: false, evidenceAdded: 0, suppressedBy: episodeRow.state,
+        captureCount: input.evidence.length, created: false, evidenceAdded: 0, suppressedBy: episodeRow.state, convergenceProposed: 0,
       },
     };
   }
@@ -454,7 +454,7 @@ async function storeCandidate(
     .upsert(rows, { onConflict: "episode_id,source_table,source_id,truth_level", ignoreDuplicates: true })
     .select("id");
   if (evErr) return { ok: false, reason: "write_failed", detail: `${EVIDENCE_TABLE} write: ${evErr.message}` };
-
+  const late = input.converge && episodeRow!.state === "confirmed" ? await proposeLateCaptures(sc, input.ownerId, episodeRow!.id, input.evidence.map((e) => e.source_id)) : { ok: true as const, proposed: 0 }; if (!late.ok) return { ok: false, reason: late.reason, detail: late.detail }; // H180 (3806): late captures of an episode the owner KEPT are proposed to its linked Memory — shown in the inbox, attached only by the owner's Keep
   return {
     ok: true,
     summary: {
@@ -464,7 +464,7 @@ async function storeCandidate(
       captureCount: input.evidence.length,
       created,
       evidenceAdded: Array.isArray(written) ? written.length : 0,
-      suppressedBy: null,
+      suppressedBy: null, convergenceProposed: late.proposed,
     },
   };
 }
@@ -708,12 +708,12 @@ export async function confirmCandidate(
 
   const { data: evData, error: evErr } = await sc
     .from("memory_evidence")
-    .select("source_table, source_id")
+    .select("source_table, source_id, recorded_at")
     .eq("user_id", input.ownerId)
     .eq("episode_id", ep.id);
   if (evErr) return { ok: false, reason: "unavailable", detail: `${EVIDENCE_TABLE}: ${evErr.message}` };
-  const evRows = ((evData as Array<{ source_table: string; source_id: string }> | null) ?? []);
-  const captureIds = evRows.filter((r) => r.source_table === "media_assets").map((r) => r.source_id);
+  const evRows = ((evData as Array<{ source_table: string; source_id: string; recorded_at?: string | null }> | null) ?? []); const linkRow = evRows.find((r) => r.source_table === "memories") ?? null; // H180: a capture recorded AFTER the Memory link is a late one — a convergence proposal, never attached by a (re)tried Keep
+  const captureIds = evRows.filter((r) => r.source_table === "media_assets" && !recordedAfterLink(r, linkRow)).map((r) => r.source_id);
   const existingLink = evRows.find((r) => r.source_table === "memories")?.source_id ?? null;
   const replayed = !claimedHere;
 
@@ -846,4 +846,52 @@ export async function confirmCandidate(
   }
 
   return { ok: true, episodeId: ep.id, state: "confirmed", memoryId: memoryId!, mediaAttached: attached, replayed };
+}
+
+/* ============================================================================
+ * H180 — late captures of a KEPT episode (census §BY, migration 3806)
+ * Appended after every line the census cites.
+ * ==========================================================================*/
+
+/**
+ * Captures the detector appended to an episode the owner already KEPT become
+ * proposals for the Memory that episode is linked to (basis
+ * `confirmed_episode`, memoryConvergenceStore.ts). An episode whose Keep is
+ * still interrupted has no link yet: its late captures stay evidence the
+ * finishing Keep will attach — the owner's own unfinished Keep, shown in the
+ * inbox as interrupted with these photos in its count.
+ */
+async function proposeLateCaptures(
+  sc: SupabaseClient, ownerId: string, episodeId: string, assetIds: readonly string[],
+): Promise<{ ok: true; proposed: number } | { ok: false; reason: "unavailable" | "write_failed"; detail: string }> {
+  const link = await linkedMemoryId(sc, ownerId, episodeId);
+  if (!link.ok) return { ok: false, reason: "unavailable", detail: link.detail };
+  if (!link.memoryId) return { ok: true, proposed: 0 };
+  return proposeOntoKeptMemory(sc, { ownerId, memoryId: link.memoryId, assetIds });
+}
+
+/**
+ * Was this capture recorded AFTER the episode was linked to its Memory? Then it
+ * arrived after the owner's Keep and is a convergence proposal, never part of
+ * what that Keep attaches — so a retried Keep (a lost response, a second
+ * device) cannot add a photo the owner was never shown. Both instants are the
+ * DATABASE's own `recorded_at` (2320's default now()), so no two clocks are
+ * compared. Unknown on either side ⇒ not late: the pre-H180 behaviour.
+ */
+export function recordedAfterLink(
+  capture: { recorded_at?: string | null },
+  link: { recorded_at?: string | null } | null,
+): boolean {
+  if (!link || !capture.recorded_at || !link.recorded_at) return false;
+  const c = epochMicros(capture.recorded_at);
+  const l = epochMicros(link.recorded_at);
+  return c !== null && l !== null && c > l;
+}
+
+/** A timestamptz to whole microseconds: Date.parse keeps milliseconds only, and two writes can share one. */
+function epochMicros(ts: string): number | null {
+  const frac = /\.(\d+)/.exec(ts)?.[1] ?? "";
+  const whole = Date.parse(ts.replace(/\.\d+/, ""));
+  if (!Number.isFinite(whole)) return null;
+  return whole * 1000 + Number(`${frac}000000`.slice(0, 6));
 }
