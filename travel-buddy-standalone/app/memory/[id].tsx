@@ -22,7 +22,7 @@ import {
   getMemory, deleteMemoryItem, deleteMemory,
   addMemoryItem, type Memory, type MemoryItem,
 } from '../../src/services/memories';
-import { MemorySocialBar } from '../../src/features/memories/social/MemorySocialBar.tsx';
+import { MemorySocialBar } from '../../src/features/memories/social/MemorySocialBar.tsx'; import { SharedAnchorPanel } from '../../src/features/memories/shared/SharedAnchorPanel.tsx'; // H53 (MEM-ANCHOR-2); on this line so no cited line moves
 import { useSession } from '../../src/context/SessionContext';
 import { useMediaPicker } from '../../src/hooks/useMediaPicker.ts';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
@@ -378,7 +378,7 @@ export default function MemoryDetailScreen() {
           {/* Like / save / share (HM-F09, HM-F13), people (HM-F12), own history (HM-F11) */}
           <MemorySocialBar memory={memory} isOwner={isOwner} />
           {/* §14 Executable Memories: Do this again / Add to trip / Take me back, compiled against the world now */}
-          <MemoryActionBar memoryId={memory.id} autoAction={isAutoAction(requestedAction) ? requestedAction : null} />
+          <MemoryActionBar memoryId={memory.id} autoAction={isAutoAction(requestedAction) ? requestedAction : null} /><SharedAnchorPanel memoryId={memory.id} isOwner={isOwner} viewerId={userId ?? null} />{/* §5 (census H53, MEM-ANCHOR-2): Remember this together — renders nothing while memory_shared_anchors_enabled is off */}
           <MemoryParticipantsSection
             memoryId={memory.id}
             participants={(memory as MemoryWithParticipants).tags ?? []}
