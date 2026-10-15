@@ -6,10 +6,10 @@
  *   POST /api/admin/places/:id/merge      — merge :id into { intoId } (admin)
  *   POST /api/admin/places/:id/unmerge    — reverse a merge (admin)
  *
- * Flag-gated by `external_places_enabled` (OFF = dormant; reads 404, ingest
- * no-ops via the resolver). Merge model is LOSSLESS: a merged place keeps its
- * own references and just points `merged_into_place_id` at the survivor; the
- * canonical read aggregates across the group, so unmerge is a one-field revert.
+ * Flag-gated by `external_places_enabled` (OFF = dormant: reads 404; ingest, merge and unmerge answer
+ * feature_disabled). A merged place keeps its own references and points `merged_into_place_id` at the survivor;
+ * the canonical read aggregates the group. Every merge/unmerge is recorded in place_merge_log BEFORE it is applied,
+ * never applied unrecorded, and unmerge reverses only a merge the log records (lib/places/placeMerge.ts).
  */
 import { Router } from "express";
 import { z } from "zod";
@@ -18,7 +18,7 @@ import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { resolveExternalPlace, toCanonicalPlace, type ExternalPlaceRecord } from "../lib/places/placeResolve.js";
-import { requireAdmin } from "../lib/requireAdmin.js";
+import { requireAdmin } from "../lib/requireAdmin.js"; import { mergePlace, unmergePlace, sendPlaceMergeRefusal } from "../lib/places/placeMerge.js"; // same line on purpose: this file is cited by line
 
 const router = Router();
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -100,24 +100,24 @@ router.post("/admin/places/:id/merge", asyncHandler(async (req, res) => {
   const intoId = parsed.data.intoId;
   if (id === intoId) { sendError(res, "invalid_payload", "Cannot merge a place into itself"); return; }
 
-  const [{ data: loser }, { data: survivor }] = await Promise.all([
-    admin.sc.from("places").select("id, merged_into_place_id").eq("id", id).maybeSingle(),
-    admin.sc.from("places").select("id, merged_into_place_id").eq("id", intoId).maybeSingle(),
-  ]);
-  if (!loser || !survivor) { sendError(res, "not_found", "Place not found"); return; }
-  if ((survivor as any).merged_into_place_id) { sendError(res, "invalid_payload", "Target is itself merged; merge into the survivor"); return; }
+  // Dormant like ingest and the canonical read (header :9): OFF, absent or
+  // unreadable refuses before anything is read or written.
+  if (!(await isFlagEnabled(admin.sc, "external_places_enabled"))) { sendError(res, "feature_disabled"); return; }
 
-  const { count } = await admin.sc.from("external_place_references")
-    .select("id", { count: "exact", head: true }).eq("place_id", id);
-  const { error } = await admin.sc.from("places")
-    .update({ merged_into_place_id: intoId, status: "duplicate", updated_at: new Date().toISOString() })
-    .eq("id", id);
-  if (error) { sendError(res, "db_error", error.message); return; }
+  // MAIN wrote the place here and then the place_merge_log row, never reading
+  // the log insert's result: a failed log write answered 200 over a merge with
+  // no record. mergePlace (lib/places/placeMerge.ts) checks every precondition
+  // read (a failed read is 503, not "not found"; an already-merged place is
+  // 409, not re-pointed), WRITES THE LOG ROW FIRST, moves the place only from
+  // the state it read (a concurrent change is 409, not an overwrite), and
+  // withdraws the log row when the move provably did not happen. Every failure
+  // is an error answer.
+  //
+  // place_merge_log is written by this call (3504's ledger cites this line):
+  const out = await mergePlace(admin.sc, { placeId: id, intoId, adminId: admin.userId }, req.log);
+  if (!out.ok) { sendPlaceMergeRefusal(res, out); return; }
 
-  await admin.sc.from("place_merge_log").insert({
-    action: "merge", survivor_place_id: intoId, affected_place_id: id,
-    admin_id: admin.userId, ref_count: count ?? 0,
-  });
+  // Same success body as main.
   res.json({ ok: true, survivorId: intoId, mergedId: id });
 }));
 
@@ -128,19 +128,19 @@ router.post("/admin/places/:id/unmerge", asyncHandler(async (req, res) => {
   const { id } = req.params;
   if (!UUID_RE.test(id)) { sendError(res, "invalid_payload", "Invalid id"); return; }
 
-  const { data: place } = await admin.sc.from("places").select("id, merged_into_place_id").eq("id", id).maybeSingle();
-  if (!place) { sendError(res, "not_found", "Place not found"); return; }
-  if (!(place as any).merged_into_place_id) { sendError(res, "invalid_payload", "Place is not merged"); return; }
-  const survivorId = (place as any).merged_into_place_id;
+  // Dormant like the merge (header :9).
+  if (!(await isFlagEnabled(admin.sc, "external_places_enabled"))) { sendError(res, "feature_disabled"); return; }
 
-  const { error } = await admin.sc.from("places")
-    .update({ merged_into_place_id: null, status: "active", updated_at: new Date().toISOString() })
-    .eq("id", id);
-  if (error) { sendError(res, "db_error", error.message); return; }
+  // MAIN reverted merged_into_place_id here without reading place_merge_log,
+  // then wrote its unmerge row without reading the result. unmergePlace reverses
+  // only a merge the log RECORDS (the newest 'merge' row for this place must
+  // name its current survivor, else 409 and nothing changes) and records the
+  // unmerge before applying it, exactly as the merge does.
+  const out = await unmergePlace(admin.sc, { placeId: id, adminId: admin.userId }, req.log);
+  if (!out.ok) { sendPlaceMergeRefusal(res, out); return; }
 
-  await admin.sc.from("place_merge_log").insert({
-    action: "unmerge", survivor_place_id: survivorId, affected_place_id: id, admin_id: admin.userId, ref_count: 0,
-  });
+  // Same success body as main. Status returns to 'active' as on main: the status
+  // before the merge is not recorded (lib/places/placeMerge.ts header).
   res.json({ ok: true, restoredId: id });
 }));
 
