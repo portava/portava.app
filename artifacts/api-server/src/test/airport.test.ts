@@ -419,8 +419,8 @@ describe("LayoverSafetyEngine", () => {
     assert.ok(bufWithBags.totalBuffer > bufNoBags.totalBuffer);
   });
 
-  it("inside-airport activity is always safe", () => {
-    const session = makeSession(120);
+  it("inside-airport activity is safe when the layover holds it AND the boarding time is stated (census-layover §80)", () => {
+    const session = makeSession(120, { boardingTime: new Date(Date.now() + 90 * 60_000).toISOString() }); // §80 (V-728 R2): no boarding time ⇒ never "safe" airside
     const a = assess(airport, session, {
       title: "Airport lounge", travelTimeMin: 0, activityTimeMin: 30, insideAirport: true,
     }, T, recordAt(session));
@@ -456,7 +456,7 @@ describe("LayoverSafetyEngine", () => {
   });
 
   it("rankActivities sorts safe first then shorter travel time", () => {
-    const session = makeSession(480, { flightType: "domestic" });
+    const session = makeSession(480, { flightType: "domestic", boardingTime: new Date(Date.now() + 450 * 60_000).toISOString() }); // §80: airside "safe" needs a stated boarding time
     const candidates = [
       { title: "Far risky", travelTimeMin: 90, activityTimeMin: 120, insideAirport: false },
       { title: "Airport cafe", travelTimeMin: 0, activityTimeMin: 30, insideAirport: true },

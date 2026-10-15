@@ -703,15 +703,15 @@ export const UNMEASURED_TRAVEL_WARNING =
 /** The same, for a card whose time-at-the-destination nobody stated. */
 export const UNSTATED_ACTIVITY_WARNING =
   "Nobody has said how long this takes, so we cannot tell you it fits your layover.";
-/** And for a card rated with no readable certified record for THIS instant (census-layover §75). */
+/** And for a card rated with no readable certified record for THIS session at THIS instant (census-layover §75, §80). */
 export const UNCERTIFIED_WINDOW_WARNING =
   "We could not confirm how much usable time your layover has, so we cannot tell you this fits.";
 
 /**
- * What a card is rated against: ONE certified record's deadline and envelope,
- * at that record's instant. `LayoverFeasibilityRecord` satisfies it as it is.
+ * What a card is rated against: ONE certified record's deadline and envelope, for that
+ * record's SESSION at that record's instant (§80). `LayoverFeasibilityRecord` satisfies it as it is.
  */
-export interface CertifiedTimeBudget { deadline: ReturnDeadline; envelope: Pick<LayoverWindow, "usableMinutes" | "totalMinutes">; inputs: { nowMs: number } }
+export interface CertifiedTimeBudget { deadline: ReturnDeadline; envelope: Pick<LayoverWindow, "usableMinutes" | "totalMinutes">; inputs: { nowMs: number; session: { id: string } } }
 
 /**
  * Assess a single activity against the current session state.
@@ -724,7 +724,7 @@ export interface CertifiedTimeBudget { deadline: ReturnDeadline; envelope: Pick<
  * before any experience time; §2.1 forbids a second time budget. This used to
  * read `deadline − now`, which before landing counts hours spent in the air
  * (V-717 F-A: 463 usable minutes against the record's 218). No record, another
- * instant's record or an unreadable window: NOTHING is certified, and says so.
+ * session's or another instant's record (§80), or an unreadable window: NOTHING is certified, and says so.
  *
  * ── IT FAILS CLOSED ON A TERM NOBODY STATED (census L293) ───────────────────
  * `travelTimeMin: null` — or a landside `0`, the same absence wearing the only
@@ -739,11 +739,11 @@ export interface CertifiedTimeBudget { deadline: ReturnDeadline; envelope: Pick<
  */
 export function assess(
   airport: EngineAirport,
-  session: EngineSession,
+  session: RatedSession, // carries its `id`: a record is read only for the session it certified (census-layover §80)
   candidate: ActivityCandidate,
   nowMs = Date.now(),
   /**
-   * The certified record for THIS instant (`inputs.nowMs === nowMs`), passed whole: its deadline is
+   * The certified record for THIS session at THIS instant (`inputs.session.id === session.id`, `inputs.nowMs === nowMs`), passed whole: its deadline is
    * reused, never re-derived (headline defect 2), and its envelope is the only usable time a card gets.
    */
   record?: CertifiedTimeBudget | null,
@@ -752,7 +752,7 @@ export function assess(
 ): SafetyAssessment { const certified = record?.deadline; // the record's deadline, reused — the destructure below is cited by line
   const { cutoffMs, breakdown, hardReturnTime } = certified ?? computeReturnDeadline(airport, session, live);
   const availableMin   = Math.max(0, Math.round((cutoffMs - nowMs) / 60000));
-  const window         = certified && Number.isFinite(cutoffMs) && record?.inputs?.nowMs === nowMs && [record.envelope?.usableMinutes, record.envelope?.totalMinutes].every((m) => Number.isFinite(m) && (m as number) >= 0) ? record.envelope : null; // §75: THIS instant's readable record, or none
+  const window         = certified && Number.isFinite(cutoffMs) && record?.inputs?.nowMs === nowMs && certifiedForSession(record, session) && [record.envelope?.usableMinutes, record.envelope?.totalMinutes].every((m) => Number.isFinite(m) && (m as number) >= 0) ? record.envelope : null; // §75: THIS instant's readable record, or none; §80: and THIS session's
   const bufferMin      = breakdown.totalBuffer;
   const usableMin      = window ? window.usableMinutes : 0; // census-layover §75: the record's figure, the ONE definition (`computeWindow`)
   const airsideMin     = window ? Math.min(availableMin, window.totalMinutes) : 0; // the layover ITSELF (arrival→cutoff), clipped to now
@@ -784,9 +784,9 @@ export function assess(
       // Safe unless the layover ITSELF is too short — its arrival→cutoff span, not the hours before landing (§75)
       rating = "possible_but_risky";
       warningReason = "Your layover is very short — plan for a quick visit.";
-    } else {
-      rating = "safe";
-    }
+    } else if (!cutoffIsStatedBoarding(session, cutoffMs)) { // §80 (V-728 R2): no boarding time, so the span ends at DEPARTURE and spec §6's boarding term is unknown — never "safe"
+      rating = "possible_but_risky"; warningReason = BOARDING_TIME_UNKNOWN_WARNING;
+    } else { rating = "safe"; }
   } else if (!session.wantsToLeave) {
     // Not a time claim, so an unstated leg does not change it: the traveller
     // said they are staying airside, and that answer is theirs.
@@ -924,7 +924,7 @@ export function assessWindowOnly(
  */
 export function rankActivities<T extends ActivityCandidate>(
   airport: EngineAirport,
-  session: EngineSession,
+  session: RatedSession, // the session the record certified (census-layover §80)
   /**
    * Generic in the candidate rather than widened to `ActivityCandidate`: the
    * recommendation service's candidates carry `recType`, `placeId`, `city` and
@@ -1568,3 +1568,73 @@ export const NIGHT_BAND_END_HOUR = 6;
 export function isNightBandHour(hour: number): boolean {
   return hour >= NIGHT_BAND_START_HOUR || hour < NIGHT_BAND_END_HOUR;
 }
+
+// ── Whose record, and whose boarding time (census-layover §80) ───────────────
+//
+// Appended at the foot so every line the censuses cite above keeps its number.
+
+/**
+ * The session `assess` / `rankActivities` rate FOR: the engine's fields plus
+ * its `id`. Required, not optional — a caller that cannot name the session it
+ * is rating cannot be matched to a record, and the compiler says so before the
+ * runtime check below refuses it. `LayoverSession` and `FeasibilitySession`
+ * both satisfy it.
+ */
+export type RatedSession = EngineSession & Pick<LayoverSession, "id">;
+
+/**
+ * V-728 R1: is this certified record THIS session's?
+ *
+ * Until §80 the engine had no session identity at all: a readable record for
+ * ANOTHER traveller's session, certified at the same instant, was accepted and
+ * every card was rated against that session's usable time (the verifier's
+ * probe: 7 h left, rated against a 20-h session's record → `safe` ×3, 999
+ * usable minutes). Both production callers hand in the record they certified
+ * for the session they hold, so this was latent; it is structural now.
+ *
+ * Fails closed in every direction a caller can get wrong: the record's
+ * `inputs.session.id` and the session's `id` must BOTH be non-empty strings and
+ * equal. A missing id on either side is a refusal, never a match — two
+ * `undefined`s are not the same session.
+ */
+export function certifiedForSession(
+  record: { inputs?: { session?: { id?: unknown } | null } | null } | null | undefined,
+  session: { id?: unknown },
+): boolean {
+  const recordSessionId = record?.inputs?.session?.id;
+  return typeof session.id === "string" && session.id !== "" && recordSessionId === session.id;
+}
+
+/**
+ * V-728 R2: is the record's cutoff a boarding time the traveller STATED?
+ *
+ * `layoverCutoffMs` anchors every deadline at `boardingTime ?? departureTime`.
+ * With no boarding time the airside span therefore ends at DEPARTURE, while
+ * spec §6's ladder deducts a boarding buffer (and deplaning, a terminal/gate
+ * transfer and contingency) before "= usable experience time". No airport row,
+ * no constraint column that is written (2992's `minimum_boarding_buffer_min`
+ * has no writer) and no client field supplies that boarding term — the mode
+ * sheet sends no boarding time — so it is UNKNOWN, and no minute is invented
+ * for it here (census L293 / H4). An unknown term may not certify `safe`.
+ *
+ * True only when the session states a parseable boarding time AND the record's
+ * cutoff IS that instant; anything else (absent, unparseable, or a record whose
+ * cutoff is not the stated boarding time) is "not stated".
+ */
+export function cutoffIsStatedBoarding(
+  session: { boardingTime?: string | null },
+  cutoffMs: number,
+): boolean {
+  if (typeof session.boardingTime !== "string" || session.boardingTime === "") return false;
+  const boardingMs = new Date(session.boardingTime).getTime();
+  return Number.isFinite(boardingMs) && boardingMs === cutoffMs;
+}
+
+/**
+ * The sentence on an airside card whose session states no boarding time. The
+ * card is `possible_but_risky`, never `safe`: it was timed against departure,
+ * and the boarding term spec §6 deducts first is not known. Every word is true
+ * without a boarding-close figure, and it asks for nothing the app cannot take.
+ */
+export const BOARDING_TIME_UNKNOWN_WARNING =
+  "We don't know your boarding time, so we could only check this against your departure time. Be back at your gate before boarding.";
