@@ -14831,7 +14831,7 @@ member" for a missing one. Measured on main `3c214ca80`: the new suite's five by
 
 The route asks the viewer's own row FIRST, before anything about the thread
 (`artifacts/api-server/src/server/telegraph/capabilityRoute.ts:73#const undisclosed = await undisclosedAnswerFor(sc, threadId, user.id);`,
-`:133#async function undisclosedAnswerFor(`). With no row it sends exactly the body a non-existent thread has always got:
+`artifacts/api-server/src/server/telegraph/capabilityRoute.ts:133#async function undisclosedAnswerFor(`). With no row it sends exactly the body a non-existent thread has always got:
 - type `"unknown"`;
 - every capability false with `TELEGRAPH_AUTH_NOT_MEMBER`;
 - `inputsRead: []`;

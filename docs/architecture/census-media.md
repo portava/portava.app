@@ -17017,8 +17017,8 @@ hand, independently of sharp's writer. Each still carries all of these at once:
 - for PNG: `eXIf`, an `iTXt` XMP and a `tEXt` comment;
 - for WebP: VP8X with `EXIF` and `XMP ` chunks.
 
-`fixtureCarries` (`…geotaggedImageFixtures.ts:345#export async function fixtureCarries(`) refuses a fixture that
-lacks any of them. `locationLeaks` (`:371#export async function locationLeaks(`) reports a leak through each of these
+`fixtureCarries` (`artifacts/api-server/src/test/geotaggedImageFixtures.ts:345#export async function fixtureCarries(`) refuses a fixture that
+lacks any of them. `locationLeaks` (`artifacts/api-server/src/test/geotaggedImageFixtures.ts:371#export async function locationLeaks(`) reports a leak through each of these
 checks:
 - sharp's parser;
 - `lib/exifFacts` (which never reads a value);
@@ -17033,7 +17033,7 @@ cases were green on main).
 | Entry point | Producer | Objects stored | Location carriers left |
 | --- | --- | --- | --- |
 | `POST /media/upload`: memories, stories, Telegraph media, and the message-media assemble (`artifacts/api-server/src/routes/messageMediaTransport.ts:200#await storeVerifiedMediaUpload(`) | `processImage`, `makeThumbnail`, `makeFeedVariant` (`artifacts/api-server/src/routes/posts.ts:163#const img = await processImage(rawBody, sniffed);`) | original, `.thumb.jpg`, `.feed.jpg` | none |
-| `POST /postcards/:id/media/:mediaId/complete`, over the bytes the signed-URL PUT or the resumable assemble left | `processImage` (`artifacts/api-server/src/routes/postcards.ts:734#img = await processImage(rawBuf, sniffed);`), re-stored in place (`:741#.upload(storagePath, img.buffer`), then `makeFeedVariant` | original (replaced), `.feed.jpg` | none |
+| `POST /postcards/:id/media/:mediaId/complete`, over the bytes the signed-URL PUT or the resumable assemble left | `processImage` (`artifacts/api-server/src/routes/postcards.ts:734#img = await processImage(rawBuf, sniffed);`), re-stored in place (`artifacts/api-server/src/routes/postcards.ts:741#.upload(storagePath, img.buffer`), then `makeFeedVariant` | original (replaced), `.feed.jpg` | none |
 | `POST /me/avatar/upload` and `POST /me/cover/upload` | `processImage` at 1024 / 2048 (`artifacts/api-server/src/routes/profile.ts:36#return { img: await processImage(rawBody, sniffed, maxDim) };`) | one each | none |
 | `POST /postcards/:id/media/:mediaId/poster` | `makeVideoPoster` (`artifacts/api-server/src/routes/postcardMediaTransport.ts:193#poster = await makeVideoPoster(`) | `.poster.jpg` | none |
 | `POST /media/upload/poster` | `makeVideoPoster` (`artifacts/api-server/src/routes/mediaVideoPoster.ts:92#poster = await makeVideoPoster(`) | `.poster.jpg` | none |
@@ -17086,8 +17086,8 @@ that sharp itself writes with EXIF has that header. Two consequences followed:
 
 The header is now skipped, line-neutrally:
 - `artifacts/api-server/src/lib/exifFacts.ts:87#if (type === "EXIF") return withoutExifHeader(`;
-- the PNG `eXIf` branch at `:70#if (type === "eXIf") return withoutExifHeader(`;
-- the helper, appended at `:180#function withoutExifHeader(`.
+- the PNG `eXIf` branch at `artifacts/api-server/src/lib/exifFacts.ts:70#if (type === "eXIf") return withoutExifHeader(`;
+- the helper, appended at `artifacts/api-server/src/lib/exifFacts.ts:180#function withoutExifHeader(`.
 
 No pipeline output carries EXIF at all (52.1), so no stored WebP was affected through these routes. The hole was in
 the second line of defence. A side effect: `capturedAtFromImageBytes` now reads a WebP upload's DateTimeOriginal, so
