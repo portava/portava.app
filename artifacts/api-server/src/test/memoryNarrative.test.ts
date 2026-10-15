@@ -110,7 +110,7 @@ const VALID_CONSENT: Row = { user_id: OWNER, enabled: true, consent_version: MEM
 interface Fake { reads: string[]; writes: Array<{ table: string; op: string; values: unknown }> }
 
 /** A table-backed fake that resolves `{ data, error }` the way supabase-js does, and records every read and write. */
-function makeClient(store: Record<string, Row[]>, opts: { failReads?: string[]; absent?: string[]; failWrites?: string[]; truncate?: Record<string, number>; nullRows?: string[] }, fake: Fake) {
+function makeClient(store: Record<string, Row[]>, opts: { failReads?: string[]; absent?: string[]; failWrites?: string[]; truncate?: Record<string, number>; nullRows?: string[]; countAs?: Record<string, number | null> }, fake: Fake) {
   function chain(table: string) {
     const filters: Array<(r: Row) => boolean> = [];
     let columns: string[] | null = null;
@@ -160,7 +160,7 @@ function makeClient(store: Record<string, Row[]>, opts: { failReads?: string[]; 
       if (countHead) return { data: null, count: rows.length, error: null };
       const project = (r: Row) => (columns ? Object.fromEntries(columns.filter((c) => c in r).map((c) => [c, r[c]])) : { ...r });
       if (single) return { data: rows[0] ? project(rows[0]) : null, error: null };
-      return { data: opts.nullRows?.includes(table) ? null : rows.map(project).slice(0, opts.truncate?.[table] ?? rows.length), count: wantCount ? rows.length : null, error: null };
+      return { data: opts.nullRows?.includes(table) ? null : rows.map(project).slice(0, opts.truncate?.[table] ?? rows.length), count: wantCount ? (opts.countAs && table in opts.countAs ? opts.countAs[table]! : rows.length) : null, error: null };
     }
     return q;
   }
@@ -173,7 +173,7 @@ function makeClient(store: Record<string, Row[]>, opts: { failReads?: string[]; 
 interface ModelCall { params: any; opts: any }
 interface App { baseUrl: string; store: Record<string, Row[]>; fake: Fake; calls: ModelCall[]; close: () => Promise<void> }
 
-async function startApp(o: { mutate?: (s: Record<string, Row[]>) => void; failReads?: string[]; absent?: string[]; failWrites?: string[]; truncate?: Record<string, number>; nullRows?: string[]; reply?: string | (() => Promise<string>) } = {}): Promise<App> {
+async function startApp(o: { mutate?: (s: Record<string, Row[]>) => void; failReads?: string[]; absent?: string[]; failWrites?: string[]; truncate?: Record<string, number>; nullRows?: string[]; countAs?: Record<string, number | null>; reply?: string | (() => Promise<string>) } = {}): Promise<App> {
   const store = tables();
   o.mutate?.(store);
   const fake: Fake = { reads: [], writes: [] };
@@ -1050,6 +1050,21 @@ describe("NARR-PHOTOS: the route and §18's derivative read each item's type", (
     await app.close();
     app = await startApp({ nullRows: ["memory_items"] });
     assert.equal((await call(app, "GET", `/api/memories/${MEM}/narrative`, OWNER)).status, 503, "a count with no rows is not 'no items'");
+  });
+
+  it("rows with no count, or no rows with a count that is not a number, are 503 — never 'all of them', never 'no items'", async () => {
+    const cases: Array<[string, { countAs: Record<string, number | null>; truncate?: Record<string, number> }]> = [
+      ["4 rows, count null", { countAs: { memory_items: null } }],
+      ["no rows, count NaN", { countAs: { memory_items: Number.NaN }, truncate: { memory_items: 0 } }],
+    ];
+    for (const [label, o] of cases) {
+      app = await startApp({ mutate: open, ...o });
+      const get = await call(app, "GET", `/api/memories/${MEM}/narrative`, OWNER);
+      assert.deepEqual([get.status, get.body.error], [503, "degraded_unavailable"], label);
+      assert.equal((await call(app, "POST", `/api/memories/${MEM}/narrative/ai`, OWNER)).status, 503, label);
+      assert.equal(app.calls.length, 0, `${label}: nothing is sent`);
+      await app.close(); app = null;
+    }
   });
 });
 

@@ -9050,7 +9050,7 @@ Every file §BL grades is watched by this census (CENSUS_SCOPE, added line-neutr
 
 ## §BX — 2026-10-14 (B58 lane NARR-PHOTOS; the defect MEM-NARR-2 found, §BU.5 Q-NARR2-2): a Memory's items are counted as what they are — "3 photos and 1 video", never "4 photos" — in the summary, §18's derivative and the AI draft's check, and the AI disclosure says the item count is sent as ONE number (disclosure v2). NO ROW MOVES
 
-Branch `claude/fix-narrative-photo-count`, from `origin/main` `7bef154f6` (#720, §BI), merged with `665a5d102` (#725, §BK). Server only. No migration, no flag, no new file. The label follows every in-flight section (§BK–§BU, the PRIV-FIX-3 section, HM-A3's §BW): renumber on collision.
+Branch `claude/fix-narrative-photo-count`, from `origin/main` `7bef154f6` (#720, §BI), merged with `665a5d102` (#725, §BK) and `7408f62e6` (#729, #731 §BL). Server only. No migration, no flag, no new file. The label follows every in-flight section (§BK–§BU, the PRIV-FIX-3 section, HM-A3's §BW): renumber on collision.
 
 ### §BX.1 The defect, re-verified on `origin/main` `7bef154f6`
 
@@ -9080,40 +9080,40 @@ Branch `claude/fix-narrative-photo-count`, from `origin/main` `7bef154f6` (#720,
 
 ### §BX.3 The tests
 
-`artifacts/api-server/src/test/memoryNarrative.test.ts`, **89 → 164 cases**, every #720 case kept. Pre-existing lines were edited in place, never moved.
+`artifacts/api-server/src/test/memoryNarrative.test.ts`, **89 → 165 cases**, every #720 case kept. Pre-existing lines were edited in place, never moved.
 
 - **What an item is**, 21 types (`artifacts/api-server/src/test/memoryNarrative.test.ts:954#describe("NARR-PHOTOS: what an item is`), and 11 phrasings.
 - **The summary** for 3 photos and a video: every clause a fact, the clause citing both facts (`artifacts/api-server/src/test/memoryNarrative.test.ts:989#it("3 photos and a video are '3 photos and 1 video'`). A word for a kind appears only when an item of that kind is stored.
-- **The route and the derivative** (`artifacts/api-server/src/test/memoryNarrative.test.ts:1023#it("GET: a Memory of 3 photos and a video`, `artifacts/api-server/src/test/memoryNarrative.test.ts:1032#it("the derivative says the same as the route`). A cut-short or row-less item read is a 503, and nothing is sent to the model (`artifacts/api-server/src/test/memoryNarrative.test.ts:1042#it("a read of the items cut short`).
+- **The route and the derivative** (`artifacts/api-server/src/test/memoryNarrative.test.ts:1023#it("GET: a Memory of 3 photos and a video`, `artifacts/api-server/src/test/memoryNarrative.test.ts:1032#it("the derivative says the same as the route`). A cut-short or row-less item read is a 503, and nothing is sent to the model (`artifacts/api-server/src/test/memoryNarrative.test.ts:1042#it("a read of the items cut short`). So are rows with no count, and no rows with a count that is not a number (`artifacts/api-server/src/test/memoryNarrative.test.ts:1055#it("rows with no count, or no rows with a count that is not a number`; fix round 1, verifier V-750's surviving mutant V18).
 - **The AI draft.**
-  - The payload keeps its six keys, with `photos` 4 for 3 photos and a video (`artifacts/api-server/src/test/memoryNarrative.test.ts:1060#it("what is sent is unchanged in shape`).
-  - "… 4 photos." is refused and the right summary is served (`artifacts/api-server/src/test/memoryNarrative.test.ts:1071#it("'4 photos' about 3 photos and a video is refused`). "… 4 items." is accepted, resting on both item facts (`artifacts/api-server/src/test/memoryNarrative.test.ts:1079#it("'4 items' about 3 photos and a video is accepted`).
-  - A 26-row single-fault table of kinds and counts (`artifacts/api-server/src/test/memoryNarrative.test.ts:1088#const KIND_TABLE`).
-- **The disclosure.** v2's words and the sha256 pin (`artifacts/api-server/src/test/memoryNarrative.test.ts:1140#it("v2 says the items are sent`). A v1 grant is no grant: 403, the offer is `consent_required`, and no model call (`artifacts/api-server/src/test/memoryNarrative.test.ts:1149#it("a grant recorded under v1 is no grant`). A re-grant naming v1 is a 409 that writes nothing; naming v2, it is stamped v2 and the draft runs (`artifacts/api-server/src/test/memoryNarrative.test.ts:1162#it("re-granting names the version displayed`).
+  - The payload keeps its six keys, with `photos` 4 for 3 photos and a video (`artifacts/api-server/src/test/memoryNarrative.test.ts:1075#it("what is sent is unchanged in shape`).
+  - "… 4 photos." is refused and the right summary is served (`artifacts/api-server/src/test/memoryNarrative.test.ts:1086#it("'4 photos' about 3 photos and a video is refused`). "… 4 items." is accepted, resting on both item facts (`artifacts/api-server/src/test/memoryNarrative.test.ts:1094#it("'4 items' about 3 photos and a video is accepted`).
+  - A 26-row single-fault table of kinds and counts (`artifacts/api-server/src/test/memoryNarrative.test.ts:1103#const KIND_TABLE`).
+- **The disclosure.** v2's words and the sha256 pin (`artifacts/api-server/src/test/memoryNarrative.test.ts:1155#it("v2 says the items are sent`). A v1 grant is no grant: 403, the offer is `consent_required`, and no model call (`artifacts/api-server/src/test/memoryNarrative.test.ts:1164#it("a grant recorded under v1 is no grant`). A re-grant naming v1 is a 409 that writes nothing; naming v2, it is stamped v2 and the draft runs (`artifacts/api-server/src/test/memoryNarrative.test.ts:1177#it("re-granting names the version displayed`).
 - **#720's batteries, re-run.**
   - Over #720's all-image fixture, all 80 inventing, 12 faithful, 35 single-fault and 61 second-battery verdicts are unchanged.
-  - Over the same drafts for 3 photos and a video (`artifacts/api-server/src/test/memoryNarrative.test.ts:1175#describe("NARR-PHOTOS: #720's batteries`), all 115 false drafts are still refused. Exactly 6 true drafts are now refused: the ones that call the 4 items "photos". Each is refused on the noun and on nothing else (`artifacts/api-server/src/test/memoryNarrative.test.ts:1185#it("of the true drafts, exactly those`).
+  - Over the same drafts for 3 photos and a video (`artifacts/api-server/src/test/memoryNarrative.test.ts:1190#describe("NARR-PHOTOS: #720's batteries`), all 115 false drafts are still refused. Of the faithful and accepted drafts, exactly 6 are now refused: the ones that call the 4 items "photos". Each is refused on the noun and on nothing else. (Across every draft main accepted, the verifier counts 7: the Q-NARR-7 residual N9, "The people of Vietnam in 4 photos.", is also refused on the noun, correctly.) (`artifacts/api-server/src/test/memoryNarrative.test.ts:1200#it("of the true drafts, exactly those`).
 - **Fails without the behaviour.** On main's sources, 8 of the 9 HTTP-level cases fail, each on the defect: "4 photos" from the route and from the derivative; a cut-short read served; the "4 photos" draft accepted; no `video_count` support; v1 served; a v1 grant honoured; a v1 re-grant accepted. The 9th, the unchanged payload shape, passes on main by design. The pure cases cannot load on main, because the exports are absent.
-- **35 of 35 mutants killed** by a lane-private runner that refuses to run outside its worktree:
+- **36 of 36 mutants killed** by a lane-private runner that refuses to run outside its worktree:
   - 7 on the type reading (case, trim, prefix, parameters, anchoring, non-string, video-as-photo);
   - 6 on the phrasing and facts;
   - 3 on what is sent and what a draft rests on;
   - 7 on the check's noun binding (each kind, the consistency of kinds and count, both branches, the singular, the noun set);
   - 2 on the prompt and the renderer version, and 2 on the disclosure (an unbumped version, a one-word change without a version);
-  - 6 on the read (a cut-short page, no count, no rows, every item a photo, the check told every item is a photo, a grant at any version);
+  - 6 on the read (a cut-short page, no count, no rows, every item a photo, the check told every item is a photo, a grant at any version), and 1 more from fix round 1: rows trusted when their count is missing or not a number (V-750's V18);
   - 2 on the derivative (every item a photo, another Memory's items counted).
 - Neighbours: 532 of 532 across 16 suites (projection registry, outbox consumer, projection routes, trip recap, profile highlight, memory graph, certification invariants, item visibility, corrections, resurfacing controls, canonical fields, and five others).
 
 ### §BX.4 Other surfaces built on the same counts (read, not fixed here)
 
 - **Server.** No other server surface puts a word to a `memory_items` count. The projections carry `media_count` as a bare number (`artifacts/api-server/src/services/memoryProjections/projectionRegistry.ts:177#function mediaCount`). The post-trip projection says "items" (`artifacts/api-server/src/domain/trips/projections/TripPostTripProjections.ts:229#items: live.reduce`).
-- **Telegraph's recap headline** (`artifacts/api-server/src/services/telegraph/memoryNotes.ts:364#export function recapHeadline`) counts photos and videos separately, from Telegraph messages, not `memory_items`. Its album count calls every asset not marked "video" a photo (`artifacts/api-server/src/services/telegraph/memoryNotes.ts:335#else images += 1;`): the same guess, on another census's surface. Listed for census-telegraph.
+- **Telegraph's recap headline** (`artifacts/api-server/src/services/telegraph/memoryNotes.ts:364#export function recapHeadline`) counts photos and videos separately, from Telegraph messages, not `memory_items`. Its album count calls every asset not marked "video" a photo (`artifacts/api-server/src/services/telegraph/memoryNotes.ts:335#images += 1;`): the same guess, on another census's surface. Listed for census-telegraph.
 - **Client: three screens say "N photo(s)" over a `memory_items` count that includes videos.**
-  - the Memory timeline (`travel-buddy-standalone/app/memory/timeline.tsx:22#const photos = r.media_count`);
-  - the trip recap (`travel-buddy-standalone/app/trip/[id]/recap.tsx:82#const photos = item.media_count`);
+  - the Memory timeline (`travel-buddy-standalone/app/memory/timeline.tsx:22#r.media_count ?? 0`);
+  - the trip recap (`travel-buddy-standalone/app/trip/[id]/recap.tsx:82#item.media_count ?? 0`);
   - the post-trip card (`travel-buddy-standalone/src/features/trips/closeout/TripPostTripCard.tsx:116#Kept as a memory`).
   
-  The fix there is a client word ("items"), or per-kind counts in three projection whitelists. That is a follow-up lane, not this server fix.
+  The fix there is a client word ("items"), or per-kind counts in three projection whitelists. That is a follow-up lane, not this server fix. Open PR #755 (PHOTOS-CLIENT) is that lane: it rewrites these three lines and Telegraph's album count. The anchors above cite text both versions share, so either PR can merge first.
 - **#746's card** shows this summary verbatim, so it inherits the fix. Its plain-words list already says "photos and videos, as one number". Its never-sent entry "Photo captions" is true but now narrower than the server's "the captions on photos and videos".
 
 ### §BX.5 Rows read, NOT moved
@@ -9121,7 +9121,7 @@ Branch `claude/fix-narrative-photo-count`, from `origin/main` `7bef154f6` (#720,
 | id | standing | what is now true, and what still stops it |
 | --- | --- | --- |
 | H14 | BUILT-BUT-WRONG | The deterministic summary no longer states a false count: each kind is named as its stored type says, and an unreadable or partial item read refuses (§BX.2 items 1–3). W: unchanged, Q-NARR-5 (§BI.4, §BU.4) |
-| H172 | BUILT-BUT-WRONG | The derivative states what the route states, and an AI draft that calls a video a photo is refused. The disclosure says what is sent, at v2 (§BX.2 items 3–5). W: 3802 is unapplied and `memory_narrative_ai_enabled` is FALSE (rule A.2); Q-NARR-1/2/6/7 are open |
+| H172 | BUILT-BUT-WRONG | The derivative states what the route states (within PostgREST's row cap: the registry's own source read, `artifacts/api-server/src/services/memoryProjections/derivativeRegistry.ts:147#const itemRes = await client.from("memory_items")`, is unpaged — a gap that predates this section, shared by every projection's `media_count`, and latent here because NarrativeDerivative has no production caller), and an AI draft that calls a video a photo is refused. The disclosure says what is sent, at v2 (§BX.2 items 3–5). W: 3802 is unapplied and `memory_narrative_ai_enabled` is FALSE (rule A.2); Q-NARR-1/2/6/7 are open |
 | H265 | BUILT-BUT-WRONG | Untouched: the owner's words are still carried verbatim. W as §BI.4 (Compass) |
 
 ### §BX.6 Owner questions (fail-closed defaults implemented, none approved)
