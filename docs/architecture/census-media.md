@@ -16845,6 +16845,162 @@ Cited, not graded (check:census-scope-coverage):
 - NOT-GRADED: artifacts/api-server/src/test/certifyPostconditionSupersession.test.ts — §50.18 cites the rules certify's postcondition supersession is held to; it is CI tooling, and no Media row is graded on it.
 - NOT-GRADED: artifacts/api-server/src/test/db/postconditionSupersession.db.test.ts — §50.18 cites the chain-end half of the same rules; CI tooling, no Media row graded on it.
 
+## 54. B58 lane POSTS-LIKERS, 2026-10-14: a post's and a comment's likers follow the post's own read and its block, and GET /me/blocker-ids is the whole list or a refusal. NO ROW MOVES
+
+*Branch `claude/fix-post-likers-blocks`, cut from `origin/main` `7408f62e6`. Placed before §51 rather than at the
+foot, so it merges cleanly beside #745's §52 and #747's §53. `head_commit` is not re-declared.*
+
+**Why this census.** No row in any census grades who may list a post's likers. This census grades the post spine
+and its read decision, and the social layer on it (MD55, MD203), so the post half of `GET /engagement/likes` is
+recorded here. census-highlights-memories §BQ (PR #739, open) grades the Memory and Highlight halves of the same
+route; verifier V-739 found this half as an adjacent defect.
+
+### 54.1 The defects, re-verified on `7408f62e6`
+
+1. **The post likers gate read no block.** `post_like`, `post_reaction` and `comment_like` were gated by
+   `checkPostAccess`: the author, or `visibility = 'public'`, or any `trip_members` row for a trip_only post. Its
+   `posts` read excluded only `status = 'deleted'` and bound no error. The like route refuses a pair blocked in
+   EITHER direction with the post's own 404
+   (`artifacts/api-server/src/routes/posts.ts:2478#// Bidirectional block check — matches /stamps access control.`).
+   Executed on main (§54.3): a viewer the author blocked, a viewer who blocked the author, and a mutual block all
+   got 200 and the roster, for the post, its reactions and every comment on it.
+2. **The gate was cruder than the post's own read.** GET /posts/:postId
+   (`artifacts/api-server/src/routes/posts.ts:1874#router.get("/posts/:postId", async (req, res) => {`) reads
+   `status = 'active'` only, refuses a non-author an unpublished post, and decides visibility with
+   `artifacts/api-server/src/lib/postVisibility.ts:83#export function decidePostReadable(`. The likers gate served
+   anyone the likers of an ARCHIVED public post (`status = 'hidden'`) and of a public post not yet published
+   (`post_status`), counted an INVITED trip row as membership, and answered a missing, private or otherwise
+   unreadable post 403, so a blocked viewer's answer differed from a missing post's.
+3. **GET /me/blocker-ids stopped at 500.** BLOCKS-2 named it "found, not fixed" (census-telegraph §98, PR #754):
+   `.limit(500)`, no paging, and nothing on the response saying the list had stopped. PostgREST also cuts any
+   read at db-max-rows with no error, so a larger limit would only have moved the cut.
+
+### 54.2 What changed
+
+1. **The gate** (`artifacts/api-server/src/lib/postLikersGate.ts:82#export async function decidePostLikersAccess(`)
+   is the post's own read decision plus the like route's block check, in this order:
+   - GET's `status = 'active'` row; no row → the post's 404;
+   - the author is admitted;
+   - not published → the post's 404;
+   - a block in EITHER direction → the post's 404
+     (`artifacts/api-server/src/lib/postLikersGate.ts:95#if (await isBlockedBetween(sc, viewerId, row.author_id)) return POST_NOT_FOUND;`).
+     `isBlockedBetween` answers "blocked" when the read fails or throws, so an unreadable block state gets the same
+     answer;
+   - `decidePostReadable`, with the accepted trip membership and the follow read only when the tier needs them;
+     refused → the post's 404.
+
+   Every refusal is the same object, so a missing post and a refused one cannot be told apart.
+   - **Unreadable reads.** A failed `posts` read is "unreadable"
+     (`artifacts/api-server/src/lib/postLikersGate.ts:89#if (error) return "unreadable";`), answered 503 before the
+     row's existence is known. A failed trip-membership or follow read refuses with the post's 404
+     (`artifacts/api-server/src/lib/postLikersGate.ts:100#if (member === null) return POST_NOT_FOUND;`). A 503 there
+     would be served only for a post that exists and is otherwise readable, and would say so.
+   - **Not widened.** After the read comes main's likers rule: public, or a trip member of a trip_only post
+     (`artifacts/api-server/src/lib/postLikersGate.ts:118#if (row.visibility === "trip_only" && decision.reason === "trip_member") return true;`).
+     A follower of a followers_only post, and a legacy row with no visibility, can read the post and still get 403.
+     Membership is now GET's ACCEPTED test: an invited row no longer counts, and the trip's owner, who has no
+     `trip_members` row by design and whom GET and the like route already admit, now does. That is the one reader
+     newly admitted.
+   - **Comments** (`artifacts/api-server/src/lib/postLikersGate.ts:122#export async function decideCommentLikersAccess(`):
+     the comment's row (not soft-deleted), then its post's rule. Every refusal is the comment routes' own
+     "Comment not found"
+     (`artifacts/api-server/src/lib/postLikersGate.ts:132#return typeof verdict === "object" ? COMMENT_NOT_FOUND : verdict;`).
+2. **The route.** It answers the gate's refusal before `checkAccess`
+   (`artifacts/api-server/src/routes/engagement.ts:222#} if (await answerPostLikersRefusal(`), and `checkPostAccess`
+   (`artifacts/api-server/src/routes/engagement.ts:55#async function checkPostAccess(`) runs the same decision and
+   admits only on `true`. Both edits are line-neutral: PR #739's §BQ cites this file's later lines by number, and it
+   edits the import line, `checkAccess`'s signature and the refusal block, none of which this touches. The two
+   `checkPostAccess` entries leave the unchecked-reads allowlist. The likers list was already block-filtered
+   (`readBlockExclusions` over the page, 503 when unreadable) and is unchanged.
+3. **GET /me/blocker-ids**
+   (`artifacts/api-server/src/routes/blocks.ts:298#router.get("/me/blocker-ids", async (req, res) => {`) walks
+   `blocks` by keyset on `id` until an EMPTY page
+   (`artifacts/api-server/src/routes/blocks.ts:305#const read = await readAllByIdKeyset(`). A page that fails
+   fails the answer: db_error, as before, and never a prefix. Past 10,000 rows it refuses with 503
+   (`artifacts/api-server/src/routes/blocks.ts:313#if (read.truncated) {`). A 200 is always the whole list, and the
+   client's `!ok` path already marks the list "not known". Line-neutral, because census-telegraph cites this file by
+   line.
+
+### 54.3 Evidence
+
+- **`artifacts/api-server/src/test/engagementPostLikersReadGate.test.ts`**: 35 tests, registered, over the real
+  app (app.js). Its double gives `.or()` the real PostgREST grammar, because `isBlockedBetween` narrows entirely inside
+  it. Each refusal is byte-compared (status, body, content-type, content-length) with the real answers on the same
+  seed:
+  - POST /posts/:postId/like's refusal of the blocked pair;
+  - GET /posts/:postId for every state it refuses
+    (`artifacts/api-server/src/test/engagementPostLikersReadGate.test.ts:343#for (const c of REFUSED) {`);
+  - a missing post or comment.
+
+  **Red on main: 28 of 35.** The 7 green on both are controls: a roster is producible; a block with a LIKER only
+  drops that liker; the author; the roster's own 503 for the author and for a non-author; readers main admitted;
+  and NOT WIDENED. Green: 35/35.
+- **`artifacts/api-server/src/test/blockerIdsComplete.test.ts`**: 9 tests, registered. Its double caps every
+  response at db-max-rows, whatever `.limit()` asks. **Red on main: 6 of 9**: 501 blockers, 1,234 at a cap of
+  1,000, 2,500 at a cap of 400, exactly 10,000, 10,001, and a mid-walk failure. The 3 controls are green on both.
+  Green: 9/9.
+- **Neighbours changed to match:**
+  - `artifacts/api-server/src/test/engagement.test.ts`: the two private-post cases expect the post's or comment's
+    404 (they expected 403);
+  - `artifacts/api-server/src/test/exclusionFailClosedRoutes.test.ts`: the roster-refusal case reads the viewer's
+    own post, because on anyone else's the gate now refuses first. Line-neutral; its cited :510 holds;
+  - `artifacts/api-server/src/test/blocks.test.ts`: its double gains `.gt` and row ids.
+- **Mutants: 26 run, 25 killed**, each by an assertion. The runner is lane-private, asserts the worktree, restores
+  with `git checkout` and ends with the tree clean.
+  - The gate (17): the status filter, the unreadable read, the author line, the published check, the block, the
+    block asked about the wrong pair, an unreadable membership admitting, an unreadable follow answering 403,
+    widening, the read decision ignored, a comment refusal saying "Post not found", deleted comments readable, an
+    unreadable comment read answering 404, a refusal answered 403, unreadable falling through, `post_reaction`
+    ungated, and a membership outage escaping as 503.
+  - The route (3): the pre-gate removed, `checkPostAccess` always admitting, and the pre-gate removed together
+    with `checkPostAccess` admitting a truthy verdict.
+  - GET /me/blocker-ids (5): the ceiling raised, a truncated read served, no ceiling, the wrong direction, and a
+    failed walk served empty.
+  - **Survived, equivalent: `checkPostAccess` admitting any truthy verdict on its own.** The pre-gate answers every
+    non-boolean verdict first, so nothing reaches it. It is the belt for the pre-gate, and the paired mutant shows
+    the belt matters.
+
+### 54.4 Rows read, NOT moved
+
+- **MD55** (the social layer is owned by the post spine) and **MD203** (creator engagement) stay C. Their evidence
+  is the engagement routes on the post spine. Neither names the likers roster, and nothing either claims changes.
+  The defect was a privacy gap inside that layer, now closed.
+- **MD9** (privacy, blocks and eligibility resolve before client projection) stays C. It is graded on the Media
+  world projection, and the likers roster is not that projection.
+- Census-telegraph's rows on block reads are not regraded by this lane. `routes/blocks.ts` still reads `blocks`
+  directly, now through the shared keyset walker.
+
+**Headline unchanged: 450 = 415 C / 30 W / 5 N / 0 ?** (`check:census-integrity`).
+
+### 54.5 Found, not fixed (named for a follow-up)
+
+1. **GET /posts/:postId and GET /posts/:postId/comments read no block.** A viewer blocked either way by the author
+   is served the post (200) and its comments. The like route answers that pair 404, and comment creation answers
+   `blocked_user`. So the likers' 404 is no new signal, but the post read itself is a gap. It is a change to the
+   posts read, with its own question of what a blocked viewer is told.
+2. **A block between the viewer and a COMMENT's author** is read by no comment route; they read only the post
+   author's. The comment likers gate follows them. A refusal here alone would announce the block where the comment
+   list still shows the comment (the trade LR-B58-6 names).
+3. **GET /me/blocks** still reads `.limit(500)`: the viewer's own block list, and the client's `blockedIds` with
+   it, is cut at 500.
+4. **`readAllByIdKeyset` on main reads a page whose `data` is not a list as an empty page**, which ends the walk.
+   PR #754 makes it a failed read, and until it merges GET /me/blocker-ids inherits that.
+
+### 54.6 Owner questions
+
+- **OQ-POSTLIKERS-1.** May a reader the post admits beyond main's likers rule (a follower of a followers_only post)
+  see who liked it? The fail-closed default is implemented: no (403). Main's rule is kept, and nobody who could not
+  list these likers on main can now, except the trip's owner (§54.2).
+- **The 10,000-row ceiling on GET /me/blocker-ids** is Q-BLOCKS2-1's question (PR #754). The default is
+  implemented: refuse past it.
+
+Cited, not graded (check:census-scope-coverage):
+- NOT-GRADED: artifacts/api-server/src/routes/blocks.ts — §54.2 item 3 fixes GET /me/blocker-ids in it; census-telegraph watches the file and grades the block surfaces, and no Media row rests on it
+- NOT-GRADED: artifacts/api-server/src/test/blockerIdsComplete.test.ts — §54.3 names it as the blocker-ids proof; it proves census-telegraph's file, and no Media row rests on it
+- NOT-GRADED: artifacts/api-server/src/test/engagement.test.ts — §54.3 names two expectations changed in it; the route's original suite, a neighbour, and no Media row rests on it
+- NOT-GRADED: artifacts/api-server/src/test/exclusionFailClosedRoutes.test.ts — §54.3 names a fixture change in it; census-telegraph's exclusion suite, and no Media row rests on it
+- NOT-GRADED: artifacts/api-server/src/test/blocks.test.ts — §54.3 names a fixture change in its double; the blocks routes' suite, and no Media row rests on it
+
 ## 51. B58 lane TM-4, 2026-10-14: MD162's Media half — the NOW lens pairs the gateway's crowd flows with each zone's recent perspectives. MD162 N → W
 
 §50.11 built MD162's blocker (a): a published `crowd_flow` names its ends (`payload.endpoints.{from,to}`: the

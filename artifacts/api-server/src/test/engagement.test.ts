@@ -4,7 +4,7 @@
  * Covers:
  *   - 401 when no auth token
  *   - 400 for invalid targetType / targetId / empty reactionType
- *   - 403 when viewer cannot access the content (private post, private memory, etc.)
+ *   - a post the viewer cannot READ: the post's own 404 (census-media §54); 403 for private memory etc.
  *   - 200 success with users array, nextCursor, hasMore
  *   - Viewer excluded from their own results
  *   - Block filtering (both directions excluded)
@@ -306,13 +306,13 @@ describe('GET /api/engagement/likes — input validation', () => {
 });
 
 describe('GET /api/engagement/likes — access control', () => {
-  it('returns 403 when post is private and viewer is not the author', async () => {
+  it('returns the post\'s own 404 when post is private and viewer is not the author (census-media §54; was 403)', async () => {
     const { status, data } = await get(
       url({ targetType: 'post_like', targetId: PRIVATE_POST_ID }),
       TOKEN_VIEWER,
     );
-    assert.equal(status, 403, JSON.stringify(data));
-    assert.match(data.error, /forbidden/);
+    assert.equal(status, 404, JSON.stringify(data)); // GET /posts/:postId's answer to this viewer: no existence oracle
+    assert.match(data.error, /not_found/);
   });
 
   it('returns 200 for a public post', async () => {
@@ -339,7 +339,7 @@ describe('GET /api/engagement/likes — access control', () => {
     assert.equal(status, 200);
   });
 
-  it('comment_like returns 403 when parent post is private', async () => {
+  it('comment_like returns the comment\'s own 404 when parent post is private (census-media §54; was 403)', async () => {
     // Attach the comment to the private post
     postsComments[0] = { id: COMMENT_ID, post_id: PRIVATE_POST_ID, deleted_at: null };
     _setTestClient(buildFakeClient() as any, true);
@@ -348,7 +348,7 @@ describe('GET /api/engagement/likes — access control', () => {
       url({ targetType: 'comment_like', targetId: COMMENT_ID }),
       TOKEN_VIEWER,
     );
-    assert.equal(status, 403);
+    assert.equal(status, 404);
   });
 
   it('comment_like returns 200 when parent post is public', async () => {

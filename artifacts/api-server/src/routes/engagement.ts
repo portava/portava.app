@@ -19,8 +19,8 @@
  * already hold from the parent entity (e.g. post.like_count).
  *
  * Access control per targetType:
- *   post_like / post_reaction  — reads content_stamps; post must be public OR viewer is the author
- *                                (trip_only: viewer must be a trip member)
+ *   post_like / post_reaction  — reads content_stamps; GET /posts/:postId's own read + a block either way (its 404),
+ *                                then public OR author OR trip member (census-media §54, lib/postLikersGate.ts)
  *   comment_like               — same as the comment's parent post
  *   highlight_like             — viewer must be the highlight owner OR highlight is public
  *   memory_like                — viewer must be the memory owner OR memory is public
@@ -32,7 +32,7 @@
 import { Router } from "express";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
-import { nameVisibilitySet, presentedName } from "../lib/publicIdentity.js";
+import { nameVisibilitySet, presentedName } from "../lib/publicIdentity.js"; import { answerPostLikersRefusal, decidePostLikersAccess } from "../lib/postLikersGate.js"; // census-media §54: on this line, so no cited line moves
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { readBlockExclusions, isExcluded, sendExclusionsUnavailable } from "../lib/exclusionSet.js";
 
@@ -53,25 +53,25 @@ type TargetType = typeof VALID_TYPES[number];
 // ── Access control helpers ─────────────────────────────────────────────────────
 
 async function checkPostAccess(sc: any, viewerId: string, postId: string): Promise<boolean> {
-  const { data: post } = await sc
-    .from("posts")
-    .select("id, author_id, visibility, status, trip_id")
-    .eq("id", postId)
-    .maybeSingle();
-  if (!post || (post as any).status === "deleted") return false;
-  const { author_id: authorId, visibility, trip_id: tripId } = post as any;
-  if (authorId === viewerId) return true;
-  if (visibility === "public") return true;
-  if (visibility === "trip_only" && tripId) {
-    const { data: member } = await sc
-      .from("trip_members")
-      .select("user_id")
-      .eq("trip_id", tripId)
-      .eq("user_id", viewerId)
-      .maybeSingle();
-    return !!member;
-  }
-  return false;
+  // census-media §54 (B58 lane POSTS-LIKERS, verifier V-739's adjacent finding). This WAS: the author, or
+  // `visibility === "public"`, or any `trip_members` row for a trip_only post — over a `posts` read that excluded
+  // only `status = 'deleted'`, bound no error, and read no `blocks`. POST /posts/:postId/like refuses a pair blocked
+  // in EITHER direction with the post's own 404; the likers of the same post were listed to that same viewer (and
+  // to anyone, for an archived or a not-yet-published public post, both of which GET /posts/:postId refuses).
+  //
+  // It is now the post's OWN read decision plus that block check — lib/postLikersGate.ts decidePostLikersAccess:
+  // GET /posts/:postId's `status = 'active'` row, the author admitted, published-or-author, isBlockedBetween (an
+  // unreadable block state reads as blocked), decidePostReadable, then main's narrower likers rule: public, or a
+  // member of a trip_only post's trip by GET's ACCEPTED test (an invited row no longer counts; the trip's owner does).
+  //
+  // Only `true` admits. The route answers the gate's own refusals FIRST (answerPostLikersRefusal: the post's 404,
+  // or 503 when the post cannot be read), so what reaches `false` here is a reader the post admits but this
+  // narrower rule does not — the route's 403. Called for `comment_like` too, with the comment's post.
+  //
+  // Line-neutral on purpose: §BQ of census-highlights-memories (PR #739) cites lines below this function by
+  // number, and that PR edits this file's import line, checkAccess's signature and the route's refusal block.
+  const verdict = await decidePostLikersAccess(sc, viewerId, postId);
+  return verdict === true;
 }
 
 async function checkAccess(
@@ -219,7 +219,7 @@ router.get("/engagement/likes", asyncHandler(async (req, res) => {
   if (!sc) {
     sendError(res, "server_not_configured", "Service not available");
     return;
-  }
+  } if (await answerPostLikersRefusal(req, res, sc, user.id, targetType as string, targetId)) return; // census-media §54: a post's or comment's own read refusal (its 404, or 503) first
 
   const accessible = await checkAccess(sc, user.id, targetType as TargetType, targetId);
   if (!accessible) {
