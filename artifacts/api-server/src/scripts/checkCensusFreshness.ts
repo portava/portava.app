@@ -1684,7 +1684,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // not graded. See check:census-scope-coverage for why the ratio matters.
     "artifacts/api-server/src/compass/CompassMediaContext.ts",
     "artifacts/api-server/src/routes/mediaFeed.ts",
-    "travel-buddy-standalone/src/stores/mediaStore.ts",
+    "travel-buddy-standalone/src/stores/mediaStore.ts", "travel-buddy-standalone/src/stores/__tests__/mediaStore.restore.component.test.tsx", "docs/ops/media-corrections-20261015.md",
     "artifacts/api-server/src/migrations/0191_media_assets.sql",
     "artifacts/api-server/src/services/wall/WallCandidateLoaders.ts",
     "artifacts/api-server/src/routes/mediaViewRequest.ts",

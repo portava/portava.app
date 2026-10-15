@@ -67,8 +67,16 @@ export async function callVendor<T>(
       Promise.resolve().then(fn),
       timeout,
     ]);
-    if (!answer || typeof answer !== "object" || typeof (answer as { ok?: unknown }).ok !== "boolean") {
+    if (!answer || typeof answer !== "object" || Array.isArray(answer) || typeof (answer as { ok?: unknown }).ok !== "boolean") {
       return refused("invalid_answer", "the adapter did not return a VendorAnswer");
+    }
+    if (answer.ok) {
+      if (!Object.prototype.hasOwnProperty.call(answer, "value")) return refused("invalid_answer", "the adapter omitted its value");
+    } else if (
+      !["not_configured", "unsupported", "error", "timeout", "invalid_answer"].includes(answer.reason) ||
+      (answer.detail !== undefined && typeof answer.detail !== "string")
+    ) {
+      return refused("invalid_answer", "the adapter returned a malformed refusal");
     }
     return answer;
   } catch (err) {

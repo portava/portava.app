@@ -58,7 +58,7 @@ import {
   verifyUploadedBytes,
   ALLOWED_MEDIA_MIME,
 } from "../lib/mediaPipeline.js";
-import { recordMediaAsset, capturedAtFromImageBytes, recordPostMediaAttachments, MEDIA_SOURCE_UNDECLARED } from "../lib/mediaAssets.js";
+import { recordMediaAssetDetailed, capturedAtFromImageBytes, recordPostMediaAttachments, MEDIA_SOURCE_UNDECLARED } from "../lib/mediaAssets.js";
 import { resolvePostPlace } from "../lib/places/placeResolve.js";
 import { classifyBuckets, incrementBucketCounts } from "../lib/places/bucketClassifier.js";
 import { ensurePlaceDay, isEligiblePlaceDayPost } from "../lib/places/placeDays.js";
@@ -266,7 +266,7 @@ export async function storeVerifiedMediaUpload(req: any, res: any, sc: any, user
     const mediaRelayUrl = `${STORAGE_BUCKET}/${path}`;
 
     // Canonical dual-write (flag-gated OFF; fail-soft — legacy flow unaffected).
-    void canonicalModerationAtBirth(sc).then((atBirth) => recordMediaAsset(sc, { ...atBirth, // census-media §37.8: born HELD while 3356 is on; {} (byte-identical) otherwise (was: void recordMediaAsset(sc, {)
+    void canonicalModerationAtBirth(sc).then((atBirth) => recordMediaAssetDetailed(sc, { ...atBirth,
       ownerUserId: user.id, sourceType: MEDIA_SOURCE_UNDECLARED, // §6 source: this route receives bytes and a Content-Type, never camera vs library (census-media §35, MD37)
       storageBucket: STORAGE_BUCKET,
       storagePath: path,
@@ -282,7 +282,8 @@ export async function storeVerifiedMediaUpload(req: any, res: any, sc: any, user
       // omitted the field, so media_assets.captured_at had no writer at all and
       // the Wall's §16 experienceAt could never differ from publishedAt.
       capturedAt,
-    })).then(async (assetId) => { await recordMeasuredDuration(sc, assetId, videoProbe); await runMediaVendorIngest(sc, { assetId, bucket: STORAGE_BUCKET, path, mediaType: sniffed.kind, durationMs: videoProbe?.durationMs ?? null }); }); // §37: the probed duration_ms, never the declared one; then the four vendor stages, each behind its own flag seeded FALSE (census-media §37)
+      durationMs: videoProbe?.durationMs == null ? null : Math.round(videoProbe.durationMs),
+    })).then(async (asset) => { await runMediaVendorIngest(sc, { assetId: asset.assetId, sourceVersion: asset.assetVersion, bucket: STORAGE_BUCKET, path, mediaType: sniffed.kind, durationMs: videoProbe?.durationMs ?? null }); });
 
     // Response stays backward-compatible ({url, path}); new fields are additive.
     // `phash` is included so the client can persist it on the post_media row.
@@ -3668,7 +3669,6 @@ export default router;
 
 // §37 (census-media §22): the canonical row's duration_ms is the probed one. Imported at the
 // TAIL so no line above moves (census-wall cites this file by line); ESM hoists imports.
-import { recordMeasuredDuration } from "../lib/mediaVideoPoster.js";
 
 
 // Imported at the TAIL so no cited line above moves (census-media §28.7); ESM hoists imports.

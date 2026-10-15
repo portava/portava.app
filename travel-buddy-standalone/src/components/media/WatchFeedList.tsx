@@ -91,7 +91,34 @@ const CellWrapper = React.memo(function CellWrapper({
 }: CellWrapperProps) {
   // ── Playback state ─────────────────────────────────────────────────────────
   const [progress, setProgress] = useState(0);
-  const [userPaused, setUserPaused] = useState(tapToPlay); const pausedBeforeHoldRef = useRef(tapToPlay); useTapToPlayRestOnLeave(tapToPlay, setUserPaused);
+  const [playbackState, setPlaybackState] = useState({
+    tapToPlay,
+    userPaused: tapToPlay,
+    pausedBeforeHold: null as boolean | null,
+  });
+  if (playbackState.tapToPlay !== tapToPlay) {
+    setPlaybackState({
+      ...playbackState,
+      tapToPlay,
+      userPaused: tapToPlay || playbackState.userPaused,
+      pausedBeforeHold: tapToPlay ? null : playbackState.pausedBeforeHold,
+    });
+  }
+  const { userPaused } = playbackState;
+  const setUserPaused = useCallback((paused: boolean) => {
+    setPlaybackState((current) => ({ ...current, userPaused: paused, pausedBeforeHold: null }));
+  }, []);
+  const restoreAfterHold = useCallback(() => {
+    setPlaybackState((current) => {
+      if (current.tapToPlay && current.pausedBeforeHold === null) return current;
+      return {
+        ...current,
+        userPaused: current.tapToPlay && current.pausedBeforeHold === true,
+        pausedBeforeHold: null,
+      };
+    });
+  }, []);
+  useTapToPlayRestOnLeave(tapToPlay, setUserPaused);
 
   // ── Scrub state ────────────────────────────────────────────────────────────
   const [isScrubbing, setIsScrubbing] = useState(false);
@@ -145,7 +172,7 @@ const CellWrapper = React.memo(function CellWrapper({
       setIsScrubbing(false);
       setShowRadialMenu(false);
     }
-  }, [isActive, tapToPlay]);
+  }, [isActive, tapToPlay, setUserPaused]);
 
   // ── Progress callback ──────────────────────────────────────────────────────
 
@@ -205,8 +232,8 @@ const CellWrapper = React.memo(function CellWrapper({
 
   const handleRadialDismiss = useCallback(() => {
     setShowRadialMenu(false);
-    setUserPaused(tapToPlay ? pausedBeforeHoldRef.current : false);
-  }, [tapToPlay]);
+    restoreAfterHold();
+  }, [restoreAfterHold]);
 
   // ── Main gesture (full-screen layer) ──────────────────────────────────────
 
@@ -223,7 +250,7 @@ const CellWrapper = React.memo(function CellWrapper({
     .runOnJS(true)
     .onEnd(() => {
       if (!isActive) return;
-      setUserPaused((p) => !p);
+      setPlaybackState((current) => ({ ...current, userPaused: !current.userPaused, pausedBeforeHold: null }));
     });
 
   // Long-press: pause video AND open radial quick-menu.
@@ -231,11 +258,11 @@ const CellWrapper = React.memo(function CellWrapper({
     .minDuration(400)
     .runOnJS(true)
     .onStart(() => {
-      pausedBeforeHoldRef.current = userPaused; setUserPaused(true);
+      setPlaybackState((current) => ({ ...current, pausedBeforeHold: current.userPaused, userPaused: true }));
       setShowRadialMenu(true);
     })
-    .onEnd(() => { setUserPaused(tapToPlay ? pausedBeforeHoldRef.current : false); })
-    .onFinalize(() => { setUserPaused(tapToPlay ? pausedBeforeHoldRef.current : false); });
+    .onEnd(restoreAfterHold)
+    .onFinalize(restoreAfterHold);
 
   // ── Route It pan gesture (swipe right ≥60 px, horizontal-only) ────────────
 

@@ -233,6 +233,8 @@ interface State {
   assets: AssetRow[];
   upserts: any[];
   assetUpdates: Array<{ patch: any; filters: Record<string, unknown> }>;
+  omitUpsertVersion?: boolean;
+  afterUpsertSnapshot?: (asset: AssetRow) => void;
 }
 let state: State;
 
@@ -242,7 +244,8 @@ function makeClient() {
     let patch: any = null;
     let upserted: any = null;
     let selected = false;
-    const result = () => {
+    let selectedColumns = "";
+    const result = (single = false) => {
       if (table === "feature_flags") {
         const flag = String(filters.flag);
         return { data: flag in state.flags ? { enabled: state.flags[flag] } : null, error: null };
@@ -255,14 +258,21 @@ function makeClient() {
       }
       if (table === "media_assets" && upserted) {
         const row = { id: `asset-${state.assets.length + 1}`, ...upserted };
-        state.assets.push(row);
+        const stored: AssetRow = { ...row, version: 41 };
+        state.assets.push(stored);
         state.upserts.push({ ...row }); // the INSERT as sent (census-media §37.8); later updates land on state.assets
-        return { data: { id: row.id }, error: null };
+        const response = { id: row.id, ...(!state.omitUpsertVersion && selectedColumns.split(",").some(column => column.trim() === "version") ? { version: stored.version } : {}) };
+        state.afterUpsertSnapshot?.(stored);
+        return { data: response, error: null };
+      }
+      if (table === "media_assets") {
+        const rows = state.assets.filter(asset => Object.entries(filters).every(([column, value]) => asset[column] === value)).map(asset => ({ ...asset }));
+        return { data: single ? rows[0] ?? null : rows, error: null };
       }
       return { data: [], error: null };
     };
     const b: any = {
-      select() { selected = true; return b; },
+      select(columns = "*") { selected = true; selectedColumns = columns; return b; },
       update(p: any) { patch = p; return b; },
       upsert(row: any) { upserted = row; return b; },
       insert(row: any) { upserted = row; return b; },
@@ -270,8 +280,8 @@ function makeClient() {
       in() { return b; }, is() { return b; }, not() { return b; }, or() { return b; },
       gte() { return b; }, lte() { return b; }, lt() { return b; }, gt() { return b; },
       order() { return b; }, limit() { return b; }, range() { return b; },
-      maybeSingle() { return Promise.resolve(result()); },
-      single() { return Promise.resolve(result()); },
+      maybeSingle() { return Promise.resolve(result(true)); },
+      single() { return Promise.resolve(result(true)); },
       then(onF: any, onR: any) { return Promise.resolve(result()).then(onF, onR); },
     };
     return b;
@@ -371,6 +381,7 @@ after(async () => {
 
 beforeEach(() => {
   state = { flags: {}, objects: new Map(), assets: [], upserts: [], assetUpdates: [] };
+  _setMediaModerationClassifierForTest(null);
   const c = makeClient();
   _setTestClient(c, true);
 });
@@ -386,10 +397,8 @@ describe("MD276 on the wire — POST /media/upload writes the probed duration on
     assert.equal(row.media_type, "video");
     assert.equal(row.width, 64);
     assert.equal(row.height, 48);
-    const dur = state.assetUpdates.find((u) => "duration_ms" in u.patch);
-    assert.ok(dur, "a duration write followed the canonical write");
-    assert.equal(dur.patch.duration_ms, 1500);
-    assert.equal(dur.filters.id, row.id, "…on the row the upload just recorded");
+    assert.equal(row.duration_ms, 1500, "duration belongs to the original canonical write");
+    assert.equal(state.assetUpdates.some(update => "duration_ms" in update.patch), false, "no unversioned duration follow-up");
   });
 });
 
@@ -472,6 +481,89 @@ describe("MD275 on the wire — POST /media/upload/poster", () => {
 // flags are off.
 import { _setMediaVisionProviderForTest, type MediaVisionProvider } from "../lib/media/vendors/mediaVisionProvider.js";
 import { _setMediaModerationClassifierForTest, type MediaModerationClassifier } from "../lib/media/vendors/mediaModerationClassifier.js";
+import { applyCanonicalModerationDecision } from "../services/media/MediaModerationService.js";
+import { runMediaVendorIngest } from "../lib/media/vendors/mediaVendorStages.js";
+
+describe("automated moderation preserves the upload's original generation over HTTP", () => {
+  let classifierCalls: number;
+  let duringClassification: (() => Promise<void>) | null;
+
+  beforeEach(() => {
+    classifierCalls = 0;
+    duringClassification = null;
+    state.flags.media_canonical_enabled = true;
+    state.flags.media_moderation_classifier_enabled = true;
+    _setMediaModerationClassifierForTest({
+      name: "wire-whole-video-classifier",
+      capabilities: { image: true, video: true, videoFrame: false },
+      async classify() {
+        classifierCalls += 1;
+        await duringClassification?.();
+        return { ok: true, value: { verdict: "allow", labels: [], confidence: 0.9 } };
+      },
+    });
+  });
+
+  after(() => _setMediaModerationClassifierForTest(null));
+
+  async function upload(): Promise<AssetRow> {
+    const response = await req("POST", "/api/media/upload", PLAIN_MP4, "video/mp4");
+    assert.equal(response.status, 201, JSON.stringify(response.body));
+    await settle();
+    assert.equal(state.objects.size, 1);
+    assert.equal(state.upserts.length, 1);
+    assert.equal(state.upserts[0].duration_ms, 1500);
+    assert.equal(state.upserts[0].moderation_status, "limited");
+    assert.equal(state.assetUpdates.some(update => "duration_ms" in update.patch), false);
+    return state.assets[0];
+  }
+
+  it("passes the returned non-default version through the real upload and releases only its own hold", async () => {
+    const asset = await upload();
+    assert.equal(classifierCalls, 1);
+    assert.equal(asset.moderation_status, "active");
+    assert.equal(asset.version, 43);
+    assert.deepEqual(state.assetUpdates.map(update => update.filters.version), [41, 42]);
+  });
+
+  it("does not invent generation authority when the original upsert response omits its version", async () => {
+    state.omitUpsertVersion = true;
+    const asset = await upload();
+    assert.equal(classifierCalls, 0);
+    assert.equal(asset.moderation_status, "limited");
+    assert.equal(asset.version, 41);
+    assert.deepEqual(state.assetUpdates, []);
+  });
+
+  it("refuses the original snapshot if a human rehold happens before the upsert response is consumed", async () => {
+    state.afterUpsertSnapshot = asset => { asset.version = 42; asset.moderation_status = "limited"; };
+    const asset = await upload();
+    assert.equal(classifierCalls, 0);
+    assert.equal(asset.moderation_status, "limited");
+    assert.equal(asset.version, 42);
+    assert.deepEqual(state.assetUpdates, []);
+  });
+
+  it("a human rehold survives both the in-flight verdict and a duplicate original-generation ingest", async () => {
+    duringClassification = async () => {
+      duringClassification = null;
+      const asset = state.assets[0];
+      const client = makeClient() as any;
+      assert.equal(await applyCanonicalModerationDecision(client, {
+        bucket: asset.storage_bucket, path: asset.storage_path, decision: "flag",
+      }), "applied");
+      await runMediaVendorIngest(client, {
+        assetId: asset.id, sourceVersion: 41, bucket: asset.storage_bucket,
+        path: asset.storage_path, mediaType: "video", durationMs: 1500,
+      });
+    };
+    const asset = await upload();
+    assert.equal(classifierCalls, 1, "duplicate cannot reacquire a human-revoked hold");
+    assert.equal(asset.moderation_status, "limited");
+    assert.equal(asset.version, 43);
+    assert.deepEqual(state.assetUpdates.map(update => update.patch.moderation_status), ["limited", "limited"]);
+  });
+});
 
 describe("§37 on the wire — POST /media/upload and /media/upload/poster reach the vendor seams only behind their flags", () => {
   const calls: string[] = [];
@@ -535,21 +627,20 @@ describe("§37 on the wire — POST /media/upload and /media/upload/poster reach
 
 // ── census-media §37.8 (MD269 (c)): the canonical row is BORN held while the stage is on ──
 describe("§37.8 on the wire — POST /media/upload's canonical row is born held while 3356 is on", () => {
-  /** Every key the canonical insert carried before §37.8 — the flag-off payload must be exactly these. */
-  const KEYS_BEFORE = [
+  const VIDEO_INSERT_KEYS = [
     "owner_user_id", "uploader_user_id", "storage_bucket", "storage_path", "public_url", "media_type", "mime_type",
     "size_bytes", "width", "height", "thumbnail_path", "thumbnail_url", "source_type", "captured_at", "provenance",
-    "intelligence_eligibility", "processing_status",
+    "intelligence_eligibility", "processing_status", "duration_ms",
   ].sort();
 
-  it("stage OFF (the seed): the one insert carries no moderation_status — the payload keys are exactly the pre-§37.8 set", async () => {
+  it("stage OFF (the seed): the one insert carries measured duration and no moderation_status", async () => {
     state.flags.media_canonical_enabled = true;
     const up = await req("POST", "/api/media/upload", PLAIN_MP4, "video/mp4");
     assert.equal(up.status, 201, JSON.stringify(up.body));
     await settle();
     assert.equal(state.upserts.length, 1);
     const { id: _id, ...row } = state.upserts[0];
-    assert.deepEqual(Object.keys(row).sort(), KEYS_BEFORE);
+    assert.deepEqual(Object.keys(row).sort(), VIDEO_INSERT_KEYS);
   });
 
   it("stage ON: the SAME single insert carries moderation_status 'limited' — never born distributable", async () => {
@@ -561,6 +652,6 @@ describe("§37.8 on the wire — POST /media/upload's canonical row is born held
     assert.equal(state.upserts.length, 1, "one write");
     assert.equal(state.upserts[0].moderation_status, "limited");
     const { id: _id, moderation_status: _m, ...rest } = state.upserts[0];
-    assert.deepEqual(Object.keys(rest).sort(), KEYS_BEFORE, "nothing else about the insert changes");
+    assert.deepEqual(Object.keys(rest).sort(), VIDEO_INSERT_KEYS, "nothing else about the insert changes");
   });
 });

@@ -37,7 +37,13 @@
  */
 import { isFlagEnabled } from "../../featureFlags.js";
 import { logger } from "../../logger.js";
-import { applyCanonicalModerationDecision, type CanonicalModerationOutcome } from "../../../services/media/MediaModerationService.js";
+import {
+  applyCanonicalModerationDecision,
+  beginAutomatedCanonicalModeration,
+  completeAutomatedCanonicalModeration,
+  type AutomatedModerationHold,
+  type CanonicalModerationOutcome,
+} from "../../../services/media/MediaModerationService.js";
 import {
   decidePreDistribution,
   postMediaStatusFor,
@@ -88,6 +94,7 @@ export function selectedMediaVendorAdapters(): MediaVendorAdapters {
 
 export interface VendorIngestSubject {
   assetId: string | null;
+  sourceVersion?: number | null;
   bucket: string;
   path: string;
   mediaType: "image" | "video";
@@ -135,24 +142,33 @@ export async function runMediaVendorIngest(
     if (moderationOn) {
       // HOLD FIRST, then decide. With the stage on at upload, the canonical row
       // is BORN `limited` (canonicalModerationAtBirth, census-media §37.8), so
-      // this is a no-op read. It still matters when the stage was switched on
+      // this write claims a version-bound hold. It also matters when the stage was switched on
       // between the insert and this run: the row was born `processing`, which
       // is distributable. A classifier may take up to VENDOR_CALL_TIMEOUT_MS; the
       // final decision moves the row limited → active / rejected (§36 table).
       let recorded: CanonicalModerationOutcome | "skipped_no_asset" = "skipped_no_asset";
+      let hold: AutomatedModerationHold | undefined;
       if (subject.assetId) {
-        recorded = await applyCanonicalModerationDecision(sc as any, { bucket: subject.bucket, path: subject.path, decision: "flag" });
+        const started = await beginAutomatedCanonicalModeration(sc as any, {
+          assetId: subject.assetId, bucket: subject.bucket, path: subject.path,
+          sourceVersion: subject.sourceVersion,
+        });
+        recorded = started.outcome;
+        hold = started.hold;
       }
-      const decision = await decidePreDistribution({
-        stageOn: true,
-        classifier: adapters.classifier,
-        subject: { mediaType: subject.mediaType, bucket: subject.bucket, path: subject.path, framePath: null },
-      });
-      if (subject.assetId && decision.stage === "on" && decision.decision !== "flag") {
-        recorded = await applyCanonicalModerationDecision(sc as any, {
+      const decision: PreDistributionDecision = recorded === "applied" && hold
+        ? await decidePreDistribution({
+            stageOn: true,
+            classifier: adapters.classifier,
+            subject: { mediaType: subject.mediaType, bucket: subject.bucket, path: subject.path, framePath: null },
+          })
+        : { stage: "on", decision: "flag", basis: "hold_not_recorded", classifier: adapters.classifier.name, labels: [], refusal: "error" };
+      if (hold && decision.stage === "on" && decision.decision !== "flag") {
+        recorded = await completeAutomatedCanonicalModeration(sc as any, {
           bucket: subject.bucket,
           path: subject.path,
           decision: decision.decision,
+          hold,
         });
       }
       report.moderation = { state: "ran", result: { decision, recorded } };
@@ -171,7 +187,12 @@ export async function runMediaVendorIngest(
               path: subject.path,
               framePath: null,
             }));
-      report.vision = { state: "ran", result: answer };
+      report.vision = {
+        state: "ran",
+        result: answer.ok && typeof answer.value?.accepted !== "boolean"
+          ? refused("invalid_answer", "the provider did not return an ingestion acknowledgement")
+          : answer,
+      };
     }
 
     if (transcodeOn && subject.mediaType === "video") {
@@ -189,7 +210,11 @@ export async function runMediaVendorIngest(
     }
 
     if (captionsOn && subject.mediaType === "video") {
-      report.captions = { state: "ran", result: await captionStage(sc as StorageLike, adapters.captions, subject) };
+      report.captions = {
+        state: "ran",
+        result: await captionStage(sc as StorageLike, adapters.captions, subject)
+          .catch(() => refused("error", "the caption stage failed")),
+      };
     }
   } catch (err) {
     logger.warn({ err, path: subject.path }, "media vendor stages threw — report is partial");

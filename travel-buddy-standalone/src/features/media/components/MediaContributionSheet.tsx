@@ -132,7 +132,8 @@ export function MediaContributionSheet({
         disabled={blocker != null || busy}
         onPress={onSubmit}
         accessibilityRole="button"
-        accessibilityState={{ disabled: blocker != null || busy }}
+        accessibilityLabel="Share this perspective"
+        accessibilityState={{ disabled: blocker != null || busy, busy }}
         testID="media-contribution-submit"
       >
         {busy ? <ActivityIndicator color={color.ink} /> : <Text style={styles.submitText}>Share this perspective</Text>}

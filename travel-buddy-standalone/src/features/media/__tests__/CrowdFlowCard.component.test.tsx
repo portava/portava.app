@@ -38,6 +38,7 @@ const COHORT = 23;
 
 const mockFetchMediaMap = jest.fn();
 const mockFetchPlaceView = jest.fn();
+let mockWorldEmpty = false;
 jest.mock('../services/mediaProjection.ts', () => {
   const actual = jest.requireActual('../services/mediaProjection.ts');
   return {
@@ -46,7 +47,7 @@ jest.mock('../services/mediaProjection.ts', () => {
       ok: true,
       data: actual.mapWorldProjection({
         city: 'Da Nang',
-        cityVisualState: [{ placeId: '66666666-6666-6666-6666-666666666666', label: 'My Khe', perspectiveCount: 3, freshness: 'fresh' }],
+        cityVisualState: mockWorldEmpty ? [] : [{ placeId: '66666666-6666-6666-6666-666666666666', label: 'My Khe', perspectiveCount: 3, freshness: 'fresh' }],
         forYouNow: [],
         changingNow: [],
         generatedAt: new Date().toISOString(),
@@ -130,6 +131,7 @@ const COUNTS = [
 ];
 
 beforeEach(() => {
+  mockWorldEmpty = false;
   mockPush.mockReset();
   mockFetchMediaMap.mockReset();
   mockFetchPlaceView.mockReset();
@@ -156,6 +158,28 @@ async function renderNow() {
 }
 
 describe('NOW lens — where the night is moving (census-media MD162)', () => {
+  it('shows a qualified flow even when the independent World dashboard is empty', async () => {
+    mockWorldEmpty = true;
+    await render(<Shell cityName="Da Nang" lat={16.06} lng={108.24} />);
+    await waitFor(() => expect(screen.getByText(NIGHT_FLOW_HEADING)).toBeTruthy());
+    expect(screen.getByText('Beachfront')).toBeTruthy();
+    expect(screen.getByText('5 perspectives')).toBeTruthy();
+    expect(screen.queryByText('Nothing changing yet')).toBeNull();
+    expect(mockFetchMapProjection).toHaveBeenCalledWith(expect.objectContaining({ kinds: ['crowd_flow'] }));
+    expect(mockFetchMediaMap).toHaveBeenCalledWith(expect.objectContaining({ city: 'Da Nang' }));
+  });
+
+  it('retains the empty dashboard without a flow when the gateway refuses', async () => {
+    mockWorldEmpty = true;
+    gatewayServes([servedFlow()], { enabled: false, sources: [] });
+    await render(<Shell cityName="Da Nang" lat={16.06} lng={108.24} />);
+    await waitFor(() => expect(mockFetchMapProjection).toHaveBeenCalled());
+    await settle();
+    expect(screen.getByText('Nothing changing yet')).toBeTruthy();
+    expect(screen.queryByText(NIGHT_FLOW_HEADING)).toBeNull();
+    expect(mockFetchMediaMap).not.toHaveBeenCalled();
+  });
+
   it('pairs a served flow\'s two named ends with the recent perspectives at THEIR listed places', async () => {
     await renderNow();
     await waitFor(() => expect(screen.getByText(NIGHT_FLOW_HEADING)).toBeTruthy());

@@ -27,6 +27,7 @@ import {
   isDeviceVideoCompressionEnabled,
   VIDEO_COMPRESSION_POLICY,
   VIDEO_COMPRESSOR_MODULE,
+  videoUriForUpload,
 } from '../videoCompression.ts';
 
 const CHUNK = 64;
@@ -165,7 +166,12 @@ function gatedFs(fileBytes: Uint8Array, opts: { failStageAt?: number } = {}) {
     cacheDirectory: 'file:///cache/',
     sessionBackground: 1,
     uploadBinary: 0,
-    async getInfoAsync() { return { exists: true, size: fileBytes.length }; },
+    async getInfoAsync(uri) {
+      const staged = files.get(uri);
+      return staged !== undefined
+        ? { exists: true, size: Buffer.from(staged, 'base64').length }
+        : { exists: uri === 'file:///video.mp4', size: fileBytes.length };
+    },
     async readAsStringAsync(_uri, o) {
       reads++;
       if (opts.failStageAt !== undefined && reads === opts.failStageAt + 1) throw new Error('disk full');
@@ -292,6 +298,50 @@ describe('MD282 — the compression seam: the native module only when present, t
     _setTestVideoCompressorLookup(() => ({ compress: async () => ({}) }));
     const r = await compressVideoForUpload(picked);
     assert.equal(!r.compressed && r.reason, 'module_absent');
+  });
+
+  for (const uri of ['https://storage.test/out.mp4', 'content://media/out', '/cache/out.mp4', 'file://', 'file:///', picked.uri]) {
+    it(`refuses a compressor URI that is not a separate local file: ${uri}`, async () => {
+      _setTestVideoCompressionFlag(true);
+      _setTestVideoCompressorLookup(() => moduleThat({ uri, sizeBytes: 1000, width: 1080, height: 1920 }));
+      const result = await compressVideoForUpload(picked);
+      assert.equal(result.compressed, false);
+      assert.equal(result.video, picked);
+      assert.equal(await videoUriForUpload(picked.uri, true, picked.fileSizeBytes), picked.uri);
+    });
+  }
+
+  for (const invalid of [
+    { sizeBytes: 0.5 },
+    { width: 0.1 },
+    { height: 0.1 },
+    { width: VIDEO_COMPRESSION_POLICY.maxLongEdgePx + 1 },
+    { height: VIDEO_COMPRESSION_POLICY.maxLongEdgePx + 1 },
+  ]) {
+    it(`rejects native output outside the byte/pixel contract: ${JSON.stringify(invalid)}`, async () => {
+      _setTestVideoCompressionFlag(true);
+      _setTestVideoCompressorLookup(() => moduleThat({ uri: 'file:///out.mp4', sizeBytes: 1000, width: 1080, height: 1920, ...invalid }));
+      const result = await compressVideoForUpload(picked);
+      assert.equal(result.compressed, false);
+      assert.equal(result.video, picked);
+      assert.equal(!result.compressed && result.reason, 'incomplete_answer');
+    });
+  }
+
+  it('native lookup failures do not prevent the original video from uploading', async () => {
+    _setTestVideoCompressionFlag(true);
+    _setTestVideoCompressorLookup(() => { throw new Error('native bridge unavailable'); });
+    const result = await compressVideoForUpload(picked);
+    assert.equal(result.video, picked);
+    assert.equal(!result.compressed && result.reason, 'module_absent');
+    assert.equal(await videoUriForUpload(picked.uri, true), picked.uri);
+  });
+
+  it('an unknown original size still accepts a valid bounded local copy', async () => {
+    _setTestVideoCompressionFlag(true);
+    _setTestVideoCompressorLookup(() => moduleThat({ uri: 'file:///out.mp4', sizeBytes: 1000, width: 1920, height: 1080 }));
+    assert.equal(await videoUriForUpload(picked.uri, true), 'file:///out.mp4');
+    assert.equal(await videoUriForUpload(picked.uri, false), picked.uri);
   });
 });
 

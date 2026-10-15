@@ -56,7 +56,7 @@ export interface FsLike {
 /** A FileLike over a local file whose slices are byte-range descriptors, never bytes in JS. */
 export async function backgroundFile(uri: string, fs: FsLike): Promise<FileLike> {
   const info = await fs.getInfoAsync(uri);
-  if (!info.exists || typeof info.size !== 'number' || info.size <= 0) {
+  if (!info.exists || typeof info.size !== 'number' || !Number.isSafeInteger(info.size) || info.size <= 0) {
     throw new Error('The file to upload is no longer on this device.');
   }
   const size = info.size;
@@ -69,11 +69,21 @@ export async function backgroundFile(uri: string, fs: FsLike): Promise<FileLike>
 }
 
 function isDescriptor(part: unknown): part is PartDescriptor {
-  const p = part as PartDescriptor | null;
-  return !!p && p.kind === 'file-range' && typeof p.uri === 'string' && p.end > p.start;
+  const descriptor = part as PartDescriptor | null;
+  return !!descriptor && descriptor.kind === 'file-range' && typeof descriptor.uri === 'string' && descriptor.uri.length > 0
+    && Number.isSafeInteger(descriptor.start) && descriptor.start >= 0
+    && Number.isSafeInteger(descriptor.end) && descriptor.end > descriptor.start;
 }
 
 let partCounter = 0;
+
+async function stagePart(fs: FsLike, part: PartDescriptor, uri: string): Promise<void> {
+  const length = part.end - part.start;
+  const contents = await fs.readAsStringAsync(part.uri, { encoding: 'base64', position: part.start, length });
+  await fs.writeAsStringAsync(uri, contents, { encoding: 'base64' });
+  const info = await fs.getInfoAsync(uri);
+  if (!info.exists || info.size !== length) throw new Error('staged part size does not match the requested byte range');
+}
 
 /**
  * A ResumableTransport whose parts travel as background transfers. `api`
@@ -85,15 +95,11 @@ export function backgroundPartTransport(api: ResumableTransport['api'], fs: FsLi
     api, putParts: (parts, contentType, onSent, owner) => putPartsInBackground(fs, parts, contentType, onSent, owner), // MD284: every missing part at once (end of file); §37.8 passes the owning slot (was: putParts: (parts, contentType, onSent) => …)
     async putPart(url, part, contentType, onSent, owner) {
       if (!isDescriptor(part)) throw new Error('background transfer needs a file-range part');
-      const dir = fs.cacheDirectory ?? '';
+      const dir = fs.cacheDirectory;
+      if (!dir) throw new Error('background transfer cache directory is unavailable');
       const partUri = stagedPartUri(dir, owner); // §37.8: the name carries the owning slot, so the sweep can attribute it
       try {
-        const b64 = await fs.readAsStringAsync(part.uri, {
-          encoding: 'base64',
-          position: part.start,
-          length: part.end - part.start,
-        });
-        await fs.writeAsStringAsync(partUri, b64, { encoding: 'base64' });
+        await stagePart(fs, part, partUri);
         const task = fs.createUploadTask(
           url,
           partUri,
@@ -182,7 +188,8 @@ export async function putPartsInBackground(
 ): Promise<PartOutcome[]> {
   const outcomes: PartOutcome[] = parts.map(() => ({ error: 'not handed over' }));
   const staged: Array<{ position: number; url: string; uri: string }> = [];
-  const dir = fs.cacheDirectory ?? '';
+  const dir = fs.cacheDirectory;
+  if (!dir) return parts.map(() => ({ error: 'background transfer cache directory is unavailable' }));
   try {
     // 1. Stage, sequentially.
     for (let position = 0; position < parts.length; position++) {
@@ -193,12 +200,7 @@ export async function putPartsInBackground(
       }
       const uri = stagedPartUri(dir, owner);
       try {
-        const b64 = await fs.readAsStringAsync(p.part.uri, {
-          encoding: 'base64',
-          position: p.part.start,
-          length: p.part.end - p.part.start,
-        });
-        await fs.writeAsStringAsync(uri, b64, { encoding: 'base64' });
+        await stagePart(fs, p.part, uri);
         staged.push({ position, url: p.url, uri });
       } catch (err) {
         await fs.deleteAsync(uri, { idempotent: true }).catch(() => {});
@@ -346,6 +348,7 @@ export async function sweepStagedParts(
   } catch {
     live = null;
   }
+  let deleteAttempts = 0;
   for (const { name, parsed } of staged) {
     if (parsed.owner !== null) {
       if (live === null) { out.keptUnknown++; continue; }
@@ -354,7 +357,8 @@ export async function sweepStagedParts(
       out.keptYoung++;
       continue;
     }
-    if (out.deleted.length >= maxDeletes) { out.deferred++; continue; }
+    if (deleteAttempts >= maxDeletes) { out.deferred++; continue; }
+    deleteAttempts++;
     try {
       await fs.deleteAsync(`${dir}${name}`, { idempotent: true });
       out.deleted.push(name);

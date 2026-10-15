@@ -123,6 +123,7 @@ export function selectMediaModerationClassifier(env: NodeJS.ProcessEnv = process
 }
 
 export type PreDistributionBasis =
+  | "hold_not_recorded"
   /** The classifier read the whole file. */
   | "classifier"
   /** The classifier read only a video's frame. */

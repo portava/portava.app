@@ -103,9 +103,13 @@ function realLookup(name: string): unknown {
 
 /** The native compressor, when the running binary has one with the contract's method; otherwise null. */
 export function resolveVideoCompressor(): NativeVideoCompressor | null {
-  const mod = (_testLookup ?? realLookup)(VIDEO_COMPRESSOR_MODULE) as Partial<NativeVideoCompressor> | null | undefined;
-  if (!mod || typeof mod.compressAsync !== 'function') return null;
-  return mod as NativeVideoCompressor;
+  try {
+    const mod = (_testLookup ?? realLookup)(VIDEO_COMPRESSOR_MODULE) as Partial<NativeVideoCompressor> | null | undefined;
+    if (!mod || typeof mod.compressAsync !== 'function') return null;
+    return mod as NativeVideoCompressor;
+  } catch {
+    return null;
+  }
 }
 
 export interface VideoForUpload {
@@ -119,7 +123,7 @@ export type VideoCompressionOutcome<T extends VideoForUpload> =
   | { compressed: true; video: T; originalSizeBytes: number }
   | { compressed: false; video: T; reason: 'switched_off' | 'module_absent' | 'failed' | 'not_smaller' | 'incomplete_answer' };
 
-const positive = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v > 0;
+const positiveInteger = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
 
 /**
  * The picked video, compressed when the module is present and the switch is
@@ -135,16 +139,18 @@ export async function compressVideoForUpload<T extends VideoForUpload>(video: T)
   } catch {
     return { compressed: false, video, reason: 'failed' };
   }
-  if (!out || typeof out.uri !== 'string' || out.uri.length === 0 || !positive(out.sizeBytes) || !positive(out.width) || !positive(out.height)) {
+  if (!out || typeof out.uri !== 'string' || !/^file:\/\/\/[^?#]+$/.test(out.uri) || out.uri === video.uri
+    || !positiveInteger(out.sizeBytes) || !positiveInteger(out.width) || !positiveInteger(out.height)
+    || Math.max(out.width, out.height) > VIDEO_COMPRESSION_POLICY.maxLongEdgePx) {
     return { compressed: false, video, reason: 'incomplete_answer' };
   }
-  if (positive(video.fileSizeBytes) && out.sizeBytes >= video.fileSizeBytes) {
+  if (positiveInteger(video.fileSizeBytes) && out.sizeBytes >= video.fileSizeBytes) {
     return { compressed: false, video, reason: 'not_smaller' };
   }
   return {
     compressed: true,
     originalSizeBytes: video.fileSizeBytes,
-    video: { ...video, uri: out.uri, fileSizeBytes: out.sizeBytes, width: Math.round(out.width), height: Math.round(out.height) },
+    video: { ...video, uri: out.uri, fileSizeBytes: out.sizeBytes, width: out.width, height: out.height },
   };
 }
 

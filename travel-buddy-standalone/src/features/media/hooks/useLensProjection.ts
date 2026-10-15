@@ -20,9 +20,19 @@ import {
 } from '../state/worldState.ts';
 import type { ProjectionResult } from '../types/media.ts';
 
-type Action<T> =
+type Action<T> = { scope: readonly unknown[] } & (
   | { type: 'start' }
-  | { type: 'result'; state: LensLoadState<T> };
+  | { type: 'result'; result: ProjectionResult<T>; isEmpty: (data: T) => boolean; at: number }
+);
+
+interface ScopedLensState<T> {
+  scope: readonly unknown[];
+  state: LensLoadState<T>;
+}
+
+function sameScope(current: readonly unknown[], next: readonly unknown[]): boolean {
+  return current.length === next.length && current.every((value, index) => Object.is(value, next[index]));
+}
 
 export interface UseLensProjectionResult<T> {
   state: LensLoadState<T>;
@@ -36,39 +46,43 @@ export function useLensProjection<T>(
 ): UseLensProjectionResult<T> {
   const initial: LensLoadState<T> = { status: 'idle', data: null, loadedAt: null, errorKind: null };
 
-  const [state, dispatch] = useReducer((s: LensLoadState<T>, action: Action<T>): LensLoadState<T> => {
+  const [scopedState, dispatch] = useReducer((current: ScopedLensState<T>, action: Action<T>): ScopedLensState<T> => {
+    const previous = sameScope(current.scope, action.scope) ? current.state : initial;
     switch (action.type) {
       case 'start':
-        return { ...s, status: s.data ? 'revalidating' : 'loading', errorKind: null };
+        return { scope: action.scope, state: { ...previous, status: previous.data ? 'revalidating' : 'loading', errorKind: null } };
       case 'result':
-        return action.state;
+        return { scope: action.scope, state: lensStateWithSwr(previous, action.result, action.isEmpty, action.at) };
       default:
-        return s;
+        return current;
     }
-  }, initial);
+  }, { scope: deps, state: initial });
 
   const abortRef = useRef<AbortController | null>(null);
   const fetcherRef = useRef(fetcher);
   fetcherRef.current = fetcher;
   const isEmptyRef = useRef(isEmpty);
   isEmptyRef.current = isEmpty;
-  // Mirror the latest state so the async resolver can make an SWR decision
-  // against the data that was on screen when the refresh was kicked off.
-  const stateRef = useRef(state);
-  stateRef.current = state;
+  const scopeRef = useRef(deps);
+  scopeRef.current = deps;
 
   const load = useCallback(() => {
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
-    dispatch({ type: 'start' });
+    const scope = scopeRef.current;
+    const isEmpty = isEmptyRef.current;
+    dispatch({ type: 'start', scope });
     void fetcherRef.current({ signal: controller.signal }).then((result) => {
       if (controller.signal.aborted) return;
       // SWR: fold the result into the state that was on screen when we started,
       // so a failed refresh keeps the last good data (§39).
       dispatch({
         type: 'result',
-        state: lensStateWithSwr(stateRef.current, result, isEmptyRef.current, Date.now()),
+        scope,
+        result,
+        isEmpty,
+        at: Date.now(),
       });
     });
   }, []);
@@ -79,5 +93,5 @@ export function useLensProjection<T>(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [load, ...deps]);
 
-  return { state, reload: load };
+  return { state: sameScope(scopedState.scope, deps) ? scopedState.state : initial, reload: load };
 }
