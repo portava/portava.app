@@ -109,9 +109,9 @@ export const OUTBOX_FAIL_FN = "memory_outbox_fail";
  * would be a performance optimisation bought with a correctness risk — a
  * projection left stale because someone judged an event could not affect it —
  * and rebuilds are idempotent upserts, so the cost of being broad is work, not
- * wrongness. `SearchEmbedding` and `NarrativeDerivative` are deliberately
- * absent: both are NOT_CONFIGURED in the registry and rebuilding them refuses
- * by design.
+ * wrongness. `SearchEmbedding` is deliberately absent (NOT_CONFIGURED: a rebuild
+ * refuses by design), and so is `NarrativeDerivative` (BUILDABLE, but derived per
+ * request and never registered, so no narrative text is stored: Q-NARR-4, §BI).
  */
 const OWNER_SURFACES: readonly ProjectionId[] = [
   "MemoryTimelineProjection",
@@ -321,8 +321,8 @@ export interface DrainResult {
 /**
  * Rebuild every projection one event invalidates.
  *
- * `projection_not_configured` IS NOT A FAILURE. SearchEmbedding and
- * NarrativeDerivative refuse by design, and counting a designed refusal as an
+ * `projection_not_configured` IS NOT A FAILURE. SearchEmbedding refuses by
+ * design (NarrativeDerivative is never subscribed), and counting a refusal as an
  * error would burn the row's attempts until it was poisoned and stopped being
  * delivered — a correct event discarded because part of the system is honestly
  * unbuilt. It is counted as SKIPPED, which is a number the caller can see.

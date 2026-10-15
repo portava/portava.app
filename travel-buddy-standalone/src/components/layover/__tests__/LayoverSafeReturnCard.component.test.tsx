@@ -626,3 +626,112 @@ test('L173 — an ended layover shows its check-ins but offers no report', async
   expect(screen.queryByTestId('layover-checkpoint-left')).toBeNull();
   expect(screen.queryByTestId('layover-checkpoint-back')).toBeNull();
 });
+
+// ── §15.1 L144 — the traveller's own per-abort "tell my crew" choice ─────────
+//
+// WHAT WOULD TURN THIS RED. On main (9af376fa4) the card had no control at all
+// and `returnToAirportNow` always POSTed with no body, so every case that finds
+// the toggle, reads `tellCrew` off the request, or renders the server's COUNT is
+// red there. The server half (flag OFF by default, crew card gates both ways,
+// minimal text, count only) is pinned in the api-server suites
+// layoverCrewAbortNotice.test.ts and layoverCrewAbortNoticeRoute.test.ts.
+
+const OFFERED = { available: true, reason: null };
+
+function tellCrewToggle() {
+  return screen.queryByTestId('abort-tell-crew-toggle');
+}
+
+function bodyOf(call: unknown[]): unknown {
+  const init = call[1] as { body?: string } | undefined;
+  return init?.body === undefined ? undefined : JSON.parse(init.body);
+}
+
+test('L144 — not offered when the overview does not say the server would honour it', async () => {
+  fetchSpy.mockResolvedValue(jsonResponse(200, ABORT_OK_BODY));
+  // A pre-L144 server sends no field at all.
+  await render(<CardUnderTest overview={overviewFixture()} nowMs={CERTIFIED_MS} canAbort />);
+  expect(tellCrewToggle()).toBeNull();
+  // The flag OFF (its seed), or no crew: the server says no, and nothing is offered.
+  for (const crewAbortNotice of [
+    { available: false, reason: 'crew_notify_not_enabled' },
+    { available: false, reason: 'not_in_a_crew' },
+  ]) {
+    await render(<CardUnderTest overview={{ ...overviewFixture(), crewAbortNotice }} nowMs={CERTIFIED_MS} canAbort />);
+    expect(tellCrewToggle()).toBeNull();
+  }
+  // A probe proving the renders above committed (an empty tree would also have no toggle).
+  expect(screen.getByTestId('return-to-airport-btn')).toBeTruthy();
+});
+
+test('L144 — not offered on a session that cannot be aborted', async () => {
+  const ov = overviewFixture();
+  await render(<CardUnderTest overview={{ ...ov, session: { ...ov.session, status: 'completed' }, crewAbortNotice: OFFERED }} nowMs={CERTIFIED_MS} canAbort={false} />);
+  expect(screen.getByTestId('safe-return-inactive')).toBeTruthy();
+  expect(tellCrewToggle()).toBeNull();
+});
+
+test('L144 — offered UNTICKED, states the whole disclosure, and an unticked press sends exactly the old request', async () => {
+  fetchSpy.mockResolvedValue(jsonResponse(200, { ...ABORT_OK_BODY, crewNotifyUnavailableReason: 'not_requested', crewNotifiedCount: 0 }));
+  await render(<CardUnderTest overview={{ ...overviewFixture(), crewAbortNotice: OFFERED }} nowMs={CERTIFIED_MS} canAbort />);
+  const toggle = tellCrewToggle();
+  expect(toggle).toBeTruthy();
+  expect(toggle!.props.accessibilityState.checked).toBe(false);
+  expect(toggle!.props.accessibilityRole).toBe('checkbox');
+  expect(screen.getByTestId('abort-tell-crew-disclosure').props.children).toMatch(/only that you are heading back to the airport — no place, time or reason/);
+
+  await act(async () => { fireEvent.press(screen.getByTestId('return-to-airport-btn')); });
+  await waitFor(() => expect(returnNowCalls()).toHaveLength(1));
+  expect(bodyOf(returnNowCalls()[0])).toBeUndefined();
+  await waitFor(() => expect(screen.getByTestId('abort-crew-notice')).toBeTruthy());
+  expect(screen.getByTestId('abort-crew-notice').props.children).toBe('Your crew was not told you are heading back — you did not ask us to.');
+});
+
+test('L144 — ticked, the press sends { tellCrew: true } ONCE, and the choice resets for the next press', async () => {
+  fetchSpy.mockResolvedValue(jsonResponse(200, { ...ABORT_OK_BODY, effects: ['itinerary_cancelled', 'ledger_recorded', 'crew_notified'], crewNotifiedCount: 2, crewNotifyUnavailableReason: null }));
+  await render(<CardUnderTest overview={{ ...overviewFixture(), crewAbortNotice: OFFERED }} nowMs={CERTIFIED_MS} canAbort />);
+
+  await act(async () => { fireEvent.press(tellCrewToggle()!); });
+  expect(tellCrewToggle()!.props.accessibilityState.checked).toBe(true);
+
+  await act(async () => { fireEvent.press(screen.getByTestId('return-to-airport-btn')); });
+  await waitFor(() => expect(returnNowCalls()).toHaveLength(1));
+  expect(bodyOf(returnNowCalls()[0])).toEqual({ tellCrew: true });
+  await waitFor(() => expect(screen.getByTestId('abort-crew-notice')).toBeTruthy());
+  // The server's COUNT, said to the traveller; nobody is named.
+  expect(screen.getByTestId('abort-crew-notice').props.children).toBe('2 crewmates were told you are heading back.');
+  // Reset: the next abort is a new choice, unticked.
+  expect(tellCrewToggle()!.props.accessibilityState.checked).toBe(false);
+
+  await act(async () => { fireEvent.press(screen.getByTestId('return-to-airport-btn')); });
+  await waitFor(() => expect(returnNowCalls()).toHaveLength(2));
+  expect(bodyOf(returnNowCalls()[1])).toBeUndefined();
+});
+
+test('L144 — ticking and unticking again sends nothing', async () => {
+  fetchSpy.mockResolvedValue(jsonResponse(200, ABORT_OK_BODY));
+  await render(<CardUnderTest overview={{ ...overviewFixture(), crewAbortNotice: OFFERED }} nowMs={CERTIFIED_MS} canAbort />);
+  await act(async () => { fireEvent.press(tellCrewToggle()!); });
+  await act(async () => { fireEvent.press(tellCrewToggle()!); });
+  expect(tellCrewToggle()!.props.accessibilityState.checked).toBe(false);
+  await act(async () => { fireEvent.press(screen.getByTestId('return-to-airport-btn')); });
+  await waitFor(() => expect(returnNowCalls()).toHaveLength(1));
+  expect(bodyOf(returnNowCalls()[0])).toBeUndefined();
+});
+
+test('L144 — a PARTIAL abort still tells the traveller whether their crew was told', async () => {
+  fetchSpy.mockResolvedValue(jsonResponse(500, { ...ABORT_PARTIAL_BODY, crewNotifiedCount: 1, crewNotifyUnavailableReason: null }));
+  await render(<CardUnderTest overview={{ ...overviewFixture(), crewAbortNotice: OFFERED }} nowMs={CERTIFIED_MS} canAbort />);
+  await act(async () => { fireEvent.press(tellCrewToggle()!); });
+  await act(async () => { fireEvent.press(screen.getByTestId('return-to-airport-btn')); });
+  await waitFor(() => expect(screen.getByTestId('abort-partial-notice')).toBeTruthy());
+  expect(screen.getByTestId('abort-crew-notice').props.children).toBe('One crewmate was told you are heading back.');
+});
+
+test('L144 — a pre-L144 server\'s partial body (no crew fields) says nothing about the crew', async () => {
+  fetchSpy.mockResolvedValue(jsonResponse(500, ABORT_PARTIAL_BODY));
+  await render(<CardUnderTest overview={overviewFixture()} nowMs={CERTIFIED_MS} canAbort />);
+  await act(async () => { fireEvent.press(screen.getByTestId('return-to-airport-btn')); });
+  await waitFor(() => expect(screen.getByTestId('abort-partial-notice')).toBeTruthy());
+  expect(screen.queryByTestId('abort-crew-notice')).toBeNull();
+});
