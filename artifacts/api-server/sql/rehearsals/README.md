@@ -210,3 +210,36 @@ present), succeeding once cleared, re-running as no-ops, and both files re-apply
 capture, the no-place rule dropped, the catalog overriding a writer's text, EXECUTE granted, a stored default on
 `memory_type`, the MOMENT default dropped, a fourteenth type, the trigger's column list narrowed, and a default on the
 name column.
+
+## 3806 — convergence proposals: photos that belong to a Memory the owner already has (2026-10-14, B58 MEM-CONVERGE)
+
+Census-highlights-memories §BY (H180). Rehearsed on PGlite over a fixture of exactly the objects the file touches
+(roles with Supabase's default ACL, `auth.users`, `schema_migration_ledger`, and `memories` + `media_assets` as the
+2026-08-19 baseline declares them, with their primary keys and `auth.users` foreign keys), never on a real database.
+The full chain runs in CI's local-db job (`src/test/db/memoryConvergenceProposals.db.test.ts`).
+
+```bash
+$PSQL -f src/migrations/3806_memory_convergence_proposals.sql
+$PSQL -f sql/rehearsals/3806_00_seed.sql
+$PSQL -f sql/rehearsals/3806_01_memory_convergence_proposals.sql
+```
+
+Measured 2026-10-14, 22 of 22 steps passing: apply and re-apply; `$pre$` and `$post$` each alone (the live applier's
+split-session shape); T1–T5; five `$post$` negative controls (a client grant, a policy, RLS off, a Memory link that
+does not cascade, the guard trigger dropped), each refused and restored; the rollback REFUSING while an owner's
+dismissal exists, then succeeding once it is cleared, re-running as a no-op, and the migration re-applying.
+
+- **T1** no client role reads or writes the table.
+- **T2** the guard refuses a proposal onto another person's Memory, of another person's photo, owned by someone who
+  owns neither, and an unknown basis — and none of the refusals writes a row.
+- **T3** four open proposals; the detector's `ON CONFLICT DO NOTHING` insert adds nothing on a re-run.
+- **T4** an unstamped decision and a row born decided without a stamp are refused; a dismissal holds and is final (no
+  reopen, no flip to kept, no re-dating) and the detector's insert never reopens it; a keep is final; basis, Memory and
+  owner never change.
+- **T5** a hard-deleted Memory, a deleted photo and a deleted account each take their rows; nothing else moves.
+
+**21 of 21 SQL mutants killed**: each ownership check of the guard, finality, re-dating, basis / Memory / owner
+changes, the trigger on INSERT only and on UPDATE only, the decision stamp, a widened state CHECK (which survived
+until the `$post$` block counted the CHECK's literals), any basis, each of the three cascades, a primary key without
+the photo, client grants left in place, RLS off, and three rollback mutants (no refusal, a refusal on the wrong state,
+the function left behind).

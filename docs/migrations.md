@@ -5784,3 +5784,39 @@ owner-rights cases were added).
 **Rollback:** `db/rollback/2026-10-14-3825-telegraph-message-link-previews-rollback.sql` drops the trigger, both
 functions, the table and the flag row it seeded. It destroys every stored preview; turning the flag off is almost
 always what is wanted instead.
+
+## 2026-10-14 — `3806_memory_convergence_proposals.sql`, written and NOT applied anywhere (B58 cluster MEM-CONVERGE)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3806_memory_convergence_proposals.sql` | **not applied** | **not applied** |
+
+**What it adds (census-highlights-memories §BY, H180).** `memory_convergence_proposals`: one row per (owner, Memory,
+photo) the candidate detector found to belong to a Memory the owner ALREADY has — `basis` `memory_window` (taken inside
+the window of the owner's published Memory on the same trip, at most 24 h) or `confirmed_episode` (grouped with an
+episode the owner kept, whose Memory 2320's explicit link names) — and its decision: `proposed`, `kept` (the owner's
+Keep attached it through §17 ADD_MEDIA) or `dismissed` (the durable negative: the detector's insert is `ON CONFLICT DO
+NOTHING`, so it is never proposed for that Memory again). A guard trigger refuses a row whose Memory or photo is not
+the owner's, and makes every decision final. RLS on with no policy; every client privilege revoked; service_role only.
+No flag: the inbox that writes and reads it is gated by 2320's deployment and by this table's own probe.
+
+**Without it.** The detector behaves exactly as before (a capture inside a Memory's window becomes a candidate); the
+inbox's `convergence` field says `not_deployed`; Keep / Dismiss answer 404 feature_disabled. Unreadable (not absent) ⇒
+detection refuses with 503 rather than proposing a duplicate candidate it cannot rule out.
+
+**Deletion fate.** ERASED_BY_CASCADE (`lib/deletionDispositions.ts`, registered in POST_BASELINE_TABLES): `owner_id`
+cascades from `auth.users`, `memory_id` from `public.memories`, `media_asset_id` from `public.media_assets`. A Memory
+its owner deletes (a soft delete) has its rows purged by §21 RAW_EVIDENCE_PURGED
+(`services/memory/memoryDeletionLifecycle.ts`).
+
+**Pre/postconditions** in the file, self-contained (the `$post$` block recomputes everything from the catalog,
+including that the state and basis CHECKs are exactly their vocabularies). **Rehearsed** on PGlite over a fixture of
+the touched objects: 22 of 22 steps, 21 of 21 SQL mutants killed (`sql/rehearsals/README.md`, section "3806"). The
+chain half is `src/test/db/memoryConvergenceProposals.db.test.ts` (CI local-db job).
+
+**Order.** After 2320 in practice (only the 2320-backed detector writes rows), though the table itself names no 2320
+object.
+
+**Rollback:** `db/rollback/2026-10-14-3806-memory-convergence-proposals-rollback.sql`. It refuses while any DISMISSED
+row exists (an owner's decision nothing can re-derive: dropping it would re-propose those photos); proposed rows are
+re-derived by the next detection and kept rows by the photo already being in its Memory. Re-runs as a no-op.
