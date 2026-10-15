@@ -1506,6 +1506,8 @@ describe("IN-G141-R4 — a currency sign is its number's on either side, spaced 
   it("inside a mixed token the number keeps its sign and its dash: '$18k' is not '18 k', '12-3pm' is not '3 pm'", () => {
     assert.ok(inventedFacts("Paid 18 k", ["paid $18k"], "travel").includes("number:18"));
     assert.ok(inventedFacts("Open 3 pm", ["open 12-3pm"], "travel").includes("number:3"));
+    assert.ok(inventedFacts("Paid 18 pp", ["paid 18\u{20AC}pp"], "travel").includes("number:18"), "18\u{20AC}pp is not 18 pp");
+    assert.ok(inventedFacts("5 c at dawn", ["-5c at dawn"], "travel").includes("number:5"), "-5c is not 5 c");
     assert.deepEqual(inventedFacts("Open 12-3 pm!", ["open 12-3pm"], "travel"), []);
     assert.deepEqual(inventedFacts("Dinner at 8 pm!", ["dinner at 8pm"], "travel"), [], "8pm is still 8 pm");
   });
