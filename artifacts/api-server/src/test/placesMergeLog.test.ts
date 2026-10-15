@@ -328,7 +328,7 @@ describe("POST /admin/places/:id/merge", () => {
     assert.equal(r.status, 404, JSON.stringify(r.body));
     assert.equal(r.body?.error, "feature_disabled");
     unchangedActive(w, A, "M7");
-    assert.deepEqual(w.writes(), [], "M7: nothing is written");
+    assert.deepEqual(w.oracle.log.map((l) => tableOf(l.url)), ["feature_flags"], "M7: the flag is the only thing read");
   });
 
   it("M8 an ABSENT or UNREADABLE flag is OFF", async () => {
@@ -551,7 +551,7 @@ describe("POST /admin/places/:id/unmerge", () => {
     const r = await unmerge();
     assert.deepEqual([r.status, r.body?.error], [404, "feature_disabled"], JSON.stringify(r.body));
     stillMerged(w, A, B, "U10");
-    assert.deepEqual(w.writes(), [], "U10: nothing is written");
+    assert.deepEqual(w.oracle.log.map((l) => tableOf(l.url)), ["feature_flags"], "U10: the flag is the only thing read");
   });
 
   it("U11 a place read that FAILS is answered as unavailable, not as 'Place not found'", async () => {
