@@ -92,6 +92,7 @@ function acceptedBody() {
 type Reply = { status: number; body: unknown } | Error;
 interface Call { method: string; path: string; body: unknown }
 let calls: Call[] = [];
+let auths: Array<string | undefined> = [];
 let routes: Map<string, Reply[]> = new Map();
 const realFetch = globalThis.fetch;
 function on(method: string, path: string, ...replies: Reply[]) { routes.set(`${method} ${path}`, replies); }
@@ -100,6 +101,7 @@ function install() {
     const method = init?.method ?? 'GET';
     const path = String(url).startsWith(BASE) ? String(url).slice(BASE.length) : String(url);
     calls.push({ method, path, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+    auths.push((init?.headers as Record<string, string> | undefined)?.Authorization);
     const queue = routes.get(`${method} ${path}`);
     const r: Reply = queue ? (queue.length > 1 ? queue.shift()! : queue[0]!) : { status: 418, body: { error: 'unrouted' } };
     if (r instanceof Error) throw r;
@@ -115,7 +117,7 @@ const memoryWrites = () => calls.filter((c) => c.method !== 'GET' && c.path !== 
 const MEMORY = { id: MID, updatedAt: '2026-10-01T00:00:00.000Z', items: [] };
 let alertSpy: jest.SpyInstance;
 beforeEach(() => {
-  calls = []; routes = new Map(); mockFlags = { [FLAG]: true };
+  calls = []; auths = []; routes = new Map(); mockFlags = { [FLAG]: true };
   process.env.EXPO_PUBLIC_API_BASE_URL = BASE;
   install();
   alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
@@ -282,6 +284,17 @@ describe('the switch writes the opt-in through the server, and revoking stops ev
     expect(posts()).toEqual([]);
   });
 
+  it('a grant refused with 404 feature_disabled (the flag went off) withdraws every AI control', async () => {
+    on('GET', NARR, { status: 200, body: narrBody(OFFER_NEEDS_CONSENT) });
+    on('GET', CONSENT, { status: 200, body: consentBody(false) });
+    on('PUT', CONSENT, { status: 404, body: { error: 'feature_disabled', message: 'This setting is not available yet.' } });
+    await mount();
+    await fireEvent(await screen.findByTestId('memory-narrative-ai-consent-toggle'), 'valueChange', true);
+    await waitFor(() => expect(screen.queryByTestId('memory-narrative-ai')).toBeNull());
+    expect(summaryText()).toBe(SUMMARY);
+    expect(posts()).toEqual([]);
+  });
+
   it('a refused write is reported and the switch does not move', async () => {
     on('GET', NARR, { status: 200, body: narrBody(OFFER_NEEDS_CONSENT) });
     on('GET', CONSENT, { status: 200, body: consentBody(false) });
@@ -408,7 +421,14 @@ describe('a refused, unavailable, failed or offline draft shows the summary and 
     expect(summaryText()).toBe(SUMMARY);
   });
 
-  it('503 / 429: the summary stands and the server\'s sentence is said', async () => {
+  it('429: the summary stands and the server\'s sentence is said', async () => {
+    await draftReplies({ status: 429, body: { error: 'rate_limited', message: 'Too many summaries. Please wait a moment.' } });
+    await waitFor(() => expect(screen.getByTestId('memory-narrative-ai-note').props.children).toBe('Too many summaries. Please wait a moment.'));
+    expect(screen.queryByTestId('memory-narrative-ai-proposal')).toBeNull();
+    expect(summaryText()).toBe(SUMMARY);
+  });
+
+  it('503: the summary stands and the server\'s sentence is said', async () => {
     await draftReplies({ status: 503, body: { error: 'degraded_unavailable', message: "This Memory's privacy settings could not be checked, so nothing was sent. Please try again." } });
     await waitFor(() => expect(screen.getByTestId('memory-narrative-ai-note').props.children).toMatch(/could not be checked/));
     expect(screen.queryByTestId('memory-narrative-ai-proposal')).toBeNull();
@@ -472,6 +492,7 @@ describe('memoryNarrativeApi', () => {
     expect((await fetchMemoryNarrative(MID)).state).toBe('error');
     on('GET', CONSENT, { status: 200, body: { ...consentBody(true), disclosureText: '' } });
     expect((await fetchNarrativeAiConsent()).state).toBe('error'); // no words, no switch
+    expect(auths).toEqual(['Bearer tok', 'Bearer tok', 'Bearer tok']);
   });
 
   it('a grant names the displayed version; a withdrawal is a DELETE; only a 200 that says so is success', async () => {

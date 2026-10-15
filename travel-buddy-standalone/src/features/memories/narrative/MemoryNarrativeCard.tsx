@@ -100,8 +100,7 @@ export function MemoryNarrativeCard({ memory, isOwner }: MemoryNarrativeCardProp
     setProposal(null);
     setAiNote(null);
     if (r.state === 'ok') {
-      setOffer(r.ai);
-      if (r.ai.available === false && r.ai.reason === 'feature_disabled') setAiOff(true);
+      setOffer(r.ai); // a server that says feature_disabled closes gate 1 through `offerSaysOff`
       if (!touched.current) { setEditorText(r.narrative.summary); setEditorSource('summary'); }
     }
   }, [isOwner, memoryId]);
@@ -121,12 +120,7 @@ export function MemoryNarrativeCard({ memory, isOwner }: MemoryNarrativeCardProp
   const refreshOffer = useCallback(async () => {
     const r = await fetchMemoryNarrative(memoryId);
     if (!alive.current) return;
-    if (r.state === 'ok') {
-      setOffer(r.ai);
-      if (r.ai.available === false && r.ai.reason === 'feature_disabled') setAiOff(true);
-    } else {
-      setOffer(UNAVAILABLE);
-    }
+    setOffer(r.state === 'ok' ? r.ai : UNAVAILABLE);
   }, [memoryId]);
 
   const consentOn = consent?.state === 'ok' && consent.consent.enabled;
