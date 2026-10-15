@@ -348,6 +348,14 @@ describe("B: circle admin routes go through the shared guard", () => {
 
 describe("C: placesCanonical admin routes go through the shared guard", () => {
   const mergedPlace = { id: PLACE_ID, merged_into_place_id: SURVIVOR };
+  // The unmerge is flag-gated and reverses only a merge place_merge_log records
+  // (lane PLACES-MERGE-LOG, src/test/placesMergeLog.test.ts), so the admin case
+  // needs the flag ON and the merge's log row to reach a real unmerge.
+  const unmergeable = {
+    places: [mergedPlace],
+    feature_flags: [{ flag: "external_places_enabled", enabled: true }],
+    place_merge_log: [{ id: "55555555-5555-4555-8555-555555555555", action: "merge", survivor_place_id: SURVIVOR, affected_place_id: PLACE_ID, created_at: "2026-10-01T00:00:00.000Z" }],
+  };
 
   it("C1 refuses role 'user' with the shared 403 (valid id — not an input-validation 400)", async () => {
     install(clientFor({ role: "user", rows: { places: [mergedPlace] } }));
@@ -358,7 +366,7 @@ describe("C: placesCanonical admin routes go through the shared guard", () => {
   });
 
   it("C2 admits role 'admin' and performs the unmerge", async () => {
-    install(clientFor({ role: "admin", rows: { places: [mergedPlace] } }));
+    install(clientFor({ role: "admin", rows: unmergeable }));
     const r = await request(placesBase, "POST", `/api/admin/places/${PLACE_ID}/unmerge`, {});
     assert.equal(r.status, 200, `C2: ${JSON.stringify(r.body)}`);
     assert.deepEqual(r.body, { ok: true, restoredId: PLACE_ID });

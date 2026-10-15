@@ -16988,3 +16988,235 @@ removed from `MediaWorldScreen.tsx`, 7 of the 9 shell cases go red.
 
 Cited, not graded (check:census-scope-coverage):
 - NOT-GRADED: travel-buddy-standalone/src/components/map/CrowdFlowLine.tsx — §51.2 cites the Map renderer's cohort floor and aggregate rung, which the Media card imports; census-map grades the Map renderer.
+
+## 53. B58 lane PLACES-MERGE-LOG, 2026-10-14: the admin place merge and unmerge never leave a change this API applied without its `place_merge_log` row. NO ROW MOVES
+
+Lane MEM-PLACE-SPLIT (PR #744) reported it: the admin MERGE and UNMERGE of canonical places are not flag-gated and
+ignore the error of their `place_merge_log` insert. Re-measured on main `3c214ca80` and fixed on branch
+`claude/fix-places-merge-log`. No migration.
+
+### 53.1 Why this census, and which row
+
+**No row in any census grades these two routes.** Every census was searched for the route file, `place_merge_log`,
+`admin/places`, unmerge and `external_places_enabled`. None of them names a verdict on the merge or the unmerge, and no
+owner or lead ruling (`docs/ops/owner-decisions-20261004.md`, `-20261012.md`, `lead-rulings-20261006.md`) decides them.
+
+The canonical external-place layer (migration 2028) was built as this audit's Phase 6. Two rows here rest on its
+identity:
+- **MD430**, "Places owns canonical Place identity";
+- **MD111**, the gem's bridge to a canonical place.
+
+So the record is here. Neither row moves, because neither grades the merge's audit trail:
+- MD430's claim is that Media carries `places.id` opaquely and never re-derives identity. That still holds.
+- MD111's bridge is untouched.
+
+Whether the catalog's admin integrity should be a graded row is **OWNER QUESTION Q-PML-3** (§53.6).
+
+### 53.2 The defect, measured on main
+
+Measured on main `3c214ca80`, through the real route and the real supabase-js client over an in-memory PostgREST.
+
+**What main did:**
+- **A failed log write still answered success.** Merge wrote the place first and then awaited the log insert without
+  reading its result. With that insert failing, the merge answered 200, the place was merged into its survivor, and
+  `place_merge_log` held **zero** rows.
+- **An unrecorded merge could still be reversed.** Unmerge never read the log. The merge above was reversed with 200,
+  and the log then held a lone `unmerge` row. The defect was **not** that an unmerge became impossible: it was that
+  changes went unrecorded, were reported as success, and could be reversed as if they had been recorded.
+- **Unmerge had the same unchecked insert.** A failed write returned the place to `active` with no record.
+- **Neither route read `external_places_enabled`.** The file's own header says that flag gates it, and ingest and the
+  canonical read do check it.
+- **A failed place read was answered 404** "Place not found".
+- **A failed reference count was logged as `ref_count: 0`.**
+- **An already-merged place was silently re-pointed** to a new survivor.
+- **A place other places were merged into could itself be merged away.** That is a two-hop chain (A→B→C) the canonical
+  read follows only one hop of, and it needs no race: `scripts/landmarkDedupSweep.ts` can produce it in one `--apply`
+  run, because it records only losers, so a survivor can later be chosen as a loser.
+- **A concurrent change was overwritten.**
+
+### 53.3 The fix
+
+The work moved into `artifacts/api-server/src/lib/places/placeMerge.ts:243#export async function mergePlace(` and
+`artifacts/api-server/src/lib/places/placeMerge.ts:308#export async function unmergePlace(`.
+
+The routes were edited line-neutrally. The six handler lines other files point at did not move:
+- 37 and 74 (the canonical read and ingest);
+- 94 and 125 (the merge and unmerge handlers);
+- 117, now the call that writes the log
+  (`artifacts/api-server/src/routes/placesCanonical.ts:117#const out = await mergePlace(`);
+- 160 (thin buckets).
+
+**Gate.** Both routes answer `feature_disabled` when the flag is OFF, absent or unreadable, as ingest does. The flag
+is the only thing they read in that case
+(`artifacts/api-server/src/routes/placesCanonical.ts:105#isFlagEnabled(admin.sc, "external_places_enabled")`,
+`artifacts/api-server/src/routes/placesCanonical.ts:132#isFlagEnabled(admin.sc, "external_places_enabled")`).
+
+**Order.** Each route works in four steps:
+1. **It reads and checks every precondition.**
+   - A failed read is 503 `place_read_failed`
+     (`artifacts/api-server/src/lib/places/placeMerge.ts:254#place_read_failed`). That includes a failed read of only
+     the place being merged away.
+   - A failed reference count is 503 `reference_count_failed`
+     (`artifacts/api-server/src/lib/places/placeMerge.ts:279#reference_count_failed`).
+   - An already-merged place is 409 `already_merged`
+     (`artifacts/api-server/src/lib/places/placeMerge.ts:262#already_merged`).
+   - A place other places are merged into is 409 `place_is_survivor`
+     (`artifacts/api-server/src/lib/places/placeMerge.ts:272#place_is_survivor`). A merge into a place that is itself
+     merged was already refused on main. Without a race, neither a chain nor a cycle can now be made.
+2. **It writes the log row first.** The row's id is generated by the API
+   (`artifacts/api-server/src/lib/places/placeMerge.ts:283#const logId = randomUUID();`). If this write fails, nothing
+   has changed, and the route answers 500 with `merge_log_write_failed` or `unmerge_log_write_failed`.
+3. **It moves the place with a compare-and-set on the state step 1 read.** That state is `merged_into_place_id` **and**
+   the exact `updated_at`
+   (`artifacts/api-server/src/lib/places/placeMerge.ts:297#.is("merged_into_place_id", null);`,
+   `artifacts/api-server/src/lib/places/placeMerge.ts:298#mergeMove.eq("updated_at", stamp0)`,
+   `artifacts/api-server/src/lib/places/placeMerge.ts:348#.eq("merged_into_place_id", survivorId);`,
+   `artifacts/api-server/src/lib/places/placeMerge.ts:349#unmergeMove.eq("updated_at", stamp0)`).
+   - **The stamp is new in fix round 2.** Every move writes one strictly later than the stamp it replaced
+     (`artifacts/api-server/src/lib/places/placeMerge.ts:165#Math.max(Date.now(), floorMs)`).
+   - That holds within one millisecond, and on an instance whose clock is behind.
+   - No trigger maintains `places.updated_at`, and these two moves are its only writers in the API (by grep).
+   - So a place never returns to a stamp it has left, and any move since step 1 makes the compare-and-set match
+     nothing. The answer is then 409 `place_changed`.
+4. **It withdraws its log row in exactly two cases**
+   (`artifacts/api-server/src/lib/places/placeMerge.ts:174#.delete().eq("id", logId)`):
+   - (a) the UPDATE ran and matched no row: this request changed nothing;
+   - (b) the UPDATE errored, and the place is re-read in its starting state **with the stamp step 1 read**
+     (`artifacts/api-server/src/lib/places/placeMerge.ts:213#const untouched =`), **and** this request's row is still
+     the newest `place_merge_log` row for the place
+     (`artifacts/api-server/src/lib/places/placeMerge.ts:221#newest.data?.id === logId`).
+     - **The stamp half proves (b):** a place at step 1's stamp has not moved since, so this request's UPDATE did not
+       commit.
+     - **The newest-row half is a second, independent check:** a request that moved the place after reading our
+       committed state wrote a newer row first (verifier scenarios X1/X2).
+     - **Fix round 1 withdrew on the newest-row half alone.** An ABA defeated that: a stale request whose compare-and-set
+       was armed on an earlier, identical state reversed our change with an older row (VERIFY-747-delta, ABA-M/ABA-U).
+       The stamp in every compare-and-set now makes that request match nothing.
+
+   The mirror case: a place re-read in its target state **with the stamp this request wrote**
+   (`artifacts/api-server/src/lib/places/placeMerge.ts:214#const ours =`), its row still the newest, is this request's
+   success. Every other outcome keeps the row and answers 500 `*_outcome_unknown`, naming it and saying why:
+   - a failed re-read;
+   - a place that no longer exists;
+   - any other state or stamp;
+   - a failed log read;
+   - an empty log;
+   - a newer row.
+
+   A withdrawal that fails answers 500 `*_log_orphaned`, naming the row's id, and logs it at error level.
+
+**Unmerge reads the log.** Only a merge the log records **as the place's current state** is reversed. The newest
+`place_merge_log` row for the place, of any action, must be a `merge` naming its current survivor
+(`artifacts/api-server/src/lib/places/placeMerge.ts:131#.eq("affected_place_id", placeId)`,
+`artifacts/api-server/src/lib/places/placeMerge.ts:132#.order("created_at", { ascending: false })`). Otherwise it
+answers 409:
+- `merge_not_logged` when there is no row, or the newest row is not a merge
+  (`artifacts/api-server/src/lib/places/placeMerge.ts:328#merge_not_logged`);
+- `merge_log_disagrees` when the newest merge names another survivor
+  (`artifacts/api-server/src/lib/places/placeMerge.ts:331#merge_log_disagrees`).
+
+The first head looked only at the newest *merge* row. That reversed a merge re-made, unlogged, after a logged
+unmerge into the same survivor (verifier scenario X4). A `split` row (3812, PR #744) has the new place as its
+`affected_place_id`, so it never stands for a merge.
+
+**Why the API orders the writes rather than using one SQL transaction.** The atomic shape is one function that locks
+the rows and writes the change and its log row together, as 3812's `place_split` does. That needs a migration. The
+routes are live: the flag is TRUE in production (the 2026-09-22 snapshot). Moving them onto an unapplied function would
+break the admin merge until the owner applies it.
+
+**What the invariant rests on.** "No interleaving of this API's own requests leaves an applied change without its row"
+holds **under three premises**:
+- **P1:** this file is the only API writer of `merged_into_place_id` and of `updated_at`, and no trigger writes either;
+- **P2:** every write here logs before it moves;
+- **P3:** every move compare-and-sets on the exact stamp it read and writes one strictly later.
+
+Under P1–P3, a stale request served late, or one whose state left and came back, answers 409 instead of acting. What
+falls outside the premises, and what remains inside them, is §53.5.
+
+### 53.4 Evidence
+
+**`artifacts/api-server/src/test/placesMergeLog.test.ts`: 51 tests.** They run the real router over HTTP, with the real
+supabase-js client over `helpers/postgrestOracle.ts`, so writes are applied and the request order is observable.
+
+**Red runs:**
+- **On main:** the 36 tests that existed at fix round 1 give 32 fails and 4 passes; the 4 pin main's own refusals,
+  admin-only and a round trip.
+- **On `5e36c3ad6`:** 6 of the 8 round-1 tests fail.
+- **On `ecb7b6744`:** 8 of the 10 round-2 tests fail: ABA-CAS M20/U17, ABA-M M21, ABA-U U18, the rolling-deploy ABA
+  M22/U19, the empty log M24, and X3 M25. M23/U20 (D3) pass there; they pin the failed log read.
+
+**On the fix: 51 of 51 pass.** For example:
+- `artifacts/api-server/src/test/placesMergeLog.test.ts:294#a log row that cannot be written leaves the place UNMERGED`;
+- `artifacts/api-server/src/test/placesMergeLog.test.ts:515#a merge whose compare-and-set was armed on a state that left and came back matches nothing`;
+- `artifacts/api-server/src/test/placesMergeLog.test.ts:534#a stale unmerge served LATE cannot reverse our committed merge`;
+- `artifacts/api-server/src/test/placesMergeLog.test.ts:597#a failed place_merge_log read in the settle step is an unknown outcome`;
+- `artifacts/api-server/src/test/placesMergeLog.test.ts:893#a merge re-made after a LOGGED unmerge without its own row is refused`.
+
+ABA-M and ABA-U drive the stale request through the same route, and serve its held-up PATCH late with its own filters.
+So the stale request's compare-and-set is the code under test.
+
+**The shared admin-guard suite's case C2** gains the flag row and the merge's log row in its fixture; its assertion is
+unchanged. 36 of 36 pass, on main and on the fix.
+
+**Mutants: 50 of 50 killed** on the final code, each by a named test. They cover:
+- every precondition read, and the survivor refusal;
+- the log-first write;
+- both compare-and-sets, on `merged_into_place_id` and on the stamp separately (M27/U21: a change without a stamp
+  change, such as ON DELETE SET NULL);
+- `nextStamp`'s strictness and the microsecond comparison;
+- the withdrawal and its failure;
+- each condition of the settle step: the stamp halves, the newest-row half, a failed log read (D3), an empty log (D4),
+  a place that no longer exists (V5), and each outcome;
+- the log read's place and order, and the newest row's action and survivor;
+- both flag gates, and the refusal's reason and detail.
+
+### 53.5 What is not closed
+
+These need a transaction with row locks, so a migration:
+- **A crash, or a failed withdrawal, between the log write and the move** leaves a row recording a change that did not
+  happen. The answer names that row. If it is the place's newest row, a later unmerge refuses (409
+  `merge_log_disagrees` or `merge_not_logged`) until an operator removes it (verifier scenario X7).
+- **Two requests that read the same stamp in the same millisecond and make the same change** compute the same new
+  stamp. The one whose UPDATE failed without committing can then answer 200 for the change the other made, and the log
+  holds two rows for one change (X3). With different stamps it answers `merge_outcome_unknown` (M25).
+- **An instance running code older than the stamp (a rolling deploy)** can still act on a stale state. This code then
+  never withdraws a row because of it, but answers `*_outcome_unknown` (M22/U19).
+- **A change to `merged_into_place_id` made outside this API without a stamp change** (an operator's SQL, or the FK's ON
+  DELETE SET NULL when a survivor is deleted) fails the compare-and-set (M27/U21), but that change itself has no row.
+- **The merge target and the place's merged-in places are checked, not locked.** A target merged away, or a place
+  merged into this one, by a concurrent request in the window yields a two-hop chain; A→B racing B→A yields a cycle
+  (scenario X6). Each hop is logged. Without a race both shapes are refused (§53.3 step 1).
+
+**Not fixed, reported:** unmerge still sets `status = 'active'`, as on main. The status before the merge is recorded
+nowhere, so a closed place that is merged and then unmerged comes back active.
+
+### 53.6 Rows and owner questions
+
+**No row moves.** MD430 stays **C** and MD111 stays **C** (§53.1). The headline is unchanged, restated from
+`check:census-integrity`: **450 = 415 C / 30 W / 5 N / 0 X**.
+
+**OWNER QUESTIONS.** Each default below is implemented. None of them is approved.
+- **Q-PML-1: should both routes be dormant when `external_places_enabled` is OFF?**
+  - Implemented default: yes, both are dormant, including unmerge, the repair path.
+  - This follows the file's own header and the ingest route.
+  - It changes nothing in production while the flag is TRUE.
+- **Q-PML-2: when is an unmerge refused because the log does not record the merge?**
+  - Implemented default: whenever the newest row for the place is not a merge naming its current survivor.
+  - That covers a merge with no row at all, and a merge re-made after a logged unmerge without its own row.
+  - Under P1–P3 neither arises from this API's own requests. They come from:
+    - a log write that failed silently before this fix;
+    - a change made outside this API;
+    - an instance running older code during a deploy.
+  - The cost of this rule: a kept row from an unknown outcome, or an orphan, that is the place's newest blocks the
+    unmerge until an operator removes it.
+  - Repairing such a place, by writing or deleting a row or reversing it in SQL, is the owner's call.
+- **Q-PML-3: should the catalog's admin integrity be a graded row, and in which census?** The candidates are the
+  log-first invariant, the compare-and-set, the chain refusals and the status restore.
+- **Q-PML-4: should an atomic SQL function with row locks replace the API's ordering, and should place_merge_log record
+  the pre-merge status?** Both need a migration (§53.5). The function would also close the racing chain and cycle.
+
+Cited, not graded (check:census-scope-coverage):
+- NOT-GRADED: artifacts/api-server/src/routes/placesCanonical.ts — no row in this census grades the admin merge or unmerge; §53 records a defect fixed in it and moves no verdict (§53.1, Q-PML-3).
+- NOT-GRADED: artifacts/api-server/src/lib/places/placeMerge.ts — the merge and unmerge's new home; §53 cites it as the fix's evidence and no verdict row rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/placesMergeLog.test.ts — the suite that proves §53's fix; it evidences no verdict row of this census.
+- NOT-GRADED: artifacts/api-server/src/scripts/landmarkDedupSweep.ts — §53.2 names it as the caller that can build a two-hop chain without a race; no verdict row of this census grades it.
