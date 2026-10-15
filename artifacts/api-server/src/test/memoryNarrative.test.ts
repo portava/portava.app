@@ -1035,7 +1035,7 @@ describe("NARR-PHOTOS: the route and §18's derivative read each item's type", (
     const r = await deriveProjection(makeClient(store, {}, { reads: [], writes: [] }) as any, "NarrativeDerivative", { owner_id: OWNER, viewer_id: OWNER });
     assert.ok(r.ok, JSON.stringify(r));
     assert.equal(r.value.rows.find((x) => x.memory_id === MEM)!.summary, MIXED_SUMMARY);
-    const thai = r.value.rows.find((x) => x.memory_id === MEM_THAI)!.summary;
+    const thai = String(r.value.rows.find((x) => x.memory_id === MEM_THAI)!.summary);
     assert.ok(!/\b(photos?|videos?|items?)\b/.test(thai), `another Memory's items are not counted: ${thai}`);
   });
 
