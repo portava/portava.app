@@ -153,7 +153,7 @@ function makeUser(overrides: Partial<User> = {}): User {
     id: 'u1',
     handle: 'alice',
     name: 'Alice Nomad',
-    avatarUrl: 'https://example.com/avatar.jpg',
+    avatarUrl: 'avatars/avatar.jpg', // PRIV-FIX-3: avatars are Portava storage (non-private refs, so onError falls straight back)
     homeCity: 'Lisbon',
     homeCountry: 'Portugal',
     travelStyle: 'solo',
@@ -180,7 +180,7 @@ beforeEach(() => {
 
 describe('BuddyPreview avatar fallback', () => {
   it('shows the expo-image while the URL is valid', () => {
-    const buddies = [makeUser({ name: 'Alice Nomad', avatarUrl: 'https://example.com/ok.jpg' })];
+    const buddies = [makeUser({ name: 'Alice Nomad', avatarUrl: 'avatars/ok.jpg' })];
     const tr = create(<BuddyPreview buddies={buddies} />);
 
     expect(findExpoImages(tr.root).length).toBeGreaterThan(0);
@@ -189,7 +189,7 @@ describe('BuddyPreview avatar fallback', () => {
   });
 
   it('shows initials after onError fires on a broken avatar URL', () => {
-    const buddies = [makeUser({ name: 'Alice Nomad', avatarUrl: 'https://example.com/broken.jpg' })];
+    const buddies = [makeUser({ name: 'Alice Nomad', avatarUrl: 'avatars/broken.jpg' })];
     const tr = create(<BuddyPreview buddies={buddies} />);
 
     // Image should be rendered initially
@@ -214,8 +214,8 @@ describe('BuddyPreview avatar fallback', () => {
 
   it('shows each buddy\'s correct initials after their images fail', () => {
     const buddies = [
-      makeUser({ id: 'u1', name: 'Carol Drift', avatarUrl: 'https://example.com/b1.jpg' }),
-      makeUser({ id: 'u2', name: 'Dana Shore', avatarUrl: 'https://example.com/b2.jpg' }),
+      makeUser({ id: 'u1', name: 'Carol Drift', avatarUrl: 'avatars/b1.jpg' }),
+      makeUser({ id: 'u2', name: 'Dana Shore', avatarUrl: 'avatars/b2.jpg' }),
     ];
     const tr = create(<BuddyPreview buddies={buddies} />);
 
@@ -231,7 +231,7 @@ describe('BuddyPreview avatar fallback', () => {
   it('count label reflects the full list length when some buddies have null avatarUrls', () => {
     // 3 buddies: one with a valid URL, two with null — the label must say "3 buddies"
     const buddies = [
-      makeUser({ id: 'u1', name: 'Alice Nomad', avatarUrl: 'https://example.com/ok.jpg' }),
+      makeUser({ id: 'u1', name: 'Alice Nomad', avatarUrl: 'avatars/ok.jpg' }),
       makeUser({ id: 'u2', name: 'Bob Wander', avatarUrl: null as any }),
       makeUser({ id: 'u3', name: 'Carol Drift', avatarUrl: null as any }),
     ];
@@ -251,7 +251,7 @@ describe('BuddyPreview avatar fallback', () => {
 
 describe('BuddyRow avatar fallback', () => {
   it('shows the expo-image while the URL is valid', () => {
-    const buddies = [makeUser({ name: 'Eve Trek', avatarUrl: 'https://example.com/ok.jpg' })];
+    const buddies = [makeUser({ name: 'Eve Trek', avatarUrl: 'avatars/ok.jpg' })];
     const tr = create(<BuddyRow buddies={buddies} />);
 
     expect(findExpoImages(tr.root).length).toBeGreaterThan(0);
@@ -259,7 +259,7 @@ describe('BuddyRow avatar fallback', () => {
   });
 
   it('shows initials after onError fires on a broken avatar URL', () => {
-    const buddies = [makeUser({ name: 'Eve Trek', avatarUrl: 'https://example.com/broken.jpg' })];
+    const buddies = [makeUser({ name: 'Eve Trek', avatarUrl: 'avatars/broken.jpg' })];
     const tr = create(<BuddyRow buddies={buddies} />);
 
     expect(findExpoImages(tr.root).length).toBeGreaterThan(0);
@@ -281,8 +281,8 @@ describe('BuddyRow avatar fallback', () => {
 
   it('shows each buddy\'s correct initials after their images fail', () => {
     const buddies = [
-      makeUser({ id: 'u1', name: 'Grace Hill', avatarUrl: 'https://example.com/r1.jpg' }),
-      makeUser({ id: 'u2', name: 'Henry Vale', avatarUrl: 'https://example.com/r2.jpg' }),
+      makeUser({ id: 'u1', name: 'Grace Hill', avatarUrl: 'avatars/r1.jpg' }),
+      makeUser({ id: 'u2', name: 'Henry Vale', avatarUrl: 'avatars/r2.jpg' }),
     ];
     const tr = create(<BuddyRow buddies={buddies} />);
 

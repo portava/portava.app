@@ -406,7 +406,7 @@ describe("PATCH → GET /api/me/profile round-trip", () => {
     _setTestClient(client, true);
     _setTestServiceClient(client);
 
-    const avatarUrl = "https://example.com/avatar.jpg";
+    const avatarUrl = `profile-media/avatars/${ME}/avatar.jpg`; // PRIV-FIX-3: the caller's own upload; an outside URL is refused (profileAvatarUrlStorageOnly.test.ts)
 
     const patchRes = await api("/me/profile", {
       method: "PATCH",
@@ -1068,7 +1068,7 @@ describe("PATCH /me/profile — single-field guard: each patchable field accepte
     ["currentCity",        { currentCity: "Manila" }],
     ["interests",          { interests: ["food", "hiking"] }],
     ["passportVisibility", { passportVisibility: "followers_only" }],
-    ["avatarUrl",          { avatarUrl: "https://example.com/avatar.jpg" }],
+    ["avatarUrl",          { avatarUrl: `profile-media/avatars/${ME}/avatar.jpg` }], // PRIV-FIX-3: own upload only
     ["coverUrl",           { coverUrl: "https://example.com/cover.jpg" }],
     ["travelStyle",        { travelStyle: "backpacker" }],
     ["openToMeet",         { openToMeet: true }],

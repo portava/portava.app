@@ -14808,3 +14808,141 @@ counts the merged rows on main `0bea6f282`: 262 / 183 / 4 / 2 of 451. CONSTRUCTE
   - the host let past the membership gate (2 red).
 - Not carried over: the first round's block-filter mutants test code that no longer exists.
 - T122's C rests on the evidence in 93.3. The headline is unchanged (93.7).
+
+## §97 — TELEGRAPH lane PRIV-FIX-3 (2026-10-14): a person's avatar is their own Portava upload or nothing — the server refuses any other value (migration 3827, unapplied) and the app never hands an outside avatar host to an image loader. NO ROW MOVES
+
+Written 2026-10-14 on branch `claude/fix-priv-avatar-mine-blocks` from origin/main `3c214ca80`. APPEND-ONLY once
+merged. Numbered §97 because open PRs #729, #738 and #740 write §94, §95 and §96; renumber on conflict. Found by B58
+lane TM-2 ("Adjacent findings" (a), PR #740), which pinned the avatar sinks of the message tree as "a person's profile
+avatar served by our API — not a message field … a separate follow-up". This is that follow-up. Migration 3827 is
+applied to NO database; nothing is flag-gated.
+
+### 97.1 The defect, re-verified on `3c214ca80`
+
+- **The person chose the host.** `profiles.avatar_url` was writable by its owner with ANY https URL, at both doors:
+  - PATCH /api/me/profile parsed `avatarUrl` with `appMediaRef`, which admits "https anywhere"
+    (`artifacts/api-server/src/lib/postSchemas.ts:58#export const appMediaRef`);
+  - PostgREST: the baseline grants `UPDATE (avatar_url)` to anon and authenticated, 3740 re-issues that list, and
+    2078 took back `role` only (`artifacts/api-server/src/migrations/2078_profiles_role_not_self_writable.sql:200#REVOKE UPDATE (role) ON public.profiles FROM authenticated;`);
+    `profiles_update` admits the owner's row.
+- **Every viewer's device fetched it.** The hydration layer returns a non-storage URL "unchanged", and every avatar
+  primitive (`Avatar`, `AvatarImage`, `TelegraphAvatar`) and 13 raw `CachedImage`/`Image` sinks handed it to the native
+  loader. In a conversation that is the thread header (`travel-buddy-standalone/app/messages/[id].tsx:1815#<Avatar uri={dmProfile?.avatarUrl}`),
+  a group's sender avatars (`travel-buddy-standalone/src/components/GroupChatScreen.tsx:825#uri={m.senderAvatarUrl}`)
+  and reader chips (`travel-buddy-standalone/src/components/GroupChatScreen.tsx:423#readerAvatars.map((uri, i) => (`),
+  an inbox row, a mention suggestion; outside it, comments, follower lists, map pins, the wall byline. The host learns
+  each viewer's address and when they looked — the disclosure T446 forbids for previews, through a field T446's words
+  do not cover.
+- Rows already holding an outside host exist: the seed scripts write dicebear, picsum and unsplash avatars (the @Portava
+  account's included) with the service key.
+
+### 97.2 What changed
+
+- **The server's door.** `artifacts/api-server/src/lib/avatarStorageRef.ts:71#export function avatarRefAcceptedFor(`:
+  a person may set exactly `profile-media/avatars/<their own uid>/<file>` (what POST /me/avatar/upload answers) or null.
+  PATCH /me/profile refuses anything else with 400 before any write, on one appended line
+  (`artifacts/api-server/src/routes/profile.ts:547#if (!avatarRefAcceptedFor(p.avatarUrl, user.id))`).
+- **The database's door, 3827.** `REVOKE UPDATE (avatar_url)` from PUBLIC, anon and authenticated
+  (`artifacts/api-server/src/migrations/3827_profiles_avatar_url_storage_only.sql:96#REVOKE UPDATE (avatar_url) ON TABLE public.profiles FROM PUBLIC, anon, authenticated;`),
+  sorted after 3740; and `trg_profiles_avatar_url_storage_only`, BEFORE INSERT OR UPDATE, which refuses 42501 a value
+  being SET by a caller `caller_may_write_profile_role()` does not admit unless it is the row owner's own upload path
+  (`artifacts/api-server/src/migrations/3827_profiles_avatar_url_storage_only.sql:120#IF NOT (NEW.avatar_url ~ ('^profile-media/avatars/' || NEW.id::text`).
+  No row is rewritten. The root tree's uncalled `updateMyProfile` stopped naming the column.
+- **The app's rule.** `travel-buddy-standalone/src/lib/avatarImageUri.ts:66#export function avatarImageUri(` is
+  storage-or-nothing — the same rule as TM-1's `storageImageOrNull` and TM-2's `telegraphMediaUri` — applied to the
+  stored value BEFORE hydration, so signed URLs and offline copies are untouched. It is in the primitives
+  (`travel-buddy-standalone/src/components/ui/Avatar.tsx:78#const uri = avatarImageUri(rawUri);`,
+  `travel-buddy-standalone/src/components/ui/DisplayMediaImage.tsx:415#resolveDisplayMedia([avatarImageUri(uri), avatarImageUri(user?.avatarUrl)])`,
+  `travel-buddy-standalone/src/components/telegraph/TelegraphPrimitives.tsx:24#const uri = avatarImageUri(rawUri);`,
+  `travel-buddy-standalone/src/utils/identity.ts:62#return avatarImageUri(url);`), in the reader chips' faces
+  (`travel-buddy-standalone/src/features/telegraph/lifecycle/useReaderAvatars.ts:22#avatarImageUri(readerFace(userId))`)
+  and at every raw sink that binds an avatar. Every edit is line-neutral. In the message tree the sink expressions
+  #740 pins are kept byte-identical; its pins still match.
+
+### 97.3 Rows read, none restated in a verdict table
+
+- **T446 stays where it is**: W on main, and C if #740's §96 lands first. It is deliberately not restated here, so this
+  section cannot undo §96 whichever order they merge in. Its words are previews, and an avatar is not one (TM-2's
+  reading). What this section closes is the adjacent door TM-2 named as the residual risk of its proposed C: a
+  sender-chosen avatar host is now refused at both writers, and a recipient's device never fetches it.
+- **T295 stays C.** Reader faces still come from the server's receipt answer. The client now draws a face only when it
+  is Portava storage, which narrows the chip and never widens it.
+- **T9 stays C.** The thread header's avatar goes through `Avatar`, now storage-or-nothing. Nothing else in the row's
+  evidence changes.
+
+### 97.4 Evidence
+
+- `artifacts/api-server/src/test/profileAvatarUrlStorageOnly.test.ts`, 111 tests. It covers the rule over 34 hostile
+  references; the trigger's own regex, lifted from 3827, run over the same table (parity); the route; and the
+  replayed chain under both starting ACLs (`artifacts/api-server/src/test/profileAvatarUrlStorageOnly.test.ts:271#AV-C1`,
+  `artifacts/api-server/src/test/profileAvatarUrlStorageOnly.test.ts:278#AV-C3`). It also holds the premise that no
+  client tree writes the column through PostgREST. **Red on main: 27** (the route admits 23 of the refused references,
+  plus the re-send case, AV-C1, AV-C3 and the premise); the parity suite cannot load without 3827.
+- `artifacts/api-server/src/test/db/profileAvatarUrlStorageOnly.db.test.ts` AV0–AV8 runs in CI's local-db job. On a
+  lane-private PGlite replica of `profiles` it is 9/9, and 7/9 red without 3827.
+- `travel-buddy-standalone/src/lib/__tests__/avatarImageBoundary.test.ts`, a TS-AST guard over `app/` and `src/`. It
+  checks that every image sink binding an avatar-named source goes through the door (structurally: a door call beside
+  a raw operand does not count), with two pinned, reviewed sites. It also checks the name-hidden doors. **Red on main:**
+  12 sinks and the door check.
+- `travel-buddy-standalone/src/components/ui/__tests__/avatarStorageOnly.component.test.tsx`, 13 tests: six primitives
+  and the reader chips draw no outside host, and each has a storage CONTROL. **Red on main: 7 of 13** (every
+  outside-host case; the controls pass).
+- Mutants: see 97.6.
+
+### 97.5 Decisions and effects, stated so a reader does not discover them
+
+- **OWNER QUESTION Q-AV-1 (fail-closed default, NOT approved).** Avatars on an outside host now draw as initials for
+  every viewer, the person included. That covers the seeded test profiles (dicebear, picsum) and the @Portava official
+  account (`artifacts/api-server/src/scripts/seed-portava-account.ts:36#PORTAVA_AVATAR_URL`, unsplash). The fix is to
+  upload them to `profile-media` with the service key. No outside host is allow-listed.
+- **OWNER QUESTION Q-AV-2.** `profiles.cover_photo_url` has the same shape. It is owner-writable through PostgREST and
+  through `coverUrl: appMediaRef`, and every Passport viewer draws it. It is NOT changed here (lane scope). Recommended:
+  the same two barriers and the same rule.
+- The API refuses an absolute URL of the person's own object too: the upload never answers that form, and 2082
+  canonicalized stored values to the bare key.
+- A row that already holds an outside URL keeps it through other edits. The person can clear it or replace it with an
+  upload. The app draws it as nothing.
+
+### 97.6 Mutants: 31 of 31 killed on the avatar half
+
+The runner `b58/priv3/mutate.py` asserts the worktree and a clean committed tree, applies one textual mutant at a
+time, restores it with `git checkout`, and ends clean.
+
+- **API rule and route, 8 killed.** The check skipped; the bucket or prefix unchecked; the uid case-folded (killed after
+  an assertion was added; it survived round 1 because the route's owner comparison still refused it); `..` admitted;
+  the file bound off by one; any owner admitted; clearing refused.
+- **3827, 6 killed.** These are the REVOKE dropped, unchanged values judged, any uid admitted, `..` admitted, the
+  trigger on UPDATE only, and the predicate bypassed.
+  - All six are killed by the static suite.
+  - Run against the db suite alone:
+    - five cannot even be applied: 3827's own `$post$` refuses them;
+    - `..` admitted applies, and AV2 kills it.
+- **The premise, 1 killed.** The root writer is restored.
+- **App, 16 killed:**
+  - the rule: the origin as a bare prefix, a dotted first segment, unsafe characters, traversal;
+  - each primitive and door unruled: Avatar, AvatarImage by `uri` and by `user`, TelegraphAvatar, the reader faces,
+    `resolveAvatarUrl`, the comment avatar, the suggestion avatar, the mention row;
+  - a raw sink restored, and TravelerMapLayer raw again;
+  - the guard loosened so that "a door anywhere" counts.
+
+### 97.7 Scope
+
+- NOT-GRADED: artifacts/api-server/src/lib/avatarStorageRef.ts — the API's avatar rule; cited in 97.2 for the door it closes, graded by no telegraph row.
+- NOT-GRADED: artifacts/api-server/src/lib/postSchemas.ts — cited in 97.1 only as the shared media-reference schema that admitted any https host.
+- NOT-GRADED: artifacts/api-server/src/routes/profile.ts — cited in 97.2 for the one appended check; the profile route is census-passport's.
+- NOT-GRADED: artifacts/api-server/src/migrations/2078_profiles_role_not_self_writable.sql — cited in 97.1 for the one column it took back.
+- NOT-GRADED: artifacts/api-server/src/migrations/3827_profiles_avatar_url_storage_only.sql — the migration this section describes; profiles is not a telegraph table.
+- NOT-GRADED: artifacts/api-server/src/scripts/seed-portava-account.ts — cited in 97.5 for the seeded outside-host avatar.
+- NOT-GRADED: artifacts/api-server/src/test/profileAvatarUrlStorageOnly.test.ts — this section's evidence; no telegraph row rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/db/profileAvatarUrlStorageOnly.db.test.ts — this section's executed SQL evidence.
+- NOT-GRADED: travel-buddy-standalone/src/lib/avatarImageUri.ts — the app's avatar rule; graded by no telegraph row.
+- NOT-GRADED: travel-buddy-standalone/src/components/ui/Avatar.tsx — a shared primitive; cited for the rule it now applies.
+- NOT-GRADED: travel-buddy-standalone/src/components/ui/DisplayMediaImage.tsx — a shared primitive; cited for the rule AvatarImage now applies.
+- NOT-GRADED: travel-buddy-standalone/src/utils/identity.ts — cited for resolveAvatarUrl.
+- NOT-GRADED: travel-buddy-standalone/src/lib/__tests__/avatarImageBoundary.test.ts — this section's TS-AST avatar sink guard; no telegraph row rests on it alone.
+- NOT-GRADED: travel-buddy-standalone/src/components/ui/__tests__/avatarStorageOnly.component.test.tsx — this section's component evidence.
+
+### 97.8 The headline, restated from the rows
+
+Unchanged by this section, which moves no bucket: `check:census-integrity` on this branch counts 262 / 183 / 4 / 2 of
+451 (C / W / N / X), as on main `3c214ca80`.

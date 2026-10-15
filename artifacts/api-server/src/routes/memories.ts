@@ -1110,7 +1110,7 @@ router.post("/memories/search", async (req, res) => {
     semanticRerankApplied: result.value.semantic_rerank_applied,
     namespace: result.value.namespace,
     projectionId: result.value.projection_id,
-    engineVersion: result.value.engine_version, audienceWithheldCount: result.value.audience_withheld_count, // §23 at read time (H3-1): a hit this reader may not see is withheld, and counted
+    engineVersion: result.value.engine_version, audienceWithheldCount: result.value.audience_withheld_count, peopleComplete: result.value.people_complete, // §23 at read time (H3-1): a hit this reader may not see is withheld, and counted; peopleComplete (census-highlights-memories §BU): false only when block state was unreadable and every person but the viewer was withheld from each hit's people
     capabilities: searchCapabilities(),
   });
 });

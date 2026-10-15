@@ -19,7 +19,7 @@ import TestRenderer, { act } from 'react-test-renderer';
 import { SearchSuggestionsPanel } from '../SearchSuggestionsPanel.tsx';
 import type { SuggestGroup, UnifiedSearchResult } from '../../../services/discovery.ts';
 
-const RAW_URL = 'https://proj.supabase.co/storage/v1/object/public/profile-media/u2/avatar.jpg';
+const RAW_URL = 'profile-media/u2/avatar.jpg'; // PRIV-FIX-3: the canonical stored reference; an outside host is never hydrated
 const SIGNED_URL = 'https://proj.supabase.co/storage/v1/object/sign/profile-media/u2/avatar.jpg?token=signed-abc';
 
 // ── mediaUrl mock ────────────────────────────────────────────────────────────

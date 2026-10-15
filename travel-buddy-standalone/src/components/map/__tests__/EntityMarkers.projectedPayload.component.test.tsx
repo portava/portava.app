@@ -89,7 +89,7 @@ describe('EntityMarkers reads the projected payload', () => {
   });
 
   it('a circle-member pin renders the avatar the projector put on the payload', async () => {
-    const url = 'https://cdn.example/friend-avatar.jpg';
+    const url = 'profile-media/avatars/friend/a.jpg'; // PRIV-FIX-3: an avatar is Portava storage or nothing
     await renderMarkers([friendEntity({ avatarUrl: url })]);
     expect(screen.getByTestId(`cached-image:${url}`)).toBeTruthy();
   });

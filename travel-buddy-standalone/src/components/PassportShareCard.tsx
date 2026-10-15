@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import { CachedImage } from './CachedImage.tsx';
+import { CachedImage } from './CachedImage.tsx'; import { avatarImageUri } from '../lib/avatarImageUri.ts'; // PRIV-FIX-3 (census-telegraph §97): an avatar is Portava storage or nothing
 import { Plane, Map, Award } from 'lucide-react-native';
 import { color, space, radius, avatar } from '../theme/tokens.ts';
 import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity.ts';
@@ -31,8 +31,8 @@ export const PassportShareCard = React.forwardRef<View, PassportShareCardProps>(
 
         {/* Avatar */}
         <View style={styles.avatarWrap}>
-          {avatarUrl ? (
-            <CachedImage source={{ uri: avatarUrl }} style={styles.avatar} fallbackLabel="" />
+          {avatarImageUri(avatarUrl) ? (
+            <CachedImage source={{ uri: avatarImageUri(avatarUrl) ?? undefined }} style={styles.avatar} fallbackLabel="" />
           ) : (
             <View style={[styles.avatar, styles.avatarPlaceholder]}>
               <Text style={styles.avatarEmoji}>✈️</Text>

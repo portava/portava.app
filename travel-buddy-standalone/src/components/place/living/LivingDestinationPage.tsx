@@ -57,7 +57,7 @@ import {
   AlertTriangle,
 } from 'lucide-react-native';
 import { router } from 'expo-router';
-import { CachedImage } from '../../CachedImage.tsx';
+import { CachedImage } from '../../CachedImage.tsx'; import { avatarImageUri } from '../../../lib/avatarImageUri.ts'; // PRIV-FIX-3 (census-telegraph §97): an avatar is Portava storage or nothing
 import { color, space, radius, type as t, shadow, typography, icon, aspect, dot} from '../../../theme/tokens.ts';
 import { getPlaceTimeline } from '../../../services/places.ts';
 import { useIntelPrompts } from '../../../hooks/useIntelPrompts.ts';
@@ -1639,9 +1639,9 @@ function PlaceTopContributorChip({ contributor }: PlaceTopContributorChipProps) 
   return (
     <View style={tc.wrap}>
       <View style={tc.chip}>
-        {contributor.avatarUrl ? (
+        {avatarImageUri(contributor.avatarUrl) ? (
           <CachedImage
-            source={{ uri: contributor.avatarUrl }}
+            source={{ uri: avatarImageUri(contributor.avatarUrl) ?? undefined }}
             style={tc.avatar}
             resizeMode="cover"
           />

@@ -32,7 +32,7 @@ import { Search, X, Users, Zap } from 'lucide-react-native';
 import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
 import { AppHeader } from '../../src/components/ui/AppHeader';
 import { EmptyState } from '../../src/components/ui/EmptyState';
-import { CachedImage } from '../../src/components/CachedImage';
+import { CachedImage } from '../../src/components/CachedImage'; import { avatarImageUri } from '../../src/lib/avatarImageUri.ts'; // PRIV-FIX-3 (census-telegraph §97): an avatar is Portava storage or nothing
 import { PlainBottomFiller } from '../../src/hooks/useBottomInset';
 import { useTelegraphRecipients } from '../../src/hooks/useTelegraphRecipients';
 import type { RecipientRow } from '../../src/platform/input-assistance/social/telegraphRecipients';
@@ -187,8 +187,8 @@ function RecipientRowView({
       accessibilityLabel={`Message ${recipient.name}`}
     >
       <View style={styles.avatarWrap}>
-        {recipient.avatarUrl ? (
-          <CachedImage source={{ uri: recipient.avatarUrl }} style={styles.avatar} />
+        {avatarImageUri(recipient.avatarUrl) ? (
+          <CachedImage source={{ uri: avatarImageUri(recipient.avatarUrl) ?? undefined }} style={styles.avatar} />
         ) : (
           <View style={[styles.avatar, styles.avatarFallback]}>
             <Text style={styles.avatarInitials}>

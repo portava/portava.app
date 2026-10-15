@@ -87,8 +87,8 @@ describe('PortavaSheet', () => {
 
 describe('Avatar', () => {
   it('renders the image when a uri is given', async () => {
-    const { getByTestId } = await render(<Avatar uri="https://cdn/a.jpg" name="Maya Chen" testID="av" />);
-    expect(getByTestId('av').props.source).toEqual({ uri: 'https://cdn/a.jpg' });
+    const { getByTestId } = await render(<Avatar uri="avatars/a.jpg" name="Maya Chen" testID="av" />); // PRIV-FIX-3: an avatar is Portava storage or nothing (a non-private reference: hydration passes it through unsigned here)
+    expect(getByTestId('av').props.source).toEqual({ uri: 'avatars/a.jpg' });
   });
 
   it('falls back to two-letter initials', async () => {

@@ -43,7 +43,7 @@ import { X, SendHorizonal, Trash2, CornerDownRight, Flag, Pencil } from 'lucide-
 import { StampIcon } from './stamps/StampIcon.tsx';
 import { ReportSheet } from './ReportSheet.tsx';
 import { blockUser } from '../services/blocks.ts';
-import { ProfilePreviewCard } from './ProfilePreviewCard.tsx';
+import { ProfilePreviewCard } from './ProfilePreviewCard.tsx'; import { avatarImageUri } from '../lib/avatarImageUri.ts'; // PRIV-FIX-3 (census-telegraph §97): an avatar is Portava storage or nothing
 import { color, space, radius, shadow, avatar } from '../theme/tokens.ts';
 import { MentionInput, type MentionInputHandle } from './MentionInput.tsx';
 import { MentionSuggestionList } from './MentionSuggestionList.tsx';
@@ -138,7 +138,7 @@ function AvatarFallback({ name, size = 32 }: { name: string; size?: number }) {
   );
 }
 
-function CommentAvatar({ uri, name, size = 32 }: { uri?: string | null; name: string; size?: number }) {
+function CommentAvatar({ uri: rawUri, name, size = 32 }: { uri?: string | null; name: string; size?: number }) { const uri = avatarImageUri(rawUri); // PRIV-FIX-3: a commenter's avatar is Portava storage or initials
   const [imgErr, setImgErr] = useState(false);
   if (uri && !imgErr) {
     return (

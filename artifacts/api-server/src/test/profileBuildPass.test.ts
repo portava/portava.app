@@ -333,7 +333,7 @@ describe("PATCH /api/me/profile — allowed fields", () => {
   });
 
   it("accepts avatarUrl — persists avatar_url column", async () => {
-    const url = "https://example.com/avatar.jpg";
+    const url = `profile-media/avatars/${ME}/avatar.jpg`; // PRIV-FIX-3: the caller's own upload (what POST /me/avatar/upload answers); an outside URL is refused — profileAvatarUrlStorageOnly.test.ts AV-A
     const res = await req("PATCH", "/api/me/profile", {
       body: { avatarUrl: url },
     });

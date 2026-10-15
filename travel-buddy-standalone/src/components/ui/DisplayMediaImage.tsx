@@ -30,7 +30,7 @@ import { Image as ExpoImage } from 'expo-image';
 import type { ImageContentFit } from 'expo-image';
 import { color, radius, space, type as t, icon } from '../../theme/tokens.ts';
 import { type IdentityInput, fallbackInitials } from '../../utils/identity.ts';
-import { resolveDisplayMedia } from '../../lib/displayMedia.ts';
+import { resolveDisplayMedia } from '../../lib/displayMedia.ts'; import { avatarImageUri } from '../../lib/avatarImageUri.ts'; // PRIV-FIX-3 (census-telegraph §97)
 import { hydrateMediaUrls, useHydratedMedia } from '../../services/mediaUrl.ts';
 import { _evictBatchSignEntry } from '../../lib/batchSignMedia.ts';
 import { resolveFilterStyle, type FilterStyle } from '../../lib/media/filters.ts';
@@ -412,7 +412,7 @@ export interface AvatarImageProps {
  * made before falling back to the initials chip.
  */
 export function AvatarImage({ uri, user, size, style, bg, testID }: AvatarImageProps) {
-  const resolvedUri = resolveDisplayMedia([uri, user?.avatarUrl ?? undefined]);
+  const resolvedUri = resolveDisplayMedia([avatarImageUri(uri), avatarImageUri(user?.avatarUrl)]); // PRIV-FIX-3 (census-telegraph §97): an avatar is Portava storage or nothing (initials)
   const initials = user ? fallbackInitials(user) : (uri ? '?' : '?');
   const [imgError, setImgError] = useState(false);
   const reHydrated = useRef(false);
