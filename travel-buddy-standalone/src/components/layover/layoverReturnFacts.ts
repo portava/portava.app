@@ -382,8 +382,8 @@ export function describeCachedPhrases(
  * inventing one that sounds plausible.
  */
 const CREW_NOTIFY_REASON_TEXT: Record<string, string> = {
-  no_crew_storage: 'there is nothing set up to reach them',
-  crew_notify_not_enabled: 'Portava does not message your crew for you, so let them know yourself',
+  no_crew_storage: 'there is nothing set up to reach them', crew_notify_not_enabled: 'Portava does not message your crew for you, so let them know yourself', not_requested: 'you did not ask us to', not_in_a_crew: 'you are not in a crew on this layover', no_crewmate_to_tell: 'there is no one in your crew we can reach for you',
+  sharing_not_allowed: 'your location sharing is paused or off', crew_unreadable: 'your crew could not be checked just now', blocks_unreadable: 'your crew could not be checked just now', sharing_preferences_unreadable: 'your crew could not be checked just now', notify_failed: 'the message could not be sent',
 };
 
 /**
@@ -391,39 +391,39 @@ const CREW_NOTIFY_REASON_TEXT: Record<string, string> = {
  *
  * ── THE BOUNDARY THIS FUNCTION IS CAREFUL ABOUT ──────────────────────────────
  * Notifying a crew that a member aborted is a DISCLOSURE ABOUT THAT MEMBER, and
- * whether it should happen at all is an owner decision that is NOT taken here
- * or anywhere else on this client. Nothing in this file, and nothing that calls
- * it, sends a notification, offers a control that would, or asks the server
- * for one.
+ * whether it should happen at all is an owner decision (OQ-3) that is NOT taken
+ * here: the server holds it behind a flag seeded OFF, and the only control this
+ * client has is the traveller's own per-abort "tell my crew" choice
+ * (LayoverCrewAbortToggle), offered only when the server says it would honour it.
  *
  * What it does is the other half, and that half is not optional: when the
  * server reports that the traveller's abort WAS broadcast to other people, the
  * traveller is entitled to know it happened. A surface that silently swallows
- * `crewNotified` is deciding — by omission — that a traveller need not be told
+ * `crewNotifiedCount` is deciding — by omission — that a traveller need not be told
  * who was told about them.
  *
  * ── WHY IT READS THE FIELDS AND NOT `effects` ────────────────────────────────
- * `crew_notify_unavailable` is an effect MARKER that has been unconditionally
- * present on every abort this tree has ever served; `describeAbortEffects`
+ * `crew_notify_unavailable` is an effect MARKER present on every abort that told
+ * nobody (before L144, on every abort this tree served); `describeAbortEffects`
  * drops it for exactly that reason and two tests pin that it keeps doing so.
- * `crewNotified` and `crewNotifyUnavailableReason` are the VALUES, and a value
+ * `crewNotifiedCount` and `crewNotifyUnavailableReason` are the VALUES, and a value
  * is what this reads.
  *
  * Returns `null` when the server reported neither — nothing happened, so
  * nothing is said. An empty string would be a sentence-shaped blank.
  */
 export function describeCrewNotification(input: {
-  crewNotified: readonly string[];
+  crewNotified?: readonly string[]; /** census-layover L144: the server's COUNT (preferred); `crewNotified` is a pre-L144 server's always-empty list */ crewNotifiedCount?: number;
   crewNotifyUnavailableReason: CrewNotifyUnavailableReason | null;
 }): string | null {
-  const notified = input.crewNotified.length;
+  const notified = typeof input.crewNotifiedCount === 'number' ? input.crewNotifiedCount : (input.crewNotified?.length ?? 0);
   if (notified > 0) {
-    return notified === 1
-      ? 'One crewmate was told you are heading back.'
-      : `${notified} crewmates were told you are heading back.`;
+    const told = notified === 1
+      ? 'One crewmate was told you are heading back.' : `${notified} crewmates were told you are heading back.`;
+    return input.crewNotifyUnavailableReason === 'notify_partially_failed' ? `${told} Not everyone in your crew could be reached.` : told;
   }
   const reason = input.crewNotifyUnavailableReason;
-  if (!reason) return null;
+  if (!reason) return null; if (reason === 'notify_timed_out') return 'We could not confirm in time whether your crew was told you are heading back.'; // census-layover L144 fix round 1 (F3): past the abort's bound the server cannot say, so neither does this
   const why = CREW_NOTIFY_REASON_TEXT[reason];
   return why
     ? `Your crew was not told you are heading back — ${why}.`

@@ -247,7 +247,7 @@ export async function answerLayoverQuestion(
   const { cutoffMs, breakdown, hardReturnTime } = record.deadline;
   const availMin  = input.snapshot ? Math.max(0, input.snapshot.minutesToHardReturn + breakdown.totalBuffer) : Math.max(0, Math.round((cutoffMs - now.getTime()) / 60000)); // §81: ON, the clock too is read off the snapshot
   const bufferMin = breakdown.totalBuffer;
-  const usableMin = input.snapshot ? input.snapshot.usableMinutes : Math.max(0, availMin - bufferMin);
+  const usableMin = input.snapshot ? input.snapshot.usableMinutes : record.envelope.usableMinutes; // census-layover §75: the record's figure — `cutoff − now − buffer` counted the flight itself as usable time
   const hardReturnLocal = formatLocalTime(airport.timezone ?? "UTC", hardReturnTime);
 
   // L-CL02d: the ONLY answer this door gives — certified text + deterministic

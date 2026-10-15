@@ -261,21 +261,21 @@ describe("a record publishes exactly one buffer and one deadline", () => {
     );
   });
 
-  it("passing the certified deadline into assess() changes no assessment", () => {
-    // The optional 5th argument is a REUSE of `computeReturnDeadline`, not a
-    // second path. If it ever became one, this comparison is where it shows.
+  it("assess() against the certified record reuses its deadline AND its envelope — no second path (census-layover §75)", () => {
+    // The 5th argument used to be a bare deadline, reused rather than re-derived. It is now the whole
+    // record: the deadline is still reused, and its envelope is the only usable time a card is rated
+    // against. Without a record nothing is certified — there is no fallback derivation to compare with.
     const a = airport();
     const s = split;
-    const deadline = computeReturnDeadline(a, s);
+    const record = certifySessionFeasibility(a, s, { nowMs: NOW });
+    assert.equal(record.deadline.hardReturnTime.getTime(), computeReturnDeadline(a, s).hardReturnTime.getTime());
     for (const travel of [0, 5, 20, 60, 200]) {
       for (const activity of [0, 30, 120]) {
         for (const inside of [true, false]) {
           const cand = { title: "c", travelTimeMin: travel, activityTimeMin: activity, insideAirport: inside };
-          assert.deepEqual(
-            assess(a, s, cand, NOW, deadline),
-            assess(a, s, cand, NOW),
-            `travel=${travel} activity=${activity} inside=${inside}`,
-          );
+          const got = assess(a, s, cand, NOW, record), bare = assess(a, s, cand, NOW);
+          assert.deepEqual([got.hardReturnTime, got.returnBufferMin, got.breakdown, got.usableMinutes], [record.deadline.hardReturnTime, record.deadline.breakdown.totalBuffer, record.deadline.breakdown, record.envelope.usableMinutes], `travel=${travel} activity=${activity} inside=${inside}`);
+          assert.equal(bare.rating, "not_recommended", `no record, yet travel=${travel} activity=${activity} inside=${inside} was rated ${bare.rating}`);
         }
       }
     }
