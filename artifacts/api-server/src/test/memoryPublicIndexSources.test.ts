@@ -469,14 +469,18 @@ describe("H203 — the outbox worker keeps the PUBLIC index from the event paylo
       assert.equal(reg(store, PUBLIC_KEY).revocation_state, "ACTIVE");
     });
 
-    it("an already-revoked registration is reported revoked, not rewritten", async () => {
+    it("the rebuild failing at its SOURCE read (memories unreadable) takes the same fallback; an already-revoked registration is reported revoked, not rewritten", async () => {
       const { rebuildSubscribedProjection } = await import("../services/memoryProjections/outboxConsumer.js");
+      const sourceDown = { memories: { code: "57014", message: "statement timeout" } };
       const store = await narrowedWorld();
       store.memory_domain_events.push(event("e-1", NARROWED));
-      Object.assign(reg(store, PUBLIC_KEY), { revocation_state: "REVOKED", revocation_reason: "earlier" });
-      const r = await rebuildSubscribedProjection(makeDb(store, { failWrite: failPublicUpsert }), claimed() as any, "PublicMemoryProjection", { owner_id: OWNER }, NOW);
-      assert.ok(r.ok && r.value.was_revoked);
-      assert.equal(reg(store, PUBLIC_KEY).revocation_reason, "earlier");
+      const r1 = await rebuildSubscribedProjection(makeDb(store, { failRead: sourceDown }), claimed() as any, "PublicMemoryProjection", { owner_id: OWNER }, NOW);
+      assert.ok(r1.ok && r1.value.was_revoked);
+      assert.equal(reg(store, PUBLIC_KEY).revocation_state, "REVOKED");
+      Object.assign(reg(store, PUBLIC_KEY), { revocation_reason: "earlier" });
+      const r2 = await rebuildSubscribedProjection(makeDb(store, { failRead: sourceDown }), claimed() as any, "PublicMemoryProjection", { owner_id: OWNER }, NOW);
+      assert.ok(r2.ok && r2.value.was_revoked);
+      assert.equal(reg(store, PUBLIC_KEY).revocation_reason, "earlier", "a revoked registration is not rewritten");
     });
 
     it("every OTHER projection's failure is untouched by the payload: it fails, it is never revoked here", async () => {
