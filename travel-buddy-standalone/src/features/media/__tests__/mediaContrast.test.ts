@@ -1649,3 +1649,27 @@ test('census-media §33.13: dynamic type — no Text in the nested sheets opts o
   assert.ok(textElements >= 60, `found ${textElements} <Text elements`);
   assert.deepEqual(offenders, []);
 });
+
+// ═══ census-media §51 (MD162) — appended at the TAIL so no line cited above moves ═══
+// The NOW dashboard's "WHERE THE NIGHT IS MOVING" card (components/CrowdFlowCard.tsx)
+// paints on the same 0.05 card wash as the City Visual State above it, and its
+// FreshnessBadge is the same pill on the same card. Each pair is tied to the
+// card's source by a needle, so a colour change there turns this file red.
+const F_FLOW = 'src/features/media/components/CrowdFlowCard.tsx';
+add({ id: 'nightFlow.heading', fg: color.onInkMute, on: 'card', kind: 'text', at: [CARD(F_FLOW), [F_FLOW, /heading: \{\s*color: color\.onInkMute,/]] });
+add({ id: 'nightFlow.zoneName', fg: color.onInk, on: 'card', kind: 'text', at: [CARD(F_FLOW), [F_FLOW, "zoneName: { color: color.onInk, fontSize: 15"]] });
+add({ id: 'nightFlow.count', fg: color.onInkMute, on: 'card', kind: 'text', at: [CARD(F_FLOW), [F_FLOW, "count: { color: color.onInkMute, fontSize: 12"]] });
+add({ id: 'nightFlow.toward', fg: color.onInkMute, on: 'card', kind: 'text', at: [CARD(F_FLOW), [F_FLOW, "toward: { color: color.onInkMute, fontSize: 15"]] });
+add({ id: 'nightFlow.sentence', fg: color.onInk, on: 'card', kind: 'text', at: [CARD(F_FLOW), [F_FLOW, "sentence: { color: color.onInk, fontSize: 13"]] });
+add({ id: 'nightFlow.freshness.text', fg: color.onInkMute, on: 'pill10OnCard', kind: 'text', at: [FRESH_TEXT, PILL10(F.freshness), CARD(F_FLOW), [F_FLOW, '<FreshnessBadge freshness={end.freshness} />']] });
+for (const [k, v] of Object.entries(FRESHNESS_COLOR)) {
+  add({ id: `nightFlow.freshness.dot.${k}`, fg: v, on: 'pill10OnCard', kind: 'ui', at: [...FRESH_DOT, CARD(F_FLOW)] });
+}
+MEASURED.push(...PAIRS.slice(MEASURED.length).map(measurePair));
+
+test('census-media §51: the night-flow card is a measured surface, and every pair on it clears AA', () => {
+  const flow = MEASURED.filter((m) => m.pair.id.startsWith('nightFlow.'));
+  assert.ok(flow.length >= 6 + Object.keys(FRESHNESS_COLOR).length, `expected the card's pairs, got ${flow.length}`);
+  assert.deepEqual(flow.filter((m) => m.threshold !== null && m.ratio < m.threshold).map((m) => `${m.pair.id}: ${m.ratio.toFixed(2)}`), []);
+  assert.equal(MEASURED.length, PAIRS.length);
+});
