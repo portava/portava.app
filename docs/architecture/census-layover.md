@@ -11635,3 +11635,176 @@ No row moves.
 | total | 296 | 296 |
 
 **C=85 W=156 N=55 X=0** over 296 (`check:census-integrity`, restated on merging `main` `f57202703`, which carries §73 and §74 — L144 N → W).
+
+## §80 — 2026-10-14 (B58 lane LAY-R1R2; verifier V-728 recommendations R1 and R2): a certified record is read only for the session it certified, and an airside card is never `safe` while the boarding time is unknown. NO ROW MOVES
+
+*Built on branch `claude/fix-layover-session-identity-airside` from #728's head `cf43d2940`, then merged with origin/main
+`78028e2d8` (#728 itself). §76–§79 are reserved for #730, #732, #734 and #733, which are in flight. No migration, no
+flag, no stored column and no database are touched. Every edit to a line-cited file is line-neutral; the new helpers
+are appended at the foot of `LayoverSafetyEngine.ts`.*
+
+### §80.1 R1: the engine had no session identity
+
+- **The defect, re-verified on `78028e2d8`.** §75 made `assess` read a certified record only if it is readable and
+  this instant's. The record type carried only the instant, `inputs: { nowMs }`, so a readable record for ANOTHER
+  session, certified at the same instant, was accepted. Every card was then rated against that session's usable
+  time.
+  - The verifier's case, now a test: session A has 7 h left and session B is a 20-hour connection. A's cards rated
+    against B's record were `safe` ×3 on `main`
+    (`artifacts/api-server/src/test/layoverSessionIdentityAirside.test.ts:105#B's record rated for session A`).
+- **It was latent.** Both production callers hand in the record they certified for the session they hold:
+  - the recommendation service through `consumerLayoverRecord` (which honours the loaded session) or an inline
+    certification of the same session;
+  - the record's own landside probe, which is rated against the record being built.
+- **The fix makes it structural.**
+  - The record type carries the session id
+    (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:714#export interface CertifiedTimeBudget`).
+    It names the field every record already has. The producer has projected `session.id` into the hashed inputs
+    since 2700 (`artifacts/api-server/src/services/airport/LayoverFeasibility.ts:375#id: session.id,`), so the
+    producer needs no change and no record byte moves.
+  - `assess` and `rankActivities` take a session that names its own id
+    (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:742#session: RatedSession`,
+    `artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:1583#export type RatedSession`). A caller
+    that cannot name the session it rates is a compile error, before the runtime check refuses it.
+  - The readability predicate gains one conjunct
+    (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:755#certifiedForSession(record, session)`).
+    Both ids must be non-empty strings and equal
+    (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:1605#return typeof session.id === "string" && session.id !== "" && recordSessionId === session.id;`).
+  - A mismatch, or a missing id on either side, is §75's refusal: `not_recommended` with
+    `UNCERTIFIED_WINDOW_WARNING`. Two `undefined`s are not one session.
+- **Every caller.** Both production callers type-check unchanged, because `LayoverSession` and `FeasibilitySession`
+  carry `id`. #730 (LAY-5) is not on `main` yet. Its time-budget chips narrow a COPY of the record by spread, which
+  keeps `inputs.session.id`. That copy shape is pinned here
+  (`artifacts/api-server/src/test/layoverSessionIdentityAirside.test.ts:160#a NARROWED COPY of the record`).
+
+### §80.2 R2: the airside margin when the boarding time is unknown
+
+- **The defect, re-verified on `78028e2d8`.**
+  - Every deadline is anchored at the boarding time, or at the departure when there is none
+    (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:657#return boardingMs ?? new Date(session.departureTime).getTime();`).
+  - The airside branch compares the span with the dwell plus a flat 15 minutes
+    (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:783#} else if (airsideMin < statedActivity + 15) {`).
+  - Spec §6 deducts a terminal/gate transfer and a boarding buffer before "= usable experience time"
+    (`docs/specs/Portava_Layover_Development_Architecture_Spec_v3.txt:217#- terminal/gate transfer`,
+    `docs/specs/Portava_Layover_Development_Architecture_Spec_v3.txt:218#- boarding buffer`).
+  - So with no boarding time, a 45-minute dining card on a 60-minute connection was `safe`, with the traveller due
+    at the gate 15 minutes before DEPARTURE. That was the verifier's case, and it is red on `main` both through
+    `assess` and through the producer's own dining card
+    (`artifacts/api-server/src/test/layoverSessionIdentityAirside.test.ts:191#RED ON MAIN: a 45-minute dining card`).
+- **Does the data have the airside terms? No, so no minute is invented (L293, H4).**
+  - `airport_profiles` carries LANDSIDE return terms only. The base buffer is security and boarding lumped together
+    (L46), and splitting it would invent the split.
+  - No minimum-connection, boarding-close or gate-transfer figure exists for any airport.
+  - §4's `minimum_boarding_buffer_min` exists as a column
+    (`artifacts/api-server/src/migrations/2992_layover_decision_record_and_operational_tables.sql:428#minimum_boarding_buffer_min INTEGER`),
+    but nothing writes it. The stored-vocabulary suite lists it as unsent
+    (`artifacts/api-server/src/test/layoverStoredVocabulary.test.ts:282#minimum_boarding_buffer_min`).
+  - The client's mode sheet sends no boarding time
+    (`travel-buddy-standalone/src/components/layover/LayoverModeSheet.tsx:212#const payload: CreateSessionPayload = {`).
+    The API accepts one, but no screen asks for it.
+- **Does the spec give an X?** No. §6 lists the terms without figures, and §8's map bands defer to "configured
+  policy", which nothing configures. So the lead's suggested threshold ("the activity uses more than X% of the span")
+  has no X to use. The X=0 end is built as the fail-closed default, and the threshold goes to the owner (Q-R2-1).
+- **The fix.**
+  - An airside card is `safe` only when the session STATES a boarding time and the record's cutoff IS that instant
+    (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:1630#return Number.isFinite(boardingMs) && boardingMs === cutoffMs;`).
+  - Otherwise the card is `possible_but_risky`, with a sentence that names the unknown
+    (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:787#} else if (!cutoffIsStatedBoarding(session, cutoffMs)) {`,
+    `artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:1639#export const BOARDING_TIME_UNKNOWN_WARNING =`).
+    The sentence asks for nothing the app cannot take: "be back at your gate before boarding".
+  - The STATED reasons keep precedence. An unstated dwell is still `not_recommended`, and a span too short for
+    dwell + 15 still says so.
+  - With a stated boarding time the rule is exactly the one it was.
+  - **No number moves.** Stating boarding = departure leaves the cutoff, the record, the deadline, the buffer and
+    every minute on the card identical; only the rating differs
+    (`artifacts/api-server/src/test/layoverSessionIdentityAirside.test.ts:215#NO MINUTE IS INVENTED`).
+- **Why `possible_but_risky` and not `not_recommended`.** L293 refuses an unmeasured LANDSIDE leg outright, because
+  "possible but risky" would size a risk nobody measured. Airside the traveller never leaves the terminal. The only
+  unknown is how long before departure boarding is, so the card can be done in the stated time; what is unsure is
+  whether it fits before boarding. That choice is also an owner question (Q-R2-2), and the fail-closed alternative
+  is one line.
+- **Reach in production, stated plainly.** No screen asks for a boarding time, so a session has one only if a caller
+  wrote it through the API directly. Production rows were not read; that is not this lane's to touch. For every
+  session created in the app, EVERY airside card is now `possible_but_risky` with the warning. Landside cards were already
+  never `safe` (no routed provider, L293). **No card is `safe` for those travellers until the owner answers Q-R2-1.**
+  - The client already renders `warningReason` under the label, so the reason is visible.
+  - §72's monitor counts `possible_but_risky` as a certified fit and reads no new violation.
+  - A stated-boarding session (through the API) is rated as before.
+
+### §80.3 Evidence
+
+- **New suite** `artifacts/api-server/src/test/layoverSessionIdentityAirside.test.ts`: 17/17 green.
+  - Against `main`'s engine, 10 of 17 fail, every one by assertion on behaviour and none by TypeError: 4 on R1
+    (another session's record, rankActivities, the relabel gate, missing ids) and 6 on R2.
+  - The 7 that pass on `main` are controls: the precondition, the probe, the narrowed copy, the producer with a
+    stated boarding time, a stated boarding time that holds or does not, precedence, and landside untouched.
+- **Existing suites.** Seven cases pinned an airside `safe` on a session with no boarding time:
+  - `airport.test.ts` ×2;
+  - `layoverUnmeasuredJourney.test.ts` ×2;
+  - `layoverUsableTimeOneDefinition.test.ts` ×3 (the producer control, the touchdown control, the fail-closed
+    precondition).
+
+  Each now STATES a boarding time: boarding = departure where the figures must not move, and 30 min before departure
+  elsewhere. None loosens an assertion. The producer control now asserts that every dwell the connection holds is
+  downgraded only for the unknown boarding time, never for its length. Every edit is line-for-line, so every cited
+  case keeps its line.
+- **115 suites** read `LayoverSafetyEngine.ts`, `LayoverRecommendationService.ts`, `LayoverFeasibility.ts` or
+  `routes/airport.ts`, including the airport.ts ratchet suites. All 115 were run by explicit path, outside the
+  sandbox: **2,641/2,641**.
+- **Byte comparison, `main` against head**, over a 2,520-session matrix:
+  - The matrix is 10 arrival instants × 7 layover lengths × 3 flight shapes × wantsToLeave × 3 boarding states ×
+    2 entry states.
+  - **10,080 certified records** (×4 landside probes): **10,080 byte-identical**, including `inputHash`,
+    `engineVersion` and `landside`.
+  - **30,240 card assessments** (12 cards each, rated with the session's own record): 27,660 identical. The 2,580
+    that differ are ALL airside cards on a session with no boarding time, `safe` → `possible_but_risky` with the
+    new warning, and every other field is identical.
+  - R1 moves no same-session rating anywhere. 720 rank orders differ, all on no-boarding sessions.
+- `check:layover-decision-diff`: 31 compared, **0 changed**.
+- **`LAYOVER_ENGINE_VERSION` is not bumped.** Every certified record output is byte-identical (above), and the
+  version is inside `inputHash`. What changed is how a CARD consumes the record, which is §75's precedent (accepted
+  by V-728). If the lead reads card ratings as certified outputs, the bump is mechanical: the version string plus a
+  golden regeneration.
+- **Mutants** (`b58/lay-r12/mutants.py`; the runner asserts it is in this worktree and is clean after each one):
+  **18 mutants, 18 killed**, run against the new suite plus `layoverUsableTimeOneDefinition`, `layoverFeasibilityRecord`
+  and `layoverRecommendationGate`.
+  - R1 (9): the identity conjunct removed; the check always true; missing ids matching; empty ids matching; a
+    case-insensitive compare; the record's id falling back to the session's; the check applied only when both ids
+    are present; the probe record losing its session; the service handing in a relabelled record.
+  - R2 (9): the boarding branch removed; boarding always counted as stated; any boarding time counting whatever the
+    cutoff; a boarding time before the cutoff counting; no warning on the downgrade; refusing instead of downgrading;
+    unknown boarding outranking the too-short reason; an unparseable boarding time counting; the +15 dropped once
+    boarding is stated.
+
+### §80.4 Recorded, not moved
+
+- **No row moves.**
+  - **L46** stays W. §80 models no ladder term. It makes the UNKNOWN boarding term honest on the one branch that
+    charged nothing for it, and that half divergence is still W under §13.4's rule.
+  - **L22 / L23** stay N: `minimum_boarding_buffer_min` and the time-budget ladder columns have no writer.
+  - **L293** stays C, and §80 keeps its rule: no category-default minute reaches a rating.
+  - **L45, L47, L52** stay C.
+  - **L76, L77, L216** stay W.
+- **Airside with a stated boarding time.** The remaining §6 terms are still charged only by the pre-existing flat
+  +15: deplaning before arrival, the terminal/gate transfer and contingency. No data supplies them (owner question
+  Q-R2-3).
+- **The asymmetry this leaves.** The landside ladder charges boarding inside the airport's base buffer. So with no
+  boarding time a landside card with STATED legs can be `safe` while an airside card cannot. On today's producer
+  that cannot happen, because every landside leg is unmeasured; it is recorded for Q-R2-1.
+- **Merge hazard.** §76–§79 are #730/#732/#734/#733's. If any of them lands under another number, or not at all,
+  this section is renumbered and its `§80` code comments with it. #730's test comment "the engine has no session
+  identity of its own yet (V-728 R1)" becomes stale when this lands.
+
+### §80.5 Headline
+
+No row moves.
+
+| bucket | was (§75, main) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 85 | 85 |
+| BUILT-BUT-WRONG | 156 | 156 |
+| NOT-BUILT | 55 | 55 |
+| CANNOT-VERIFY | 0 | 0 |
+| total | 296 | 296 |
+
+**C=85 W=156 N=55 X=0** over 296 (`check:census-integrity`, restated on merging `main` `7408f62e6`).
