@@ -23,7 +23,7 @@ import { getDecayedWeights } from "./CompassSearchDecayService.js";
 
 import { getTrustProfileResult } from "../services/trust/TrustScoreService.js";
 // census-compass CT-02 — the ONE membership seam; this file had the fourth copy.
-import { resolveMemberTripIds, SELECTION_TRIP_ROLES } from "./CompassCurrentTrip.js";
+import { resolveMemberTripIds, SELECTION_TRIP_ROLES } from "./CompassCurrentTrip.js"; import { readBlockDirection } from "../lib/exclusionSet.js"; // one line: census docs cite this file by line
 const CACHE_TTL_MS = 2 * 60 * 1_000; // 2 minutes
 const FUTURE_WINDOW_48H_MS = 48 * 60 * 60 * 1_000;
 
@@ -101,12 +101,12 @@ async function buildProfile(
       .select("location_mode, sharing_paused, safe_return_enabled")
       .eq("user_id", userId)
       .maybeSingle(),
-    db.from("blocks")
-      .select("blocked_id")
-      .eq("blocker_id", userId),
-    db.from("blocks")
-      .select("blocker_id")
-      .eq("blocked_id", userId),
+    // Each direction read to its END (census-telegraph §98): these were range-less
+    // reads, cut at db-max-rows, so past 1,000 rows the profile's lists were a prefix.
+    readBlockDirection(db, "blocker_id", userId),
+    // A failed page, or a list past BLOCK_LIST_CEILING, is `{ data: null, error }`,
+    // which safetyListErrored below refuses exactly as it refuses a returned error.
+    readBlockDirection(db, "blocked_id", userId),
     db.from("safe_return_sessions")
       .select("id")
       .eq("user_id", userId)

@@ -284,7 +284,7 @@ function makeAcceptClient(opts: {
         select()            { return obj; },
         eq()                { return obj; },
         or()                { return obj; },
-        limit() { return obj; }, is() { return obj; }, // isBlockedBetween chains .or().limit(1); the inviter's open-restriction read (lead ruling R2, refuseIfInviterCannotHost) chains .is("lifted_at", null)
+        limit() { return tableName === "blocks" ? Promise.resolve({ data: [], error: null }) : obj; }, is() { return obj; }, // isBlockedBetween chains .or().limit(1) and gets the real "no block" answer, an empty row list (census-telegraph §98); the inviter's open-restriction read (lead ruling R2, refuseIfInviterCannotHost) chains .is("lifted_at", null)
         neq()               { return obj; },
         maybeSingle() {
           if (tableName === "trip_invite_links") {
@@ -463,7 +463,7 @@ function makeRaceClient() {
         // pass the pre-flight guard and reach the RPC — exactly the race we
         // want to exercise.
         then(resolve: (v: any) => void) {
-          if (tableName === "trip_members") {
+          if (tableName === "trip_members" || tableName === "blocks") { // blocks: the real "no block" answer to isBlockedBetween's .limit(1) list read is [] (census-telegraph §98)
             resolve({ data: [], error: null });
           } else {
             resolve({ data: null, error: null });

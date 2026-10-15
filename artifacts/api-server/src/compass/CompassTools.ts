@@ -122,7 +122,7 @@ import {
   type PassportViewerContext,
 } from "../services/passport/PassportProjectionService.js";
 import { getActiveWindows } from "../services/passport/OpenToPlansService.js";
-import { readGroupBlockExclusions, exclusionsUnavailable, type ExclusionSet } from "../lib/exclusionSet.js";
+import { readGroupBlockExclusions, readBlockDirection, exclusionsUnavailable, type ExclusionSet } from "../lib/exclusionSet.js";
 
 import { getTrustProfileResult } from "../services/trust/TrustScoreService.js";
 // Telegraph §18.3 — the eight conversation accessors the Telegraph spec names.
@@ -697,8 +697,8 @@ async function refreshHiddenUsers(
 ): Promise<CompassProfile | null> {
   try {
     const [blockedRes, blockerRes, mutedRes] = await Promise.all([
-      sc.from("blocks").select("blocked_id").eq("blocker_id", userId),
-      sc.from("blocks").select("blocker_id").eq("blocked_id", userId),
+      readBlockDirection(sc, "blocker_id", userId), // each direction read to its END, never a db-max-rows prefix (census-telegraph §98)
+      readBlockDirection(sc, "blocked_id", userId), // a failed page or a list past BLOCK_LIST_CEILING is `{ data: null, error }`
       sc.from("user_mutes").select("muted_id").eq("muter_id", userId),
     ]);
     const blockedUserIds = blockedRes.error

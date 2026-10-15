@@ -46,7 +46,11 @@ export async function readAllByIdKeyset(
     if (last !== null) q = q.gt("id", last);
     const { data, error } = await q.limit(KEYSET_PAGE);
     if (error) return { ok: false, error };
-    const page = (data as any[]) ?? [];
+    // NOT `data ?? []`: postgrest-js resolves `{ data: null, error: null }` for a 2xx with an EMPTY body and for a 404
+    // with an empty body (processResponse), and reading that as an empty page ended the walk and passed the rows read
+    // so far off as the set. Only a row list is a page (census-telegraph §98).
+    if (!Array.isArray(data)) return { ok: false, error: new Error("keyset read: a page was not a row list") };
+    const page = data as any[];
     if (page.length === 0) return { ok: true, rows, truncated: false };
     for (const r of page) {
       if (rows.length >= maxRows) return { ok: true, rows, truncated: true };
@@ -56,6 +60,9 @@ export async function readAllByIdKeyset(
     // A row without an id cannot advance the cursor; looping on it would re-read
     // the same page forever, and stopping would pass a prefix off as the set.
     if (typeof tail !== "string" && typeof tail !== "number") return { ok: false, error: new Error("keyset read: row without an id") };
+    // A server that honours `id > last` can never end a page on `last` again. One that does ignored the cursor, and
+    // the walk would re-read the same page until maxRows (or forever): stop, and say so, on the first repeat.
+    if (String(tail) === last) return { ok: false, error: new Error("keyset read: the cursor was not honoured") };
     last = String(tail);
   }
 }

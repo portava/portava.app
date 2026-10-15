@@ -1034,7 +1034,7 @@ describe("trips-expansion routes", () => {
               return Promise.resolve({ data: null, error: null });
             },
             then(onF: any, onR: any) {
-              return Promise.resolve({ data: null, error: null }).then(onF, onR);
+              return Promise.resolve({ data: tableName === "blocks" ? [] : null, error: null }).then(onF, onR); // blocks: isBlockedBetween's .limit(1) list read answers [] for "no block", never null (census-telegraph §98)
             },
           };
           return obj;
