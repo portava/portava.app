@@ -151,7 +151,7 @@ before(async () => {
   port = (server.address() as any).port;
 });
 after(() => { server.close(); _setTestClient(null as any, false); _setTestOpenAI(null); });
-beforeEach(() => { invalidateFlagsCache(); _setTestClient(makeClient(), "test-token"); });
+beforeEach(() => { invalidateFlagsCache(); _setTestClient(makeClient(), true); });
 afterEach(() => { _setTestOpenAI(null); });
 
 async function ask(body: Record<string, unknown>) {
