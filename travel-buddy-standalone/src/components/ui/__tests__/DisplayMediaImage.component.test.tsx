@@ -280,7 +280,7 @@ describe('AvatarImage', () => {
   it('renders expo-image (not initials) for a valid URL', () => {
     const tr = create(
       <AvatarImage
-        uri="https://example.com/avatar.jpg"
+        uri="profile-media/avatars/u/avatar.jpg" // PRIV-FIX-3: an avatar is Portava storage or nothing
         user={{ displayName: 'Maria Santos' }}
         size={40}
       />,
@@ -293,7 +293,7 @@ describe('AvatarImage', () => {
   it('falls back to initials after onError fires for a broken URL', () => {
     const tr = create(
       <AvatarImage
-        uri="https://example.com/broken.jpg"
+        uri="avatars/broken.jpg" // PRIV-FIX-3: a non-private storage reference, so onError falls straight back
         user={{ displayName: 'Jordan Lee' }}
         size={40}
       />,
@@ -310,7 +310,7 @@ describe('AvatarImage', () => {
   });
 
   it('updates expo-image source to signed URL once useHydratedMedia resolves', async () => {
-    const originalUrl = 'https://supabase.example.com/storage/v1/object/public/profile-media/user123.jpg';
+    const originalUrl = 'profile-media/user123.jpg'; // PRIV-FIX-3: the canonical stored reference
     const signedUrl = 'https://abc.supabase.co/storage/v1/object/sign/profile-media/user123.jpg?token=xxx';
 
     mockHydrateMediaUrls.mockResolvedValueOnce({ [originalUrl]: signedUrl });
@@ -337,8 +337,8 @@ describe('AvatarImage', () => {
   });
 
   it('never shows the previous signed URL after uri prop changes to a new URI', async () => {
-    const uriA = 'https://supabase.example.com/storage/v1/object/public/profile-media/a.jpg';
-    const uriB = 'https://supabase.example.com/storage/v1/object/public/profile-media/b.jpg';
+    const uriA = 'profile-media/a.jpg'; // PRIV-FIX-3: canonical stored references
+    const uriB = 'profile-media/b.jpg';
     const signedA = `${uriA}?token=a`;
     const signedB = `${uriB}?token=b`;
 
@@ -387,7 +387,7 @@ describe('AvatarImage', () => {
   it('falls back to initials when onError fires for a non-private-bucket URL', async () => {
     // avatars bucket is NOT in PRIVATE_BUCKETS — no re-hydration attempt is made,
     // the component falls back to initials immediately on the first error.
-    const url = 'https://supabase.example.com/storage/v1/object/public/avatars/private.jpg';
+    const url = 'avatars/private.jpg'; // PRIV-FIX-3: a bare storage reference outside the private buckets
     mockHydrateMediaUrls.mockResolvedValueOnce({ [url]: url });
 
     let tr!: TestRenderer.ReactTestRenderer;

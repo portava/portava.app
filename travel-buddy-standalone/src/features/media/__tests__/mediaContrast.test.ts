@@ -1446,7 +1446,7 @@ for (const [id, file, line] of [
   ['world.contribution', F.contribution, '<CachedImage source={{ uri: draft.media.uri }} style={styles.preview} resizeMode="cover" fallbackBg={color.mute} />'],
   ['world.perspectiveTile', F.tile, '<CachedImage source={{ uri: media.thumbnailUrl }} style={styles.img} resizeMode="cover" fallbackBg={color.mute} />'],
   ['world.experienceMosaic', F.expMosaic, '<CachedImage source={{ uri: m.thumbnailUrl }} style={styles.heroImg} resizeMode="cover" fallbackBg={color.mute} />'],
-  ['world.people', F.people, '<CachedImage source={{ uri: c.avatarUrl }} style={styles.avatar} resizeMode="cover" fallbackBg={color.mute} />'],
+  ['world.people', F.people, '<CachedImage source={{ uri: avatarImageUri(c.avatarUrl) ?? undefined }} style={styles.avatar} resizeMode="cover" fallbackBg={color.mute} />'], // PRIV-FIX-3: the avatar source goes through avatarImageUri; the measured style and fallback ground are unchanged
   ['mediaViewer', MV, '<CachedImage source={{ uri: mediaUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" fallbackBg={color.mute} />'],
 ] as const) {
   add({ id: `${id}.imageFallback.caption`, fg: color.paper, on: 'mediaFallbackGround', kind: 'text', at: [[file, line], CACHED_BG, ...FALLBACK_CAPTION] }); // FIXED by lane K (census-media §31.13): was 1.19 (paper on haze)

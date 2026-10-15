@@ -89,8 +89,8 @@ import type { MapTraveler } from '../../../services/mapTravelers.ts';
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
-const PROFILE_MEDIA_URL =
-  'https://example.supabase.co/storage/v1/object/public/profile-media/user-1/avatar.jpg';
+const PROFILE_MEDIA_URL = // PRIV-FIX-3: the canonical stored reference (an absolute URL counts only on the configured storage origin)
+  'profile-media/user-1/avatar.jpg';
 
 const SIGNED_URL =
   'https://example.supabase.co/storage/v1/object/sign/profile-media/user-1/avatar.jpg?token=abc123';

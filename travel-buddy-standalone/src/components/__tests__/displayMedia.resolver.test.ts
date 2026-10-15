@@ -134,10 +134,10 @@ describe('resolveDisplayMedia — full priority chain (8 tiers)', () => {
 describe('avatarFallback', () => {
   it('returns the avatarUrl when set', () => {
     const { url, initials } = avatarFallback({
-      avatarUrl: 'https://cdn.example.com/avatar.jpg',
+      avatarUrl: 'profile-media/avatars/aa000000-0000-4000-a000-000000000099/a.jpg', // PRIV-FIX-3: Portava storage; an outside host is null (avatarImageUri.test.ts)
       displayName: 'Alice',
-    });
-    assert.equal(url, 'https://cdn.example.com/avatar.jpg');
+    }); assert.equal(avatarFallback({ avatarUrl: 'https://cdn.example.com/avatar.jpg', displayName: 'Alice' }).url, null, 'an outside host is never handed to a loader');
+    assert.equal(url, 'profile-media/avatars/aa000000-0000-4000-a000-000000000099/a.jpg');
     assert.ok(initials.length > 0, 'initials must be non-empty');
   });
 
