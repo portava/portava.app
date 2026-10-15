@@ -607,8 +607,20 @@ describe("H180 Keep — only the owner's Keep attaches, through §17 ADD_MEDIA, 
     app = await start();
     await detect(app);
     app.store.memories[0].state = "archived";
+    assert.deepEqual((await inbox(app)).body.convergence.groups, [], "the inbox no longer offers it");
     const r = await keep(app, M, [a(2)]);
     assert.deepEqual([r.status, r.body.reason], [409, "memory_not_published"]);
+    assert.equal(itemsOf(app, M).length, 1);
+  });
+
+  it("a proposed photo whose stored URL names ANOTHER person's object is neither listed nor attached", async () => {
+    app = await start();
+    await detect(app);
+    app.store.media_assets.find((m) => m.id === a(2)).public_url = url(2, OTHER);
+    const listed = await inbox(app);
+    assert.deepEqual(listed.body.convergence.groups[0].photos.map((p: any) => p.assetId), [a(3)]);
+    const r = await keep(app, M, [a(2)]);
+    assert.deepEqual([r.status, r.body.reason], [409, "nothing_to_keep"]);
     assert.equal(itemsOf(app, M).length, 1);
   });
 
@@ -738,8 +750,9 @@ describe("H180 late captures of a KEPT episode", () => {
 
 describe("H180 §21 — a deleted Memory takes its proposals and dismissals with it", () => {
   it("RAW_EVIDENCE_PURGED purges every row about the Memory (proposed and dismissed); the inbox and Keep forget it", async () => {
-    app = await start();
+    app = await start({ mutate: (s) => { s.memories.push(memory(M2, { title: "Walk home", starts_at: "2026-03-02T21:00:00.000Z", ends_at: "2026-03-02T23:00:00.000Z" })); } });
     await detect(app);
+    assert.equal(proposals(app).length, 3, "20:15 and 21:30 for M, 21:30 for M2");
     await dismiss(app, M, [a(3)]);
     app.store.memories[0].state = "deleted";
     const report = await runMemoryDeletionLifecycle(app.client as any, {
@@ -750,9 +763,41 @@ describe("H180 §21 — a deleted Memory takes its proposals and dismissals with
     const step = report.steps.find((s) => s.step === "RAW_EVIDENCE_PURGED")!;
     assert.equal(step.outcome, "done", JSON.stringify(step));
     assert.equal(step.facts.convergencePurged, 2);
-    assert.equal(proposals(app).length, 0);
-    assert.deepEqual((await inbox(app)).body.convergence.groups, []);
+    assert.deepEqual(proposals(app).map((p) => p.memory_id), [M2], "another Memory's proposal is not touched");
+    assert.deepEqual((await inbox(app)).body.convergence.groups.map((g: any) => g.memoryId), [M2], "the deleted Memory is gone from the inbox");
     assert.equal((await keep(app, M, [a(2)])).status, 404);
+  });
+
+  it("2320 and 3673 not deployed but 3806 is: the state RAN (done), purged what was there, and names what was not deployed", async () => {
+    app = await start();
+    await detect(app);
+    app.store.memories[0].state = "deleted";
+    reclient(app, { absent: new Set(["memory_evidence", "memory_episodes", "memory_corrections"]) });
+    const report = await runMemoryDeletionLifecycle(app.client as any, {
+      memoryId: M, ownerId: OWNER, actorUserId: OWNER,
+      previous: { visibility: "only_me", state: "published", trip_id: TRIP },
+    });
+    const step = report.steps.find((s) => s.step === "RAW_EVIDENCE_PURGED")!;
+    assert.equal(step.outcome, "done", JSON.stringify(step));
+    assert.equal(step.facts.convergencePurged, 2);
+    assert.deepEqual(step.facts.notDeployed, ["memory_evidence", "memory_corrections"]);
+    assert.equal(proposals(app).length, 0);
+  });
+
+  it("a purge the database does not confirm (no row array) is a failure, never `done`", async () => {
+    app = await start();
+    await detect(app);
+    app.store.memories[0].state = "deleted";
+    const base = makeClient(app.store, {}, app.receipts);
+    // The delete resolves with no error and NO row array (a PostgREST answer that confirms nothing).
+    const unconfirmed = { ...base, from: (t: string) => { const c = base.from(t); if (t === TABLE) { const realDelete = c.delete; c.delete = () => { realDelete(); c.select = () => Promise.resolve({ data: null, error: null }); return c; }; } return c; } };
+    const report = await runMemoryDeletionLifecycle(unconfirmed as any, {
+      memoryId: M, ownerId: OWNER, actorUserId: OWNER,
+      previous: { visibility: "only_me", state: "published", trip_id: TRIP },
+    });
+    const step = report.steps.find((s) => s.step === "RAW_EVIDENCE_PURGED")!;
+    assert.equal(step.outcome, "failed");
+    assert.match(step.detail, /memory_convergence_proposals purge unconfirmed/);
   });
 
   it("a purge that fails is a retryable failure of that state, named — never `done`", async () => {
