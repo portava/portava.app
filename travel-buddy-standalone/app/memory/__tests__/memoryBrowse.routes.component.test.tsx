@@ -118,3 +118,45 @@ describe('/memory/saved', () => {
     expect(screen.queryByText('Nothing saved yet')).toBeNull();
   });
 });
+
+// PHOTOS-CLIENT (2026-10-14; found by lane NARR-PHOTOS): `media_count` counts EVERY memory_items row of the
+// Memory, photos and videos alike (projectionRegistry `mediaCount`), and the timeline projection carries no
+// per-kind count. So the row says "items": it never calls a video a photo, and never guesses a kind it was
+// not sent. Each case below that names a kind was "N photo(s)" on main.
+describe('/memory/timeline — the media count says only what the projection knows', () => {
+  const showRow = async (media_count: number | null | undefined) => {
+    mockTimeline.mockResolvedValue({ ok: true, truncated: false, rows: [{ memory_id: M1, occurred_at: '2026-09-01T00:00:00Z', title: 'Hoi An', location_city: null, location_country: null, media_count, people: [] }] });
+    await render(<TimelineRoute />);
+    await screen.findByText('Hoi An');
+  };
+  const metaText = (re: RegExp) => String([screen.getByText(re).props.children].flat().join(''));
+
+  it('a Memory of 3 photos and 1 video (media_count 4) says "4 items", not "4 photos"', async () => {
+    await showRow(4);
+    expect(metaText(/· 4 items$/)).not.toMatch(/photo|video/);
+    expect(screen.queryByText(/4 photos/)).toBeNull();
+  });
+
+  it('a Memory of 2 videos says "2 items", never "2 photos"', async () => {
+    await showRow(2);
+    expect(metaText(/· 2 items$/)).not.toMatch(/photo|video/);
+    expect(screen.queryByText(/2 photos/)).toBeNull();
+  });
+
+  it('a Memory of 3 photos also says "3 items": with no kinds on the wire the screen does not guess "photos"', async () => {
+    await showRow(3);
+    expect(metaText(/· 3 items$/)).not.toMatch(/photo/);
+  });
+
+  it('one item of a kind nobody sent is "1 item" (singular)', async () => {
+    await showRow(1);
+    expect(metaText(/· 1 item$/)).not.toMatch(/items|photo|video/);
+  });
+
+  it('no items, or no count at all, prints no count', async () => {
+    await showRow(0);
+    expect(screen.queryByText(/\bitems?\b/)).toBeNull();
+    await showRow(null);
+    expect(screen.queryByText(/\bitems?\b/)).toBeNull();
+  });
+});

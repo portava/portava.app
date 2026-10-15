@@ -332,7 +332,7 @@ function albumAssets(body: string | null | undefined): { images: number; videos:
     let videos = 0;
     for (const a of assets) {
       if (a?.mediaType === "video") videos += 1;
-      else images += 1;
+      else if (a?.mediaType === "image") images += 1; // PHOTOS-CLIENT: by the asset's own type, like the single-media branch above; any other or missing type is no photo
     }
     return { images, videos };
   } catch {

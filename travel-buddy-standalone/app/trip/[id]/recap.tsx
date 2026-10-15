@@ -79,9 +79,9 @@ export default function TripRecapRoute() {
           contentContainerStyle={[s.list, { paddingBottom: insets.bottom + space.xl }]}
           renderItem={({ item }) => {
             const people = item.people?.length ?? 0;
-            const photos = item.media_count ?? 0;
+            const items = item.media_count ?? 0; // every photo AND video; the projection sends no kinds, so the word is "item" (PHOTOS-CLIENT)
             const place = [item.location_city, item.location_country].filter(Boolean).join(', ');
-            const meta = [when(item.occurred_at), photos ? `${photos} photo${photos === 1 ? '' : 's'}` : null, people ? `with ${people} ${people === 1 ? 'person' : 'people'}` : null].filter(Boolean).join(' · ');
+            const meta = [when(item.occurred_at), items ? `${items} item${items === 1 ? '' : 's'}` : null, people ? `with ${people} ${people === 1 ? 'person' : 'people'}` : null].filter(Boolean).join(' · ');
             return (
               <Pressable style={s.card} onPress={() => router.push(`/memory/${item.memory_id}` as never)} accessibilityRole="button" testID={`trip-recap-row-${item.memory_id}`}>
                 <Text style={s.strong} numberOfLines={1}>{item.title || 'Untitled memory'}</Text>

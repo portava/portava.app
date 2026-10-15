@@ -62,3 +62,41 @@ it('a recap the server could not build is an error with a retry', async () => {
   await act(async () => { fireEvent.press(screen.getByTestId('trip-recap-retry')); });
   expect(await screen.findByTestId('trip-recap-empty')).toBeTruthy();
 });
+
+// PHOTOS-CLIENT (2026-10-14; found by lane NARR-PHOTOS): a recap row's `media_count` counts EVERY item of the
+// Memory, photos and videos alike, and TripMemoryProjection's eight-field whitelist carries no per-kind
+// count. So the row says "items", never "photos" it cannot know. Each case below that names a kind was
+// "N photo(s)" on main.
+describe('the recap row counts items, not photos', () => {
+  const showRow = async (media_count: number | null) => {
+    mockRecap.mockResolvedValue({ ok: true, rows: [{ memory_id: 'm1', occurred_at: '2026-08-01T10:00:00Z', title: 'Arrival', location_city: null, location_country: null, media_count, people: ['a'] }] });
+    await render(<TripRecapRoute />);
+    await screen.findByText('Arrival');
+  };
+  const metaText = (re: RegExp) => String([screen.getByText(re).props.children].flat().join(''));
+
+  it('a Memory of 3 photos and 1 video (media_count 4) says "4 items", not "4 photos"', async () => {
+    await showRow(4);
+    expect(metaText(/· 4 items · with 1 person$/)).not.toMatch(/photo|video/);
+    expect(screen.queryByText(/4 photos/)).toBeNull();
+  });
+
+  it('a Memory of 2 videos says "2 items", never "2 photos"', async () => {
+    await showRow(2);
+    expect(metaText(/· 2 items · with 1 person$/)).not.toMatch(/photo|video/);
+  });
+
+  it('a Memory of 3 photos also says "3 items": no kinds are sent, so none is guessed', async () => {
+    await showRow(3);
+    expect(metaText(/· 3 items · /)).not.toMatch(/photo/);
+  });
+
+  it('one item is "1 item"; none, or no count at all, prints no count', async () => {
+    await showRow(1);
+    expect(metaText(/· 1 item · /)).not.toMatch(/items|photo/);
+    await showRow(0);
+    expect(screen.queryByText(/\bitems?\b/)).toBeNull();
+    await showRow(null);
+    expect(screen.queryByText(/\bitems?\b/)).toBeNull();
+  });
+});

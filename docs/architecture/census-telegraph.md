@@ -14977,3 +14977,22 @@ catch, a stale entry, a lazy verdict, a reader without its try, a reader catch a
     CONSTRUCTED 97.8 %, CORRECT 58.1 %.
 
 ---
+
+## §98 — TELEGRAPH B58 lane PHOTOS-CLIENT (2026-10-14): an album asset counts in the recap as what its own type says, and one of any other type is no photo. NO ROW CHANGES BUCKET
+
+Written 2026-10-14 on branch `claude/fix-client-photo-counts` from origin/main `f57202703`. One server line, line-neutral: no migration, no flag, and no client change on this census's surface. Numbered §98 because open PRs #738, #740, #745 and #748 write §95–§97 (#745 and #748 both write §97). Renumber on conflict.
+
+- **The defect** (found by lane NARR-PHOTOS). The recap's album count called every asset not typed "video" a photo. An asset of any other or missing type therefore reached the headline as a photo. This is the fixed line: `artifacts/api-server/src/services/telegraph/memoryNotes.ts:335#else if (a?.mediaType === "image") images += 1`. The route serves the headline, and the sheet shows it verbatim (`travel-buddy-standalone/src/features/telegraph/memory/RecapSheet.tsx:82#const headline = data?.headline`).
+- **Latent, not live.** Every album the app can write passes `MediaAlbumPayload`, which allows only `"image"` and `"video"` as an asset's type (`artifacts/api-server/src/services/telegraph/messageKinds.ts:48#mediaType: z.enum(["image", "video"])`). The text door stores only `text` or `system` (`artifacts/api-server/src/domain/telegraph/policies/messageDoorPolicy.ts:89#export function resolveClientDiscriminator`), and a forward copies a stored body. No stored album could reach the wrong branch.
+- **The fix.** An asset is a photo only when its type is `"image"`. This is how the single-media branch of the same loop already reads `media_type` (`artifacts/api-server/src/services/telegraph/memoryNotes.ts:262#r.media_type === "image"`). An asset of any other or missing type counts as neither a photo nor a video. It is not said as "items": `RecapCounts` has no such field, and adding one would change the recap's response shape and the client's mirror for a case no writer can produce today. The single-media branch already leaves audio uncounted.
+- **Tests.** `artifacts/api-server/src/test/telegraphMemory.test.ts:607#describe("PHOTOS-CLIENT — the recap counts album assets by their own type"` has 5 cases, appended after every cited line:
+  - a mixed album says "2 photos · 1 video";
+  - an all-photo album says "2 photos";
+  - an all-video album says "2 videos";
+  - an asset of another or missing type is no photo;
+  - an album of only such assets adds nothing.
+
+  The last two fail on main's source. The first three pass there by design. 5 of 5 mutants are killed. The suite passes 40 of 40, and with `telegraphConversationMemoryBoundary` 106 of 106.
+- **Rows.** No row changes bucket. T121 and T122 stay C: the headline was true for every album the system can store, so neither row was overstated on main. Headline restated from `check:census-integrity` on this branch, unchanged: 451 = 262 C / 183 W / 4 N / 2 X.
+
+---

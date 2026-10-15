@@ -597,3 +597,51 @@ describe("RECAP-HOST — the host is counted from the plan row the route actuall
     assert.equal((await get(`/threads/${THREAD}/recap`, CAROL)).status, 403, "Carol hosts but is not a member of the thread");
   });
 });
+
+// ── PHOTOS-CLIENT (2026-10-14): an album asset is counted as what its OWN type says ──
+//
+// `albumAssets` called every album asset that was not `mediaType: "video"` a photo, so an asset of any other
+// or missing type reached the headline as "N photos". The album writer (MediaAlbumPayload) only stores
+// "image" and "video" today, so this was latent; it now reads the type the way the single-media branch of the
+// same loop does, and an asset of any other type is no photo and no video.
+describe("PHOTOS-CLIENT — the recap counts album assets by their own type", () => {
+  type RecapRow = Parameters<typeof buildRecap>[0]["rows"][number];
+  const album = (id: string, assets: unknown[]): RecapRow => ({
+    id, sender_id: BOB, created_at: hrs(-3), msg_type: "media_album",
+    body: JSON.stringify({ kind: "MEDIA_ALBUM", envelopeVersion: "1", payload: { assets } }),
+  });
+  const recapOf = (rows: RecapRow[]) => buildRecap({
+    threadId: THREAD, planId: MEETUP, windowStartsAt: hrs(-6), windowEndsAt: hrs(-2), participantIds: [], rows,
+  });
+
+  it("a mixed album: two photos and a video, and the headline says both", () => {
+    const r = recapOf([album("mx", [{ url: "a", mediaType: "image" }, { url: "b", mediaType: "video" }, { url: "c", mediaType: "image" }])]);
+    assert.deepEqual([r.counts.photos, r.counts.videos], [2, 1]);
+    assert.equal(recapHeadline(r.counts), "2 photos · 1 video");
+  });
+
+  it("an all-photo album still says photos", () => {
+    const r = recapOf([album("ph", [{ url: "a", mediaType: "image" }, { url: "b", mediaType: "image" }])]);
+    assert.deepEqual([r.counts.photos, r.counts.videos], [2, 0]);
+    assert.equal(recapHeadline(r.counts), "2 photos");
+  });
+
+  it("an all-video album says videos, never photos", () => {
+    const r = recapOf([album("vi", [{ url: "a", mediaType: "video" }, { url: "b", mediaType: "video" }])]);
+    assert.deepEqual([r.counts.photos, r.counts.videos], [0, 2]);
+    assert.equal(recapHeadline(r.counts), "2 videos");
+  });
+
+  it("an asset of another or missing type is not called a photo", () => {
+    const r = recapOf([album("un", [{ url: "a", mediaType: "image" }, { url: "b", mediaType: "audio" }, { url: "c" }, { url: "d", mediaType: null }])]);
+    assert.deepEqual([r.counts.photos, r.counts.videos], [1, 0], "one image; audio, a missing type and null are no photo");
+    assert.equal(recapHeadline(r.counts), "1 photo");
+  });
+
+  it("an album with no asset of a known type adds nothing: no photo, no source message, an empty recap", () => {
+    const r = recapOf([album("nk", [{ url: "a", mediaType: "audio" }, { url: "b" }])]);
+    assert.deepEqual([r.counts.photos, r.counts.videos], [0, 0]);
+    assert.deepEqual(r.sourceMessageIds, []);
+    assert.equal(r.empty, true);
+  });
+});
