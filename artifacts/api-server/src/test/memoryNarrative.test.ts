@@ -110,7 +110,7 @@ const VALID_CONSENT: Row = { user_id: OWNER, enabled: true, consent_version: MEM
 interface Fake { reads: string[]; writes: Array<{ table: string; op: string; values: unknown }> }
 
 /** A table-backed fake that resolves `{ data, error }` the way supabase-js does, and records every read and write. */
-function makeClient(store: Record<string, Row[]>, opts: { failReads?: string[]; absent?: string[]; failWrites?: string[]; truncate?: Record<string, number> }, fake: Fake) {
+function makeClient(store: Record<string, Row[]>, opts: { failReads?: string[]; absent?: string[]; failWrites?: string[]; truncate?: Record<string, number>; nullRows?: string[] }, fake: Fake) {
   function chain(table: string) {
     const filters: Array<(r: Row) => boolean> = [];
     let columns: string[] | null = null;
@@ -160,7 +160,7 @@ function makeClient(store: Record<string, Row[]>, opts: { failReads?: string[]; 
       if (countHead) return { data: null, count: rows.length, error: null };
       const project = (r: Row) => (columns ? Object.fromEntries(columns.filter((c) => c in r).map((c) => [c, r[c]])) : { ...r });
       if (single) return { data: rows[0] ? project(rows[0]) : null, error: null };
-      return { data: rows.map(project).slice(0, opts.truncate?.[table] ?? rows.length), count: wantCount ? rows.length : null, error: null };
+      return { data: opts.nullRows?.includes(table) ? null : rows.map(project).slice(0, opts.truncate?.[table] ?? rows.length), count: wantCount ? rows.length : null, error: null };
     }
     return q;
   }
@@ -173,7 +173,7 @@ function makeClient(store: Record<string, Row[]>, opts: { failReads?: string[]; 
 interface ModelCall { params: any; opts: any }
 interface App { baseUrl: string; store: Record<string, Row[]>; fake: Fake; calls: ModelCall[]; close: () => Promise<void> }
 
-async function startApp(o: { mutate?: (s: Record<string, Row[]>) => void; failReads?: string[]; absent?: string[]; failWrites?: string[]; truncate?: Record<string, number>; reply?: string | (() => Promise<string>) } = {}): Promise<App> {
+async function startApp(o: { mutate?: (s: Record<string, Row[]>) => void; failReads?: string[]; absent?: string[]; failWrites?: string[]; truncate?: Record<string, number>; nullRows?: string[]; reply?: string | (() => Promise<string>) } = {}): Promise<App> {
   const store = tables();
   o.mutate?.(store);
   const fake: Fake = { reads: [], writes: [] };
@@ -1035,6 +1035,8 @@ describe("NARR-PHOTOS: the route and §18's derivative read each item's type", (
     const r = await deriveProjection(makeClient(store, {}, { reads: [], writes: [] }) as any, "NarrativeDerivative", { owner_id: OWNER, viewer_id: OWNER });
     assert.ok(r.ok, JSON.stringify(r));
     assert.equal(r.value.rows.find((x) => x.memory_id === MEM)!.summary, MIXED_SUMMARY);
+    const thai = r.value.rows.find((x) => x.memory_id === MEM_THAI)!.summary;
+    assert.ok(!/\b(photos?|videos?|items?)\b/.test(thai), `another Memory's items are not counted: ${thai}`);
   });
 
   it("a read of the items cut short (fewer rows than their count) is 503 — never a summary that under-counts", async () => {
@@ -1045,6 +1047,9 @@ describe("NARR-PHOTOS: the route and §18's derivative read each item's type", (
     app = await startApp({ mutate: open, truncate: { memory_items: 3 } });
     assert.equal((await call(app, "POST", `/api/memories/${MEM}/narrative/ai`, OWNER)).status, 503);
     assert.equal(app.calls.length, 0, "nothing is sent over a partial read");
+    await app.close();
+    app = await startApp({ nullRows: ["memory_items"] });
+    assert.equal((await call(app, "GET", `/api/memories/${MEM}/narrative`, OWNER)).status, 503, "a count with no rows is not 'no items'");
   });
 });
 
@@ -1096,6 +1101,7 @@ describe("NARR-PHOTOS: the AI draft — the item count is sent as one number, an
     ["A sunset walk with 4 photos.", { photos: 4, videos: 0, other: 0 }, "ok"],
     ["A sunset walk with 4 videos.", { photos: 4, videos: 0, other: 0 }, "unsupported_fact: kind: 4 videos"],
     ["A sunset walk with 4 photos.", { photos: 3, videos: 0, other: 0 }, "unsupported_fact: kind: 4 photos"], // kinds that do not count the number sent speak for nothing
+    ["A sunset walk with 4 photos.", { photos: 4, videos: 1, other: 0 }, "unsupported_fact: kind: 4 photos"], // …even when one kind alone matches it
     ["2 videos in Da Nang, Vietnam.", { photos: 0, videos: 2, other: 0 }, "ok", { ...F_FACTS, photos: 2 }],
     ["2 photos in Da Nang, Vietnam.", { photos: 0, videos: 2, other: 0 }, "unsupported_fact: kind: 2 photos", { ...F_FACTS, photos: 2 }],
     ["A video from Da Nang, Vietnam.", { photos: 0, videos: 1, other: 0 }, "ok", { ...F_FACTS, photos: 1 }],
@@ -1163,5 +1169,30 @@ describe("NARR-PHOTOS: the disclosure says what is sent, and a grant to the old 
     assert.equal(app.store.memory_narrative_ai_consent!.find((r) => r.user_id === OWNER)!.consent_version, MEMORY_NARRATIVE_AI_DISCLOSURE_VERSION);
     assert.equal((await call(app, "POST", `/api/memories/${MEM}/narrative/ai`, OWNER)).status, 200);
     assert.equal(app.calls.length, 1);
+  });
+});
+
+describe("NARR-PHOTOS: #720's batteries over a Memory of 3 photos and a video", () => {
+  // The same drafts and facts; only the stored kinds behind `photos: 4` change (F_FACTS, B2_F).
+  const kindsFor = (f: NarrativeAiFacts): NarrativeItemCounts => (f.photos === 4 ? { photos: 3, videos: 1, other: 0 } : photosOnly(f));
+  const falseDrafts: Array<[string, NarrativeAiFacts]> = [...INVENTING, ...BATTERY_2.filter((r) => r[3] === "REFUSE").map((r): [string, NarrativeAiFacts] => [r[1], r[2]])];
+  const trueDrafts: Array<[string, NarrativeAiFacts]> = [...FAITHFUL, ...BATTERY_2.filter((r) => r[3] === "ACCEPT").map((r): [string, NarrativeAiFacts] => [r[1], r[2]])];
+
+  it(`every one of the ${falseDrafts.length} false drafts is still refused`, () => {
+    assert.deepEqual(falseDrafts.filter(([t, f]) => checkAiNarrative(t, f, kindsFor(f)).ok).map(([t]) => t), []);
+  });
+
+  it("of the true drafts, exactly those that call the 4 items photos are now refused — for the noun, and nothing else", () => {
+    const now = trueDrafts.map(([t, f]) => [t, checkAiNarrative(t, f, kindsFor(f))] as const);
+    const refused = now.filter(([, c]) => !c.ok);
+    for (const [t, c] of refused) assert.match(c.ok ? "" : c.detail, /^kind: /, t);
+    assert.deepEqual(refused.map(([t]) => t), [
+      "A sunset walk in Da Nang, Vietnam on 13 March 2025, with 2 people and 4 photos.",
+      "Sunset walk in Da Nang with four photos and two people.",
+      "Da Nang's 4 photos.",
+      "Sunset walk with two people and four photos.",
+      "A Sunset walk in Da Nang, Vietnam on 13 March 2025, with 2 people and 4 photos.",
+      "This Memory is from Da Nang, Vietnam, on 13 March 2025: 4 photos with 2 people.",
+    ]);
   });
 });
