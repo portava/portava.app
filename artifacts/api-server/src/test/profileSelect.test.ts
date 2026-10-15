@@ -820,7 +820,7 @@ describe("profile data-leak prevention", () => {
   // stay stripped when it runs alongside a homeCity clear.
 
   describe("PATCH /api/me/profile — avatarUrl update (pre-fetch branch) with homeCity clear", () => {
-    const payload = { homeCity: null, avatarUrl: "https://example.com/pic.jpg" };
+    const payload = { homeCity: null, avatarUrl: `profile-media/avatars/${USER_ID}/pic.jpg` }; // PRIV-FIX-3: the caller's own upload; an outside URL is refused (profileAvatarUrlStorageOnly.test.ts)
 
     it("returns HTTP 200 when setting avatarUrl while clearing homeCity", async () => {
       const { status, body } = await apiReqWithBody(
@@ -1639,7 +1639,7 @@ describe("PATCH /api/me/profile — old storage file cleanup on clear", () => {
     };
 
     const { status, body } = await patchProfile({
-      avatarUrl: STORAGE_BASE + `avatars/${USER_ID}/new-avatar.jpg`,
+      avatarUrl: `profile-media/avatars/${USER_ID}/new-avatar.jpg`, // PRIV-FIX-3: the bare key the upload answers; an absolute URL is refused
     });
     assert.equal(status, 200, `expected 200 but got ${status}: ${JSON.stringify(body)}`);
     await flushCleanup();
@@ -1681,7 +1681,7 @@ describe("PATCH /api/me/profile — old storage file cleanup on clear", () => {
     };
 
     const { status } = await patchProfile({
-      avatarUrl: STORAGE_BASE + `avatars/${USER_ID}/new-avatar.jpg`,
+      avatarUrl: `profile-media/avatars/${USER_ID}/new-avatar.jpg`, // PRIV-FIX-3: the bare key the upload answers; an absolute URL is refused
       coverUrl:  STORAGE_BASE + `covers/${USER_ID}/new-cover.jpg`,
     });
     assert.equal(status, 200);
@@ -1698,11 +1698,11 @@ describe("PATCH /api/me/profile — old storage file cleanup on clear", () => {
     removedPaths = [];
     profileRow = {
       ...PROFILE_ROW_WITH_SENSITIVE,
-      avatar_url: STORAGE_BASE + OLD_AVATAR_PATH,
+      avatar_url: "profile-media/" + OLD_AVATAR_PATH, // PRIV-FIX-3: re-saving the stored value needs the bare key the upload answers
       cover_photo_url: null,
     };
 
-    const { status } = await patchProfile({ avatarUrl: STORAGE_BASE + OLD_AVATAR_PATH });
+    const { status } = await patchProfile({ avatarUrl: "profile-media/" + OLD_AVATAR_PATH });
     assert.equal(status, 200);
     await flushCleanup();
 
@@ -1748,7 +1748,7 @@ describe("PATCH /api/me/profile — old storage file cleanup on clear", () => {
     failFirstUpdate = { code: "PGRST204", message: "column profiles.travel_pace does not exist" };
 
     const { status, body } = await patchProfile({
-      avatarUrl: STORAGE_BASE + `avatars/${USER_ID}/new-avatar.jpg`,
+      avatarUrl: `profile-media/avatars/${USER_ID}/new-avatar.jpg`, // PRIV-FIX-3: the bare key the upload answers; an absolute URL is refused
       travelPace: "slow", // stripped by fallback → forces the unsavedFields 200 early return
     });
     assert.equal(status, 200, `expected 200 but got ${status}: ${JSON.stringify(body)}`);

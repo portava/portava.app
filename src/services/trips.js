@@ -105,8 +105,8 @@ function updateMyProfile(patch) {
                         row.name = patch.name;
                     if (patch.bio !== undefined)
                         row.bio = patch.bio;
-                    if (patch.avatarUrl !== undefined)
-                        row.avatar_url = patch.avatarUrl;
+                    // avatarUrl is not written here: profiles.avatar_url is the owner's own upload, set through the API (migration 3827).
+                    // (see src/services/trips.ts)
                     if (patch.currentCity !== undefined)
                         row.current_city = patch.currentCity;
                     if (patch.openToMeet !== undefined)

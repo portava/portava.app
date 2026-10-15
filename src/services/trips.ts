@@ -50,7 +50,7 @@ export async function updateMyProfile(patch: Partial<ProfileRow>): Promise<Profi
   const row: any = {};
   if (patch.name !== undefined) row.name = patch.name;
   if (patch.bio !== undefined) row.bio = patch.bio;
-  if (patch.avatarUrl !== undefined) row.avatar_url = patch.avatarUrl;
+  // avatarUrl is not written here: profiles.avatar_url is the owner's own upload, set through POST /api/me/avatar/upload + PATCH /api/me/profile (migration 3827 revokes the client UPDATE).
   if (patch.currentCity !== undefined) row.current_city = patch.currentCity;
   if (patch.openToMeet !== undefined) row.open_to_meet = patch.openToMeet;
   if (patch.isPrivate !== undefined) row.is_private = patch.isPrivate;

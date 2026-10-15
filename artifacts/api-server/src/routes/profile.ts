@@ -13,7 +13,7 @@ import { detectAndStoreLanguage, invalidateContentTranslations } from "../servic
 import { isFlagEnabled, isKillSwitchEngaged } from "../lib/featureFlags";
 import { invalidateCompassHomeCache } from "./compassHome";
 import { sniffMedia, processImage, type ProcessedImage, type SniffResult } from "../lib/mediaProcessing";
-import { appMediaRef } from "../lib/postSchemas";
+import { appMediaRef } from "../lib/postSchemas"; import { avatarRefAcceptedFor, AVATAR_REF_REFUSAL } from "../lib/avatarStorageRef.js"; // PRIV-FIX-3: on this line so no cited line moves
 import { computeTrustScore } from "../lib/trustScore.js";
 import { measureStampsEarned } from "../services/stamps/ContentStampService.js";
 import { countUserTrips } from "../domain/trips/services/tripCounts.js";
@@ -544,7 +544,7 @@ router.patch("/me/profile", async (req, res) => {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
     return;
   }
-  const p = parsed.data;
+  const p = parsed.data; if (!avatarRefAcceptedFor(p.avatarUrl, user.id)) { sendError(res, "invalid_payload", AVATAR_REF_REFUSAL); return; } // PRIV-FIX-3 (census-telegraph §97): an avatar is drawn by every viewer, so it is the caller's own upload (profile-media/avatars/<uid>/<file>) or nothing — appMediaRef above admits any https host, which made every viewer's device fetch a URL the person chose
   const nowMs = Date.now();
 
   const row: Record<string, unknown> = {};

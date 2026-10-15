@@ -5755,3 +5755,44 @@ owner-rights cases were added).
 **Rollback:** `db/rollback/2026-10-14-3825-telegraph-message-link-previews-rollback.sql` drops the trigger, both
 functions, the table and the flag row it seeded. It destroys every stored preview; turning the flag off is almost
 always what is wanted instead.
+
+## 2026-10-14 — `3827_profiles_avatar_url_storage_only.sql`, written and NOT applied anywhere (lane PRIV-FIX-3)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3827_profiles_avatar_url_storage_only.sql` | **not applied** | **not applied** |
+
+**What it is.** A person's avatar is drawn by every viewer of them, and until this file a signed-in person could
+point it at any host: `anon` and `authenticated` hold column UPDATE on `profiles.avatar_url` (the baseline's list,
+re-issued by 3740; 2078 took back `role` only) and `profiles_update` admits the owner's row. Every viewer's device
+then fetched the URL the person chose — a presence beacon (census-telegraph §97; B58 lane TM-2's adjacent finding).
+3827 takes the two barriers 2078 set up for `role`: `REVOKE UPDATE (avatar_url)` from PUBLIC, anon and
+authenticated, and `trg_profiles_avatar_url_storage_only` (BEFORE INSERT OR UPDATE, row-level; SECURITY INVOKER,
+pinned search_path, no client EXECUTE), which refuses 42501 a value being SET by a caller
+`caller_may_write_profile_role()` does not admit unless it is exactly the row owner's own upload reference
+`profile-media/avatars/<id>/<file>` (NULL always admitted). The same rule guards the API's door
+(`artifacts/api-server/src/lib/avatarStorageRef.ts`, PATCH /api/me/profile). No row is rewritten: a row already
+holding an outside URL keeps it through other edits, and the app draws it as nothing.
+
+**What writes the column.** The app: POST /api/me/avatar/upload then PATCH /api/me/profile, on the API's service
+client. Admin (clears it) and seed scripts: service role. No client tree writes it through PostgREST
+(`src/test/profileAvatarUrlStorageOnly.test.ts` AV-P1; the root tree's uncalled `updateMyProfile` stopped naming it
+in the same change).
+
+**Without it.** PATCH /api/me/profile still refuses an outside avatar, but PostgREST accepts one.
+
+**Proof.** `src/test/db/profileAvatarUrlStorageOnly.db.test.ts` (CI local-db job, AV0-AV8): the self-write refused at
+the grant, the trigger alone after a table-level re-grant (an outside URL, another person's path, an absolute URL of
+one's own object, traversal and a cover refused; the own upload path and NULL land; an unchanged stored value never
+trips), INSERT, the service path, the pre-3827 posture open and closed again, thirteen postcondition negative
+controls, idempotence, the postcondition alone, and the `$pre$` refusal over a table-level UPDATE. Rehearsed on a
+lane-private PGlite replica of `profiles` (baseline table, policies and client column grants, 2078's predicate): 9/9
+with 3827, 7/9 red without it (the two that pass need no 3827: the service path and the `$pre$` text).
+`src/test/profileAvatarUrlStorageOnly.test.ts` AV-C replays the chain under both starting ACLs (no client UPDATE on
+the column; `triggerGuards` finds the trigger) and pins 3827 after every file that grants the column (3740).
+
+**Prefix band.** 3827 is in the B58 telegraph+media band (3825-3839; 3825 TM-1, 3826 TM-5); it must sort after 3740,
+which re-grants the baseline's `profiles` column list.
+
+**Rollback:** `db/rollback/2026-10-14-3827-profiles-avatar-url-storage-only-rollback.sql` drops the trigger and its
+function and re-grants the column to anon and authenticated. It re-opens the door.
