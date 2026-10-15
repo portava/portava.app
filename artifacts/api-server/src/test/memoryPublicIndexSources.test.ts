@@ -188,7 +188,7 @@ const FORBIDDEN_MEMORY_COLUMNS = ["location_lat", "location_lng", "allowed_user_
  * not admit.
  */
 function assertPublicReadOnly(log: Query[], label: string) {
-  assert.ok(log.some((q) => q.table === "memories"), `${label}: precondition — memories was read`);
+  assert.ok(log.some((q: Query) => q.table === "memories"), `${label}: precondition — memories was read`);
   for (const q of log) {
     if (q.table === "memories") {
       for (const c of FORBIDDEN_MEMORY_COLUMNS) assert.ok(!q.columns.includes(c), `${label}: memories read selected ${c} (${q.columns.join(", ")})`);
@@ -390,7 +390,7 @@ describe("H203 — the outbox worker keeps the PUBLIC index from the event paylo
     assert.ok(r.ok);
     PUBLIC_PUBLISHED.delete(PUB_A);
     try { assertPublicReadOnly(db.log, "narrowing rebuild"); } finally { PUBLIC_PUBLISHED.add(PUB_A); }
-    assert.ok(!db.log.some((q) => q.table === "memories" && memoryIdsIn(q).includes(PUB_A)), "the narrowed Memory's row was fetched");
+    assert.ok(!db.log.some((q: Query) => q.table === "memories" && memoryIdsIn(q).includes(PUB_A)), "the narrowed Memory's row was fetched");
   });
 
   describe("H-4's fallback: a FAILED public rebuild after the payload says the Memory left the index REVOKES it — from the payload and the registry, never the row", () => {
@@ -413,8 +413,8 @@ describe("H203 — the outbox worker keeps the PUBLIC index from the event paylo
       assert.deepEqual(pub.payload_json, []);
       assert.equal(pub.row_count, 0);
       assert.equal(pub.revocation_reason, "memory_visibility_changed: re-derivation failed");
-      assert.ok(db.log.some((q) => q.table === "memory_domain_events" && q.columns.join() === "payload_json"), "the decision read the payload");
-      assert.ok(!db.log.some((q) => q.table === "memories" && memoryIdsIn(q).includes(PUB_A)), "the decision read the Memory");
+      assert.ok(db.log.some((q: Query) => q.table === "memory_domain_events" && q.columns.join() === "payload_json"), "the decision read the payload");
+      assert.ok(!db.log.some((q: Query) => q.table === "memories" && memoryIdsIn(q).includes(PUB_A)), "the decision read the Memory");
     });
 
     it("WIDENED (the payload says public) ⇒ NOT revoked: the failure stands and the outbox retries it", async () => {
@@ -490,7 +490,7 @@ describe("H203 — the outbox worker keeps the PUBLIC index from the event paylo
       const db = makeDb(store, { failWrite: (t, m) => t === DERIVATIVE_REGISTRY_TABLE && m === "upsert" });
       const r = await rebuildSubscribedProjection(db, claimed() as any, "MemoryTimelineProjection", { owner_id: OWNER, viewer_id: OWNER }, NOW);
       assert.equal(r.ok, false);
-      assert.ok(!db.log.some((q) => q.table === "memory_domain_events"), "a non-public failure reads no payload");
+      assert.ok(!db.log.some((q: Query) => q.table === "memory_domain_events"), "a non-public failure reads no payload");
     });
   });
 
@@ -556,9 +556,9 @@ describe("H203 — the definition, never the caller, decides the read", () => {
     const db = makeDb(seed());
     const t = await deriveProjection(db, "MemoryTimelineProjection", { owner_id: OWNER, viewer_id: OWNER, trip_id: null, place_id: null, person_id: null });
     assert.ok(t.ok);
-    const memReads = db.log.filter((q) => q.table === "memories");
+    const memReads = db.log.filter((q: Query) => q.table === "memories");
     assert.equal(memReads.length, 1);
     assert.ok(memReads[0]!.columns.includes("location_lat"), "the owner-private read is unchanged");
-    assert.ok(db.log.some((q) => q.table === "memory_tags"));
+    assert.ok(db.log.some((q: Query) => q.table === "memory_tags"));
   });
 });
