@@ -595,8 +595,9 @@ test('A11 sinks the tree does not use yet are modelled (verifier S2): Animated.I
 });
 
 test('A12 a platform variant (.native / .ios / .android / .web) is in the closure too (verifier P16)', () => {
+  const spec = './Card'; // extensionless on purpose; interpolated so the repo's import-extension lint does not read the fixture as an import
   const src = memory({
-    [ROOT]: `import { Card } from './Card';\nexport const B = (m: any) => <Card m={m} />;`,
+    [ROOT]: `import { Card } from '${spec}';\nexport const B = (m: any) => <Card m={m} />;`,
     'src/components/Card.native.tsx': `import { Image } from 'react-native';\nexport const Card = ({ m }: any) => <Image source={{ uri: m.url }} />;`,
     'src/components/Card.web.tsx': `export const Card = (_p: any) => null;`,
   });
