@@ -3024,7 +3024,7 @@ const crewCreateSchema = z.object({
  * — at best `caution` — and a REFUSED border is not seen as `closed`. `crewPayload`
  * certifies the EMPTY plan, so nothing is published from that yet. Owner question.
  */
-export function certifyCrewMemberRecord( // exported for routes/layoverCrewLocation.ts (census-layover L166/L203): the crew feature keeps ONE certification wrapper
+export function certifyCrewMemberRecord( // exported: routes/layoverCrewLocation.ts (L166/L203)
   airport: AirportProfile,
   session: LayoverSession,
   nowMs: number,
@@ -3086,7 +3086,7 @@ async function crewSolverMembers(
  * The crew, as a traveller may see it: the certified §14.1 solution plus the
  * members they are actually entitled to see a face for.
  */
-export async function crewPayload( // exported for routes/layoverCrewLocation.ts (census-layover L166/L203)
+export async function crewPayload( // exported: routes/layoverCrewLocation.ts (L166/L203)
   sc: any,
   viewerId: string,
   crew: { id: string; title: string; city: string; meetingPointLabel: string | null; status: string; maxMembers: number; expiresAt: string; createdBy: string },
@@ -4972,7 +4972,7 @@ const CREW_LANDSIDE_MEETING_POINT_REFUSAL =
  * entry fact, exactly as `GET /crew`'s roster gate certifies them. `"unknown"`
  * when their airport could not be resolved — said as unknown, never as open.
  */
-export async function crewViewerLandside( // exported for routes/layoverCrewLocation.ts (census-layover L166/L203)
+export async function crewViewerLandside(
   sc: any,
   viewerId: string,
   session: LayoverSession,

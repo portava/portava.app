@@ -184,6 +184,24 @@ describe("boundedGrantWindow — OQ-2: no invented ceiling, only the crew's life
 
 // ── the store, over the fake ──────────────────────────────────────────────────
 
+/** A query builder whose every chain step returns itself and which RESOLVES to `answer` (no error thrown). */
+function resolvesTo(answer: unknown): any {
+  const b: any = {};
+  for (const k of ["select", "eq", "neq", "in", "is", "gt", "gte", "lt", "lte", "order", "limit", "update", "insert"]) b[k] = () => b;
+  b.maybeSingle = () => Promise.resolve(answer);
+  b.single = () => Promise.resolve(answer);
+  b.then = (onF: any, onR: any) => Promise.resolve(answer).then(onF, onR);
+  return b;
+}
+
+/** The four malformed-but-RESOLVED shapes main's `readBlockExclusions` read as "nobody is blocked" (V-734 fix 2). */
+const MALFORMED_ANSWERS: Array<[string, unknown]> = [
+  ["{ data: null, error: null }", { data: null, error: null }],
+  ["{ data: \"garbage\", error: null }", { data: "garbage", error: null }],
+  ["undefined", undefined],
+  ["a row without the id columns", { data: [{}], error: null }],
+];
+
 function grantRow(over: Record<string, any> = {}) {
   return {
     id: over.id ?? `g-${Math.random().toString(36).slice(2, 8)}`,
@@ -232,6 +250,24 @@ describe("newestGrantsForCrew — the newest row per member, revoked or not; a f
     assert.deepEqual(await newestGrantsForCrew(db, CREW), { ok: false, reason: "read_failed" });
   });
 
+  // V-734 fix 3: a malformed-but-RESOLVED answer used to read as an EMPTY map — "never granted", i.e. "not sharing".
+  for (const [label, answer] of [
+    ...MALFORMED_ANSWERS,
+    ["a row for ANOTHER crew", { data: [grantRow({ crew_id: "crew-2" })], error: null }],
+    ["a row with no granter", { data: [grantRow({ granted_by_user_id: null })], error: null }],
+  ] as Array<[string, unknown]>) {
+    it(`a MALFORMED resolved grant answer (${label}) is { ok: false }, never an empty map`, async () => {
+      const { db } = world({ malformed: { table: "layover_crew_location_grants", answer } });
+      assert.deepEqual(await newestGrantsForCrew(db, CREW), { ok: false, reason: "read_failed" });
+    });
+  }
+
+  it("CONTROL: a WELL-FORMED empty answer is a measured absence (an empty map)", async () => {
+    const r = await newestGrantsForCrew(makeLayoverDb({ layover_crew_location_grants: [] }), CREW);
+    assert.ok(r.ok);
+    assert.equal(r.value.size, 0);
+  });
+
   it("the per-member cap is the read limit shared by the largest crew, so no member's newest grant is ever cut", () => {
     assert.equal(MAX_GRANTS_PER_MEMBER * 12, GRANT_READ_LIMIT);
   });
@@ -271,6 +307,22 @@ describe("grantCrewLocation — L203: membership is READ before any write", () =
       const r = await grantCrewLocation(makeLayoverDb(tables, { failures: { [fail]: { message: "boom" } } }), input);
       assert.deepEqual(r, { ok: false, reason: "read_failed" }, fail);
       assert.equal(tables.layover_crew_location_grants.length, 0, fail);
+    }
+  });
+
+  it("a MALFORMED resolved grant history refuses the grant (read_failed): nothing written", async () => {
+    for (const [label, answer] of [...MALFORMED_ANSWERS, ["another granter's row", { data: [grantRow({ granted_by_user_id: V })], error: null }]] as Array<[string, unknown]>) {
+      const tables: Record<string, any[]> = { layover_crew_members: [member()], layover_crew_location_grants: [] };
+      const fake = makeLayoverDb(tables);
+      let inserts = 0;
+      const db: any = { ...fake, from: (t: string) => {
+        if (t !== "layover_crew_location_grants") return fake.from(t);
+        const b = resolvesTo(answer);
+        b.insert = () => { inserts++; return b; };
+        return b;
+      } };
+      assert.deepEqual(await grantCrewLocation(db, input), { ok: false, reason: "read_failed" }, label);
+      assert.equal(inserts, 0, label);
     }
   });
 
@@ -336,6 +388,14 @@ describe("revocation — every unrevoked grant, a count not a failure, an absent
     }
   });
 
+  it("a revocation whose answer is MALFORMED is not reported as done (write_failed)", async () => {
+    for (const [label, answer] of MALFORMED_ANSWERS.slice(0, 3)) {
+      const db: any = { from: () => resolvesTo(answer) };
+      assert.deepEqual(await revokeCrewLocation(db, { userId: T }, iso(NOW)), { ok: false, reason: "write_failed" }, label);
+      assert.deepEqual(await revokeCrewLocationGrantsForCrew(db, CREW, iso(NOW)), { ok: false, reason: "write_failed" }, label);
+    }
+  });
+
   it("a disbanding crew revokes every member's grant in it, and no other crew's", async () => {
     const tables: Record<string, any[]> = { layover_crew_location_grants: [grantRow({ id: "t" }), grantRow({ id: "v", granted_by_user_id: V, session_id: S_V }), grantRow({ id: "o", crew_id: "crew-2" })] };
     assert.deepEqual(await revokeCrewLocationGrantsForCrew(makeLayoverDb(tables), CREW, iso(NOW)), { ok: true, value: { revoked: 2, storeAbsent: false } });
@@ -359,6 +419,8 @@ function world(opts: {
   prefs?: Record<string, any>[];
   failures?: Record<string, { message: string; code?: string }>;
   throwOn?: string;
+  /** A table whose SELECT resolves to this exact answer (verification V-734: malformed-but-resolved shapes). */
+  malformed?: { table: string; answer: unknown };
 } = {}) {
   const tables: Record<string, any[]> = {
     feature_flags: [
@@ -375,7 +437,9 @@ function world(opts: {
   const fake = makeLayoverDb(tables, { failures: opts.failures ?? {} });
   const db = opts.throwOn
     ? { ...fake, from: (t: string) => { if (t === opts.throwOn) throw new Error(`thrown read on ${t}`); return fake.from(t); } }
-    : fake;
+    : opts.malformed
+      ? { ...fake, from: (t: string) => (t === opts.malformed!.table ? resolvesTo(opts.malformed!.answer) : fake.from(t)) }
+      : fake;
   return { tables, db: db as any };
 }
 
@@ -427,6 +491,27 @@ describe("preciseCrewLocationVisible — OQ-1's fail-closed default: same crew, 
     assert.deepEqual(await audience(world({ throwOn: "blocks" }).db), { visible: false, reason: "blocks_unreadable" });
   });
 
+  // V-734 fix 2: the target blocked the viewer, they follow each other (edge cleanup failed) and a live grant
+  // exists — and the block read RESOLVES malformed. Main's reader answered `{ ok: true, ids: ∅ }` here, which
+  // graded the pair `visible: true`.
+  for (const [label, answer] of MALFORMED_ANSWERS) {
+    it(`a MALFORMED resolved block answer (${label}) is unreadable — not shared, never 'nobody is blocked'`, async () => {
+      const w = world({ blocks: [{ blocker_id: T, blocked_id: V }], malformed: { table: "blocks", answer } });
+      assert.deepEqual(await audience(w.db), { visible: false, reason: "blocks_unreadable" });
+    });
+  }
+
+  it("CONTROL for the four: the same world with a WELL-FORMED block answer reads the block (blocked), and without it is visible", async () => {
+    assert.deepEqual(await audience(world({ blocks: [{ blocker_id: T, blocked_id: V }] }).db), { visible: false, reason: "blocked" });
+    assert.deepEqual(await audience(world().db), { visible: true, reason: "live_scoped_grant" });
+  });
+
+  it("a malformed follow answer is unreadable too (a row without the ids is not an edge)", async () => {
+    for (const [, answer] of MALFORMED_ANSWERS) {
+      assert.deepEqual(await audience(world({ malformed: { table: "user_follows", answer } }).db), { visible: false, reason: "follows_unreadable" });
+    }
+  });
+
   it("D-103: a ONE-WAY follow either way is not mutual; an unread edge is no edge", async () => {
     assert.deepEqual(await audience(world({ follows: [[V, T]] }).db), { visible: false, reason: "not_mutual" });
     assert.deepEqual(await audience(world({ follows: [[T, V]] }).db), { visible: false, reason: "not_mutual" });
@@ -450,6 +535,10 @@ describe("preciseCrewLocationVisible — OQ-1's fail-closed default: same crew, 
     assert.deepEqual(await audience(world({ persistence: false }).db), { visible: false, reason: "reentry_unverifiable" });
     assert.deepEqual(await audience(world({ failures: { "layover_checkpoints:select": { message: "boom" } } }).db), { visible: false, reason: "reentry_unverifiable" });
     assert.deepEqual(await audience(world({ throwOn: "layover_checkpoints" }).db), { visible: false, reason: "reentry_unverifiable" });
+    // A malformed RESOLVED checkpoint answer is unverifiable too, never "no re-entry" (V-734 class).
+    for (const [label, answer] of MALFORMED_ANSWERS.slice(0, 2)) {
+      assert.deepEqual(await audience(world({ malformed: { table: "layover_checkpoints", answer } }).db), { visible: false, reason: "reentry_unverifiable" }, label);
+    }
   });
 
   it("the target's own sharing switches: paused, off, or unreadable — not shared", async () => {
@@ -497,6 +586,14 @@ describe("crewOwnLocationShare — `yourShare`: the viewer's OWN share, which th
     assert.deepEqual(await own(world({ grants: [] }).db), { yourShare: { available: true, live: false, reason: "no_live_grant:never_granted", expiresAt: null }, degradedReasons: [] });
     assert.deepEqual(await own(world({ grants: [grantRow({ revoked_at: iso(NOW - MIN) })] }).db), { yourShare: { available: true, live: false, reason: "no_live_grant:user_revoked", expiresAt: null }, degradedReasons: [] });
     assert.deepEqual((await own(world({ persistence: false }).db)).yourShare, { available: true, live: false, reason: "reentry_unverifiable", expiresAt: null });
+  });
+
+  it("a MALFORMED resolved grant answer is UNKNOWN too (null + location_grants_unreadable), and the audience refuses", async () => {
+    for (const [label, answer] of MALFORMED_ANSWERS) {
+      const { db } = world({ malformed: { table: "layover_crew_location_grants", answer } });
+      assert.deepEqual(await own(db), { yourShare: null, degradedReasons: ["location_grants_unreadable"] }, label);
+      assert.deepEqual(await audience(db), { visible: false, reason: "location_grants_unreadable" }, label);
+    }
   });
 
   it("an unreadable grant table is UNKNOWN (null) with location_grants_unreadable — never 'not sharing'", async () => {

@@ -24,7 +24,7 @@
  *
  * ── THE FAIL-CLOSED DEFAULTS IMPLEMENTED (owner questions, NOT approved) ─────
  * OQ-1 (audience): precise only to a CURRENT member of the SAME crew, no block
- *   in either direction (an unreadable or thrown block read = NOT shared), a
+ *   in either direction (an unreadable, thrown or malformed block read = NOT shared), a
  *   live grant FROM THE TARGET, AND a mutual follow (lead ruling D-103's shape:
  *   viewer follows target AND target follows viewer; an unread edge is no edge).
  *   Never to a non-member.
@@ -61,7 +61,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../../lib/logger.js";
 import { isFlagEnabled } from "../../lib/featureFlags.js";
-import { readBlockExclusions } from "../../lib/exclusionSet.js";
 import {
   evaluateCrewLocationShare,
   locationPrecisionFor,
@@ -298,17 +297,63 @@ export async function crewOwnLocationShare(
  */
 export type AudienceReason = string;
 
+/**
+ * One directed edge's answer, READ STRICTLY: a resolved answer counts only when
+ * it carries no error, `data` is an array, and every row names exactly the two
+ * ids asked for. Anything else — `{ data: null, error: null }`, a non-array
+ * `data`, a missing answer, a row without the id columns — is `null`
+ * (unreadable), never "no row". `lib/exclusionSet.readBlockExclusions` on main
+ * reads `(data ?? [])`, which turns those shapes into "nobody is blocked"
+ * (verification V-734 fix 2; #729's class), so the block read below does not
+ * use it.
+ */
+function strictEdge(
+  answer: { data?: unknown; error?: unknown } | null | undefined,
+  cols: readonly [string, string],
+  ids: readonly [string, string],
+): boolean | null {
+  if (!answer || answer.error || !Array.isArray(answer.data)) return null;
+  for (const row of answer.data as unknown[]) {
+    const r = row as Record<string, unknown> | null;
+    if (!r || typeof r !== "object" || r[cols[0]] !== ids[0] || r[cols[1]] !== ids[1]) return null;
+  }
+  return answer.data.length > 0;
+}
+
 /** D-103's mutual follow from the two RAW edges. An unread edge is no edge; any failure is `null`. */
 async function mutualFollow(db: SupabaseClient, viewerId: string, targetId: string): Promise<boolean | null> {
   try {
     const [vt, tv] = await Promise.all([
-      db.from("user_follows").select("follower_id").eq("follower_id", viewerId).eq("following_id", targetId).limit(1),
-      db.from("user_follows").select("follower_id").eq("follower_id", targetId).eq("following_id", viewerId).limit(1),
+      db.from("user_follows").select("follower_id, following_id").eq("follower_id", viewerId).eq("following_id", targetId).limit(1),
+      db.from("user_follows").select("follower_id, following_id").eq("follower_id", targetId).eq("following_id", viewerId).limit(1),
     ]);
-    if (vt.error || tv.error) return null;
-    if (!Array.isArray(vt.data) || !Array.isArray(tv.data)) return null;
-    return vt.data.length > 0 && tv.data.length > 0;
+    const a = strictEdge(vt, ["follower_id", "following_id"], [viewerId, targetId]);
+    const b = strictEdge(tv, ["follower_id", "following_id"], [targetId, viewerId]);
+    if (a === null || b === null) return null;
+    return a && b;
   } catch {
+    return null;
+  }
+}
+
+/**
+ * A block in EITHER direction, from the two RAW edges, read strictly
+ * (`strictEdge`). `true` blocked, `false` measured absent, `null` unreadable —
+ * an error, a malformed resolved answer or a THROWN read. Never "nobody is
+ * blocked" on anything but two well-formed empty answers.
+ */
+async function blockedEitherWay(db: SupabaseClient, viewerId: string, targetId: string): Promise<boolean | null> {
+  try {
+    const [out, inb] = await Promise.all([
+      db.from("blocks").select("blocker_id, blocked_id").eq("blocker_id", viewerId).eq("blocked_id", targetId).limit(1),
+      db.from("blocks").select("blocker_id, blocked_id").eq("blocker_id", targetId).eq("blocked_id", viewerId).limit(1),
+    ]);
+    const a = strictEdge(out, ["blocker_id", "blocked_id"], [viewerId, targetId]);
+    const b = strictEdge(inb, ["blocker_id", "blocked_id"], [targetId, viewerId]);
+    if (a === null || b === null) return null;
+    return a || b;
+  } catch (err) {
+    logger.warn({ err }, "crew location audience: block read threw — not shared");
     return null;
   }
 }
@@ -343,16 +388,9 @@ export async function preciseCrewLocationVisible(
     return no("not_in_a_crew_together");
   }
 
-  // No block in EITHER direction. A failed or THROWN read is not "nobody is blocked".
-  let blocked: boolean;
-  try {
-    const set = await readBlockExclusions(db, input.viewerId, { among: [input.targetId] });
-    if (!set.ok) return no("blocks_unreadable");
-    blocked = set.ids.has(input.targetId);
-  } catch (err) {
-    logger.warn({ err }, "crew location audience: block read threw — not shared");
-    return no("blocks_unreadable");
-  }
+  // No block in EITHER direction. A failed, THROWN or MALFORMED read is not "nobody is blocked".
+  const blocked = await blockedEitherWay(db, input.viewerId, input.targetId);
+  if (blocked === null) return no("blocks_unreadable");
   if (blocked) return no("blocked");
 
   const mutual = await mutualFollow(db, input.viewerId, input.targetId);

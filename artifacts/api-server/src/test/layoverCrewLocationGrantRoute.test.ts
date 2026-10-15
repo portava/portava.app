@@ -88,8 +88,20 @@ interface StageOpts {
   bInCrew?: boolean;
   bJoinedAt?: string;
   sessionBStatus?: string;
+  /** The grant table's SELECT resolves to exactly this (V-734 fix 3: a malformed-but-resolved answer). */
+  grantsAnswer?: unknown;
 }
 
+
+/** A query builder that RESOLVES to `answer` whatever is chained. */
+function resolvesTo(answer: unknown): any {
+  const b: any = {};
+  for (const k of ["select", "eq", "neq", "in", "is", "gt", "gte", "lt", "lte", "order", "limit", "update", "insert"]) b[k] = () => b;
+  b.maybeSingle = () => Promise.resolve(answer);
+  b.single = () => Promise.resolve(answer);
+  b.then = (onF: any, onR: any) => Promise.resolve(answer).then(onF, onR);
+  return b;
+}
 
 /** A (owner) and B (member) in one open crew in Taoyuan; C a traveller in the city outside it. */
 function stage(opts: StageOpts = {}) {
@@ -140,13 +152,14 @@ function stage(opts: StageOpts = {}) {
     trip_crew_location_preferences: [],
     trips: [],
   };
-  _setTestClient(
-    makeLayoverDb(tables, {
-      users: { [A_TOKEN]: USER_A, [B_TOKEN]: USER_B, [C_TOKEN]: USER_C },
-      failures: opts.failures ?? {},
-    }),
-    true,
-  );
+  const fake = makeLayoverDb(tables, {
+    users: { [A_TOKEN]: USER_A, [B_TOKEN]: USER_B, [C_TOKEN]: USER_C },
+    failures: opts.failures ?? {},
+  });
+  const client = "grantsAnswer" in opts
+    ? { ...fake, from: (t: string) => (t === "layover_crew_location_grants" ? resolvesTo(opts.grantsAnswer) : fake.from(t)) }
+    : fake;
+  _setTestClient(client, true);
   return tables;
 }
 
@@ -365,6 +378,16 @@ describe("yourShare on the crew payload — honest, and about the viewer only", 
     assert.equal(r.body.degraded, true);
     assert.ok(r.body.degradedReasons.includes("location_grants_unreadable"));
     assert.equal(r.body.crew.memberCount, 2);
+  });
+
+  it("a MALFORMED resolved grant answer is UNKNOWN too — never 'not sharing' (V-734 fix 3)", async () => {
+    for (const answer of [{ data: null, error: null }, { data: "garbage", error: null }, undefined, { data: [{}], error: null }]) {
+      stage({ sharing: true, grantsAnswer: answer });
+      const r = await call(B_TOKEN, "GET", crewUrl(SESSION_B));
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      assert.equal(r.body.yourShare, null, JSON.stringify(answer));
+      assert.ok(r.body.degradedReasons.includes("location_grants_unreadable"), JSON.stringify(answer));
+    }
   });
 
   it("an AIRPORT_REENTRY after the grant ends it; persistence OFF makes it not active (reentry_unverifiable)", async () => {

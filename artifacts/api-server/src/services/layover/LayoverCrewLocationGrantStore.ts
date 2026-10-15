@@ -129,6 +129,45 @@ export function instantMs(iso: string | null | undefined): number | null {
   return Number.isFinite(ms) ? ms : null;
 }
 
+/**
+ * A resolved grant answer, READ STRICTLY (verification V-734 fix 3): `data` must
+ * be an array whose every row is an object naming the crew asked for and a
+ * granter (and, when given, the granter asked for). `{ data: null, error: null }`,
+ * a non-array `data` or a row that cannot be attributed is `null` — the read
+ * FAILED — never an empty history, which the ladder would report as
+ * "never granted" (not sharing) for a store it could not read.
+ */
+export function wellFormedGrantRows(
+  data: unknown,
+  scope: { crewId: string; grantedByUserId?: string },
+): Array<Record<string, any>> | null {
+  if (!Array.isArray(data)) return null;
+  for (const row of data as unknown[]) {
+    const r = row as Record<string, unknown> | null;
+    if (!r || typeof r !== "object") return null;
+    if (r.crew_id !== scope.crewId) return null;
+    if (typeof r.granted_by_user_id !== "string" || r.granted_by_user_id === "") return null;
+    if (scope.grantedByUserId !== undefined && r.granted_by_user_id !== scope.grantedByUserId) return null;
+  }
+  return data as Array<Record<string, any>>;
+}
+
+/**
+ * Await one PostgREST call and ALWAYS get `{ data, error }` back: a thrown read
+ * or a missing answer becomes an `error`, so every caller's existing
+ * "error ⇒ refuse" branch covers it (verification V-734: a malformed answer is
+ * not an empty one).
+ */
+async function answerOf(call: PromiseLike<any>): Promise<{ data: any; error: any }> {
+  try {
+    const res = await call;
+    if (!res || typeof res !== "object") return { data: undefined, error: { message: "no answer" } };
+    return { data: res.data, error: res.error ?? null };
+  } catch (err) {
+    return { data: undefined, error: { message: String((err as Error)?.message ?? err) } };
+  }
+}
+
 /** 42P01 / PGRST205: the relation does not exist — 3787 is not applied here. */
 export function grantStoreAbsent(err: unknown): boolean {
   const code = (err as { code?: string } | null)?.code;
@@ -144,12 +183,12 @@ export async function newestGrantsForCrew(
   db: SupabaseClient,
   crewId: string,
 ): Promise<GrantRead<Map<string, MemberGrant>>> {
-  const { data, error } = await db
+  const { data, error } = await answerOf(db
     .from("layover_crew_location_grants")
     .select(GRANT_COLUMNS)
     .eq("crew_id", crewId)
     .order("granted_at", { ascending: false })
-    .limit(GRANT_READ_LIMIT);
+    .limit(GRANT_READ_LIMIT));
   if (error) {
     logger.warn(
       { err: error.message, code: (error as { code?: string }).code, crewId },
@@ -157,9 +196,14 @@ export async function newestGrantsForCrew(
     );
     return FAILED;
   }
+  const rows = wellFormedGrantRows(data, { crewId });
+  if (rows === null) {
+    logger.warn({ crewId }, "crew location grant read answered in an unreadable shape — refusing rather than reporting that nobody is sharing");
+    return FAILED;
+  }
 
   const out = new Map<string, MemberGrant>();
-  for (const raw of (data ?? []) as Array<Record<string, any>>) {
+  for (const raw of rows) {
     const row = toGrantRow(raw);
     // Newest-first order plus first-wins: the NEWEST grant per member. Taking a
     // maximum over expiries instead would let a revoked long grant outlive the
@@ -277,13 +321,13 @@ export async function grantCrewLocation(
   db: SupabaseClient,
   input: GrantCrewLocationInput,
 ): Promise<GrantWrite<CrewLocationGrantRow & { alreadyGranted: boolean }>> {
-  const { data: mem, error: memErr } = await db
+  const { data: mem, error: memErr } = await answerOf(db
     .from("layover_crew_members")
     .select("crew_id,user_id,session_id,role,joined_at")
     .eq("crew_id", input.crewId)
     .eq("user_id", input.grantedByUserId)
     .is("left_at", null)
-    .maybeSingle();
+    .maybeSingle());
   if (memErr) {
     logger.warn(
       { err: memErr.message, crewId: input.crewId },
@@ -296,18 +340,19 @@ export async function grantCrewLocation(
     return { ok: false, reason: "session_not_in_crew" };
   }
 
-  const { data: mine, error: mineErr } = await db
+  const { data: mine, error: mineErr } = await answerOf(db
     .from("layover_crew_location_grants")
     .select(GRANT_COLUMNS)
     .eq("crew_id", input.crewId)
     .eq("granted_by_user_id", input.grantedByUserId)
     .order("granted_at", { ascending: false })
-    .limit(MAX_GRANTS_PER_MEMBER);
-  if (mineErr) {
-    logger.warn({ err: mineErr.message, crewId: input.crewId }, "crew location grant history unreadable on grant — refusing");
+    .limit(MAX_GRANTS_PER_MEMBER));
+  const mineRows = mineErr ? null : wellFormedGrantRows(mine, { crewId: input.crewId, grantedByUserId: input.grantedByUserId });
+  if (mineRows === null) {
+    logger.warn({ err: mineErr?.message, crewId: input.crewId }, "crew location grant history unreadable on grant — refusing");
     return { ok: false, reason: "read_failed" };
   }
-  const history = ((mine ?? []) as Array<Record<string, any>>).map(toGrantRow);
+  const history = mineRows.map(toGrantRow);
   const newest = history[0];
   const newestExpires = newest ? instantMs(newest.expiresAt) : null;
   if (newest && newest.revokedAt === null && newestExpires !== null && newestExpires > input.grantedAtMs) {
@@ -315,7 +360,7 @@ export async function grantCrewLocation(
   }
   if (history.length >= MAX_GRANTS_PER_MEMBER) return { ok: false, reason: "too_many_grants" };
 
-  const { data, error } = await db
+  const { data, error } = await answerOf(db
     .from("layover_crew_location_grants")
     .insert({
       crew_id: input.crewId,
@@ -325,7 +370,7 @@ export async function grantCrewLocation(
       expires_at: new Date(input.expiresAtMs).toISOString(),
     })
     .select(GRANT_COLUMNS)
-    .maybeSingle();
+    .maybeSingle());
   if (error || !data) {
     logger.warn({ err: error?.message, crewId: input.crewId }, "crew location grant insert failed");
     return { ok: false, reason: "write_failed" };
@@ -356,7 +401,7 @@ export async function revokeCrewLocation(
     .eq("granted_by_user_id", input.userId)
     .is("revoked_at", null);
   if (input.crewId) q = q.eq("crew_id", input.crewId);
-  const { data, error } = await q.select("id");
+  const { data, error } = await answerOf(q.select("id"));
   if (error) {
     if (grantStoreAbsent(error)) return { ok: true, value: { revoked: 0, storeAbsent: true } };
     logger.error(
@@ -365,7 +410,13 @@ export async function revokeCrewLocation(
     );
     return { ok: false, reason: "write_failed" };
   }
-  return { ok: true, value: { revoked: ((data ?? []) as unknown[]).length, storeAbsent: false } };
+  // A resolved answer that is not the array a `.select("id")` returns cannot say
+  // what was revoked; the caller must not be told "stopped" on it.
+  if (!Array.isArray(data)) {
+    logger.error({ crewId: input.crewId ?? null }, "crew location revocation answered in an unreadable shape — not reported as done");
+    return { ok: false, reason: "write_failed" };
+  }
+  return { ok: true, value: { revoked: data.length, storeAbsent: false } };
 }
 
 /**
@@ -379,16 +430,22 @@ export async function revokeCrewLocationGrantsForCrew(
   crewId: string,
   nowIso: string,
 ): Promise<GrantWrite<{ revoked: number; storeAbsent: boolean }>> {
-  const { data, error } = await db
+  const { data, error } = await answerOf(db
     .from("layover_crew_location_grants")
     .update({ revoked_at: nowIso })
     .eq("crew_id", crewId)
     .is("revoked_at", null)
-    .select("id");
+    .select("id"));
   if (error) {
     if (grantStoreAbsent(error)) return { ok: true, value: { revoked: 0, storeAbsent: true } };
     logger.error({ err: error.message, crewId }, "crew location revocation on disband failed");
     return { ok: false, reason: "write_failed" };
   }
-  return { ok: true, value: { revoked: ((data ?? []) as unknown[]).length, storeAbsent: false } };
+  // A resolved answer that is not the array a `.select("id")` returns cannot say
+  // what was revoked; the caller must not be told "stopped" on it.
+  if (!Array.isArray(data)) {
+    logger.error({ crewId }, "crew location revocation on disband answered in an unreadable shape — not reported as done");
+    return { ok: false, reason: "write_failed" };
+  }
+  return { ok: true, value: { revoked: data.length, storeAbsent: false } };
 }
