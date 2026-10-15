@@ -97,6 +97,7 @@ describe("AV-R the rule (lib/avatarStorageRef.ts)", () => {
   it("names the owner only for the exact upload shape, and NULL clears (always admitted)", () => {
     assert.equal(avatarRefOwner(OWN), ME);
     assert.equal(avatarRefOwner(`profile-media/avatars/${OTHER}/a.jpg`), OTHER);
+    assert.equal(avatarRefOwner(`profile-media/avatars/${ME.toUpperCase()}/a.jpg`), null, "an upper-cased uid is another object key: refused by shape, not folded");
     assert.equal(avatarRefAcceptedFor(`profile-media/avatars/${OTHER}/a.jpg`, OTHER), true, "the other person may set their own");
     assert.equal(avatarRefAcceptedFor(null, ME), true);
     assert.equal(avatarRefAcceptedFor(undefined, ME), true);
