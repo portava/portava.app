@@ -1898,7 +1898,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/platform/input-assistance/components/EntitySuggestionRow.tsx",
     // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): §20's canonical contract — MD38, MD41, MD43, MD255, MD274·MD351 and MD369 — the audience rule, the two migrations and the proof suites §20.2 and §20.8 name.
     "artifacts/api-server/src/lib/mediaVisibility.ts",
-    "artifacts/api-server/src/lib/postVisibility.ts",
+    "artifacts/api-server/src/lib/postVisibility.ts", "artifacts/api-server/src/lib/postLikersGate.ts", "artifacts/api-server/src/routes/engagement.ts", "artifacts/api-server/src/test/engagementPostLikersReadGate.test.ts", // ADDED 2026-10-14 by B58 lane POSTS-LIKERS (census-media §54): the post likers gate, its two call sites and its suite; on this line so no cited line moves
     "artifacts/api-server/src/migrations/3320_media_canonical_contract_constraints.sql",
     "artifacts/api-server/src/migrations/3321_media_moderation_canonical_state.sql",
     "artifacts/api-server/src/test/mediaCanonicalLayers.test.ts",
