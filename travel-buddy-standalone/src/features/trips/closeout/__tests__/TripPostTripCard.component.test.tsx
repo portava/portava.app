@@ -44,3 +44,41 @@ it('an empty projection says there is nothing yet', async () => {
   await render(<TripPostTripCard tripId="t1" loadMemory={jest.fn().mockResolvedValue(memory([]))} loadPassport={jest.fn().mockResolvedValue(passport)} />);
   await waitFor(() => screen.getByTestId('trip-posttrip-empty'));
 });
+
+// PHOTOS-CLIENT (2026-10-14; found by lane NARR-PHOTOS): `realized.mediaCount` is the number of
+// memory_items rows of the kept Memory (TripPostTripProjections counts rows, photo or video, and sends no
+// kind; TR382's own word is "memory items ... counted"). So the link says "items", never "photos" it
+// cannot know. Each case below that names a kind was "N photo(s)" on main.
+describe('a kept candidate counts its Memory\'s items, not photos', () => {
+  const showKept = async (mediaCount: number) => {
+    await render(<TripPostTripCard tripId="t1"
+      loadMemory={jest.fn().mockResolvedValue(memory([
+        { id: 'plan:k', kind: 'place_visited', title: 'Night market', occurredAt: null, evidence: { source: 'outcome', ids: ['o9'] }, memoryDraft: draft, realized: { memoryId: 'm7', mediaCount } },
+      ]))}
+      loadPassport={jest.fn().mockResolvedValue(passport)} />);
+    await waitFor(() => screen.getByTestId('trip-posttrip-open-plan:k'));
+  };
+
+  it('a kept Memory of 3 photos and 1 video says "4 items", not "4 photos"', async () => {
+    await showKept(4);
+    expect(screen.getByText('Kept as a memory · 4 items — open')).toBeTruthy();
+    expect(screen.queryByText(/photo|video/)).toBeNull();
+  });
+
+  it('a kept Memory of 2 videos says "2 items", never "2 photos"', async () => {
+    await showKept(2);
+    expect(screen.getByText('Kept as a memory · 2 items — open')).toBeTruthy();
+  });
+
+  it('a kept Memory of 3 photos also says "3 items": no kinds are sent, so none is guessed', async () => {
+    await showKept(3);
+    expect(screen.getByText('Kept as a memory · 3 items — open')).toBeTruthy();
+  });
+
+  it('one item is "1 item"; none prints no count', async () => {
+    await showKept(1);
+    expect(screen.getByText('Kept as a memory · 1 item — open')).toBeTruthy();
+    await showKept(0);
+    expect(screen.getByText('Kept as a memory — open')).toBeTruthy();
+  });
+});

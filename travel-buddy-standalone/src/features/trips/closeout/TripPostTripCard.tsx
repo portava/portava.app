@@ -113,7 +113,7 @@ export function TripPostTripCard({ tripId, loadMemory = fetchMemoryCandidates, l
                   <Text style={s.detail}>{KIND_LABEL[c.kind] ?? c.kind}{c.occurredAt ? ` · ${new Date(c.occurredAt).toLocaleDateString()}` : ''}</Text>
                   {st === 'kept' ? (
                     <Pressable onPress={() => router.push(`/memory/${c.realized!.memoryId}` as any)} testID={`trip-posttrip-open-${c.id}`} accessibilityRole="link">
-                      <Text style={s.link}>Kept as a memory{c.realized!.mediaCount > 0 ? ` · ${c.realized!.mediaCount} photo${c.realized!.mediaCount === 1 ? '' : 's'}` : ''} — open</Text>
+                      <Text style={s.link}>Kept as a memory{c.realized!.mediaCount > 0 ? ` · ${c.realized!.mediaCount} item${c.realized!.mediaCount === 1 ? '' : 's'}` : ''} — open</Text>
                     </Pressable>
                   ) : st === 'keepable' ? (
                     k === 'pending' ? <ActivityIndicator size="small" color={color.signal} style={{ alignSelf: 'flex-start' }} />

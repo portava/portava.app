@@ -19,8 +19,8 @@ export default function MemoryTimelineRoute() {
       truncated: res.truncated,
       rows: res.rows.map((r) => {
         const people = r.people?.length ?? 0;
-        const photos = r.media_count ?? 0;
-        const bits = [formatMemoryDate(r.occurred_at), photos ? `${photos} photo${photos === 1 ? '' : 's'}` : null, people ? `with ${people} ${people === 1 ? 'person' : 'people'}` : null];
+        const items = r.media_count ?? 0; // every photo AND video; the projection sends no kinds, so the word is "item" (PHOTOS-CLIENT)
+        const bits = [formatMemoryDate(r.occurred_at), items ? `${items} item${items === 1 ? '' : 's'}` : null, people ? `with ${people} ${people === 1 ? 'person' : 'people'}` : null];
         return { memoryId: r.memory_id, title: r.title || 'Untitled memory', subtitle: placeLine(r.location_city, r.location_country), meta: bits.filter(Boolean).join(' · ') || null };
       }),
     };

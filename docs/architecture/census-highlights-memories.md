@@ -8966,3 +8966,32 @@ Branch `claude/b58-mem-metrics` (PR #725, including verifier fix round 1). No mi
 | total | 266 | 266 |
 
 **2 moves, both N → W.** 266 = 71 C / 181 W / 12 N / 2 X. CONSTRUCTED% is (71 + 181) / 266 = 94.7 %. (Restated on merging `origin/main` `7bef154f6`, which carries §BH, §BI (three N → W) and §BJ before this section; `check:census-integrity`.)
+
+## §CB — 2026-10-14 (B58 lane PHOTOS-CLIENT; the client half of §BX.4): the owner's timeline and the trip recap count a Memory's items, never "photos" they cannot know. NO ROW MOVES
+
+Branch `claude/fix-client-photo-counts`, from `origin/main` `f57202703`. Client wording only: no migration, no flag, no server change on this census's surface, no new request. The label follows every in-flight section (§BL–§CA on open PRs #731–#753); renumber on collision. Nothing here depends on §BX (#750, unmerged).
+
+### §CB.1 The defect, re-verified on `f57202703`
+
+- A row's `media_count` is the number of the Memory's items the viewer may see, photos and videos alike (`artifacts/api-server/src/services/memoryProjections/projectionRegistry.ts:177#function mediaCount`). No kind is sent: `media_count` is the only media field of the timeline's whitelist (`artifacts/api-server/src/services/memoryProjections/projectionRegistry.ts:181#const TIMELINE_FIELDS`) and of the recap's (`artifacts/api-server/src/services/memoryProjections/projectionRegistry.ts:195#const TRIP_FIELDS`).
+- The timeline (HM-F11) and the trip recap (HM-F15) printed that number as "N photo(s)". A Memory of 3 photos and 1 video read "4 photos"; one of 2 videos read "2 photos".
+
+### §CB.2 The fix
+
+- Both rows now say "N item(s)": the singular for 1, nothing for 0 or no count (`travel-buddy-standalone/app/memory/timeline.tsx:22#const items = r.media_count ?? 0`, `travel-buddy-standalone/app/trip/[id]/recap.tsx:82#const items = item.media_count ?? 0`). "Item" is the app's existing neutral count word: a saved collection's "N items", the post-trip projection's `media.items` (census-trips §98), and §BX's server summary. The edits are line-neutral, so §TM.2's `travel-buddy-standalone/app/trip/[id]/recap.tsx:32#TripRecapRoute` holds.
+- What it costs: a Memory of only photos now reads "3 items", not "3 photos". That is true and less specific. "3 photos and 1 video" needs per-kind counts on the wire, and the screens never guess a kind (Q-PHOTOS-CLIENT-1).
+
+### §CB.3 Tests
+
+- `travel-buddy-standalone/app/memory/__tests__/memoryBrowse.routes.component.test.tsx:126#describe('/memory/timeline — the media count` (5 cases) and `travel-buddy-standalone/app/trip/__tests__/tripRecap.route.component.test.tsx:70#describe('the recap row counts items, not photos'` (4 cases). 3 photos and a video, 2 videos, 3 photos, and 1 item each say "items", with the right singular. No count prints nothing.
+- **Red on main's sources:** 8 of the 9 fail, each on the word ("4 photos", "2 photos", "3 photos", "1 photo"). The timeline's no-count case passes on main by design.
+- 11 of 11 mutants on these two screens are killed: the old word, "video", a flipped or dropped singular, a zero printed, and a missing count read as 1. They are part of the lane's 20 of 20.
+
+### §CB.4 Rows and owner question
+
+- **No row moves.** H163 and H166 are C on server evidence. They grade the projections, whose `media_count` was always a correct count of items. No row grades these screens or asserts their word. Headline unchanged: 266 = 71 C / 181 W / 12 N / 2 X (check:census-integrity on this branch).
+- **Q-PHOTOS-CLIENT-1.** Should the timeline and recap projections send per-kind counts, so a row can say "3 photos and 1 video"? Default: no. They say "items", with no new field and no new request. Adding the counts would widen two §18 whitelists and the post-trip projection.
+
+- NOT-GRADED: travel-buddy-standalone/app/memory/timeline.tsx — the owner timeline screen (HM-F11); H163 grades the projection behind it, §CB cites its count word, and no row here grades client code.
+- NOT-GRADED: travel-buddy-standalone/app/memory/__tests__/memoryBrowse.routes.component.test.tsx — §CB.3's client suite for the timeline's count word; controlled evidence, no verdict rests on it.
+- NOT-GRADED: travel-buddy-standalone/app/trip/__tests__/tripRecap.route.component.test.tsx — §CB.3's client suite for the recap's count word; controlled evidence, no verdict rests on it.

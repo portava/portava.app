@@ -11213,3 +11213,12 @@ fail with an unknown column.
 
 - NOT-GRADED: src/services/trips.ts — the root workspace client's trips service; §97 names its column list.
 - NOT-GRADED: src/services/trips.js — the committed compiled twin of src/services/trips.ts; §97 keeps it in step.
+
+## §98 B58 lane PHOTOS-CLIENT (2026-10-14): the post-trip card counts a kept Memory's items, not its "photos" — NO ROW MOVES
+
+Branch `claude/fix-client-photo-counts`, from `origin/main` `f57202703`. One client word: no migration, no flag, no server change, no new request. No open PR writes a census-trips section, so §98 is the next free number.
+
+- **The defect** (found by lane NARR-PHOTOS). "Kept as a memory · N photos" printed `realized.mediaCount`. That is the number of the kept Memory's `memory_items` rows, photo or video, with no kind (`artifacts/api-server/src/domain/trips/projections/TripPostTripProjections.ts:310#mediaCount: counts.get(String(m.id)) ?? 0`). A kept Memory of 3 photos and 1 video read "4 photos".
+- **The fix.** The link says "N item(s)" (`travel-buddy-standalone/src/features/trips/closeout/TripPostTripCard.tsx:116#Kept as a memory`). That is the projection's own word for the same count (`artifacts/api-server/src/domain/trips/projections/TripPostTripProjections.ts:229#items: live.reduce`). The edit is line-neutral, so the cited `travel-buddy-standalone/src/features/trips/closeout/TripPostTripCard.tsx:44#export function TripPostTripCard` holds. A kept Memory of only photos now reads "3 items" (census-highlights-memories §CB, Q-PHOTOS-CLIENT-1).
+- **Tests.** `travel-buddy-standalone/src/features/trips/closeout/__tests__/TripPostTripCard.component.test.tsx:52#describe('a kept candidate counts` has 4 cases. All 4 fail on main's source, each on "N photo(s)". 4 of 4 mutants are killed: the old word, a flipped or dropped singular, and a zero printed.
+- **Rows.** No row moves. TR382 is C, and its own evidence already says "media is the memory items of the trip's memories, counted". The server count was right; the client now uses the row's word. TR388 is untouched. Headline unchanged: 451 = 320 C / 128 W / 3 N / 0 X (check:census-integrity on this branch).
