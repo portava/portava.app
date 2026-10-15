@@ -129,7 +129,7 @@ describe("§21 memory deletion lifecycle", () => {
 
   it("an ABSENT store is `not_applicable` with its reason, and is not retried", async () => {
     const counter: Record<string, number> = {};
-    const sc = makeClient(baseState(), { memory_derivative_registry: ABSENT, memory_evidence: ABSENT, memory_corrections: ABSENT }, counter); // H-13: step 4 targets 2320 AND 3673; not_applicable only when neither is deployed
+    const sc = makeClient(baseState(), { memory_derivative_registry: ABSENT, memory_evidence: ABSENT, memory_corrections: ABSENT, memory_convergence_proposals: ABSENT }, counter); // H-13: step 4 targets 2320 AND 3673, and (H180, census §BZ) 3806; not_applicable only when none of the three is deployed
     const report = await run(sc);
     const derivatives = report.steps.find((s) => s.step === "DERIVATIVES_PURGED")!;
     assert.equal(derivatives.outcome, "not_applicable");
