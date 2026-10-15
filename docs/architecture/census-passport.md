@@ -2830,3 +2830,36 @@ longer wait on that acceptance. `head_commit` is NOT re-declared.*
 | ID | Was | Now | Why |
 |---|---|---|---|
 | P61 | **W** | **W** | §33.2 and §34; the guard now withholds the neighborhood too. The headline in §33.3 stands. |
+
+## §36 — 2026-10-14 (lane PRIV-FIX-3): a person's profile photo is their own Portava upload or nothing. No row moves
+
+*Branch `claude/fix-priv-avatar-mine-blocks` from origin/main `3c214ca80`. `head_commit` is NOT re-declared. The full
+account is census-telegraph §97; this section records what it means for the Passport.*
+
+- **The defect.** `profiles.avatar_url` was writable by its owner with any https URL. PATCH /api/me/profile admitted it
+  through `appMediaRef`, and PostgREST through the baseline's and 3740's column grant. Every viewer's device then
+  fetched it: the Passport hero, the identity card, the QR sheet's preview, the event passport, follower lists. That
+  told the host the person chose who looked, and when.
+- **The fix.**
+  - PATCH /me/profile accepts only the caller's own upload reference, or null
+    (`artifacts/api-server/src/routes/profile.ts:547#if (!avatarRefAcceptedFor(p.avatarUrl, user.id))`).
+  - Migration 3827 (unapplied) revokes the client column UPDATE and adds a trigger that admits only the row owner's own
+    path for a client caller.
+  - The app draws an avatar only from Portava storage (`travel-buddy-standalone/src/utils/identity.ts:62#return avatarImageUri(url);`
+    for the hero and the identity card;
+    `travel-buddy-standalone/src/features/passport/PassportQrSheet.tsx:146#avatarImageUri(projection.avatarUrl)` for
+    the QR preview).
+  - An outside avatar draws as initials.
+- **Rows.** P104 (the "show my photo publicly" choice) and P123 (the QR projection's six fields) are unchanged in
+  substance. Each still decides whether an avatar is shown, and now what is shown is never an outside host. No grade
+  moves.
+- **Owner questions (fail-closed, NOT approved).** Q-AV-1: seeded and official avatars on outside hosts (the @Portava
+  account's unsplash photo) draw as initials until they are uploaded to `profile-media`. Q-AV-2:
+  `profiles.cover_photo_url` has the same shape and is NOT changed here.
+
+| ID | Was | Now | Why |
+|---|---|---|---|
+| P104 | C | C | The choice is still honoured; what an admitted viewer draws is now Portava storage or initials (census-telegraph §97). |
+| P123 | C | C | The QR projection is unchanged; its avatar field draws through the storage-or-nothing rule. |
+
+- NOT-GRADED: travel-buddy-standalone/src/utils/identity.ts — cited for resolveAvatarUrl, the hero's and identity card's avatar door; graded by census-telegraph §97's account, not a Passport row.

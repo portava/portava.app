@@ -8803,3 +8803,62 @@ The baseline's NOT-GRADED declaration is §BH.7's; §BJ.1 cites the same grants 
 - NOT-GRADED: artifacts/api-server/src/test/handRolledAuthAccountState.test.ts — §BJ.3 names it as the existing pin that the API builds only the service client; another lane's suite, no row here rests on it
 
 **Headline unchanged from §BH: 266 = 71 C / 176 W / 17 N / 2 X.**
+
+## §BU — 2026-10-14 (lane PRIV-FIX-3; MEM-PRIV-FIX's §BQ.7 finding): the owner's own "mine" search names exactly the people GET /memories/:id shows them — never a person blocked in either direction. NO ROW MOVES
+
+Written on branch `claude/fix-priv-avatar-mine-blocks` from origin/main `3c214ca80`. APPEND-ONLY once merged. Labelled §BU because open PRs and lanes in flight write §BI, §BK–§BR, §BT and (MEM-PLACE-SPLIT, assumed) §BS; renumber on conflict.
+
+### §BU.1 The defect, re-verified on `3c214ca80`
+
+- POST /memories/search with `intent: mine` reads the owner's `MemoryTimelineProjection`, and each row carries `people`, the approved participants. Nothing on that read consulted `blocks`.
+- So the owner was handed, by id, the people they had blocked and the people who had blocked them. A `people` filter naming one of them matched, and `deterministicMatchCount` and `person_relevance` gave them away with no id on the wire.
+- GET /memories/:id, for the SAME owner and the SAME Memory, hides them. §10 rule 1 is BLOCK → HIDDEN, ahead of the owner's ownership of the Memory (`artifacts/api-server/src/services/memory/memoryParticipantVisibility.ts:167#if (facts.viewerBlocked) return "HIDDEN";`).
+- §BQ.7 left it for a decision because the single search had no completeness field to report an unreadable block state through. This section adds one.
+
+### §BU.2 What changed
+
+- `runMemorySearch` passes the per-read `withholdPeople` hook to the engine (`artifacts/api-server/src/services/memory/memorySearchService.ts:427#now, withholdPeople: viewerPeopleWithholder(client, viewerId, blockState),`). It is the same mechanism PR #739 adds for the crew search: `viewerPeopleWithholder`, `readBlockExclusions` scoped to the named ids, and `isExcluded`.
+  - The engine narrows the rows BEFORE the people filter, the ranking and the counts (`artifacts/api-server/src/services/memoryRetrieval/searchMemories.ts:250#const rows = input.withholdPeople`).
+  - The registered derivative is not edited, so lifting a block needs no rebuild.
+  - The engine hook and the withholder are copied byte-identically from #739, so the two PRs compose (merge hazard noted below).
+- **Unreadable block state** (a returned error or a thrown read): every Memory is still served, every person but the viewer is withheld, and the answer says so. That is `people_complete` (`artifacts/api-server/src/services/memory/memorySearchService.ts:478#people_complete: !blockState.unreadable`), on the wire as `peopleComplete` (`artifacts/api-server/src/routes/memories.ts:1113#peopleComplete: result.value.people_complete`, the same line).
+- A REAL block is silent: nothing differs from a person who was never tagged.
+- `mine_place` and `public` searches carry no `people`, so the hook asks nothing and makes no block read.
+
+### §BU.3 Evidence
+
+- `artifacts/api-server/src/test/memoryMineSearchPeopleBlocks.test.ts`, 11 tests, registered. It covers:
+  - the leak, in both directions (`artifacts/api-server/src/test/memoryMineSearchPeopleBlocks.test.ts:235#a person the owner blocked`);
+  - **consistency with the detail read, Memory by Memory, with and without blocks** (`artifacts/api-server/src/test/memoryMineSearchPeopleBlocks.test.ts:250#the search names exactly the people GET /memories/:id shows`);
+  - a people filter shaped exactly like a never-tagged stranger's (`artifacts/api-server/src/test/memoryMineSearchPeopleBlocks.test.ts:277#a people filter naming a blocked person matches NOTHING`);
+  - the ranking (`artifacts/api-server/src/test/memoryMineSearchPeopleBlocks.test.ts:296#the ranking does not betray`);
+  - per-read narrowing (`artifacts/api-server/src/test/memoryMineSearchPeopleBlocks.test.ts:307#the narrowing is per READ`);
+  - returned and thrown block reads (`artifacts/api-server/src/test/memoryMineSearchPeopleBlocks.test.ts:326#the blocks read`);
+  - no block read when the timeline names nobody (`artifacts/api-server/src/test/memoryMineSearchPeopleBlocks.test.ts:341#a timeline that names nobody makes no block read`).
+- **Red on main: 10 of 11.** Six are the leak itself: the blocked people named, the detail read disagreeing, the filter matching, the ranking, and both unreadable cases. Four fail only on the new `peopleComplete` field. The per-read case passes on main, as a premise.
+- Green: 11/11.
+- **Mutants: 7 of 7 killed.** The hook was dropped; unreadable was not reported; the wire field was dropped; the engine filtered before narrowing; a thrown read escaped; unreadable was read as "nobody"; only one block direction was read.
+
+### §BU.4 Rows read, reason restated, NOT moved
+
+| id | standing | what is now true, and why it does not move |
+| --- | --- | --- |
+| H209 | BUILT-AND-CORRECT | **A defect in a C row, now fixed; it stays C.** The owner's "mine" search was one more surface returning participants, and it skipped §10 rule 1. It now names exactly the people GET /memories/:id names for the same owner (§BU.3). The search returns ids, not names, so the name rungs do not arise |
+| H77 | BUILT-AND-CORRECT | As H209: the HIDDEN rung for a block now holds on the owner's own search too |
+| H84 | BUILT-BUT-WRONG | The blocking half gains one more surface. W stands on the deletion half, owner decision D6, untouched |
+| H110 | BUILT-AND-CORRECT | The route still hands §15's parameter set to the module. Its response gains `peopleComplete`; nothing it served before is removed |
+
+### §BU.5 Owner questions and proposed rulings
+
+- **Proposed ruling W-BU-1 (implemented; it mirrors #739's W-BQ-1).** When the owner's block state cannot be read, the "mine" search serves every Memory, withholds every person but the owner, and marks the answer `peopleComplete: false`. The alternative is to refuse the whole search with 503. That would let a blocks outage blank a person's own timeline over a question that concerns other people.
+
+### §BU.6 Composition with work in flight
+
+- **#739 (MEM-PRIV-FIX, open).** Both PRs add the same `withholdPeople` hook to `searchMemories.ts`, byte for byte, and the same `viewerPeopleWithholder` and import line to `memorySearchService.ts`. Git takes identical changes cleanly. This PR's own edits sit on lines #739 does not touch, and they are line-neutral. If the lead resolves a conflict there, keep ONE copy of each. Nothing in this section cites a line that #739 moves.
+- **#729 (BLOCKS, open).** The one `try/catch` around a block read is #739's `viewerPeopleWithholder::catch#1`, the same function and the same entry: fingerprint `454c4b0e55d05878`, closedBy `answers-unreadable`. This PR adds no new catch.
+
+### §BU.7 Scope
+
+- NOT-GRADED: artifacts/api-server/src/test/memoryMineSearchPeopleBlocks.test.ts — §BU.3's evidence; no row here rests on it alone
+
+**Headline unchanged: 266 = 71 C / 176 W / 17 N / 2 X.**
