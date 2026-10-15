@@ -408,6 +408,7 @@ describe("S/U/C/W — the admin split and the re-resolution job", () => {
     assert.equal(a.store.external_place_references.find((x) => x.id === REF_A).place_id, P, "the other stayed");
     assert.deepEqual(a.store.place_merge_log.map((l) => [l.action, l.survivor_place_id, l.affected_place_id, l.admin_id]), [["split", P, p2, ADMIN]]);
     assert.equal(a.store.places.find((x) => x.id === p2).city, "Da Nang", "descriptive fields not given are the source's");
+    assert.equal(a.store.places.find((x) => x.id === p2).normalized_name, "bar b", "normalized with the catalog resolver's own normalizer");
     const [p1] = proposalFor(a, M_AT_P1);
     assert.equal(p1.suggested_place_id, P);
     assert.deepEqual(p1.candidate_place_ids, [P, p2]);
@@ -511,6 +512,31 @@ describe("S/U/C/W — the admin split and the re-resolution job", () => {
     assert.equal(r.status, 201);
     assert.equal(r.body.reresolution.state, "incomplete");
     assert.equal(r.body.reresolution.failed, 8, "the corrected Memory is never written");
+  });
+
+  it("W: more Memories than one page are each read exactly once (keyset paging by id)", async () => {
+    const extra = Array.from({ length: 1001 }, (_, i) => memory(`b7300000-0000-4000-8000-${String(i).padStart(12, "0")}`, A, { location_lat: null, location_lng: null }));
+    const a = await start({ flags: { ...ON, [OCCURRENCE_NAME_FLAG]: true } }, { mutate: (s) => { s.memories.push(...extra); } });
+    const r = await splitAsAdmin(a);
+    assert.equal(r.body.reresolution.scanned, 1010);
+    assert.equal(r.body.reresolution.proposed, 1009);
+    assert.equal(new Set(a.store.memory_place_reresolution_proposals.map((p) => p.memory_id)).size, 1009);
+    assert.equal(a.ops.filter((o) => o.table === "memories" && o.mode === "select").length, 3, "three pages: 500, 500, 10");
+  });
+
+  it("re-resolve answers 404 for a log row that is not a split, and for a split whose candidate place is gone", async () => {
+    const a = await start({ flags: { ...ON } }, {
+      mutate: (s) => {
+        s.place_merge_log.push({ id: "d7200000-0000-4000-8000-0000000000aa", action: "merge", survivor_place_id: P, affected_place_id: ELSEWHERE });
+        s.place_merge_log.push({ id: "d7200000-0000-4000-8000-0000000000bb", action: "split", survivor_place_id: P, affected_place_id: randomUUID() });
+      },
+    });
+    for (const id of ["d7200000-0000-4000-8000-0000000000aa", "d7200000-0000-4000-8000-0000000000bb", randomUUID()]) {
+      const r = await call(a, "POST", `/admin/places/splits/${id}/reresolve`, ADMIN);
+      assert.equal(r.status, 404, id);
+    }
+    assert.deepEqual(writes(a), []);
+    assert.ok(!a.ops.some((o) => o.table === "memories"), "no Memory is read for a split that cannot be re-resolved");
   });
 
   it("the occurrence-name gate: absent (3804 unapplied) ⇒ the column is never named and no name can match; unreadable ⇒ the job refuses", async () => {
@@ -681,6 +707,7 @@ describe("O — the owner's proposals: read, accept after the PATCH, dismiss", (
     const early = await call(a, "POST", `/memory-place-proposals/${prop.id}/accept`, A, { placeId: p2 });
     assert.deepEqual([early.status, early.body.reason], [409, "memory_not_changed"]);
     assert.equal(prop.state, "pending");
+    assert.ok(!a.ops.some((o) => o.mode === "update"), "refused before any write is attempted");
     // The owner's PATCH /memories/:id is the one writer of the place (H-10); modelled here as its committed effect.
     a.store.memories.find((m) => m.id === M_AT_P2).place_id = p2;
     const n = a.ops.length;
@@ -690,8 +717,20 @@ describe("O — the owner's proposals: read, accept after the PATCH, dismiss", (
     assert.equal(prop.accepted_place_id, p2);
     assert.ok(prop.decided_at);
     assert.deepEqual(a.ops.slice(n).filter((o) => o.mode !== "select").map((o) => o.table), ["memory_place_reresolution_proposals"], "accept writes only the proposal");
+    const m = a.ops.length;
     const twice = await call(a, "POST", `/memory-place-proposals/${prop.id}/accept`, A, { placeId: p2 });
     assert.deepEqual([twice.status, twice.body.reason], [409, "already_decided"]);
+    assert.ok(!a.ops.slice(m).some((o) => o.mode === "update"), "a decided proposal is refused before any write");
+  });
+
+  it("accept racing another decision: the write is conditional on pending, so the loser is told it was already answered", async () => {
+    const { a } = await splitWorld();
+    const [prop] = proposalFor(a, M_AT_P1);
+    const db = a.db; const from = db.from; let n = 0;
+    db.from = (t: string) => { if (t === "memory_place_reresolution_proposals" && ++n === 2) { prop.state = "dismissed"; prop.decided_at = new Date().toISOString(); } return from(t); };
+    const r = await call(a, "POST", `/memory-place-proposals/${prop.id}/accept`, A, { placeId: P });
+    assert.deepEqual([r.status, r.body.reason], [409, "already_decided"]);
+    assert.equal(prop.state, "dismissed");
   });
 
   it("end to end over the REAL PATCH /memories/:id: the owner moves the Memory to P2 (recorded as their correction), then accepts; the proposal is no longer offered", async () => {
