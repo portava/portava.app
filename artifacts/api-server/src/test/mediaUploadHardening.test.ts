@@ -235,7 +235,7 @@ describe("POST /api/media/upload — hardening", () => {
     setClients(client);
     const withExif = await sharp({ create: { width: 900, height: 600, channels: 3, background: "#3a5" } })
       .jpeg()
-      .withExif({ IFD0: { Copyright: "x" }, GPS: { GPSLatitudeRef: "N" } } as any)
+      .withExif({ IFD0: { Copyright: "x" }, IFD3: { GPSLatitudeRef: "N", GPSLatitude: "16/1 3/1 0/1" } }) // IFD3 = the GPS IFD; `GPS:` planted none (census-media §52)
       .toBuffer();
     const r = await rawReq("POST", "/api/media/upload", withExif, "image/jpeg");
     assert.equal(r.status, 201, JSON.stringify(r.body));

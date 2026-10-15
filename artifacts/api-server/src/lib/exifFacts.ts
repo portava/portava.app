@@ -67,7 +67,7 @@ export function findTiff(buf: Buffer): Buffer | null {
     while (p + 8 < buf.length) {
       const len = buf.readUInt32BE(p);
       const type = buf.slice(p + 4, p + 8).toString("latin1");
-      if (type === "eXIf") return buf.slice(p + 8, p + 8 + len);
+      if (type === "eXIf") return withoutExifHeader(buf.slice(p + 8, p + 8 + len)); // a writer may prefix the JPEG-style header here too (census-media §52)
       if (type === "IEND") break;
       p += 12 + len;
     }
@@ -84,7 +84,7 @@ export function findTiff(buf: Buffer): Buffer | null {
     while (p + 8 < buf.length) {
       const type = buf.slice(p, p + 4).toString("latin1");
       const len = buf.readUInt32LE(p + 4);
-      if (type === "EXIF") return buf.slice(p + 8, p + 8 + len);
+      if (type === "EXIF") return withoutExifHeader(buf.slice(p + 8, p + 8 + len)); // libwebp (sharp's own WebP writer) prefixes "Exif\0\0" (census-media §52)
       p += 8 + len + (len % 2);
     }
     return Buffer.alloc(0);
@@ -166,4 +166,17 @@ export function exifFactsFrom(buf: Buffer): ExifFacts | null {
   const tiff = findTiff(buf);
   if (tiff === null) return null;
   return tiff.length === 0 ? NO_EXIF : parseExif(tiff);
+}
+
+/**
+ * A WebP `EXIF` chunk (and, from some writers, a PNG `eXIf` chunk) may carry the
+ * six-byte JPEG APP1 header `Exif\0\0` before the TIFF block. libwebp writes it —
+ * so every WebP sharp itself emits with EXIF has it — and parseExif()
+ * would otherwise read "Ex" as a byte-order mark, fail it, and report the still
+ * as carrying NO EXIF: a geotagged WebP counted clean by audit:storage-exif and
+ * passed by the media worker's GPS refusal. Measured in census-media §52;
+ * src/test/imageLocationStripGuard.test.ts ("E.") fails without this.
+ */
+function withoutExifHeader(block: Buffer): Buffer {
+  return block.length >= 6 && block.toString("latin1", 0, 6) === "Exif\0\0" ? block.subarray(6) : block;
 }

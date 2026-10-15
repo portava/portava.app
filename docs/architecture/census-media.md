@@ -16988,3 +16988,153 @@ removed from `MediaWorldScreen.tsx`, 7 of the 9 shell cases go red.
 
 Cited, not graded (check:census-scope-coverage):
 - NOT-GRADED: travel-buddy-standalone/src/components/map/CrowdFlowLine.tsx — §51.2 cites the Map renderer's cohort floor and aggregate rung, which the Media card imports; census-map grades the Map renderer.
+
+## 52. B58 lane PRIV-FIX-2, 2026-10-14: the EXIF/GPS strip measured with a still that really carries GPS. No live leak; five vacuous fixtures; the worker's GPS refusal could not see a WebP. NO ROW CHANGES BUCKET
+
+Lane MEM-RENDITIONS reported that `photoCeilingExifStrip.test.ts` (line 100 on main) planted its GPS tags as
+`withExif({ GPS: { … } })`. sharp 0.35.3 has no `GPS` key; the GPS IFD is `IFD3`. Measured: that call writes an
+EXIF block whose IFD0 has **no 0x8825 pointer**, so the fixture carried no GPS. Four more fixtures had the same
+defect, each now fixed in place:
+- `artifacts/api-server/src/test/mediaLib.test.ts:22#IFD3: { GPSLatitudeRef: "N"`;
+- `artifacts/api-server/src/test/mediaUploadHardening.test.ts:238#.withExif({ IFD0: { Copyright: "x" }, IFD3:`;
+- `artifacts/api-server/src/test/mediaVideoPosterGeneral.test.ts:345#.withExif({ IFD0: { Copyright: "x" }, IFD3:`;
+- `artifacts/api-server/src/test/mediaVideoTransport.test.ts:403#.withExif({ IFD0: { Copyright: "x" }, IFD3:`.
+
+ The last three carried `as any`, which is how TypeScript's refusal of the key was
+silenced. No suite had ever passed a GPS IFD through the pipeline. Their EXIF-block assertions were real, because IFD0
+was planted. Their GPS claim was not. `artifacts/api-server/src/test/messageMediaTransport.test.ts:153#IFD3: { GPSLatitudeRef: "N"` used `IFD3` and was the
+one exception.
+
+### 52.1 Is there a live GPS leak? No. Measured on main `3c214ca80`, not argued
+
+`artifacts/api-server/src/test/geotaggedImageFixtures.ts:82#export function buildGeotaggedTiff(` builds the TIFF by
+hand, independently of sharp's writer. Each still carries all of these at once:
+- a GPS IFD with 6 entries (version, both refs, latitude, longitude, a processing-method sentinel);
+- an Exif sub-IFD MakerNote;
+- Orientation 6;
+- XMP (`exif:GPSLatitude`, `exif:GPSLongitude`, `photoshop:City`);
+- for JPEG: an IPTC-IIM 2:90 city, a COM comment and an APP11 (JUMBF/C2PA carrier) payload;
+- for PNG: `eXIf`, an `iTXt` XMP and a `tEXt` comment;
+- for WebP: VP8X with `EXIF` and `XMP ` chunks.
+
+`fixtureCarries` (`artifacts/api-server/src/test/geotaggedImageFixtures.ts:345#export async function fixtureCarries(`) refuses a fixture that
+lacks any of them. `locationLeaks` (`artifacts/api-server/src/test/geotaggedImageFixtures.ts:371#export async function locationLeaks(`) reports a leak through each of these
+checks:
+- sharp's parser;
+- `lib/exifFacts` (which never reads a value);
+- the raw bytes, scanned for every sentinel and the planted decimal coordinate;
+- a container allowlist: JPEG may keep APP0 JFIF only, PNG critical and colour chunks only, WebP image chunks only.
+
+Every server entry point that stores or derives a still from a user's bytes was fed JPEG, PNG and WebP. The new suite,
+`imageLocationStripGuard.test.ts`, does this over HTTP against a fake Storage that records every write. **Every stored
+object came back clean.** That run used main's code byte for byte; only the test files were added (46 of the suite's 50
+cases were green on main).
+
+| Entry point | Producer | Objects stored | Location carriers left |
+| --- | --- | --- | --- |
+| `POST /media/upload`: memories, stories, Telegraph media, and the message-media assemble (`artifacts/api-server/src/routes/messageMediaTransport.ts:200#await storeVerifiedMediaUpload(`) | `processImage`, `makeThumbnail`, `makeFeedVariant` (`artifacts/api-server/src/routes/posts.ts:163#const img = await processImage(rawBody, sniffed);`) | original, `.thumb.jpg`, `.feed.jpg` | none |
+| `POST /postcards/:id/media/:mediaId/complete`, over the bytes the signed-URL PUT or the resumable assemble left | `processImage` (`artifacts/api-server/src/routes/postcards.ts:734#img = await processImage(rawBuf, sniffed);`), re-stored in place (`artifacts/api-server/src/routes/postcards.ts:741#.upload(storagePath, img.buffer`), then `makeFeedVariant` | original (replaced), `.feed.jpg` | none |
+| `POST /me/avatar/upload` and `POST /me/cover/upload` | `processImage` at 1024 / 2048 (`artifacts/api-server/src/routes/profile.ts:36#return { img: await processImage(rawBody, sniffed, maxDim) };`) | one each | none |
+| `POST /postcards/:id/media/:mediaId/poster` | `makeVideoPoster` (`artifacts/api-server/src/routes/postcardMediaTransport.ts:193#poster = await makeVideoPoster(`) | `.poster.jpg` | none |
+| `POST /media/upload/poster` | `makeVideoPoster` (`artifacts/api-server/src/routes/mediaVideoPoster.ts:92#poster = await makeVideoPoster(`) | `.poster.jpg` | none |
+| The public OG card from a stored cover | `renderOgImagePng` (`artifacts/api-server/src/lib/ogImage.ts:141#return await sharp(bytes)`) | served, not stored | none |
+| Place-visual derivatives (provider imagery) | `buildDerivatives` | five WebP sizes | none |
+| The tiny rung (`makeTinyVariant`, on `claude/b58-mem-renditions` only, not on main) | verbatim copy, probed | n/a | none |
+
+**Limits, stated:**
+- **A pending postcard slot holds the raw bytes until `/complete`.** This is the signed-URL transport by design. If
+  `/complete` refuses the content, the raw object stays until the pending-upload sweep. Only its owner can be signed
+  for it: a row that is not `ready` is never served to anyone else
+  (`artifacts/api-server/src/lib/mediaAccess.ts:487#if (pmRows.length >= POST_MEDIA_ATTACHMENT_CAP) return false;`).
+  This is the owner's own photograph, held for the owner. It is not a disclosure.
+- **HEIC is refused, not stripped.** This libvips has no HEVC decoder, and both transports fail closed
+  (`artifacts/api-server/src/routes/posts.ts:185#FAIL-CLOSED FOR EVERY IMAGE, HEIC INCLUDED.`). No HEIC fixture could be built here, so the claim is the refusal, not a strip.
+- **Admin stamp artwork is stored as sent.** `POST /admin/stamps/catalog/:id/upload` stores the admin's bytes unchanged
+  in the public `stamp-artwork` bucket (`artifacts/api-server/src/routes/stampCatalog.ts:1053#.upload(path, buffer, { contentType: mimeType, upsert: false });`).
+  The route claims no strip, and no Media row covers it. A phone photo uploaded there would publish the admin's
+  capture location. This is listed as **OQ-PRIV2-1** (52.5) and not changed: the stated rule (MD217/MD258) is about
+  users' media.
+
+### 52.2 What changed
+
+**Tests:**
+- The five fixtures plant `IFD3`, line-neutrally in the three cited or `as any` files.
+- `photoCeilingExifStrip.test.ts` now does three things:
+  - plants the GPS IFD (`artifacts/api-server/src/test/photoCeilingExifStrip.test.ts:122#IFD3: { GPSLatitudeRef: "N", GPSLatitude: "51/1 30/1 0/1"`);
+  - makes it a precondition (`artifacts/api-server/src/test/photoCeilingExifStrip.test.ts:164#assert.equal(srcFacts?.hasGpsIfd, true,`);
+  - checks every output for a GPS IFD and for any EXIF through `lib/exifFacts` (`artifacts/api-server/src/test/photoCeilingExifStrip.test.ts:104#assert.equal(facts.hasGpsIfd, false,`);
+  - says in its header that its GPS half was vacuous until now.
+- The new `imageLocationStripGuard.test.ts` (50 cases) has five parts:
+  - A, the fixtures and the detector, with a `keepMetadata()` control;
+  - B, every producer, from the raw bytes and from the processed original;
+  - C, the set is closed:
+    - every exported `Promise<ProcessedImage>` producer in `lib/mediaProcessing.ts` must be registered;
+    - every production importer of sharp must be classified;
+    - no production `keepMetadata` / `withMetadata` / `keepExif` / `withExif(Merge)` / `keepXmp` / `withXmp` /
+      `keepGainMap` / `withGainMap`;
+    - no test may plant GPS under `GPS:` again;
+  - D, the routes above over HTTP;
+  - E, the detector.
+
+**Code: one change, in the DETECTOR, not the strip.** `lib/exifFacts` read a WebP `EXIF` chunk as libwebp writes it, with
+the JPEG `Exif\0\0` header before the TIFF block, as "no EXIF at all": "Ex" failed the byte-order check. Every WebP
+that sharp itself writes with EXIF has that header. Two consequences followed:
+- the media worker's refusal of a stored still that carries a GPS IFD
+  (`artifacts/api-server/src/lib/media/mediaProcessingWorker.ts:172#if (exifFactsFrom(bytes)?.hasGpsIfd) {`, §30.4
+  step 2) passed a geotagged WebP;
+- `audit:storage-exif` counted such a WebP as clean.
+
+The header is now skipped, line-neutrally:
+- `artifacts/api-server/src/lib/exifFacts.ts:87#if (type === "EXIF") return withoutExifHeader(`;
+- the PNG `eXIf` branch at `artifacts/api-server/src/lib/exifFacts.ts:70#if (type === "eXIf") return withoutExifHeader(`;
+- the helper, appended at `artifacts/api-server/src/lib/exifFacts.ts:180#function withoutExifHeader(`.
+
+No pipeline output carries EXIF at all (52.1), so no stored WebP was affected through these routes. The hole was in
+the second line of defence. A side effect: `capturedAtFromImageBytes` now reads a WebP upload's DateTimeOriginal, so
+MD39's `captured_at` can be non-null for WebP where it was null. The plausibility window is unchanged.
+
+### 52.3 Rows: none moves
+
+| ID | Was | Now | Evidence |
+| --- | --- | --- | --- |
+| MD217 | **C** | **C** | Restated, not moved. The strip holds for every user-upload path and every carrier (52.1). The C's GPS evidence was vacuous until this section. It is now real: `src/test/imageLocationStripGuard.test.ts` (B, D) and `artifacts/api-server/src/test/photoCeilingExifStrip.test.ts:164#assert.equal(srcFacts?.hasGpsIfd, true,`. |
+| MD258 | **C** | **C** | Restated. The first of its three defences, stripping at upload, is now proved against a GPS IFD, XMP and IPTC location, not only against an IFD0 tag. |
+| MD268 | **C** | **C** | Restated. "Strip all EXIF" holds. XMP, IPTC, comments and unknown APPn are dropped as well, and the guard pins that (mutant A2: `.keepXmp()` passes `photoCeilingExifStrip` and fails the guard). |
+| MD338 | **C** | **C** | Restated. Its C rests on §28.9's RED WHEN (claim, complete, fail), which this does not touch. §30.4 step 2's sentence "a stored still that carries a GPS IFD … is refused" was false for a libwebp-written WebP. It is now true (52.2; `imageLocationStripGuard.test.ts` E, "the media worker therefore refuses a stored geotagged WebP"). |
+
+### 52.4 Evidence
+
+- **Red on main** (`3c214ca80`, a clean detached worktree, only the new and updated test files copied in):
+  - `imageLocationStripGuard` 4 of 50 red: the WebP detector ×3, and the `GPS:` ratchet over main's five fixtures;
+  - `photoCeilingExifStrip` 1 of 6 red: the WebP GPS precondition, which is the same detector;
+  - every producer and route case green, which is the 52.1 answer.
+- **Green on the branch:** the two suites, plus `mediaLib`, `exifFacts`, `mediaUploadHardening`,
+  `mediaVideoPosterGeneral`, `mediaVideoTransport`, `messageMediaTransport`, `mediaCapturedAtWriter` and
+  `mediaProcessingWorker`: 239 of 239.
+- **Mutants, 17 of 17 killed** (lane runner, worktree-asserted, every file restored and the tree checked clean):
+  - A1 `.keepExif()` in `processImage` (19 red);
+  - A2 `.keepXmp()` in `processImage` (17 red; **`photoCeilingExifStrip` alone stays green**);
+  - A3–A5 `.keepMetadata()` in thumbnail, feed and poster;
+  - A6–A11 each route storing its raw body or frame: `/media/upload`, `/complete`, avatar, cover, both posters;
+  - A12 the `exifFacts` fix reverted, which is main's detector (4 red, plus `photoCeilingExifStrip`'s WebP);
+  - A13 the `photoCeilingExifStrip` key back to `GPS:` (its precondition and the ratchet);
+  - A14 the fixture builder dropping its 0x8825 pointer (28 red);
+  - A15 `.keepMetadata()` on the OG card;
+  - A16 an unregistered producer appended to `mediaProcessing.ts` (the closed-set check);
+  - A17 the detector ignoring XMP (the fixture self-checks).
+
+### 52.5 Owner question (fail-closed default NOT applied, because it is not a user's media)
+
+- **OQ-PRIV2-1.** Should `POST /admin/stamps/catalog/:id/upload` re-encode admin artwork (dropping EXIF/XMP) before
+  storing it in the public `stamp-artwork` bucket? No change was made.
+
+### 52.6 Headline, restated from the rows
+
+Unchanged; no row changes bucket. `check:census-integrity` on this branch: **450 = 415 C / 30 W / 5 N / 0 X**.
+CONSTRUCTED 445 / 450 = 98.9 %; CORRECT 415 / 450 = 92.2 %.
+
+Merge hazards: none in this file beyond the section number. No open branch adds a census-media §52.
+
+Cited, not graded (check:census-scope-coverage):
+- NOT-GRADED: artifacts/api-server/src/routes/stampCatalog.ts — §52.1 cites the admin artwork upload as a path outside every Media row (OQ-PRIV2-1).
+- NOT-GRADED: artifacts/api-server/src/lib/ogImage.ts — §52.1 cites the OG renderer as clean; its card is graded nowhere in this census.
