@@ -5828,9 +5828,9 @@ either side of it (3813's precondition accepts trigger functions over `memories`
 applied or not.
 
 **Proof.** `src/test/db/memorySnapshots.db.test.ts` (CI local-db job, the real chain, D1–D8).
-`sql/rehearsals/3811_00_seed.sql` + `3811_01_memory_snapshots.sql` on PGlite over a fixture of the touched objects: 32/32
-steps (apply, re-apply, `$post$` / `$pre$` alone, 13 postcondition and 3 precondition refusals, T1–T15 with T13b, the
-rollback refusing twice and succeeding, the ledger row, a no-op re-run, re-apply). 40/40 SQL mutants killed, and both
+`sql/rehearsals/3811_00_seed.sql` + `3811_01_memory_snapshots.sql` on PGlite over a fixture of the touched objects: 33/33
+steps (apply, re-apply, `$post$` / `$pre$` alone, 13 postcondition and 4 precondition refusals, T1–T15 with T13b, the
+rollback refusing twice and succeeding, the ledger row, a no-op re-run, re-apply). 40/40 SQL mutants killed, and the three
 fix-round `$pre$` mutants. The db suite D1–D8 ran on PostgreSQL in CI (run 38643772054); D9 added in fix round 1.
 API: `src/test/memorySnapshots.test.ts`.
 
