@@ -271,7 +271,7 @@ test('SELF-TEST: raw avatar bindings are findings; the doors and a const from a 
     assert.deepEqual(r.findings, [], `false positive: ${g}`);
   }
   // an image imported from somewhere else is not a sink this guard knows
-  assert.equal(analyze('src/x.tsx', "import { Image } from './MyImage';\nexport const X = () => <Image source={{ uri: avatarUrl }} />;\n").findings.length, 0);
+  assert.equal(analyze('src/x.tsx', "import { Image } from './MyImage.tsx';\nexport const X = () => <Image source={{ uri: avatarUrl }} />;\n").findings.length, 0);
 });
 
 // ── the tree ─────────────────────────────────────────────────────────────────
