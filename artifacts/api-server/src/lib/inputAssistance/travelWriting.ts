@@ -212,15 +212,24 @@ const FIRST_PERSON: ReadonlySet<string> = new Set(['i', "i'm", "i've", "i'd", "i
 
 /**
  * A word: letters, combining marks and digits, with inner apostrophes. A
- * number is the WHOLE numeric token: "." "," ":" "/" "-" "–" between digits join
- * it ("4.5", "1,000", "8:30", "12/3", "12-3"), "% ‰ ° ′ ″" after a digit stay on
- * it ("18%"), and a currency sign or a minus/dash before it, with no letter or
- * digit before that, joins it too ("$18", "-5"): "$18" is not "18". A hyphen
+ * number is the WHOLE numeric token: "." "," ":" between digits join it ("4.5",
+ * "1,000", "8:30"), and so do "/" and EVERY dash (`\p{Pd}` and the minus sign
+ * "−"), spaced or not ("12/3", "12 / 3", "12-3", "12 – 3", "12—3", "12‑3"); "% ‰
+ * ° ′ ″" after a digit stay on it ("18%"); and a minus/dash before it, with no
+ * letter or digit before that, joins it too ("-5", "−5"). A currency sign is
+ * part of its number on EITHER side ("$18", "18€"), across a space when no
+ * other number stands across the sign ("$ 18", "18 €"; in "2 $ 18" it binds
+ * neither), with up to three letters before it ("US$18", "HK$18"), or glued to
+ * a longer word ("cost$18"): "$18" is not "18". A hyphen between letters
  * SEPARATES, so each half is judged on its own. Emoji (with their variation
  * selectors) are taken out first (EMOJI_RE), so a combining mark left standing
  * on its own is judged like a word: it must be the traveller's.
  */
-const WORD_RE = /(?:(?<![\p{L}\p{M}\p{N}])[-\u{2013}]?\p{Sc}?(?=\p{Nd}))?[\p{L}\p{M}\p{N}](?:[\p{L}\p{M}\p{N}]|'(?=[\p{L}\p{M}\p{N}])|(?<=\p{Nd})[.,:/\-\u{2013}](?=\p{Nd})|(?<=\p{Nd})[%‰°′″])*/gu;
+const DASH = String.raw`[\p{Pd}\u{2212}]`;
+const NUMBER_PREFIX = String.raw`(?:(?<![\p{L}\p{M}\p{N}])${DASH}?(?:\p{L}{1,3})?\p{Sc}|(?<![\p{L}\p{M}\p{N}])(?<!\p{Nd}\p{Zs}*)(?:\p{L}{1,3})?\p{Sc}\p{Zs}+`
+  + String.raw`|(?<=[\p{L}\p{M}])\p{Sc}|(?<![\p{L}\p{M}\p{N}])${DASH})(?=\p{Nd})`;
+const WORD_RE = new RegExp(String.raw`(?:${NUMBER_PREFIX})?[\p{L}\p{M}\p{N}](?:[\p{L}\p{M}\p{N}]|'(?=[\p{L}\p{M}\p{N}])`
+  + String.raw`|(?<=\p{Nd})(?:[.,:]|\p{Zs}*[/\p{Pd}\u{2212}]\p{Zs}*)(?=\p{Nd})|(?<=\p{Nd})[%‰°′″\p{Sc}]|(?<=\p{Nd})\p{Zs}+\p{Sc}(?!\p{Zs}*\p{Nd}))*`, 'gu');
 const HANDLE_OR_TAG_RE = /[@#][\p{L}\p{N}_][\p{L}\p{N}_.]*/gu;
 /** A link, as its domain ("nobu.com", "www.nobu.com", "https://x.io/…"): even one built from words the traveller wrote apart. */
 const DOMAIN_RE = /[\p{L}\p{N}][\p{L}\p{N}-]*\.[a-z]{2,}(?:\.[a-z]{2,})?(?![\p{L}\p{N}])/giu;
@@ -256,7 +265,10 @@ function tokens(text: string): Token[] {
   const out: Token[] = [];
   for (const m of text.matchAll(WORD_RE)) {
     const index = m.index ?? 0;
-    out.push({ raw: stripPossessive(m[0]), lower: stripPossessive(m[0].toLowerCase()), index, end: index + m[0].length, starts: opensSentence(text, index) });
+    // A number's spaces say nothing ("$ 18" is "$18", "12 – 3" is "12–3"), and in the compared form every dash is one.
+    const w = m[0].replace(/\p{Zs}+/gu, '');
+    const lower = stripPossessive(w.toLowerCase()).replace(/[\p{Pd}\u{2212}]/gu, '-');
+    out.push({ raw: stripPossessive(w), lower, index, end: index + m[0].length, starts: opensSentence(text, index) });
   }
   return out;
 }
@@ -301,10 +313,11 @@ function groundNumbers(g: readonly Token[], text: string): NumberAt[] {
     const t = g[i]!;
     if (!hasDigit(t.lower)) continue;
     out.push({ form: t.lower, prev: at(i - 1), next: at(i + 1), mustNext: unit(at(i + 1)) });
-    // The number inside a mixed token ("8pm", "21st"): the whole numeric run, and the token's own letters are its
-    // mandatory neighbours on their side — "8pm" may become "8 pm", never "8 am"; "5th" never "5 days".
+    // The number inside a mixed token ("8pm", "21st", "US$18"): the whole numeric run with its own sign and dashes
+    // ("$18k" never gives "18"), and the token's own letters are its mandatory neighbours on their side — "8pm" may
+    // become "8 pm", never "8 am"; "5th" never "5 days".
     if (/\p{L}/u.test(t.lower)) {
-      for (const r of t.lower.matchAll(/\p{Nd}+(?:[.,:]\p{Nd}+)*/gu)) {
+      for (const r of t.lower.matchAll(/-?\p{Sc}?\p{Nd}+(?:[.,:/-]\p{Nd}+)*[%‰°′″\p{Sc}]*/gu)) {
         const s = r.index ?? 0;
         const before = t.lower.slice(0, s).match(/\p{L}+$/u)?.[0];
         const after = t.lower.slice(s + r[0].length).match(/^\p{L}+/u)?.[0];

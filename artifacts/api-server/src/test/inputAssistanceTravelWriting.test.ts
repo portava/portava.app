@@ -1217,3 +1217,296 @@ describe("R — what the route accepts", () => {
     }
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// VERIFY-727 confirmation battery (LR-B58-8, at 1efdec98c) and lane IN-G141-R4.
+// The verifier's 25 fresh variants of the five round-3 classes, 25 more of the
+// same mechanisms, 21 residual probes and 20 fresh faithful polishes, copied here
+// AS DATA (never executing its script). Its §4 named two groups of residuals:
+// Group A — the round-3 currency and dash mechanisms in positions that fix did not
+// reach (a sign after the number, spaced, or letter-prefixed; a dash other than
+// - and –, or spaced, between two numbers) — CLOSED by IN-G141-R4; Group B — new
+// design residuals — still served and NAMED in census §46.7, pinned by name.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const V727C_FRESH: Array<[cls: string, ground: string, draft: string]> = [
+  ["C1 \u{2BB} U+02BB okina apostrophe, n\u{2019}t dropped", "couldn\u{2BB}t get in at Nobu", "Get in at Nobu!"],
+  ["C1 \u{2C8} U+02C8 modifier-letter apostrophe, n\u{2019}t dropped", "wasn\u{2C8}t worth the queue at Nobu", "Worth the queue at Nobu!"],
+  ["C1 \u{FF07} U+FF07 fullwidth apostrophe, n\u{2019}t dropped", "haven\u{FF07}t stopped thinking about Tokyo", "Stopped thinking about Tokyo!"],
+  ["C1 inflection \"failing\" dropped", "failing to find the ramen place", "Find the ramen place!"],
+  ["C1 inflection \"shutting\" dropped", "Nobu shutting early, sadly", "Nobu!"],
+  ["C2 bare count gains \"am\"", "we were 3 at lunch", "Lunch at 3 am"],
+  ["C2 their unit moved onto the other number", "walked 10 blocks, 2 hours", "Walked 10 hours, 2 blocks"],
+  ["C2 bare count gains \"times\"", "coffee at 9, 4 of us", "Coffee 4 times at 9"],
+  ["C2 \"nights\" swapped onto the other number", "2 nights, table for 6", "6 nights, table for 2"],
+  ["C2 a count becomes a frequency", "5 of us at Nobu", "At Nobu 5 times"],
+  ["C3 \u{20AC} unbound from its number", "\u{20AC}12 for 3 beers", "12 for \u{20AC}3 beers"],
+  ["C3 \u{A3} unbound from its number", "paid \u{A3}40, table for 2", "Paid 40, table for \u{A3}2"],
+  ["C3 \u{A5} with thousands separator unbound", "\u{A5}1,800 ramen, 2 bowls", "1,800 ramen, \u{A5}2 bowls"],
+  ["C3 \u{20A9} unbound", "\u{20A9}15,000 for 2 of us", "15,000 for \u{20A9}2 of us"],
+  ["C3 currency swapped between their two numbers", "paid $18, 2 bowls", "Paid $2, 18 bowls"],
+  ["C4 en dash range between their two numbers", "table 18, 2019 trip", "Table 18\u{2013}2019 trip"],
+  ["C4 reversed slash date", "room 12, 3 of us", "Room 3/12"],
+  ["C4 slash spaced on one side", "room 12, 3 of us", "Room 12 /3"],
+  ["C4 leading minus after a paren", "we were 5 at dinner, so cold", "At dinner we were (-5), so cold"],
+  ["C4 triple star rating", "dinner for 5", "Dinner for 5 ***"],
+  ["C5 hashtag extended", "ramen #tokyo_food", "Ramen #tokyo_foodie"],
+  ["C5 dotted handle prefix", "dinner with @marcus.k.jp", "Dinner with @marcus.k"],
+  ["C5 two-label TLD truncated", "book at nobu.co.uk", "Book at nobu.co"],
+  ["C5 upper-case TLD domain from their two names", "ramen at Nobu, Tokyo", "Ramen at Nobu.TOKYO"],
+  ["C5 subdomain added", "booked nobu.com for dinner", "Booked menu.nobu.com for dinner"],
+];
+const V727C_EXTRA: Array<[cls: string, ground: string, draft: string]> = [
+  ["C1x hoping dropped", "hoping to see Fuji, too cloudy", "Fuji, so lovely"],
+  ["C1x sold out dropped", "the ramen place was sold out", "The ramen place!"],
+  ["C1x forgetting dropped", "forgetting the camera at the hotel", "The camera at the hotel!"],
+  ["C1x delaying dropped", "delaying our flight to Tokyo", "Our flight to Tokyo!"],
+  ["C1x oughtn\u{B4}t (U+00B4) dropped", "oughtn\u{B4}t have gone back", "Gone back!"],
+  ["C1x darent dropped", "darent go back to Nobu", "Go back to Nobu!"],
+  ["C1x unable dropped", "unable to get a table at Nobu", "Get a table at Nobu!"],
+  ["C1x \"if only\" dropped", "if only we'd had more time in Tokyo", "We'd had more time in Tokyo!"],
+  ["C1x \"should have\" dropped", "should have booked Nobu", "Booked Nobu!"],
+  ["C1x wanting dropped", "wanting to see Fuji, too cloudy", "Fuji, too cloudy"],
+  ["C2x joined unit (2am) from a bare 2", "dinner at 2, loved it", "Dinner at 2am, loved it"],
+  ["C2x bare number gains their \"km\"", "walked 5 km, 3 of us", "Walked 3 km, 5 of us"],
+  ["C2x count gains \"people\"", "table 12 for dinner", "Table for 12 people at dinner"],
+  ["C3x currency code moved (usd)", "paid 18 usd for 2 bowls", "Paid 18 for 2 usd bowls"],
+  ["C3x $ sign added to their bare number", "paid 18 for 2 bowls", "Paid $18 for 2 bowls"],
+  ["C4x section sign", "dinner for 5", "Dinner for 5 \u{A7}"],
+  ["C4x tilde range (Sm)", "room 12, 3 of us", "Room 12~3"],
+  ["C4x \"No.\" before their number (added no)", "room 12 tonight", "No. 12 tonight"],
+  ["C4x dot date (round-2 join, control)", "room 12, 3 of us", "Room 12.3"],
+  ["C4x ISO date from three numbers", "table 18, 2019 trip, 3 of us", "Table 2019-18-3 trip"],
+  ["C5x Unicode handle from their name", "dinner with \u{30DE}\u{30EB}\u{30AF}\u{30B9}", "Dinner with @\u{30DE}\u{30EB}\u{30AF}\u{30B9}"],
+  ["C5x hashtag with digits truncated", "ramen #tokyo2019", "Ramen #tokyo"],
+  ["C5x www. added", "book at nobu.com", "Book at www.nobu.com"],
+  ["C5x hashtag from two of their words", "ramen in tokyo, food heaven", "Ramen #tokyofood"],
+  ["C5x all-caps label domain", "ramen at NOBU, tokyo", "Ramen at NOBU.tokyo"],
+];
+const V727C_PROBES: Array<[cls: string, ground: string, draft: string]> = [
+  ["P1 prime U+2032 as an apostrophe", "can\u{2032}t believe how good it was", "I can believe how good it was"],
+  ["P1 space before the apostrophe", "can 't believe how good it was", "I can believe how good it was"],
+  ["P1 absence word outside the list: zero", "zero regrets about Tokyo", "Regrets about Tokyo!"],
+  ["P1 absence word outside the list: nope", "nope. great dinner at Nobu", "Great dinner at Nobu!"],
+  ["P2 unit binds across a comma (people)", "table 4, people everywhere", "Table, 4 people everywhere"],
+  ["P2 unit binds across a comma (hours)", "left at 4, hours of fun", "Left at 4 hours of fun"],
+  ["P3 postfix \u{20AC} (18\u{20AC}) unbound", "18\u{20AC} for 2 bowls", "18 for 2\u{20AC} bowls"],
+  ["P3 postfix $ (18$) unbound", "paid 18$ for 2 bowls", "Paid 18 for 2$ bowls"],
+  ["P3 spaced sign ($ 18) unbound", "paid $ 18 for 2 bowls", "Paid 18 for $ 2 bowls"],
+  ["P3 letter-prefixed sign (US$18) unbound", "paid US$18 for 2 bowls", "Paid 18 for US$2 bowls"],
+  ["P3 letter-prefixed sign (A$18) unbound", "paid A$18 for 2 bowls", "Paid 18 for A$2 bowls"],
+  ["P4 em dash range (U+2014)", "room 12, 3 of us", "Room 12\u{2014}3"],
+  ["P4 spaced hyphen range", "room 12, 3 of us", "Room 12 - 3"],
+  ["P4 spaced en dash range", "room 12, 3 of us", "Room 12 \u{2013} 3"],
+  ["P4 U+2010 hyphen range", "room 12, 3 of us", "Room 12\u{2010}3"],
+  ["P4 U+2011 non-breaking hyphen range", "room 12, 3 of us", "Room 12\u{2011}3"],
+  ["P4 ASCII apostrophe as a feet/minutes mark", "12 of us at dinner", "12' of us at dinner"],
+  ["P4 vocabulary range (\"to\")", "room 12, 3 of us", "Room 12 to 3"],
+  ["P4 hyphen couples two names", "dinner with Marcus and Jen", "Marcus-Jen dinner"],
+  ["P4 parenthesised count", "room 12, 3 of us", "Room 12 (3)"],
+  ["P5 hyphenated hashtag prefix", "ramen #tokyo-food", "Ramen #tokyo"],
+];
+const V727C_FAITHFUL: Array<[cls: string, ground: string, draft: string]> = [
+  ["F cant \u{2192} Can't, own possessive kept", "cant wait for tomorrow's dinner at Nobu", "Can't wait for tomorrow's dinner at Nobu!"],
+  ["F own $ price and count kept, dash added", "paid $18 for 2 bowls, worth it", "Paid $18 for 2 bowls \u{2014} so worth it!"],
+  ["F own room and count kept", "room 12, 3 of us, so cosy", "Room 12, 3 of us \u{2014} so cosy!"],
+  ["F dead-key apostrophe normalised", "didn\u{B4}t want to leave Tokyo", "Didn't want to leave Tokyo!"],
+  ["F own handle and hashtag kept", "dinner with @marcus_k #tokyo_food", "Dinner with @marcus_k #tokyo_food, loved it"],
+  ["F own domain, weekday and count kept", "booked nobu.com for Friday, 2 of us", "Booked nobu.com for Friday, 2 of us!"],
+  ["F own missed + km kept", "missed the last train, walked 5 km home", "Missed the last train \u{2014} walked 5 km home!"],
+  ["F own 10/10 kept", "tried the ramen at Ichiran, 10/10", "Tried the ramen at Ichiran \u{2014} 10/10!"],
+  ["F own time and ordinal kept", "sunset at 6:30 pm from the 12th floor", "Sunset at 6:30 pm from the 12th floor \u{2014} wow"],
+  ["F own lost + didnt \u{2192} didn't", "lost my hat at Fuji, didnt care", "Lost my hat at Fuji, didn't care!"],
+  ["F \u{20AC} price kept", "\u{20AC}12 for 3 beers, happy", "\u{20AC}12 for 3 beers \u{2014} so happy!"],
+  ["F negative temperature kept", "-5 at dawn on Fuji, worth it", "-5 at dawn on Fuji \u{2014} so worth it!"],
+  ["F hoping kept", "hoping to see Fuji tomorrow", "Hoping to see Fuji tomorrow!"],
+  ["F date range kept", "Tokyo 12/3\u{2013}12/9, unreal", "Tokyo 12/3\u{2013}12/9 \u{2014} unreal!"],
+  ["F sold out kept", "Nobu was sold out, so sad", "Nobu was sold out \u{2014} so sad!"],
+  ["F couldn\u{2019}t (U+2019) \u{2192} couldn't", "couldn\u{2019}t stop smiling in Tokyo", "Couldn't stop smiling in Tokyo!"],
+  ["F own US$ kept", "paid US$18 for 2 bowls", "Paid US$18 for 2 bowls, worth it"],
+  ["F if only kept", "if only we'd had more time in Tokyo", "If only we'd had more time in Tokyo!"],
+  ["F wished kept", "wished I'd booked Nobu", "Wished I'd booked Nobu!"],
+  ["F 7:30pm \u{2192} 7:30 pm", "2 of us at 7:30pm", "2 of us at 7:30 pm!"],
+];
+
+/** Group A of the confirmation's §4: served at 1efdec98c, refused after IN-G141-R4. */
+const V727C_GROUP_A = [
+  "P3 postfix \u{20AC} (18\u{20AC}) unbound",
+  "P3 postfix $ (18$) unbound",
+  "P3 spaced sign ($ 18) unbound",
+  "P3 letter-prefixed sign (US$18) unbound",
+  "P3 letter-prefixed sign (A$18) unbound",
+  "P4 em dash range (U+2014)",
+  "P4 spaced hyphen range",
+  "P4 spaced en dash range",
+  "P4 U+2010 hyphen range",
+  "P4 U+2011 non-breaking hyphen range",
+];
+
+/** Group B of the confirmation's §4: still served, each NAMED in census §46.7 (pinned both ways). */
+const V727C_GROUP_B_SERVED = [
+  "P1 prime U+2032 as an apostrophe",
+  "P1 space before the apostrophe",
+  "P1 absence word outside the list: zero",
+  "P1 absence word outside the list: nope",
+  "P2 unit binds across a comma (people)",
+  "P2 unit binds across a comma (hours)",
+  "P4 ASCII apostrophe as a feet/minutes mark",
+  "P4 hyphen couples two names",
+  "P4 parenthesised count",
+  "P5 hyphenated hashtag prefix", // not a finding: a hashtag cannot hold a hyphen, so the traveller's tag IS #tokyo
+];
+
+/** The one fresh faithful polish refused: the sanitizer strips a leading "-" as a list marker (census §46.7, a named cost). */
+const V727C_FAITHFUL_REFUSED = ["F negative temperature kept"];
+
+/**
+ * Group A, more of the same mechanisms (lane IN-G141-R4's own drafts, plus the dashes the lead's brief names that the
+ * confirmation did not draft: U+2012 and U+2212). Every one is refused after IN-G141-R4; the ones marked "served at
+ * 1efdec98c" were the holes.
+ */
+const R4_GROUP_A: Array<[cls: string, ground: string, draft: string]> = [
+  // Every dash between two numbers joins them, spaced or not.
+  ["U+2012 figure dash range", "room 12, 3 of us", "Room 12\u{2012}3"],
+  ["U+2212 minus between two numbers (their minus elsewhere)", "room 12, 3 of us, \u{2212}2 outside", "Room 12\u{2212}3, \u{2212}2 outside"],
+  ["U+2212 minus range (no minus of theirs: a symbol)", "room 12, 3 of us", "Room 12\u{2212}3"],
+  ["U+2015 horizontal bar range", "room 12, 3 of us", "Room 12\u{2015}3"],
+  ["U+FF0D fullwidth hyphen range", "room 12, 3 of us", "Room 12\u{FF0D}3"],
+  ["U+301C wave dash range", "room 12, 3 of us", "Room 12\u{301C}3"],
+  ["spaced em dash range", "room 12, 3 of us", "Room 12 \u{2014} 3"],
+  ["hyphen spaced on the left", "room 12, 3 of us", "Room 12 -3"],
+  ["hyphen spaced on the right", "room 12, 3 of us", "Room 12- 3"],
+  ["spaced slash date (their slash elsewhere)", "dinner w/ the gang, room 12, 3 of us", "Room 12 / 3 w/ the gang"],
+  ["U+2010 leading hyphen makes a number negative", "we were 5 at dinner, so cold", "We were \u{2010}5 at dinner, so cold"],
+  ["U+2212 leading minus moved between their numbers", "we were 5 at dinner, \u{2212}2 outside", "We were \u{2212}5 at dinner, 2 outside"],
+  // A sign after its number, spaced from it, or letter-prefixed binds to it like a leading one.
+  ["postfix \u{20AC} spaced (18 \u{20AC}) moved", "18 \u{20AC} for 2 bowls", "18 for 2 \u{20AC} bowls"],
+  ["postfix \u{20AC} with a no-break space moved", "18\u{A0}\u{20AC} for 2 bowls", "18 for 2\u{A0}\u{20AC} bowls"],
+  ["postfix \u{20AC} dropped", "18\u{20AC} for 2 bowls", "18 for 2 bowls"],
+  ["spaced $ dropped", "paid $ 18 for 2 bowls", "Paid 18 for 2 bowls"],
+  ["US$ dropped to a bare number", "paid US$18 for 2 bowls", "Paid 18 for 2 bowls"],
+  ["R$ moved", "paid R$18 for 2 bowls", "Paid 18 for R$2 bowls"],
+  ["HK$ moved", "paid HK$18 for 2 bowls", "Paid 18 for HK$2 bowls"],
+  ["NZ$ moved", "paid NZ$18 for 2 bowls", "Paid 18 for NZ$2 bowls"],
+  ["a sign glued to a longer word, dropped", "the bill cost$18 for 2 bowls", "The bill cost 18 for 2 bowls"],
+];
+
+describe("VERIFY-727 confirmation battery — 25 fresh, 25 extra, 21 probes, 20 fresh polishes; Group A closed (travel level)", () => {
+  const verdict = (g: string, d: string) => {
+    const clean = sanitizeSuggestedText(d);
+    return clean ? inventedFacts(clean, [g], "travel") : ["sanitized-away"];
+  };
+  type C3 = [cls: string, ground: string, draft: string];
+  const served = (cs: C3[]) => cs.filter(([, g, d]) => verdict(g, d).length === 0).map(([c]) => c);
+  const refused = (cs: C3[]) => cs.filter(([, g, d]) => verdict(g, d).length > 0).map(([c]) => c);
+
+  it("counts: 0/25 fresh, 0/25 extra; of 21 probes only the 10 Group B named are served; 0 Group A; 19/20 fresh faithful", () => {
+    assert.equal(V727C_FRESH.length, 25);
+    assert.equal(V727C_EXTRA.length, 25);
+    assert.equal(V727C_PROBES.length, 21);
+    assert.equal(V727C_FAITHFUL.length, 20);
+    assert.equal(V727C_GROUP_A.length, 10);
+    assert.deepEqual(served(V727C_FRESH), []);
+    assert.deepEqual(served(V727C_EXTRA), []);
+    assert.deepEqual(served(V727C_PROBES).sort(), [...V727C_GROUP_B_SERVED].sort());
+    assert.deepEqual(served(R4_GROUP_A), []);
+    assert.deepEqual(refused(V727C_FAITHFUL), V727C_FAITHFUL_REFUSED);
+  });
+  for (const [cls, ground, draft] of [...V727C_FRESH, ...V727C_EXTRA]) {
+    it(`refuses ${cls}`, () => { assert.ok(verdict(ground, draft).length > 0, draft); });
+  }
+  for (const [cls, ground, draft] of V727C_PROBES.filter(([c]) => V727C_GROUP_A.includes(c))) {
+    it(`refuses Group A: ${cls}`, () => { assert.ok(verdict(ground, draft).length > 0, draft); });
+  }
+  for (const [cls, ground, draft] of R4_GROUP_A) {
+    it(`refuses Group A (IN-G141-R4): ${cls}`, () => { assert.ok(verdict(ground, draft).length > 0, draft); });
+  }
+  for (const [cls, ground, draft] of V727C_FAITHFUL.filter(([c]) => !V727C_FAITHFUL_REFUSED.includes(c))) {
+    it(`serves the fresh polish: ${cls}`, () => { assert.deepEqual(verdict(ground, draft), []); });
+  }
+
+  it("end to end through buildAiAssistedWriting, both fields: the 25 fresh drafts and every Group A draft are refused; of the probes only Group B is served", async () => {
+    const groupA = [...V727C_PROBES.filter(([c]) => V727C_GROUP_A.includes(c)), ...R4_GROUP_A];
+    for (const fieldId of [POSTCARD, MEMORY]) {
+      for (const [, ground, draft] of [...V727C_FRESH, ...groupA]) {
+        model(draft);
+        assert.deepEqual(labels(await write(makeClient(state(true)), fieldId, ground)), [], `${fieldId}: ${draft}`);
+      }
+      const probesServed: string[] = [];
+      for (const [cls, ground, draft] of V727C_PROBES) {
+        model(draft);
+        if ((await write(makeClient(state(true)), fieldId, ground)).length > 0) probesServed.push(cls);
+      }
+      assert.deepEqual(probesServed.sort(), [...V727C_GROUP_B_SERVED].sort(), fieldId);
+    }
+  });
+});
+
+describe("IN-G141-R4 — a currency sign is its number's on either side, spaced or letter-prefixed; every dash between two numbers joins them (travel level)", () => {
+  it("a sign AFTER its number is part of it: 18\u{20AC} is not 18, and 2\u{20AC} is not 2", () => {
+    const f = inventedFacts("18 for 2\u{20AC} bowls", ["18\u{20AC} for 2 bowls"], "travel");
+    assert.ok(f.includes("number:18") && f.includes("number:2\u{20AC}"), f.join());
+    assert.ok(inventedFacts("Paid 18 for 2$ bowls", ["paid 18$ for 2 bowls"], "travel").includes("number:2$"));
+    assert.deepEqual(inventedFacts("18\u{20AC} for 2 bowls, so good!", ["18\u{20AC} for 2 bowls"], "travel"), []);
+  });
+  it("a sign spaced from its number is part of it when it stands beside one number only; '$ 18' is '$18', '18 \u{20AC}' is '18\u{20AC}'", () => {
+    const f = inventedFacts("Paid 18 for $ 2 bowls", ["paid $ 18 for 2 bowls"], "travel");
+    assert.ok(f.includes("number:18") && f.includes("number:$2"), f.join());
+    assert.deepEqual(inventedFacts("Paid $18 for 2 bowls!", ["paid $ 18 for 2 bowls"], "travel"), []);
+    assert.deepEqual(inventedFacts("Paid 18 \u{20AC} for 2 bowls!", ["paid 18\u{20AC} for 2 bowls"], "travel"), []);
+    assert.deepEqual(inventedFacts("Paid 18\u{202F}\u{20AC} for 2 bowls!", ["paid 18 \u{20AC} for 2 bowls"], "travel"), [], "a narrow no-break space is a space");
+    // Between two numbers a spaced sign binds neither; a draft that binds it to one is refused.
+    assert.deepEqual(inventedFacts("Paid 2 $ 18, so good", ["paid 2 $ 18"], "travel"), []);
+    assert.ok(inventedFacts("Paid $2 18, so good", ["paid 2 $ 18"], "travel").includes("number:$2"));
+    assert.ok(inventedFacts("Paid 2 18 $, so good", ["paid 2 $ 18"], "travel").includes("number:18$"));
+    assert.ok(inventedFacts("Paid 2 $18, so good", ["paid 2 $ 18"], "travel").includes("number:$18"));
+    assert.ok(inventedFacts("Paid 2$ 18, so good", ["paid 2 $ 18"], "travel").includes("number:2$"));
+  });
+  it("a minus before the sign stays on the number: -$5 is not $5", () => {
+    assert.ok(inventedFacts("Paid -$5, so good", ["paid $5, so good"], "travel").includes("number:-$5"));
+    assert.deepEqual(inventedFacts("Paid -$5, so good!", ["paid -$5, so good"], "travel"), []);
+  });
+  it("up to three letters before the sign are part of the number (US$18, A$18, HK$18); dropping the letters or the sign is refused", () => {
+    assert.ok(inventedFacts("Paid 18 for US$2 bowls", ["paid US$18 for 2 bowls"], "travel").includes("number:US$2"));
+    assert.ok(inventedFacts("Paid 18 for 2 bowls", ["paid US$18 for 2 bowls"], "travel").includes("number:18"));
+    assert.ok(inventedFacts("Paid $18 for 2 bowls", ["paid US$18 for 2 bowls"], "travel").includes("number:$18"));
+    assert.ok(inventedFacts("Paid HK$18 for 2 bowls", ["paid US$18 for 2 bowls"], "travel").includes("number:HK$18"));
+    assert.deepEqual(inventedFacts("Paid US$18 for 2 bowls!", ["paid us$18 for 2 bowls"], "travel"), []);
+  });
+  it("a sign glued to a longer word is still its number's", () => {
+    assert.ok(inventedFacts("The bill cost 18 for 2 bowls", ["the bill cost$18 for 2 bowls"], "travel").includes("number:18"));
+    assert.deepEqual(inventedFacts("The bill cost $18 for 2 bowls!", ["the bill cost$18 for 2 bowls"], "travel"), []);
+  });
+  it("every dash between two numbers joins them, spaced or not: - \u{2010} \u{2011} \u{2012} \u{2013} \u{2014} \u{2015} \u{FF0D} \u{301C}", () => {
+    for (const dash of ["-", "\u{2010}", "\u{2011}", "\u{2012}", "\u{2013}", "\u{2014}", "\u{2015}", "\u{FF0D}", "\u{301C}"]) {
+      for (const [l, r] of [["", ""], [" ", " "], [" ", ""], ["", " "]]) {
+        const draft = `Room 12${l}${dash}${r}3`;
+        assert.ok(inventedFacts(draft, ["room 12, 3 of us"], "travel").includes(`number:12${l}${dash}${r}3`.replace(/ /gu, "")), draft);
+      }
+    }
+    // U+2212 is a symbol (refused unless the traveller wrote it) and, where they did, a dash like the others.
+    assert.ok(inventedFacts("Room 12\u{2212}3", ["room 12, 3 of us"], "travel").includes("symbol:\u{2212}"));
+    assert.ok(inventedFacts("Room 12\u{2212}3, \u{2212}2 outside", ["room 12, 3 of us, \u{2212}2 outside"], "travel").includes("number:12\u{2212}3"));
+    // A spaced slash joins too ("12 / 3" is a date), where the traveller's own slash makes it no new symbol.
+    assert.ok(inventedFacts("Room 12 / 3 w/ the gang", ["dinner w/ the gang, room 12, 3 of us"], "travel").includes("number:12/3"));
+  });
+  it("their own pair is compared as the pair, whatever the dash and the spacing: '12 - 3' may be written '12\u{2013}3'", () => {
+    assert.deepEqual(inventedFacts("Room 12\u{2013}3, so cosy", ["room 12 - 3, so cosy"], "travel"), []);
+    assert.deepEqual(inventedFacts("Tokyo 12/3\u{2013}12/9 \u{2014} unreal!", ["Tokyo 12/3 - 12/9, unreal"], "travel"), []);
+    assert.deepEqual(inventedFacts("Score: 10/10!", ["score 10 / 10"], "travel"), []);
+    assert.deepEqual(inventedFacts("Tokyo 12/3\u{2013}12/9 \u{2014} unreal!", ["Tokyo 12/3\u{2013}12/9, unreal"], "travel"), [], "a dash after a number, before a word, joins nothing");
+  });
+  it("a leading dash of any kind makes a number negative: \u{2010}5 and \u{2212}5 are not 5; their own \u{2212}2 may be written -2", () => {
+    assert.ok(inventedFacts("We were \u{2010}5 at dinner", ["we were 5 at dinner"], "travel").includes("number:\u{2010}5"));
+    const f = inventedFacts("We were \u{2212}5 at dinner, 2 outside", ["we were 5 at dinner, \u{2212}2 outside"], "travel");
+    assert.ok(f.includes("number:\u{2212}5") && f.includes("number:2"), f.join());
+    assert.deepEqual(inventedFacts("-2 outside, so cold!", ["\u{2212}2 outside, so cold"], "travel"), []);
+    assert.deepEqual(inventedFacts("Day-3 in kyoto!", ["day-3 in kyoto"], "travel"), [], "a hyphen after a word is not a minus");
+  });
+  it("inside a mixed token the number keeps its sign and its dash: '$18k' is not '18 k', '12-3pm' is not '3 pm'", () => {
+    assert.ok(inventedFacts("Paid 18 k", ["paid $18k"], "travel").includes("number:18"));
+    assert.ok(inventedFacts("Open 3 pm", ["open 12-3pm"], "travel").includes("number:3"));
+    assert.deepEqual(inventedFacts("Open 12-3 pm!", ["open 12-3pm"], "travel"), []);
+    assert.deepEqual(inventedFacts("Dinner at 8 pm!", ["dinner at 8pm"], "travel"), [], "8pm is still 8 pm");
+  });
+});
