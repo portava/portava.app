@@ -594,4 +594,17 @@ describe("FIX-749a — the owner's people ceiling (#736) reaches memory_get_shar
     const { out } = await call("memory_get_shared", { personHandle: "carl" }, ALICE, { extra: ceiling("HIDDEN") });
     assert.deepEqual(ids(out.memories), [M_PEOPLE]);
   });
+  it("memory_get_evidence's counts take the same ceiling: ANONYMOUS_COUNT → unidentified, HIDDEN → nobody for others, unreadable → withheld, absent → as before", async () => {
+    const anon = (await call("memory_get_evidence", { memoryId: M_PEOPLE }, BOB, { extra: ceiling("ANONYMOUS_COUNT") })).out;
+    assert.deepEqual([anon.confirmed_participants, anon.unidentified_participants], [0, 3]);
+    const hidden = (await call("memory_get_evidence", { memoryId: M_PEOPLE }, BOB, { extra: ceiling("HIDDEN") })).out;
+    assert.deepEqual([hidden.confirmed_participants, hidden.unconfirmed_participants, hidden.unidentified_participants], [0, 0, 0]);
+    const owner = (await call("memory_get_evidence", { memoryId: M_PEOPLE }, ALICE, { extra: ceiling("HIDDEN") })).out;
+    assert.equal(owner.confirmed_participants, 1);
+    const down = (await call("memory_get_evidence", { memoryId: M_PEOPLE }, BOB, { failing: ["memory_visibility_policies"] })).out;
+    assert.equal(down.confirmed_participants, null);
+    assert.equal(down.participants_unavailable, true);
+    const absent = (await call("memory_get_evidence", { memoryId: M_PEOPLE }, BOB, { absent: ["memory_visibility_policies"] })).out;
+    assert.equal(absent.confirmed_participants, 2);
+  });
 });

@@ -147,10 +147,12 @@ describe("resolveExactHandle — a literal pattern, checked equal in code", () =
 });
 
 describe("countParticipantsUnderLadder — the count follows the ladder, and an unreadable ceiling withholds it", () => {
+  // `personCeilings: absent` is MEM-POLICY's (#736) "3810 not applied" state: inert on a tree without #736, and
+  // with it the derived rung stands (a hand-built context WITHOUT it reads as `not_read`, i.e. HIDDEN, there).
   const ctx = (over: Partial<ParticipantVisibilityContext> = {}): ParticipantVisibilityContext => ({
     memoryOwnerId: "owner", memoryVisibility: "public", viewerId: "viewer", viewerIsCrew: false,
-    blockedIds: new Set(), nameAllowedIds: new Set(), ...over,
-  });
+    blockedIds: new Set(), nameAllowedIds: new Set(), personCeilings: { state: "absent", detail: "3810 not applied" }, ...over,
+  }) as unknown as ParticipantVisibilityContext;
   const tags = [
     { tagged_user_id: "p1", status: "approved" },
     { tagged_user_id: "p2", status: "approved" },
