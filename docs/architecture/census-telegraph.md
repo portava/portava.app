@@ -14808,3 +14808,105 @@ counts the merged rows on main `0bea6f282`: 262 / 183 / 4 / 2 of 451. CONSTRUCTE
   - the host let past the membership gate (2 red).
 - Not carried over: the first round's block-filter mutants test code that no longer exists.
 - T122's C rests on the evidence in 93.3. The headline is unchanged (93.7).
+
+## §97 — TELEGRAPH B58 lane PRIV-FIX-2 (2026-10-14): `GET /threads/:threadId/capabilities` stops telling a non-member that a thread exists, and T403's GPS evidence becomes real. NO ROW CHANGES BUCKET
+
+### 97.1 The defect: a thread-existence oracle
+
+Lane TM-5 found this in passing. The route's header said that every capability false "is the same answer for 'this
+thread does not exist', 'you were removed' and 'you were blocked'", and §11.1 repeated it ("a 403 would make it a
+thread-existence oracle"). That held for the **status** and not for the **body**. The policy reads `message_threads`
+first, so:
+- a missing thread returned `conversationType: "unknown"` and `inputsRead: []`;
+- an existing thread returned, to a viewer with no membership row:
+  - its real type (`"direct"` / `"group"` / `"trip"`);
+  - `inputsRead: ["conversationType", "membership"]`.
+
+Any signed-in user could probe a thread id and learn whether it exists and what kind of conversation it is.
+
+A failed membership read leaked the same way: degraded with the real type for an existing thread, a clean "not a
+member" for a missing one. Measured on main `3c214ca80`: the new suite's five byte comparisons are red there.
+
+### 97.2 The fix: the route asks the viewer's own row first
+
+The route asks the viewer's own row FIRST, before anything about the thread
+(`artifacts/api-server/src/server/telegraph/capabilityRoute.ts:73#const undisclosed = await undisclosedAnswerFor(sc, threadId, user.id);`,
+`:133#async function undisclosedAnswerFor(`). With no row it sends exactly the body a non-existent thread has always got:
+- type `"unknown"`;
+- every capability false with `TELEGRAPH_AUTH_NOT_MEMBER`;
+- `inputsRead: []`;
+- the conversation facts all null.
+
+The thread is never read, so neither the content nor the sequence of reads can depend on whether it exists. A row
+that cannot be read answers ONE degraded body (`TELEGRAPH_DEGRADED_MEMBERSHIP_UNREADABLE`, type `"unknown"`), alike
+for both cases. A member is never told "not a member" because a read failed.
+
+**Who is unchanged:**
+- **Members, and former members (a row with `left_at`),** are answered by the policy exactly as before. A former
+  member already knows the thread.
+- **The policy itself (`conversationCapabilityPolicy.ts`) is not touched.** The policy's other callers are therefore
+  unaffected: GET /messages, read receipts and the Compass tool gate. The Compass gate reads the caller's own row
+  before it calls the policy (`TelegraphConversationTools.ts`); read receipts is covered in the next paragraph.
+
+The edit is line-neutral, and the lines §11.1 cites hold
+(`artifacts/api-server/src/server/telegraph/capabilityRoute.ts:83#reasons[name] = raw === null ? null : redactForWire(raw);`,
+`artifacts/api-server/src/server/telegraph/capabilityRoute.ts:98#res.status(200).json({`).
+
+**Adjacent, not changed:** `GET /threads/:threadId/read-receipts` (`server/telegraph/readReceiptsRoute.ts`) answers a
+non-member 403 `TELEGRAPH_AUTH_NOT_MEMBER` for both an existing and a missing thread. During a membership-read outage,
+though, it answers 503 for an existing thread and 403 for a missing one. That is an existence signal only while the
+store is failing, and it is reported here, not fixed.
+
+### 97.3 T403 (EXIF handling): the strip was real, its GPS evidence was not
+
+census-media §52 has the full measurement. In short:
+- five test fixtures planted GPS under `withExif({ GPS: … })`, a key sharp ignores, so no suite had passed a GPS IFD
+  through the pipeline;
+- with hand-built stills carrying a GPS IFD, a MakerNote, XMP and IPTC location, comments and APP11, every upload route
+  stores location-free bytes on main. There is no live leak;
+- `lib/exifFacts` (the media worker's GPS refusal) could not see a WebP's EXIF, and now can.
+
+T403 says "a full EXIF/GPS/XMP strip". Until now its XMP half had no test at all. `.keepXmp()` passes the old suite and
+fails the new guard (census-media §52.4, mutant A2).
+
+### 97.4 Rows: none moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| T403 | C | C | Restated. GPS, capture time and device metadata are handled as the row says. The GPS and XMP claims are now proved against a still that carries them (`artifacts/api-server/src/test/imageLocationStripGuard.test.ts`, census-media §52). Before this they rested on a fixture with no GPS IFD. |
+| T207 | C | C | Restated. Derivation from the eight inputs is untouched (the policy is unchanged). The endpoint that serves it no longer tells a non-member the thread's type or what was read (97.2). §11.1's sentence about the oracle is now true of the body as well as the status. |
+
+### 97.5 Evidence
+
+- **New suite `artifacts/api-server/src/test/telegraphCapabilityExistenceOracle.test.ts` (10 cases).** The same thread
+  id is asked in two databases: one where the thread exists and the viewer is not in it, one where it does not exist.
+  The checks:
+  - status, content type and the body text must be identical, for `direct`, `group` and `trip`;
+  - the reads must be the same, in the same order, with `message_threads` never read;
+  - a failed membership read gives identical degraded bodies;
+  - controls: the non-existent answer is pinned to main's body; members and former members are unchanged; a failed
+    thread read tells a non-member nothing.
+- **Red on main:** 5 of 10.
+- **Green on the branch:** with `telegraphConversationCapabilities`, `telegraphProjectionRegistryHonesty` and
+  `telegraphTransportClasses`, 67 of 67.
+- **Mutants: 9 of 9 killed:**
+  - the gate not called;
+  - an unreadable row read as "not a member";
+  - an unreadable row passed to the policy;
+  - a former member treated as a stranger;
+  - the type in the non-member body;
+  - `inputsRead` in it;
+  - the gate also reading the thread;
+  - `memberCount: 0` disclosed;
+  - the degraded body dropping its reason.
+
+### 97.6 Headline, restated from the rows
+
+Unchanged; no row changes bucket. `check:census-integrity` on this branch: **262 / 183 / 4 / 2 of 451**.
+CONSTRUCTED 445 / 451 = 98.7 %; CORRECT 262 / 451 = 58.1 %.
+
+**Merge hazards:**
+- **§97 follows open PRs:** §94 (#729), §95 (#738), §96 (#740).
+- **#738 (TM-5) edits `conversationCapabilityPolicy.ts` (at its lines 54, 366 and 401 on that branch).** This section
+  changes no line of that file. #738's new `GET /threads/:threadId/context` gates non-members itself (it answers `"unknown"`).
+
