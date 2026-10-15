@@ -155,7 +155,7 @@ import {
   CLASSIFIER_CONTEXT_TURNS,
   type IntentClassification,
 } from "../services/compass/CompassIntentClassifier.js";
-import { getWeatherContext as getWeatherForAsk }  from "../lib/weatherCache.js";
+import { getWeatherContext as getWeatherForAsk }  from "../lib/weatherCache.js"; import { renderMemoryToolFallback } from "../compass/memoryFallbackRenderer.js"; // census-highlights-memories H266 (b58 HM-A3)
 import {
   COMPASS_TOOL_DEFINITIONS,
   COMPASS_TOOLS_PROMPT_ADDENDUM,
@@ -1311,10 +1311,10 @@ async function runToolCallingLoop(
    *  forwarded live (tool rounds stay silent). Used by the SSE branch. */
   onDelta?: (delta: string) => void,
   /** Aborts model calls when the SSE client disconnects mid-answer. */
-  signal?:  AbortSignal,
+  signal?:  AbortSignal, /** H266: when given, every tool execution is recorded HERE, so a caller whose model call later throws can still render what the memory tools returned. */ toolSink?: ToolExecution[],
 ): Promise<ToolLoopOutcome> {
   const convo: any[] = [...messages];
-  const toolLog: ToolExecution[] = [];
+  const toolLog: ToolExecution[] = toolSink ?? []; // H266: the caller's sink IS the log, so it outlives a throw
   const proposals: AddToTripProposal[] = [];
 
   for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
@@ -2002,7 +2002,7 @@ router.post("/compass/ask", async (req, res) => {
     const clientAbort = new AbortController();
     res.on("close", () => {
       if (!res.writableEnded) clientAbort.abort();
-    });
+    }); const streamToolSink: ToolExecution[] = []; // H266: outlives a throw below
     try {
       // Tool rounds run silently server-side; the FINAL model round streams
       // its content token-by-token as delta events (same contract as before
@@ -2010,10 +2010,10 @@ router.post("/compass/ask", async (req, res) => {
       const { finalRaw, toolLog, proposals } = await withAskProjections(() => runToolCallingLoop(
         sc, user.id, guardProfile, messages as any, req.log,
         (delta) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify({ delta })}\n\n`); },
-        clientAbort.signal,
+        clientAbort.signal, streamToolSink,
       ));
       const _parsed = _parseModelResponse(finalRaw);
-      const _rawMessage  = finalRaw === "" ? SUMMARISE_EMPTY_FALLBACK_MESSAGE : _parsed.message;
+      const _memoryFallback = finalRaw === "" ? renderMemoryToolFallback(toolLog) : null; const _rawMessage  = finalRaw === "" ? (_memoryFallback?.text ?? SUMMARISE_EMPTY_FALLBACK_MESSAGE) : _parsed.message; if (finalRaw === "" && !res.writableEnded) res.write(`data: ${JSON.stringify({ delta: _rawMessage })}\n\n`); // H266: an empty final round streamed nothing and the client builds the bubble from deltas, so the fallback is sent as one
       // Sensing `:148`. The tokens are already on the wire — the client rebuilds
       // the bubble from the accumulated deltas — so the correction is sent as
       // one more delta rather than by rewriting what was said.
@@ -2064,7 +2064,7 @@ router.post("/compass/ask", async (req, res) => {
       } catch { /* non-fatal */ }
       // Phase 6: bounded-cadence memory compression (fire-and-forget)
       compressConversationIfDue(sc, user.id, conversationId).catch(() => {});
-      res.write(`data: ${JSON.stringify({ done: true, conversationId, message, promptVersion: COMPASS_ASK_PROMPT_VERSION, payload, quickActions, pendingProposals: proposals, uiBlocks, meta: { droppedInventedIds: uiBlockMeta.droppedInventedIds, groundingViolations: _grounded.violations.map((v) => v.kind), toolsUsed: toolLog.map((t) => t.name) }, intent: intentResult })}\n\n`);
+      res.write(`data: ${JSON.stringify({ done: true, conversationId, message, promptVersion: COMPASS_ASK_PROMPT_VERSION, payload, quickActions, pendingProposals: proposals, uiBlocks, meta: { droppedInventedIds: uiBlockMeta.droppedInventedIds, groundingViolations: _grounded.violations.map((v) => v.kind), toolsUsed: toolLog.map((t) => t.name) }, ...(_memoryFallback ? { renderer: _memoryFallback.renderer } : {}), intent: intentResult })}\n\n`);
       res.end();
     } catch (err) {
       if (clientAbort.signal.aborted) {
@@ -2074,19 +2074,19 @@ router.post("/compass/ask", async (req, res) => {
         return;
       }
       req.log.error({ err, userId: user.id }, "compass/ask stream failed");
-      res.write(`data: ${JSON.stringify({ error: true, message: HONEST_FALLBACK_MESSAGE })}\n\n`);
+      res.write(`data: ${JSON.stringify({ error: true, message: renderMemoryToolFallback(streamToolSink)?.text ?? HONEST_FALLBACK_MESSAGE })}\n\n`); // H266
       res.end();
     }
     return;
   }
 
-  // ── Non-streaming (default) ───────────────────────────────────────────────
+  const askToolSink: ToolExecution[] = []; // ── Non-streaming (default) ── (H266: the tool log outlives a throw, for the fallback below)
   try {
     const { finalRaw, toolLog, proposals } = await withAskProjections(() => runToolCallingLoop(
-      sc, user.id, guardProfile, messages as any, req.log,
+      sc, user.id, guardProfile, messages as any, req.log, undefined, undefined, askToolSink,
     ));
     const _parsed = _parseModelResponse(finalRaw);
-    const _rawMessage  = finalRaw === "" ? SUMMARISE_EMPTY_FALLBACK_MESSAGE : _parsed.message;
+    const _memoryFallback = finalRaw === "" ? renderMemoryToolFallback(toolLog) : null; const _rawMessage  = finalRaw === "" ? (_memoryFallback?.text ?? SUMMARISE_EMPTY_FALLBACK_MESSAGE) : _parsed.message; // H266: an empty final round renders the memory facts deterministically
     // Sensing `:148` — the same boundary the streamed branch applies, on the
     // same tool log, so the two branches cannot publish different answers.
     const _grounded    = groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence);
@@ -2135,21 +2135,21 @@ router.post("/compass/ask", async (req, res) => {
     } catch { /* non-fatal */ }
     // Phase 6: bounded-cadence memory compression (fire-and-forget)
     compressConversationIfDue(sc, user.id, conversationId).catch(() => {});
-    res.json({ conversationId, message, payload: payload ?? null, quickActions, pendingProposals: proposals, uiBlocks, meta: { droppedInventedIds: uiBlockMeta.droppedInventedIds, groundingViolations: _grounded.violations.map((v) => v.kind), toolsUsed: toolLog.map((t) => t.name) }, promptVersion: COMPASS_ASK_PROMPT_VERSION, intent: intentResult });
+    res.json({ conversationId, message, payload: payload ?? null, quickActions, pendingProposals: proposals, uiBlocks, meta: { droppedInventedIds: uiBlockMeta.droppedInventedIds, groundingViolations: _grounded.violations.map((v) => v.kind), toolsUsed: toolLog.map((t) => t.name) }, promptVersion: COMPASS_ASK_PROMPT_VERSION, ...(_memoryFallback ? { renderer: _memoryFallback.renderer } : {}), intent: intentResult });
   } catch (err) {
-    req.log.error({ err, userId: user.id }, "compass/ask: LLM call failed");
+    req.log.error({ err, userId: user.id }, "compass/ask: LLM call failed"); const memoryFallback = renderMemoryToolFallback(askToolSink); // H266: what the memory tools returned before the model failed, rendered without a model
     // spec §1 `system-event`: the conversation records that the assistant was
     // unavailable at this turn, so the history is honest about the gap. Never a
     // model turn (modelTurns drops it); refused where 2996 is not applied.
     appendSystemEvent(sc, conversationId, "assistant_unavailable", { fallbackReason: "ai_error" }).catch(() => {});
     res.json({
       conversationId,
-      message:        HONEST_FALLBACK_MESSAGE,
+      message:        memoryFallback?.text ?? HONEST_FALLBACK_MESSAGE,
       payload:        null,
       quickActions:   [],
       promptVersion:  COMPASS_ASK_PROMPT_VERSION,
       fallback:       true,
-      fallbackReason: "ai_error",
+      fallbackReason: "ai_error", ...(memoryFallback ? { renderer: memoryFallback.renderer } : {}),
     });
   }
 });

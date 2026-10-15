@@ -843,7 +843,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // CREATE OR REPLACE that makes the §17 applier admit UNHIDE_HIGHLIGHT, which
     // is what §Y moves H159's boundary on.
     "artifacts/api-server/src/scripts/migrationPrefixRules.ts",
-    "artifacts/api-server/src/migrations/3001_highlight_kernel_admits_unhide.sql",
+    "artifacts/api-server/src/migrations/3001_highlight_kernel_admits_unhide.sql", "artifacts/api-server/src/compass/memoryCompassTruth.ts", "artifacts/api-server/src/compass/memoryFallbackRenderer.ts", "artifacts/api-server/src/test/memoryCompassTruth.test.ts", "artifacts/api-server/src/test/memoryCompassTruthUnits.test.ts", "artifacts/api-server/src/test/compassMemoryFallbackRoute.test.ts", /* ADDED 2026-10-14 by B58 lane HM-A3 (census §BW, H262/H266): the modules and suites §BW grades on, on this line so cited lines hold */
     // ── ADDED 2026-09-23 by §Y.7: the un-hide's CLIENT half. ────────────────
     // §Y.4 wired the route and §Y.6 said the migration is applied nowhere;
     // between those two it would be easy to read the un-hide as a server

@@ -45,7 +45,7 @@ import {
 import { certificationClient, tablesFor } from "./world.js";
 import {
   runAllInvariants,
-  type InvariantOutcome,
+  type InvariantOutcome, runDeveloperInvariants, type DeveloperInvariantOutcome,
 } from "./invariants.js";
 import {
   runAllChaosScenarios,
@@ -80,14 +80,14 @@ export interface CertificationReport {
   readonly suite_version: string;
   readonly engine_versions: Readonly<Record<string, string>>;
   readonly fixtures: readonly FixtureOutcome[];
-  readonly invariants: readonly InvariantOutcome[];
+  readonly invariants: readonly InvariantOutcome[]; /** §28 developer invariants (census H262), kept out of §25's nine. */ readonly developer_invariants: readonly DeveloperInvariantOutcome[];
   readonly chaos: readonly ChaosOutcome[];
   readonly totals: {
     readonly fixtures_certified: number;
     readonly fixtures_diverged: number;
     readonly invariants_held: number;
     readonly invariants_violated: number;
-    readonly invariants_no_surface: number;
+    readonly invariants_no_surface: number; readonly developer_invariants_violated: number;
     readonly chaos_tolerated: number;
     readonly chaos_broken: number;
     readonly chaos_partial: number;
@@ -216,7 +216,7 @@ async function runFixture(id: CertificationFixtureId): Promise<FixtureOutcome> {
 export async function runCertification(): Promise<CertificationReport> {
   const fixtures: FixtureOutcome[] = [];
   for (const id of CERTIFICATION_FIXTURE_IDS) fixtures.push(await runFixture(id));
-  const invariants = await runAllInvariants();
+  const invariants = await runAllInvariants(); const developerInvariants = await runDeveloperInvariants(); // §28 developer invariants (H262), one line: :256 is cited
   const chaos = await runAllChaosScenarios();
 
   const totals = {
@@ -224,7 +224,7 @@ export async function runCertification(): Promise<CertificationReport> {
     fixtures_diverged: fixtures.filter((f) => f.status === "DIVERGED").length,
     invariants_held: invariants.filter((i) => i.status === "HELD").length,
     invariants_violated: invariants.filter((i) => i.status === "VIOLATED").length,
-    invariants_no_surface: invariants.filter((i) => i.status === "NO_SURFACE").length,
+    invariants_no_surface: invariants.filter((i) => i.status === "NO_SURFACE").length, developer_invariants_violated: developerInvariants.filter((i) => i.status === "VIOLATED").length,
     chaos_tolerated: chaos.filter((c) => c.status === "TOLERATED").length,
     chaos_broken: chaos.filter((c) => c.status === "BROKEN").length,
     chaos_partial: chaos.filter((c) => c.status === "PARTIAL").length,
@@ -242,12 +242,12 @@ export async function runCertification(): Promise<CertificationReport> {
       retrieval: RETRIEVAL_ENGINE_VERSION,
     }),
     fixtures,
-    invariants,
+    invariants, developer_invariants: developerInvariants,
     chaos,
     totals,
     passed:
       totals.fixtures_diverged === 0 &&
-      totals.invariants_violated === 0 &&
+      totals.invariants_violated === 0 && totals.developer_invariants_violated === 0 &&
       totals.chaos_broken === 0,
   };
 }
@@ -280,6 +280,13 @@ export function formatCertificationReport(report: CertificationReport): string {
     out.push(`        ${i.detail}`);
   }
   out.push("");
+  out.push("§28 developer invariants (not part of §25's nine)");
+  for (const i of report.developer_invariants) {
+    out.push(`  ${i.census_id.padEnd(5)} ${i.status.padEnd(10)} ${i.id}`);
+    out.push(`        surface: ${i.surface}${i.reachable_from_a_route ? " [reachable from a route]" : " [NOT reachable from any route]"}`);
+    out.push(`        ${i.detail}`);
+  }
+  out.push("");
   out.push("§25 property / chaos scenarios");
   for (const c of report.chaos) {
     out.push(`  ${c.census_id.padEnd(5)} ${c.status.padEnd(10)} ${c.id}`);
@@ -289,6 +296,7 @@ export function formatCertificationReport(report: CertificationReport): string {
   out.push(
     `TOTALS  fixtures ${report.totals.fixtures_certified} certified / ${report.totals.fixtures_diverged} diverged` +
       `  ·  invariants ${report.totals.invariants_held} held / ${report.totals.invariants_violated} violated / ${report.totals.invariants_no_surface} no-surface` +
+      `  ·  developer invariants ${report.developer_invariants.length - report.totals.developer_invariants_violated} / ${report.developer_invariants.length} not violated` +
       `  ·  chaos ${report.totals.chaos_tolerated} tolerated / ${report.totals.chaos_broken} broken / ${report.totals.chaos_partial} partial / ${report.totals.chaos_no_surface} no-surface`,
   );
   out.push(

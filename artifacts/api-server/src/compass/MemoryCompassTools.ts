@@ -1,5 +1,5 @@
 /**
- * MemoryCompassTools — §16's Compass contract, as eight accessors.
+ * MemoryCompassTools — §16's Compass contract, as eight accessors and two proposals.
  *
  * SPEC: Portava Highlights / Memories Development Architecture Specification v1
  *       §16 "Compass Contract" names exactly eight:
@@ -34,9 +34,9 @@
  *
  * WHAT THESE TOOLS STRUCTURALLY CANNOT DO
  * =======================================
- *   - WRITE. Not one of the eight issues an INSERT, UPDATE or DELETE. The two
+ *   - WRITE. Not one of the ten issues an INSERT, UPDATE or DELETE. The four
  *     write-shaped ones return a PROPOSAL the user confirms through the existing
- *     authenticated routes (`POST /memories`, `PATCH /memories/:id`), which
+ *     authenticated routes (`POST /memories`, `PATCH /memories/:id`, merge, split), which
  *     re-authorize from scratch. This is `add_to_trip`'s posture and Telegraph's
  *     `telegraph_create_plan_draft`'s, not a new one. Census H129 ("Compass must
  *     not mutate canonical Memory facts through prose") is BUILT-AND-CORRECT and
@@ -56,21 +56,21 @@
  *
  * THE CEILING, BEFORE ANYONE READS THE ROWS AS MORE THAN THEY ARE
  * ===============================================================
- *   - `memory_get_evidence` has no evidence store to read. §3.6's
- *     `memory_evidence` table does not exist in this repository at all (census
- *     H24: "no migration in this tree"), so the accessor exists and its honest
- *     answer is that assertion-level provenance is not recorded. It returns the
- *     artifacts ATTACHED to a Memory and says in the payload that those are not
- *     §6-normalized evidence.
+ *   - `memory_get_evidence` reads §3.3's `memory_evidence` where it exists. It
+ *     is migration 2320 (written, and applied to no database when this was
+ *     written), so without it the honest answer is `not_deployed`; an unreadable
+ *     store is `unavailable`, never "none"; provenance goes to the OWNER only. The
+ *     artifacts ATTACHED to a Memory are returned too, and the payload says they
+ *     are not §6-normalized evidence.
  *   - `memory_search` is a deterministic query over canonical `memories`, not
  *     §15's derivative-backed `services/memoryRetrieval/searchMemories.ts`. That
  *     module reads registered derivatives out of `memory_derivative_registry`,
  *     which is migration 2730 and unapplied, so it cannot serve a production
  *     request. H110–H114 are unmoved by this file.
- *   - There is no merge and no split to propose. MERGE_MEMORY and SPLIT_MEMORY
- *     are undeclared commands (`lib/memoryCommandBus.ts`
- *     `MEMORY_COMMAND_TYPES_NOT_DECLARED`), so `suggestMemoryCorrection` is the
- *     only third of §16's "merge/split/correction" that exists.
+ *   - Merge and split are PROPOSED, never performed: `memory_propose_merge` and
+ *     `memory_propose_split` (end of file) return what `POST /memories/merge` and
+ *     `POST /memories/:id/split` would do, and refuse while those routes' flag
+ *     (`memory_merge_split_enabled`, migration 3674) is off. Both write nothing.
  */
 
 import { randomUUID } from "node:crypto";
@@ -97,7 +97,7 @@ import {
   type HistoricalFact,
 } from "../services/memory/historicalTruth.js";
 import { guardMemoryRows } from "../services/memory/memoryReaderGuard.js"; // census H48 H49 H73 H87 H187 H188 H210 (RECON-W A1): the owner's per-Memory controls
-import { hiddenItemKeys, itemKey } from "../services/memory/memoryItemVisibility.js"; // census H80: a photo the owner keeps to themself
+import { hiddenItemKeys, itemKey } from "../services/memory/memoryItemVisibility.js"; import { readPlaceAsk, resolveNamedPlace, unresolvedPlaceAnswer, resolveExactHandle, unresolvedPersonAnswer, originalTextOf, ORIGINAL_LANGUAGE_UNDETERMINED, readMemoryProvenance, evidenceParticipantCounts, PROPOSE_MERGE_MAX_ABSORBED, PROPOSE_SPLIT_MAX_ITEMS, mergeAudiencesDiffer, MEMORY_PROPOSAL_TOOL_DEFINITIONS, memoriesNamingPerson, PEOPLE_UNCHECKABLE } from "./memoryCompassTruth.js"; import { isFlagEnabled } from "../lib/featureFlags.js"; // census H80: a photo the owner keeps to themself; census H262 H265 H120 H123 H124 (b58 HM-A3): one line, because the lines below are cited
 
 const log = rootLogger.child({ mod: "memoryCompassTools" });
 
@@ -256,7 +256,7 @@ export interface MemoryFactPayload {
   memory_id: string;
   owned_by_viewer: boolean;
   title: string | null;
-  caption: string | null;
+  caption: string | null; /** §28.16 (H265): the owner's own words exactly as stored, and their language — "und", because none is stored. */ original_text: { title: string | null; caption: string | null }; original_language: typeof ORIGINAL_LANGUAGE_UNDETERMINED;
   city: string | null;
   country: string | null;
   /** §10: the owner's location-precision rung withholds some of this Memory's place words from this viewer. */
@@ -305,7 +305,7 @@ function toMemoryFact(row: any, viewerId: string, nowMs: number): MemoryFactPayl
     memory_id: String(row.id),
     owned_by_viewer: row.owner_id === viewerId,
     title: typeof row.title === "string" ? wrapUgc(row.title) : null,
-    caption: typeof row.caption === "string" ? wrapUgc(row.caption) : null,
+    caption: typeof row.caption === "string" ? wrapUgc(row.caption) : null, original_text: originalTextOf(row, wrapUgc), original_language: ORIGINAL_LANGUAGE_UNDETERMINED,
     city: (row.location_city as string | null) ?? null,
     country: (row.location_country as string | null) ?? null,
     ...(row?.place_withheld === true ? { place_withheld: true as const } : {}),
@@ -461,7 +461,7 @@ async function toolMemorySearch(sc: SupabaseClient, viewerId: string, args: Reco
   if (!history.ok) return refuse(history.reason);
 
   const query = typeof args["query"] === "string" ? (args["query"] as string).slice(0, 200) : "";
-  const city = typeof args["city"] === "string" ? (args["city"] as string).trim().toLowerCase() : "";
+  const named = resolveNamedPlace(history.rows, readPlaceAsk(args)); if (named.resolution === "UNRESOLVED" || named.resolution === "AMBIGUOUS") return { ...unresolvedPlaceAnswer(named, "memories"), searched: "the user's own Memories and Memories they are tagged in" }; // §28.3 (H262): the named place, equal or nothing
   const tripId = typeof args["tripId"] === "string" && UUID_RE.test(args["tripId"] as string) ? (args["tripId"] as string) : null;
   const from = typeof args["from"] === "string" ? (args["from"] as string).slice(0, 10) : null;
   const to = typeof args["to"] === "string" ? (args["to"] as string).slice(0, 10) : null;
@@ -470,7 +470,7 @@ async function toolMemorySearch(sc: SupabaseClient, viewerId: string, args: Reco
   const tokens = tokenize(query);
   const nowMs = Date.now();
   const scored = history.rows
-    .filter((r) => (city ? String(r.location_city ?? "").toLowerCase().includes(city) : true))
+    .filter((r) => named.admits(r)) // §28.3: the asked city/country EXACTLY (memoryCompassTruth.foldEntityName), never a substring
     .filter((r) => (tripId ? r.trip_id === tripId : true))
     .filter((r) => {
       const d = typeof r.starts_at === "string" ? r.starts_at.slice(0, 10) : null;
@@ -485,7 +485,7 @@ async function toolMemorySearch(sc: SupabaseClient, viewerId: string, args: Reco
 
   return {
     memories: scored.map((x) => toMemoryFact(x.r, viewerId, nowMs)),
-    searched: "the user's own Memories and Memories they are tagged in",
+    searched: "the user's own Memories and Memories they are tagged in", ...(named.resolution === "RESOLVED" ? { resolution: "RESOLVED", asked: named.asked } : {}),
     // Named so nobody reads this as §15's retrieval. It is not.
     retrieval: "deterministic_token_overlap_over_canonical_rows",
     ceiling:
@@ -500,23 +500,23 @@ async function toolMemoryGetShared(sc: SupabaseClient, viewerId: string, args: R
   const idArg = typeof args["personId"] === "string" && UUID_RE.test(args["personId"] as string) ? (args["personId"] as string) : null;
   if (!handleArg && !idArg) return refuse("A personHandle or personId is required.");
 
-  // Uniform refusal for "no such person", "hidden" and "read failed" — the same
-  // reason toolMemoryGet is opaque.
+  // One opaque refusal for a failed or undecidable lookup, the same reason
+  // toolMemoryGet is opaque. A handle NOBODY has is UNRESOLVED instead (§28.3, H262): handles are public, and memory_create_draft already says so.
   const opaque = refuse("Shared Memories are not available for that person.");
 
   let personId = idArg;
   let personHandle: string | null = handleArg || null;
   if (!personId) {
-    const { data, error } = await sc.from("profiles").select("id, handle").ilike("handle", handleArg).maybeSingle();
-    if (error || !data) return opaque;
-    personId = String((data as any).id);
-    personHandle = String((data as any).handle ?? handleArg);
+    const found = await resolveExactHandle(sc, handleArg); // §28.3 (H262): the handle EXACTLY — `_` and `%` escaped, a wildcard-shaped name refused
+    if (found.state === "unavailable") return opaque; if (found.state === "no_such_handle") return unresolvedPersonAnswer(found.asked);
+    personId = found.id;
+    personHandle = found.handle;
   }
   if (personId === viewerId) return refuse("That is the user themself.");
 
   const history = await loadOwnHistory(sc, viewerId);
   if (!history.ok) return refuse(history.reason);
-  if (history.rows.length === 0) return { memories: [], person: personHandle, info: "The user has no Memories yet." };
+  if (history.rows.length === 0) return { memories: [], person: personHandle, resolution: "RESOLVED", info: "The user has no Memories yet." };
 
   const ids = history.rows.map((r) => String(r.id));
   const tags = await sc
@@ -539,39 +539,39 @@ async function toolMemoryGetShared(sc: SupabaseClient, viewerId: string, args: R
     else if (t.status === "pending") unconfirmed.add(String(t.memory_id));
   }
 
-  const nowMs = Date.now();
+  const nowMs = Date.now(); const ladder = await memoriesNamingPerson(sc, history.rows, viewerId, personId, (r) => (r.owner_id === personId ? null : approved.has(String(r.id)) ? "approved" : unconfirmed.has(String(r.id)) && r.owner_id === viewerId ? "pending" : null), MAX_RESULTS); if (!ladder.ok) { log.error({ detail: ladder.detail, viewerId }, "memory tools: shared-memory people ladder undecidable — refusing"); return refuse(PEOPLE_UNCHECKABLE); } // §10 (FIX-749a): the person, only where GET /memories/:id would show them to this viewer
   const shared = history.rows
-    .filter((r) => approved.has(String(r.id)) || r.owner_id === personId)
+    .filter((r) => r.owner_id === personId || (approved.has(String(r.id)) && ladder.identifiable.has(String(r.id)))) // §10: blocks, crew scope, the owner's ceiling (#736)
     .slice(0, MAX_RESULTS)
     .map((r) => toMemoryFact(r, viewerId, nowMs));
   const pending = history.rows
-    .filter((r) => unconfirmed.has(String(r.id)))
+    .filter((r) => r.owner_id === viewerId && unconfirmed.has(String(r.id)) && ladder.identifiable.has(String(r.id))) // a pending tag is §10's ANONYMOUS_COUNT to everyone but the Memory's owner
     .slice(0, MAX_RESULTS)
     .map((r) => toMemoryFact(r, viewerId, nowMs));
 
   return {
-    person: personHandle,
+    person: personHandle, resolution: "RESOLVED",
     memories: shared,
     unconfirmed_participation: pending,
     participation_rule:
-      "`memories` are Memories where this person's tag is APPROVED (they confirmed being there). `unconfirmed_participation` are Memories where the owner tagged them and they have not confirmed — say 'tagged, not confirmed', never that the person was there.",
-    ...(shared.length === 0 && pending.length === 0 ? { info: "No shared Memory with that person." } : {}),
+      "`memories` are Memories where this person's tag is APPROVED (they confirmed being there) and this user may see them on it, or that this person owns. `unconfirmed_participation` are the user's OWN Memories where they tagged this person and the person has not confirmed — say 'tagged, not confirmed', never that the person was there.",
+    ...(shared.length === 0 && pending.length === 0 ? { info: "No shared Memory with that person is visible to this user." } : {}),
   };
 }
 
 /** §16 `getPlaceHistory(placeId)` — and the one place §14's fusion is exercised. */
 async function toolMemoryGetPlaceHistory(sc: SupabaseClient, viewerId: string, args: Record<string, unknown>): Promise<unknown> {
   const placeId = typeof args["placeId"] === "string" ? (args["placeId"] as string).slice(0, 200).trim() : "";
-  const city = typeof args["city"] === "string" ? (args["city"] as string).trim().toLowerCase() : "";
-  if (!placeId && !city) return refuse("A placeId or a city is required.");
+  const placeAsk = readPlaceAsk(args); // §28.3 (H262): the city/country as ASKED, resolved below by equality
+  if (!placeId && !placeAsk.city && !placeAsk.country) return refuse("A placeId or a city is required.");
 
   const history = await loadOwnHistory(sc, viewerId);
   if (!history.ok) return refuse(history.reason);
-
+  const named = resolveNamedPlace(history.rows, placeAsk); if (named.resolution === "UNRESOLVED" || named.resolution === "AMBIGUOUS") return unresolvedPlaceAnswer(named, "visits", { place_id: placeId || null, place_name: null, visit_count: 0 });
   const nowMs = Date.now();
   const rows = history.rows
     .filter((r) => (placeId ? String(r.place_id ?? "") === placeId || String(r.canonical_location_id ?? "") === placeId : true))
-    .filter((r) => (city ? String(r.location_city ?? "").toLowerCase().includes(city) : true))
+    .filter((r) => named.admits(r)) // §28.3: EXACTLY the asked city/country, never a substring
     .slice(0, MAX_RESULTS);
 
   const visits = rows.map((r) => toMemoryFact(r, viewerId, nowMs));
@@ -607,13 +607,13 @@ async function toolMemoryGetPlaceHistory(sc: SupabaseClient, viewerId: string, a
     : null;
 
   return {
-    place_id: placeId || null,
+    place_id: placeId || null, resolution: visits.length > 0 ? "RESOLVED" : "UNRESOLVED", asked: { ...(placeId ? { place_id: placeId } : {}), ...(named.asked ?? {}) },
     place_name: placeName,
     visits,
     visit_count: visits.length,
     current_world: current,
     fusion: fused,
-    ...(visits.length === 0 ? { info: "The user has no Memory at that place." } : {}),
+    ...(visits.length === 0 ? { info: "Nothing in the user's own Memories is at that place. Say so; do not offer a Memory from another place as this one." } : {}),
   };
 }
 
@@ -701,7 +701,7 @@ async function toolMemoryGetEvidence(sc: SupabaseClient, viewerId: string, args:
     .eq("memory_id", memoryId)
     .order("position", { ascending: true })
     .limit(MAX_RESULTS);
-  const tags = await sc.from("memory_tags").select("tagged_user_id, status").eq("memory_id", memoryId).limit(50);
+  const tags = await sc.from("memory_tags").select("tagged_user_id, status").eq("memory_id", memoryId).limit(50); const participantCounts = tags.error ? null : await evidenceParticipantCounts(sc, data as any, viewerId, ((tags.data as any[]) ?? [])); const provenance = await readMemoryProvenance(sc, data as any, viewerId); // MEM-POLICY follow-up: counts through the detail read's §10 ladder; H120/H123: §3.3 provenance where 2320 exists
 
   // §28.11 — "Never swallow projection/schema failures into plausible-looking
   // empty history without structured error state."
@@ -721,21 +721,21 @@ async function toolMemoryGetEvidence(sc: SupabaseClient, viewerId: string, args:
   // would trade one silence for another. What changes is that a count nobody
   // could compute is `null` and is NAMED as unavailable, so the difference
   // between "zero" and "unknown" survives all the way to the prompt.
-  const tagsUnavailable = Boolean(tags.error);
+  const tagsUnavailable = Boolean(tags.error) || !participantCounts?.ok; // a count the ladder could not decide (blocks, the owner's ceiling) is withheld, never 0
   const itemsUnavailable = Boolean(items.error) || !hidden.ok;
   if (tagsUnavailable) {
-    log.error({ err: tags.error, memoryId, viewerId }, "memory tools: evidence participant read failed — reporting unavailable rather than zero");
+    log.error({ err: tags.error, detail: participantCounts && !participantCounts.ok ? participantCounts.detail : undefined, memoryId, viewerId }, "memory tools: evidence participant read failed — reporting unavailable rather than zero");
   }
   if (itemsUnavailable) {
     log.error({ err: items.error, memoryId, viewerId }, "memory tools: evidence artifact read failed — reporting unavailable rather than empty");
   }
-  const tagRows = ((tags.data as any[]) ?? []);
+  const counts = participantCounts?.ok ? participantCounts : null;
   return {
     memory_id: memoryId,
     // The honest headline, first, so a truncated payload still carries it.
-    evidence_store: "absent",
+    evidence_store: provenance.store,
     evidence_store_reason:
-      "§3.6 names a `memory_evidence` table for assertion-level provenance and confidence. No migration in this repository creates it, so no assertion in this Memory has a provenance record, a confidence score or an eligibility verdict attached to it.",
+      provenance.reason, ...(provenance.store === "present" ? { provenance: provenance.provenance, ...(provenance.truncated ? { provenance_truncated: true } : {}) } : {}),
     attached_artifacts: itemsUnavailable
       ? null
       : ((items.data as any[]) ?? []).filter((i: any) => hidden.ok && !hidden.keys.has(itemKey(memoryId, i.position))).map((i: any) => ({
@@ -752,17 +752,17 @@ async function toolMemoryGetEvidence(sc: SupabaseClient, viewerId: string, args:
             "The attachment list could not be read. This does NOT mean the Memory has no attachments — say that it could not be looked up.",
         }
       : {}),
-    confirmed_participants: tagsUnavailable ? null : tagRows.filter((t) => t.status === "approved").length,
-    unconfirmed_participants: tagsUnavailable ? null : tagRows.filter((t) => t.status === "pending").length,
+    confirmed_participants: counts ? counts.confirmed : null,
+    unconfirmed_participants: counts ? counts.unconfirmed : null, unidentified_participants: counts ? counts.unidentified : null,
     ...(tagsUnavailable
       ? {
           participants_unavailable: true,
           participants_unavailable_reason:
-            "The participant list could not be read. This does NOT mean nobody was there — say that it could not be looked up.",
+            "The participant list could not be read or checked against who this user may see. This does NOT mean nobody was there — say that it could not be looked up.",
         }
       : {}),
     caveat:
-      "`attached_artifacts` are files attached to the Memory. They are NOT §6-normalized evidence: nothing here says a photo was captured at the place or the time the Memory claims. Do not describe them as proof.",
+      "`attached_artifacts` are files attached to the Memory. They are NOT §6-normalized evidence: nothing here says a photo was captured at the place or the time the Memory claims. Do not describe them as proof. `unidentified_participants` were tagged and may not be identified to this user: never say who, and never say they were there. The participant counts cover only the people this user may see, so a 0 is NOT a statement that nobody else was there.",
   };
 }
 
@@ -827,10 +827,10 @@ async function toolMemoryCreateDraft(sc: SupabaseClient, viewerId: string, args:
   for (const raw of handles) {
     const handle = raw.trim().replace(/^@/, "");
     if (!handle) continue;
-    const { data, error } = await sc.from("profiles").select("id, handle").ilike("handle", handle).maybeSingle();
-    if (error) return refuse("A participant could not be checked right now, so no draft was made.");
-    if (!data) return refuse(`No user with the handle @${handle} exists. A Memory draft will not name a person this app cannot resolve.`);
-    participants.push({ handle: String((data as any).handle ?? handle), user_id: String((data as any).id) });
+    const found = await resolveExactHandle(sc, handle); // §28.3 (H262) / H74: the handle EXACTLY — `_` and `%` escaped, a wildcard-shaped name refused
+    if (found.state === "unavailable") return refuse("A participant could not be checked right now, so no draft was made.");
+    if (found.state === "no_such_handle") return refuse(`No user with the handle @${handle} exists. A Memory draft will not name a person this app cannot resolve.`);
+    participants.push({ handle: found.handle, user_id: found.id });
   }
 
   // The minimum clarifying question, in priority order. WHEN first: §7 draws
@@ -949,12 +949,12 @@ export const MEMORY_COMPASS_TOOL_DEFINITIONS = [
     function: {
       name: "memory_search",
       description:
-        "Search the user's OWN Memories — the ones they own plus the ones they are tagged in (§16 searchMemories). Deterministic keyword and filter matching over canonical rows; there is no semantic index. Use for questions like 'what did I do in Da Nang'.",
+        "Search the user's OWN Memories — the ones they own plus the ones they are tagged in (§16 searchMemories). Deterministic keyword and filter matching over canonical rows; there is no semantic index. A city or country is matched EXACTLY (case and spacing aside): a name that matches nothing comes back resolution UNRESOLVED with no Memories, and a city name several countries share comes back AMBIGUOUS with candidates. Use for questions like 'what did I do in Da Nang'.",
       parameters: {
         type: "object",
         properties: {
           query:  { type: "string", description: "Free text matched against title, caption, city, country." },
-          city:   { type: "string", description: "Restrict to Memories in this city." },
+          city:   { type: "string", description: "Restrict to Memories in exactly this city (never a partial or similar name)." }, country: { type: "string", description: "Restrict to Memories in exactly this country; use it to settle an AMBIGUOUS city." },
           tripId: { type: "string", description: "Restrict to one trip's Memories." },
           from:   { type: "string", description: "Earliest date, YYYY-MM-DD." },
           to:     { type: "string", description: "Latest date, YYYY-MM-DD." },
@@ -985,12 +985,12 @@ export const MEMORY_COMPASS_TOOL_DEFINITIONS = [
     function: {
       name: "memory_get_place_history",
       description:
-        "The user's history at one place (§16 getPlaceHistory), plus a SEPARATE current-world reading of that place when a live source can be reached. The two are never merged: past visits never establish that a place is open now.",
+        "The user's history at one place (§16 getPlaceHistory), plus a SEPARATE current-world reading of that place when a live source can be reached. The two are never merged: past visits never establish that a place is open now. A city is matched EXACTLY; UNRESOLVED and AMBIGUOUS mean what they mean for memory_search.",
       parameters: {
         type: "object",
         properties: {
           placeId: { type: "string", description: "A catalog place id, or the place id stored on the Memory." },
-          city:    { type: "string", description: "Or a city, when no place id is known." },
+          city:    { type: "string", description: "Or a city, when no place id is known (matched exactly)." }, country: { type: "string", description: "With a city: exactly this country, to settle an AMBIGUOUS city." },
         },
         additionalProperties: false,
       },
@@ -1015,7 +1015,7 @@ export const MEMORY_COMPASS_TOOL_DEFINITIONS = [
     function: {
       name: "memory_get_evidence",
       description:
-        "What supports a Memory's claims (§16 getMemoryEvidence). This app does not record assertion-level provenance, so this returns the artifacts attached to the Memory and says plainly that they are not proof. Never describe the result as evidence that something happened.",
+        "What supports a Memory's claims (§16 getMemoryEvidence). For the Memory's OWNER: its provenance records (§3.3 memory_evidence, where deployed), each with a truth level and a confidence. For anyone: the files attached to the Memory, which are not proof. Never describe the result as evidence that something happened.",
       parameters: {
         type: "object",
         properties: { memoryId: { type: "string", description: "The Memory's UUID." } },
@@ -1068,7 +1068,7 @@ export const MEMORY_COMPASS_TOOL_DEFINITIONS = [
         additionalProperties: false,
       },
     },
-  },
+  }, ...MEMORY_PROPOSAL_TOOL_DEFINITIONS, // §16 "may propose a merge/split" (H124): memory_propose_merge, memory_propose_split
 ];
 
 export const MEMORY_COMPASS_TOOL_NAMES = new Set(
@@ -1088,9 +1088,9 @@ export const MEMORY_COMPASS_PROMPT_RULES = `\
 - MEMORY RULES (Highlights/Memories §16): the memory_* tools answer only for Memories this user is authorized to read, and they return { authorized: false, reason } when they will not answer — say the reason, never work around it with another tool.
 - Every Memory fact comes back with truth_class "historical" and establishes_current_status: false. You may summarize and compare what the tools returned. You may NOT turn a past visit into a present claim: "they went there in March" never becomes "it is open" or "they like it". Only a current_world entry with available: true licenses a statement about now, and memory_get_place_history is the only tool that carries one.
 - Never state that a person was present unless they appear in "memories" (an approved tag). Anyone under "unconfirmed_participation" was tagged and has not confirmed — say exactly that.
-- memory_get_evidence returns attached files, not proof. Never call them evidence that something happened.
-- memory_create_draft and memory_suggest_correction WRITE NOTHING. Present their output as a draft or a proposal the user must confirm; never say a Memory was created, changed or corrected. If a draft comes back with a clarifying_question, ask exactly that one question and nothing else.
-- Never invent a Memory, a participant, a place, a date or an outcome that a tool did not return.`;
+- memory_get_evidence returns attached files, not proof. Never call them evidence that something happened. Its provenance (the owner only) lists records with a truth_level — asserted (the owner said so), observed (a capture), corroborated, inferred — and a confidence: summarize only those records, keep each one's truth level, and never present an observed or inferred record as proof. Never say an unidentified_participants person was there.
+- memory_create_draft, memory_suggest_correction, memory_propose_merge and memory_propose_split WRITE NOTHING. Present their output as a draft or a proposal the user must confirm; never say a Memory was created, changed, corrected, merged or split. If a draft comes back with a clarifying_question, ask exactly that one question and nothing else.
+- Never invent a Memory, a participant, a place, a date or an outcome that a tool did not return.\n- §28.3: a memory_* result with resolution "UNRESOLVED" means nothing in the user's Memories is the place or person asked about — say exactly that, and NEVER present a Memory from a different place or person as the one asked about (a New York Memory is not a York Memory). "AMBIGUOUS" lists candidates: ask which one; never pick.\n- §28.16: title, caption and original_text are the owner's own words, verbatim; original_language "und" means their language is not recorded. Quote them exactly when you quote them; never translate or paraphrase them and present the result as the owner's words.`;
 
 /** Dispatcher. Returns refusal objects rather than throwing — see the header. */
 export async function executeMemoryCompassTool(
@@ -1107,7 +1107,130 @@ export async function executeMemoryCompassTool(
     case "memory_get_trip_memories":   return toolMemoryGetTripMemories(sc, userId, args);
     case "memory_get_evidence":        return toolMemoryGetEvidence(sc, userId, args);
     case "memory_create_draft":        return toolMemoryCreateDraft(sc, userId, args);
-    case "memory_suggest_correction":  return toolMemorySuggestCorrection(sc, userId, args);
+    case "memory_suggest_correction":  return toolMemorySuggestCorrection(sc, userId, args); case "memory_propose_merge": return toolMemoryProposeMerge(sc, userId, args); case "memory_propose_split": return toolMemoryProposeSplit(sc, userId, args); // H124
     default:                           return refuse(`Unknown Memory tool: ${name}`);
   }
+}
+
+// ── §16 "May propose a merge/split" (census H124), which write nothing ────────
+//
+// Appended here, after the dispatcher, because every line above is cited by
+// number (census-highlights-memories, census-compass). Function declarations
+// hoist, so the dispatcher's two cases reach them.
+//
+// A proposal mirrors the preconditions `routes/memoryGraph.ts` and
+// `memory_graph_kernel_execute` (3676) apply, so the model is never handed a
+// merge or split the app would refuse: the flag (read fail-closed), the bounds,
+// every Memory the caller's own and not deleted (one opaque refusal, so a
+// proposal cannot probe another person's Memory ids), nothing removed, one
+// audience across a merge, and a split that moves only the source's own items
+// and leaves at least one behind. The owner's per-Memory controls apply exactly
+// as they do to `memory_suggest_correction` (OD-1012-PRIV-3 is not touched).
+
+const MERGE_SPLIT_OFF = "Merging and splitting Memories is not available yet, so nothing can be proposed. Say so.";
+
+async function toolMemoryProposeMerge(sc: SupabaseClient, viewerId: string, args: Record<string, unknown>): Promise<unknown> {
+  if (!(await isFlagEnabled(sc, "memory_merge_split_enabled"))) return refuse(MERGE_SPLIT_OFF); // the literal check:flag-polarity reads; == memoryCompassTruth.MEMORY_MERGE_SPLIT_FLAG == routes/memoryGraph.ts (pinned by memoryCompassTruthUnits.test.ts)
+  const survivorId = String(args["survivorId"] ?? "");
+  const absorbed = Array.isArray(args["absorbedIds"]) ? (args["absorbedIds"] as unknown[]).map((x) => String(x ?? "")) : [];
+  if (!UUID_RE.test(survivorId)) return refuse("A survivorId is required and must be a UUID.");
+  if (absorbed.length < 1 || absorbed.length > PROPOSE_MERGE_MAX_ABSORBED || !absorbed.every((id) => UUID_RE.test(id))) {
+    return refuse(`absorbedIds must be 1-${PROPOSE_MERGE_MAX_ABSORBED} Memory UUIDs.`);
+  }
+  if (new Set(absorbed).size !== absorbed.length || absorbed.includes(survivorId)) {
+    return refuse("absorbedIds must be distinct and must not include the survivor.");
+  }
+
+  const ids = [survivorId, ...absorbed];
+  const { data, error } = await sc.from("memories").select(MEMORY_FACT_COLUMNS).in("id", ids);
+  if (error || !Array.isArray(data)) {
+    log.error({ err: error, viewerId }, "memory tools: merge proposal read failed");
+    return refuse("Those Memories could not be read right now, so no merge was proposed.");
+  }
+  const byId = new Map((data as any[]).map((r) => [String(r.id), r]));
+  const opaque = refuse("One or more of those Memories is not available to this user.");
+  const rows: any[] = [];
+  for (const id of ids) {
+    const r = byId.get(id);
+    if (!r || r.owner_id !== viewerId || r.state === "deleted" || !(await canCompassReadMemory(sc, r, viewerId))) return opaque;
+    rows.push(r);
+  }
+  if (rows.some((r) => r.state === "removed")) return refuse("A removed Memory cannot be merged, so no merge was proposed.");
+  if (mergeAudiencesDiffer(rows)) {
+    return refuse("These Memories do not share one audience (who can see them, or draft vs published). The app refuses a merge that would show something to more people than chose to see it, so none was proposed. Suggest making their audiences match first.");
+  }
+  const honoured = await honourOwnerControls(sc, rows, viewerId);
+  if (!honoured.ok) return refuse(honoured.reason);
+  if (honoured.rows.length !== rows.length) return refuse(OWNER_EXCLUDED);
+  const shown = await withPlaceLabelsForViewer(sc, honoured.rows, viewerId);
+  const nowMs = Date.now();
+  const fact = (id: string) => toMemoryFact(shown.find((r) => String(r.id) === id), viewerId, nowMs);
+
+  return {
+    proposal: {
+      kind: "merge",
+      survivor: fact(survivorId),
+      absorbed: absorbed.map(fact),
+      requires_confirmation: true,
+      confirm_via: "POST /memories/merge",
+      confirm_body: { survivorId, absorbedIds: absorbed },
+    },
+    writes_nothing: true,
+    info: "Nothing has been merged. Present this as a merge the user confirms: the absorbed Memories' photos, tags, likes and saves would move to the survivor, and the absorbed Memories would be removed.",
+  };
+}
+
+async function toolMemoryProposeSplit(sc: SupabaseClient, viewerId: string, args: Record<string, unknown>): Promise<unknown> {
+  if (!(await isFlagEnabled(sc, "memory_merge_split_enabled"))) return refuse(MERGE_SPLIT_OFF); // the literal check:flag-polarity reads; == memoryCompassTruth.MEMORY_MERGE_SPLIT_FLAG == routes/memoryGraph.ts (pinned by memoryCompassTruthUnits.test.ts)
+  const memoryId = String(args["memoryId"] ?? "");
+  if (!UUID_RE.test(memoryId)) return refuse("A memoryId is required and must be a UUID.");
+  const itemIds = Array.isArray(args["itemIds"]) ? (args["itemIds"] as unknown[]).map((x) => String(x ?? "")) : [];
+  if (itemIds.length < 1 || itemIds.length > PROPOSE_SPLIT_MAX_ITEMS || !itemIds.every((id) => UUID_RE.test(id)) || new Set(itemIds).size !== itemIds.length) {
+    return refuse(`itemIds must be 1-${PROPOSE_SPLIT_MAX_ITEMS} distinct item UUIDs.`);
+  }
+  const title = typeof args["title"] === "string" ? (args["title"] as string).slice(0, 200) : null;
+
+  const { data, error } = await sc.from("memories").select(MEMORY_FACT_COLUMNS).eq("id", memoryId).maybeSingle();
+  const opaque = refuse("That Memory is not available to this user.");
+  if (error || !data) return opaque;
+  if ((data as any).state === "deleted" || !(await canCompassReadMemory(sc, data, viewerId))) return opaque;
+  if ((data as any).owner_id !== viewerId) return refuse("Only the owner of a Memory may split it. Suggest that the user asks the owner.");
+  if ((data as any).state === "removed") return refuse("A removed Memory cannot be split, so no split was proposed.");
+  const honoured = await honourOwnerControls(sc, [data], viewerId);
+  if (!honoured.ok) return refuse(honoured.reason);
+  if (honoured.rows.length === 0) return refuse(OWNER_EXCLUDED);
+
+  const items = await sc.from("memory_items").select("id, media_type, caption, position").eq("memory_id", memoryId).limit(1000);
+  if (items.error || !Array.isArray(items.data)) {
+    log.error({ err: items.error, memoryId, viewerId }, "memory tools: split proposal item read failed");
+    return refuse("The Memory's photos could not be read right now, so no split was proposed.");
+  }
+  const all = items.data as any[];
+  const byId = new Map(all.map((i) => [String(i.id), i]));
+  if (!itemIds.every((id) => byId.has(id))) return refuse("Not every one of those items is on this Memory, so no split was proposed.");
+  if (itemIds.length >= all.length) return refuse("A split must leave at least one item on the original Memory, so no split was proposed.");
+
+  const [shown] = await withPlaceLabelsForViewer(sc, honoured.rows, viewerId);
+  return {
+    proposal: {
+      kind: "split",
+      source: toMemoryFact(shown, viewerId, Date.now()),
+      moving_items: itemIds.map((id) => {
+        const i = byId.get(id);
+        return {
+          item_id: id,
+          position: typeof i.position === "number" ? i.position : null,
+          media_type: (i.media_type as string | null) ?? null,
+          caption: typeof i.caption === "string" ? wrapUgc(i.caption) : null,
+        };
+      }),
+      staying_item_count: all.length - itemIds.length,
+      new_memory_title: title,
+      requires_confirmation: true,
+      confirm_via: `POST /memories/${memoryId}/split`,
+      confirm_body: { itemIds, ...(title !== null ? { title } : {}) },
+    },
+    writes_nothing: true,
+    info: "Nothing has been split. Present this as a split the user confirms: the listed items would move to a NEW Memory with the same audience and place, and nobody tagged on the original would be named on the new one.",
+  };
 }

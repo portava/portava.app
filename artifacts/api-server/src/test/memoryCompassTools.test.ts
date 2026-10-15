@@ -283,7 +283,7 @@ describe("§16 — the eight accessors exist and the model is offered them", () 
     for (const toolName of Object.values(MEMORY_TOOL_SPEC_NAMES)) {
       assert.ok(MEMORY_COMPASS_TOOL_NAMES.has(toolName), `§16 accessor missing: ${toolName}`);
     }
-    assert.equal(MEMORY_COMPASS_TOOL_DEFINITIONS.length, 8);
+    assert.equal(MEMORY_COMPASS_TOOL_DEFINITIONS.length, 10); // §16's eight accessors + the two proposals its LLM boundary permits ("may propose a merge/split"), census H124 (b58 HM-A3); the spec's eight stay eight
   });
 
   it("all eight are registered in the definition list handed to the model", () => {
@@ -303,7 +303,7 @@ describe("§16 — the eight accessors exist and the model is offered them", () 
     const memoryFacing = COMPASS_TOOL_DEFINITIONS
       .map((t: any) => t.function.name as string)
       .filter((n) => /memor/.test(n));
-    assert.equal(memoryFacing.length, 8, `expected 8 memory-facing tool names, got ${memoryFacing.join(", ")}`);
+    assert.equal(memoryFacing.length, 10, `expected 10 memory-facing tool names (8 accessors + 2 proposals), got ${memoryFacing.join(", ")}`);
   });
 
   it("every declared tool is dispatchable — no definition without an implementation", async () => {
@@ -578,12 +578,12 @@ describe("§16 — Compass proposes; it does not mutate canonical Memory facts",
 
 /* ────────────────────── §16 getMemoryEvidence, honestly ──────────────────── */
 
-describe("§16 — getMemoryEvidence says there is no evidence store", () => {
-  it("reports the absence first and does not dress attachments as proof", async () => {
+describe("§16 — getMemoryEvidence says what the evidence store holds, and nothing more", () => {
+  it("reports the store's state first and does not dress attachments as proof", async () => {
     const { client } = makeClient();
     const out: any = await executeMemoryCompassTool(client, ALICE, "memory_get_evidence", { memoryId: M_OWN_PUBLIC });
-    assert.equal(out.evidence_store, "absent");
-    assert.match(out.evidence_store_reason, /memory_evidence/);
+    assert.equal(out.evidence_store, "present"); assert.deepEqual(out.provenance, []); // this fake answers a table it does not hold with no rows; absent/unreadable stores: memoryCompassTruth.test.ts (b58 HM-A3)
+    assert.match(out.evidence_store_reason, /memory_evidence/); assert.doesNotMatch(out.evidence_store_reason, /No migration in this repository/); // false since 2320
     assert.equal(out.attached_artifacts.length, 1);
     assert.match(out.caveat, /NOT §6-normalized evidence/);
     assert.equal(out.confirmed_participants, 0);
@@ -669,7 +669,7 @@ describe("§16/§9 — a participant is resolved by exact handle, never by resem
   it("getSharedMemories does not resolve a near-miss handle either", async () => {
     const { client } = makeClient();
     const out: any = await executeMemoryCompassTool(client, ALICE, "memory_get_shared", { personHandle: "car" });
-    assert.equal(out.authorized, false);
+    assert.equal(out.resolution, "UNRESOLVED"); assert.equal(out.person, null); assert.deepEqual(out.memories, []); // §28.3 (H262, b58 HM-A3): a handle nobody has is UNRESOLVED — said, not refused, and never Carl
     const ok: any = await executeMemoryCompassTool(client, ALICE, "memory_get_shared", { personHandle: "carl" });
     assert.equal(ok.person, "carl");
   });
