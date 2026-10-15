@@ -41,6 +41,21 @@
  * enough": the sharp-parser one and the raw-byte ones fail for different
  * reasons.
  *
+ * THE GPS HALF WAS VACUOUS UNTIL 2026-10-14 (census-media §52)
+ * -----------------------------------------------------------
+ * The fixture planted its GPS tags as `withExif({ GPS: { ... } })`. sharp
+ * 0.35.3 has no `GPS` key — the GPS IFD is `IFD3` — so the input carried an
+ * EXIF block with NO GPS IFD (IFD0 had no 0x8825 pointer), and "stripped,
+ * including GPS" was asserted against an input that had no GPS. The EXIF-block
+ * assertions were real (IFD0's sentinel); the GPS claim was not. The key is now
+ * `IFD3`, the fixture's GPS IFD is a PRECONDITION read by lib/exifFacts (which
+ * never decodes a value), and every output is checked for a GPS IFD by the same
+ * parser. Measured, not assumed: with the key reverted to `GPS`, the
+ * precondition goes red; with `.keepExif()` added to processImage, the GPS
+ * assertion goes red beside the three EXIF ones. The strip itself was never
+ * broken — src/test/imageLocationStripGuard.test.ts feeds every upload route a
+ * still carrying GPS, XMP, IPTC, a MakerNote and comments.
+ *
  * Worth knowing from that run: the "derived thumbnail and feed variant" test
  * stayed GREEN while processImage() was leaking. That is correct, not a hole —
  * makeThumbnail()/makeFeedVariant() re-encode with sharp's default behaviour, so
@@ -60,6 +75,7 @@ import {
   FEED_DIM,
   THUMBNAIL_DIM,
 } from "../lib/mediaProcessing.js";
+import { exifFactsFrom } from "../lib/exifFacts.js";
 
 /**
  * A distinctive ASCII string planted in EXIF so its survival can be checked
@@ -82,6 +98,11 @@ async function assertFullyStripped(buf: Buffer, what: string) {
     false,
     `${what}: the planted EXIF sentinel must not appear anywhere in the output`,
   );
+  // The GPS IFD, by a parser that is not sharp's and never reads a coordinate.
+  const facts = exifFactsFrom(buf);
+  assert.ok(facts, `${what}: output container must be scannable`);
+  assert.equal(facts.hasGpsIfd, false, `${what}: stored bytes must carry NO GPS IFD`);
+  assert.equal(facts.hasExif, false, `${what}: lib/exifFacts must find no EXIF either`);
   // The orientation tag must be GONE, not merely normalised to 1 — it lives in
   // the same EXIF block as GPS, so a surviving orientation tag means a surviving
   // block.
@@ -97,7 +118,8 @@ async function oversizedOrientedJpeg(): Promise<Buffer> {
   return sharp({ create: { width: 5000, height: 2500, channels: 3, background: "#3a5" } })
     .withExif({
       IFD0: { Copyright: SENTINEL },
-      GPS: { GPSLatitudeRef: "N", GPSLatitude: "51/1 30/1 0/1", GPSLongitudeRef: "W" },
+      // IFD3 is sharp's key for the GPS IFD. `GPS:` was silently ignored (see header).
+      IFD3: { GPSLatitudeRef: "N", GPSLatitude: "51/1 30/1 0/1", GPSLongitudeRef: "W", GPSLongitude: "0/1 7/1 39/1" },
     })
     .withMetadata({ orientation: 6 })
     .jpeg()
@@ -138,6 +160,9 @@ describe("oversized photo: capped, auto-oriented, and fully EXIF/GPS-stripped", 
     assert.equal(srcMeta.orientation, 6, "fixture must carry an orientation tag");
     assert.ok((srcMeta.exif?.length ?? 0) > 0, "fixture must carry an EXIF block");
     assert.ok(src.includes(Buffer.from(SENTINEL, "latin1")), "fixture must carry the sentinel");
+    const srcFacts = exifFactsFrom(src);
+    assert.equal(srcFacts?.hasGpsIfd, true, "fixture must carry a GPS IFD (0x8825) — `GPS:` is not a sharp key, `IFD3:` is");
+    assert.equal(srcFacts?.gpsEntryCount, 4, "all four planted GPS tags must be in the fixture");
 
     const sniffed = sniffMedia(src);
     assert.equal(sniffed?.kind, "image");
@@ -180,9 +205,10 @@ describe("oversized photo: capped, auto-oriented, and fully EXIF/GPS-stripped", 
   it("WebP takes the same path: capped and stripped, format preserved", async () => {
     // The strip must not be a property of the JPEG encoder branch alone.
     const src = await sharp({ create: { width: 5000, height: 2500, channels: 3, background: "#c73" } })
-      .withExif({ IFD0: { Copyright: SENTINEL } })
+      .withExif({ IFD0: { Copyright: SENTINEL }, IFD3: { GPSLatitudeRef: "N", GPSLatitude: "51/1 30/1 0/1" } })
       .webp()
       .toBuffer();
+    assert.equal(exifFactsFrom(src)?.hasGpsIfd, true, "webp fixture must carry a GPS IFD");
     const sniffed = sniffMedia(src)!;
     assert.equal(sniffed.mime, "image/webp");
 

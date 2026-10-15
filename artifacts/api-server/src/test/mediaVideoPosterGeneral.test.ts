@@ -342,7 +342,7 @@ function req(method: string, pathAndQuery: string, body: Buffer, contentType: st
 async function jpegWithGps(): Promise<Buffer> {
   return sharp({ create: { width: 320, height: 240, channels: 3, background: "#48c" } })
     .jpeg()
-    .withExif({ IFD0: { Copyright: "x" }, GPS: { GPSLatitudeRef: "N" } } as any)
+    .withExif({ IFD0: { Copyright: "x" }, IFD3: { GPSLatitudeRef: "N", GPSLatitude: "16/1 3/1 0/1" } }) // IFD3 = the GPS IFD; `GPS:` planted none (census-media §52)
     .toBuffer();
 }
 

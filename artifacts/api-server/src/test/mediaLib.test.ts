@@ -19,8 +19,8 @@ async function makeJpegWithGps(width = 800, height = 600): Promise<Buffer> {
     .jpeg()
     .withExif({
       IFD0: { Copyright: "test", Software: "cam" },
-      GPS: { GPSLatitudeRef: "N", GPSLongitudeRef: "E" },
-    } as any)
+      IFD3: { GPSLatitudeRef: "N", GPSLatitude: "16/1 3/1 0/1", GPSLongitudeRef: "E", GPSLongitude: "108/1 12/1 0/1" }, // the GPS IFD; `GPS:` planted none (census-media §52)
+    })
     .toBuffer();
 }
 
