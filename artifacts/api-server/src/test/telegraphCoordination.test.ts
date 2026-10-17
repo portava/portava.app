@@ -2288,7 +2288,7 @@ describe("T155 — the coordination fold reads a §12 checkpoint where the sessi
 
 // ── 3998 executed (PGlite, as the repository's other SQL suites run it) ──────
 
-const T155_PGLITE = process.env.DISCOVERY_PGLITE_MODULE;
+const T155_PGLITE = process.env.DISCOVERY_PGLITE_MODULE ?? new URL(import.meta.resolve("@electric-sql/pglite")).pathname; // a devDependency: the suite always executes
 
 describe("T155 — migration 3998 executed: the checkpoint, its writer and the triggers that keep it honest", { skip: !T155_PGLITE }, () => {
   let db: any;

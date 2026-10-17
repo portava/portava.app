@@ -64,7 +64,7 @@ afterEach(() => alertSpy.mockRestore());
 
 const press = async (id: string) => { await act(async () => { fireEvent.press(screen.getByTestId(id)); }); };
 const confirmLastAlert = async () => {
-  const buttons = alertSpy.mock.calls.at(-1)?.[2] as Array<{ text: string; onPress?: () => void }>;
+  const buttons = alertSpy.mock.calls.at(-1)?.[2] as Array<{ text: string; style?: string; onPress?: () => void }>;
   await act(async () => { buttons.find((b) => b.style !== 'cancel' && b.text !== 'Cancel')?.onPress?.(); });
 };
 

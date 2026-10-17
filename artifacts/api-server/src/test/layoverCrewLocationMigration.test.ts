@@ -76,8 +76,8 @@ const S1 = "00000000-0000-4000-8000-000000000011";
 const S2 = "00000000-0000-4000-8000-000000000012";
 const C1 = "00000000-0000-4000-8000-000000000021";
 
-test("3996 executes: membership, explicit permission, bounded window, and every end", { skip: !process.env.DISCOVERY_PGLITE_MODULE }, async (t) => {
-  const { PGlite } = await import(process.env.DISCOVERY_PGLITE_MODULE!);
+test("3996 executes: membership, explicit permission, bounded window, and every end", async (t) => { // PGlite is a devDependency: this always executes (never a counted skip)
+  const { PGlite } = await import(process.env.DISCOVERY_PGLITE_MODULE ?? "@electric-sql/pglite");
   const db = new PGlite();
   const q = (text: string, params: unknown[] = []) => db.query(text, params);
   const grant = (over: Record<string, string> = {}) => {

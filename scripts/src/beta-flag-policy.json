@@ -1532,6 +1532,13 @@
       "evidence": []
     },
     {
+      "flag": "layover_crew_location_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3996_layover_crew_location_grants.sql:346, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
+      "evidence": []
+    },
+    {
       "flag": "layover_crowd_reports_enabled",
       "kind": "CAPABILITY",
       "enabled": true,
@@ -2048,6 +2055,13 @@
       "evidence": []
     },
     {
+      "flag": "memory_shared_experiences_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3997_memory_visibility_policies_and_shared_experiences.sql:113, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
+      "evidence": []
+    },
+    {
       "flag": "memory_snapshots_enabled",
       "kind": "CAPABILITY",
       "enabled": false,
@@ -2066,6 +2080,13 @@
       "kind": "CAPABILITY",
       "enabled": false,
       "reason": "OFF: seeded FALSE by 3991_memory_video_segments.sql:4, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
+      "evidence": []
+    },
+    {
+      "flag": "memory_visibility_policies_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3997_memory_visibility_policies_and_shared_experiences.sql:111, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
       "evidence": []
     },
     {
@@ -2482,6 +2503,13 @@
       "kind": "CAPABILITY",
       "enabled": false,
       "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "telegraph_conversation_snapshots_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3998_telegraph_conversation_snapshots.sql:243, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
       "evidence": []
     },
     {

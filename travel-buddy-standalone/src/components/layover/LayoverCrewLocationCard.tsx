@@ -79,7 +79,7 @@ export function LayoverCrewLocationCard({ sessionId, timezone, refreshKey = 0, o
   const [picks, setPicks] = useState<Pick[]>([]);
   const [picked, setPicked] = useState<Pick | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null); const [crewKnown, setCrewKnown] = useState(false); // the last ANSWERED read said: feature on, and this traveller is in a crew
 
   // Newest read wins, as in LayoverCrewSection.
   const ticket = useRef(0);
@@ -90,7 +90,7 @@ export function LayoverCrewLocationCard({ sessionId, timezone, refreshKey = 0, o
     const mine = ++ticket.current;
     const r = await getCrewLocation(sessionId);
     if (mine !== ticket.current) return;
-    setRead(r);
+    setRead(r); if (r.ok) setCrewKnown(r.available && r.inCrew); // a failed read keeps what the server last said
     onReadRef.current?.(r);
   }, [sessionId]);
   useEffect(() => { void refresh(); }, [refresh, refreshKey]);
@@ -122,7 +122,7 @@ export function LayoverCrewLocationCard({ sessionId, timezone, refreshKey = 0, o
   }, [refresh]);
 
   if (read === null) return null;
-  if (!read.ok) {
+  if (!read.ok) { if (!crewKnown) return null; // a failed read is not the server saying the feature is on or that this traveller is in a crew: draw nothing, as for feature off; once it has said so, the quiet line below
     return (
       <View style={styles.block}>
         <Text style={styles.note} testID="layover-crew-location-unavailable">Crew locations are unavailable right now.</Text>

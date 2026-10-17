@@ -205,7 +205,7 @@ export const KNOWN_WRITERLESS_READS: Record<
 
   // ── EXTERNALLY SEEDED REFERENCE DATA ──────────────────────────────────────
   fsq_places: {
-    readers: 2,
+    readers: 3, // 3 since 2026-10-17: lib/inputAssistance/providerFederation.ts (Input G222/G237), a bounded read behind fsq_places_enabled (seeded FALSE), ranked below every Portava row
     classification: "external-seed",
     note:
       "Foursquare venue cache. Declared in REFERENCE_LOCATION_TABLES (lib/locationPurposes.ts) " +

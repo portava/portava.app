@@ -133,10 +133,10 @@ test('the card line says why a map was not saved, and how far a saved one has go
 });
 
 test('the trip screen hands the card the trip\'s own destination coordinates (wiring pin)', async () => {
-  const { readFileSync } = await import('node:fs');
-  const src = readFileSync(new URL('../../../../../app/trip/[id].tsx', import.meta.url), 'utf8');
+  const { readFileSync } = await import('node:fs'); const { fileURLToPath } = await import('node:url'); const { dirname } = await import('node:path'); const __dir = dirname(fileURLToPath(import.meta.url));
+  const src = readFileSync(`${__dir}/../../../../../app/trip/[id].tsx`, 'utf8');
   assert.match(src, /<TripOfflineCard tripId=\{trip\.id\} destination=\{\{ lat: \(realTrip as any\)\?\.destinationLat, lng: \(realTrip as any\)\?\.destinationLng \}\} \/>/);
-  const card = readFileSync(new URL('../TripOfflineCard.tsx', import.meta.url), 'utf8');
+  const card = readFileSync(`${__dir}/../TripOfflineCard.tsx`, 'utf8');
   assert.match(card, /<TripOfflineTiles tripId=\{tripId\} stored=\{stored\} destination=\{destination\} \{\.\.\.tiles\} \/>/);
 });
 

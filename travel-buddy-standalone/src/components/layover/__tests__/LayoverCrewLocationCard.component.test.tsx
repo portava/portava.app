@@ -162,10 +162,25 @@ describe('LayoverCrewLocationCard', () => {
     expect(screen.queryByText(/Nobody else in your crew is sharing/)).toBeNull();
   });
 
-  it('9. an unreadable read says so', async () => {
-    jest.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(503, { error: 'degraded_unavailable', message: 'x' }));
-    await render(<LayoverCrewLocationCard sessionId="sess-1" timezone="UTC" />);
+  it('9a. an unreadable FIRST read draws nothing: the server never said the feature is on or that this traveller is in a crew', async () => {
+    const fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(503, { error: 'degraded_unavailable', message: 'x' }));
+    const { toJSON } = await render(<LayoverCrewLocationCard sessionId="sess-1" timezone="UTC" />);
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(toJSON()).toBeNull());
+    expect(screen.queryByTestId('layover-crew-location-unavailable')).toBeNull();
+  });
+
+  it('9b. once a read has put the traveller in a crew, an unreadable refresh says so quietly', async () => {
+    let fail = false;
+    jest.spyOn(globalThis, 'fetch').mockImplementation(async () => (
+      fail ? jsonResponse(503, { error: 'degraded_unavailable', message: 'x' }) : jsonResponse(200, crewBody())
+    ));
+    const { rerender } = await render(<LayoverCrewLocationCard sessionId="sess-1" timezone="UTC" refreshKey={0} />);
+    await waitFor(() => expect(screen.getByTestId('layover-crew-location')).toBeTruthy());
+    fail = true;
+    await rerender(<LayoverCrewLocationCard sessionId="sess-1" timezone="UTC" refreshKey={1} />);
     await waitFor(() => expect(screen.getByTestId('layover-crew-location-unavailable')).toBeTruthy());
+    expect(screen.queryByTestId('layover-crew-location-mate-u-a')).toBeNull();
   });
 });
 
