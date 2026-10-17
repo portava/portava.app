@@ -103,7 +103,7 @@ async function defaultDeps(sc: SupabaseClient): Promise<CoordinationNotifyDeps> 
 }
 
 /** The actor as a lock screen may name them. A failed read names nobody. */
-async function actorLabel(sc: SupabaseClient, actorId: string): Promise<string> {
+export async function actorLabel(sc: SupabaseClient, actorId: string): Promise<string> {
   const { data, error } = await sc.from("profiles").select("handle, username, display_name, name").eq("id", actorId).maybeSingle();
   if (error || !data) return "Someone";
   const row = data as { handle?: string | null; username?: string | null; display_name?: string | null; name?: string | null };

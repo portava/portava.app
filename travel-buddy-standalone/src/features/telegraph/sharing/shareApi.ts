@@ -14,7 +14,7 @@
 import { isSupabaseConfigured } from '../../../lib/supabase.ts';
 import { freshToken } from '../../../services/apiToken.ts';
 import { captureMessagingOwnerRequest, messagingOwnerToken, type MessagingOwnerRequest } from '../../../services/messagingOwnerRequest.ts';
-import type { TelegraphAction, TelegraphObjectType } from '../sharedContext/types.ts';
+import type { TelegraphAction, TelegraphObjectType } from '../sharedContext/types.ts'; import { shareProjectionHeaders } from '../negotiation/clientCapabilities.ts'; // census-telegraph T431
 
 export type UnavailableReason = 'deleted' | 'private' | 'unauthorized' | 'not_found' | 'unknown';
 
@@ -69,14 +69,14 @@ function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 }
 
-async function post<T>(path: string, body: unknown, owner?: MessagingOwnerRequest): Promise<ShareResult<T>> {
+async function post<T>(path: string, body: unknown, owner?: MessagingOwnerRequest, extraHeaders?: Record<string, string>): Promise<ShareResult<T>> {
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'unconfigured' };
   const token = owner ? await messagingOwnerToken(owner) : await freshToken();
   if (!token || (owner && !owner.isCurrent())) return { ok: false, error: 'unauthenticated' };
   try {
     const res = await fetch(`${apiBase()}${path}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...(extraHeaders ?? {}) },
       body: JSON.stringify(body),
     });
     if (owner && !owner.isCurrent()) return { ok: false, error: 'unauthenticated' };
@@ -101,7 +101,7 @@ export async function resolveShareProjections(
   if (refs.length === 0) {
     return { ok: true, data: { threadId, projections: [], unsupported: [] } };
   }
-  return post<ResolveResponse>(`/api/threads/${threadId}/share-projections`, { refs });
+  return post<ResolveResponse>(`/api/threads/${threadId}/share-projections`, { refs }, undefined, shareProjectionHeaders()); // §30A.16 (T431): the card's schemas and the actions it can offer
 }
 
 export async function shareObjectIntoThread(

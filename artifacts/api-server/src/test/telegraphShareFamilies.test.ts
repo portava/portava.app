@@ -130,13 +130,13 @@ function fixture(): Record<string, any[]> {
       { id: HL_ARCHIVED, owner_id: BOB, caption: "Filed away", location_name: null, location_city: "Hue", visibility: "public", expires_at: soon(), deleted_at: null, archived_at: "2026-05-05T00:00:00.000Z", media_url: "post-media/x/h5.jpg", media_type: "image", updated_at: "2026-05-05T00:00:00.000Z" },
     ],
     user_stamps: [
-      { id: STAMP_PUBLIC, user_id: BOB, stamp_definition_id: STAMP_DEF, title_override: null, city: "Hue", country: "VN", visibility: "public", display_on_passport: true, is_revoked: false, earned_at: "2026-04-01T00:00:00.000Z" },
+      { id: STAMP_PUBLIC, user_id: BOB, stamp_definition_id: STAMP_DEF, title_override: null, city: "Hue", country: "VN", visibility: "public", display_on_passport: true, is_revoked: false, earned_at: "2026-04-01T00:00:00.000Z", source_type: "posts", source_id: "post-hue", stamp_definitions: { slug: "city_explorer" } }, // H4 (wave 5 lane 7): a GPS-postcard presence stamp WITH its evidence, so its place may be shown
       { id: STAMP_REVOKED, user_id: BOB, stamp_definition_id: STAMP_DEF, title_override: null, city: "Hue", country: "VN", visibility: "public", display_on_passport: true, is_revoked: true, earned_at: "2026-04-02T00:00:00.000Z" },
       { id: STAMP_HIDDEN, user_id: BOB, stamp_definition_id: STAMP_DEF, title_override: null, city: "Hue", country: "VN", visibility: "public", display_on_passport: false, is_revoked: false, earned_at: "2026-04-03T00:00:00.000Z" },
       { id: STAMP_PRIVATE, user_id: BOB, stamp_definition_id: STAMP_DEF, title_override: "Private award", city: "Hue", country: "VN", visibility: "private", display_on_passport: true, is_revoked: false, earned_at: "2026-04-04T00:00:00.000Z" },
     ],
     stamp_definitions: [
-      { id: STAMP_DEF, name: "First Perfume River crossing", icon_url: "post-media/x/s.png", universal_artwork_url: null },
+      { id: STAMP_DEF, name: "First Perfume River crossing", icon_url: "post-media/x/s.png", universal_artwork_url: null }, ], passport_postcards: [ { user_id: BOB, post_id: "post-hue", stamp_eligible: true, stamp_revoked: false }, // the evidence STAMP_PUBLIC's place rests on (stampPresenceView.ts)
     ],
     neighborhood_areas: [
       { id: HOOD, name: "Old town", city_name: "Hue", country: "VN", confidence: "high", source: "osm", computed_at: "2026-03-01T00:00:00.000Z" },

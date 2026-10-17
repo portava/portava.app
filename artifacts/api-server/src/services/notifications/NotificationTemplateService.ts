@@ -215,7 +215,7 @@ export const TEMPLATES: NotificationTemplate[] = [
     eventType: 'telegraph.message',
     category: 'telegraph',
     defaultPriority: 'important',
-    defaultChannels: ['in_app', 'push', 'telegraph'],
+    defaultChannels: ['in_app', 'push'], // census-telegraph T256: never the telegraph channel — it would post a second, system message into the thread whose message it reports (services/telegraph/messageNotifications.ts)
     title: ({ actor }) => `${actor}`,
     body: ({ preview }) => preview ?? 'New message',
     actionUrl: ({ threadId }) => `/messages/${threadId}`,
@@ -1211,6 +1211,22 @@ export const TEMPLATES: NotificationTemplate[] = [
     title: () => 'Coordination update',
     body: ({ actor, act }) => `${actor || 'Someone'} ${act || 'posted a coordination update'}`,
     actionUrl: ({ threadId }) => threadId ? `/messages/${threadId}` : '/messages',
+  }),
+
+  // ── A Plan's time confirmed (census-telegraph T397 — §30A.6's causal dedupe) ──
+  // POST /meetups/:id/confirm-time used to push the RSVPs directly, outside the
+  // ledger, so Compass Sense's report of the same change was a second
+  // notification. It is now written here (services/notifications/
+  // planNotifications.ts) with the change's causal id. The words are the old
+  // push's words, unchanged. Appended LAST, as the coordination template was.
+  tpl({
+    eventType: 'plan.time_confirmed',
+    category: 'plans',
+    defaultPriority: 'important',
+    defaultChannels: ['in_app', 'push'],
+    title: ({ actor }) => `${actor || 'The organizer'} confirmed a meetup time`,
+    body: ({ meetupTitle, when }) => `${meetupTitle || 'Your meetup'}${when ? ` — ${when}` : ''}`,
+    actionUrl: ({ meetupId }) => meetupId ? `/meetup/${meetupId}` : '/',
   }),
 ];
 

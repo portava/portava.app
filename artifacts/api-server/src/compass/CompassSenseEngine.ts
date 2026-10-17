@@ -43,7 +43,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { makeConfidence, type Confidence } from "../lib/liveIntelligence.js";
 import { isQuietHours } from "./CompassNotificationEngine.js";
 import { getWeatherContext } from "../lib/weatherCache.js";
-import { NotificationService } from "../services/notifications/NotificationService.js";
+import { NotificationService } from "../services/notifications/NotificationService.js"; import { planStatusEventId } from "../services/notifications/causalEvents.js"; // census-telegraph T397
 import { freeGapFromPlan } from "../domain/trips/invariants/TripFreedomEngine.js"; import { buildTripCompassDayPlanProjection } from "../domain/trips/projections/TripCompassPlanProjection.js"; import { acceptTripProjection, TRIP_PROJECTION_SCHEMA_VERSION } from "../domain/trips/contracts/TripProjectionEnvelope.js";
 import { NotificationRouter } from "../services/notifications/NotificationRouter.js";
 import { fetchUserTimezone, localHourFor, nowUtcInstant } from "../lib/localTime.js";
@@ -112,7 +112,7 @@ export interface CandidateNudge {
   body: string;
   /** Deep link into a real surface (event screen, route, trip plan, meetup). */
   actionUrl: string;
-  confidence: Confidence;
+  confidence: Confidence; /** census-telegraph T397: the underlying CHANGE this nudge reports (services/notifications/causalEvents.ts), only when it reports one; another producer reporting it makes this nudge a duplicate. */ causalEventId?: string;
 }
 
 export interface SuppressedNudge {
@@ -441,7 +441,7 @@ async function evalCirclePlanChange(
     const sinceIso = new Date(nowMs - CIRCLE_CHANGE_WINDOW_MS).toISOString();
     const { data: meetups, error: meetupsErr } = await sc
       .from("meetups")
-      .select("id, title, status, updated_at")
+      .select("id, title, status, updated_at, starts_at") // starts_at: the confirmed time is the change's identity (T397)
       .in("id", ids)
       .gte("updated_at", sinceIso);
 
@@ -450,7 +450,7 @@ async function evalCirclePlanChange(
       .map((m) => ({
         type: "circle_plan_change" as const,
         category: "circle" as const,
-        dedupeKey: `meetup:${m.id}:${m.status}`,
+        dedupeKey: `meetup:${m.id}:${m.status}`, causalEventId: planStatusEventId(String(m.id), String(m.status), m.starts_at), // T397: the Plan change the Plan producer (routes/meetups.ts) also reports
         title: m.status === "cancelled" ? "A meetup you joined was cancelled" : "Your meetup is confirmed",
         body: `${m.title} is now ${m.status}.`,
         actionUrl: `/meetup/${m.id}`,
@@ -701,7 +701,7 @@ export async function runSense(
         priority: "normal",
         actionUrl: nudge.actionUrl,
         sourceType: "compass_sense",
-        sourceId: nudge.dedupeKey,
+        sourceId: nudge.dedupeKey, ...(nudge.causalEventId ? { causalEventId: nudge.causalEventId } : {}), // census-T397: told once, whoever reports the change
         metadata: { confidence: nudge.confidence, senseType: nudge.type },
       });
       if (row) void notifRouter.route(row).catch(() => {});

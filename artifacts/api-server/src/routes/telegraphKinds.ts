@@ -51,7 +51,7 @@ import {
   type DrawerTab,
 } from "../services/telegraph/messageKinds.js";
 import { isFlagEnabled } from "../lib/featureFlags.js"; import { applySharedCardTruth, sharedCardIndexText } from "../services/telegraph/sharedCardTruth.js"; // census-telegraph T448/T359 (lane w-tg-cardtruth)
-import { getServiceClient } from "../lib/supabase.js";
+import { getServiceClient } from "../lib/supabase.js"; import { notifyNewMessage } from "../services/telegraph/messageNotifications.js"; // census-telegraph T256
 import { schemaToStamp } from "../services/telegraph/structuredSchemas.js";
 import {
   applyHistoryWindow,
@@ -283,7 +283,7 @@ router.post(
       return;
     }
 
-    const m = written.row;
+    const m = written.row; void notifyNewMessage(getServiceClient() ?? client, { threadId, senderId: user.id, messageId: String(m.id), msgType: m.msg_type, subtype: m.subtype ?? null, nowMs }, { log }); // census-telegraph T256: a GIF, an album or a Memory Note is a MESSAGE; the producer skips the kinds whose cause is not (LOCATION, SAFETY, ACTION, ANNOUNCEMENT)
     res.status(201).json({
       id: m.id,
       threadId: m.thread_id,

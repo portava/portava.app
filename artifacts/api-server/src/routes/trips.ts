@@ -30,7 +30,7 @@ import { toCamel, readPlanItemsInOrder } from "./plan.js"; import { withholdPriv
 import { logTripActivity, findTripActivityByKey } from "../domain/trips/events/tripActivityLog.js";
 import { syncTripChatMembers } from "../lib/chatSync.js";
 import { getRestrictionState } from "../services/trust/TrustRestrictionService.js"; import { refuseIfTrustRestricted } from "../lib/discoveryTrustGate.js";
-import { sendTripPush } from "../domain/trips/policies/tripPush.js";
+import { sendTripPush } from "../domain/trips/policies/tripPush.js"; import { tripStatusEventId, tripMemberEventId } from "../services/notifications/causalEvents.js"; // census-telegraph T397
 import { recordOpportunityCompletion } from "../domain/trips/services/tripOpportunityMetrics.js";
 import { awardStamp, type StampLogger } from "../services/passport/StampAwardEngine.js"; import { readTripPresenceEvidence, countEvidencedCompletedTrips } from "../services/passport/tripCompletionPresence.js";
 import { placelessAward, TRIP_CREATION_STAMP_LOCATION_TEXT } from "../services/passport/nonPresenceStampAwards.js";
@@ -1037,12 +1037,12 @@ router.patch("/trips/:tripId", async (req, res) => {
               }),
             ),
           );
-          // Route through NotificationService so the privacy guard + dedup run.
-          // notifRouter.route() is intentionally NOT called here; push is sent
-          // below via sendTripPush to avoid double-delivery.
+          // Route through NotificationService so the privacy guard + dedup run;
+          // notifRouter.route() is intentionally NOT called here; the push is sent
+          // below via sendTripPush, only to the members whose row was written (T397).
           const { NotificationService } = await import("../services/notifications/NotificationService.js");
           const notifSvc = new NotificationService(sc);
-          await Promise.allSettled(
+          const told = await Promise.allSettled(
             memberIds.map((uid) =>
               notifSvc.create({
                 userId: uid,
@@ -1053,7 +1053,7 @@ router.patch("/trips/:tripId", async (req, res) => {
                 body: `Leave a review for "${tripTitle}" — your feedback helps the community.`,
                 sourceType: "trips",
                 sourceId: tripId,
-                tripId,
+                tripId, causalEventId: tripStatusEventId(tripId, "completed"), // census-telegraph T397: the trip's completion, whoever reports it
                 metadata: { entityType: "trip", entityId: tripId, entityName: tripTitle },
               }),
             ),
@@ -1066,7 +1066,7 @@ router.patch("/trips/:tripId", async (req, res) => {
             if (!tokensByUser.has(uid)) tokensByUser.set(uid, []);
             tokensByUser.get(uid)!.push(d.expo_push_token);
           }
-          const recipients = [...tokensByUser.entries()].map(([userId, tokens]) => ({ userId, tokens }));
+          const toldIds = new Set(told.flatMap((r) => (r.status === "fulfilled" && r.value ? [r.value.userId] : []))); const recipients = [...tokensByUser.entries()].filter(([userId]) => toldIds.has(userId)).map(([userId, tokens]) => ({ userId, tokens })); // T397: no push for a row the ledger refused (this change already told, or the privacy guard)
           if (recipients.length > 0) {
             await sendTripPush(sc, recipients, {
               title: "How was the trip?",
@@ -1279,27 +1279,27 @@ router.post("/trips/:tripId/invite", async (req, res) => {
       const inviterName = truncateDisplayName(inviterNameAllowed
         ? ((inviterRow as any)?.display_name ?? ((inviterRow as any)?.handle ? `@${(inviterRow as any).handle}` : "Someone"))
         : ((inviterRow as any)?.handle ? `@${(inviterRow as any).handle}` : "Someone"));
-      await sendTripPush(sc2, { userId, tokens: [(inviteeRow as any)?.expo_push_token] }, {
+      // In-app notification FIRST — it is the ledger entry (census-telegraph T397).
+      // notifRouter.route() is intentionally NOT called here; the push below is
+      // sent via sendTripPush only when this row was written. Generic text only.
+      const { NotificationService } = await import("../services/notifications/NotificationService.js");
+      const notifSvc = new NotificationService(sc2);
+      const row = await notifSvc.create({
+        userId,
+        eventType:  "trip.invite_received",
+        sourceType: "trips",
+        sourceId:   tripId,
+        actorId:    user.id, causalEventId: tripMemberEventId(tripId, userId, "invited"), // T397: the invitation, whoever reports it
+        // Privacy: params deliberately contain NO trip title or destination.
+        params: { actor: inviterName, tripId },
+      });
+      if (row) await sendTripPush(sc2, { userId, tokens: [(inviteeRow as any)?.expo_push_token] }, {
         title: "Trip invitation",
         // Privacy: do not include the trip name or destination in the push body —
         // the invitee has not accepted yet and the content may be private.
         // Full details are available after the user opens the app.
         body:  "You received a trip invitation.",
         data:  { type: "trip_invite_received", tripId },
-      });
-      // In-app notification: store with generic text — no trip name in params.
-      // notifRouter.route() is intentionally NOT called here; push was already
-      // sent above via sendTripPush to avoid double-delivery.
-      const { NotificationService } = await import("../services/notifications/NotificationService.js");
-      const notifSvc = new NotificationService(sc2);
-      await notifSvc.create({
-        userId,
-        eventType:  "trip.invite_received",
-        sourceType: "trips",
-        sourceId:   tripId,
-        actorId:    user.id,
-        // Privacy: params deliberately contain NO trip title or destination.
-        params: { actor: inviterName, tripId },
       });
     } catch { /* best-effort */ }
   })();

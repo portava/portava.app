@@ -273,12 +273,13 @@ const REGISTRY: readonly ReadSite[] = [
     verdict: "count_only",
     why: "Stamps Earned (owned + received)",
   },
-  // ── OPEN — another lane's file ───────────────────────────────────────────
+  // ── OPEN — another lane's file: none since wave 5 lane 7 applied the rule to the Telegraph STAMP card ──
   {
     file: "services/telegraph/shareables.ts",
-    select: /"id, user_id, stamp_definition_id, title_override, city, country, visibility, display_on_passport, is_revoked, earned_at",/,
-    verdict: "open",
-    why: "Telegraph STAMP share card subtitle `[r.city, r.country]` is shown to a conversation without the rule. Telegraph lane's file (in flight). Change needed: select user_id/source_type/source_id + stamp_definitions(slug); `const v = await readStampPresenceView(client, [r]); if (!v.presenceClaimHolds(r)) return UNAVAILABLE(\"not_found\"); const p = v.place(r);` and use p.city/p.country",
+    select: /"id, user_id, stamp_definition_id, title_override, city, country, visibility, display_on_passport, is_revoked, earned_at, source_type, source_id, stamp_definitions\(slug\)",/,
+    verdict: "gated", mustSelect: GATED,
+    guard: /const presence = await readStampPresenceView\(client, \[r as StampPresenceRow\]\);[^\n]*if \(v === "unverifiable"\) return \{ state: UNAVAILABLE\("unknown"\)[^\n]*if \(!presence\.presenceClaimHolds\(r as StampPresenceRow\)\) return \{ state: UNAVAILABLE\("not_found"\)[^\n]*const place = presence\.place\(/,
+    why: "Telegraph STAMP share card (shown to a conversation): an unevidenced presence stamp is not_found (its name claims the occurrence), unreadable evidence is unknown (never shown), and the subtitle is the evidenced place only — `[place.city, place.country]` (wave 5 lane 7; was the one open reader)",
   },
 ];
 
@@ -482,13 +483,13 @@ describe("H4 (wave 5): every stamp read site is enumerated and classified", () =
     assert.match(map, /readStampPresenceView\(opts\.evidenceClient \?\? db, rows, logger\)/);
   });
 
-  it("the open set is exactly the one other-lane reader, and may only shrink", () => {
-    assert.deepEqual(REGISTRY.filter((s) => s.verdict === "open").map((s) => s.file), ["services/telegraph/shareables.ts"]);
+  it("the open set is empty, and may only shrink (the Telegraph STAMP card was the last, wave 5 lane 7)", () => {
+    assert.deepEqual(REGISTRY.filter((s) => s.verdict === "open").map((s) => s.file), []);
   });
 
   it("the verdict tally (the report's per-reader table is this registry)", () => {
     const tally: Record<string, number> = {};
     for (const s of REGISTRY) tally[s.verdict] = (tally[s.verdict] ?? 0) + (s.count ?? 1);
-    assert.deepEqual(tally, { gated: 22, writer: 7, count_only: 3, no_place: 6, admin_raw: 3, maintenance: 6, open: 1 });
+    assert.deepEqual(tally, { gated: 23, writer: 7, count_only: 3, no_place: 6, admin_raw: 3, maintenance: 6 });
   });
 });

@@ -20,7 +20,7 @@ import { DisplayMediaImage } from '../../../components/ui/DisplayMediaImage.tsx'
 import { space, radius, type as t } from '../../../theme/tokens.ts';
 import { useReducedMotionSetting } from '../../wall/hooks/useReducedMotionSetting.ts';
 import { useTelegraphPalette, type TelegraphPalette } from '../theme/telegraphTheme.ts';
-import { parseKindEnvelope, type EnvelopeKind } from './kindsApi.ts';
+import { parseKindEnvelope, type EnvelopeKind } from './kindsApi.ts'; import { TYPED_RENDERED_MSG_TYPES } from './renderedKinds.ts'; // census-telegraph T431: one list for this dispatch and the capability header
 import { VoiceMessagePlayer } from '../voice/VoiceMessagePlayer.tsx'; import { openMapsNavigation, type MapsPlace } from '../../../lib/maps.ts'; // §8.1 navigate — shares a line so nothing below moves
 const CARD_MAX_WIDTH = 280; // census-telegraph cites :33/:65/:129/:164 — the blank line that was here paid for the import above, so nothing below shifts.
 
@@ -58,8 +58,8 @@ export interface TypedMessageRendererProps {
 export function rendersTypedKind(msgType: string | null | undefined): boolean {
   if (typeof msgType !== 'string') return false;
   return [
-    'media_album', 'gif', 'location', 'action', 'announcement', 'safety', 'memory_note', 'voice',
-  ].includes(msgType.toLowerCase());
+    ...TYPED_RENDERED_MSG_TYPES, // renderedKinds.ts — the §30A.16 header declares from the same list
+  ].includes(msgType.toLowerCase() as (typeof TYPED_RENDERED_MSG_TYPES)[number]);
 }
 
 export function TypedMessageRenderer({

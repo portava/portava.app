@@ -49,7 +49,7 @@ import { checkEventEligibility } from "../../routes/events.js"; import { readEve
 import { isFlagEnabled } from "../../lib/featureFlags.js"; import { storageImageOrNull } from "./messageTreeImages.js"; // census-telegraph T446 (B58 TM-1): on this line so no cited line moves
 import { absenceDisclosure } from "../../lib/privacy/absenceDisclosure.js"; import { actionsWhileLive } from "./actionLiveness.js"; // census-telegraph T320/T411; on this line so no cited line moves
 import { nameVisibilitySet, presentedName, resolveHandle } from "../../lib/publicIdentity.js";
-import { resolveAccountRestriction } from "../../lib/accountStateGate.js";
+import { resolveAccountRestriction } from "../../lib/accountStateGate.js"; import { readStampPresenceView, type StampPresenceRow } from "../passport/stampPresenceView.js"; // census-highlights-memories H4: the STAMP card's place
 import {
   readProjectionInputs,
   publicProjectionVerdict,
@@ -912,7 +912,7 @@ const loadStamp: Loader = async (client, id, viewerId) => {
   const { data, error } = await client
     .from("user_stamps")
     .select(
-      "id, user_id, stamp_definition_id, title_override, city, country, visibility, display_on_passport, is_revoked, earned_at",
+      "id, user_id, stamp_definition_id, title_override, city, country, visibility, display_on_passport, is_revoked, earned_at, source_type, source_id, stamp_definitions(slug)",
     )
     .eq("id", id)
     .maybeSingle();
@@ -928,7 +928,7 @@ const loadStamp: Loader = async (client, id, viewerId) => {
   const mine = r.user_id === viewerId;
   if (!mine && (r.visibility !== "public" || r.display_on_passport === false)) {
     return { state: UNAVAILABLE("private"), projection: null };
-  }
+  } const presence = await readStampPresenceView(client, [r as StampPresenceRow]); { const v = presence.verdict(r as StampPresenceRow); if (v === "unverifiable") return { state: UNAVAILABLE("unknown"), projection: null }; if (!presence.presenceClaimHolds(r as StampPresenceRow)) return { state: UNAVAILABLE("not_found"), projection: null }; } const place = presence.place(r as StampPresenceRow & { city?: unknown; country?: unknown }); // census-highlights-memories H4 (wave 5): a presence stamp — its name claims an occurrence — reaches a conversation only with its own source's evidence, and a place only then; unreadable evidence is `unknown`, never shown
   // A block, EITHER way, refuses (read first, above) — `GET /stamps/:stampId` answers not_found on
   // `isBlocked` (bidirectional, fail-closed). Lane R N1, 2026-10-06: this
   // loader read no `blocks`, so a blocked viewer resolved the stamp's title,
@@ -954,7 +954,7 @@ const loadStamp: Loader = async (client, id, viewerId) => {
       "STAMP",
       id,
       title ?? "Stamp",
-      [r.city, r.country].filter(Boolean).join(", ") || null,
+      [place.city, place.country].filter(Boolean).join(", ") || null, // H4: the evidenced place, or none
       icon,
       (r.earned_at as string) ?? null,
     ),

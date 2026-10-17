@@ -46,7 +46,7 @@ import { NotificationRouter, _resetCleanupFailureCount } from "../services/notif
 import { NotificationPreferenceService } from "../services/notifications/NotificationPreferenceService.js";
 import { NotificationDigestService } from "../services/notifications/NotificationDigestService.js";
 import { RealtimeActivityService, activityBus } from "../services/notifications/RealtimeActivityService.js";
-import type { NotificationRow } from "../services/notifications/NotificationService.js";
+import type { NotificationRow } from "../services/notifications/NotificationService.js"; import { TEMPLATES } from "../services/notifications/NotificationTemplateService.js";
 
 const USER_ID  = "bb000000-0000-4000-8000-000000000001";
 const NOTIF_ID = "bb000000-0000-4000-8000-000000000002";
@@ -194,7 +194,7 @@ describe("NotificationRouter — unreadable preferences must not read as consent
 // 2. THE DELIVERY LEDGER MUST NOT CLAIM SENDS THAT DID NOT HAPPEN
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("NotificationRouter — telegraph delivery", () => {
+describe("NotificationRouter — telegraph delivery", () => { /* census-telegraph T256 (wave 5): telegraph.message no longer routes to the telegraph channel (it would post into the very thread it reports), and no shipped template does, so the channel's ledger is exercised through a test-local one */ const TG = "test.telegraph_channel"; beforeEach(() => { if (!TEMPLATES.some((t) => t.eventType === TG)) TEMPLATES.push({ eventType: TG, category: "telegraph", defaultPriority: "normal", defaultChannels: ["in_app", "telegraph"], title: () => "t", body: () => "b" }); }); afterEach(() => { const i = TEMPLATES.findIndex((t) => t.eventType === TG); if (i >= 0) TEMPLATES.splice(i, 1); });
   it("records 'failed', never 'sent', when the system-message insert errors", async () => {
     const inserted: Record<string, any[]> = {};
     const db = makeFailClosedClient({
@@ -209,7 +209,7 @@ describe("NotificationRouter — telegraph delivery", () => {
     });
 
     await new NotificationRouter(db).route(
-      notif({ category: "telegraph", eventType: "telegraph.message", sourceId: "thread-1" }),
+      notif({ category: "telegraph", eventType: TG, sourceId: "thread-1" }),
     );
 
     const tg = attempts(inserted, "telegraph");
@@ -233,7 +233,7 @@ describe("NotificationRouter — telegraph delivery", () => {
     });
 
     await new NotificationRouter(db).route(
-      notif({ category: "telegraph", eventType: "telegraph.message", sourceId: "thread-1" }),
+      notif({ category: "telegraph", eventType: TG, sourceId: "thread-1" }),
     );
 
     const tg = attempts(inserted, "telegraph");

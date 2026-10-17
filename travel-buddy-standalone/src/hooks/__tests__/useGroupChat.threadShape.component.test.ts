@@ -83,7 +83,7 @@ describe('useGroupChat — accepts both /chat payload shapes', () => {
 
     await waitFor(() => expect(result.current.state).toBe('active'));
     expect(mockGetTripChat).toHaveBeenCalledWith('trip-9');
-    expect(mockGetThreadMessages).toHaveBeenCalledWith('t-1');
+    expect(mockGetThreadMessages).toHaveBeenCalledWith('t-1', undefined, 'group_chat'); // census-telegraph T431: the group chat's own capability claim
     expect(result.current.thread).toMatchObject({
       id: 't-1',
       threadType: 'trip',

@@ -269,7 +269,7 @@ describe("POST /threads/:id/messages — the mention notification, driven", () =
     assert.match(String((notif as any).title), /@alice/);
     assert.deepEqual(
       (notif as any).metadata,
-      {},
+      { causal_event_id: `MESSAGE:${r.body.id}` }, // census-telegraph T397/T256: the message is the mention's causal event — and still no degradation marker
       "and the healthy path carries no degradation marker at all",
     );
   });
@@ -304,7 +304,7 @@ describe("POST /threads/:id/messages — the mention notification, driven", () =
     );
     assert.deepEqual(
       (notif as any).metadata,
-      { taggerHandleUnreadable: true },
+      { taggerHandleUnreadable: true, causal_event_id: `MESSAGE:${r.body.id}` }, // + the mention's causal event (census-telegraph T397/T256)
       "the PERSISTED row says which of the two worlds this was; `params` renders " +
         "the template and is not stored",
     );

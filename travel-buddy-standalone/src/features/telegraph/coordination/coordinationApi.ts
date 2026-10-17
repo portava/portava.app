@@ -11,7 +11,7 @@
  * reason, and this module keeps them separate in the types.
  */
 import { isSupabaseConfigured } from '../../../lib/supabase.ts';
-import { freshToken } from '../../../services/apiToken.ts';
+import { freshToken } from '../../../services/apiToken.ts'; import { withCoordinationSchema } from '../negotiation/clientCapabilities.ts'; // census-telegraph T431: `schema` only for a kind whose id the client knows
 
 export const QUICK_STATES = [
   'ON_MY_WAY',
@@ -169,7 +169,7 @@ export async function postQuickState(
 ): Promise<CoordinationResult<{ id: string }>> {
   return call(`/api/threads/${threadId}/coordination`, {
     method: 'POST',
-    body: JSON.stringify({ kind: 'COORDINATION', payload: { state, ...(extra ?? {}) } }),
+    body: JSON.stringify(withCoordinationSchema({ kind: 'COORDINATION', payload: { state, ...(extra ?? {}) } })),
   });
 }
 
@@ -180,7 +180,7 @@ export async function postVote(
 ): Promise<CoordinationResult<{ id: string }>> {
   return call(`/api/threads/${threadId}/coordination`, {
     method: 'POST',
-    body: JSON.stringify({ kind: 'VOTE', payload: { decisionId, optionId } }),
+    body: JSON.stringify(withCoordinationSchema({ kind: 'VOTE', payload: { decisionId, optionId } })),
   });
 }
 
@@ -191,7 +191,7 @@ export async function postCoordinationKind(
 ): Promise<CoordinationResult<{ id: string }>> {
   return call(`/api/threads/${threadId}/coordination`, {
     method: 'POST',
-    body: JSON.stringify({ kind, payload }),
+    body: JSON.stringify(withCoordinationSchema({ kind, payload })),
   });
 }
 
@@ -239,10 +239,10 @@ export async function acknowledgeAnnouncement(
 ): Promise<CoordinationResult<{ id: string }>> {
   return call(`/api/threads/${threadId}/coordination`, {
     method: 'POST',
-    body: JSON.stringify({
+    body: JSON.stringify(withCoordinationSchema({
       kind: 'ACKNOWLEDGEMENT',
       payload: { announcementMessageId, ...(note ? { note } : {}) },
-    }),
+    })),
   });
 }
 
