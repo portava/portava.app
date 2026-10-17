@@ -190,7 +190,7 @@ test("executed SQL excludes protected and unlocatable contributions before all t
         }
       }
       await database.exec("RESET ROLE; REVOKE SELECT ON public.protected_zones FROM service_role; SET ROLE service_role");
-      await assert.rejects(database.query("SELECT public.rebuild_place_momentum_v2($1)", [now]), /permission denied/);
+      await assert.rejects(database.query("SELECT public.rebuild_place_momentum_v2($1)", [now]), /permission denied/); await assert.rejects(database.query("SELECT public.rebuild_place_momentum($1)", [now]), /permission denied/); await assert.rejects(database.query("SELECT * FROM public.discovery_trend_place_context()"), /permission denied/); // Fable gate C3 (2026-10-17): an unreadable zone policy is an error for v1 and the context too, never an empty policy
     });
 
     await context.test("with no active zone every producer writes its predecessor's rows and feature version; a zone switched on filters and stamps", async () => {
