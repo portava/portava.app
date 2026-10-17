@@ -126,3 +126,87 @@ describe('TripOfflineCard', () => {
     expect(getByText('1 change(s) queued for reconnect')).toBeTruthy();
   });
 });
+
+// ── census-trips TR340: §18.1 "cached map tiles where permitted" ─────────────
+describe('TripOfflineCard — the offline map of the trip area (TR340)', () => {
+  const PARIS = { lat: 48.8566, lng: 2.3522 };
+  const withPoints = (): SignedBundle => signed({ sourceTripVersion: 8, contents: { ...signed().bundle.contents, meetingPoints: [{ id: 'm1', label: 'Fountain', lat: 48.86, lng: 2.33, meetAt: null, purpose: 'regroup', myArrivalState: null }] } });
+  function tileSeams(o: { allowed?: boolean; outcome?: any; status?: any } = {}) {
+    return {
+      cacheTiles: jest.fn(async () => o.outcome ?? ({ state: 'cached' as const, scope: `trip:${TRIP_ID}` })),
+      tileStatus: jest.fn(async () => o.status ?? ({ state: 'none' as const })),
+      mediaAllowed: jest.fn(async () => o.allowed ?? true),
+    };
+  }
+
+  it('does NOT download on mount; it reads how far the trip\'s pack has got', async () => {
+    const t = tileSeams({ status: { state: 'complete' } });
+    const r = await render(<TripOfflineCard tripId={TRIP_ID} now={() => NOW} destination={PARIS} tiles={t} {...seams({ stored: stored() })} />);
+    expect((await r.findByTestId('trip-offline-tiles')).props.children).toMatch(/saved for offline use/);
+    expect(t.cacheTiles).not.toHaveBeenCalled();
+    expect(t.tileStatus).toHaveBeenCalledWith(TRIP_ID);
+  });
+
+  it('a refresh packs the trip area: the destination and the NEW copy\'s meeting points, with the device\'s data-saver answer', async () => {
+    const t = tileSeams({ status: { state: 'none' } });
+    const s = { ...seams({ stored: stored() }), fetchBundle: jest.fn(async () => ({ state: 'ok' as const, signed: withPoints() })) };
+    const r = await render(<TripOfflineCard tripId={TRIP_ID} now={() => NOW} destination={PARIS} tiles={t} {...s} />);
+    await r.findByTestId('trip-offline-card');
+    t.tileStatus.mockResolvedValue({ state: 'downloading', percentage: 37 } as any);
+    await fireEvent.press(await r.findByTestId('trip-offline-refresh'));
+    await waitFor(() => expect(t.cacheTiles).toHaveBeenCalledTimes(1));
+    expect(t.cacheTiles).toHaveBeenCalledWith(TRIP_ID, { destination: PARIS, meetingPoints: withPoints().bundle.contents.meetingPoints }, { mediaAllowed: true });
+    await waitFor(() => expect(r.getByTestId('trip-offline-tiles').props.children).toMatch(/37%/));
+  });
+
+  it('where NOT permitted, the card says why — and the offline copy itself is unaffected', async () => {
+    const t = tileSeams({ allowed: false, outcome: { state: 'not_permitted', reason: 'data_saver' } });
+    const s = seams({ stored: stored() });
+    const r = await render(<TripOfflineCard tripId={TRIP_ID} now={() => NOW} destination={PARIS} tiles={t} {...s} />);
+    await r.findByTestId('trip-offline-card');
+    await fireEvent.press(await r.findByTestId('trip-offline-refresh'));
+    await waitFor(() => expect(r.getByTestId('trip-offline-tiles').props.children).toMatch(/data saver is on/));
+    expect(t.cacheTiles).toHaveBeenCalledWith(TRIP_ID, expect.anything(), { mediaAllowed: false });
+    expect(r.getByText('Offline copy ready')).toBeTruthy();
+  });
+
+  it('a trip with no destination coordinates passes none (the pack is refused as having no area, not centred on null island)', async () => {
+    const t = tileSeams();
+    const s = seams({ stored: stored() });
+    const r = await render(<TripOfflineCard tripId={TRIP_ID} now={() => NOW} destination={{ lat: null, lng: null }} tiles={t} {...s} />);
+    await r.findByTestId('trip-offline-card');
+    await fireEvent.press(await r.findByTestId('trip-offline-refresh'));
+    await waitFor(() => expect(t.cacheTiles).toHaveBeenCalled());
+    expect((t.cacheTiles.mock.calls[0] as any[])[1].destination).toBeNull();
+  });
+});
+
+describe('TR340 — the device data-saver setting decides, with no seam', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const asyncStorageModule = require('@react-native-async-storage/async-storage');
+  const AsyncStorage = asyncStorageModule.default ?? asyncStorageModule;
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { readDataSaverSetting } = require('../../../telegraph/hooks/useDataSaver.ts');
+  beforeEach(async () => { await AsyncStorage.clear(); });
+
+  it('reads the same device setting the Telegraph data-saver writes; unreadable or absent is off', async () => {
+    expect(await readDataSaverSetting()).toBe('off');
+    await AsyncStorage.setItem('telegraph:dataSaver:v1', 'on');
+    expect(await readDataSaverSetting()).toBe('on');
+    // Once, and not restored: the storage mock's getItem is itself a jest.fn, and mockRestore() would strip it.
+    jest.spyOn(AsyncStorage, 'getItem').mockRejectedValueOnce(new Error('storage gone'));
+    expect(await readDataSaverSetting()).toBe('off');
+    expect(await readDataSaverSetting()).toBe('on');
+  });
+
+  it('with data saver ON and no mediaAllowed seam, the refresh asks for NO tiles', async () => {
+    await AsyncStorage.setItem('telegraph:dataSaver:v1', 'on');
+    const cacheTiles = jest.fn(async () => ({ state: 'not_permitted' as const, reason: 'data_saver' as const }));
+    const tileStatus = jest.fn(async () => ({ state: 'none' as const }));
+    const r = await render(<TripOfflineCard tripId={TRIP_ID} now={() => NOW} destination={{ lat: 48.85, lng: 2.35 }} tiles={{ cacheTiles, tileStatus }} {...seams({ stored: stored() })} />);
+    await r.findByTestId('trip-offline-card');
+    await fireEvent.press(await r.findByTestId('trip-offline-refresh'));
+    await waitFor(() => expect(cacheTiles).toHaveBeenCalled());
+    expect((cacheTiles.mock.calls[0] as any[])[2]).toEqual({ mediaAllowed: false });
+  });
+});

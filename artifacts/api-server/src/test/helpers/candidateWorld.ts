@@ -134,10 +134,10 @@ export function world(): Record<string, Row[]> {
     ],
     saved_places: [{ user_id: VIEWER, place_id: P.SAVED, saved_at: iso(DAY) }],
     place_momentum: [
-      { place_id: `db/${P.TRENDING}`, trend_state: "trending", recent_rate: 9, computed_at: run, recent_unique_travelers: 20, window_unique_travelers: 20 },
-      { place_id: `db/${P.EMERGING}`, trend_state: "emerging", recent_rate: 4, computed_at: run, recent_unique_travelers: 20, window_unique_travelers: 20 },  // ≥ k in both windows: a claim the trend API would disclose
-      { place_id: "node/101", trend_state: "trending", recent_rate: 3, computed_at: run, recent_unique_travelers: 20, window_unique_travelers: 20 },
-      { place_id: `db/${P.STALE_RUN}`, trend_state: "trending", recent_rate: 50, computed_at: older },
+      { place_id: `db/${P.TRENDING}`, trend_state: "trending", recent_rate: 9, computed_at: run, recent_unique_travelers: 20, window_unique_travelers: 20, source_surface: "discovery" },
+      { place_id: `db/${P.EMERGING}`, trend_state: "emerging", recent_rate: 4, computed_at: run, recent_unique_travelers: 20, window_unique_travelers: 20, source_surface: "discovery" },  // ≥ k in both windows: a claim the trend API would disclose
+      { place_id: "node/101", trend_state: "trending", recent_rate: 3, computed_at: run, recent_unique_travelers: 20, window_unique_travelers: 20, source_surface: "discovery" },
+      { place_id: `db/${P.STALE_RUN}`, trend_state: "trending", recent_rate: 50, computed_at: older, source_surface: "discovery" },
     ],
     compass_graph_edges: [
       { id: "g1", edge_type: "at_place", src_key: "x1", dst_key: P.GRAPH_SEED, last_seen: iso(DAY) },

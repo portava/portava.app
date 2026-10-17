@@ -48,7 +48,7 @@ import {
 } from "../../domain/telegraph/contracts/conversationCapabilities.js";
 import { redactForWire } from "../../domain/telegraph/contracts/telegraphReasonCodes.js";
 import { resolveConversationCapabilities } from "../../domain/telegraph/policies/conversationCapabilityPolicy.js";
-import { readConversationFacts } from "./conversationFacts.js";
+import { readConversationFacts } from "./conversationFacts.js"; import { assembleContextKernel } from "../../services/telegraph/contextKernel.js"; import { contextKernelForWire } from "../../services/telegraph/contextKernelPolicy.js"; import { checkRateLimit } from "../../lib/rateLimit.js"; import { quantiseNow } from "../../routes/nearbyReachable.js"; // census-telegraph T439: §30A.19 Context Kernel (route at file foot)
 import { transportClassFor } from "../../domain/telegraph/policies/transportClass.js";
 
 const router = Router();
@@ -118,3 +118,50 @@ router.get(
 );
 
 export default router;
+
+// ── census-telegraph T439 — §30A.19's Context Kernel, on the capability router ──
+//
+// GET /api/threads/:threadId/context-kernel — the five inputs (Relationship,
+// Time, Proximity, Intent, Shared Objects), what this viewer may be shown of
+// each, and the actions on offer, each admitted by the §14.1 capability that
+// governs it (services/telegraph/contextKernelPolicy.ts). Same refusal shape as
+// the capabilities above: a non-member gets 200 with everything withheld, and
+// a block reads as "not a member" on every field. Rate-limited, and read at the
+// §4.5 poll quantum, because its proximity input is an observation.
+router.get(
+  "/threads/:threadId/context-kernel",
+  asyncHandler(async (req, res) => {
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+    const { user } = auth;
+
+    const threadId = String(req.params["threadId"] ?? "");
+    if (!UUID_RE.test(threadId)) {
+      sendError(res, "invalid_payload", "Invalid thread id");
+      return;
+    }
+
+    const sc = getServiceClient();
+    if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+    const rl = checkRateLimit("telegraph_context_kernel", user.id, 20, 60_000);
+    if (!rl.allowed) {
+      res.setHeader("Retry-After", Math.ceil(rl.retryAfterMs / 1000).toString());
+      sendError(res, "rate_limited", "Too many requests. Please wait.");
+      return;
+    }
+
+    const result = await assembleContextKernel(sc, { viewerId: user.id, conversationId: threadId, nowMs: quantiseNow(Date.now()) });
+    if (!result.ok) {
+      // The membership the whole kernel rests on could not be read. "You share
+      // nothing here" would be a fabrication, so this is a retryable refusal.
+      log.warn({ threadId, viewerId: user.id, stage: result.stage }, "context kernel refused: a read it rests on failed");
+      sendError(res, "degraded_unavailable", "The conversation context is temporarily unavailable.");
+      return;
+    }
+    if (result.kernel.degraded) {
+      log.warn({ threadId, viewerId: user.id, degradedInputs: result.kernel.degradedInputs }, "context kernel answered from a degraded read");
+    }
+    res.status(200).json(contextKernelForWire(result.kernel, redactForWire));
+  }),
+);

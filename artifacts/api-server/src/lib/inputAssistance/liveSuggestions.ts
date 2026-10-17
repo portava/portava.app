@@ -177,7 +177,7 @@ export function formatRelativeAge(observedAt: string, nowMs: number): string {
 export function buildFreshnessState(
   envelopes: readonly LiveClaimEnvelope[],
   nowMs: number,
-): FreshnessState | null {
+): FreshnessState | null { envelopes = liveLabelEligible(envelopes); // census G123: a claim ruled NEVER a live label (closure.state, a cancelled event) backs no label, generic or otherwise
   if (!envelopes || envelopes.length === 0) return null;
 
   // Choose the claim to headline, deterministically over the already-ordered
@@ -286,12 +286,12 @@ export async function enrichSuggestionsWithLive(
   // is independently fail-soft: an error or empty result leaves that suggestion
   // untouched (never a fabricated label).
   const take = eligibleIdx.slice(0, max);
-  const freshnessById = new Map<string, FreshnessState | null>();
+  const freshnessById = new Map<string, FreshnessState | null>(); const closedIds = new Set<string>(); // §20 G123: places the best current closure claim says are shut
   await Promise.all(
     [...new Set(take.map((i) => suggestions[i].entityId as string))].map(async (id) => {
       try {
         const envelopes = await readLiveClaimEnvelopes(sc, id, { now });
-        freshnessById.set(id, buildFreshnessState(envelopes, nowMs));
+        freshnessById.set(id, buildFreshnessState(envelopes, nowMs)); if (OPERATING_STATUS_CONTEXTS.has(opts.context) && closedNow(envelopes)) closedIds.add(id); // §20 G123 — only where the current state is relevant
       } catch {
         freshnessById.set(id, null);
       }
@@ -302,7 +302,7 @@ export async function enrichSuggestionsWithLive(
   return suggestions.map((s, i) => {
     if (!takeSet.has(i)) return s;
     const id = s.entityId as string;
-    const freshness = freshnessById.get(id) ?? null;
+    if (closedIds.has(id)) return demoteShut(s); const freshness = freshnessById.get(id) ?? null; // §20 G123: a shut place is demoted, never labelled or boosted
     if (!freshness) return s; // no gated live claim ⇒ no label, no boost (§31)
     const base = s.confidence ?? 0;
     const boosted = Math.min(BOOST_CEILING, base + freshnessBoost(freshness.state));
@@ -316,3 +316,23 @@ export async function enrichSuggestionsWithLive(
     };
   });
 }
+
+// ── §20 "Closed or unavailable where current operating status is relevant" ────
+//
+// Census G123 (wave 4, 2026-10-17). Appended below everything else so no line
+// the censuses cite above moves; the edits above are in place, one line each.
+// operatingStatus.ts says which claims count and where.
+
+/** Drop envelopes intelContracts rules NEVER a live label (closure.state; a cancelled event). */
+function liveLabelEligible(envelopes: readonly LiveClaimEnvelope[]): LiveClaimEnvelope[] {
+  return (envelopes ?? []).filter((e) => claimTypeLiveLabelRuling(e.claimType, e.value) !== 'never');
+}
+
+/** A shut place: the task-feasibility demotion. It returns before any live projection is attached, so it carries none. */
+function demoteShut(s: InputSuggestion): InputSuggestion {
+  return { ...s, confidence: applyFeasibility(s.confidence ?? 0, true) };
+}
+
+import { claimTypeLiveLabelRuling } from '../intelContracts';
+import { applyFeasibility } from './rankingSignals';
+import { OPERATING_STATUS_CONTEXTS, closedNow } from './operatingStatus';

@@ -4715,3 +4715,25 @@ a token failure, whereas the corrected UI retains Retry for the same intent.
 The other 33 original probes pass. These overlapping counts are not unique
 requirements, device acceptance or a production-readiness claim. Native evidence
 uses disposable local PostgreSQL 17.11 only; hosted Linux CI remains unobserved.
+
+## Row moves — 2026-10-17 build and fix (wave 4)
+
+*Measured on branch `claude/wave4-build-20261017` at `40db3ff94` plus uncommitted wave-4 work. No database was
+read or written, no flag was touched, no provider was called. `head_commit` is not re-declared. **ONE ROW MOVES:
+TV-7c, N → W.** No legal text was written: every sentence the row rests on was already in the tree, and the one
+change made here is a test.*
+
+| id | was | now | the evidence |
+|---|---|---|---|
+| TV-7c the identity-check data flow, documented in the privacy surface | N | **W** | **Built, and mounted.** A Settings → Privacy entry (`travel-buddy-standalone/app/settings/index.tsx:552#accessibilityLabel="Privacy information"`, `travel-buddy-standalone/app/settings/index.tsx:555#router.push('/settings/privacy-policy')`; route `travel-buddy-standalone/src/navigation/portavaRoutes.ts:1985#'settings-privacy-policy'`) opens a screen (`travel-buddy-standalone/app/settings/privacy-policy.tsx:22#export default function PrivacyInformationScreen()`) that documents V-7's data flow end to end: the session and the provider's hosted flow (`travel-buddy-standalone/app/settings/privacy-policy.tsx:46#How an identity check works`); what the check never stores and what it keeps, rendered from the schema-tested lists TV-2b already grades C (`travel-buddy-standalone/app/settings/privacy-policy.tsx:61#VERIFICATION_NEVER_STORED.map(`, `travel-buddy-standalone/app/settings/privacy-policy.tsx:69#VERIFICATION_KEPT.map(`); the erasure ORDER TV-7a grades C (`travel-buddy-standalone/app/settings/privacy-policy.tsx:79#Account deletion includes asking the verification service to delete its copy before` — the code is `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:997#const r = await requestProviderDeletionForUser(sc, userId);` before `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1010#"delete_identity_verifications"`); and the 90-day purge TV-7b grades C (`travel-buddy-standalone/app/settings/privacy-policy.tsx:84#The documented cleanup targets failed or expired checks older than 90 days` — `artifacts/api-server/src/services/identityVerification/retention.ts:31#export const PURGEABLE_STATUSES` and `artifacts/api-server/src/services/identityVerification/retention.ts:34#export const VERIFICATION_RETENTION_DAYS = 90;`). **Pinned:** 9 mounted cases in `travel-buddy-standalone/app/settings/__tests__/privacyPolicy.component.test.tsx:32#describe('TV-7c — limited privacy information, not a published policy'` and 3 on the Settings entry in `travel-buddy-standalone/app/settings/__tests__/privacyPolicy.settingsLink.component.test.tsx:55#describe('TV-7c — Settings privacy information entry'` (12/12 jest, run here), plus `travel-buddy-standalone/src/lib/__tests__/verificationDisclosure.test.ts` (10/10) holding both lists to the schema. Mutation-checked here: dropping the kept-list section turns 1 case red; unwiring the Settings entry turns 3 red; rewriting the erasure sentence to drop the order turned **nothing** red, so a case pinning it was added (`travel-buddy-standalone/app/settings/__tests__/privacyPolicy.component.test.tsx:119#describe('TV-7c — the stated erasure order of the identity-check data flow'`), red on that mutant, green on the tree. **Why W and not C — what remains is the owner's:** the surface says first that it is NOT the privacy policy (`travel-buddy-standalone/app/settings/privacy-policy.tsx:38#Not an approved privacy policy`). The requirement places the data flow IN the privacy policy, and no approved policy exists: `privacy-policy-draft.md` is a draft for legal review with unfilled company, contact, address, date and vendor fields, and no policy URL is configured (§40.4). The provider is unnamed on purpose and its privacy link is absent, because D-PROVIDER's account is not live (TV-6a). One operational column is not named on the screen: `provider_mode` (3930: `test`/`live`/`local_mock`), which is not personal data. OWNER DECISION: the reviewed policy text or its published URL, which then carries or links this section. That closes the row with a client change of a link. |
+
+### Headline, restated from the rows
+
+| BUILT-AND-CORRECT | **90** |
+|---|---|
+| BUILT-BUT-WRONG | **15** |
+| NOT-BUILT | **1** |
+| CANNOT-VERIFY | **2** |
+
+90 + 15 + 1 + 2 = 108. CONSTRUCTED 97.2 % (105 / 108) · CORRECT 83.3 % (90 / 108). The one NOT-BUILT row is
+TV-6a (D-PROVIDER: the Sumsub account, keys, webhook secret and per-market coverage; owner-held).

@@ -616,17 +616,17 @@ export async function generateSuggestions(
       // still flow through the existing per-type search behind the privacy gate.
       const otherTypes = dispatchTypes.filter((t) => t !== 'cities'); if (policyEntityTypes.includes('neighborhood')) { const hood = await resolveNeighborhoodRows(sc, q, context, POLICY_VERSION, policy.maxSuggestions); if (hood.unreadable) noteTypeUnreadable(coverage, 'neighborhoods'); suggestions.push(...hood.rows); } // §11/§12 G66 — system neighbourhood zones
       if (otherTypes.length > 0) {
-        let other = await dispatchAndProject(sc, otherTypes, {
-          q, userId, context, policy, lat, lng, city, temporalWindow, taskConstraint, coverage, distanceOrigin, tripFitSink,
+        const placeSink: SearchResult[] = []; let other = await dispatchAndProject(sc, otherTypes, { // census G153/G192: placeSink = the canonical places the provider lane is checked against
+          q, userId, context, policy, lat, lng, city, temporalWindow, taskConstraint, coverage, distanceOrigin, tripFitSink, placeSink,
         });
         // §10 second attempt — same rule as the city path above.
         if (other.length === 0 && norm.correctedQuery) {
           const retry = await dispatchAndProject(sc, otherTypes, {
-            q: norm.correctedQuery, userId, context, policy, lat, lng, city, temporalWindow, taskConstraint, coverage, distanceOrigin, tripFitSink,
+            q: norm.correctedQuery, userId, context, policy, lat, lng, city, temporalWindow, taskConstraint, coverage, distanceOrigin, tripFitSink, placeSink,
           });
           if (retry.length > 0) { other = retry; correctionHelped = true; }
         }
-        suggestions.push(...other);
+        suggestions.push(...other); suggestions.push(...(await buildProviderSuggestions(sc, { context, policy, q, lat, lng, taskCity: taskConstraint.city, canonicalPlaces: placeSink, catalogOnly: params.catalogOnly === true, policyVersion: POLICY_VERSION, onUnreadable: (lane) => noteTypeUnreadable(coverage, lane) }))); // §34 G222 provider federation on the server (§9 step 9), checked against the canonical places by §30's ladder (G192/G153), merged neutrally (G237) — providerFederation.ts
       }
     } else {
       // ── Generic mixed-entity path (global_search, username, hashtag, …) ─────
@@ -964,7 +964,7 @@ async function dispatchAndProject(
     /** §16/§17 active-task bounds resolved once by the caller. */
     taskConstraint: TaskConstraint;
     /** census-discovery §80 — the optional coverage sink. */
-    coverage?: GatewayCoverage; /** §9 G53 — collects TripFit ids for the trust positions. */ tripFitSink?: Set<string>;
+    coverage?: GatewayCoverage; /** §9 G53 — collects TripFit ids for the trust positions. */ tripFitSink?: Set<string>; /** census G153/G192 — collects the canonical place candidates the provider lane is compared with. */ placeSink?: SearchResult[];
   },
 ): Promise<InputSuggestion[]> {
   const [blockedSet, ageRestrictedSet] = await Promise.all([
@@ -987,7 +987,7 @@ async function dispatchAndProject(
     ),
   ), []);
 
-  const verdict = classifyFeasibility(perTypeResults.flat(), p.taskConstraint); for (const id of verdict.tripFitIds) p.tripFitSink?.add(id); // §9 G53 step 4
+  const verdict = classifyFeasibility(perTypeResults.flat(), p.taskConstraint); for (const id of verdict.tripFitIds) p.tripFitSink?.add(id); for (const r of perTypeResults.flat()) if (r.type === 'places') p.placeSink?.push(r); // §9 G53 step 4; census G153/G192 place sink
   const out: InputSuggestion[] = [];
   const seen = new Set<string>();
   for (const items of perTypeResults) {
@@ -1156,3 +1156,4 @@ export function gatewayFailureRefusal(): DiscoveryRefusal {
 
 import { serveTelegraphMeetAt } from "./telegraphActions";
 import { ZERO_STATE_LANE, PREVIOUS_QUERIES_LANE } from "./zeroStateLanes"; import { buildPreviousQueryCompletions } from "./previousQueries"; import { buildStructuredValueRows } from "./structuredValues"; import { buildTripActionRows } from "./tripActions"; import { planSearchScope } from "./searchScope"; // V-ZS: zero-state failure lanes never share a dispatched type's name
+import { buildProviderSuggestions } from "./providerFederation"; // §34 G222 (wave 4): provider federation on the server

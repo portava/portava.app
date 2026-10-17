@@ -1036,3 +1036,109 @@ describe("H3-2 — H-5 reaches the SHARED crew scope: a member's own crew search
     } finally { await app.close(); }
   });
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * §28.3 (census H262) — "Never query a semantic substitute for an unknown
+ * canonical place/person and pretend it is the requested entity."
+ *
+ * A search that names a place or a person is answered about THAT entity or
+ * refused as unknown. An unknown one is never answered with something similar,
+ * never with "you have no Memory there", and nothing is read or registered for
+ * it. A failed resolution read is a retryable refusal.
+ * ════════════════════════════════════════════════════════════════════════*/
+
+describe("§28.3 (H262): a named place or person is resolved before anything is searched", () => {
+  const CATALOG_PLACE = "99999999-9999-4999-8999-999999999999";
+  const UNKNOWN_PLACE = "99999999-9999-4999-8999-000000000000";
+  const NOBODY = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbb99";
+  function guarded(): Record<string, any[]> {
+    const t = tables();
+    t.places = [{ id: CATALOG_PLACE, name: "Miradouro da Graca" }];
+    return t;
+  }
+
+  it("an unknown place id is refused as unknown — not answered by a similar place, and nothing is registered", async () => {
+    const app = await startApp({ store: guarded() });
+    try {
+      const r = await search(app, OWNER, { intent: { kind: "mine_place", placeId: UNKNOWN_PLACE }, query: "Lisbon rooftop sunset" });
+      assert.equal(r.status, 404);
+      assert.equal(r.body.error, "not_found");
+      assert.match(r.body.message, /not known/);
+      assert.equal(r.body.hits, undefined, "no hit is offered in its stead");
+      assert.equal(app.store[REG].length, 0, "no derivative is built or read for an entity that does not exist");
+    } finally { await app.close(); }
+  });
+
+  it("a place NAME is not a place id, however well it matches a Memory's text", async () => {
+    const app = await startApp({ store: guarded() });
+    try {
+      const r = await search(app, OWNER, { intent: { kind: "mine_place", placeId: "Lisbon rooftop" }, query: "Lisbon rooftop" });
+      assert.equal(r.status, 404);
+      assert.equal(app.store[REG].length, 0);
+    } finally { await app.close(); }
+  });
+
+  it("the owner's own stored place reference resolves, and is answered about exactly that place", async () => {
+    const app = await startApp({ store: guarded() });
+    try {
+      const r = await search(app, OWNER, { intent: { kind: "mine_place", placeId: "place-lisboa" } });
+      assert.equal(r.status, 200);
+      assert.deepEqual(ids(r.body), new Set([M_PUB, M_PRIV]));
+    } finally { await app.close(); }
+  });
+
+  it("a catalog place the owner has no Memory at is an honest empty, not 'unknown'", async () => {
+    const app = await startApp({ store: guarded() });
+    try {
+      const r = await search(app, OWNER, { intent: { kind: "mine_place", placeId: CATALOG_PLACE } });
+      assert.equal(r.status, 200);
+      assert.equal(r.body.hits.length, 0);
+    } finally { await app.close(); }
+  });
+
+  it("a deleted Memory's place is not evidence the place exists", async () => {
+    const store = guarded();
+    for (const m of store.memories) if (m.owner_id === OWNER) m.state = "deleted";
+    const app = await startApp({ store });
+    try {
+      const r = await search(app, OWNER, { intent: { kind: "mine_place", placeId: "place-lisboa" } });
+      assert.equal(r.status, 404);
+    } finally { await app.close(); }
+  });
+
+  it("a person who is not a person's id, or who does not exist, is refused as unknown", async () => {
+    const app = await startApp({ store: guarded() });
+    try {
+      const byName = await search(app, OWNER, { intent: { kind: "mine" }, people: ["Stranger"] });
+      assert.equal(byName.status, 404, "a name is never matched by likeness");
+      const gone = await search(app, OWNER, { intent: { kind: "mine" }, people: [NOBODY] });
+      assert.equal(gone.status, 404);
+      const known = await search(app, OWNER, { intent: { kind: "mine" }, people: [STRANGER] });
+      assert.equal(known.status, 200, "a real person with no shared Memory is an honest empty");
+      assert.equal(known.body.hits.length, 0);
+    } finally { await app.close(); }
+  });
+
+  it("the crew search applies the same guard", async () => {
+    const app = await startApp({ store: crewTables() });
+    try {
+      const r = await search(app, VIEWER, { intent: { kind: "crew_trip", tripId: TRIP }, people: [NOBODY] });
+      assert.equal(r.status, 404);
+      assert.match(r.body.message, /not known/);
+    } finally { await app.close(); }
+  });
+
+  it("a resolution read that fails is a retryable refusal, never 'unknown' and never an empty page", async () => {
+    const app = await startApp({ store: guarded(), failReads: new Set(["places"]) });
+    try {
+      const r = await search(app, OWNER, { intent: { kind: "mine_place", placeId: UNKNOWN_PLACE } });
+      assert.equal(r.status, 503);
+    } finally { await app.close(); }
+    const app2 = await startApp({ store: guarded(), failReads: new Set(["profiles"]) });
+    try {
+      const r = await search(app2, OWNER, { intent: { kind: "mine" }, people: [STRANGER] });
+      assert.ok(r.status === 503 || r.status === 401, `an unreadable person is not 'unknown' (got ${r.status})`);
+      assert.notEqual(r.status, 404);
+    } finally { await app2.close(); }
+  });
+});

@@ -280,7 +280,7 @@ export interface InputSuggestion {
    * surface already badges, and NEVER from a coordinate — `'exact'` is not in
    * the union because the gem search path cannot produce one.
    */
-  locationPrecision?: 'approximate' | 'hidden'; /** §28 G176 — a coarse band from the viewer's own position (distanceBand.ts); never a number, never a person or gem. */ distanceBand?: '<0.5km' | '0.5-1km' | '1-3km' | '3-10km' | '10-50km' | '50km+'; /** §20 G179 — the viewer's own relationship to a typed PLACE row: on one of their live Trips' plans, or saved (relationshipLabels.ts). Absent otherwise. */ relationship?: 'in_trip' | 'saved';
+  locationPrecision?: 'approximate' | 'hidden'; /** §28 G176 — a coarse band from the viewer's own position (distanceBand.ts); never a number, never a person or gem. */ distanceBand?: '<0.5km' | '0.5-1km' | '1-3km' | '3-10km' | '10-50km' | '50km+'; /** §20 G179 — the viewer's own relationship to a typed PLACE row: on one of their live Trips' plans, or saved (relationshipLabels.ts). Absent otherwise. */ relationship?: 'in_trip' | 'saved'; /** §28 G177 — an EVENT's current availability (`events.state`, kept current by the RSVP capacity writer; operatingStatus.ts). Absent for every other row and for an open event. */ availability?: 'full' | 'waitlist'; /** §9 step 9 / census G222 — the required attribution of the provider a `source: 'provider'` row came from (providerFederation.ts). Absent on every other row. */ attribution?: string;
 
   source:
     | 'canonical'

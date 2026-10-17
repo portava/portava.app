@@ -11428,3 +11428,40 @@ The lead's ruling on wave 2 says what closes a §5.1 table row: *a mounted produ
 No row moved. 451 = 322 C / 126 W / 3 N / 0 X.
 
 - NOT-GRADED: artifacts/api-server/src/migrations/3741_trip_presence_current_security_invoker.sql — the wave-3 section cites it as the unapplied blocker that holds TR87 and TR23; no verdict here rests on what it does.
+
+## Row moves — 2026-10-17 build and fix (wave 4)
+
+Measured on branch `claude/wave4-build-20261017` on 2026-10-17, against the working tree. `head_commit` is not re-declared. APPEND-ONLY: every earlier section stands as written; a row not named here is unchanged. **One N row is built and moves N → W; the other two are examined and held, each on a blocker named below.** No migration, no flag, no hosted database, no device run: every number is a local run (node and jest) on fakes.
+
+### Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| TR340 §18.1 bundle: cached map tiles where permitted | N | **W** | **Built on the client, where the row's own text puts it** ("a client permission the server does not hold"). When the traveller refreshes the offline copy, the trip's area is packed into the device's native map store through the Map programme's §28 "cache current base-map region" mechanism — the same style, the same `base_map_region` retention class — under the trip's own scope, so a refresh replaces that trip's pack and never another trip's (`travel-buddy-standalone/src/features/trips/offline/tripOfflineTiles.ts:94#export async function cacheTripTiles(`; `travel-buddy-standalone/src/features/trips/offline/tripOfflineTiles.ts:103#{ scope: tripTileScope(tripId), bounds: a.bounds, minZoom: TRIP_TILE_MIN_ZOOM, maxZoom: TRIP_TILE_MAX_ZOOM }`). The area is the trip's destination plus the bundle's meeting points, padded, and refused past a city's span (`travel-buddy-standalone/src/features/trips/offline/tripOfflineTiles.ts:67#if (north - south > MAX_TILE_SPAN_DEG || east - west > MAX_TILE_SPAN_DEG) return { ok: false, reason: 'area_too_large' };`). **Where permitted** is decided on the device and said on the card: the traveller's data-saver refuses the bulk download (`travel-buddy-standalone/src/features/trips/offline/tripOfflineTiles.ts:99#if (deps.mediaAllowed !== true) return { state: 'not_permitted', reason: 'data_saver' };`), a device with no pack store refuses it (`travel-buddy-standalone/src/features/trips/offline/tripOfflineTiles.ts:107#if (r.reason === 'offline_unavailable') return { state: 'not_permitted', reason: 'offline_unavailable' };`), and so does a trip with no location. Packing happens only on an explicit refresh, never on mount, because a refresh of a pack re-downloads it (`travel-buddy-standalone/src/features/trips/offline/TripOfflineTiles.tsx:56#if (mountedWith.current === undefined) { mountedWith.current = storedAt; return; }`), with the NEW copy's meeting points (`travel-buddy-standalone/src/features/trips/offline/TripOfflineTiles.tsx:64#const o = await cacheTiles(tripId, { destination: point, meetingPoints: stored.signed.bundle.contents.meetingPoints ?? [] }, { mediaAllowed: allowed });`). Mounted in the offline card (`travel-buddy-standalone/src/features/trips/offline/TripOfflineCard.tsx:113#<TripOfflineTiles tripId={tripId} stored={stored} destination={destination} {...tiles} />`), which the trip screen now hands the trip's own destination coordinates (`travel-buddy-standalone/app/trip/[id].tsx:573#<TripOfflineCard tripId={trip.id} destination={{ lat: (realTrip as any)?.destinationLat, lng: (realTrip as any)?.destinationLng }} />`). The server's bundle is unchanged and still names tiles as not carried by it. Tests: `travel-buddy-standalone/src/features/trips/offline/__tests__/tripOfflineTiles.test.ts:75#test('permitted: the trip area is packed under the trip scope, the §28 style and class, at street level'`, `travel-buddy-standalone/src/features/trips/offline/__tests__/tripOfflineTiles.test.ts:98#test('NOT permitted: data saver, no area, too wide an area, or a device without packs — and nothing is downloaded'`, `travel-buddy-standalone/src/features/trips/offline/__tests__/TripOfflineCard.component.test.tsx:131#describe('TripOfflineCard — the offline map of the trip area (TR340)'`, `travel-buddy-standalone/src/features/trips/offline/__tests__/TripOfflineCard.component.test.tsx:184#describe('TR340 — the device data-saver setting decides, with no seam'`. **Still W:** (1) the download itself is MapLibre's native pack store, exercised here only through a fake pack manager — no device run shows a trip's tiles drawn offline; (2) the tile provider's own terms are inherited from the Map programme's §28 decision (its base-map pack already caches the same style), not established for offline trip packs by any recorded ruling; (3) on today's deployments the meeting points the area grows from need 2794 and the operational gate (TR338), so the area is the destination alone. |
+
+### Tests and mutation proofs, run for this section on 2026-10-17
+
+| change | red first | green | targeted mutants |
+| --- | --- | --- | --- |
+| TR340 tiles (logic, component, card, screen, the data-saver reader) | with the five production changes reverted: `tripOfflineTiles.test.ts` cannot load (node 0/1); `TripOfflineCard.component.test.tsx` jest 5/11 (the 6 new cases fail) | node 10/10; jest 11/11 (5 before + 6 new) | 15 of 15 killed, each restored by sha256: data saver ignored; no span cap; null island accepted as a destination; one scope for every trip; street-level zoom dropped; meeting points ignored; an absent pack store read as a failure; packing on mount; the component ignoring data saver; the component dropping the meeting points; the component dropping the destination; the card not rendering the tiles; the screen passing no destination; the setting reader always off; the default device check ignoring the setting |
+
+Neighbours, re-run after the last change in this section: the Map programme's base-map pack suite and the offline-copy suite (node, 26/26 with the new suite); the five trip-screen suites, the memories testing-mode wiring suite and the Telegraph data-saver suite (jest, 48/48 across 11 suites with the card). Client guards `lint:mocks`, `lint:imports`, `check:route-registry` and `check-orphan-tests` pass.
+
+### Rows examined and held
+
+| id | what stops it |
+| --- | --- |
+| TR176 §10.4 opt-in Bluetooth proximity | Native radio work. The client has no BLE dependency, and the requirement is the radio itself; there is no non-native part to build alone. |
+| TR178 §10.4 temporary relay metadata | Its producer is the peer relay of TR176 — nothing in this tree observes a peer, so there is no relay to carry metadata for. Its store would be the Map programme's Locate My Friends tables (whose `peer_relay` rung no producer fires), which are absent from production and owned by that lane; and the one migration number this pass held was used by census-telegraph T155. |
+
+### Headline
+
+| bucket | was (wave 3) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 322 | 322 |
+| BUILT-BUT-WRONG | 126 | 127 |
+| NOT-BUILT | 3 | 2 |
+| CANNOT-VERIFY | 0 | 0 |
+| total | 451 | 451 |
+
+451 = 322 C / 127 W / 2 N / 0 X. CONSTRUCTED 449 of 451 = 99.6 %, CORRECT 322 of 451 = 71.4 %, unchanged.

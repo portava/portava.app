@@ -59,7 +59,7 @@ import {
   publicationPrecision,
   resolveMemoryLocationCeiling,
   coarsenMemoryLocation,
-} from "../lib/memoryLocationPrecision.js";
+} from "../lib/memoryLocationPrecision.js"; import { loadAudienceCeilings, withAudienceCeiling, type AudienceCeilings } from "../services/memory/memoryVisibilityPolicies.js"; // §3.6 (3997, census H33): the owner's per-audience publication ceiling; on this line so no cited line moves
 // §17 Command Bus and Domain Events. Every canonical Memory write below crosses
 // this boundary: a typed command, an actor, an idempotency key, an audit row
 // and — when the kernel is enabled — a domain event in the same transaction as
@@ -127,7 +127,7 @@ function isUuid(s: string) { return UUID_RE.test(s); }
 
 interface MemoryGemContext {
   gems: RestrictiveGem[];
-  determined: boolean;
+  determined: boolean; audience?: AudienceCeilings; // §3.6 (3997, H33): the owners' per-audience publication ceilings, read with the gems so every non-owner door that loads one has the other
 }
 
 async function loadMemoryGemContext(
@@ -139,9 +139,9 @@ async function loadMemoryGemContext(
       placeIds: [],
       cities: rows.map((r) => r?.location_city ?? null),
     });
-    return { gems, determined: true };
+    return { gems, determined: true, audience: await loadAudienceCeilings(db, rows) }; // never throws: an unreadable policy is a clamp, not an exception
   } catch {
-    return { gems: [], determined: false };
+    return { gems: [], determined: false, audience: await loadAudienceCeilings(db, rows) };
   }
 }
 
@@ -182,7 +182,7 @@ function protectMemoryRow(
   // Flag on ⇒ the row's rung; a row that does not carry the key, or carries
   // null / a value off the ladder, is clamped to 'hidden' — the read-side
   // normalization that keeps an unreadable policy from being served as 'exact'.
-  const ownerPrecision = publicationPrecision(row, precisionEnabled);
+  const ownerPrecision = withAudienceCeiling(publicationPrecision(row, precisionEnabled), ctx.audience, row); // §3.6/§28.7 (3997, H33): never finer than the owner's ceiling for this Memory's audience
   const ceiling = resolveMemoryLocationCeiling(ownerPrecision, gemCeiling);
   if (ceiling == null) return row; // no constraint from either source → unchanged
   const d = coarsenMemoryLocation(row, ceiling);
@@ -938,7 +938,7 @@ async function serveCrewSearch(
     limit: body.limit,
   });
 
-  if (!result.ok) {
+  if (!result.ok) { if (result.reason === "entity_unresolved") { sendError(res, "not_found", "That place or person is not known. Nothing similar was searched in its place."); return; } // §28.3 (H262): "unknown" is not "no matches" and not "try again"
     switch (result.reason) {
       case "invalid_intent":
       case "filter_unsupported":
@@ -1088,7 +1088,7 @@ router.post("/memories/search", async (req, res) => {
     limit: body.limit,
   });
 
-  if (!result.ok) {
+  if (!result.ok) { if (result.reason === "entity_unresolved") { sendError(res, "not_found", "That place or person is not known. Nothing similar was searched in its place."); return; } // §28.3 (H262): "unknown" is not "no matches" and not "try again"
     switch (result.reason) {
       case "invalid_intent":
       case "filter_unsupported":

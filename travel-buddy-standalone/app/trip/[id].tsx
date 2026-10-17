@@ -570,7 +570,7 @@ function TripDetailScreen() {
             The signed bundle kept as issued, its age and version judged by the
             server's own rule and shown stale as stale; queued changes replayed
             on reconnect with the server's per-operation decision applied. */}
-        {live && trip.id ? <TripOfflineCard tripId={trip.id} /> : null}
+        {live && trip.id ? <TripOfflineCard tripId={trip.id} destination={{ lat: (realTrip as any)?.destinationLat, lng: (realTrip as any)?.destinationLng }} /> : null}
 
         {/* ── §7.3 conflicts on the timeline ───────────────────────────────
             A day that carries a temporal conflict is named above the plan,

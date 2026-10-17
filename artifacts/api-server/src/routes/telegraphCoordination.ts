@@ -33,7 +33,7 @@ import { asyncHandler } from "../lib/asyncHandler.js";
 import { logger as rootLogger } from "../lib/logger.js";
 import { guardTelegraphThreadWrite, sendThreadWriteRefusal } from "../lib/telegraphThreadWrite.js"; import { boundAnnouncementsForViewer, textOfPayload } from "../domain/telegraph/policies/groupControlsPolicy.js"; import { getServiceClient } from "../lib/supabase.js";
 import { emitCoordinationCompleted, publishToThread } from "../lib/telegraphEvents.js"; import { publishMessageCreated } from "../lib/telegraphOutboxDrainScheduler.js"; // census-telegraph T154 (V-TR F1)
-import { createCoordinationSession } from "../services/telegraph/coordinationSessions.js";
+import { createCoordinationSession } from "../services/telegraph/coordinationSessions.js"; import { readSessionRowsThroughCheckpoint } from "../services/telegraph/conversationSnapshots.js"; // census-telegraph T155
 import { writeThreadEnvelope } from "../services/telegraph/threadEnvelopeWrites.js";
 import { projectCloseout, projectNextStep, projectSharedRides } from "../services/telegraph/coordinationStages.js";
 import { SHARED_RIDE_ACTION, findReplayedProposal, proposalAction, rideJoinRefusal } from "../services/telegraph/sharedRideWrites.js"; // census-telegraph T107
@@ -898,7 +898,7 @@ router.get(
      * anything: `SESSION_SCAN_LIMIT` transitions is far more than one evening
      * produces, and the bound is reported rather than assumed.
      */
-    const sessionRead = await readSessionRowsForThread(client, threadId, gate.visibleFrom, gate.viewerId);
+    const sessionRead = await readSessionRowsSnapshotAware(client, threadId, gate.visibleFrom, gate.viewerId); // census-telegraph T155: through the §12 checkpoint when telegraph_conversation_snapshots_enabled (file foot)
     if (!sessionRead.ok) {
       log.error({ threadId, message: sessionRead.message }, "coordination session read failed");
       sendError(res, "db_error", "Could not read this conversation's coordination state");
@@ -966,7 +966,7 @@ router.get(
        */
       duplicateSessionIds: projectedSessions.duplicateSessionIds,
       /** The session read's own bound, stated separately from the message scan. */
-      sessionScanTruncated: sessionRead.truncated,
+      sessionScanTruncated: sessionRead.truncated, sessionSnapshot: sessionRead.snapshot, // census-telegraph T155: whether the fold read a §12 checkpoint, and why not
     });
   }),
 );
@@ -1698,3 +1698,25 @@ router.get(
 );
 
 export default router;
+
+// ── census-telegraph T155 — §12 conversation_snapshots: the session read through a checkpoint ──
+//
+// The coordination view's session read, unchanged while
+// telegraph_conversation_snapshots_enabled is off (it IS readSessionRowsForThread
+// then). On, a thread whose session-kind rows overflow SESSION_SCAN_LIMIT is
+// checkpointed once (migration 3998's writer) and read as the checkpoint plus the
+// replayed rows after its cursor, through the same projection — so the fold sees
+// the whole evening rather than its newest 200 rows. See
+// services/telegraph/conversationSnapshots.ts.
+async function readSessionRowsSnapshotAware(
+  client: SupabaseClient,
+  threadId: string,
+  visibleFrom: string | null,
+  viewerId: string,
+) {
+  return readSessionRowsThroughCheckpoint(
+    client,
+    { threadId, visibleFrom, viewerId, columns: COORD_COLUMNS, tailLimit: SESSION_SCAN_LIMIT },
+    () => readSessionRowsForThread(client, threadId, visibleFrom, viewerId),
+  );
+}

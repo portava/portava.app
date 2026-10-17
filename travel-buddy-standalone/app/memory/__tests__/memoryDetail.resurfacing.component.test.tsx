@@ -36,7 +36,7 @@ jest.mock('../../../src/features/memories/MemoryVideoSegments', () => {
   const { View } = require('react-native');
   return { MemoryVideoSegments: () => <View testID="unchanged-video" /> };
 });
-jest.mock('../../../src/features/memories/social/MemorySocialBar', () => ({ ...jest.requireActual('../../../src/features/memories/social/MemorySocialBar'), MemorySocialBar: () => null }));
+jest.mock('../../../src/features/memories/social/MemorySocialBar', () => ({ ...jest.requireActual('../../../src/features/memories/social/MemorySocialBar'), MemorySocialBar: () => null })); jest.mock('../../../src/features/memories/RememberTogetherPanel', () => ({ RememberTogetherPanel: () => null })); // H53's panel has its own suite (RememberTogether.component.test.tsx); this file pins the resurfacing control's transport
 jest.mock('../../../src/features/memories/social/MemoryBrowseLinks', () => {
   const { Text } = require('react-native');
   return { MemoryBrowseLinks: () => <Text>Existing browse links</Text> };

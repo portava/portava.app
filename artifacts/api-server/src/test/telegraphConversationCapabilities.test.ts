@@ -634,3 +634,517 @@ describe("T320 — in a booking's thread, canCall follows the booking", () => {
     assert.ok(isTelegraphReason("TELEGRAPH_POLICY_BOOKING_NOT_ACTIVE"));
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// census-telegraph T439 — §30A.19 "Formalize a Context Kernel above transport:
+// Relationship, Time, Proximity, Intent and Shared Objects feed Policy +
+// Capabilities, which determine what the Telegraph surface may reveal and what
+// actions it may offer." The policy (services/telegraph/contextKernelPolicy.ts),
+// the gatherer (services/telegraph/contextKernel.ts) and the route
+// (GET /threads/:id/context-kernel on the capability router), each tested here.
+// ══════════════════════════════════════════════════════════════════════════════
+
+import {
+  ACTION_GOVERNING_CAPABILITY as K_GOVERNS,
+  CONTEXT_KERNEL_INPUTS as K_INPUTS,
+  contextKernelForWire as kWire,
+  decideContextKernel as kDecide,
+  intentAction as kIntentAction,
+  proximityMayBeRead as kMayReadProximity,
+  type ContextKernelFacts as KFacts,
+} from "../services/telegraph/contextKernelPolicy.js";
+import {
+  assembleContextKernel as kAssemble,
+  kernelProximityFrom as kProximityFrom,
+  readKernelIntent as kReadIntent,
+  readKernelProximity as kReadProximity,
+  KERNEL_MAX_PARTICIPANTS as K_MAX_PARTICIPANTS,
+} from "../services/telegraph/contextKernel.js";
+import { MAX_RAIL_PARTICIPANTS as K_RAIL_MAX } from "../routes/telegraphSharedContext.js";
+import { NOW_ACTIONS as K_NOW_ACTIONS } from "../services/telegraph/layers.js";
+import { TELEGRAPH_ACTIONS as K_ACTIONS } from "../services/telegraph/vocabulary.js";
+import { redactForWire as kRedact } from "../domain/telegraph/contracts/telegraphReasonCodes.js";
+
+const K_NOW = Date.parse("2026-10-17T12:00:00.000Z");
+const kIso = (deltaMin: number) => new Date(K_NOW + deltaMin * 60_000).toISOString();
+
+/** §14.1's answer with every capability TRUE unless overridden — the policy's ceiling in a test. */
+function kCaps(over: Partial<Record<string, false | string>> = {}): any {
+  const capabilities: Record<string, boolean> = {};
+  const reasons: Record<string, string | null> = {};
+  for (const n of CONVERSATION_CAPABILITY_NAMES) {
+    const o = over[n];
+    capabilities[n] = o === undefined;
+    reasons[n] = o === undefined ? null : (o === false ? "TELEGRAPH_POLICY_MEMBERSHIP_DERIVED" : o);
+  }
+  return { conversationId: DM, viewerId: ALICE, conversationType: "direct", capabilities, reasons, inputsRead: [...CAPABILITY_INPUTS], degraded: false, degradedReasons: [] };
+}
+
+function kItem(objectType: string, objectId: string, orderBand: string, availableActions: string[], startsAt?: string): any {
+  return { objectType, objectId, title: objectId, relationship: "BOTH_PARTICIPANTS", status: "going", availableActions, orderBand, ...(startsAt ? { startsAt } : {}) };
+}
+
+function kShared(items: { now?: any[]; upcoming?: any[]; unresolved?: any[]; past?: any[] } = {}, incomplete = false): any {
+  return { status: "read", value: { incomplete, projection: { conversationId: DM, generatedAt: kIso(0), now: items.now ?? [], upcoming: items.upcoming ?? [], unresolved: items.unresolved ?? [], past: items.past ?? [] } } };
+}
+
+function kFacts(over: Partial<KFacts> = {}): KFacts {
+  return {
+    conversationId: DM, viewerId: ALICE, conversationType: "direct", member: true, capabilities: kCaps(),
+    relationship: { status: "read", value: { state: "ACTIVE", origins: ["MUTUAL_FOLLOW"], expiredOrigins: [] } },
+    proximity: { status: "read", value: { people: [{ userId: BOB, bucket: "same_area", travel: "walk", freshness: "live" } as any] } },
+    intent: { status: "read", value: null },
+    sharedObjects: kShared(),
+    nowMs: K_NOW,
+    ...over,
+  };
+}
+
+const kOffered = (k: any) => k.offeredActions.map((a: any) => `${a.source}:${a.action}${a.objectId ? `@${a.objectId}` : ""}`).sort();
+
+describe("T439 — the Context Kernel policy (§30A.19)", () => {
+  it("names §30A.19's five inputs, in the spec's order, and answers every one for a member", () => {
+    assert.deepEqual([...K_INPUTS], ["relationship", "time", "proximity", "intent", "sharedObjects"]);
+    const k = kDecide(kFacts());
+    assert.deepEqual(Object.keys(k.inputs), [...K_INPUTS]);
+    for (const name of K_INPUTS) assert.equal((k.inputs as any)[name].revealed, true, `${name} should be revealed to a member here`);
+    assert.deepEqual([...k.inputsRead], [...K_INPUTS]);
+  });
+
+  it("a non-member is shown NOTHING — not even the conversation's clock — and offered nothing", () => {
+    const k = kDecide(kFacts({ member: false, sharedObjects: kShared({ now: [kItem("MEETUP", "m1", "HAPPENING_NOW", ["MEET_HERE"])] }) }));
+    for (const name of K_INPUTS) {
+      assert.equal((k.inputs as any)[name].revealed, false, name);
+      assert.equal((k.inputs as any)[name].reason, "KERNEL_NOT_MEMBER", name);
+    }
+    assert.deepEqual(k.offeredActions, []);
+    assert.deepEqual(k.inputsRead, []);
+  });
+
+  it("a block seen by §14.1 withholds the other person and everything shared, and offers nothing", () => {
+    const k = kDecide(kFacts({
+      capabilities: kCaps({ canSendMessage: "TELEGRAPH_AUTH_BLOCKED" }),
+      intent: { status: "read", value: { intent: "create_meetup", confidence: 0.85, messageId: "msg-1", at: kIso(-1), sentByViewer: false } },
+      sharedObjects: kShared({ now: [kItem("MEETUP", "m1", "HAPPENING_NOW", ["MEET_HERE"])] }),
+    }));
+    for (const name of ["relationship", "proximity", "intent", "sharedObjects"]) {
+      assert.equal((k.inputs as any)[name].revealed, false, name);
+      assert.equal((k.inputs as any)[name].reason, "KERNEL_BLOCKED", name);
+    }
+    assert.equal(k.inputs.time.revealed, true, "the clock is not about anybody");
+    assert.equal(k.inputs.time.value?.band, null, "the band would describe what the two share");
+    assert.deepEqual(k.offeredActions, []);
+    assert.deepEqual(k.withheldActions, []);
+  });
+
+  it("a block seen only by the RELATIONSHIP input does the same (§15.3: no rediscovery across a block)", () => {
+    const k = kDecide(kFacts({
+      relationship: { status: "read", value: { state: "BLOCKED", origins: [], expiredOrigins: [] } },
+      sharedObjects: kShared({ upcoming: [kItem("MEETUP", "m1", "UPCOMING", ["JOIN_PLAN"])] }),
+    }));
+    assert.equal(k.inputs.sharedObjects.reason, "KERNEL_BLOCKED");
+    assert.equal(k.inputs.proximity.reason, "KERNEL_BLOCKED");
+    assert.deepEqual(k.offeredActions, []);
+  });
+
+  it("an input that is off, not applicable or unreadable is WITHHELD with that reason — never published as a floor", () => {
+    const k = kDecide(kFacts({
+      relationship: { status: "off", detail: "flag off" },
+      conversationType: "trip",
+      proximity: { status: "unreadable", detail: "budget refused" },
+      intent: { status: "not_applicable", detail: "e2ee" },
+    }));
+    assert.equal(k.inputs.relationship.reason, "KERNEL_INPUT_OFF");
+    assert.equal(k.inputs.proximity.reason, "KERNEL_INPUT_UNREADABLE");
+    assert.equal(k.inputs.intent.reason, "KERNEL_INPUT_NOT_APPLICABLE");
+    assert.equal(k.inputs.proximity.value, null);
+    assert.equal(k.degraded, true);
+    assert.deepEqual([...k.degradedInputs], ["proximity"]);
+    assert.ok(!k.inputsRead.includes("proximity") && !k.inputsRead.includes("relationship"));
+  });
+
+  it("an INCOMPLETE shared-object read is revealed as the floor it is, and marks the kernel degraded", () => {
+    const k = kDecide(kFacts({ sharedObjects: kShared({}, true) }));
+    assert.equal(k.inputs.sharedObjects.revealed, true);
+    assert.equal(k.inputs.sharedObjects.value?.incomplete, true);
+    assert.equal(k.degraded, true);
+    assert.deepEqual([...k.degradedInputs], ["sharedObjects"]);
+  });
+
+  it("Relationship FEEDS the proximity decision in a direct conversation", () => {
+    assert.equal(kDecide(kFacts()).inputs.proximity.revealed, true, "ACTIVE admits the bucket");
+    assert.equal(kDecide(kFacts({ relationship: { status: "read", value: { state: "TEMPORARY", origins: ["EVENT"], expiredOrigins: [] } } })).inputs.proximity.revealed, true);
+    for (const state of ["REQUEST_ONLY", "EXPIRED", "RESTRICTED"] as const) {
+      const k = kDecide(kFacts({ relationship: { status: "read", value: { state, origins: [], expiredOrigins: [] } } }));
+      assert.equal(k.inputs.proximity.revealed, false, state);
+      assert.equal(k.inputs.proximity.reason, "KERNEL_RELATIONSHIP_REQUIRED", state);
+    }
+    for (const relationship of [{ status: "off", detail: "x" }, { status: "unreadable", detail: "x" }] as const) {
+      const k = kDecide(kFacts({ relationship }));
+      assert.equal(k.inputs.proximity.reason, "KERNEL_RELATIONSHIP_REQUIRED", `${relationship.status}: an unestablished relationship admits no bucket`);
+    }
+    const group = kDecide(kFacts({ conversationType: "trip", relationship: { status: "not_applicable", detail: "group" } }));
+    assert.equal(group.inputs.proximity.revealed, true, "a group's proximity is the reachable projection's own (circle + crew) answer");
+  });
+
+  it("the gatherer reads proximity under the SAME rule the policy reveals it by", () => {
+    const active = { status: "read", value: { state: "ACTIVE", origins: [], expiredOrigins: [] } } as const;
+    const requestOnly = { status: "read", value: { state: "REQUEST_ONLY", origins: [], expiredOrigins: [] } } as const;
+    assert.equal(kMayReadProximity("direct", active), true);
+    assert.equal(kMayReadProximity("direct", requestOnly), false);
+    assert.equal(kMayReadProximity("direct", { status: "off", detail: "x" }), false);
+    assert.equal(kMayReadProximity("trip", { status: "not_applicable", detail: "x" }), true);
+  });
+
+  it("Time: the soonest revealed shared object's §3.3 band, stated in UTC; only HAPPENING_NOW offers §2.3's NOW actions", () => {
+    const now = kDecide(kFacts({ proximity: { status: "read", value: { people: [] } }, sharedObjects: kShared({
+      now: [kItem("MEETUP", "m-now", "HAPPENING_NOW", [])],
+      upcoming: [kItem("MEETUP", "m-soon", "STARTING_SOON", [], kIso(30)), kItem("MEETUP", "m-later", "UPCOMING", [], kIso(600))],
+    }) }));
+    assert.equal(now.inputs.time.value?.frame, "UTC");
+    assert.equal(now.inputs.time.value?.now, kIso(0));
+    assert.equal(now.inputs.time.value?.band, "HAPPENING_NOW");
+    assert.equal(now.inputs.time.value?.nextStartsAt, kIso(30));
+    assert.deepEqual(kOffered(now), K_NOW_ACTIONS.map((a) => `time:${a}`).sort());
+
+    const later = kDecide(kFacts({ proximity: { status: "read", value: { people: [] } }, sharedObjects: kShared({ upcoming: [kItem("MEETUP", "m-later", "UPCOMING", [], kIso(600))] }) }));
+    assert.equal(later.inputs.time.value?.band, "UPCOMING");
+    assert.deepEqual(kOffered(later), [], "nothing happening now offers no NOW action");
+  });
+
+  it("Proximity: somebody in the nearest bucket offers MEET_HERE; anybody further does not", () => {
+    assert.deepEqual(kOffered(kDecide(kFacts())), ["proximity:MEET_HERE"]);
+    const further = kDecide(kFacts({ proximity: { status: "read", value: { people: [{ userId: BOB, bucket: "nearby", travel: "short", freshness: "live" } as any] } } }));
+    assert.deepEqual(kOffered(further), []);
+  });
+
+  it("Intent: every detectIntent label maps to a §8.1 action, and a plan intent is ADD_TO_TRIP only in a trip", () => {
+    const src = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "services", "telegraphIntent.ts"), "utf8");
+    const union = src.slice(src.indexOf("export type IntentType ="), src.indexOf("export interface IntentResult"));
+    const labels = [...union.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+    assert.ok(labels.length >= 15, `read ${labels.length} intent labels`);
+    for (const l of labels) assert.ok((K_ACTIONS as readonly string[]).includes(kIntentAction(l as any, "direct")), l);
+    assert.equal(kIntentAction("add_to_plan", "trip"), "ADD_TO_TRIP");
+    assert.equal(kIntentAction("add_to_plan", "direct"), "CREATE_PLAN");
+    assert.equal(kIntentAction("time_poll", "direct"), "VOTE");
+    const k = kDecide(kFacts({ proximity: { status: "read", value: { people: [] } }, intent: { status: "read", value: { intent: "create_meetup", confidence: 0.85, messageId: "msg-1", at: kIso(-5), sentByViewer: false } } }));
+    assert.deepEqual(kOffered(k), ["intent:CREATE_PLAN"]);
+  });
+
+  it("Shared objects: each live object's own actions are offered with the object named; a PAST object offers none", () => {
+    const k = kDecide(kFacts({ proximity: { status: "read", value: { people: [] } }, sharedObjects: kShared({
+      upcoming: [kItem("MEETUP", "m1", "UPCOMING", ["JOIN_PLAN", "VOTE"], kIso(600))],
+      past: [kItem("MEETUP", "m0", "PAST", ["JOIN_PLAN"])],
+    }) }));
+    assert.deepEqual(kOffered(k), ["sharedObjects:JOIN_PLAN@m1", "sharedObjects:VOTE@m1"]);
+  });
+
+  it("§14.1 DECIDES: a false capability withholds the action with its own reason, and nothing is ever granted", () => {
+    const facts = kFacts({
+      intent: { status: "read", value: { intent: "create_meetup", confidence: 0.85, messageId: "msg-1", at: kIso(-5), sentByViewer: true } },
+      capabilities: kCaps({ canCreatePlan: "TELEGRAPH_AUTH_NOT_TRIP_MEMBER" }),
+    });
+    const k = kDecide(facts);
+    assert.deepEqual(kOffered(k), ["proximity:MEET_HERE"]);
+    assert.deepEqual(k.withheldActions.map((a) => [a.action, a.capability, a.reason]), [["CREATE_PLAN", "canCreatePlan", "TELEGRAPH_AUTH_NOT_TRIP_MEMBER"]]);
+
+    const none = kDecide({ ...facts, capabilities: kCaps(Object.fromEntries(CONVERSATION_CAPABILITY_NAMES.map((n) => [n, "TELEGRAPH_POLICY_THREAD_ARCHIVED"]))) });
+    assert.deepEqual(none.offeredActions, [], "with every capability false the kernel offers nothing");
+    assert.equal(none.withheldActions.length, 2);
+  });
+
+  it("every §8.1 action has a governing §14.1 capability", () => {
+    for (const a of K_ACTIONS) assert.ok((CONVERSATION_CAPABILITY_NAMES as readonly string[]).includes(K_GOVERNS[a]), a);
+    assert.equal(K_GOVERNS.CREATE_PLAN, "canCreatePlan");
+    assert.equal(K_GOVERNS.ADD_TO_TRIP, "canCreatePlan");
+  });
+
+  it("the wire tells a blocked viewer only what it tells a non-member", () => {
+    const blocked = kWire(kDecide(kFacts({ capabilities: kCaps({ canSendMessage: "TELEGRAPH_AUTH_BLOCKED", canCall: "TELEGRAPH_AUTH_BLOCKED" }) })), kRedact);
+    const text = JSON.stringify(blocked);
+    assert.ok(!text.includes("BLOCKED"), "no field may carry the block");
+    assert.equal(blocked.inputs.sharedObjects.reason, "KERNEL_NOT_MEMBER");
+    assert.equal(blocked.capabilityReasons.canSendMessage, "TELEGRAPH_AUTH_NOT_MEMBER");
+  });
+});
+
+/* ── the gatherer, over a generic fake ──────────────────────────────────── */
+
+interface KState {
+  flags?: Record<string, boolean>;
+  errors?: string[];
+  rows?: Record<string, any[]>;
+}
+
+/** Splits a PostgREST `or=` expression at depth 0 and evaluates it by meaning. */
+function kOrMatch(expr: string, row: any): boolean {
+  const parts: string[] = [];
+  let depth = 0; let cur = "";
+  for (const ch of expr) {
+    if (ch === "(") depth++;
+    if (ch === ")") depth--;
+    if (ch === "," && depth === 0) { parts.push(cur); cur = ""; continue; }
+    cur += ch;
+  }
+  if (cur) parts.push(cur);
+  const cond = (c: string): boolean => {
+    if (c.startsWith("and(") && c.endsWith(")")) {
+      const inner = c.slice(4, -1);
+      const sub: string[] = []; let d = 0; let s = "";
+      for (const ch of inner) { if (ch === "(") d++; if (ch === ")") d--; if (ch === "," && d === 0) { sub.push(s); s = ""; continue; } s += ch; }
+      if (s) sub.push(s);
+      return sub.every(cond);
+    }
+    const i = c.indexOf("."); const j = c.indexOf(".", i + 1);
+    const col = c.slice(0, i); const op = c.slice(i + 1, j); const val = c.slice(j + 1);
+    const v = row[col];
+    if (op === "eq") return String(v) === val;
+    if (op === "is") return val === "null" ? v == null : String(v) === val;
+    if (op === "gte") return Date.parse(String(v)) >= Date.parse(val);
+    if (op === "gt") return Date.parse(String(v)) > Date.parse(val);
+    return false;
+  };
+  return parts.some(cond);
+}
+
+function kClient(state: KState) {
+  const rows: Record<string, any[]> = { ...(state.rows ?? {}) };
+  rows.feature_flags = Object.entries(state.flags ?? {}).map(([flag, enabled]) => ({ flag, enabled }));
+  const reads: string[] = [];
+  const writes: string[] = [];
+  function from(table: string) {
+    const filters: Array<(r: any) => boolean> = [];
+    let lim: number | null = null; let order: { col: string; asc: boolean } | null = null; let mode: "select" | "delete" | "upsert" = "select";
+    const result = () => {
+      if ((state.errors ?? []).includes(table)) return { data: null, error: { message: `${table} unreadable` } };
+      if (mode !== "select") return { data: null, error: null };
+      let out = (rows[table] ?? []).filter((r) => filters.every((f) => f(r)));
+      if (order) { const o = order; out = [...out].sort((a, b) => (a[o.col] < b[o.col] ? -1 : a[o.col] > b[o.col] ? 1 : 0) * (o.asc ? 1 : -1)); }
+      if (lim !== null) out = out.slice(0, lim);
+      return { data: out, error: null };
+    };
+    const t: any = {
+      select() { reads.push(table); return p; },
+      eq(c: string, v: any) { filters.push((r) => String(r[c]) === String(v)); return p; },
+      neq(c: string, v: any) { filters.push((r) => String(r[c]) !== String(v)); return p; },
+      is(c: string, v: any) { filters.push((r) => (v === null ? r[c] == null : r[c] === v)); return p; },
+      in(c: string, vs: any[]) { filters.push((r) => vs.map(String).includes(String(r[c]))); return p; },
+      gte(c: string, v: any) { filters.push((r) => Date.parse(String(r[c])) >= Date.parse(String(v))); return p; },
+      lt(c: string, v: any) { filters.push((r) => Date.parse(String(r[c])) < Date.parse(String(v))); return p; },
+      or(expr: string) { filters.push((r) => kOrMatch(expr, r)); return p; },
+      order(col: string, o?: { ascending?: boolean }) { order = { col, asc: o?.ascending !== false }; return p; },
+      limit(n: number) { lim = n; return p; },
+      delete() { mode = "delete"; writes.push(`${table}:delete`); return p; },
+      upsert() { mode = "upsert"; writes.push(`${table}:upsert`); return p; },
+      maybeSingle() { const r = result(); return Promise.resolve({ data: r.data ? (r.data[0] ?? null) : null, error: r.error }); },
+      then(res: any, rej?: any) { return Promise.resolve(result()).then(res, rej); },
+    };
+    const p: any = new Proxy(t, { get(o, k) { if (k in o) return o[k as string]; if (k === "catch" || k === "finally") return undefined; return () => p; } });
+    return p;
+  }
+  return { from, reads, writes, rpc: async () => ({ data: null, error: { message: "rpc not modelled" } }), auth: { getUser: async (token: string) => ({ data: { user: { id: token } }, error: null }) } } as any;
+}
+
+const K_MEETUP = "22222222-0000-4000-8000-000000000001";
+function kBase(extra: Record<string, any[]> = {}): Record<string, any[]> {
+  return {
+    message_threads: [
+      { id: DM, thread_type: "direct", status: "active", trip_id: null, circle_owner_id: null, is_e2ee: false },
+      { id: DM_BLOCKED, thread_type: "direct", status: "active", trip_id: null, circle_owner_id: null, is_e2ee: false },
+      { id: TRIP_THREAD, thread_type: "trip", status: "active", trip_id: TRIP_MINE, circle_owner_id: null, is_e2ee: false },
+      { id: STRANGER, thread_type: "direct", status: "active", trip_id: null, circle_owner_id: null, is_e2ee: true },
+    ],
+    message_thread_members: [
+      { thread_id: DM, user_id: ALICE, role: "member", left_at: null },
+      { thread_id: DM, user_id: BOB, role: "member", left_at: null },
+      { thread_id: DM_BLOCKED, user_id: ALICE, role: "member", left_at: null },
+      { thread_id: DM_BLOCKED, user_id: CARL, role: "member", left_at: null },
+      { thread_id: TRIP_THREAD, user_id: ALICE, role: "member", left_at: null },
+      { thread_id: TRIP_THREAD, user_id: BOB, role: "member", left_at: null },
+      { thread_id: TRIP_THREAD, user_id: CARL, role: "member", left_at: null },
+      { thread_id: STRANGER, user_id: BOB, role: "member", left_at: null },
+    ],
+    blocks: [{ blocker_id: CARL, blocked_id: ALICE }],
+    trips: [{ id: TRIP_MINE, owner_id: ALICE }],
+    trip_members: [{ trip_id: TRIP_MINE, user_id: ALICE, role: "owner", status: "accepted" }],
+    ...extra,
+  };
+}
+
+describe("T439 — the gatherer reads the five inputs from the resolvers that exist", () => {
+  it("a direct conversation with the relationship flag OFF: relationship off, and proximity never even READ", async () => {
+    const c = kClient({ flags: { nearby_reachable_enabled: true }, rows: kBase() });
+    const r = await kAssemble(c, { viewerId: ALICE, conversationId: DM, nowMs: K_NOW });
+    assert.ok(r.ok);
+    assert.equal(r.kernel.inputs.relationship.reason, "KERNEL_INPUT_OFF");
+    assert.equal(r.kernel.inputs.proximity.reason, "KERNEL_RELATIONSHIP_REQUIRED");
+    assert.ok(!c.reads.includes("nearby_proximity_observations"), "a bucket the kernel would withhold must not be observed");
+    assert.ok(!c.reads.includes("location_preferences"));
+  });
+
+  it("the relationship flag ON and a friendship: ACTIVE, and the proximity pipeline runs (gated by its own flag)", async () => {
+    const rows = kBase({ user_friendships: [{ user_a: ALICE < BOB ? ALICE : BOB, user_b: ALICE < BOB ? BOB : ALICE }] });
+    const off = kClient({ flags: { telegraph_relationship_context_enabled: true }, rows });
+    const r1 = await kAssemble(off, { viewerId: ALICE, conversationId: DM, nowMs: K_NOW });
+    assert.ok(r1.ok);
+    assert.equal(r1.kernel.inputs.relationship.value?.state, "ACTIVE");
+    assert.equal(r1.kernel.inputs.proximity.reason, "KERNEL_INPUT_OFF", "nearby_reachable_enabled is off: no deployment publishes proximity");
+
+    const on = kClient({ flags: { telegraph_relationship_context_enabled: true, nearby_reachable_enabled: true }, rows });
+    const r2 = await kAssemble(on, { viewerId: ALICE, conversationId: DM, nowMs: K_NOW });
+    assert.ok(r2.ok);
+    assert.equal(r2.kernel.inputs.proximity.revealed, true);
+    assert.deepEqual(r2.kernel.inputs.proximity.value?.people, [], "nobody is a circle or crew candidate here");
+    assert.ok(on.reads.includes("nearby_proximity_observations"), "the read went through the §4.3 observation budget");
+  });
+
+  it("proximity: an unreadable flag is unreadable, not off", async () => {
+    const r = await kReadProximity(kClient({ errors: ["feature_flags"], rows: kBase() }), ALICE, [BOB], K_NOW);
+    assert.equal(r.status, "unreadable");
+  });
+
+  it("proximity is narrowed to this conversation's members, and to buckets the projection PUBLISHED", () => {
+    const p = (id: string, bucket: string, published: boolean) => ({ personId: id, proximity: { bucket, travel: "walk", freshness: "live", precision: "bucket" }, privacy: { proximityPublished: published } }) as any;
+    const out = kProximityFrom([p(BOB, "same_area", true), p(CARL, "same_area", true), p("dddddddd-0000-4000-8000-000000000004", "unknown", false)], [BOB, "dddddddd-0000-4000-8000-000000000004"]);
+    assert.deepEqual(out.people.map((x) => x.userId), [BOB]);
+    assert.deepEqual(Object.keys(out.people[0]).sort(), ["bucket", "freshness", "travel", "userId"], "bucket-only: no coordinate, no distance");
+  });
+
+  it("intent: the newest recognisable message, as a label — never the body", async () => {
+    const rows = kBase({ messages: [
+      { id: "m-old", thread_id: DM, sender_id: BOB, created_at: kIso(-30), msg_type: "text", body: "where should we eat tonight?", deleted_at: null },
+      { id: "m-new", thread_id: DM, sender_id: BOB, created_at: kIso(-5), msg_type: "text", body: "let's meet up this weekend", deleted_at: null },
+      { id: "m-stale", thread_id: DM, sender_id: BOB, created_at: kIso(-60 * 25), msg_type: "text", body: "what time works for everyone?", deleted_at: null },
+    ] });
+    const r = await kReadIntent(kClient({ rows }), { threadId: DM, viewerId: ALICE, visibleFrom: null, isE2ee: false }, K_NOW);
+    assert.equal(r.status, "read");
+    assert.deepEqual(r.status === "read" ? r.value : null, { intent: "create_meetup", confidence: 0.85, messageId: "m-new", at: kIso(-5), sentByViewer: false });
+    assert.ok(!JSON.stringify(r).includes("meet up this weekend"), "the message body must not leave the gatherer");
+  });
+
+  it("intent: a blocked sender's message, a deleted one and one outside the §14.3 window are not read", async () => {
+    const rows = kBase({ messages: [
+      { id: "m-carl", thread_id: TRIP_THREAD, sender_id: CARL, created_at: kIso(-1), msg_type: "text", body: "let's meet up later", deleted_at: null },
+      { id: "m-del", thread_id: TRIP_THREAD, sender_id: BOB, created_at: kIso(-2), msg_type: "text", body: "any good bars nearby for tonight?", deleted_at: kIso(-1) },
+      { id: "m-pre", thread_id: TRIP_THREAD, sender_id: BOB, created_at: kIso(-120), msg_type: "text", body: "what time works for everyone?", deleted_at: null },
+      { id: "m-ok", thread_id: TRIP_THREAD, sender_id: BOB, created_at: kIso(-10), msg_type: "text", body: "where should we eat tonight?", deleted_at: null },
+    ] });
+    const r = await kReadIntent(kClient({ rows }), { threadId: TRIP_THREAD, viewerId: ALICE, visibleFrom: kIso(-60), isE2ee: false }, K_NOW);
+    assert.equal(r.status === "read" ? r.value?.messageId : r.status, "m-ok");
+    // The only readable message says nothing: each excluded one, if read, would have been the answer.
+    const quietRows = { ...rows, messages: rows.messages.map((m: any) => (m.id === "m-ok" ? { ...m, body: "sounds good" } : m)) };
+    const quiet = await kReadIntent(kClient({ rows: quietRows }), { threadId: TRIP_THREAD, viewerId: ALICE, visibleFrom: kIso(-60), isE2ee: false }, K_NOW);
+    assert.deepEqual(quiet, { status: "read", value: null }, "a blocked, deleted or pre-window message was classified");
+  });
+
+  it("intent: unreadable messages or blocks are UNREADABLE; an E2EE thread is not applicable; nothing recognised is read-and-null", async () => {
+    const msgs = { messages: [{ id: "m1", thread_id: TRIP_THREAD, sender_id: BOB, created_at: kIso(-1), msg_type: "text", body: "let's meet up", deleted_at: null }] };
+    assert.equal((await kReadIntent(kClient({ rows: kBase(msgs), errors: ["messages"] }), { threadId: TRIP_THREAD, viewerId: ALICE, visibleFrom: null, isE2ee: false }, K_NOW)).status, "unreadable");
+    assert.equal((await kReadIntent(kClient({ rows: kBase(msgs), errors: ["blocks"] }), { threadId: TRIP_THREAD, viewerId: ALICE, visibleFrom: null, isE2ee: false }, K_NOW)).status, "unreadable");
+    assert.equal((await kReadIntent(kClient({ rows: kBase(msgs) }), { threadId: TRIP_THREAD, viewerId: ALICE, visibleFrom: null, isE2ee: true }, K_NOW)).status, "not_applicable");
+    const quiet = await kReadIntent(kClient({ rows: kBase({ messages: [{ id: "m1", thread_id: TRIP_THREAD, sender_id: BOB, created_at: kIso(-1), msg_type: "text", body: "ok", deleted_at: null }] }) }), { threadId: TRIP_THREAD, viewerId: ALICE, visibleFrom: null, isE2ee: false }, K_NOW);
+    assert.deepEqual(quiet, { status: "read", value: null });
+  });
+
+  it("end to end in a trip conversation: a meetup happening now puts the meetup's actions, the NOW actions and the intent's action on offer — each admitted by §14.1", async () => {
+    const rows = kBase({
+      meetups: [{ id: K_MEETUP, creator_id: BOB, title: "Dinner", starts_at: kIso(-30), ends_at: kIso(60), status: "active", updated_at: kIso(-60) }],
+      meetup_invites: [{ meetup_id: K_MEETUP, user_id: ALICE, status: "going" }, { meetup_id: K_MEETUP, user_id: BOB, status: "going" }],
+      messages: [{ id: "m1", thread_id: TRIP_THREAD, sender_id: BOB, created_at: kIso(-3), msg_type: "text", body: "what's the plan for tomorrow", deleted_at: null }],
+    });
+    const r = await kAssemble(kClient({ rows }), { viewerId: ALICE, conversationId: TRIP_THREAD, nowMs: K_NOW });
+    assert.ok(r.ok);
+    const k = r.kernel;
+    assert.equal(k.inputs.relationship.reason, "KERNEL_INPUT_NOT_APPLICABLE");
+    assert.equal(k.inputs.time.value?.band, "HAPPENING_NOW");
+    assert.equal(k.inputs.sharedObjects.value?.projection.now[0]?.objectId, K_MEETUP);
+    assert.equal(k.inputs.intent.value?.intent, "general_plan");
+    const offered = kOffered(k);
+    for (const a of K_NOW_ACTIONS) assert.ok(offered.includes(`time:${a}`), a);
+    assert.ok(offered.includes(`sharedObjects:CHECK_IN_SAFE@${K_MEETUP}`));
+    assert.ok(offered.includes("intent:ADD_TO_TRIP"), "a plan intent in a trip conversation, and Alice is accepted crew");
+    assert.equal(k.capabilities.canCreatePlan, true);
+  });
+
+  it("the membership the kernel rests on: unreadable REFUSES; absent withholds everything", async () => {
+    const bad = await kAssemble(kClient({ rows: kBase(), errors: ["message_thread_members"] }), { viewerId: ALICE, conversationId: DM, nowMs: K_NOW });
+    assert.equal(bad.ok, false);
+    const stranger = await kAssemble(kClient({ rows: kBase() }), { viewerId: ALICE, conversationId: STRANGER, nowMs: K_NOW });
+    assert.ok(stranger.ok);
+    assert.equal(stranger.kernel.conversationType, "unknown", "a non-member is not told what kind of conversation it is");
+    for (const name of K_INPUTS) assert.equal((stranger.kernel.inputs as any)[name].reason, "KERNEL_NOT_MEMBER");
+  });
+
+  it("intent: a message older than the recency horizon states no CURRENT intent", async () => {
+    const rows = kBase({ messages: [{ id: "m-stale", thread_id: DM, sender_id: BOB, created_at: kIso(-60 * 25), msg_type: "text", body: "let's meet up this weekend", deleted_at: null }] });
+    const r = await kReadIntent(kClient({ rows }), { threadId: DM, viewerId: ALICE, visibleFrom: null, isE2ee: false }, K_NOW);
+    assert.deepEqual(r, { status: "read", value: null });
+  });
+
+  it("a member who LEFT the conversation is a non-member: nothing is gathered or shown", async () => {
+    const rows = kBase();
+    rows.message_thread_members = rows.message_thread_members.map((m) => (m.thread_id === DM && m.user_id === ALICE ? { ...m, left_at: kIso(-10) } : m));
+    rows.messages = [{ id: "m1", thread_id: DM, sender_id: BOB, created_at: kIso(-1), msg_type: "text", body: "let's meet up", deleted_at: null }];
+    const c = kClient({ rows });
+    const r = await kAssemble(c, { viewerId: ALICE, conversationId: DM, nowMs: K_NOW });
+    assert.ok(r.ok);
+    for (const name of K_INPUTS) assert.equal((r.kernel.inputs as any)[name].reason, "KERNEL_NOT_MEMBER", name);
+    assert.ok(!c.reads.includes("messages"), "a former member's kernel reads no message");
+  });
+
+  it("the participant cap is the rail's own", () => {
+    assert.equal(K_MAX_PARTICIPANTS, K_RAIL_MAX);
+  });
+});
+
+describe("T439 — GET /threads/:threadId/context-kernel is mounted on the capability router", () => {
+  let server: any;
+  let base = "";
+
+  before(async () => {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", capabilityRouter);
+    server = createServer(app);
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    base = `http://127.0.0.1:${server.address().port}/api`;
+  });
+
+  after(async () => {
+    _setTestClient(null, false);
+    await new Promise<void>((r) => server.close(() => r()));
+  });
+
+  async function get(threadId: string, asUser: string) {
+    const res = await fetch(`${base}/threads/${threadId}/context-kernel`, { headers: { authorization: `Bearer ${asUser}` } });
+    return { status: res.status, body: (await res.json()) as any };
+  }
+
+  it("a member gets the five inputs, the capabilities and the actions on offer", async () => {
+    _setTestClient(kClient({ rows: kBase() }), true);
+    const { status, body } = await get(DM, ALICE);
+    assert.equal(status, 200);
+    assert.deepEqual(Object.keys(body.inputs), [...K_INPUTS]);
+    assert.equal(body.inputs.time.value.frame, "UTC");
+    assert.equal(body.capabilities.canSendMessage, true);
+    assert.ok(Array.isArray(body.offeredActions));
+  });
+
+  it("a blocked viewer and a non-member get the same answer, and neither learns which", async () => {
+    _setTestClient(kClient({ rows: kBase() }), true);
+    const blocked = await get(DM_BLOCKED, ALICE);
+    const stranger = await get(STRANGER, ALICE);
+    assert.equal(blocked.status, 200);
+    assert.equal(stranger.status, 200, "200, not 403: the endpoint is not a thread-existence oracle");
+    assert.ok(!JSON.stringify(blocked.body).includes("BLOCKED"));
+    assert.equal(blocked.body.inputs.sharedObjects.reason, "KERNEL_NOT_MEMBER");
+    assert.equal(stranger.body.inputs.sharedObjects.reason, "KERNEL_NOT_MEMBER");
+  });
+
+  it("an unreadable membership is a retryable 503, never an empty context", async () => {
+    _setTestClient(kClient({ rows: kBase(), errors: ["message_thread_members"] }), true);
+    const { status, body } = await get(DM, ALICE);
+    assert.equal(status, 503);
+    assert.equal(body.error, "degraded_unavailable");
+  });
+});
