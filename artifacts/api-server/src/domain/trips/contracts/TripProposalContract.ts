@@ -218,3 +218,59 @@ export function proposalContractPayload(
   if (impact !== null) out[TRIP_PROPOSAL_PAYLOAD_KEYS.impactSummary] = impact;
   return out;
 }
+
+/**
+ * The DOOR half (census-trips TR153): a CREATE_PROPOSAL command's payload as
+ * `POST /trips/:tripId/commands` hands it to the kernel.
+ *
+ * The two server writers build `payload_json` through `proposalContractPayload`,
+ * but both run only under `trip_kernel_enabled`. The commands endpoint issues
+ * CREATE_PROPOSAL whatever that flag says, and it passed a caller's
+ * `payload_json` through verbatim — so on every deployment the one proposal
+ * writer that runs could store `affectedObjects` as a string, a rationale as a
+ * number, or two disagreeing spellings of one field, and the contract's
+ * "a new writer cannot invent a sixth spelling" held everywhere except there.
+ *
+ * Here the three payload fields are validated and re-written under their ONE
+ * key, through the same `proposalContractPayload` the server writers use. A
+ * malformed field is REFUSED with its name rather than dropped: a caller who
+ * sent a rationale and had it silently discarded would believe the crew can
+ * read it. `null` is "not recorded" and is omitted, as the writer does. A
+ * payload with none of the three fields, or with no `payload_json`, is returned
+ * as the caller sent it. Every other key is left to the kernel, which owns it.
+ */
+export type ProposalCommandPayload =
+  | { ok: true; payload: unknown }
+  | { ok: false; message: string };
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return v !== null && typeof v === "object" && !Array.isArray(v);
+}
+
+export function proposalCommandPayload(raw: unknown): ProposalCommandPayload {
+  if (!isPlainObject(raw) || raw.payload_json === undefined || raw.payload_json === null) return { ok: true, payload: raw };
+  const change = raw.payload_json;
+  if (!isPlainObject(change)) return { ok: false, message: "payload_json must be an object" };
+  if (!Object.values(READ_ALIASES).some((aliases) => aliases.some((k) => k in change))) return { ok: true, payload: raw };
+
+  const fields: { affectedObjects?: string[] | null; rationale?: string | null; impactSummary?: string | null } = {};
+  for (const [field, aliases] of Object.entries(READ_ALIASES) as Array<[keyof typeof TRIP_PROPOSAL_PAYLOAD_KEYS, readonly string[]]>) {
+    const canonical = TRIP_PROPOSAL_PAYLOAD_KEYS[field];
+    const given = aliases.filter((k) => k in change && change[k] !== null && change[k] !== undefined);
+    if (given.length > 1 && new Set(given.map((k) => JSON.stringify(change[k]))).size > 1) {
+      return { ok: false, message: `${canonical} is given under ${given.join(" and ")} with different values` };
+    }
+    if (given.length === 0) continue;
+    const v = change[given[0]!];
+    if (field === "affectedObjects") {
+      if (!Array.isArray(v) || !v.every((x) => typeof x === "string" && x.length > 0)) {
+        return { ok: false, message: `${canonical} must be an array of ids` };
+      }
+      fields.affectedObjects = v as string[];
+    } else {
+      if (typeof v !== "string") return { ok: false, message: `${canonical} must be text` };
+      fields[field] = v;
+    }
+  }
+  return { ok: true, payload: { ...raw, payload_json: proposalContractPayload(change, fields) } };
+}

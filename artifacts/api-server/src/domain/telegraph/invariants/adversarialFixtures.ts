@@ -167,19 +167,19 @@ export const TELEGRAPH_ADVERSARIAL_FIXTURES: readonly AdversarialFixture[] = [
     scenario:
       "A booking moves to cancelled while its thread is open and a call is being " +
       "started",
-    status: "divergent",
+    status: "enforced",
     enforcedBy: [
-      "src/lib/calls/callGatewayAdapter.ts",
-      "travel-buddy-standalone/src/components/rentabuddy/BookingMilestoneMessage.tsx",
+      "src/lib/calls/callGatewayAdapter.ts", "src/services/telegraph/actionLiveness.ts",
+      "travel-buddy-standalone/app/messages/[id].tsx",
     ],
     note:
-      "Eligibility is re-derived from the booking row at call start, and the " +
-      "fixture walks the whole status vocabulary to prove that cancelled is " +
-      "refused while disputed and completed-with-both-parties-opted-in stay " +
-      "callable — a deliberate policy, quoted in that module. The divergence is " +
-      "the card: the fixture reads the milestone component and asserts it " +
-      "performs no fetch and no capability read, so its buttons outlive the state " +
-      "they were rendered from.",
+      "ENFORCED 2026-10-17 (census-telegraph T320). Eligibility is re-derived from " +
+      "the booking row at call start (cancelled refused; disputed and completed-with-" +
+      "both-opted-in callable — a deliberate policy). The thread is no longer blind to " +
+      "the cancellation: its own booking card arriving re-reads the booking, so the " +
+      "call controls and the booking header follow it, and a booking's card and rail " +
+      "actions are offered only while it is operational. The milestone banner offers " +
+      "no action, so nothing on it can outlive the state.",
   },
   {
     id: "F-10",

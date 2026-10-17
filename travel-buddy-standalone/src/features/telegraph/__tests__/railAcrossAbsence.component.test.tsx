@@ -40,7 +40,7 @@ jest.mock('../../wall/hooks/useReducedMotionSetting.ts', () => ({
 import { SharedContextRail } from '../sharedContext/SharedContextRail.tsx';
 import { fetchSharedContext } from '../sharedContext/api.ts';
 import { railSeenKey, clearRailSeenForUser } from '../sharedContext/railSeenStore.ts';
-import { detectChangesSinceSeen, nextSeenSnapshot, seenSnapshotFrom } from '../sharedContext/railBehavior.ts';
+import { detectChangesSinceSeen, nextSeenSnapshot, seenSnapshotFrom, withCancellations } from '../sharedContext/railBehavior.ts';
 import { _setTestAccountId } from '../../../services/accountId.ts';
 import type { SharedContextItem, SharedContextResponse } from '../sharedContext/types.ts';
 
@@ -191,5 +191,90 @@ describe('T264 — the decisions, pure', () => {
     const found = detectChangesSinceSeen(seen, current);
     expect(nextSeenSnapshot(seen, current, found, [])).toEqual({ p1: { status: 'active', startsAt: T1 } });
     expect(nextSeenSnapshot(seen, current, found, [found[0]!.changeKey])).toEqual(seenSnapshotFrom(current));
+  });
+});
+
+// ── census-telegraph T264: a shared EVENT called off while the member was away ─────────────────
+//
+// The server withholds a cancelled event from everyone but its host, so the rail no longer HOLDS it
+// and there is no item whose status can change. What reaches an attendee instead is a notice beside
+// the projection — `cancellations: [{ objectType: 'EVENT', objectId, status: 'cancelled' }]` — and
+// the rail promotes it against what this account last saw. The device record keeps no title (by
+// design: railSeenStore stores status and start only), and the notice carries none, so the change
+// is named as the member saw it in this mount, or as "A shared event you were going to".
+describe('T264 — an event called off while away is promoted from its cancellation notice', () => {
+  const NOTICE = { objectType: 'EVENT', objectId: 'e1', status: 'cancelled' };
+  const withNotices = (cancellations: unknown): SharedContextResponse =>
+    ({ ...served(plan()), cancellations } as unknown as SharedContextResponse);
+
+  it('promoted on the FIRST load back, with no title the device or the notice never held', async () => {
+    await storeSeen(ACCT, { p1: { status: 'active', startsAt: T1 }, e1: { status: 'open', startsAt: T1 } });
+    mockedFetch.mockResolvedValue({ ok: true, data: withNotices([NOTICE]) });
+    await openConversation();
+    const card = await screen.findByTestId('telegraph-rail-change-card');
+    expect(card.props.accessibilityLabel).toBe('Cancelled: A shared event you were going to');
+  });
+
+  it('until ACKNOWLEDGED it survives another absence; acknowledged, the record lets the event go and it is not promoted again', async () => {
+    await storeSeen(ACCT, { p1: { status: 'active', startsAt: T1 }, e1: { status: 'open', startsAt: T1 } });
+    mockedFetch.mockResolvedValue({ ok: true, data: withNotices([NOTICE]) });
+
+    const first = await openConversation();
+    await screen.findByTestId('telegraph-rail-change-card');
+    await waitFor(async () => expect(await readSeen()).toEqual({ p1: { status: 'active', startsAt: T1 }, e1: { status: 'open', startsAt: T1 } }));
+    await first.unmount();
+
+    const second = await openConversation();
+    await screen.findByTestId('telegraph-rail-change-card');
+    await fireEvent.press(screen.getByLabelText('Acknowledge change'));
+    await waitFor(async () => expect(await readSeen()).toEqual({ p1: { status: 'active', startsAt: T1 } }));
+    await second.unmount();
+
+    await openConversation(); // the notice still arrives; the member has seen it
+    expect(screen.queryByTestId('telegraph-rail-change-card')).toBeNull();
+  });
+
+  it('a notice about something this member never saw here promotes nothing', async () => {
+    await storeSeen(ACCT, { p1: { status: 'active', startsAt: T1 } });
+    mockedFetch.mockResolvedValue({ ok: true, data: withNotices([NOTICE]) });
+    await openConversation();
+    expect(screen.queryByTestId('telegraph-rail-change-card')).toBeNull();
+  });
+
+  it('a malformed or non-cancellation notice is not a change', async () => {
+    await storeSeen(ACCT, { p1: { status: 'active', startsAt: T1 }, e1: { status: 'open', startsAt: T1 } });
+    mockedFetch.mockResolvedValue({ ok: true, data: withNotices([{ objectType: 'EVENT', objectId: 'e1', status: 'deleted' }, 'e1', null, { objectId: 7, status: 'cancelled' }]) });
+    await openConversation();
+    expect(screen.queryByTestId('telegraph-rail-change-card')).toBeNull();
+  });
+});
+
+describe('T264 — withCancellations, pure', () => {
+  const current = served(plan()).sharedContext;
+  const NOTICE = { objectType: 'EVENT', objectId: 'e1', status: 'cancelled' };
+
+  it('against the device record: a CANCELLED change for a seen, live object; nothing for an unseen or already-cancelled one', () => {
+    const found = withCancellations([], { e1: { status: 'open', startsAt: T1 } }, null, [NOTICE]);
+    expect(found).toEqual([{ objectId: 'e1', title: 'A shared event you were going to', changeKey: 'e1:status:cancelled', reason: 'CANCELLED', startsAt: T1 }]);
+    expect(withCancellations([], { p1: { status: 'active', startsAt: T1 } }, null, [NOTICE])).toEqual([]);
+    expect(withCancellations([], { e1: { status: 'cancelled', startsAt: T1 } }, null, [NOTICE])).toEqual([]);
+  });
+
+  it('within one mount (no record): named by the title this mount showed', () => {
+    const shown = { ...current, upcoming: [plan({ objectType: 'EVENT', objectId: 'e1', title: 'Rooftop music', status: 'open' })] };
+    const found = withCancellations([], null, shown, [NOTICE]);
+    expect(found.map((c) => [c.objectId, c.title, c.reason])).toEqual([['e1', 'Rooftop music', 'CANCELLED']]);
+  });
+
+  it('keeps what was already found, and does not add a second card for the same change', () => {
+    const already = detectChangesSinceSeen({ p1: { status: 'active', startsAt: T1 } }, served(plan({ startsAt: T2 })).sharedContext);
+    const found = withCancellations(already, { p1: { status: 'active', startsAt: T1 }, e1: { status: 'open', startsAt: null } }, null, [NOTICE, NOTICE]);
+    expect(found.map((c) => c.changeKey)).toEqual([already[0]!.changeKey, 'e1:status:cancelled']);
+  });
+
+  it('no notices, or not an array: exactly what was found', () => {
+    const already = detectChangesSinceSeen({ p1: { status: 'active', startsAt: T1 } }, served(plan({ startsAt: T2 })).sharedContext);
+    expect(withCancellations(already, { e1: { status: 'open', startsAt: T1 } }, null, undefined)).toBe(already);
+    expect(withCancellations(already, { e1: { status: 'open', startsAt: T1 } }, null, { e1: 'cancelled' })).toBe(already);
   });
 });

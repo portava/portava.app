@@ -784,3 +784,31 @@ describe("GET /threads/:id/trip-context — §20's today/next for a crew thread"
     assert.equal((await get(`/threads/${THREAD_T}/trip-context`, ALICE)).status, 500);
   });
 });
+
+// ── census-telegraph T320 / T411: the rail's offered actions are CURRENT capabilities ─────────
+describe("T320 / T411 — a rail item offers actions only while its object is live", () => {
+  const candidate = (objectType: string, status: string) => ({
+    objectType, objectId: `${objectType}-1`, title: "x", status, relationship: "BOTH_PARTICIPANTS",
+    source: objectType === "BOOKING" ? "rent_buddy_bookings" : "event_attendees",
+    counterpartIds: ["someone"], viewerStillAuthorized: true,
+    startsAt: new Date(Date.now() + 3 * 86400000).toISOString(), endsAt: null,
+  });
+  const admitted = async (objectType: string, status: string) => {
+    const { admitCandidate } = await import("../services/telegraph/sharedContext.js");
+    const a = admitCandidate(candidate(objectType, status) as any, Date.now());
+    assert.equal(a.admitted, true);
+    return (a as any).item.availableActions as string[];
+  };
+  it("an operational booking offers its actions", async () => {
+    assert.ok((await admitted("BOOKING", "confirmed")).length > 0);
+  });
+  for (const status of ["cancelled", "refunded", "completed", "pending"]) {
+    it(`a ${status} booking stays in the rail and offers nothing`, async () => {
+      assert.deepEqual(await admitted("BOOKING", status), []);
+    });
+  }
+  it("a cancelled event (its host's view) offers nothing; a live one still does", async () => {
+    assert.deepEqual(await admitted("EVENT", "cancelled"), []);
+    assert.ok((await admitted("EVENT", "open")).length > 0);
+  });
+});

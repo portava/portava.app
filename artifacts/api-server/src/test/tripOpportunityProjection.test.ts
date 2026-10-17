@@ -380,3 +380,23 @@ describe("§13 opportunity — committed transport segments are consulted for th
     assert.match((r as any).message, /transport segments/i);
   });
 });
+
+// census-trips TR139 (2783): another member's personal goal never weighs on this
+// viewer's opportunities; the viewer's own does.
+describe("2783 — opportunities read the viewer's goals: shared, and their own personal ones", () => {
+  it("sources.goals counts shared + own personal; another member's personal goal and an unread scope are not read", async () => {
+    const tables = base();
+    tables.trip_goals = [
+      { id: "g1", trip_id: TRIP_ID, type: "social", scope: "shared", owner_user_id: null, status: "open", priority: "normal", weight: null },
+      { id: "g2", trip_id: TRIP_ID, type: "rest", scope: "personal", owner_user_id: OWNER_ID, status: "open", priority: "high", weight: 0.8 },
+      { id: "g3", trip_id: TRIP_ID, type: "experience", scope: "personal", owner_user_id: "22222222-2222-2222-2222-222222222222", status: "open", priority: "high", weight: 0.8 },
+      { id: "g4", trip_id: TRIP_ID, type: "budget", status: "open", priority: "normal", weight: null },
+    ];
+    const owner = await buildTripOpportunityProjection(makeClient(withStages(tables)) as any, TRIP_ID, OWNER_ID, { now: NOW });
+    assert.ok(owner.ok, JSON.stringify(owner));
+    assert.equal(owner.projection.sources.goals, 2);
+    const member = await buildTripOpportunityProjection(makeClient(withStages(tables)) as any, TRIP_ID, "22222222-2222-2222-2222-222222222222", { now: NOW });
+    assert.ok(member.ok, JSON.stringify(member));
+    assert.equal(member.projection.sources.goals, 2);
+  });
+});

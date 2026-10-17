@@ -435,6 +435,26 @@
       "fingerprint": "ed79b0c205323d49",
       "closedBy": "withholds",
       "why": "A thrown block read while telling the crew that a traveller turned back lands in tellCrewOfAbort's catch, which answers untold: no crewmate is told, and the abort itself still answers ok with its ledger row (census-layover §74, L144)."
+    },
+    {
+      "key": "services/telegraph/catchUp.ts::readViewerCatchUp::catch#1",
+      "kind": "catch",
+      "reads": [
+        "withholdLocationAcrossBlocks"
+      ],
+      "fingerprint": "0f78357fdc65007b",
+      "closedBy": "answers-unreadable",
+      "why": "A thrown block read while withholding location across blocks for Compass’s catch-up lands in readViewerCatchUp’s catch, which answers { ok: false }: getConversationContext then carries no catch-up (null), never an empty one that would read as “nothing happened” (census-telegraph T267, wave 2 2026-10-17)."
+    },
+    {
+      "key": "services/telegraph/eventAttendance.ts::readEventCancellation::catch#1",
+      "kind": "catch",
+      "reads": [
+        "isBlockedBetween"
+      ],
+      "fingerprint": "813da59d872ec6f0",
+      "closedBy": "answers-unreadable",
+      "why": "A thrown block read while deciding whether an attendee may be told an event was cancelled lands in readEventCancellation’s catch, which answers \"unavailable\": no cancellation notice is issued, and a refusal is never read as \"not blocked\" (census-telegraph T264, wave 2 2026-10-17)."
     }
   ]
 }

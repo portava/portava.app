@@ -46,7 +46,7 @@
  * viewer was removed from does not survive in the historical view.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { createEventAttendanceReader, type EventAttendeeIdentity } from "./eventAttendance.js";
+import { createEventAttendanceReader, readEventCancellation, type EventAttendeeIdentity } from "./eventAttendance.js"; import { actionsWhileLive } from "./actionLiveness.js";
 import {
   type SharedRelationship,
   type TelegraphAction,
@@ -271,7 +271,7 @@ export function admitCandidate(c: SharedContextCandidate, nowMs: number): Admiss
     title: c.title,
     relationship: c.relationship,
     status: c.status,
-    availableActions: availableActionsFor(c.objectType, orderBand),
+    availableActions: actionsWhileLive(c.objectType, c.status, availableActionsFor(c.objectType, orderBand)), // T320/T411: nothing cancelled, and no booking that is not operational, offers an action
     orderBand,
   };
   if (c.currentVersion) item.currentVersion = c.currentVersion;
@@ -331,7 +331,7 @@ export interface ResolverProblem {
 
 interface ResolveResult {
   candidates: SharedContextCandidate[];
-  problems: ResolverProblem[];
+  problems: ResolverProblem[]; /** census-telegraph T264: cancellation notices (see `SharedContextCancellation`). */ cancellations?: SharedContextCancellation[];
 }
 
 function relationshipFor(
@@ -471,7 +471,7 @@ export async function resolveSharedMeetups(
 export async function resolveSharedEvents(
   client: SupabaseClient,
   viewerId: string,
-  participantIds: string[],
+  participantIds: string[], nowMs: number = Date.now(),
 ): Promise<ResolveResult> {
   const problems: ResolverProblem[] = [];
   const { data, error } = await client
@@ -500,12 +500,12 @@ export async function resolveSharedEvents(
     problems.push({ resolver: "events", message: eErr.message ?? "events read failed" });
     return { candidates: [], problems };
   }
-  const readAttendance = createEventAttendanceReader(client, viewerId, participantIds);
+  const readAttendance = createEventAttendanceReader(client, viewerId, participantIds); const cancellations: SharedContextCancellation[] = []; // census-telegraph T264
   const candidates: SharedContextCandidate[] = [];
   for (const e of (events ?? []) as Row[]) {
     const attendance = await readAttendance(e.id as string, e.host_id);
     if (attendance.eventAccess !== "allowed") {
-      if (attendance.eventAccess === "unavailable") problems.push({ resolver: "events", message: "Event authorization unavailable" });
+      if (attendance.eventAccess === "unavailable") problems.push({ resolver: "events", message: "Event authorization unavailable" }); else if (attendance.deniedReason === "deleted" && e.state === "cancelled") await noteEventCancellation(client, viewerId, e.id as string, nowMs, cancellations, problems); // T264: the state gate, reached only past the block gate
       continue;
     }
     const attending = byEvent.get(e.id as string) ?? new Set<string>();
@@ -525,7 +525,7 @@ export async function resolveSharedEvents(
       eventAttendance: attendance.attendance,
     });
   }
-  return { candidates, problems };
+  return { candidates, problems, cancellations };
 }
 
 /** §3.1 clause 3 — "the same ... booking". */
@@ -646,7 +646,7 @@ export interface SharedContextResult {
   /** Every candidate the §3.2 gate turned away, with the reason. */
   refusals: Array<{ objectId: string; refusal: AdmissionRefusal }>;
   /** Reads that failed. A non-empty list means the rail is INCOMPLETE, not empty. */
-  problems: ResolverProblem[];
+  problems: ResolverProblem[]; /** census-telegraph T264: what the viewer may be told was cancelled, beside — never inside — the projection. */ cancellations: SharedContextCancellation[];
 }
 
 /**
@@ -672,12 +672,12 @@ export async function buildSharedContextProjection(
   const results = await Promise.all([
     resolveSharedTrips(client, opts.viewerId, participantIds),
     resolveSharedMeetups(client, opts.viewerId, participantIds),
-    resolveSharedEvents(client, opts.viewerId, participantIds),
+    resolveSharedEvents(client, opts.viewerId, participantIds, nowMs),
     resolveSharedBookings(client, opts.viewerId, participantIds),
     resolveSharedWantToDo(client, opts.viewerId, participantIds),
   ]);
 
-  const problems = results.flatMap((r) => r.problems);
+  const problems = results.flatMap((r) => r.problems); const cancellations = results.flatMap((r) => r.cancellations ?? []);
   const refusals: Array<{ objectId: string; refusal: AdmissionRefusal }> = [];
   const buckets: Record<"now" | "upcoming" | "unresolved" | "past", SharedContextItem[]> = {
     now: [],
@@ -711,7 +711,7 @@ export async function buildSharedContextProjection(
       past: buckets.past,
     },
     refusals,
-    problems,
+    problems, cancellations,
   };
 }
 
@@ -742,4 +742,33 @@ export function collapsedSummary(p: TelegraphSharedContextProjection): string {
   if (pastTrips > 0) parts.push(`${pastTrips} past trip${pastTrips === 1 ? "" : "s"}`);
   if (pastOther > 0) parts.push(`${pastOther} past item${pastOther === 1 ? "" : "s"}`);
   return parts.join(" · ");
+}
+
+// ── census-telegraph T264: cancellation notices ──────────────────────────────
+
+/**
+ * What an attendee may be told about a shared event that was cancelled: the id
+ * their rail already held, and the word. Carried BESIDE the projection, never as a
+ * `SharedContextItem` — a cancelled event is not shared context any more, and an
+ * item would need the title, timing and actions the loader withholds. The client
+ * promotes it as §11.2's "called off" change against what the member last saw.
+ */
+export interface SharedContextCancellation {
+  objectType: "EVENT";
+  objectId: string;
+  status: "cancelled";
+}
+
+/** One event's notice, through `readEventCancellation`'s gate; an unreadable gate is a problem. */
+async function noteEventCancellation(
+  client: SupabaseClient,
+  viewerId: string,
+  eventId: string,
+  nowMs: number,
+  out: SharedContextCancellation[],
+  problems: ResolverProblem[],
+): Promise<void> {
+  const read = await readEventCancellation(client, eventId, viewerId, nowMs);
+  if (read === "cancelled") out.push({ objectType: "EVENT", objectId: eventId, status: "cancelled" });
+  else if (read === "unavailable") problems.push({ resolver: "events", message: "Event cancellation gate unavailable" });
 }

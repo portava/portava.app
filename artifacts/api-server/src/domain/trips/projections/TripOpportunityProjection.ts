@@ -57,7 +57,7 @@ import {
   diffOpportunities, shouldNotify, attentionKindFor, type OpportunityPortfolio, type OpportunityEvent, type OpportunityTrigger,
 } from "../services/TripOpportunityEngine.js";
 import { decideAttention, TRIP_PUSH_EVENT_PROFILES, type AttentionLevel } from "../policies/TripAttentionPolicy.js";
-import { recordTripDecision, persistTripDecision, listTripDecisions, TRIP_ENGINE_VERSIONS, type TripDecision } from "../services/TripDecisionLedger.js";
+import { recordTripDecision, persistTripDecision, listTripDecisions, TRIP_ENGINE_VERSIONS, type TripDecision } from "../services/TripDecisionLedger.js"; import { goalsVisibleTo } from "../policies/tripGoalVisibility.js";
 
 const log = logger.child({ mod: "tripOpportunityProjection" });
 
@@ -324,9 +324,9 @@ export async function buildTripOpportunityProjection(
   });
 
   // 3. goals, participants, origin
-  const { data: goalRows, error: gErr } = await sc.from("trip_goals").select("id, type, scope, status, priority, weight").eq("trip_id", tripId);
+  const { data: goalRows, error: gErr } = await sc.from("trip_goals").select("id, type, scope, status, priority, weight, owner_user_id").eq("trip_id", tripId);
   if (gErr) return { ok: false, reason: "TRIP_PROJECTION_UNAVAILABLE", message: "trip_goals could not be read" };
-  const goals: CompileGoal[] = ((goalRows ?? []) as any[]).map((g) => ({ id: String(g.id), type: String(g.type ?? ""), scope: String(g.scope ?? "shared"), status: String(g.status ?? "open"), priority: g.priority ?? null, weight: typeof g.weight === "number" ? g.weight : null }));
+  const goals: CompileGoal[] = goalsVisibleTo((goalRows ?? []) as any[], viewerId).map((g) => ({ id: String(g.id), type: String(g.type ?? ""), scope: String(g.scope ?? "shared"), status: String(g.status ?? "open"), priority: g.priority ?? null, weight: typeof g.weight === "number" ? g.weight : null }));
   const { data: members, error: mErr } = await sc.from("trip_members").select("user_id, status").eq("trip_id", tripId);
   if (mErr) return { ok: false, reason: "TRIP_PROJECTION_UNAVAILABLE", message: "trip_members could not be read" };
   const participantIds = ((members ?? []) as any[]).filter((m) => m.status == null || m.status === "accepted").map((m) => String(m.user_id));

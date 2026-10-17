@@ -124,6 +124,7 @@ describe('each promoted control does what it says', () => {
     expect(h.onCall).toHaveBeenCalledTimes(1);
     expect(h.onBlockOrReport).toHaveBeenCalledTimes(1);
     expect(h.onLocationScope).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('Share where you are')).toBeTruthy(); // T106: it opens the time-limited scope sheet, and says so
 
     await rerender(<SafetyModeBar threadId="t1" initialResponse={resp()} />);
     expect(screen.queryByTestId('telegraph-safety-affordance-CALL')).toBeNull();
@@ -211,7 +212,7 @@ describe('the conversation screen mounts the bar above the rail and wires it', (
   it('passes call, block/report, location and the rail collapse, and sits before the rail', () => {
     expect(line).toContain("onCall={canShowCallButtons ? () => { void startThreadCall('voice'); } : undefined}");
     expect(line).toContain('onBlockOrReport={() => setShowSafetySheet(true)}');
-    expect(line).toContain("onLocationScope={() => setTypedCompose('LOCATION')}");
+    expect(line).toContain("onLocationScope={() => setTypedCompose('LOCATION_SCOPE')}"); // census-telegraph T106: the SCOPE sheet (expiry + purpose), not the place sheet
     // Verifier F3: the rail is coordination context, not entertainment — it is never
     // collapsed for safety. What is held away, for the whole of the raised mode, is
     // the unsolicited AI suggestion tray.

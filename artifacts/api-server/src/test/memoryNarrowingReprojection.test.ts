@@ -418,3 +418,178 @@ describe("narrowingReprojection names the registry table as a literal equal to D
     for (const c of calls) assert.equal(c, JSON.stringify(DERIVATIVE_REGISTRY_TABLE), `a .from() that is not the registry literal: ${c}`);
   });
 });
+
+// ── §24 the PROJECTION log line (census H223). Appended. ─────────────────────
+// Spec §24 (.txt:640): "Operational logs must include memoryId, commandId,
+// eventId, source version, engine version, reason codes, projection name, and
+// failure class. Do not log sensitive raw content unless strictly necessary."
+// The command log (MemoryDomainService.auditCommand) carries seven of the eight
+// and an explicit null `projectionName` — a command is not a projection. H223
+// stayed W because "nothing writes a projection log line that carries it". These
+// cases drive the real router (PATCH / DELETE) and the registry, and read the
+// lines the application logger receives.
+const SECTION_24_FIELDS = [
+  "memoryId", "commandId", "eventId", "sourceVersion",
+  "engineVersion", "reason", "projectionName", "failureClass",
+] as const;
+
+async function captureAppLog<T>(fn: () => Promise<T>): Promise<{ out: T; lines: Array<Record<string, any>> }> {
+  const { logger } = await import("../lib/logger.js");
+  const lines: Array<Record<string, any>> = [];
+  const realInfo = logger.info.bind(logger);
+  const realWarn = logger.warn.bind(logger);
+  (logger as any).info = (obj: any, msg?: string) => { lines.push({ ...(obj ?? {}), __msg: msg }); };
+  (logger as any).warn = (obj: any, msg?: string) => { lines.push({ ...(obj ?? {}), __msg: msg }); };
+  try {
+    return { out: await fn(), lines };
+  } finally {
+    (logger as any).info = realInfo;
+    (logger as any).warn = realWarn;
+  }
+}
+const projectionLines = (lines: Array<Record<string, any>>, projection: string) =>
+  lines.filter((l) => l.projectionName === projection);
+const commandLine = (lines: Array<Record<string, any>>, type: string) =>
+  lines.find((l) => l.commandType === type && l.projectionName === null);
+
+describe("§24 the PROJECTION log line — the eighth field has a home (H223)", () => {
+  it("PATCH make-private: each re-derived registration logs all eight §24 fields, joined to the command by its ids, with no Memory content", async () => {
+    const store = seed();
+    await registerBoth(store);
+    app = await start(store);
+    const { out: r, lines } = await captureAppLog(() => patch(app!, M, { visibility: "only_me" }));
+    assert.equal(r.status, 200, r.body);
+
+    const cmd = commandLine(lines, "CHANGE_VISIBILITY");
+    assert.ok(cmd, `the command's own audit line is the join key: ${JSON.stringify(lines)}`);
+    assert.equal(typeof cmd!.commandId, "string");
+
+    for (const [projection, scope, engine] of [
+      ["PublicMemoryProjection", PUBLIC_SCOPE, "public@1"],
+      ["MemoryTimelineProjection", OWNER_SCOPE, "timeline@1"],
+    ] as const) {
+      const mine = projectionLines(lines, projection);
+      assert.equal(mine.length, 1, `${projection}: exactly one projection line for one re-derivation: ${JSON.stringify(lines)}`);
+      const line = mine[0]!;
+      for (const f of SECTION_24_FIELDS) assert.ok(f in line, `${projection}: §24 field ${f} is missing from the projection log line`);
+      assert.equal(line.projectionName, projection);
+      assert.equal(line.memoryId, M, "the Memory whose change caused the re-derivation");
+      assert.equal(line.commandId, cmd!.commandId, "the projection line names the command that caused it");
+      assert.equal(line.eventId, cmd!.eventId, "and the command's event (null on the legacy path, present as a key)");
+      assert.equal(line.sourceVersion, reg(store, projection, scope).source_version, "the version the registration now records");
+      assert.equal(typeof line.sourceVersion, "string");
+      assert.equal(line.engineVersion, engine, "the builder that produced the derivative");
+      assert.equal(line.reason, "memory_visibility_changed");
+      assert.equal(line.failureClass, null, "a re-derivation that succeeded has no failure class");
+      assert.deepEqual([line.operation, line.outcome], ["rebuild", "rebuilt"]);
+      assert.equal(line.scopeKey, scopeKeyOf(projection, scope));
+    }
+    const text = JSON.stringify(lines.filter((l) => l.projectionName));
+    for (const raw of [`t-${M.slice(0, 4)}`, `t-${M2.slice(0, 4)}`, "Lisbon", "Portugal"]) {
+      assert.ok(!text.includes(raw), `the projection log must not carry Memory content (${raw})`);
+    }
+  });
+
+  it("a re-derivation that fails logs its failure class and reason code, then the fail-closed revocation logs its own line", async () => {
+    const store = seed();
+    await registerBoth(store);
+    app = await start(store, { failWrites: new Set([`${DERIVATIVE_REGISTRY_TABLE}:upsert`]) });
+    const { out: r, lines } = await captureAppLog(() => patch(app!, M, { visibility: "only_me" }));
+    assert.equal(r.status, 200, r.body);
+    const cmd = commandLine(lines, "CHANGE_VISIBILITY");
+    const pub = projectionLines(lines, "PublicMemoryProjection");
+    const refused = pub.find((l) => l.operation === "rebuild");
+    assert.ok(refused, JSON.stringify(lines));
+    for (const f of SECTION_24_FIELDS) assert.ok(f in refused!, `§24 field ${f} is missing from a refused projection line`);
+    assert.deepEqual([refused!.outcome, refused!.reason, refused!.failureClass], ["refused", "registry_unavailable", "infrastructure"]);
+    assert.equal(refused!.sourceVersion, null, "nothing was registered, so no version is claimed");
+    assert.equal(refused!.engineVersion, "public@1");
+    assert.equal(refused!.commandId, cmd!.commandId);
+    const revoked = pub.find((l) => l.operation === "revoke");
+    assert.ok(revoked, `the fail-closed revocation is a projection operation and is logged: ${JSON.stringify(pub)}`);
+    for (const f of SECTION_24_FIELDS) assert.ok(f in revoked!, `§24 field ${f} is missing from a revocation line`);
+    assert.deepEqual([revoked!.outcome, revoked!.failureClass, revoked!.memoryId, revoked!.commandId], ["revoked", null, M, cmd!.commandId]);
+    assert.equal(revoked!.reason, "memory_visibility_changed: re-derivation failed");
+  });
+
+  it("a revocation that could not be written is logged as a failure, never as a revocation", async () => {
+    const store = seed();
+    store[DERIVATIVE_REGISTRY_TABLE].push({ id: "stuck", scope_key: "NoSuchProjection|owner:z", source_memory_ids: [M], revocation_state: "ACTIVE", payload_json: [{ memory_id: M }], row_count: 1 });
+    const { lines } = await captureAppLog(() => reprojectDerivativesAfterNarrowing(
+      makeClient(store, { failWrites: new Set([`${DERIVATIVE_REGISTRY_TABLE}:update`]) }) as any,
+      { memoryId: M, now: NOW, reason: "memory_visibility_changed" },
+    ));
+    const line = projectionLines(lines, "NoSuchProjection").find((l) => l.operation === "revoke");
+    assert.ok(line, JSON.stringify(lines));
+    assert.deepEqual([line!.outcome, line!.failureClass, line!.reason], ["refused", "infrastructure", "revocation_unconfirmed"]);
+    assert.equal(line!.engineVersion, null, "no builder is known for a projection id the registry does not define");
+  });
+
+  it("DELETE: the deletion's re-derivations log with the DELETE_MEMORY command's id and the deletion reason", async () => {
+    const store = seed();
+    await registerBoth(store);
+    app = await start(store);
+    const { out: r, lines } = await captureAppLog(() => send(app!, "DELETE", `/memories/${M}`, OWNER));
+    assert.equal(r.status, 204);
+    const cmd = commandLine(lines, "DELETE_MEMORY");
+    assert.ok(cmd, JSON.stringify(lines));
+    for (const projection of ["PublicMemoryProjection", "MemoryTimelineProjection"]) {
+      const line = projectionLines(lines, projection).find((l) => l.operation === "rebuild");
+      assert.ok(line, `${projection}: ${JSON.stringify(lines)}`);
+      assert.deepEqual([line!.memoryId, line!.commandId, line!.reason, line!.failureClass], [M, cmd!.commandId, DELETION_REVOCATION_REASON, null]);
+    }
+  });
+
+  it("a scope-wide rebuild (the search's ensure-fresh) logs every key, with no Memory, command or event to name", async () => {
+    const store = seed();
+    const { out, lines } = await captureAppLog(() => rebuildProjection(makeClient(store) as any, "PublicMemoryProjection", PUBLIC_SCOPE, NOW));
+    assert.ok(out.ok);
+    const line = projectionLines(lines, "PublicMemoryProjection")[0];
+    assert.ok(line, JSON.stringify(lines));
+    for (const f of SECTION_24_FIELDS) assert.ok(f in line!, `§24 field ${f} is missing`);
+    assert.deepEqual([line!.memoryId, line!.commandId, line!.eventId], [null, null, null], "null is a state, not a missing key");
+    assert.equal(line!.sourceVersion, out.ok ? out.value.registration.source_version : undefined);
+  });
+
+  it("the line is an ALLOWLIST: content handed to the logger with the entry never reaches the line", async () => {
+    const { logProjectionOperation } = await import("../services/memoryProjections/projectionLog.js");
+    const { lines } = await captureAppLog(async () => logProjectionOperation({
+      operation: "rebuild", outcome: "rebuilt", projectionName: "PublicMemoryProjection", scopeKey: "PublicMemoryProjection|owner:o",
+      sourceVersion: "v1", engineVersion: "public@1", trace: { memoryId: M },
+      ...({ rows: [{ memory_id: M, title: "Dinner at Ana's", caption: "secret words" }], payload_json: [{ city: "Lisbon" }] } as any),
+    }));
+    assert.equal(lines.length, 1);
+    const text = JSON.stringify(lines[0]);
+    for (const raw of ["Dinner at Ana's", "secret words", "Lisbon"]) assert.ok(!text.includes(raw), `content leaked into the projection log: ${raw}`);
+    for (const f of SECTION_24_FIELDS) assert.ok(f in lines[0]!, `§24 field ${f} is missing`);
+  });
+
+  it("a rebuild that declines to overwrite a REVOKED registration logs kept_revoked, not a failure", async () => {
+    const store = seed();
+    await registerBoth(store);
+    Object.assign(reg(store, "PublicMemoryProjection", PUBLIC_SCOPE), { revocation_state: "REVOKED", revocation_reason: "owner made it private", payload_json: [], row_count: 0 });
+    const { out, lines } = await captureAppLog(() => rebuildProjection(makeClient(store) as any, "PublicMemoryProjection", PUBLIC_SCOPE, NOW, { trace: { memoryId: M, reason: "derivative_stale" } }));
+    assert.ok(out.ok && out.value.was_revoked);
+    const line = projectionLines(lines, "PublicMemoryProjection")[0];
+    assert.ok(line, JSON.stringify(lines));
+    assert.deepEqual([line!.outcome, line!.failureClass, line!.memoryId, line!.reason, line!.engineVersion], ["kept_revoked", null, M, "derivative_stale", "public@1"]);
+  });
+
+  it("a rebuild that THROWS is logged as refused (rebuild_threw) before the throw propagates", async () => {
+    const throwing = { from: () => { throw new Error("client exploded"); } };
+    const { lines } = await captureAppLog(async () => {
+      await assert.rejects(rebuildProjection(throwing as any, "PublicMemoryProjection", PUBLIC_SCOPE, NOW, { trace: { memoryId: M } }), /client exploded/);
+    });
+    const line = projectionLines(lines, "PublicMemoryProjection")[0];
+    assert.ok(line, JSON.stringify(lines));
+    assert.deepEqual([line!.outcome, line!.reason, line!.failureClass, line!.memoryId], ["refused", "rebuild_threw", "infrastructure", M]);
+  });
+
+  it("an unknown projection is refused with a validation class and no engine version", async () => {
+    const { out, lines } = await captureAppLog(() => rebuildProjection(makeClient(seed()) as any, "NoSuchProjection" as any, PUBLIC_SCOPE, NOW));
+    assert.equal(out.ok, false);
+    const line = projectionLines(lines, "NoSuchProjection")[0];
+    assert.ok(line, JSON.stringify(lines));
+    assert.deepEqual([line!.outcome, line!.reason, line!.failureClass, line!.engineVersion], ["refused", "unknown_projection", "validation", null]);
+  });
+});

@@ -410,3 +410,63 @@ describe("§7 / developer rule 14 — the generalised engine stays airport-free"
     );
   });
 });
+
+// ── census-layover L57: spec §7 `Commitment`, all eight members, on the layover's two commitments ──
+//
+// L57 was W for one sentence: "`hardConstraints` and `confidence` live on the
+// WINDOW in this engine rather than on the commitment". They are now members of
+// the generalised engine's `EngineCommitment`, both layover commitments carry
+// them on every certification, and the engine READS them: the window's
+// confidence comes from the commitments (the same-airport hop is a FACT and
+// adds no doubt), and NO_LATE_ARRIVAL is what keeps a tolerance off a flight.
+describe("census-layover L57 — the layover's commitments carry spec §7's eight members", () => {
+  const ctx: LayoverFreedomContext = {
+    arrivalMs: Date.UTC(2026, 4, 12, 3, 0, 0),
+    departureMs: Date.UTC(2026, 4, 12, 3, 0, 0) + 8 * HOUR,
+    cutoffMs: Date.UTC(2026, 4, 12, 3, 0, 0) + 8 * HOUR - 30 * MIN,
+    exitDelayMin: 45,
+    returnBufferMin: 150,
+    airportPoint: null,
+    airportPlaceId: "TPE",
+    confidence: "MEDIUM",
+  };
+
+  it("type, startsAt, requiredArrivalAt, location, preparationTime, latenessTolerance, hardConstraints, confidence — on both", () => {
+    for (const cm of layoverCommitments(ctx)) {
+      for (const k of ["type", "startsAt", "requiredArrivalAt", "place", "prepMinutes", "latenessToleranceMinutes", "hardConstraints", "confidence"]) {
+        assert.ok(k in cm, `${cm.id} lacks ${k}`);
+      }
+      assert.equal(cm.confidence, "MEDIUM", "the airport's certified confidence is the commitment's own");
+      assert.deepEqual(cm.hardConstraints.map((h) => h.kind), ["NO_LATE_ARRIVAL"], `${cm.id}: an aircraft does not wait`);
+      assert.ok(cm.hardConstraints.every((h) => typeof h.detail === "string" && h.detail.length > 0));
+    }
+  });
+
+  it("the window's confidence is the COMMITMENTS' — a HIGH zero hop between them certifies nothing", async () => {
+    const { computeFreedomWindows } = await import("../domain/trips/invariants/TripFreedomEngine.js");
+    for (const band of ["MEDIUM", "LOW", "INSUFFICIENT"] as const) {
+      const commitments = layoverCommitments({ ...ctx, confidence: band });
+      const w = computeFreedomWindows({
+        commitments, hops: [{ travelMinutes: 0, confidence: "HIGH", routed: false, unknownReason: null }],
+        participants: [], tripStart: null, tripEnd: null,
+      }).windows.find((x) => x.position === "between")!;
+      assert.equal(w.confidence, band, `a ${band} buffer cannot become HIGH because the hop is a fact`);
+      assert.equal(w.certified, false);
+      const built = buildFreedomWindow({ ...ctx, confidence: band });
+      assert.equal(built.window!.confidence, band);
+      assert.equal(built.window!.certified, false);
+      assert.equal(calculateCommitmentEnvelope({ ...ctx, confidence: band }).confidence, band, "the envelope reads the departure commitment's confidence");
+    }
+  });
+
+  it("NO_LATE_ARRIVAL keeps a tolerance off the outbound flight even when one is supplied", async () => {
+    const { computeFreedomWindows } = await import("../domain/trips/invariants/TripFreedomEngine.js");
+    const [arrival, departure] = layoverCommitments(ctx);
+    const loosened = [arrival!, { ...departure!, latenessToleranceMinutes: 25 }];
+    const w = computeFreedomWindows({
+      commitments: loosened, hops: [{ travelMinutes: 0, confidence: "HIGH", routed: false, unknownReason: null }],
+      participants: [], tripStart: null, tripEnd: null,
+    }).windows.find((x) => x.position === "between")!;
+    assert.equal(Date.parse(w.endsAt), ctx.cutoffMs - ctx.returnBufferMin * MIN, "cutoff − buffer, with no 25 minutes the aircraft never grants");
+  });
+});

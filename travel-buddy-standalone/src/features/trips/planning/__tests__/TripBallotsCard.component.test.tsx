@@ -78,3 +78,18 @@ it('a failed read says so with a retry, and an empty board says there are no ope
   await fireEvent.press(screen.getByTestId('trip-ballots-retry'));
   await waitFor(() => screen.getByTestId('trip-ballots-empty'));
 });
+
+// census-trips TR153: §9.3's rationale and impact summary are on the ballot, so
+// a crew deciding a proposal can see WHY it was made and WHAT it changes.
+it('shows the proposal\'s rationale and impact summary — and neither line when the server has none', async () => {
+  const load = jest.fn().mockResolvedValue(board([
+    proposal({ rationale: 'The museum runs late', impactSummary: 'Dinner moves an hour; one booking to change', affectedObjects: ['pl1'] }),
+    proposal({ id: 'p2', payload: { title: 'Beach day' } }),
+  ]));
+  await render(<TripBallotsCard tripId="t1" isOwner={false} load={load} />);
+  await waitFor(() => screen.getByText('Dinner at 8pm'));
+  expect(screen.getByTestId('ballot-why-p1').props.children).toEqual(['Why: ', 'The museum runs late']);
+  expect(screen.getByTestId('ballot-impact-p1').props.children).toEqual(['Impact: ', 'Dinner moves an hour; one booking to change']);
+  expect(screen.queryByTestId('ballot-why-p2')).toBeNull();
+  expect(screen.queryByTestId('ballot-impact-p2')).toBeNull();
+});

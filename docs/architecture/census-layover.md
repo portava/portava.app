@@ -12183,3 +12183,34 @@ Tests run on this tree for the changed areas (focused, not a full suite):
   0 skipped.
 
 Headline unchanged: **C=85 W=159 N=52 X=0** over 296.
+
+## Row moves — 2026-10-17 fixes (wave 2)
+
+Measured on branch `claude/census-regrade-20261017` (stacked on PR #762) on 2026-10-17, against the working tree. `head_commit` is not re-declared. Every row not named here is unchanged. One row moves `W → C` on a code fix. §23.3 had put it in bucket (d), *"blocked on a file another lane owns"*. That lane is now this one, because the Trips and Layover lanes were worked together in this pass.
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L57 `Commitment` | W | **C** | **The stated gap is closed.** §18 held L57 at W on one sentence: *"`hardConstraints` and `confidence` live on the WINDOW in this engine rather than on the commitment, and widening `EngineCommitment` is the Trips lane's decision"*. The generalised engine's commitment now carries both (`artifacts/api-server/src/domain/trips/invariants/TripFreedomEngine.ts:481#hardConstraints: readonly CommitmentHardConstraint[];`, `artifacts/api-server/src/domain/trips/invariants/TripFreedomEngine.ts:483#confidence: TravelConfidence | null;`), in a generic vocabulary that names no airport (`artifacts/api-server/src/domain/trips/invariants/TripFreedomEngine.ts:467#export const COMMITMENT_HARD_CONSTRAINT_KINDS = [`). The engine READS both. A commitment's confidence caps every window it bounds (`artifacts/api-server/src/domain/trips/invariants/TripFreedomEngine.ts:287#commitmentBoundConfidence(hop.confidence, prev, next)`, `artifacts/api-server/src/domain/trips/invariants/TripFreedomEngine.ts:344#commitmentBoundConfidence("LOW", last)`). NO_LATE_ARRIVAL keeps a lateness tolerance from ever being spent: in the window's end (`artifacts/api-server/src/domain/trips/invariants/TripFreedomEngine.ts:266#spendableToleranceMinutes(next)`), in the before-first window (`artifacts/api-server/src/domain/trips/invariants/TripFreedomEngine.ts:238#spendableToleranceMinutes(first)`) and in when the traveller is released (`artifacts/api-server/src/domain/trips/invariants/TripFreedomEngine.ts:198#spendableToleranceMinutes(c)`). Both layover commitments carry all eight of spec §7's members on every certification (`artifacts/api-server/src/services/airport/LayoverTemporalFreedom.ts:181#hardConstraints: [INBOUND_DOES_NOT_WAIT], confidence: ctx.confidence,`, `artifacts/api-server/src/services/airport/LayoverTemporalFreedom.ts:192#hardConstraints: [OUTBOUND_DOES_NOT_WAIT], confidence: ctx.confidence,`). The airport reason stays in the adapter (`artifacts/api-server/src/services/airport/LayoverTemporalFreedom.ts:323#const OUTBOUND_DOES_NOT_WAIT: CommitmentHardConstraint = {`). The window's confidence now comes from the commitments, not from the same-airport hop, which is a fact and is HIGH (`artifacts/api-server/src/services/airport/LayoverTemporalFreedom.ts:221#hops: [samePlaceHop("HIGH")],`). The commitment envelope reads the departure commitment's confidence (`artifacts/api-server/src/services/airport/LayoverTemporalFreedom.ts:282#confidence: commitmentBoundConfidence(hop.confidence, departure!),`). **No number a traveller sees moved:** the window equals `hardReturnTime` to the millisecond across the existing sweep, and the Trips decision-diff golden is byte-identical. The Trips adapter states no constraint and no confidence for its rows (`trip_commitments` stores a 0..1 number, not a band), and the engine then computes exactly as before. Tests: `artifacts/api-server/src/test/layoverTemporalFreedom.test.ts:422#census-layover L57 — the layover's commitments carry spec §7's eight members`, `artifacts/api-server/src/test/tripFreedomEngine.test.ts:269#census-layover L57 — a commitment's own hardConstraints and confidence`. |
+
+### Tests and mutation proofs, run for this section on 2026-10-17
+
+All runs were `node --import tsx/esm --test` with `TZ=UTC`, on fakes, with no clock and no network.
+
+| what | result |
+| --- | --- |
+| New cases written before the fix (`layoverTemporalFreedom.test.ts`, `tripFreedomEngine.test.ts`) | red: 18/22 pass, with the 3 layover cases failing and `tripFreedomEngine.test.ts` failing to load (the vocabulary it imports did not exist). Green after the fix: 41/41 |
+| Every production change reverted (all four files restored to their originals; final tests kept) | red: 18/22 again. Restored byte-identically (sha256 rechecked) |
+| Targeted mutants | 4/4 killed. The engine ignores a commitment's confidence: 4 fail. The engine spends a NO_LATE_ARRIVAL tolerance: 2 fail. The adapter drops both members: 6 fail. The adapter states HIGH on its commitments: 5 fail |
+| Neighbours: every suite that imports the engine, the adapter, the Trips freedom projection, the replay corpus or the safety engine (57 files, including the Trips decision-diff golden and the layover scenario matrices) | 1394/1394 |
+
+### Headline
+
+| bucket | was (§80) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 85 | 86 |
+| BUILT-BUT-WRONG | 159 | 158 |
+| NOT-BUILT | 52 | 52 |
+| CANNOT-VERIFY | 0 | 0 |
+| total | 296 | 296 |
+
+**1 move: L57 W → C.** 296 = 86 C / 158 W / 52 N / 0 X. CORRECT% is 86 / 296 = 29.1 %.

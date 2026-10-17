@@ -400,7 +400,7 @@ describe("§29 privacyClass (G31) — the shared suggestion cache refuses viewer
       "the cache READ must be gated",
     );
     assert.ok(
-      /if \(cacheable\) sharedSuggestionCache\.set\(cacheKey, finalized\);/.test(hook),
+      /if \(cacheable && !finalized\.some\(\(s\) => s\.type === 'ai_suggestion'\)\) sharedSuggestionCache\.set\(cacheKey, finalized\);/.test(hook), // G203: the privacy gate AND the never-cache-AI exclusion
       "the cache WRITE must be gated",
     );
   });

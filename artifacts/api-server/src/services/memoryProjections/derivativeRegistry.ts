@@ -41,7 +41,7 @@ import {
   scopeKeyOf,
   sourceVersionOf, recapExcludedOf,
 } from "./projectionRegistry.js";
-import type { SignificanceExplanation } from "./significance.js"; import { isTableAbsentError } from "../../lib/tableAbsence.js"; import { hiddenItemKeys } from "../memory/memoryItemVisibility.js"; import { memoriesAssertedAtPlace, placesThroughCorrections } from "../memory/memoryCorrections.js"; import { fieldServed, readCanonicalGates, occurrenceNameKeptWithRef, type CanonicalGates } from "../memory/memoryCanonicalFields.js"; // one line: cited by line
+import type { SignificanceExplanation } from "./significance.js"; import { isTableAbsentError } from "../../lib/tableAbsence.js"; import { hiddenItemKeys } from "../memory/memoryItemVisibility.js"; import { memoriesAssertedAtPlace, placesThroughCorrections } from "../memory/memoryCorrections.js"; import { fieldServed, readCanonicalGates, occurrenceNameKeptWithRef, type CanonicalGates } from "../memory/memoryCanonicalFields.js"; import { logProjectionOperation, type ProjectionTrace } from "./projectionLog.js"; // one line: cited by line
 
 export const DERIVATIVE_REGISTRY_TABLE = "memory_derivative_registry";
 
@@ -289,8 +289,8 @@ export async function rebuildProjection(
   projectionId: ProjectionId,
   scope: ProjectionScope,
   now: Date,
-  opts: { significance?: ReadonlyMap<string, SignificanceExplanation>; /** Lead ruling H-5: rebuild a registration revoked ONLY because a Memory was deleted. */ reviveDeletionRevoked?: boolean } = {},
-): Promise<ProjectionResult<{ registration: RegistrationRow; rows: ProjectedRow[]; was_revoked: boolean }>> {
+  opts: { significance?: ReadonlyMap<string, SignificanceExplanation>; /** Lead ruling H-5: rebuild a registration revoked ONLY because a Memory was deleted. */ reviveDeletionRevoked?: boolean; /** §24 (census H223): what caused this rebuild, named on its projection log line. */ trace?: ProjectionTrace } = {},
+): Promise<ProjectionResult<{ registration: RegistrationRow; rows: ProjectedRow[]; was_revoked: boolean }>> { return logRebuild(projectionId, scope, opts.trace, () => rebuildProjectionUnlogged(client, projectionId, scope, now, opts)); } async function rebuildProjectionUnlogged(client: ClientLike, projectionId: ProjectionId, scope: ProjectionScope, now: Date, opts: NonNullable<Parameters<typeof rebuildProjection>[4]>): ReturnType<typeof rebuildProjection> { // §24 (H223): one line, so every line this file is cited by stays put
   const derived = await deriveProjection(client, projectionId, scope, opts);
   if (!derived.ok) return derived;
 
@@ -749,4 +749,40 @@ async function readCompleteSource(query: QueryLike, keyColumns: readonly string[
   } catch {
     return refuse("source read rejected before completeness could be checked");
   }
+}
+
+/**
+ * §24 (census H223): every rebuild writes a projection log line carrying the
+ * eight operational fields — see projectionLog.ts. Every outcome is logged, a
+ * refusal with its failure class, and a throw before it propagates. Appended,
+ * for the reason the banner above gives.
+ */
+async function logRebuild(
+  projectionId: ProjectionId,
+  scope: ProjectionScope,
+  trace: ProjectionTrace | undefined,
+  run: () => ReturnType<typeof rebuildProjection>,
+): ReturnType<typeof rebuildProjection> {
+  const base = { operation: "rebuild" as const, projectionName: projectionId, scopeKey: scopeKeyOf(projectionId, scope), trace };
+  const definedEngine = () => getProjectionDefinition(projectionId)?.builder_version ?? null;
+  let result: Awaited<ReturnType<typeof rebuildProjection>>;
+  try {
+    result = await run();
+  } catch (err) {
+    logProjectionOperation({ ...base, outcome: "refused", reason: "rebuild_threw", sourceVersion: null, engineVersion: definedEngine() });
+    throw err;
+  }
+  if (result.ok) {
+    const reg = result.value.registration;
+    logProjectionOperation({
+      ...base,
+      outcome: result.value.was_revoked ? "kept_revoked" : "rebuilt",
+      sourceVersion: reg.source_version ?? null,
+      engineVersion: reg.builder_version ?? null,
+      rowCount: reg.row_count ?? null,
+    });
+  } else {
+    logProjectionOperation({ ...base, outcome: "refused", reason: result.reason, sourceVersion: null, engineVersion: definedEngine() });
+  }
+  return result;
 }

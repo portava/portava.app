@@ -109,7 +109,7 @@ import { usePlainBottomInset } from '../../src/hooks/useBottomInset';
 import * as Clipboard from 'expo-clipboard';
 import { RentABuddyThreadHeader } from '../../src/components/rentabuddy/BookingThreadHeader';
 import { MessageEntrance, useMessageEntranceGate } from '../../src/components/MessageEntrance';
-import { BookingMilestoneMessage } from '../../src/components/rentabuddy/BookingMilestoneMessage';
+import { BookingMilestoneMessage } from '../../src/components/rentabuddy/BookingMilestoneMessage'; import { latestBookingTransitionKey } from '../../src/features/telegraph/booking/bookingTransition.ts'; // census-telegraph T320
 import { E2EE_VERIFICATION_UI_ENABLED, E2EE_CLAIM_UI_ENABLED } from '../../src/lib/e2ee/verificationGate';
 
 function formatTime(iso: string): string {
@@ -1429,7 +1429,7 @@ export default function TelegraphThread() {
   const callState = useCallState();
   const callActions = useCallActions();
   // RAB booking status drives entry-point gating (and Call back eligibility).
-  const [rabBookingStatus, setRabBookingStatus] = useState<string | null>(null);
+  const [rabBookingStatus, setRabBookingStatus] = useState<string | null>(null); const bookingTransitionKey = latestBookingTransitionKey(messages); // T320: the booking's own transition card (a cancellation included) arriving re-reads it
   const [rabStayConnected, setRabStayConnected] = useState<{ traveler: boolean; buddy: boolean }>({ traveler: false, buddy: false });
   useEffect(() => {
     if (threadType !== 'rent_buddy_booking' || !contextId) return;
@@ -1444,7 +1444,7 @@ export default function TelegraphThread() {
       }
     }).catch(() => {});
     return () => { alive = false; };
-  }, [threadType, contextId]);
+  }, [threadType, contextId, bookingTransitionKey]);
   const callContextType = threadCallContextType(threadType);
   const canShowCallButtons = canShowThreadCallButtons({
     threadType, otherUserId, isWaitingForReply, rabBookingStatus,
@@ -2037,7 +2037,7 @@ export default function TelegraphThread() {
     <KeyboardSafeScrollView style={styles.screen}>
       <ThreadHeader />
       {threadType === 'rent_buddy_booking' && contextId && (
-        <RentABuddyThreadHeader
+        <RentABuddyThreadHeader key={bookingTransitionKey ?? 'booking'}
           bookingId={contextId}
           autoTranslate={autoTranslate}
           onTranslateToggle={(v) => {
@@ -2051,12 +2051,12 @@ export default function TelegraphThread() {
       {/* Telegraph §2.2 / §3: the Shared Context Rail sits between the header
           and the message stream. It renders nothing when there is no mutual
           canonical state, and nothing when the read failed. */}
-      {id ? <SafetyModeBar threadId={id} refreshKey={messages[messages.length - 1]?.id ?? null} onCall={canShowCallButtons ? () => { void startThreadCall('voice'); } : undefined} onBlockOrReport={() => setShowSafetySheet(true)} onLocationScope={() => setTypedCompose('LOCATION')} onModeChange={(s) => setSafetyQuiet(s.deprioritizeEntertainment)} senderLabel={(uid) => senderLabelFor(messages, uid, userId ?? null)} /> : null}{id ? <SharedContextRail threadId={id} scrolled={railCollapsed} /> : null}<TelegraphConnectionBanner />{/* §30A.15: says when messages cannot arrive; nothing while fine */}
+      {id ? <SafetyModeBar threadId={id} refreshKey={messages[messages.length - 1]?.id ?? null} onCall={canShowCallButtons ? () => { void startThreadCall('voice'); } : undefined} onBlockOrReport={() => setShowSafetySheet(true)} onLocationScope={() => setTypedCompose('LOCATION_SCOPE')} onModeChange={(s) => setSafetyQuiet(s.deprioritizeEntertainment)} senderLabel={(uid) => senderLabelFor(messages, uid, userId ?? null)} /> : null}{id ? <SharedContextRail threadId={id} key={bookingTransitionKey ?? 'rail'} scrolled={railCollapsed} /> : null}<TelegraphConnectionBanner />{/* §30A.15: says when messages cannot arrive; nothing while fine */}
 
       {/* Telegraph §2.2's optional coordination panel / §9's coordination
           mode. Renders only while the thread is actually coordinating, or
           while a decision or commitment is unresolved. */}
-      {id ? <CoordinationPanel threadId={id} viewerId={userId ?? null} onOpenRecap={threadRecap.available ? () => setShowRecap(true) : undefined} onShareLocation={() => setTypedCompose('LOCATION')} refreshKey={messages[messages.length - 1]?.id ?? null} onDrawnIdsChange={setPanelDrawnIds} /> : null}{id ? <SemanticLayersStrip threadId={id} viewerId={userId ?? null} messages={messages} refreshKey={messages[messages.length - 1]?.id ?? null} dataSaver={!dataSaver.mayLoad('mediaPreview')} onLayeredIdsChange={setLayeredIds} panelDrawnIds={panelDrawnIds} /> : null}
+      {id ? <CoordinationPanel threadId={id} viewerId={userId ?? null} onOpenRecap={threadRecap.available ? () => setShowRecap(true) : undefined} onShareLocation={() => setTypedCompose('LOCATION_SCOPE')} refreshKey={messages[messages.length - 1]?.id ?? null} onDrawnIdsChange={setPanelDrawnIds} /> : null}{id ? <SemanticLayersStrip threadId={id} viewerId={userId ?? null} messages={messages} refreshKey={messages[messages.length - 1]?.id ?? null} dataSaver={!dataSaver.mayLoad('mediaPreview')} onLayeredIdsChange={setLayeredIds} panelDrawnIds={panelDrawnIds} /> : null}
 
       <FlatList
         windowSize={9}

@@ -94,6 +94,19 @@ export interface SharedContextResponse {
   /** True when a resolver read failed: the rail is unknown, not empty. */
   incomplete: boolean;
   refusedCount: number;
+  /**
+   * census-telegraph T264: shared events this viewer attended that were CANCELLED — the id their
+   * rail held and the word, nothing else. Beside the projection, never in it (the event itself is
+   * withheld). Absent from an older server.
+   */
+  cancellations?: SharedContextCancellation[];
+}
+
+/** census-telegraph T264 — the server's minimal cancellation notice. */
+export interface SharedContextCancellation {
+  objectType: 'EVENT';
+  objectId: string;
+  status: 'cancelled';
 }
 
 export interface ConversationHeaderParticipant {

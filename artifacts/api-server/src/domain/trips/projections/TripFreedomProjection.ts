@@ -225,7 +225,7 @@ async function buildFreedomInBudget(sc: any, tripId: string, opts: { now?: Date 
       place: { placeId: r.place_id ?? null, point: pointOf(r.place_id) },
       flexibility: r.flexibility ?? "flexible",
       prepMinutes: intervalToMinutes(r.prep_duration) ?? 0,
-      latenessToleranceMinutes: intervalToMinutes(r.lateness_tolerance) ?? 0,
+      latenessToleranceMinutes: intervalToMinutes(r.lateness_tolerance) ?? 0, hardConstraints: [], confidence: null, // L57: no constraint column; 2761's 0..1 confidence is not a band and none is invented
     })),
     // The expanded occurrences enter the engine as ordinary commitments —
     // deliberately, because they ARE commitments for the purposes of §7.2 and
@@ -240,7 +240,7 @@ async function buildFreedomInBudget(sc: any, tripId: string, opts: { now?: Date 
       place: { placeId: o.placeId, point: pointOf(o.placeId) },
       flexibility: o.flexibility,
       prepMinutes: o.prepMinutes,
-      latenessToleranceMinutes: o.latenessToleranceMinutes,
+      latenessToleranceMinutes: o.latenessToleranceMinutes, hardConstraints: [], confidence: null,
     })),
   ];
 

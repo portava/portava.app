@@ -77,8 +77,8 @@
  */
 import {
   computeFreedomWindows,
-  leaveAt,
-  type EngineCommitment,
+  leaveAt, commitmentBoundConfidence, spendableToleranceMinutes,
+  type EngineCommitment, type CommitmentHardConstraint,
   type FreedomWindow,
   type HopTravel,
   type TemporalConflict,
@@ -147,13 +147,13 @@ export interface LayoverFreedomResult {
 /**
  * Spec §7 `Commitment`, as the generalised engine's `EngineCommitment`.
  *
- * Six of the spec's eight members map straight across — `type`, `startsAt`,
+ * All eight of the spec's members are here: `type`, `startsAt`,
  * `requiredArrivalAt`, `location` (`place`), `preparationTime` (`prepMinutes`),
- * `latenessTolerance` (`latenessToleranceMinutes`). The other two,
- * `hardConstraints` and `confidence`, live on the WINDOW in this engine rather
- * than on the commitment; that divergence is real and is recorded in the census
- * rather than papered over here, because `EngineCommitment` is the Trips
- * domain's type and widening it is that lane's decision, not this one's.
+ * `latenessTolerance` (`latenessToleranceMinutes`), `hardConstraints` and
+ * `confidence` (census-layover L57). Both commitments state the airport's
+ * certified confidence, which is where a layover's doubt lives (the hop between
+ * them is a fact), and both declare NO_LATE_ARRIVAL, which the ENGINE enforces:
+ * no tolerance can be spent on a flight, whatever number a caller puts here.
  *
  * `latenessToleranceMinutes` is 0 for both, and that is a safety statement:
  * an aircraft does not wait, so there is no tolerance to spend. The spec's
@@ -178,7 +178,7 @@ export function layoverCommitments(ctx: LayoverFreedomContext): EngineCommitment
       place,
       flexibility: "fixed",
       prepMinutes: 0,
-      latenessToleranceMinutes: 0,
+      latenessToleranceMinutes: 0, hardConstraints: [INBOUND_DOES_NOT_WAIT], confidence: ctx.confidence,
     },
     {
       id: LAYOVER_DEPARTURE_COMMITMENT_ID,
@@ -189,7 +189,7 @@ export function layoverCommitments(ctx: LayoverFreedomContext): EngineCommitment
       place,
       flexibility: "fixed",
       prepMinutes: ctx.returnBufferMin,
-      latenessToleranceMinutes: 0,
+      latenessToleranceMinutes: 0, hardConstraints: [OUTBOUND_DOES_NOT_WAIT], confidence: ctx.confidence,
     },
   ];
 }
@@ -199,8 +199,8 @@ export function layoverCommitments(ctx: LayoverFreedomContext): EngineCommitment
  * airport. See the header for why this is a fact and not an estimate, and why
  * the landside journey does NOT belong here.
  *
- * `routed: false` is honest for the same reason: nothing routed anything. The
- * engine reads `routed` only to report it, and `confidence` is the caller's.
+ * `routed: false` is honest for the same reason: nothing routed anything. Its
+ * confidence is HIGH: the doubt is the two commitments' own (L57), not the hop's.
  */
 function samePlaceHop(confidence: TravelConfidence): HopTravel {
   return { travelMinutes: 0, confidence, routed: false, unknownReason: null };
@@ -218,7 +218,7 @@ export function buildFreedomWindow(ctx: LayoverFreedomContext): LayoverFreedomRe
   const commitments = layoverCommitments(ctx);
   const result = computeFreedomWindows({
     commitments,
-    hops: [samePlaceHop(ctx.confidence)],
+    hops: [samePlaceHop("HIGH")],
     participants: [],
     // No window before the inbound flight and none after the outbound: a
     // layover is the gap BETWEEN them and nothing else. Passing trip bounds
@@ -265,11 +265,11 @@ export interface CommitmentEnvelope {
 
 export function calculateCommitmentEnvelope(ctx: LayoverFreedomContext): CommitmentEnvelope {
   const [, departure] = layoverCommitments(ctx);
-  const hop = samePlaceHop(ctx.confidence);
+  const hop = samePlaceHop("HIGH");
   const travelMinutes = hop.travelMinutes ?? 0;
   const reservedMinutes = travelMinutes + departure!.prepMinutes;
   const arriveByMs =
-    departure!.requiredArrivalAt!.getTime() + departure!.latenessToleranceMinutes * MS_PER_MIN;
+    departure!.requiredArrivalAt!.getTime() + spendableToleranceMinutes(departure!) * MS_PER_MIN;
   return {
     commitmentId: departure!.id,
     type: departure!.type,
@@ -278,9 +278,9 @@ export function calculateCommitmentEnvelope(ctx: LayoverFreedomContext): Commitm
     reservedMinutes,
     travelMinutes,
     preparationMinutes: departure!.prepMinutes,
-    latenessToleranceMinutes: departure!.latenessToleranceMinutes,
-    confidence: ctx.confidence,
-    certified: ctx.confidence === "HIGH",
+    latenessToleranceMinutes: spendableToleranceMinutes(departure!),
+    confidence: commitmentBoundConfidence(hop.confidence, departure!),
+    certified: commitmentBoundConfidence(hop.confidence, departure!) === "HIGH",
   };
 }
 
@@ -310,3 +310,17 @@ export const TemporalFreedomService = {
   buildFreedomWindow,
   calculateCommitmentEnvelope,
 } as const;
+
+/**
+ * census-layover L57 — spec §7 `Commitment.hardConstraints`, in the engine's
+ * generic vocabulary and the adapter's own words. "An aircraft does not wait"
+ * is airport knowledge, so it is stated HERE and nowhere in the engine.
+ */
+const INBOUND_DOES_NOT_WAIT: CommitmentHardConstraint = {
+  kind: "NO_LATE_ARRIVAL",
+  detail: "the inbound flight lands when it lands; there is no lateness to absorb",
+};
+const OUTBOUND_DOES_NOT_WAIT: CommitmentHardConstraint = {
+  kind: "NO_LATE_ARRIVAL",
+  detail: "an aircraft does not wait: boarding closes at the cutoff",
+};

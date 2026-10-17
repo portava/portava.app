@@ -190,7 +190,7 @@ router.get(
       // A rail built on a failed read is INCOMPLETE, and says so, rather than
       // presenting an empty rail as the truthful answer "nothing is shared".
       incomplete: result.problems.length > 0,
-      refusedCount: result.refusals.length,
+      refusedCount: result.refusals.length, cancellations: result.cancellations, // census-telegraph T264: shared events this viewer attended that were cancelled — the id and the word, beside the projection
     });
   }),
 );

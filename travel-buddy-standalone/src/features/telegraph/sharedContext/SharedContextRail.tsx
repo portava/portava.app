@@ -36,7 +36,7 @@ import {
   detectCriticalChanges,
   resolveRailPresentation,
   type CriticalChange,
-} from './railBehavior.ts'; import { detectChangesSinceSeen, nextSeenSnapshot, type SeenSnapshot } from './railBehavior.ts';
+} from './railBehavior.ts'; import { detectChangesSinceSeen, nextSeenSnapshot, withCancellations, type SeenSnapshot } from './railBehavior.ts';
 import { captureRailSeenScope, readRailSeen, writeRailSeen, type RailSeenScope } from './railSeenStore.ts';
 import type {
   SharedContextItem,
@@ -139,7 +139,7 @@ function ScopedSharedContextRail({
         const stored = await readRailSeen(ownerScope);
         if (!requestCurrent()) return;
         const seen = stored.state === 'seen' ? stored.snapshot : null;
-        const found = seen ? detectChangesSinceSeen(seen, current) : detectCriticalChanges(lastShown.current.projection, current);
+        const found = seen ? detectChangesSinceSeen(seen, current) : detectCriticalChanges(lastShown.current.projection, current); found.push(...withCancellations(found, seen, lastShown.current.projection, result.data.cancellations).slice(found.length)); // T264: an event the server no longer shows, called off — from its cancellation notice
         // An unreadable record is not "never seen": nothing is written over it.
         const scope = stored.state === 'none' || stored.state === 'seen' ? ownerScope : null;
         lastShown.current = { projection: current, seen, scope, found };
