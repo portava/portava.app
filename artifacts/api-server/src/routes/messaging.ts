@@ -3210,7 +3210,7 @@ router.post('/threads/:threadId/messages', async (req, res) => {
     },
     { excludeUserId: user.id },
   );
-  void notifyNewMessage(getServiceClient() ?? sc, { threadId, senderId: user.id, messageId: m.id, msgType: m.msg_type ?? 'text', subtype: m.subtype ?? null, nowMs: Date.parse(now) || Date.now() }, { log: req.log }); /* census-telegraph T256: one notification per other member, after the answer */ void publishToThread(sc, threadId, {
+  void notifyNewMessage(getServiceClient() ?? sc, { threadId, senderId: user.id, messageId: m.id, msgType: m.msg_type ?? 'text', subtype: m.subtype ?? null, nowMs: Date.parse(now) }, { log: req.log }); /* census-telegraph T256: one notification per other member, after the answer */ void publishToThread(sc, threadId, {
     type: 'thread.updated',
     payload: { lastMessageAt: now },
   });
@@ -3444,7 +3444,7 @@ router.post('/threads/:threadId/media', async (req, res) => {
       .eq('id', threadId);
   } catch { /* non-fatal */ }
 
-  void notifyNewMessage(getServiceClient() ?? sc, { threadId, senderId: user.id, messageId: msg.id, msgType: 'media', nowMs: Date.parse(now) || Date.now() }, { log: req.log }); // census-telegraph T256 (the media door) · Publish real-time event to thread members
+  void notifyNewMessage(getServiceClient() ?? sc, { threadId, senderId: user.id, messageId: msg.id, msgType: 'media', nowMs: Date.parse(now) }, { log: req.log }); // census-telegraph T256 (the media door) · Publish real-time event to thread members
   try {
     await publishMessageCreated(sc, threadId, { // T154 (V-TR F1): one publisher for every door — the drainer owns message.created when fan-out is in force
       type: 'message.created',

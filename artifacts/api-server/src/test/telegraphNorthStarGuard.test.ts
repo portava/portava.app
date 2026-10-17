@@ -87,7 +87,7 @@ const TELEGRAPH_NOTIFICATION_EVENTS: Readonly<Record<string, string>> = {
   "telegraph.mention": "someone mentioned the person",
   "telegraph.reaction": "someone reacted to the person's message",
   "telegraph.thread_archived": "a participant archived the conversation",
-  "call.incoming": "someone is calling the person (filed under the telegraph category)", "telegraph.coordination": "a member opened a coordination session or declared a §9.1 quick state in the person's conversation (census T395)",
+  "call.incoming": "someone is calling the person (filed under the telegraph category)", "telegraph.coordination": "a member opened a coordination session or declared a §9.1 quick state in the person's conversation (census T395)", "telegraph.sos": "a member of the person's conversation asked for help or raised a safety heads-up (§19 P0, wave 5)", "telegraph.safety_all_clear": "a member posted ALL CLEAR, ending a raised safety mode (§19 P1, wave 5)", "telegraph.location": "a member shared a location in the person's conversation (§30A.6 LOCATION, wave 5)", "telegraph.announcement": "a member posted an announcement in the person's conversation (§30A.5, wave 5)",
 };
 
 // ── helpers ──────────────────────────────────────────────────────────────────

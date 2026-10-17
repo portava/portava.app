@@ -15,12 +15,12 @@
  * T256 C → W for exactly that.
  *
  * ── WHAT THIS PRODUCES ──────────────────────────────────────────────────────
- * One `telegraph.message` notification per other active member, for a message a
- * PERSON sent through a send door: text (and the app-authored cards the text
- * door carries), media, voice, a share, and the typed kinds that are ordinary
- * messages (GIF, album, Memory Note). Not for protocol rows (`e2ee_welcome`),
- * not for the coordination door (its own COORDINATION producer), and not for
- * LOCATION / SAFETY / ACTION / ANNOUNCEMENT, whose causes are their own.
+ * One notification per other active member, for a message a PERSON sent through
+ * a send door, under the cause its KIND is (`kindPolicyOf`, foot of file):
+ * MESSAGE (`telegraph.message`, P2) — text and the app's cards, media, voice, a
+ * share, GIF, album, Memory Note, an ACTION proposal, a safety check-in; LOCATION
+ * (`telegraph.location`, P2); an ANNOUNCEMENT as COORDINATION (P1). Never protocol
+ * rows (`e2ee_welcome`). SAFETY signals are safetyNotifications.ts's (P0).
  *
  * ── WHO IS TOLD, IN ORDER — and every unknown tells NOBODY ──────────────────
  *   1. The conversation's other ACTIVE members (a failed roster read: nobody).
@@ -70,10 +70,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { isExcluded, readBlockExclusions } from "../../lib/exclusionSet.js";
 import { decideThreadNotification, type NotificationCause } from "../../domain/telegraph/policies/threadNotificationPolicy.js";
 import { NO_THREAD_CHOICE, readThreadNotificationStates } from "./threadNotificationState.js";
-import { projectSafetyMode, type SafetyInputRow } from "./safetyMode.js";
-import { actorLabel } from "./coordinationNotifications.js";
+import { projectSafetyMode, type SafetyInputRow, type SafetyModeProjection } from "./safetyMode.js";
+import { actorLabel, coordinationActOf, notifyCoordinationAct } from "./coordinationNotifications.js";
 import type { CreateNotificationInput, NotificationRow } from "../notifications/NotificationService.js";
-import { causalEventIdOf } from "../notifications/NotificationDeduplicationService.js";
+import { causalEventIdOf } from "../notifications/NotificationDeduplicationService.js"; import { isNeedHelpQuickState, notifySafetySignal, safetySignalOfRow, type SafetyNotifyOutcome } from "./safetyNotifications.js"; // wave 5 safety lane
 
 export const MESSAGE_NOTIFICATION_EVENT = "telegraph.message" as const;
 export const MESSAGE_NOTIFICATION_SOURCE = "thread" as const;
@@ -91,16 +91,16 @@ export function messageCausalEventId(messageId: string): string | undefined {
 const NOTIFIABLE_SYSTEM_SUBTYPES: ReadonlySet<string> = new Set(["discovery_card", "post_card", "compass_card", "meetup"]);
 
 /**
- * §6.2 kinds that are an ordinary message (MESSAGE): a GIF, a photo album, a Memory Note, a shared Portava object.
- * NOT LOCATION, SAFETY, ACTION or ANNOUNCEMENT — §30A.6 gives those their own causes (LOCATION, SAFETY, and the
- * operational ones), and filing one as MESSAGE would let a MENTIONS-only choice or a coalesced burst hide it.
+ * §6.2 kinds that are an ordinary message (MESSAGE): a GIF, a photo album, a Memory Note, a shared Portava object, and
+ * an ACTION — a §8.2 proposal; §30A.6 names no ACTION cause (an owner question, wave 5 safety lane). NOT LOCATION or
+ * ANNOUNCEMENT (their own causes, `kindPolicyOf`) and not a SAFETY signal (safetyNotifications.ts); a check-in is a message.
  */
-const ORDINARY_TYPED_KINDS: ReadonlySet<string> = new Set(["gif", "media_album", "memory_note", "portava_object"]);
+const ORDINARY_TYPED_KINDS: ReadonlySet<string> = new Set(["gif", "media_album", "memory_note", "portava_object", "action"]);
 
 /** True for a row a person sent that an ordinary send door wrote. */
 export function isNotifiableMessage(row: { msgType: string | null | undefined; subtype?: string | null }): boolean {
   const t = typeof row.msgType === "string" ? row.msgType : "";
-  if (t === "text" || t === "media" || t === "voice" || ORDINARY_TYPED_KINDS.has(t)) return true;
+  if (t === "text" || t === "media" || t === "voice" || ORDINARY_TYPED_KINDS.has(t)) return true; if (t === "safety") return row.subtype === "check_in"; // a check-in is reassurance, not a signal (safetyMode.ts rule 2)
   if (t === "system") return typeof row.subtype === "string" && NOTIFIABLE_SYSTEM_SUBTYPES.has(row.subtype);
   return false;
 }
@@ -124,7 +124,7 @@ export type MessageNotifyOutcome =
       readonly withheld: Array<{ userId: string; reason: string }>;
     }
   | { readonly status: "skipped"; readonly reason: "not_a_person_message" }
-  | { readonly status: "refused"; readonly stage: "roster" | "blocks" | "thread_policy" | "threw" };
+  | { readonly status: "refused"; readonly stage: "roster" | "blocks" | "thread_policy" | "threw" } | { readonly status: "delegated"; readonly to: "safety"; readonly outcome: SafetyNotifyOutcome };
 
 export interface MessageNotifyInput {
   threadId: string;
@@ -143,8 +143,14 @@ async function defaultDeps(sc: SupabaseClient): Promise<MessageNotifyDeps> {
   return { create: (input) => ns.create(input), route: (row) => nr.route(row) };
 }
 
-/** Is the sender the person whose unanswered help request holds this conversation in SAFETY_EVENT? */
+/** Is the sender the person whose unanswered help request holds this conversation in SAFETY_EVENT? null = unreadable. */
 async function senderRaisedSafetyEvent(sc: SupabaseClient, threadId: string, senderId: string, nowMs: number): Promise<boolean | null> {
+  const projection = await readThreadSafetyMode(sc, threadId, nowMs);
+  return projection === null ? null : projection.mode === "SAFETY_EVENT" && projection.raisedBy === senderId;
+}
+
+/** The conversation's §15.2 mode from its own safety rows; `excluding` leaves one message out (the mode just BEFORE it). null = unreadable. */
+export async function readThreadSafetyMode(sc: SupabaseClient, threadId: string, nowMs: number, excluding?: string): Promise<SafetyModeProjection | null> {
   try {
     const { data, error } = await sc
       .from("messages")
@@ -155,25 +161,19 @@ async function senderRaisedSafetyEvent(sc: SupabaseClient, threadId: string, sen
       .order("created_at", { ascending: false })
       .limit(SAFETY_SCAN_LIMIT);
     if (error || !Array.isArray(data)) return null;
-    const projection = projectSafetyMode({ threadId, rows: data as SafetyInputRow[], nowMs });
-    return projection.mode === "SAFETY_EVENT" && projection.raisedBy === senderId;
-  } catch {
-    return null;
-  }
+    return projectSafetyMode({ threadId, rows: (data as SafetyInputRow[]).filter((r) => r.id !== excluding), nowMs });
+  } catch { return null; }
 }
 
-/**
- * Tell the conversation's other members that a message arrived. NEVER rejects —
- * the send doors fire it without awaiting, after the write has answered — and a
- * failure at any gate tells nobody and says which gate.
- */
+/** Tell the other members a message arrived, under its kind's cause (a SAFETY signal: safetyNotifications.ts). NEVER
+ *  rejects — the doors fire it without awaiting, after the write answered — and a failed gate tells nobody and says which. */
 export async function notifyNewMessage(
   sc: SupabaseClient,
   input: MessageNotifyInput,
-  opts: { deps?: MessageNotifyDeps; log?: MessageNotifyLog } = {},
+  opts: { deps?: MessageNotifyDeps; log?: MessageNotifyLog; retryDelaysMs?: readonly number[] } = {},
 ): Promise<MessageNotifyOutcome> {
   try {
-    return await tellMembers(sc, input, opts);
+    return await routeByKind(sc, input, opts);
   } catch (err) {
     opts.log?.warn({ err, threadId: input.threadId }, "message notification threw before anyone was told (the message itself was written)");
     return { status: "refused", stage: "threw" };
@@ -183,10 +183,10 @@ export async function notifyNewMessage(
 async function tellMembers(
   sc: SupabaseClient,
   input: MessageNotifyInput,
-  opts: { deps?: MessageNotifyDeps; log?: MessageNotifyLog },
+  opts: { deps?: MessageNotifyDeps; log?: MessageNotifyLog }, forced?: KindPolicy,
 ): Promise<MessageNotifyOutcome> {
   const { threadId, senderId, messageId, nowMs } = input;
-  if (!isNotifiableMessage(input)) return { status: "skipped", reason: "not_a_person_message" };
+  const policy = forced ?? kindPolicyOf(input); if (policy === null) return { status: "skipped", reason: "not_a_person_message" };
 
   // 1. The other active members. Never the sender.
   const { data: roster, error: rosterErr } = await sc
@@ -211,18 +211,21 @@ async function tellMembers(
   const raised = unblocked.length > 0 ? await senderRaisedSafetyEvent(sc, threadId, senderId, nowMs) : false;
   if (raised === null) opts.log?.warn({ threadId }, "message notification: the conversation's safety state is unreadable — the message is notified as an ordinary one (no mute is overridden without evidence)");
   const cause: NotificationCause = raised === true ? "SAFETY" : "MESSAGE";
+  // The kind's own cause (LOCATION; an ANNOUNCEMENT as COORDINATION) — unless the person who asked for help sent it:
+  // then SAFETY, filed as an ordinary message on its own source, whatever its kind (the rule above).
+  const filed: KindPolicy = cause === "SAFETY" ? SAFETY_MODE_POLICY : policy;
   const safety = raised === null ? "unreadable" as const : "read" as const;
-  if (unblocked.length === 0) return { status: "notified", cause, safety, notified: [], withheld };
+  if (unblocked.length === 0) return { status: "notified", cause: filed.cause, safety, notified: [], withheld };
 
   // 4. Each member's thread choice for that cause.
   const states = await readThreadNotificationStates(sc, threadId, unblocked);
-  if (!states.ok && cause !== "SAFETY") return { status: "refused", stage: "thread_policy" };
+  if (!states.ok && filed.cause !== "SAFETY") return { status: "refused", stage: "thread_policy" };
   const deliverTo = unblocked.filter((id) => {
-    const decision = decideThreadNotification({ cause, state: states.ok ? (states.states.get(id) ?? NO_THREAD_CHOICE) : null, nowMs });
+    const decision = decideThreadNotification({ cause: filed.cause, state: states.ok ? (states.states.get(id) ?? NO_THREAD_CHOICE) : null, nowMs });
     if (!decision.deliver) withheld.push({ userId: id, reason: decision.reason });
     return decision.deliver;
   });
-  if (deliverTo.length === 0) return { status: "notified", cause, safety, notified: [], withheld };
+  if (deliverTo.length === 0) return { status: "notified", cause: filed.cause, safety, notified: [], withheld };
 
   const actor = await actorLabel(sc, senderId);
   const deps = opts.deps ?? (await defaultDeps(sc));
@@ -232,14 +235,15 @@ async function tellMembers(
     try {
       const row = await deps.create({
         userId,
-        eventType: MESSAGE_NOTIFICATION_EVENT,
+        eventType: filed.eventType,
         actorId: senderId,
+        // The privacy guard's Ghost Mode key: a LOCATION (category `location`) from a person in Ghost Mode is not told.
         senderId,
-        sourceType: cause === "SAFETY" ? SAFETY_MESSAGE_NOTIFICATION_SOURCE : MESSAGE_NOTIFICATION_SOURCE,
-        sourceId: threadId,
-        // No `preview`: the template's fixed "New message" (header).
+        sourceType: filed.sourceType,
+        sourceId: filed.sourceIdIs === "message" ? messageId : threadId,
+        // No `preview`, no label, no title: each template's fixed words (header).
         params: { actor, threadId },
-        metadata: { cause },
+        metadata: { cause: filed.cause },
         ...(causalEventId ? { causalEventId } : {}),
       });
       if (!row) { withheld.push({ userId, reason: "not_created" }); return; }
@@ -249,5 +253,98 @@ async function tellMembers(
       opts.log?.warn({ err, threadId }, "message notification failed for one member (the message itself was written)");
     }
   }));
-  return { status: "notified", cause, safety, notified, withheld };
+  return { status: "notified", cause: filed.cause, safety, notified, withheld };
+}
+
+// ── each kind's cause (§30A.6) — wave 5 safety lane ─────────────────────────
+
+/** How a kind is told: its §30A.6 cause, its template (and so its §19 band) and what its burst coalesces on. */
+export interface KindPolicy {
+  readonly cause: NotificationCause;
+  readonly eventType: string;
+  readonly sourceType: string;
+  /** The coalescing key: the conversation (a burst is one thing to look at) or each message (each one is news). */
+  readonly sourceIdIs: "thread" | "message";
+}
+
+export const LOCATION_NOTIFICATION_EVENT = "telegraph.location" as const;
+export const ANNOUNCEMENT_NOTIFICATION_EVENT = "telegraph.announcement" as const;
+
+/** §19 P2: an ordinary message. */
+const MESSAGE_POLICY: KindPolicy = { cause: "MESSAGE", eventType: MESSAGE_NOTIFICATION_EVENT, sourceType: MESSAGE_NOTIFICATION_SOURCE, sourceIdIs: "thread" };
+/** The person who asked for help, while it stands: SAFETY (no mute silences it), P2, never coalesced behind an ordinary burst. */
+const SAFETY_MODE_POLICY: KindPolicy = { cause: "SAFETY", eventType: MESSAGE_NOTIFICATION_EVENT, sourceType: SAFETY_MESSAGE_NOTIFICATION_SOURCE, sourceIdIs: "thread" };
+/**
+ * §30A.6's LOCATION cause, §19's standard policy (P2): IMPORTANT admits it, MENTIONS and a mute do not. Category
+ * `location`, so the privacy guard's Ghost Mode rule applies and the row is `sensitive`; the words never carry the place.
+ */
+const LOCATION_POLICY: KindPolicy = { cause: "LOCATION", eventType: LOCATION_NOTIFICATION_EVENT, sourceType: "thread_location", sourceIdIs: "thread" };
+/**
+ * §30A.5's ANNOUNCEMENT — "operational changes such as meeting-point changes, Trip instructions, and host notices" —
+ * is §19's P1 ("Meetup moved … Immediate/high priority"). §30A.6 has no ANNOUNCEMENT cause; COORDINATION is the
+ * operational one (IMPORTANT admits it). Each announcement is its own news, so none is coalesced into another.
+ */
+const ANNOUNCEMENT_POLICY: KindPolicy = { cause: "COORDINATION", eventType: ANNOUNCEMENT_NOTIFICATION_EVENT, sourceType: "thread_announcement", sourceIdIs: "message" };
+
+/** The policy a person's message is told under, or null when it is not one (a protocol row, a coordination write, a safety SIGNAL). */
+export function kindPolicyOf(row: { msgType: string | null | undefined; subtype?: string | null }): KindPolicy | null {
+  if (isNotifiableMessage(row)) return MESSAGE_POLICY;
+  if (row.msgType === "location") return LOCATION_POLICY;
+  if (row.msgType === "announcement") return ANNOUNCEMENT_POLICY;
+  return null;
+}
+
+/**
+ * A §6.2 SAFETY signal is the safety producer's: need_help and heads_up always (P0); an ALL CLEAR only when it ENDS a
+ * raised mode — read just before it — and otherwise it is an ordinary message. An unreadable mode is no evidence that
+ * anything ended, so it overrides no mute (the rule `senderRaisedSafetyEvent` follows).
+ */
+async function routeByKind(
+  sc: SupabaseClient,
+  input: MessageNotifyInput,
+  opts: { deps?: MessageNotifyDeps; log?: MessageNotifyLog; retryDelaysMs?: readonly number[] },
+): Promise<MessageNotifyOutcome> {
+  const signal = safetySignalOfRow(input);
+  const asSafety = async (): Promise<MessageNotifyOutcome> => ({
+    status: "delegated",
+    to: "safety",
+    outcome: await notifySafetySignal(sc, { threadId: input.threadId, senderId: input.senderId, messageId: input.messageId, signal: signal!, nowMs: input.nowMs }, opts),
+  });
+  if (signal === "need_help" || signal === "heads_up") return asSafety();
+  if (signal === "all_clear") {
+    const before = await readThreadSafetyMode(sc, input.threadId, input.nowMs, input.messageId);
+    if (before !== null && before.mode !== "NORMAL") return asSafety();
+    if (before === null) opts.log?.warn({ threadId: input.threadId }, "ALL CLEAR: the conversation's safety state is unreadable — told as an ordinary message (no mute is overridden without evidence)");
+    return tellMembers(sc, input, opts, MESSAGE_POLICY);
+  }
+  return tellMembers(sc, input, opts);
+}
+
+/**
+ * §13.1's command bus writes the SAME envelopes the route doors write (threadEnvelopeWrites.ts), so it tells the same
+ * people the same thing: NEED_HELP as SAFETY (P0), a §9.1 quick state as COORDINATION (census-telegraph T395), a
+ * SHARE_LOCATION as LOCATION. CREATE_DECISION tells nobody, as on the coordination route. Never throws.
+ */
+export function notifyEnvelopeCommandWrite(
+  sc: SupabaseClient,
+  input: { threadId: string; senderId: string; kind: string; payload: unknown; row: { id: unknown; created_at?: unknown } },
+  opts: { log?: MessageNotifyLog } = {},
+): void {
+  try {
+    const messageId = String(input.row.id);
+    const nowMs = Date.parse(String(input.row.created_at)) || Date.now();
+    if (isNeedHelpQuickState(input.kind, input.payload)) {
+      void notifySafetySignal(sc, { threadId: input.threadId, senderId: input.senderId, messageId, signal: "need_help", nowMs }, opts);
+      return;
+    }
+    const act = coordinationActOf(input.kind, input.payload);
+    if (act) {
+      void notifyCoordinationAct(sc, { threadId: input.threadId, actorId: input.senderId, act, messageId, nowMs }, opts);
+      return;
+    }
+    // A bus LOCATION is always the `location` row (threadEnvelopeWrites.ts); its precision subtype is not read here.
+    if (input.kind === "LOCATION") void notifyNewMessage(sc, { threadId: input.threadId, senderId: input.senderId, messageId, msgType: "location", nowMs }, opts);
+  } catch (err) {
+    opts.log?.warn({ err, threadId: input.threadId }, "envelope command notification threw (the message itself was written)");
+  }
 }

@@ -132,7 +132,7 @@ describe("T256 — the template is §19's P2, never the telegraph channel, and c
   });
 
   it("only a message a PERSON sent: text, media, voice and the app's cards — never protocol rows", () => {
-    for (const [msgType, subtype, want] of [["text", null, true], ["media", null, true], ["voice", null, true], ["system", "post_card", true], ["system", "meetup", true], ["system", "e2ee_welcome", false], ["system", null, false], ["coordination", null, false], ["location", null, false], ["gif", null, true], ["media_album", null, true], ["memory_note", null, true], ["portava_object", "place", true], ["safety", "need_help", false], ["action", "meet_here", false], ["announcement", null, false]] as const) {
+    for (const [msgType, subtype, want] of [["text", null, true], ["media", null, true], ["voice", null, true], ["system", "post_card", true], ["system", "meetup", true], ["system", "e2ee_welcome", false], ["system", null, false], ["coordination", null, false], ["location", null, false], ["gif", null, true], ["media_album", null, true], ["memory_note", null, true], ["portava_object", "place", true], ["safety", "need_help", false], ["safety", "heads_up", false], ["safety", "all_clear", false], ["safety", "check_in", true], ["action", "meet_here", true], ["announcement", null, false]] as const) { // wave 5 safety lane: an ACTION proposal and a check-in are messages; the safety SIGNALS and an announcement have their own causes
       assert.equal(isNotifiableMessage({ msgType, subtype }), want, `${msgType}/${subtype}`);
     }
   });

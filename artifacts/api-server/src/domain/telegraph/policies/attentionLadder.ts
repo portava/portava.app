@@ -171,23 +171,23 @@ export const EVENT_BAND: Readonly<Record<string, AttentionBand>> = dispatchTable
   "safe_return.missed": "P0_SAFETY",                // :255
   "safe_return.trusted_circle_alert": "P0_SAFETY",  // :264
   "safe_return.check_in_prompt": "P0_SAFETY",       // :682
-  "circle.need_help_host_alert": "P0_SAFETY",       // :986
+  "circle.need_help_host_alert": "P0_SAFETY", "telegraph.sos": "P0_SAFETY", // :986 · "telegraph.sos" is a conversation's help request or safety heads-up (services/telegraph/safetyNotifications.ts, wave 5)
 
   // P1 — §19's own three examples, each matched to the event that IS it:
   //   "meetup moved"  -> circle.meeting_point_updated  (the host moved it)
   //   "pickup"        -> trip.departure_reminder       (be somewhere, at a time)
   //   "return state"  -> safe_return.cleared           (they are back)
-  // Nothing else is claimed for P1 except §30A.6's COORDINATION cause (wave 5, below). An invite is not a plan changing under
+  // Nothing else is claimed for P1 except §30A.6's COORDINATION cause, a safety ALL CLEAR and an ANNOUNCEMENT (wave 5, below). An invite is not a plan changing under
   // someone who already made arrangements around it, which is the specific harm
   // a 30-minute swallow does here.
   "circle.meeting_point_updated": "P1_COORDINATION", // :974
   "trip.departure_reminder": "P1_COORDINATION",      // :640
-  "safe_return.cleared": "P1_COORDINATION", "telegraph.coordination": "P1_COORDINATION", // :271 · "telegraph.coordination" is §30A.6's own COORDINATION cause (census T395, wave 5)
+  "safe_return.cleared": "P1_COORDINATION", "telegraph.coordination": "P1_COORDINATION", "telegraph.safety_all_clear": "P1_COORDINATION", "telegraph.announcement": "P1_COORDINATION", // :271 · "telegraph.coordination" is §30A.6's own COORDINATION cause (census T395, wave 5) · the ALL CLEAR that ends a raised safety mode is §19's "return state" and an §30A.5 ANNOUNCEMENT is "meetup moved"-shaped operational news (wave 5 safety lane)
 
   // P2 — ordinary conversation. The window is 5 minutes, which is the window
   // telegraph.message already had; the point is that P1 above is now SHORTER
   // than this rather than four times longer.
-  "telegraph.message": "P2_MESSAGE",         // :215
+  "telegraph.message": "P2_MESSAGE", "telegraph.location": "P2_MESSAGE", // :215 · telegraph.location: §30A.6's LOCATION cause under §19's standard policy (wave 5 safety lane)
   "telegraph.message_request": "P2_MESSAGE", // :224
   "telegraph.mention": "P2_MESSAGE",         // :651
   "telegraph.reaction": "P2_MESSAGE",        // :660

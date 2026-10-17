@@ -283,7 +283,7 @@ router.post(
       return;
     }
 
-    const m = written.row; void notifyNewMessage(getServiceClient() ?? client, { threadId, senderId: user.id, messageId: String(m.id), msgType: m.msg_type, subtype: m.subtype ?? null, nowMs }, { log }); // census-telegraph T256: a GIF, an album or a Memory Note is a MESSAGE; the producer skips the kinds whose cause is not (LOCATION, SAFETY, ACTION, ANNOUNCEMENT)
+    const m = written.row; void notifyNewMessage(getServiceClient() ?? client, { threadId, senderId: user.id, messageId: String(m.id), msgType: m.msg_type, subtype: m.subtype ?? null, nowMs }, { log }); // census-telegraph T256 + wave 5 safety lane: each kind under its own cause — SAFETY need_help / heads_up as §19 P0 (safetyNotifications.ts), LOCATION, an ANNOUNCEMENT as COORDINATION (P1); a GIF, album, Memory Note, ACTION or check-in is a MESSAGE
     res.status(201).json({
       id: m.id,
       threadId: m.thread_id,

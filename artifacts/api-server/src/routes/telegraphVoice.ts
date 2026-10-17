@@ -376,7 +376,7 @@ router.post(
       clientId,
     });
 
-    void notifyNewMessage(getServiceClient() ?? client, { threadId, senderId: user.id, messageId: m.id, msgType: "voice", nowMs: Date.parse(now) || Date.now() }, { log }); /* census-telegraph T256: the voice door */ void publishMessageCreated(client, threadId, { // T154 (V-TR F1): the drainer owns message.created when fan-out is in force
+    void notifyNewMessage(getServiceClient() ?? client, { threadId, senderId: user.id, messageId: m.id, msgType: "voice", nowMs: Date.parse(now) }, { log }); /* census-telegraph T256: the voice door */ void publishMessageCreated(client, threadId, { // T154 (V-TR F1): the drainer owns message.created when fan-out is in force
       type: "message.created",
       payload: {
         messageId: m.id,

@@ -190,7 +190,7 @@ router.post(
       share: body,
     });
 
-    void notifyNewMessage(getServiceClient() ?? sc, { threadId, senderId: user.id, messageId: String(m.id), msgType: m.msg_type, subtype: m.subtype ?? null, nowMs: Date.parse(String(m.created_at)) || Date.now() }, { log }); /* census-telegraph T256: a share is a message */ void publishMessageCreated(sc, threadId, { // T154 (V-TR F1): the drainer owns message.created when fan-out is in force
+    void notifyNewMessage(getServiceClient() ?? sc, { threadId, senderId: user.id, messageId: String(m.id), msgType: m.msg_type, subtype: m.subtype ?? null, nowMs: Date.parse(now) }, { log }); /* census-telegraph T256: a share is a message */ void publishMessageCreated(sc, threadId, { // T154 (V-TR F1): the drainer owns message.created when fan-out is in force
       type: "message.created",
       payload: {
         messageId: m.id,

@@ -1228,6 +1228,57 @@ export const TEMPLATES: NotificationTemplate[] = [
     body: ({ meetupTitle, when }) => `${meetupTitle || 'Your meetup'}${when ? ` — ${when}` : ''}`,
     actionUrl: ({ meetupId }) => meetupId ? `/meetup/${meetupId}` : '/',
   }),
+
+  // ── Telegraph safety and kinds (wave 5 safety lane — census-telegraph T254/T395/T398) ──
+  // services/telegraph/safetyNotifications.ts and messageNotifications.ts decide who
+  // is told. Every word is FIXED: `signal` is one of SAFETY_SIGNAL_PHRASES, never the
+  // label, note or place the sender typed, and no announcement title or location
+  // label ever reaches a lock screen. Appended LAST, as the templates above were.
+  //
+  // §19 P0 "SOS, safety escalation — Interruptive". `urgent` is the one existing
+  // safety rule (quiet hours and push-off yield where the recipient's own
+  // safety_override is on), and the name carries `sos`, which NotificationRouter's
+  // Compass map reads as emergency_safety. Category `safe_return` is the safety
+  // category the circle need-help alert already uses.
+  tpl({
+    eventType: 'telegraph.sos',
+    category: 'safe_return',
+    defaultPriority: 'urgent',
+    defaultChannels: ['in_app', 'push'],
+    title: () => 'Safety alert',
+    body: ({ actor, signal }) => `${actor || 'Someone'} ${signal || 'raised a safety alert'}`,
+    actionUrl: ({ threadId }) => threadId ? `/messages/${threadId}` : '/messages',
+  }),
+  // §19 P1 "return state": the ALL CLEAR that ends a raised mode — safe_return.cleared's shape.
+  tpl({
+    eventType: 'telegraph.safety_all_clear',
+    category: 'safe_return',
+    defaultPriority: 'normal',
+    defaultChannels: ['in_app', 'push'],
+    title: () => 'All clear',
+    body: ({ actor }) => `${actor || 'Someone'} posted ALL CLEAR`,
+    actionUrl: ({ threadId }) => threadId ? `/messages/${threadId}` : '/messages',
+  }),
+  // §30A.6 LOCATION, §19 P2. Category `location`: the privacy guard's Ghost Mode rule applies.
+  tpl({
+    eventType: 'telegraph.location',
+    category: 'location',
+    defaultPriority: 'important',
+    defaultChannels: ['in_app', 'push'],
+    title: ({ actor }) => `${actor || 'Someone'}`,
+    body: () => 'Shared a location',
+    actionUrl: ({ threadId }) => threadId ? `/messages/${threadId}` : '/messages',
+  }),
+  // §30A.5 ANNOUNCEMENT as §30A.6 COORDINATION, §19 P1.
+  tpl({
+    eventType: 'telegraph.announcement',
+    category: 'telegraph',
+    defaultPriority: 'important',
+    defaultChannels: ['in_app', 'push'],
+    title: ({ actor }) => `${actor || 'Someone'}`,
+    body: () => 'Posted an announcement',
+    actionUrl: ({ threadId }) => threadId ? `/messages/${threadId}` : '/messages',
+  }),
 ];
 
 const TEMPLATE_MAP = new Map<string, NotificationTemplate>(

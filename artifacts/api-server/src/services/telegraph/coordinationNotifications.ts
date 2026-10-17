@@ -20,7 +20,7 @@
  *   - a §9.1 quick state declared (ON_MY_WAY, ARRIVED, RUNNING_LATE,
  *     CANT_MAKE_IT, START_WITHOUT_ME, HEADING_BACK).
  * NEED_HELP is NOT this cause: it is SAFETY (§30A.6, §19 P0), and filing it as
- * coordination would let a thread mute silence it. It is not produced here.
+ * coordination would let a thread mute silence it. It is not produced here: safetyNotifications.ts produces it, as P0.
  * Transitions, votes, decisions and the rest are not "pickup, return state" and
  * are not produced either: §19 names three examples and this cause takes the two
  * a conversation itself states.

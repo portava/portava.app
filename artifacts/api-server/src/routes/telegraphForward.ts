@@ -32,7 +32,7 @@ import { asyncHandler } from "../lib/asyncHandler.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { guardTelegraphThreadWrite, sendThreadWriteRefusal } from "../lib/telegraphThreadWrite.js";
-import { publishToThread } from "../lib/telegraphEvents.js";
+import { publishToThread } from "../lib/telegraphEvents.js"; import { notifyNewMessage } from "../services/telegraph/messageNotifications.js"; // census-telegraph T256 (wave 5 safety lane)
 import { logger as rootLogger } from "../lib/logger.js";
 import { historyBoundEnabled, visibleFromOf, withinWindow } from "../services/groupChatHistoryBound.js";
 import { parsePortavaObjectBody, shareableFor } from "../services/telegraph/shareables.js";
@@ -240,7 +240,7 @@ router.post(
     });
 
     // The realtime payload is the target thread's own facts — nothing about the source.
-    void publishToThread(sc, threadId, {
+    void notifyNewMessage(sc, { threadId, senderId: user.id, messageId, msgType: decision.msgType, subtype: decision.subtype, nowMs: Date.parse(createdAt) || Date.now() }, { log }); /* census-telegraph T256 (wave 5 safety lane): a forward is a message the forwarder sent — reachable only with telegraph_forwarding_enabled ON (refused above while off) */ void publishToThread(sc, threadId, {
       type: "message.created",
       payload: { messageId, senderId: user.id, msgType: decision.msgType, subtype: decision.subtype, createdAt },
     });
