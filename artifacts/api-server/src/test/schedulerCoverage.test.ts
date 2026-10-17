@@ -122,7 +122,7 @@ describe("what the coverage count says", () => {
    * fails because a scheduler gained health reporting, that is good news and
    * the number moves DOWN; update it and say so.
    */
-  it("pins today's real coverage: 64 started, 17 reported, 10 durable, 45 invisible", () => {
+  it("pins today's real coverage: 65 started, 18 reported, 11 durable, 45 invisible", () => {
     const cov = schedulerCoverage();
     // 59 -> 60 and 12 -> 13 on 2026-10-07 (lane R, census-layover L163):
     // startLayoverAuditRetentionScheduler deletes pseudonymised layover_events
@@ -137,15 +137,15 @@ describe("what the coverage count says", () => {
     // was added. 60 -> 61, 13 -> 14 and 6 -> 7 the same way at the merge of lane H with lane R (census-highlights-memories §AV): startMemoryDeletionRedriveScheduler reports AND writes job_health, so 45 holds.
     // 61 -> 62, 14 -> 15 and 7 -> 8 the same way on 2026-10-10 (lane H-REST, census H157): startHighlightExpiryEventScheduler reports AND writes job_health, so 45 holds. 62 -> 63, 15 -> 16 and 8 -> 9 the same way at the merge of lane T-REL (census-telegraph T154, 3655): startTelegraphOutboxDrainScheduler reports as `telegraphOutboxDrain` AND writes that job_health row, so 45 holds.
     // 63 -> 64 and 16 -> 17 with lane T-REL (census-telegraph T223, 3656): startMessageMediaPartsSweepScheduler reports to /healthz/schedulers as `messageMediaPartsSweep` and writes no job_health row, so 9 durable and 45 invisible hold.
-    assert.equal(cov.started, 64);
-    assert.equal(cov.reported, 17);
+    assert.equal(cov.started, 65); // 64 -> 65, 17 -> 18 and 10 -> 11 with the Telegraph safety re-drive (Fable pass 3 §1.1): startSafetySignalRedriveScheduler reports as `safetySignalRedrive` AND writes that job_health row, so 45 holds
+    assert.equal(cov.reported, 18);
     // Moved DOWN on 2026-10-03: startHealthMonitorLoop now writes its own
     // `stamp_health_monitor` job_health row, so the stamp health monitor is no
     // longer one of the jobs whose stopping leaves no trace. 4 durable -> 5,
     // 46 invisible -> 45.
-    assert.equal(cov.persisted, 10); // 9 -> 10 at the merge of main (63 / 16 / 9 / 45) with lane L-DATA (census-layover L261): startLayoverAuditRetentionScheduler, already reported, also writes job_health for its snapshot-compaction phase; no scheduler gained or lost a trace, so 45 holds
+    assert.equal(cov.persisted, 11); // 9 -> 10 at the merge of main (63 / 16 / 9 / 45) with lane L-DATA (census-layover L261): startLayoverAuditRetentionScheduler, already reported, also writes job_health for its snapshot-compaction phase; no scheduler gained or lost a trace, so 45 holds
     assert.equal(cov.unobservable.length, 45);
-    assert.equal(cov.started, cov.unobservable.length + 19, "17 reported + 10 durable overlap on 8 rows");
+    assert.equal(cov.started, cov.unobservable.length + 20, "18 reported + 11 durable overlap on 9 rows");
   });
 
   /**

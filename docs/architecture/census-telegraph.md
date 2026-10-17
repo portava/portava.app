@@ -15562,3 +15562,43 @@ Built by the wave-5 T220 lane and appended by the lead. APPEND-ONLY.
 Headline unchanged: **451 = 272 C / 176 W / 1 N / 2 X**.
 
 Also recorded (independent verification, pass 3 wording): W5P.1's "main's golden is untouched" means the golden was generated from main's router and that commit did not change it.
+
+### Correction (2026-10-17, wave 5) — T254: a help request is re-driven, not dropped; owner ruling on archived conversations
+
+**Durable re-drive (independent verification, pass 3).** Correction to W5S.1's T254 evidence (and W5P.1's 'its producer … as W5S.1 states'): when the roster or blocks
+read failed, the producer retried for ~1.25 s (250 ms + 1 s) and then DROPPED the help request's notification for
+good (ERROR-logged, never re-attempted) — Fable pass 3 §1.1. It is now re-driven durably for 15 minutes:
+- An unreadable roster or blocks read still tells nobody at that moment.
+- The help request is re-attempted from the stored message at 10 s, 30 s, 1, 2, 4, 8 and 15 minutes, every gate
+  re-read: the message (unsent or deleted means nobody), the members (left or joined after means not told), the
+  blocks, and who already holds it by causal id MESSAGE:<id> (never twice). Then it gives up at ERROR
+  (`artifacts/api-server/src/services/telegraph/safetyNotifications.ts:442#export async function redriveSafetySignal(`,
+  `artifacts/api-server/src/lib/safetySignalRedriveScheduler.ts:96#export async function runSafetySignalRedrivePass(`).
+- A help request already answered by a later ALL CLEAR is not sent late
+  (`artifacts/api-server/src/services/telegraph/safetyNotifications.ts:527#} else if (later.some((s) => s.kind === "all_clear")) {`).
+- It needs no table: the message and the notification rows are the durable record, and a second node process
+  handed only the database delivers
+  (`artifacts/api-server/src/test/telegraphSafetySignalRedrive.test.ts:506#describe("survives a process restart`,
+  `artifacts/api-server/src/test/telegraphSafetySignalRedrive.test.ts:441#describe("bounded: seven attempts`,
+  `artifacts/api-server/src/test/telegraphSafetySignalRedrive.test.ts:219#describe("never told twice`).
+- Residual: two instances re-driving the same message within ~100 ms can tell a member twice. Closing it needs a
+  unique index (a migration).
+
+**Owner ruling (2026-10-17).** Owner ruling 2026-10-17: a help request is not routed to a member who archived the conversation.
+- Archive in Telegraph is per member (message_thread_members.archived_at).
+- A §6.2 need_help / heads_up or §9.1 NEED_HELP (telegraph.sos) skips such a member at the door
+  (`artifacts/api-server/src/services/telegraph/safetyNotifications.ts:214#const archived = archivedRecipients(roster.value`)
+  and on every durable re-drive attempt
+  (`artifacts/api-server/src/services/telegraph/safetyNotifications.ts:478#withheld.push(...archivedWithheld(archived))`).
+- The message stays in the history, delivered requests are untouched, and the next request after unarchiving
+  routes normally
+  (`artifacts/api-server/src/test/telegraphSafetySignalRedrive.test.ts:534#describe("owner ruling 2026-10-17`).
+- An unreadable archive state is an unreadable roster (one statement): nobody is told at that moment, and it is
+  re-driven for 15 minutes.
+- Ordinary messages (T256) and the ALL CLEAR are unchanged.
+- OPEN: the ruling's 'allow users to unarchive' has no implementation. Nothing clears archived_at, there is no
+  route or client action, and the only archiver is Rent-a-Buddy booking completion. Until one is built, an
+  archived member cannot be routed help requests in that thread again.
+T254's grade (interruptiveness) is unchanged. (The lead has started building unarchive, as the ruling asks.)
+
+W5P.1's 'main's golden is untouched' means: the golden was generated from main's router and this commit did not change it.

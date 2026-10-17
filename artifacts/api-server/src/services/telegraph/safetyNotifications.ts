@@ -33,7 +33,7 @@
  *   ordinary message and messageNotifications.ts tells it.
  *
  * ── WHO IS TOLD ─────────────────────────────────────────────────────────────
- *   1. The conversation's other ACTIVE members. Never the sender.
+ *   1. The conversation's other ACTIVE members. Never the sender. For a help request, never one who ARCHIVED it (owner ruling, file foot).
  *   2. Minus a block EITHER way. The spec carves out no exception for safety
  *      (§15.3, §27.1, §28), so a blocked pair is not told.
  *   3. NOT the member's thread choice. SAFETY is governed by the safety policy,
@@ -59,14 +59,14 @@
  *     need-help alert passes none either). The notification carries no place.
  *
  * ── WHEN A READ FAILS ───────────────────────────────────────────────────────
- *   roster  — retried; then nobody can be named: refused, logged at ERROR.
- *   blocks  — retried; then refused (nobody told), logged at ERROR. Telling
+ *   roster  — retried; then nobody can be named NOW: refused, ERROR-logged.
+ *   blocks  — retried; then refused (nobody told NOW), ERROR-logged. Telling
  *             everyone on an unknown block state would break §27.1's invariant
  *             and §28's zero, which the spec states without exception, and a
  *             help request reaching the person the asker blocked is the one
- *             delivery that can make things worse. The message itself is
- *             written and in the thread (§17.4: push is the wakeup, not the
- *             record). Recorded for the owner.
+ *             delivery that can make things worse. NOT DROPPED: the re-drive
+ *             at the file foot re-attempts it for 15 minutes from the stored
+ *             message, every gate re-read, once per member (Fable pass 3 §1.1).
  *   thread choices — not read (above).
  *   notification preferences — the router delivers `urgent` regardless
  *             (NotificationRouter.route), unchanged.
@@ -86,7 +86,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { isExcluded, readBlockExclusions, type ExclusionSet } from "../../lib/exclusionSet.js";
-import { actorLabel } from "./coordinationNotifications.js";
+import { actorLabel } from "./coordinationNotifications.js"; import { projectSafetyMode, readSafetySignals, type SafetyInputRow } from "./safetyMode.js"; // the re-drive's "is it still open?" (file foot)
 import type { CreateNotificationInput, NotificationRow } from "../notifications/NotificationService.js";
 import { causalEventIdOf } from "../notifications/NotificationDeduplicationService.js";
 
@@ -186,12 +186,12 @@ export async function notifySafetySignal(
   input: SafetyNotifyInput,
   opts: { deps?: SafetyNotifyDeps; log?: SafetyNotifyLog; retryDelaysMs?: readonly number[] } = {},
 ): Promise<SafetyNotifyOutcome> {
-  try {
-    return await tellConversation(sc, input, opts);
-  } catch (err) {
-    loud(opts.log, { err, threadId: input.threadId, signal: input.signal }, "SAFETY notification threw before anyone was told — the help request is in the thread but reached nobody by notification");
-    return { status: "refused", stage: "threw" };
-  }
+  // While this door is telling the message the re-drive (file foot) leaves it alone; a door that told everyone settles it.
+  const door = redriveEntry(input.messageId, input.nowMs); door.inFlight += 1; let outcome: SafetyNotifyOutcome = { status: "refused", stage: "threw" };
+  try { outcome = await tellConversation(sc, input, opts); return outcome; } catch (err) {
+    loud(opts.log, { err, threadId: input.threadId, signal: input.signal }, "SAFETY notification threw before anyone was told — the help request is in the thread and the durable re-drive re-attempts it");
+    return outcome;
+  } finally { door.inFlight -= 1; if (doorToldEveryone(outcome)) door.settled = true; }
 }
 
 async function tellConversation(
@@ -202,18 +202,18 @@ async function tellConversation(
   const { threadId, senderId, messageId, signal } = input;
   const delays = opts.retryDelaysMs ?? SAFETY_READ_RETRY_DELAYS_MS;
 
-  // 1. The other active members. Never the sender. Retried; unknown names nobody.
+  // 1. The other active members (and who archived it: same read, same snapshot). Never the sender. Retried; unknown names nobody.
   const roster = await retried(delays, async () => {
-    const { data, error } = await sc.from("message_thread_members").select("user_id").eq("thread_id", threadId).is("left_at", null);
-    return error || !Array.isArray(data) ? null : (data as Array<{ user_id: unknown }>);
+    const { data, error } = await sc.from("message_thread_members").select("user_id, archived_at").eq("thread_id", threadId).is("left_at", null);
+    return error || !Array.isArray(data) ? null : (data as Array<{ user_id: unknown; archived_at?: unknown }>);
   });
   if (roster.value === null) {
-    loud(opts.log, { threadId, signal, attempts: roster.attempts }, "SAFETY notification REFUSED: the conversation's members could not be read — the help request reached NOBODY by notification");
+    loud(opts.log, { threadId, signal, attempts: roster.attempts }, "SAFETY notification REFUSED: the conversation's members could not be read — the help request reached NOBODY by notification yet; the durable re-drive re-attempts it for 15 minutes");
     return { status: "refused", stage: "roster" };
   }
-  const others = [...new Set(roster.value.map((r) => String(r.user_id ?? "")).filter((id) => id.length > 0 && id !== senderId))];
+  const archived = archivedRecipients(roster.value, senderId, signal); const others = [...new Set(roster.value.map((r) => String(r.user_id ?? "")).filter((id) => id.length > 0 && id !== senderId && !archived.has(id)))];
   const eventType = signal === "all_clear" ? SAFETY_ALL_CLEAR_EVENT : SAFETY_ALERT_EVENT;
-  if (others.length === 0) return { status: "notified", signal, eventType, notified: [], withheld: [] };
+  if (others.length === 0) return { status: "notified", signal, eventType, notified: [], withheld: archivedWithheld(archived) };
 
   // 2. Nobody in a block with the sender, either way. Retried; unknown tells nobody (header).
   const blocks = await retried<ExclusionSet>(delays, async () => {
@@ -221,10 +221,10 @@ async function tellConversation(
     return b.ok ? b : null;
   });
   if (blocks.value === null) {
-    loud(opts.log, { threadId, signal, attempts: blocks.attempts }, "SAFETY notification REFUSED: block state unknown — telling everyone could reach a blocked person (§27.1), so it reached NOBODY by notification");
+    loud(opts.log, { threadId, signal, attempts: blocks.attempts }, "SAFETY notification REFUSED: block state unknown — telling everyone could reach a blocked person (§27.1), so it reached NOBODY by notification yet; the durable re-drive re-attempts it for 15 minutes");
     return { status: "refused", stage: "blocks" };
   }
-  const withheld: Array<{ userId: string; reason: string }> = [];
+  const withheld: Array<{ userId: string; reason: string }> = archivedWithheld(archived);
   const deliverTo = others.filter((id) => {
     if (!isExcluded(blocks.value!, id)) return true;
     withheld.push({ userId: id, reason: "blocked" });
@@ -236,11 +236,31 @@ async function tellConversation(
   // The name is decoration: a failure to read it names "Someone", it never stops the alert.
   const actor = await actorLabel(sc, senderId).catch(() => "Someone");
   const deps = opts.deps ?? (await defaultDeps(sc));
+  const told = await deliverSafetySignal(deps, { threadId, senderId, messageId, signal, eventType, actor }, deliverTo, opts.log);
+  return { status: "notified", signal, eventType, notified: told.notified, withheld: [...withheld, ...told.withheld] };
+}
+
+/**
+ * One notification per member, each on its own: one member's failure stops nobody else. The causal event
+ * (`MESSAGE:<id>`) is persisted on every row (metadata.causal_event_id) — it is what the re-drive below reads to
+ * tell each member at most once. `withheld` here is `not_created` (the service declined or the insert failed) or
+ * `failed` (it threw); the re-drive re-attempts both. A failed ROUTE is not withheld: the row exists, the member
+ * is told in-app, and repeating the push is the router's push-retry job, not this producer's.
+ */
+async function deliverSafetySignal(
+  deps: SafetyNotifyDeps,
+  m: { threadId: string; senderId: string; messageId: string; signal: SafetySignal; eventType: typeof SAFETY_ALERT_EVENT | typeof SAFETY_ALL_CLEAR_EVENT; actor: string },
+  deliverTo: readonly string[],
+  log: SafetyNotifyLog | undefined,
+): Promise<{ notified: string[]; withheld: Array<{ userId: string; reason: string }> }> {
+  const { threadId, senderId, messageId, signal, eventType, actor } = m;
   const causalEventId = causalEventIdOf({ objectType: "MESSAGE", objectId: messageId }) ?? undefined;
   const notified: string[] = [];
+  const withheld: Array<{ userId: string; reason: string }> = [];
   await Promise.all(deliverTo.map(async (userId) => {
+    let row: NotificationRow | null;
     try {
-      const row = await deps.create({
+      row = await deps.create({
         userId,
         eventType,
         actorId: senderId,
@@ -251,16 +271,326 @@ async function tellConversation(
         metadata: { cause: "SAFETY", signal },
         ...(causalEventId ? { causalEventId } : {}),
       });
-      if (!row) {
-        withheld.push({ userId, reason: "not_created" });
-        loud(opts.log, { threadId, signal, userId }, "SAFETY notification not created for one member (privacy guard, ledger or insert)");
-        return;
-      }
-      notified.push(userId);
+    } catch (err) {
+      withheld.push({ userId, reason: "failed" });
+      loud(log, { err, threadId, signal, userId }, "SAFETY notification failed for one member (the help request itself was written)");
+      return;
+    }
+    if (!row) {
+      withheld.push({ userId, reason: "not_created" });
+      loud(log, { threadId, signal, userId }, "SAFETY notification not created for one member (privacy guard, ledger or insert)");
+      return;
+    }
+    notified.push(userId);
+    try {
       await deps.route(row);
     } catch (err) {
-      loud(opts.log, { err, threadId, signal, userId }, "SAFETY notification failed for one member (the help request itself was written)");
+      loud(log, { err, threadId, signal, userId }, "SAFETY notification failed for one member (the help request itself was written)");
     }
   }));
-  return { status: "notified", signal, eventType, notified, withheld };
+  return { notified, withheld };
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// THE DURABLE RE-DRIVE — Fable pass 3 §1.1: "do not lose the help request"
+// ═════════════════════════════════════════════════════════════════════════════
+/**
+ * THE DEFECT. The door retries an unreadable roster or blocks read for ~1.25 s
+ * (250 ms + 1 s) and then refuses. Before this, the refusal was the end: an
+ * outage longer than that (a PostgREST restart, a pooler hiccup) lost that
+ * help request's notification for good — loud in the log, but nobody woken.
+ *
+ * THE RULE KEPT. An unreadable roster or blocks read still tells nobody AT
+ * THAT MOMENT (§27.1 / §28 are unconditional; header). What changes is that
+ * the moment is not the last one.
+ *
+ * WHAT IS DURABLE, AND WHY NO TABLE. No production-present queue can carry
+ * this (the handback lists what was checked: push_retry_queue is keyed on an
+ * EXISTING notification, the journey / stamp / place / outbox queues are each
+ * one domain's, scheduler_watermarks and telegraph_outbox are not applied in
+ * production, and the 3000-3999 band is exhausted). It needs none: the help
+ * request IS a durable row — public.messages, written in the door's own
+ * transaction before any of this runs — and who has been told IS a durable
+ * row too — public.notifications, each carrying metadata.causal_event_id =
+ * `MESSAGE:<id>`. So the job is "a §6.2/§9.1 safety row from the last 15
+ * minutes that some eligible member holds no notification for", and
+ * lib/safetySignalRedriveScheduler.ts derives it from those two tables on
+ * every pass. A restart loses only the in-process memo below (which attempt
+ * is next; which messages are already settled) — the next pass on ANY
+ * instance re-derives the work from the database and makes one catch-up
+ * attempt for each message still inside the window.
+ *
+ * THE SCHEDULE. The door's own attempt (with its two quick retries) is the
+ * first; then one attempt as each age in SAFETY_REDRIVE_SCHEDULE_MS passes —
+ * 10 s, 30 s, 1, 2, 4, 8 and 15 minutes: seven re-drives, doubling back-off,
+ * bounded. Points a pass missed (a slow pass, a restart) collapse into ONE
+ * attempt, never a burst. After the 15-minute attempt fails the re-drive
+ * gives up and says so at ERROR, naming the message.
+ *
+ * EVERY ATTEMPT RE-READS EVERY GATE, from the database, in this order:
+ *   1. the message — unsent or deleted since (both set deleted_at): nobody;
+ *   2. the members NOW — a member who left since is not told; nor is anyone
+ *      whose membership began AFTER the message (joined_at / §14.3's
+ *      visible_from_at): the door could not have told them, so a late
+ *      delivery must not widen its audience;
+ *   3. the blocks NOW, both ways — a block made since is honoured; unknown
+ *      tells nobody this attempt (the door's rule);
+ *   4. who already HAS it — any notification to them with this causal id,
+ *      whoever wrote it (the door, an earlier attempt, another instance);
+ *      unknown tells nobody this attempt. This is "never told twice";
+ *   5. only if someone is still untold: is it still OPEN (below).
+ *
+ * A RAISED MODE THAT ENDED MEANWHILE — decided from the spec and the safety
+ * lane's handback, and stated: a help request or heads-up that an ALL CLEAR
+ * posted AFTER it has already answered is NOT sent late. §17.4 makes push the
+ * wakeup, not the record — the message is in the thread either way — and
+ * §19's P0 is "Interruptive": an urgent "Safety alert: asked for help" that
+ * arrives after (or beside) "posted ALL CLEAR" reads as a NEW emergency and
+ * would wake people through quiet hours for one that is over. safetyMode.ts
+ * rule 1 (an EVENT ends only by an explicit ALL CLEAR) is what makes that
+ * ALL CLEAR the evidence. A LATER, separate help request does not count: it
+ * is its own message with its own delivery. Symmetrically, an ALL CLEAR is
+ * re-driven only while it still ends something (the §15.2 mode just before
+ * it was raised — the door's own test) and no NEW help request or heads-up
+ * came after it: a late "ALL CLEAR" landing after a fresh SOS would read as
+ * clearing that one.
+ *
+ * WHAT IT DOES NOT CLOSE (stated for the owner, in the handback too):
+ *   - Two instances due on the same message within the same ~100 ms can both
+ *     find a member untold and both tell them. Closing that needs a unique
+ *     index on (user_id, metadata->>causal_event_id) or a claim row — a
+ *     migration, and none is available.
+ *   - The loop is an in-process timer like every scheduler here: no process
+ *     running at all (autoscale with no instance up) means no attempt until
+ *     one starts; a gap past 15 minutes forfeits the remaining attempts and
+ *     the give-up ERROR (no pass saw the last point).
+ */
+export const SAFETY_REDRIVE_SCHEDULE_MS: readonly number[] = [10_000, 30_000, 60_000, 120_000, 240_000, 480_000, 900_000];
+/** The re-drive's deadline: the last scheduled attempt (15 minutes after the message). */
+export const SAFETY_REDRIVE_WINDOW_MS: number = SAFETY_REDRIVE_SCHEDULE_MS[SAFETY_REDRIVE_SCHEDULE_MS.length - 1]!;
+/** The stored subtypes of the rows this producer tells (§6.2 SAFETY's kinds; §9.1's NEED_HELP, lower-cased by coordination.ts). */
+export const SAFETY_REDRIVE_SUBTYPES: readonly string[] = ["need_help", "heads_up", "all_clear"];
+/** The §15.2 read's bound — messageNotifications.ts SAFETY_SCAN_LIMIT's value (not imported: that module imports this one). */
+const SAFETY_REDRIVE_MODE_SCAN_LIMIT = 400;
+/** `.in()` chunk for the "already told" read, the block reader's own chunk size (lib/exclusionSet.ts). */
+const TOLD_CHUNK = 100;
+
+/** In-process only, and only an optimisation: which messages need no further attempt, which is next, and which a door is still telling. */
+export interface SafetyRedriveEntry { createdMs: number; next: number; settled: boolean; inFlight: number }
+const _redrive = new Map<string, SafetyRedriveEntry>();
+const REDRIVE_MEMO_CAP = 5_000;
+
+/** The memo entry for one message, created on first use. */
+export function redriveEntry(messageId: string, createdMs: number): SafetyRedriveEntry {
+  let e = _redrive.get(messageId);
+  if (!e) {
+    if (_redrive.size >= REDRIVE_MEMO_CAP) pruneSafetyRedriveMemo(createdMs - SAFETY_REDRIVE_WINDOW_MS);
+    e = { createdMs, next: 0, settled: false, inFlight: 0 };
+    _redrive.set(messageId, e);
+  }
+  return e;
+}
+
+/** Forget every idle entry for a message created before `beforeMs` (the pass prunes what has left its window). */
+export function pruneSafetyRedriveMemo(beforeMs: number): void {
+  for (const [id, e] of _redrive) if (e.inFlight === 0 && e.createdMs < beforeMs) _redrive.delete(id);
+}
+
+/** Test seam: what a process restart does to the re-drive — every in-process memo gone, the database untouched. */
+export function _resetSafetyRedriveMemo(): void {
+  _redrive.clear();
+}
+
+/** A door that told every member it could (blocked and, for a help request, archived ones excepted) leaves nothing for the re-drive. */
+function doorToldEveryone(o: SafetyNotifyOutcome): boolean {
+  return o.status === "notified" && o.withheld.every((w) => w.reason === "blocked" || w.reason === "archived");
+}
+
+/** The signal a STORED row carries: a §6.2 SAFETY row's kind, or §9.1's NEED_HELP (coordination.ts stores the state lower-cased as the subtype). */
+export function storedSafetySignalOf(m: { msg_type?: unknown; subtype?: unknown }): SafetySignal | null {
+  const msgType = typeof m.msg_type === "string" ? m.msg_type : null;
+  const subtype = typeof m.subtype === "string" ? m.subtype : null;
+  if (msgType === "coordination") return subtype === "need_help" ? "need_help" : null;
+  return safetySignalOfRow({ msgType, subtype });
+}
+
+const msOf = (v: unknown): number => {
+  const t = typeof v === "string" && v.length > 0 ? Date.parse(v) : Number.NaN;
+  return Number.isFinite(t) ? t : Number.NEGATIVE_INFINITY;
+};
+
+export type SafetyRedriveStage = "message" | "roster" | "blocks" | "told" | "mode" | "deliver" | "threw";
+export type SafetyRedriveSettledReason = "complete" | "message_absent" | "not_a_signal" | "cleared" | "superseded" | "ends_nothing";
+export type SafetyRedriveOutcome =
+  | {
+      readonly status: "settled";
+      readonly reason: SafetyRedriveSettledReason;
+      readonly threadId: string | null;
+      readonly signal: SafetySignal | null;
+      /** Told by THIS attempt (not those who already had it). */
+      readonly notified: string[];
+      readonly withheld: Array<{ userId: string; reason: string }>;
+    }
+  | { readonly status: "retry"; readonly stage: SafetyRedriveStage; readonly threadId: string | null; readonly signal: SafetySignal | null; readonly notified: string[] };
+
+/**
+ * ONE re-drive attempt for one stored message. NEVER rejects. `settled` = no
+ * further attempt is needed (everyone eligible holds it, or it must not go);
+ * `retry` = a gate could not be read or a member could not be written — the
+ * caller (lib/safetySignalRedriveScheduler.ts) decides when, and when to stop.
+ */
+export async function redriveSafetySignal(
+  sc: SupabaseClient,
+  messageId: string,
+  opts: { deps?: SafetyNotifyDeps; log?: SafetyNotifyLog } = {},
+): Promise<SafetyRedriveOutcome> {
+  try {
+    return await redriveOnce(sc, messageId, opts);
+  } catch (err) {
+    opts.log?.warn({ err, messageId }, "SAFETY re-drive attempt threw — re-attempted at the next due point");
+    return { status: "retry", stage: "threw", threadId: null, signal: null, notified: [] };
+  }
+}
+
+async function redriveOnce(sc: SupabaseClient, messageId: string, opts: { deps?: SafetyNotifyDeps; log?: SafetyNotifyLog }): Promise<SafetyRedriveOutcome> {
+  let threadId: string | null = null;
+  let signal: SafetySignal | null = null;
+  const withheld: Array<{ userId: string; reason: string }> = [];
+  const retry = (stage: SafetyRedriveStage, notified: string[] = []): SafetyRedriveOutcome => ({ status: "retry", stage, threadId, signal, notified });
+  const settle = (reason: SafetyRedriveSettledReason, notified: string[] = []): SafetyRedriveOutcome => ({ status: "settled", reason, threadId, signal, notified, withheld });
+
+  // 1. The message, re-read. Unsent or deleted since (both set deleted_at): it is not in the thread, nobody is told.
+  const { data: m, error: mErr } = await sc.from("messages").select("id, thread_id, sender_id, created_at, deleted_at, msg_type, subtype").eq("id", messageId).maybeSingle();
+  if (mErr) return retry("message");
+  if (!m || (m as { deleted_at?: unknown }).deleted_at != null) return settle("message_absent");
+  const row = m as { thread_id?: unknown; sender_id?: unknown; created_at?: unknown; msg_type?: unknown; subtype?: unknown };
+  signal = storedSafetySignalOf(row);
+  threadId = typeof row.thread_id === "string" && row.thread_id.length > 0 ? row.thread_id : null;
+  const senderId = typeof row.sender_id === "string" && row.sender_id.length > 0 ? row.sender_id : null;
+  const atMs = msOf(row.created_at);
+  if (signal === null || threadId === null || senderId === null || !Number.isFinite(atMs)) return settle("not_a_signal");
+
+  // 2. The members NOW, never the sender. A member who left since is not told; nor, for a help request, one who has
+  //    archived it (owner ruling, below); nor anyone whose membership began after the message (the door could not have told them).
+  const { data: roster, error: rErr } = await sc.from("message_thread_members").select("user_id, joined_at, visible_from_at, archived_at").eq("thread_id", threadId).is("left_at", null);
+  if (rErr || !Array.isArray(roster)) return retry("roster");
+  const archived = archivedRecipients(roster as Array<{ user_id?: unknown; archived_at?: unknown }>, senderId, signal);
+  withheld.push(...archivedWithheld(archived)); // archived NOW: an archive made during the window is honoured
+  const others: string[] = [];
+  for (const r of roster as Array<{ user_id?: unknown; joined_at?: unknown; visible_from_at?: unknown }>) {
+    const id = String(r?.user_id ?? "");
+    if (id.length === 0 || id === senderId || others.includes(id) || withheld.some((w) => w.userId === id)) continue;
+    if (Math.max(msOf(r.joined_at), msOf(r.visible_from_at)) > atMs) { withheld.push({ userId: id, reason: "joined_after" }); continue; }
+    others.push(id);
+  }
+  if (others.length === 0) return settle("complete");
+
+  // 3. The blocks NOW, both ways: a block made since is honoured. Unknown tells nobody this attempt (the door's rule).
+  const blocks = await readBlockExclusions(sc, senderId, { among: others });
+  if (!blocks.ok) return retry("blocks");
+  const eligible = others.filter((id) => {
+    if (!isExcluded(blocks, id)) return true;
+    withheld.push({ userId: id, reason: "blocked" });
+    return false;
+  });
+  if (eligible.length === 0) return settle("complete");
+
+  // 4. Who already HAS it: a notification carrying this message's causal id, whoever wrote it. Unknown tells nobody
+  //    this attempt — never twice.
+  const causal = causalEventIdOf({ objectType: "MESSAGE", objectId: messageId });
+  if (causal === null) return retry("told");
+  const told = new Set<string>();
+  for (let i = 0; i < eligible.length; i += TOLD_CHUNK) {
+    const { data, error } = await sc.from("notifications").select("user_id").in("user_id", eligible.slice(i, i + TOLD_CHUNK)).eq("metadata->>causal_event_id", causal);
+    if (error || !Array.isArray(data)) return retry("told");
+    for (const t of data as Array<{ user_id?: unknown }>) told.add(String(t?.user_id ?? ""));
+  }
+  const untold = eligible.filter((id) => !told.has(id));
+  if (untold.length === 0) return settle("complete");
+
+  // 5. Still open? Read only when someone is untold (most re-checks end at 4): the thread's own §15.2 signal rows.
+  const { data: rows, error: modeErr } = await sc
+    .from("messages")
+    .select("id, sender_id, created_at, deleted_at, msg_type, subtype, body")
+    .eq("thread_id", threadId)
+    .in("msg_type", ["safety", "coordination"])
+    .is("deleted_at", null)
+    .order("created_at", { ascending: false })
+    .limit(SAFETY_REDRIVE_MODE_SCAN_LIMIT);
+  if (modeErr || !Array.isArray(rows)) return retry("mode");
+  const signalRows = (rows as SafetyInputRow[]).filter((r) => r.id !== messageId);
+  const later = readSafetySignals(signalRows).filter((s) => msOf(s.at) > atMs);
+  if (signal === "all_clear") {
+    const before = projectSafetyMode({ threadId, rows: signalRows.filter((r) => msOf(r.created_at) <= atMs), nowMs: atMs });
+    if (before.mode === "NORMAL") return settle("ends_nothing");
+    if (later.some((s) => s.raises !== null)) return settle("superseded");
+  } else if (later.some((s) => s.kind === "all_clear")) {
+    return settle("cleared");
+  }
+
+  // 6. Tell the rest, exactly as the door would have.
+  const actor = await actorLabel(sc, senderId).catch(() => "Someone");
+  const deps = opts.deps ?? (await defaultDeps(sc));
+  const eventType = signal === "all_clear" ? SAFETY_ALL_CLEAR_EVENT : SAFETY_ALERT_EVENT;
+  const out = await deliverSafetySignal(deps, { threadId, senderId, messageId, signal, eventType, actor }, untold, opts.log);
+  if (out.withheld.length > 0) return retry("deliver", out.notified);
+  return settle("complete", out.notified);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ARCHIVED CONVERSATIONS — OWNER RULING 2026-10-17
+// ═════════════════════════════════════════════════════════════════════════════
+/**
+ * THE RULING (relayed by the lead): "Archived conversations can still receive
+ * new help requests. … prevent new help requests from being routed to archived
+ * conversations; preserve conversation history and existing requests; allow
+ * users to unarchive conversations; ensure archived conversations are excluded
+ * from active request routing."
+ *
+ * HOW ARCHIVING WORKS HERE, MEASURED (2026-10-17). It is PER MEMBER:
+ * `message_thread_members.archived_at` (baseline :7501; in the production
+ * capture). GET /me/threads returns it as `archivedAt` (routes/messaging.ts).
+ *   - The ONLY writer is Rent-a-Buddy booking completion
+ *     (routes/rentABuddy.ts, the two `.update({ archived_at })` sites), which
+ *     archives the booking thread for EVERY member when the booking completes
+ *     and the pair did not both choose "stay connected".
+ *   - There is NO unarchive: nothing sets it back to NULL, no route or client
+ *     action exists, and the table has no client UPDATE policy (baseline
+ *     mtm_insert / mtm_select only). Reported, not built (the lead's brief).
+ *   - `message_threads.status` ('active' | 'archived') is a per-THREAD value
+ *     with no writer, and TELEGRAPH_POLICY_THREAD_ARCHIVED is declared but not
+ *     enforced anywhere; it is not read here.
+ *
+ * WHAT THIS DOES. A help request — telegraph.sos: §6.2 need_help, heads_up and
+ * §9.1's NEED_HELP quick state — is not routed to a recipient whose
+ * archived_at is set, at the door and on every re-drive attempt (re-read, so
+ * an archive made during the window is honoured). The message itself is
+ * written and stays in the thread's history unchanged; notifications already
+ * delivered are untouched. Clearing archived_at (an unarchive, when one
+ * exists) makes the NEXT help request route normally — nothing is remembered.
+ *
+ * NOT CHANGED: the ALL CLEAR (telegraph.safety_all_clear) — it is not a
+ * request, and someone who archived after an SOS reached them should still
+ * learn it is over — and ordinary messages (T256, messageNotifications.ts),
+ * which still notify an archived member exactly as before. The ruling is about
+ * help requests only.
+ *
+ * AN UNREADABLE ARCHIVE STATE is read in the SAME statement as the roster, so
+ * it is an unreadable roster: nobody is told at that moment, it is logged at
+ * ERROR, and the durable re-drive re-attempts it for 15 minutes. It is never
+ * guessed in either direction — "everyone" would ignore an archive, "nobody
+ * for good" is the silent drop the re-drive exists to prevent.
+ */
+function archivedRecipients(rows: ReadonlyArray<{ user_id?: unknown; archived_at?: unknown }>, senderId: string, signal: SafetySignal): Set<string> {
+  const out = new Set<string>();
+  if (signal === "all_clear") return out;
+  for (const r of rows) {
+    const id = String(r?.user_id ?? "");
+    if (id.length > 0 && id !== senderId && r?.archived_at != null) out.add(id);
+  }
+  return out;
+}
+
+function archivedWithheld(archived: ReadonlySet<string>): Array<{ userId: string; reason: string }> {
+  return [...archived].map((userId) => ({ userId, reason: "archived" }));
 }
