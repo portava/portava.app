@@ -136,6 +136,14 @@ describe("the trip screen's structure composer on the real chain (TR78, TR79, TR
     assert.equal(count("trip_commitments"), n);
   });
 
+  it("ADD_COMMITMENT with a start (census G160's `startsAt`, the one starts_at path): the instant lands as sent, offset honoured", () => {
+    const id = added(tap(alice, commitmentCommand({ type: "event", flexibility: "fixed", stageId: null, startsAt: "2026-10-23T19:00:00+07:00" })));
+    assert.equal(scalar(`SELECT starts_at = '2026-10-23T12:00:00Z'::timestamptz FROM public.trip_commitments WHERE id = '${id}' AND trip_id = '${tripId}'`), "t");
+    // and a commitment with no start still has none — nothing is defaulted
+    const bare = added(tap(alice, commitmentCommand({ type: "other", flexibility: "flexible", stageId: null })));
+    assert.equal(scalar(`SELECT starts_at IS NULL FROM public.trip_commitments WHERE id = '${bare}'`), "t");
+  });
+
   it("ADD_GOAL as the composer builds it: type, priority and scope land; a personal goal is the actor's and only the actor reads it (TR84)", () => {
     const before = version();
     const personal = added(tap(alice, goalCommand({ type: "rest", priority: "high", scope: "personal" })));

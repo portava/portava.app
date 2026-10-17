@@ -41,9 +41,9 @@
 import { intentKey } from '../shared/tripApi.ts';
 import type { TripCommandRequest, TripCommandResult } from '../../../services/tripCommands.ts';
 import {
-  stageCommand, legCommand, commitmentCommand, goalCommand,
+  legCommand, goalCommand,
   type StructureCommand, type StageInput, type LegInput, type CommitmentInput, type GoalInput,
-} from './tripStructurePayloads.ts';
+} from './tripStructurePayloads.ts'; import { boundedStageCommand, detailedCommitmentCommand, type DetailedCommand, type StageBounds, type CommitmentDetails } from './tripStructureDetails.ts'; // census-trips TR13/TR15/TR122-TR127: boundaries and §7.1 fields
 
 export {
   STAGE_TYPES, LEG_TYPES, COMMITMENT_TYPES, COMMITMENT_FLEXIBILITIES, GOAL_TYPES, GOAL_PRIORITIES, GOAL_SCOPES,
@@ -76,7 +76,7 @@ const REFUSAL_TEXT: Record<string, string> = {
   LOCAL_INVALID: 'pick one of the offered options',
   LOCAL_SAME_STAGE: 'a leg needs two different stages',
   LOCAL_NO_ANCHOR: "that city couldn't be matched to a known city",
-  LOCAL_NO_TIMEZONE: 'no time zone is known for that city',
+  LOCAL_NO_TIMEZONE: 'no time zone is known for that city', LOCAL_BAD_TIME: 'a time could not be read', LOCAL_ENDS_BEFORE_START: 'the stage would end before it starts', LOCAL_ARRIVAL_AFTER_START: 'the arrival time is after it starts', LOCAL_BAD_DURATION: 'minutes must be a whole number', LOCAL_BAD_CONFIDENCE: 'pick one of the offered confidences',
 };
 
 function resultId(result: unknown): string | null {
@@ -93,7 +93,7 @@ function toResult(r: TripCommandResult): StructureEntryResult {
   return { state: 'refused', reason: r.reason, detail: REFUSAL_TEXT[r.reason] ?? r.detail ?? r.reason };
 }
 
-async function send(tripId: string, cmd: StructureCommand, idempotencyKey: string): Promise<StructureEntryResult> {
+async function send(tripId: string, cmd: StructureCommand | DetailedCommand, idempotencyKey: string): Promise<StructureEntryResult> {
   if (!cmd.ok) return { state: 'refused', reason: cmd.reason, detail: REFUSAL_TEXT[cmd.reason]! };
   return toResult(await issue(tripId, { type: cmd.type, payload: cmd.payload, idempotencyKey }));
 }
@@ -103,9 +103,9 @@ export function structureEntryKey(kind: 'stage' | 'leg' | 'commitment' | 'goal')
   return intentKey(`structure-entry:${kind}`);
 }
 
-/** ADD_STAGE { stage_type, city_id, timezone, sequence }. */
-export async function addStage(tripId: string, input: StageInput, idempotencyKey: string): Promise<StructureEntryResult> {
-  return send(tripId, stageCommand(input), idempotencyKey);
+/** ADD_STAGE { stage_type, city_id, timezone, sequence, starts_at?, ends_at? } (tripStructureDetails.ts adds the boundaries). */
+export async function addStage(tripId: string, input: StageInput & StageBounds, idempotencyKey: string): Promise<StructureEntryResult> {
+  return send(tripId, boundedStageCommand(input), idempotencyKey);
 }
 
 /** ADD_LEG { leg_type, from_stage_id, to_stage_id }. */
@@ -113,9 +113,9 @@ export async function addLeg(tripId: string, input: LegInput, idempotencyKey: st
   return send(tripId, legCommand(input), idempotencyKey);
 }
 
-/** ADD_COMMITMENT { type, flexibility, stage_id? }. */
-export async function addCommitment(tripId: string, input: CommitmentInput, idempotencyKey: string): Promise<StructureEntryResult> {
-  return send(tripId, commitmentCommand(input), idempotencyKey);
+/** ADD_COMMITMENT { type, flexibility, stage_id?, and §7.1's starts_at, required_arrival_at, lateness_tolerance, prep_duration, confidence when given }. */
+export async function addCommitment(tripId: string, input: CommitmentInput & CommitmentDetails, idempotencyKey: string): Promise<StructureEntryResult> {
+  return send(tripId, detailedCommitmentCommand(input), idempotencyKey);
 }
 
 /** ADD_GOAL { type, priority, scope }. */

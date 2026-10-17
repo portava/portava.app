@@ -32,7 +32,7 @@ import { TripReadinessCard } from '../../src/components/trip/TripReadinessCard';
 import { TripFeasibilityCard } from '../../src/features/trips/planning/TripFeasibilityCard'; import { TripTransportPolicyCard } from '../../src/features/trips/planning/TripTransportPolicyCard.tsx'; import { TripBallotsCard } from '../../src/features/trips/planning/TripBallotsCard.tsx';
 import { TripCrewPresenceCard } from '../../src/features/trips/crew/TripCrewPresenceCard'; import { TripGeofenceCard } from '../../src/features/trips/crew/TripGeofenceCard.tsx'; import { JoinRequestsList } from '../../src/features/trips/joinRequests/JoinRequestsList.tsx';
 import { TripDecisionsCard } from '../../src/features/trips/planning/TripDecisionsCard'; import { TripDecisionComposer } from '../../src/features/trips/planning/TripDecisionComposer.tsx'; // census-trips TR85/TR86: the product writer for decision tasks and risks
-import { TripStageSpineCard } from '../../src/components/trip/TripStageSpineCard'; import { TripStructureComposer } from '../../src/features/trips/planning/TripStructureComposer.tsx'; import { tripTimezoneOf } from '../../src/features/trips/planning/tripStructureEntries.ts'; import { TripPlanPrivacyCard } from '../../src/features/trips/planning/TripPlanPrivacyCard.tsx'; // census-trips TR78/TR79/TR81/TR84 writers; TR116 plan privacy
+import { TripStageSpineCard } from '../../src/components/trip/TripStageSpineCard'; import { TripStructureComposer } from '../../src/features/trips/planning/TripStructureComposer.tsx'; import { tripTimezoneOf } from '../../src/features/trips/planning/tripStructureEntries.ts'; import { TripPlanPrivacyCard } from '../../src/features/trips/planning/TripPlanPrivacyCard.tsx'; import { TripStageControls } from '../../src/features/trips/stages/TripStageControls.tsx'; import { TripPlanAttendanceCard } from '../../src/features/trips/plans/TripPlanAttendanceCard.tsx'; // census-trips TR78/TR79/TR81/TR84 writers; TR116 plan privacy; TR13/TR65 stage dates + lifecycle; TR149 attendance
 import { TripMapLayersCard } from '../../src/features/trips/map/TripMapLayersCard'; import { PrivatePlacesCard } from '../../src/features/trips/anchors/PrivatePlacesCard.tsx';
 import { TripTodayCard } from '../../src/features/trips/today/TripTodayCard.tsx';
 import { TripTimelineConflictsCard } from '../../src/features/trips/timeline/TripTimelineConflictsCard.tsx';
@@ -617,7 +617,7 @@ function TripDetailScreen() {
             time. Orphaned references are DISPLAYED rather than tidied away:
             the FKs make them impossible, which is exactly why silence about
             one would be a dropped row. */}
-        {live && trip.id ? <React.Fragment key={`stages-${stagesKey}`}><TripStageSpineCard tripId={trip.id} /></React.Fragment> : null}{live && trip.id ? <TripStructureComposer tripId={trip.id} tripTimezone={tripTimezoneOf(realTrip)} onAdded={(kind) => (kind === 'goal' ? setDecisionsKey((k) => k + 1) : setStagesKey((k) => k + 1))} /> : null}
+        {live && trip.id ? <React.Fragment key={`stages-${stagesKey}`}><TripStageSpineCard tripId={trip.id} /></React.Fragment> : null}{live && trip.id ? <TripStructureComposer tripId={trip.id} tripTimezone={tripTimezoneOf(realTrip)} onAdded={(kind) => (kind === 'goal' ? setDecisionsKey((k) => k + 1) : setStagesKey((k) => k + 1))} /> : null}{live && trip.id ? <TripStageControls tripId={trip.id} refreshKey={stagesKey} onChanged={() => setStagesKey((k) => k + 1)} /> : null}
 
         {/* ── §14.1 TripMapProjection ──────────────────────────────────────
             The projection's SHAPE, not its geometry: what this trip has to put
@@ -668,7 +668,7 @@ function TripDetailScreen() {
             tripEndDate={realTrip?.endDate ?? undefined}
             pageScrollRef={pageScrollRef}
           />
-        </View>{live && trip.id && userId ? <TripPlanPrivacyCard tripId={trip.id} currentUserId={userId} /> : null}{/* census-trips TR116: §6.3 scope, read and set */}
+        </View>{live && trip.id && userId ? <TripPlanPrivacyCard tripId={trip.id} currentUserId={userId} /> : null}{/* census-trips TR116: §6.3 scope, read and set */}{live && trip.id && userId ? <TripPlanAttendanceCard tripId={trip.id} currentUserId={userId} /> : null}{/* census-trips TR149: §9.1 attendance */}
         {live && trip.id ? (
           <><TripReservationsSection tripId={trip.id} /><TripGeofenceCard tripId={trip.id} isOwner={realTrip.ownerId === userId} isMember={realTrip.ownerId === userId || (!!memberRole && memberRole !== 'invited' && !isPendingInvite)} /></>
         ) : null}

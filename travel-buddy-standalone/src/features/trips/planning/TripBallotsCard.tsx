@@ -20,7 +20,7 @@ import { fetchTripDecisions, myVoteLabel, type DecisionRead } from './tripDecisi
 import {
   castBallot, decideProposal, ballotKey, openBallots, canOfferDecision, proposalTitle, tallyLine, BALLOTS,
   type Ballot, type BallotResult, type BoardProposal,
-} from './tripBallots.ts';
+} from './tripBallots.ts'; import { TripProposalComposer } from './TripProposalComposer.tsx'; import type { createProposal } from './tripProposals.ts'; // census-trips TR154: proposals are made here, beside the votes
 
 interface Props {
   tripId: string;
@@ -28,7 +28,7 @@ interface Props {
   /** Test seams. */
   load?: typeof fetchTripDecisions;
   cast?: typeof castBallot;
-  decide?: typeof decideProposal;
+  decide?: typeof decideProposal; propose?: typeof createProposal;
 }
 
 type Intent = { kind: Ballot | 'accept' | 'reject'; key: string };
@@ -37,7 +37,7 @@ type Outcome = { intent: Intent; result: BallotResult | 'pending' };
 const BALLOT_LABEL: Record<Ballot, string> = { yes: 'Yes', no: 'No', abstain: 'Abstain' };
 const RULE_LABEL: Record<string, string> = { host: 'the host decides', majority: 'majority of the crew', unanimous: 'everyone must agree', anyone: 'anyone may decide' };
 
-export function TripBallotsCard({ tripId, isOwner, load = fetchTripDecisions, cast = castBallot, decide = decideProposal }: Props) {
+export function TripBallotsCard({ tripId, isOwner, load = fetchTripDecisions, cast = castBallot, decide = decideProposal, propose }: Props) {
   const [read, setRead] = useState<DecisionRead | undefined>(undefined);
   const [outcomes, setOutcomes] = useState<Record<string, Outcome>>({});
 
@@ -62,7 +62,7 @@ export function TripBallotsCard({ tripId, isOwner, load = fetchTripDecisions, ca
       const current = begin();
       try { const next = await load(tripId); if (current() && next.state === 'ok') setRead(next); } catch { /* the recorded line stays */ }
     }
-  }, [tripId, cast, decide, load, begin]);
+  }, [tripId, cast, decide, load, begin]); const rereadAfterProposal = useCallback(async () => { const current = begin(); try { const next = await load(tripId); if (current() && next.state === 'ok') setRead(next); } catch { /* the proposal line stays */ } }, [tripId, load, begin]);
 
   if (read === undefined) {
     return <View style={s.wrap} testID="trip-ballots-loading"><ActivityIndicator size="small" color={color.signal} style={{ margin: space.lg }} /></View>;
@@ -92,7 +92,7 @@ export function TripBallotsCard({ tripId, isOwner, load = fetchTripDecisions, ca
         <View style={s.row}>
           <Vote size={14} color={color.mute} />
           <Text style={[s.detail, { flex: 1, marginTop: 0 }]}>No open votes on this trip.</Text>
-        </View>
+        </View><TripProposalComposer key="proposal-composer" tripId={tripId} propose={propose} onProposed={() => void rereadAfterProposal()} />
       </View>
     );
   }
@@ -164,6 +164,7 @@ export function TripBallotsCard({ tripId, isOwner, load = fetchTripDecisions, ca
           </View>
         );
       })}
+      <TripProposalComposer key="proposal-composer" tripId={tripId} propose={propose} onProposed={() => void rereadAfterProposal()} />
     </View>
   );
 }

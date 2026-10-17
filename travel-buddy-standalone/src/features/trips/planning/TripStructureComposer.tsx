@@ -41,13 +41,13 @@ import type { Place } from '../../../lib/location/placeTypes.ts';
 import { GlobalPlacePicker } from '../../../components/selectors/GlobalPlacePicker.tsx';
 import { GEO_FIELD_IDS } from '../../../platform/input-assistance/geographic/geoFields.ts';
 import type { InputContext } from '../../../platform/input-assistance/types/inputContext.ts';
-import { fetchTripStructure, fetchTripDecisions, type StructureRead, type DecisionRead } from './tripDecisions.ts';
+import { fetchTripStructure, fetchTripDecisions, type StructureRead, type DecisionRead } from './tripDecisions.ts'; import { TripItineraryPaste } from './TripItineraryPaste.tsx'; // census G160
 import {
   addStage, addLeg, addCommitment, addGoal, structureEntryKey, nextStageSequence, isUuid,
   STAGE_TYPES, LEG_TYPES, COMMITMENT_TYPES, COMMITMENT_FLEXIBILITIES, GOAL_TYPES, GOAL_PRIORITIES, GOAL_SCOPES,
   type StageType, type LegType, type CommitmentType, type CommitmentFlexibility, type GoalType, type GoalPriority, type GoalScope,
   type StructureEntryResult,
-} from './tripStructureEntries.ts';
+} from './tripStructureEntries.ts'; import { StageBoundsFields, CommitmentDetailsFields } from './StructureDetailFields.tsx'; import { stageBoundsDraft, commitmentDetailsDraft, commitmentZone, EMPTY_STAGE_BOUNDS, EMPTY_COMMITMENT_DETAILS, type StageBoundsValue, type CommitmentDetailsValue } from './structureDetailDrafts.ts'; import type { StageBounds, CommitmentFields } from './tripStructureDetails.ts'; // census-trips TR13/TR15/TR78/TR122-TR127: boundaries and §7.1 fields
 
 export type StructureKind = 'stage' | 'leg' | 'commitment' | 'goal';
 
@@ -105,9 +105,9 @@ export function phoneTimezone(): string | null {
 
 /** What one tap sent, kept whole so a retry re-sends exactly it. */
 type Sent =
-  | { kind: 'stage'; input: { stageType: string; cityId: string | null; timezone: string | null; sequence: number } }
+  | { kind: 'stage'; input: { stageType: string; cityId: string | null; timezone: string | null; sequence: number } & StageBounds }
   | { kind: 'leg'; input: { legType: string; fromStageId: string; toStageId: string } }
-  | { kind: 'commitment'; input: { type: string; flexibility: string; stageId: string | null } }
+  | { kind: 'commitment'; input: { type: string; flexibility: string; stageId: string | null } & CommitmentFields }
   | { kind: 'goal'; input: { type: string; priority: string; scope: string } };
 type Attempt = { sent: Sent; key: string; result: StructureEntryResult | 'pending' };
 
@@ -138,7 +138,7 @@ export function TripStructureComposer({
 
   const [stageType, setStageType] = useState<StageType | null>(null);
   const [city, setCity] = useState<PickedCity | null>(null);
-  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false); const [bounds, setBounds] = useState<StageBoundsValue>(EMPTY_STAGE_BOUNDS);
 
   const [legType, setLegType] = useState<LegType | null>(null);
   const [fromId, setFromId] = useState<string | null>(null);
@@ -147,7 +147,7 @@ export function TripStructureComposer({
   const [commitmentType, setCommitmentType] = useState<CommitmentType | null>(null);
   // The kernel's own default, shown selected rather than applied unseen.
   const [flexibility, setFlexibility] = useState<CommitmentFlexibility>('flexible');
-  const [commitmentStage, setCommitmentStage] = useState<string | null>(null);
+  const [commitmentStage, setCommitmentStage] = useState<string | null>(null); const [details, setDetails] = useState<CommitmentDetailsValue>(EMPTY_COMMITMENT_DETAILS); const [detailsPhoneZone, setDetailsPhoneZone] = useState<string | null>(null);
 
   const [goalType, setGoalType] = useState<GoalType | null>(null);
   const [priority, setPriority] = useState<GoalPriority>('normal');
@@ -168,7 +168,7 @@ export function TripStructureComposer({
   const stages: Stage[] = structure?.state === 'ok'
     ? [...structure.structure.stages].sort((a, b) => a.sequence - b.sequence)
     : [];
-
+  const detailsZone = commitmentZone(structure?.state === 'ok' ? structure.structure.stages : [], commitmentStage, tripTimezone, detailsPhoneZone); // a commitment's times: its stage's zone, else the trip's, else this phone's once chosen
   const send = useCallback(async (sent: Sent, key: string) => {
     setAttempt({ sent, key, result: 'pending' });
     const result =
@@ -178,9 +178,9 @@ export function TripStructureComposer({
       : await addGoalEntry(tripId, sent.input, key);
     setAttempt({ sent, key, result });
     if (result.state === 'recorded') {
-      if (sent.kind === 'stage') { setStageType(null); setCity(null); }
+      if (sent.kind === 'stage') { setStageType(null); setCity(null); setBounds(EMPTY_STAGE_BOUNDS); }
       if (sent.kind === 'leg') { setLegType(null); setFromId(null); setToId(null); }
-      if (sent.kind === 'commitment') { setCommitmentType(null); setFlexibility('flexible'); setCommitmentStage(null); }
+      if (sent.kind === 'commitment') { setCommitmentType(null); setFlexibility('flexible'); setCommitmentStage(null); setDetails(EMPTY_COMMITMENT_DETAILS); }
       if (sent.kind === 'goal') { setGoalType(null); setPriority('normal'); setScope('shared'); }
       onAdded?.(sent.kind);
     }
@@ -195,14 +195,14 @@ export function TripStructureComposer({
   const draft = (): Sent | null => {
     switch (mode) {
       case 'stage':
-        if (!stageType || !city || structure?.state !== 'ok') return null;
-        return { kind: 'stage', input: { stageType, cityId: city.cityId, timezone: city.timezone, sequence: nextStageSequence(stages) } };
+        if (!stageType || !city || structure?.state !== 'ok' || !stageBoundsDraft(bounds, city.timezone).ready) return null;
+        return { kind: 'stage', input: { stageType, cityId: city.cityId, timezone: city.timezone, sequence: nextStageSequence(stages), ...stageBoundsDraft(bounds, city.timezone).value } };
       case 'leg':
         if (!legType || !fromId || !toId || fromId === toId) return null;
         return { kind: 'leg', input: { legType, fromStageId: fromId, toStageId: toId } };
       case 'commitment':
-        if (!commitmentType) return null;
-        return { kind: 'commitment', input: { type: commitmentType, flexibility, stageId: commitmentStage } };
+        if (!commitmentType || !commitmentDetailsDraft(details, detailsZone.zone).ready) return null;
+        return { kind: 'commitment', input: { type: commitmentType, flexibility, stageId: commitmentStage, ...commitmentDetailsDraft(details, detailsZone.zone).value } };
       case 'goal':
         if (!goalType) return null;
         return { kind: 'goal', input: { type: goalType, priority, scope } };
@@ -241,7 +241,7 @@ export function TripStructureComposer({
               <Chip key={k} label={KIND_LABEL[k]} on={mode === k} onPress={() => { setMode(k); setAttempt(null); if (k === 'goal' && decisions === undefined) void readGoals(); }} testID={`structure-compose-${k}`} a11y={`Add a ${KIND_LABEL[k].toLowerCase()}`} />
             ))}
           </View>
-
+          <TripItineraryPaste tripId={tripId} tripTimezone={tripTimezone} stages={stages} deviceTimezone={deviceTimezone} onAdded={() => onAdded?.('commitment')} />
           {mode && mode !== 'goal' ? (
             structure === undefined ? (
               <ActivityIndicator size="small" color={color.signal} style={{ alignSelf: 'flex-start', marginTop: space.xs }} testID="structure-compose-reading" accessibilityLabel="Reading this trip's stages" />
@@ -287,7 +287,7 @@ export function TripStructureComposer({
                 </View>
               ) : null}
               <PlacePicker visible={pickerOpen} mode="city" title="Stage city" usedFor="trip_stage" assistContext="city_picker" assistFieldId={GEO_FIELD_IDS.cityPicker} onSelect={onCity} onClose={() => setPickerOpen(false)} />
-            </View>
+              {city ? <StageBoundsFields value={bounds} onChange={setBounds} zone={city.timezone} zoneFrom={city.timezoneFrom} /> : null}</View>
           ) : null}
 
           {mode === 'leg' && structure?.state === 'ok' ? (
@@ -341,7 +341,7 @@ export function TripStructureComposer({
                   <Chip key={st.id} label={stageName(st)} on={commitmentStage === st.id} onPress={() => setCommitmentStage(st.id)} testID={`commitment-stage-${st.id}`} a11y={`At stage ${stageName(st)}`} />
                 ))}
               </View>
-            </View>
+              <CommitmentDetailsFields value={details} onChange={setDetails} zone={detailsZone.zone} zoneFrom={detailsZone.from} phoneZone={detailsZone.zone ? null : deviceTimezone()} onUsePhoneZone={() => setDetailsPhoneZone(deviceTimezone())} /></View>
           ) : null}
 
           {mode === 'goal' ? (

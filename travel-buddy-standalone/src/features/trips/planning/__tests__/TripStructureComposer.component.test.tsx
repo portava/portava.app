@@ -233,3 +233,98 @@ it('a spine that could not be read is said, not drawn as a trip with no stages; 
   await fireEvent.press(screen.getByTestId('structure-compose-reread'));
   await waitFor(() => screen.getByTestId('structure-compose-leg-form'));
 });
+
+// ── census-trips TR13 / TR78: a stage's boundaries, typed in the stage's zone ──
+
+it('a stage can carry its start and end, typed as the city\'s wall clock and sent as instants with their offset', async () => {
+  const addStageEntry = jest.fn().mockResolvedValue(recorded);
+  await render(<TripStructureComposer tripId="t1" loadStructure={jest.fn().mockResolvedValue(structureOf([]))} addStageEntry={addStageEntry} PlacePicker={pickerPicking(placeOf({}))} />);
+  await fireEvent.press(screen.getByTestId('structure-compose-stage'));
+  await waitFor(() => screen.getByTestId('structure-compose-stage-form'));
+  expect(screen.queryByTestId('stage-bounds-fields')).toBeNull(); // no city, no zone: no times yet
+  await fireEvent.press(screen.getByTestId('stage-type-city'));
+  await fireEvent.press(screen.getByTestId('stage-city-pick'));
+  await fireEvent.press(screen.getByTestId('fake-picker-select'));
+  expect(screen.getByText("Starts — Europe/Lisbon (the city's)")).toBeTruthy();
+  await fireEvent.changeText(screen.getByTestId('stage-starts-date'), '2026-10-24');
+  await fireEvent.changeText(screen.getByTestId('stage-starts-time'), '15:00');
+  await fireEvent.changeText(screen.getByTestId('stage-ends-date'), '2026-10-23');
+  await fireEvent.changeText(screen.getByTestId('stage-ends-time'), '11:00');
+  expect(screen.getByTestId('stage-bounds-problem').props.children).toBe('The stage would end before it starts.');
+  expect(screen.getByTestId('structure-compose-submit').props.accessibilityState).toEqual({ disabled: true });
+  await fireEvent.changeText(screen.getByTestId('stage-ends-date'), '2026-10-27');
+  expect(screen.getByTestId('stage-ends-reads').props.children).toEqual(['Tue 27 Oct 2026', ', ', '11:00', ' (', 'GMT', ')']);
+  await fireEvent.press(screen.getByTestId('structure-compose-submit'));
+  await waitFor(() => screen.getByTestId('structure-compose-recorded'));
+  expect(addStageEntry).toHaveBeenCalledWith('t1', { stageType: 'city', cityId: CITY, timezone: 'Europe/Lisbon', sequence: 1, startsAt: '2026-10-24T15:00:00+01:00', endsAt: '2026-10-27T11:00:00+00:00' }, expect.any(String));
+});
+
+// ── census-trips TR15 / TR122–TR125 / TR127: a commitment's §7.1 fields ──
+
+it('a commitment carries its start, the time to be there by, both buffers and how sure it is — typed in its stage\'s zone', async () => {
+  const addCommitmentEntry = jest.fn().mockResolvedValue(recorded);
+  await render(<TripStructureComposer tripId="t1" tripTimezone="Asia/Manila" loadStructure={jest.fn().mockResolvedValue(structureOf([stage(S1, 1)]))} addCommitmentEntry={addCommitmentEntry} />);
+  await fireEvent.press(screen.getByTestId('structure-compose-commitment'));
+  await waitFor(() => screen.getByTestId(`commitment-stage-${S1}`));
+  await fireEvent.press(screen.getByTestId('commitment-type-event'));
+  // no stage chosen: the trip's zone, said as such; choosing the stage moves the times to its zone
+  expect(screen.getByText("Starts — Asia/Manila (the trip's)")).toBeTruthy();
+  await fireEvent.press(screen.getByTestId(`commitment-stage-${S1}`));
+  expect(screen.getByText("Starts — Europe/Lisbon (the stage's)")).toBeTruthy();
+  expect(screen.getByTestId('commitment-confidence-none').props.accessibilityState).toEqual({ selected: true });
+  await fireEvent.changeText(screen.getByTestId('commitment-starts-date'), '2026-10-24');
+  await fireEvent.changeText(screen.getByTestId('commitment-starts-time'), '19:00');
+  await fireEvent.changeText(screen.getByTestId('commitment-arrive-by-date'), '2026-10-24');
+  await fireEvent.changeText(screen.getByTestId('commitment-arrive-by-time'), '19:15');
+  expect(screen.getByTestId('commitment-details-problem').props.children).toMatch(/arrival time is after it starts/);
+  expect(screen.getByTestId('structure-compose-submit').props.accessibilityState).toEqual({ disabled: true });
+  await fireEvent.changeText(screen.getByTestId('commitment-arrive-by-time'), '18:45');
+  await fireEvent.changeText(screen.getByTestId('commitment-lateness'), '5');
+  await fireEvent.changeText(screen.getByTestId('commitment-prep'), '20');
+  await fireEvent.press(screen.getByTestId('commitment-confidence-0.75'));
+  await fireEvent.press(screen.getByTestId('structure-compose-submit'));
+  await waitFor(() => screen.getByTestId('structure-compose-recorded'));
+  expect(addCommitmentEntry).toHaveBeenCalledWith('t1', {
+    type: 'event', flexibility: 'flexible', stageId: S1,
+    startsAt: '2026-10-24T19:00:00+01:00', requiredArrivalAt: '2026-10-24T18:45:00+01:00', latenessMinutes: 5, prepMinutes: 20, confidence: 0.75,
+  }, expect.stringMatching(/^structure-entry:commitment:/));
+  // the details reset with the rest of the form
+  expect(screen.getByTestId('commitment-starts-date').props.value).toBe('');
+});
+
+it('a commitment time that happens twice is not sent until one is chosen; minutes must be whole', async () => {
+  const addCommitmentEntry = jest.fn().mockResolvedValue(recorded);
+  await render(<TripStructureComposer tripId="t1" loadStructure={jest.fn().mockResolvedValue(structureOf([stage(S1, 1)]))} addCommitmentEntry={addCommitmentEntry} />);
+  await fireEvent.press(screen.getByTestId('structure-compose-commitment'));
+  await waitFor(() => screen.getByTestId(`commitment-stage-${S1}`));
+  await fireEvent.press(screen.getByTestId('commitment-type-meeting'));
+  await fireEvent.press(screen.getByTestId(`commitment-stage-${S1}`));
+  await fireEvent.changeText(screen.getByTestId('commitment-starts-date'), '2026-10-25');
+  await fireEvent.changeText(screen.getByTestId('commitment-starts-time'), '01:30');
+  expect(screen.getByTestId('commitment-starts-problem').props.children).toMatch(/happens twice that day in Europe\/Lisbon/);
+  expect(screen.getByTestId('structure-compose-submit').props.accessibilityState).toEqual({ disabled: true });
+  await fireEvent.press(screen.getByTestId('commitment-starts-pick-earlier'));
+  await fireEvent.changeText(screen.getByTestId('commitment-prep'), '7.5');
+  expect(screen.getByTestId('commitment-details-problem').props.children).toBe('Enter minutes as a whole number, for example 15.');
+  expect(screen.getByTestId('structure-compose-submit').props.accessibilityState).toEqual({ disabled: true });
+  await fireEvent.changeText(screen.getByTestId('commitment-prep'), '');
+  await fireEvent.press(screen.getByTestId('structure-compose-submit'));
+  await waitFor(() => screen.getByTestId('structure-compose-recorded'));
+  expect(addCommitmentEntry.mock.calls[0][1]).toEqual({ type: 'meeting', flexibility: 'flexible', stageId: S1, startsAt: '2026-10-25T01:30:00+01:00' });
+});
+
+it('with no stage and no trip zone, commitment times stay closed until the phone\'s zone is CHOSEN, and it is labelled as the phone\'s', async () => {
+  const addCommitmentEntry = jest.fn().mockResolvedValue(recorded);
+  await render(<TripStructureComposer tripId="t1" tripTimezone={null} deviceTimezone={() => 'Asia/Tokyo'} loadStructure={jest.fn().mockResolvedValue(structureOf([]))} addCommitmentEntry={addCommitmentEntry} />);
+  await fireEvent.press(screen.getByTestId('structure-compose-commitment'));
+  await waitFor(() => screen.getByTestId('commitment-zone-missing'));
+  expect(screen.getByTestId('commitment-starts-date').props.editable).toBe(false);
+  await fireEvent.press(screen.getByLabelText("Use this phone's time zone, Asia/Tokyo"));
+  expect(screen.getByText("Starts — Asia/Tokyo (this phone's)")).toBeTruthy();
+  await fireEvent.press(screen.getByTestId('commitment-type-booking'));
+  await fireEvent.changeText(screen.getByTestId('commitment-starts-date'), '2026-10-24');
+  await fireEvent.changeText(screen.getByTestId('commitment-starts-time'), '09:00');
+  await fireEvent.press(screen.getByTestId('structure-compose-submit'));
+  await waitFor(() => screen.getByTestId('structure-compose-recorded'));
+  expect(addCommitmentEntry.mock.calls[0][1]).toEqual({ type: 'booking', flexibility: 'flexible', stageId: null, startsAt: '2026-10-24T09:00:00+09:00' });
+});

@@ -51,7 +51,7 @@ export type StructureCommand =
 
 export interface StageInput { stageType: string; cityId: string | null; timezone: string | null; sequence: number }
 export interface LegInput { legType: string; fromStageId: string; toStageId: string }
-export interface CommitmentInput { type: string; flexibility: string; stageId: string | null }
+export interface CommitmentInput { type: string; flexibility: string; stageId: string | null; /** census G160: an instant WITH its offset; omitted → no `starts_at`. */ startsAt?: string | null }
 export interface GoalInput { type: string; priority: string; scope: string }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -98,15 +98,15 @@ export function legCommand(input: LegInput): StructureCommand {
   return { ok: true, type: 'ADD_LEG', payload: { leg_type: input.legType, from_stage_id: input.fromStageId, to_stage_id: input.toStageId } };
 }
 
-/** ADD_COMMITMENT { type, flexibility, stage_id? } — a stage is optional (2761: nullable). */
+/** ADD_COMMITMENT { type, flexibility, stage_id?, starts_at? } — a stage is optional (2761: nullable), and so is the time (G160). */
 export function commitmentCommand(input: CommitmentInput): StructureCommand {
   if (!isOneOf(COMMITMENT_TYPES, input.type) || !isOneOf(COMMITMENT_FLEXIBILITIES, input.flexibility)) {
     return { ok: false, reason: 'LOCAL_INVALID' };
   }
-  if (input.stageId !== null && !isUuid(input.stageId)) return { ok: false, reason: 'LOCAL_INVALID' };
+  if ((input.stageId !== null && !isUuid(input.stageId)) || (input.startsAt != null && !isInstant(input.startsAt))) return { ok: false, reason: 'LOCAL_INVALID' };
   return {
     ok: true, type: 'ADD_COMMITMENT',
-    payload: { type: input.type, flexibility: input.flexibility, ...(input.stageId ? { stage_id: input.stageId } : {}) },
+    payload: { type: input.type, flexibility: input.flexibility, ...(input.stageId ? { stage_id: input.stageId } : {}), ...(input.startsAt ? { starts_at: input.startsAt } : {}) },
   };
 }
 
@@ -116,4 +116,15 @@ export function goalCommand(input: GoalInput): StructureCommand {
     return { ok: false, reason: 'LOCAL_INVALID' };
   }
   return { ok: true, type: 'ADD_GOAL', payload: { type: input.type, priority: input.priority, scope: input.scope } };
+}
+
+/**
+ * census G160: an instant WITH an explicit offset (`2026-10-23T19:00:00+07:00`
+ * or `…Z`). A zone-less wall time is refused: the kernel casts `starts_at` to
+ * timestamptz (2765), and Postgres would read a bare wall time in the
+ * DATABASE's zone — the wrong instant, stored without complaint.
+ */
+const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,6})?)?(?:Z|[+-]\d{2}:\d{2})$/;
+export function isInstant(value: unknown): value is string {
+  return typeof value === 'string' && ISO_INSTANT.test(value) && Number.isFinite(Date.parse(value));
 }
