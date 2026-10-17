@@ -4538,21 +4538,21 @@ router.get("/events/:id/reviews", async (req, res) => {
 
   const { data: reviews, error } = await sc
     .from("event_reviews")
-    .select("id, rating, body, anonymous, created_at, reviewer_id, profiles!reviewer_id(handle, display_name, avatar_url)")
+    .select("id, rating, body, anonymous, created_at, reviewer_id") // census-trust wave 5: the reviewer is read in step two, under the standing rule routes/reviews.ts applies (readEventReviewerProfiles)
     .eq("event_id", id)
     .order("created_at", { ascending: false })
     .range(offset, offset + limit - 1);
 
   if (error) { req.log.error({ err: error }, "get event reviews"); sendError(res, "db_error", error.message); return; }
-
+  const eventReviewers = await readEventReviewerProfiles(sc, (reviews as any[]) ?? []); if (!eventReviewers) { req.log.error("get event reviews: reviewer profiles unreadable"); sendError(res, "degraded_unavailable", "Reviewer profiles could not be read"); return; } const shownReviews = ((reviews as any[]) ?? []).filter((r: any) => eventReviewers.has(r.reviewer_id)).map((r: any) => ({ ...r, profiles: eventReviewers.get(r.reviewer_id) })); // census-trust wave 5: one batch; a reviewer not in good standing is withheld, as on reviews.ts
   // Universal display-name rule: reviewer names show only when opted in.
-  const reviewerIds = ((reviews as any[]) ?? [])
+  const reviewerIds = shownReviews
     .filter((r: any) => !r.anonymous)
     .map((r: any) => r.reviewer_id as string);
   const allowedReviewerNames = await nameVisibilitySet(sc, reviewerIds);
 
   res.json({
-    reviews: ((reviews as any[]) ?? []).map((r: any) => ({
+    reviews: shownReviews.map((r: any) => ({
       id:        r.id,
       rating:    r.rating,
       body:      r.body ?? null,
@@ -7085,3 +7085,55 @@ function isHttpsUrl(url: string): boolean {
   try { return new URL(url).protocol === "https:"; } catch { return false; }
 }
 import { readVerifiedBadges, identityBadgeField } from "../services/identityVerification/verifiedBadges.js"; // census-trust TV-2c
+
+/**
+ * census-trust (wave 5, 2026-10-17) — GET /api/events/:id/reviews reads its
+ * reviewers in a second step, under the reviewer-standing rule routes/reviews.ts
+ * applies to every other review list (readReviewerProfiles there).
+ *
+ * WHY. The event page embedded `profiles!reviewer_id(...)` from event_reviews.
+ * That embed resolves (event_reviews_reviewer_id_fkey → profiles), but it
+ * applied no standing rule, while the host's merged list (GET
+ * /users/:id/reviews) withholds an event review whose reviewer is not active.
+ * A deactivated reviewer's review therefore showed on the event page and not in
+ * the host's list. Now both read the same batch the same way.
+ *
+ * THE FIELDS. The embed's three (handle, display_name, avatar_url);
+ * `account_status` is read to decide standing and is never returned.
+ *
+ * STANDING. A review whose reviewer is not `active` (deactivated,
+ * pending_deletion, deleted) is withheld, anonymous ones included (the server
+ * knows the author). A reviewer with no profile row is standing-unknown and
+ * withheld. A NULL status reads as active (lib/http.ts). Withheld rows shorten
+ * the page, as on the trip and place lists.
+ *
+ * FAILURE. `null` when the read fails; the route answers 503
+ * `degraded_unavailable`, as reviews.ts does, never reviews with blank reviewers
+ * or unread standing.
+ */
+const EVENT_REVIEWER_PROFILE_COLUMNS = "id, handle, display_name, avatar_url, account_status";
+
+async function readEventReviewerProfiles(
+  sc: any,
+  rows: ReadonlyArray<{ reviewer_id?: unknown }>,
+): Promise<Map<string, { handle: string | null; display_name: string | null; avatar_url: string | null }> | null> {
+  const ids = [...new Set(rows.map((r) => r.reviewer_id).filter((v): v is string => typeof v === "string" && v !== ""))];
+  if (ids.length === 0) return new Map();
+  try {
+    const { data, error } = await sc.from("profiles").select(EVENT_REVIEWER_PROFILE_COLUMNS).in("id", ids);
+    if (error || !Array.isArray(data)) return null;
+    const out = new Map<string, { handle: string | null; display_name: string | null; avatar_url: string | null }>();
+    for (const p of data as Array<Record<string, unknown>>) {
+      if (typeof p?.id !== "string") continue;
+      if ((p.account_status ?? "active") !== "active") continue;
+      out.set(p.id, {
+        handle: (p.handle as string | null | undefined) ?? null,
+        display_name: (p.display_name as string | null | undefined) ?? null,
+        avatar_url: (p.avatar_url as string | null | undefined) ?? null,
+      });
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}

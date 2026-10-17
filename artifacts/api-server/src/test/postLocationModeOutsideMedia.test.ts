@@ -365,7 +365,7 @@ function discoveryDb(tables: Record<string, Row[]>) {
     };
     return chain;
   };
-  return { db: { from: (t: string) => chainFor(t, tables[t] ?? []) } as any, reads, selects };
+  return { db: { from: (t: string) => chainFor(t, tables[t] ?? (t === "discovery_places" ? [...EVENT_VENUES.values()] : [])) } as any, reads, selects };
 }
 
 function discoveryPost(id: string, mode: string | null, over: Row = {}): Row {
@@ -376,7 +376,7 @@ function discoveryPost(id: string, mode: string | null, over: Row = {}): Row {
     media_urls: [],
     location_city: "Lisbon",
     location_name: "Hotel Alfama",
-    location_place_id: `osm-${id}`,
+    location_place_id: `node/${[...id].map((c) => c.charCodeAt(0)).join("")}`, // census-discovery wave 5: an OSM key (the only shape discovery_places.osm_id holds), unique per post
     public_lat: 38.711,
     public_lng: -9.13,
     created_at: NOW,
@@ -398,9 +398,9 @@ const EVENT_WITH_VENUE = {
 };
 const EVENT_NO_VENUE = { ...EVENT_WITH_VENUE, id: "event-novenue", title: "Pop-up", location_name: null };
 const EVENT_PLACE = { name: "Hotel Alfama", primary_category: "events", city: "Lisbon", lat: 38.711, lng: -9.13 };
-
+const EVENT_VENUES = new Map<string, Row>(); // census-discovery wave 5: the discovery_places ROWS placeRow() puts a post at, served by discoveryDb (Path B reads them by osm_id)
 const linkRow = (post: Row, event: Row) => ({ post_id: post.id, event_id: event.id, posts: post, events: event });
-const placeRow = (post: Row) => ({ ...post, discovery_places: { ...EVENT_PLACE } });
+const placeRow = (post: Row) => (EVENT_VENUES.set(post.location_place_id, { osm_id: post.location_place_id, ...EVENT_PLACE }), { ...post }); // was a pretend `discovery_places` embed on the post: production refused it (PGRST200)
 
 /** Restated from the pre-change module (5956c6233): Path A's served object. */
 function pathAShape(post: Row, event: Row): DiscoveryEventPost {
@@ -583,7 +583,7 @@ describe("B. eventPostsDiscovery — the owner's location mode, per viewer, afte
     const f = discoveryDb({});
     await fetchEventPostsForDiscovery(discoveryParams(f.db, VIEWER));
     const pathA = f.selects.find((s) => s.table === "post_event_links");
-    const pathB = f.selects.find((s) => s.table === "posts" && s.cols.includes("discovery_places"));
+    const pathB = f.selects.find((s) => s.table === "posts" && s.cols.includes("location_place_id")); // census-discovery wave 5: Path B's posts read no longer embeds discovery_places
     assert.ok(pathA && pathB, "precondition: both paths were read");
     assert.match(pathA!.cols, /posts!inner\s*\([^)]*\blocation_privacy_mode\b/s, "Path A's posts embed carries the mode");
     assert.match(pathB!.cols, /\blocation_privacy_mode\b/, "Path B's posts read carries the mode");

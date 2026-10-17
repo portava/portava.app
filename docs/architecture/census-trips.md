@@ -11688,4 +11688,6 @@ unchanged, and so is the universal display-name rule.
 back (12 red, including `selectEmbedForeignKeyScan.test.ts`), the batch dropped, a failed batch answered as "no
 profiles", the members error unread, the stops error unread. `routePlanMembers.test.ts` stays green unchanged.
 
+- NOT-GRADED: artifacts/api-server/src/test/routePlanMembers.test.ts — named above only as the existing suite that stays green; no Trips verdict rests on it.
+
 Rows: none move. Headline unchanged: 451 = 326 C / 123 W / 2 N / 0 X.

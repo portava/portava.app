@@ -4795,3 +4795,75 @@ of the three reads, the batch turned into one read per reviewer, the profile rea
 event reviewers.
 
 Rows: none move. Headline unchanged: 90 / 15 / 1 / 2 of 108.
+
+### Correction (2026-10-17, wave 5) — admin appeals queue: the appellant embed never resolved in production
+
+*Measured on branch `claude/wave4-build-20261017` against the working tree. `head_commit` is not re-declared. The fix
+is uncommitted and not deployed, so production keeps the defect below until it ships. **NO ROW MOVES.***
+
+**What was broken, in production.** The admin queue `GET /api/appeals` selected
+`profiles!appellant_id(handle, display_name, avatar_url)` from `appeals`. The only foreign key on
+`public.appeals.appellant_id` is `appeals_appellant_id_fkey`, and it runs to `auth.users`, not `public.profiles`. The
+lead read this from the production catalog, read-only, on 2026-10-17; migration 0070 and the 2026-08-19 baseline agree.
+PostgREST answered PGRST200, so the queue answered `db_error` on every call: no admin could list appeals. The
+appellant-facing doors (`POST /api/appeals`, `GET /api/appeals/me`, `GET /api/appeals/me/restrictions`) and the
+restoration queue never embedded and were not affected. No Trust row rests on the admin list, so none moves.
+
+**What changed, with no migration.** The page of appeals is read with no embed
+(`artifacts/api-server/src/routes/appeals.ts:204#.select("id, appellant_id, target_type, target_id, reason, evidence_url, state, moderator_id, resolution_note, created_at, updated_at")`). Then ONE
+batched `.in("id", ids)` read of `public.profiles` finds that page's appellants
+(`artifacts/api-server/src/routes/appeals.ts:215#const appellants = await readAppellantProfiles(sc, (data as any[]) ?? []);`,
+helper `artifacts/api-server/src/routes/appeals.ts:694#async function readAppellantProfiles(`). The appellant object is
+unchanged: handle, displayName, avatarUrl.
+
+**Two decisions (routine, recorded here).**
+- *Standing: none applied.* This is an admin queue, and the admin user surfaces (`GET /admin/users`,
+  `/admin/users/:id/moderation-summary`) read a profile whatever its `account_status`. A deactivated, pending-deletion
+  or deleted account's appeal is still owed a decision, so it stays listed with its appellant's handle. An appellant
+  with no profile row is listed with null fields, as the embed rendered a missing row. This differs on purpose from the
+  people-list rule the review lists apply.
+- *Failure.* An unreadable profile batch answers `db_error`, as an unreadable appeals page does, never a queue of
+  nameless appellants.
+
+**Tests.** `artifacts/api-server/src/test/appealsAppellantTwoStepRead.test.ts:137#it("answers 200 with the shape it was written to return, naming only live columns"`
+(10 cases: shape and live columns on the schema-strict double, the state filter and page window, the empty queue, the
+non-admin refusal, all three non-active states, a missing profile row, the failed batch with its healthy twin, and both
+doubles refusing the old select). Red first: 8 of 10 red on the pre-fix route. Four mutants killed and restored by
+sha256: the embed put back (10 red, including the static scan below), the batch dropped, a failed batch answered as
+"no appellants", one read per appellant.
+
+**A static scan now covers every select.** `artifacts/api-server/src/test/selectEmbedForeignKeyScan.test.ts` reads
+every `.select(` under `artifacts/api-server/src` (5,258 resolved; 121 that embed) with
+`artifacts/api-server/src/test/helpers/selectEmbedScan.ts` and checks each embed against the declared keys. It found
+exactly this defect, `route_plan_members → profiles` (census-trips) and `posts → discovery_places` (census-discovery),
+and fails on any new one. Its two other ledgers are reported in the wave-5 handback.
+
+Rows: none move. Headline unchanged: 90 / 15 / 1 / 2 of 108.
+
+### Correction (2026-10-17, wave 5) — event-page reviews: the reviewer-standing rule the other review lists apply
+
+*Same branch and tree. Uncommitted and undeployed. **NO ROW MOVES.***
+
+**The divergence.** The review-list correction above (reviews reviewer embed) withholds a review whose reviewer is not
+`active`, and the host's merged list applies that rule to event reviews too. `GET /api/events/:id/reviews` applied
+none: its embed was keyed (`event_reviews_reviewer_id_fkey` → profiles) and it read no `account_status`. A
+deactivated reviewer's event review therefore showed on the event page and was withheld from the host's list.
+
+**What changed.** The event page reads its page of `event_reviews` with no embed, then the reviewers in ONE batched
+read with `account_status`
+(`artifacts/api-server/src/routes/events.ts:4547#readEventReviewerProfiles(sc, (reviews as any[]) ?? []);`),
+and withholds a row whose reviewer is not in good standing
+(`artifacts/api-server/src/routes/events.ts:7116#async function readEventReviewerProfiles(`, whose standing check is `account_status ?? "active"`): the same
+rule, anonymous reviews included, a missing profile row withheld, a NULL status read as active. The reviewer object
+keeps its four fields and `account_status` never leaves the route. An unreadable batch is 503
+`degraded_unavailable`, as on the other review lists. Withheld rows shorten the page, as on the trip and place lists.
+
+**Not changed here.** The event page's list still applies no block filter, unlike the trip, place and host lists
+(§27.2). That is recorded, not fixed.
+
+**Tests.** `artifacts/api-server/src/test/eventReviewsReviewerStanding.test.ts:150#it("answers 200 with the shape it was written to return, naming only live columns"`
+(7 cases). Red first: 6 of 7 red on the pre-fix route (the seventh is the NULL-status control). Four mutants killed:
+the standing check dropped, `account_status` left out of the select, a failed batch answered as "no reviewers",
+rows left unfiltered.
+
+Rows: none move. Headline unchanged: 90 / 15 / 1 / 2 of 108.

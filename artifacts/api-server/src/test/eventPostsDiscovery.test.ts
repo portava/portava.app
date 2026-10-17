@@ -47,6 +47,8 @@ function fakeDb(
       ilike: (_col: string, _val: any) => chain,
       is: (_col: string, _val: any) => chain,
       not: (_col: string, _op: string, _val: any) => chain,
+      in: (_col: string, _vals: any[]) => chain,
+      order: (_col: string, _opts?: any) => chain,
       limit: (_n: number) => chain,
       then: (resolve: (v: any) => void) => {
         resolve({ data: filtered, error: null });
@@ -86,7 +88,7 @@ const BASE_POST = {
   media_urls: [],
   location_city: "Barcelona",
   location_name: "Palau de la Música",
-  location_place_id: "osm-venue-1",
+  location_place_id: "node/1001", // census-discovery wave 5: an OSM key, the only shape discovery_places.osm_id holds
   public_lat: 41.387,
   public_lng: 2.175,
   created_at: new Date().toISOString(),
@@ -109,7 +111,11 @@ const BASE_EVENT = {
   location_name: "Palau de la Música",
 };
 
+// census-discovery wave 5: a real discovery_places ROW, read by osm_id in Path B's
+// second step. It used to ride on each post as a pretend `discovery_places` embed,
+// which production refused (PGRST200: posts.location_place_id has no foreign key).
 const BASE_PLACE = {
+  osm_id: "node/1001",
   name: "Palau de la Música",
   primary_category: "events",
   city: "Barcelona",
@@ -173,13 +179,11 @@ describe("Path A — explicit event link", () => {
 
 describe("Path B — venue category", () => {
   it("returns a post tagged at an events venue", async () => {
-    const postWithPlace = {
-      ...BASE_POST,
-      discovery_places: BASE_PLACE,
-    };
+    const postWithPlace = { ...BASE_POST };
     const db = fakeDb({
       post_event_links: [],
       posts: [postWithPlace],
+      discovery_places: [BASE_PLACE],
     });
 
     const results = await fetchEventPostsForDiscovery(makeParams({ db }));
@@ -190,10 +194,11 @@ describe("Path B — venue category", () => {
 
   it("excludes a post tagged at a non-events venue", async () => {
     const nonEventPlace = { ...BASE_PLACE, primary_category: "food" };
-    const postWithPlace = { ...BASE_POST, discovery_places: nonEventPlace };
+    const postWithPlace = { ...BASE_POST };
     const db = fakeDb({
       post_event_links: [],
       posts: [postWithPlace],
+      discovery_places: [nonEventPlace],
     });
 
     const results = await fetchEventPostsForDiscovery(makeParams({ db }));
@@ -202,10 +207,11 @@ describe("Path B — venue category", () => {
 
   it("excludes a post at an events venue that is beyond radiusKm", async () => {
     const farPlace = { ...BASE_PLACE, lat: 52.0, lng: 4.0 };
-    const postWithPlace = { ...BASE_POST, discovery_places: farPlace };
+    const postWithPlace = { ...BASE_POST };
     const db = fakeDb({
       post_event_links: [],
       posts: [postWithPlace],
+      discovery_places: [farPlace],
     });
 
     const results = await fetchEventPostsForDiscovery(makeParams({ db, radiusKm: 10 }));
@@ -217,22 +223,22 @@ describe("Path B — venue category", () => {
 
 describe("Privacy filter", () => {
   it("excludes trip_only posts", async () => {
-    const post = { ...BASE_POST, visibility: "trip_only", discovery_places: BASE_PLACE };
-    const db = fakeDb({ post_event_links: [], posts: [post] });
+    const post = { ...BASE_POST, visibility: "trip_only" };
+    const db = fakeDb({ post_event_links: [], posts: [post], discovery_places: [BASE_PLACE] });
     const results = await fetchEventPostsForDiscovery(makeParams({ db }));
     assert.equal(results.length, 0);
   });
 
   it("excludes private posts", async () => {
-    const post = { ...BASE_POST, visibility: "private", discovery_places: BASE_PLACE };
-    const db = fakeDb({ post_event_links: [], posts: [post] });
+    const post = { ...BASE_POST, visibility: "private" };
+    const db = fakeDb({ post_event_links: [], posts: [post], discovery_places: [BASE_PLACE] });
     const results = await fetchEventPostsForDiscovery(makeParams({ db }));
     assert.equal(results.length, 0);
   });
 
   it("includes public posts", async () => {
-    const post = { ...BASE_POST, visibility: "public", discovery_places: BASE_PLACE };
-    const db = fakeDb({ post_event_links: [], posts: [post] });
+    const post = { ...BASE_POST, visibility: "public" };
+    const db = fakeDb({ post_event_links: [], posts: [post], discovery_places: [BASE_PLACE] });
     const results = await fetchEventPostsForDiscovery(makeParams({ db }));
     assert.equal(results.length, 1);
   });
@@ -242,16 +248,16 @@ describe("Privacy filter", () => {
 
 describe("Block filter", () => {
   it("excludes posts from a blocked author", async () => {
-    const post = { ...BASE_POST, author_id: "blocked-user", discovery_places: BASE_PLACE };
-    const db = fakeDb({ post_event_links: [], posts: [post] });
+    const post = { ...BASE_POST, author_id: "blocked-user" };
+    const db = fakeDb({ post_event_links: [], posts: [post], discovery_places: [BASE_PLACE] });
     const blockedIds = new Set(["blocked-user"]);
     const results = await fetchEventPostsForDiscovery(makeParams({ db, blockedIds }));
     assert.equal(results.length, 0);
   });
 
   it("includes posts from non-blocked authors", async () => {
-    const post = { ...BASE_POST, discovery_places: BASE_PLACE };
-    const db = fakeDb({ post_event_links: [], posts: [post] });
+    const post = { ...BASE_POST };
+    const db = fakeDb({ post_event_links: [], posts: [post], discovery_places: [BASE_PLACE] });
     const blockedIds = new Set(["some-other-user"]);
     const results = await fetchEventPostsForDiscovery(makeParams({ db, blockedIds }));
     assert.equal(results.length, 1);
@@ -266,12 +272,11 @@ describe("Diversity cap", () => {
       ...BASE_POST,
       id: `post-${i}`,
       // same location_place_id → same groupKey
-      location_place_id: "osm-venue-1",
-      discovery_places: BASE_PLACE,
+      location_place_id: "node/1001",
       created_at: new Date(Date.now() - i * 60_000).toISOString(),
     }));
 
-    const db = fakeDb({ post_event_links: [], posts });
+    const db = fakeDb({ post_event_links: [], posts, discovery_places: [BASE_PLACE] });
     const results = await fetchEventPostsForDiscovery(makeParams({ db }));
     assert.ok(results.length <= 3, `Expected ≤ 3 posts, got ${results.length}`);
   });
@@ -280,11 +285,10 @@ describe("Diversity cap", () => {
     const posts = Array.from({ length: 2 }, (_, i) => ({
       ...BASE_POST,
       id: `post-${i}`,
-      location_place_id: "osm-venue-1",
-      discovery_places: BASE_PLACE,
+      location_place_id: "node/1001",
     }));
 
-    const db = fakeDb({ post_event_links: [], posts });
+    const db = fakeDb({ post_event_links: [], posts, discovery_places: [BASE_PLACE] });
     const results = await fetchEventPostsForDiscovery(makeParams({ db }));
     assert.equal(results.length, 2);
   });
@@ -297,16 +301,15 @@ describe("Status filters", () => {
     const post = {
       ...BASE_POST,
       deleted_at: new Date().toISOString(),
-      discovery_places: BASE_PLACE,
     };
-    const db = fakeDb({ post_event_links: [], posts: [post] });
+    const db = fakeDb({ post_event_links: [], posts: [post], discovery_places: [BASE_PLACE] });
     const results = await fetchEventPostsForDiscovery(makeParams({ db }));
     assert.equal(results.length, 0);
   });
 
   it("excludes inactive posts", async () => {
-    const post = { ...BASE_POST, status: "inactive", discovery_places: BASE_PLACE };
-    const db = fakeDb({ post_event_links: [], posts: [post] });
+    const post = { ...BASE_POST, status: "inactive" };
+    const db = fakeDb({ post_event_links: [], posts: [post], discovery_places: [BASE_PLACE] });
     const results = await fetchEventPostsForDiscovery(makeParams({ db }));
     assert.equal(results.length, 0);
   });
@@ -321,8 +324,8 @@ describe("Status filters", () => {
   // moderation path actually write.
   for (const pending of ["pending_location_exit", "pending_delay", "pending_safety_review"]) {
     it(`excludes a post whose post_status is '${pending}' (a real, writable label)`, async () => {
-      const post = { ...BASE_POST, post_status: pending, discovery_places: BASE_PLACE };
-      const db = fakeDb({ post_event_links: [], posts: [post] });
+      const post = { ...BASE_POST, post_status: pending };
+      const db = fakeDb({ post_event_links: [], posts: [post], discovery_places: [BASE_PLACE] });
       const results = await fetchEventPostsForDiscovery(makeParams({ db }));
       assert.equal(results.length, 0, `${pending} must never reach event discovery`);
     });
@@ -336,9 +339,8 @@ describe("Status filters", () => {
       ...BASE_POST,
       post_status: "pending_delay",
       publish_eligible_at: pastTime,
-      discovery_places: BASE_PLACE,
     };
-    const db = fakeDb({ post_event_links: [], posts: [post] });
+    const db = fakeDb({ post_event_links: [], posts: [post], discovery_places: [BASE_PLACE] });
     const results = await fetchEventPostsForDiscovery(makeParams({ db }));
     assert.equal(results.length, 0);
   });
@@ -349,9 +351,8 @@ describe("Status filters", () => {
       ...BASE_POST,
       post_status: "published",
       publish_eligible_at: futureTime,
-      discovery_places: BASE_PLACE,
     };
-    const db = fakeDb({ post_event_links: [], posts: [post] });
+    const db = fakeDb({ post_event_links: [], posts: [post], discovery_places: [BASE_PLACE] });
     const results = await fetchEventPostsForDiscovery(makeParams({ db }));
     assert.equal(results.length, 1);
   });
@@ -412,12 +413,12 @@ describe("event-posts L1 cache — a failed read is not cached", () => {
     // Path A unreadable, Path B fine. Event posts are a supplementary feed and
     // have always failed open; what must not happen is the half-answer being
     // frozen in for five minutes.
-    const post = { ...BASE_POST, discovery_places: BASE_PLACE };
-    const partial = fakeDb({ post_event_links: [linkRow()], posts: [post] }, new Set(["post_event_links"]));
+    const post = { ...BASE_POST };
+    const partial = fakeDb({ post_event_links: [linkRow()], posts: [post], discovery_places: [BASE_PLACE] }, new Set(["post_event_links"]));
     const first = await fetchEventPostsForDiscovery(makeParams({ db: partial }));
     assert.equal(first.length, 1, "the readable path's posts are still served");
 
-    const healthy = fakeDb({ post_event_links: [linkRow()], posts: [post] });
+    const healthy = fakeDb({ post_event_links: [linkRow()], posts: [post], discovery_places: [BASE_PLACE] });
     const second = await fetchEventPostsForDiscovery(makeParams({ db: healthy }));
     assert.ok(healthy._reads.includes("post_event_links"),
       "a half-read answer must not be cached — the next call has to try Path A again");

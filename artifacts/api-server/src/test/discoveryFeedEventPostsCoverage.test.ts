@@ -56,7 +56,7 @@ function venuePost(id: string) {
     location_place_id: "node/1", public_lat: 25.77, public_lng: -80.19, created_at: new Date().toISOString(),
     like_count: 1, comment_count: 0, visibility: "public", status: "active", post_status: "published",
     deleted_at: null, publish_eligible_at: null, location_privacy_mode: "none",
-    discovery_places: { name: "The Venue", primary_category: "events", city: "Miami", lat: 25.77, lng: -80.19 },
+    // census-discovery wave 5: no pretend `discovery_places` embed (posts has no key to it; PGRST200) — the venue is a real row, THE_VENUE, read by osm_id
   };
 }
 
@@ -64,7 +64,7 @@ type AuthMode = "ok" | "throws" | "retryable" | "server_error" | "invalid_token"
 function fakeClient(opts: { errorTables?: string[]; rows?: Record<string, any[]>; auth?: AuthMode } = {}) {
   const errorTables = new Set(opts.errorTables ?? []);
   const rowsFor: Record<string, any[]> = {
-    feature_flags: [{ flag: "discovery_serve_log_enabled", enabled: true }],
+    feature_flags: [{ flag: "discovery_serve_log_enabled", enabled: true }], ...((opts.rows?.posts ?? []).some((p: any) => p.location_place_id === THE_VENUE.osm_id) ? { discovery_places: [THE_VENUE] } : {}), // census-discovery wave 5: Path B's second step reads the venue row
     ...(opts.rows ?? {}),
   };
   function from(table: string) {
@@ -453,3 +453,5 @@ describe("GET /discovery/feed — an unresolved viewer's event-post read is a fa
 
 // §98: the per-request serve row's RPC name, imported at the foot so no line above moves.
 import { SERVE_REQUEST_RPC } from "../lib/discoveryServeLog.js";
+// census-discovery wave 5: the venue venuePost() names, as the discovery_places ROW Path B now reads by osm_id (appended so no line above moves).
+const THE_VENUE = { osm_id: "node/1", name: "The Venue", primary_category: "events", city: "Miami", lat: 25.77, lng: -80.19 };
