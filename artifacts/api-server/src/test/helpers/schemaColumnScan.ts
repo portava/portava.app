@@ -24,7 +24,11 @@
  * columns for every table AND view, and every public function, verified by
  * digests production computed itself. Plus the DDL of any migration
  * `production-applied-migrations.json` records AFTER that capture's watermark
- * (none, at 2026-10-17). The 2026-08-19 baseline and the migration chain are
+ * (none, at 2026-10-17). Plus the names a later read-only catalog check OBSERVED
+ * in production (`test/fixtures/productionCatalogObservations.json`, dated, with
+ * the query and the evidence; 2026-10-17: the three names 2998 adds that code
+ * reads — 2998 was applied by hand after the capture and never recorded).
+ * The 2026-08-19 baseline and the migration chain are
  * read for PROVENANCE only: they say where a name production lacks was declared,
  * which is what decides the class:
  *   A        declared nowhere (no migration, not the baseline): fails everywhere.
@@ -601,10 +605,44 @@ export interface ProductionSchema {
   watermark: string;
   /** Migrations the applied list records after the capture's watermark, whose DDL is added on top. */
   appliedAfterWatermark: string[];
+  /** Names (`column t.c`, `table t`, `function f`) a dated catalog observation added on top of the capture. */
+  observedAfterCapture: string[];
+  /** Observed names the capture ALREADY records: the observation is redundant and must be deleted. */
+  observedButCaptured: string[];
+}
+
+/**
+ * One read-only look at production's catalog, after the capture, that found
+ * names the capture lacks. See `test/fixtures/productionCatalogObservations.json`.
+ */
+export interface CatalogObservation {
+  observedOn: string;
+  by: string;
+  /** `column t.c`, `table t` or `function f`, exactly as the scan reports a mismatch. */
+  present: string[];
+  /** The migration (file stem) that declares every observed name. */
+  migration: string;
+  ledgerRow: { table: string; filename: string; applied_by: string; checksum: string; readOn: string; source: string };
+  why: string;
+  /** A table observed present whose columns were not themselves observed: taken from `from`'s CREATE TABLE. */
+  columnsOf?: Record<string, { from: string; observed: boolean; why: string }>;
+  settle: string;
 }
 
 const SNAPSHOT_DIR = path.join(SRC, "lib/capability/snapshots");
 const APPLIED = path.join(SRC, "lib/capability/production-applied-migrations.json");
+const OBSERVATIONS = path.join(SRC, "test/fixtures/productionCatalogObservations.json");
+
+/** The dated catalog observations the scan grades on top of the capture. */
+export function catalogObservations(): CatalogObservation[] {
+  return (JSON.parse(fs.readFileSync(OBSERVATIONS, "utf8")) as { observations: CatalogObservation[] }).observations;
+}
+
+/** `column t.c` / `table t` / `function f` → its parts. */
+export function splitName(n: string): { object: "table" | "column" | "function"; name: string } {
+  const sp = n.indexOf(" ");
+  return { object: n.slice(0, sp) as "table" | "column" | "function", name: n.slice(sp + 1) };
+}
 const BASELINE = path.join(API_ROOT, "baseline/20260819_baseline_structure.sql");
 const MIGRATION_DIRS = [path.join(API_ROOT, "migrations"), path.join(SRC, "migrations")];
 const REPO_ROOT = path.resolve(API_ROOT, "../..");
@@ -631,7 +669,38 @@ export function productionSchema(): ProductionSchema {
     for (const v of d.views) if (!tables.has(v)) tables.set(v, new Set());
     for (const f of d.functions) functions.add(f);
   }
-  prodCache = { tables, functions, snapshot: PRODUCTION_SNAPSHOT_FILENAME, watermark: snap.productionMigrationWatermark, appliedAfterWatermark: after };
+  // Names a dated read-only catalog check found present after the capture.
+  const observed: string[] = [];
+  const observedButCaptured: string[] = [];
+  const addColumn = (t: string, c: string) => {
+    const set = tables.get(t) ?? new Set<string>();
+    set.add(c);
+    tables.set(t, set);
+  };
+  for (const o of catalogObservations()) {
+    for (const n of o.present) {
+      const { object, name } = splitName(n);
+      const dot = name.indexOf(".");
+      const captured = object === "function" ? functions.has(name)
+        : object === "table" ? tables.has(name)
+        : tables.get(name.slice(0, dot))?.has(name.slice(dot + 1)) === true;
+      if (captured) observedButCaptured.push(n);
+      if (object === "function") functions.add(name);
+      else if (object === "table") { if (!tables.has(name)) tables.set(name, new Set()); }
+      else addColumn(name.slice(0, dot), name.slice(dot + 1));
+      observed.push(n);
+    }
+    for (const [t, spec] of Object.entries(o.columnsOf ?? {})) {
+      const file = migrationFiles().find((f) => path.basename(f, ".sql") === spec.from);
+      const cols = file ? declarationsIn(fs.readFileSync(file, "utf8")).columns.get(t) : undefined;
+      if (!cols?.size) throw new Error(`productionCatalogObservations: ${spec.from} declares no columns of ${t}`);
+      for (const c of cols) addColumn(t, c);
+    }
+  }
+  prodCache = {
+    tables, functions, snapshot: PRODUCTION_SNAPSHOT_FILENAME, watermark: snap.productionMigrationWatermark,
+    appliedAfterWatermark: after, observedAfterCapture: observed, observedButCaptured,
+  };
   return prodCache;
 }
 

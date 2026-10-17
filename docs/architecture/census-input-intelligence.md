@@ -9116,3 +9116,30 @@ Built by the wave-5 G160 lane. APPEND-ONLY. No row changes bucket. G160's stated
 | NOT-BUILT | 2 | 2 |
 | CANNOT-VERIFY | 4 | 4 |
 | total | 373 | 373 |
+
+### Correction (2026-10-17, wave 5) — FSQ city places: ten fsq_places columns do not exist in production
+
+*Measured on branch `claude/wave4-build-20261017` against the working tree. Uncommitted and undeployed. **NO ROW MOVES.***
+
+**What was broken, in production.** `GET /api/cities/:cityKey/places` reads the FSQ OS Places layer through
+`getCityPlaces`. That read selected ten "extended" columns that no SQL in the repository ever declared: `tel`,
+`website`, `rating`, `price`, `stats`, `photos`, `hours`, `features`, `amenities` and `photo_url`. `fsq_places` has the
+19 columns of migration 0184; the baseline and the 2026-09-22 production capture agree. PostgREST failed the whole read
+with 42703. `getCityPlaces` gave its fail-soft empty answer, and the route answered `200 { places: [], enabled: true }`
+for every city. Production has `fsq_places_enabled` TRUE (2026-09-22 capture). The provider cluster above calls the
+flag "seeded FALSE"; that describes the seed, not production. The provider federation that G222 grades reads only
+0184's columns and was not affected. No row grades the city places route, so no row moves.
+
+**What changed, with no migration.** The select names only `fsq_places`' own columns
+(`artifacts/api-server/src/lib/fsq/fsqPlaces.ts:164#ONLY fsq_places' own columns`). The `FsqPlace` fields the open
+dataset has no value for now answer null or `[]`, which their type already allowed. Nothing is invented. A failed read
+is now logged before the empty answer.
+
+**Tests.** `artifacts/api-server/src/test/fsqPlacesProductionColumns.test.ts:94#it("names no dead column and returns the city's places (the 42703 answered none)"`
+(3 cases on schemaStrictSupabase). Red first: 3 of 3 are red on the pre-fix read. Two mutants were killed, each
+restored and checked by sha256: all ten names put back, and one name (`photos`) put back.
+
+- NOT-GRADED: artifacts/api-server/src/lib/fsq/fsqPlaces.ts — the FSQ city read, cited for this fix; no G row grades it.
+- NOT-GRADED: artifacts/api-server/src/test/fsqPlacesProductionColumns.test.ts — this correction's own test; no G row rests on it.
+
+Rows: none move. Headline unchanged: 319 BUILT-AND-CORRECT, 48 BUILT-BUT-WRONG, 2 NOT-BUILT, 4 CANNOT-VERIFY of 373.

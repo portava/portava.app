@@ -123,14 +123,14 @@ async function checkEligibility(
       return (tripRow as any)?.status === "completed";
     }
     case "rent_buddy_booking": {
-      const { data } = await sc
-        .from("rent_buddy_bookings")
-        .select("id, status")
-        .eq("id", entityId)
-        .or(`traveler_id.eq.${userId},buddy_user_id.eq.${userId}`)
-        .in("status", ["completed"])
-        .maybeSingle();
-      return !!data;
+      // buddy_id references rent_buddy_profiles(id), not a user — there is no buddy_user_id (wave 5, 2026-10-17) — so the buddy side is two reads.
+      const { data: booking, error: bookingErr } = await sc.from("rent_buddy_bookings").select("id, status, traveler_id, buddy_id")
+        .eq("id", entityId).eq("status", "completed").maybeSingle();
+      if (bookingErr || !booking) return false; // unreadable is not eligible (fail closed), as for every entity type here
+      if ((booking as any).traveler_id === userId) return true;
+      if (!(booking as any).buddy_id) return false;
+      const { data: buddy, error: buddyErr } = await sc.from("rent_buddy_profiles").select("user_id").eq("id", (booking as any).buddy_id).maybeSingle();
+      return !buddyErr && (buddy as any)?.user_id === userId;
     }
     default:
       return false;

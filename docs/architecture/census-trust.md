@@ -4867,3 +4867,73 @@ the standing check dropped, `account_status` left out of the select, a failed ba
 rows left unfiltered.
 
 Rows: none move. Headline unchanged: 90 / 15 / 1 / 2 of 108.
+
+### Correction (2026-10-17, wave 5) — booking reviews: rent_buddy_bookings.buddy_user_id does not exist in production
+
+*Measured on branch `claude/wave4-build-20261017` against the working tree. `head_commit` is not re-declared. The fix
+is uncommitted and not deployed, so production keeps the defect below until it ships. **NO ROW MOVES.***
+
+**What was broken, in production.** `POST /api/reviews` with `entityType: "rent_buddy_booking"` checked eligibility with
+`.or(traveler_id.eq.U,buddy_user_id.eq.U)`. `rent_buddy_bookings` has no `buddy_user_id`. No SQL in the repository
+declares it, and the 2026-09-22 production capture does not have it. The buddy column is `buddy_id`, and it references
+`rent_buddy_profiles(id)`, not a user. PostgREST failed the read with 42703, and the result read as "no booking". Both
+the traveller and the buddy were refused with `403 review_not_eligible`. `rent_buddy_enabled` is FALSE in production, so
+few users were reached. No row of this census grades booking-review eligibility: its review rows grade the review lists'
+reviewer reads and block filters. So no row moves.
+
+**What changed, with no migration.** Eligibility is now two reads. The first reads the completed booking's
+`traveler_id` and `buddy_id`
+(`artifacts/api-server/src/routes/reviews.ts:127#await sc.from("rent_buddy_bookings").select("id, status, traveler_id, buddy_id")`).
+For a caller who is not the traveller, the second reads the buddy profile's `user_id`
+(`artifacts/api-server/src/routes/reviews.ts:132#await sc.from("rent_buddy_profiles").select("user_id")`). A read that
+fails means not eligible, as it does for every entity type in the check. The edit is line-neutral, so no citation into
+the route moves.
+
+**How it was found.** `artifacts/api-server/src/test/schemaColumnProductionScan.test.ts` (class A: declared by no SQL;
+an `.or()` column).
+
+**Tests.** `artifacts/api-server/src/test/reviewsRentBuddyBookingEligibility.test.ts:109#it("the buddy — the user who owns the booking's buddy profile — may review it (201)"`
+(6 cases on schemaStrictSupabase). Red first: 5 of 6 are red on the pre-fix route; the stranger control passes. Four
+mutants were killed, each restored and checked by sha256: the old column put back in the select, the buddy compared
+by profile id, the completed filter dropped, and the traveller refused.
+
+- NOT-GRADED: artifacts/api-server/src/test/reviewsRentBuddyBookingEligibility.test.ts — this correction's own test; no Trust row rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/schemaColumnProductionScan.test.ts — the repository-wide scan that found the defect; no Trust row rests on it.
+
+Rows: none move. Headline unchanged: 90 / 15 / 1 / 2 of 108.
+
+### Correction (2026-10-17, wave 5) — Rent-a-Buddy earnings summary and fee editor: rent_buddy_fee_rules.platform_fee_basis_points does not exist in production
+
+*Same branch and tree. Uncommitted and undeployed. **NO ROW MOVES.***
+
+**What was broken, in production.** Migration 3601 adds `rent_buddy_fee_rules.platform_fee_basis_points`. It is held
+for production (owner hold D-OWNER1004-14), and the 2026-10-17 apply packet excludes it. The fee resolver selects only
+that column, so every production read of the schedule fails with 42703. Refusing is right, because the rate cannot be
+known there. But the answers were wrong:
+- `GET /api/rent-a-buddy/me/earnings/summary` has no `rent_buddy_enabled` check, and it answered `500 db_error` to
+  every user with an active buddy profile;
+- `PATCH /api/rent-a-buddy/admin/fee-rules` answered `500 db_error`.
+
+No row of this census grades either route. This correction is recorded here because this census watches
+`routes/rentABuddyMarketplace.ts`.
+
+**What changed, with no migration.** The resolver marks a read that failed for that column
+(`artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts:556#export function isFeeScheduleSchemaAbsent(`). Both routes
+now answer `503 degraded_unavailable` and state the reason
+(`artifacts/api-server/src/routes/rentABuddyMarketplace.ts:2199#return feeSchedule.schemaAbsent ? sendError(res, 'degraded_unavailable', FEE_SCHEDULE_NOT_DEPLOYED)`,
+`artifacts/api-server/src/routes/rentABuddyMarketplace.ts:2832#isFeeScheduleSchemaAbsent(feeErr) ? sendError(res, 'degraded_unavailable', FEE_SCHEDULE_NOT_DEPLOYED_ADMIN)`).
+No rate is invented and nothing is written. Any other read failure is still a 500. Both route edits are line-neutral,
+so no citation into the route file moves. Both answers clear when 3601 is applied. Two other readers of the column
+are behind `rent_buddy_enabled` = FALSE and are unchanged: the dashboard summary in `routes/rentABuddy.ts` and the
+earnings ledger.
+
+**Tests.** `artifacts/api-server/src/test/rentBuddyFeeScheduleNotDeployed.test.ts:151#it("answers 503 degraded_unavailable with the reason, and publishes no fee or earnings figure"`
+(6 cases on schemaStrictSupabase). Its `rent_buddy_fee_rules` is the live schema's and lacks the column, so the 42703
+comes from the real schema. Red first: both 503 cases are red on the pre-fix routes. Four mutants were killed, each
+restored and checked by sha256: either route put back to 500, the marker never set, and the marker set for any
+missing column.
+
+- NOT-GRADED: artifacts/api-server/src/test/rentBuddyFeeScheduleNotDeployed.test.ts — this correction's own test; no Trust row rests on it.
+- NOT-GRADED: artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts — the fee resolver, cited for the marker; no Trust row grades fees, and census-layover is the census that watches this file.
+
+Rows: none move. Headline unchanged: 90 / 15 / 1 / 2 of 108.

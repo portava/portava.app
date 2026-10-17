@@ -421,6 +421,8 @@ describe("E. runStaleSweep — re-queues stale living-cache rows", () => {
     const capturedUpserts: Array<{ table: string; row: any }> = [];
     const sc = makeFakeSc({
       staleCacheRows: [{ place_id: PLACE_ID, cached_at: new Date(0).toISOString() }],
+      // An ACTIVE place: more than 20 active posts (the sweep reads them from posts; wave 5).
+      postRows: Array.from({ length: 21 }, (_, i) => ({ id: `post-${i}` })),
       capturedUpserts,
     });
 
@@ -708,7 +710,9 @@ describe("I. Sweep collides with processing — lock guard blocks immediate re-c
     ];
 
     const capturedUpserts: Array<{ table: string; row: any }> = [];
-    const sc = makeFakeSc({ queueRows, staleCacheRows, capturedUpserts });
+    // An ACTIVE place (more than 20 active posts), so the sweep re-queues it (wave 5: read from posts).
+    const postRows: FakeRow[] = Array.from({ length: 21 }, (_, i) => ({ id: `post-${i}` }));
+    const sc = makeFakeSc({ queueRows, staleCacheRows, capturedUpserts, postRows });
 
     // Sweep detects the stale cache entry and re-queues it, overwriting the
     // processing row's status with 'pending'.

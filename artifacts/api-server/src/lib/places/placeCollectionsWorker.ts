@@ -10,8 +10,8 @@
  *     by enqueueLivingCacheInvalidation), recomputes best-of + contributors +
  *     living cache for each claimed place, marks the row 'done'.
  *
- *   60-minute sweep — selects place_living_cache rows older than 6 h for
- *     places with post_count > 20 and re-queues them (upsert).
+ *   60-minute sweep — re-queues place_living_cache rows older than 6 h for
+ *     places with more than 20 active posts, counted from posts (upsert).
  *
  * Schema alignment:
  *   place_cache_invalidation_queue — place_id UUID PRIMARY KEY (from 2047),
@@ -49,7 +49,7 @@ const LOCK_DURATION_MS         = 5  * 60 * 1_000;   // 5-min pessimistic lock
 const STALE_LOCK_THRESHOLD_MS  = 10 * 60 * 1_000;   // reclaim locks > 10 min old
 const CLAIM_BATCH_SIZE         = 20;
 const CACHE_STALE_HOURS        = 6;
-const POST_COUNT_THRESHOLD     = 20;
+const POST_COUNT_THRESHOLD     = 20; // a place is "active" for the stale sweep above this many active posts
 
 // ── Best-of limits ────────────────────────────────────────────────────────────
 const LIMIT_VIDEOS      = 25;
@@ -606,11 +606,32 @@ async function processPlace(sc: any, placeId: string, claimedQueuedAt: string): 
 
 // ── Hourly stale-cache sweep ──────────────────────────────────────────────────
 
+/** How many stale cache rows one sweep examines. */
+const STALE_SWEEP_BATCH = 200;
+
 /**
- * Select place_living_cache rows older than CACHE_STALE_HOURS for places with
- * post_count > POST_COUNT_THRESHOLD and re-queue them.
- * Exported so tests can call it directly.
- * Never throws.
+ * Re-queue place_living_cache rows older than CACHE_STALE_HOURS for ACTIVE
+ * places — more than POST_COUNT_THRESHOLD active posts — so a busy place's page
+ * is refreshed even when no invalidation arrives. Exported so tests can call it
+ * directly. Never throws.
+ *
+ * WAVE 5 (2026-10-17). This read embedded `places!inner(post_count)` and
+ * filtered `places.post_count`. `places` has no post_count: no SQL in the
+ * repository declares one and production does not have one. PostgREST failed
+ * the read with 42703, the sweep logged stale_sweep_query_error and re-queued
+ * NOTHING, every hour the worker ran. Found by
+ * test/schemaColumnProductionScan.test.ts (class A).
+ *
+ * THE SIGNAL is now read from posts, with the predicate this worker already
+ * counts a place's posts by (`canonical_place_id`, `status = 'active'`, as in
+ * processPlace): at most POST_COUNT_THRESHOLD + 1 ids per place, so "more than
+ * 20" never reads more than 21 rows and no counter column is needed.
+ *
+ * WHICH STALE ROWS: the STALE_SWEEP_BATCH most recently stale (cached_at
+ * descending). A quiet place's cache is refreshed by an invalidation when it
+ * gets a post; until then it stays stale and never qualifies, so oldest-first
+ * would let quiet places fill every slot of the batch, forever. A place whose
+ * activity cannot be read is skipped and counted, never re-queued on a guess.
  */
 export async function runStaleSweep(scOverride?: any): Promise<{ requeued: number }> {
   const sc = scOverride ?? getServiceClient();
@@ -620,10 +641,10 @@ export async function runStaleSweep(scOverride?: any): Promise<{ requeued: numbe
 
   const { data: staleRows, error: staleErr } = await sc
     .from("place_living_cache")
-    .select("place_id, places!inner(post_count)")
+    .select("place_id")
     .lt("cached_at", cutoff)
-    .gt("places.post_count", POST_COUNT_THRESHOLD)
-    .limit(200);
+    .order("cached_at", { ascending: false })
+    .limit(STALE_SWEEP_BATCH);
 
   if (staleErr) {
     console.warn(JSON.stringify({
@@ -638,8 +659,31 @@ export async function runStaleSweep(scOverride?: any): Promise<{ requeued: numbe
 
   const nowIso = new Date().toISOString();
   let requeued = 0;
+  let quiet = 0;
+  let activityUnreadable = 0;
 
   for (const row of rows) {
+    const { data: activePosts, error: activityErr } = await sc
+      .from("posts")
+      .select("id")
+      .eq("canonical_place_id", row.place_id)
+      .eq("status", "active")
+      .limit(POST_COUNT_THRESHOLD + 1);
+
+    if (activityErr) {
+      activityUnreadable++;
+      console.warn(JSON.stringify({
+        event:    "place_collections.stale_activity_read_error",
+        place_id: row.place_id,
+        error:    activityErr.message,
+      }));
+      continue;
+    }
+    if (((activePosts ?? []) as unknown[]).length <= POST_COUNT_THRESHOLD) {
+      quiet++;
+      continue;
+    }
+
     // Upsert back to pending — if already pending, just refresh queued_at.
     // If processing, this re-asserts pending so the next tick re-claims it.
     const { error: upsertErr } = await sc
@@ -661,8 +705,10 @@ export async function runStaleSweep(scOverride?: any): Promise<{ requeued: numbe
   }
 
   console.log(JSON.stringify({
-    event:    "place_collections.stale_sweep_complete",
+    event:               "place_collections.stale_sweep_complete",
     requeued,
+    quiet,
+    activity_unreadable: activityUnreadable,
     cutoff,
   }));
 

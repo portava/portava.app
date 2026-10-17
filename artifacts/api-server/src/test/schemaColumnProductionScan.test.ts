@@ -14,7 +14,9 @@
  * select list (with its embeds' columns), filter column, write key, onConflict
  * column, `.from()` table and `.rpc()` name under src/ through the embed scan's
  * resolver, and grades each against the frozen PRODUCTION capture
- * (lib/capability/snapshots/current.ts) plus anything recorded applied after it:
+ * (lib/capability/snapshots/current.ts) plus anything recorded applied after it,
+ * plus the names a dated read-only catalog check OBSERVED in production after
+ * the capture (fixtures/productionCatalogObservations.json):
  *   A        declared by no SQL anywhere in the repository — fails everywhere;
  *   dropped  declared only by the 2026-08-19 baseline or a migration production
  *            is recorded as having, and absent from production — fails there;
@@ -40,13 +42,14 @@
  */
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   scanSchemaReferences, productionMismatches, productionSchema, provenance, mismatchKey,
-  bareColumn, logicTreeColumns, selectListColumns, declarationsIn,
+  bareColumn, logicTreeColumns, selectListColumns, declarationsIn, catalogObservations, splitName,
   type SchemaRefScan, type Mismatch,
 } from "./helpers/schemaColumnScan.js";
 import { scanSelectEmbeds } from "./helpers/selectEmbedScan.js";
@@ -60,41 +63,18 @@ type Name = string;
  * Class A and dropped names, per file: each is a query that fails in
  * production today (and, for A, everywhere). SHRINK-ONLY, and EXACT per file:
  * a new dead name in a listed file fails, and so does a fixed one left listed.
- * Two were fixed with this file (wave 5, 2026-10-17): routes/adminCompass.ts
- * filtered compass_abuse_flags on `created_at` (the column is `detected_at`),
- * and routes/tags.ts embedded `trips(name, destination)` (`title`,
- * `destination_city`). Each entry carries the catalog query that settles it.
+ * EMPTY since wave 5's follow-up (2026-10-17). Five were found; all are fixed:
+ *   routes/adminCompass.ts   compass_abuse_flags.created_at → detected_at (9894cfa75)
+ *   routes/tags.ts           trips(name, destination) → title, destination_city (9894cfa75)
+ *   lib/fsq/fsqPlaces.ts     ten columns fsq_places never had → only its 0184 columns
+ *                            (fsqPlacesProductionColumns.test.ts)
+ *   routes/reviews.ts        rent_buddy_bookings.buddy_user_id → booking.buddy_id, then
+ *                            rent_buddy_profiles.user_id (reviewsRentBuddyBookingEligibility.test.ts)
+ *   lib/places/placeCollectionsWorker.ts  places.post_count → active posts counted from
+ *                            posts (placeCollectionsStaleSweep.test.ts)
+ * A new entry carries the catalog query that settles it.
  */
-const KNOWN_DEAD_NAMES: ReadonlyArray<{ file: string; names: Name[]; finding: string }> = [
-  {
-    file: "src/lib/fsq/fsqPlaces.ts",
-    names: ["amenities", "features", "hours", "photo_url", "photos", "price", "rating", "stats", "tel", "website"].map((c) => `column fsq_places.${c}`),
-    finding:
-      "getCityPlaces selects ten 'extended' columns no SQL ever declared (fsq_places has the 19 columns of 0184 / the " +
-      "baseline). The read fails 42703; getCityPlaces answers its fail-soft empty, so GET /api/fsq-places answers 200 with " +
-      "no places for every city while fsq_places_enabled is TRUE in production. Fix: drop the ten names (rowToPlace already " +
-      "tolerates their absence) or add the enriched columns by migration — a product call, listed for the lead. Settle: " +
-      "select column_name from information_schema.columns where table_schema='public' and table_name='fsq_places';",
-  },
-  {
-    file: "src/lib/places/placeCollectionsWorker.ts",
-    names: ["column places.post_count"],
-    finding:
-      "runStaleSweep embeds places!inner(post_count) and filters places.post_count; places has no post_count anywhere. " +
-      "The sweep logs place_collections.stale_sweep_query_error and re-queues nothing, every hour, whenever " +
-      "PLACE_COLLECTIONS_WORKER_ENABLED=true. No rename exists (no place counter column); listed for the lead. Settle: " +
-      "select 1 from information_schema.columns where table_schema='public' and table_name='places' and column_name='post_count';",
-  },
-  {
-    file: "src/routes/reviews.ts",
-    names: ["column rent_buddy_bookings.buddy_user_id"],
-    finding:
-      "checkEligibility('rent_buddy_booking') filters .or(traveler_id.eq.U,buddy_user_id.eq.U); the column is buddy_id and it " +
-      "references rent_buddy_profiles(id), not a user, so the fix is a two-step read (the caller's rent_buddy_profiles.id), " +
-      "not a rename. Today the read fails 42703 and POST /api/reviews for a booking answers review_not_eligible for both " +
-      "parties. Settle: select conname, pg_get_constraintdef(oid) from pg_constraint where conrelid='public.rent_buddy_bookings'::regclass and contype='f';",
-  },
-];
+const KNOWN_DEAD_NAMES: ReadonlyArray<{ file: string; names: Name[]; finding: string }> = [];
 
 /**
  * What a class-B statement does in production, judged from the code on
@@ -121,13 +101,26 @@ type Verdict = "gated" | "unreachable" | "masked" | "fail-soft" | "UNGATED";
  * exactly one entry, and every listed name is still found. Kept as data
  * (fixtures/unappliedSchemaReads.json, one entry per line, each with its
  * finding: the lines, the gate or the outcome with file:line, and the reviewer's
- * confidence) because it is 298 entries over 186 files.
+ * confidence) because it is ~290 entries over ~180 files.
+ *
+ * 2026-10-17 correction: six entries came OUT because their names are in
+ * production. The lead's read-only catalog check found `stories.deleted_at`,
+ * `story_purge_queue` and `job_health.last_success_at` present; 2998 was
+ * applied by hand after the 2026-09-22 capture (production's ledger has a
+ * `manual` row whose checksum is the file's bytes) and was never recorded. So
+ * lib/mediaAccess.ts's owner read, routes/storyArchive.ts and
+ * services/stories/storyRetention.ts were NOT live defects (three UNGATED names),
+ * and the two schedulers' job_health reads were not fail-soft but working.
  */
 const UNAPPLIED_SCHEMA_READS: ReadonlyArray<{ file: string; names: Name[]; verdict: Verdict; why: string }> =
   JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures/unappliedSchemaReads.json"), "utf8"));
 
-/** The live-defect count (UNGATED names). It may only go down. */
-const UNGATED_CEILING = 81;
+/**
+ * The live-defect count (UNGATED names). It may only go down. 81 at 9894cfa75;
+ * 78 after the 2026-10-17 catalog observation (the three story reads above); 76
+ * once both 3601 reads answer a stated 503 (rentBuddyFeeScheduleNotDeployed.test.ts).
+ */
+const UNGATED_CEILING = 76;
 
 /**
  * Sites the scan cannot resolve (a non-static table, column, list, body or
@@ -255,6 +248,56 @@ describe("the scan reached the codebase and production (not vacuous)", () => {
   });
 });
 
+describe("dated catalog observations: names production HAS that the capture predates", () => {
+  const SRC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+  it("each observation carries its evidence, and every name it adds is declared by the migration it names", () => {
+    const obs = catalogObservations();
+    assert.ok(obs.length > 0, "the 2026-10-17 observation is read");
+    for (const o of obs) {
+      assert.match(o.observedOn, /^\d{4}-\d{2}-\d{2}$/);
+      for (const field of [o.by, o.why, o.settle, o.ledgerRow.source]) assert.ok(field.length >= 40, `${o.migration}: say how it was observed`);
+      const file = path.join(SRC_DIR, "migrations", `${o.migration}.sql`);
+      assert.ok(fs.existsSync(file), `${o.migration} is a migration in this repository`);
+      // The ledger row production holds is THIS file's bytes: the evidence is checkable offline.
+      assert.equal(crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex"), o.ledgerRow.checksum,
+        `${o.migration}: the production ledger row's checksum is not this file's sha256`);
+      const d = declarationsIn(fs.readFileSync(file, "utf8"));
+      for (const n of o.present) {
+        const { object, name } = splitName(n);
+        const declared = object === "function" ? d.functions.has(name)
+          : object === "table" ? d.tables.has(name)
+          : d.columns.get(name.slice(0, name.indexOf(".")))?.has(name.slice(name.indexOf(".") + 1)) === true;
+        assert.ok(declared, `${n} is not declared by ${o.migration}`);
+      }
+      for (const [t, spec] of Object.entries(o.columnsOf ?? {})) {
+        assert.ok(o.present.includes(`table ${t}`), `columnsOf ${t}: the table itself must be observed`);
+        assert.equal(spec.from, o.migration);
+        assert.ok(spec.why.length >= 40);
+      }
+    }
+  });
+
+  it("the 2026-10-17 observation: 2998's three names are graded present, and the capture does not already hold them", () => {
+    const prod = productionSchema();
+    assert.ok(prod.tables.get("stories")?.has("deleted_at"), "stories.deleted_at");
+    assert.ok(prod.tables.get("job_health")?.has("last_success_at"), "job_health.last_success_at");
+    assert.ok(prod.tables.get("story_purge_queue")?.has("next_attempt_at"), "story_purge_queue, with 2998's columns");
+    assert.deepEqual([...prod.observedAfterCapture].sort(),
+      ["column job_health.last_success_at", "column stories.deleted_at", "table story_purge_queue"]);
+    assert.deepEqual(prod.observedButCaptured, [], "the capture current.ts names now records these: delete the observation (shrink-only)");
+  });
+
+  it("none of them is graded missing anywhere in the codebase (they were three UNGATED and three other ledger entries)", () => {
+    const names = new Set(mismatches.map((m) => `${m.object} ${m.name}`));
+    for (const n of ["column stories.deleted_at", "table story_purge_queue", "column job_health.last_success_at"]) {
+      assert.ok(!names.has(n), `${n} is still graded missing`);
+    }
+    assert.ok(scan.refs.some((r) => r.file === "src/lib/mediaAccess.ts" && r.table === "stories" && r.name === "deleted_at"),
+      "control: the scan still reads mediaAccess's stories.deleted_at");
+  });
+});
+
 describe("class A / dropped: a name production lacks that no unapplied migration explains is on a shrink-only ledger", () => {
   it("no NEW dead name; every ledger entry is exactly what the scan finds in its file", () => {
     const found = byFile(["A", "dropped"]);
@@ -267,10 +310,20 @@ describe("class A / dropped: a name production lacks that no unapplied migration
     assert.deepEqual(stale, [], "fixed: delete these from KNOWN_DEAD_NAMES");
   });
 
-  it("the two names fixed with this file stay fixed", () => {
+  it("the five fixed names stay fixed", () => {
     const found = byFile(["A", "dropped", "B"]);
     assert.ok(!found.get("src/routes/adminCompass.ts")?.has("column compass_abuse_flags.created_at"));
     for (const c of ["name", "destination"]) assert.ok(!found.get("src/routes/tags.ts")?.has(`column trips.${c}`));
+    for (const c of ["tel", "website", "rating", "price", "stats", "photos", "hours", "features", "amenities", "photo_url"]) {
+      assert.ok(!found.get("src/lib/fsq/fsqPlaces.ts")?.has(`column fsq_places.${c}`), c);
+    }
+    assert.ok(!found.get("src/routes/reviews.ts")?.has("column rent_buddy_bookings.buddy_user_id"));
+    assert.ok(!found.get("src/lib/places/placeCollectionsWorker.ts")?.has("column places.post_count"));
+    // Controls: the fixed reads are still read by the scan, on their real columns.
+    const has = (file: string, table: string, name: string) => scan.refs.some((r) => r.file === file && r.table === table && r.name === name);
+    assert.ok(has("src/lib/fsq/fsqPlaces.ts", "fsq_places", "dataset_date"));
+    assert.ok(has("src/routes/reviews.ts", "rent_buddy_bookings", "buddy_id") && has("src/routes/reviews.ts", "rent_buddy_profiles", "user_id"));
+    assert.ok(has("src/lib/places/placeCollectionsWorker.ts", "posts", "canonical_place_id"));
   });
 });
 

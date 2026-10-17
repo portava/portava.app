@@ -9506,3 +9506,33 @@ Memory's shared-experience anchor, not a Shared Moment's feed.
 
 - NOT-GRADED: artifacts/api-server/src/routes/placeRecaps.ts — the recap list route behind HM-F19, cited above. Place recaps are a Live Places object, and no H row grades them.
 - NOT-GRADED: artifacts/api-server/src/test/ambiguousEmbedHints.test.ts — the route tests for this correction, which moves no row.
+
+### Correction (2026-10-17, wave 5) — place living-cache stale sweep: places.post_count does not exist in production
+
+*Measured on branch `claude/wave4-build-20261017` against the working tree. Uncommitted and undeployed. **NO ROW MOVES.***
+
+**What was broken, in production.** Every hour, the place collections worker's sweep re-queues busy places whose
+living-page cache is more than six hours old. It read `place_living_cache.select("place_id, places!inner(post_count)")`
+and filtered on `.gt("places.post_count", 20)`. `places` has no `post_count`. No SQL in the repository declares one,
+and the 2026-09-22 production capture does not have one. PostgREST failed the read with 42703. The sweep logged
+`stale_sweep_query_error` and re-queued nothing, every hour the worker ran. The worker runs only when
+`PLACE_COLLECTIONS_WORKER_ENABLED=true`, and that value is not known here for production. A busy place's page was
+refreshed only by an invalidation. No H row grades the sweep (H4 cites this worker for its contributor-stamp award
+only), so no row moves.
+
+**What changed, with no migration.** The sweep now reads activity from posts. It uses the predicate the worker
+already counts a place's posts by (`canonical_place_id`, `status = 'active'`) and reads at most 21 ids per place
+(`artifacts/api-server/src/lib/places/placeCollectionsWorker.ts:671#.limit(POST_COUNT_THRESHOLD + 1);`). It examines
+the 200 most recently stale rows. A quiet place gets no invalidation and so stays stale; most-recent-first means such
+places cannot fill every slot. A place whose activity cannot be read is skipped and counted, and is never re-queued
+on a guess (`artifacts/api-server/src/lib/places/placeCollectionsWorker.ts:636#export async function runStaleSweep(`).
+The cited lines above the sweep do not move.
+
+**Tests.** `artifacts/api-server/src/test/placeCollectionsStaleSweep.test.ts:66#it("re-queues the busy place only, as pending (the 42703 re-queued nothing)"`
+(5 cases on schemaStrictSupabase). Red first: 3 of 5 are red on the pre-fix worker. Four mutants were killed, each
+restored and checked by sha256: the old embed put back, `<= 20` loosened to `< 20`, the active filter dropped, and
+oldest-first ordering. The worker's own suite (`artifacts/api-server/src/test/placeCollectionsWorker.test.ts`) had to give its two sweep fixtures 21 active posts. Its fake answered
+the old read whatever columns it named, which is how the dead column stayed green.
+
+- NOT-GRADED: artifacts/api-server/src/test/placeCollectionsStaleSweep.test.ts — this correction's own test; no H row rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/placeCollectionsWorker.test.ts — the worker's suite, whose two sweep fixtures gained active posts; no H row rests on it.
