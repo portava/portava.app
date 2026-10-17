@@ -2063,7 +2063,7 @@ const t155Id = (i: number) => `15500000-0000-4000-8000-${String(i).padStart(12, 
 
 /** A long evening: one session opened 1000 minutes ago and `n` transitions after it, oldest first. */
 function t155Evening(n: number): any[] {
-  const rows = [sessionMsg(SESSION, min(-1000))];
+  const rows: Array<ReturnType<typeof sessionMsg> | ReturnType<typeof transitionMsg>> = [sessionMsg(SESSION, min(-1000))];
   for (let i = 0; i < n; i++) {
     const to = i % 2 === 0 ? "DISRUPTED" : "ACTIVE";
     rows.push(transitionMsg(t155Id(i), SESSION, to, min(-999 + i)));

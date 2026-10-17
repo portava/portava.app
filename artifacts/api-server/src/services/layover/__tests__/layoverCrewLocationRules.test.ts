@@ -167,7 +167,7 @@ describe("L158 — scoped to the session: the share ends with the layover, not o
     };
     const live = { status: "open", expiresAt: iso(NOW + 5 * 60 * MIN), updatedAt: iso(NOW - 60 * MIN) };
     const session = { id: "s-a", status: "active", departureTime: iso(NOW + 3 * 60 * MIN), boardingTime: null, updatedAt: iso(NOW - 60 * MIN) };
-    const base = { grant, crew: live, sharerSession: session, membershipLive: true, reentryAtMs: null, nowMs: NOW };
+    const base: Parameters<typeof crewShareSignalsFor>[0] = { grant, crew: live, sharerSession: session, membershipLive: true, reentryAtMs: null, nowMs: NOW };
     const run = (over: Partial<typeof base>) => {
       const signals = crewShareSignalsFor({ ...base, ...over });
       return evaluateCrewLocationShare(

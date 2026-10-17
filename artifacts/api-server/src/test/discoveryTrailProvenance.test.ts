@@ -592,7 +592,7 @@ describe("2026-10-17 (wave 4) — no Trail momentum while a protected zone is ac
     for (const [over, erroring, reason] of [
       [{ ...flags, protected_zones: [ACTIVE_ZONE] }, [], "protected_zone_filter_required"],
       [flags, ["protected_zones"], "protected_zone_policy_unreadable"],
-    ] as const) {
+    ] satisfies Array<[Record<string, Row[]>, string[], string]>) {
       const r = await getTrailModules(db(surging(NOW, over), [...erroring]), T_A, { nowMs: NOW });
       assert.ok(r.modules.some((m) => m.key === "hidden_gems"), reason);
       assert.deepEqual(trendingNow(r)?.items, [], reason);
