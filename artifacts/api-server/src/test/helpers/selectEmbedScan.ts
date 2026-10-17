@@ -34,8 +34,8 @@ import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { parseSelectEmbeds, selectEmbedRefusalDetails, type EmbedRefusal } from "./migrationForeignKeys.js";
 
-const API_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
-const SRC = path.join(API_ROOT, "src");
+export const API_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+export const SRC = path.join(API_ROOT, "src");
 
 /** Bound on the spellings one select may expand to (ternaries multiply). */
 const MAX_VARIANTS = 64;
@@ -79,6 +79,20 @@ export interface EmbedScan {
   unresolved: UnresolvedSite[];
   /** `.select(` sites resolved to a table and a list, embed or not (the coverage figure). */
   selectsScanned: number;
+  /**
+   * EVERY resolved `.select(` (embedding or not), one entry per table spelling:
+   * what `schemaColumnScan.ts` checks column names on (wave 5, 2026-10-17).
+   */
+  selectSites: SelectSite[];
+}
+
+/** One resolved `.select(`: its table and every spelling of its list. */
+export interface SelectSite {
+  file: string;
+  line: number;
+  via: string | null;
+  table: string;
+  variants: string[];
 }
 
 // ── Files ────────────────────────────────────────────────────────────────────
@@ -91,7 +105,7 @@ function isProductionFile(root: string, full: string): boolean {
   return full.endsWith(".ts");
 }
 
-function listFiles(root: string, dir: string = root): string[] {
+export function listFiles(root: string, dir: string = root): string[] {
   const out: string[] = [];
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
@@ -105,7 +119,7 @@ function listFiles(root: string, dir: string = root): string[] {
 }
 
 const sourceCache = new Map<string, ts.SourceFile | null>();
-function sourceOf(file: string): ts.SourceFile | null {
+export function sourceOf(file: string): ts.SourceFile | null {
   if (sourceCache.has(file)) return sourceCache.get(file)!;
   let sf: ts.SourceFile | null = null;
   try {
@@ -125,7 +139,7 @@ function resolveModule(fromFile: string, spec: string): string | null {
   return null;
 }
 
-function unwrap(expr: ts.Expression): ts.Expression {
+export function unwrap(expr: ts.Expression): ts.Expression {
   let cur = expr;
   while (ts.isParenthesizedExpression(cur) || ts.isAsExpression(cur) || ts.isNonNullExpression(cur) || ts.isSatisfiesExpression(cur) || ts.isTypeAssertionExpression(cur)) {
     cur = cur.expression;
@@ -158,7 +172,7 @@ function declarations(sf: ts.SourceFile): Map<string, Decl[]> {
   return map;
 }
 
-type FnLike = ts.FunctionDeclaration | ts.ArrowFunction | ts.FunctionExpression;
+export type FnLike = ts.FunctionDeclaration | ts.ArrowFunction | ts.FunctionExpression;
 
 function topLevelFunction(sf: ts.SourceFile, name: string, mustExport: boolean): FnLike | null {
   for (const stmt of sf.statements) {
@@ -225,8 +239,95 @@ function importedSymbol(sf: ts.SourceFile, name: string): { sf: ts.SourceFile; i
   return null;
 }
 
-/** The initializer `name` refers to at `usePos`: the nearest preceding same-file declaration, else the sole one, else an import. */
-function initializerIn(sf: ts.SourceFile, name: string, usePos: number): { sf: ts.SourceFile; init: ts.Expression } | null {
+// ── Lexical scope (wave 5, 2026-10-17) ───────────────────────────────────────
+//
+// "The nearest preceding declaration of that name" is wrong whenever the name
+// at the use is a DIFFERENT binding: a parameter, a `for (const row of rows)`
+// loop variable, a destructured name, or a `const` in a sibling function. The
+// column scan resolves write bodies (`insert(row)`) where all four are common,
+// and a body resolved to another function's `row` names columns of the wrong
+// table. So a use at a REAL position resolves to the binding lexically in scope
+// there (innermost scope; an opaque binding — parameter, loop variable,
+// destructure, catch — resolves to nothing). A use at MAX_SAFE_INTEGER (a body
+// resolved from elsewhere, with no position to stand on) keeps the old rule.
+
+interface LexicalBinding { start: number; end: number; pos: number; init: ts.Expression | null }
+const bindingCache = new WeakMap<ts.SourceFile, Map<string, LexicalBinding[]>>();
+
+function lexicalBindings(sf: ts.SourceFile): Map<string, LexicalBinding[]> {
+  let map = bindingCache.get(sf);
+  if (map) return map;
+  const out = new Map<string, LexicalBinding[]>();
+  map = out;
+  const add = (name: string, scope: ts.Node, pos: number, init: ts.Expression | null) => {
+    const list = out.get(name) ?? [];
+    list.push({ start: scope.getStart(sf), end: scope.end, pos, init });
+    out.set(name, list);
+  };
+  const names = (n: ts.BindingName, acc: ts.Identifier[] = []): ts.Identifier[] => {
+    if (ts.isIdentifier(n)) acc.push(n);
+    else for (const el of n.elements) if (!ts.isOmittedExpression(el)) names(el.name, acc);
+    return acc;
+  };
+  const blockScope = (node: ts.Node): ts.Node => {
+    for (let cur = node.parent; cur; cur = cur.parent) {
+      if (ts.isBlock(cur) || ts.isSourceFile(cur) || ts.isCaseBlock(cur) || ts.isModuleBlock(cur) ||
+        ts.isForStatement(cur) || ts.isForOfStatement(cur) || ts.isForInStatement(cur)) return cur;
+    }
+    return sf;
+  };
+  const functionScope = (node: ts.Node): ts.Node => {
+    for (let cur = node.parent; cur; cur = cur.parent) if (ts.isFunctionLike(cur) || ts.isSourceFile(cur)) return cur;
+    return sf;
+  };
+  const visit = (node: ts.Node) => {
+    if (ts.isVariableDeclaration(node)) {
+      const list = node.parent;
+      const scoped = ts.isVariableDeclarationList(list) && (list.flags & ts.NodeFlags.BlockScoped) !== 0;
+      const scope = scoped ? blockScope(list) : functionScope(list);
+      if (ts.isIdentifier(node.name)) add(node.name.text, scope, node.getStart(sf), node.initializer ?? null);
+      else for (const id of names(node.name)) add(id.text, scope, id.getStart(sf), null);
+    } else if (ts.isParameter(node) && node.parent && ts.isFunctionLike(node.parent)) {
+      for (const id of names(node.name)) add(id.text, node.parent, id.getStart(sf), null);
+    } else if (ts.isCatchClause(node) && node.variableDeclaration) {
+      for (const id of names(node.variableDeclaration.name)) add(id.text, node, id.getStart(sf), null);
+      ts.forEachChild(node.block, visit);
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  bindingCache.set(sf, out);
+  return out;
+}
+
+/** The binding `name` denotes at `usePos`: its initializer, "opaque" (a parameter, loop variable, destructure…), or null (none in scope). */
+export function lexicalInitializer(sf: ts.SourceFile, name: string, usePos: number): ts.Expression | "opaque" | null {
+  const inScope = (lexicalBindings(sf).get(name) ?? []).filter((b) => b.start <= usePos && usePos < b.end);
+  if (inScope.length === 0) return null;
+  let best = inScope[0]!;
+  for (const b of inScope) {
+    const inner = b.start > best.start || (b.start === best.start && b.end < best.end);
+    const sameScope = b.start === best.start && b.end === best.end;
+    if (inner || (sameScope && b.pos < usePos && b.pos > best.pos)) best = b;
+  }
+  return best.init ?? "opaque";
+}
+
+/**
+ * The initializer `name` refers to at `usePos`: at a real position, the binding
+ * lexically in scope (none when it is a parameter, loop variable or destructure),
+ * else an import; at MAX_SAFE_INTEGER, the nearest preceding same-file
+ * declaration, else the sole one, else an import.
+ */
+export function initializerIn(sf: ts.SourceFile, name: string, usePos: number): { sf: ts.SourceFile; init: ts.Expression } | null {
+  if (usePos <= sf.end) {
+    const lexical = lexicalInitializer(sf, name, usePos);
+    if (lexical === "opaque") return null;
+    if (lexical) return { sf, init: lexical };
+    const imp = importedSymbol(sf, name);
+    return imp?.init ? { sf: imp.sf, init: imp.init } : null;
+  }
   const decls = declarations(sf).get(name);
   if (decls && decls.length > 0) {
     let best: Decl | undefined;
@@ -238,7 +339,7 @@ function initializerIn(sf: ts.SourceFile, name: string, usePos: number): { sf: t
   return imp?.init ? { sf: imp.sf, init: imp.init } : null;
 }
 
-function functionNamed(sf: ts.SourceFile, name: string): { sf: ts.SourceFile; decl: FnLike } | null {
+export function functionNamed(sf: ts.SourceFile, name: string): { sf: ts.SourceFile; decl: FnLike } | null {
   const local = topLevelFunction(sf, name, false);
   if (local) return { sf, decl: local };
   const imp = importedSymbol(sf, name);
@@ -248,9 +349,9 @@ function functionNamed(sf: ts.SourceFile, name: string): { sf: ts.SourceFile; de
 // ── Strings ──────────────────────────────────────────────────────────────────
 
 /** Parameters bound to call arguments while a function body is resolved. */
-type Binding = { expr: ts.Expression; sf: ts.SourceFile; usePos: number; env: Env };
-type Env = ReadonlyMap<string, Binding>;
-const NO_ENV: Env = new Map();
+export type Binding = { expr: ts.Expression; sf: ts.SourceFile; usePos: number; env: Env };
+export type Env = ReadonlyMap<string, Binding>;
+export const NO_ENV: Env = new Map();
 
 /**
  * Every string `expr` can evaluate to, or null when any part is not static.
@@ -343,14 +444,14 @@ export function resolveStrings(expr: ts.Expression, sf: ts.SourceFile, usePos: n
   return null;
 }
 
-function propName(n: ts.PropertyName): string | null {
+export function propName(n: ts.PropertyName): string | null {
   return ts.isIdentifier(n) || ts.isStringLiteral(n) ? n.text : null;
 }
 
-type ObjectSite = { lit: ts.ObjectLiteralExpression; sf: ts.SourceFile; usePos: number; env: Env };
+export type ObjectSite = { lit: ts.ObjectLiteralExpression; sf: ts.SourceFile; usePos: number; env: Env };
 
 /** Every object literal `expr` can be (a binding, a constant, a ternary of literals, or a call whose every return is one), or null. */
-function objectLiteralsOf(expr: ts.Expression, sf: ts.SourceFile, usePos: number, depth: number, env: Env): ObjectSite[] | null {
+export function objectLiteralsOf(expr: ts.Expression, sf: ts.SourceFile, usePos: number, depth: number, env: Env): ObjectSite[] | null {
   if (depth > 12) return null;
   const e = unwrap(expr);
   if (ts.isObjectLiteralExpression(e)) return [{ lit: e, sf, usePos, env }];
@@ -386,7 +487,7 @@ function objectLiteralsOf(expr: ts.Expression, sf: ts.SourceFile, usePos: number
 }
 
 /** The string elements of an array literal (spreads of resolvable arrays included), or null. */
-function arrayItems(expr: ts.Expression, sf: ts.SourceFile, usePos: number, depth: number, env: Env): string[] | null {
+export function arrayItems(expr: ts.Expression, sf: ts.SourceFile, usePos: number, depth: number, env: Env): string[] | null {
   if (depth > 12) return null;
   let e = unwrap(expr);
   let esf = sf;
@@ -413,7 +514,7 @@ function arrayItems(expr: ts.Expression, sf: ts.SourceFile, usePos: number, dept
 }
 
 /** Every `return <expr>` of a function body (nested functions excluded); `null` marks a bare `return;`. */
-function returnExpressions(fn: FnLike): Array<ts.Expression | null> {
+export function returnExpressions(fn: FnLike): Array<ts.Expression | null> {
   if (!fn.body) return [];
   if (!ts.isBlock(fn.body)) return [fn.body];
   const out: Array<ts.Expression | null> = [];
@@ -444,7 +545,7 @@ function cap(list: string[]): string[] | null {
  * PostgREST builder this scan can see); `null`: a `.from` whose argument is not
  * static; otherwise every spelling of the table.
  */
-function tableOfChain(expr: ts.Expression, sf: ts.SourceFile, usePos: number, env: Env, depth = 0): string[] | null | undefined {
+export function tableOfChain(expr: ts.Expression, sf: ts.SourceFile, usePos: number, env: Env, depth = 0): string[] | null | undefined {
   let cur: ts.Expression = expr;
   for (let guard = 0; guard < 200; guard++) {
     cur = unwrap(cur);
@@ -455,6 +556,8 @@ function tableOfChain(expr: ts.Expression, sf: ts.SourceFile, usePos: number, en
       if (callee.name.text === "from") {
         const recv = unwrap(callee.expression);
         if (ts.isIdentifier(recv) && /^(Array|Buffer|Uint8Array|Object|Set|Map|String)$/.test(recv.text)) return undefined;
+        // `sc.storage.from(bucket)` names a Storage bucket, not a table.
+        if (ts.isPropertyAccessExpression(recv) && recv.name.text === "storage") return undefined;
         const arg = cur.arguments[0];
         return arg ? resolveStrings(arg, sf, usePos, 0, env) : null;
       }
@@ -475,7 +578,7 @@ function tableOfChain(expr: ts.Expression, sf: ts.SourceFile, usePos: number, en
 // ── Helpers that take the table or the list as a parameter ───────────────────
 
 /** The named function a node sits in, when it has one this scan can find calls of. */
-function enclosingNamedFunction(node: ts.Node): { name: string; decl: FnLike } | null {
+export function enclosingNamedFunction(node: ts.Node): { name: string; decl: FnLike } | null {
   for (let cur: ts.Node | undefined = node.parent; cur; cur = cur.parent) {
     if (ts.isFunctionDeclaration(cur)) return cur.name && cur.body ? { name: cur.name.text, decl: cur } : null;
     if ((ts.isArrowFunction(cur) || ts.isFunctionExpression(cur))) {
@@ -489,7 +592,7 @@ function enclosingNamedFunction(node: ts.Node): { name: string; decl: FnLike } |
 }
 
 /** The block a NESTED `const name = (…) => …` helper is declared in; null for a top-level one. */
-function enclosingBlockOf(decl: FnLike): ts.Node | null {
+export function enclosingBlockOf(decl: FnLike): ts.Node | null {
   const v = decl.parent;
   if (!v || !ts.isVariableDeclaration(v)) return null;
   const stmt = v.parent?.parent;
@@ -498,7 +601,7 @@ function enclosingBlockOf(decl: FnLike): ts.Node | null {
 }
 
 /** Does `node`'s subtree name one of `fn`'s parameters? */
-function mentionsParameter(node: ts.Node, fn: FnLike): boolean {
+export function mentionsParameter(node: ts.Node, fn: FnLike): boolean {
   const params = new Set(fn.parameters.filter((p) => ts.isIdentifier(p.name)).map((p) => (p.name as ts.Identifier).text));
   let found = false;
   const visit = (n: ts.Node) => {
@@ -511,8 +614,11 @@ function mentionsParameter(node: ts.Node, fn: FnLike): boolean {
 }
 
 let callIndex: Map<string, Array<{ sf: ts.SourceFile; call: ts.CallExpression }>> | null = null;
-function callsNamed(name: string, files: ts.SourceFile[]): Array<{ sf: ts.SourceFile; call: ts.CallExpression }> {
-  if (!callIndex) {
+let callIndexFiles: ts.SourceFile[] | null = null;
+/** Every `name(...)` call in `files` (the index is rebuilt whenever a different file list is asked about). */
+export function callsNamed(name: string, files: ts.SourceFile[]): Array<{ sf: ts.SourceFile; call: ts.CallExpression }> {
+  if (!callIndex || callIndexFiles !== files) {
+    callIndexFiles = files;
     callIndex = new Map();
     for (const sf of files) {
       const visit = (n: ts.Node) => {
@@ -529,10 +635,50 @@ function callsNamed(name: string, files: ts.SourceFile[]): Array<{ sf: ts.Source
   return callIndex.get(name) ?? [];
 }
 
+/**
+ * When `node` sits in a named helper and any of `parts` names one of its
+ * parameters: one environment per call of the helper, its parameters bound to
+ * that call's arguments. A top-level helper is called wherever its name
+ * resolves to it; a helper declared inside a function (`const run = async
+ * (cols) => …`) only within the block that declares it. Null when `node` is not
+ * in such a helper, `parts` do not mention its parameters, or nothing calls it.
+ * Shared with `schemaColumnScan.ts`, so a filter or a write body forwarded
+ * through a helper resolves exactly as a select list does.
+ */
+export function helperCallBindings(sf: ts.SourceFile, node: ts.Node, parts: ts.Node[], env: Env, files: ts.SourceFile[]):
+  Array<{ env: Env; helper: string; sf: ts.SourceFile; call: ts.CallExpression }> | null {
+  const helper = enclosingNamedFunction(node);
+  if (!helper || !parts.some((p) => mentionsParameter(p, helper.decl))) return null;
+  const scope = enclosingBlockOf(helper.decl);
+  const calls = callsNamed(helper.name, files).filter(({ sf: csf, call }) =>
+    functionNamed(csf, helper.name)?.decl === helper.decl ||
+    (scope !== null && csf === sf && call.getStart(csf) >= scope.getStart(sf) && call.getEnd() <= scope.getEnd()));
+  if (calls.length === 0) return null;
+  return calls.map(({ sf: csf, call }) => {
+    const bindings = new Map(env);
+    helper.decl.parameters.forEach((p, i) => {
+      const a = call.arguments[i];
+      if (ts.isIdentifier(p.name) && a) bindings.set(p.name.text, { expr: a, sf: csf, usePos: call.getStart(csf), env: NO_ENV });
+    });
+    return { env: bindings, helper: helper.name, sf: csf, call };
+  });
+}
+
+const sourcesCache = new Map<string, ts.SourceFile[]>();
+/** The parsed production files under `root`, sorted; one array per root, so the call index is shared. */
+export function productionSources(root: string = SRC): ts.SourceFile[] {
+  let hit = sourcesCache.get(root);
+  if (!hit) {
+    hit = listFiles(root).sort().map(sourceOf).filter((x): x is ts.SourceFile => x !== null);
+    sourcesCache.set(root, hit);
+  }
+  return hit;
+}
+
 // ── Views (a relationship through a view is invisible to the key reader) ─────
 
 let viewCache: Set<string> | null = null;
-function views(): Set<string> {
+export function views(): Set<string> {
   if (viewCache) return viewCache;
   const out = new Set<string>();
   const re = /CREATE\s+(?:OR\s+REPLACE\s+)?(?:MATERIALIZED\s+)?VIEW\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:"?public"?\.)?"?([a-z_][a-z0-9_]*)"?/gi;
@@ -559,18 +705,19 @@ const scanCache = new Map<string, EmbedScan>();
 export function scanSelectEmbeds(root: string = SRC): EmbedScan {
   const hit = scanCache.get(root);
   if (hit) return hit;
-  callIndex = null;
   const embedSites: EmbedSite[] = [];
   const viewSites: EmbedSite[] = [];
   const unresolved: UnresolvedSite[] = [];
+  const selectSites: SelectSite[] = [];
   let selectsScanned = 0;
   const viewSet = views();
-  const files = listFiles(root).sort().map(sourceOf).filter((x): x is ts.SourceFile => x !== null);
+  const files = productionSources(root);
   const rel = (sf: ts.SourceFile) => path.relative(root === SRC ? API_ROOT : root, sf.fileName).split(path.sep).join("/");
   const lineOf = (sf: ts.SourceFile, n: ts.Node) => sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1;
 
   function judge(site: { file: string; line: number; via: string | null }, tables: string[], variants: string[]) {
     selectsScanned++;
+    for (const table of tables) selectSites.push({ ...site, table, variants });
     for (const table of tables) {
       const embeds = [...new Set(variants.flatMap((v) => parseSelectEmbeds(table, v).map((x) => `${x.parent}→${x.embed}`)))];
       if (embeds.length === 0) continue;
@@ -608,27 +755,10 @@ export function scanSelectEmbeds(root: string = SRC): EmbedScan {
       return;
     }
     if (tables !== null && variants !== null) { judge(site, tables, variants); return; }
-    const helper = enclosingNamedFunction(node);
-    const parameterised = helper && (mentionsParameter(recv, helper.decl) || (arg && mentionsParameter(arg, helper.decl)));
-    if (helper && parameterised && hops < MAX_CALL_HOPS) {
-      // A top-level helper is called wherever its name resolves to it; a helper
-      // declared inside a function (`const run = async (cols) => …`) only within
-      // the block that declares it.
-      const scope = enclosingBlockOf(helper.decl);
-      const calls = callsNamed(helper.name, files).filter(({ sf: csf, call }) =>
-        functionNamed(csf, helper.name)?.decl === helper.decl ||
-        (scope !== null && csf === sf && call.getStart(csf) >= scope.getStart(sf) && call.getEnd() <= scope.getEnd()));
-      if (calls.length > 0) {
-        for (const { sf: csf, call } of calls) {
-          const bindings = new Map(env);
-          helper.decl.parameters.forEach((p, i) => {
-            const a = call.arguments[i];
-            if (ts.isIdentifier(p.name) && a) bindings.set(p.name.text, { expr: a, sf: csf, usePos: call.getStart(csf), env: NO_ENV });
-          });
-          visitSelect(sf, node, bindings, `${helper.name}() called at ${rel(csf)}:${lineOf(csf, call)}`, hops + 1);
-        }
-        return;
-      }
+    const calls = hops < MAX_CALL_HOPS ? helperCallBindings(sf, node, [recv, ...(arg ? [arg] : [])], env, files) : null;
+    if (calls) {
+      for (const c of calls) visitSelect(sf, node, c.env, `${c.helper}() called at ${rel(c.sf)}:${lineOf(c.sf, c.call)}`, hops + 1);
+      return;
     }
     if (variants === null) report({ ...site, table: tables?.length === 1 ? tables[0] : null, reason: "select list not statically resolvable", text });
     else if (variants.some((v) => EMBED_SHAPE.test(v))) report({ ...site, table: null, reason: "table not statically resolvable", text });
@@ -643,7 +773,7 @@ export function scanSelectEmbeds(root: string = SRC): EmbedScan {
     };
     visit(sf);
   }
-  const result = { embedSites, viewSites, unresolved, selectsScanned };
+  const result = { embedSites, viewSites, unresolved, selectsScanned, selectSites };
   scanCache.set(root, result);
   return result;
 }

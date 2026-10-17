@@ -17448,3 +17448,35 @@ rows. The last two changed line-neutrally, so every cited `it(` still holds.
 - NOT-GRADED: artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts — census-media's suite; named above only because its Path B fixtures moved to real `discovery_places` rows, line-neutrally; no Discovery verdict rests on it.
 
 Rows: none move. Headline unchanged: 103 C / 83 W / 2 N / 0 X of 188.
+
+### Correction (2026-10-17, wave 5) — tag suggestions: trips.name and trips.destination do not exist in production
+
+*Measured on branch `claude/wave4-build-20261017` against the working tree. `head_commit` is not re-declared. The fix
+is uncommitted and not deployed, so production keeps the defect below until it ships. **NO ROW MOVES.***
+
+**What was broken, in production.** The mention picker, `GET /api/tags/suggestions` (`routes/tags.ts`), offered the
+caller's trips by reading `trip_members` with the embed `trips(id, name, destination, status)`. `trips` has `title`
+and `destination_city`; it has never had `name` or `destination` (the 2026-08-19 production baseline, the 2026-09-22
+production capture, no migration). PostgREST failed the read with 42703, the route never read `error`, and no trip
+was ever suggested: the picker's trip half was empty on every call. DV-76 grades tagging privacy (Phase 0.3: tag
+writes, pending tags, who is notified) and §80.14 the picker's `.or()` escaping; neither rests on the picker's trip
+suggestions, so no row moves.
+
+**What changed, with no migration.** The embed reads `name:title, destination:destination_city` (the keys the route
+already used) and only for an accepted membership
+(`artifacts/api-server/src/routes/tags.ts:363#.select('trip_id, trips(id, name:title, destination:destination_city, status)')`,
+`artifacts/api-server/src/routes/tags.ts:364#.eq('status', 'accepted')`). The status filter is new: `trip_members.status`
+also holds `invited`, `declined`, `removed` and `left`, and once the read works none of those may surface a trip's
+title in the picker.
+
+**How it was found.** `artifacts/api-server/src/test/schemaColumnProductionScan.test.ts` (class A: declared by no SQL in
+the repository; the embed's columns are graded on the table the embed resolves to).
+
+**Tests.** `artifacts/api-server/src/test/tagSuggestionsTripEntities.test.ts:114#it("a matching accepted trip is suggested with its title and destination city"`
+(3 cases on schemaStrictSupabase with `joinEmbeds`, which materialises the embed from flat seed tables and answers
+42703 for a dead column). Red first: the old embed restored turns 2 of 3 red; the status filter dropped turns 2 red;
+the aliases dropped turns 1 red. Each mutant was restored byte-identically (`cmp`). Both route edits are line-neutral, so no other
+citation into `routes/tags.ts` moves.
+
+- NOT-GRADED: artifacts/api-server/src/test/tagSuggestionsTripEntities.test.ts — this correction's own test; no Discovery row rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/schemaColumnProductionScan.test.ts — the repository-wide scan that found the defect; no Discovery row rests on it.
