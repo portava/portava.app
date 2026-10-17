@@ -124,7 +124,7 @@ export function createShareRevocationPoller(deps: PollerDeps) {
       t.lastAnswerAt = deps.now();
       for (const card of t.cards.values()) {
         const a = answerFor(card.ref, answers);
-        if (!a) continue; // unsupported / omitted: cannot tell, keep what the card has
+        if (!a || (!a.available && a.reason === 'unknown')) continue; // unsupported / omitted / unreadable source ('unknown'): cannot tell, keep what the card has
         const next = revocationFromResolved(a);
         for (const l of [...card.listeners]) {
           try { l(next); } catch { /* one card's failure never silences another */ }

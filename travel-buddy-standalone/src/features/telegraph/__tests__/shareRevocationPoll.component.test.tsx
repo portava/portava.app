@@ -276,3 +276,27 @@ describe('T359 / F-12 — an OPEN card hears its source revoked', () => {
     expect(screen.getByText('This content was removed')).toBeTruthy(); // the re-read's reason, not the poll's "private"
   });
 });
+
+// Independent verification (wave 5, pass 1): the batch route answers an
+// UNREADABLE source as { available: false, reason: 'unknown' }. That is a read
+// failure, not a revocation — the card must keep what it has, exactly like an
+// omitted or unsupported ref, and a later definite answer is still heard.
+describe('T359 — an unreadable source is "cannot tell", never a revocation', () => {
+  const unreadable = (objectId: string, messageId: string | null = null): ResolvedShare => ({
+    objectType: 'POST', objectId, messageId, available: false, status: 'unknown', reason: 'unknown',
+    projection: null, actions: [], deepLink: `/post/${objectId}`,
+  });
+
+  it('P9 reason "unknown" tells the card nothing; the next definite answer is heard', async () => {
+    const h = harness();
+    const heard: string[] = [];
+    h.poller.subscribe(THREAD, { objectType: 'POST', objectId: POST, messageId: 'm1' }, (r) => heard.push(r.state));
+    h.setAnswer((refs) => ({ ok: true, data: { threadId: THREAD, projections: refs.map((r) => unreadable(r.objectId, r.messageId ?? null)), unsupported: [] } }));
+    await h.advance(POLL_BASE_MS);
+    expect(h.calls).toHaveLength(1);
+    expect(heard).toEqual([]);
+    h.setAnswer((refs) => ({ ok: true, data: { threadId: THREAD, projections: refs.map((r) => revoked(r.objectId, r.messageId ?? null)), unsupported: [] } }));
+    await h.advance(POLL_BASE_MS);
+    expect(heard).toEqual(['unavailable']);
+  });
+});

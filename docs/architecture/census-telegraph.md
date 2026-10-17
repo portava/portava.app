@@ -15485,3 +15485,10 @@ Not moved, recorded: six Trip pushes remain push-only outside the notification l
 | CANNOT-VERIFY | **2** |
 
 That is **451 = 272 C / 176 W / 1 N / 2 X**: CORRECT 272 of 451 = 60.3 % (59.9 % at W5C.2). T397 and T256 move W -> C; T431 is restated W -> W.
+
+### Correction (2026-10-17, wave 5) — independent verification, pass 1: T359 and T446
+
+Fable pass 1 ACCEPTED T446 and T359 at C, with two corrections recorded here (no row moves).
+
+- **T359: an unreadable source was drawn as revoked.** The batch route answers a source it could not read as `{ available: false, reason: "unknown" }`; the poller turned every `available: false` into the revoked notice, so a transient read failure blanked a live card for one interval — contrary to the poller's own rule that only a definite answer is told. The poller now treats reason `unknown` as "cannot tell", exactly like an omitted or unsupported ref (`travel-buddy-standalone/src/features/telegraph/sharing/shareRevocationPoller.ts:127#a.reason === 'unknown'`), pinned by `travel-buddy-standalone/src/features/telegraph/__tests__/shareRevocationPoll.component.test.tsx:290#it('P9 reason "unknown" tells the card nothing` (red with the old line). Stated limit, in addition to "within one poll": an app in the background hears nothing until it returns to the foreground.
+- **T446: a deployment note.** The client's message-tree rule keys on the origin of `EXPO_PUBLIC_SUPABASE_URL`. If that origin differs from the API's `SUPABASE_URL`, every absolute message image is withheld (fail-closed) — correct, but visible. The two must name the same project.
