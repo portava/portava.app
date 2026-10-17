@@ -17379,7 +17379,7 @@ sentence's bare line numbers should not.
 
 ### 130.4 Scope note
 
-- NOT-GRADED: artifacts/api-server/src/lib/eventViewAccess.ts — §64.2 quotes the Events route's own visibility rule, which the integration batch moved from the route into this helper, as the reference Discovery's event reads were compared with; no Discovery verdict row cites it.
+- Watched: artifacts/api-server/src/lib/eventViewAccess.ts — now in this census's freshness scope (CENSUS_SCOPE, added by PR #762's CI fix), so the NOT-GRADED declaration is withdrawn; the reason it was cited stands: §64.2 quotes the Events route's own visibility rule, which the integration batch moved from the route into this helper, as the reference Discovery's event reads were compared with; no Discovery verdict row cites it.
 
 `artifacts/api-server/src/test/discoveryPeopleBuddyPayments.test.ts` is cited on §128's B03 verdict row, so it is
 graded and cannot be declared not graded. It is still unwatched. Adding it to this census's `CENSUS_SCOPE` in

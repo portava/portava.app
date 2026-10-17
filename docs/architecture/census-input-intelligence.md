@@ -8688,7 +8688,7 @@ on that flag.
 
 ### 52.6 Scope note
 
-- NOT-GRADED: travel-buddy-standalone/src/services/messagingOwnerRequest.ts — §51's known-limit paragraph names the shared owner-session lease only to locate a disclosed, unfixed limitation; it changes no grade, and no Input verdict row rests on that file.
+- Watched: travel-buddy-standalone/src/services/messagingOwnerRequest.ts — now in this census's freshness scope (CENSUS_SCOPE, added by PR #762's CI fix), so the NOT-GRADED declaration is withdrawn; the reason it was cited stands: §51's known-limit paragraph names the shared owner-session lease only to locate a disclosed, unfixed limitation; it changes no grade, and no Input verdict row rests on that file.
 
 ### 52.7 Headline, restated from the rows
 
