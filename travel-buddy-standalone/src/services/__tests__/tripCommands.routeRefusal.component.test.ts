@@ -51,3 +51,12 @@ it('a 503, a 401, a retryable answer and an unreadable body are NOT refusals —
   answer(500, { error: 'db_error', message: 'boom' });
   expect(await send()).toMatchObject({ kind: 'unavailable' });
 });
+
+// Independent verification (wave 5, pass 2): the server does not mark
+// rate_limited retryable (lib/http.ts RETRYABLE_CODES), so a limiter on
+// /commands would answer 429 WITHOUT `retryable: true`. That is "try again
+// later", never a refusal of the command.
+it('a 429 is unavailable even when the server does not mark it retryable', async () => {
+  answer(429, { error: 'rate_limited', message: 'slow down' });
+  expect(await send()).toMatchObject({ ok: false, kind: 'unavailable' });
+});

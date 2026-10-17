@@ -144,7 +144,7 @@ export function TripStageControls({ tripId, refreshKey = 0, onChanged, load = fe
         const arrow = nextArrow(st.state);
         // A zone this phone cannot compute in cannot show the stage's dates, so
         // they are not offered for editing: an empty field would CLEAR them.
-        const zoneOk = usableZone(st.timezone) !== null;
+        const zoneOk = usableZone(st.timezone) !== null && [st.startsAt, st.endsAt].every((v) => v == null || Number.isFinite(Date.parse(v))); // and a served boundary it cannot parse would prefill as empty and CLEAR it
         const isEditing = zoneOk && editing === st.id;
         const draft = isEditing ? stageBoundsDraft({ starts, ends }, st.timezone) : null;
         const current: Bounds = { startsAt: st.startsAt, endsAt: st.endsAt };
@@ -159,7 +159,7 @@ export function TripStageControls({ tripId, refreshKey = 0, onChanged, load = fe
               <Text style={s.detail} testID={`stage-control-dates-${st.id}`}>
                 Starts {boundaryWords(st.startsAt, st.timezone)} · Ends {boundaryWords(st.endsAt, st.timezone)} — {st.timezone}
               </Text>
-              {!zoneOk ? <Text style={s.detail} testID={`stage-control-zone-unusable-${st.id}`}>This stage&apos;s time zone can&apos;t be used on this phone, so its dates can&apos;t be set here.</Text> : null}
+              {!zoneOk ? <Text style={s.detail} testID={`stage-control-zone-unusable-${st.id}`}>{usableZone(st.timezone) === null ? 'This stage\'s time zone can\'t be used on this phone, so its dates can\'t be set here.' : 'This stage\'s saved dates can\'t be read on this phone, so they can\'t be changed here.'}</Text> : null}
               <View style={s.buttons}>
                 {zoneOk ? <Pressable
                   disabled={busy}

@@ -15515,3 +15515,11 @@ Built by the wave-5 safety-notifications lane and appended by the lead. APPEND-O
 | CANNOT-VERIFY | **2** |
 
 That is **451 = 271 C / 177 W / 1 N / 2 X**: T254 is restated C -> W on its own corrected evidence (one urgent safety type is not interruptive); T398 and T256 are restated in their buckets.
+
+### Correction (2026-10-17, wave 5) — independent verification, pass 2: T256, T359, T397
+
+Fable pass 2 ACCEPTED T397 and T256 at C (no row moves here). Three corrections:
+
+- **T256 wording.** W5N.1 says an unreadable roster, blocks table or thread choice tells nobody. That holds with one deliberate exception: during a raised SAFETY mode, the person who asked for help still reaches members who muted the thread (the mute is overridden; quiet hours are not). The safety lane (W5S.1) states the rule.
+- **T359, the per-card path.** The poller's fix (95027e013) covered the batch poll; the hook's own per-card resolve, used only for a card the thread read did not project, still drew reason `unknown` as revoked. It now reads it as "cannot tell" too (`travel-buddy-standalone/src/features/telegraph/sharing/useShareRevocation.ts:98#first.reason === 'unknown' ? UNKNOWN`), pinned by a new case at the end of shareRevocation.component.test.tsx (red with the old line).
+- **T397, a reading for the owner.** The six Trip pushes that stay outside the notification ledger (`trip_cancelled`, `trip_archived`, `trip_join_request_received`, `trip_invite_accepted`, `trip_invite_declined`, `trip_24h_reminder`) each have exactly one producer, so none can duplicate; the row's clause ("one Plan change must not create redundant ...") does not require them. If the owner reads "deduplicate by underlying causal event" as every push path going through the ledger, T397 returns to W until they do.

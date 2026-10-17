@@ -176,7 +176,7 @@ export async function issueTripCommand(
   // server's words — not "couldn't reach the trip, try again". A 401 (the
   // token was not accepted) and anything the server marks `retryable` stay
   // unavailable.
-  if (res.status >= 400 && res.status < 500 && res.status !== 401 && body
+  if (res.status >= 400 && res.status < 500 && res.status !== 401 && res.status !== 429 && body
     && typeof body.reason !== 'string' && typeof body.error === 'string' && body.retryable !== true) {
     return {
       ok: false, kind: 'refused', status: res.status, reason: body.error,

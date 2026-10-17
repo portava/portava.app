@@ -95,7 +95,7 @@ export function useShareRevocation(
       setValue(
         first.available
           ? { state: 'available', reason: null, resolved: first }
-          : { state: 'unavailable', reason: first.reason, resolved: first },
+          : first.reason === 'unknown' ? UNKNOWN : { state: 'unavailable', reason: first.reason, resolved: first }, // an unreadable source is "cannot tell", never a revocation
       );
     })();
     return () => {

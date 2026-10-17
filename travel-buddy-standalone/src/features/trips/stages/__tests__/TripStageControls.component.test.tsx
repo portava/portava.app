@@ -153,3 +153,13 @@ it('a stage whose zone cannot be computed here is not offered for dating, so an 
   expect(screen.queryByTestId(`stage-control-edit-${S1}`)).toBeNull();
   expect(screen.getByTestId(`stage-control-dates-${S1}`).props.children[1]).toBe('2026-10-20T07:00:00+00:00');
 });
+
+// Independent verification (wave 5, pass 2), hardening: a served boundary this
+// phone cannot parse would prefill as an empty field and CLEAR that boundary on
+// Save. Such a stage is not offered for dating, exactly like an unusable zone.
+it('a stage whose served boundary cannot be parsed is not offered for dating', async () => {
+  await render(<TripStageControls tripId="t1" load={jest.fn().mockResolvedValue(structureOf([stage(S1, 1, { startsAt: 'not-an-instant' })]))} />);
+  await waitFor(() => screen.getByTestId('stage-controls'));
+  expect(screen.queryByTestId(`stage-control-edit-${S1}`)).toBeNull();
+  expect(screen.getByTestId(`stage-control-zone-unusable-${S1}`).props.children).toBe('This stage\'s saved dates can\'t be read on this phone, so they can\'t be changed here.');
+});
