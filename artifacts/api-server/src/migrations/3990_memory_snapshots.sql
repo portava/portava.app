@@ -68,7 +68,11 @@ DROP POLICY IF EXISTS memory_snapshots_owner_read ON public.memory_snapshots;
 CREATE POLICY memory_snapshots_owner_read ON public.memory_snapshots
   FOR SELECT TO authenticated USING (owner_id = (SELECT auth.uid()));
 REVOKE ALL ON TABLE public.memory_snapshots FROM PUBLIC, anon, authenticated, service_role;
+-- 3503's boundary: no client role holds any privilege on a sequence, and service_role keeps USAGE on
+-- every one (its postcondition and src/test/db/clientSequencePrivileges.db.test.ts hold both). The
+-- table stays closed to service_role; only the SECURITY DEFINER functions below write it.
 REVOKE ALL ON SEQUENCE public.memory_snapshots_revision_seq FROM PUBLIC, anon, authenticated, service_role;
+GRANT USAGE ON SEQUENCE public.memory_snapshots_revision_seq TO service_role;
 CREATE INDEX IF NOT EXISTS memory_snapshots_memory_idx ON public.memory_snapshots (memory_id, owner_id, revision);
 CREATE INDEX IF NOT EXISTS memory_snapshots_evidence_idx ON public.memory_snapshots USING gin (source_evidence_ids);
 CREATE INDEX IF NOT EXISTS memory_snapshots_episode_idx ON public.memory_snapshots USING gin (source_episode_ids);

@@ -190,7 +190,67 @@ test("executed SQL excludes protected and unlocatable contributions before all t
         }
       }
       await database.exec("RESET ROLE; REVOKE SELECT ON public.protected_zones FROM service_role; SET ROLE service_role");
-      await assert.rejects(database.query("SELECT public.rebuild_place_momentum_v2($1)", [now]), /permission denied/);
+      await assert.rejects(database.query("SELECT public.rebuild_place_momentum_v2($1)", [now]), /permission denied/); await assert.rejects(database.query("SELECT public.rebuild_place_momentum($1)", [now]), /permission denied/); await assert.rejects(database.query("SELECT * FROM public.discovery_trend_place_context()"), /permission denied/); // Fable gate C3 (2026-10-17): an unreadable zone policy is an error for v1 and the context too, never an empty policy
+    });
+
+    await context.test("with no active zone every producer writes its predecessor's rows and feature version; a zone switched on filters and stamps", async () => {
+      const inactive = new PGlite();
+      try {
+        await fixture(inactive);
+        await inactive.exec(`RESET ROLE; UPDATE public.protected_zones SET active = false;
+          INSERT INTO public.rank_events SELECT place, actor, 'save', '2031-07-10', '2031-07-10', 'discovery'
+            FROM unnest(ARRAY['db/${safePlace}','db/${protectedPlace}','db/${unknownPlace}','osm:missing']) place
+            CROSS JOIN unnest(ARRAY['30000000-0000-4000-a000-000000000001'::uuid,'30000000-0000-4000-a000-000000000002'::uuid]) actor;
+          INSERT INTO public.memories (owner_id,place_id,state,visibility,created_at)
+            SELECT actor, place,'published','public', CASE WHEN actor::text LIKE '%001' THEN '2031-07-14 01:00'::timestamptz ELSE '2031-07-14 02:00'::timestamptz END
+            FROM unnest(ARRAY['${safePlace}','${protectedPlace}','${unknownPlace}','osm:missing']) place
+            CROSS JOIN unnest(ARRAY['30000000-0000-4000-a000-000000000001'::uuid,'30000000-0000-4000-a000-000000000002'::uuid]) actor;
+          SET ROLE service_role`);
+        const readings = async () => {
+          const out: Record<string, unknown> = {};
+          for (const [label, normalised, post] of [["v1", false, false], ["v2", true, false], ["v2+post", true, true]] as const) {
+            await inactive.exec(`DELETE FROM public.place_momentum; DELETE FROM public.area_momentum;
+              UPDATE public.feature_flags SET enabled = ${normalised} WHERE flag = 'discovery_trend_normalised_enabled';
+              UPDATE public.feature_flags SET enabled = ${post} WHERE flag = 'discovery_trend_post_convergence_enabled';`);
+            await inactive.query("SELECT public.rebuild_place_momentum($1)", [now]);
+            out[label] = {
+              places: (await inactive.query("SELECT to_jsonb(s)-'id'-'created_at' AS r FROM public.place_momentum s ORDER BY place_id")).rows,
+              areas: (await inactive.query("SELECT to_jsonb(s)-'id'-'created_at' AS r FROM public.area_momentum s ORDER BY cell_key")).rows,
+            };
+          }
+          out.context = (await inactive.query("SELECT * FROM public.discovery_trend_place_context() ORDER BY place_key")).rows;
+          out.windows = (await inactive.query("SELECT * FROM public.discovery_trend_windows_v2($1,'place') ORDER BY o_key", [now])).rows;
+          out.areaWindows = (await inactive.query("SELECT * FROM public.discovery_trend_windows_v2($1,'area') ORDER BY o_key", [now])).rows;
+          out.posts = (await inactive.query("SELECT * FROM public.discovery_trend_post_groups_v2($1) ORDER BY o_key, o_win", [now])).rows;
+          return out;
+        };
+        const predecessor = await readings();
+        const everyItem = [`db/${safePlace}`, `db/${protectedPlace}`, `db/${unknownPlace}`, "osm:missing"].sort();
+        assert.deepEqual((predecessor.windows as Array<{ o_key: string }>).map((r) => r.o_key), everyItem, "not vacuous: unlocatable and non-canonical items are read");
+        assert.deepEqual((predecessor.posts as Array<{ o_key: string }>).map((r) => r.o_key), everyItem, "not vacuous: every place has a post leg");
+        assert.deepEqual((predecessor.v1 as { places: Array<{ r: Record<string, unknown> }> }).places.map((p) => p.r.feature_version),
+          everyItem.map(() => "discovery-row-activity-v2"));
+        await inactive.exec("RESET ROLE");
+        await inactive.exec(patch);
+        await inactive.exec("SET ROLE service_role");
+        assert.deepEqual(await readings(), predecessor, "no active zone: 3988 moves no value, feature_version included");
+
+        await inactive.exec("RESET ROLE; UPDATE public.protected_zones SET active = true; SET ROLE service_role");
+        const policed = await readings();
+        assert.deepEqual((policed.windows as Array<{ o_key: string }>).map((r) => r.o_key), [`db/${safePlace}`]);
+        assert.deepEqual((policed.posts as Array<{ o_key: string }>).map((r) => r.o_key), [`db/${safePlace}`]);
+        assert.deepEqual((policed.context as Array<{ place_key: string }>).map((r) => r.place_key), [safePlace]);
+        // A Local Pulse cell has no post leg (3497 stamps it with the plain v2 feature in either mode).
+        for (const [label, stamp, areaStamp] of [["v1", "discovery-row-activity-v2+protected-contributions-v1", null],
+          ["v2", "discovery-exposure-activity-v3+protected-contributions-v1", "discovery-exposure-activity-v3+protected-contributions-v1"],
+          ["v2+post", "discovery-exposure-activity-v3+post-after-visit-v1+protected-contributions-v1", "discovery-exposure-activity-v3+protected-contributions-v1"]] as const) {
+          const reading = policed[label] as { places: Array<{ r: Record<string, unknown> }>; areas: Array<{ r: Record<string, unknown> }> };
+          assert.deepEqual(reading.places.map((p) => [p.r.place_id, p.r.feature_version]), [[`db/${safePlace}`, stamp]], label);
+          assert.deepEqual(reading.areas.map((a) => a.r.feature_version), areaStamp === null ? [] : [areaStamp], label);
+        }
+      } finally {
+        await inactive.close();
+      }
     });
 
     await context.test("an incompatible deployed definition rolls back the whole migration", async () => {

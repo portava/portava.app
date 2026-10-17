@@ -138,11 +138,11 @@ DECLARE
   expected_row record;
   actual_hash text;
   expected_functions jsonb := '[
-    {"signature":"public.discovery_trend_place_context()","before":"9690429382f8b78a78b5164361c4cf640b28e6dcc0103935e6739cc60b452177","after":"fa94c17c81b241a434931c37865002f2f201b27b5fd2b133c705e59bc2b9a9bc"},
-    {"signature":"public.discovery_trend_windows_v2(timestamptz,text)","before":"0adead359d36460924c2575b7edb155a0b47d93614b83241b3acb6c1dccf7958","after":"5ab09b001ac3a45bdc020301b9ad1c010f230031be6c42f1fc7072cf6395ad59"},
-    {"signature":"public.discovery_trend_post_groups_v2(timestamptz)","before":"69e7206c9d541487bbe983d6102b5a6271c730042f612b3aadfc6a546f79e989","after":"9c7a079f2dd50ae97c19e4b7d54323ae3fc7544e51a83bc3dae9719cf6401655"},
-    {"signature":"public.rebuild_place_momentum(timestamptz)","before":"4ba1cbf572793b53a5f39a310819d9524ea032694b475ea946fb86dc2e9c9844","after":"725253992dfe683d1226e0db78a73eb8c099ff9ce59e12fc4392da5d5522f9f4"},
-    {"signature":"public.rebuild_place_momentum_v2(timestamptz)","before":"2560f3daa9859db172bac33a54dffa5160f41dd9c6cb918ef91e6478a299b9ba","after":"8c17befe9ccd0c811ee8635d634af2d60b2fb11ad3a23499057d76bdf25c3282"}
+    {"signature":"public.discovery_trend_place_context()","before":"9690429382f8b78a78b5164361c4cf640b28e6dcc0103935e6739cc60b452177","after":"5e970cbc6e5c8bbee186d54ece1ee678da9f36c46020c2fa9de5e64520292967"},
+    {"signature":"public.discovery_trend_windows_v2(timestamptz,text)","before":"0adead359d36460924c2575b7edb155a0b47d93614b83241b3acb6c1dccf7958","after":"8967523ccd3435c626d25ca95a3ea406b16c5be898ab5ea8bfca66f9b469b9f5"},
+    {"signature":"public.discovery_trend_post_groups_v2(timestamptz)","before":"69e7206c9d541487bbe983d6102b5a6271c730042f612b3aadfc6a546f79e989","after":"93859dcf6650f82b15de316602fe13d8af34e764e8decffbb460d153047277a6"},
+    {"signature":"public.rebuild_place_momentum(timestamptz)","before":"4ba1cbf572793b53a5f39a310819d9524ea032694b475ea946fb86dc2e9c9844","after":"dfe91a41961498b24e43ec80fd3c4eb60a4e003941e33e38807769179f9c4d68"},
+    {"signature":"public.rebuild_place_momentum_v2(timestamptz)","before":"2560f3daa9859db172bac33a54dffa5160f41dd9c6cb918ef91e6478a299b9ba","after":"9bc554e497cbc8c37aedd3fa227a3e41261ee80bc78848970798e22ac51cc7cf"}
   ]';
 BEGIN
   FOR expected_row IN SELECT * FROM jsonb_to_recordset(expected_functions) AS expected(signature text, "before" text, "after" text) LOOP
@@ -154,31 +154,41 @@ BEGIN
       RAISE EXCEPTION '3988 refuses unreviewed definition for %', expected_row.signature;
     END IF;
   END LOOP;
+  -- The filter and the +protected-contributions-v1 stamp apply while a protection
+  -- policy is in force: any ACTIVE protected_zones row. Then a contribution counts
+  -- only at a canonical place whose position is proven clear of every active zone
+  -- (unlocatable, non-canonical and malformed-zone cases fail closed). With no
+  -- active zone there is nothing a contribution could fall inside, the filter is
+  -- the identity, and each producer writes its predecessor's rows and feature
+  -- version value for value: the stored snapshot stays the product's in-process
+  -- reading (census-discovery §58, §84, §95.9; DV-25, DV-72, DC-17), which
+  -- lib/discoveryTrendProducerPrivacy withholds entirely whenever a zone is active.
+  -- An unreadable zone table is an error here, never an empty policy.
   FOR patch_row IN SELECT * FROM (VALUES
     ('public.discovery_trend_place_context()',
      E'FROM public.discovery_places dp\n',
-     E'FROM public.discovery_places dp\n     WHERE public.discovery_trend_position_is_clear(dp.lat, dp.lng)\n'),
+     E'FROM public.discovery_places dp\n     WHERE NOT EXISTS (SELECT 1 FROM public.protected_zones z WHERE z.active)\n        OR public.discovery_trend_position_is_clear(dp.lat, dp.lng)\n'),
     ('public.discovery_trend_windows_v2(timestamptz,text)',
-     '      LEFT JOIN ctx x ON x.cpk = lower(regexp_replace(r.item_id, ''^db/'', ''''))',
-     '      JOIN ctx x ON x.cpk = lower(regexp_replace(r.item_id, ''^db/'', ''''))'),
+     E'      LEFT JOIN ctx x ON x.cpk = lower(regexp_replace(r.item_id, ''^db/'', ''''))\n     WHERE r.surface = c_surface',
+     E'      LEFT JOIN ctx x ON x.cpk = lower(regexp_replace(r.item_id, ''^db/'', ''''))\n     WHERE (x.cpk IS NOT NULL OR NOT EXISTS (SELECT 1 FROM public.protected_zones z WHERE z.active))\n       AND r.surface = c_surface'),
     ('public.discovery_trend_post_groups_v2(timestamptz)',
-     '      LEFT JOIN ctx x ON x.cpk = lower(regexp_replace(r.item_id, ''^db/'', ''''))',
-     '      JOIN ctx x ON x.cpk = lower(regexp_replace(r.item_id, ''^db/'', ''''))'),
+     E'      LEFT JOIN ctx x ON x.cpk = lower(regexp_replace(r.item_id, ''^db/'', ''''))\n     WHERE r.surface = c_surface',
+     E'      LEFT JOIN ctx x ON x.cpk = lower(regexp_replace(r.item_id, ''^db/'', ''''))\n     WHERE (x.cpk IS NOT NULL OR NOT EXISTS (SELECT 1 FROM public.protected_zones z WHERE z.active))\n       AND r.surface = c_surface'),
     ('public.rebuild_place_momentum(timestamptz)',
      'WITH base AS (',
      'WITH eligible AS MATERIALIZED (SELECT place_key FROM public.discovery_trend_place_context()), base AS ('),
     ('public.rebuild_place_momentum(timestamptz)',
      'WHERE surface = c_surface',
-     'WHERE surface = c_surface AND EXISTS (SELECT 1 FROM eligible WHERE place_key = lower(regexp_replace(item_id, ''^db/'', '''')))'),
+     'WHERE surface = c_surface AND (NOT EXISTS (SELECT 1 FROM public.protected_zones z WHERE z.active) OR EXISTS (SELECT 1 FROM eligible WHERE place_key = lower(regexp_replace(item_id, ''^db/'', ''''))))'),
     ('public.rebuild_place_momentum(timestamptz)',
      '''discovery-row-activity-v2''',
-     '''discovery-row-activity-v2+protected-contributions-v1'''),
+     'CASE WHEN EXISTS (SELECT 1 FROM public.protected_zones z WHERE z.active) THEN ''discovery-row-activity-v2+protected-contributions-v1'' ELSE ''discovery-row-activity-v2'' END'),
     ('public.rebuild_place_momentum_v2(timestamptz)',
      '''discovery-exposure-activity-v3''',
-     '''discovery-exposure-activity-v3+protected-contributions-v1'''),
+     'CASE WHEN EXISTS (SELECT 1 FROM public.protected_zones z WHERE z.active) THEN ''discovery-exposure-activity-v3+protected-contributions-v1'' ELSE ''discovery-exposure-activity-v3'' END'),
     ('public.rebuild_place_momentum_v2(timestamptz)',
      '''discovery-exposure-activity-v3+post-after-visit-v1''',
-     '''discovery-exposure-activity-v3+post-after-visit-v1+protected-contributions-v1''')
+     'CASE WHEN EXISTS (SELECT 1 FROM public.protected_zones z WHERE z.active) THEN ''discovery-exposure-activity-v3+post-after-visit-v1+protected-contributions-v1'' ELSE ''discovery-exposure-activity-v3+post-after-visit-v1'' END')
   ) AS patches(signature, source, replacement) LOOP
     function_signature := patch_row.signature;
     source_fragment := patch_row.source;
