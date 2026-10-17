@@ -16,7 +16,7 @@
  *
  * The registry is the single source of truth for which metrics exist; the
  * evaluator rejects criteria referencing anything not registered.
- */
+ */ import { countEvidencedCompletedTrips } from "../../../services/passport/tripCompletionPresence.js";
 
 export interface EvalContext {
   /** Metrics supplied by the trigger site (override/augment DB metrics). */
@@ -120,7 +120,7 @@ const DB_METRICS: Record<string, MetricResolver> = {
 
   // Trips (owner_id; status='completed')
   trips_created:   (sc, u) => countRows(sc, "trips", [["owner_id", u]]),
-  trips_completed: (sc, u) => countRows(sc, "trips", [["owner_id", u], ["status", "completed"]]),
+  trips_completed: async (sc, u) => (await countEvidencedCompletedTrips(sc, u)).count ?? 0, // H4: a completed trip counts only with occurrence evidence (tripCompletionPresence.ts); a failed read is 0, as every metric here
 
   // Events (host_id; event_rsvps user_id + status='going')
   events_hosted: (sc, u) => countRows(sc, "events", [["host_id", u]]),

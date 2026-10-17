@@ -25,7 +25,7 @@ const mockEnd = jest.fn();
 const mockLeave = jest.fn();
 const mockList = jest.fn();
 const mockAccept = jest.fn();
-const mockDecline = jest.fn();
+const mockDecline = jest.fn(); const mockExits = jest.fn();
 jest.mock('../../../services/memorySharedExperiences.ts', () => ({
   ...jest.requireActual('../../../services/memorySharedExperiences.ts'),
   getSharedExperience: (...a: unknown[]) => mockGet(...a),
@@ -35,7 +35,7 @@ jest.mock('../../../services/memorySharedExperiences.ts', () => ({
   leaveSharedExperience: (...a: unknown[]) => mockLeave(...a),
   listSharedInvitations: (...a: unknown[]) => mockList(...a),
   acceptSharedInvitation: (...a: unknown[]) => mockAccept(...a),
-  declineSharedInvitation: (...a: unknown[]) => mockDecline(...a),
+  declineSharedInvitation: (...a: unknown[]) => mockDecline(...a), listMySharedExits: (...a: unknown[]) => mockExits(...a),
 }));
 const mockUserMemories = jest.fn();
 jest.mock('../../../services/memories.ts', () => ({
@@ -56,7 +56,7 @@ const HOST = { userId: 'host', name: 'Hà', handle: 'ha', avatarUrl: null };
 
 let alertSpy: jest.SpyInstance;
 beforeEach(() => {
-  for (const m of [mockGet, mockInvite, mockWithdraw, mockEnd, mockLeave, mockList, mockAccept, mockDecline, mockUserMemories]) m.mockReset();
+  for (const m of [mockGet, mockInvite, mockWithdraw, mockEnd, mockLeave, mockList, mockAccept, mockDecline, mockUserMemories, mockExits]) m.mockReset(); mockExits.mockResolvedValue({ ok: true, exits: { memberships: [], invitations: [], hosting: [] } });
   mockSession.userId = 'me';
   alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
 });
@@ -198,5 +198,67 @@ describe('SharedExperienceInvitations (my timeline)', () => {
     mockList.mockResolvedValueOnce({ ok: false, kind: 'degraded_unavailable', message: 'Shared memories could not be loaded right now.' });
     await render(<SharedExperienceInvitations />);
     expect(await screen.findByTestId('shared-invitations-error')).toBeTruthy();
+  });
+});
+
+describe('SharedExperienceInvitations — switched off, the ways out stay reachable (H53)', () => {
+  const OFF = { ok: false, kind: 'feature_disabled', message: 'x' };
+  const EXITS = {
+    invitations: [{ invitationId: 'inv-1' }],
+    memberships: [{ experienceId: 'exp-1', myMemoryId: 'my-mem' }],
+    hosting: [{ hostMemoryId: MEM }],
+  };
+
+  it('lists only my own ways out — decline, leave, end — and names nobody', async () => {
+    mockList.mockResolvedValue(OFF);
+    mockExits.mockResolvedValue({ ok: true, exits: EXITS });
+    await render(<SharedExperienceInvitations />);
+    expect(await screen.findByTestId('shared-exits')).toBeTruthy();
+    expect(screen.getByTestId('shared-exit-decline-inv-1')).toBeTruthy();
+    expect(screen.getByTestId('shared-exit-leave-exp-1')).toBeTruthy();
+    expect(screen.getByTestId(`shared-exit-end-${MEM}`)).toBeTruthy();
+    expect(screen.queryByText(/Accept/)).toBeNull();
+    expect(screen.queryByTestId('shared-invitations')).toBeNull();
+  });
+
+  it('each exit calls its own route with the id the server gave; leave and end confirm first', async () => {
+    mockList.mockResolvedValue(OFF);
+    mockExits.mockResolvedValue({ ok: true, exits: EXITS });
+    mockDecline.mockResolvedValue({ ok: true, declined: true });
+    mockLeave.mockResolvedValue({ ok: true, left: true });
+    mockEnd.mockResolvedValue({ ok: true, ended: true });
+    await render(<SharedExperienceInvitations />);
+    await screen.findByTestId('shared-exits');
+    await press('shared-exit-decline-inv-1');
+    expect(mockDecline).toHaveBeenCalledWith('inv-1');
+    await screen.findByTestId('shared-exits');
+    await press('shared-exit-leave-exp-1');
+    expect(mockLeave).not.toHaveBeenCalled();
+    await confirmLastAlert();
+    expect(mockLeave).toHaveBeenCalledWith('exp-1');
+    await screen.findByTestId('shared-exits');
+    await press(`shared-exit-end-${MEM}`);
+    expect(mockEnd).not.toHaveBeenCalled();
+    await confirmLastAlert();
+    expect(mockEnd).toHaveBeenCalledWith(MEM);
+  });
+
+  it('switched off with nothing to leave shows nothing; a failed exits read says so with Try again', async () => {
+    mockList.mockResolvedValue(OFF);
+    const a = await render(<SharedExperienceInvitations />);
+    await act(async () => {});
+    expect(screen.queryByTestId('shared-exits')).toBeNull();
+    expect(screen.queryByTestId('shared-invitations-error')).toBeNull();
+    await a.unmount();
+    mockExits.mockResolvedValueOnce({ ok: false, kind: 'degraded_unavailable', message: 'Shared memories could not be loaded right now.' });
+    await render(<SharedExperienceInvitations />);
+    expect(await screen.findByTestId('shared-invitations-error')).toBeTruthy();
+  });
+
+  it('when the feature is ON the exits read is never consulted', async () => {
+    mockList.mockResolvedValueOnce({ ok: true, invitations: [] });
+    await render(<SharedExperienceInvitations />);
+    await act(async () => {});
+    expect(mockExits).not.toHaveBeenCalled();
   });
 });

@@ -1971,6 +1971,13 @@
       "evidence": []
     },
     {
+      "flag": "memory_from_own_media_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3999_memory_items_source_post.sql:150, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
+      "evidence": []
+    },
+    {
       "flag": "memory_graph_read_cutover_enabled",
       "kind": "CAPABILITY",
       "enabled": false,

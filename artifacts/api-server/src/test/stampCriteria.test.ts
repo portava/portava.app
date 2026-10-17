@@ -54,6 +54,16 @@ function makeSc(opts: FakeOpts = {}) {
         },
         then(resolve: any) {
           if (b._head) { resolve({ count: counts[table] ?? 0, error: null }); return; }
+          // H4 (census-highlights-memories): `trips_completed` counts completed
+          // trips WITH occurrence evidence (tripCompletionPresence.ts), not a
+          // head count. `counts.trips = N` stages N completed trips the user
+          // checked in on, which is what every case here means by it.
+          if (table === "trips") {
+            resolve({ data: Array.from({ length: counts.trips ?? 0 }, (_, i) => ({ id: `trip-${i}` })), error: null }); return;
+          }
+          if (table === "plan_checkins") {
+            resolve({ data: Array.from({ length: counts.trips ?? 0 }, (_, i) => ({ trip_id: `trip-${i}`, status: "arrived", checked_in_at: "2026-01-01T00:00:00Z" })), error: null }); return;
+          }
           if (table === "user_stamps" && b._field && opts.distinct) {
             // Each staged value becomes a row carrying an embedded definition.
             // `evidences_presence` defaults TRUE here because every existing
@@ -177,7 +187,9 @@ describe("criteria evaluator", () => {
         } as any;
       },
     } as any;
-    const r = await evaluateCriteria(sc, U, { version: 1, all: [{ metric: "trips_completed", gte: 5 }, { metric: "trips_completed", lte: 100 }] });
+    // A head-count metric, so one resolution is one read. (trips_completed now
+    // takes three reads per resolution — trips, check-ins, stamps — H4.)
+    const r = await evaluateCriteria(sc, U, { version: 1, all: [{ metric: "followers_count", gte: 5 }, { metric: "followers_count", lte: 100 }] });
     assert.equal(r.met, true);
     assert.equal(calls, 1); // resolved once despite two references
   });

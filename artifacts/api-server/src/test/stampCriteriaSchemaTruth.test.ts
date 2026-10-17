@@ -251,6 +251,11 @@ describe("criteria metrics resolve real counts against real-shaped rows", () => 
         { id: "t1", owner_id: USER, status: "completed" },
         { id: "t2", owner_id: USER, status: "planning" },
       ],
+      // H4: `trips_completed` counts a completed trip only with occurrence
+      // evidence (tripCompletionPresence.ts); t1 was checked in on.
+      plan_checkins: [
+        { trip_id: "t1", user_id: USER, status: "arrived", checked_in_at: "2026-01-01T00:00:00Z" },
+      ],
       events: [{ id: "e1", host_id: USER }],
       // `evidences_presence: true` is load-bearing since `distinctStampField`
       // began asking the presence question (migration 2970): a row without it

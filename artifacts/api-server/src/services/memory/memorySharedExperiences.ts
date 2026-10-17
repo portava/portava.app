@@ -31,7 +31,7 @@
  * unreadable read is a refusal, never "no shared experience" (§28.11).
  */
 import { readFlagState } from "../../lib/capability/schemaCapability.js";
-import { blockedAmong, canReadMemory, isBlocked } from "./memoryReadPolicy.js";
+import { blockedAmong, canReadMemory, isBlocked } from "./memoryReadPolicy.js"; import { isTableAbsentError } from "../../lib/tableAbsence.js";
 
 export const MEMORY_SHARED_EXPERIENCES_FLAG = "memory_shared_experiences_enabled";
 export const SHARED_EXPERIENCES_TABLE = "memory_shared_experiences";
@@ -335,5 +335,62 @@ export async function listMyInvitations(sc: any, viewerId: string): Promise<Shar
       invitedAt: r.created_at ?? null,
     });
   }
+  return { ok: true, value: out };
+}
+
+// ── The ways out, with the flag OFF ──────────────────────────────────────────
+
+export interface SharedExits {
+  /** Shared experiences I joined (accepted), each leavable by its id. */
+  memberships: Array<{ experienceId: string; myMemoryId: string | null }>;
+  /** Invitations I have not answered, each declinable by its id. */
+  invitations: Array<{ invitationId: string }>;
+  /** My own Memories that host an experience or an unanswered invitation, each endable. */
+  hosting: Array<{ hostMemoryId: string }>;
+}
+
+/**
+ * Everything the caller can step OUT of, and nothing else — readable whatever
+ * memory_shared_experiences_enabled says.
+ *
+ * "Never trap a person" (H53; 3997's FLAGS paragraph): with the flag off,
+ * decline, withdraw, leave and end all run, but every read that would reveal
+ * the ids they take is gated, so a person who joined while it was on had no way
+ * to find the experience id to leave by. This read returns only the caller's
+ * OWN rows, as ids: their accepted memberships (with their own linked Memory
+ * id, which is theirs), their pending invitations, and their own Memories that
+ * host something. No other member, no host, no title, no count of anyone else —
+ * the minimum an exit control needs. Blocks are deliberately NOT applied: a
+ * block must never be the thing that keeps someone in.
+ *
+ * Tables absent (3997 not applied) is the truth "there is nothing to leave",
+ * answered as empty lists. Any other failed read is `unavailable`, never empty.
+ */
+export async function listMyExits(sc: any, viewerId: string): Promise<SharedResult<SharedExits>> {
+  const out: SharedExits = { memberships: [], invitations: [], hosting: [] };
+  if (!UUID_RE.test(viewerId)) return fail("invalid", "viewer id must be a UUID");
+  const mine = await sc.from(SHARED_INVITATIONS_TABLE).select("id, status, experience_id, participant_memory_id")
+    .eq("invitee_id", viewerId).in("status", ["pending", "accepted"]);
+  if (mine.error) {
+    if (isTableAbsentError(mine.error)) return { ok: true, value: out };
+    return fail("unavailable", `invitations: ${mine.error.message ?? "failed"}`);
+  }
+  if (!Array.isArray(mine.data)) return fail("unavailable", "invitations: no row array");
+  for (const r of mine.data as any[]) {
+    if (r.status === "pending" && typeof r.id === "string") out.invitations.push({ invitationId: r.id });
+    if (r.status === "accepted" && typeof r.experience_id === "string") {
+      out.memberships.push({ experienceId: r.experience_id, myMemoryId: typeof r.participant_memory_id === "string" ? r.participant_memory_id : null });
+    }
+  }
+  const [hostedExp, hostedInv] = await Promise.all([
+    sc.from(SHARED_EXPERIENCES_TABLE).select("host_memory_id").eq("host_id", viewerId),
+    sc.from(SHARED_INVITATIONS_TABLE).select("host_memory_id").eq("host_id", viewerId).eq("status", "pending"),
+  ]);
+  for (const [name, r] of [[SHARED_EXPERIENCES_TABLE, hostedExp], [SHARED_INVITATIONS_TABLE, hostedInv]] as const) {
+    if (r.error || !Array.isArray(r.data)) return fail("unavailable", `${name}: ${r.error?.message ?? "no row array"}`);
+  }
+  const hosted = new Set<string>();
+  for (const r of [...(hostedExp.data as any[]), ...(hostedInv.data as any[])]) if (typeof r.host_memory_id === "string") hosted.add(r.host_memory_id);
+  out.hosting = [...hosted].map((hostMemoryId) => ({ hostMemoryId }));
   return { ok: true, value: out };
 }

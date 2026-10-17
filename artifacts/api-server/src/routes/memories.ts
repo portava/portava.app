@@ -97,7 +97,7 @@ import {
   mergedAudience,
   revokeMemoryAudienceCaches,
 } from "../services/memory/memoryAudienceRevocation.js";
-import { runMemoryDeletionLifecycle } from "../services/memory/memoryDeletionLifecycle.js"; import { reprojectDerivativesAfterNarrowing } from "../services/memoryProjections/narrowingReprojection.js"; import { refuseWideningKeptPrivate, readRecapControls } from "../services/memory/memoryResurfacingControls.js"; import { hiddenItemKeys, itemKey } from "../services/memory/memoryItemVisibility.js"; import { clearsCanonicalOnPatch, correctPlaceHistory, placeCorrectionsForPatch, placesForViewer, recordPlaceCorrections } from "../services/memory/memoryCorrections.js"; import { memoryGraphLinkPath } from "../services/memory/memoryGraphShadow.js"; import { followMemoryRedirect } from "../services/memory/memoryIdRedirects.js"; // one line: this file is cited by line
+import { runMemoryDeletionLifecycle } from "../services/memory/memoryDeletionLifecycle.js"; import { reprojectDerivativesAfterNarrowing } from "../services/memoryProjections/narrowingReprojection.js"; import { refuseWideningKeptPrivate, readRecapControls } from "../services/memory/memoryResurfacingControls.js"; import { hiddenItemKeys, itemKey } from "../services/memory/memoryItemVisibility.js"; import { clearsCanonicalOnPatch, correctPlaceHistory, placeCorrectionsForPatch, placesForViewer, recordPlaceCorrections } from "../services/memory/memoryCorrections.js"; import { memoryGraphLinkPath } from "../services/memory/memoryGraphShadow.js"; import { followMemoryRedirect } from "../services/memory/memoryIdRedirects.js"; import { withMemoryItemRenditions } from "../services/memory/memoryItemRenditions.js"; // one line: this file is cited by line
 import {
   classifyMemoryMediaUrl, memoryItemMediaUrlAccepted, MEMORY_MEDIA_URL_REFUSAL,
   FOREIGN_MEDIA_REFUSAL,
@@ -1764,7 +1764,7 @@ router.get("/memories/:id", async (req, res) => {
   res.json({
     memory: {
       ...mapMemory(withCanonicalPayload(safeMemory, canonPayload), user.id), ...(redirectedFrom ? { redirectedFrom } : {}),
-      items: ((items.data ?? []) as any[]).filter((it) => !hiddenItems.keys.has(itemKey(id, it.position))).map(mapItem),
+      items: await withMemoryItemRenditions(sc, user.id, ((items.data ?? []) as any[]).filter((it) => !hiddenItems.keys.has(itemKey(id, it.position))).map(mapItem), req.log), // H182: tiny/card/viewer renditions, only behind MEDIA_IMAGE_VARIANTS_ENABLED and 3980's two flags; the original always stays
       tags: participants.participants,
       anonymousParticipants: participants.anonymousCount,
       likeCount: likeCount.count ?? 0,
@@ -3836,3 +3836,125 @@ async function protectRecapRows(sc: any, rows: any[], viewerId: string): Promise
   const gemCtx = await loadMemoryGemContext(sc, withRung); const placed = await placesForViewer(sc, withRung, viewerId, new Date()); if (!placed.ok) return null; // H-16: a crew member's recap shows places through the owner's corrections; unreadable ⇒ the route refuses
   return placed.rows.map((r) => protectMemoryRow(r, gemCtx, viewerId, precisionClampApplies(gate)));
 }
+
+// ── POST /memories/:id/items/from-post — census-media MD385, ruling D-26j ─────
+// "Save to a Memory" from the caller's OWN post. Appended at the end of the
+// file so no cited line above moves. The decisions are
+// services/memory/memoryFromOwnMedia.ts's; the one write is here, because this
+// file is memory_items' declared writer (lib/memoryTableOwnership.ts).
+import {
+  gateMemoryFromOwnMedia,
+  resolveOwnPostMedia,
+  MAX_POST_MEDIA_INDEX,
+} from "../services/memory/memoryFromOwnMedia.js";
+import { recordMemoryCreatedFromMediaSignal } from "../lib/mediaAnalytics.js";
+
+const fromOwnPostSchema = z.object({
+  postId: z.string().uuid(),
+  /** Which of the post's own media; the URL is never taken from the client. */
+  mediaIndex: z.number().int().min(0).max(MAX_POST_MEDIA_INDEX).default(0),
+  caption: z.string().max(500).nullable().optional(),
+  position: z.number().int().min(0).default(0),
+}).strict();
+
+router.post("/memories/:id/items/from-post", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { id } = req.params;
+  if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid memory id"); return; }
+  const parsed = fromOwnPostSchema.safeParse(req.body ?? {});
+  if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  // Flag, then storage. Absent storage refuses: an item without its source link
+  // is the one thing this route must never write.
+  const gate = await gateMemoryFromOwnMedia(sc);
+  if (!gate.ok) {
+    if (gate.reason === "disabled") { sendError(res, "feature_disabled"); return; }
+    req.log.error({ memoryId: id, reason: gate.reason, detail: gate.detail }, "memories from-post: refused before anything was read");
+    sendError(res, "degraded_unavailable", "Saving to a Memory is not available right now.");
+    return;
+  }
+
+  const idempotencyKey = requireIdempotencyKey(req, res);
+  if (idempotencyKey === null) return;
+
+  const loaded = await loadMemoryForCommand(sc, id);
+  if (!loaded.ok) { sendCommandFailure(req, res, loaded); return; }
+  if (loaded.row.owner_id !== user.id) { sendError(res, "forbidden", "Not your memory"); return; }
+
+  const source = await resolveOwnPostMedia(sc, { viewerId: user.id, postId: parsed.data.postId, mediaIndex: parsed.data.mediaIndex });
+  if (!source.ok) {
+    if (source.reason === "not_found") { sendError(res, "not_found", "No post of yours with that id"); return; }
+    if (source.reason === "no_such_media") { sendError(res, "invalid_payload", "That post has no media at that position"); return; }
+    req.log.error({ memoryId: id, detail: source.detail }, "memories from-post: the source post could not be read — refusing");
+    sendError(res, "degraded_unavailable", "Could not read that post. Please try again.");
+    return;
+  }
+  const { postId, mediaUrl, mediaType } = source.value;
+
+  const outcome = await dispatchMemoryCommand<any>({
+    sc,
+    commandType: "ADD_MEDIA",
+    memoryId: id,
+    actorUserId: user.id,
+    idempotencyKey,
+    sourceVersion: loaded.row.updated_at ?? null,
+    payload: {
+      media_type: mediaType,
+      position: parsed.data.position,
+      write: { memory_id: id, media_url: mediaUrl, media_type: mediaType, caption: parsed.data.caption ?? null, position: parsed.data.position },
+    },
+    legacy: async () => {
+      const { data, error } = await sc
+        .from("memory_items")
+        .insert({
+          memory_id: id,
+          media_url: mediaUrl,
+          media_type: mediaType,
+          caption: parsed.data.caption ?? null,
+          position: parsed.data.position,
+          source_post_id: postId,
+        })
+        .select("id, media_url, media_type, caption, position, created_at, source_post_id")
+        .single();
+      if (error) {
+        req.log.error({ err: error, memoryId: id }, "memories from-post: insert refused");
+        return { ok: false, http: { code: error.code === "23505" ? "conflict" : "db_error", message: error.code === "23505" ? "That photo is already in this Memory" : error.message } };
+      }
+      return { ok: true, body: data };
+    },
+  });
+  if (!outcome.ok) { sendCommandFailure(req, res, outcome); return; }
+
+  // The kernel's ADD_MEDIA (2711) writes the five columns it knows. Its item
+  // carries no source link, so the link is written here, and if it cannot be
+  // the item is taken back out: an unlinked copy is never left behind.
+  let row = outcome.body as any;
+  if (row?.source_post_id !== postId) {
+    const linked = await sc.from("memory_items").update({ source_post_id: postId })
+      .eq("id", row?.id).eq("memory_id", id).select("id, media_url, media_type, caption, position, created_at, source_post_id");
+    if (linked.error || !Array.isArray(linked.data) || linked.data.length !== 1) {
+      req.log.error({ err: linked.error, memoryId: id, itemId: row?.id }, "memories from-post: the source link could not be written — removing the item");
+      const undo = await dispatchMemoryCommand<any>({
+        sc, commandType: "REMOVE_MEDIA", memoryId: id, actorUserId: user.id,
+        idempotencyKey: `${idempotencyKey}:from-post-unlinked`, payload: { item_id: row?.id },
+        legacy: async () => {
+          const { error } = await sc.from("memory_items").delete().eq("id", row?.id).eq("memory_id", id);
+          return error ? { ok: false, http: { code: "db_error", message: error.message } } : { ok: true, body: null };
+        },
+      });
+      if (!undo.ok) req.log.error({ memoryId: id, itemId: row?.id }, "memories from-post: the unlinked item could not be removed");
+      sendError(res, "degraded_unavailable", "Could not save that photo to your Memory. Please try again.");
+      return;
+    }
+    row = linked.data[0];
+  }
+
+  recordMemoryCreatedFromMediaSignal(sc, { userId: user.id, postId });
+  res.status(201).json({ item: { ...mapItem(row), sourcePostId: postId } });
+});

@@ -385,6 +385,11 @@ describe("Stamp award integration: POST /api/trips + PATCH + idempotency", async
             role:    "owner",
           },
         ],
+        // H4 (census-highlights-memories): a completion stamp needs occurrence
+        // evidence for THIS trip. The owner took this trip, so they checked in.
+        plan_checkins: [
+          { trip_id: TRIP_ID_B, user_id: OWNER_ID, status: "arrived", checked_in_at: "2020-01-03T10:00:00Z" },
+        ],
       });
       _setTestClient(makeFakeClient(db) as any, true);
 

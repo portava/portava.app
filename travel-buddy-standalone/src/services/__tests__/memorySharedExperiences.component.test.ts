@@ -13,7 +13,7 @@ jest.mock('../apiToken.ts', () => ({ freshToken: async () => 'test-token' }));
 
 import {
   acceptSharedInvitation, declineSharedInvitation, endSharedExperience, getSharedExperience, inviteToRememberTogether,
-  leaveSharedExperience, listSharedInvitations, withdrawInvitation,
+  leaveSharedExperience, listMySharedExits, listSharedInvitations, withdrawInvitation,
 } from '../memorySharedExperiences.ts';
 
 const MID = '33333333-3333-4333-8333-333333333333';
@@ -90,4 +90,13 @@ it('a body without the field it promised is a failure, never "nothing shared"', 
   responses.push({ status: 200, json: {} }, { status: 200, json: { invitations: 'nope' } });
   expect((await getSharedExperience(MID)).ok).toBe(false);
   expect((await listSharedInvitations()).ok).toBe(false);
+});
+
+it('the exits read (H53): GET /me/shared-experience-exits, ids only, and a malformed body is a failure', async () => {
+  const exits = { memberships: [{ experienceId: 'e1', myMemoryId: null }], invitations: [{ invitationId: 'i1' }], hosting: [{ hostMemoryId: MID }] };
+  responses.push({ status: 200, json: exits }, { status: 200, json: { memberships: [{}], invitations: [], hosting: [] } }, { status: 200, json: { invitations: [] } });
+  expect(await listMySharedExits()).toEqual({ ok: true, exits });
+  expect(calls.at(-1)).toMatchObject({ method: 'GET', url: 'http://api.test/api/me/shared-experience-exits', auth: 'Bearer test-token' });
+  expect(await listMySharedExits()).toMatchObject({ ok: false, kind: 'degraded_unavailable' });
+  expect(await listMySharedExits()).toMatchObject({ ok: false, kind: 'degraded_unavailable' });
 });

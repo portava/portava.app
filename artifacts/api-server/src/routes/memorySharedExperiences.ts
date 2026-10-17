@@ -10,7 +10,7 @@
  *   GET    /me/shared-experience-invitations                         my pending invitations
  *   POST   /shared-experience-invitations/:invitationId/accept      { memoryId? } — consent, optionally linking my own Memory
  *   POST   /shared-experience-invitations/:invitationId/decline
- *   POST   /shared-experiences/:experienceId/leave
+ *   POST   /shared-experiences/:experienceId/leave                  (and GET /me/shared-experience-exits: my ways out, as ids, NOT gated)
  *
  * Every route acts as the signed-in person; no route takes an owner, host or
  * invitee id for the actor from the request. Behind memory_shared_experiences_enabled
@@ -25,7 +25,7 @@ import {
   endSharedExperience,
   inviteToSharedExperience,
   leaveSharedExperience,
-  listMyInvitations,
+  listMyExits, listMyInvitations,
   readSharedExperienceForMemory,
   respondToInvitation,
   withdrawInvitation,
@@ -137,6 +137,17 @@ router.post("/shared-experiences/:experienceId/leave", asyncHandler(async (req: 
   const auth = await requireUser(req, res);
   if (!auth) return;
   const r = await leaveSharedExperience(auth.client, { experienceId: String(req.params.experienceId), userId: auth.user.id });
+  if (!r.ok) { refuse(req, res, r); return; }
+  res.json(r.value);
+}));
+
+// The ways OUT, readable with the flag off (H53, "never trap a person"): only
+// the caller's own memberships, pending invitations and hosted Memories, as ids.
+router.get("/me/shared-experience-exits", asyncHandler(async (req: Request, res: Response) => {
+  privateResponse(res);
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const r = await listMyExits(auth.client, auth.user.id);
   if (!r.ok) { refuse(req, res, r); return; }
   res.json(r.value);
 }));

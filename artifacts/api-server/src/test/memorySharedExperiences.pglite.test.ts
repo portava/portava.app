@@ -608,4 +608,75 @@ describe("H53 / H33 — migration 3997 executed in PGlite, and the shared-experi
     assert.equal(await statusOf(ANA, M_HOST_PRIVATE), null, "the pending question is erased with it");
     assert.ok(p.invitation_id);
   });
+
+  // ── H53 follow-up: the flag-off exits read (GET /me/shared-experience-exits) ──
+  const exitsOf = async (who: string) => {
+    const r = await call("GET", "/me/shared-experience-exits", who);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    return r.body;
+  };
+  const sortHosting = (b: any) => ({ ...b, hosting: [...b.hosting].sort((x: any, y: any) => x.hostMemoryId.localeCompare(y.hostMemoryId)) });
+
+  it("H53 flag OFF: the exits read lists ONLY my own memberships, pending invitations and hosted Memories, as ids", async () => {
+    const a = await invite(HOST, M_HOST, ANA);
+    const b = await invite(HOST, M_HOST, BAO);
+    const exp = (await respond(a.invitation_id, ANA, true, M_ANA)).experience_id;
+    const p = await invite(HOST, M_HOST_PRIVATE, ANA);
+    await flagOff();
+    const ana = await exitsOf(ANA);
+    assert.deepEqual(ana, { memberships: [{ experienceId: exp, myMemoryId: M_ANA }], invitations: [{ invitationId: p.invitation_id }], hosting: [] });
+    const text = JSON.stringify(ana);
+    for (const other of [HOST, BAO, M_HOST, M_HOST_PRIVATE, "Night market", "Private dinner"]) {
+      assert.ok(!text.includes(other), `the exits read names nothing of anyone else: ${other}`);
+    }
+    assert.deepEqual(await exitsOf(BAO), { memberships: [], invitations: [{ invitationId: b.invitation_id }], hosting: [] });
+    assert.deepEqual(sortHosting(await exitsOf(HOST)), { memberships: [], invitations: [], hosting: [{ hostMemoryId: M_HOST }, { hostMemoryId: M_HOST_PRIVATE }].sort((x, y) => x.hostMemoryId.localeCompare(y.hostMemoryId)) });
+    assert.deepEqual(await exitsOf(STRANGER), { memberships: [], invitations: [], hosting: [] });
+    assert.equal((await call("GET", "/me/shared-experience-exits", null)).status, 401);
+  });
+
+  it("H53 flag OFF: the ids it returns are enough to get out — leave, decline and end, then nothing is left", async () => {
+    const a = await invite(HOST, M_HOST, ANA);
+    await invite(HOST, M_HOST, BAO);
+    await respond(a.invitation_id, ANA, true, M_ANA);
+    await invite(HOST, M_HOST_PRIVATE, ANA);
+    await flagOff();
+    const ana = await exitsOf(ANA);
+    assert.equal((await call("POST", `/shared-experiences/${ana.memberships[0].experienceId}/leave`, ANA, {})).status, 200);
+    assert.equal((await call("POST", `/shared-experience-invitations/${ana.invitations[0].invitationId}/decline`, ANA, {})).status, 200);
+    assert.deepEqual(await exitsOf(ANA), { memberships: [], invitations: [], hosting: [] });
+    for (const h of (await exitsOf(HOST)).hosting) {
+      assert.equal((await call("DELETE", `/memories/${h.hostMemoryId}/shared-experience`, HOST)).status, 200);
+    }
+    assert.deepEqual(await exitsOf(HOST), { memberships: [], invitations: [], hosting: [] });
+    assert.deepEqual(await exitsOf(BAO), { memberships: [], invitations: [], hosting: [] }, "ending erased Bao's question too");
+  });
+
+  it("H53: a block never hides a way out", async () => {
+    const a = await invite(HOST, M_HOST, ANA);
+    const exp = (await respond(a.invitation_id, ANA, true, null)).experience_id;
+    await db.query("INSERT INTO public.blocks (blocker_id, blocked_id) VALUES ($1, $2)", [HOST, ANA]);
+    await flagOff();
+    assert.deepEqual((await exitsOf(ANA)).memberships, [{ experienceId: exp, myMemoryId: null }]);
+  });
+
+  it("H53: where 3997 is not applied there is nothing to leave — empty lists, not an error", async () => {
+    const fresh = await import(modulePath.startsWith("file:") ? modulePath : pathToFileURL(modulePath).href);
+    const bare = new fresh.PGlite() as Database;
+    try {
+      await bare.exec(`CREATE ROLE service_role BYPASSRLS; GRANT USAGE ON SCHEMA public TO service_role;
+        CREATE TABLE public.feature_flags (flag text PRIMARY KEY, enabled boolean NOT NULL DEFAULT false, description text);
+        CREATE TABLE public.profiles (id uuid PRIMARY KEY, account_status text);
+        GRANT ALL ON public.feature_flags, public.profiles TO service_role;`);
+      _setTestClient(pgClient(bare) as any, true);
+      assert.deepEqual(await exitsOf(ANA), { memberships: [], invitations: [], hosting: [] });
+    } finally { _setTestClient(pgClient(db) as any, true); await bare.close(); }
+  });
+
+  it("H53: an unreadable invitation table is 503, never an empty list of ways out", async () => {
+    await invite(HOST, M_HOST, ANA);
+    _setTestClient(pgClient(db, { failSelect: (t) => t === "memory_shared_experience_invitations" }) as any, true);
+    const r = await call("GET", "/me/shared-experience-exits", ANA);
+    assert.deepEqual([r.status, r.body.error], [503, "degraded_unavailable"]);
+  });
 });

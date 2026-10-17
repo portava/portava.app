@@ -132,7 +132,7 @@ import {
 } from "../compass/CompassMemoryService.js";
 import { buildProjectedMemoryBlock } from "../compass/ProjectedMemoryPrompt.js";
 import { buildRememberSurface } from "../compass/PassportRemembersService.js";
-import { generateRecap, buildOnThisDay, type RecapKind } from "../compass/MemoryRecapsService.js";
+import { generateRecap, buildOnThisDay, type RecapKind } from "../compass/MemoryRecapsService.js"; import { trackPartialToolLog, partialToolLogOf, compassAiFailureFallback, compassAiFailureFallbackWithRetrieval } from "../compass/compassMemoryFallback.js"; // census H266: the deterministic Memory fallback
 import { recordIntentFromQuery } from "../lib/intentMemory.js";
 import { buildLiveChatContextLines }             from "../compass/CompassLiveEngine.js";
 import {
@@ -1317,7 +1317,7 @@ async function runToolCallingLoop(
   signal?:  AbortSignal,
 ): Promise<ToolLoopOutcome> {
   const convo: any[] = [...messages];
-  const toolLog: ToolExecution[] = [];
+  const toolLog: ToolExecution[] = trackPartialToolLog<ToolExecution>(messages); // H266: readable by the caller if a model call below throws
   const proposals: AddToTripProposal[] = [];
 
   for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
@@ -2016,7 +2016,7 @@ router.post("/compass/ask", async (req, res) => {
         clientAbort.signal,
       ));
       const _parsed = _parseModelResponse(finalRaw);
-      const _rawMessage  = finalRaw === "" ? SUMMARISE_EMPTY_FALLBACK_MESSAGE : _parsed.message;
+      const _rawMessage  = finalRaw === "" ? compassAiFailureFallback(toolLog, SUMMARISE_EMPTY_FALLBACK_MESSAGE).message : _parsed.message;
       // Sensing `:148`. The tokens are already on the wire — the client rebuilds
       // the bubble from the accumulated deltas — so the correction is sent as
       // one more delta rather than by rewriting what was said.
@@ -2077,7 +2077,7 @@ router.post("/compass/ask", async (req, res) => {
         return;
       }
       req.log.error({ err, userId: user.id }, "compass/ask stream failed");
-      res.write(`data: ${JSON.stringify({ error: true, message: HONEST_FALLBACK_MESSAGE })}\n\n`);
+      res.write(`data: ${JSON.stringify({ error: true, ...(await compassAiFailureFallbackWithRetrieval(partialToolLogOf(messages), () => executeCompassTool(sc, user.id, guardProfile as any, "memory_search", { query: prompt }), HONEST_FALLBACK_MESSAGE)) })}\n\n`);
       res.end();
     }
     return;
@@ -2089,7 +2089,7 @@ router.post("/compass/ask", async (req, res) => {
       sc, user.id, guardProfile, messages as any, req.log,
     ));
     const _parsed = _parseModelResponse(finalRaw);
-    const _rawMessage  = finalRaw === "" ? SUMMARISE_EMPTY_FALLBACK_MESSAGE : _parsed.message;
+    const _rawMessage  = finalRaw === "" ? compassAiFailureFallback(toolLog, SUMMARISE_EMPTY_FALLBACK_MESSAGE).message : _parsed.message;
     // Sensing `:148` — the same boundary the streamed branch applies, on the
     // same tool log, so the two branches cannot publish different answers.
     const _grounded    = groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence);
@@ -2147,7 +2147,7 @@ router.post("/compass/ask", async (req, res) => {
     appendSystemEvent(sc, conversationId, "assistant_unavailable", { fallbackReason: "ai_error" }).catch(() => {});
     res.json({
       conversationId,
-      message:        HONEST_FALLBACK_MESSAGE,
+      ...(await compassAiFailureFallbackWithRetrieval(partialToolLogOf(messages), () => executeCompassTool(sc, user.id, guardProfile as any, "memory_search", { query: prompt }), HONEST_FALLBACK_MESSAGE)), // H266: Memory facts, rendered; the sentence only when there are none
       payload:        null,
       quickActions:   [],
       promptVersion:  COMPASS_ASK_PROMPT_VERSION,

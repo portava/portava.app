@@ -141,3 +141,28 @@ export async function declineSharedInvitation(invitationId: string): Promise<Sha
 export function personLabel(p: SharedPerson): string {
   return p.name?.trim() || (p.handle ? `@${p.handle}` : 'Someone');
 }
+
+/**
+ * My ways OUT — readable even while remembering together is switched off
+ * (H53, "never trap a person"). Only my own rows, as ids: experiences I joined,
+ * invitations I have not answered, and my own Memories that host one. Nothing
+ * about anyone else. A malformed body is a failure, never "nothing to leave".
+ */
+export interface SharedExits {
+  memberships: Array<{ experienceId: string; myMemoryId: string | null }>;
+  invitations: Array<{ invitationId: string }>;
+  hosting: Array<{ hostMemoryId: string }>;
+}
+
+export async function listMySharedExits(): Promise<SharedResult<{ exits: SharedExits }>> {
+  const r = await call<Partial<SharedExits>>('GET', '/me/shared-experience-exits');
+  if (!r.ok) return r;
+  const b = r.body;
+  const isStr = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
+  if (!b || !Array.isArray(b.memberships) || !Array.isArray(b.invitations) || !Array.isArray(b.hosting)
+    || !b.memberships.every((m) => isStr(m?.experienceId)) || !b.invitations.every((i) => isStr(i?.invitationId))
+    || !b.hosting.every((h) => isStr(h?.hostMemoryId))) {
+    return { ok: false, kind: 'degraded_unavailable', message: FALLBACK.degraded_unavailable };
+  }
+  return { ok: true, exits: { memberships: b.memberships, invitations: b.invitations, hosting: b.hosting } };
+}

@@ -17324,3 +17324,82 @@ FFmpeg toolchain, pgvector, and a native build. All five also wait on vendor rul
 - a caption track served before the creator publishes it;
 - an index that outlives its media or its consent;
 - an encoder that returns a file over its bitrate ceiling or not smaller than the source.
+
+## 54. Row moves — 2026-10-17 build and fix (wave 5, memory/stamps/media): MD385 is built up to its migration. NO ROW MOVES
+
+Measured on branch `claude/wave4-build-20261017` on 2026-10-17, against the working tree. `head_commit` is not
+re-declared. Every row not named here is unchanged. This section records construction for one W row whose
+verdict does not move: the migration it needs is written and applied nowhere, so rule A.2 holds it at W.
+
+### 54.1 What is built for MD385 (ruling D-26j: a Memory from one's OWN media only)
+
+- **Storage, migration 3999 (applied nowhere).** `memory_items.source_post_id` is added as a nullable uuid
+  (`artifacts/api-server/src/migrations/3999_memory_items_source_post.sql:89#ALTER TABLE public.memory_items ADD COLUMN IF NOT EXISTS source_post_id uuid;`).
+  It references the post and cascades with the post row
+  (`artifacts/api-server/src/migrations/3999_memory_items_source_post.sql:98#FOREIGN KEY (source_post_id) REFERENCES public.posts(id) ON DELETE CASCADE;`).
+  A guard trigger accepts a link only to a live post whose author owns the Memory, and only with that post's own
+  media (`artifacts/api-server/src/migrations/3999_memory_items_source_post.sql:128#AND p.author_id = m.owner_id`).
+  One copy of one post photo per Memory
+  (`artifacts/api-server/src/migrations/3999_memory_items_source_post.sql:107#CREATE UNIQUE INDEX IF NOT EXISTS memory_items_source_post_media_uniq`).
+  The flag is seeded FALSE
+  (`artifacts/api-server/src/migrations/3999_memory_items_source_post.sql:150#('memory_from_own_media_enabled', false,`).
+- **The action.** `POST /memories/:id/items/from-post`
+  (`artifacts/api-server/src/routes/memories.ts:3860#router.post("/memories/:id/items/from-post"`). The server checks,
+  in order: the flag, then the column by name (the schema-marker probe), so absent storage is refused and never
+  written around (`artifacts/api-server/src/services/memory/memoryFromOwnMedia.ts:47#export async function gateMemoryFromOwnMedia(`);
+  that the Memory is the caller's; and that the post is the caller's own live post. Someone else's post, a missing
+  post and a deleted post are one answer, `not_found`
+  (`artifacts/api-server/src/services/memory/memoryFromOwnMedia.ts:92#if (!post || post.author_id !== input.viewerId)`).
+  The media is picked by index from the post's own `media_urls`. The client never supplies a URL, and the body is
+  `.strict()`. With the Memory kernel on, 2711's ADD_MEDIA writes no link, so the route links the item after the
+  write, or removes it and refuses. An unlinked copy is never left behind
+  (`artifacts/api-server/src/routes/memories.ts:3938#if (row?.source_post_id !== postId) {`).
+- **The §44 producer.** `memory_create` is recorded at the moment the item is written, keyed by the post id, as
+  `postcard_create` is (`artifacts/api-server/src/lib/mediaAnalytics.ts:428#export function recordMemoryCreatedFromMediaSignal(`).
+  It is server-only, on `MEDIA_SERVER_OUTCOME_SIGNAL_TYPES`, and carries no Memory id, title or place.
+- **Withdrawal, stated rather than decided.** Erasing the source post row erases the copies made from it. A post
+  its author soft-deletes keeps its copies in that author's own Memories. Whether a soft delete or a moderation
+  hold on the source should also withdraw the copy is an open owner question, **MD385-Q1**.
+
+**TESTED:** `artifacts/api-server/src/test/memoryFromOwnMedia.pglite.test.ts`, 11/11, runs 3999 in PGlite and the
+route over it (`artifacts/api-server/src/test/memoryFromOwnMedia.pglite.test.ts:244#the database accepts a link only to the Memory owner's own live post`,
+`artifacts/api-server/src/test/memoryFromOwnMedia.pglite.test.ts:295#someone else's post is refused, as not_found`,
+`artifacts/api-server/src/test/memoryFromOwnMedia.pglite.test.ts:328#kernel on, and the link cannot be written`,
+`artifacts/api-server/src/test/memoryFromOwnMedia.pglite.test.ts:344#flag ON over a database without 3999`).
+Sixteen mutants were run, each restored byte-identically and checked by sha256. Fifteen were killed. They
+cover: dropping the storage probe, the author check, the live-post check, the trigger's author, status and
+media clauses, the cascade, the kernel-path link, the undo, `.strict()`, the flag seed, the EXECUTE revoke,
+the signal, the flag gate and the unique index. The one survivor deletes only the log line of a failed undo,
+so it is equivalent by construction. The cascade, revoke and seed mutants are also killed by 3999's own
+postcondition. These are local runs on PGlite with a stub of 2711's two arms. They are not evidence about a
+hosted database.
+
+### 54.2 Row moves
+
+| ID | Was | Now | Evidence |
+| --- | --- | --- | --- |
+| MD385 | **W** | **W** | **Built up to its migration, not moved.** D-26j's own-media scope is enforced twice, in the route and by 3999's trigger. The §44 Memory half now has a producer (§54.1). **Why W, not C:** 3999 is applied nowhere (A.2), and `memory_from_own_media_enabled` is seeded FALSE. MD385-Q1 (whether a soft delete or a moderation hold withdraws the copy) is open. No client control calls the route yet. The lead registers the test file. |
+
+### 54.3 Examined and not moved
+
+- **The image ladder has no production producer.** `enqueueConfiguredImageVariants`
+  (`artifacts/api-server/src/lib/media/imageVariants/bridge.ts:31#subject.bucket !== "post-media"`) is called
+  only by tests. No upload path enqueues an image, so no generation is ever published, even with
+  `MEDIA_IMAGE_VARIANTS_ENABLED` set and both 3980 flags on. The rows that grade the ladder are already W on
+  3980 being applied nowhere. This is recorded as a finding for whoever wires the post-moderation hook, and no
+  verdict here moves on it. census-highlights-memories H182 now selects the ladder's renditions on the Memory
+  read path (that census, wave 5). It inherits this gap.
+
+### 54.4 Headline, restated from the rows
+
+`check:census-integrity` recounted after this section.
+
+| Measure | §53.5 | **§54.4** |
+| --- | ---: | ---: |
+| Denominator | 450 | **450** |
+| BUILT-AND-CORRECT | 415 | **415** |
+| BUILT-BUT-WRONG | 35 | **35** |
+| NOT-BUILT | 0 | **0** |
+| CANNOT-VERIFY | 0 | **0** |
+| CONSTRUCTED% | 100.0 % | **100.0 %** (450 / 450) |
+| CORRECT% raw | 92.2 % | **92.2 %** (415 / 450) |

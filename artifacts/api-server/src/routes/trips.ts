@@ -32,7 +32,7 @@ import { syncTripChatMembers } from "../lib/chatSync.js";
 import { getRestrictionState } from "../services/trust/TrustRestrictionService.js"; import { refuseIfTrustRestricted } from "../lib/discoveryTrustGate.js";
 import { sendTripPush } from "../domain/trips/policies/tripPush.js";
 import { recordOpportunityCompletion } from "../domain/trips/services/tripOpportunityMetrics.js";
-import { awardStamp, type StampLogger } from "../services/passport/StampAwardEngine.js";
+import { awardStamp, type StampLogger } from "../services/passport/StampAwardEngine.js"; import { readTripPresenceEvidence, countEvidencedCompletedTrips } from "../services/passport/tripCompletionPresence.js";
 import { placelessAward, TRIP_CREATION_STAMP_LOCATION_TEXT } from "../services/passport/nonPresenceStampAwards.js";
 import { buildConsumerProjection } from "../services/passport/PassportConsumerProjections.js";
 import { nameVisibilitySet, sanitizeIdentity, nameVisibleFor } from "../lib/publicIdentity";
@@ -204,11 +204,11 @@ async function awardTripCompletionStamps(
   // because awardStamp is idempotent the milestone would only reappear on the
   // NEXT completed trip. The milestones are skipped explicitly and logged, so
   // the per-member stamps above still land.
-  const { count: completedCount, error: countErr } = await sc
-    .from("trips")
-    .select("id", { count: "exact", head: true })
-    .eq("owner_id", ownerId)
-    .eq("status", "completed");
+  // H4: a milestone counts only completed trips the owner has occurrence
+  // evidence for (services/passport/tripCompletionPresence.ts). The calendar
+  // completes a plan nobody took; five of those are not five trips.
+  const { count: completedCount, error: countErr } =
+    await countEvidencedCompletedTrips(sc, ownerId);
 
   if (countErr || completedCount == null) {
     log?.warn?.(
@@ -222,11 +222,11 @@ async function awardTripCompletionStamps(
     if (n >= 10) awards.push({ userId: ownerId, slug: "frequent_flyer" });
   }
 
-  // ── Call awardStamp() directly to collect results, then batch notifications ─
-  // Direct engine calls (not HTTP) so we get AwardResult back for notification logic.
-  // awardStamp is idempotent via (user:def:sourceType:sourceId) key — re-runs are safe.
+  // H4: the calendar completes a trip, it does not prove anyone went. Only a member with occurrence evidence (a check-in on this trip) earns a completion stamp.
+  const presence = await readTripPresenceEvidence(sc, tripId, memberIds);
+  if (presence.unreadable.length > 0) log?.warn?.({ tripId, unreadable: presence.unreadable }, "awardTripCompletionStamps: presence evidence partly unreadable — members it would have shown present get no completion stamp");
   const settled = await Promise.allSettled(
-    awards.map(({ userId, slug }) =>
+    awards.filter(({ userId }) => presence.present.has(userId)).map(({ userId, slug }) =>
       awardStamp(sc, {
         userId,
         definitionSlug: slug,
