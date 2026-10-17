@@ -13,9 +13,9 @@
  *   POST   /shared-experiences/:experienceId/leave
  *
  * Every route acts as the signed-in person; no route takes an owner, host or
- * invitee id for the actor from the request. Behind
- * memory_shared_experiences_enabled (seeded FALSE): off or absent answers
- * `feature_disabled`; an unreadable flag or table answers `degraded_unavailable`.
+ * invitee id for the actor from the request. Behind memory_shared_experiences_enabled
+ * (seeded FALSE; off answers `feature_disabled`) EXCEPT the ways out — decline,
+ * withdraw, leave, end — which are NEVER gated (H53). Unreadable: `degraded_unavailable`.
  */
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";

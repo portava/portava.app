@@ -108,8 +108,8 @@ export async function withdrawInvitation(
   input: { hostId: string; memoryId: string; inviteeId: string },
 ): Promise<SharedResult<{ withdrawn: boolean }>> {
   if (!UUID_RE.test(input.memoryId) || !UUID_RE.test(input.inviteeId)) return fail("invalid", "ids must be UUIDs");
-  const g = await gate(sc);
-  if (!g.ok) return g;
+  // NO flag gate, on purpose (H53): taking back a question is a way OUT, and no
+  // switch may strand it. Only the host's own pending row matches the filter.
   const { data, error } = await sc.from(SHARED_INVITATIONS_TABLE).delete()
     .eq("host_memory_id", input.memoryId).eq("host_id", input.hostId)
     .eq("invitee_id", input.inviteeId).eq("status", "pending")
@@ -126,9 +126,9 @@ export async function respondToInvitation(
   if (!UUID_RE.test(input.invitationId) || (input.participantMemoryId !== null && !UUID_RE.test(input.participantMemoryId))) {
     return fail("invalid", "ids must be UUIDs");
   }
-  const g = await gate(sc);
-  if (!g.ok) return g;
+  // Only ACCEPTING is gated: it creates sharing. A decline is a way OUT (H53).
   if (input.accept) {
+    const g = await gate(sc); if (!g.ok) return g;
     // A block that arrived after the invitation stops the acceptance: the
     // host's invitation is not a way past it, in either direction.
     const inv = await sc.from(SHARED_INVITATIONS_TABLE).select("host_id")
@@ -159,8 +159,8 @@ export async function leaveSharedExperience(
   input: { experienceId: string; userId: string },
 ): Promise<SharedResult<{ left: true }>> {
   if (!UUID_RE.test(input.experienceId)) return fail("invalid", "ids must be UUIDs");
-  const g = await gate(sc);
-  if (!g.ok) return g;
+  // NO flag gate, on purpose (H53, as 3997's SQL says): turning the feature off
+  // must never trap a person in it. The SQL admits only this user's accepted row.
   const r = await rpcOutcome(sc, "memory_shared_experience_leave", { p_experience_id: input.experienceId, p_user_id: input.userId });
   if (!r.ok) return r;
   if (r.value.outcome === "left") return { ok: true, value: { left: true } };
@@ -173,8 +173,8 @@ export async function endSharedExperience(
   input: { hostId: string; memoryId: string },
 ): Promise<SharedResult<{ ended: true }>> {
   if (!UUID_RE.test(input.memoryId)) return fail("invalid", "ids must be UUIDs");
-  const g = await gate(sc);
-  if (!g.ok) return g;
+  // NO flag gate, on purpose (H53): ending is the host's way OUT; the SQL erases
+  // only what is on a Memory this host owns.
   const r = await rpcOutcome(sc, "memory_shared_experience_end", { p_host_id: input.hostId, p_memory_id: input.memoryId });
   if (!r.ok) return r;
   if (r.value.outcome === "ended") return { ok: true, value: { ended: true } };

@@ -70,9 +70,9 @@
 --
 -- ── FLAGS ────────────────────────────────────────────────────────────────────
 -- memory_visibility_policies_enabled and memory_shared_experiences_enabled are
--- seeded FALSE. Off or absent: the routes answer as if they did not exist, no
--- policy is read or written, and the shared-experience functions refuse
--- ('disabled'). Turning either on is the owner's call.
+-- seeded FALSE. Off or absent: no policy is read or written, and every way INTO a
+-- shared experience refuses ('disabled'); the ways OUT (decline, withdraw, leave,
+-- end) are never gated, so no switch traps anyone. Turning on is the owner's call.
 --
 -- Rollback (nothing else depends on these objects):
 --   DROP TABLE IF EXISTS public.memory_shared_experience_invitations,
@@ -111,7 +111,7 @@ INSERT INTO public.feature_flags (flag, enabled, description) VALUES
   ('memory_visibility_policies_enabled', false,
    '3997 (census H33): the owner''s per-audience location precision policy (memory_visibility_policies). FALSE / absent: the policy routes answer as if absent and no non-owner read consults the table.'),
   ('memory_shared_experiences_enabled', false,
-   '3997 (census H53): "Remember this together". The owner of a Memory invites people holding an approved tag on it; the shared experience exists only after one of them consents. FALSE / absent: every route answers as if absent and every function refuses.')
+   '3997 (census H53): "Remember this together". The owner of a Memory invites people holding an approved tag on it; the shared experience exists only after one of them consents. FALSE / absent: nobody can be invited or accept and the reads answer as if absent; declining, withdrawing, leaving and ending always work.')
 ON CONFLICT (flag) DO NOTHING;
 
 -- ── PART 1 ───────────────────────────────────────────────────────────────────
@@ -314,7 +314,7 @@ $fn$;
 -- experience in this same transaction. Outcomes: accepted | declined |
 -- not_found (no pending invitation of this person's) | host_memory_gone |
 -- memory_not_linkable (the Memory offered is not this person's live Memory, or
--- is already linked to another shared experience) | disabled.
+-- is already linked to another shared experience) | disabled (ACCEPTING only: a decline is a way out, never gated).
 CREATE OR REPLACE FUNCTION public.memory_shared_experience_respond(p_invitation_id uuid, p_invitee_id uuid, p_accept boolean, p_participant_memory_id uuid)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -326,7 +326,7 @@ DECLARE
   v_state      text;
   v_experience uuid;
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM public.feature_flags WHERE flag = 'memory_shared_experiences_enabled' AND enabled IS TRUE) THEN
+  IF p_accept IS NOT FALSE AND NOT EXISTS (SELECT 1 FROM public.feature_flags WHERE flag = 'memory_shared_experiences_enabled' AND enabled IS TRUE) THEN
     RETURN jsonb_build_object('outcome', 'disabled');
   END IF;
   IF p_invitation_id IS NULL OR p_invitee_id IS NULL OR p_accept IS NULL THEN
@@ -403,7 +403,7 @@ $fn$;
 -- end: the host ends the shared experience for everyone. The experience and every
 -- invitation of the host's Memory are erased, the declined and left ones
 -- included, so nothing about who was asked survives it. Outcomes: ended |
--- not_found (no experience or pending invitation on a Memory this host owns).
+-- not_found (no experience or pending invitation on a Memory this host owns). Never flag-gated: a way out.
 CREATE OR REPLACE FUNCTION public.memory_shared_experience_end(p_host_id uuid, p_memory_id uuid)
 RETURNS jsonb
 LANGUAGE plpgsql

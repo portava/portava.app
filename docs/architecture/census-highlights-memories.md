@@ -9367,3 +9367,15 @@ These are local runs, on fakes and PGlite. They are not evidence about the hoste
 | total | 266 | 266 |
 
 **4 moves, all N → W: H33, H53, H203, H262.** 266 = 73 C / 188 W / 3 N / 2 X. CONSTRUCTED% is (73 + 188) / 266 = 98.1 %. CORRECT% is unchanged at 73 / 266 = 27.4 %.
+
+### Correction (2026-10-17, wave-4 verification) — H53 leave is never gated
+
+The wave-4 verifier found H53's service contradicting its own migration. 3997's SQL says leaving is deliberately NOT flag-gated ("never trap a person"), but `leaveSharedExperience` in `artifacts/api-server/src/services/memory/memorySharedExperiences.ts` refused with `feature_disabled` whenever `memory_shared_experiences_enabled` was off, so a person who had joined a shared experience could not leave it. It is corrected on the rule the layover crew-location DELETE already follows: every way OUT runs with the flag off, and every way IN stays gated.
+
+- Ungated in the service: leave, decline, the host's withdrawal of a pending invitation, and the host's end. Accept keeps its gate, now inside the accept branch.
+- Ungated in the SQL (3997 edited in place; it is applied nowhere): `memory_shared_experience_respond` checks the flag only when accepting (`p_accept IS NOT FALSE`), so a decline runs with the flag off. `_leave` and `_end` already did not check it. The FLAGS paragraph of the migration header and the seeded flag description now say the same.
+- Still gated: invite, accept (which creates or joins), and both reads. With the flag off, a person can leave only with an experience id their client already holds, because the reads that would reveal it stay off (the layover GET precedent). Whether a flag-off "what am I in" read is wanted is an open question, not decided here.
+- Unchanged: auth and membership. Leave matches only the caller's own accepted row, decline only their own pending invitation, and withdraw and end only a Memory the caller hosts.
+- Evidence: `artifacts/api-server/src/test/memorySharedExperiences.pglite.test.ts` 25/25 (4 cases appended at the end). Re-gating leave, decline (in the service or in the SQL), withdraw or end each turns a new case red. Ungating accept in both the service and the SQL turns it red. Ungating accept in the service alone survives, because the SQL still refuses it (defence in depth). Dropping the membership filter from `_leave` turns 4 cases red. Each mutant was restored and sha256-checked.
+
+H53 stays W. No row moves, so no count changes.

@@ -245,7 +245,7 @@ describe("H53 / H33 — migration 3997 executed in PGlite, and the shared-experi
     assert.deepEqual(privileges, { a1: false, a2: false, a3: false, a4: false, a5: false, s1: true });
   });
 
-  it("with the flag off, nothing can be invited or answered", async () => {
+  it("with the flag off, nobody can be invited (the ways out are proved ungated at the end of this file)", async () => {
     await db.exec("UPDATE public.feature_flags SET enabled = false WHERE flag = 'memory_shared_experiences_enabled'");
     assert.equal((await invite(HOST, M_HOST, ANA)).outcome, "disabled");
     assert.equal(await count("memory_shared_experience_invitations"), 0);
@@ -503,5 +503,109 @@ describe("H53 / H33 — migration 3997 executed in PGlite, and the shared-experi
     } finally {
       await db.exec("GRANT SELECT ON public.memory_shared_experience_invitations TO service_role");
     }
+  });
+
+  // ── H53 correction (2026-10-17, wave-4 verification): the ways OUT are never gated ──
+  // 3997 says leaving is deliberately not flag-gated ("never trap a person"); the
+  // service used to gate it anyway. Anything that removes a person or their consent
+  // (leave, decline, withdraw, end) runs with the flag OFF; anything that creates or
+  // extends sharing (invite, accept) and the reads stay gated.
+
+  const flagOff = () => db.exec("UPDATE public.feature_flags SET enabled = false WHERE flag = 'memory_shared_experiences_enabled'");
+  const statusOf = async (invitee: string, memory = M_HOST) =>
+    (await sql<any>("SELECT status FROM public.memory_shared_experience_invitations WHERE invitee_id = $1 AND host_memory_id = $2", [invitee, memory]))[0]?.status ?? null;
+
+  it("H53 flag OFF: a member LEAVES; a non-member, the host and an anonymous caller are refused", async () => {
+    const a = await call("POST", `/memories/${M_HOST}/shared-experience/invitations`, HOST, { userId: ANA });
+    const b = await call("POST", `/memories/${M_HOST}/shared-experience/invitations`, HOST, { userId: BAO });
+    const exp = (await call("POST", `/shared-experience-invitations/${a.body.invitationId}/accept`, ANA, { memoryId: M_ANA })).body.experienceId;
+    await call("POST", `/shared-experience-invitations/${b.body.invitationId}/accept`, BAO, {});
+    await flagOff();
+    const stranger = await call("POST", `/shared-experiences/${exp}/leave`, STRANGER);
+    assert.deepEqual([stranger.status, stranger.body.error], [404, "not_found"], "a non-member is refused as a non-member, not as 'disabled'");
+    const host = await call("POST", `/shared-experiences/${exp}/leave`, HOST);
+    assert.deepEqual([host.status, host.body.error], [404, "not_found"], "the host ends; only a participant leaves");
+    assert.equal((await call("POST", `/shared-experiences/${exp}/leave`, null)).status, 401, "auth is still required");
+    const left = await call("POST", `/shared-experiences/${exp}/leave`, ANA);
+    assert.equal(left.status, 200, "the switch must not trap her");
+    assert.deepEqual(left.body, { left: true });
+    assert.equal(await statusOf(ANA), "left");
+    assert.equal(await statusOf(BAO), "accepted", "only the member themself left");
+    assert.equal(await count("memory_shared_experiences"), 1);
+    const again = await call("POST", `/shared-experiences/${exp}/leave`, ANA);
+    assert.deepEqual([again.status, again.body.error], [404, "not_found"], "once");
+    assert.equal((await call("POST", `/shared-experiences/${exp}/leave`, BAO)).status, 200);
+    assert.equal(await count("memory_shared_experiences"), 0, "and it still dissolves when nobody is left");
+  });
+
+  it("H53 flag OFF: decline, withdraw and end still work, each only for the person it belongs to", async () => {
+    const a = await call("POST", `/memories/${M_HOST}/shared-experience/invitations`, HOST, { userId: ANA });
+    await call("POST", `/memories/${M_HOST}/shared-experience/invitations`, HOST, { userId: BAO });
+    const p = await call("POST", `/memories/${M_HOST_PRIVATE}/shared-experience/invitations`, HOST, { userId: ANA });
+    await call("POST", `/shared-experience-invitations/${a.body.invitationId}/accept`, ANA, {});
+    await flagOff();
+    // decline
+    const notHers = await call("POST", `/shared-experience-invitations/${p.body.invitationId}/decline`, STRANGER);
+    assert.deepEqual([notHers.status, notHers.body.error], [404, "not_found"]);
+    assert.equal(await statusOf(ANA, M_HOST_PRIVATE), "pending");
+    const declined = await call("POST", `/shared-experience-invitations/${p.body.invitationId}/decline`, ANA);
+    assert.equal(declined.status, 200, "a no to a question already asked is never gated");
+    assert.equal(declined.body.outcome, "declined");
+    assert.equal(await statusOf(ANA, M_HOST_PRIVATE), "declined");
+    // withdraw
+    assert.equal((await call("DELETE", `/memories/${M_HOST}/shared-experience/invitations/${BAO}`, ANA)).body.withdrawn, false, "not Ana's invitation to take back");
+    assert.equal(await statusOf(BAO), "pending");
+    const withdrawn = await call("DELETE", `/memories/${M_HOST}/shared-experience/invitations/${BAO}`, HOST);
+    assert.deepEqual([withdrawn.status, withdrawn.body.withdrawn], [200, true]);
+    assert.equal(await statusOf(BAO), null);
+    // end
+    const notHost = await call("DELETE", `/memories/${M_HOST}/shared-experience`, ANA);
+    assert.deepEqual([notHost.status, notHost.body.error], [404, "not_found"], "a participant cannot end it");
+    assert.equal(await count("memory_shared_experiences"), 1);
+    const ended = await call("DELETE", `/memories/${M_HOST}/shared-experience`, HOST);
+    assert.deepEqual([ended.status, ended.body.ended], [200, true]);
+    assert.equal(await count("memory_shared_experiences"), 0);
+  });
+
+  it("H53 flag OFF: every way IN is still refused — invite, accept (which would create or join), and the reads", async () => {
+    const a = await call("POST", `/memories/${M_HOST}/shared-experience/invitations`, HOST, { userId: ANA });
+    const b = await call("POST", `/memories/${M_HOST}/shared-experience/invitations`, HOST, { userId: BAO });
+    await flagOff();
+    const create = await call("POST", `/shared-experience-invitations/${a.body.invitationId}/accept`, ANA, { memoryId: M_ANA });
+    assert.deepEqual([create.status, create.body.error], [404, "feature_disabled"], "the first acceptance would CREATE the experience");
+    assert.equal(await count("memory_shared_experiences"), 0);
+    assert.equal(await statusOf(ANA), "pending");
+    const invited = await call("POST", `/memories/${M_HOST_PRIVATE}/shared-experience/invitations`, HOST, { userId: ANA });
+    assert.deepEqual([invited.status, invited.body.error], [404, "feature_disabled"]);
+    assert.equal(await statusOf(ANA, M_HOST_PRIVATE), null);
+    // join an EXISTING experience: accepted while on, then the switch goes off.
+    await db.exec("UPDATE public.feature_flags SET enabled = true WHERE flag = 'memory_shared_experiences_enabled'");
+    await call("POST", `/shared-experience-invitations/${a.body.invitationId}/accept`, ANA, {});
+    await flagOff();
+    const join = await call("POST", `/shared-experience-invitations/${b.body.invitationId}/accept`, BAO, {});
+    assert.deepEqual([join.status, join.body.error], [404, "feature_disabled"]);
+    assert.equal(await statusOf(BAO), "pending");
+    for (const path of [`/memories/${M_HOST}/shared-experience`, "/me/shared-experience-invitations"]) {
+      const r = await call("GET", path, ANA);
+      assert.deepEqual([r.status, r.body.error], [404, "feature_disabled"], path);
+    }
+  });
+
+  it("H53 flag OFF, in the SQL itself: respond declines but never accepts; leave and end run; invite refuses", async () => {
+    const a = await invite(HOST, M_HOST, ANA);
+    const b = await invite(HOST, M_HOST, BAO);
+    const exp = (await respond(a.invitation_id, ANA, true, M_ANA)).experience_id;
+    const p = await invite(HOST, M_HOST_PRIVATE, ANA);
+    await flagOff();
+    assert.equal((await respond(b.invitation_id, BAO, true)).outcome, "disabled", "joining is a way in");
+    assert.equal((await respond(b.invitation_id, ANA, false)).outcome, "not_found", "only the invitee answers");
+    assert.equal((await respond(b.invitation_id, BAO, false)).outcome, "declined");
+    assert.equal((await invite(HOST, M_HOST, STRANGER)).outcome, "disabled");
+    assert.equal((await leave(exp, STRANGER)).outcome, "not_member");
+    assert.equal((await leave(exp, ANA)).outcome, "left");
+    assert.equal((await end(ANA, M_HOST_PRIVATE)).outcome, "not_found");
+    assert.equal((await end(HOST, M_HOST_PRIVATE)).outcome, "ended");
+    assert.equal(await statusOf(ANA, M_HOST_PRIVATE), null, "the pending question is erased with it");
+    assert.ok(p.invitation_id);
   });
 });
