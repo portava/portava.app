@@ -2,7 +2,7 @@ import { Router } from "express";
 import type { Response } from "express";
 import { auditServedResurfacing } from "../services/highlights/resurfacingSuppressionAudit.js";
 import { requireUser, sendError } from "../lib/http";
-import { getServiceClient } from "../lib/supabase"; import { isExcluded, readBlockExclusions, readPairExclusion } from "../lib/exclusionSet.js";
+import { getServiceClient } from "../lib/supabase"; import { isExcluded, readBlockExclusions, readPairExclusion, readBlockDirections } from "../lib/exclusionSet.js";
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
 import {
   canViewHighlight,
@@ -1360,21 +1360,21 @@ router.get("/highlights/active", async (req, res) => {
   // has blocked nobody". A transient blocks-table failure therefore served
   // blocked owners' highlights into the feed. Same defect, same fix, as
   // routes/memories.ts's discovery feed.
-  const [blockedByMe, blockingMe] = await Promise.all([
-    sc.from("blocks").select("blocked_id").eq("blocker_id", user.id),
-    sc.from("blocks").select("blocker_id").eq("blocked_id", user.id),
-  ]);
-  if (blockedByMe.error || blockingMe.error) {
+  // census-telegraph T220: both directions through the shared reader, readBlockDirections —
+  // each read WHOLE by key (a range-less read was cut at db-max-rows) — and every failure (a
+  // returned error, a thrown read, an answer that is not a row list, a row naming nobody) `!ok`.
+  const blocks = await readBlockDirections(sc, user.id);
+  if (!blocks.ok) {
     req.log.error(
-      { err: blockedByMe.error ?? blockingMe.error },
+      { err: blocks.reason },
       "highlights: block lookup failed — failing closed",
     );
     sendError(res, "db_error", "Could not resolve block state");
     return;
   }
   const blockedIds = new Set<string>([
-    ...((blockedByMe.data ?? []).map((r: any) => r.blocked_id as string)),
-    ...((blockingMe.data ?? []).map((r: any) => r.blocker_id as string)),
+    ...blocks.ids, // both directions: everyone the viewer blocked, and everyone who blocked them
+    // (one read now: the two `.map()`s over blockedByMe / blockingMe are blocks.outgoing / .incoming)
   ]);
 
   // Build query — include trip_only so trip members can see them

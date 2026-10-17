@@ -4,7 +4,7 @@ import { nameVisibilitySet, nameVisibleFor, readNameVisibilitySet } from "../lib
 import { decideUnfollow, isUuid } from "../lib/followDecisions";
 import { normalizedFriendshipPair } from "../lib/friendDecisions";
 import { resolveInteractionPermissions } from "../services/interactionPermissions";
-import { getSeenIds, markAsSeen, clearSeen, dailySeed, seededShuffle } from "../lib/suggestionSeenCache"; import { readBlockExclusions } from "../lib/exclusionSet";
+import { getSeenIds, markAsSeen, clearSeen, dailySeed, seededShuffle } from "../lib/suggestionSeenCache"; import { readBlockExclusions, readPairDirections } from "../lib/exclusionSet";
 import { isKillSwitchEngaged } from "../lib/featureFlags"; import { discoveryRefusal, sendDiscoveryRefusal } from "../lib/discoveryRefusal"; // census-discovery §106 (tm-people): the people search's stop refuses rather than posing as a miss
 import { safeOrIlikeValue } from "../lib/postgrestFilter"; import { ownerAvailabilityWithheld } from "../services/telegraph/availabilityInvisibility"; // lead ruling P-T1a
 
@@ -1763,14 +1763,14 @@ router.get("/users/:userId", async (req, res) => {
       sc.from("profiles").select(PUBLIC_PASSPORT_FIELDS).eq("id", target).maybeSingle(),
       sc.from("user_follows").select("*", { count: "exact", head: true }).eq("following_id", target),
       sc.from("user_follows").select("*", { count: "exact", head: true }).eq("follower_id", target),
-      needBlockCheck
-        ? sc.from("blocks").select("blocker_id", { count: "exact", head: true })
-            .eq("blocker_id", callerId!).eq("blocked_id", target)
-        : Promise.resolve({ count: 0, error: null }),
-      needBlockCheck
-        ? sc.from("blocks").select("blocker_id", { count: "exact", head: true })
-            .eq("blocker_id", target).eq("blocked_id", callerId!)
-        : Promise.resolve({ count: 0, error: null }),
+      // census-telegraph T220: both block slots come from ONE shared pair read —
+      // readPairDirections, one `.eq().eq().limit(1)` read per direction (these
+      // were two head counts) — mapped onto the `{ count, error }` pair the gate
+      // below reads, so nothing below moved. The reader answers EVERY failure (a
+      // returned error, a thrown read, an answer that is not a row list) as
+      // unreadable, and each now takes the gate's 503; a head count that came back
+      // with no count and no error used to read as "not blocked" (`?? 0`).
+      ...passportBlockSlots(sc, callerId, target, needBlockCheck),
     ]);
 
   if (profileRes.error || !profileRes.data) {
@@ -1955,14 +1955,14 @@ router.get("/users/by-handle/:handle", async (req, res) => {
     await Promise.all([
       sc.from("user_follows").select("*", { count: "exact", head: true }).eq("following_id", target),
       sc.from("user_follows").select("*", { count: "exact", head: true }).eq("follower_id", target),
-      needBlockCheck
-        ? sc.from("blocks").select("blocker_id", { count: "exact", head: true })
-            .eq("blocker_id", callerId!).eq("blocked_id", target)
-        : Promise.resolve({ count: 0, error: null }),
-      needBlockCheck
-        ? sc.from("blocks").select("blocker_id", { count: "exact", head: true })
-            .eq("blocker_id", target).eq("blocked_id", callerId!)
-        : Promise.resolve({ count: 0, error: null }),
+      // census-telegraph T220: the same shared pair read and the same mapping as
+      // GET /users/:userId above (passportBlockSlots, at the foot of this file):
+      // caller→target then target→caller, `{ count, error }` each, and an
+      // unreadable read — a returned error, a thrown read, an answer that is
+      // not a row list — is the error the gate below refuses on with a 503,
+      // never `count ?? 0`. Without a caller, or on one's own profile, both
+      // slots are `{ count: 0, error: null }` and nothing is read.
+      ...passportBlockSlots(sc, callerId, target, needBlockCheck),
     ]);
 
   // ── THE BLOCK GATE MUST NOT BE ANSWERED BY A READ THAT FAILED ──────────────
@@ -2041,3 +2041,20 @@ router.get("/users/by-handle/:handle", async (req, res) => {
 
 export default router;
 import { readVerifiedBadges, identityBadgeField } from "../services/identityVerification/verifiedBadges.js";
+
+/**
+ * census-telegraph T220: the passport's two block slots — caller blocked
+ * target, target blocked caller — from ONE shared pair read. `readPairDirections`
+ * answers both directions; each slot is mapped onto the `{ count, error }` shape
+ * the block gate reads (a row is a count of 1). Unreadable → both slots carry
+ * the error, so the gate's 503 fires exactly as it does for a returned error.
+ * No check needed (anonymous, or one's own profile) → the same
+ * `{ count: 0, error: null }` the handlers resolved before, and no read.
+ */
+type PassportBlockSlot = { count: number | null; error: { message: string } | null };
+function passportBlockSlots(sc: any, callerId: string | null, target: string, need: boolean): [Promise<PassportBlockSlot>, Promise<PassportBlockSlot>] {
+  if (!need || !callerId) return [Promise.resolve({ count: 0, error: null }), Promise.resolve({ count: 0, error: null })];
+  const pair = readPairDirections(sc, callerId, target);
+  const slot = (dir: "aBlockedB" | "bBlockedA") => pair.then((p): PassportBlockSlot => (p.ok ? { count: p[dir] ? 1 : 0, error: null } : { count: null, error: { message: p.reason } }));
+  return [slot("aBlockedB"), slot("bBlockedA")];
+}

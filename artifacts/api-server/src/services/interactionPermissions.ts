@@ -26,7 +26,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getRestrictionState, DegradedPermissionCheckError } from "./trust/TrustRestrictionService.js";
-import { logger as rootLogger } from "../lib/logger.js"; import { isRestrictionRowInForce } from "../lib/accountStateGate.js"; import { isAbsentTableError } from "../lib/absentTableError.js"; // one line: this file is cited by line
+import { logger as rootLogger } from "../lib/logger.js"; import { isRestrictionRowInForce } from "../lib/accountStateGate.js"; import { isAbsentTableError } from "../lib/absentTableError.js"; import { readPairDirections } from "../lib/exclusionSet.js"; // one line: this file is cited by line
 
 const log = rootLogger.child({ service: "interactionPermissions" });
 
@@ -329,13 +329,13 @@ export async function resolveInteractionPermissions(
 
   // ── PRIORITY 2: Block check (FAIL-CLOSED) ─────────────────────────────────
   // blocks is a pre-existing table. Any error is re-thrown — we never assume "no block".
-  const blockRows = await critList<{ blocker_id: string }>(
-    sc.from("blocks")
-      .select("blocker_id")
-      .or(`and(blocker_id.eq.${viewerId},blocked_id.eq.${targetUserId}),and(blocker_id.eq.${targetUserId},blocked_id.eq.${viewerId})`) as unknown as Promise<{ data: { blocker_id: string }[] | null; error: any }>,
-  );
-  const iBlocked   = blockRows.some((r) => r.blocker_id === viewerId);
-  const theyBlocked = blockRows.some((r) => r.blocker_id === targetUserId);
+  const blockPair = await readPairDirections(sc, viewerId, targetUserId); // census-telegraph T220: the shared directional pair reader, one `.eq().eq().limit(1)` read per direction
+  if (!blockPair.ok) {
+    // critList's refusal, word for word — and now for EVERY failure: a returned error, a thrown read, or an answer that is not a row list (critList read that as `?? []`, "no block").
+    throw new Error(`Critical safety query failed: ${blockPair.reason}`);
+  }
+  const iBlocked   = blockPair.aBlockedB;
+  const theyBlocked = blockPair.bBlockedA;
 
   if (iBlocked || theyBlocked) {
     const label: RelationshipLabel = iBlocked && theyBlocked ? "mutual_block" : iBlocked ? "blocked" : "blocks_you";

@@ -22,7 +22,7 @@ import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
 import { COMPASS_QUICK_ACTION_TYPES } from "../lib/compassDecisionActions.js";
-import { requireUser, sendError, canEditPlan, isAcceptedTripMember } from "../lib/http.js"; import { readBlockExclusions } from "../lib/exclusionSet.js";
+import { requireUser, sendError, canEditPlan, isAcceptedTripMember } from "../lib/http.js"; import { readBlockExclusions, readBlockDirection } from "../lib/exclusionSet.js";
 import { getServiceClient } from "../lib/supabase.js";
 import {
   tripKernelClient,
@@ -4360,19 +4360,19 @@ router.get("/compass/recommendations", async (req, res) => {
       // Load block list — fail-CLOSED: on any error, return empty to prevent leaking blocked users
       let blockedIds: Set<string>;
       try {
-        const { data: blocks, error: blocksErr } = await sc
-          .from("blocks")
-          .select("blocked_id")
-          .eq("blocker_id", user.id);
-        if (blocksErr) {
-          req.log.warn({ err: blocksErr }, "compass/recommendations: block-list fetch failed; returning empty");
+        // census-telegraph T220: still ONE direction — blocked_id where blocker_id is the
+        // viewer (widening it is a product decision) — through the shared reader:
+        // read WHOLE by key, where one range-less read was cut at db-max-rows.
+        const blocks = await readBlockDirection(sc, user.id, "outgoing");
+        if (!blocks.ok) {
+          req.log.warn({ err: blocks.reason }, "compass/recommendations: block-list fetch failed; returning empty");
           res.json({ recommendations: [], surface });
           return;
         }
-        blockedIds = new Set<string>();
-        for (const b of (blocks ?? []) as any[]) {
-          if (b.blocked_id) blockedIds.add(b.blocked_id);
-        }
+        blockedIds = new Set<string>(blocks.ids);
+        // Every failure — a returned error, a thrown read, an answer that is not a
+        // row list, a row naming nobody — is `!ok` and takes the empty answer above;
+        // `(blocks ?? [])` read a non-list as "blocked nobody" and served everyone.
       } catch (err) {
         req.log.warn({ err }, "compass/recommendations: block-list fetch threw; returning empty");
         res.json({ recommendations: [], surface });

@@ -377,24 +377,24 @@ describe("CP-02 §3 — the private-profile suppression survives the swap", () =
 // ─────────────────────────────────────────────────────────────────────────────
 // §3b — a RESTRICTED projection is dropped, never rendered as a half-person.
 //
-// HOW THE STATE IS FORCED, stated rather than hidden: `isBlockedBetween`
-// (lib/blockGuard.ts) narrows entirely inside `.or(and(…),and(…))`, and no
-// in-memory double in this tree models PostgREST's `.or` — fakePassportDb says
-// so in its own header ("`.or()` is intentionally a no-op"). So ANY row in
-// `blocks` makes the permissions engine read every pair as blocked, and the
-// assembler answers with the variant's minimal `restricted` card. That is a
-// double's limitation, not production behaviour — but the card it produces is
-// exactly the shape this route must refuse to render, so it is the honest way
-// to reach that shape from here. (In production the same shape is reached by
-// `account_unavailable`: `profiles.account_status` and the account-state table
-// can disagree, and that traveler must vanish rather than appear as a name.)
+// HOW THE STATE IS FORCED, stated rather than hidden: through the production
+// path, `account_unavailable`. `profiles.account_status` and the account-state
+// table can disagree — every candidate here is `active` on `profiles` and
+// `deleted` in `user_account_states` — so the candidate read keeps them, the
+// permissions engine answers `unavailable`, and the assembler's only card is
+// the variant's minimal `restricted` one: the shape this route must drop.
+// (Until census-telegraph T220 part 2 this was forced through a double's
+// limitation instead — a no-op `.or()` made ANY `blocks` row block every pair
+// — which stopped working once the permissions engine read the pair with
+// `.eq().eq()` (readPairDirections), a shape this fake filters faithfully.
+// Rendering a restricted card turns 3b1 red either way.)
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("CP-02 §3b — a restricted card is no card", () => {
   it("3b1 — nobody the assembler can only project as restricted is returned", async () => {
     const out = await travelers(makeClient(tables({
-      // Alice blocks somebody who is not even a candidate here.
-      blocks: [{ blocker_id: ALICE, blocked_id: "00000000-0000-0000-0000-0000000000zz" }],
+      // Every candidate's account is unavailable in the account-state table while `profiles` still says active.
+      user_account_states: [T_OPEN, T_NAMED, T_BLANK, T_NOPIC, T_NODISC, T_AGE, T_PRIVATE].map((user_id) => ({ user_id, state: "deleted", expires_at: null })),
     })));
     assert.deepEqual(
       out,

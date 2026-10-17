@@ -6,8 +6,8 @@
  * no network.
  *
  * ── WHAT THIS HOLDS ─────────────────────────────────────────────────────────
- * The block relationship has definitions of record — lib/exclusionSet.ts
- * (`readBlockExclusions`, `readPairExclusion`, `readGroupBlockExclusions`),
+ * The block relationship has definitions of record — lib/exclusionSet.ts (`readBlockExclusions`, `readPairExclusion`, `readGroupBlockExclusions`;
+ * since T220 part 2 also `readBlockDirection(s)`, `readPairDirections`, `countBlockRows`: direction, whole-by-key, batch, count),
  * lib/blockGuard.ts (`isBlockedBetween`) and lib/blocks.ts (`fetchBlockedSet`).
  * Every one of them answers EVERY failure (a returned error, a thrown read, an
  * answer that is not a row list) with its unreadable value, and
@@ -71,30 +71,30 @@ const LABEL_CALLEES = new Set([
  * (and MAX_TOTAL) when a read moves; never raise one.
  *
  * Seeded 2026-10-17 (wave 5) at 72 reads in 25 files; the same wave moved 15
- * modules (40 reads) onto the shared readers, leaving 32 in 13. Every entry
- * left is a semantic the shared readers do not offer — a DIRECTION, a COUNT,
- * one direction only, a key-paged read, a batch coalescer's shape, or a
- * whole-list read whose per-direction cut the one-`.or` whole-list reader would
- * lower — or the block list's own CRUD.
+ * modules (40 reads) onto the shared readers, leaving 32 in 13, each needing a
+ * DIRECTION, a COUNT, one direction only, a key-paged read, a batch coalescer's
+ * shape or a per-direction whole list. T220 part 2 (same day) added those to
+ * lib/exclusionSet.ts and moved the last 12 modules (26 reads, retired below):
+ * what is left is the block list's own CRUD, which IS the table's owner.
  */
 export const ALLOWED: Record<string, { reads: number; reason: string }> = {
   "routes/blocks.ts": { reads: 6, reason: "The block list's own CRUD: the upsert, the delete, GET /me/blocks and /me/blocker-ids (one direction each, by design), and /users/:id/block-status, which answers the two directions separately (iBlocked / theyBlocked)." },
-  "routes/admin.ts": { reads: 1, reason: "The moderation dossier COUNTS block rows (count: exact, head: true) for blockCount; the shared readers answer membership, not a row count, and a mutual block is two rows but one counter-party." },
-  "routes/follows.ts": { reads: 4, reason: "Four DIRECTIONAL head counts on the two passport handlers (GET /users/:id and its account-state twin): each answers isBlocker true or false, so it needs to know WHICH direction holds the row, and no shared reader returns the direction. A returned error refuses with a 503 (fail-closed)." },
-  "routes/compass.ts": { reads: 1, reason: "GET /compass/recommendations?surface=passport reads ONE direction only (blocked_id where blocker_id = the viewer); every shared reader answers both directions, so moving it would widen the filter — a product decision, not a refactor. A returned or thrown failure serves an empty list (fail-closed)." },
-  "routes/highlights.ts": { reads: 2, reason: "GET /highlights/active: two whole-list per-direction reads (cut at db-max-rows PER DIRECTION). The candidates are not known until after the read (it scopes the highlights query), and the shared whole-list reader is ONE range-less `.or` read cut at db-max-rows over BOTH directions (census-telegraph §94 found-not-fixed), so moving it would lower the cut. A returned error refuses with db_error (fail-closed)." },
-  "routes/memories.ts": { reads: 3, reason: "loadBlockedIds (2): two whole-list per-direction reads, each cut at db-max-rows on its own, feeding a DB-side `.not(owner_id in …)` before any candidate is known; the shared whole-list reader is ONE `.or` read cut at db-max-rows over BOTH directions (census-telegraph §94 found-not-fixed), so moving it would lower the cut. The memory graph (1): count-verified, schema-parsed, row-scoped per-direction batches that refuse on an out-of-scope row — checks the shared reader does not make. Both fail closed (ok:false / 503)." },
-  "routes/pulse.ts": { reads: 4, reason: "GET /pulse and /pulse/live: two whole-list per-direction reads each, filtering candidates that are fetched later (events, plans, buddies), so no `among` scope exists at read time; the shared whole-list reader is one `.or` read cut at db-max-rows over BOTH directions (census-telegraph §94 found-not-fixed), so moving them would lower the cut. A returned or thrown failure serves an empty feed or rail (fail-closed)." },
-  "compass/CompassFallbackFeedBuilder.ts": { reads: 2, reason: "loadBlockedIds: two whole-list per-direction reads feeding seven category fetchers (no candidate list exists yet); the shared whole-list reader is one `.or` read cut at db-max-rows over BOTH directions (census-telegraph §94 found-not-fixed), so moving it would lower the cut. A returned error throws (fail-closed); a non-list answer still reads as nobody blocked (a gap the shared reader would close)." },
-  "compass/CompassProfileService.ts": { reads: 2, reason: "Two DIRECTIONAL whole-list reads inside buildProfile's allSettled: the profile keeps blockedUserIds and blockerUserIds apart (and blockCount), which no shared reader returns; a failure throws (fail-closed)." },
-  "compass/CompassTools.ts": { reads: 2, reason: "refreshHiddenUsers: two DIRECTIONAL whole-list reads with a per-direction fallback to the ask-time snapshot; no shared reader keeps the directions apart (fail-closed: snapshot kept, or throw)." },
-  "lib/mediaEligibility.ts": { reads: 2, reason: "Two per-direction whole-list reads PAGED by key (readWholeColumn, census-media §47); the shared whole-list reader is one range-less read cut at db-max-rows (census-telegraph §94 found-not-fixed), so moving would re-open the cut." },
-  "services/interactionPermissions.ts": { reads: 1, reason: "One pair read through critList that must tell the DIRECTION (iBlocked / theyBlocked / mutual_block labels and canBlock / canUnblock); no shared reader returns the direction. A failure throws (fail-closed)." },
-  "services/telegraph/shareables.ts": { reads: 2, reason: "readBlockBetween: two directional `.eq().eq().limit(1)` reads that services/telegraph/coalescedReads.ts COALESCES across a batch of share cards into one `.in().in()` read per direction (census-telegraph T448, \"no N+1\"); readPairExclusion's `.or(and(…))` shape is replayed per card, so moving it would re-open the N+1. Fail-closed: a returned error is `unknown`; a thrown read escapes to the loader." },
+  // routes/admin.ts (1) — moved 2026-10-17 (T220 part 2): the dossier's blockCount is countBlockRows(sc, userId, "either"), the same HEAD count.
+  // routes/follows.ts (4) — moved 2026-10-17 (T220 part 2): the two passport handlers' directional head counts are one readPairDirections each (passportBlockSlots); unreadable → the same 503.
+  // routes/compass.ts (1) — moved 2026-10-17 (T220 part 2): surface=passport reads ONE direction still, through readBlockDirection(sc, viewer, "outgoing"), whole by key.
+  // routes/highlights.ts (2) — moved 2026-10-17 (T220 part 2): GET /highlights/active reads both directions through readBlockDirections, whole by key; !ok is the same db_error.
+  // routes/memories.ts (3) — moved 2026-10-17 (T220 part 2): loadBlockedIds is readBlockDirections (whole, by key); the graph is readBlockDirections among the participants (count-, schema- and scope-checked by the reader).
+  // routes/pulse.ts (4) — moved 2026-10-17 (T220 part 2): GET /pulse and /pulse/live read both directions through readBlockDirections, whole by key; !ok is the same empty feed / rail.
+  // compass/CompassFallbackFeedBuilder.ts (2) — moved 2026-10-17 (T220 part 2): loadBlockedIds is readBlockDirections, whole by key; !ok throws the same block_list_unavailable degrade.
+  // compass/CompassProfileService.ts (2) — moved 2026-10-17 (T220 part 2): buildProfile reads both directions through readBlockDirections and keeps them apart (outgoing → blockedUserIds, incoming → blockerUserIds).
+  // compass/CompassTools.ts (2) — moved 2026-10-17 (T220 part 2): refreshHiddenUsers reads each direction through readBlockDirection, keeping its per-direction snapshot fallback.
+  // lib/mediaEligibility.ts (2) — moved 2026-10-17 (T220 part 2): both lists are readBlockDirection (outgoing, incoming), read whole by key exactly as readWholeColumn read them.
+  // services/interactionPermissions.ts (1) — moved 2026-10-17 (T220 part 2): the PRIORITY 2 block check is readPairDirections; !ok throws the same "Critical safety query failed".
+  // services/telegraph/shareables.ts (2) — moved 2026-10-17 (T220 part 2): readBlockBetween is readPairDirections, the same two `.eq().eq().limit(1)` reads the coalescer batches (T448).
 };
 
 /** SHRINK-ONLY: the sum of ALLOWED. Raising an entry means raising this, in review. */
-export const MAX_TOTAL = 32;
+export const MAX_TOTAL = 6;
 const MIN_REASON = 40;
 
 /** The private block reads in one source text, as the line of each. */
@@ -123,7 +123,7 @@ export function judge(counts: Map<string, number>, allowed: Record<string, { rea
   for (const [file, n] of [...counts].sort()) {
     if (DEFINITIONS.has(file) || n === 0) continue;
     const entry = allowed[file];
-    if (!entry) { problems.push(`NEW      ${file} reads \`blocks\` itself (${n}) — use readBlockExclusions / readPairExclusion (lib/exclusionSet.ts) or isBlockedBetween (lib/blockGuard.ts)`); continue; }
+    if (!entry) { problems.push(`NEW      ${file} reads \`blocks\` itself (${n}) — use the shared readers in lib/exclusionSet.ts (readBlockExclusions, readPairExclusion, readBlockDirection(s), readPairDirections, countBlockRows) or isBlockedBetween (lib/blockGuard.ts)`); continue; }
     if (n > entry.reads) problems.push(`GREW     ${file}: ${entry.reads} → ${n} private block reads — a new one goes through the shared readers`);
     if (n < entry.reads) problems.push(`SHRANK   ${file}: ${entry.reads} → ${n} — lower its entry to ${n} and MAX_TOTAL by ${entry.reads - n} (shrink-only)`);
   }

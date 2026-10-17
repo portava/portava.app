@@ -48,7 +48,7 @@ import { decideHighlightViewAccess } from "../../routes/highlights.js";
 import { checkEventEligibility } from "../../routes/events.js"; import { readEventViewAccess } from "../../lib/eventViewAccess.js";
 import { isFlagEnabled } from "../../lib/featureFlags.js"; import { storageImageOrNull } from "./messageTreeImages.js"; // census-telegraph T446 (B58 TM-1): on this line so no cited line moves
 import { absenceDisclosure } from "../../lib/privacy/absenceDisclosure.js"; import { actionsWhileLive } from "./actionLiveness.js"; // census-telegraph T320/T411; on this line so no cited line moves
-import { nameVisibilitySet, presentedName, resolveHandle } from "../../lib/publicIdentity.js";
+import { nameVisibilitySet, presentedName, resolveHandle } from "../../lib/publicIdentity.js"; import { readPairDirections } from "../../lib/exclusionSet.js"; // census-telegraph T220; on this line so no cited line moves
 import { resolveAccountRestriction } from "../../lib/accountStateGate.js"; import { readStampPresenceView, type StampPresenceRow } from "../passport/stampPresenceView.js"; // census-highlights-memories H4: the STAMP card's place
 import {
   readProjectionInputs,
@@ -290,13 +290,13 @@ type BlockRead = "clear" | "blocked" | "unreadable";
 
 async function readBlockBetween(client: SupabaseClient, viewerId: string, ownerId: unknown): Promise<BlockRead> {
   if (typeof ownerId !== "string" || ownerId.length === 0 || ownerId === viewerId) return "clear";
-  const [byOwner, byViewer] = await Promise.all([
-    client.from("blocks").select("blocker_id").eq("blocker_id", ownerId).eq("blocked_id", viewerId).limit(1),
-    client.from("blocks").select("blocker_id").eq("blocker_id", viewerId).eq("blocked_id", ownerId).limit(1),
-  ]);
-  if (byOwner.error || byViewer.error) return "unreadable";
-  const any = (rows: unknown) => Array.isArray(rows) && rows.length > 0;
-  return any(byOwner.data) || any(byViewer.data) ? "blocked" : "clear";
+  // census-telegraph T220: the shared pair reader issues exactly the two reads this
+  // made — `.select("blocker_id").eq().eq().limit(1)`, owner→viewer then viewer→owner —
+  // so services/telegraph/coalescedReads.ts still folds every card's pair into ONE
+  // `.in().in()` query (T448), and it answers EVERY failure (a returned error, a thrown
+  // read, an answer that is not a row list) as unreadable: `unknown` here, never clear.
+  const pair = await readPairDirections(client, ownerId, viewerId);
+  return !pair.ok ? "unreadable" : pair.aBlockedB || pair.bBlockedA ? "blocked" : "clear";
 }
 
 function refusedByBlock(b: Exclude<BlockRead, "clear">): Loaded {

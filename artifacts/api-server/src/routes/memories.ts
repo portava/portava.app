@@ -216,7 +216,7 @@ import {
   acceptedCrewOfTrip,
   isBlocked,
   type MemoryReadSurface,
-} from "../services/memory/memoryReadPolicy.js";
+} from "../services/memory/memoryReadPolicy.js"; import { readBlockDirections } from "../lib/exclusionSet.js"; // census-telegraph T220; on this line so no cited line moves
 
 export type { MemoryReadSurface };
 
@@ -237,18 +237,18 @@ async function loadBlockedIds(
   sc: any,
   viewerId: string,
 ): Promise<{ ok: true; ids: Set<string> } | { ok: false; error: unknown }> {
-  const [blockedByMe, blockingMe] = await Promise.all([
-    sc.from("blocks").select("blocked_id").eq("blocker_id", viewerId),
-    sc.from("blocks").select("blocker_id").eq("blocked_id", viewerId),
-  ]);
-  if (blockedByMe.error || blockingMe.error) {
-    return { ok: false, error: blockedByMe.error ?? blockingMe.error };
+  // census-telegraph T220: both directions through the shared reader, readBlockDirections —
+  // each read WHOLE by key — and EVERY failure (a returned error, a thrown read, an answer
+  // that is not a row list, a row naming nobody) `ok: false`, kept in this function's shape.
+  const blocks = await readBlockDirections(sc, viewerId);
+  if (!blocks.ok) {
+    return { ok: false, error: blocks.reason };
   }
   return {
     ok: true,
     ids: new Set<string>([
-      ...((blockedByMe.data ?? []).map((r: any) => r.blocked_id as string)),
-      ...((blockingMe.data ?? []).map((r: any) => r.blocker_id as string)),
+      ...blocks.ids, // both directions: everyone the viewer blocked, and everyone who blocked them
+      // (this set feeds a DB-side `.not(owner_id in …)`; one range-less read per direction was cut at db-max-rows, and the owners past the cut were served)
     ]),
   };
 }
@@ -1222,26 +1222,26 @@ router.get("/memories/graph", async (req, res) => {
     const linked = await memoryGraphLinkPath(sc, { ownerId: user.id, moments, placeRows: memoryRows, log: req.log });
     if (!linked.ok) { sendError(res, "degraded_unavailable", "We could not build your memory graph. Please try again."); return; }
     const participantIds = [...new Set([...people.values()].flat())];
-    const blockedIds = new Set<string>();
-    for (const batch of chunkIds(participantIds.filter((id) => id !== user.id))) {
-      for (const direction of ["outgoing", "incoming"] as const) {
-        const outgoing = direction === "outgoing";
-        const { data: blockRows, error: blockError, count: blockCount } = await sc
-          .from("blocks")
-          .select("blocker_id, blocked_id", { count: "exact" })
-          .eq(outgoing ? "blocker_id" : "blocked_id", user.id)
-          .in(outgoing ? "blocked_id" : "blocker_id", batch);
-        const parsedBlocks = z.array(graphBlockSchema).safeParse(blockRows);
-        if (blockError || !countedGraphRows(blockRows, blockCount, true) || !parsedBlocks.success
-          || parsedBlocks.data.some((block) => outgoing
-            ? block.blocker_id !== user.id || !batch.includes(block.blocked_id)
-            : block.blocked_id !== user.id || !batch.includes(block.blocker_id))) {
-          sendError(res, "degraded_unavailable", "We could not build your memory graph. Please try again.");
-          return;
-        }
-        for (const block of parsedBlocks.data) blockedIds.add(outgoing ? block.blocked_id : block.blocker_id);
-      }
+    // census-telegraph T220: the participants' blocks through the shared reader,
+    // readBlockDirections scoped to them (`among`) — whose scoped read IS the read this
+    // route made by hand: `select("blocker_id, blocked_id", { count: "exact" })`, the
+    // viewer's column `.eq()`, the counter-party `.in()`, one chunk at a time — and which
+    // holds each answer to its own filter as this route did (countedGraphRows,
+    // graphBlockSchema, the scope test): a count that is missing or disagrees with the
+    // rows, a row whose viewer column is not the viewer or whose counter-party is outside
+    // its chunk, a row naming nobody, a returned error and a thrown read are each
+    // `ok: false`, and each is the same 503. Chunks are BLOCK_AMONG_CHUNK (150) rather
+    // than IN_LIST_CHUNK (200); the answer is the same set.
+    const participantBlocks = await readBlockDirections(sc, user.id, {
+      among: participantIds.filter((id) => id !== user.id),
+    });
+    if (!participantBlocks.ok) {
+      sendError(res, "degraded_unavailable", "We could not build your memory graph. Please try again.");
+      return;
     }
+    // A block either way hides that participant: outgoing ∪ incoming, as the two
+    // per-direction loops built it.
+    const blockedIds = new Set<string>(participantBlocks.ids);
     const disclosed = projectParticipants({
       memoryOwnerId: user.id,
       memoryVisibility: null,

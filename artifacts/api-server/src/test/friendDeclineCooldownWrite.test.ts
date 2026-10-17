@@ -75,7 +75,7 @@ function makeClient(o: { failCooldownWrite?: boolean }) {
     const b: any = new Proxy({}, {
       get(_t, prop) {
         if (typeof prop === "symbol") return undefined;
-        if (prop === "then") return (res: any, rej: any) => Promise.resolve(settle()).then(res, rej);
+        if (prop === "then") return (res: any, rej: any) => Promise.resolve(settle()).then((r: any) => (table === "blocks" && r.data === null && !r.error ? { ...r, data: [] } : r)).then(res, rej); // census-telegraph T220 part 2: a blocks LIST read answers a list (null is a shape the shared readers refuse)
         if (prop === "maybeSingle" || prop === "single") return () => Promise.resolve(settle());
         if (prop === "insert" || prop === "update" || prop === "upsert" || prop === "delete") {
           return (..._a: any[]) => { op = String(prop); return b; };

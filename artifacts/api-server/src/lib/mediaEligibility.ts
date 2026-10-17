@@ -20,7 +20,7 @@
  * Fail-closed: if blocks cannot be fetched, return empty (never risk surfacing
  * content from blocked users).
  */
-import type { SupabaseClient } from "@supabase/supabase-js"; import { readWholeColumn, asResult } from "./feedReads.js"; // census-media §47: gate lists read whole, by key
+import type { SupabaseClient } from "@supabase/supabase-js"; import { readWholeColumn } from "./feedReads.js"; import { readBlockDirection } from "./exclusionSet.js"; // census-media §47: gate lists read whole, by key
 
 export type FeedType = "for_you" | "following";
 
@@ -227,14 +227,14 @@ export async function filterEligibleMediaCandidates(
   const blockedSet = new Set<string>();
   try {
     const [blockedRes, blockerRes] = await Promise.all([ // census-media §47: both lists WHOLE, by key — a block list past 1,000 rows was cut, and the creators past the cut were served
-      readWholeColumn(sc, "blocks", "blocked_id", (q: any) => q.eq("blocker_id", viewerCtx.viewerUserId)).then(asResult),
-      readWholeColumn(sc, "blocks", "blocker_id", (q: any) => q.eq("blocked_id", viewerCtx.viewerUserId)).then(asResult),
+      readBlockDirection(sc, viewerCtx.viewerUserId, "outgoing"), // census-telegraph T220: each direction through the shared reader — read whole by key exactly as readWholeColumn read it, and an answer that is not a row list, or a row naming nobody (readWholeColumn kept it as "undefined"), is `!ok`
+      readBlockDirection(sc, viewerCtx.viewerUserId, "incoming"),
     ]);
-    if (blockedRes.error || blockerRes.error) {
+    if (!blockedRes.ok || !blockerRes.ok) {
       blockFetchFailed = true;
     } else {
-      for (const id of (blockedRes.data as string[]) ?? []) blockedSet.add(id);
-      for (const id of (blockerRes.data as string[]) ?? []) blockedSet.add(id);
+      for (const id of blockedRes.ids) blockedSet.add(id);
+      for (const id of blockerRes.ids) blockedSet.add(id);
     }
   } catch {
     blockFetchFailed = true;
