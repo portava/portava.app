@@ -21,7 +21,7 @@ import { TelegraphAvatar, TelegraphRow } from './telegraph/TelegraphPrimitives.t
 import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
 import { useBottomInset } from '../hooks/useBottomInset.ts';
 import { useScreenTiming } from '../hooks/useScreenTiming.ts';
-import type { ThreadSummary, MessageRequest } from '../services/messaging.ts';
+import type { ThreadSummary, MessageRequest } from '../services/messaging.ts'; import { splitArchived } from '../features/telegraph/inbox/archivedThreads.ts'; import { UnarchiveAction } from '../features/telegraph/inbox/UnarchiveAction.tsx'; // owner ruling 2026-10-17 (unarchive) — on this line so no cited line moves
 import { circleCardInboxPreview } from './CircleStatusCardMessage.logic';
 import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity.ts';
 import { originLabel } from '../features/telegraph/lib/requestOriginLabel.ts'; import { blockFailedCopy } from '../features/telegraph/messageActions/messageActionRules.ts'; import { TelegraphConnectionBanner } from '../features/telegraph/connection/TelegraphConnectionBanner.tsx';
@@ -305,7 +305,7 @@ function SectionDivider({ label }: { label: string }) {
 type InboxItem =
   | { _t: 'thread'; thread: ThreadSummary }
   | { _t: 'divider'; key: string; label: string }
-  | { _t: 'requests'; key: string; count: number };
+  | { _t: 'requests'; key: string; count: number } | { _t: 'archived'; key: string; thread: ThreadSummary }; // owner ruling 2026-10-17: a row of the Archived section
 
 /**
  * Splits threads into DMs first, then group threads (trips/circles), with a
@@ -393,7 +393,7 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
   const [search, setSearch] = useState('');
   /** Telegraph §21 — the server-backed message search, opened from the row below. */
   const [messageSearchOpen, setMessageSearchOpen] = useState(false);
-  const [filter, setFilter] = useState<FilterKey>('all');
+  const [filter, setFilter] = useState<FilterKey>('all'); const [unarchived, setUnarchived] = useState<ReadonlyMap<string, string>>(() => new Map()); // owner ruling 2026-10-17: unarchives the server confirmed (features/telegraph/inbox/archivedThreads.ts)
   const [blockedIds, setBlockedIds] = useState<Set<string>>(new Set());
   const { blockerIds } = useBlockedIds();
 
@@ -581,6 +581,15 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
     </View>
   );
 
+  // Owner ruling 2026-10-17: an archived conversation is not in the main list. It is in the Archived
+  // section at the list's foot, with Unarchive; once the server says ok it is drawn back in the main
+  // list (features/telegraph/inbox/archivedThreads.ts says how long that holds).
+  const { active, archived } = splitArchived(filtered, unarchived);
+  const markUnarchived = (threadId: string) => {
+    const archivedAt = threads.find((th) => th.id === threadId)?.archivedAt;
+    if (archivedAt) setUnarchived((prev) => new Map(prev).set(threadId, archivedAt));
+  };
+
   // Not signed in — single FlatList with header + sign-in message
   if (!isAuthed) {
     return (
@@ -622,9 +631,9 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
     <KeyboardSafeScrollView style={{ backgroundColor: palette.surface }}>
       <FlatList
         data={
-          error || (loading && !refreshing) || filtered.length === 0
+          error || (loading && !refreshing) || (active.length === 0 && archived.length === 0)
             ? []
-            : buildInboxItems(filtered, filter, requestCount)
+            : [...buildInboxItems(active, filter, requestCount), ...archivedSectionItems(archived)]
         }
         keyExtractor={(item) => item._t === 'thread' ? item.thread.id : item.key}
         ListHeaderComponent={listHeader}
@@ -668,10 +677,39 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
               </TelegraphRow>
             );
           }
+          if (item._t === 'archived') return <ArchivedThreadRow item={item.thread} userId={userId} onUnarchived={markUnarchived} />;
           return <ThreadRow item={item.thread} userId={userId} />;
         }}
       />
     </KeyboardSafeScrollView>
+  );
+}
+
+// ── Archived section (owner ruling 2026-10-17) ────────────────────────────────
+
+/** The Archived section at the foot of the list: a divider, then each archived conversation. */
+function archivedSectionItems(threads: ThreadSummary[]): InboxItem[] {
+  if (threads.length === 0) return [];
+  return [
+    { _t: 'divider', key: 'div-archived', label: 'Archived' },
+    ...threads.map((thread): InboxItem => ({ _t: 'archived', key: `archived-${thread.id}`, thread })),
+  ];
+}
+
+/** The name ThreadRow draws for a conversation, for the Unarchive action's accessibility label. */
+function conversationName(item: ThreadSummary): string {
+  const other = item.otherMembers[0];
+  if (item.threadType !== 'direct') return item.title ?? (item.threadType === 'trip' ? 'Trip Chat' : 'Circle Chat');
+  return other ? primaryIdentityText({ name: other.name, handle: other.handle }) : 'Unknown';
+}
+
+/** An archived conversation: its ordinary row (it still opens), with Unarchive under it. */
+function ArchivedThreadRow({ item, userId, onUnarchived }: { item: ThreadSummary; userId: string | null; onUnarchived: (threadId: string) => void }) {
+  return (
+    <View testID={`telegraph-archived-${item.id}`}>
+      <ThreadRow item={item} userId={userId} />
+      <UnarchiveAction threadId={item.id} conversationName={conversationName(item)} onUnarchived={onUnarchived} />
+    </View>
   );
 }
 

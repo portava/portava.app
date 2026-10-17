@@ -15602,3 +15602,39 @@ good (ERROR-logged, never re-attempted) — Fable pass 3 §1.1. It is now re-dri
 T254's grade (interruptiveness) is unchanged. (The lead has started building unarchive, as the ruling asks.)
 
 W5P.1's 'main's golden is untouched' means: the golden was generated from main's router and this commit did not change it.
+
+### Correction (2026-10-17, wave 5) — unarchive (owner ruling)
+
+Owner ruling 2026-10-17: "Allow users to unarchive conversations." This closes the OPEN item in the correction above: unarchive had no implementation.
+
+**Server.** A new route, `POST /threads/:threadId/unarchive` (`artifacts/api-server/src/routes/telegraphArchive.ts:39#"/threads/:threadId/unarchive"`). It clears the caller's OWN `message_thread_members.archived_at` and answers the read-back `{ ok, threadId, archivedAt: null, changed }`. No migration.
+- The write names the caller (`artifacts/api-server/src/services/telegraph/threadArchive.ts:62#.eq("user_id", userId)`). It also requires `left_at IS NULL` (`artifacts/api-server/src/services/telegraph/threadArchive.ts:63#.is("left_at", null)`).
+- It is idempotent: a conversation that is not archived answers `changed: false` and nothing is written.
+- A non-member, and a member who LEFT, get the sibling member routes' refusal: 403 "Not a member of this thread" (`artifacts/api-server/src/routes/telegraphArchive.ts:55#sendError(res, "forbidden", "Not a member of this thread")`). So does a member who leaves between the read and the write. A conversation someone left is not brought back.
+- An unreadable membership is a 503 and a failed write is a 500. Neither is reported as "not a member" or as "unarchived".
+- Only the caller's own devices are told (`thread.updated`), and only when something changed (`artifacts/api-server/src/routes/telegraphArchive.ts:61#if (outcome.changed) publishToUsers([user.id]`).
+- Not touched: other members' rows, other conversations, `message_threads.status`, `blocks` and `rent_buddy_bookings`.
+- Blocks: the route does not read them, so its answer across a block is byte-identical to one without. It cannot tell anyone they are blocked. After an unarchive, the send path still refuses across the block (`artifacts/api-server/src/routes/messaging.ts:2788#await isBlockedBetween(blockSc, user.id, others[0])`).
+
+**Client.** Before this, GET /me/threads returned `archivedAt`, no screen read it, and archived conversations sat in the main inbox list. Now:
+- Archived conversations leave the main list (`travel-buddy-standalone/src/components/TelegraphInboxScreen.tsx:587#splitArchived(filtered, unarchived)`) and go in an Archived section at the foot of the list (`travel-buddy-standalone/src/components/TelegraphInboxScreen.tsx:694#label: 'Archived'`).
+- Each archived row still opens the conversation and has an Unarchive action. While it waits, the action reads "Unarchiving…", is marked busy and cannot be sent twice.
+- A failure is shown with the alert role, and the action stays so the person can retry.
+- A conversation moves back to the main list only after the server answers ok (`travel-buddy-standalone/src/features/telegraph/inbox/UnarchiveAction.tsx:46#if (result.ok) { onUnarchived(threadId); return; }`) and its read-back says the conversation is unarchived (`travel-buddy-standalone/src/features/telegraph/inbox/archiveApi.ts:37#body.archivedAt !== null`).
+
+**A help request after an unarchive, end to end.** This runs through the real typed door, the real producer and the real NotificationService:
+- While the member has the conversation archived, a help request does not reach them.
+- After they unarchive through the route, the next help request does reach them.
+- The request that arrived while it was archived is never delivered late (`artifacts/api-server/src/test/telegraphUnarchive.test.ts:339#it("archived: not told; unarchived through the route`).
+
+**Tests.** `telegraphUnarchive.test.ts` (18 cases), `TelegraphInboxArchived.component.test.tsx` (8) and `inboxArchive.component.test.ts` (9). They were red first, against an empty route and stub modules. Ten server mutations and seven client mutations each turned a case red.
+
+**Rent-a-Buddy: an open question for the owner.** When a booking completes, its thread is archived for both parties unless BOTH chose "stay connected" (`artifacts/api-server/src/routes/rentABuddy.ts:3201#Both parties must call before completion fires`). The code enforces one consequence of that: a completed booking can be called only when both opted in (`artifacts/api-server/src/lib/calls/callGatewayAdapter.ts:79#!!b.stay_connected_traveler && !!b.stay_connected_buddy`).
+- Here, unarchive reopens only the caller's own view. The other party stays archived, the booking row is unchanged, and calling is still refused (`artifacts/api-server/src/test/telegraphUnarchive.test.ts:287#calling stays refused after it`).
+- What is unclear: that file's comment says "calls end with messaging". But nothing refuses a message in a completed booking thread without mutual stay-connected, either before this change or after it. Archive has never blocked sends.
+- The question: should messaging after completion, without mutual stay-connected, be refused? If it should, it needs a send gate on the booking's state, not on archived_at. That is not built.
+- NOT-GRADED: artifacts/api-server/src/routes/rentABuddy.ts — named in this correction only as the completion archiver behind the owner question; the booking lifecycle is not a Telegraph row.
+
+**A correction to the brief.** `TELEGRAPH_POLICY_THREAD_ARCHIVED` is used: §14.1's capability policy reads it (`artifacts/api-server/src/domain/telegraph/policies/conversationCapabilityPolicy.ts:285#if (!threadActive) deny(d, "canSendMessage", "TELEGRAPH_POLICY_THREAD_ARCHIVED");`). It never fires, because nothing writes `message_threads.status = 'archived'`. The per-member archive is a different column, and unarchive does not touch the per-thread one.
+
+No row moves. T138 and T139 mention archive only as columns in their schema. Their W comes from other gaps: no policy or version, and no visible or delivered sequences. Headline unchanged: **451 = 272 C / 176 W / 1 N / 2 X**.

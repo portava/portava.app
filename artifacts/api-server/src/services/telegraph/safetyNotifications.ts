@@ -554,9 +554,9 @@ async function redriveOnce(sc: SupabaseClient, messageId: string, opts: { deps?:
  *     (routes/rentABuddy.ts, the two `.update({ archived_at })` sites), which
  *     archives the booking thread for EVERY member when the booking completes
  *     and the pair did not both choose "stay connected".
- *   - There is NO unarchive: nothing sets it back to NULL, no route or client
- *     action exists, and the table has no client UPDATE policy (baseline
- *     mtm_insert / mtm_select only). Reported, not built (the lead's brief).
+ *   - UNARCHIVE (wave 5): POST /threads/:threadId/unarchive (routes/
+ *     telegraphArchive.ts) clears the caller's OWN archived_at. Members still
+ *     cannot write the table (baseline mtm_insert / mtm_select only).
  *   - `message_threads.status` ('active' | 'archived') is a per-THREAD value
  *     with no writer, and TELEGRAPH_POLICY_THREAD_ARCHIVED is declared but not
  *     enforced anywhere; it is not read here.
@@ -566,8 +566,8 @@ async function redriveOnce(sc: SupabaseClient, messageId: string, opts: { deps?:
  * archived_at is set, at the door and on every re-drive attempt (re-read, so
  * an archive made during the window is honoured). The message itself is
  * written and stays in the thread's history unchanged; notifications already
- * delivered are untouched. Clearing archived_at (an unarchive, when one
- * exists) makes the NEXT help request route normally — nothing is remembered.
+ * delivered are untouched. Clearing archived_at (POST /threads/:id/unarchive)
+ * makes the NEXT help request route normally — nothing is remembered.
  *
  * NOT CHANGED: the ALL CLEAR (telegraph.safety_all_clear) — it is not a
  * request, and someone who archived after an SOS reached them should still
