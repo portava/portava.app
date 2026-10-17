@@ -186,7 +186,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError, type ApiErrorCode } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js"; import { findVisibleSourcedPlanItem } from "../server/trips/privateAnchorShares.js"; // census-trips §87.3 (D-65)
-import { logger } from "../lib/logger.js";
+import { logger } from "../lib/logger.js"; import { readEventViewAccess } from "../lib/eventViewAccess.js";
 import { detectAndStoreLanguage, invalidateContentTranslations } from "../services/contentTranslation.js";
 import { nameVisibilitySet, sanitizeIdentity } from "../lib/publicIdentity.js";
 import { isFlagEnabled, isKillSwitchEngaged } from "../lib/featureFlags.js"; import { readFlagState } from "../lib/capability/schemaCapability.js";  // census-trust §30: eventTrustGatesRun
@@ -4301,67 +4301,22 @@ async function isCircleMember(sc: any, circleId: string, userId: string): Promis
 
 /** Check if userId is an accepted member/owner of the trip linked to the event. */
 async function isTripEventMember(sc: any, tripId: string, userId: string): Promise<boolean> {
-  const { data } = await sc
+  const { data, error } = await sc
     .from("trip_members")
-    .select("role")
+    .select("role, status")
     .eq("trip_id", tripId)
     .eq("user_id", userId)
     .maybeSingle();
-  if (!data) return false;
+  if (error || !data) return false;
   const row = data as { role: string; status?: string | null };
   const acceptedRoles = ["owner", "co_host", "member", "viewer"];
   if (!acceptedRoles.includes(row.role)) return false;
-  if (row.status != null && row.status !== "accepted") return false;
+  if (row.status !== "accepted") return false;
   return true;
 }
 
 export async function canViewEvent(sc: any, ev: any, userId: string): Promise<boolean> {
-  if (ev.host_id === userId) return true;
-
-  // Staff (cohost/moderator) always have access
-  const { data: staffRole } = await sc
-    .from("event_roles").select("role")
-    .eq("event_id", ev.id).eq("user_id", userId)
-    .maybeSingle();
-  if (staffRole && ["co_host", "moderator"].includes((staffRole as any).role)) return true;
-
-  // A non-live event (draft/cancelled/archived) is visible only to its host and
-  // staff (both already returned true above) — regardless of visibility. Without
-  // this gate the visibility branches below leaked unpublished/withdrawn events
-  // to members, friends, circle/trip members and invitees.
-  if (["draft", "cancelled", "archived"].includes(ev.state)) return false;
-
-  if (ev.visibility === "public") return true;
-  if (ev.visibility === "friends_only") {
-    const { data: friendship } = await sc
-      .from("user_friendships")
-      .select("user_a")
-      .or(`and(user_a.eq.${userId},user_b.eq.${ev.host_id}),and(user_b.eq.${userId},user_a.eq.${ev.host_id})`)
-      .maybeSingle();
-    if (friendship) return true;
-    // friends_only: also allow existing attendees/role holders to see the event
-    const [rsvp, role] = await Promise.all([
-      sc.from("event_rsvps").select("status").eq("event_id", ev.id).eq("user_id", userId).maybeSingle(),
-      sc.from("event_roles").select("role").eq("event_id", ev.id).eq("user_id", userId).maybeSingle(),
-    ]);
-    return !!(rsvp as any).data || !!(role as any).data;
-  }
-  if (ev.visibility === "circle") {
-    // Must be a member of the linked circle
-    if (!ev.circle_id) return false;
-    return isCircleMember(sc, ev.circle_id, userId);
-  }
-  if (ev.visibility === "trip") {
-    // Must be an accepted member of the linked trip
-    if (!ev.trip_id) return false;
-    return isTripEventMember(sc, ev.trip_id, userId);
-  }
-  // invite_only / unknown: must have an RSVP, approved join request, or role
-  const [rsvp, role] = await Promise.all([
-    sc.from("event_rsvps").select("status").eq("event_id", ev.id).eq("user_id", userId).maybeSingle(),
-    sc.from("event_roles").select("role").eq("event_id", ev.id).eq("user_id", userId).maybeSingle(),
-  ]);
-  return !!(rsvp as any).data || !!(role as any).data;
+  return await readEventViewAccess(sc, ev, userId) === "allowed";
 }
 
 async function createEventChatThread(sc: any, eventId: string, title: string, hostId: string): Promise<string | null> {

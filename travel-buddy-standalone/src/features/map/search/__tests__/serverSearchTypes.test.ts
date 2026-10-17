@@ -305,7 +305,10 @@ describe('§27 Saved items', () => {
     // the saved lane on its behalf. The chain has the same last link, one hop
     // further in, and both hops are read as source here.
     const sheet = readFileSync(locateRepoFile('travel-buddy-standalone/src/components/map/MapSearchSheet.tsx'), 'utf8');
-    assert.match(sheet, /requestMapSearchPage\(q, opts\)/, 'the sheet no longer asks the gateway page — update this guard');
+    // The sheet now passes the scheduler's abort signal as a third argument so a
+    // superseded keystroke's request is cancelled; the call itself — same query,
+    // same opts — is what this link pins, and the signal must be the request's.
+    assert.match(sheet, /requestMapSearchPage\(q, opts, request\.signal\)/, 'the sheet no longer asks the gateway page — update this guard');
     const page = readFileSync(locateRepoFile('artifacts/api-server/src/lib/inputAssistance/searchPage.ts'), 'utf8');
     assert.match(
       page,

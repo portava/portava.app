@@ -77,14 +77,17 @@ import { requireUser, requireTripMember, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
+import { readAllByIdKeyset } from "../lib/keysetRead.js";
 import {
-  recommendAll, propagateRisks,
+  recommendAll, propagateRisks, RISK_LEVELS,
   type Goal, type DecisionTask, type Proposal, type Risk,
 } from "../domain/trips/services/TripDecisionEngine.js";
 
 const router = Router();
 const log = logger.child({ mod: "tripDecisions" });
 const UUID_RE = /^[0-9a-f-]{36}$/i;
+const RISK_READ_CEILING = 10_000;
+const RISK_STATUSES = new Set(["open", "mitigated", "realised", "closed"]);
 
 /** The §7 verdicts a proposal payload may legitimately carry. */
 const FEASIBILITY_VERDICTS = new Set(["INFEASIBLE", "UNKNOWN", "FEASIBLE_UNVERIFIED", "FEASIBLE"]);
@@ -132,8 +135,47 @@ router.get("/trips/:tripId/decisions", asyncHandler(async (req, res) => {
     .select("id, type, priority, status, evidence_json").eq("trip_id", tripId));
   const taskRows = await readAll("trip_decision_tasks", sc.from("trip_decision_tasks")
     .select("id, type, deadline_at, consequence, assigned_user_id, status").eq("trip_id", tripId));
-  const riskRows = await readAll("trip_risks", sc.from("trip_risks")
-    .select("id, likelihood, impact, status, trigger_json, mitigation_json").eq("trip_id", tripId));
+  let riskRows: any[] = [];
+  if (!failedInput) {
+    try {
+      let lastRiskId: string | null = null;
+      const riskRead = await readAllByIdKeyset(() => {
+        let query = sc.from("trip_risks")
+          .select("id, likelihood, impact, status, trigger_json, mitigation_json").eq("trip_id", tripId);
+        const page = {
+          order(column: string, options: { ascending: boolean }) {
+            query = query.order(column, options);
+            return page;
+          },
+          gt(column: string, value: string) {
+            query = query.gt(column, value);
+            return page;
+          },
+          async limit(count: number) {
+            const result = await query.limit(count);
+            if (result.error) return result;
+            if (!Array.isArray(result.data)) throw new Error("Malformed risk register page");
+            for (const row of result.data) {
+              if (!row || typeof row.id !== "string" || row.id.length === 0
+                || !RISK_LEVELS.includes(row.likelihood) || !RISK_LEVELS.includes(row.impact) || !RISK_STATUSES.has(row.status)
+                || (lastRiskId !== null && row.id <= lastRiskId)) {
+                throw new Error("Malformed or non-advancing risk register row");
+              }
+              lastRiskId = row.id;
+            }
+            return result;
+          },
+        };
+        return page;
+      }, RISK_READ_CEILING);
+      if (!riskRead.ok) throw riskRead.error;
+      if (riskRead.truncated) throw new Error("Risk register exceeds the row limit");
+      riskRows = riskRead.rows;
+    } catch (error) {
+      log.warn({ err: error, tripId, table: "trip_risks" }, "decisions: input read failed");
+      failedInput = "trip_risks";
+    }
+  }
   // §8.2's downstream term reads two more tables. They are inputs to the
   // URGENCY, not to the recommendation: unreadable, the term is 0 and
   // `urgencyInputsUnread` says so — the decisions are still served.

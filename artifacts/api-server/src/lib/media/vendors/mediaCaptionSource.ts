@@ -152,6 +152,7 @@ export function captionTrackPathFor(videoStoragePath: string): string {
 
 export interface CaptionSubject {
   assetId: string;
+  sourceVersion?: number | null;
   bucket: string;
   path: string;
   durationMs: number | null;

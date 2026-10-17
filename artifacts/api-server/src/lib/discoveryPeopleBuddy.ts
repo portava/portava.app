@@ -61,11 +61,20 @@
  *     dates is not blocked by a window the buddy set. With no asked window
  *     there is no availability question to answer, and none is invented.
  *
- *   PAYMENT — NOT BUILT, AND NOT FAKED
- *     There is no payment processor (docs/specs/discovery-v1/09_Payment_
- *     Architecture.md §1: "real payouts" are "Do later"). No column says a
- *     buddy can be paid, so no predicate here pretends to. What it needs is a
- *     per-buddy payout-readiness state written by a processor integration.
+ *   PAYMENT — READ-ONLY, BEHIND THE EXISTING BUDDY LAUNCH GATE
+ *     Stripe Connect test-mode infrastructure exists; implementation alone
+ *     does not establish certification, market, identity or tax readiness.
+ *     With discovery_buddy_launch_gate_enabled on, consume paymentsReadiness,
+ *     the booking KYC gate, current adult identity and hosting restrictions,
+ *     and bookingPayments' stored verified recipient. Match the configured
+ *     provider and require charges AND payouts, in a supported market/currency.
+ *     No provider operation, onboarding, account creation or payout is run.
+ *     Checkout still revalidates with the provider; payout timing and finalized
+ *     earnings remain the payment domain's responsibility (OD-PAY-1/4/10).
+ *     The gate retains its existing capability polarity: absent, disabled or
+ *     unreadable means the previous resolver. Once enabled, missing payment
+ *     or verification schema is unavailable, never ready. Currency support
+ *     follows the current booking store's USD pricing, not a new quote system.
  *
  * FAIL-CLOSED, AND SAYS SO
  * ========================
@@ -76,6 +85,16 @@
  * read is never served on the strength of a missing row.
  */
 import { getCategoryRiskLevel } from "./rentaBuddyScanner.js";
+import { isFlagEnabled } from "./featureFlags.js";
+import { checkBookingKycGate } from "./rentBuddyKycGate.js";
+import { readCurrentIdentityVerification } from "../services/identityVerification/currentVerification.js";
+import { getRestrictionState } from "../services/trust/TrustRestrictionService.js";
+import { paymentsReadiness } from "../services/payments/readiness.js";
+import { resolvePaymentProvider } from "../services/payments/providerRegistry.js";
+import { selectChargeModel } from "../services/payments/PaymentProvider.js";
+import { readBuddyPaymentReadiness } from "../services/payments/bookingPayments/recipientReadiness.js";
+import { supabaseBookingPaymentStore } from "../services/payments/bookingPayments/supabaseStore.js";
+import { mapLimit } from "../services/telegraph/inboxReads.js";
 
 // ── The ask ──────────────────────────────────────────────────────────────────
 
@@ -186,6 +205,11 @@ export const BUDDY_INELIGIBLE_REASONS = [
   "no_approved_category",
   "category_not_approved",
   "unavailable_in_window",
+  "payments_unavailable",
+  "identity_unavailable",
+  "identity_not_verified",
+  "hosting_restricted",
+  "payment_not_ready",
 ] as const;
 export type BuddyIneligibleReason = (typeof BUDDY_INELIGIBLE_REASONS)[number];
 
@@ -364,6 +388,89 @@ export async function readBuddyEligibility(
       ask,
     );
     if (!verdict.eligible) ineligible.set(uid, verdict.reason);
+  }
+  const candidates = ids.filter((userId) => !ineligible.has(userId));
+  if (candidates.length === 0) return { ok: true, ineligible };
+  if (!(await isFlagEnabled(sc, "discovery_buddy_launch_gate_enabled"))) return { ok: true, ineligible };
+
+  const readiness = paymentsReadiness();
+  const resolution = resolvePaymentProvider();
+  if (!readiness.operational || !resolution.ok || resolution.name !== readiness.provider) {
+    for (const userId of candidates) ineligible.set(userId, "payments_unavailable");
+    return { ok: true, ineligible };
+  }
+  const capabilities = resolution.provider.capabilities();
+  if (!capabilities.payouts) {
+    for (const userId of candidates) ineligible.set(userId, "payments_unavailable");
+    return { ok: true, ineligible };
+  }
+
+  const countries = await settle(sc.from("rent_buddy_profiles")
+    .select("user_id, country")
+    .in("user_id", candidates));
+  if (countries.error) return { ok: false, relation: "rent_buddy_profiles", error: countries.error };
+  const countryByUser = new Map<string, string>();
+  for (const entry of (Array.isArray(countries.data) ? countries.data : [])) {
+    if (typeof entry?.country === "string") countryByUser.set(entry.user_id, entry.country.trim());
+  }
+
+  const store = supabaseBookingPaymentStore(sc);
+  const verdicts = await mapLimit(candidates, 4, async (userId): Promise<BuddyIneligibleReason | Extract<BuddyEligibilityRead, { ok: false }> | null> => {
+    const country = countryByUser.get(userId) ?? null;
+    if (!(await checkBookingKycGate(sc, country)).allowed) {
+      return "identity_unavailable";
+    }
+    const [identity, restrictions] = await Promise.all([
+      readCurrentIdentityVerification(sc, userId),
+      getRestrictionState(sc, userId),
+    ]);
+    if (identity.state === "unreadable") {
+      return { ok: false, relation: "identity_verifications", error: new Error("Buddy identity unavailable") };
+    }
+    if (restrictions.degraded) {
+      return { ok: false, relation: "trust_restrictions", error: new Error("Buddy restrictions unavailable") };
+    }
+    if (identity.state !== "verified" || !identity.adult) {
+      return "identity_not_verified";
+    }
+    if (!restrictions.canHost) {
+      return "hosting_restricted";
+    }
+    try {
+      const party = await store.partyForProfile(userId);
+      if (!party.ok) return { ok: false, relation: "payment_parties", error: new Error("Buddy payment party unavailable") };
+      if (!party.value) {
+        return "payment_not_ready";
+      }
+      const recipient = await store.getRecipient(party.value);
+      const payment = await readBuddyPaymentReadiness({
+        partyForProfile: async () => party,
+        getRecipient: async () => recipient,
+      }, userId);
+      if (payment.state === "unreadable" || !recipient.ok) {
+        return { ok: false, relation: "rent_buddy_payment_recipients", error: new Error("Buddy recipient unavailable") };
+      }
+      const account = recipient.value;
+      const market = account ? resolution.provider.marketSupport({
+        recipientCountry: account.country, presentmentCurrency: "USD",
+      }) : null;
+      if (payment.state !== "ready" || !account || account.provider !== resolution.provider.id ||
+          !account.payoutsEnabled || !account.recipientRef.trim() || account.recipientRef === "undefined" ||
+          account.recipientRef === "null" || !readiness.enabledMarkets.includes(account.country) ||
+          !country || !readiness.enabledMarkets.includes(country.toUpperCase()) ||
+          !market || !selectChargeModel(capabilities, market, "refuse").ok ||
+          !market.settlementCurrencies.includes(account.settlementCurrency)) {
+        return "payment_not_ready";
+      }
+    } catch (error) {
+      return { ok: false, relation: "rent_buddy_payment_recipients", error };
+    }
+    return null;
+  });
+  for (const [index, verdict] of verdicts.entries()) {
+    if (verdict === null) continue;
+    if (typeof verdict !== "string") return verdict;
+    ineligible.set(candidates[index]!, verdict);
   }
   return { ok: true, ineligible };
 }

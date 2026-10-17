@@ -398,6 +398,7 @@ function corpusClient(flag: "absent" | "false" | "error") {
           return Promise.resolve({ data: flag === "false" ? { enabled: false } : null, error: null });
         },
         then(res: (v: unknown) => unknown, rej: (e: unknown) => unknown) {
+          if (table === "protected_zones") return Promise.resolve({ data: [], error: null }).then(res, rej);
           if (table === "trend_integrity_reviews") return Promise.resolve({ data: [], error: null }).then(res, rej); if (table !== "rank_events") throw new Error(`corpusClient: ${table}`);  // §93 (H-W10T-1): no review recorded
           return Promise.resolve({ data: rows.filter((r) => r.outcome !== "analytics").slice(range[0], range[1] + 1), error: null }).then(res, rej);
         },

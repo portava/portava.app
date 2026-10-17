@@ -46,6 +46,7 @@
  * viewer was removed from does not survive in the historical view.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { createEventAttendanceReader, type EventAttendeeIdentity } from "./eventAttendance.js";
 import {
   type SharedRelationship,
   type TelegraphAction,
@@ -68,6 +69,7 @@ export interface SharedContextItem {
   availableActions: TelegraphAction[];
   /** §3.3's band. Carried so the client can order without re-deriving time. */
   orderBand: SharedContextBand;
+  eventAttendance?: EventAttendeeIdentity[] | null;
 }
 
 /** §3.4 `TelegraphSharedContextProjection`. */
@@ -220,6 +222,7 @@ export interface SharedContextCandidate {
   counterpartIds: string[];
   /** The viewer's own canonical membership is active right now (§3.1 last bullet). */
   viewerStillAuthorized: boolean;
+  eventAttendance?: EventAttendeeIdentity[] | null;
 }
 
 export type AdmissionRefusal =
@@ -274,6 +277,7 @@ export function admitCandidate(c: SharedContextCandidate, nowMs: number): Admiss
   if (c.currentVersion) item.currentVersion = c.currentVersion;
   if (c.startsAt) item.startsAt = c.startsAt;
   if (c.endsAt) item.endsAt = c.endsAt;
+  if (c.objectType === "EVENT") item.eventAttendance = c.eventAttendance ?? null;
   return { admitted: true, item };
 }
 
@@ -496,8 +500,14 @@ export async function resolveSharedEvents(
     problems.push({ resolver: "events", message: eErr.message ?? "events read failed" });
     return { candidates: [], problems };
   }
+  const readAttendance = createEventAttendanceReader(client, viewerId, participantIds);
   const candidates: SharedContextCandidate[] = [];
   for (const e of (events ?? []) as Row[]) {
+    const attendance = await readAttendance(e.id as string, e.host_id);
+    if (attendance.eventAccess !== "allowed") {
+      if (attendance.eventAccess === "unavailable") problems.push({ resolver: "events", message: "Event authorization unavailable" });
+      continue;
+    }
     const attending = byEvent.get(e.id as string) ?? new Set<string>();
     const counterpartIds = [...attending].filter((u) => u !== viewerId);
     candidates.push({
@@ -512,6 +522,7 @@ export async function resolveSharedEvents(
       source: "event_attendees",
       counterpartIds,
       viewerStillAuthorized: attending.has(viewerId),
+      eventAttendance: attendance.attendance,
     });
   }
   return { candidates, problems };

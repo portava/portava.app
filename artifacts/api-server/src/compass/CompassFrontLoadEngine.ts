@@ -38,7 +38,7 @@ const logger = rootLogger.child({ service: "CompassFrontLoadEngine" });
 import { buildFeed } from "./CompassFeedBuilder.js";
 import { buildCompassContext, defaultSignals } from "./CompassContextEngine.js";
 import { hydrateCompassItems } from "./CompassItemHydrator.js";
-import { getCachedFeed, setCachedFeed } from "./CompassCacheEngine.js";
+import { getCachedFeed, setCachedFeed, type CacheBuildContext } from "./CompassCacheEngine.js";
 import { fetchCompassFlags } from "./flags.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -523,6 +523,7 @@ async function loadTier3(
 export async function buildFrontLoadPayload(
   db:      SupabaseClient | null,
   userId:  string,
+  cacheBuild: CacheBuildContext | null,
   profile: CompassProfile,
   opts: {
     networkHint?: NetworkHint;
@@ -568,7 +569,7 @@ export async function buildFrontLoadPayload(
     } else {
       tier1 = await loadTier1(db, userId, profile, rules, networkHint, localHour);
       // Back-fill asynchronously — caller already has the data it needs
-      void setCachedFeed(db, userId, t1Key, 'frontload', tier1);
+      void setCachedFeed(db, userId, cacheBuild, t1Key, 'frontload', tier1);
     }
   }
 
@@ -579,7 +580,7 @@ export async function buildFrontLoadPayload(
       tier2 = cached;
     } else {
       tier2 = await loadTier2(db, userId, profile, rules);
-      void setCachedFeed(db, userId, t2Key, 'frontload', tier2);
+      void setCachedFeed(db, userId, cacheBuild, t2Key, 'frontload', tier2);
     }
   }
 
@@ -590,7 +591,7 @@ export async function buildFrontLoadPayload(
       tier3 = cached;
     } else {
       tier3 = await loadTier3(db, userId, profile, rules);
-      void setCachedFeed(db, userId, t3Key, 'frontload', tier3);
+      void setCachedFeed(db, userId, cacheBuild, t3Key, 'frontload', tier3);
     }
   }
 

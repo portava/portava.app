@@ -8,6 +8,7 @@ import { schedulerCoverage } from "../lib/schedulerCoverage.js";
 import { logger } from "../lib/logger.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { safeSecretEquals } from "../lib/http.js";
+import { getBuildIdentity } from "../lib/buildIdentity.mjs";
 
 // ── Scheduler health sources ─────────────────────────────────────────────────
 // Every one of these getters existed and had NO CALLER. Each job maintained
@@ -36,6 +37,8 @@ const router: IRouter = Router();
 
 router.get("/healthz", (_req, res) => {
   const data = HealthCheckResponse.parse({ status: "ok" });
+  res.set("X-Portava-Build", getBuildIdentity());
+  res.set("Cache-Control", "no-store");
   res.json(data);
 });
 

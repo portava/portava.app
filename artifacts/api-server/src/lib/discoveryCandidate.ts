@@ -442,7 +442,7 @@ export function projectDiscoveryCandidate(row: CandidateSourceRow, ctx: Candidat
 // ── Flag (cached 30 s, mirrors discoveryServeLog) ─────────────────────────────
 
 const FLAG_TTL_MS = 30_000;
-let _flagCache: { value: boolean; at: number } | null = null;
+let _flagCache: { sc: unknown; value: boolean; at: number } | null = null;
 
 /** Invalidate the flag cache. Exported for tests. */
 export function invalidateCandidateProjectionFlagCache(): void {
@@ -450,9 +450,9 @@ export function invalidateCandidateProjectionFlagCache(): void {
 }
 
 export async function candidateProjectionEnabled(sc: any): Promise<boolean> {
-  if (_flagCache && Date.now() - _flagCache.at < FLAG_TTL_MS) return _flagCache.value;
+  if (_flagCache && _flagCache.sc === sc && Date.now() - _flagCache.at < FLAG_TTL_MS) return _flagCache.value;
   const value = await isFlagEnabled(sc, DISCOVERY_CANDIDATE_PROJECTION_FLAG);
-  _flagCache = { value, at: Date.now() };
+  _flagCache = { sc, value, at: Date.now() };
   return value;
 }
 

@@ -27,6 +27,7 @@ import { readFileSync } from "node:fs";
 import { execSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { requiredCiTestFiles } from "./required-ci-test-registration.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const pkgRoot = path.resolve(__dirname, "..");
@@ -42,6 +43,12 @@ const testScript = [pkg.scripts?.pretest, pkg.scripts?.test].filter(Boolean).joi
 const registered = new Set(
   (testScript.match(/src\/[^\s'"]+\.test\.ts/g) ?? []).map((p) => p.trim()),
 );
+const lifecycleRegistered = new Set(registered);
+const requiredCiRegistered = requiredCiTestFiles(
+  pkg.scripts ?? {},
+  readFileSync(path.resolve(pkgRoot, "../../.github/workflows/ci.yml"), "utf8"),
+);
+for (const file of requiredCiRegistered) registered.add(file);
 
 const allowlistPath = path.join(__dirname, "UNREGISTERED_TESTS_ALLOWLIST.json");
 let allowlist = [];
@@ -125,7 +132,7 @@ const ghosts = [...registered].filter((f) => !found.includes(f));
 
 console.log(
   `✅ check-test-registration: ${found.length} test file(s) on disk under src/\n` +
-    `     ${registeredOnDisk.length} registered  → RUN under \`npm test\`\n` +
+    `     ${registeredOnDisk.length} registered  → ${found.filter(file => lifecycleRegistered.has(file)).length} in npm test; ${found.filter(file => requiredCiRegistered.has(file) && !lifecycleRegistered.has(file)).length} in separately required CI gates\n` +
     `     ${excluded.length} not registered → NEVER RUN (allowlisted)\n` +
     `     ${registeredOnDisk.length} + ${excluded.length} = ${found.length}\n` +
     `   allowlist has ${allowlist.length} entr(y/ies): ${excluded.length} actually exclude, ` +

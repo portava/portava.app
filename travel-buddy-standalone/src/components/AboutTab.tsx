@@ -3,6 +3,7 @@ import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { MapPin, Calendar, User as UserIcon } from 'lucide-react-native';
 import type { OwnProfile, PublicProfile } from '../types/models.ts';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { TranslatedContent } from './TranslatedContent.tsx';
 
 const INTEREST_LABEL: Record<string, string> = {
   nightlife: 'Nightlife', food: 'Food', beach: 'Beach', luxury: 'Luxury',
@@ -54,7 +55,7 @@ export function AboutTab({
       {bio ? (
         <View style={ab.section}>
           <Text style={ab.sectionLabel}>BIO</Text>
-          <Text style={ab.bio}>{bio}</Text>
+          <TranslatedContent entityType="bio" entityId={profile.id} field="bio" original={bio} style={ab.bio}><Text style={ab.bio}>{bio}</Text></TranslatedContent>
         </View>
       ) : null}
 

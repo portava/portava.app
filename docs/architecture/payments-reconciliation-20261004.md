@@ -221,7 +221,7 @@ It imports nothing, and no ledger module imports it.
 
 ### 1.7 Tests
 
-Nineteen files, **all registered in the main runner** (`artifacts/api-server/package.json:93#SUPABASE_URL=http://127.0.0.1:9`)
+Nineteen files, **all registered in the main runner** (`artifacts/api-server/package.json:95#"test": "SUPABASE_URL=http://127.0.0.1:9`)
 — so they run in CI's unstarvable static tier, not only on a developer's machine.
 
 The two that bear directly on §11: `test/paymentsLiveGuard.test.ts` (694 lines, A–H) drives the real
@@ -612,7 +612,7 @@ OD-INPUT-4, OD-TRUST-2/3/5, OD-TRIP-1) and the hash-verified `docs/specs/discove
 |---|---|---|
 | OD-PAY-1/2 provider interface, buddy is the seller | direct charge on the buddy's account, commission as a separate platform fee; a market without direct charges is **refused**, never silently made a destination charge | `artifacts/api-server/src/services/payments/bookingPayments/checkout.ts:193#const model = selectChargeModel(deps.provider.capabilities(), market, "refuse");` |
 | OD-PAY-3 10 % on the pre-tax price, shown first, none on tips, no deposit | 1000 bps, versioned, by product and market (no market rule decided, none configured); the quote shows the commission as taken FROM the price | `artifacts/api-server/src/services/payments/bookingPayments/commissionPolicy.ts:54#bps: 1000,`, `artifacts/api-server/src/services/payments/bookingPayments/bookingQuote.ts:110#const commission = commissionMinor(input.serviceMinor, rule.bps);` |
-| OD-PAY-4 monthly, finalised, completed, verified; carry forward | plan / hold / release / execute; finalised = dispute window closed; a currency with **no configured minimum pays nothing** (the owner named no number) | `artifacts/api-server/src/services/payments/bookingPayments/payouts.ts:165#const carryReason = minimum === undefined` |
+| OD-PAY-4 monthly, finalised, completed, verified; carry forward | plan / hold / release / execute; finalised = dispute window closed; a currency with **no configured minimum pays nothing** (the owner named no number) | `artifacts/api-server/src/services/payments/bookingPayments/payouts.ts:183#const carryReason = minimum === undefined` |
 | OD-PAY-5 refunds | the owner's table; fees returned in proportion; an uncaptured payment is cancelled, not refunded | `artifacts/api-server/src/services/payments/bookingPayments/refunds.ts:66#case "cancelled_before_service": {` |
 | OD-PAY-6 original currency and conversion | stored as charged and as the provider reports settlement; **local-currency pricing is NOT built** — prices are stored only as `total_usd` | `artifacts/api-server/src/migrations/3931_rent_buddy_payments.sql:141#amount_minor                 bigint      NOT NULL CHECK (amount_minor > 0),` |
 | OD-PAY-7 tax configured per market before checkout | checkout refuses where the registered tax provider has not configured the market | `artifacts/api-server/src/services/payments/bookingPayments/bookingQuote.ts:100#return r.reason === "tax_not_configured"` |

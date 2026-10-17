@@ -294,7 +294,7 @@ describe("resolveInteractionPermissions — post-block cooldown fails closed", (
  */
 function makeToolsClient(opts: { blocksError: boolean }) {
   const TRIP_ROW = {
-    id: "ct-trip-1", title: "Bangkok run", destination_city: "Bangkok",
+    id: "00000000-0000-4000-8000-0000000000c1", title: "Bangkok run", destination_city: "Bangkok",
     destination_country: "Thailand", start_date: "2026-01-01", end_date: "2026-01-10",
     status: "active",
   };
@@ -322,8 +322,8 @@ function makeToolsClient(opts: { blocksError: boolean }) {
       if (table === "trip_members") {
         return {
           data: [
-            { trip_id: TRIP_ROW.id, user_id: "ct-user-1", role: "owner", status: "accepted" },
-            { trip_id: TRIP_ROW.id, user_id: "ct-user-2", role: "member", status: "accepted" },
+            { trip_id: TRIP_ROW.id, user_id: "00000000-0000-4000-8000-0000000000a1", role: "owner", status: "accepted" },
+            { trip_id: TRIP_ROW.id, user_id: "00000000-0000-4000-8000-0000000000a2", role: "member", status: "accepted" },
           ],
           error: null,
         };
@@ -337,7 +337,7 @@ function makeToolsClient(opts: { blocksError: boolean }) {
           travel_group_style: "small", looking_for: ["food"], comfort_level: "moderate",
           planning_style: "flexible", current_city: "Bangkok",
         });
-        return obj._single ? { data: p("ct-user-1"), error: null } : { data: [p("ct-user-1"), p("ct-user-2")], error: null };
+        return obj._single ? { data: p("00000000-0000-4000-8000-0000000000a1"), error: null } : { data: [p("00000000-0000-4000-8000-0000000000a1"), p("00000000-0000-4000-8000-0000000000a2")], error: null };
       }
       return obj._single ? { data: null, error: null } : { data: [], error: null };
     }
@@ -356,7 +356,7 @@ describe("executeCompassTool get_group_recommendation — group block union fail
   // tool's own contract; assert only that no candidate comes back.
   it("recommends NOTHING when the group block-union read ERRORS", async () => {
     const sc = makeToolsClient({ blocksError: true });
-    const out: any = await executeCompassTool(sc as any, "ct-user-1", null, "get_group_recommendation", {});
+    const out: any = await executeCompassTool(sc as any, "00000000-0000-4000-8000-0000000000a1", null, "get_group_recommendation", {});
     assert.ok(
       !Array.isArray(out?.candidates) || out.candidates.length === 0,
       `an unreadable block union must not produce a group recommendation, got ${JSON.stringify(out)}`,
@@ -370,7 +370,7 @@ describe("executeCompassTool get_group_recommendation — group block union fail
 
   it("NEGATIVE CONTROL: does not report a block-state failure on a clean read", async () => {
     const sc = makeToolsClient({ blocksError: false });
-    const out: any = await executeCompassTool(sc as any, "ct-user-1", null, "get_group_recommendation", {});
+    const out: any = await executeCompassTool(sc as any, "00000000-0000-4000-8000-0000000000a1", null, "get_group_recommendation", {});
     assert.doesNotMatch(
       String(out?.error ?? "") + " " + String(out?.detail ?? "") + " " + String(out?.info ?? ""),
       /unavailable|could not be read/i,

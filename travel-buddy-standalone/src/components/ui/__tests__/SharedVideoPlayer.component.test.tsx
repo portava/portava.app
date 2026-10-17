@@ -18,6 +18,15 @@ const mockPlayAsync = jest.fn().mockResolvedValue(undefined);
 const mockPauseAsync = jest.fn().mockResolvedValue(undefined);
 const mockSetStatusAsync = jest.fn().mockResolvedValue(undefined);
 let capturedStatusCallback: ((s: any) => void) | null = null;
+const mockDubbingSession = jest.fn();
+
+jest.mock('../../media/MediaDubbingSession.tsx', () => {
+  const actual = jest.requireActual('../../media/MediaDubbingSession.tsx');
+  return { ...actual, useMediaDubbingSession: (options: unknown) => {
+    mockDubbingSession(options);
+    return actual.useMediaDubbingSession(options);
+  } };
+});
 
 jest.mock('expo-av', () => {
   const React = require('react');
@@ -35,7 +44,7 @@ jest.mock('expo-av', () => {
         playAsync: mockPlayAsync,
         pauseAsync: mockPauseAsync,
         setStatusAsync: mockSetStatusAsync,
-      }));
+      }), []);
 
       return <View testID={testID ?? 'mock-video'} {...rest} />;
     },
@@ -97,6 +106,28 @@ describe('SharedVideoPlayer', () => {
       fireEvent.press(muteBtn);
     });
     expect(mockSetStatusAsync).toHaveBeenCalledWith({ isMuted: false });
+  });
+
+  it('withdraws play intent before native pause finishes and ignores late playing status', async () => {
+    let finishPause: (() => void) | undefined;
+    mockPauseAsync.mockImplementationOnce(() => new Promise<void>((resolve) => { finishPause = resolve; }));
+    await render(<SharedVideoPlayer uri="https://example.com/video.mp4" autoplay />);
+    const previousStatus = capturedStatusCallback;
+    await act(async () => { fireEvent.press(screen.getByLabelText('Pause video')); });
+    expect(mockDubbingSession.mock.lastCall[0].controlSource.shouldPlay).toBe(false);
+    expect(screen.getByTestId('mock-video').props.shouldPlay).toBe(false);
+    await act(async () => { previousStatus?.({ isLoaded: true, isPlaying: true, positionMillis: 150, durationMillis: 5000 }); });
+    expect(mockDubbingSession.mock.lastCall[0].controlSource.shouldPlay).toBe(false);
+    expect(screen.getByTestId('mock-video').props.shouldPlay).toBe(false);
+    await act(async () => { finishPause?.(); });
+  });
+
+  it('keeps play intent false after a rejected native pause', async () => {
+    mockPauseAsync.mockRejectedValueOnce(new Error('native pause failed'));
+    await render(<SharedVideoPlayer uri="https://example.com/video.mp4" autoplay />);
+    await act(async () => { fireEvent.press(screen.getByLabelText('Pause video')); });
+    expect(mockDubbingSession.mock.lastCall[0].controlSource.shouldPlay).toBe(false);
+    expect(screen.getByTestId('mock-video').props.shouldPlay).toBe(false);
   });
 
   it('shows error fallback when the video reports a load error', async () => {

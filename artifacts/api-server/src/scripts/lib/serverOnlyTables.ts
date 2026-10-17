@@ -136,6 +136,12 @@ export const SERVER_ONLY_TABLES: readonly ServerOnlyTable[] = [
       "Memory items: an owner could attach another user's storage object as a photo past the API's foreign_storage refusal " +
       "(3814, §BL)",
   },
+  { table: "memory_snapshots", closedBy: "3990_memory_snapshots.sql", why: "Immutable private source evidence; only authenticated owner API calls may use the service-only snapshot functions. Migration is not applied by this change." },
+  { table: "memory_video_segments", closedBy: "3991_memory_video_segments.sql", why: "Owner-selected canonical asset references must pass source authorization, revision and duration validation through the service-only API." },
+  { table: "memory_video_segment_operations", closedBy: "3991_memory_video_segments.sql", why: "Private idempotency and cancellation receipts must not be client-readable or client-writable independently of the segment command boundary." },
+  { table: "memory_import_batches", closedBy: "3992_memory_import_batches.sql", why: "Private owner-selected backfill progress is returned only through the service-only ownership and feature-gated API." },
+  { table: "memory_import_batch_items", closedBy: "3992_memory_import_batches.sql", why: "Private source associations and command identity may only be changed by the validated transactional importer or source-erasure triggers." },
+  { table: "memory_resurfacing_policy_heads", closedBy: "3993_owner_resurfacing_policy.sql", why: "Private owner-policy serialization state is only accessed by the authenticated service command boundary; no client may independently write or inspect its sequence." },
 ];
 
 const ROLES = ["anon", "authenticated", "public"] as const;

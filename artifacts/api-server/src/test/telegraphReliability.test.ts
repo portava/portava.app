@@ -24,6 +24,7 @@ import messagingRouter from "../routes/messaging.js";
 import {
   _resetResumeInFlight, _setResumeInFlightForTest, resumeInFlight,
   RESUME_LIMIT_PER_WINDOW, RESUME_PAGE_MAX, parseIdempotencyKey, resumeSummary,
+  replayDecision, sameSendPayload, type ReplayRow,
 } from "../services/telegraphReliability.js";
 
 const ME = "aaaaaaaa-0000-4000-8000-000000000001";
@@ -45,6 +46,11 @@ interface State {
   lookupDelayMs: number;
   lookupError: boolean;
   blocksError: boolean;
+  replyUpdateError: boolean;
+  replyUpdates: Array<Record<string, unknown>>;
+  replyLookupError: boolean;
+  replyLookupCount: number;
+  deleteReplyBeforeInsert: boolean;
 }
 
 let state: State;
@@ -69,6 +75,11 @@ function fresh(): State {
     lookupDelayMs: 0,
     lookupError: false,
     blocksError: false,
+    replyUpdateError: false,
+    replyUpdates: [],
+    replyLookupError: false,
+    replyLookupCount: 0,
+    deleteReplyBeforeInsert: false,
   };
 }
 
@@ -98,6 +109,7 @@ function makeClient() {
     let upd: any = null;
     let single = false;
     let idemLookup = false;
+    let replyLookup = false;
 
     const rows = (): any[] => {
       if (table === "feature_flags") return Object.entries(state.flags).map(([flag, enabled]) => ({ flag, enabled }));
@@ -113,6 +125,12 @@ function makeClient() {
       if (ins !== null) {
         const row = { id: uuid(), deleted_at: null, edited_at: null, reply_to_id: null, sequence: null, ...ins };
         if (table === "messages") {
+          if (row.reply_to_id != null) {
+            if (state.deleteReplyBeforeInsert) state.messages = state.messages.filter((message) => message.id !== row.reply_to_id);
+            if (!state.messages.some((message) => message.id === row.reply_to_id)) {
+              return { data: null, error: { code: "23503", message: 'insert or update on table "messages" violates foreign key constraint "messages_reply_to_id_fkey"', details: `Key (reply_to_id)=(${row.reply_to_id}) is not present in table "messages".` } };
+            }
+          }
           if (row.idempotency_key != null && state.messages.some((m) =>
             m.thread_id === row.thread_id && m.sender_id === row.sender_id && m.idempotency_key === row.idempotency_key)) {
             return { data: null, error: { code: "23505", message: 'duplicate key value violates unique constraint "messages_idempotency_uniq"' } };
@@ -127,7 +145,16 @@ function makeClient() {
         }
         return { data: single ? row : [row], error: null };
       }
-      if (upd !== null) return { data: null, error: null };
+      if (upd !== null) {
+        if (table === "messages") {
+          if ("reply_to_id" in upd) {
+            state.replyUpdates.push(upd);
+            if (state.replyUpdateError) return { data: null, error: { code: "08006", message: "reply update unavailable" } };
+          }
+          for (const row of rows().filter((candidate) => filters.every((filter) => filter(candidate)))) Object.assign(row, upd);
+        }
+        return { data: null, error: null };
+      }
       if (idemLookup) {
         if (state.lookupError) return { data: null, error: { code: "57014", message: "statement timeout" } };
         // The read is taken NOW (a snapshot) and answered after the delay, so two
@@ -137,6 +164,10 @@ function makeClient() {
         return { data: single ? (snap[0] ?? null) : snap, error: null };
       }
       if (table === "blocks" && state.blocksError) return { data: null, error: { code: "08006", message: "connection failure" } };
+      if (replyLookup) {
+        state.replyLookupCount += 1;
+        if (state.replyLookupError) return { data: null, error: { code: "08006", message: "reply lookup unavailable" } };
+      }
       let out = rows().filter((r) => filters.every((f) => f(r)));
       if (order) { const { col, asc } = order; out = [...out].sort((a, b) => (asc ? 1 : -1) * cmp(col, a[col], b[col])); }
       if (limit !== null) out = out.slice(0, limit);
@@ -145,7 +176,7 @@ function makeClient() {
     };
 
     const t: any = {
-      select() { return p; },
+      select(columns?: string) { replyLookup = table === "messages" && columns === "id"; return p; },
       insert(d: any) { ins = d; return p; },
       update(d: any) { upd = d; return p; },
       upsert() { upd = {}; return p; },
@@ -220,6 +251,229 @@ beforeEach(() => {
 });
 
 const KEY = "0f2c4e6a-1b3d-4f5a-8c9e-aa0011223344";
+
+function seedReplyTarget(threadId = DM): ReplayRow {
+  const target: ReplayRow = {
+    id: uuid(), thread_id: threadId, sender_id: OTHER, body: "quoted message", ciphertext: null,
+    created_at: "2026-10-16T00:00:00.000Z", msg_type: "text", subtype: null,
+    deleted_at: null, reply_to_id: null,
+  };
+  state.messages.push(target);
+  return target;
+}
+
+describe("reply identity and atomic persistence", () => {
+  it("acknowledges only a reply stored in the original insert, even when a separate reply update fails", async () => {
+    state.flags = { ...ON_ALL };
+    state.replyUpdateError = true;
+    const target = seedReplyTarget();
+    const response = await call("POST", `/threads/${DM}/messages`, ME, { body: "yes", clientId: KEY, replyToId: target.id });
+    assert.equal(response.status, 201, JSON.stringify(response.body));
+    assert.equal(response.body.replyToId, target.id);
+    assert.equal(state.messages.find((message) => message.id === response.body.id)?.reply_to_id, target.id,
+      "the acknowledged reply must already be canonical, not depend on a post-response update");
+    assert.equal(state.inserts[0].reply_to_id, target.id);
+    assert.equal(state.replyUpdates.length, 0);
+  });
+
+  it("refuses the same key and body with a different valid reply target", async () => {
+    state.flags = { ...ON_ALL };
+    const originalTarget = seedReplyTarget();
+    const otherTarget = seedReplyTarget();
+    const first = await call("POST", `/threads/${DM}/messages`, ME, { body: "yes", clientId: KEY, replyToId: originalTarget.id });
+    assert.equal(first.status, 201, JSON.stringify(first.body));
+    assert.equal(state.messages.find((message) => message.id === first.body.id)?.reply_to_id, originalTarget.id);
+    const retry = await call("POST", `/threads/${DM}/messages`, ME, { body: "yes", clientId: KEY, replyToId: otherTarget.id });
+    assert.equal(retry.status, 409, JSON.stringify(retry.body));
+    assert.equal(retry.body.error, "conflict");
+    assert.equal(state.inserts.length, 1);
+    assert.equal(state.messages.find((message) => message.id === first.body.id)?.reply_to_id, originalTarget.id);
+    assert.equal(JSON.stringify(retry.body).includes(originalTarget.id), false);
+  });
+
+  it("replays the same reply without another insert or reply update, including uppercase UUID input", async () => {
+    state.flags = { ...ON_ALL };
+    const target = seedReplyTarget();
+    const first = await call("POST", `/threads/${DM}/messages`, ME, { body: "yes", clientId: KEY, replyToId: target.id });
+    const retry = await call("POST", `/threads/${DM}/messages`, ME, { body: "yes", clientId: KEY, replyToId: ` ${target.id.toUpperCase()} ` });
+    assert.equal(first.status, 201);
+    assert.equal(retry.status, 200, JSON.stringify(retry.body));
+    assert.equal(retry.body.id, first.body.id);
+    assert.equal(retry.body.replyToId, target.id);
+    assert.equal(state.inserts.length, 1);
+    assert.equal(state.replyUpdates.length, 0);
+  });
+
+  it("refuses adding or removing a reply target under the same key", async () => {
+    state.flags = { ...ON_ALL };
+    const target = seedReplyTarget();
+    for (const [firstTarget, retryTarget] of [[null, target.id], [target.id, null]]) {
+      const clientId = uuid();
+      const first = await call("POST", `/threads/${DM}/messages`, ME, { body: "yes", clientId, replyToId: firstTarget });
+      const retry = await call("POST", `/threads/${DM}/messages`, ME, { body: "yes", clientId, replyToId: retryTarget });
+      assert.equal(first.status, 201);
+      assert.equal(retry.status, 409, JSON.stringify(retry.body));
+    }
+    assert.equal(state.inserts.length, 2);
+  });
+
+  it("concurrent different-target sends have one winner and a conflicting loser", async () => {
+    state.flags = { ...ON_ALL };
+    state.lookupDelayMs = 40;
+    const targets = [seedReplyTarget(), seedReplyTarget()];
+    const responses = await Promise.all(targets.map((target) => call("POST", `/threads/${DM}/messages`, ME,
+      { body: "yes", clientId: KEY, replyToId: target.id })));
+    assert.deepEqual(responses.map((response) => response.status).sort(), [201, 409]);
+    const winner = responses.find((response) => response.status === 201)!;
+    const loser = responses.find((response) => response.status === 409)!;
+    assert.equal(state.inserts.length, 1);
+    assert.equal(state.inserts[0].reply_to_id, winner.body.replyToId);
+    assert.equal(JSON.stringify(loser.body).includes(winner.body.replyToId), false);
+    assert.equal(state.replyUpdates.length, 0);
+  });
+
+  it("concurrent same-target sends replay the fully persisted winner", async () => {
+    state.flags = { ...ON_ALL };
+    state.lookupDelayMs = 40;
+    const target = seedReplyTarget();
+    const responses = await Promise.all([0, 1].map(() => call("POST", `/threads/${DM}/messages`, ME,
+      { body: "yes", clientId: KEY, replyToId: target.id })));
+    assert.deepEqual(responses.map((response) => response.status).sort(), [200, 201]);
+    assert.equal(new Set(responses.map((response) => response.body.id)).size, 1);
+    assert.ok(responses.every((response) => response.body.replyToId === target.id));
+    assert.equal(state.inserts.length, 1);
+  });
+
+  it("encrypted retries keep fresh ciphertext semantics but require the same reply target", async () => {
+    state.flags = { ...ON_ALL };
+    state.threads[DM].is_e2ee = true;
+    const target = seedReplyTarget();
+    const otherTarget = seedReplyTarget();
+    const first = await call("POST", `/threads/${DM}/messages`, ME,
+      { ciphertext: "cipher-original", body: "never store this", clientId: KEY, replyToId: target.id });
+    const retry = await call("POST", `/threads/${DM}/messages`, ME,
+      { ciphertext: "cipher-ratcheted", clientId: KEY, replyToId: target.id });
+    const changed = await call("POST", `/threads/${DM}/messages`, ME,
+      { ciphertext: "cipher-ratcheted-again", clientId: KEY, replyToId: otherTarget.id });
+    assert.equal(first.status, 201);
+    assert.equal(retry.status, 200);
+    assert.equal(changed.status, 409);
+    assert.equal(state.inserts.length, 1);
+    assert.equal(state.inserts[0].body, null);
+    assert.equal(state.inserts[0].ciphertext, "cipher-original");
+    assert.equal(state.inserts[0].reply_to_id, target.id);
+  });
+
+  it("persists replies with the capability off without adding idempotency columns", async () => {
+    const target = seedReplyTarget();
+    const response = await call("POST", `/threads/${DM}/messages`, ME, { body: "yes", clientId: KEY, replyToId: target.id });
+    assert.equal(response.status, 201);
+    assert.equal(state.inserts[0].reply_to_id, target.id);
+    assert.equal("idempotency_key" in state.inserts[0], false);
+    assert.equal(state.replyUpdates.length, 0);
+  });
+
+  it("keeps absent and malformed optional reply inputs as ordinary non-reply sends", async () => {
+    for (const replyToId of [undefined, null, "", "not-a-uuid", 123]) {
+      const response = await call("POST", `/threads/${DM}/messages`, ME, { body: "yes", replyToId });
+      assert.equal(response.status, 201, JSON.stringify(response.body));
+      assert.equal(response.body.replyToId, null);
+    }
+    assert.equal(state.replyLookupCount, 0);
+    assert.ok(state.inserts.every((insert) => !("reply_to_id" in insert)));
+  });
+
+  it("never distinguishes foreign reply targets from nonexistent ones, including on a keyed replay", async () => {
+    state.flags = { ...ON_ALL };
+    const target = seedReplyTarget();
+    const foreignTarget = seedReplyTarget(FOREIGN);
+    await call("POST", `/threads/${DM}/messages`, ME, { body: "yes", clientId: KEY, replyToId: target.id });
+    for (const clientId of [KEY, uuid()]) {
+      const foreign = await call("POST", `/threads/${DM}/messages`, ME, { body: "yes", clientId, replyToId: foreignTarget.id });
+      const absent = await call("POST", `/threads/${DM}/messages`, ME, { body: "yes", clientId, replyToId: uuid() });
+      assert.equal(foreign.status, 400);
+      assert.equal(absent.status, 400);
+      assert.deepEqual(foreign.body, absent.body);
+      assert.equal(JSON.stringify(foreign.body).includes(foreignTarget.id), false);
+    }
+    assert.equal(state.inserts.length, 1);
+  });
+
+  it("unreadable target validation remains retryable and never stores an unverified reply", async () => {
+    state.flags = { ...ON_ALL };
+    const target = seedReplyTarget();
+    state.replyLookupError = true;
+    const response = await call("POST", `/threads/${DM}/messages`, ME, { body: "yes", clientId: KEY, replyToId: target.id });
+    assert.equal(response.status, 503);
+    assert.equal(response.body.error, "degraded_unavailable");
+    assert.equal(state.inserts.length, 0);
+  });
+
+  it("a target deleted between validation and insert fails atomically without database detail", async () => {
+    const target = seedReplyTarget();
+    state.deleteReplyBeforeInsert = true;
+    const response = await call("POST", `/threads/${DM}/messages`, ME, { body: "yes", replyToId: target.id });
+    const absent = await call("POST", `/threads/${DM}/messages`, ME, { body: "yes", replyToId: target.id });
+    assert.equal(response.status, 400, JSON.stringify(response.body));
+    assert.deepEqual(response.body, absent.body);
+    assert.equal(state.inserts.length, 0);
+    assert.equal(state.messages.length, 0);
+    assert.equal(JSON.stringify(response.body).includes("messages_reply_to_id_fkey"), false);
+  });
+
+  it("keeps tombstone replay ahead of payload conflict without reviving or retargeting the original", async () => {
+    state.flags = { ...ON_ALL };
+    const target = seedReplyTarget();
+    const otherTarget = seedReplyTarget();
+    const first = await call("POST", `/threads/${DM}/messages`, ME, { body: "yes", clientId: KEY, replyToId: target.id });
+    const original = state.messages.find((message) => message.id === first.body.id);
+    original.deleted_at = "2026-10-16T01:00:00Z";
+    original.body = "";
+    const retry = await call("POST", `/threads/${DM}/messages`, ME, { body: "changed", clientId: KEY, replyToId: otherTarget.id });
+    assert.equal(retry.status, 200);
+    assert.equal(retry.body.deleted, true);
+    assert.equal(retry.body.body, null);
+    assert.equal(original.reply_to_id, target.id);
+    assert.equal(state.inserts.length, 1);
+  });
+
+  it("rechecks blocks and membership before reply lookup or replay", async () => {
+    state.flags = { ...ON_ALL };
+    const target = seedReplyTarget();
+    await call("POST", `/threads/${DM}/messages`, ME, { body: "yes", clientId: KEY, replyToId: target.id });
+    const reads = state.replyLookupCount;
+    state.blocks.push({ blocker_id: OTHER, blocked_id: ME });
+    const blocked = await call("POST", `/threads/${DM}/messages`, ME, { body: "yes", clientId: KEY, replyToId: target.id });
+    const foreign = await call("POST", `/threads/${FOREIGN}/messages`, ME, { body: "yes", clientId: KEY, replyToId: target.id });
+    assert.equal(blocked.status, 403);
+    assert.equal(foreign.status, 403);
+    assert.equal(state.replyLookupCount, reads);
+    assert.equal(state.inserts.length, 1);
+  });
+
+  it("keeps the existing valid-FK behavior for a soft-deleted target without returning its content", async () => {
+    const target = seedReplyTarget();
+    target.deleted_at = "2026-10-16T01:00:00Z";
+    const response = await call("POST", `/threads/${DM}/messages`, ME, { body: "yes", replyToId: target.id });
+    assert.equal(response.status, 201);
+    assert.equal(state.inserts[0].reply_to_id, target.id);
+    assert.equal(JSON.stringify(response.body).includes(target.body!), false);
+  });
+
+  it("unit payload comparison includes reply identity while encrypted and tombstone exceptions stay intact", () => {
+    const row = { ...seedReplyTarget(), body: "yes", reply_to_id: uuid() };
+    const sent = { body: "yes", ciphertext: null, msgType: "text", subtype: null, replyToId: row.reply_to_id };
+    assert.equal(sameSendPayload(row, sent), true);
+    for (const replyToId of [null, uuid()]) {
+      assert.equal(sameSendPayload(row, { ...sent, replyToId }), false);
+      assert.equal(replayDecision(row, { ...sent, replyToId }, false), "conflict");
+      assert.equal(replayDecision(row, { ...sent, ciphertext: "fresh", replyToId }, true), "conflict");
+    }
+    assert.equal(replayDecision(row, { ...sent, ciphertext: "fresh" }, true), "replay");
+    assert.equal(replayDecision({ ...row, deleted_at: "2026-10-16T01:00:00Z" }, { ...sent, replyToId: null }, false), "replay");
+    assert.equal(sameSendPayload({ ...row, reply_to_id: undefined }, { ...sent, replyToId: null }), true);
+  });
+});
 
 // ════════════════════════════════════════════════════════════════════════════
 describe("T231 idempotent resend (telegraph_idempotent_send_enabled)", () => {

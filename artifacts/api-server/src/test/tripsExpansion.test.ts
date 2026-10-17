@@ -1034,7 +1034,7 @@ describe("trips-expansion routes", () => {
               return Promise.resolve({ data: null, error: null });
             },
             then(onF: any, onR: any) {
-              return Promise.resolve({ data: null, error: null }).then(onF, onR);
+              return Promise.resolve({ data: tableName === "blocks" ? [] : null, error: null }).then(onF, onR);
             },
           };
           return obj;

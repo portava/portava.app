@@ -1328,6 +1328,126 @@ const EXEMPT = [
       'pin is independently enforced by pinnedTestEnv. EXEMPTION MEANS UNGUARDED, NOT SAFE: changing the ' +
       'literal target or removing the injected transport voids this exemption and requires a guarded entry point.',
   },
+
+  // ── 2026-10-16 media/memory/compass batch. Each entry was READ, not pattern-
+  // matched: the line cited is the credential name or createClient( the scan
+  // found, and the reason says what stops it dialing a real project.
+  //
+  // Library code in the production request/worker path — same class as
+  // src/lib/mediaAccess.ts above: it reads SUPABASE_URL only to learn the
+  // storage ORIGIN it must compare signed URLs against; it constructs no client
+  // (the caller hands one in). A guard here would refuse the production worker.
+  {
+    file: 'src/lib/media/adaptive/runtime.ts',
+    reason:
+      'adaptiveConfig() (runtime.ts:13) copies SUPABASE_URL into AdaptiveConfig.storageOrigin after refusing a ' +
+      'non-https, credentialed, query- or hash-bearing value (runtime.ts:18-20); service.ts:16 then refuses any ' +
+      'signed source URL whose origin differs. It constructs no client: createAdaptiveQueueBridge(client) takes ' +
+      'the caller\'s. Library code loaded by the production media worker; it does not choose the target, its ' +
+      'callers do. No package script names it. Unguarded.',
+  },
+  {
+    file: 'src/lib/media/imageVariants/runtime.ts',
+    reason:
+      'imageVariantsConfigFromEnv() (runtime.ts:33) copies SUPABASE_URL into ImageVariantsConfig.storageOrigin; ' +
+      'canonical.ts:62 refuses a non-https/credentialed/path-bearing origin and canonical.ts:69-70 refuses a ' +
+      'signed URL whose origin or object path differs. It constructs no client: createImageVariantsRuntime(sc, …) ' +
+      'takes the caller\'s. Library code loaded by the production media worker and route; no package script ' +
+      'names it. Unguarded.',
+  },
+  {
+    file: 'src/lib/media/vendors/imageUnderstandingJob.ts',
+    reason:
+      'runImageUnderstandingJob (imageUnderstandingJob.ts:34) passes (input.env ?? process.env).SUPABASE_URL as the ' +
+      'storage origin to acquireImageUnderstandingPixels, which refuses anything but https://<ref>.supabase.co ' +
+      '(imageUnderstandingPixels.ts:62) and any signed URL off that origin or object path (:72). It constructs no ' +
+      'client; input.sc is the caller\'s. Library code on the production vision worker path; no package script ' +
+      'names it. Unguarded.',
+  },
+  {
+    file: 'src/lib/media/visualIndex/canonicalImageAcquisition.ts',
+    reason:
+      'createCanonicalVisualImageAcquirer reads ctx.env.SUPABASE_URL (canonicalImageAcquisition.ts:63-64) only to ' +
+      'pin the storage origin — refused unless it is exactly https://<ref>.supabase.co — and refuses a signed URL ' +
+      'off that origin or object path (:89-90). It constructs no client; ctx.sc is the caller\'s. Library code on ' +
+      'the production visual-index worker path; no package script names it. Unguarded.',
+  },
+
+  // Unregistered unit tests whose ONLY Supabase surface is a REAL createClient
+  // handed a literal, non-routable URL and an injected fetch that answers in
+  // memory and never forwards — the shape compassTripProjectionReads.test.ts
+  // and notificationPushTokenRegistryUnreadable.test.ts are exempt on. None is
+  // named by any package script (deriveCiSurface finds none), so CI never
+  // invokes them directly; but the exemption does not rest on that — they
+  // CANNOT DIAL ANYTHING while the injected fetch is the client's only transport.
+  ...[
+    ['src/test/compassSocialTripRosterConsumer.test.ts', 'compassSocialTripRosterConsumer.test.ts:57 — createClient("http://127.0.0.1:9", "dummy"), injected fetch asserts GET and the loopback origin and answers in memory'],
+    ['src/test/compassTripRosterConsumer.test.ts', 'compassTripRosterConsumer.test.ts:57 — createClient("http://127.0.0.1:9", "dummy"), injected fetch asserts GET, records the URL and answers in memory'],
+    ['src/test/compassTripSavedIdeasConsumer.test.ts', 'compassTripSavedIdeasConsumer.test.ts:56 — createClient("http://127.0.0.1:9", "dummy"), injected fetch records any non-loopback or non-GET request as unexpected and answers in memory'],
+    ['src/test/helpers/tripCompassDayCountFixture.ts', 'tripCompassDayCountFixture.ts:58 — a helper (imported by tests, named by no script): createClient("http://127.0.0.1:9", "dummy"), injected fetch asserts the loopback origin and answers in memory'],
+    ['src/test/helpers/tripCompassRangeFixture.ts', 'tripCompassRangeFixture.ts:58 — a helper (imported by tests, named by no script): createClient("http://127.0.0.1:9", "dummy"), injected fetch asserts GET and the loopback origin and answers in memory'],
+    ['src/test/layoverMetricsWindowReads.test.ts', 'layoverMetricsWindowReads.test.ts:234 — createClient("https://fixture.invalid", "fixture-key"), a name reserved never to resolve; injected fetch records and answers in memory'],
+    ['src/test/mediaDerivativeWorker.test.ts', 'mediaDerivativeWorker.test.ts:222 — createClient("https://synthetic.invalid", "synthetic-key"); injected fetch only captures the abort signal and returns a test-controlled promise'],
+    ['src/test/mediaRetainedCaptionTranslationCleanup.test.ts', 'mediaRetainedCaptionTranslationCleanup.test.ts:164 and :179 — createClient("http://127.0.0.1:9", "synthetic-only"); each injected fetch fabricates the Storage upload Response (or throws a synthetic transport error) in memory'],
+    ['src/test/memoryFalseMemoryRateReadBoundary.test.ts', 'memoryFalseMemoryRateReadBoundary.test.ts:205 — createClient("http://127.0.0.1:9", "dummy"), injected fetch asserts the loopback origin and answers per table in memory; globalThis.fetch is restored to the original at :112, never called through'],
+    ['src/test/messageTranslationInitialLifecycle.test.ts', 'messageTranslationInitialLifecycle.test.ts:470 — createClient("http://translation.fixture.invalid", "synthetic-key"), injected fetch asserts that origin and answers per table in memory'],
+    ['src/test/tripCompassRosterProjection.test.ts', 'tripCompassRosterProjection.test.ts:16 — createClient("http://127.0.0.1:9", "dummy"), injected fetch asserts GET, records the URL and answers in memory'],
+    ['src/test/tripCompassSavedIdeasProjection.test.ts', 'tripCompassSavedIdeasProjection.test.ts:22 — createClient("http://127.0.0.1:9", "dummy"), injected fetch records any non-loopback or non-GET request as unexpected and answers in memory'],
+  ].map(([file, where]) => ({
+    file,
+    reason:
+      `Unit test over a REAL supabase-js client that cannot dial: ${where}. The URL and key are in-file literals, ` +
+      'never read from the environment, and the injected fetch is the client\'s only transport. No package script ' +
+      'names the file. EXEMPTION MEANS UNGUARDED, NOT SAFE — if the injected fetch is ever removed or the URL ever ' +
+      'comes from the environment, the exemption is void and this file must import the guard.',
+  })),
+
+  // Unregistered unit tests that NAME a Supabase credential variable only as a
+  // SYNTHETIC VALUE in an env object handed to the code under test (or to a
+  // child process the test spawns from a temp-dir copy of a runner), never
+  // reading the operator's value, and construct no client. The detector is
+  // NAME-BASED and cannot tell "sets a fake" from "reads the real one".
+  ...[
+    ['src/test/helpers/mediaVisualSidecarFixture.ts', 'mediaVisualSidecarFixture.ts:67 sets SUPABASE_URL to the in-file literal visualOrigin ("https://synthetic-fixture.supabase.co", :6) inside an env object for the visual-index context; its sc is an in-memory fake and its signed URLs are fabricated (:22). A helper named by no script'],
+    ['src/test/imageUnderstanding.test.ts', 'imageUnderstanding.test.ts:31 sets SUPABASE_URL to "https://synthetic.supabase.co" in a local env object; every runImageUnderstandingJob/readImageUnderstandingStorageBytes call injects a fetch transport (:73, :205, :247, :276, :298) that answers in memory or from a 127.0.0.1 server, and the HTTP app is wired to a fake via _setTestClient (:320)'],
+    ['src/test/mediaDerivativeIntegration.test.ts', 'mediaDerivativeIntegration.test.ts:78 and :84 pass SUPABASE_URL as "https://storage.example.test" (and a credentialed variant that must be refused) to adaptiveConfig() — a pure config parser; nothing is fetched with it'],
+    ['src/test/mediaEncodingCi.test.ts', 'mediaEncodingCi.test.ts:21 puts SUPABASE_URL "https://synthetic.invalid" and a synthetic service key in the environment of a temp-dir control script (prepare.mjs, :92) to prove they are NOT forwarded; nothing constructs a client'],
+    ['src/test/mediaEncodingRunner.test.ts', 'mediaEncodingRunner.test.ts:275 hands "https://synthetic.invalid" to a temp-dir copy of scripts/run-media-encoding-tests.mjs (:169), whose generated fixture tests assert the runner re-pinned SUPABASE_URL to http://127.0.0.1:9 and the keys to dummy (:114-115, :153-154)'],
+    ['src/test/mediaImageVariantsEnqueue.test.ts', 'mediaImageVariantsEnqueue.test.ts:16 sets SUPABASE_URL to the fixture origin "https://image-synthetic.supabase.co" (helpers/imageVariantsFixture.ts:23) in a local env object; the client is the fixture\'s in-memory fake and the test asserts zero signs and zero fetches (:39, :56, :75, :142)'],
+    ['src/test/mediaImageVariantsRoute.test.ts', 'mediaImageVariantsRoute.test.ts:114-115 SETS process.env.SUPABASE_URL to the fixture origin "https://image-synthetic.supabase.co" and restores the previous value after; :181 uses it in a local env object. Clients are the fixture\'s in-memory fakes; fetch is the fixture\'s recorder'],
+    ['src/test/mediaImageVariantsRuntime.test.ts', 'mediaImageVariantsRuntime.test.ts:61-63 SETS process.env.SUPABASE_URL to the fixture origin "https://image-synthetic.supabase.co" and restores it after; every runtime is built with { fetch: fixture.fetch } (:13, :41, :67 …) over the fixture\'s fake sc'],
+    ['src/test/mediaJobRegistry.test.ts', 'mediaJobRegistry.test.ts:25 passes SUPABASE_URL "https://synthetic-project.supabase.co" to configuredMediaJobHandler over makeFeedDb\'s in-memory client and asserts construction touches no table (:29); no request is issued'],
+    ['src/test/mediaSqlRunner.test.ts', 'mediaSqlRunner.test.ts:232-234 hands "https://synthetic.invalid" values to a temp-dir copy of scripts/run-media-sql-tests.mjs (:154), whose generated fixture tests assert the runner re-pinned SUPABASE_URL to http://127.0.0.1:9 and the keys to dummy (:248-249)'],
+    ['src/test/memoryNativeCi.test.ts', 'memoryNativeCi.test.ts:116 puts SUPABASE_URL "https://must-not-reach.invalid" and a fake key into a temp-dir control script\'s environment to prove they do not leak (leakNames, :54); :241 and :342 only match source text'],
+    ['src/test/memoryNativeRunner.test.ts', 'memoryNativeRunner.test.ts:176-177 hands "https://synthetic.invalid" values to a temp-dir copy of scripts/run-memory-native-tests.mjs (:79), whose generated fixture tests assert the runner re-pinned them to http://127.0.0.1:9 / dummy (:168-170)'],
+    ['src/test/memorySqlRunner.test.ts', 'memorySqlRunner.test.ts:113-115 hands "https://synthetic.invalid" values to a temp-dir copy of scripts/run-memory-sql-tests.mjs (:55), whose generated fixture tests assert the runner re-pinned them to http://127.0.0.1:9 / dummy (:105-107)'],
+  ].map(([file, where]) => ({
+    file,
+    reason:
+      `Names a Supabase credential variable only to SET a synthetic value: ${where}. It reads no operator ` +
+      'credential and calls createClient nowhere. No package script names the file. EXEMPTION MEANS UNGUARDED, ' +
+      'NOT SAFE — if this file ever reads the real variable or constructs a client, the exemption is void and it ' +
+      'must import the guard.',
+  })),
+
+  // Registered (CI-run) unit tests with a REAL createClient that cannot dial —
+  // pinnedTestEnv because CI invokes them through the test script. Importing
+  // the guard would refuse the loopback pin and take the unit suite red.
+  ...[
+    ['src/test/blockGuardReadHonesty.test.ts', 'blockGuardReadHonesty.test.ts:26 — createClient("http://block.fixture.invalid", "dummy-only"), injected fetch asserts that origin and the /rest/v1/blocks path and answers in memory'],
+    ['src/test/memoryQualityMetrics.test.ts', 'memoryQualityMetrics.test.ts:1071 — createClient("http://127.0.0.1:9", "dummy"), injected fetch asserts the loopback origin and the /rest/v1/trip_saved_places path and answers in memory (its other fetch, :639, targets the test\'s own 127.0.0.1 app server)'],
+    ['src/test/tripPlanVisibilityRuling.test.ts', 'tripPlanVisibilityRuling.test.ts:307 — createClient("http://127.0.0.1:9", "dummy"), injected fetch asserts the loopback origin and GET and answers in memory'],
+    ['src/test/tripPrivateAnchorLifecycle.test.ts', 'tripPrivateAnchorLifecycle.test.ts:255 — createClient("http://127.0.0.1:9", "dummy"), injected fetch asserts the loopback origin and answers per table in memory'],
+  ].map(([file, where]) => ({
+    file,
+    pinnedTestEnv: true,
+    reason:
+      `Registered unit test over a REAL supabase-js client that cannot dial: ${where}. URL and key are in-file ` +
+      'literals and the injected fetch is the client\'s only transport — a stronger pin than the package.json ' +
+      'loopback one, which pinnedTestEnv re-verifies independently. EXEMPTION MEANS UNGUARDED, NOT SAFE — if the ' +
+      'injected fetch is ever removed or the URL ever comes from the environment, the exemption is void and this ' +
+      'file must import the guard or leave the curated list.',
+  })),
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────

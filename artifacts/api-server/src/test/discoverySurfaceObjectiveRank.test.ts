@@ -206,7 +206,7 @@ const pm = (n: number, state: string, velocity: number | null, run: string): Row
   cell_key: "n:lisbon:alfama", city: "lisbon",
 });
 const dp = (n: number, createdAgo: number): Row => ({
-  id: PL(n), name: `Place ${n}`, status: "active", submitted_by: U(1), lat: null, lng: null, category: "cafe", place_type: "venue",
+  id: PL(n), name: `Place ${n}`, status: "active", submitted_by: U(1), lat: 38.71, lng: -9.13, category: "cafe", place_type: "venue",
   created_at: rel(createdAgo), saved_count: 4, verified: false,
 });
 /**

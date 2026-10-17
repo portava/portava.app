@@ -250,3 +250,65 @@ describe("the four 3931 payment tables are RETAINED_WITH_REASON with the decided
     }
   });
 });
+
+// ── Media derivatives (3980-3995): fifteen tables registered with their fate, one deliberately not ──
+describe("the fifteen 3980-3995 Media derivative tables are registered once, as erased, and counted", () => {
+  // Registration only: this proves each table is in the denominator and carries
+  // exactly one stated fate. It does not prove the erasure runs. The cascade
+  // evidence is each table's ON DELETE CASCADE FK to media_assets (or to
+  // media_derivative_jobs); the two receipt ledgers have no FK and are erased
+  // by accountMediaDeletion.ts, which keeps the request pending while a receipt
+  // is unsettled.
+  const MEDIA_DERIVATIVE_TABLES = [
+    "media_derivative_jobs", "media_derivative_job_events",
+    "media_image_understanding_consents", "media_image_understanding_artifacts",
+    "media_visual_index_consents", "media_visual_embeddings",
+    "media_caption_manifests", "media_caption_asr_epochs", "media_caption_asr_consents",
+    "media_dubbing_epochs", "media_dubbing_consents",
+    "media_caption_translation_consents", "media_caption_translation_epochs",
+    "media_dubbing_artifacts", "media_caption_translation_artifacts",
+  ];
+  const count = (list: readonly string[], t: string) => list.filter((x) => x === t).length;
+
+  it("each is in ERASED_BY_CASCADE exactly once and in no competing bucket", () => {
+    assert.equal(new Set(MEDIA_DERIVATIVE_TABLES).size, 15);
+    for (const t of MEDIA_DERIVATIVE_TABLES) {
+      assert.equal(count(ERASED_BY_CASCADE, t), 1, `${t}: exactly one ERASED_BY_CASCADE entry`);
+      assert.equal(count(ANONYMISED_FK_NULLED, t), 0, `${t}: not ANONYMISED_FK_NULLED`);
+      assert.equal(count(DELETION_FLOW_TABLES, t), 0, `${t}: not DELETION_FLOW_TABLES`);
+      assert.equal(count(RETAINED_WITH_REASON.map((r) => r.table), t), 0, `${t}: not RETAINED_WITH_REASON`);
+      assert.equal(count(AWAITING_OWNER_DECISION.map((r) => r.table), t), 0, `${t}: not AWAITING_OWNER_DECISION`);
+      assert.equal(count(UNCLASSIFIED_BACKLOG, t), 0, `${t}: never parked in UNCLASSIFIED_BACKLOG`);
+      assert.equal(count(DENOMINATOR_CORRECTION_BACKLOG, t), 0, `${t}: never parked in DENOMINATOR_CORRECTION_BACKLOG`);
+    }
+  });
+
+  it("each is in POST_BASELINE_TABLES exactly once, which is what puts it in the denominator", () => {
+    const universe = userKeyedTablesFromBaseline(BASELINE);
+    for (const t of MEDIA_DERIVATIVE_TABLES) {
+      assert.equal(count(POST_BASELINE_TABLES, t), 1, `${t}: exactly one POST_BASELINE_TABLES entry`);
+      assert.ok(universe.has(t), `${t}: missing from the deletion-coverage denominator`);
+    }
+  });
+
+  it("FLAGS a stale entry if one of them leaves the schema but keeps its erased registration", () => {
+    // Same shape as the AWAITING_OWNER_DECISION stale check above: drop the table
+    // from the denominator AND from the post-baseline exemption, which is what a
+    // deleted table would leave behind.
+    const victim = "media_visual_embeddings";
+    const tables = new Map(userKeyedTablesFromBaseline(BASELINE));
+    tables.delete(victim);
+    const problems = computeProblems(tables, POST_BASELINE_TABLES.filter((t) => t !== victim));
+    assert.ok(problems.some((p) => p.table === victim && p.kind === "STALE ENTRY"),
+      `a stale ERASED_BY_CASCADE entry for ${victim} went unreported`);
+  });
+
+  it("the visual-index tombstone and the two singleton configs are NOT registered as erased", () => {
+    // media_visual_index_tombstones (3982) survives completed erasure; its fate
+    // is undecided. Absence here is not a retention decision either.
+    for (const t of ["media_visual_index_tombstones", "media_caption_asr_config", "media_caption_translation_config"]) {
+      assert.equal(count(ERASED_BY_CASCADE, t), 0, `${t} must not be claimed as erased`);
+      assert.equal(count(RETAINED_WITH_REASON.map((r) => r.table), t), 0, `${t} has no decided retention`);
+    }
+  });
+});

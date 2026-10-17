@@ -160,6 +160,14 @@ describe('HiddenGemCard byline — C19: resolved from (displayName, handle), nev
 
     expect(screen.getByText('By Traveler')).toBeTruthy();
   });
+
+  it('revocation replaces an already-rendered name without reusing the legacy name', async () => {
+    const card = await render(<HiddenGemCard gem={gemWith({ name: 'Nikki Chen', displayName: 'Nikki Chen', handle: 'nikki' })} />);
+    expect(screen.getByText('By Nikki Chen')).toBeTruthy();
+    await card.rerender(<HiddenGemCard gem={gemWith({ name: 'Nikki Chen', displayName: null, handle: 'nikki' })} />);
+    expect(screen.getByText('By @nikki')).toBeTruthy();
+    expect(screen.queryByText(/Nikki Chen/)).toBeNull();
+  });
 });
 
 describe('TravelerPickCard byline — C19: the same one rule on the second byline', () => {
@@ -181,5 +189,13 @@ describe('TravelerPickCard byline — C19: the same one rule on the second bylin
     await render(<TravelerPickCard pick={pickWith({ name: '', displayName: null, handle: 'nikki' })} />);
 
     expect(screen.getByText('@nikki')).toBeTruthy();
+  });
+
+  it('revocation replaces an already-rendered pick name without reusing it', async () => {
+    const card = await render(<TravelerPickCard pick={pickWith({ name: 'Nikki Chen', displayName: 'Nikki Chen', handle: 'nikki' })} />);
+    expect(screen.getByText('Nikki Chen')).toBeTruthy();
+    await card.rerender(<TravelerPickCard pick={pickWith({ name: 'Nikki Chen', displayName: null, handle: 'nikki' })} />);
+    expect(screen.getByText('@nikki')).toBeTruthy();
+    expect(screen.queryByText(/Nikki Chen/)).toBeNull();
   });
 });

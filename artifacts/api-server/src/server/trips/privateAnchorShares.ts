@@ -33,6 +33,8 @@ import { readSelectedPlanItemIds } from "./planItemAudience.js";
 export const ANCHOR_SHARING_FLAG = "trip_private_anchor_sharing_enabled";
 
 const ACCEPTED_ROLES: ReadonlySet<string> = new Set(["owner", "co_host", "member", "viewer"]);
+const MEMBER_STATUSES: ReadonlySet<string> = new Set(["invited", "accepted", "declined", "removed", "left"]);
+const CANONICAL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export type SharingFlag = "on" | "off" | "unread";
 
@@ -54,21 +56,32 @@ export async function anchorSharingOn(sc: SupabaseClient): Promise<boolean> {
 
 /** The accepted members of a trip, as requireTripMember counts them (owner fallback included). */
 export async function readAcceptedTripMembers(sc: SupabaseClient, tripId: string): Promise<Set<string> | null> {
-  const [{ data: members, error: mErr }, { data: trip, error: tErr }] = await Promise.all([
-    sc.from("trip_members").select("user_id, status, role").eq("trip_id", tripId),
-    sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle(),
-  ]);
-  if (mErr || tErr) return null;
-  const out = new Set<string>();
-  const withRow = new Set<string>();
-  for (const m of (members ?? []) as Array<{ user_id: string; status?: string | null; role?: string | null }>) {
-    withRow.add(String(m.user_id));
-    // requireTripMember's rule exactly (lib/http.ts): one of the four accepted roles, status accepted or unset.
-    if (ACCEPTED_ROLES.has(String(m.role)) && (m.status == null || m.status === "accepted")) out.add(String(m.user_id));
+  try {
+    const [{ data: members, error: mErr }, { data: trip, error: tErr }] = await Promise.all([
+      sc.from("trip_members").select("user_id, status, role").eq("trip_id", tripId),
+      sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle(),
+    ]);
+    if (mErr || tErr || !Array.isArray(members)) return null;
+    if (trip !== null && (typeof trip !== "object" || Array.isArray(trip)
+      || typeof trip.owner_id !== "string" || !CANONICAL_UUID.test(trip.owner_id))) return null;
+    const out = new Set<string>();
+    const withRow = new Set<string>();
+    for (const member of members) {
+      if (member === null || typeof member !== "object" || Array.isArray(member)
+        || typeof member.user_id !== "string" || !CANONICAL_UUID.test(member.user_id)
+        || typeof member.role !== "string" || (!ACCEPTED_ROLES.has(member.role) && member.role !== "invited")
+        || (member.status != null && (typeof member.status !== "string" || !MEMBER_STATUSES.has(member.status)))) return null;
+      if (withRow.has(member.user_id)) return null;
+      withRow.add(member.user_id);
+      // requireTripMember's rule exactly (lib/http.ts): one of the four accepted roles, status accepted or unset.
+      if (ACCEPTED_ROLES.has(member.role) && (member.status == null || member.status === "accepted")) out.add(member.user_id);
+    }
+    const owner = trip?.owner_id;
+    if (typeof owner === "string" && !withRow.has(owner)) out.add(owner);
+    return out;
+  } catch {
+    return null;
   }
-  const owner = (trip as { owner_id?: unknown } | null)?.owner_id;
-  if (typeof owner === "string" && !withRow.has(owner)) out.add(owner);
-  return out;
 }
 
 /**
@@ -102,13 +115,19 @@ async function anchorAccessFor(sc: SupabaseClient, tripId: string, viewerId: str
     if (isAbsentTableError(error)) return ownerOnlyAccess(viewerId);
     return ownerOnlyAccess(viewerId, "unread", "private-place shares could not be read");
   }
-  const rows = (data ?? []) as Array<{ plan_item_id: string; owner_id: string }>;
+  const rows: unknown = data;
+  if (!Array.isArray(rows) || !rows.every((row: unknown): row is { plan_item_id: string; owner_id: string } => {
+    if (row === null || typeof row !== "object" || Array.isArray(row)) return false;
+    const grant = row as Record<string, unknown>;
+    return typeof grant.plan_item_id === "string" && CANONICAL_UUID.test(grant.plan_item_id)
+      && typeof grant.owner_id === "string" && CANONICAL_UUID.test(grant.owner_id);
+  })) return ownerOnlyAccess(viewerId, "unread", "private-place shares could not be read");
   if (rows.length === 0) return ownerOnlyAccess(viewerId);
   const accepted = await readAcceptedTripMembers(sc, tripId);
   if (!accepted) return ownerOnlyAccess(viewerId, "unread", "trip membership could not be read");
   if (!accepted.has(viewerId)) return ownerOnlyAccess(viewerId);
   const grants = new Map<string, string>();
-  for (const r of rows) if (accepted.has(String(r.owner_id))) grants.set(String(r.plan_item_id), String(r.owner_id));
+  for (const row of rows) if (accepted.has(row.owner_id)) grants.set(row.plan_item_id, row.owner_id);
   return { viewerId, status: "ok", grants };
 }
 

@@ -3,12 +3,33 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { build as esbuild } from "esbuild";
 import esbuildPluginPino from "esbuild-plugin-pino";
-import { rm } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rm } from "node:fs/promises";
+import { writeBuildIdentity } from "./src/lib/buildIdentity.mjs";
 
 // Plugins (e.g. 'esbuild-plugin-pino') may use `require` to resolve dependencies
 globalThis.require = createRequire(import.meta.url);
 
 const artifactDir = path.dirname(fileURLToPath(import.meta.url));
+
+const runtimeAssets = [
+  ["src/lib/media/captions/transcribe.py", "transcribe.py"],
+  ["../../tools/media-vision/worker.py", "runtime/media-vision/worker.py"],
+  ["../../tools/media-vision/model-manifest.json", "runtime/media-vision/model-manifest.json"],
+  ["../../tools/media-visual-index/clip_worker.py", "runtime/media-visual-index/clip_worker.py"],
+  ["scripts/translation-runtime.py", "runtime/translation-runtime.py"],
+];
+
+const relocateVisionAsset = {
+  name: "media-vision-bundled-asset",
+  setup(builder) {
+    builder.onLoad({ filter: /[/\\]media[/\\]vendors[/\\]imageUnderstandingLocal\.ts$/ }, async ({ path: sourcePath }) => {
+      const source = await readFile(sourcePath, "utf8");
+      const original = '"../../../../../../tools/media-vision/worker.py"';
+      if (source.split(original).length !== 2) throw new Error("Review media vision asset relocation before building");
+      return { contents: source.replace(original, '"./runtime/media-vision/worker.py"'), loader: "ts", resolveDir: path.dirname(sourcePath) };
+    });
+  },
+};
 
 /**
  * Packages that must remain external in EVERY bundle so they are loaded from
@@ -150,21 +171,44 @@ async function buildAll() {
 
   // ── main application bundle ──────────────────────────────────────────────────
   await esbuild({
-    entryPoints: [path.resolve(artifactDir, "src/index.ts")],
+    entryPoints: {
+      index: path.resolve(artifactDir, "src/index.ts"),
+      runMediaDerivativeWorker: path.resolve(artifactDir, "src/scripts/runMediaDerivativeWorker.ts"),
+      runMediaDerivativeCleanup: path.resolve(artifactDir, "src/scripts/runMediaDerivativeCleanup.ts"),
+    },
     platform: "node",
     bundle: true,
     format: "esm",
+    define: { __PORTAVA_PACKAGED_API__: "true" },
     outdir: distDir,
     outExtension: { ".js": ".mjs" },
     logLevel: "info",
     sourcemap: "linked",
     external: EXTERNAL,
     plugins: [
+      relocateVisionAsset,
       // pino relies on workers to handle logging, instead of externalizing it we use a plugin to handle it
       esbuildPluginPino({ transports: ["pino-pretty"] })
     ],
     banner: CJS_BANNER,
   });
+  await esbuild({
+    entryPoints: [path.resolve(artifactDir, "src/lib/media/imageVariants/encoderChild.ts")],
+    platform: "node",
+    bundle: true,
+    format: "esm",
+    outfile: path.join(distDir, "encoderChild.js"),
+    logLevel: "info",
+    sourcemap: "linked",
+    external: EXTERNAL,
+    banner: CJS_BANNER,
+  });
+  for (const [source, target] of runtimeAssets) {
+    const destination = path.join(distDir, target);
+    await mkdir(path.dirname(destination), { recursive: true });
+    await copyFile(path.resolve(artifactDir, source), destination);
+  }
+  console.log(`API artifact fingerprint: ${writeBuildIdentity(distDir)}`);
 }
 
 buildAll().catch((err) => {

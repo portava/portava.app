@@ -31,6 +31,26 @@ import React from 'react';
 import { Alert } from 'react-native';
 import { render, act, waitFor, fireEvent, cleanup, screen } from '@testing-library/react-native';
 
+// NOTE: SDK transport stub only — the picker leases the OBSERVED auth session
+// (src/services/messagingOwnerRequest.ts); a named Discovery viewer alone is
+// not authority. This records onAuthStateChange listeners so beforeEach can deliver
+// SIGNED_IN to the REAL owner observer (services/__tests__/observedOwnerSessionFixture.ts).
+// Plain functions, not jest.fn, so jest.restoreAllMocks() cannot strip them.
+jest.mock('@supabase/supabase-js', () => {
+  const listeners = new Set<any>();
+  const auth = {
+    getSession: async () => ({ data: { session: null } }),
+    refreshSession: async () => ({ data: { session: null } }),
+    listeners,
+    onAuthStateChange: (listener: any) => {
+      listeners.add(listener);
+      return { data: { subscription: { unsubscribe: () => listeners.delete(listener) } } };
+    },
+  };
+  return { ...jest.requireActual('@supabase/supabase-js'), createClient: () => ({ auth }) };
+});
+jest.mock('../../../src/lib/supabase.ts', () => ({ ...jest.requireActual('../../../src/lib/supabase.ts'), isSupabaseConfigured: true }));
+
 // NOTE: exhaustive-by-design stub — services/inputAssistance.ts reaches the
 // Supabase-backed token helper at load.
 jest.mock('../../../src/platform/input-assistance/services/inputAssistance.ts', () => ({
@@ -114,6 +134,8 @@ import SubmitGemScreen, { applyNeighbourhoodPick } from '../submit.tsx';
 import { submitGem } from '../../../src/services/hiddenGems';
 import { requestSuggestions } from '../../../src/platform/input-assistance/services/inputAssistance.ts';
 import { sharedSuggestionCache } from '../../../src/platform/input-assistance/services/suggestionCache.ts';
+import { setDiscoveryViewerFromSession, _resetDiscoveryViewerScopeForTests } from '../../../src/services/discoveryViewerScope.ts';
+import { disposeObservedOwnerSession, seedObservedOwnerSession } from '../../../src/services/__tests__/observedOwnerSessionFixture.ts';
 import type { InputSuggestion } from '../../../src/platform/input-assistance/types/inputSuggestion.ts';
 import { INPUT_CONTEXTS as _SEED_CONTEXTS } from '../../../src/platform/input-assistance/types/inputContext.ts';
 import { _seedPolicyForTests as _seedPolicy } from '../../../src/platform/input-assistance/services/policyStore.ts';
@@ -166,6 +188,8 @@ function served(rows: InputSuggestion[]) {
 }
 
 beforeEach(() => {
+  seedObservedOwnerSession('gem-fixture-owner', 'gem-location-fields-session');
+  setDiscoveryViewerFromSession('gem-fixture-owner');
   mockRequest.mockReset();
   mockRequest.mockImplementation((req: any) => {
     if (req.context === 'neighborhood_picker' && req.text === '') return served([tripDefault]);
@@ -181,6 +205,8 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  _resetDiscoveryViewerScopeForTests();
+  disposeObservedOwnerSession();
   jest.restoreAllMocks();
 });
 

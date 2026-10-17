@@ -34,6 +34,26 @@
 import React from 'react';
 import { cleanup, fireEvent, render, waitFor, act } from '@testing-library/react-native';
 
+// NOTE: SDK transport stub only — the picker leases the OBSERVED auth session
+// (services/messagingOwnerRequest.ts); a named Discovery viewer alone is
+// not authority. This records onAuthStateChange listeners so beforeEach can deliver
+// SIGNED_IN to the REAL owner observer (services/__tests__/observedOwnerSessionFixture.ts).
+// Plain functions, not jest.fn, so jest.restoreAllMocks() cannot strip them.
+jest.mock('@supabase/supabase-js', () => {
+  const listeners = new Set<any>();
+  const auth = {
+    getSession: async () => ({ data: { session: null } }),
+    refreshSession: async () => ({ data: { session: null } }),
+    listeners,
+    onAuthStateChange: (listener: any) => {
+      listeners.add(listener);
+      return { data: { subscription: { unsubscribe: () => listeners.delete(listener) } } };
+    },
+  };
+  return { ...jest.requireActual('@supabase/supabase-js'), createClient: () => ({ auth }) };
+});
+jest.mock('../../../lib/supabase.ts', () => ({ ...jest.requireActual('../../../lib/supabase.ts'), isSupabaseConfigured: true }));
+
 // NOTE: exhaustive-by-design stub — services/inputAssistance.ts reaches the
 // Supabase-backed token helper at load; the picker path calls only requestSuggestions.
 jest.mock('../../../platform/input-assistance/services/inputAssistance.ts', () => ({
@@ -104,6 +124,8 @@ import type { LocalRecentsStorage } from '../../../platform/input-assistance/ser
 import type { InputSuggestion } from '../../../platform/input-assistance/types/inputSuggestion.ts';
 import { INPUT_CONTEXTS as _SEED_CONTEXTS } from '../../../platform/input-assistance/types/inputContext.ts';
 import { _seedPolicyForTests as _seedPolicy, _TEST_ACCOUNT } from '../../../platform/input-assistance/services/policyStore.ts';
+import { setDiscoveryViewerFromSession } from '../../../services/discoveryViewerScope.ts';
+import { disposeObservedOwnerSession, seedObservedOwnerSession } from '../../../services/__tests__/observedOwnerSessionFixture.ts';
 
 // The registry's own vocabulary for the Trip form's field (policyRegistry.ts).
 _seedPolicy(_SEED_CONTEXTS, {
@@ -171,6 +193,8 @@ function fakeStorage(): LocalRecentsStorage & { dump(): string } {
 }
 
 beforeEach(() => {
+  seedObservedOwnerSession(_TEST_ACCOUNT, 'zero-state-session');
+  setDiscoveryViewerFromSession(_TEST_ACCOUNT);
   mockRequest.mockReset();
   mockRecord.mockReset();
   mockLocalRecents.current = [];
@@ -185,6 +209,7 @@ beforeEach(() => {
 afterEach(async () => {
   await cleanup();
   unregisterField(FIELD);
+  disposeObservedOwnerSession();
 });
 
 describe('PR-D2-9 — the picker shows the gateway’s empty-field rows', () => {

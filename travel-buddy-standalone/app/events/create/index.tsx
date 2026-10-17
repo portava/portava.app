@@ -46,6 +46,9 @@ import {
   composeLocalDate, splitIso, defaultEndFor, validateEventTimes,
 } from '../../../src/lib/eventDateTime';
 import { GlobalPlacePicker } from '../../../src/components/selectors/GlobalPlacePicker';
+import { GEO_FIELD_IDS } from '../../../src/platform/input-assistance/geographic/geoFields.ts';
+import { useInputAccountEpoch } from '../../../src/platform/input-assistance/hooks/useInputAccountEpoch.ts';
+import { currentDiscoveryScope } from '../../../src/services/discoveryViewerScope.ts';
 import { Avatar } from '../../../src/components/ui';
 import { color, space, radius, type as t, shadow, aspect, dot} from '../../../src/theme/tokens';
 // Global Input Intelligence — Phase 5 (Creation). Inline, NON-BLOCKING duplicate
@@ -79,6 +82,7 @@ function todayLocalDateStr(): string {
 
 type Step = 'basics' | 'datetime' | 'location' | 'capacity' | 'age_trust' | 'privacy' | 'tickets' | 'invite' | 'preview';
 const STEPS: Step[] = ['basics', 'datetime', 'location', 'capacity', 'age_trust', 'privacy', 'tickets', 'invite', 'preview'];
+const LOCATION_ASSIST_SESSION = { surface: 'event_create' };
 const STEP_LABELS: Record<Step, string> = {
   basics:    'Basics',
   datetime:  'Date & Time',
@@ -121,6 +125,19 @@ export default function CreateEventScreen() {
   const [draftId, setDraftId] = useState<string | null>(draftIdParam ?? null);
   const [draftSavedAt, setDraftSavedAt] = useState<string | null>(null);
   const [locationPickerVisible, setLocationPickerVisible] = useState(false);
+  const locationAccountEpoch = useInputAccountEpoch();
+  const locationLifetime = useRef({ generation: 0, open: false });
+  const locationGeneration = locationLifetime.current.generation;
+  const locationSelectionCurrent = () => locationLifetime.current.generation === locationGeneration
+    && currentDiscoveryScope().epoch === locationAccountEpoch;
+  useEffect(() => {
+    locationLifetime.current.open = false;
+    setLocationPickerVisible(false);
+    return () => {
+      locationLifetime.current.generation += 1;
+      locationLifetime.current.open = false;
+    };
+  }, [draftIdParam, locationAccountEpoch, step]);
   const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Step 1: Basics ──────────────────────────────────────────────────────────
@@ -962,7 +979,11 @@ export default function CreateEventScreen() {
               <Text style={styles.label}>Venue or location *</Text>
               <Pressable
                 style={[styles.input, styles.locationRow]}
-                onPress={() => setLocationPickerVisible(true)}
+                onPress={() => {
+                  locationLifetime.current.generation += 1;
+                  locationLifetime.current.open = true;
+                  setLocationPickerVisible(true);
+                }}
               >
                 <MapPin size={14} color={color.mute} />
                 <Text style={[styles.locationText, !locationName && styles.placeholder]} numberOfLines={1}>
@@ -971,26 +992,40 @@ export default function CreateEventScreen() {
                 <ChevronRight size={14} color={color.mute} />
               </Pressable>
               <GlobalPlacePicker
+                key={`${draftIdParam ?? 'new'}:${locationAccountEpoch}:${locationGeneration}`}
                 visible={locationPickerVisible}
                 title="Event location"
                 placeholder="City, venue or address…"
                 allowGPS
                 usedFor="event_location"
+                assistContext="event_location"
+                assistFieldId={GEO_FIELD_IDS.eventLocation}
+                sessionContext={LOCATION_ASSIST_SESSION}
                 onSelect={(place) => {
+                  if (!locationLifetime.current.open || !locationSelectionCurrent()) return;
+                  locationLifetime.current.open = false;
                   setLocationName(place.displayName);
                   // QA round 2, bug 6 — routed through the shared resolvePickedPlace
                   // rule (the same one gems/submit uses). Blank fields fill silently;
                   // a divergent typed spelling is reported as a CONFLICT the user is
                   // asked about, instead of being silently kept — which let divergent
                   // city/country spellings persist. Manual override is preserved.
-                  const { fill, conflict, hasConflict } = resolvePickedPlace(place, { city, country });
+                  const canonicalVenue = place.source === 'canonical' && place.type === 'place';
+                  const details = canonicalVenue ? { ...place, name: place.city ?? '' } : place;
+                  const { fill, conflict, hasConflict } = resolvePickedPlace(details, { city, country });
                   if (fill.city) { setCity(fill.city); }
                   if (fill.country) { setCountry(fill.country); }
                   // Coordinates + timezone are §17 dependent fields, not free text,
                   // so they bind directly from the resolved place.
-                  if (place.lat != null) setLocationLat(place.lat);
-                  if (place.lng != null) setLocationLng(place.lng);
-                  if (place.timezone) setLocationTimezone(place.timezone);
+                  if (place.source === 'canonical') {
+                    setLocationLat(place.lat ?? undefined);
+                    setLocationLng(place.lng ?? undefined);
+                    setLocationTimezone(place.timezone ?? null);
+                  } else {
+                    if (place.lat != null) setLocationLat(place.lat);
+                    if (place.lng != null) setLocationLng(place.lng);
+                    if (place.timezone) setLocationTimezone(place.timezone);
+                  }
                   setLocationPickerVisible(false);
                   scheduleSave();
                   if (hasConflict) {
@@ -1002,6 +1037,7 @@ export default function CreateEventScreen() {
                         {
                           text: 'Use this place',
                           onPress: () => {
+                            if (!locationSelectionCurrent()) return;
                             if (conflict.city) setCity(conflict.city);
                             if (conflict.country) setCountry(conflict.country);
                             scheduleSave();
@@ -1011,7 +1047,12 @@ export default function CreateEventScreen() {
                     );
                   }
                 }}
-                onClose={() => setLocationPickerVisible(false)}
+                onClose={() => {
+                  if (!locationSelectionCurrent()) return;
+                  if (locationLifetime.current.open) locationLifetime.current.generation += 1;
+                  locationLifetime.current.open = false;
+                  setLocationPickerVisible(false);
+                }}
               />
               <Text style={styles.label}>City (optional — auto-filled from location)</Text>
               <TextInput

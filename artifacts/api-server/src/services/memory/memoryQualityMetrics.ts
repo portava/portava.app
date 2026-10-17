@@ -45,18 +45,18 @@
  * THE SHOWN PLACE IS HELD AS A KEYED DIGEST (`placeDigest`), not as text; the
  * capture window is held as two instants.
  *
- * THE TIME HALF HAS NO CORRECTION SURFACE. The app cannot change a kept
- * Memory's time: `UpdateMemoryInput`
- * (travel-buddy-standalone/src/services/memories.ts) has no startsAt or
- * endsAt, and app/memory/edit.tsx sends neither. So a wrong time that an owner
- * sees can never be counted as corrected, except through the bare API. Counting
- * time assertions in the denominator would make the rate low BY
- * CONSTRUCTION. That is the "0 that looks like 'measured, and fine'" the kernel
- * module's header refuses. So the overall figure is UNPRODUCIBLE while any
- * surfaced kind has no correction surface (`CORRECTION_SURFACES`). Both kinds
- * still report their counts, and the place half reports its own rate. A guard
- * test fails if the client grows a time field without this declaration being
- * updated.
+ * TIME CORRECTION IS AN EXPLICIT OWNER EDIT. app/memory/edit.tsx now sends
+ * touched startsAt/endsAt fields through the existing authenticated PATCH.
+ * Dates, times and UTC offsets are supplied by the owner, never inferred;
+ * explicit null clears a value and untouched fields are omitted. Mounted
+ * editor tests exercise the real client transport, and route tests preserve
+ * the original episode and capture evidence while changing the kept Memory.
+ * This availability declaration does not ratify the definitions above, add a
+ * time-correction ledger or change the metric's formula or population. The
+ * overall figure remains UNPRODUCIBLE while a decided kind has no correction
+ * surface (`CORRECTION_SURFACES`). A source guard pins the connected controls,
+ * PATCH input and this declaration together; the missing-surface refusal is
+ * still tested independently of today's available controls.
  *
  * ── do_again_conversion ──────────────────────────────────────────────────────
  * A PLAN is counted when GET /memories/:id/actions/DO_AGAIN serves one
@@ -104,6 +104,7 @@
  */
 import { createHmac, randomBytes } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { z as zod } from "zod";
 import { logger as rootLogger } from "../../lib/logger.js";
 import { isTableAbsentError } from "../../lib/tableAbsence.js";
 
@@ -116,7 +117,7 @@ export const MEMORY_QUALITY_METRICS = {
 } as const;
 
 /** Bumped on any change to how a figure below is derived (§28.13). */
-export const MEMORY_QUALITY_METRICS_ENGINE_VERSION = "memory-quality-metrics@1";
+export const MEMORY_QUALITY_METRICS_ENGINE_VERSION = "memory-quality-metrics@2";
 
 /** The most surfaced episodes / Do Again plans one process remembers. Oldest go first. */
 export const MAX_TRACKED_SURFACED = 5000;
@@ -133,17 +134,17 @@ export const INFERRED_ASSERTION_KINDS: readonly InferredAssertionKind[] = ["time
 /**
  * Where an owner can correct each kind of inferred assertion, or null when no
  * client surface can. Read by `computeFalseMemoryRate`, and pinned against the
- * client source by memoryQualityMetrics.test.ts. If the app gains a time
- * field, that test fails until `time` names the surface.
+ * client source by memoryQualityMetrics.test.ts. Both client surfaces have
+ * mounted transport tests; a type declaration alone is not a correction UI.
  */
 export const CORRECTION_SURFACES: Readonly<Record<InferredAssertionKind, string | null>> = {
   place: "travel-buddy-standalone/app/memory/edit.tsx -> PATCH /api/memories/:id (locationCity / locationCountry)",
-  time: null,
+  time: "travel-buddy-standalone/app/memory/edit.tsx -> PATCH /api/memories/:id (startsAt / endsAt)",
 };
 
 export const NO_CORRECTION_SURFACE: Readonly<Record<InferredAssertionKind, string>> = {
   place: "no client surface corrects a kept Memory's place",
-  time: "no client surface corrects a kept Memory's time: UpdateMemoryInput (travel-buddy-standalone/src/services/memories.ts) has no startsAt/endsAt, so a wrong time an owner sees can never be counted as corrected and the rate would be low by construction",
+  time: "no client surface corrects a kept Memory's time",
 };
 
 // ── Clock (a seam for tests) ─────────────────────────────────────────────────
@@ -587,94 +588,136 @@ function chunks<T>(xs: readonly T[], n: number): T[][] {
 
 type Read<T> = { ok: true; value: T } | { ok: false; blockedBy: string };
 
-async function readLinks(sc: SupabaseClient, snapshot: readonly SurfacedCandidate[]): Promise<Read<Map<string, string[]>>> {
-  const ownerOf = new Map(snapshot.map((s) => [s.episodeId, s.ownerId] as const));
-  const links = new Map<string, string[]>();
-  for (const ids of chunks(snapshot.map((s) => s.episodeId), ID_CHUNK)) {
-    const { data, error } = await sc
-      .from("memory_evidence")
-      .select("episode_id, source_id, user_id")
-      .eq("source_table", "memories")
-      .eq("truth_level", "asserted")
-      .in("episode_id", ids)
-      .limit(READ_PAGE);
-    if (error) return { ok: false, blockedBy: "memory_evidence could not be read, so which candidates were kept is unknown" };
-    const rows = (data as Array<{ episode_id: string; source_id: string; user_id: string }> | null) ?? [];
-    if (rows.length >= READ_PAGE) return { ok: false, blockedBy: "the memory_evidence read may be truncated, so which candidates were kept is incomplete" };
-    for (const r of rows) {
-      // The owner's own keep only: a link written under another user is not this owner's word.
-      if (ownerOf.get(String(r.episode_id)) !== String(r.user_id)) continue;
-      const list = links.get(String(r.episode_id)) ?? [];
-      list.push(String(r.source_id));
-      links.set(String(r.episode_id), list);
-    }
+const falseMemoryUuidReadSchema = zod.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+const falseMemoryEpisodesReadSchema = zod.array(zod.object({
+  id: falseMemoryUuidReadSchema,
+  user_id: falseMemoryUuidReadSchema,
+  state: zod.string(),
+}));
+const falseMemoryLinksReadSchema = zod.array(zod.object({
+  episode_id: falseMemoryUuidReadSchema,
+  user_id: falseMemoryUuidReadSchema,
+  source_id: zod.string(),
+}));
+const falseMemoryKeptReadSchema = zod.array(zod.object({
+  id: falseMemoryUuidReadSchema,
+  owner_id: falseMemoryUuidReadSchema,
+  state: zod.string().nullable(),
+  starts_at: zod.string().nullable(),
+  ends_at: zod.string().nullable(),
+  location_city: zod.string().nullable(),
+  location_country: zod.string().nullable(),
+}));
+const falseMemoryMergeReadSchema = zod.array(zod.object({
+  new_memory_id: falseMemoryUuidReadSchema,
+}));
+
+async function guardFalseMemorySource<T>(source: string, read: () => Promise<Read<T>>): Promise<Read<T>> {
+  try {
+    return await read();
+  } catch {
+    return { ok: false, blockedBy: `the false_memory_rate read failed: ${source} could not be read` };
   }
-  return { ok: true, value: links };
+}
+
+async function readLinks(sc: SupabaseClient, snapshot: readonly SurfacedCandidate[]): Promise<Read<Map<string, string[]>>> {
+  return guardFalseMemorySource("memory_evidence", async () => {
+    const ownerOf = new Map(snapshot.map((s) => [s.episodeId, s.ownerId] as const));
+    const links = new Map<string, string[]>();
+    for (const ids of chunks(snapshot.map((s) => s.episodeId), ID_CHUNK)) {
+      const { data, error } = await sc
+        .from("memory_evidence")
+        .select("episode_id, source_id, user_id")
+        .eq("source_table", "memories")
+        .eq("truth_level", "asserted")
+        .in("episode_id", ids)
+        .limit(READ_PAGE);
+      if (error !== null) return { ok: false, blockedBy: "memory_evidence could not be read, so which candidates were kept is unknown" };
+      if (Array.isArray(data) && data.length >= READ_PAGE) return { ok: false, blockedBy: "the memory_evidence read may be truncated, so which candidates were kept is incomplete" };
+      const rows = falseMemoryLinksReadSchema.safeParse(data);
+      if (!rows.success) return { ok: false, blockedBy: "memory_evidence returned malformed rows, so which candidates were kept is unknown" };
+      for (const row of rows.data) {
+        if (ownerOf.get(row.episode_id) !== row.user_id) continue;
+        const list = links.get(row.episode_id) ?? [];
+        list.push(row.source_id);
+        links.set(row.episode_id, list);
+      }
+    }
+    return { ok: true, value: links };
+  });
 }
 
 /** The surfaced episodes as stored now. A row that is gone is an erased episode, not an undecided one. */
 async function readEpisodes(sc: SupabaseClient, snapshot: readonly SurfacedCandidate[]): Promise<Read<Map<string, EpisodeState>>> {
-  const out = new Map<string, EpisodeState>();
-  for (const ids of chunks(snapshot.map((s) => s.episodeId), ID_CHUNK)) {
-    const { data, error } = await sc
-      .from("memory_episodes")
-      .select("id, user_id, state")
-      .in("id", ids)
-      .limit(READ_PAGE);
-    if (error) return { ok: false, blockedBy: "memory_episodes could not be read, so which candidates were decided is unknown" };
-    // No truncation check: `id` is the primary key and a chunk names at most ID_CHUNK (100) ids, below READ_PAGE.
-    for (const r of (data as Array<{ id: string; user_id: string; state: string }> | null) ?? []) {
-      out.set(String(r.id), { ownerId: String(r.user_id), state: String(r.state) });
+  return guardFalseMemorySource("memory_episodes", async () => {
+    const out = new Map<string, EpisodeState>();
+    for (const ids of chunks(snapshot.map((s) => s.episodeId), ID_CHUNK)) {
+      const { data, error } = await sc
+        .from("memory_episodes")
+        .select("id, user_id, state")
+        .in("id", ids)
+        .limit(READ_PAGE);
+      if (error !== null) return { ok: false, blockedBy: "memory_episodes could not be read, so which candidates were decided is unknown" };
+      const rows = falseMemoryEpisodesReadSchema.safeParse(data);
+      if (!rows.success) return { ok: false, blockedBy: "memory_episodes returned malformed rows, so which candidates were decided is unknown" };
+      for (const row of rows.data) {
+        out.set(row.id, { ownerId: row.user_id, state: row.state });
+      }
     }
-  }
-  return { ok: true, value: out };
+    return { ok: true, value: out };
+  });
 }
 
 async function readKeptMemories(sc: SupabaseClient, ids: readonly string[]): Promise<Read<Map<string, KeptMemoryState>>> {
-  const out = new Map<string, KeptMemoryState>();
-  for (const chunk of chunks(ids, ID_CHUNK)) {
-    const { data, error } = await sc
-      .from("memories")
-      .select("id, owner_id, state, starts_at, ends_at, location_city, location_country")
-      .in("id", chunk)
-      .limit(READ_PAGE);
-    if (error) return { ok: false, blockedBy: "memories could not be read, so whether a kept candidate was corrected is unknown" };
-    // No truncation check: `id` is the primary key and a chunk names at most ID_CHUNK (100) ids, below READ_PAGE.
-    const rows = (data as Array<Record<string, unknown>> | null) ?? [];
-    for (const r of rows) {
-      out.set(String(r.id), {
-        id: String(r.id),
-        ownerId: String(r.owner_id),
-        state: r.state == null ? null : String(r.state),
-        startsAt: r.starts_at == null ? null : String(r.starts_at),
-        endsAt: r.ends_at == null ? null : String(r.ends_at),
-        city: r.location_city == null ? null : String(r.location_city),
-        country: r.location_country == null ? null : String(r.location_country),
-      });
+  return guardFalseMemorySource("memories", async () => {
+    const out = new Map<string, KeptMemoryState>();
+    for (const chunk of chunks(ids, ID_CHUNK)) {
+      const { data, error } = await sc
+        .from("memories")
+        .select("id, owner_id, state, starts_at, ends_at, location_city, location_country")
+        .in("id", chunk)
+        .limit(READ_PAGE);
+      if (error !== null) return { ok: false, blockedBy: "memories could not be read, so whether a kept candidate was corrected is unknown" };
+      const rows = falseMemoryKeptReadSchema.safeParse(data);
+      if (!rows.success) return { ok: false, blockedBy: "memories returned malformed rows, so whether a kept candidate was corrected is unknown" };
+      for (const row of rows.data) {
+        out.set(row.id, {
+          id: row.id,
+          ownerId: row.owner_id,
+          state: row.state,
+          startsAt: row.starts_at,
+          endsAt: row.ends_at,
+          city: row.location_city,
+          country: row.location_country,
+        });
+      }
     }
-  }
-  return { ok: true, value: out };
+    return { ok: true, value: out };
+  });
 }
 
 /** Memories that absorbed another. 3676 unapplied ⇒ the table is absent ⇒ no merge can have happened. */
 async function readMergeSurvivors(sc: SupabaseClient, ids: readonly string[]): Promise<Read<Set<string>>> {
-  const out = new Set<string>();
-  for (const chunk of chunks(ids, ID_CHUNK)) {
-    const { data, error } = await sc
-      .from("memory_id_redirects")
-      .select("new_memory_id")
-      .eq("reason", "merged")
-      .in("new_memory_id", chunk)
-      .limit(READ_PAGE);
-    if (error) {
-      if (isTableAbsentError(error)) return { ok: true, value: out };
-      return { ok: false, blockedBy: "memory_id_redirects could not be read, so a merged Memory cannot be told from a corrected one" };
+  return guardFalseMemorySource("memory_id_redirects", async () => {
+    const out = new Set<string>();
+    for (const chunk of chunks(ids, ID_CHUNK)) {
+      const { data, error } = await sc
+        .from("memory_id_redirects")
+        .select("new_memory_id")
+        .eq("reason", "merged")
+        .in("new_memory_id", chunk)
+        .limit(READ_PAGE);
+      if (error !== null) {
+        if (isTableAbsentError(error)) return { ok: true, value: out };
+        return { ok: false, blockedBy: "memory_id_redirects could not be read, so a merged Memory cannot be told from a corrected one" };
+      }
+      if (Array.isArray(data) && data.length >= READ_PAGE) return { ok: false, blockedBy: "the memory_id_redirects read may be truncated" };
+      const rows = falseMemoryMergeReadSchema.safeParse(data);
+      if (!rows.success) return { ok: false, blockedBy: "memory_id_redirects returned malformed rows, so a merged Memory cannot be told from a corrected one" };
+      for (const row of rows.data) out.add(row.new_memory_id);
     }
-    const rows = (data as Array<{ new_memory_id: string }> | null) ?? [];
-    if (rows.length >= READ_PAGE) return { ok: false, blockedBy: "the memory_id_redirects read may be truncated" };
-    for (const r of rows) out.add(String(r.new_memory_id));
-  }
-  return { ok: true, value: out };
+    return { ok: true, value: out };
+  });
 }
 
 /** false_memory_rate over what this process surfaced, corrected as the database says now. Never throws. */
@@ -701,6 +744,12 @@ export async function readFalseMemoryRate(sc: SupabaseClient): Promise<FalseMemo
   }
 }
 
+const savedPlacesReadSchema = zod.array(zod.object({
+  user_id: zod.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i),
+  place_id: zod.string().nullable(),
+  saved_at: zod.string().datetime({ offset: true }).refine((value) => Number.isFinite(Date.parse(value))),
+}));
+
 /** do_again_conversion over the plans this process served, converted as trip_saved_places says now. Never throws. */
 export async function readDoAgainConversion(sc: SupabaseClient): Promise<DoAgainConversionResult> {
   const nowMs = clock();
@@ -726,13 +775,13 @@ export async function readDoAgainConversion(sc: SupabaseClient): Promise<DoAgain
         .gte("saved_at", new Date(from).toISOString())
         .lt("saved_at", new Date(to).toISOString())
         .limit(READ_PAGE);
-      if (error) return unreadable("trip_saved_places could not be read, so no conversion is reported");
-      const rows = (data as Array<{ user_id: string; place_id: string | null; saved_at: string }> | null) ?? [];
-      if (rows.length >= READ_PAGE) return unreadable("the trip_saved_places read may be truncated, so no conversion is reported");
-      for (const r of rows) {
-        const savedAtMs = Date.parse(String(r.saved_at));
-        if (r.place_id == null || !Number.isFinite(savedAtMs)) continue;
-        saves.push({ userId: String(r.user_id), placeId: String(r.place_id), savedAtMs });
+      if (error !== null) return unreadable("trip_saved_places could not be read, so no conversion is reported");
+      if (Array.isArray(data) && data.length >= READ_PAGE) return unreadable("the trip_saved_places read may be truncated, so no conversion is reported");
+      const rows = savedPlacesReadSchema.safeParse(data);
+      if (!rows.success) return unreadable("trip_saved_places returned malformed rows, so no conversion is reported");
+      for (const row of rows.data) {
+        if (row.place_id === null) continue;
+        saves.push({ userId: row.user_id, placeId: row.place_id, savedAtMs: Date.parse(row.saved_at) });
       }
     }
     return computeDoAgainConversion({ plans: snapshot, saves, nowMs, windowMs, evicted });

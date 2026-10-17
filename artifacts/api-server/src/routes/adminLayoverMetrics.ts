@@ -34,7 +34,7 @@ import { sendError } from "../lib/http.js"; import { asyncHandler } from "../lib
 import { requireAdmin } from "../lib/requireAdmin.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { computeLayoverMetrics, type LayoverEventRow } from "../services/airport/layoverObservability.js"; import { recommendationContractWindow, recommendationContractCounters } from "../services/airport/layoverContractMonitor.js"; import { replayStoredComputations, type ReplaySummary } from "../services/airport/layoverReplay.js";
-import { decisionsInWindow, storedComputationsInWindow } from "../services/layover/LayoverDecisionStore.js";
+import { countedLayoverWindow, decisionsInWindow, storedComputationsInWindow } from "../services/layover/LayoverDecisionStore.js";
 import { staleFallbackCounters } from "../services/airport/AirportProfileService.js"; import { layoverRankingWindow, layoverRankingCounters } from "../services/airport/layoverRankingMode.js"; import { LAYOVER_LIVE_FLAGS_WITHOUT_SHADOW, LAYOVER_SHADOW_ARMS, resolveLayoverRolloutMode } from "../lib/layoverRolloutMode.js"; import { describeCohort } from "../lib/discoveryCohort.js"; // census L78/L242 — on one line, so every line cited below holds
 
 const router = Router();
@@ -43,6 +43,8 @@ const router = Router();
 export const EVENT_WINDOW_LIMIT = 50_000;
 export const METRICS_MAX_DAYS = 90;
 export const METRICS_DEFAULT_DAYS = 7;
+const EVENT_COLUMNS = "session_id, event_type, created_at";
+const GENERATION_COLUMNS = "created_at, metadata";
 
 /** `?days=` as an integer in 1..90; anything else is the default. */
 export function metricsWindowDays(raw: unknown): number {
@@ -62,18 +64,18 @@ router.get("/admin/layover/metrics", asyncHandler(async (req, res) => {
 
   const ev = await sc
     .from("layover_events")
-    .select("session_id, event_type, created_at")
+    .select(EVENT_COLUMNS, { count: "exact" })
     .gte("created_at", fromIso)
     .lt("created_at", toIso)
     .order("created_at", { ascending: false })
     .limit(EVENT_WINDOW_LIMIT + 1);
-  if (ev.error) {
+  const eventWindow = countedLayoverWindow(ev, EVENT_COLUMNS, EVENT_WINDOW_LIMIT);
+  if (!eventWindow) {
     sendError(res, "degraded_unavailable", "layover_events could not be read, so no metric is reported.");
     return;
   }
-  const evRows = (ev.data ?? []) as Array<{ session_id: string; event_type: string; created_at: string }>;
-  const eventsTruncated = evRows.length > EVENT_WINDOW_LIMIT;
-  const events: LayoverEventRow[] = evRows.slice(0, EVENT_WINDOW_LIMIT).map((r) => ({
+  const eventsTruncated = eventWindow.truncated;
+  const events: LayoverEventRow[] = eventWindow.rows.map((r) => ({
     sessionId: String(r.session_id), eventType: String(r.event_type), at: String(r.created_at),
   }));
 
@@ -83,20 +85,22 @@ router.get("/admin/layover/metrics", asyncHandler(async (req, res) => {
   // whole audit metadata, which the counters above never need.
   const gen = await sc
     .from("layover_events")
-    .select("created_at, metadata")
+    .select(GENERATION_COLUMNS, { count: "exact" })
     .eq("event_type", "recommendation_generated")
     .gte("created_at", fromIso)
     .lt("created_at", toIso)
     .order("created_at", { ascending: false })
     .limit(CONTRACT_EVENT_LIMIT + 1);
-  if (gen.error) {
+  const generationWindow = countedLayoverWindow(gen, GENERATION_COLUMNS, CONTRACT_EVENT_LIMIT);
+  if (!generationWindow || generationWindow.rows.some((row) => row.metadata === null
+    || typeof row.metadata !== "object" || Array.isArray(row.metadata))) {
     sendError(res, "degraded_unavailable", "layover_events could not be read, so no metric is reported.");
     return;
   }
-  const genRows = (gen.data ?? []) as Array<{ metadata: unknown }>;
+  const genRows = generationWindow.rows;
   const contract = recommendationContractWindow(
-    genRows.slice(0, CONTRACT_EVENT_LIMIT).map((r) => r.metadata),
-    genRows.length > CONTRACT_EVENT_LIMIT,
+    genRows.map((r) => r.metadata),
+    generationWindow.truncated,
   );
 
   const persistenceOn = await isFlagEnabled(sc, "layover_decision_persistence_enabled");
@@ -132,8 +136,8 @@ router.get("/admin/layover/metrics", asyncHandler(async (req, res) => {
   // read of `layover_events`. A generation with no `ranking` key ran legacy.
   // Counts only — no session id, user id, card or order leaves this route.
   const ranking = layoverRankingWindow(
-    genRows.slice(0, CONTRACT_EVENT_LIMIT).map((r) => r.metadata),
-    genRows.length > CONTRACT_EVENT_LIMIT,
+    genRows.map((r) => r.metadata),
+    generationWindow.truncated,
   );
   const rankingMode = await resolveLayoverRolloutMode(sc, "ranking_objective");
 

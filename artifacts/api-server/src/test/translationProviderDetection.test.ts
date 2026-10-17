@@ -15,6 +15,7 @@ import {
   type TranslationStatusValue,
 } from '../services/messageTranslation.js';
 import { makeSchemaStrictClient } from './helpers/schemaStrictSupabase.js';
+import { makeFailClosedClient } from './helpers/failClosedSupabase.js';
 
 const MESSAGE_ID = '11111111-1111-4111-8111-111111111111';
 const SENDER_ID = '22222222-2222-4222-8222-222222222222';
@@ -42,10 +43,16 @@ function responses(...results: unknown[]) {
 
 async function translate(senderPreferenceUnreadable = false) {
   const database = makeSchemaStrictClient({
-    messages: [{ id: MESSAGE_ID, body: ORIGINAL }],
-    message_thread_members: [{ thread_id: THREAD_ID, user_id: RECIPIENT_ID }],
+    messages: [{ id: MESSAGE_ID, body: ORIGINAL, thread_id: THREAD_ID, sender_id: SENDER_ID,
+      created_at: '2026-10-01T00:00:00.000Z', edited_at: null, deleted_at: null, ciphertext: null,
+      original_language: null, language_detection_source: null }],
+    message_threads: [{ id: THREAD_ID, is_e2ee: false }],
+    message_thread_members: [{ thread_id: THREAD_ID, user_id: RECIPIENT_ID, left_at: null }],
     profiles: [{ id: RECIPIENT_ID, preferred_language: 'en', auto_translate_messages: true }],
   }, { unchecked: ['message_translations'] });
+  const originalFrom = database.from.bind(database);
+  const blocks = makeFailClosedClient({ rows: { blocks: [] } });
+  database.from = table => table === 'blocks' ? blocks.from(table) : originalFrom(table);
   await translateMessageForThread(database as unknown as SupabaseClient, {
     messageId: MESSAGE_ID,
     body: ORIGINAL,

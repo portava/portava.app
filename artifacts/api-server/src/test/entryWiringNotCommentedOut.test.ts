@@ -54,7 +54,11 @@ function callsAndMounts(sf: ts.SourceFile): { called: Set<string>; mounted: Set<
     if (ts.isCallExpression(n)) {
       if (ts.isIdentifier(n.expression)) called.add(n.expression.text);
       if (ts.isPropertyAccessExpression(n.expression) && n.expression.name.text === "use") {
-        for (const a of n.arguments) if (ts.isIdentifier(a)) mounted.add(a.text);
+        for (const a of n.arguments) {
+          if (ts.isIdentifier(a)) mounted.add(a.text);
+          // `router.use(createXRouter(...))` mounts the factory's product: the factory counts as mounted.
+          else if (ts.isCallExpression(a) && ts.isIdentifier(a.expression)) mounted.add(a.expression.text);
+        }
       }
     }
     ts.forEachChild(n, visit);

@@ -52,7 +52,7 @@ import { recordImpressionDistributionStats } from "../services/ranking/Discovery
 // three without a migration. See lib/discoveryRecommendationId for why the
 // Compass token could not be reused as-is.
 import { recommendationIdFor } from "./discoveryRecommendationId.js";
-import { DISCOVERY_MODEL_VERSION } from "./discoveryRankProvenance.js";  import { canonicalServedAt, serveIdFor, screenFeaturesForStorage, isDuplicateExposureReplay } from "./discoveryRecommendationRecord.js";  import { isMissingRecommendationIdSchema, noteRecommendationIdAbsent, recommendationIdSchemaAbsent, reportRankEventsRejection } from "./rankEventsProvenance.js";  /* DV-40 / §41.1. ON ONE LINE ON PURPOSE: eleven anchored doc citations point at fixed line numbers in this file (`:70`, `:415`, `:421`, `:426`, `:430`, `:444`, `:450`, `:466`, `:475`, `:477`), most of them in docs/architecture/census-discovery.md, and check:doc-citations fails an anchor whose text has moved. Inserting a line here would red that guard with no fix available in this lane. See the note at the foot of this file. */
+import { DISCOVERY_MODEL_VERSION } from "./discoveryRankProvenance.js";  import { canonicalServedAt, serveIdFor, screenFeaturesForStorage, discoveryExposureRowIdFor, isDuplicateDiscoveryExposureRow } from "./discoveryRecommendationRecord.js";  import { isMissingRecommendationIdSchema, noteRecommendationIdAbsent, recommendationIdSchemaAbsent, reportRankEventsRejection } from "./rankEventsProvenance.js";  /* DV-40 / §41.1. ON ONE LINE ON PURPOSE: eleven anchored doc citations point at fixed line numbers in this file (`:70`, `:415`, `:421`, `:426`, `:430`, `:444`, `:450`, `:466`, `:475`, `:477`), most of them in docs/architecture/census-discovery.md, and check:doc-citations fails an anchor whose text has moved. Inserting a line here would red that guard with no fix available in this lane. See the note at the foot of this file. */
 
 /** Feature flag gating every write in this module. Absent row ⇒ disabled. */
 export const DISCOVERY_SERVE_LOG_FLAG = "discovery_serve_log_enabled";
@@ -402,7 +402,7 @@ export async function logDiscoveryServe(
     }
 
     const rows = items.map((item, idx) => ({
-      user_id:    userId,
+      user_id:    userId, ...(recommendationIdSchemaAbsent() ? {} : { id: discoveryExposureRowIdFor(recommendationIdFor({ userId, sessionId: effectiveSessionId, servedAt, surface: "discovery", position: idx, itemId: item.id })) }),
       item_id:    item.id,
       item_kind:  item.kind !== undefined ? item.kind : itemKindFor(item.id),
       position:   idx,  ...(recommendationIdSchemaAbsent() ? {} : { recommendation_id: recommendationIdFor({ userId, sessionId: effectiveSessionId, servedAt, surface: "discovery", position: idx, itemId: item.id }), schema_version: DISCOVERY_EVENT_SCHEMA_VERSION, privacy_class: DISCOVERY_EVENT_PRIVACY_CLASS }),  // DV-38/DV-39 (§48): 2890's two columns are now WRITTEN, not defaulted, and ride the same latch — a database without 2890 answers 42703/PGRST204 exactly as one without 2891 does, and the legacy retry below omits all three. `04` §5 / census DV-40, DV-46, DSV2-12 — 2891's COLUMN, carrying exactly the token features.recommendationId carries below. A token in a jsonb key is a VALUE; a token in a column is a JOIN KEY that an index can arbitrate. 2891 was applied to portava-ci and to production on 2026-09-14, and that deployment record measured what a column with no writer is worth: "rows carrying a recommendation_id — 0". features.recommendationId is KEPT rather than moved, because every row written before this line carries it there and routes/rankEvents.ts reads column -> features -> derived in that order. The conditional spread is the same idiom routes/rankEvents.ts uses at its two update sites: once the latch says 2891 is absent here, the column is OMITTED from the payload rather than sent and retried, so the failed round-trip is paid once per process and not once per serve.
@@ -440,13 +440,13 @@ export async function logDiscoveryServe(
       session_id: effectiveSessionId,
     }));
 
-    attemptedItems = rows.length; await logDiscoveryServeRequest(sc, { userId, sessionId: effectiveSessionId, servedAt, servePoint, route, items, context: screened.kept });  // DV-06 — this request's own row, before its items'
+    attemptedItems = rows.length; const settleReplay = (error: unknown) => settleServeReplay(error, rows); await logDiscoveryServeRequest(sc, { userId, sessionId: effectiveSessionId, servedAt, servePoint, route, items, context: screened.kept });  // DV-06 — this request's own row, before its items'
     const { error } = await sc.from("rank_events").insert(rows);
     // DV-40's degrade path, and it is load-bearing: on a database WITHOUT 2891 the
     // column above is a PGRST204 and EVERY row of this serve is lost, which would
     // make adding a join key cost the telemetry it was added to make joinable. So
     // the batch is redone ONCE in the pre-2891 shape — column omitted, not nulled.
-    const settled = error && isMissingRecommendationIdSchema(error) ? await retryServeRowsWithoutToken(sc, rows, { servePoint, route }) : settleReplay(error);  if (!settled.duplicate)  // DV-37 (§48): a REPLAY of this exact serve collides whole on 2891's (recommendation_id, outcome) index and writes nothing — the idempotency guarantee working, so it is neither a rejection nor a second landing, and it moves no denominator.
+    const settled = error && isMissingRecommendationIdSchema(error) ? await retryServeRowsWithoutToken(sc, rows, { servePoint, route }) : settleReplay(error);  if (!settled.duplicate)  // DV-37 (§48): a REPLAY of this exact serve collides whole on its stable primary key or 2891's index and writes nothing — the idempotency guarantee working, so it is neither a rejection nor a second landing, and it moves no denominator.
     recordServeLogOutcome({
       outcome: settled.error ? "rejected" : "landed",
       servedItems: rows.length,
@@ -512,13 +512,13 @@ export async function logDiscoveryServe(
 // one item was tapped would, under DO NOTHING, skip the untouched rows and
 // RE-INSERT the tapped item's impression — a second exposure for one serve,
 // exactly the inflation DV-37 exists to prevent. The plain multi-row insert is
-// one statement, so the untouched rows' collisions refuse the whole replay and
-// the tapped item is not resurrected either (pinned on a real database by
-// src/test/db/discoveryTelemetryIdempotency.db.test.ts). The boundary left,
-// stated rather than hidden: a replay arriving after EVERY row of the serve
-// has moved past 'impression' collides with nothing and would land. The serve
-// log is written once, right after the response and before any outcome can
-// arrive, and nothing in the tree retries it.
+// one statement, so the untouched rows' collisions refuse the whole replay.
+// New provenance-bearing rows also use a deterministic UUID primary key from
+// their existing recommendation token: EVERY outcome can advance and that
+// immutable key still refuses a replay, including a concurrent delayed copy.
+// Historical random-id rows and the pre-2891 fallback do not gain this guard.
+// Request receipts cannot replace it: a receipt can land before an item insert
+// fails, and skipping every duplicate receipt would prevent item recovery.
 //
 // A measured second reason: seventeen route suites fake this write as
 // `.insert` and capture it; the property is proved on the harness instead of
@@ -579,12 +579,12 @@ async function retryServeRowsWithoutToken(
 /**
  * DV-37 — read an insert error for what it is.
  *
- * A 23505 on 2891's exposure index means this exact serve is already written:
- * `error` becomes null and `duplicate` true. Anything else is returned as it
- * came, including a 23505 on some other constraint, which is a real refusal.
+ * A 23505 on 2891's index or this batch's deterministic exposure primary key
+ * means it already landed: `error` becomes null and `duplicate` true. Other
+ * failures, including unrecognised primary-key collisions, remain refusals.
  */
-function settleReplay(error: unknown): { error: unknown; duplicate: boolean } {
-  if (error && isDuplicateExposureReplay(error)) return { error: null, duplicate: true };
+function settleServeReplay(error: unknown, rows: ReadonlyArray<Record<string, unknown>>): { error: unknown; duplicate: boolean } {
+  if (error && isDuplicateDiscoveryExposureRow(error, rows)) return { error: null, duplicate: true };
   return { error, duplicate: false };
 }
 

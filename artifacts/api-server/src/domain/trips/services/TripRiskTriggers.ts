@@ -172,7 +172,7 @@ export function evaluateRiskTriggers(inputs: RiskTriggerInputs): RiskTrigger[] {
   const partyFor = (t: TriggerTransport) =>
     t.partySize ?? inputs.plans.find((p) => p.id === t.servesId)?.partySize ?? inputs.crewSize;
   const mismatched = inputs.transport.filter((t) => {
-    if (t.state === "completed" || t.state === "COMPLETED") return false;
+    if (t.state === "completed" || t.state === "COMPLETED" || t.state === "cancelled" || t.state === "CANCELLED") return false;
     const dep = ms(t.plannedDepartureAt); if (dep !== null && dep < inputs.now) return false;
     const cap = t.capacity ?? DEFAULT_VEHICLE_CAPACITY[t.mode.toLowerCase()] ?? null;
     return cap !== null && partyFor(t) > cap;

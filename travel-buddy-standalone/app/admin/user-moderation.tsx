@@ -13,7 +13,7 @@
  * native confirm step for suspend/ban specifically (the two that also flip
  * profiles.account_status for the whole account).
  */
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -24,7 +24,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useRequireAdmin } from '../../src/hooks/useRequireAdmin';
 import { ReasonPromptModal } from '../../src/components/ReasonPromptModal';
 import {
@@ -39,6 +39,8 @@ import {
   restrictMessaging,
   restrictVisibility,
   hidePosts,
+  readModerationReportHandoff,
+  type ModerationReportHandoff,
   type UserSummary,
 } from '../../src/services/adminUsers';
 
@@ -83,13 +85,13 @@ const ACTIONS: ActionDef[] = [
   { slug: 'hide-posts', label: 'Hide all posts', destructive: true, requireReason: true, promptMessage: 'Why are this user\u2019s posts being hidden?' },
 ];
 
-function runAction(slug: ActionSlug, userId: string, reason: string) {
+function runAction(slug: ActionSlug, userId: string, reason: string, reportId?: string) {
   const r = reason || null;
   switch (slug) {
-    case 'warn':                return warnUser(userId, r);
-    case 'restrict':             return restrictUser(userId, reason);
-    case 'suspend':              return suspendUser(userId, reason);
-    case 'ban':                  return banUser(userId, reason);
+    case 'warn':                return warnUser(userId, r, reportId);
+    case 'restrict':             return restrictUser(userId, reason, reportId);
+    case 'suspend':              return suspendUser(userId, reason, undefined, reportId);
+    case 'ban':                  return banUser(userId, reason, reportId);
     case 'restore':              return restoreUser(userId, r);
     case 'restrict-bio':         return restrictBio(userId, reason);
     case 'restrict-messaging':   return restrictMessaging(userId, reason);
@@ -100,72 +102,133 @@ function runAction(slug: ActionSlug, userId: string, reason: string) {
 
 export default function UserModerationScreen() {
   useRequireAdmin();
+  const params = useLocalSearchParams<{ userId?: string | string[]; reportId?: string | string[] }>();
+  const handoff = readModerationReportHandoff(params.userId, params.reportId);
+  const invalidHandoff = !handoff && (params.userId !== undefined || params.reportId !== undefined);
+  return <UserModerationForm key={JSON.stringify([params.userId, params.reportId])} initialHandoff={handoff} invalidHandoff={invalidHandoff} />;
+}
+
+const REPORT_ACTIONS: readonly ActionSlug[] = ['warn', 'restrict', 'suspend', 'ban'];
+type PendingAction = ActionDef & { userId: string; reportId?: string; revision: number };
+
+function UserModerationForm({ initialHandoff, invalidHandoff }: { initialHandoff: ModerationReportHandoff | null; invalidHandoff: boolean }) {
 
   const [query, setQuery]         = useState('');
   const [searching, setSearching] = useState(false);
-  const [searchError, setSearchError] = useState<string | null>(null);
-  const [userId, setUserId]       = useState<string | null>(null);
+  const [searchError, setSearchError] = useState<string | null>(invalidHandoff ? 'Invalid report handoff. Return to the report queue and select a reported user.' : null);
+  const [userId, setUserId]       = useState<string | null>(initialHandoff?.userId ?? null);
+  const [reportId, setReportId]   = useState<string | undefined>(initialHandoff?.reportId);
   const [summary, setSummary]     = useState<UserSummary | null>(null);
   const [loadingSummary, setLoadingSummary] = useState(false);
-  const [pendingAction, setPendingAction]   = useState<ActionDef | null>(null);
+  const [pendingAction, setPendingAction]   = useState<PendingAction | null>(null);
   const [actioning, setActioning] = useState<ActionSlug | null>(null);
+  const revisionRef = useRef(0);
+  const mountedRef = useRef(true);
+  const actioningRef = useRef(false);
+  const initialUserId = initialHandoff?.userId;
 
-  const loadSummary = useCallback(async (id: string) => {
+  const loadSummary = useCallback(async (id: string, revision: number) => {
+    if (!mountedRef.current || revision !== revisionRef.current) return;
     setLoadingSummary(true);
-    const res = await fetchUserSummary(id);
-    setLoadingSummary(false);
-    if (res.ok) {
-      setSummary(res.data);
-    } else {
-      Alert.alert('Could not load user summary', res.error);
+    setSummary(null);
+    setSearchError(null);
+    try {
+      const res = await fetchUserSummary(id);
+      if (!mountedRef.current || revision !== revisionRef.current) return;
+      if (res.ok && res.data?.profile?.id?.toLowerCase() === id.toLowerCase()) {
+        setSummary(res.data);
+      } else {
+        setSearchError(res.ok ? 'The summary does not match the selected user. Nothing can be changed.' : res.error);
+      }
+    } catch (error) {
+      if (mountedRef.current && revision === revisionRef.current) setSearchError(error instanceof Error ? error.message : 'Could not load user summary');
+    } finally {
+      if (mountedRef.current && revision === revisionRef.current) setLoadingSummary(false);
     }
   }, []);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    const revision = ++revisionRef.current;
+    if (initialUserId) void loadSummary(initialUserId, revision);
+    return () => { mountedRef.current = false; };
+  }, [initialUserId, loadSummary]);
+
+  const resetTarget = () => {
+    revisionRef.current++;
+    setUserId(null);
+    setReportId(undefined);
+    setSummary(null);
+    setPendingAction(null);
+    setSearchError(null);
+    setLoadingSummary(false);
+    setSearching(false);
+    return revisionRef.current;
+  };
 
   const onSearch = async () => {
     const trimmed = query.trim();
     if (!trimmed) return;
+    const revision = resetTarget();
     setSearching(true);
-    setSearchError(null);
-    setSummary(null);
-    setUserId(null);
-    const isEmail = trimmed.includes('@');
-    const res = await lookupUser(isEmail ? { email: trimmed } : { handle: trimmed });
-    setSearching(false);
-    if (!res.ok) {
-      setSearchError(res.error);
-      return;
+    try {
+      const isEmail = trimmed.includes('@');
+      const res = await lookupUser(isEmail ? { email: trimmed } : { handle: trimmed });
+      if (!mountedRef.current || revision !== revisionRef.current) return;
+      if (!res.ok) { setSearchError(res.error); return; }
+      const id = res.data.profile.id;
+      setUserId(id);
+      await loadSummary(id, revision);
+    } catch (error) {
+      if (mountedRef.current && revision === revisionRef.current) setSearchError(error instanceof Error ? error.message : 'Could not look up user');
+    } finally {
+      if (mountedRef.current && revision === revisionRef.current) setSearching(false);
     }
-    const id = res.data.profile.id;
-    setUserId(id);
-    await loadSummary(id);
+  };
+
+  const cancelPending = (revision: number) => {
+    if (!mountedRef.current || revision !== revisionRef.current) return;
+    revisionRef.current++;
+    setPendingAction(null);
   };
 
   const beginAction = (def: ActionDef) => {
-    if (actioning) return;
+    if (!mountedRef.current || actioningRef.current || !userId || !summary || (reportId && !REPORT_ACTIONS.includes(def.slug))) return;
+    const revision = ++revisionRef.current;
+    const pending = { ...def, userId, reportId, revision };
+    setPendingAction(null);
     if (def.confirmFirst) {
       Alert.alert('Confirm', def.confirmFirst, [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Continue', style: 'destructive', onPress: () => setPendingAction(def) },
+        { text: 'Cancel', style: 'cancel', onPress: () => cancelPending(revision) },
+        { text: 'Continue', style: 'destructive', onPress: () => {
+          if (mountedRef.current && revision === revisionRef.current) setPendingAction(pending);
+        } },
       ]);
     } else {
-      setPendingAction(def);
+      setPendingAction(pending);
     }
   };
 
   const onSubmitAction = async (reason: string) => {
     const def = pendingAction;
+    if (!mountedRef.current || !def || def.revision !== revisionRef.current || actioningRef.current) return;
+    const revision = ++revisionRef.current;
+    actioningRef.current = true;
     setPendingAction(null);
-    if (!def || !userId) return;
     setActioning(def.slug);
     try {
-      const res = await runAction(def.slug, userId, reason);
+      const res = await runAction(def.slug, def.userId, reason, def.reportId);
+      if (!mountedRef.current || revision !== revisionRef.current) return;
       if (!res.ok) {
         Alert.alert(`${def.label} failed`, res.error);
       } else {
-        await loadSummary(userId);
+        await loadSummary(def.userId, revision);
       }
+    } catch (error) {
+      if (mountedRef.current && revision === revisionRef.current) Alert.alert(`${def.label} failed`, error instanceof Error ? error.message : 'Request failed');
     } finally {
-      setActioning(null);
+      actioningRef.current = false;
+      if (mountedRef.current) setActioning(null);
     }
   };
 
@@ -185,7 +248,7 @@ export default function UserModerationScreen() {
         <TextInput
           style={s.searchInput}
           value={query}
-          onChangeText={setQuery}
+          onChangeText={(value) => { setQuery(value); resetTarget(); }}
           placeholder="Email or @handle"
           placeholderTextColor="#9CA3AF"
           autoCapitalize="none"
@@ -199,9 +262,19 @@ export default function UserModerationScreen() {
       </View>
 
       <ScrollView contentContainerStyle={s.body}>
+        {reportId ? (
+          <View style={s.section}>
+            <Text style={s.sectionTitle} testID="moderation-report-link">Report {reportId} is linked to this action.</Text>
+            <Text style={s.meta}>Choose an action and confirm it below. This does not close the report. Searching for another user cancels this handoff.</Text>
+            <Pressable accessibilityRole="button" testID="cancel-report-handoff" onPress={() => { resetTarget(); setQuery(''); }}>
+              <Text style={s.backText}>Cancel report handoff</Text>
+            </Pressable>
+          </View>
+        ) : null}
         {searchError && (
-          <View style={s.errorBox} testID="user-search-error">
+          <View style={s.errorBox} testID="user-search-error" accessibilityRole="alert">
             <Text style={s.errorText}>{searchError}</Text>
+            {userId ? <Pressable accessibilityRole="button" testID="retry-user-summary" onPress={() => { void loadSummary(userId, ++revisionRef.current); }}><Text style={s.backText}>Retry user summary</Text></Pressable> : null}
           </View>
         )}
 
@@ -231,7 +304,7 @@ export default function UserModerationScreen() {
             <View style={s.section}>
               <Text style={s.sectionTitle}>Moderation actions</Text>
               <View style={s.actionsWrap}>
-                {ACTIONS.map((def) => (
+                {ACTIONS.filter((def) => !reportId || REPORT_ACTIONS.includes(def.slug)).map((def) => (
                   <Pressable
                     key={def.slug}
                     style={[s.actionChip, def.destructive && s.actionChipDestructive]}
@@ -310,7 +383,7 @@ export default function UserModerationScreen() {
         confirmLabel={pendingAction?.label ?? 'Confirm'}
         requireValue={pendingAction?.requireReason ?? true}
         destructive={pendingAction?.destructive ?? false}
-        onCancel={() => setPendingAction(null)}
+        onCancel={() => { if (pendingAction) cancelPending(pendingAction.revision); }}
         onSubmit={onSubmitAction}
       />
     </View>

@@ -133,10 +133,11 @@ export function isIdempotencyConflict(err: unknown): boolean {
  */
 export function replayDecision(
   row: ReplayRow,
-  sent: { body: string | null; ciphertext: string | null; msgType: string; subtype: string | null },
+  sent: { body: string | null; ciphertext: string | null; msgType: string; subtype: string | null; replyToId: string | null },
   isE2ee: boolean,
 ): "replay" | "conflict" {
   if (row.deleted_at) return "replay";
+  if ((row.reply_to_id ?? null) !== sent.replyToId) return "conflict";
   if (isE2ee) {
     return (row.msg_type ?? "text") === sent.msgType && (row.subtype ?? null) === (sent.subtype ?? null) ? "replay" : "conflict";
   }
@@ -145,12 +146,13 @@ export function replayDecision(
 
 export function sameSendPayload(
   row: ReplayRow,
-  sent: { body: string | null; ciphertext: string | null; msgType: string; subtype: string | null },
+  sent: { body: string | null; ciphertext: string | null; msgType: string; subtype: string | null; replyToId: string | null },
 ): boolean {
   return (row.body ?? null) === (sent.body ?? null)
     && (row.ciphertext ?? null) === (sent.ciphertext ?? null)
     && (row.msg_type ?? "text") === sent.msgType
-    && (row.subtype ?? null) === (sent.subtype ?? null);
+    && (row.subtype ?? null) === (sent.subtype ?? null)
+    && (row.reply_to_id ?? null) === sent.replyToId;
 }
 
 /**

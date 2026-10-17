@@ -44,6 +44,7 @@ import {
   validateRenditionLadder,
   submitForTranscode,
   adaptiveLadderFor,
+  selectMediaTranscoder,
   type MediaTranscoder,
 } from "../lib/media/vendors/mediaTranscoder.js";
 import {
@@ -100,10 +101,14 @@ describe("§37 vendorCommon — a vendor call never throws and never hangs", () 
     assert.equal(selectVendor("toString", {}, refusing).adapter, refusing);
   });
 
-  it("no vendor is chosen in this tree: every IMPLEMENTED table is empty and every env selection refuses", () => {
-    for (const table of [IMPLEMENTED_VISION_PROVIDERS, IMPLEMENTED_MODERATION_CLASSIFIERS, IMPLEMENTED_TRANSCODERS, IMPLEMENTED_CAPTION_SOURCES]) {
+  it("unimplemented vendors refuse and the self-hosted transcoder remains disabled without configuration", () => {
+    for (const table of [IMPLEMENTED_MODERATION_CLASSIFIERS, IMPLEMENTED_CAPTION_SOURCES]) {
       assert.deepEqual(Object.keys(table), []);
     }
+    assert.deepEqual(Object.keys(IMPLEMENTED_VISION_PROVIDERS), ["self_hosted_siglip", "local_clip", "self_hosted_media"]);
+    assert.equal(selectMediaVisionProvider({}).adapter, REFUSING_VISION_PROVIDER);
+    assert.deepEqual(Object.keys(IMPLEMENTED_TRANSCODERS), ["self_hosted_ffmpeg"]);
+    assert.equal(selectMediaTranscoder({ MEDIA_TRANSCODER: "self_hosted_ffmpeg" }).adapter, REFUSING_TRANSCODER);
     const env = { MEDIA_VISION_PROVIDER: "google", MEDIA_MODERATION_CLASSIFIER: "rekognition" } as NodeJS.ProcessEnv;
     assert.equal(selectMediaVisionProvider(env).adapter, REFUSING_VISION_PROVIDER);
     assert.equal(selectMediaModerationClassifier(env).adapter, REFUSING_MODERATION_CLASSIFIER);
@@ -836,6 +841,63 @@ describe("automated moderation is bound to its own canonical hold", () => {
     assert.equal(asset.moderation_status, "active");
     assert.equal(asset.version, 2);
   });
+});
+
+describe("derived media inherits only the upload generation it owns", () => {
+  afterEach(() => resetCanonicalSchemaMemo());
+  const subject = { sourceVersion: 1, assetId: A, bucket: "post-media", path: "u/1.mp4", mediaType: "video" as const, durationMs: 3000 };
+  const flags = { [MEDIA_VISION_STAGE_FLAG]: true, [MEDIA_TRANSCODE_STAGE_FLAG]: true, [MEDIA_CAPTIONS_STAGE_FLAG]: true };
+
+  for (const moderationOn of [false, true]) {
+    it(`passes the owned generation to every derived job with moderation ${moderationOn ? "on" : "off"}`, async () => {
+      const asset = ASSET_ROW();
+      const store = makeStore({ ...flags, [MEDIA_MODERATION_STAGE_FLAG]: moderationOn }, [asset]);
+      const { adapters } = spyAdapters();
+      const received: Array<{ stage: string; sourceVersion: unknown }> = [];
+      const ingestion = adapters.vision.ingest;
+      const submit = adapters.transcoder.submit;
+      const transcribe = adapters.captions.transcribe;
+      adapters.vision.ingest = async (input) => { received.push({ stage: "vision", sourceVersion: input.sourceVersion }); return ingestion(input); };
+      adapters.transcoder.submit = async (input) => { received.push({ stage: "transcode", sourceVersion: input.sourceVersion }); return submit(input); };
+      adapters.captions.transcribe = async (input) => { received.push({ stage: "captions", sourceVersion: input.sourceVersion }); return transcribe(input); };
+      await runMediaVendorIngest(store.sc, subject, adapters);
+      assert.deepEqual(received, ["vision", "transcode", "captions"].map((stage) => ({ stage, sourceVersion: moderationOn ? 3 : 1 })));
+      assert.equal(subject.sourceVersion, 1);
+    });
+  }
+
+  for (const outcome of ["reject", "flag", "conflict"] as const) {
+    it(`does not start derived jobs after a moderation ${outcome}`, async () => {
+      const asset = ASSET_ROW();
+      const store = makeStore({ ...flags, [MEDIA_MODERATION_STAGE_FLAG]: true }, [asset]);
+      const { adapters, calls } = spyAdapters();
+      adapters.classifier.classify = async () => {
+        if (outcome === "conflict") {
+          assert.equal(await applyCanonicalModerationDecision(store.sc as unknown as Parameters<typeof applyCanonicalModerationDecision>[0], { bucket: subject.bucket, path: subject.path, decision: "flag" }), "applied");
+          return allow;
+        }
+        return outcome === "reject" ? block : restrict;
+      };
+      const report = await runMediaVendorIngest(store.sc, subject, adapters);
+      assert.deepEqual(calls, []);
+      assert.deepEqual(store.uploads, []);
+      assert.equal(asset.moderation_status, outcome === "reject" ? "rejected" : "limited");
+      for (const stage of [report.vision, report.transcode, report.captions]) {
+        assert.equal(stage.state, "ran");
+        assert.equal(stage.state === "ran" && stage.result.ok, false);
+      }
+    });
+  }
+
+  for (const sourceVersion of [undefined, null, 0, -1, 1.5, NaN, Infinity, 2147483648]) {
+    it(`refuses derived work without a valid original generation: ${String(sourceVersion)}`, async () => {
+      const store = makeStore(flags, [ASSET_ROW()]);
+      const { adapters, calls } = spyAdapters();
+      await runMediaVendorIngest(store.sc, { ...subject, sourceVersion }, adapters);
+      assert.deepEqual(calls, []);
+      assert.deepEqual(store.uploads, []);
+    });
+  }
 });
 
 describe("Media provider contracts — malformed attestations and stateful failures", () => {

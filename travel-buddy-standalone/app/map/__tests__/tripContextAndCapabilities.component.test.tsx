@@ -50,6 +50,16 @@ const knobs: {
 
 /** Written by the LayersSheet stub on every render; read after a deep link. */
 const layerContextHolder: { mode?: string } = {};
+const mockAuthListeners = new Set<(userId: string | null) => void>();
+
+jest.mock('../../../src/services/auth', () => ({
+  ...jest.requireActual('../../../src/services/auth'),
+  onAuthChange: (listener: (userId: string | null) => void) => {
+    mockAuthListeners.add(listener);
+    listener(knobs.userId);
+    return () => { mockAuthListeners.delete(listener); };
+  },
+}));
 
 jest.mock('expo-router', () => {
   const React = require('react');
@@ -117,9 +127,15 @@ jest.mock('../../../src/services/locateFriends', () => ({
 }));
 
 // NOTE: intentional stub — the panel's own polling is covered elsewhere.
-jest.mock('../../../src/components/map/LocateFriendsPanel', () => ({
-  LocateFriendsPanel: () => null,
-}));
+jest.mock('../../../src/components/map/LocateFriendsPanel', () => {
+  const React = require('react');
+  const { Text } = require('react-native');
+  return {
+    LocateFriendsPanel: ({ live }: { live: { sessionId: string; viewerMemberId: string } }) => (
+      <Text testID="locate-session">{`${live.sessionId}:${live.viewerMemberId}`}</Text>
+    ),
+  };
+});
 
 // One pulse item so LivePulseCard mounts; the item's content is irrelevant
 // because the deep link is invoked directly below.
@@ -276,6 +292,8 @@ function locateSession() {
 }
 
 beforeEach(() => {
+  jest.requireActual('../../../src/features/map/telemetry/mapTelemetry')._resetMapTelemetryForTests();
+  mockAuthListeners.clear();
   knobs.params = {};
   knobs.flags = {};
   knobs.userId = null;
@@ -325,6 +343,81 @@ describe('FullScreenMapScreen — §11 Optimize Today is reachable', () => {
 // ── §30 capabilities ──────────────────────────────────────────────────────────
 
 describe('FullScreenMapScreen — §12 Locate My Friends capability', () => {
+  it('keeps the new account busy while the previous account request settles', async () => {
+    knobs.params = { entityTypes: 'trips', tripId: 'trip-1' };
+    knobs.flags = { locate_friends_enabled: true };
+    knobs.userId = 'user-1';
+    let resolveOld!: (value: unknown) => void;
+    let resolveNew!: (value: unknown) => void;
+    locateSession()
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve; }))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveNew = resolve; }));
+    await mount();
+    await deepLinkTo('LOCATE_FRIENDS');
+    await act(async () => { fireEvent.press(await screen.findByLabelText('Start locating friends')); });
+
+    await act(async () => {
+      knobs.userId = 'user-2';
+      for (const listener of mockAuthListeners) listener('user-2');
+    });
+    await act(async () => { fireEvent.press(await screen.findByLabelText('Start locating friends')); });
+    expect(locateSession()).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      resolveOld({ ok: true, data: { session: { id: 'old-private-session' }, requestedClass: 'approximate' } });
+    });
+
+    expect(screen.queryByTestId('locate-session')).toBeNull();
+    expect(screen.getByText('Starting…')).toBeTruthy();
+    await act(async () => {
+      resolveNew({ ok: true, data: { session: { id: 'new-session' }, requestedClass: 'approximate' } });
+    });
+    expect((await screen.findByTestId('locate-session')).props.children).toBe('new-session:user-2');
+    expect(screen.queryByText('Starting…')).toBeNull();
+  });
+
+  for (const nextOwner of ['user-2', 'user-1']) {
+    it(`discards a pending session after changing the auth epoch to ${nextOwner}`, async () => {
+      knobs.params = { entityTypes: 'trips', tripId: 'trip-1' };
+      knobs.flags = { locate_friends_enabled: true };
+      knobs.userId = 'user-1';
+      let resolveSession!: (value: unknown) => void;
+      locateSession().mockImplementationOnce(() => new Promise((resolve) => { resolveSession = resolve; }));
+      await mount();
+      await deepLinkTo('LOCATE_FRIENDS');
+      await act(async () => { fireEvent.press(await screen.findByLabelText('Start locating friends')); });
+      expect(locateSession()).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        for (const listener of mockAuthListeners) listener(null);
+        knobs.userId = nextOwner;
+        for (const listener of mockAuthListeners) listener(nextOwner);
+      });
+      await act(async () => {
+        resolveSession({ ok: true, data: { session: { id: 'old-private-session' }, requestedClass: 'approximate' } });
+      });
+
+      expect(screen.queryByTestId('locate-session')).toBeNull();
+      expect(screen.getByLabelText('Start locating friends').props.accessibilityState?.disabled).not.toBe(true);
+    });
+  }
+
+  it('removes an installed session when its account signs out and back in', async () => {
+    knobs.params = { entityTypes: 'trips', tripId: 'trip-1' };
+    knobs.flags = { locate_friends_enabled: true };
+    knobs.userId = 'user-1';
+    await mount();
+    await deepLinkTo('LOCATE_FRIENDS');
+    await act(async () => { fireEvent.press(await screen.findByLabelText('Start locating friends')); });
+    expect(await screen.findByTestId('locate-session')).toBeTruthy();
+
+    await act(async () => {
+      for (const listener of mockAuthListeners) listener(null);
+      for (const listener of mockAuthListeners) listener('user-1');
+    });
+
+    expect(screen.queryByTestId('locate-session')).toBeNull();
+  });
+
   it('lets the mode be entered and the session started when flag, trip and viewer all exist', async () => {
     knobs.params = { entityTypes: 'trips', tripId: 'trip-1' };
     knobs.flags = { locate_friends_enabled: true };

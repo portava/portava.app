@@ -12,6 +12,7 @@ import { color, space, radius, type as t, shadow, avatar } from '../theme/tokens
 import { HighlightRing } from './HighlightRing.tsx';
 import { VerifiedStamp } from './ui/VerifiedStamp.tsx';
 import { OfficialBadge } from './OfficialBadge.tsx';
+import { TranslatedContent } from './TranslatedContent.tsx';
 
 const INTEREST_LABEL: Record<string, string> = {
   nightlife: 'Nightlife', food: 'Food', beach: 'Beach', luxury: 'Luxury',
@@ -225,7 +226,7 @@ export function PassportHero({
             {isOfficial ? <OfficialBadge size="md" /> : isVerified ? <VerifiedStamp size="md" /> : null}
           </View>
           {handleSubline ? <Text style={styles.handle}>{handleSubline}</Text> : null}
-          {!hidePrivateFields && bio ? <Text style={styles.bio} numberOfLines={2}>{bio}</Text> : null}
+          {!hidePrivateFields && bio ? <TranslatedContent entityType="bio" entityId={profile.id} field="bio" original={bio} style={styles.bio} numberOfLines={2}><Text style={styles.bio} numberOfLines={2}>{bio}</Text></TranslatedContent> : null}
           {!hidePrivateFields && (homeCity || homeCountry) ? (
             <View style={styles.locRow}>
               <MapPin size={12} color={color.deep} />

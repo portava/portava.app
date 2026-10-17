@@ -439,7 +439,10 @@ function parseCensus(file: string, text: string): CensusResult {
   const candidates: number[] = [];
   for (const m of text.matchAll(/\|\s*\*{0,2}Denominator[^|]*\|\s*\*{0,2}([0-9]{1,4})\*{0,2}\s*\|/gi)) candidates.push(Number(m[1]));
   for (const m of text.matchAll(/how ([0-9]{2,4}) was counted/gi)) candidates.push(Number(m[1]));
-  for (const m of text.matchAll(/\/\s*([0-9]{2,4})\s*=\s*\*{0,2}[0-9.]+\s*%/g)) candidates.push(Number(m[1]));
+  const percentageDenominator = file === "census-discovery.md"
+    ? /\b(?:CONSTRUCTED|CORRECT)\b[^\n/]*\/\s*([0-9]{2,4})\s*=\s*\*{0,2}[0-9.]+\s*%/gi
+    : /\/\s*([0-9]{2,4})\s*=\s*\*{0,2}[0-9.]+\s*%/g;
+  for (const m of text.matchAll(percentageDenominator)) candidates.push(Number(m[1]));
   const uniqueDenoms = [...new Set(candidates)].sort((a, b) => a - b);
   const statedDenominator = uniqueDenoms.length > 0 ? uniqueDenoms[uniqueDenoms.length - 1]! : null;
 

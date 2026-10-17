@@ -31,9 +31,13 @@ import { act, renderHook } from '@testing-library/react-native';
 
 // ── LanguagePreferenceContext — controlled per test ───────────────────────────
 
-jest.mock('../../../../src/context/LanguagePreferenceContext', () => ({
+jest.mock('../../../../src/context/LanguagePreferenceContext', () => ({ ...jest.requireActual('../../../../src/context/LanguagePreferenceContext'),
   ...jest.requireActual('../../../../src/context/LanguagePreferenceContext'),
   useLanguagePreference: jest.fn(),
+}));
+
+jest.mock('../../../../src/context/SessionContext', () => ({ ...jest.requireActual('../../../../src/context/SessionContext'),
+  useSession: () => ({ userId: 'viewer', isAuthed: true }),
 }));
 
 // ── contentTranslation service — not under test ───────────────────────────────
@@ -41,9 +45,11 @@ jest.mock('../../../../src/context/LanguagePreferenceContext', () => ({
 // fetchContentTranslation is called by the auto-fetch effect when canTranslate
 // is true. The mock must return a Promise or the .then() inside the effect
 // throws and corrupts React's test renderer state for subsequent tests.
-jest.mock('../../../../src/services/contentTranslation', () => ({
+jest.mock('../../../../src/services/contentTranslation', () => ({ ...jest.requireActual('../../../../src/services/contentTranslation'),
   ...jest.requireActual('../../../../src/services/contentTranslation'),
-  fetchContentTranslation: jest.fn().mockResolvedValue({ ok: false }),
+  fetchContentTranslation: jest.fn().mockResolvedValue({
+    ok: true, status: 'translated', translatedFields: { content: 'Translated content' },
+  }),
 }));
 
 // ── Imports (after mocks) ─────────────────────────────────────────────────────

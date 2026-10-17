@@ -7,6 +7,7 @@
  * none) — this module does not prompt; screens own the confirmation UX.
  */
 import { adminGet, adminPost, type AdminApiResult } from './adminApi.ts';
+import type { ModerationReport } from './reportsAdmin.ts';
 
 export type { AdminApiResult };
 
@@ -113,17 +114,17 @@ function action<T extends Record<string, unknown>>(
   return adminPost<T>(`/api/admin/users/${userId}/${slug}`, { reason, ...extra });
 }
 
-export const warnUser = (userId: string, reason: string | null) =>
-  action<{ action: ModerationActionRow }>(userId, 'warn', reason);
+export const warnUser = (userId: string, reason: string | null, reportId?: string) =>
+  action<{ action: ModerationActionRow }>(userId, 'warn', reason, reportLinkFields(reportId));
 
-export const restrictUser = (userId: string, reason: string) =>
-  action<{ ok: true; restricted: true }>(userId, 'restrict', reason);
+export const restrictUser = (userId: string, reason: string, reportId?: string) =>
+  action<{ ok: true; restricted: true }>(userId, 'restrict', reason, reportLinkFields(reportId));
 
-export const suspendUser = (userId: string, reason: string, expiresAt?: string | null) =>
-  action<{ ok: true; suspended: true }>(userId, 'suspend', reason, expiresAt ? { expires_at: expiresAt } : undefined);
+export const suspendUser = (userId: string, reason: string, expiresAt?: string | null, reportId?: string) =>
+  action<{ ok: true; suspended: true }>(userId, 'suspend', reason, { ...(expiresAt ? { expires_at: expiresAt } : {}), ...reportLinkFields(reportId) });
 
-export const banUser = (userId: string, reason: string) =>
-  action<{ ok: true; banned: true }>(userId, 'ban', reason);
+export const banUser = (userId: string, reason: string, reportId?: string) =>
+  action<{ ok: true; banned: true }>(userId, 'ban', reason, reportLinkFields(reportId));
 
 export const restoreUser = (userId: string, reason: string | null) =>
   action<{ ok: true; restored: true }>(userId, 'restore', reason);
@@ -139,3 +140,33 @@ export const restrictVisibility = (userId: string, reason: string) =>
 
 export const hidePosts = (userId: string, reason: string) =>
   action<{ ok: true; postsHidden: true }>(userId, 'hide-posts', reason);
+
+export interface ModerationReportHandoff { userId: string; reportId: string }
+
+function reportLinkFields(reportId: string | undefined) {
+  return reportId === undefined ? undefined : { report_id: reportId };
+}
+
+function handoffUuid(value: unknown): string | null {
+  return typeof value === 'string' && value.length === 36 && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
+    ? value.toLowerCase() : null;
+}
+
+export function readModerationReportHandoff(userId: unknown, reportId: unknown): ModerationReportHandoff | null {
+  const user = handoffUuid(userId);
+  const report = handoffUuid(reportId);
+  return user && report ? { userId: user, reportId: report } : null;
+}
+
+export function reportModerationHandoff(report: ModerationReport): ModerationReportHandoff | null {
+  if (report.status !== 'open' && report.status !== 'reviewing') return null;
+  const recordedUser = handoffUuid(report.subject_user_id);
+  if (report.subject_user_id != null && !recordedUser) return null;
+  if (report.subject_type === 'user') {
+    const directUser = handoffUuid(report.subject_id);
+    if (!directUser || (recordedUser && recordedUser !== directUser)) return null;
+    return readModerationReportHandoff(directUser, report.id);
+  }
+  if (!['post', 'comment', 'message', 'event', 'review', 'buddy_listing', 'media'].includes(report.subject_type)) return null;
+  return readModerationReportHandoff(recordedUser, report.id);
+}

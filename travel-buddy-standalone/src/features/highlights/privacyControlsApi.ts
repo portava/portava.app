@@ -24,6 +24,8 @@
  */
 import { isSupabaseConfigured } from '../../lib/supabase.ts';
 import { freshToken as freshApiToken } from '../../services/apiToken.ts';
+import { newMemoryOperationId } from '../../services/memories.ts';
+import { currentDiscoveryScope, isCurrentDiscoveryScope, viewerKeyForToken, type DiscoveryScope } from '../../services/discoveryViewerScope.ts';
 
 /** §11. The six controls, as the server declares them. */
 export type ResurfacingControl =
@@ -129,6 +131,7 @@ export type PrivacyErrorKind =
   | 'forbidden'
   | 'not_found'
   | 'invalid_payload'
+  | 'conflict'
   | 'feature_disabled'
   | 'degraded_unavailable'
   | 'network_unreachable'
@@ -140,7 +143,10 @@ export interface PrivacyResult<T> {
   data: T | null;
   errorKind?: PrivacyErrorKind;
   message?: string;
+  operationId?: string;
 }
+
+const pendingControls = new Map<string, { operationId: string; intent: string }>();
 
 function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
@@ -157,7 +163,7 @@ function isNetworkError(e: unknown): boolean {
 }
 
 const KNOWN: PrivacyErrorKind[] = [
-  'unauthenticated', 'forbidden', 'not_found', 'invalid_payload',
+  'unauthenticated', 'forbidden', 'not_found', 'invalid_payload', 'conflict',
   'feature_disabled', 'degraded_unavailable', 'db_error',
 ];
 
@@ -176,26 +182,51 @@ function mapError<T>(status: number, body: any): PrivacyResult<T> {
 
 async function request<T>(
   path: string,
-  init: { method: string; body?: unknown },
+  init: { method: string; body?: unknown; operationId?: string; scope?: DiscoveryScope },
 ): Promise<PrivacyResult<T>> {
   if (!isSupabaseConfigured || !apiBase()) {
     return { ok: false, data: null, errorKind: 'config_error', message: 'Backend not configured' };
   }
-  const token = await freshApiToken();
-  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
   try {
+    const token = await freshApiToken();
+    if (!token || (init.scope && (!isCurrentDiscoveryScope(init.scope) || viewerKeyForToken(token) !== init.scope.viewer))) {
+      return { ok: false, data: null, errorKind: 'unauthenticated' };
+    }
     const res = await fetch(`${apiBase()}${path}`, {
       method: init.method,
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`,
+        ...(init.operationId ? { 'Idempotency-Key': init.operationId } : {}) },
       body: init.body === undefined ? undefined : JSON.stringify(init.body),
     });
-    const parsed = await res.json().catch(() => ({}));
+    const parsed = await res.json();
+    if (init.scope && !isCurrentDiscoveryScope(init.scope)) return { ok: false, data: null, errorKind: 'unauthenticated' };
     if (!res.ok) return mapError<T>(res.status, parsed);
     return { ok: true, data: parsed as T };
   } catch (e) {
     if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
     return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
   }
+}
+
+async function writeControl<T>(method: 'PUT' | 'DELETE', control: ResurfacingControl, subjectId: string, confirm: boolean, explicitId?: string): Promise<PrivacyResult<T>> {
+  const scope = currentDiscoveryScope();
+  if (!scope.viewer?.startsWith('u:')) return { ok: false, data: null, errorKind: 'unauthenticated' };
+  const selector = JSON.stringify([scope.viewer, control, subjectId.toLowerCase()]);
+  const intent = JSON.stringify([method, method === 'DELETE' && control === 'KEEP_PRIVATE_FOREVER' && confirm]);
+  const pending = pendingControls.get(selector);
+  if (pending && (pending.intent !== intent || (explicitId && explicitId !== pending.operationId))) {
+    return { ok: false, data: null, errorKind: 'degraded_unavailable', operationId: pending.operationId,
+      message: 'The previous change is unconfirmed. Retry it before changing this control again.' };
+  }
+  if (!pending && pendingControls.size >= 200) return { ok: false, data: null, errorKind: 'degraded_unavailable', message: 'Resolve pending changes before making another change.' };
+  const operationId = pending?.operationId ?? explicitId ?? newMemoryOperationId('resurfacing');
+  pendingControls.set(selector, { operationId, intent });
+  const result = await request<T>('/api/highlights/resurfacing-controls', { method, operationId, scope,
+    body: { control, subjectId, ...(method === 'DELETE' ? { confirm } : {}) } });
+  if (result.ok || ['invalid_payload', 'not_found', 'forbidden', 'feature_disabled', 'config_error', 'conflict'].includes(result.errorKind ?? '')) {
+    if (pendingControls.get(selector)?.operationId === operationId) pendingControls.delete(selector);
+  }
+  return { ...result, operationId };
 }
 
 export async function fetchResurfacingControls(): Promise<PrivacyResult<ResurfacingControlsView>> {
@@ -205,11 +236,9 @@ export async function fetchResurfacingControls(): Promise<PrivacyResult<Resurfac
 export async function setResurfacingControl(
   control: ResurfacingControl,
   subjectId: string,
+  opts: { operationId?: string } = {},
 ): Promise<PrivacyResult<StoredControl>> {
-  return request<StoredControl>('/api/highlights/resurfacing-controls', {
-    method: 'PUT',
-    body: { control, subjectId },
-  });
+  return writeControl('PUT', control, subjectId, false, opts.operationId);
 }
 
 /**
@@ -224,12 +253,9 @@ export async function setResurfacingControl(
 export async function clearResurfacingControl(
   control: ResurfacingControl,
   subjectId: string,
-  opts: { confirm?: boolean } = {},
+  opts: { confirm?: boolean; operationId?: string } = {},
 ): Promise<PrivacyResult<{ cleared: boolean }>> {
-  return request<{ cleared: boolean }>('/api/highlights/resurfacing-controls', {
-    method: 'DELETE',
-    body: { control, subjectId, confirm: opts.confirm === true },
-  });
+  return writeControl('DELETE', control, subjectId, opts.confirm === true, opts.operationId);
 }
 
 export async function fetchProjectionPolicy(highlightId: string): Promise<PrivacyResult<ProjectionPolicyView>> {

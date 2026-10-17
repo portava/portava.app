@@ -99,6 +99,32 @@ export interface PlanReportLine {
   readonly paymentCount: number;
 }
 
+async function payoutEligibilityRefusal(
+  deps: PaymentSliceDeps,
+  payout: Pick<MonthlyPayoutRecord, "provider" | "recipientPartyId" | "recipientRef">,
+): Promise<string | null> {
+  if (payout.provider !== deps.provider.id) return "provider_mismatch";
+  try {
+    const profile = await deps.store.profileForParty(payout.recipientPartyId);
+    if (!profile.ok) return "verification_unreadable";
+    if (!profile.value) return "identity_removed";
+    const verified = await deps.personVerified(profile.value);
+    if (verified !== "verified") return verified === "unreadable" ? "verification_unreadable" : "recipient_not_verified";
+  } catch {
+    return "verification_unreadable";
+  }
+  try {
+    const account = await deps.provider.validateRecipient(payout.recipientRef);
+    if (account.status !== "ok" || account.value.recipientRef !== payout.recipientRef ||
+      account.value.onboarding !== "verified" || account.value.payoutsEnabled !== true) {
+      return "recipient_payouts_not_enabled";
+    }
+  } catch {
+    return "recipient_payouts_not_enabled";
+  }
+  return null;
+}
+
 /** PLAN the payouts for a period. Admin-triggered; idempotent per (recipient account, period, currency). */
 export async function planMonthlyPayouts(deps: PaymentSliceDeps, policy: PayoutPolicy, period: string): Promise<SliceOutcome> {
   const bounds = periodBounds(period);
@@ -139,17 +165,9 @@ export async function planMonthlyPayouts(deps: PaymentSliceDeps, policy: PayoutP
     // Verification is a fact about a PERSON: the party leads back to one only
     // while the identity link exists. After an erasure there is nobody to verify,
     // so nothing is paid out (the balance stays on the pseudonymous party).
-    const profile = await deps.store.profileForParty(recipientPartyId);
-    if (!profile.ok) { report.push({ ...base, result: "skipped", reason: "verification_unreadable", payoutId: null }); continue; }
-    if (!profile.value) { report.push({ ...base, result: "skipped", reason: "identity_removed", payoutId: null }); continue; }
-    const verified = await deps.personVerified(profile.value);
-    if (verified !== "verified") {
-      report.push({ ...base, result: "skipped", reason: verified === "unreadable" ? "verification_unreadable" : "recipient_not_verified", payoutId: null });
-      continue;
-    }
-    const acct = await deps.provider.validateRecipient(recipientRef);
-    if (acct.status !== "ok" || !acct.value.payoutsEnabled) {
-      report.push({ ...base, result: "skipped", reason: "recipient_payouts_not_enabled", payoutId: null });
+    const eligibilityRefusal = await payoutEligibilityRefusal(deps, { provider, recipientPartyId, recipientRef });
+    if (eligibilityRefusal) {
+      report.push({ ...base, result: "skipped", reason: eligibilityRefusal, payoutId: null });
       continue;
     }
 
@@ -212,6 +230,8 @@ export async function executePlannedPayouts(deps: PaymentSliceDeps, payoutIds: r
     const payout = r.value;
     if (!payout) { results.push({ payoutId: id, result: "not_found" }); continue; }
     if (payout.state !== "planned") { results.push({ payoutId: id, result: `skipped_${payout.state}` }); continue; }
+    const eligibilityRefusal = await payoutEligibilityRefusal(deps, payout);
+    if (eligibilityRefusal) { results.push({ payoutId: id, result: eligibilityRefusal }); continue; }
     const res = await deps.provider.requestPayout({
       idempotencyKey: payout.idempotencyKey,
       kind: "payout",

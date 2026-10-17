@@ -12,7 +12,7 @@
  *   useEffect(() => { registerRef(id, videoRef); return () => unregisterRef(id); }, []);
  */
 
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import { AppState, type AppStateStatus } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import type { Video } from 'expo-av';
@@ -21,6 +21,7 @@ import { mediaEvents } from '../lib/mediaEvents.ts';
 type VideoRef = React.RefObject<Video | null>;
 
 export interface WatchPlaybackManager {
+  playbackEligible: boolean;
   /** Register a video ref under a stable item ID. */
   registerRef: (id: string, ref: VideoRef) => void;
   /** Remove a ref when the cell unmounts. */
@@ -34,10 +35,15 @@ export function useWatchPlayback(options: { autoplay?: boolean } = {}): WatchPla
   const activeIdRef = useRef<string | null>(null);
   // Track whether the screen is currently focused.
   const focusedRef = useRef(true);
+  const foregroundRef = useRef(AppState.currentState !== 'background' && AppState.currentState !== 'inactive');
+  const eligibleRef = useRef(foregroundRef.current);
+  const [playbackEligible, setPlaybackEligible] = useState(eligibleRef.current);
 
   // ── Pause all currently registered videos ──────────────────────────────────
 
   const pauseAll = useCallback(async () => {
+    eligibleRef.current = false;
+    setPlaybackEligible(false);
     for (const [, ref] of refsMap.current) {
       try {
         await ref.current?.pauseAsync();
@@ -50,6 +56,9 @@ export function useWatchPlayback(options: { autoplay?: boolean } = {}): WatchPla
   // ── Resume the active video (if any) ───────────────────────────────────────
 
   const resumeActive = useCallback(async () => {
+    if (!focusedRef.current || !foregroundRef.current) return;
+    eligibleRef.current = true;
+    setPlaybackEligible(true);
     const id = activeIdRef.current;
     if (!id || !autoplayRef.current) return;
     const ref = refsMap.current.get(id);
@@ -77,6 +86,7 @@ export function useWatchPlayback(options: { autoplay?: boolean } = {}): WatchPla
 
   useEffect(() => {
     const handleAppState = (next: AppStateStatus) => {
+      foregroundRef.current = next === 'active';
       if (next === 'background' || next === 'inactive') {
         pauseAll();
       } else if (next === 'active' && focusedRef.current) {
@@ -123,7 +133,7 @@ export function useWatchPlayback(options: { autoplay?: boolean } = {}): WatchPla
       activeIdRef.current = id;
 
       // Play the new active item (only if the screen is focused).
-      if (id && focusedRef.current && autoplayRef.current) {
+      if (id && focusedRef.current && eligibleRef.current && autoplayRef.current) {
         const ref = refsMap.current.get(id);
         try {
           await ref?.current?.playAsync();
@@ -135,5 +145,5 @@ export function useWatchPlayback(options: { autoplay?: boolean } = {}): WatchPla
     [],
   );
 
-  return { registerRef, unregisterRef, setActiveId };
+  return { playbackEligible, registerRef, unregisterRef, setActiveId };
 }

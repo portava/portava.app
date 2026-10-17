@@ -148,7 +148,7 @@ describe("§17 the seventeen commands are all accounted for — declared or expl
     for (const n of notDeclared) assert.ok(SPEC_17.includes(n), `${n} is not a §17 command name`);
     // Both pinned BY NAME (§17/§21 reasoning: lib/memoryCommandBus.ts header).
     const extensions = [...declared].filter((d) => !SPEC_17.includes(d));
-    assert.deepEqual(extensions, ["UPDATE_MEMORY", "UNHIDE_HIGHLIGHT", "CREATE_HIGHLIGHT"]);
+    assert.deepEqual(extensions, ["UPDATE_MEMORY", "UNHIDE_HIGHLIGHT", "CREATE_HIGHLIGHT", "BACKFILL_LEGACY_MEMORY"]);
   });
 
   /**
@@ -171,13 +171,13 @@ describe("§17 the seventeen commands are all accounted for — declared or expl
    * reason that drifts back into being false is the exact failure this block
    * exists to catch.
    */
-  it("fifteen §17 command names are declared: the ten memory-domain names, MERGE/SPLIT_MEMORY and the three buildable Highlight commands", () => {
+  it("sixteen §17 command names are declared, including the owner-policy boundary", () => {
     const declaredSpecNames = MEMORY_COMMAND_TYPES.filter((t) => SPEC_17.includes(t));
-    assert.equal(declaredSpecNames.length, 15);
+    assert.equal(declaredSpecNames.length, 16);
     assert.deepEqual([...declaredSpecNames].sort(), [
       "ADD_MEDIA", "ADD_PERSON", "ARCHIVE_MEMORY", "CHANGE_PLACE", "CHANGE_VISIBILITY",
       "CONFIRM_MEMORY", "CREATE_MEMORY", "DELETE_MEMORY", "HIDE_HIGHLIGHT",
-      "MERGE_MEMORY", "PIN_HIGHLIGHT", "REMOVE_MEDIA", "REMOVE_PERSON", "SPLIT_MEMORY", "UNPIN_HIGHLIGHT",
+      "MERGE_MEMORY", "PIN_HIGHLIGHT", "REMOVE_MEDIA", "REMOVE_PERSON", "SET_RESURFACING_POLICY", "SPLIT_MEMORY", "UNPIN_HIGHLIGHT",
     ]);
   });
 

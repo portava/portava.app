@@ -51,7 +51,7 @@ function languageLabel(code: string | null): string {
 type RowItem = { code: string | null; label: string };
 
 const LIST_DATA: RowItem[] = [
-  { code: null, label: 'Use device language' },
+  { code: null, label: 'No preferred language' },
   ...LANGUAGE_OPTIONS,
 ];
 
@@ -74,13 +74,13 @@ export default function ContentLanguageScreen() {
   return (
     <SettingsScreen
       title="Content Language"
-      subtitle="Choose the language for feed translations"
+      subtitle="Choose a preferred translation language"
     >
       <SettingsSection
         title="Display language"
         subtitle={
-          'When content is detected in a different language than your preference, ' +
-          'a "See translation" toggle will appear. Affects posts, gems, events, and other feed content.'
+          'Used for supported content translations and Telegraph. Availability depends on the installed ' +
+          'self-hosted language model. Originals remain available; selecting a language does not install a model.'
         }
       >
         <View style={styles.currentRow}>

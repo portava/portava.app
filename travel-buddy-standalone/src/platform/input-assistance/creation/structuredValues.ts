@@ -100,7 +100,7 @@ export function eventFormPatch(value: CreationStructuredValue, form: EventFormTi
     if (value.startTime) patch.startTime = value.startTime;
     if (value.endTime) {
       patch.endTime = value.endTime;
-      patch.endDateStr = value.endDate ?? value.date ?? form.startDateStr;
+      patch.endDateStr = value.endDate ?? eventTimeEndDate(value, form.startDateStr);
     }
     return Object.keys(patch).length > 0 ? patch : null;
   }
@@ -113,4 +113,14 @@ export function eventFormPatch(value: CreationStructuredValue, form: EventFormTi
     endDateStr: `${end.getUTCFullYear()}-${pad(end.getUTCMonth() + 1)}-${pad(end.getUTCDate())}`,
     endTime: `${pad(end.getUTCHours())}:${pad(end.getUTCMinutes())}`,
   };
+}
+
+function eventTimeEndDate(value: EventTimeValue, startDateStr: string): string {
+  const date = value.date ?? startDateStr;
+  if (!value.startTime || !value.endTime || !TIME_RE.test(value.startTime) || !TIME_RE.test(value.endTime)
+    || value.endTime >= value.startTime || !DATE_RE.test(date)) return date;
+  const end = new Date(`${date}T00:00:00.000Z`);
+  if (!Number.isFinite(end.getTime()) || end.toISOString().slice(0, 10) !== date) return date;
+  end.setUTCDate(end.getUTCDate() + 1);
+  return end.toISOString().slice(0, 10);
 }

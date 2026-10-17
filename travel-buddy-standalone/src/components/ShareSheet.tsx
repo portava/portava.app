@@ -17,7 +17,7 @@
  * The parent (PostEngagementBar) calls recordShare(postId, target) via
  * onShareSuccess so the correct target is always persisted.
  */
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -57,6 +57,9 @@ import type { ThreadSummary } from '../services/messaging.ts';
 import { getPostById } from '../services/posts.ts';
 import { searchUsers } from '../services/follows.ts';
 import type { TravelerSearchResult } from '../services/follows.ts';
+import { useInputAccountEpoch } from '../platform/input-assistance/hooks/useInputAccountEpoch.ts';
+import { createInputRequestScheduler } from '../platform/input-assistance/services/inputRequestScheduler.ts';
+import { currentDiscoveryScope, isCurrentDiscoveryScope } from '../services/discoveryViewerScope.ts';
 import { shareObjectIntoThread } from '../features/telegraph/sharing/shareApi.ts';
 
 export type ShareTarget = 'external' | 'copy_link' | 'dm' | 'group_chat' | 'trip_crew' | 'circle';
@@ -110,92 +113,153 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess, telegraph
   // Thread search
   const [threadSearch, setThreadSearch] = useState('');
   const [userResults, setUserResults] = useState<TravelerSearchResult[]>([]);
-  const [searchingUsers, setSearchingUsers] = useState(false); const [userSearchFailed, setUserSearchFailed] = useState(false); const userSearchSeqRef = useRef(0); // census-discovery §106 (tm-people): the last people search's read failed; the generation of the latest search
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [searchingUsers, setSearchingUsers] = useState(false);
+  const [userSearchFailed, setUserSearchFailed] = useState(false);
+  const accountEpoch = useInputAccountEpoch();
+  const context = useMemo(() => ({ active: false, scope: currentDiscoveryScope() }), [visible, accountEpoch, postId, telegraphObject?.objectType, telegraphObject?.objectId]);
+  const currentContext = useRef(context);
+  const scheduler = useMemo(createInputRequestScheduler, []);
+  const pickerVersionRef = useRef(0);
+  const pickerVersion = pickerVersionRef.current;
+  const pickerActive = useRef(false);
+  const actionVersionRef = useRef(0);
+  const actionVersion = actionVersionRef.current;
+  const sendingRef = useRef(false);
+  const isCurrent = () => context.active && currentContext.current === context && isCurrentDiscoveryScope(context.scope);
+  const isCurrentPicker = () => isCurrent() && pickerActive.current && pickerVersion === pickerVersionRef.current;
+  const isCurrentAction = () => isCurrentPicker() && actionVersion === actionVersionRef.current;
 
-  // Reset + hydrate whenever the sheet opens.
-  useEffect(() => {
-    if (!visible) {
-      if (debounceRef.current) clearTimeout(debounceRef.current); userSearchSeqRef.current++; setUserSearchFailed(false); // a closed sheet takes no late answer
-      setThreadSearch('');
-      setUserResults([]);
-      return;
-    }
-    setMode('menu');
-    setSelectedId(null);
-    setCaption('');
+  function resetSearch() {
+    actionVersionRef.current++;
+    scheduler.cancel();
     setThreadSearch('');
     setUserResults([]);
+    setSearchingUsers(false);
+    setUserSearchFailed(false);
+    setSelectedId(null);
+    sendingRef.current = false;
     setSending(false);
-    setPreview(null);
-    // Fetch a lightweight preview of the post so the sent card is rich and real.
-    getPostById(postId)
-      .then((res) => {
-        if (res.ok && res.data) {
-          const p = res.data;
-          setPreview({
-            authorName: p.author?.name,
-            authorHandle: p.author?.handle,
-            authorAvatar: p.author?.avatarUrl ?? null,
-            snippet: (p.content ?? '').slice(0, 220),
-            thumbnail: p.mediaUrls?.[0] ?? p.mediaThumbnailUrl ?? null,
-            city: p.locationCity ?? null,
-            country: p.locationCountry ?? null,
-            likeCount: p.likeCount,
-            commentCount: p.commentCount,
-          });
-        }
-      })
-      .catch(() => {});
-  }, [visible, postId]);
+  }
 
-  const openPicker = useCallback(() => {
+  function handleClose() {
+    if (!isCurrent()) return;
+    context.active = false;
+    pickerActive.current = false;
+    pickerVersionRef.current++;
+    resetSearch();
+    setThreads([]);
+    onClose();
+  }
+
+  function closePicker() {
+    if (!isCurrentPicker()) return;
+    pickerActive.current = false;
+    pickerVersionRef.current++;
+    resetSearch();
+    setThreads([]);
+    setLoadingThreads(false);
+    setMode('menu');
+  }
+
+  useLayoutEffect(() => {
+    let active = true;
+    const isCurrentHydration = () => active && isCurrent();
+    currentContext.current = context;
+    context.active = visible;
+    pickerActive.current = false;
+    pickerVersionRef.current++;
+    resetSearch();
+    setMode('menu');
+    setCaption('');
+    setThreads([]);
+    setLoadingThreads(false);
+    setPreview(null);
+    if (visible) {
+      getPostById(postId)
+        .then((res) => {
+          if (isCurrentHydration() && res.ok && res.data) {
+            const post = res.data;
+            setPreview({
+              authorName: post.author?.name,
+              authorHandle: post.author?.handle,
+              authorAvatar: post.author?.avatarUrl ?? null,
+              snippet: (post.content ?? '').slice(0, 220),
+              thumbnail: post.mediaUrls?.[0] ?? post.mediaThumbnailUrl ?? null,
+              city: post.locationCity ?? null,
+              country: post.locationCountry ?? null,
+              likeCount: post.likeCount,
+              commentCount: post.commentCount,
+            });
+          }
+        })
+        .catch(() => {});
+    }
+    return () => {
+      active = false;
+      context.active = false;
+      scheduler.cancel();
+    };
+  }, [context]);
+
+  function openPicker() {
+    if (!isCurrent() || pickerActive.current) return;
+    pickerActive.current = true;
+    const version = ++pickerVersionRef.current;
+    const isCurrentHydration = () => isCurrent() && pickerActive.current && version === pickerVersionRef.current;
+    resetSearch();
     setMode('picker');
-    setThreadSearch('');
-    setUserResults([]);
-    setSelectedId(null);
+    setThreads([]);
     setLoadingThreads(true);
     getMyThreads()
       .then((res) => {
-        if (res.ok && res.data) setThreads(res.data.threads.slice(0, 15));
+        if (isCurrentHydration() && res.ok && res.data) setThreads(res.data.threads.slice(0, 15));
       })
       .catch(() => {})
-      .finally(() => setLoadingThreads(false));
-  }, []);
+      .finally(() => { if (isCurrentHydration()) setLoadingThreads(false); });
+  }
 
-  const handleSearchChange = useCallback((text: string) => {
-    setThreadSearch(text); const seq = ++userSearchSeqRef.current; setUserSearchFailed(false); // a new query: whatever is in flight answers a question no longer asked
-    setSelectedId(null);
-
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-
-    if (!text.trim()) {
-      setUserResults([]);
-      setSearchingUsers(false);
-      return;
-    }
-
-    debounceRef.current = setTimeout(async () => {
-      setSearchingUsers(true);
+  function handleSearchChange(text: string) {
+    if (!isCurrentPicker()) return;
+    resetSearch();
+    setThreadSearch(text);
+    if (!text.trim()) return;
+    setSearchingUsers(true);
+    scheduler.schedule(async (request) => {
+      const isCurrentRequest = () => isCurrentPicker() && request.isCurrent();
+      if (!isCurrentRequest()) return;
       try {
-        const res = await searchUsers(text.trim(), 10); if (seq !== userSearchSeqRef.current) return; // only the latest request writes the People section
+        const res = await searchUsers(text.trim(), 10, { ...request, isCurrent: isCurrentRequest, scope: context.scope });
+        if (!isCurrentRequest()) return;
         if (res.ok && res.data) {
           setUserResults(res.data);
         } else {
-          setUserResults([]); setUserSearchFailed(true); // a failed read is not "No people found"
+          setUserResults([]);
+          setUserSearchFailed(true);
         }
       } catch {
-        if (seq === userSearchSeqRef.current) { setUserResults([]); setUserSearchFailed(true); }
+        if (isCurrentRequest()) {
+          setUserResults([]);
+          setUserSearchFailed(true);
+        }
       } finally {
-        if (seq === userSearchSeqRef.current) setSearchingUsers(false);
+        if (isCurrentRequest()) setSearchingUsers(false);
       }
     }, 350);
-  }, []);
+  }
 
-  const handleUserResultPress = useCallback(async (user: TravelerSearchResult) => {
+  function selectThread(thread: ThreadSummary) {
+    if (!isCurrentAction() || sendingRef.current || !threads.includes(thread) || selectedId === thread.id) return;
+    actionVersionRef.current++;
+    setSelectedId(thread.id);
+  }
+
+  async function handleUserResultPress(user: TravelerSearchResult) {
+    if (!isCurrentAction() || sendingRef.current || !userResults.includes(user)) return;
+    sendingRef.current = true;
     setSending(true);
     try {
       const threadRes = await openDirectThread(user.id);
+      if (!isCurrentAction()) return;
       if (!threadRes.ok || !threadRes.data) {
         Alert.alert('Could not send', 'Could not open a chat with this user. Please try again.');
         return;
@@ -221,22 +285,27 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess, telegraph
             msgType: 'system',
             subtype: 'post_card',
           });
+      if (!isCurrentAction()) return;
       if (msgRes.ok) {
         onShareSuccess?.('dm');
-        onClose();
+        handleClose();
         Alert.alert('Sent!', 'Post shared to your chat.');
       } else {
         Alert.alert('Could not send', 'Something went wrong. Please try again.');
       }
     } catch {
-      Alert.alert('Could not send', 'Something went wrong. Please try again.');
+      if (isCurrentAction()) Alert.alert('Could not send', 'Something went wrong. Please try again.');
     } finally {
-      setSending(false);
+      if (isCurrentAction()) {
+        sendingRef.current = false;
+        setSending(false);
+      }
     }
-  }, [postId, preview, caption, onClose, onShareSuccess, telegraphObject]);
+  }
 
-  const handleNativeShare = useCallback(async () => {
-    onClose();
+  async function handleNativeShare() {
+    if (!isCurrent()) return;
+    handleClose();
     try {
       const result = await Share.share({
         message: `Check out this post on Portava!\n${postPermalink(postId)}`,
@@ -248,10 +317,11 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess, telegraph
     } catch (_) {
       // User cancelled or share unavailable — silent
     }
-  }, [postId, onClose, onShareSuccess]);
+  }
 
-  const handleCopyLink = useCallback(async () => {
-    onClose();
+  async function handleCopyLink() {
+    if (!isCurrent()) return;
+    handleClose();
     try {
       await Clipboard.setStringAsync(postPermalink(postId));
       onShareSuccess?.('copy_link');
@@ -263,12 +333,13 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess, telegraph
     } catch (_) {
       Alert.alert('Error', 'Could not copy link. Please try again.');
     }
-  }, [postId, onClose, onShareSuccess]);
+  }
 
-  const handleSend = useCallback(async () => {
-    if (!selectedId) return;
+  async function handleSend() {
+    if (!selectedId || !isCurrentAction() || sendingRef.current) return;
     const thread = threads.find((t) => t.id === selectedId);
     if (!thread) return;
+    sendingRef.current = true;
     setSending(true);
     try {
       const payload = {
@@ -291,24 +362,28 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess, telegraph
             msgType: 'system',
             subtype: 'post_card',
           });
+      if (!isCurrentAction()) return;
       if (res.ok) {
         onShareSuccess?.(targetForThread(thread.threadType));
-        onClose();
+        handleClose();
         Alert.alert('Sent!', 'Post shared to your chat.');
       } else {
         Alert.alert('Could not send', 'Something went wrong. Please try again.');
       }
     } catch {
-      Alert.alert('Could not send', 'Something went wrong. Please try again.');
+      if (isCurrentAction()) Alert.alert('Could not send', 'Something went wrong. Please try again.');
     } finally {
-      setSending(false);
+      if (isCurrentAction()) {
+        sendingRef.current = false;
+        setSending(false);
+      }
     }
-  }, [selectedId, threads, postId, preview, caption, onClose, onShareSuccess, telegraphObject]);
+  }
 
   return (
     <PortavaSheet
       visible={visible}
-      onClose={onClose}
+      onClose={handleClose}
       accessibilityLabel="Share post"
       closeAccessibilityLabel="Close share sheet"
       testID="share-sheet"
@@ -317,7 +392,7 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess, telegraph
           <>
             <View style={s.header}>
               <Text style={s.title}>Share Post</Text>
-              <Pressable onPress={onClose} hitSlop={10}>
+              <Pressable onPress={handleClose} hitSlop={10}>
                 <X size={20} color={color.ink} />
               </Pressable>
             </View>
@@ -354,18 +429,18 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess, telegraph
               />
             </ScrollView>
 
-            <Pressable style={s.cancel} onPress={onClose}>
+            <Pressable style={s.cancel} onPress={handleClose}>
               <Text style={s.cancelText}>Cancel</Text>
             </Pressable>
           </>
         ) : (
           <>
             <View style={s.header}>
-              <Pressable onPress={() => setMode('menu')} hitSlop={10}>
+              <Pressable onPress={closePicker} hitSlop={10}>
                 <Text style={s.backText}>‹ Back</Text>
               </Pressable>
               <Text style={s.title}>Send to</Text>
-              <Pressable onPress={onClose} hitSlop={10}>
+              <Pressable onPress={handleClose} hitSlop={10}>
                 <X size={20} color={color.ink} />
               </Pressable>
             </View>
@@ -408,7 +483,7 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess, telegraph
                 style={s.newThreadRow}
                 onPress={() => {
                   // BUG CC/CD fix: defer navigation until after the sheet close animation.
-                  closeThenNavigate(onClose, '/(tabs)/messages');
+                  closeThenNavigate(handleClose, '/(tabs)/messages');
                 }}
               >
                 <View style={s.newThreadIcon}>
@@ -460,7 +535,7 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess, telegraph
                       <ThreadRow
                         thread={thread}
                         selected={selectedId === thread.id}
-                        onPress={() => setSelectedId(thread.id)}
+                        onPress={() => selectThread(thread)}
                       />
                     )}
                     ItemSeparatorComponent={() => (
@@ -488,7 +563,7 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess, telegraph
                       <ThreadRow
                         thread={thread}
                         selected={selectedId === thread.id}
-                        onPress={() => setSelectedId(thread.id)}
+                        onPress={() => selectThread(thread)}
                       />
                       {i < filteredThreads.length - 1 && (
                         <View style={{ height: 1, backgroundColor: color.haze }} />

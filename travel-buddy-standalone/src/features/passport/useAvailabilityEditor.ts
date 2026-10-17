@@ -27,7 +27,7 @@
  * The pure helpers (`isWindowExpired`, `pickCurrentWindow`, `pickInferredPrompt`,
  * `defaultTonightWindow`) are exported for direct unit/component testing.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   getMyAvailability,
   patchMyAvailability,
@@ -192,6 +192,22 @@ function toggleInArray<T>(arr: readonly T[], value: T): T[] {
   return arr.includes(value) ? arr.filter((v) => v !== value) : [...arr, value];
 }
 
+function isReadObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function hasReadableWeeklyDays(value: unknown): boolean {
+  const weekdays: readonly Weekday[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+  const timeBlocks: readonly TimeBlock[] = ['morning', 'afternoon', 'evening', 'late'];
+  return isReadObject(value) && Object.entries(value).every(([day, blocks]) =>
+    weekdays.some(weekday => weekday === day) && Array.isArray(blocks)
+    && blocks.every(block => timeBlocks.some(timeBlock => timeBlock === block)));
+}
+
+function hasKnownWindowSource(value: unknown): boolean {
+  return isReadObject(value) && (value.source === 'explicit' || value.source === 'plan_derived');
+}
+
 export function useAvailabilityEditor(): UseAvailabilityEditorResult {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -201,6 +217,13 @@ export function useAvailabilityEditor(): UseAvailabilityEditorResult {
   const [windows, setWindows] = useState<AvailabilityWindow[]>([]);
   const [weeklyDays, setWeeklyDays] = useState<Partial<Record<Weekday, TimeBlock[]>>>({});
   const [draft, setDraft] = useState<AvailabilityDraft>(() => emptyDraft(Date.now()));
+  const [bundleGeneration, setBundleGeneration] = useState<number | null>(null);
+  const mounted = useRef(false);
+  const readGeneration = useRef(0);
+  const readableGeneration = useRef<number | null>(null);
+  const saveInFlight = useRef(false);
+  const latestDraft = useRef({ draft, weeklyDays });
+  latestDraft.current = { draft, weeklyDays };
 
   // Derived: §7/§31 current + inferred selection is recomputed on every render.
   const nowMs = Date.now();
@@ -208,41 +231,60 @@ export function useAvailabilityEditor(): UseAvailabilityEditorResult {
   const inferredPrompt = useMemo(() => pickInferredPrompt(windows, nowMs), [windows, nowMs]);
 
   const load = useCallback(async () => {
+    if (!mounted.current) return;
+    const generation = ++readGeneration.current;
+    const isCurrent = () => mounted.current && readGeneration.current === generation;
+    readableGeneration.current = null;
+    setBundleGeneration(null);
     setLoading(true);
     setError(null);
 
-    const [gridRes, winRes] = await Promise.all([
-      getMyAvailability(),
-      getMyAvailabilityWindows(),
-    ]);
+    try {
+      const [gridRes, winRes] = await Promise.all([
+        getMyAvailability(),
+        getMyAvailabilityWindows(),
+      ]);
+      if (!isCurrent()) return;
+      if (!gridRes.ok || !winRes.ok) {
+        const message = [gridRes.ok ? null : gridRes.message, winRes.ok ? null : winRes.message]
+          .find((value): value is string => typeof value === 'string' && value.trim().length > 0);
+        setError(message ?? 'Could not load your availability');
+        return;
+      }
 
-    if (!gridRes.ok && !winRes.ok) {
-      setError(gridRes.message ?? winRes.message ?? 'Could not load your availability');
-      setLoading(false);
-      return;
+      const grid = gridRes.data?.weeklyDays;
+      const envelope = winRes.data;
+      if (!grid || !hasReadableWeeklyDays(grid)
+        || typeof envelope?.enabled !== 'boolean' || !Array.isArray(envelope.windows)
+        || !envelope.windows.every(hasKnownWindowSource)) {
+        setError('Could not read your saved availability. Please try again.');
+        return;
+      }
+
+      const now = Date.now();
+      const cur = pickCurrentWindow(envelope.windows, now);
+      const nextDraft = cur ? draftFromWindow(cur) : emptyDraft(now);
+      setWeeklyDays(grid);
+      setWindows(envelope.windows);
+      setWindowsEnabled(envelope.enabled);
+      setDraft(nextDraft);
+      readableGeneration.current = generation;
+      setBundleGeneration(generation);
+    } catch {
+      if (isCurrent()) setError('Could not load your availability. Please try again.');
+    } finally {
+      if (isCurrent()) setLoading(false);
     }
-
-    // Weekly grid (§6). Null data (dev / unconfigured) leaves an empty grid.
-    if (gridRes.ok && gridRes.data) {
-      setWeeklyDays(gridRes.data.weeklyDays ?? {});
-    }
-
-    // §8 windows. `enabled:false` (flag off) still resolves ok with no windows.
-    const envelope = winRes.ok ? winRes.data : null;
-    const list = envelope?.windows ?? [];
-    setWindows(list);
-    setWindowsEnabled(envelope?.enabled ?? false);
-
-    // Seed the draft from the current explicit window (§7/§31), else a fresh one.
-    const now = Date.now();
-    const cur = pickCurrentWindow(list, now);
-    setDraft(cur ? draftFromWindow(cur) : emptyDraft(now));
-
-    setLoading(false);
   }, []);
 
   useEffect(() => {
-    load();
+    mounted.current = true;
+    void load();
+    return () => {
+      mounted.current = false;
+      readGeneration.current += 1;
+      readableGeneration.current = null;
+    };
   }, [load]);
 
   // ── Draft mutators ────────────────────────────────────────────────────────
@@ -275,10 +317,24 @@ export function useAvailabilityEditor(): UseAvailabilityEditorResult {
 
   // ── Persist (the EXPLICIT answer, §7) ─────────────────────────────────────
   const save = useCallback(async (): Promise<SaveResult> => {
+    const isCurrent = () => mounted.current
+      && bundleGeneration !== null
+      && readGeneration.current === bundleGeneration
+      && readableGeneration.current === bundleGeneration
+      && latestDraft.current.draft === draft
+      && latestDraft.current.weeklyDays === weeklyDays;
+    const refused: SaveResult = {
+      ok: false,
+      enabled: windowsEnabled,
+      message: 'Availability changed or could not be read. Reload it before saving again.',
+    };
+    if (!isCurrent() || saveInFlight.current) return refused;
+    saveInFlight.current = true;
     setSaving(true);
     try {
       // 1. Weekly recurring grid (§6) — NOT flag-gated.
       const gridRes = await patchMyAvailability({ weeklyDays });
+      if (!isCurrent()) return refused;
       if (!gridRes.ok) {
         return { ok: false, enabled: windowsEnabled, message: gridRes.message };
       }
@@ -298,6 +354,7 @@ export function useAvailabilityEditor(): UseAvailabilityEditorResult {
           endAt: draft.endAt,
           visibility: draft.visibility,
         });
+        if (!isCurrent()) return refused;
         if (!res.ok) return { ok: false, enabled, message: res.message };
         if (res.data && res.data.enabled === false) enabled = false;
       } else {
@@ -313,16 +370,27 @@ export function useAvailabilityEditor(): UseAvailabilityEditorResult {
           visibility: draft.visibility,
           source: 'explicit',
         });
+        if (!isCurrent()) return refused;
         if (!res.ok) return { ok: false, enabled, message: res.message };
         if (res.data && res.data.enabled === false) enabled = false;
       }
 
+      const refreshGeneration = readGeneration.current + 1;
       await load();
+      if (!mounted.current || readGeneration.current !== refreshGeneration) return refused;
       return { ok: true, enabled };
+    } catch {
+      if (isCurrent()) {
+        readableGeneration.current = null;
+        setBundleGeneration(null);
+        setError('Could not confirm your save. Reload your availability before trying again.');
+      }
+      return refused;
     } finally {
-      setSaving(false);
+      saveInFlight.current = false;
+      if (mounted.current) setSaving(false);
     }
-  }, [weeklyDays, windows, windowsEnabled, draft, load]);
+  }, [weeklyDays, windows, windowsEnabled, draft, load, bundleGeneration]);
 
   const clearWindow = useCallback(async () => {
     const cur = pickCurrentWindow(windows, Date.now());

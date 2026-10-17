@@ -191,7 +191,7 @@ function fixture(state: State): Record<string, any[]> {
       { event_id: EVENT_UP, user_id: BOB },
     ],
     events: [
-      { id: EVENT_UP, host_id: CAROL, title: "Rooftop set", starts_at: days(3), ends_at: days(3), state: "published", updated_at: days(-1) },
+      { id: EVENT_UP, host_id: CAROL, title: "Rooftop set", starts_at: days(3), ends_at: days(3), state: "open", visibility: "public", updated_at: days(-1) },
     ],
     rent_buddy_bookings: [],
     collections: [

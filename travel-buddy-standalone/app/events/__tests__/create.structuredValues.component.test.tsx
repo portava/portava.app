@@ -142,3 +142,36 @@ describe('Create Event — structured values typed into the title (G46)', () => 
     expect(ui.queryByTestId('structured-value-chips')).toBeNull();
   });
 });
+
+describe('Create Event — an undated overnight chip uses the existing form date', () => {
+  it.each([true, false])('advances the end date only when tapped: %s', async (tap) => {
+    await openAndType('Start with a dated suggestion');
+    await waitFor(() => expect(ui.getByTestId('structured-value-event_time')).toBeTruthy());
+    await act(async () => { fireEvent.press(ui.getByTestId('structured-value-event_time')); });
+    await act(async () => { fireEvent.press(ui.getByText('Next')); });
+    const dateLabel = (day: number) => new Date(2030, 5, day, 12).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+    const timeLabel = (hour: number) => new Date(2000, 0, 1, hour).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    await waitFor(() => expect(ui.getByLabelText(`Start date: ${dateLabel(7)}`)).toBeTruthy());
+    await act(async () => { fireEvent.press(ui.getByLabelText('Clear end date and time')); });
+    await act(async () => { fireEvent.press(ui.getByText('Back')); });
+
+    served = [row({ kind: 'event_time', date: null, startTime: '22:00', endDate: null, endTime: '02:00' }, '10:00 PM – 2:00 AM', 'Set as the time')];
+    await act(async () => { fireEvent.changeText(ui.getByPlaceholderText('e.g. Sunset hike at Mount Batang'), 'Club night 10pm-2am'); });
+    await waitFor(() => expect(ui.getByText('10:00 PM – 2:00 AM')).toBeTruthy());
+    if (tap) await act(async () => { fireEvent.press(ui.getByTestId('structured-value-event_time')); });
+    expect(ui.getByDisplayValue('Club night 10pm-2am')).toBeTruthy();
+    await act(async () => { fireEvent.press(ui.getByText('Next')); });
+    await waitFor(() => expect(ui.getByLabelText(`Start date: ${dateLabel(7)}`)).toBeTruthy());
+    expect(ui.getByLabelText(`Start time: ${timeLabel(tap ? 22 : 20)}`)).toBeTruthy();
+    if (tap) {
+      expect(ui.getByLabelText(`End date: ${dateLabel(8)}`)).toBeTruthy();
+      expect(ui.getByLabelText(`End time: ${timeLabel(2)}`)).toBeTruthy();
+    } else {
+      expect(ui.getByLabelText('Pick an end date')).toBeTruthy();
+      expect(ui.getByLabelText('Pick an end time')).toBeTruthy();
+    }
+    await act(async () => { fireEvent.press(ui.getByText('Next')); });
+    expect(ui.queryByText('End time must be after the start time')).toBeNull();
+    expect(ui.getByText('Venue or location *')).toBeTruthy();
+  });
+});

@@ -84,6 +84,19 @@ function humSamples(count: number): AcousticMeterSample[] {
 }
 
 describe('S29 — the acoustic permission is SEPARATE from the call/video microphone', () => {
+  test('failed grant persistence is observable rather than reported as success', async () => {
+    const storage = memoryStorage();
+    storage.setItem = async () => { throw Error('storage unavailable'); };
+    await assert.rejects(grantAcousticPermission(storage, 1000, true), /storage unavailable/);
+  });
+
+  test('failed withdrawal over an old grant is observable and does not pretend it saved', async () => {
+    const storage = memoryStorage();
+    await grantAcousticPermission(storage, 1000, true);
+    storage.setItem = async () => { throw Error('storage unavailable'); };
+    await assert.rejects(revokeAcousticPermission(storage, 2000), /storage unavailable/);
+    assert.equal((await loadAcousticPermission(storage)).granted, true);
+  });
   test('it has its own scope and its own storage key', () => {
     assert.equal(ACOUSTIC_SENSING_SCOPE, 'sensing.acoustic.energy');
     assert.equal(ACOUSTIC_PERMISSION_STORAGE_KEY, 'sensing_acoustic_permission_v1');

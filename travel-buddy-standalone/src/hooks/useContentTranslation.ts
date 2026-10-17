@@ -16,8 +16,9 @@
  *   // Render the toggle:
  *   <TranslationToggle tx={tx} />
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useLanguagePreference } from '../context/LanguagePreferenceContext.tsx';
+import { useSession } from '../context/SessionContext.tsx';
 import {
   fetchContentTranslation,
   type ContentEntityType,
@@ -45,53 +46,56 @@ interface UseContentTranslationOptions {
   entityId: string;
   /** ISO 639-1 source language detected at write time, or null if unknown. */
   originalLanguage: string | null | undefined;
+  sourceRevision?: string;
+  resolveLanguageOnServer?: boolean;
 }
 
 export function useContentTranslation({
   entityType,
   entityId,
   originalLanguage,
+  sourceRevision,
+  resolveLanguageOnServer = false,
 }: UseContentTranslationOptions): ContentTranslationState {
-  const { preferredLanguage } = useLanguagePreference();
-  const [translated, setTranslated] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [translatedFields, setTranslatedFields] = useState<TranslatedFields>({});
-  const [translationLabel, setTranslationLabel] = useState('');
-  const fetchedForLang = useRef<string | null>(null);
+  const { preferredLanguage, preferenceSession } = useLanguagePreference();
+  const { userId } = useSession();
+  const key = JSON.stringify([userId, preferenceSession, entityType, entityId, originalLanguage, preferredLanguage, sourceRevision, resolveLanguageOnServer]);
+  const [state, setState] = useState({ key: '', translated: false, loading: false,
+    translatedFields: {} as TranslatedFields, translationLabel: '' });
 
   // Whether this content is in a different language than the viewer's preference.
   const canTranslate = Boolean(
-    originalLanguage &&
+    userId && (originalLanguage || resolveLanguageOnServer) &&
     preferredLanguage &&
     originalLanguage !== preferredLanguage,
   );
 
   // Auto-fetch when the viewer has a preferred language that differs from the source.
   useEffect(() => {
+    setState({ key, translated: false, loading: canTranslate, translatedFields: {}, translationLabel: '' });
     if (!canTranslate || !preferredLanguage) return;
-    if (fetchedForLang.current === preferredLanguage) return;
 
     let cancelled = false;
-    setLoading(true);
 
     fetchContentTranslation(entityType, entityId, preferredLanguage).then((result) => {
       if (cancelled) return;
-      fetchedForLang.current = preferredLanguage;
-      setLoading(false);
-
-      if (result.ok && result.status === 'translated' && result.translatedFields) {
-        setTranslatedFields(result.translatedFields);
-        setTranslationLabel(result.translationLabel ?? '');
-        setTranslated(true);
-      }
+      const available = Boolean(result.ok && result.status === 'translated' && result.translatedFields
+        && Object.keys(result.translatedFields).length);
+      setState({ key, loading: false, translated: available,
+        translatedFields: available ? result.translatedFields! : {},
+        translationLabel: available ? result.translationLabel ?? '' : '' });
+    }).catch(() => {
+      if (!cancelled) setState({ key, translated: false, loading: false, translatedFields: {}, translationLabel: '' });
     });
 
     return () => { cancelled = true; };
-  }, [canTranslate, entityType, entityId, preferredLanguage]);
+  }, [key, canTranslate, entityType, entityId, preferredLanguage]);
 
   const toggle = useCallback(() => {
-    setTranslated((prev) => !prev);
-  }, []);
+    setState(previous => previous.key === key && Object.keys(previous.translatedFields).length
+      ? { ...previous, translated: !previous.translated } : previous);
+  }, [key]);
 
-  return { translated, loading, translatedFields, translationLabel, canTranslate, toggle };
+  const current = state.key === key ? state : { translated: false, loading: canTranslate, translatedFields: {}, translationLabel: '' };
+  return { ...current, canTranslate: canTranslate && (current.loading || Object.keys(current.translatedFields).length > 0), toggle };
 }

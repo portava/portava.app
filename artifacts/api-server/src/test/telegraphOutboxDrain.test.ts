@@ -41,6 +41,7 @@ interface World {
   messageReadError: boolean;
   claimError: boolean;
   ackError: boolean;
+  ackOverride: { data: unknown } | null;
   rpcCalls: string[];
 }
 
@@ -60,6 +61,7 @@ function fresh(): World {
     messageReadError: false,
     claimError: false,
     ackError: false,
+    ackOverride: null,
     rpcCalls: [],
   };
 }
@@ -149,6 +151,7 @@ function makeClient() {
     }
     if (fn === "telegraph_outbox_ack") {
       if (w.ackError) return { data: null, error: { code: "08006", message: "connection failure" } };
+      if (w.ackOverride !== null) return { data: w.ackOverride.data, error: null };
       let k = 0;
       for (const r of w.outbox) if (args.p_ids.includes(r.id) && r.published_at === null) { r.published_at = now; r.locked_until = null; r.disposition = args.p_disposition; k++; }
       return { data: k, error: null };
@@ -307,6 +310,102 @@ describe("T154 the drainer, pass by pass", () => {
   it("outboxFanoutInForce is false on a flag read error", async () => {
     const broken = { from: () => { throw new Error("connection refused"); } };
     assert.equal(await outboxFanoutInForce(broken), false);
+  });
+});
+
+describe("malformed acknowledgment counts fail without claiming successful health", () => {
+  const cases = [
+    { label: "null", data: null },
+    { label: "undefined", data: undefined },
+    { label: "numeric string", data: "1" },
+    { label: "negative", data: -1 },
+    { label: "fractional", data: 0.5 },
+    { label: "NaN", data: Number.NaN },
+    { label: "larger than the acknowledgment batch", data: 2 },
+  ];
+
+  for (const scenario of cases) {
+    it(`${scenario.label}: preserves health, waits for the lease, and redelivers with the same dedupe key`, async () => {
+      w.flags = { ...ON };
+      const published = recorder();
+      const previousSuccess = new Date(w.clock).toISOString();
+      await runTelegraphOutboxDrainTick({ client: db, now: new Date(w.clock), publish: published.fn });
+      assert.equal(getTelegraphOutboxDrainStatus().lastSuccessAt, previousSuccess);
+      w.clock += 1000;
+      const row = seedOutbox("message.sent", {});
+      w.ackOverride = { data: scenario.data };
+
+      const failed = await runTelegraphOutboxDrainTick({ client: db, now: new Date(w.clock), publish: published.fn });
+      const status = getTelegraphOutboxDrainStatus();
+      assert.equal(status.lastSuccessAt, previousSuccess, "an unreadable acknowledgment must not advance successful health");
+      assert.deepEqual([failed.outcome, failed.reason], ["failed", "ack_failed"]);
+      assert.equal(failed.fannedOut, 0);
+      assert.equal(status.consecutiveFailures, 1);
+      assert.equal(status.lastAttemptAt, new Date(w.clock).toISOString());
+      assert.equal(w.jobHealth.at(-1).last_run_at, new Date(w.clock).toISOString());
+      assert.equal(w.jobHealth.at(-1).last_success_at, undefined);
+      assert.equal(row.published_at, null);
+      assert.equal(row.locked_until, w.clock + 60_000);
+      assert.equal(published.calls.length, 1);
+      assert.equal(w.rpcCalls.includes("telegraph_outbox_fail"), false);
+
+      w.ackOverride = null;
+      const waiting = await runTelegraphOutboxDrainPass({ client: db, nowMs: w.clock, publish: published.fn });
+      assert.equal(waiting.outcome, "idle");
+      assert.equal(published.calls.length, 1);
+      w.clock += 61_000;
+      const retried = await runTelegraphOutboxDrainTick({ client: db, now: new Date(w.clock), publish: published.fn });
+      assert.deepEqual([retried.outcome, retried.reason, retried.fannedOut], ["drained", null, 1]);
+      assert.equal(row.attempts, 2);
+      assert.equal(row.published_at, w.clock);
+      assert.equal(published.calls.length, 2);
+      assert.equal(published.calls[0]!.event.payload.dedupeKey, published.calls[1]!.event.payload.dedupeKey);
+      assert.equal(published.calls[0]!.event.payload.messageId, published.calls[1]!.event.payload.messageId);
+      assert.equal(JSON.stringify(published.calls).includes("secret body"), false);
+      assert.equal(getTelegraphOutboxDrainStatus().consecutiveFailures, 0);
+      assert.equal(getTelegraphOutboxDrainStatus().lastSuccessAt, new Date(w.clock).toISOString());
+      assert.equal(w.jobHealth.at(-1).last_success_at, new Date(w.clock).toISOString());
+    });
+  }
+});
+
+describe("valid acknowledgment counts preserve idempotent results", () => {
+  for (const acknowledgedElsewhere of [0, 1, 2]) {
+    it(`accepts ${2 - acknowledgedElsewhere} acknowledgments for two rows when another drainer already acknowledged ${acknowledgedElsewhere}`, async () => {
+      w.flags = { ...ON };
+      seedOutbox("message.sent", {});
+      seedOutbox("message.sent", {});
+      const published = recorder(() => {
+        for (const row of w.outbox.slice(0, acknowledgedElsewhere)) {
+          row.published_at = w.clock;
+          row.locked_until = null;
+          row.disposition = "fanned_out";
+        }
+        return "published";
+      });
+      const result = await runTelegraphOutboxDrainTick({ client: db, now: new Date(w.clock), publish: published.fn });
+      assert.deepEqual([result.outcome, result.reason, result.claimed, result.fannedOut],
+        ["drained", null, 2, 2 - acknowledgedElsewhere]);
+      assert.equal(published.calls.length, 2);
+      assert.ok(w.outbox.every((row) => row.published_at === w.clock && row.locked_until === null));
+      assert.equal(getTelegraphOutboxDrainStatus().consecutiveFailures, 0);
+      assert.equal(getTelegraphOutboxDrainStatus().lastSuccessAt, new Date(w.clock).toISOString());
+      assert.equal(w.jobHealth.at(-1).last_success_at, new Date(w.clock).toISOString());
+    });
+  }
+
+  it("bounds acknowledgment counts to the disposition batch, not the whole claim", async () => {
+    w.flags = { ...ON };
+    seedOutbox("message.sent", {});
+    seedOutbox("message.edited", {});
+    w.ackOverride = { data: 2 };
+    const result = await runTelegraphOutboxDrainTick({ client: db, now: new Date(w.clock), publish: recorder().fn });
+    assert.deepEqual([result.outcome, result.reason, result.claimed], ["failed", "ack_failed", 2]);
+    assert.equal(result.fannedOut, 0);
+    assert.equal(result.routeDirect, 0);
+    assert.equal(w.rpcCalls.filter((name) => name === "telegraph_outbox_ack").length, 1);
+    assert.equal(getTelegraphOutboxDrainStatus().lastSuccessAt, null);
+    assert.equal(w.jobHealth.at(-1).last_success_at, undefined);
   });
 });
 

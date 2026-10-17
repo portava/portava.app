@@ -2835,7 +2835,7 @@ router.post('/threads/:threadId/messages', async (req, res) => {
   const now = new Date().toISOString();
 
   const replyToIdRaw = typeof req.body?.replyToId === 'string' ? req.body.replyToId.trim() : null;
-  const replyToId = replyToIdRaw && isUuid(replyToIdRaw) ? replyToIdRaw : null;
+  const replyToId = replyToIdRaw && isUuid(replyToIdRaw) ? replyToIdRaw.toLowerCase() : null;
 
   // Validate reply reference belongs to the same thread (prevents cross-thread metadata exposure).
   if (replyToId) {
@@ -2868,7 +2868,7 @@ router.post('/threads/:threadId/messages', async (req, res) => {
   }
 
   // T231: every gate above ran for the replay too (stop, block, restriction, E2EE), so a resend is answered exactly when a fresh send would be allowed. A key reused for a DIFFERENT payload is refused, never answered with the original.
-  if (replay) { if (replayDecision(replay, { body: isE2ee ? null : body, ciphertext: isE2ee ? ciphertext : null, msgType, subtype }, isE2ee) === 'conflict') { sendError(res, 'conflict', 'This message id was already used for a different message.'); return; } res.status(200).json(replayResponseBody(replay, clientId)); return; }
+  if (replay) { if (replayDecision(replay, { body: isE2ee ? null : body, ciphertext: isE2ee ? ciphertext : null, msgType, subtype, replyToId }, isE2ee) === 'conflict') { sendError(res, 'conflict', 'This message id was already used for a different message.'); return; } res.status(200).json(replayResponseBody(replay, clientId)); return; }
   const { data: msg, error: msgErr } = await sc
     .from('messages')
     .insert({
@@ -2879,13 +2879,18 @@ router.post('/threads/:threadId/messages', async (req, res) => {
       ciphertext: isE2ee ? ciphertext : null,
       created_at: now,
       msg_type: msgType,
-      subtype, ...(idemOn ? { idempotency_key: idemKey, client_message_id: clientId } : {}), // T231: only with the flag ON (3654 requires 2810's columns); OFF inserts exactly the columns it always did
+      subtype, ...(idemOn ? { idempotency_key: idemKey, client_message_id: clientId } : {}),
+      ...(replyToId ? { reply_to_id: replyToId } : {}),
     })
     .select('id, thread_id, sender_id, body, ciphertext, created_at, msg_type, subtype')
     .single();
 
   // T231: two concurrent sends with one key — the index lets exactly one win; the loser answers with the winner's message, not an error and not a second row.
-  if (msgErr && idemOn && isIdempotencyConflict(msgErr)) { const again = await findIdempotentReplay(client, threadId, user.id, idemKey!); if (again.kind === 'found') { replay = again.row; if (replayDecision(replay, { body: isE2ee ? null : body, ciphertext: isE2ee ? ciphertext : null, msgType, subtype }, isE2ee) === 'conflict') { sendError(res, 'conflict', 'This message id was already used for a different message.'); return; } res.status(200).json(replayResponseBody(replay, clientId)); return; } }
+  if (msgErr && idemOn && isIdempotencyConflict(msgErr)) { const again = await findIdempotentReplay(client, threadId, user.id, idemKey!); if (again.kind === 'found') { replay = again.row; if (replayDecision(replay, { body: isE2ee ? null : body, ciphertext: isE2ee ? ciphertext : null, msgType, subtype, replyToId }, isE2ee) === 'conflict') { sendError(res, 'conflict', 'This message id was already used for a different message.'); return; } res.status(200).json(replayResponseBody(replay, clientId)); return; } }
+  if (replyToId && msgErr?.code === '23503' && msgErr.message?.includes('messages_reply_to_id_fkey')) {
+    sendError(res, 'invalid_payload', 'Referenced message does not belong to this thread');
+    return;
+  }
   if (msgErr || !msg) {
     req.log.error({ err: msgErr }, 'message insert failed');
     sendError(res, 'db_error', msgErr?.message ?? 'Failed to insert message');
@@ -3185,11 +3190,6 @@ router.post('/threads/:threadId/messages', async (req, res) => {
     clientId,
     replyToId: replyToId ?? null,
   });
-
-  // Fire-and-forget: set reply_to_id if provided (requires migration 0057_reply_to_messages.sql).
-  if (replyToId) {
-    void (Promise.resolve(sc.from('messages').update({ reply_to_id: replyToId }).eq('id', m.id)).catch(() => {}));
-  }
 
   // Realtime: notify other active members a new message landed, and bump the
   // thread for inbox ordering. Fire-and-forget — delivery must never affect the

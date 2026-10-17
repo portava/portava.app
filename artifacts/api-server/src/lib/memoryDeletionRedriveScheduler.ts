@@ -28,6 +28,7 @@ import { logger } from "./logger.js";
 import { isFlagEnabled } from "./featureFlags.js";
 import { isTableAbsentError } from "./tableAbsence.js";
 import { runMemoryDeletionLifecycle } from "../services/memory/memoryDeletionLifecycle.js";
+import { readRetryDetail } from "../services/memory/memoryDeletionDeadLetters.js";
 
 export const REDRIVE_FLAG = "memory_deletion_redrive_enabled";
 export const REDRIVE_BATCH = 25;
@@ -76,7 +77,7 @@ export async function runMemoryDeletionRedrivePass(
   try {
     const { data, error } = await db
       .from("memory_deletion_dead_letters")
-      .select("memory_id, owner_id, detail, failed_steps")
+      .select("memory_id, owner_id, detail, failed_steps, letters, last_failed_at")
       .is("resolved_at", null)
       .order("last_failed_at", { ascending: true })
       .limit(REDRIVE_BATCH);
@@ -85,10 +86,18 @@ export async function runMemoryDeletionRedrivePass(
       logger.warn({ err: error }, "memory deletion redrive: open letters unreadable");
       return { ...out, reason: "error" };
     }
-    const letters = (Array.isArray(data) ? data : []) as Array<{ memory_id: string; owner_id: string; detail: string; failed_steps: string[] | null }>;
+    const letters = (Array.isArray(data) ? data : []) as Array<{ memory_id: string; owner_id: string; detail: string; failed_steps: string[] | null; letters: number; last_failed_at: string }>;
     const result: RedriveResult = { ...out, skipped: false, considered: letters.length };
 
     for (const letter of letters) {
+      if (!letter || typeof letter.memory_id !== "string" || typeof letter.owner_id !== "string"
+        || typeof letter.detail !== "string" || !Number.isSafeInteger(letter.letters) || letter.letters < 1
+        || typeof letter.last_failed_at !== "string" || !Number.isFinite(Date.parse(letter.last_failed_at))) {
+        result.unreadable += 1;
+        continue;
+      }
+      const retryDetail = readRetryDetail(letter.detail);
+      if (!retryDetail.ok) { result.unreadable += 1; continue; }
       const { data: row, error: rowErr } = await db
         .from("memories")
         .select("id, owner_id, state, visibility, allowed_user_ids, hidden_user_ids, trip_id")
@@ -101,23 +110,27 @@ export async function runMemoryDeletionRedrivePass(
       // `state === "deleted"` (or the row gone). Every other state is not deleted.
       const stillDeleted = row == null || (row as any).state === "deleted";
       if (!stillDeleted) {
-        if ((letter.failed_steps ?? []).includes("DELETED")) {
-          const { error: bumpErr } = await db
+        if ((letter.failed_steps ?? []).includes("DELETED") || retryDetail.checkpoints.length > 0) {
+          const { data: bumped, error: bumpErr } = await db
             .from("memory_deletion_dead_letters")
-            .update({ last_failed_at: now.toISOString() })
+            .update({ last_failed_at: new Date(Math.max(now.getTime(), Date.parse(letter.last_failed_at))).toISOString() })
             .eq("memory_id", letter.memory_id)
+            .eq("owner_id", letter.owner_id)
+            .eq("letters", letter.letters).eq("last_failed_at", letter.last_failed_at)
             .is("resolved_at", null)
             .select("memory_id");
-          if (bumpErr) result.unreadable += 1; else result.needsOperator += 1;
+          if (bumpErr || !Array.isArray(bumped) || bumped.length !== 1 || bumped[0]?.memory_id !== letter.memory_id) result.unreadable += 1; else result.needsOperator += 1;
           continue;
         }
-        const { error: mootErr } = await db
+        const { data: closed, error: mootErr } = await db
           .from("memory_deletion_dead_letters")
           .update({ resolved_at: now.toISOString(), detail: `${String(letter.detail ?? "")} | moot: the Memory is '${String((row as any).state)}', not deleted — nothing was re-run`.slice(0, 4000) })
           .eq("memory_id", letter.memory_id)
+          .eq("owner_id", letter.owner_id)
+          .eq("letters", letter.letters).eq("last_failed_at", letter.last_failed_at)
           .is("resolved_at", null)
           .select("memory_id");
-        if (mootErr) result.unreadable += 1; else result.moot += 1;
+        if (mootErr || !Array.isArray(closed) || closed.length !== 1 || closed[0]?.memory_id !== letter.memory_id) result.unreadable += 1; else result.moot += 1;
         continue;
       }
       const report = await runMemoryDeletionLifecycle(db, {

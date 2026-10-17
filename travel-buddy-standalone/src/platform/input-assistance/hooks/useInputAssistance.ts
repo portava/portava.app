@@ -33,8 +33,9 @@ import {
   type ClientCapabilities,
 } from '../contexts/clientCapabilities.ts';
 import { requestSuggestions } from '../services/inputAssistance.ts';
-import { sharedSuggestionCache, SuggestionCache, isCacheablePrivacyClass } from '../services/suggestionCache.ts';
-import { createSequenceGuard } from '../services/raceGuard.ts';
+import { sharedSuggestionCache, SuggestionCache, isCacheablePrivacyClass, inputSessionScopeKey } from '../services/suggestionCache.ts';
+import { createInputRequestScheduler } from '../services/inputRequestScheduler.ts';
+import { useInputAccountEpoch } from './useInputAccountEpoch.ts';
 import { finalizeSuggestions, narrowToQuery } from '../services/suggestionRanking.ts';
 import { localZeroState, offlineZeroStateRows, retainZeroStateRows } from '../services/localZeroState.ts'; // §32 G200/G201 — saved/Trip zero-state rows (lead ruling 2026-10-07)
 import { offlineLocalRows, sufficientLocalRows } from '../services/localDictionary.ts';
@@ -100,6 +101,7 @@ export function useInputAssistance(
   opts: UseInputAssistanceOptions,
 ): UseInputAssistanceResult {
   const { fieldId, text, context, sessionContext, aiAssist, city, draft, tz, capabilities, checkDraft, enabled = true, timeAware } = opts; const tzKey = timeAware === true && typeof tz === 'string' ? tz : ''; // G46
+  const accountEpoch = useInputAccountEpoch();
 
   const policy = useMemo(
     () => resolveFieldPolicy(fieldId, context),
@@ -124,9 +126,7 @@ export function useInputAssistance(
   const capKey = useMemo(() => capabilitySignature(capabilities), [capabilities]);
 
   // Per-instance sequence guard + abort controller + debounce timer.
-  const guardRef = useRef(createSequenceGuard());
-  const abortRef = useRef<AbortController | null>(null);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const schedulerRef = useRef(createInputRequestScheduler());
 
   const trimmed = text.trim();
   const lat = sessionContext?.lat;
@@ -137,11 +137,7 @@ export function useInputAssistance(
 
   // Serialize the non-coord session context so it participates in deps without
   // churning on identity changes.
-  const sessionKey = useMemo(() => {
-    if (!sessionContext) return '';
-    const { lat: _lat, lng: _lng, ...rest } = sessionContext;
-    return JSON.stringify(rest);
-  }, [sessionContext]);
+  const sessionKey = inputSessionScopeKey(sessionContext);
 
   // §22 — the AI opt-in + coarse writing context participate in the cache key
   // and effect deps ONLY when opted in, so an aiAssist request can never serve a
@@ -151,15 +147,21 @@ export function useInputAssistance(
     if (aiAssist !== true) return '';
     return JSON.stringify({ city: city ?? '', tz: tz ?? '', draft: draft ?? null });
   }, [aiAssist, city, tz, draft]); const checkPair = checkDraftPair(checkDraft); const checkKey = checkPair ? `${checkPair.city ?? ''}|${checkPair.country ?? ''}`.toLowerCase() : ''; // §23 G149
+  const resultScope = JSON.stringify([accountEpoch, fieldId, policy, sessionKey, latKey, lngKey, aiKey, capKey, checkKey, tzKey]);
+  const renderedScope = useRef(resultScope);
+  const scopeCurrent = renderedScope.current === resultScope;
 
   useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
+    const scheduler = schedulerRef.current;
+    scheduler.cancel();
+    if (renderedScope.current !== resultScope) {
+      renderedScope.current = resultScope;
+      setSuggestions([]); setRefusal(null); setAnsweredText(null); setRequestId(null);
+      setUnavailable(false);
+    }
 
     // Disabled or no policy → clear + stop.
     if (!enabled || !policy) {
-      abortRef.current?.abort();
-      abortRef.current = null;
-      guardRef.current.invalidate();
       setSuggestions([]); setRefusal(null); setAnsweredText(null);
       setLoading(false);
       return;
@@ -189,9 +191,6 @@ export function useInputAssistance(
     // Below the field's threshold → clear (nothing to assist yet). minChars 0
     // means "assist even at zero characters" (zero-state, §14).
     if (trimmed.length < policy.minChars && !zeroStateTier) {
-      abortRef.current?.abort();
-      abortRef.current = null;
-      guardRef.current.invalidate();
       setSuggestions([]); setRefusal(null); setAnsweredText(null);
       setLoading(false);
       setUnavailable(false);
@@ -201,7 +200,8 @@ export function useInputAssistance(
     // Cache hit → serve instantly, no network (§33 SWR). An opted-in AI request
     // keys separately (via the effective fieldId) so it never collides with the
     // field's non-AI cache entry for the same text.
-    const baseFieldId = capKey ? `${fieldId}::cap:${capKey}` : fieldId;
+    const scopedFieldId = sessionKey ? `${fieldId}::scope:${sessionKey}` : fieldId;
+    const baseFieldId = capKey ? `${scopedFieldId}::cap:${capKey}` : scopedFieldId;
     const cacheFieldId = (aiAssist === true ? `${baseFieldId}::ai:${aiKey}` : checkKey ? `${baseFieldId}::check:${checkKey}` : baseFieldId) + (tzKey ? `::tz:${tzKey}` : ''); // G149: a verdict is keyed by the pair it judged; G46: a date by the zone it was read in
     const cacheKey = SuggestionCache.key(cacheFieldId, trimmed, latKey, lngKey);
     // §29 — the field's declared privacyClass decides whether its suggestions
@@ -212,7 +212,6 @@ export function useInputAssistance(
     const cacheable = isCacheablePrivacyClass(policy.privacyClass);
     const cached = cacheable ? sharedSuggestionCache.get(cacheKey) : null;
     if (cached) {
-      guardRef.current.invalidate();
       setSuggestions(cached); setRefusal(null); setAnsweredText(trimmed);
       setLoading(false);
       setUnavailable(false);
@@ -226,9 +225,6 @@ export function useInputAssistance(
     // No hit, an AI opt-in, or any doubt → the request below goes out as before.
     const sufficient = aiAssist === true ? [] : sufficientLocalRows(policy, getContextDescriptor(policy.context), trimmed);
     if (sufficient.length > 0) {
-      abortRef.current?.abort();
-      abortRef.current = null;
-      guardRef.current.invalidate();
       setSuggestions(finalizeSuggestions(sufficient, policy.maxSuggestions)); setRefusal(null); setAnsweredText(trimmed);
       setLoading(false);
       setUnavailable(false);
@@ -294,14 +290,9 @@ export function useInputAssistance(
     }
 
     setLoading(true); // keep previous suggestions visible while fetching
-    const mySeq = guardRef.current.next();
     emitInputEvent('query_length_changed', fieldId, policy.context, { length: trimmed.length }, policy.telemetryPolicy);
 
-    debounceRef.current = setTimeout(() => {
-      abortRef.current?.abort();
-      const ctrl = new AbortController();
-      abortRef.current = ctrl;
-
+    scheduler.schedule((request) => {
       emitInputEvent('suggestion_request_started', fieldId, policy.context, undefined, policy.telemetryPolicy);
       const sentAt = Date.now();
 
@@ -322,10 +313,10 @@ export function useInputAssistance(
           // §48 capability handshake — omitted when the caller declared none.
           client: capabilities,
         },
-        ctrl.signal,
+        request.signal,
       ).then((res) => {
         // Superseded by a newer keystroke — drop (§33 out-of-order guarantee).
-        if (!guardRef.current.isCurrent(mySeq)) return;
+        if (!request.isCurrent()) return;
 
         if (res.ok) {
           const finalized = finalizeSuggestions(res.suggestions, policy.maxSuggestions);
@@ -349,6 +340,11 @@ export function useInputAssistance(
           );
         } else if (res.aborted) {
           // Newer request in flight — do nothing (never flash empty).
+        } else if (res.error === 'HTTP 401' || res.error === 'HTTP 403') {
+          sharedSuggestionCache.clear();
+          setSuggestions([]); setRefusal(null); setAnsweredText(null); setRequestId(null);
+          setUnavailable(false);
+          setLoading(false);
         } else if (res.unavailable) {
           // §33 "network loss: RETAIN local/cached suggestions" + explicit
           // degraded behaviour. This branch used to `setSuggestions([])`, which
@@ -481,9 +477,7 @@ export function useInputAssistance(
       });
     }, policy.debounceMs);
 
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
+    return scheduler.cancel;
     // sessionContext is intentionally referenced via sessionKey/latKey/lngKey
     // to avoid re-running on unstable object identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -491,12 +485,9 @@ export function useInputAssistance(
     // for this effect; depending on the object itself would re-fetch on every
     // render that produced an equal declaration.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trimmed, enabled, policy, fieldId, latKey, lngKey, sessionKey, aiKey, capKey, checkKey, tzKey]);
+  }, [trimmed, enabled, policy, fieldId, latKey, lngKey, sessionKey, aiKey, capKey, checkKey, tzKey, accountEpoch, resultScope]);
 
-  // Abort any in-flight request on unmount.
-  useEffect(() => () => { abortRef.current?.abort(); }, []);
-
-  return { suggestions, loading, unavailable, policy, requestId, refusal, policyAuthoritative: policy != null && getContextDescriptor(policy.context).authoritative, answeredText };
+  return { suggestions: scopeCurrent ? suggestions : [], loading, unavailable: scopeCurrent && unavailable, policy, requestId: scopeCurrent ? requestId : null, refusal: scopeCurrent ? refusal : null, policyAuthoritative: policy != null && getContextDescriptor(policy.context).authoritative, answeredText: scopeCurrent ? answeredText : null };
 }
 
 // ── §23 census G149 — the pair a creation form asks the server to judge ──────

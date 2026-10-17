@@ -17,16 +17,20 @@ import assert from "node:assert/strict";
 import { _setTestClient, runCreatorAttributionTick } from "../lib/creatorAttributionScheduler.js";
 
 const BUDDY_USER = "33333333-3333-4333-8333-333333333333";
+const BOOKING_ID = "44444444-4444-4444-8444-444444444444";
+const BUDDY_PROFILE = "11111111-1111-4111-8111-111111111111";
 
 function fake(opts: { flagOn: boolean; slowFlag?: boolean }) {
   const reads: string[] = [];
   const writes: Array<{ table: string; payload: any }> = [];
   const from = (t: string) => {
     const s: any = {
-      _f: [] as any[], _p: null as any, _single: false,
+      _f: [] as any[], _p: null as any, _single: false, _after: null as string | null,
       select() { return s; }, eq(c: string, v: any) { s._f.push([c, v]); return s; }, in() { return s; },
       order() { return s; }, lte() { return s; }, limit() { return s; },
+      gt(_column: string, value: string) { s._after = value; return s; },
       insert(p: any) { s._p = p; writes.push({ table: t, payload: p }); return s; },
+      update(payload: any) { s._p = payload; writes.push({ table: t, payload }); return s; },
       single() { s._single = true; return s; }, maybeSingle() { s._single = true; return s; },
       range() { return s; },
       async then(res: any) {
@@ -36,12 +40,13 @@ function fake(opts: { flagOn: boolean; slowFlag?: boolean }) {
           return res({ data: opts.flagOn ? { enabled: true } : null, error: null });
         }
         if (s._p) return res({ data: { id: "new-row", ...s._p }, error: null });
+        if (t === "creator_attribution_scan_cursors") return res({ data: { after_booking_id: null, cycle_upper_id: null, revision: "55555555-5555-4555-8555-555555555555" }, error: null });
         if (t === "rent_buddy_bookings") {
           const status = s._f.find(([c]: any) => c === "status")?.[1];
-          const all = [{ id: "bk-done", buddy_id: "bp-1", status: "completed" }];
-          return res({ data: all.filter((b) => b.status === status), error: null });
+          const all = [{ id: BOOKING_ID, buddy_id: BUDDY_PROFILE, status: "completed" }];
+          return res({ data: all.filter((b) => b.status === status && (s._after === null || b.id > s._after)), error: null });
         }
-        if (t === "rent_buddy_profiles") return res({ data: [{ id: "bp-1", user_id: BUDDY_USER }], error: null });
+        if (t === "rent_buddy_profiles") return res({ data: [{ id: BUDDY_PROFILE, user_id: BUDDY_USER }], error: null });
         if (t === "creator_rule_versions") {
           return res({ data: [{ creator_type: "travel_partner", rule_version: "creator-rules/travel-partner/v1", params: {}, effective_from: "2026-01-01T00:00:00Z" }], error: null });
         }
@@ -76,7 +81,7 @@ describe("SC — the attribution scheduler's tick", () => {
     assert.deepEqual(
       [rows[0].creator_type, rows[0].subject_kind, rows[0].subject_id, rows[0].value_event_id, rows[0].beneficiary_user_id,
        rows[0].weight, rows[0].gross_revenue_minor, rows[0].provisional_share_minor, rows[0].settled_minor],
-      ["travel_partner", "booking", "bk-done", "bk-done", BUDDY_USER, 1, 0, 0, 0],
+      ["travel_partner", "booking", BOOKING_ID, BOOKING_ID, BUDDY_USER, 1, 0, 0, 0],
     );
   });
 

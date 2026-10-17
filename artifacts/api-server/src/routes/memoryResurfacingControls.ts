@@ -15,6 +15,7 @@ import { Router, type Request, type Response } from "express";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
+import { writeResurfacingPolicy } from "../services/memory/resurfacingPolicyCommand.js";
 import {
   clearMemoryControl,
   isMemoryResurfacingControl,
@@ -40,6 +41,9 @@ async function ownMemory(req: Request, res: Response, sc: any, ownerId: string):
 
 function sendWrite(req: Request, res: Response, out: ControlWrite): void {
   if (out.ok) { res.status(204).send(); return; }
+  if (out.reason === "invalid") { sendError(res, "invalid_payload", out.detail); return; }
+  if (out.reason === "not_owned") { sendError(res, "not_found", "Memory not found"); return; }
+  if (out.reason === "key_reused") { sendError(res, "conflict", "Idempotency-Key already used for a different operation"); return; }
   if (out.reason === "not_deployed") { sendError(res, "feature_disabled", "Memory privacy controls are not available yet."); return; }
   if (out.reason === "not_private") { sendError(res, "conflict", "Make this Memory private (only me) before keeping it private forever.", { exposeDetail: true, reason: "not_private" }); return; }
   req.log.error({ detail: out.detail }, "memory resurfacing controls: write failed");
@@ -67,9 +71,13 @@ router.put("/memories/:id/resurfacing-controls/:control", asyncHandler(async (re
   if (!isMemoryResurfacingControl(control)) { sendError(res, "invalid_payload", `control must be one of ${MEMORY_RESURFACING_CONTROLS.join(", ")}`); return; }
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+  const id = String(req.params.id ?? "");
+  if (!UUID_RE.test(id)) { sendError(res, "invalid_payload", "Invalid memory id"); return; }
+  const command = await writeResurfacingPolicy(sc, auth.user.id, { target: { kind: "memory", id }, control, on: true }, req.get("Idempotency-Key"));
+  if (command) { sendWrite(req, res, command.ok ? { ok: true } : command); return; }
   const mem = await ownMemory(req, res, sc, auth.user.id);
   if (!mem) return;
-  sendWrite(req, res, await setMemoryControl(sc, { ownerId: auth.user.id, memoryId: mem.id, control, currentVisibility: mem.visibility }));
+  sendWrite(req, res, await setMemoryControl(sc, { ownerId: auth.user.id, memoryId: mem.id, control, currentVisibility: mem.visibility, idempotencyKey: req.get("Idempotency-Key") }));
 }));
 
 router.delete("/memories/:id/resurfacing-controls/:control", asyncHandler(async (req: Request, res: Response) => {
@@ -79,9 +87,13 @@ router.delete("/memories/:id/resurfacing-controls/:control", asyncHandler(async 
   if (!isMemoryResurfacingControl(control)) { sendError(res, "invalid_payload", `control must be one of ${MEMORY_RESURFACING_CONTROLS.join(", ")}`); return; }
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+  const id = String(req.params.id ?? "");
+  if (!UUID_RE.test(id)) { sendError(res, "invalid_payload", "Invalid memory id"); return; }
+  const command = await writeResurfacingPolicy(sc, auth.user.id, { target: { kind: "memory", id }, control, on: false }, req.get("Idempotency-Key"));
+  if (command) { sendWrite(req, res, command.ok ? { ok: true } : command); return; }
   const mem = await ownMemory(req, res, sc, auth.user.id);
   if (!mem) return;
-  sendWrite(req, res, await clearMemoryControl(sc, { ownerId: auth.user.id, memoryId: mem.id, control }));
+  sendWrite(req, res, await clearMemoryControl(sc, { ownerId: auth.user.id, memoryId: mem.id, control, idempotencyKey: req.get("Idempotency-Key") }));
 }));
 
 export default router;

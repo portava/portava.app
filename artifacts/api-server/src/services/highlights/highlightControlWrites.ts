@@ -71,6 +71,7 @@
  * first save. A field the caller does not name is left exactly as it was.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { writeResurfacingPolicy } from "../memory/resurfacingPolicyCommand.js";
 import { probeHighlightObject, type ObjectAvailability } from "./highlightSchemaAvailability.js";
 import {
   CONTROL_EFFECTS,
@@ -106,6 +107,7 @@ export type ControlWriteFailure =
   | "unavailable"
   | "invalid"
   | "not_owned"
+  | "key_reused"
   | "write_unconfirmed";
 
 export type ControlWriteResult<T> =
@@ -237,6 +239,7 @@ export async function setResurfacingControl(
   ownerId: string,
   control: unknown,
   subjectId: unknown,
+  idempotencyKey?: string,
 ): Promise<ControlWriteResult<StoredControl>> {
   if (!isResurfacingControl(control)) {
     return fail("invalid", `unknown control ${JSON.stringify(control)}`);
@@ -245,6 +248,9 @@ export async function setResurfacingControl(
     return fail("invalid", "subjectId must be a UUID");
   }
   const subjectType = subjectTypeFor(control);
+
+  const command = await writeResurfacingPolicy(sc, ownerId, { target: { kind: subjectType as "highlight" | "person" | "trip", id: subjectId }, control, on: true }, idempotencyKey);
+  if (command) return command.ok ? command : { ...command, reason: command.reason === "not_private" ? "invalid" : command.reason };
 
   const availability = await probeHighlightObject(sc, RESURFACING_TABLE, RESURFACING_COLUMNS);
   const refused = refusalFor(RESURFACING_TABLE, availability);
@@ -310,7 +316,7 @@ export async function clearResurfacingControl(
   ownerId: string,
   control: unknown,
   subjectId: unknown,
-  opts: { readonly confirmed?: boolean } = {},
+  opts: { readonly confirmed?: boolean; readonly idempotencyKey?: string } = {},
 ): Promise<ControlWriteResult<{ readonly cleared: boolean }>> {
   if (!isResurfacingControl(control)) {
     return fail("invalid", `unknown control ${JSON.stringify(control)}`);
@@ -322,6 +328,9 @@ export async function clearResurfacingControl(
     return fail("invalid", "clearing KEEP_PRIVATE_FOREVER requires an explicit confirmation");
   }
   const subjectType = subjectTypeFor(control);
+
+  const command = await writeResurfacingPolicy(sc, ownerId, { target: { kind: subjectType as "highlight" | "person" | "trip", id: subjectId }, control, on: false, confirmed: opts.confirmed === true }, opts.idempotencyKey);
+  if (command) return command.ok ? command : { ...command, reason: command.reason === "not_private" ? "invalid" : command.reason };
 
   const availability = await probeHighlightObject(sc, RESURFACING_TABLE, RESURFACING_COLUMNS);
   const refused = refusalFor(RESURFACING_TABLE, availability);

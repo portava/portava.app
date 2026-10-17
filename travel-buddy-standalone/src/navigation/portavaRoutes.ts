@@ -1171,7 +1171,7 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
   // ── Memory ────────────────────────────────────────────────────────────────
 
   {
-    key: 'memory-detail',
+    key: 'memory-chapters', path: 'memory/chapters', title: 'Life Chapters', parent: null, icon: null, requiresAuth: true, ownerOnly: true, deepLink: '/memory/chapters', }, { key: 'memory-detail',
     path: 'memory/[id]',
     title: 'Memory',
     parent: null,
@@ -1982,7 +1982,7 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
   },
 
   // ── Settings ──────────────────────────────────────────────────────────────
-
+  { key: 'settings-privacy-policy', path: 'settings/privacy-policy', title: 'Privacy information', parent: 'settings-index', icon: null, requiresAuth: false, deepLink: '/settings/privacy-policy' },
   {
     key: 'settings-index',
     path: 'settings/index',

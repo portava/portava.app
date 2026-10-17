@@ -1,6 +1,5 @@
 {
   "__total_files_scanned": 1350,
-  "artifacts/api-server/src/compass/CompassCacheEngine.ts::S2": 1,
   "artifacts/api-server/src/compass/CompassExplanationEngine.ts::S2": 1,
   "artifacts/api-server/src/compass/CompassFallbackFeedBuilder.ts::S4": 1,
   "artifacts/api-server/src/compass/CompassFeedBuilder.ts::S2": 1,

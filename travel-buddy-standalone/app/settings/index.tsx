@@ -547,6 +547,16 @@ export default function Settings() {
           >
             <Text style={styles.item}>Privacy settings</Text>
           </Pressable>
+          <Pressable
+            accessibilityRole="link"
+            accessibilityLabel="Privacy information"
+            accessibilityHint="Opens identity-check information, not an approved privacy policy."
+            style={({ pressed }) => [styles.row, pressed && { opacity: layout.pressedOpacity }]}
+            onPress={() => router.push('/settings/privacy-policy')}
+          >
+            <Text style={styles.item}>Privacy information</Text>
+            <Text style={styles.sectionDesc}>Identity-check data flow · Policy approval pending</Text>
+          </Pressable>
         </View>
 
         {/* Safety section */}

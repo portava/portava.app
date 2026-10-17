@@ -1864,6 +1864,9 @@ function sendControlFailure(
   log: (obj: any, msg: string) => void,
 ): void {
   switch (reason) {
+    case "key_reused":
+      sendError(res, "conflict", "Idempotency-Key already used for a different operation");
+      return;
     case "invalid":
       sendError(res, "invalid_payload", detail);
       return;
@@ -1942,7 +1945,7 @@ router.put("/highlights/resurfacing-controls", async (req, res) => {
     .safeParse(req.body ?? {});
   if (!parsed.success) { sendError(res, "invalid_payload", "control and subjectId are required"); return; }
 
-  const set = await setResurfacingControl(client, user.id, parsed.data.control, parsed.data.subjectId);
+  const set = await setResurfacingControl(client, user.id, parsed.data.control, parsed.data.subjectId, req.get("Idempotency-Key"));
   if (!set.ok) {
     sendControlFailure(res, set.reason, set.detail, (o, m) => req.log.error(o, m));
     return;
@@ -1977,7 +1980,7 @@ router.delete("/highlights/resurfacing-controls", async (req, res) => {
   const subjectId = (req.body?.subjectId ?? req.query.subjectId) as unknown;
   const confirmed = req.body?.confirm === true || req.query.confirm === "true";
 
-  const cleared = await clearResurfacingControl(client, user.id, control, subjectId, { confirmed });
+  const cleared = await clearResurfacingControl(client, user.id, control, subjectId, { confirmed, idempotencyKey: req.get("Idempotency-Key") });
   if (!cleared.ok) {
     sendControlFailure(res, cleared.reason, cleared.detail, (o, m) => req.log.error(o, m));
     return;

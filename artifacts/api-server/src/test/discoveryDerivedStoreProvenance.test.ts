@@ -290,7 +290,11 @@ describe("DC-17 — provenance is ABOUT the computation and must not change it",
 function fakeClient(rowsOrError: MomentumRow[] | Error) {
   let reads = 0;
   const client = {
-    from() {
+    from(table: string) {
+      if (table === "protected_zones") {
+        const policy = { select: () => policy, eq: () => policy, limit: async () => ({ data: [], error: null }) };
+        return policy;
+      }
       const q: any = {
         select: () => q, eq: () => q, neq: () => q, in: () => q, gte: () => q, order: () => q,
         range: (from: number, to: number) => {

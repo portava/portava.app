@@ -22,6 +22,8 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CompassProfile } from "./types.js";
+import { buildTripCompassRosterProjection } from "../domain/trips/projections/TripCompassRosterProjection.js";
+import { acceptTripProjection, TRIP_PROJECTION_SCHEMA_VERSION } from "../domain/trips/contracts/TripProjectionEnvelope.js";
 import {
   canViewCirclePresenceBatch,
   canBeSeenByViewersBatch,
@@ -452,20 +454,14 @@ type ContextRoster = { status: "ok"; memberIds: string[] } | { status: "unread" 
 async function contextMemberIds(
   sc: SupabaseClient,
   ctx: ContextRef,
+  viewerId: string,
 ): Promise<ContextRoster> {
   if (ctx.type === "trip") {
-    const { data, error } = await sc
-      .from("trip_members")
-      .select("user_id, role, status")
-      .eq("trip_id", ctx.id)
-      .in("role", SOCIAL_CONTEXT_TRIP_ROLES as unknown as string[]);
-    if (error) return { status: "unread" };
-    return {
-      status: "ok",
-      memberIds: ((data ?? []) as any[])
-        .filter((r) => r.status == null || r.status === "accepted")
-        .map((r) => r.user_id as string),
-    };
+    const roster = await buildTripCompassRosterProjection(sc, ctx.id, viewerId);
+    if (!roster.ok || !acceptTripProjection(roster.projection, {
+      acceptedSchemaVersion: TRIP_PROJECTION_SCHEMA_VERSION, metric: "TripCompassRosterProjection",
+    }).accepted) return { status: "unread" };
+    return { status: "ok", memberIds: roster.projection.memberIds };
   }
   const [rsvpResult, attendeeResult] = await Promise.all([
     sc.from("event_rsvps").select("user_id").eq("event_id", ctx.id).eq("status", "going"),
@@ -536,7 +532,7 @@ async function collectPresence(
   for (const ctx of contexts) {
     let roster: ContextRoster;
     try {
-      roster = await contextMemberIds(sc, ctx);
+      roster = await contextMemberIds(sc, ctx, viewerId);
     } catch { roster = { status: "unread" }; }
     if (roster.status === "unread") {
       // The context EXISTS and its roster does not; saying nothing about it is

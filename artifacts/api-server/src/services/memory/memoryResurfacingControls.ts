@@ -29,6 +29,7 @@
  * recap derivative and the Compass memory tools are the next consumers).
  */
 import { isTableAbsentError } from "../../lib/tableAbsence.js";
+import { writeResurfacingPolicy } from "./resurfacingPolicyCommand.js";
 import type { SourceControls } from "../memoryProjections/projectionRegistry.js";
 
 /** PostgREST's max-rows on Supabase. A controls read that returns this many may be truncated. */
@@ -68,10 +69,10 @@ export async function readMemoryControls(sc: any, ownerId: string, memoryIds: re
     if (!Array.isArray(data)) return { state: "unreadable", detail: "controls read returned no row array" };
     if (data.length >= CONTROLS_PAGE) return { state: "unreadable", detail: `controls page full (${data.length} rows): refusing rather than missing a control past it` };
     const byMemory = new Map<string, Set<MemoryResurfacingControl>>();
-    for (const r of data as Array<{ memory_id: string; control: string }>) {
-      if (!isMemoryResurfacingControl(r.control)) continue;
-      if (!byMemory.has(r.memory_id)) byMemory.set(r.memory_id, new Set());
-      byMemory.get(r.memory_id)!.add(r.control);
+    for (const row of data as Array<{ memory_id: string; control: string }>) {
+      if (!row || typeof row !== "object" || Array.isArray(row) || typeof row.memory_id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(row.memory_id) || !ids.includes(row.memory_id) || !isMemoryResurfacingControl(row.control)) return { state: "unreadable", detail: "controls read returned a malformed or out-of-scope row" };
+      if (!byMemory.has(row.memory_id)) byMemory.set(row.memory_id, new Set());
+      byMemory.get(row.memory_id)!.add(row.control);
     }
     return { state: "ok", byMemory };
   } catch (err) {
@@ -117,13 +118,15 @@ export async function refuseWideningKeptPrivate(
 
 export type ControlWrite =
   | { ok: true }
-  | { ok: false; reason: "not_deployed" | "unavailable" | "not_private"; detail: string };
+  | { ok: false; reason: "not_deployed" | "unavailable" | "not_private" | "not_owned" | "invalid" | "key_reused"; detail: string };
 
 /** Set a control. KEEP_PRIVATE_FOREVER is refused on a Memory that is not `only_me` now: the owner narrows first. */
 export async function setMemoryControl(
   sc: any,
-  input: { ownerId: string; memoryId: string; control: MemoryResurfacingControl; currentVisibility: string | null },
+  input: { ownerId: string; memoryId: string; control: MemoryResurfacingControl; currentVisibility: string | null; idempotencyKey?: string },
 ): Promise<ControlWrite> {
+  const command = await writeResurfacingPolicy(sc, input.ownerId, { target: { kind: "memory", id: input.memoryId }, control: input.control, on: true }, input.idempotencyKey);
+  if (command) return command.ok ? { ok: true } : command;
   if (input.control === "KEEP_PRIVATE_FOREVER" && input.currentVisibility !== "only_me") {
     return { ok: false, reason: "not_private", detail: "make this Memory private (only me) before keeping it private forever" };
   }
@@ -131,6 +134,7 @@ export async function setMemoryControl(
     .from("memory_resurfacing_preferences")
     .upsert({ memory_id: input.memoryId, owner_id: input.ownerId, control: input.control }, { onConflict: "memory_id,control", ignoreDuplicates: true });
   if (error) {
+    if (error.code === "23514" && String(error.message).includes("memory_kept_private")) return { ok: false, reason: "not_private", detail: "make this Memory private (only me) before keeping it private forever" };
     if (isTableAbsentError(error)) return { ok: false, reason: "not_deployed", detail: String(error.message ?? "") };
     return { ok: false, reason: "unavailable", detail: String(error.message ?? "") };
   }
@@ -140,8 +144,10 @@ export async function setMemoryControl(
 /** Clear a control (deletes the row). Clearing one that is not set is not an error. */
 export async function clearMemoryControl(
   sc: any,
-  input: { ownerId: string; memoryId: string; control: MemoryResurfacingControl },
+  input: { ownerId: string; memoryId: string; control: MemoryResurfacingControl; idempotencyKey?: string },
 ): Promise<ControlWrite> {
+  const command = await writeResurfacingPolicy(sc, input.ownerId, { target: { kind: "memory", id: input.memoryId }, control: input.control, on: false }, input.idempotencyKey);
+  if (command) return command.ok ? { ok: true } : command;
   const { error } = await sc
     .from("memory_resurfacing_preferences")
     .delete()
@@ -169,8 +175,8 @@ export async function readRecapControls(sc: any, ownerId: string, memoryIds: rea
     if (!Array.isArray(data)) return { state: "unreadable" };
     if (data.length >= CONTROLS_PAGE) return { state: "unreadable" }; // a full page may be truncated: a control past it would not be honoured — fail closed
     const byMemory: Record<string, string[]> = {};
-    for (const r of data as Array<{ memory_id: string; control: string }>) {
-      if (wanted.has(r.memory_id) && isMemoryResurfacingControl(r.control)) (byMemory[r.memory_id] ??= []).push(r.control);
+    for (const row of data as Array<{ memory_id: string; control: string }>) {
+      if (!row || typeof row !== "object" || Array.isArray(row) || typeof row.memory_id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(row.memory_id) || !isMemoryResurfacingControl(row.control)) return { state: "unreadable" }; if (wanted.has(row.memory_id)) (byMemory[row.memory_id] ??= []).push(row.control);
     }
     return { state: "ok", byMemory };
   } catch {

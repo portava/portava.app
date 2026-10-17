@@ -76,7 +76,7 @@ import { EPISODES_TABLE, EVIDENCE_TABLE, parseEpisodeRow, type MemoryEpisode } f
 import { classifyMemoryMediaUrl } from "./memoryMediaOrigin.js";
 import { countCandidateDecision, countCandidateEvaluation } from "./memoryKernelMetrics.js";
 import { dispatchMemoryCommand } from "./MemoryDomainService.js";
-import { lifecycleStateOf } from "../../lib/memoryCommandBus.js"; import { retireEpisodesAndPurgeEvidence } from "./memoryEvidenceErasure.js"; import { CANDIDATE_MEMORY_TYPE, memoryTypeForWrite, readCanonicalGates, reconcileCanonicalFields } from "./memoryCanonicalFields.js"; // one line: lines below are cited
+import { lifecycleStateOf } from "../../lib/memoryCommandBus.js"; import { retireEpisodesAndPurgeEvidence } from "./memoryEvidenceErasure.js"; import { CANDIDATE_MEMORY_TYPE, memoryTypeForWrite, readCanonicalGates, reconcileCanonicalFields, type CanonicalGates } from "./memoryCanonicalFields.js"; // one line: lines below are cited
 
 const log = rootLogger.child({ mod: "episodeCandidates" });
 
@@ -719,8 +719,9 @@ export async function confirmCandidate(
 
   // (2)
   let memoryId = existingLink;
+  let keepCanonGates: CanonicalGates | null = null;
   if (!memoryId) {
-    const derivedId = candidateMemoryId(ep.id); const keepCanonGates = await readCanonicalGates(sc); // H40 (3803): a Memory kept from a detected episode is an EPISODE
+    const derivedId = candidateMemoryId(ep.id); keepCanonGates = await readCanonicalGates(sc); // H40 (3803): a Memory kept from a detected episode is an EPISODE
     const write = {
       id: derivedId,
       owner_id: input.ownerId,
@@ -758,10 +759,10 @@ export async function confirmCandidate(
       const detail = "rejection" in created ? created.rejection.reason : created.http.message;
       return { ok: false, reason: "kernel_refused", detail: String(detail) };
     }
-    memoryId = created.body.id; const keptCanon = await reconcileCanonicalFields(sc, { memoryId, ownerId: input.ownerId, gates: keepCanonGates, intended: { memoryType: memoryTypeForWrite(keepCanonGates.memoryType, CANDIDATE_MEMORY_TYPE) } }); if (!keptCanon.ok) return { ok: false, reason: "unavailable", detail: keptCanon.detail }; // H40: the kernel path takes the DEFAULT; this writes EPISODE. A retry re-runs this block (no evidence link yet) and reconciles again
+    memoryId = created.body.id;
   }
 
-  // (2b) A KEEP NEVER FINISHES ONTO A MEMORY ITS OWNER DELETED. The Memory's id
+  // (2b) A KEEP NEVER FINISHES ONTO A DELETED OR REMOVED MEMORY. The Memory's id
   //      is derived from the episode, so a Keep that was cut off before its
   //      link, then a delete of that Memory, then Keep again reaches the
   //      soft-deleted row through the primary-key refusal — and would link and
@@ -775,10 +776,20 @@ export async function confirmCandidate(
     .eq("owner_id", input.ownerId)
     .maybeSingle();
   if (keptErr) return { ok: false, reason: "unavailable", detail: `memories: ${keptErr.message}` };
-  if (!keptRow || (keptRow as { state: string }).state === "deleted") {
-    const retired = await retireEpisodesAndPurgeEvidence(sc, { ownerId: input.ownerId, episodeIds: [ep.id], now: input.now, order: "purge_first" });
-    if (retired.state !== "done") return { ok: false, reason: "unavailable", detail: `retiring a deleted Memory's suggestion: ${retired.detail}` };
-    return { ok: false, reason: "not_a_candidate", detail: "the Memory this suggestion was kept as has been deleted" };
+  if (!keptRow || ["deleted", "removed"].includes((keptRow as { state: string }).state)) {
+    const retired = await retireEpisodesAndPurgeEvidence(sc, { ownerId: input.ownerId, memoryId, episodeIds: [ep.id], now: input.now, order: "purge_first" });
+    if (retired.state !== "done") return { ok: false, reason: "unavailable", detail: `retiring a terminal Memory's suggestion: ${retired.detail}` };
+    return { ok: false, reason: "not_a_candidate", detail: "the Memory this suggestion was kept as has been deleted or removed" };
+  }
+
+  if (keepCanonGates) {
+    const keptCanon = await reconcileCanonicalFields(sc, {
+      memoryId,
+      ownerId: input.ownerId,
+      gates: keepCanonGates,
+      intended: { memoryType: memoryTypeForWrite(keepCanonGates.memoryType, CANDIDATE_MEMORY_TYPE) },
+    });
+    if (!keptCanon.ok) return { ok: false, reason: "unavailable", detail: keptCanon.detail };
   }
 
   if (!existingLink) {

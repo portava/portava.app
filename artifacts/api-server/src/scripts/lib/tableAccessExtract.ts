@@ -300,8 +300,9 @@ export function extractTableAccess(dirs: string[], repoRoot: string): AccessResu
           const callee = unwrap(node.expression);
           if (ts.isPropertyAccessExpression(callee)) {
             const method = callee.name.text;
-            // `.from("t")` itself — the read record.
-            if (method === "from" && !isStorageFrom(node) && !isWriteChain(node)) {
+            // `.from("t")` itself — the read record. `Buffer.from("…")` builds bytes and is never a table.
+            const receiver = unwrap(callee.expression);
+            if (method === "from" && !isStorageFrom(node) && !isWriteChain(node) && !(ts.isIdentifier(receiver) && receiver.text === "Buffer")) {
               const arg = node.arguments[0];
               if (arg && ts.isStringLiteralLike(arg)) {
                 push(reads, {

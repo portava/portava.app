@@ -868,6 +868,34 @@ function chunkIds<T>(ids: readonly T[], size = IN_LIST_CHUNK): T[][] {
 /** One page of a life. A person with more Memories than this gets the most recent. */
 const GRAPH_MEMORY_LIMIT = 2000;
 
+function countedGraphRows(data: unknown, count: unknown, complete: boolean): data is unknown[] {
+  return Array.isArray(data) && typeof count === "number" && Number.isSafeInteger(count)
+    && count >= data.length && (data.length > 0 || count === 0)
+    && (!complete || count === data.length);
+}
+
+const graphMemorySchema = z.object({
+  id: z.string().min(1),
+  owner_id: z.string().min(1),
+  state: z.enum(["draft", "published", "archived"]),
+  trip_id: z.string().nullable(),
+  place_id: z.string().nullable(),
+  canonical_location_id: z.string().nullable(),
+  starts_at: z.string().refine((value) => Number.isFinite(Date.parse(value))).nullable(),
+  created_at: z.string().refine((value) => Number.isFinite(Date.parse(value))),
+});
+
+const graphTagSchema = z.object({
+  memory_id: z.string().min(1),
+  tagged_user_id: z.string().min(1),
+  status: z.literal("approved"),
+});
+
+const graphBlockSchema = z.object({
+  blocker_id: z.string().min(1),
+  blocked_id: z.string().min(1),
+});
+
 /* ============================================================================
  * The SHARED_CREW half of POST /memories/search.
  *
@@ -1123,105 +1151,155 @@ router.get("/memories/graph", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: rows, error } = await sc
-    .from("memories")
-    .select("id, owner_id, trip_id, place_id, canonical_location_id, starts_at, created_at")
-    .eq("owner_id", user.id)
-    .neq("state", "deleted")
-    .order("starts_at", { ascending: false })
-    .limit(GRAPH_MEMORY_LIMIT);
-  if (error) {
-    req.log.error({ err: error, ownerId: user.id }, "memories: graph read failed — refusing rather than projecting a partial life");
-    sendError(res, "degraded_unavailable", "We could not build your memory graph. Please try again.");
-    return;
-  }
-
-  const memoryRows = (rows ?? []) as any[];
-  const ids = memoryRows.map((r) => r.id as string);
-
-  const people = new Map<string, string[]>();
-  for (const batch of chunkIds(ids)) {
-    const { data: tagRows, error: tagErr } = await sc
-      .from("memory_tags")
-      .select("memory_id, tagged_user_id, status")
-      .in("memory_id", batch)
-      .eq("status", "approved");
-    if (tagErr) {
-      req.log.error({ err: tagErr, ownerId: user.id }, "memories: graph companion read failed — refusing rather than reporting a companion-free life");
+  try {
+    const { data: rows, error, count } = await sc
+      .from("memories")
+      .select("id, owner_id, state, trip_id, place_id, canonical_location_id, starts_at, created_at", { count: "exact" })
+      .eq("owner_id", user.id)
+      .neq("state", "deleted")
+      .neq("state", "removed")
+      .order("starts_at", { ascending: false })
+      .order("id", { ascending: true })
+      .limit(GRAPH_MEMORY_LIMIT);
+    const parsedRows = z.array(graphMemorySchema).safeParse(rows);
+    if (error || !countedGraphRows(rows, count, false) || rows.length > GRAPH_MEMORY_LIMIT
+      || !parsedRows.success || parsedRows.data.some((row) => row.owner_id !== user.id)
+      || new Set(parsedRows.data.map((row) => row.id)).size !== parsedRows.data.length) {
+      req.log.error({ err: error, ownerId: user.id }, "memories: graph read failed — refusing rather than projecting a partial life");
       sendError(res, "degraded_unavailable", "We could not build your memory graph. Please try again.");
       return;
     }
-    for (const t of (tagRows ?? []) as any[]) {
-      const list = people.get(t.memory_id as string) ?? [];
-      list.push(t.tagged_user_id as string);
-      people.set(t.memory_id as string, list);
+
+    const memoryRows = parsedRows.data;
+    const ids = memoryRows.map((row) => row.id);
+
+    const people = new Map<string, string[]>();
+    for (const batch of chunkIds(ids)) {
+      const { data: tagRows, error: tagErr, count: tagCount } = await sc
+        .from("memory_tags")
+        .select("memory_id, tagged_user_id, status", { count: "exact" })
+        .in("memory_id", batch)
+        .eq("status", "approved");
+      const parsedTags = z.array(graphTagSchema).safeParse(tagRows);
+      if (tagErr || !countedGraphRows(tagRows, tagCount, true) || !parsedTags.success
+        || parsedTags.data.some((tag) => !batch.includes(tag.memory_id))
+        || new Set(parsedTags.data.map((tag) => `${tag.memory_id}:${tag.tagged_user_id}`)).size !== parsedTags.data.length) {
+        req.log.error({ err: tagErr, ownerId: user.id }, "memories: graph companion read failed — refusing rather than reporting a companion-free life");
+        sendError(res, "degraded_unavailable", "We could not build your memory graph. Please try again.");
+        return;
+      }
+      for (const tag of parsedTags.data) {
+        const list = people.get(tag.memory_id) ?? [];
+        list.push(tag.tagged_user_id);
+        people.set(tag.memory_id, list);
+      }
     }
+
+    let onRecordedTime = 0;
+    const moments: GraphMoment[] = memoryRows.map((r) => {
+      const occurred = (r.starts_at as string | null) ?? (r.created_at as string | null) ?? "";
+      if (!r.starts_at) onRecordedTime++;
+      return {
+        memory_id: r.id as string,
+        owner_id: user.id,
+        occurred_at: occurred,
+        // §3.1's occurred_timezone does not exist on this schema (H17), so every
+        // bucket is UTC and the response says so.
+        utc_offset_minutes: 0,
+        // §3.6 memory_episodes is not deployed (H8), so no moment carries an
+        // episode id and the EPISODE level is legitimately empty rather than
+        // fabricated from proximity here.
+        episode_id: null,
+        trip_id: (r.trip_id as string | null) ?? null,
+        place_id: (r.canonical_location_id as string | null) ?? (r.place_id as string | null) ?? null,
+        people: (people.get(r.id as string) ?? []).slice().sort(),
+        // §8's score has no column to be stored in (H63), and a node never
+        // projects it anyway.
+        significance_score: null,
+      };
+    });
+
+    const linked = await memoryGraphLinkPath(sc, { ownerId: user.id, moments, placeRows: memoryRows, log: req.log });
+    if (!linked.ok) { sendError(res, "degraded_unavailable", "We could not build your memory graph. Please try again."); return; }
+    const participantIds = [...new Set([...people.values()].flat())];
+    const blockedIds = new Set<string>();
+    for (const batch of chunkIds(participantIds.filter((id) => id !== user.id))) {
+      for (const direction of ["outgoing", "incoming"] as const) {
+        const outgoing = direction === "outgoing";
+        const { data: blockRows, error: blockError, count: blockCount } = await sc
+          .from("blocks")
+          .select("blocker_id, blocked_id", { count: "exact" })
+          .eq(outgoing ? "blocker_id" : "blocked_id", user.id)
+          .in(outgoing ? "blocked_id" : "blocker_id", batch);
+        const parsedBlocks = z.array(graphBlockSchema).safeParse(blockRows);
+        if (blockError || !countedGraphRows(blockRows, blockCount, true) || !parsedBlocks.success
+          || parsedBlocks.data.some((block) => outgoing
+            ? block.blocker_id !== user.id || !batch.includes(block.blocked_id)
+            : block.blocked_id !== user.id || !batch.includes(block.blocker_id))) {
+          sendError(res, "degraded_unavailable", "We could not build your memory graph. Please try again.");
+          return;
+        }
+        for (const block of parsedBlocks.data) blockedIds.add(outgoing ? block.blocked_id : block.blocker_id);
+      }
+    }
+    const disclosed = projectParticipants({
+      memoryOwnerId: user.id,
+      memoryVisibility: null,
+      viewerId: user.id,
+      viewerIsCrew: false,
+      blockedIds,
+      nameAllowedIds: new Set(),
+    }, participantIds.map((id) => ({ tagged_user_id: id, status: "approved" })));
+    const disclosedIds = new Set(disclosed.participants.map((participant) => participant.userId));
+    const safeMoments = linked.moments.map((moment) => ({
+      ...moment,
+      people: moment.people.filter((person) => disclosedIds.has(person) && people.get(moment.memory_id)?.includes(person)),
+    }));
+    const themes = deriveChapterThemes(safeMoments);
+    const hierarchy = buildCompressionHierarchy(safeMoments, themes);
+
+    const project = (n: CompressedNode) => ({
+      level: n.level,
+      id: n.id,
+      key: n.key,
+      startedAt: n.started_at,
+      endedAt: n.ended_at,
+      memberMemoryIds: n.member_memory_ids,
+      childNodeIds: n.child_node_ids,
+      memoryCount: n.memory_count,
+    });
+
+    res.set("Cache-Control", "private, no-store");
+    res.json({
+      graph: {
+        levels: {
+          EPISODE: hierarchy.levels.EPISODE.map(project),
+          DAY: hierarchy.levels.DAY.map(project),
+          TRIP: hierarchy.levels.TRIP.map(project),
+          SEASON: hierarchy.levels.SEASON.map(project),
+          LIFE_CHAPTER: hierarchy.levels.LIFE_CHAPTER.map(project),
+        },
+        chapters: hierarchy.levels.LIFE_CHAPTER.map((n) => ({
+          id: n.id,
+          key: n.key,
+          label: themes.find((t) => t.key === n.key)?.label ?? n.key,
+          memoryCount: n.memory_count,
+        })),
+        momentCount: moments.length,
+        momentsOnRecordedTime: onRecordedTime,
+        timezoneBasis: "utc",
+        truncated: Number(count) > memoryRows.length,
+        engineVersion: hierarchy.engine_version, ...(linked.source === "graph" ? { linkSource: "graph" } : {}),
+        unplaced: {
+          EPISODE: unplacedAt(safeMoments, "EPISODE").length,
+          TRIP: unplacedAt(safeMoments, "TRIP").length,
+        },
+      },
+    });
+  } catch (error) {
+    req.log.error({ err: error, ownerId: user.id }, "memories: graph input unavailable");
+    sendError(res, "degraded_unavailable", "We could not build your memory graph. Please try again.");
   }
-
-  let onRecordedTime = 0;
-  const moments: GraphMoment[] = memoryRows.map((r) => {
-    const occurred = (r.starts_at as string | null) ?? (r.created_at as string | null) ?? "";
-    if (!r.starts_at) onRecordedTime++;
-    return {
-      memory_id: r.id as string,
-      owner_id: user.id,
-      occurred_at: occurred,
-      // §3.1's occurred_timezone does not exist on this schema (H17), so every
-      // bucket is UTC and the response says so.
-      utc_offset_minutes: 0,
-      // §3.6 memory_episodes is not deployed (H8), so no moment carries an
-      // episode id and the EPISODE level is legitimately empty rather than
-      // fabricated from proximity here.
-      episode_id: null,
-      trip_id: (r.trip_id as string | null) ?? null,
-      place_id: (r.canonical_location_id as string | null) ?? (r.place_id as string | null) ?? null,
-      people: (people.get(r.id as string) ?? []).slice().sort(),
-      // §8's score has no column to be stored in (H63), and a node never
-      // projects it anyway.
-      significance_score: null,
-    };
-  });
-
-  const linked = await memoryGraphLinkPath(sc, { ownerId: user.id, moments, log: req.log }); const themes = deriveChapterThemes(linked.moments); // §22 (H196): legacy answer unless cutover is on AND its gate is open; the shadow comparison runs off the response path
-  const hierarchy = buildCompressionHierarchy(linked.moments, themes);
-
-  const project = (n: CompressedNode) => ({
-    level: n.level,
-    id: n.id,
-    key: n.key,
-    startedAt: n.started_at,
-    endedAt: n.ended_at,
-    memberMemoryIds: n.member_memory_ids,
-    childNodeIds: n.child_node_ids,
-    memoryCount: n.memory_count,
-  });
-
-  res.json({
-    graph: {
-      levels: {
-        EPISODE: hierarchy.levels.EPISODE.map(project),
-        DAY: hierarchy.levels.DAY.map(project),
-        TRIP: hierarchy.levels.TRIP.map(project),
-        SEASON: hierarchy.levels.SEASON.map(project),
-        LIFE_CHAPTER: hierarchy.levels.LIFE_CHAPTER.map(project),
-      },
-      chapters: hierarchy.levels.LIFE_CHAPTER.map((n) => ({
-        id: n.id,
-        key: n.key,
-        label: themes.find((t) => t.key === n.key)?.label ?? n.key,
-        memoryCount: n.memory_count,
-      })),
-      momentCount: moments.length,
-      momentsOnRecordedTime: onRecordedTime,
-      timezoneBasis: "utc",
-      truncated: memoryRows.length >= GRAPH_MEMORY_LIMIT,
-      engineVersion: hierarchy.engine_version, ...(linked.source === "graph" ? { linkSource: "graph" } : {}),
-      unplaced: {
-        EPISODE: unplacedAt(linked.moments, "EPISODE").length,
-        TRIP: unplacedAt(linked.moments, "TRIP").length,
-      },
-    },
-  });
 });
 
 // §8 significance, derived from the rows this schema actually holds, and the

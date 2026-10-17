@@ -1,21 +1,19 @@
 {
   "generatedFrom": "checkCensusIntegrity CENSUS_INTEGRITY_DUMP=ALL",
-  "note": "Verdicts are READ from the census and are never authored here. `blocker` is the one hand-maintained field; see the header of src/scripts/buildDiscoveryLedger.ts for why it is not derived.",
-  "total": 187,
+  "note": "Verdicts are READ from the census and are never authored here. `blocker` is the one hand-maintained field; see the header of src/scripts/buildDiscoveryLedger.ts for why it is not derived. The blocker is a primary gate, not all acceptance criteria or permission to activate.",
+  "blockerReviewedAt": "2026-10-15",
+  "blockerEvidence": "docs/verification/discovery-completion-20261015.md",
+  "total": 188,
   "byVerdict": {
-    "C": 75,
-    "W": 86,
-    "N": 23,
-    "X": 3
+    "C": 103,
+    "W": 83,
+    "N": 2
   },
   "openByBlocker": {
-    "FLAG": 17,
-    "CODE_CROSS_SURFACE": 25,
-    "MIGRATION": 31,
-    "CODE": 33,
-    "DEPLOY": 1,
-    "RUNTIME_EVIDENCE": 4,
-    "EXTERNAL_SETTING": 1
+    "PRODUCTION_ROLLOUT": 61,
+    "OBSERVATION_WINDOW": 3,
+    "OWNER_APPROVAL": 18,
+    "RUNTIME_EVIDENCE": 3
   },
   "rows": [
     {
@@ -39,14 +37,14 @@
     {
       "id": "A07",
       "verdict": "W",
-      "line": 1013,
-      "blocker": "FLAG"
+      "line": 15862,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "A08",
-      "verdict": "W",
-      "line": 64,
-      "blocker": "CODE_CROSS_SURFACE"
+      "verdict": "C",
+      "line": 16157,
+      "blocker": "NONE"
     },
     {
       "id": "A09",
@@ -57,14 +55,14 @@
     {
       "id": "A10",
       "verdict": "W",
-      "line": 66,
-      "blocker": "MIGRATION"
+      "line": 14009,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "A11",
       "verdict": "W",
-      "line": 461,
-      "blocker": "MIGRATION"
+      "line": 17263,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "A12",
@@ -74,15 +72,15 @@
     },
     {
       "id": "A13",
-      "verdict": "N",
-      "line": 69,
-      "blocker": "CODE_CROSS_SURFACE"
+      "verdict": "W",
+      "line": 14007,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "A14",
-      "verdict": "N",
-      "line": 70,
-      "blocker": "CODE_CROSS_SURFACE"
+      "verdict": "W",
+      "line": 14008,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "A15",
@@ -104,9 +102,9 @@
     },
     {
       "id": "A21",
-      "verdict": "N",
-      "line": 77,
-      "blocker": "CODE_CROSS_SURFACE"
+      "verdict": "W",
+      "line": 15710,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "A22",
@@ -122,27 +120,27 @@
     },
     {
       "id": "A24",
-      "verdict": "N",
-      "line": 80,
-      "blocker": "CODE_CROSS_SURFACE"
+      "verdict": "C",
+      "line": 8139,
+      "blocker": "NONE"
     },
     {
       "id": "B02",
-      "verdict": "W",
-      "line": 88,
-      "blocker": "CODE"
+      "verdict": "C",
+      "line": 16156,
+      "blocker": "NONE"
     },
     {
       "id": "B04",
       "verdict": "W",
-      "line": 90,
-      "blocker": "MIGRATION"
+      "line": 13431,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "B05",
-      "verdict": "W",
-      "line": 91,
-      "blocker": "CODE_CROSS_SURFACE"
+      "verdict": "C",
+      "line": 5747,
+      "blocker": "NONE"
     },
     {
       "id": "B06",
@@ -165,7 +163,7 @@
     {
       "id": "B09",
       "verdict": "C",
-      "line": 409,
+      "line": 13432,
       "blocker": "NONE"
     },
     {
@@ -242,9 +240,9 @@
     },
     {
       "id": "C14",
-      "verdict": "W",
-      "line": 2565,
-      "blocker": "CODE"
+      "verdict": "C",
+      "line": 2997,
+      "blocker": "NONE"
     },
     {
       "id": "C15",
@@ -338,9 +336,9 @@
     },
     {
       "id": "C32",
-      "verdict": "C",
-      "line": 132,
-      "blocker": "NONE"
+      "verdict": "W",
+      "line": 14554,
+      "blocker": "OBSERVATION_WINDOW"
     },
     {
       "id": "C33",
@@ -351,20 +349,20 @@
     {
       "id": "A01",
       "verdict": "W",
-      "line": 462,
-      "blocker": "FLAG"
+      "line": 15264,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "A03",
       "verdict": "W",
-      "line": 398,
-      "blocker": "FLAG"
+      "line": 15265,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "A05",
       "verdict": "W",
-      "line": 1012,
-      "blocker": "FLAG"
+      "line": 14557,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "A17",
@@ -374,9 +372,9 @@
     },
     {
       "id": "A18",
-      "verdict": "N",
-      "line": 401,
-      "blocker": "CODE_CROSS_SURFACE"
+      "verdict": "W",
+      "line": 15444,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "A20",
@@ -387,20 +385,20 @@
     {
       "id": "A25",
       "verdict": "W",
-      "line": 403,
-      "blocker": "CODE_CROSS_SURFACE"
+      "line": 15266,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "B01",
-      "verdict": "W",
-      "line": 404,
-      "blocker": "DEPLOY"
+      "verdict": "C",
+      "line": 13261,
+      "blocker": "NONE"
     },
     {
       "id": "B03",
       "verdict": "W",
-      "line": 405,
-      "blocker": "CODE_CROSS_SURFACE"
+      "line": 17264,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "C11",
@@ -411,8 +409,8 @@
     {
       "id": "C19",
       "verdict": "W",
-      "line": 411,
-      "blocker": "CODE_CROSS_SURFACE"
+      "line": 15859,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "C28",
@@ -422,21 +420,21 @@
     },
     {
       "id": "DV-01",
-      "verdict": "W",
-      "line": 843,
-      "blocker": "CODE_CROSS_SURFACE"
+      "verdict": "C",
+      "line": 4247,
+      "blocker": "NONE"
     },
     {
       "id": "DV-02",
       "verdict": "W",
-      "line": 844,
-      "blocker": "RUNTIME_EVIDENCE"
+      "line": 15267,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DV-03",
       "verdict": "W",
-      "line": 845,
-      "blocker": "FLAG"
+      "line": 14556,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DV-04",
@@ -453,14 +451,14 @@
     {
       "id": "DV-06",
       "verdict": "W",
-      "line": 853,
-      "blocker": "CODE"
+      "line": 15276,
+      "blocker": "OWNER_APPROVAL"
     },
     {
       "id": "DV-07",
-      "verdict": "W",
-      "line": 854,
-      "blocker": "CODE_CROSS_SURFACE"
+      "verdict": "C",
+      "line": 4510,
+      "blocker": "NONE"
     },
     {
       "id": "DV-08",
@@ -471,8 +469,8 @@
     {
       "id": "DV-09",
       "verdict": "W",
-      "line": 856,
-      "blocker": "CODE"
+      "line": 15578,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DV-10",
@@ -489,14 +487,14 @@
     {
       "id": "DV-12",
       "verdict": "W",
-      "line": 859,
-      "blocker": "CODE"
+      "line": 15445,
+      "blocker": "OWNER_APPROVAL"
     },
     {
       "id": "DV-13",
-      "verdict": "W",
-      "line": 2390,
-      "blocker": "MIGRATION"
+      "verdict": "C",
+      "line": 15055,
+      "blocker": "NONE"
     },
     {
       "id": "DV-14",
@@ -525,56 +523,56 @@
     {
       "id": "DV-18",
       "verdict": "W",
-      "line": 1378,
-      "blocker": "CODE"
+      "line": 15446,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DV-19",
-      "verdict": "N",
-      "line": 866,
-      "blocker": "CODE_CROSS_SURFACE"
+      "verdict": "W",
+      "line": 14715,
+      "blocker": "RUNTIME_EVIDENCE"
     },
     {
       "id": "DV-20",
-      "verdict": "W",
-      "line": 2391,
-      "blocker": "MIGRATION"
+      "verdict": "C",
+      "line": 13260,
+      "blocker": "NONE"
     },
     {
       "id": "DV-21",
       "verdict": "W",
-      "line": 2392,
-      "blocker": "MIGRATION"
+      "line": 14867,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DV-22",
       "verdict": "W",
-      "line": 2393,
-      "blocker": "MIGRATION"
+      "line": 14868,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DV-23",
-      "verdict": "W",
-      "line": 2394,
-      "blocker": "MIGRATION"
+      "verdict": "C",
+      "line": 15135,
+      "blocker": "NONE"
     },
     {
       "id": "DV-24",
       "verdict": "W",
-      "line": 2395,
-      "blocker": "MIGRATION"
+      "line": 14871,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DV-25",
-      "verdict": "W",
-      "line": 2396,
-      "blocker": "MIGRATION"
+      "verdict": "C",
+      "line": 10862,
+      "blocker": "NONE"
     },
     {
       "id": "DV-26",
-      "verdict": "N",
-      "line": 887,
-      "blocker": "CODE"
+      "verdict": "W",
+      "line": 15278,
+      "blocker": "OWNER_APPROVAL"
     },
     {
       "id": "DV-27",
@@ -585,44 +583,44 @@
     {
       "id": "DV-28",
       "verdict": "W",
-      "line": 1381,
-      "blocker": "FLAG"
+      "line": 14148,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DV-29",
       "verdict": "W",
-      "line": 1382,
-      "blocker": "FLAG"
+      "line": 14149,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DV-30",
-      "verdict": "C",
-      "line": 900,
-      "blocker": "NONE"
+      "verdict": "W",
+      "line": 14146,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DV-31",
       "verdict": "W",
-      "line": 901,
-      "blocker": "FLAG"
+      "line": 15577,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DV-32",
       "verdict": "W",
-      "line": 902,
-      "blocker": "FLAG"
+      "line": 14151,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DV-33",
       "verdict": "W",
-      "line": 1310,
-      "blocker": "FLAG"
+      "line": 14152,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DV-34",
-      "verdict": "N",
-      "line": 904,
-      "blocker": "CODE"
+      "verdict": "W",
+      "line": 16068,
+      "blocker": "OWNER_APPROVAL"
     },
     {
       "id": "DV-35",
@@ -638,39 +636,39 @@
     },
     {
       "id": "DV-37",
-      "verdict": "N",
-      "line": 1383,
-      "blocker": "MIGRATION"
+      "verdict": "W",
+      "line": 14714,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DV-38",
-      "verdict": "W",
-      "line": 2189,
-      "blocker": "MIGRATION"
+      "verdict": "C",
+      "line": 6939,
+      "blocker": "NONE"
     },
     {
       "id": "DV-39",
-      "verdict": "W",
-      "line": 914,
-      "blocker": "MIGRATION"
+      "verdict": "C",
+      "line": 6940,
+      "blocker": "NONE"
     },
     {
       "id": "DV-40",
       "verdict": "W",
-      "line": 1680,
-      "blocker": "CODE"
+      "line": 15277,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DV-41",
-      "verdict": "N",
-      "line": 916,
-      "blocker": "MIGRATION"
+      "verdict": "W",
+      "line": 14717,
+      "blocker": "OWNER_APPROVAL"
     },
     {
       "id": "DV-42",
       "verdict": "W",
-      "line": 917,
-      "blocker": "FLAG"
+      "line": 15268,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DV-43",
@@ -681,26 +679,26 @@
     {
       "id": "DV-44",
       "verdict": "W",
-      "line": 919,
-      "blocker": "MIGRATION"
+      "line": 14719,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DV-45",
-      "verdict": "W",
-      "line": 920,
-      "blocker": "CODE"
+      "verdict": "C",
+      "line": 6941,
+      "blocker": "NONE"
     },
     {
       "id": "DV-46",
-      "verdict": "W",
-      "line": 1681,
-      "blocker": "CODE"
+      "verdict": "C",
+      "line": 7384,
+      "blocker": "NONE"
     },
     {
       "id": "DV-47",
       "verdict": "W",
-      "line": 922,
-      "blocker": "RUNTIME_EVIDENCE"
+      "line": 15269,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DV-48",
@@ -711,8 +709,8 @@
     {
       "id": "DV-49",
       "verdict": "W",
-      "line": 934,
-      "blocker": "FLAG"
+      "line": 14419,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DV-50",
@@ -723,134 +721,134 @@
     {
       "id": "DV-51",
       "verdict": "W",
-      "line": 936,
-      "blocker": "CODE"
+      "line": 14014,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DV-52",
-      "verdict": "X",
-      "line": 1386,
-      "blocker": "CODE_CROSS_SURFACE"
+      "verdict": "W",
+      "line": 15280,
+      "blocker": "OWNER_APPROVAL"
     },
     {
       "id": "DV-53",
       "verdict": "W",
-      "line": 943,
-      "blocker": "FLAG"
+      "line": 14420,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DV-54",
       "verdict": "W",
-      "line": 944,
-      "blocker": "FLAG"
+      "line": 15448,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DV-55",
       "verdict": "W",
-      "line": 945,
-      "blocker": "CODE"
+      "line": 14421,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DV-56",
       "verdict": "W",
-      "line": 2403,
-      "blocker": "MIGRATION"
+      "line": 16752,
+      "blocker": "OWNER_APPROVAL"
     },
     {
       "id": "DV-57",
       "verdict": "W",
-      "line": 2404,
-      "blocker": "MIGRATION"
+      "line": 16753,
+      "blocker": "OWNER_APPROVAL"
     },
     {
       "id": "DV-58",
       "verdict": "W",
-      "line": 2405,
-      "blocker": "MIGRATION"
+      "line": 16754,
+      "blocker": "OWNER_APPROVAL"
     },
     {
       "id": "DV-59",
       "verdict": "W",
-      "line": 2406,
-      "blocker": "MIGRATION"
+      "line": 16755,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DV-60",
       "verdict": "W",
-      "line": 2407,
-      "blocker": "MIGRATION"
+      "line": 16756,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DV-61",
       "verdict": "N",
-      "line": 964,
-      "blocker": "CODE_CROSS_SURFACE"
+      "line": 15286,
+      "blocker": "OWNER_APPROVAL"
     },
     {
       "id": "DV-62",
       "verdict": "N",
-      "line": 965,
-      "blocker": "CODE_CROSS_SURFACE"
+      "line": 15287,
+      "blocker": "OWNER_APPROVAL"
     },
     {
       "id": "DV-63",
-      "verdict": "N",
-      "line": 966,
-      "blocker": "CODE_CROSS_SURFACE"
+      "verdict": "W",
+      "line": 16757,
+      "blocker": "OWNER_APPROVAL"
     },
     {
       "id": "DV-64",
       "verdict": "W",
-      "line": 2408,
-      "blocker": "MIGRATION"
+      "line": 16758,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DV-65",
-      "verdict": "N",
-      "line": 968,
-      "blocker": "CODE_CROSS_SURFACE"
+      "verdict": "W",
+      "line": 16759,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DV-66",
-      "verdict": "N",
-      "line": 969,
-      "blocker": "CODE_CROSS_SURFACE"
+      "verdict": "W",
+      "line": 16760,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DV-67",
-      "verdict": "N",
-      "line": 970,
-      "blocker": "CODE_CROSS_SURFACE"
+      "verdict": "W",
+      "line": 16761,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DV-68",
-      "verdict": "N",
-      "line": 971,
-      "blocker": "CODE_CROSS_SURFACE"
+      "verdict": "W",
+      "line": 16762,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DV-69",
-      "verdict": "N",
-      "line": 972,
-      "blocker": "CODE_CROSS_SURFACE"
+      "verdict": "W",
+      "line": 16763,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DV-70",
       "verdict": "W",
-      "line": 984,
-      "blocker": "CODE"
+      "line": 13782,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DV-71",
-      "verdict": "W",
-      "line": 985,
-      "blocker": "RUNTIME_EVIDENCE"
+      "verdict": "C",
+      "line": 8800,
+      "blocker": "NONE"
     },
     {
       "id": "DV-72",
       "verdict": "W",
-      "line": 986,
-      "blocker": "MIGRATION"
+      "line": 15704,
+      "blocker": "OWNER_APPROVAL"
     },
     {
       "id": "DV-73",
@@ -861,44 +859,44 @@
     {
       "id": "DV-74",
       "verdict": "W",
-      "line": 988,
-      "blocker": "CODE"
+      "line": 15579,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DV-75",
-      "verdict": "W",
-      "line": 994,
-      "blocker": "EXTERNAL_SETTING"
+      "verdict": "C",
+      "line": 17306,
+      "blocker": "NONE"
     },
     {
       "id": "DV-76",
-      "verdict": "X",
-      "line": 995,
-      "blocker": "CODE_CROSS_SURFACE"
+      "verdict": "W",
+      "line": 15711,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DV-77",
-      "verdict": "N",
-      "line": 996,
-      "blocker": "CODE_CROSS_SURFACE"
+      "verdict": "W",
+      "line": 14012,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DV-78",
       "verdict": "W",
-      "line": 997,
-      "blocker": "CODE"
+      "line": 14716,
+      "blocker": "OWNER_APPROVAL"
     },
     {
       "id": "DV-79",
-      "verdict": "W",
-      "line": 1379,
-      "blocker": "CODE"
+      "verdict": "C",
+      "line": 5277,
+      "blocker": "NONE"
     },
     {
       "id": "DV-80",
-      "verdict": "N",
-      "line": 999,
-      "blocker": "CODE"
+      "verdict": "W",
+      "line": 14156,
+      "blocker": "RUNTIME_EVIDENCE"
     },
     {
       "id": "DV-81",
@@ -909,8 +907,8 @@
     {
       "id": "DV-82",
       "verdict": "W",
-      "line": 1380,
-      "blocker": "CODE"
+      "line": 16255,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DSV2-06",
@@ -921,44 +919,44 @@
     {
       "id": "DC-01",
       "verdict": "W",
-      "line": 1894,
-      "blocker": "CODE"
+      "line": 15861,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DC-02",
-      "verdict": "W",
-      "line": 2397,
-      "blocker": "MIGRATION"
+      "verdict": "C",
+      "line": 7567,
+      "blocker": "NONE"
     },
     {
       "id": "DC-03",
-      "verdict": "W",
-      "line": 2398,
-      "blocker": "MIGRATION"
+      "verdict": "C",
+      "line": 10860,
+      "blocker": "NONE"
     },
     {
       "id": "DC-04",
       "verdict": "W",
-      "line": 2399,
-      "blocker": "MIGRATION"
+      "line": 14869,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DC-05",
       "verdict": "W",
-      "line": 2400,
-      "blocker": "MIGRATION"
+      "line": 14870,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DC-06",
       "verdict": "W",
-      "line": 1899,
-      "blocker": "CODE"
+      "line": 14147,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DC-07",
       "verdict": "W",
-      "line": 1900,
-      "blocker": "MIGRATION"
+      "line": 14154,
+      "blocker": "OWNER_APPROVAL"
     },
     {
       "id": "DC-08",
@@ -968,9 +966,9 @@
     },
     {
       "id": "DC-09",
-      "verdict": "W",
-      "line": 1902,
-      "blocker": "CODE"
+      "verdict": "C",
+      "line": 5278,
+      "blocker": "NONE"
     },
     {
       "id": "DC-10",
@@ -981,32 +979,32 @@
     {
       "id": "DC-11",
       "verdict": "W",
-      "line": 1904,
-      "blocker": "FLAG"
+      "line": 15440,
+      "blocker": "OWNER_APPROVAL"
     },
     {
       "id": "DC-12",
       "verdict": "W",
-      "line": 1905,
-      "blocker": "CODE"
+      "line": 15709,
+      "blocker": "OWNER_APPROVAL"
     },
     {
       "id": "DC-13",
       "verdict": "W",
-      "line": 1906,
-      "blocker": "CODE"
+      "line": 15447,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DC-14",
       "verdict": "W",
-      "line": 1907,
-      "blocker": "FLAG"
+      "line": 14559,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DC-15",
-      "verdict": "W",
-      "line": 1908,
-      "blocker": "MIGRATION"
+      "verdict": "C",
+      "line": 10415,
+      "blocker": "NONE"
     },
     {
       "id": "DC-16",
@@ -1017,68 +1015,68 @@
     {
       "id": "DC-17",
       "verdict": "W",
-      "line": 1910,
-      "blocker": "CODE"
+      "line": 15860,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DC-18",
       "verdict": "W",
-      "line": 1911,
-      "blocker": "CODE"
+      "line": 16257,
+      "blocker": "RUNTIME_EVIDENCE"
     },
     {
       "id": "DC-19",
-      "verdict": "W",
-      "line": 1912,
-      "blocker": "CODE"
+      "verdict": "C",
+      "line": 4300,
+      "blocker": "NONE"
     },
     {
       "id": "DC-20",
       "verdict": "W",
-      "line": 2401,
-      "blocker": "MIGRATION"
+      "line": 14873,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DC-21",
       "verdict": "W",
-      "line": 2402,
-      "blocker": "MIGRATION"
+      "line": 14155,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DC-22",
       "verdict": "W",
-      "line": 1915,
-      "blocker": "CODE"
+      "line": 14718,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DC-23",
-      "verdict": "N",
-      "line": 1916,
-      "blocker": "CODE"
+      "verdict": "W",
+      "line": 16764,
+      "blocker": "OWNER_APPROVAL"
     },
     {
       "id": "DC-24",
       "verdict": "W",
-      "line": 1917,
-      "blocker": "CODE"
+      "line": 14555,
+      "blocker": "OBSERVATION_WINDOW"
     },
     {
       "id": "DC-25",
-      "verdict": "W",
-      "line": 1918,
-      "blocker": "FLAG"
+      "verdict": "C",
+      "line": 6744,
+      "blocker": "NONE"
     },
     {
       "id": "DC-26",
-      "verdict": "W",
-      "line": 1919,
-      "blocker": "CODE"
+      "verdict": "C",
+      "line": 17262,
+      "blocker": "NONE"
     },
     {
       "id": "DC-27",
-      "verdict": "X",
-      "line": 1920,
-      "blocker": "RUNTIME_EVIDENCE"
+      "verdict": "W",
+      "line": 16258,
+      "blocker": "OBSERVATION_WINDOW"
     },
     {
       "id": "DC-28",
@@ -1107,14 +1105,14 @@
     {
       "id": "DC-32",
       "verdict": "W",
-      "line": 1925,
-      "blocker": "CODE"
+      "line": 16256,
+      "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DC-33",
-      "verdict": "W",
-      "line": 1926,
-      "blocker": "MIGRATION"
+      "verdict": "C",
+      "line": 9959,
+      "blocker": "NONE"
     },
     {
       "id": "DC-34",
@@ -1124,9 +1122,9 @@
     },
     {
       "id": "DSV2-04",
-      "verdict": "N",
-      "line": 2056,
-      "blocker": "CODE_CROSS_SURFACE"
+      "verdict": "C",
+      "line": 7383,
+      "blocker": "NONE"
     },
     {
       "id": "DSV2-05",
@@ -1136,9 +1134,15 @@
     },
     {
       "id": "DSV2-12",
-      "verdict": "N",
-      "line": 2058,
-      "blocker": "CODE"
+      "verdict": "C",
+      "line": 8759,
+      "blocker": "NONE"
+    },
+    {
+      "id": "DV-83",
+      "verdict": "C",
+      "line": 17223,
+      "blocker": "NONE"
     }
   ]
 }

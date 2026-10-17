@@ -29,6 +29,7 @@ import { sharedSuggestionCache, SuggestionCache, isCacheablePrivacyClass } from 
 import { finalizeSuggestions } from './suggestionRanking.ts';
 import { GEO_FIELD_IDS } from '../geographic/geoFields.ts';
 import type { SuggestRequest, SuggestResult } from '../types/inputSuggestion.ts';
+import { currentDiscoveryScope, isCurrentDiscoveryScope } from '../../../services/discoveryViewerScope.ts';
 
 /** The transport. The shared client by default, loaded lazily: it reaches the Supabase-backed token helper, which cannot load under node:test (voiceIntake.ts uses the same form). */
 export type PrefetchRequest = (req: SuggestRequest) => Promise<SuggestResult>;
@@ -68,6 +69,7 @@ export function zeroStateCacheKey(field: DependentField): string {
  * no policy), 'cached' (already warm), 'warmed', or 'failed'.
  */
 export async function prefetchZeroState(field: DependentField, request: PrefetchRequest = sharedRequest): Promise<'skipped' | 'cached' | 'warmed' | 'failed'> {
+  const accountScope = currentDiscoveryScope();
   try {
     const policy = resolveFieldPolicy(field.fieldId, field.context);
     if (!policy) return 'skipped';
@@ -82,7 +84,7 @@ export async function prefetchZeroState(field: DependentField, request: Prefetch
       limit: policy.maxSuggestions,
       client: field.capabilities,
     });
-    if (!res.ok || res.refusal) return 'failed';
+    if (!isCurrentDiscoveryScope(accountScope) || !res.ok || res.refusal) return 'failed';
     sharedSuggestionCache.set(key, finalizeSuggestions(res.suggestions, policy.maxSuggestions));
     return 'warmed';
   } catch {

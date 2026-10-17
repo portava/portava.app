@@ -1,13 +1,14 @@
 /**
  * Memory edit screen — /memory/edit?id=<uuid>
  *
- * Lets the owner change title, caption, visibility, and location (including
- * clearing it). Navigates back to the detail screen on success.
+ * Lets the owner change title, caption, visibility, location and explicit
+ * start/end times. Navigates back to the detail screen on success.
  */
 import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { z } from 'zod';
 import {
   View, Text, ScrollView, Pressable, TextInput,
-  StyleSheet, ActivityIndicator, Alert,
+  StyleSheet, ActivityIndicator,
 } from 'react-native';
 import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
 import { router, useLocalSearchParams, Redirect } from 'expo-router';
@@ -15,8 +16,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { X, Globe, Users, Lock, Eye, MapPin, ChevronDown } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import {
-  getMemory, updateMemory, type Memory, type MemoryVisibility,
+  getMemory, updateMemory, newMemoryOperationId, type Memory, type MemoryVisibility,
 } from '../../src/services/memories';
+import { useSession } from '../../src/context/SessionContext.tsx';
+import { supabase } from '../../src/lib/supabase.ts';
+import { memoryOwnerSessionId, type MemoryOwnerRequest } from '../../src/services/memoryOwnerRequest.ts';
+import { MemoryNarrativeDraft } from '../../src/features/memories/MemoryNarrativeDraft.tsx';
 import { GlobalPlacePicker } from '../../src/components/selectors/GlobalPlacePicker';
 import { placeToLocationFields } from '../../src/lib/location/locationPayload';
 import type { Place } from '../../src/lib/location/placeTypes'; import { MemoryTypePicker } from '../../src/features/memories/canonical/MemoryTypePicker.tsx'; import { isMemoryType, memoryPlaceLine, occurrenceNameOfPick, type MemoryType } from '../../src/features/memories/canonical/memoryCanonical.ts'; // H40/H71; on this line so no cited line moves
@@ -53,11 +58,109 @@ function memoryToPlace(memory: Memory): Place | null {
   } as Place;
 }
 
+type MemoryTimeDraft = {
+  original: string | null;
+  date: string;
+  time: string;
+  offset: string;
+  touched: boolean;
+  cleared: boolean;
+};
+
+const memoryTimeSchema = z.string().datetime({ offset: true });
+
+function memoryTimeDraft(original: string | null | undefined): MemoryTimeDraft {
+  const parts = original?.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2}(?:\.\d+)?)(Z|[+-]\d{2}:?\d{2})$/);
+  return { original: original ?? null, date: parts?.[1] ?? '', time: parts?.[2] ?? '',
+    offset: parts?.[3] ?? '', touched: false, cleared: false };
+}
+
+function memoryTimeValue(draft: MemoryTimeDraft, bound: 'start' | 'end'):
+  { ok: true; value: string | null | undefined } | { ok: false; message: string } {
+  if (!draft.touched) return { ok: true, value: undefined };
+  if (draft.cleared) return { ok: true, value: null };
+  const value = `${draft.date}T${draft.time}${draft.offset}`;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(draft.date)
+    || !/^\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(draft.time)
+    || !/^(Z|[+-]\d{2}:?\d{2})$/.test(draft.offset)
+    || !memoryTimeSchema.safeParse(value).success || !Number.isFinite(Date.parse(value))) {
+    return { ok: false, message: `Enter a complete ${bound} date (YYYY-MM-DD), time (HH:mm:ss) and UTC offset (Z or ±HH:mm), or choose Clear ${bound}.` };
+  }
+  return { ok: true, value: value === draft.original ? undefined : value };
+}
+
+function memoryTimeInstant(value: string): { wholeSecond: number; fraction: string } | null {
+  const parts = value.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:?\d{2})$/);
+  if (!parts || !memoryTimeSchema.safeParse(value).success) return null;
+  const wholeSecond = Date.parse(`${parts[1]}${parts[3]}`);
+  return Number.isFinite(wholeSecond) ? { wholeSecond, fraction: parts[2] ?? '' } : null;
+}
+
+function memoryTimeBefore(earlier: string, later: string): boolean {
+  const earlierInstant = memoryTimeInstant(earlier);
+  const laterInstant = memoryTimeInstant(later);
+  if (!earlierInstant || !laterInstant) return false;
+  if (earlierInstant.wholeSecond !== laterInstant.wholeSecond) return earlierInstant.wholeSecond < laterInstant.wholeSecond;
+  const precision = Math.max(earlierInstant.fraction.length, laterInstant.fraction.length);
+  return earlierInstant.fraction.padEnd(precision, '0') < laterInstant.fraction.padEnd(precision, '0');
+}
+
+function MemoryTimeInputs({ bound, value, onChange, disabled }: {
+  bound: 'start' | 'end'; value: MemoryTimeDraft; onChange: (next: MemoryTimeDraft) => void; disabled: boolean;
+}) {
+  const label = bound === 'start' ? 'Start' : 'End';
+  return (
+    <View style={s.section}>
+      <Text style={s.sectionLabel}>{label} date and time</Text>
+      {(value.cleared || (!value.original && !value.touched)) && <Text style={s.timeHelp}>{label} not set</Text>}
+      {value.original !== null && <Text style={s.timeHelp}>Saved {bound}: {value.original}</Text>}
+      <Text style={s.timeHelp}>Date (YYYY-MM-DD)</Text>
+      <TextInput testID={`memory-${bound}-date`} accessibilityLabel={`${label} date (YYYY-MM-DD)`}
+        style={s.input} value={value.date} placeholder="YYYY-MM-DD" editable={!disabled} autoCorrect={false} autoCapitalize="none"
+        onChangeText={date => onChange({ ...value, date, touched: true, cleared: false })} />
+      <Text style={s.timeHelp}>Time (24-hour HH:mm:ss; fractional seconds optional)</Text>
+      <TextInput testID={`memory-${bound}-time`} accessibilityLabel={`${label} time (HH:mm:ss)`}
+        style={s.input} value={value.time} placeholder="HH:mm:ss" editable={!disabled} autoCorrect={false} autoCapitalize="none"
+        onChangeText={time => onChange({ ...value, time, touched: true, cleared: false })} />
+      <Text style={s.timeHelp}>UTC offset (Z means UTC; for example +05:45 or -04:00)</Text>
+      <TextInput testID={`memory-${bound}-offset`} accessibilityLabel={`${label} UTC offset`}
+        style={s.input} value={value.offset} placeholder="Z or ±HH:mm" editable={!disabled} autoCorrect={false} autoCapitalize="none"
+        onChangeText={offset => onChange({ ...value, offset, touched: true, cleared: false })} />
+      <Pressable accessibilityRole="button" accessibilityLabel={`Clear ${bound}`} disabled={disabled}
+        onPress={() => onChange({ ...value, date: '', time: '', offset: '', touched: true, cleared: true })}>
+        <Text style={s.backLinkText}>Clear {bound}</Text>
+      </Pressable>
+      {value.touched && <Pressable accessibilityRole="button" accessibilityLabel={`Restore saved ${bound}`} disabled={disabled}
+        onPress={() => onChange(memoryTimeDraft(value.original))}>
+        <Text style={s.backLinkText}>Restore saved {bound}</Text>
+      </Pressable>}
+    </View>
+  );
+}
+
 // ── Screen ────────────────────────────────────────────────────────────────────
 
 export default function EditMemoryScreen() {
-  const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
+  const { userId, loading } = useSession();
+  const target = useRef({ id, userId });
+  target.current = { id, userId };
+  const isTargetCurrent = useCallback(() => target.current.id === id && target.current.userId === userId, [id, userId]);
+  if (!id) return <Redirect href="/memory/new" />;
+  if (loading) return <View style={s.centered}><ActivityIndicator color={color.signal} /></View>;
+  if (!userId) return (
+    <View style={s.centered}>
+      <Text style={s.errorText}>Sign in to edit this Memory.</Text>
+      <Pressable onPress={() => router.back()} style={s.backLink}><Text style={s.backLinkText}>Go back</Text></Pressable>
+    </View>
+  );
+  return <OwnerMemoryEditor key={`${userId}:${id}`} id={id} ownerId={userId} isTargetCurrent={isTargetCurrent} />;
+}
+
+function OwnerMemoryEditor({ id, ownerId, isTargetCurrent }: {
+  id: string; ownerId: string; isTargetCurrent: () => boolean;
+}) {
+  const insets = useSafeAreaInsets();
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -66,6 +169,8 @@ export default function EditMemoryScreen() {
 
   const [title, setTitle] = useState('');
   const [caption, setCaption] = useState('');
+  const [startTime, setStartTime] = useState(() => memoryTimeDraft(null));
+  const [endTime, setEndTime] = useState(() => memoryTimeDraft(null));
   const [visibility, setVisibility] = useState<MemoryVisibility>('friends_only');
   const [place, setPlace] = useState<Place | null>(null);
   const [placePickerOpen, setPlacePickerOpen] = useState(false); const [memoryType, setMemoryType] = useState<MemoryType | null>(null); const typeTouched = useRef(false); const placeTouched = useRef(false); // §4 / §9: sent only when the person changed them here
@@ -74,34 +179,70 @@ export default function EditMemoryScreen() {
   // We need to send explicit nulls when the user clears an existing location.
   const originalHadLocation = useRef(false);
   const saveLock = useRef(false);
+  const lifecycle = useRef<AbortController | null>(null);
+  const [request, setRequest] = useState<MemoryOwnerRequest | null>(null);
+  const lastSave = useRef<{ intent: string; operationId: string } | null>(null);
 
   // ── Load existing memory ────────────────────────────────────────────────────
 
   useEffect(() => {
-    if (!id) return;
-    let cancelled = false;
+    const controller = new AbortController();
+    lifecycle.current = controller;
+    let sessionId: string | null = null;
+    const acceptsSession = (next: string | null) => {
+      if (!next) return false;
+      if (sessionId === null) sessionId = next;
+      return sessionId === next;
+    };
+    const invalidateSession = () => {
+      if (controller.signal.aborted || !isTargetCurrent()) return;
+      controller.abort();
+      setRequest(null); setTitle(''); setCaption(''); setPlace(null); setPlacePickerOpen(false);
+      setStartTime(memoryTimeDraft(null)); setEndTime(memoryTimeDraft(null));
+      setVisibility('friends_only'); setMemoryType(null); setSaveError(''); setSaving(false);
+      lastSave.current = null;
+      setLoadError('This editing session changed. Reopen the Memory.'); setLoading(false);
+    };
+    const scope: MemoryOwnerRequest = { memoryId: id, ownerId, signal: controller.signal,
+      isCurrent: () => !controller.signal.aborted && isTargetCurrent(), acceptsSession, invalidateSession };
+    setRequest(scope);
+    setLoading(true);
+    setLoadError('');
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_OUT' || session?.user.id !== ownerId
+        || !acceptsSession(memoryOwnerSessionId(session.access_token))) invalidateSession();
+    });
     (async () => {
-      setLoading(true);
-      setLoadError('');
-      const result = await getMemory(id);
-      if (cancelled) return;
+      const result = await getMemory(id, scope);
+      if (!scope.isCurrent()) return;
       setLoading(false);
       if (!result.ok) { setLoadError(result.message); return; }
       const m = result.memory;
       setTitle(m.title ?? '');
       setCaption(m.caption ?? '');
+      setStartTime(memoryTimeDraft(m.startsAt)); setEndTime(memoryTimeDraft(m.endsAt));
       setVisibility(m.visibility as MemoryVisibility); setMemoryType(isMemoryType(m.memoryType) ? m.memoryType : null);
       const initialPlace = memoryToPlace(m);
       setPlace(initialPlace);
       originalHadLocation.current = initialPlace !== null;
     })();
-    return () => { cancelled = true; };
-  }, [id]);
+    return () => { controller.abort(); subscription.unsubscribe(); };
+  }, [id, ownerId, isTargetCurrent]);
 
   // ── Save ────────────────────────────────────────────────────────────────────
 
   const handleSave = useCallback(async () => {
-    if (!id || saveLock.current) return;
+    if (!request || !request.isCurrent() || request.signal.aborted || saveLock.current) return;
+    const startResult = memoryTimeValue(startTime, 'start');
+    const endResult = memoryTimeValue(endTime, 'end');
+    if (!startResult.ok) { setSaveError(startResult.message); return; }
+    if (!endResult.ok) { setSaveError(endResult.message); return; }
+    const nextStart = startResult.value === undefined ? startTime.original : startResult.value;
+    const nextEnd = endResult.value === undefined ? endTime.original : endResult.value;
+    if ((startTime.touched || endTime.touched) && nextStart !== null && nextEnd !== null
+      && memoryTimeBefore(nextEnd, nextStart)) {
+      setSaveError('End must not be before start. Change or clear a time.'); return;
+    }
     saveLock.current = true;
     setSaveError('');
     setSaving(true);
@@ -124,12 +265,18 @@ export default function EditMemoryScreen() {
             }
           : {};
 
-      const result = await updateMemory(id, {
+      const patch = {
         title: title.trim() || null,
         caption: caption.trim() || null,
         visibility,
+        ...(startResult.value !== undefined ? { startsAt: startResult.value } : {}),
+        ...(endResult.value !== undefined ? { endsAt: endResult.value } : {}),
         ...locationPayload, ...(typeTouched.current ? { memoryType } : {}), ...(placeTouched.current && place ? { placeDisplayNameAtOccurrence: occurrenceNameOfPick(place) } : {}), // a type is sent only when changed (the server refuses one while types are off); a place's name only with a NEWLY picked place
-      });
+      };
+      const intent = JSON.stringify(patch);
+      if (lastSave.current?.intent !== intent) lastSave.current = { intent, operationId: newMemoryOperationId('memory-edit') };
+      const result = await updateMemory(id, { ...patch, operationId: lastSave.current.operationId }, request);
+      if (!request.isCurrent() || request.signal.aborted) return;
 
       if (!result.ok) {
         setSaveError(result.message);
@@ -138,14 +285,22 @@ export default function EditMemoryScreen() {
 
       router.back();
     } finally {
-      setSaving(false);
-      saveLock.current = false;
+      if (request.isCurrent() && !request.signal.aborted) {
+        setSaving(false);
+        saveLock.current = false;
+      }
     }
-  }, [id, title, caption, visibility, place, memoryType]);
+  }, [id, title, caption, visibility, place, memoryType, startTime, endTime, request]);
+
+  const close = () => {
+    lifecycle.current?.abort();
+    setRequest(null);
+    router.back();
+  };
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
-  if (!id) return <Redirect href="/memory/new" />; /* HM-F08: no id is a NEW Memory — this screen used to spin forever on it */ if (loading) {
+  if (loading) {
     return (
       <View style={[s.centered, { paddingTop: insets.top }]}>
         <ActivityIndicator color={color.signal} />
@@ -168,12 +323,12 @@ export default function EditMemoryScreen() {
     <KeyboardSafeScrollView style={{ backgroundColor: color.paper }}>
       {/* Header */}
       <View style={[s.header, { paddingTop: insets.top + space.sm }]}>
-        <Pressable onPress={() => router.back()} hitSlop={8} style={s.headerClose}>
+        <Pressable onPress={close} hitSlop={8} style={s.headerClose} accessibilityLabel="Close editor">
           <X size={22} color={color.ink} />
         </Pressable>
         <Text style={s.headerTitle}>Edit Memory</Text>
         <Pressable
-          onPress={handleSave}
+          onPress={() => { void handleSave(); }}
           disabled={saving}
           testID="memory-edit-save-btn"
           style={[s.saveBtn, saving && s.saveBtnDisabled]}
@@ -198,6 +353,7 @@ export default function EditMemoryScreen() {
             placeholder="Give this memory a name…"
             placeholderTextColor={color.faint}
             value={title}
+            editable={!saving}
             onChangeText={setTitle}
             maxLength={300}
             returnKeyType="next"
@@ -212,12 +368,23 @@ export default function EditMemoryScreen() {
             placeholder="What made this moment special?"
             placeholderTextColor={color.faint}
             value={caption}
+            editable={!saving}
             onChangeText={setCaption}
             maxLength={2000}
             multiline
             numberOfLines={4}
             textAlignVertical="top"
           />
+        </View>
+
+        {request && <MemoryNarrativeDraft request={request} disabled={saving} onUse={setCaption} />}
+
+        <View style={s.section}>
+          <Text style={s.sectionLabel}>When it happened</Text>
+          <Text style={s.timeHelp}>Enter only times you know. Nothing changes until you choose Save. Clear removes a time; it does not replace it with today.</Text>
+          <Text style={s.timeHelp}>An offset is not a place or time zone. These fields show the saved offset, not a guessed local time. Include the offset for the date you mean.</Text>
+          <MemoryTimeInputs bound="start" value={startTime} onChange={setStartTime} disabled={saving} />
+          <MemoryTimeInputs bound="end" value={endTime} onChange={setEndTime} disabled={saving} />
         </View>
 
         {/* §4 MemoryType (census H40) — shown only when the server accepts one */}
@@ -326,6 +493,7 @@ const s = StyleSheet.create({
 
   section: { gap: space.sm },
   sectionLabel: { ...(t.bodyStrong as object), color: color.ink },
+  timeHelp: { ...(t.small as object), color: color.mute },
 
   input: {
     borderWidth: 1,

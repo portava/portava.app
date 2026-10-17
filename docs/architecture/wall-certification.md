@@ -191,7 +191,7 @@ ahead of the scroll.
 
 This should not be credited as an implementation of the specified behaviour. The
 codebase demonstrates it knows the difference —
-`components/media/WatchFeedList.tsx:484-491` implements real poster prefetch
+`components/media/WatchFeedList.tsx:487-494` implements real poster prefetch
 ("preload upcoming items", next 2 on active-index change via `Image.prefetch`).
 The Wall does not use it.
 
@@ -260,9 +260,9 @@ account deletion keeps an anonymised tombstone profile rather than deleting the
 of what the user typed (`2271_wall_session_intents.sql:40-42`,
 `WallSessionIntentService.ts:345`) — survived deletion as orphaned personal data.
 Fix: an explicit, audited, user-scoped delete step `delete_wall_session_intent`
-(`services/accountDeletion/AccountDeletionService.ts:1069`), classified in
+(`services/accountDeletion/AccountDeletionService.ts:1045`), classified in
 `lib/deletionDispositions.ts:151,659`. Test:
-`test/accountDeletionCascade.test.ts:340`. (The same PR fixed two Passport tables
+`test/accountDeletionCascade.test.ts:427`. (The same PR fixed two Passport tables
 the same way; out of scope here.)
 
 ### 5.4 `#343` (D12) — `useWallFeed` in-flight guard released by a stale request — FIXED (client)

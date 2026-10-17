@@ -1,0 +1,57 @@
+{
+  "verifiedOn": "2026-10-15",
+  "repository": "portava/portava.app",
+  "authorization": "Yes—require all three checks on main",
+  "requirement": "DV-75",
+  "before": {
+    "protected": false,
+    "mainSha": "324ed0dd2b61371afc6f20a5a843f89406b57cc8"
+  },
+  "after": {
+    "protected": true,
+    "mainSha": "324ed0dd2b61371afc6f20a5a843f89406b57cc8",
+    "rulesetId": 25205817,
+    "rulesetUrl": "https://github.com/portava/portava.app/rules/25205817",
+    "name": "main required CI verdicts",
+    "createdAt": "2026-10-15T19:28:36.011-04:00",
+    "enforcement": "active",
+    "include": ["refs/heads/main"],
+    "exclude": [],
+    "bypassActors": [],
+    "currentUserCanBypass": "never",
+    "strictRequiredStatusChecksPolicy": true,
+    "doNotEnforceOnCreate": false,
+    "checks": [
+      {
+        "context": "CI · verdict (skipped or cancelled is not a pass)",
+        "integrationId": 15368,
+        "currentMainConclusion": "success"
+      },
+      {
+        "context": "live DB · verdict (cancelled or skipped is not a pass)",
+        "integrationId": 15368,
+        "currentMainConclusion": "success"
+      },
+      {
+        "context": "unwired · verdict (skipped or cancelled is not a pass)",
+        "integrationId": 15368,
+        "currentMainConclusion": "success"
+      }
+    ]
+  },
+  "verifiedReadbacks": [
+    "GET /repos/portava/portava.app/rulesets/25205817",
+    "GET /repos/portava/portava.app/rules/branches/main",
+    "GET /repos/portava/portava.app/branches/main"
+  ],
+  "unrelatedRuleset": {
+    "id": 20680634,
+    "include": ["refs/heads/bughunt-20260805"],
+    "updatedAtBeforeAndAfter": "2026-08-11T16:32:05.168-04:00"
+  },
+  "limitations": [
+    "Configuration was verified through separate GitHub API reads; no deliberately failing push or merge was attempted.",
+    "No branch commit, deployment, database, production flag or beta environment was changed.",
+    "This closes only DV-75's required-check setting; other release and acceptance gates remain."
+  ]
+}

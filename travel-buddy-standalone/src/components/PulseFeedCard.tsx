@@ -10,6 +10,7 @@ import {
   Sparkles, Info, Plus, ShieldCheck, Clock,
 } from 'lucide-react-native';
 import type { PulseFeedItem } from '../types/models.ts';
+import { TranslatedContent } from './TranslatedContent.tsx';
 import { color, space, radius, type as t, shadow, layout, avatar, icon } from '../theme/tokens.ts';
 import { usePlanPicker } from './PlanPickerController.tsx';
 import { RichText } from './RichText.tsx';
@@ -312,7 +313,9 @@ function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: Puls
 
         <View style={s.postFooter}>
           {item.caption ? (
-            <RichText content={item.caption} tags={item.spanTags} hashtagUsages={item.spanHashtags} style={s.caption} numberOfLines={8} />
+            <TranslatedContent entityType="post" entityId={item.id} field="content" original={item.caption} style={s.caption} numberOfLines={8}>
+              <RichText content={item.caption} tags={item.spanTags} hashtagUsages={item.spanHashtags} style={s.caption} numberOfLines={8} />
+            </TranslatedContent>
           ) : null}
           {item.updatedAt && item.updatedAt > item.createdAt ? (
             <Text style={s.editedLabel}>Edited</Text>
@@ -455,7 +458,9 @@ function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: Puls
       {/* ── Content footer ── */}
       <View style={s.postFooter}>
         {item.caption ? (
-          <RichText content={item.caption} tags={item.spanTags} hashtagUsages={item.spanHashtags} style={s.caption} numberOfLines={4} />
+          <TranslatedContent entityType="post" entityId={item.id} field="content" original={item.caption} style={s.caption} numberOfLines={4}>
+            <RichText content={item.caption} tags={item.spanTags} hashtagUsages={item.spanHashtags} style={s.caption} numberOfLines={4} />
+          </TranslatedContent>
         ) : null}
         {item.updatedAt && item.updatedAt > item.createdAt ? (
           <Text style={s.editedLabel}>Edited</Text>
@@ -656,6 +661,7 @@ function GemCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: Pulse
       featuredByPortava={item.featuredByPortava ?? null}
       title={item.title ?? null}
       captionNode={item.blurb ? (
+        <TranslatedContent entityType="post" entityId={item.id} field="content" original={item.blurb} style={{ fontSize: 14, lineHeight: 20, color: '#1a1a1a' }} numberOfLines={4}>
         <RichText
           content={item.blurb}
           tags={item.spanTags}
@@ -663,6 +669,7 @@ function GemCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: Pulse
           style={{ fontSize: 14, lineHeight: 20, color: '#1a1a1a' }}
           numberOfLines={4}
         />
+        </TranslatedContent>
       ) : undefined}
       city={item.city ?? null}
       tags={item.tags}

@@ -103,7 +103,7 @@ const DETECTOR_DOWN = {
     throw new Error("detector_down");
   },
   async translateText(text: string, _source: string, target: string) {
-    return { translatedText: `[${target}] ${text} and then some more words.`, provider: "stub" };
+    return { translatedText: `[${target}] ${text} and then some more words.`, provider: "stub", providerVersion: "stub-1" };
   },
 };
 
@@ -112,7 +112,7 @@ const DETECTOR_SAYS_IT = {
     return { language: "it", confidence: "high" };
   },
   async translateText(text: string, _source: string, target: string) {
-    return { translatedText: `[${target}] ${text} and then some more words.`, provider: "stub" };
+    return { translatedText: `[${target}] ${text} and then some more words.`, provider: "stub", providerVersion: "stub-1" };
   },
 };
 
@@ -156,6 +156,7 @@ function store(over: Partial<Record<string, any[]>> = {}): Record<string, any[]>
       {
         id: MSG, thread_id: DM, sender_id: A, body: "nos vemos en el muelle a las ocho.",
         created_at: "2026-01-01T00:00:00.000Z", deleted_at: null, edited_at: null,
+        ciphertext: null,
         original_language: null, language_detection_source: null,
         msg_type: "text", subtype: null, media_url: null, media_type: null,
         media_thumbnail_url: null, media_duration_seconds: null, reply_to_id: null,
@@ -198,7 +199,10 @@ function use(state: Record<string, any[]>, opts?: Parameters<typeof makeFakeClie
   // looking like it had tested an outage.
   _resetRateLimit();
   _clearSendTierCache();
-  const c = makeFakeClient(state, opts);
+  const c = makeFakeClient(state, { ...opts, columnDefaults: {
+    messages: { deleted_at: null, edited_at: null, ciphertext: null, original_language: null, language_detection_source: null },
+    ...opts?.columnDefaults,
+  } });
   _setTestClient(c, true);
   return c;
 }
@@ -251,6 +255,7 @@ describe("T344 — the pipeline distinguishes 'stated', 'stated nothing' and 'co
   it("the provider naming a language is still 'provider'", async () => {
     _setTestTranslationProvider(DETECTOR_SAYS_IT as any);
     const c = use(store());
+    c._store.messages[0].body = "ci vediamo al molo alle otto.";
     await translateMessageForThread(c as any, {
       messageId: MSG,
       body: "ci vediamo al molo alle otto.",
@@ -281,6 +286,7 @@ describe("T344 — the pipeline distinguishes 'stated', 'stated nothing' and 'co
 
   it("a sender who stated NOTHING is 'default' — the arm the callers made unreachable", async () => {
     const c = use(store());
+    c._store.messages[0].body = "see you at the pier at eight.";
     await translateMessageForThread(c as any, {
       messageId: MSG,
       body: "see you at the pier at eight.",
@@ -305,6 +311,7 @@ describe("T344 — the pipeline distinguishes 'stated', 'stated nothing' and 'co
 
   it("a profiles read that FAILED is 'sender_preference_unreadable', never 'default'", async () => {
     const c = use(store());
+    c._store.messages[0].body = "see you at the pier at eight.";
     await translateMessageForThread(c as any, {
       messageId: MSG,
       body: "see you at the pier at eight.",
@@ -335,6 +342,7 @@ describe("T344 — the pipeline distinguishes 'stated', 'stated nothing' and 'co
       { senderPreferredLanguage: null, senderPreferenceUnreadable: true },
     ]) {
       const c = use(store());
+      c._store.messages[0].body = "see you at the pier at eight.";
       await translateMessageForThread(c as any, {
         messageId: MSG,
         body: "see you at the pier at eight.",

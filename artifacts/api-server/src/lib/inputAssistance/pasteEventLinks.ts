@@ -67,8 +67,8 @@ export function parseEventLink(line: string, env: NodeJS.ProcessEnv = process.en
   if (!PORTAVA_LINK_HOSTS.has(host) && !extraHosts(env).includes(host)) return null;
   const m = url.pathname.match(/^\/event\/([^/]+)\/?$/);
   if (!m) return null;
-  const id = decodeURIComponent(m[1]!);
-  return UUID.test(id) ? { eventId: id.toLowerCase() } : null;
+  try { const id = decodeURIComponent(m[1]!); return UUID.test(id) ? { eventId: id.toLowerCase() } : null; }
+  catch { return null; }
 }
 
 /** searchCandidates.ts#searchEvents' default cutoff: started ≤ 2 h ago. */

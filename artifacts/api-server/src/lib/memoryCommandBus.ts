@@ -85,8 +85,8 @@
  *     highlights/highlightLifecycle.ts states that DRAFT "has no witness and
  *     is still never derived", so no Highlight is ever in a pre-published
  *     state for a command to move out of. See MEMORY_COMMAND_TYPES_NOT_DECLARED.
- *   * SET_RESURFACING_POLICY (§17) is NOT declared: its subject is not one
- *     aggregate. See MEMORY_COMMAND_TYPES_NOT_DECLARED for the measurement.
+ *   * SET_RESURFACING_POLICY uses an owner-policy aggregate (3993), not a
+ *     fabricated Memory. Its sequence orders commands, not whole-policy OCC.
  *   * UNHIDE_HIGHLIGHT is declared as an EXT, on the UPDATE_MEMORY precedent.
  *     §17 names HIDE_HIGHLIGHT and no inverse, but names PIN and UNPIN as a
  *     pair — so the omission is an asymmetry in §17, not a ruling that Archive
@@ -342,7 +342,7 @@ export const MEMORY_COMMAND_TYPES = [
                         //       produces them; POST /highlights and save-to-highlight need a name to cross
                         //       the boundary at all (the UPDATE_MEMORY precedent). public.highlight_create_execute
                         //       (3677). Census H155/H156.
-] as const;
+  "BACKFILL_LEGACY_MEMORY", "SET_RESURFACING_POLICY"] as const;
 export type MemoryCommandType = (typeof MEMORY_COMMAND_TYPES)[number];
 
 /**
@@ -354,7 +354,8 @@ export type MemoryCommandType = (typeof MEMORY_COMMAND_TYPES)[number];
  * `executeMemoryCommand` dispatches on; nothing infers the subject from the
  * command NAME, because a name is a convention and this is a routing decision.
  */
-export const COMMAND_SUBJECT: Readonly<Record<MemoryCommandType, "memory" | "highlight">> = {
+export const COMMAND_SUBJECT: Readonly<Record<MemoryCommandType, "memory" | "highlight" | "owner_policy">> = { BACKFILL_LEGACY_MEMORY: "memory",
+  SET_RESURFACING_POLICY: "owner_policy",
   CREATE_MEMORY: "memory",
   CONFIRM_MEMORY: "memory",
   ARCHIVE_MEMORY: "memory",
@@ -398,7 +399,8 @@ export const COMMAND_KERNEL_FN: Readonly<Record<MemoryCommandType, string>> = Ob
     t,
     t === "MERGE_MEMORY" || t === "SPLIT_MEMORY"
       ? MEMORY_GRAPH_KERNEL_FN
-      : t === "CREATE_HIGHLIGHT" ? HIGHLIGHT_CREATE_FN
+      : t === "CREATE_HIGHLIGHT" ? HIGHLIGHT_CREATE_FN : t === "BACKFILL_LEGACY_MEMORY" ? "memory_import_legacy_execute"
+      : t === "SET_RESURFACING_POLICY" ? "memory_resurfacing_policy_execute"
       : COMMAND_SUBJECT[t] === "highlight" ? HIGHLIGHT_KERNEL_FN : MEMORY_KERNEL_FN,
   ])) as Record<MemoryCommandType, string>,
 );
@@ -434,22 +436,11 @@ export const MEMORY_COMMAND_TYPES_NOT_DECLARED = {
   // no state to move the Highlight out of.
   PUBLISH_HIGHLIGHT:
     "no storable 'published' state: highlights has no published_at, lifecycle_state's CHECK (2723) has no PUBLISHED value, nothing writes lifecycle_state, and DRAFT has no witness — so there is no pre-published state to leave",
-  // MEASURED 2026-09-22. The previous reason here — "no resurfacing-policy
-  // storage exists" — WAS FALSE. `public.highlight_resurfacing_preferences`
-  // is on the 20260915 production snapshot (migration 2720, applied
-  // 2026-09-15) with columns owner_id, control, subject_type, subject_id, and
-  // services/highlights/highlightControlWrites.ts writes it. The real reason
-  // is structural: that table's subject_type is CHECKed to
-  // ('highlight','person','trip','owner'), so three of its four subject kinds
-  // are not an aggregate this kernel has a column for. A command boundary
-  // whose event rows carry exactly one of (memory_id, highlight_id) cannot
-  // name a person-scoped, trip-scoped or owner-scoped policy row at all.
-  SET_RESURFACING_POLICY:
-    "its subject is not one aggregate — highlight_resurfacing_preferences.subject_type is one of (highlight, person, trip, owner) and the event tables carry exactly one of (memory_id, highlight_id)",
 } as const;
 
 /** §17 command -> §17 domain event. Total over MEMORY_COMMAND_TYPES. */
-export const COMMAND_EVENT: Readonly<Record<MemoryCommandType, MemoryEventType>> = {
+export const COMMAND_EVENT: Readonly<Record<MemoryCommandType, MemoryEventType>> = { BACKFILL_LEGACY_MEMORY: "memory.corrected",
+  SET_RESURFACING_POLICY: "resurfacing.policy_changed",
   CREATE_MEMORY: "memory.created",
   CONFIRM_MEMORY: "memory.confirmed",
   ARCHIVE_MEMORY: "memory.archived",
@@ -500,7 +491,8 @@ export const COMMAND_ALSO_EMITS: Readonly<Partial<Record<MemoryCommandType, read
 });
 
 /** §23's capability vocabulary, per command. Re-checked by the SQL function. */
-export const COMMAND_CAPABILITY: Readonly<Record<MemoryCommandType, "none" | "owner" | "owner_or_participant">> = {
+export const COMMAND_CAPABILITY: Readonly<Record<MemoryCommandType, "none" | "owner" | "owner_or_participant">> = { BACKFILL_LEGACY_MEMORY: "owner",
+  SET_RESURFACING_POLICY: "owner",
   CREATE_MEMORY: "none",
   CONFIRM_MEMORY: "owner",
   ARCHIVE_MEMORY: "owner",
@@ -555,6 +547,8 @@ export interface MemoryCommand {
 }
 
 export type MemoryKernelReason =
+  | "RESURFACING_NOT_PRIVATE"
+  | "RESURFACING_NOT_DEPLOYED"
   | "MEMORY_COMMAND_MALFORMED"
   | "MEMORY_COMMAND_UNKNOWN_TYPE"
   | "MEMORY_NOT_FOUND"
@@ -597,6 +591,7 @@ export type MemoryKernelResult =
        */
       memoryId: string | null;
       highlightId: string | null;
+      policyOwnerId?: string | null;
       eventId: string;
       eventType: MemoryEventType;
       /** the ORIGINAL result body on a replay — not a freshly computed one. */
@@ -687,7 +682,18 @@ export async function executeMemoryCommand(sc: any, cmd: MemoryCommand): Promise
   // present two subjects — the TypeScript half of 2993's one-subject CHECK.
   const highlight = isHighlightCommand(cmd.type);
   const fn = COMMAND_KERNEL_FN[cmd.type];
-  const p_command = highlight
+  const p_command = COMMAND_SUBJECT[cmd.type] === "owner_policy"
+    ? {
+        command_id: cmd.commandId,
+        policy_owner_id: cmd.actorUserId,
+        actor_user_id: cmd.actorUserId,
+        idempotency_key: cmd.idempotencyKey,
+        type: cmd.type,
+        payload: cmd.payload,
+        client_observed_at: cmd.clientObservedAt ?? null,
+        correlation_id: cmd.correlationId ?? null,
+      }
+    : highlight
     ? {
         command_id: cmd.commandId,
         highlight_id: cmd.highlightId ?? null,
@@ -743,6 +749,7 @@ export async function executeMemoryCommand(sc: any, cmd: MemoryCommand): Promise
       // manufacture the literal "undefined".
       memoryId: data.memory_id == null ? null : String(data.memory_id),
       highlightId: data.highlight_id == null ? null : String(data.highlight_id),
+      ...(COMMAND_SUBJECT[cmd.type] === "owner_policy" ? { policyOwnerId: data.policy_owner_id == null ? null : String(data.policy_owner_id) } : {}),
       eventId: String(data.event_id),
       eventType: (MEMORY_EVENT_TYPES as readonly string[]).includes(eventType)
         ? (eventType as MemoryEventType)
@@ -775,6 +782,12 @@ export function sendMemoryCommandRejection(
   log?: { error: (obj: unknown, msg: string) => void },
 ): void {
   switch (r.reason) {
+    case "RESURFACING_NOT_PRIVATE":
+      res.status(409).json({ error: "conflict", message: "Make this Memory private (only me) before keeping it private forever.", reason: "not_private" });
+      return;
+    case "RESURFACING_NOT_DEPLOYED":
+      res.status(404).json({ error: "feature_disabled", message: "Memory privacy controls are not available yet." });
+      return;
     case "MEMORY_LIFECYCLE_INVALID_TRANSITION":
       res.status(409).json({
         error: "invalid_state_transition",

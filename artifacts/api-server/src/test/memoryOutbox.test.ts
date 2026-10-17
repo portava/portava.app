@@ -49,6 +49,7 @@ import {
   isMemoryEventType,
   readUnpublishedOutbox,
   HIGHLIGHT_DOMAIN_EVENT_TYPES,
+  POLICY_DOMAIN_EVENT_TYPES,
 } from "../lib/memoryOutbox.js";
 import { COMMAND_ALSO_EMITS, COMMAND_EVENT, COMMAND_SUBJECT, MEMORY_COMMAND_TYPES, executeMemoryCommand } from "../lib/memoryCommandBus.js";
 import { makeKernelRpc, _resetKernelIds, type KernelState, type KernelWriteTarget } from "./memoryCommandKernelFake.js";
@@ -94,7 +95,7 @@ describe("§17 domain events — the vocabulary is the spec's, complete and exac
       "memory.created", "memory.confirmed", "memory.corrected", "memory.merged",
       "memory.split", "memory.archived", "memory.deleted", "memory.visibility_changed",
       "highlight.created", "highlight.published", "highlight.expired",
-      "highlight.pinned", "highlight.hidden",
+      "highlight.pinned", "highlight.hidden", "resurfacing.policy_changed",
     ]);
   });
 
@@ -121,12 +122,12 @@ describe("§17 domain events — the vocabulary is the spec's, complete and exac
     assert.ok(MEMORY_DOMAIN_EVENT_TYPES.every((t) => t.startsWith("memory.")));
     assert.ok(HIGHLIGHT_DOMAIN_EVENT_TYPES.every((t) => t.startsWith("highlight.")));
     assert.equal(
-      MEMORY_DOMAIN_EVENT_TYPES.length + HIGHLIGHT_DOMAIN_EVENT_TYPES.length,
+      MEMORY_DOMAIN_EVENT_TYPES.length + HIGHLIGHT_DOMAIN_EVENT_TYPES.length + POLICY_DOMAIN_EVENT_TYPES.length,
       MEMORY_EVENT_TYPES.length,
       "every §17 event name belongs to exactly one subject",
     );
     for (const t of MEMORY_COMMAND_TYPES) {
-      const expected = COMMAND_SUBJECT[t] === "highlight" ? "highlight." : "memory.";
+      const expected = COMMAND_SUBJECT[t] === "owner_policy" ? "resurfacing." : COMMAND_SUBJECT[t] === "highlight" ? "highlight." : "memory.";
       assert.ok(
         COMMAND_EVENT[t].startsWith(expected),
         `${t} has subject ${COMMAND_SUBJECT[t]} but emits ${COMMAND_EVENT[t]}`,

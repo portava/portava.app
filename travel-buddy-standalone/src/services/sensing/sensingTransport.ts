@@ -74,6 +74,7 @@ export type SubmitOutcome =
         | 'invalid_payload'
         | 'route_unavailable'
         | 'rejected'
+        | 'cancelled'
         | 'network_error';
       status?: number;
     };
@@ -97,7 +98,7 @@ export interface SensingTransportDeps {
 
 export interface SensingTransport {
   submit(payload: SensingContributionPayload): Promise<SubmitOutcome>;
-  /** Drop the cached credential — e.g. on sign-out. */
+  /** Invalidate pending dispatch and drop the cached credential. */
   reset(): void;
 }
 
@@ -111,12 +112,13 @@ export function createSensingTransport(deps: SensingTransportDeps): SensingTrans
   const sessionPath = deps.sessionPath ?? DEFAULT_SENSING_SESSION_PATH;
   const ingestPath = deps.ingestPath ?? DEFAULT_SENSING_INGEST_PATH;
   let cached: SensingCredential | null = null;
+  let generation = 0;
 
-  async function credential(): Promise<SensingCredential | null> {
+  async function credential(expected: number): Promise<SensingCredential | null> {
     if (credentialIsFresh(cached, deps.now())) return cached;
-    const token = await deps.getEligibilityToken();
-    if (!token) return null;
     try {
+      const token = await deps.getEligibilityToken();
+      if (expected !== generation || !token) return null;
       const res = await deps.fetchImpl(`${deps.baseUrl}${sessionPath}`, {
         method: 'POST',
         headers: {
@@ -126,9 +128,9 @@ export function createSensingTransport(deps: SensingTransportDeps): SensingTrans
         },
         body: JSON.stringify({ purposeScopes: ['collect', 'retain', 'aggregate'] }),
       });
-      if (!res.ok) return null;
+      if (expected !== generation || !res.ok) return null;
       const body = (await res.json()) as Partial<SensingCredential>;
-      if (!body || typeof body.credential !== 'string') return null;
+      if (expected !== generation || !body || typeof body.credential !== 'string') return null;
       cached = {
         credential: body.credential,
         rotationEpoch: typeof body.rotationEpoch === 'number' ? body.rotationEpoch : 0,
@@ -142,13 +144,18 @@ export function createSensingTransport(deps: SensingTransportDeps): SensingTrans
 
   return {
     reset() {
+      generation += 1;
       cached = null;
     },
     async submit(payload): Promise<SubmitOutcome> {
       if (!deps.baseUrl) return { ok: false, reason: 'not_configured' };
-      const cred = await credential();
+      const expected = generation;
+      const cred = await credential(expected);
+      if (expected !== generation) return { ok: false, reason: 'cancelled' };
       if (!cred) return { ok: false, reason: 'no_credential' };
-      const commitment = await deps.commitmentFor(cred.rotationEpoch);
+      let commitment: string | null;
+      try { commitment = await deps.commitmentFor(cred.rotationEpoch); } catch { commitment = null; }
+      if (expected !== generation) return { ok: false, reason: 'cancelled' };
       if (!commitment) return { ok: false, reason: 'no_commitment' };
       let body: string;
       try {
@@ -157,6 +164,7 @@ export function createSensingTransport(deps: SensingTransportDeps): SensingTrans
         return { ok: false, reason: 'invalid_payload' };
       }
       try {
+        if (expected !== generation) return { ok: false, reason: 'cancelled' };
         const res = await deps.fetchImpl(`${deps.baseUrl}${ingestPath}`, {
           method: 'POST',
           headers: {
@@ -165,6 +173,7 @@ export function createSensingTransport(deps: SensingTransportDeps): SensingTrans
           },
           body,
         });
+        if (expected !== generation) return { ok: false, reason: 'cancelled' };
         if (res.ok) return { ok: true };
         if (res.status === 404) {
           // The credential may be fine; the route is not there yet.

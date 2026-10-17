@@ -83,16 +83,51 @@ describe('§6.1 — the menu is §6.1s eight, with honest availability', () => {
     // VOICE works now, so it must NOT still be carrying an explanation.
     expect(screen.queryByTestId('telegraph-composer-reason-VOICE')).toBeNull();
 
-    fireEvent.press(screen.getByTestId('telegraph-composer-entry-GIF'));
+    await fireEvent.press(screen.getByTestId('telegraph-composer-entry-GIF'));
     expect(onSelect).not.toHaveBeenCalled();
     expect(onUnavailable).toHaveBeenCalledWith(expect.objectContaining({ id: 'GIF' }));
+    await fireEvent.press(screen.getByTestId('telegraph-composer-entry-PORTAVA'));
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(onUnavailable).toHaveBeenCalledWith(expect.objectContaining({ id: 'PORTAVA' }));
 
     // §6.1's Voice entry SELECTS — it no longer refuses.
-    fireEvent.press(screen.getByTestId('telegraph-composer-entry-VOICE'));
+    await fireEvent.press(screen.getByTestId('telegraph-composer-entry-VOICE'));
     expect(onSelect).toHaveBeenCalledWith('VOICE');
 
-    fireEvent.press(screen.getByTestId('telegraph-composer-entry-LOCATION'));
+    await fireEvent.press(screen.getByTestId('telegraph-composer-entry-LOCATION'));
     expect(onSelect).toHaveBeenCalledWith('LOCATION');
+  });
+
+  it('dispatches Portava only through an explicitly enabled trip handler', async () => {
+    const onSelect = jest.fn();
+    const onTrip = jest.fn();
+    await render(<ComposerPlusMenu visible onClose={() => {}} onSelect={onSelect}
+      portavaTrips={{ available: true, onSelect: onTrip }} />);
+    await fireEvent.press(screen.getByTestId('telegraph-composer-entry-PORTAVA'));
+    expect(onTrip).toHaveBeenCalledTimes(1);
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('telegraph-composer-reason-PORTAVA')).toBeNull();
+    expect(screen.getByText('Portava (Trips)')).toBeTruthy();
+  });
+
+  it('keeps a wired but ineligible host unavailable', async () => {
+    const onTrip = jest.fn();
+    const onSelect = jest.fn();
+    await render(<ComposerPlusMenu visible onClose={() => {}} onSelect={onSelect}
+      portavaTrips={{ available: false, onSelect: onTrip }} />);
+    await fireEvent.press(screen.getByTestId('telegraph-composer-entry-PORTAVA'));
+    expect(onTrip).not.toHaveBeenCalled();
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(screen.getByTestId('telegraph-composer-reason-PORTAVA')).toBeTruthy();
+  });
+
+  it('cannot enable Portava with a boolean but no handler', async () => {
+    const onSelect = jest.fn();
+    const unwired = { available: true } as NonNullable<React.ComponentProps<typeof ComposerPlusMenu>['portavaTrips']>;
+    await render(<ComposerPlusMenu visible onClose={() => {}} onSelect={onSelect} portavaTrips={unwired} />);
+    await fireEvent.press(screen.getByTestId('telegraph-composer-entry-PORTAVA'));
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(screen.getByTestId('telegraph-composer-reason-PORTAVA')).toBeTruthy();
   });
 
   it('renders nothing when closed', async () => {

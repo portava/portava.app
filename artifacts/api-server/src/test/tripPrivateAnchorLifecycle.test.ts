@@ -39,13 +39,15 @@ import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import express from "express";
+import { createClient } from "@supabase/supabase-js";
 
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import tripsRouter from "../routes/trips.js";
 import routePlanRouter from "../routes/routePlan.js";
 import anchorSharesRouter from "../routes/tripAnchorShares.js";
-import { planItemAccessFor, visiblePrivateAnchorLayer } from "../server/trips/privateAnchorShares.js";
+import { planItemAccessFor, readAcceptedTripMembers, visiblePrivateAnchorLayer } from "../server/trips/privateAnchorShares.js";
+import { canSeePlanItemLocation, withholdPrivatePlanItems } from "../domain/trips/policies/privateAnchorAccess.js";
 import { makeFakeClient, startRouter, call, type FakeClient, type FakeDbOptions, type RouterHarness } from "./telegraphCertificationHarness.js";
 
 const ORGANIZER = "11111111-0000-4000-8000-000000000001";
@@ -245,6 +247,141 @@ describe("V. a grant counts only while it is still true", () => {
     assert.equal(a.status, "ok");
     assert.equal(a.grants.size, 0);
   });
+});
+
+describe("Accepted membership response integrity", () => {
+  const acceptedAuthor = { user_id: ANA, role: "member", status: "accepted" };
+  function reader(members: unknown, trip: unknown = { owner_id: ORGANIZER }, errorTable?: string, grantOwner = ANA) {
+    return createClient("http://127.0.0.1:9", "dummy", {
+      auth: { persistSession: false, autoRefreshToken: false },
+      global: { fetch: async (input, init) => {
+        const url = new URL(String(input));
+        const table = url.pathname.split("/").at(-1);
+        assert.equal(url.origin, "http://127.0.0.1:9");
+        assert.equal(init?.method, "GET");
+        if (table === errorTable) return Response.json({ code: "42501", message: "fixture read failure" }, { status: 400 });
+        if (table === "feature_flags") return Response.json({ enabled: url.searchParams.get("flag") === "eq.trip_private_anchor_sharing_enabled" });
+        if (table === "trip_private_anchor_shares") return Response.json([{ plan_item_id: HOTEL, owner_id: grantOwner }]);
+        if (table === "trips") {
+          assert.equal(url.searchParams.get("id"), `eq.${TRIP}`);
+          assert.equal(url.searchParams.get("select"), "owner_id");
+          return Response.json(trip);
+        }
+        assert.equal(table, "trip_members");
+        assert.equal(url.searchParams.get("trip_id"), `eq.${TRIP}`);
+        assert.equal(url.searchParams.get("select"), "user_id,status,role");
+        return Response.json(members);
+      } },
+    });
+  }
+
+  const malformed: Array<[string, unknown]> = [
+    ["null", null], ["object", {}], ["string", "unread"], ["null row", [null]],
+    ["array row", [[]]], ["missing identity", [{ role: "owner", status: "left" }]],
+    ["null identity", [{ user_id: null, role: "owner", status: "left" }]],
+    ["padded departed-owner identity", [{ user_id: ` ${ORGANIZER}`, role: "owner", status: "left" }]],
+    ["non-UUID identity", [{ user_id: "owner-1", role: "owner", status: "left" }]],
+    ["uppercase identity", [{ user_id: TRIP.toUpperCase(), role: "member", status: "accepted" }]],
+    ["missing role", [{ user_id: ORGANIZER, status: "accepted" }]],
+    ["null role", [{ user_id: ORGANIZER, role: null, status: "accepted" }]],
+    ["unknown role", [{ user_id: ORGANIZER, role: "host", status: "accepted" }]],
+    ["padded role", [{ user_id: ORGANIZER, role: " owner ", status: "accepted" }]],
+    ["unknown status", [{ user_id: ORGANIZER, role: "owner", status: "pending" }]],
+    ["empty status", [{ user_id: ORGANIZER, role: "owner", status: "" }]],
+    ["padded status", [{ user_id: ORGANIZER, role: "owner", status: " left " }]],
+    ["numeric status", [{ user_id: ORGANIZER, role: "owner", status: 0 }]],
+    ["malformed tail", [acceptedAuthor, { user_id: ` ${ORGANIZER}`, role: "owner", status: "left" }]],
+  ];
+  for (const [name, members] of malformed) {
+    it(`refuses ${name} before owner fallback, grant admission, or a readable map layer`, async () => {
+      const client = reader(members);
+      assert.equal(await readAcceptedTripMembers(client, TRIP), null);
+      const access = await planItemAccessFor(client, TRIP, ORGANIZER);
+      assert.equal(access.status, "unread");
+      assert.equal(access.grants.size, 0);
+      const layer = await visiblePrivateAnchorLayer(client, TRIP, ORGANIZER, [
+        { id: HOTEL, kind: "private_anchor", lat: 38.7, lng: -9.1, label: "Private stay", meta: { ownerId: ANA } },
+      ]);
+      assert.equal(layer.status, "unread");
+    });
+  }
+
+  for (const scenario of [
+    { name: "trip-owner recipient", viewer: ORGANIZER, creator: ANA, subject: ORGANIZER },
+    { name: "nonowner recipient", viewer: BEN, creator: ANA, subject: BEN },
+    { name: "trip-owner grant author", viewer: BEN, creator: ORGANIZER, subject: ORGANIZER },
+    { name: "nonowner grant author", viewer: ORGANIZER, creator: ANA, subject: ANA },
+  ]) {
+    for (const order of ["accepted-first", "departed-first"] as const) {
+      it(`refuses conflicting duplicate membership for ${scenario.name}, ${order}, before revealing a private place`, async () => {
+        const role = scenario.subject === ORGANIZER ? "owner" : "member";
+        const accepted = { user_id: scenario.subject, role, status: "accepted" };
+        const departed = { ...accepted, status: "left" };
+        const distinct = [...new Set([scenario.viewer, scenario.creator])]
+          .filter((identity) => identity !== scenario.subject)
+          .map((identity) => ({ user_id: identity, role: identity === ORGANIZER ? "owner" : "member", status: "accepted" }));
+        const clientFor = (members: unknown) => reader(members, { owner_id: ORGANIZER }, undefined, scenario.creator);
+        const privatePlan = { id: HOTEL, creator_id: scenario.creator, privacy_scope: "crew", location_is_private: true,
+          removed_at: null, title: "Casa Segreta", location_name: "Rua do Segredo 7", lat: 38.70417, lng: -9.13853 };
+        const point = { id: HOTEL, kind: "private_anchor", lat: 38.70417, lng: -9.13853, label: "Casa Segreta", meta: { ownerId: scenario.creator } };
+        const valid = await planItemAccessFor(clientFor([...distinct, accepted]), TRIP, scenario.viewer);
+        assert.equal(canSeePlanItemLocation(valid, privatePlan), true);
+        const left = await planItemAccessFor(clientFor([...distinct, departed]), TRIP, scenario.viewer);
+        assert.equal(left.status, "ok");
+        assert.equal(left.grants.size, 0);
+        assert.equal(canSeePlanItemLocation(left, privatePlan), false);
+        const conflicting = clientFor([...distinct, ...(order === "accepted-first" ? [accepted, departed] : [departed, accepted])]);
+        const access = await planItemAccessFor(conflicting, TRIP, scenario.viewer);
+        const layer = await visiblePrivateAnchorLayer(conflicting, TRIP, scenario.viewer, [point]);
+        const filtered = withholdPrivatePlanItems([privatePlan], access);
+        assert.equal(canSeePlanItemLocation(access, privatePlan), false,
+          JSON.stringify({ grants: [...access.grants], status: access.status, filtered, layer }));
+        assert.doesNotMatch(JSON.stringify(filtered), SECRET);
+        assert.equal(access.status, "unread");
+        assert.equal(access.grants.size, 0);
+        assert.equal(layer.status, "unread");
+        assert.equal(await readAcceptedTripMembers(conflicting, TRIP), null);
+        assert.equal(canSeePlanItemLocation(access, { ...privatePlan, creator_id: scenario.viewer }), true);
+      });
+    }
+  }
+
+  it("preserves legitimate empty membership, absent trip, all crew roles and legacy null or absent status", async () => {
+    assert.deepEqual(await readAcceptedTripMembers(reader([]), TRIP), new Set([ORGANIZER]));
+    assert.deepEqual(await readAcceptedTripMembers(reader([], null), TRIP), new Set());
+    for (const role of ["owner", "co_host", "member", "viewer"]) {
+      for (const status of ["accepted", null, undefined]) {
+        assert.deepEqual(await readAcceptedTripMembers(reader([{ user_id: BEN, role, status }]), TRIP), new Set([BEN, ORGANIZER]));
+      }
+    }
+  });
+  it("keeps explicit inactive and invited-role owners excluded, without falling back", async () => {
+    for (const status of ["invited", "declined", "removed", "left"]) {
+      assert.deepEqual(await readAcceptedTripMembers(reader([{ user_id: ORGANIZER, role: "owner", status }]), TRIP), new Set());
+    }
+    assert.deepEqual(await readAcceptedTripMembers(reader([{ user_id: ORGANIZER, role: "invited", status: "accepted" }]), TRIP), new Set());
+  });
+  it("keeps a valid grant and map layer while membership is readable", async () => {
+    const client = reader([acceptedAuthor]);
+    const access = await planItemAccessFor(client, TRIP, ORGANIZER);
+    assert.equal(access.status, "ok");
+    assert.deepEqual(access.grants, new Map([[HOTEL, ANA]]));
+    const layer = await visiblePrivateAnchorLayer(client, TRIP, ORGANIZER, [
+      { id: HOTEL, kind: "private_anchor", lat: 38.7, lng: -9.1, label: "Private stay", meta: { ownerId: ANA } },
+    ]);
+    assert.equal(layer.status, "ok");
+    assert.match(JSON.stringify(layer), /Private stay/);
+  });
+  for (const [name, trip] of [["missing owner", {}], ["null owner", { owner_id: null }], ["padded owner", { owner_id: ` ${ORGANIZER}` }]] as const) {
+    it(`refuses a malformed ${name} record`, async () => {
+      assert.equal(await readAcceptedTripMembers(reader([acceptedAuthor], trip), TRIP), null);
+    });
+  }
+  for (const table of ["trips", "trip_members"]) {
+    it(`keeps a returned ${table} failure unread`, async () => {
+      assert.equal(await readAcceptedTripMembers(reader([acceptedAuthor], { owner_id: ORGANIZER }, table), TRIP), null);
+    });
+  }
 });
 
 describe("C. grants are cleared where they stop being true", () => {

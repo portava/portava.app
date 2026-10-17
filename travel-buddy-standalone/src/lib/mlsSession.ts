@@ -93,10 +93,13 @@ export async function initGroupAsInitiator(
   /** PUBLIC identifier placed in the MLS credential. Never key material. */
   userId: string,
   recipientKeyPackageB64: string,
+  assertCurrent?: () => void,
 ): Promise<{ welcomeB64: string } | null> {
+  assertCurrent?.();
   if (!isNative()) return null;
 
   const keys = await loadPrivKeys();
+  assertCurrent?.();
   if (!keys) {
     console.error('[mlsSession] initGroupAsInitiator: no crypto identity — run initCryptoIdentity first');
     return null;
@@ -116,8 +119,10 @@ export async function initGroupAsInitiator(
     keys.deviceEd25519PubB64,
     recipientKeyPackageB64,
   );
+  assertCurrent?.();
 
   await saveGroupState(threadId, result.groupStateB64);
+  assertCurrent?.();
   return { welcomeB64: result.welcomeB64 };
 }
 
@@ -165,10 +170,13 @@ export interface EncryptedMessage {
 export async function encryptForThread(
   threadId: string,
   plaintext: string,
+  assertCurrent?: () => void,
 ): Promise<EncryptedMessage | null> {
+  assertCurrent?.();
   if (!isNative()) return null;
 
   const groupState = await loadGroupState(threadId);
+  assertCurrent?.();
   if (!groupState) {
     console.error('[mlsSession] encryptForThread: no group state for thread', threadId);
     return null;
@@ -178,7 +186,9 @@ export async function encryptForThread(
   try { ExpoOpenmls = require('expo-openmls'); } catch { return null; }
 
   const result = await ExpoOpenmls.encryptMessage(groupState, plaintext);
+  assertCurrent?.();
   await saveGroupState(threadId, result.updatedGroupStateB64);
+  assertCurrent?.();
   return { ciphertextB64: result.ciphertextB64 };
 }
 

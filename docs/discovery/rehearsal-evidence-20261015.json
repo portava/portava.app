@@ -1,0 +1,268 @@
+{
+  "recordedAt": "2026-10-15T20:46:11.642282+00:00",
+  "mainSha": "324ed0dd2b61371afc6f20a5a843f89406b57cc8",
+  "purpose": "Read-only DC-26 CI rehearsal evidence. No production acceptance or activation.",
+  "projectRef": "hwokxgbmezheskbzskfr",
+  "run": {
+    "id": 38753302711,
+    "url": "https://github.com/portava/portava.app/actions/runs/38753302711",
+    "headSha": "324ed0dd2b61371afc6f20a5a843f89406b57cc8",
+    "conclusion": "success",
+    "jobId": 116485340377,
+    "steps": {
+      "dryRun": "success",
+      "apply": "success",
+      "certify": "success",
+      "auditSchema": "success"
+    },
+    "summary": "0 pending; certify:migrations all stages pass; no missing live columns."
+  },
+  "requiredMigrations": [
+    {
+      "filename": "3338_media_processing_worker_flag.sql",
+      "checksum": "eab83e0eb25a1fd8cc6f8dd8a96af41c57f64b7e8ca8f4ff602804c6bbe2786e",
+      "applied_at": "2026-09-28T18:34:29.968382+00:00",
+      "checksumMatches": true
+    },
+    {
+      "filename": "3340_media_tab_world_default_flag.sql",
+      "checksum": "2cba1cac5a0fe52efe8628c1ed12c4b1a4601ed47c49aab488d34a31e52e5028",
+      "applied_at": "2026-09-28T18:35:02.236288+00:00",
+      "checksumMatches": true
+    },
+    {
+      "filename": "3341_media_watch_context_overlay_flag.sql",
+      "checksum": "61ba39d3bad870daf1191ed91143b2c7754f462e8230753f6ca2bb68b437cae2",
+      "applied_at": "2026-09-28T18:35:12.333805+00:00",
+      "checksumMatches": true
+    },
+    {
+      "filename": "3342_media_watch_tap_to_play_flag.sql",
+      "checksum": "3b7814ab09ac8ca31d156116977e937593f855182fd27ccba00c3cb3c6b90aa6",
+      "applied_at": "2026-09-28T18:35:31.962128+00:00",
+      "checksumMatches": true
+    },
+    {
+      "filename": "3343_media_watch_stage24_ranking_flag.sql",
+      "checksum": "a639ea2e19f3bea46420706c72b04f6e4997bded99bb571b1c5f08a01e37b8d3",
+      "applied_at": "2026-09-28T18:35:53.468348+00:00",
+      "checksumMatches": true
+    },
+    {
+      "filename": "3351_media_find_busier_flag.sql",
+      "checksum": "f32653d1c04b4efe10345f5d2a5833220912e4ed6a337a982730258dfc38797f",
+      "applied_at": "2026-09-28T18:36:09.042557+00:00",
+      "checksumMatches": true
+    },
+    {
+      "filename": "3352_media_perspective_vantage.sql",
+      "checksum": "f536af0ce70c5dd2d3c91ccc393a4cab6dc0cc0ed991a65059b1a596ee1bd255",
+      "applied_at": "2026-09-28T18:36:30.346121+00:00",
+      "checksumMatches": true
+    },
+    {
+      "filename": "3355_media_vision_provider_flag.sql",
+      "checksum": "2f7d81d0b2494603fda2e0df53b087d95ec1a47ac59b3f878ad0b22c76ff6141",
+      "applied_at": "2026-09-28T18:36:48.100411+00:00",
+      "checksumMatches": true
+    },
+    {
+      "filename": "3356_media_moderation_classifier_flag.sql",
+      "checksum": "8d519c54f64e30c8daeb66350ba5c882d7d642d79188688a459145c1e42b358b",
+      "applied_at": "2026-09-28T18:37:04.402923+00:00",
+      "checksumMatches": true
+    },
+    {
+      "filename": "3357_media_transcoder_flag.sql",
+      "checksum": "948728ad3287eec46bc2570452c26545a1c93a7332e5f3427c37801af01a204b",
+      "applied_at": "2026-09-28T18:37:20.102683+00:00",
+      "checksumMatches": true
+    },
+    {
+      "filename": "3358_media_captions_flag.sql",
+      "checksum": "02d2f73e87d7f32a8f8641a8a76c384d5b01ae0eb3b15cbd3742d9a7815ff149",
+      "applied_at": "2026-09-28T18:37:36.492294+00:00",
+      "checksumMatches": true
+    },
+    {
+      "filename": "3359_passport_postcard_cover_nullable.sql",
+      "checksum": "dbb7c5740f1387872a134045a3833960319c978a5b68397c4fe354c34cc16f89",
+      "applied_at": "2026-09-28T18:37:51.215866+00:00",
+      "checksumMatches": true
+    },
+    {
+      "filename": "3360_intel_evidence_sealed_reference.sql",
+      "checksum": "00e4ba752a143ddc0974b6f03eef08a9b3ba7c5de78e13bf65ca31b61d2ac829",
+      "applied_at": "2026-09-28T18:38:24.651634+00:00",
+      "checksumMatches": true
+    },
+    {
+      "filename": "3361_intel_evidence_sealed_reference_validate.sql",
+      "checksum": "641b88a08b23ad5f49b5689df865a5ec3bc7a2aacc7060fc07afabad06a9e109",
+      "applied_at": "2026-09-28T18:38:42.808306+00:00",
+      "checksumMatches": true
+    },
+    {
+      "filename": "3362_posts_client_column_grants.sql",
+      "checksum": "137e41e660f86722717d803ab4c1e1e9aa77db06bb7a45490caaafa4f503328c",
+      "applied_at": "2026-09-28T18:39:11.480203+00:00",
+      "checksumMatches": true
+    },
+    {
+      "filename": "3363_place_copies_client_column_grants.sql",
+      "checksum": "8189a754d60ff8d0ae833726344d572c3531c75c5ff6152a2a22128e4a7cedd9",
+      "applied_at": "2026-09-28T18:40:06.360191+00:00",
+      "checksumMatches": true
+    },
+    {
+      "filename": "3364_pulse_geo_tags_write_boundary.sql",
+      "checksum": "b94335b6572c20b3407bac65684f4e2888fa89ed62e5beca72c3d83e294a296f",
+      "applied_at": "2026-09-28T18:41:04.497952+00:00",
+      "checksumMatches": true
+    },
+    {
+      "filename": "3365_post_media_write_boundary.sql",
+      "checksum": "0fc0f3f7260630cc5fa2566b2d8bd91a612b7a6088757c2b8a3484865592fea5",
+      "applied_at": "2026-09-28T18:42:02.041137+00:00",
+      "checksumMatches": true
+    },
+    {
+      "filename": "3366_discovery_search_protected_zones_flag.sql",
+      "checksum": "00a8a197a69b6adf783853287ff07fd8fb024ee12ae3b60d3f60a9b691c17180",
+      "applied_at": "2026-09-28T18:42:36.411015+00:00",
+      "checksumMatches": true
+    },
+    {
+      "filename": "3375_rank_events_schema_version_admitted.sql",
+      "checksum": "88a598246d96575b37c68294a10c26b9f258dc51b69c35ba07a434723ed14d00",
+      "applied_at": "2026-09-28T18:43:07.704068+00:00",
+      "checksumMatches": true
+    },
+    {
+      "filename": "3376_discovery_recommendations_per_request.sql",
+      "checksum": "c26eea61329496eb613b4c7313760ce2f4b5a605f150387ef178e9999f732d5c",
+      "applied_at": "2026-09-28T18:44:07.220101+00:00",
+      "checksumMatches": true
+    },
+    {
+      "filename": "3380_content_trails_label_cap_serialised.sql",
+      "checksum": "e117087c803f3e57d88e8a9e3211697af7e5f9a72a4cf8d7a94e0be43b056f80",
+      "applied_at": "2026-09-28T18:44:52.677583+00:00",
+      "checksumMatches": true
+    },
+    {
+      "filename": "3381_trail_lifecycle_transitions.sql",
+      "checksum": "eaa77232c5a826d717ddf3d8d73e5ace43592d107e44b7cb6fbf3d5a48ed8bed",
+      "applied_at": "2026-09-28T18:45:36.662107+00:00",
+      "checksumMatches": true
+    },
+    {
+      "filename": "3385_creator_share_ledger_includes_creator_entries.sql",
+      "checksum": "67c75662319971bf9c2c6e4f1bb0132e522d77c8bd27898d54ef2933c03b9059",
+      "applied_at": "2026-09-28T18:46:44.730874+00:00",
+      "checksumMatches": true
+    },
+    {
+      "filename": "3386_creator_attribution_recommendation_link.sql",
+      "checksum": "9c293bd49d63e55b4c30b264eb4ab7f424335dddd6e2eab35ef0e3623731fb3a",
+      "applied_at": "2026-09-28T18:47:15.406167+00:00",
+      "checksumMatches": true
+    },
+    {
+      "filename": "3387_creator_ledger_integrity_and_audit.sql",
+      "checksum": "04f22c759c8783696ba5e25e2716dde2f5076950afb8d581726a4db47011a425",
+      "applied_at": "2026-09-28T18:48:59.473457+00:00",
+      "checksumMatches": true
+    },
+    {
+      "filename": "3390_discovery_rls_explicit_policies.sql",
+      "checksum": "9d8477bd6750f680a24f72dd2f8ecf9241aa0327336fdfad7b90dfb368ff7572",
+      "applied_at": "2026-09-28T18:50:14.400185+00:00",
+      "checksumMatches": true
+    },
+    {
+      "filename": "3391_discovery_stop_condition_measurements.sql",
+      "checksum": "bf6b6ff95bea5265640cc91061a6225673f2257cba33f3cd108360fd16740d86",
+      "applied_at": "2026-09-28T18:51:09.238149+00:00",
+      "checksumMatches": true
+    },
+    {
+      "filename": "3395_discovery_dwell_telemetry_flag.sql",
+      "checksum": "7053b7a5ec4a6c6a8a916743590da8019f102974dd68552881d60438d5cec128",
+      "applied_at": "2026-09-28T18:51:24.853443+00:00",
+      "checksumMatches": true
+    },
+    {
+      "filename": "3400_media_pending_upload_sweep_flag.sql",
+      "checksum": "97be7f79b1f71f70e92772840adac300a9a88778e8b4eeef545ccab1f64da9f2",
+      "applied_at": "2026-09-28T18:51:48.928363+00:00",
+      "checksumMatches": true
+    },
+    {
+      "filename": "3410_discovery_trend_snapshot_parity.sql",
+      "checksum": "a2d3287c487b56c52e5482e34112beb356de481a7aa1d4acfbac112c08339b48",
+      "applied_at": "2026-09-28T18:52:38.008097+00:00",
+      "checksumMatches": true
+    },
+    {
+      "filename": "3415_trail_proposal_serialised.sql",
+      "checksum": "11e135efdbf6568fbf25952e1f177747a7e8b702c21d11fc2b41460acc5e4784",
+      "applied_at": "2026-09-28T18:58:39.583462+00:00",
+      "checksumMatches": true
+    },
+    {
+      "filename": "3416_trail_relations_projection.sql",
+      "checksum": "c16b1636f8a8e3d6a6b8b34a6e2852212312167b69c01c8bf4fed6ce7661b31c",
+      "applied_at": "2026-09-28T18:59:40.99731+00:00",
+      "checksumMatches": true
+    },
+    {
+      "filename": "3417_place_momentum_dismiss_excluded.sql",
+      "checksum": "e90c4f77e04f4cbd572140b1c73fb67ada1a5e7c0f62ac20b9c2ca1b50cc653e",
+      "applied_at": "2026-09-28T19:00:38.177563+00:00",
+      "checksumMatches": true
+    },
+    {
+      "filename": "3420_rank_events_outcome_receipts.sql",
+      "checksum": "9ffb97fce6824c75f8f552bf69c07c377b8d20293c00d8850697f9c0c5729e5e",
+      "applied_at": "2026-09-28T19:01:29.149051+00:00",
+      "checksumMatches": true
+    },
+    {
+      "filename": "3421_ranking_debug_samples_content_id_nullable.sql",
+      "checksum": "539adc0a74aa94ac3511236f0c711a9b1ad4c0a1772b0698459a478ef76cbcea",
+      "applied_at": "2026-09-28T19:02:15.616148+00:00",
+      "checksumMatches": true
+    },
+    {
+      "filename": "3422_tags_client_write_boundary.sql",
+      "checksum": "27ee9f6a409371f20331e05956570768743ff667ce2ae6fae0dac1ba6c774139",
+      "applied_at": "2026-09-28T19:03:02.101861+00:00",
+      "checksumMatches": true
+    },
+    {
+      "filename": "3435_place_momentum_feature_version.sql",
+      "checksum": "ea4620ab120b5746110a1ad01551061e946efdbf297a51754713982ecb97b2ad",
+      "applied_at": "2026-09-28T19:04:09.201773+00:00",
+      "checksumMatches": true
+    },
+    {
+      "filename": "3436_trail_health_snapshot_provenance.sql",
+      "checksum": "e9e8f6bb89de3acc49cbec1cacc12c917367c2b0852f182e3654d5d99d03707f",
+      "applied_at": "2026-09-28T19:04:41.619201+00:00",
+      "checksumMatches": true
+    },
+    {
+      "filename": "3440_canonical_search_key_letter_fold.sql",
+      "checksum": "4307723dfde514cc1a4eb4d621c8636664a133b667f96c74c3b4c175eb9a3757",
+      "applied_at": "2026-09-28T19:06:08.071561+00:00",
+      "checksumMatches": true
+    },
+    {
+      "filename": "3441_trail_letter_fold_decompose_first.sql",
+      "checksum": "8f26a6919e70112e3271bbe1eea4acef19ac3fe19397e24cd2d6da90a9793bf2",
+      "applied_at": "2026-09-28T19:07:00.851766+00:00",
+      "checksumMatches": true
+    }
+  ]
+}

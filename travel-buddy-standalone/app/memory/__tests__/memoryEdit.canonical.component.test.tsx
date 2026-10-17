@@ -38,8 +38,15 @@ jest.mock('react-native-safe-area-context', () => ({
 // NOTE: intentionally exhaustive — apiToken reaches the Supabase auth session,
 // which this suite does not exercise.
 jest.mock('../../../src/services/apiToken.ts', () => ({
-  freshToken: async () => 'test-token',
+  freshToken: async () => `header.${Buffer.from(JSON.stringify({ sub: 'me', session_id: 'canonical-editor-session' })).toString('base64')}.signature`,
 }));
+
+jest.mock('../../../src/context/SessionContext.tsx', () => { return {
+  useSession: () => ({ userId: 'me', loading: false }),
+}; });
+jest.mock('../../../src/lib/supabase.ts', () => { return { supabase: { auth: {
+  onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } } }),
+} } }; });
 
 // NOTE: intentionally exhaustive — GlobalPlacePicker pulls expo-location and
 // other native modules that crash under jest. The stand-in picks a provider

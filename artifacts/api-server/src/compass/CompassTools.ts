@@ -47,6 +47,9 @@ import { proposalContractPayload } from "../domain/trips/contracts/TripProposalC
 import { checkCompassActionRestriction, compassRestrictionToolInfo } from "./CompassRestrictionGate.js";
 import { isAcceptedTripMember, canEditPlan, TripAccessUnavailableError } from "../lib/http.js";
 import { buildTripCompassProjection } from "../domain/trips/projections/TripCompassProjection.js";
+import { buildTripCompassRosterProjection } from "../domain/trips/projections/TripCompassRosterProjection.js";
+import { buildTripCompassRangeProjection, type TripCompassRangeItem } from "../domain/trips/projections/TripCompassRangeProjection.js";
+import { buildTripCompassSavedIdeasProjection } from "../domain/trips/projections/TripCompassSavedIdeasProjection.js";
 import { resolveCurrentTrip, resolveUserTrips, TOOL_TRIP_STATUSES, isWellFormedTripId, MALFORMED_TRIP_ID_INFO } from "./CompassCurrentTrip.js";
 import { buildTripFreedomProjection } from "../domain/trips/projections/TripFreedomProjection.js";
 import { buildTripRouteChainProjection } from "../domain/trips/projections/TripRouteChainProjection.js";
@@ -1239,34 +1242,16 @@ async function toolCheckTripConflicts(
 
   if (overlaps.length === 0) return { conflicts: [], info: "No overlapping trips in that date range." };
 
-  // The plan items in the asked-for RANGE, across the overlapping trips. This
-  // read stays raw on purpose and the reason is recorded in
-  // src/test/compassTripProjectionReads.test.ts's allow-list: TripCompassProjection
-  // answers ONE trip, windowed on a focus day and capped at ten items, so
-  // consuming it here would silently drop items inside the range the caller
-  // asked about — a narrower answer wearing a cleaner one's clothes.
-  const conflictItems: any[] = [];
-  let itemsUnread = false;
-  const { data: items, error: itemsErr } = await sc
-    .from("trip_plan_items")
-    .select("id, trip_id, title, day_date, creator_id, location_is_private, privacy_scope" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`)
-    .in("trip_id", overlaps.map((t) => t.id))
-    .gte("day_date", startDate)
-    .lte("day_date", endDate)
-    .is("removed_at", null)
-    .limit(20);
-  // Unbound before, like the three selection reads above: an unreadable plan
-  // became an empty `plannedItems`, which reads as "those days are free".
-  if (itemsErr) itemsUnread = true;
-  else {
-    // OD-TRIP-3: per trip, another member's private item is "Private plan".
-    const accessByTrip = new Map<string, Awaited<ReturnType<typeof planItemAccessFor>>>();
-    for (const t of overlaps) accessByTrip.set(t.id, await planItemAccessFor(sc, t.id, userId));
-    for (const raw of (items ?? []) as any[]) {
-      const access = accessByTrip.get(String(raw.trip_id));
-      const i = access ? withholdPrivatePlanItems([raw], access)[0] : { ...raw, title: WITHHELD_PLAN_TITLE }; if (!i) continue; // §96: a plan its scope keeps from the viewer is no conflict they can see
-      conflictItems.push({ tripId: i.trip_id, title: wrapUgc(String(i.title ?? "")), dayDate: i.day_date });
-    }
+  const built = await buildTripCompassRangeProjection(sc, overlaps.map((trip) => trip.id), userId, { startDate, endDate });
+  const conflictItems: TripCompassRangeItem[] = [];
+  let itemsUnread = true;
+  let accessUnread = false;
+  if (built.ok && built.projection.sources.every((source) => acceptTripProjection(source, {
+    acceptedSchemaVersion: TRIP_PROJECTION_SCHEMA_VERSION, metric: "TripCompassRangeProjection",
+  }).accepted)) {
+    itemsUnread = false;
+    accessUnread = built.projection.accessStatus === "unread";
+    conflictItems.push(...built.projection.items.map((item) => ({ ...item, title: wrapUgc(item.title) })));
   }
 
   return {
@@ -1277,7 +1262,8 @@ async function toolCheckTripConflicts(
       destination_city: t.destinationCity, start_date: t.startDate, end_date: t.endDate, status: t.status,
     })),
     plannedItems: conflictItems,
-    ...(itemsUnread ? { info: "The overlapping trips are real, but their planned items could not be read — the empty list is unread, not empty." } : {}),
+    ...(itemsUnread ? { info: "The overlapping trips are real, but their planned items could not be read — the empty list is unread, not empty." }
+      : accessUnread ? { info: "Some plan access could not be checked. Only safely visible planned items are shown; this list may be incomplete." } : {}),
   };
 }
 
@@ -1463,19 +1449,18 @@ export async function toolGetCommitments(sc: SupabaseClient, userId: string, arg
 export async function toolGetSavedIdeas(sc: SupabaseClient, userId: string, args: Record<string, unknown>): Promise<unknown> {
   const t = await resolveMemberTrip(sc, userId, args);
   if ("info" in t) return { savedIdeas: null, info: t.info };
-  const { data, error } = await sc
-    .from("trip_saved_places")
-    .select("id, user_id, place_id, place_name, place_type, notes, saved_at")
-    .eq("trip_id", t.id);
-  if (error) return { savedIdeas: null, info: `Saved ideas unavailable: ${error.message}` };
-  const rows = ((data ?? []) as any[]).sort((a, b) => String(b.saved_at ?? "").localeCompare(String(a.saved_at ?? "")));
+  const built = await buildTripCompassSavedIdeasProjection(sc, t.id, userId);
+  if (!built.ok) return { savedIdeas: null, info: "Saved ideas unavailable: the saved ideas could not be read." };
+  const decision = acceptTripProjection(built.projection, { acceptedSchemaVersion: TRIP_PROJECTION_SCHEMA_VERSION, metric: "TripCompassSavedIdeasProjection" });
+  if (!decision.accepted) return { savedIdeas: null, info: `Saved ideas unavailable (${decision.reason}): ${decision.message}` };
+  const ideas = built.projection.ideas;
   return {
-    savedIdeas: rows.map((s) => ({
-      id: s.id, placeId: s.place_id ?? null, name: wrapUgc(String(s.place_name ?? "")), placeType: s.place_type ?? null,
-      notes: s.notes ? wrapUgc(String(s.notes)) : null, savedBy: s.user_id === userId ? "you" : "a crew member", savedAt: s.saved_at ?? null,
+    savedIdeas: ideas.map((idea) => ({
+      id: idea.id, placeId: idea.placeId, name: wrapUgc(idea.name), placeType: idea.placeType,
+      notes: idea.notes ? wrapUgc(idea.notes) : null, savedBy: idea.savedBy, savedAt: idea.savedAt,
     })),
-    count: rows.length,
-    info: rows.length === 0 ? "Nothing has been saved to this trip yet." : null,
+    count: ideas.length,
+    info: ideas.length === 0 ? "Nothing has been saved to this trip yet." : null,
   };
 }
 
@@ -2149,22 +2134,16 @@ async function resolveGroupMemberIds(
   }
   if (resolved.status === "none") return { error: "No circle name given and the user has no active or upcoming trip group." };
   const trip = resolved.trip;
-  const { data: members, error: membersErr } = await sc
-    .from("trip_members")
-    .select("user_id, role, status")
-    .eq("trip_id", trip.id)
-    .in("role", ["owner", "co_host", "member", "viewer"]);
+  const roster = await buildTripCompassRosterProjection(sc, trip.id, userId);
   // An unreadable roster is NOT a roster of one. The group recommendation
   // would otherwise be computed for the caller alone and presented as the
   // group's — a narrower answer wearing the group's name.
-  if (membersErr) {
+  if (!roster.ok || !acceptTripProjection(roster.projection, {
+    acceptedSchemaVersion: TRIP_PROJECTION_SCHEMA_VERSION, metric: "TripCompassRosterProjection",
+  }).accepted) {
     return { error: "The trip's member list could not be read — this is temporary. Nothing was recommended for the group." };
   }
-  const ids = new Set<string>([userId]);
-  for (const m of (members ?? []) as any[]) {
-    if (m.status == null || m.status === "accepted") ids.add(String(m.user_id));
-  }
-  return { memberIds: [...ids], groupLabel: trip.title ? wrapUgc(String(trip.title)) : "the trip group", circleOwnerId: null };
+  return { memberIds: roster.projection.memberIds, groupLabel: trip.title ? wrapUgc(String(trip.title)) : "the trip group", circleOwnerId: null };
 }
 
 /**

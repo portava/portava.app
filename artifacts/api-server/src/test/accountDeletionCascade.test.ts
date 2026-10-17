@@ -20,6 +20,7 @@ import {
 import { processDueDeletions } from "../lib/accountDeletionScheduler.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import profileRouter from "../routes/profile.js";
+import { accountMediaFixture, accountId, otherId, source, translation } from "./helpers/accountMediaDeletionFixture.js";
 
 const USER_ID = "11111111-1111-1111-1111-111111111111";
 
@@ -39,7 +40,7 @@ function makeClient(opts: {
   // A post by default. Since owner ruling 4 (2026-08-23) the worker SELECTS the
   // user's posts and decides per post — tombstone if others have contributed,
   // delete otherwise — so a fixture with no posts exercises neither branch.
-  const rows = { posts: [{ id: "post-1" }], ...(opts.rows ?? {}) };
+  const rows: Record<string, any[]> = { posts: [{ id: "post-1" }], ...structuredClone(opts.rows ?? {}) };
   const fail = opts.fail ?? {};
   const ops: Op[] = [];
   const storageRemoved: Array<{ bucket: string; paths: string[] }> = [];
@@ -51,12 +52,14 @@ function makeClient(opts: {
       _filters: [] as any[],
       _values: undefined as any,
       _single: false,
-      select() { q._op = "select"; return q; },
+      select() { return q; },
       delete() { q._op = "delete"; return q; },
       update(v: any) { q._op = "update"; q._values = v; return q; },
       upsert(v: any) { q._op = "upsert"; q._values = v; return q; },
       insert(v: any) { q._op = "insert"; q._values = v; return q; },
       eq(c: string, v: any) { q._filters.push(["eq", c, v]); return q; },
+      is(column: string, value: unknown) { q._filters.push(["is", column, value]); return q; },
+      gt(column: string, value: unknown) { q._filters.push(["gt", column, value]); return q; },
       // neq/not exist because the ruling-4 third-party check chains them
       // (`.not("user_id","is",null).neq("user_id", userId)`). Without them the
       // builder throws and the whole posts step fails — which is how these four
@@ -77,6 +80,28 @@ function makeClient(opts: {
           return Promise.resolve({ data: null, error: { message: fail[key] ?? fail[table] } });
         }
         let data: any = rows[table] ?? [];
+        if (["media_assets", "feature_flags", "user_deletion_requests"].includes(table)) {
+          data = data.filter((row: Record<string, any>) => q._filters.every(([operator, column, value]: [string, string, any]) => {
+            if (operator === "eq" || operator === "is") return row[column] === value;
+            if (operator === "gt") return row[column] > value;
+            if (operator === "lte") return row[column] <= value;
+            if (operator === "in") return value.includes(row[column]);
+            if (operator === "or") return column.split(",").some(part => {
+              const [field, comparison, expected] = part.split(".");
+              return comparison === "eq" && row[field!] === expected;
+            });
+            throw new Error(`Unsupported scoped fixture filter: ${operator}`);
+          }));
+          if (table === "media_assets") data = [...data].sort((left, right) => left.id.localeCompare(right.id));
+          if (q._limit) data = data.slice(0, q._limit);
+          if (q._op === "update") for (const row of data) {
+            Object.assign(row, q._values);
+            if (table === "media_assets") row.version += 3;
+          }
+          if (q._op === "delete") rows[table] = rows[table]!.filter(row => !data.includes(row));
+          if (q._single && data.length > 1) return Promise.resolve({ data: null, error: { message: "Multiple rows" } });
+          data = structuredClone(data);
+        }
         if (q._limit) data = data.slice(0, q._limit);
         if (q._single) data = data.length > 0 ? data[0] : null;
         return Promise.resolve({ data, error: null });
@@ -87,6 +112,7 @@ function makeClient(opts: {
 
   return {
     _ops: ops,
+    _rows: rows,
     _storageRemoved: storageRemoved,
     _authDeleted: authDeleted,
     from: (t: string) => builder(t),
@@ -133,6 +159,64 @@ function makeClient(opts: {
 const opFor = (c: any, table: string, op: string) =>
   c._ops.find((o: Op) => o.table === table && o.op === op);
 
+describe("account Media fixture integration — truthful retained-source contract", () => {
+  it("preserves exact original and thumbnail cleanup with full source rows and returned versions", async () => {
+    const original = source(USER_ID, USER_ID);
+    const client = makeClient({ rows: { media_assets: [original], user_deletion_requests: [{ user_id: USER_ID, status: "pending" }] } });
+    const outcome = await executeAccountDeletion(client, USER_ID, { actorId: null });
+    assert.equal(outcome.ok, true, JSON.stringify(outcome.steps));
+    assert.deepEqual(client._storageRemoved.flatMap(entry => entry.paths).sort(), [original.storage_path, original.thumbnail_path].sort());
+    assert.deepEqual(client._rows.media_assets, []);
+    assert.equal(client._rows.user_deletion_requests![0].status, "completed");
+    assert.equal(client._rows.user_deletion_requests![0].user_id, null);
+    assert.deepEqual(client._authDeleted, [USER_ID]);
+    const deletion: Op = opFor(client, "media_assets", "delete")!;
+    assert.ok(deletion.filters.some(filter => filter[0] === "eq" && filter[1] === "version" && filter[2] === 10));
+    assert.ok(deletion.filters.some(filter => filter[0] === "eq" && filter[1] === "purge_status" && filter[2] === "completed"));
+  });
+
+  it("withdraws an uploader-associated source but preserves its canonical owner and retry identity while a dispatched receipt survives", async () => {
+    const fixture = accountMediaFixture({ media_assets: [source(otherId, accountId)], media_caption_translation_artifacts: [translation("dispatched", otherId)] });
+    const outcome = await executeAccountDeletion(fixture.client, accountId, { actorId: null });
+    assert.equal(outcome.ok, false);
+    assert.equal(fixture.rows.media_assets!.length, 1);
+    assert.equal(fixture.rows.media_assets![0].owner_user_id, otherId);
+    assert.equal(fixture.rows.media_assets![0].uploader_user_id, accountId);
+    assert.equal(fixture.rows.media_assets![0].version, 7);
+    assert.equal(fixture.rows.media_assets![0].moderation_status, "owner_deleted");
+    assert.ok(fixture.rows.media_assets![0].deleted_at);
+    assert.equal(fixture.rows.media_caption_translation_artifacts![0].write_state, "dispatched");
+    assert.equal(fixture.rows.user_deletion_requests![0].status, "pending");
+    assert.equal(fixture.rows.user_deletion_requests![0].user_id, accountId);
+    assert.equal(fixture.rows.profiles![0].account_status, "active");
+    assert.deepEqual(fixture.authDeleted, []);
+    assert.equal(fixture.operations.filter(operation => operation.action === "remove").length, 0);
+    assert.equal(fixture.operations.filter(operation => operation.table === "media_assets" && operation.action === "delete").length, 0);
+    assert.ok(fixture.operations.some(operation => operation.table === "media_caption_translation_revoke" && operation.values?.p_owner_id === otherId));
+    assert.ok(fixture.rows.feature_flags!.every(row => row.enabled === false));
+  });
+
+  it("models zero-row conditional RETURNING and flag equality rather than manufacturing successful effects", async () => {
+    const original = source(USER_ID, null);
+    const client = makeClient({ rows: { media_assets: [original], feature_flags: [{ flag: "account_deletion_worker_enabled", enabled: true }] } });
+    const absent = await client.from("feature_flags").select("flag").eq("flag", "media_caption_translation_enabled").maybeSingle();
+    assert.equal(absent.data, null);
+    const missed = await client.from("media_assets").update({ purge_status: "pending" }).eq("id", original.id).eq("version", 3).select("*");
+    assert.deepEqual(missed.data, []);
+    assert.equal(client._rows.media_assets![0].version, 4);
+    const changed = await client.from("media_assets").update({ purge_status: "pending" }).eq("id", original.id).eq("version", 4).is("uploader_user_id", null).select("*");
+    assert.equal(changed.data.length, 1);
+    assert.equal(changed.data[0].version, 7);
+    const missedDelete = await client.from("media_assets").delete().eq("id", original.id).eq("version", 4).select("*");
+    assert.deepEqual(missedDelete.data, []);
+    assert.equal(client._rows.media_assets!.length, 1);
+    const deleted = await client.from("media_assets").delete().eq("id", original.id).eq("version", 7).select("*");
+    assert.deepEqual(deleted.data, changed.data);
+    assert.deepEqual(client._rows.media_assets, []);
+    assert.equal(changed.data[0].purge_status, "pending");
+  });
+});
+
 // ── storagePathFromPublicUrl ─────────────────────────────────────────────────
 
 describe("storagePathFromPublicUrl", () => {
@@ -157,7 +241,10 @@ describe("executeAccountDeletion — full cascade", () => {
         post_media: [
           { storage_bucket: "post-media", storage_path: "p/1.jpg", thumbnail_storage_path: "p/1_t.jpg" },
         ],
-        media_assets: [{ storage_bucket: "post-media", storage_path: "m/2.jpg", thumbnail_path: null }],
+        media_assets: [{ id: "33333333-3333-4333-8333-333333333333", owner_user_id: USER_ID, uploader_user_id: null,
+          version: 4, media_type: "image", size_bytes: 128, deleted_at: null, updated_at: "2026-10-16T00:00:00.000Z",
+          moderation_status: "approved", processing_status: "ready", purge_status: "not_requested",
+          storage_bucket: "post-media", storage_path: "m/2.jpg", thumbnail_path: null }],
         profiles: [{
           avatar_url: `https://x/storage/v1/object/public/${PROFILE_MEDIA_BUCKET}/av.jpg`,
           cover_photo_url: null,
@@ -566,7 +653,7 @@ describe("accountDeletionScheduler — fails closed", () => {
   beforeEach(() => _setTestServiceClient(null as any));
 
   it("does nothing when the feature flag is off", async () => {
-    const c = makeClient({ rows: { feature_flags: [{ enabled: false }] } });
+    const c = makeClient({ rows: { feature_flags: [{ flag: "account_deletion_worker_enabled", enabled: false }] } });
     _setTestServiceClient(c as any);
 
     const r = await processDueDeletions();
@@ -596,7 +683,7 @@ describe("accountDeletionScheduler — fails closed", () => {
   it("executes due requests when enabled, filtering on pending + scheduled_at", async () => {
     const c = makeClient({
       rows: {
-        feature_flags: [{ enabled: true }],
+        feature_flags: [{ flag: "account_deletion_worker_enabled", enabled: true }],
         user_deletion_requests: [{ user_id: USER_ID, status: "pending", scheduled_at: "2020-01-01T00:00:00Z" }],
       },
     });
@@ -619,7 +706,7 @@ describe("accountDeletionScheduler — fails closed", () => {
   it("reports a failure instead of marking the request done", async () => {
     const c = makeClient({
       rows: {
-        feature_flags: [{ enabled: true }],
+        feature_flags: [{ flag: "account_deletion_worker_enabled", enabled: true }],
         user_deletion_requests: [{ user_id: USER_ID, status: "pending", scheduled_at: "2020-01-01T00:00:00Z" }],
       },
       fail: { "profiles.update": "db down" },
@@ -699,7 +786,7 @@ describe("POST /internal/deletion-requests/execute-due", () => {
   it("responds 503/skipped and touches nothing when the feature flag is off", async () => {
     const c = makeClient({
       rows: {
-        feature_flags: [{ enabled: false }],
+        feature_flags: [{ flag: "account_deletion_worker_enabled", enabled: false }],
         user_deletion_requests: [{ user_id: USER_ID, status: "pending", scheduled_at: "2020-01-01T00:00:00Z" }],
       },
     });
@@ -716,7 +803,7 @@ describe("POST /internal/deletion-requests/execute-due", () => {
   it("executes due requests through the unified cascade when enabled", async () => {
     const c = makeClient({
       rows: {
-        feature_flags: [{ enabled: true }],
+        feature_flags: [{ flag: "account_deletion_worker_enabled", enabled: true }],
         user_deletion_requests: [{ user_id: USER_ID, status: "pending", scheduled_at: "2020-01-01T00:00:00Z" }],
       },
     });
@@ -735,7 +822,7 @@ describe("POST /internal/deletion-requests/execute-due", () => {
   it("leaves a failed request pending and reports it in `failed`", async () => {
     const c = makeClient({
       rows: {
-        feature_flags: [{ enabled: true }],
+        feature_flags: [{ flag: "account_deletion_worker_enabled", enabled: true }],
         user_deletion_requests: [{ user_id: USER_ID, status: "pending", scheduled_at: "2020-01-01T00:00:00Z" }],
       },
       authDeleteError: "auth API down",

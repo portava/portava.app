@@ -231,11 +231,11 @@ export async function runTelegraphOutboxDrainPass(
       const ids = acks[disposition];
       if (ids.length === 0) continue;
       const { data: n, error: ackErr } = await db.rpc("telegraph_outbox_ack", { p_ids: ids, p_disposition: disposition });
-      if (ackErr) {
+      if (ackErr || typeof n !== "number" || !Number.isInteger(n) || n < 0 || n > ids.length) {
         logger.warn({ err: ackErr, disposition, count: ids.length }, "telegraph outbox drain: ack FAILED — rows will be redelivered after the lease");
         return { ...result, outcome: "failed", reason: "ack_failed" };
       }
-      const acked = typeof n === "number" ? n : 0;
+      const acked = n;
       if (disposition === "fanned_out") result.fannedOut += acked;
       else if (disposition === "route_direct") result.routeDirect += acked;
       else if (disposition === "expired") result.expired += acked;

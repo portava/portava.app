@@ -91,9 +91,7 @@ const ALLOWED: Array<{ file: string; table: string; why: string }> = [
   { file: "compass/CompassCurrentTrip.ts", table: "trips",        why: "selection: the owned trips in the requested statuses" },
   { file: "compass/CompassCurrentTrip.ts", table: "trips",        why: "selection: the member trips in the requested statuses" },
   // The survivors in CompassTools.ts, each with the reason no projection covers it.
-  { file: "compass/CompassTools.ts", table: "trip_plan_items", why: "check_trip_conflicts: a cross-trip day_date RANGE query. TripCompassProjection windows ONE trip around a focus day and caps it at ten items, so consuming it here would silently drop items inside the asked-for range — a narrower answer dressed as a cleaner one" },
   { file: "compass/CompassTools.ts", table: "trips",            why: "add_to_trip: the trip's title for the proposal card. Documented in place as defence-in-depth behind canEditPlan; building a whole context projection (two reads) on a write path to read one column is a worse trade, not a better one" },
-  { file: "compass/CompassTools.ts", table: "trip_members",     why: "the group-recommendation roster — the trip's MEMBER LIST. No Trip projection exposes it: the crew map is presence-gated and would NARROW the roster, and CT-02 never licences narrowing an authorization set to remove a read" },
 ];
 
 /**

@@ -20,7 +20,8 @@ import { Avatar } from '../../src/components/ui/Avatar';
 import { localDateKey, localTodayKey } from '../../src/utils/localDate';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
-import { useLocalSearchParams, router } from 'expo-router';
+import { useLocalSearchParams, router, useFocusEffect } from 'expo-router';
+import { PortavaTripShareSheet, usePortavaTripComposer } from '../../src/features/telegraph/composer/PortavaTripShareSheet.tsx';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ArrowLeft, Zap, Send, Users, Globe, Check, CalendarClock, ArrowRight,
@@ -1220,6 +1221,8 @@ export default function TelegraphThread() {
   // §24 / census T295: the plan control, the E2EE badge/edit affordance and the member count come
   // from GET /threads/:id/capabilities (server-built), not from message_thread_members / message_threads.
   const conversationProjection = useConversationProjection(id ?? null);
+  const tripComposer = usePortavaTripComposer(id ?? null, userId ?? null, conversationProjection, () => { void reload(); });
+  useFocusEffect(useCallback(() => tripComposer.close, [tripComposer.close]));
   const isAcceptedMember = offersPlanControl(conversationProjection);
   const isE2ee = showsE2eeBadge(conversationProjection); // the lock badge: only an affirmative server answer draws it (still behind E2EE_CLAIM_UI_ENABLED)
   const [isCircleMember, setIsCircleMember] = useState<boolean | null>(null);
@@ -2335,6 +2338,10 @@ export default function TelegraphThread() {
           in this tree is shown DISABLED rather than hidden. */}
       <ComposerPlusMenu
         visible={showPlusMenu} deprioritizeEntertainment={safetyQuiet} // §15.2: GIF is put away while safety mode is raised
+        portavaTrips={{ available: tripComposer.available, onSelect: () => {
+          setShowPlusMenu(false);
+          if (!tripComposer.open()) Alert.alert('Trip sharing unavailable', 'Reopen this conversation after signing in to share a trip.');
+        } }}
         onClose={() => setShowPlusMenu(false)}
         onSelect={async (entryId) => {
           setShowPlusMenu(false);
@@ -2346,6 +2353,9 @@ export default function TelegraphThread() {
           if (entryId === 'VOICE') { setShowVoiceRecorder(true); return; } // §6.1's Voice entry; the recorder owns permission, the ceiling and the upload.
         }}
       />
+
+      {tripComposer.intent ? <PortavaTripShareSheet key={tripComposer.intent.generation}
+        intent={tripComposer.intent} onClose={tripComposer.close} onSent={tripComposer.sent} /> : null}
 
       {/* §6.2 VOICE. Mounted beside the + menu because it IS a composer
           affordance; it writes through its own route (see voiceApi.ts). */}

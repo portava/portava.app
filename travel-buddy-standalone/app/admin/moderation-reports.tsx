@@ -20,12 +20,19 @@
  *     never sees it (migration 3700).
  * Requires admin role (useRequireAdmin + server-side requireAdmin).
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import {
   fetchModerationReports,
   reviewModerationReport,
+  fetchReportedReviewRemovalContext,
+  removeReportedReview,
+  newReportedReviewOperationId,
+  ReportedReviewRemovalError,
+  type ReportedReviewRemovalContext,
+  type ReportedReviewRemovalIntent,
+  type ReportedReviewRequest,
   type ModerationReport,
   type ModerationReportStatus,
   type ModerationReviewDecision,
@@ -35,6 +42,10 @@ import {
 import { useSession } from '../../src/context/SessionContext';
 import { useRequireAdmin } from '../../src/hooks/useRequireAdmin';
 import { ReasonPromptModal } from '../../src/components/ReasonPromptModal';
+import { reportModerationHandoff } from '../../src/services/adminUsers';
+import { captureMessagingOwnerRequest, type MessagingOwnerRequest } from '../../src/services/messagingOwnerRequest';
+import { onDiscoveryScopeChange } from '../../src/services/discoveryViewerScope';
+import { supabase } from '../../src/lib/supabase';
 
 const STATUS_FILTERS = ['open', 'reviewing', 'actioned', 'dismissed', 'all'] as const;
 type StatusFilter = (typeof STATUS_FILTERS)[number];
@@ -151,9 +162,17 @@ export function snapshotState(subjectType: string, s: ModerationSubjectSnapshot 
   return v ? `${spec.label}: ${v}` : null;
 }
 
+type RemovalView = { request: ReportedReviewRequest; context: ReportedReviewRemovalContext | null; error: string | null; busy: boolean };
+type PendingRemoval = { owner: MessagingOwnerRequest; intent: ReportedReviewRemovalIntent; busy: boolean };
+
+function canInspectReviewRemoval(report: ModerationReport): boolean {
+  return report.subject_type === 'review' && ['open', 'reviewing'].includes(report.status)
+    && report.subject_snapshot?.state === 'ok' && ['published', 'hidden'].includes(String(report.subject_snapshot.reviewState));
+}
+
 export default function ModerationReportsScreen() {
   useRequireAdmin();
-  const { isAuthed, loading: sessionLoading } = useSession();
+  const { userId, isAuthed, loading: sessionLoading } = useSession();
 
   const [reports, setReports] = useState<ModerationReport[]>([]);
   const [total, setTotal] = useState(0);
@@ -165,6 +184,131 @@ export default function ModerationReportsScreen() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('open');
   const [actioningId, setActioningId] = useState<string | null>(null);
   const [prompt, setPrompt] = useState<{ report: ModerationReport; decision: ModerationReviewDecision } | null>(null);
+  const [removalView, setRemovalView] = useState<RemovalView | null>(null);
+  const [removalPrompt, setRemovalPrompt] = useState<{ request: ReportedReviewRequest } | null>(null);
+  const removalPromptRef = useRef<typeof removalPrompt>(null);
+  const [, refreshRemoval] = useState(0);
+  const activeRemoval = useRef<{ request: ReportedReviewRequest; controller: AbortController } | null>(null);
+  const pendingRemoval = useRef<PendingRemoval | null>(null);
+  const mounted = useRef(false);
+  const focused = useRef(false);
+  const focusEpoch = useRef(0);
+  const removalIdentity = useRef('');
+  removalIdentity.current = `${userId ?? ''}:${isAuthed}:${sessionLoading}:${statusFilter}`;
+
+  const closeRemoval = useCallback((discardPending = false) => {
+    const active = activeRemoval.current;
+    activeRemoval.current = null;
+    active?.controller.abort();
+    if (active?.request.owner !== pendingRemoval.current?.owner) active?.request.owner.invalidate();
+    if (discardPending) {
+      pendingRemoval.current?.owner.invalidate();
+      pendingRemoval.current = null;
+    }
+    setRemovalView(null);
+    removalPromptRef.current = null;
+    setRemovalPrompt(null);
+  }, []);
+
+  const blurRemoval = useCallback(() => {
+    focused.current = false;
+    focusEpoch.current += 1;
+    closeRemoval();
+  }, [closeRemoval]);
+
+  useFocusEffect(useCallback(() => {
+    focused.current = true;
+    focusEpoch.current += 1;
+    refreshRemoval(value => value + 1);
+    return blurRemoval;
+  }, [blurRemoval]));
+
+  useEffect(() => {
+    mounted.current = true;
+    const checkOwner = () => {
+      if ((activeRemoval.current && !activeRemoval.current.request.owner.isCurrent())
+        || (pendingRemoval.current && !pendingRemoval.current.owner.isCurrent())) closeRemoval(true);
+    };
+    const unsubscribe = onDiscoveryScopeChange(checkOwner);
+    const { data } = supabase.auth.onAuthStateChange(event => {
+      if (event === 'SIGNED_OUT') closeRemoval(true);
+      else checkOwner();
+    });
+    return () => {
+      mounted.current = false;
+      unsubscribe();
+      data.subscription.unsubscribe();
+      activeRemoval.current?.controller.abort();
+      activeRemoval.current?.request.owner.invalidate();
+      activeRemoval.current = null;
+      removalPromptRef.current = null;
+      pendingRemoval.current?.owner.invalidate();
+      pendingRemoval.current = null;
+    };
+  }, [closeRemoval]);
+
+  useEffect(() => { closeRemoval(!isAuthed || sessionLoading); }, [userId, isAuthed, sessionLoading, statusFilter, closeRemoval]);
+
+  const openRemoval = async (report: ModerationReport | null) => {
+    if (!mounted.current || !focused.current) return;
+    const pending = pendingRemoval.current;
+    if (report && !canInspectReviewRemoval(report)) return;
+    if (pending && !pending.owner.isCurrent()) { closeRemoval(true); return; }
+    if (pending && report && pending.intent.reportId !== report.id.toLowerCase()) {
+      Alert.alert('Unresolved removal', 'Recover the pending removal result before confirming another.'); return;
+    }
+    closeRemoval();
+    const owner = pending?.owner ?? captureMessagingOwnerRequest();
+    if (!owner || owner.ownerId !== userId || !isAuthed || sessionLoading) {
+      Alert.alert('Removal unavailable', 'A current signed-in admin session is required.'); return;
+    }
+    const reviewId = pending?.intent.reviewId ?? report?.subject_id.toLowerCase();
+    const reportId = pending?.intent.reportId ?? report?.id.toLowerCase();
+    if (!reviewId || !reportId) return;
+    const controller = new AbortController();
+    const identity = removalIdentity.current;
+    const epoch = focusEpoch.current;
+    const request: ReportedReviewRequest = {
+      owner, reviewId, reportId, signal: controller.signal,
+      isCurrent: () => mounted.current && focused.current && epoch === focusEpoch.current
+        && activeRemoval.current?.request === request && identity === removalIdentity.current
+        && !controller.signal.aborted && owner.isCurrent(),
+    };
+    activeRemoval.current = { request, controller };
+    setRemovalView({ request, context: null, error: pending ? 'Recover the submitted operation using its original confirmation and reason.' : null, busy: pending?.busy ?? true });
+    if (pending) return;
+    try {
+      const context = await fetchReportedReviewRemovalContext(request);
+      if (request.isCurrent()) setRemovalView({ request, context, error: null, busy: false });
+    } catch (error) {
+      if (request.isCurrent()) setRemovalView({ request, context: null, error: error instanceof Error ? error.message : 'Removal context unavailable.', busy: false });
+    }
+  };
+
+  const submitRemoval = async (request: ReportedReviewRequest, pending: PendingRemoval) => {
+    if (!request.isCurrent() || pendingRemoval.current !== pending || pending.busy) return;
+    pending.busy = true;
+    setRemovalView(previous => previous?.request === request ? { ...previous, busy: true, error: null } : previous);
+    try {
+      await removeReportedReview(request, pending.intent);
+      if (!request.isCurrent()) return;
+      pendingRemoval.current = null;
+      closeRemoval();
+      void load(1);
+    } catch (error) {
+      if (!request.isCurrent()) return;
+      const knownRefusal = error instanceof ReportedReviewRemovalError && [400, 401, 403, 404, 409].includes(error.status);
+      if (knownRefusal) pendingRemoval.current = null;
+      setRemovalView({ request, context: null, busy: false,
+        error: error instanceof Error ? error.message : 'Result unknown. Retry the same operation to recover it.' });
+    } finally {
+      pending.busy = false;
+      if (mounted.current && pending.owner.isCurrent()) {
+        setRemovalView(previous => previous?.request.owner === pending.owner ? { ...previous, busy: false } : previous);
+        refreshRemoval(value => value + 1);
+      }
+    }
+  };
 
   const load = useCallback(async (p = 1, append = false) => {
     if (!isAuthed) return;
@@ -187,6 +331,7 @@ export default function ModerationReportsScreen() {
   }, [load, isAuthed, sessionLoading]);
 
   const onRefresh = async () => {
+    closeRemoval();
     setRefreshing(true);
     await load(1);
     setRefreshing(false);
@@ -217,7 +362,7 @@ export default function ModerationReportsScreen() {
   return (
     <View style={s.container}>
       <View style={s.header}>
-        <Pressable onPress={() => router.back()} style={s.backBtn} accessibilityRole="button">
+        <Pressable onPress={() => { blurRemoval(); router.back(); }} style={s.backBtn} accessibilityRole="button">
           <Text style={s.backText}>← Back</Text>
         </Pressable>
         <Text style={s.title}>User Reports</Text>
@@ -234,7 +379,7 @@ export default function ModerationReportsScreen() {
           renderItem={({ item: f }) => (
             <Pressable
               style={[s.chip, statusFilter === f && s.chipActive]}
-              onPress={() => setStatusFilter(f)}
+              onPress={() => { closeRemoval(); setStatusFilter(f); }}
               accessibilityRole="button"
               accessibilityState={{ selected: statusFilter === f }}
               testID={`modq-filter-${f}`}
@@ -246,6 +391,40 @@ export default function ModerationReportsScreen() {
           )}
         />
       </View>
+
+      {focused.current && pendingRemoval.current && !removalView && pendingRemoval.current.owner.isCurrent() ? (
+        <Pressable style={s.actionBtn} accessibilityRole="button" testID="review-removal-recover" onPress={() => { void openRemoval(null); }}>
+          <Text style={s.actionText}>Recover pending review removal</Text>
+        </Pressable>
+      ) : null}
+      {removalView && removalView.request.isCurrent() ? (
+        <View style={s.row}>
+          {removalView.context ? (
+            <Text style={s.snapshot} testID="review-removal-preview">Current review: {removalView.context.review.rating}★ · {removalView.context.review.body ?? 'No review text.'}</Text>
+          ) : null}
+          <Text style={s.meta}>This removes the review and records your reason. It does not close the report or sanction its author.</Text>
+          {removalView.error ? <Text style={s.errorText} accessibilityRole="alert" testID="review-removal-error">{removalView.error}</Text> : null}
+          {removalView.busy ? <ActivityIndicator size="small" /> : null}
+          {removalView.context && !pendingRemoval.current && !removalView.busy ? (
+            <Pressable style={s.actionBtn} accessibilityRole="button" testID="review-removal-confirm" onPress={() => {
+              if (removalView.request.isCurrent() && !pendingRemoval.current) {
+                const nextPrompt = { request: removalView.request };
+                removalPromptRef.current = nextPrompt;
+                setRemovalPrompt(nextPrompt);
+              }
+            }}><Text style={s.actionText}>Remove review…</Text></Pressable>
+          ) : null}
+          {pendingRemoval.current && !removalView.busy ? (
+            <Pressable style={s.actionBtn} accessibilityRole="button" testID="review-removal-retry" onPress={() => {
+              const pending = pendingRemoval.current;
+              if (pending && pending.owner === removalView.request.owner) void submitRemoval(removalView.request, pending);
+            }}><Text style={s.actionText}>Retry same removal</Text></Pressable>
+          ) : null}
+          <Pressable style={s.actionBtnMuted} accessibilityRole="button" testID="review-removal-close" onPress={() => closeRemoval()}>
+            <Text style={s.actionText}>Close</Text>
+          </Pressable>
+        </View>
+      ) : null}
 
       {incomplete.length > 0 && !error ? (
         <View style={s.warn} testID="modq-incomplete" accessibilityRole="alert">
@@ -312,6 +491,29 @@ export default function ModerationReportsScreen() {
                 </Text>
               ) : null}
               <Text style={s.meta}>{new Date(r.created_at).toLocaleString()}</Text>
+              {canInspectReviewRemoval(r) ? (
+                <Pressable style={s.actionBtn} accessibilityRole="button" testID={`modq-review-removal-context-${r.id}`}
+                  onPress={() => { void openRemoval(r); }}>
+                  <Text style={s.actionText}>Inspect review removal…</Text>
+                </Pressable>
+              ) : null}
+              {reportModerationHandoff(r) ? (
+                <Pressable
+                  style={s.actionBtn}
+                  accessibilityRole="button"
+                  disabled={actioningId !== null}
+                  testID={`modq-moderate-${r.id}`}
+                  onPress={() => {
+                    const handoff = reportModerationHandoff(r);
+                    if (handoff) {
+                      blurRemoval();
+                      router.push({ pathname: '/admin/user-moderation', params: { ...handoff } });
+                    }
+                  }}
+                >
+                  <Text style={s.actionText}>Moderate reported user…</Text>
+                </Pressable>
+              ) : null}
               {NEXT[r.status]?.length ? (
                 <View style={s.actions}>
                   {actioningId === r.id ? (
@@ -336,6 +538,30 @@ export default function ModerationReportsScreen() {
         />
       )}
 
+      {removalPrompt && removalView?.context && removalPrompt.request === removalView.request && removalPrompt.request.isCurrent() ? (
+        <ReasonPromptModal visible title="Remove this reported review" confirmLabel="Remove review" destructive
+          message="Required reason for the linked admin audit. The report status is unchanged; no sanction is applied."
+          onCancel={() => { removalPromptRef.current = null; setRemovalPrompt(null); }}
+          onSubmit={value => {
+            if (removalPromptRef.current !== removalPrompt) return;
+            removalPromptRef.current = null;
+            const request = removalPrompt.request;
+            const context = removalView.context;
+            setRemovalPrompt(null);
+            if (!request.isCurrent() || !context || pendingRemoval.current) return;
+            const reason = value.trim();
+            if (!reason || Array.from(reason).length > 1000) {
+              setRemovalView(previous => previous?.request === request ? { ...previous, error: 'Enter a reason of 1–1000 characters.' } : previous); return;
+            }
+            const pending: PendingRemoval = { owner: request.owner, busy: false, intent: Object.freeze({
+              operationId: newReportedReviewOperationId(), reviewId: context.reviewId, reportId: context.reportId,
+              reviewToken: context.reviewToken, reportToken: context.reportToken, reason,
+            }) };
+            pendingRemoval.current = pending;
+            void submitRemoval(request, pending);
+          }}
+        />
+      ) : null}
       <ReasonPromptModal
         visible={prompt !== null}
         title={prompt ? `${DECISION_LABEL[prompt.decision]} this report` : ''}

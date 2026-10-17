@@ -32,7 +32,7 @@
  *   mode             — 'all' (default) or 'city' (settlements only)
  *   contextSections  — extra caller-provided sections (label + places)
  */
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import {
   View, Text, TextInput, Pressable, FlatList, Modal,
   StyleSheet, ActivityIndicator,
@@ -68,6 +68,9 @@ import { requestSuggestions } from '../../platform/input-assistance/services/inp
 import type { InputContext } from '../../platform/input-assistance/types/inputContext.ts';
 import type { InputSessionContext, InputSuggestion } from '../../platform/input-assistance/types/inputSuggestion.ts';
 import type { CanonicalPlaceBinding } from '../../platform/input-assistance/geographic/canonicalBinding.ts';
+import { useInputAccountEpoch } from '../../platform/input-assistance/hooks/useInputAccountEpoch.ts';
+import { ANONYMOUS_VIEWER, currentDiscoveryScope, isCurrentDiscoveryScope, type DiscoveryScope } from '../../services/discoveryViewerScope.ts';
+import { captureMessagingOwnerRequest, type MessagingOwnerRequest } from '../../services/messagingOwnerRequest.ts';
 
 function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
@@ -135,6 +138,13 @@ interface Props {
 
 type GpsState = 'idle' | 'loading' | 'denied' | 'error';
 
+type SelectionIntent = Readonly<{
+  generation: number;
+  scope: Readonly<DiscoveryScope>;
+  owner: MessagingOwnerRequest | null;
+  kind: 'place' | 'gps';
+}>;
+
 export function GlobalPlacePicker({
   visible, onSelect, onClose, title, allowGPS = true, countryCode, placeholder, usedFor,
   mode = 'all', contextSections,
@@ -147,7 +157,69 @@ export function GlobalPlacePicker({
   // Silent coordinates: available only when permission was ALREADY granted.
   const [nearbyCoords, setNearbyCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [nearPlace, setNearPlace] = useState<Place | null>(null);
-  const aliveRef = useRef(true);
+  const accountEpoch = useInputAccountEpoch();
+  const openRef = useRef(false);
+  const generationRef = useRef(0);
+  const selectionRef = useRef<SelectionIntent | null>(null);
+  const resolvingRef = useRef<SelectionIntent | null>(null);
+
+  const invalidateSelection = useCallback(() => {
+    openRef.current = false;
+    generationRef.current += 1;
+    selectionRef.current = null;
+    resolvingRef.current = null;
+  }, []);
+
+  useLayoutEffect(() => {
+    generationRef.current += 1;
+    openRef.current = visible;
+    setResolvingId(null);
+    setGpsState('idle');
+    return invalidateSelection;
+  }, [visible, accountEpoch, invalidateSelection]);
+
+  const ownsSelectionSlot = useCallback((intent: SelectionIntent) => (
+    openRef.current && selectionRef.current === intent
+    && generationRef.current === intent.generation
+  ), []);
+
+  const isCurrentSelection = useCallback((intent: SelectionIntent) => (
+    ownsSelectionSlot(intent)
+    && isCurrentDiscoveryScope(intent.scope)
+    && (intent.scope.viewer === ANONYMOUS_VIEWER || intent.owner?.isCurrent() === true)
+  ), [ownsSelectionSlot]);
+
+  const isCurrentDismissal = useCallback((intent: SelectionIntent) => (
+    !openRef.current && generationRef.current === intent.generation + 1
+    && isCurrentDiscoveryScope(intent.scope)
+    && (intent.scope.viewer === ANONYMOUS_VIEWER || intent.owner?.isCurrent() === true)
+  ), []);
+
+  const beginSelection = useCallback((kind: SelectionIntent['kind'] = 'place') => {
+    if (!openRef.current) return null;
+    if (resolvingRef.current && isCurrentSelection(resolvingRef.current)) return null;
+    if (kind === 'gps' && selectionRef.current?.kind === 'gps' && isCurrentSelection(selectionRef.current)) return null;
+    const scope = currentDiscoveryScope();
+    if (scope.viewer === undefined) return null;
+    const owner = scope.viewer === ANONYMOUS_VIEWER ? null : captureMessagingOwnerRequest();
+    if (scope.viewer !== ANONYMOUS_VIEWER && !owner) return null;
+    const intent: SelectionIntent = Object.freeze({
+      generation: generationRef.current,
+      scope: Object.freeze(scope),
+      owner,
+      kind,
+    });
+    selectionRef.current = intent;
+    if (kind === 'place') setGpsState('idle');
+    return intent;
+  }, [isCurrentSelection]);
+
+  const dismiss = useCallback(() => {
+    invalidateSelection();
+    setResolvingId(null);
+    setGpsState('idle');
+    onClose();
+  }, [invalidateSelection, onClose]);
 
   // Bumped by the "Retry" button on a failed search — failed requests are
   // never cached, so re-running the hook effect issues a fresh fetch.
@@ -225,18 +297,22 @@ export function GlobalPlacePicker({
   // Reset + silent nearby detection on open. GPS must NEVER block the sheet:
   // we only use an already-granted permission and the last known position.
   useEffect(() => {
-    aliveRef.current = true;
-    if (!visible) return () => { aliveRef.current = false; };
+    if (!visible) return;
+    let cancelled = false;
+    const generation = generationRef.current;
+    const scope = currentDiscoveryScope();
+    const isCurrentOpen = () => !cancelled && openRef.current
+      && generationRef.current === generation && isCurrentDiscoveryScope(scope);
     setQuery('');
-    setGpsState('idle');
-    setResolvingId(null);
+    setNearbyCoords(null);
+    setNearPlace(null);
 
     (async () => {
       try {
         const perm = await ExpoLocation.getForegroundPermissionsAsync();
-        if (!perm.granted) return;
+        if (!isCurrentOpen() || !perm.granted) return;
         const pos = await ExpoLocation.getLastKnownPositionAsync();
-        if (!pos || !aliveRef.current) return;
+        if (!isCurrentOpen() || !pos) return;
         const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
         setNearbyCoords(coords);
 
@@ -248,9 +324,10 @@ export function GlobalPlacePicker({
             `${apiBase()}/api/places/reverse?lat=${coords.lat}&lng=${coords.lng}`,
             { signal: ctrl.signal },
           );
+          if (!isCurrentOpen()) return;
           if (res.ok) {
             const body = await res.json();
-            if (body?.place && aliveRef.current) setNearPlace(body.place);
+            if (isCurrentOpen() && body?.place) setNearPlace(body.place);
           }
         } finally {
           clearTimeout(timer);
@@ -260,16 +337,18 @@ export function GlobalPlacePicker({
       }
     })();
 
-    return () => { aliveRef.current = false; };
-  }, [visible]);
+    return () => { cancelled = true; };
+  }, [visible, accountEpoch]);
 
   /**
    * Selection pipeline: resolve → save recent → emit. Resolution attaches the
    * canonicalId (universal location registry) and normalized fields; it is
    * capped at ~1.3 s and falls back to the raw place so UX never blocks.
    */
-  const select = useCallback(async (place: Place) => {
-    if (resolvingId) return; // guard double-tap while a selection is in flight
+  const select = useCallback(async (place: Place, originalIntent?: SelectionIntent) => {
+    const intent = originalIntent ?? beginSelection();
+    if (!intent || !isCurrentSelection(intent)) return;
+    resolvingRef.current = intent;
     setResolvingId(place.id);
     try {
       // Google autocomplete results have no lat/lng — fetch Place Details to
@@ -278,14 +357,17 @@ export function GlobalPlacePicker({
       if (place.source === 'google') {
         const rawId = place.id.replace(/^google-/, '');
         const details = await fetchGooglePlaceDetails(rawId);
+        if (!isCurrentSelection(intent)) return;
         if (details) {
           enriched = { ...place, lat: details.lat, lng: details.lng, formattedAddress: details.formattedAddress };
         }
       }
       const resolved = await resolveCanonicalPlace(enriched);
+      if (!isCurrentSelection(intent)) return;
       saveRecent(resolved, usedFor);
       // §17/§53 — capture the canonical binding (city id + country + timezone +
       // coordinates) so dependent fields can prefill. No-op unless a caller opted in.
+      if (!isCurrentSelection(intent)) return;
       onCanonicalBinding?.(captureCanonicalBinding(resolved));
       // §35 Phase 8 — record this EXPLICIT accept as selection memory when the
       // row came from the gateway. Without this the picker was a READER of
@@ -297,23 +379,33 @@ export function GlobalPlacePicker({
       // never reach a picker context. Fire-and-forget + fail-soft: it never
       // awaits, never throws, and never gates the selection above.
       const originating = gatewayById.get(place.id);
+      if (!isCurrentSelection(intent)) return;
       if (originating) {
         recordSuggestionSelection(originating, { policy: assistPolicy, query });
       }
       // §33/§53 census G209 — a CANONICAL selection warms the declared next
       // field's zero-character answer (services/prefetch.ts). Fire-and-forget.
+      if (!isCurrentSelection(intent)) return;
       if (assistContext && resolved.canonicalId) void prefetchDependentFields(assistFieldId ?? assistContext, (req) => requestSuggestions(req));
+      if (!isCurrentSelection(intent)) return;
       onSelect(resolved);
-      onClose();
+      if (isCurrentSelection(intent)) dismiss();
     } finally {
-      if (aliveRef.current) setResolvingId(null);
+      if (ownsSelectionSlot(intent) && resolvingRef.current === intent) {
+        resolvingRef.current = null;
+        if (!originalIntent) selectionRef.current = null;
+        setResolvingId(null);
+      }
     }
-  }, [onSelect, onClose, saveRecent, usedFor, resolvingId, onCanonicalBinding, gatewayById, assistPolicy, query, assistContext, assistFieldId]);
+  }, [onSelect, dismiss, saveRecent, usedFor, beginSelection, isCurrentSelection, ownsSelectionSlot, onCanonicalBinding, gatewayById, assistPolicy, query, assistContext, assistFieldId]);
 
   async function useGPS() {
+    const intent = beginSelection('gps');
+    if (!intent) return;
     setGpsState('loading');
     try {
       const gps = await requestLocationForUserAction(USER_PRESS_MAP_CONTEXT); // asks the OS only here, on the row's press
+      if (!isCurrentSelection(intent)) return;
       if (!gps.granted || gps.lat == null || gps.lng == null) {
         setGpsState(gps.error === 'permission_denied' ? 'denied' : 'error');
         return;
@@ -321,15 +413,22 @@ export function GlobalPlacePicker({
       const { lat, lng } = gps;
 
       // Reverse geocode via backend
+      let reversePlace: Place | null = null;
       try {
         const res = await fetch(`${apiBase()}/api/places/reverse?lat=${lat}&lng=${lng}`);
+        if (!isCurrentSelection(intent)) return;
         if (res.ok) {
           const body = await res.json();
-          if (body.place) { await select(body.place); return; }
+          if (!isCurrentSelection(intent)) return;
+          reversePlace = body.place ?? null;
         }
       } catch { /* fall through to coordinate-only place */ }
 
+      if (!isCurrentSelection(intent)) return;
+      if (reversePlace) { await select(reversePlace, intent); return; }
+
       // Fallback: create a GPS place with raw coordinates
+      if (!isCurrentSelection(intent)) return;
       const gpsPlace: Place = {
         id: `gps-${lat.toFixed(4)}-${lng.toFixed(4)}`,
         type: 'place', name: 'Current Location',
@@ -337,9 +436,14 @@ export function GlobalPlacePicker({
         country: null, countryCode: null, region: null, city: null, district: null,
         lat, lng, timezone: null, source: 'gps',
       };
-      await select(gpsPlace);
+      await select(gpsPlace, intent);
     } catch {
-      setGpsState('error');
+      if (isCurrentSelection(intent)) setGpsState('error');
+    } finally {
+      if (ownsSelectionSlot(intent)) {
+        if (!isCurrentSelection(intent)) setGpsState('idle');
+        selectionRef.current = null;
+      }
     }
   }
 
@@ -491,19 +595,19 @@ export function GlobalPlacePicker({
   }
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={dismiss} statusBarTranslucent>
       {/* Keyboard handling: the sheet is bottom-anchored, so the KAV must lift
           it above the keyboard or the results FlatList gets covered.
           iOS: 'padding' insets the overlay by the keyboard height.
           Android: 'height' shrinks the overlay — needed because this Modal is
           statusBarTranslucent, which stops adjustResize from resizing it. */}
       <KeyboardSafeScrollView style={s.overlay}>
-        <Pressable style={s.backdrop} onPress={onClose} />
+        <Pressable style={s.backdrop} onPress={dismiss} />
         <View style={[s.sheet, { paddingBottom: insets.bottom + 8 }]}>
           {/* Header */}
           <View style={s.header}>
             <Text style={s.title}>{title ?? (cityMode ? 'Choose a City' : 'Choose Location')}</Text>
-            <Pressable style={s.closeBtn} onPress={onClose} hitSlop={12}>
+            <Pressable style={s.closeBtn} onPress={dismiss} hitSlop={12}>
               <X size={18} color={color.mute} />
             </Pressable>
           </View>
@@ -609,7 +713,13 @@ export function GlobalPlacePicker({
                     style={s.row}
                     testID={`place-zero-${item.act}`}
                     disabled={resolvingId != null}
-                    onPress={() => { onClose(); if (item.act === 'pin') onDropPin?.(); else onAddNew?.(); }}
+                    onPress={() => {
+                      const intent = beginSelection();
+                      if (!intent) return;
+                      dismiss();
+                      if (!isCurrentDismissal(intent)) return;
+                      if (item.act === 'pin') onDropPin?.(); else onAddNew?.();
+                    }}
                   >
                     <View style={[s.iconCircle, { backgroundColor: `${color.signal}15` }]}>
                       <MapPin size={16} color={color.signal} />
@@ -627,7 +737,13 @@ export function GlobalPlacePicker({
                     style={s.row}
                     testID={`place-area-${item.area.cityId}`}
                     disabled={resolvingId != null}
-                    onPress={() => { onApproximateArea?.(item.area); onClose(); }}
+                    onPress={() => {
+                      const intent = beginSelection();
+                      if (!intent) return;
+                      invalidateSelection();
+                      onApproximateArea?.(item.area);
+                      if (isCurrentDismissal(intent)) dismiss();
+                    }}
                   >
                     <View style={[s.iconCircle, { backgroundColor: `${color.signal}15` }]}>
                       <MapPin size={16} color={color.signal} />

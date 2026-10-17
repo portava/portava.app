@@ -550,6 +550,222 @@ describe("disputes: opened, won, lost (chargeback) — explicit and booked", () 
   });
 });
 
+describe("payout eligibility is current and bound to the recorded provider", () => {
+  async function finalisedPayment() {
+    const paymentId = await paidBooking(w);
+    seedBooking(w, { status: "completed", completedAt: "2026-08-20T16:00:00.000Z", disputeWindowExpiresAt: "2026-08-21T16:00:00.000Z" });
+    w.clock.now = new Date("2026-09-01T12:00:00.000Z");
+    return paymentId;
+  }
+
+  async function plannedPayout() {
+    await finalisedPayment();
+    const plan = await planMonthlyPayouts(w.deps, { minimumByCurrency: { USD: 100 } }, "2026-08");
+    assert.equal(rows(plan.body["report"])[0].result, "planned");
+    return String(rows(plan.body["report"])[0].payoutId);
+  }
+
+  it("planning never validates another provider's recipient or reserves its earnings", async () => {
+    const paymentId = await finalisedPayment();
+    const payment = w.store.payments.get(paymentId)!;
+    w.store.payments.set(paymentId, { ...payment, provider: "previous-provider" });
+    let validations = 0;
+    w.deps = { ...w.deps, provider: { ...w.deps.provider, validateRecipient: async () => { validations++; throw new Error("wrong provider reached"); } } };
+    const plan = await planMonthlyPayouts(w.deps, { minimumByCurrency: { USD: 100 } }, "2026-08");
+    assert.equal(rows(plan.body["report"])[0].reason, "provider_mismatch");
+    assert.equal(validations, 0);
+    assert.equal(w.store.payouts.size, 0);
+    assert.equal(w.store.payments.get(paymentId)?.payoutId, null);
+  });
+
+  for (const scenario of ["provider_changed", "identity_revoked", "identity_unreadable", "identity_throws", "identity_removed", "profile_unreadable", "recipient_restricted", "recipient_throws", "wrong_recipient", "onboarding_incomplete", "payouts_disabled"] as const) {
+    it(`execution refuses ${scenario} after planning without changing funds or payout state`, async () => {
+      const payoutId = await plannedPayout();
+      const original = structuredClone(w.store.payouts.get(payoutId));
+      const balances = w.fake.control.balances();
+      const provider = w.deps.provider;
+      let requests = 0;
+      let validations = 0;
+      w.deps = { ...w.deps, provider: {
+        ...provider,
+        id: scenario === "provider_changed" ? "replacement-provider" : provider.id,
+        validateRecipient: async (recipientRef) => {
+          validations++;
+          if (scenario === "recipient_throws") throw new Error("recipient state unavailable");
+          const result = await provider.validateRecipient(recipientRef);
+          if (result.status !== "ok") return result;
+          return { ...result, value: {
+            ...result.value,
+            recipientRef: scenario === "wrong_recipient" ? "another-account" : result.value.recipientRef,
+            onboarding: scenario === "onboarding_incomplete" ? "pending_verification" : result.value.onboarding,
+            payoutsEnabled: scenario === "payouts_disabled" ? false : result.value.payoutsEnabled,
+          } };
+        },
+        requestPayout: async (request) => { requests++; return provider.requestPayout(request); },
+      } };
+      if (scenario === "identity_revoked") w.deps = { ...w.deps, personVerified: async () => "not_verified" };
+      if (scenario === "identity_unreadable") w.deps = { ...w.deps, personVerified: async () => "unreadable" };
+      if (scenario === "identity_throws") w.deps = { ...w.deps, personVerified: async () => { throw new Error("verification state unavailable"); } };
+      if (scenario === "identity_removed") w.store.removeIdentity(BUDDY);
+      if (scenario === "profile_unreadable") w.store.failNext("profileForParty");
+      if (scenario === "recipient_restricted") w.fake.control.setRecipientOnboarding(original!.recipientRef, "restricted");
+      const result = await executePlannedPayouts(w.deps, [payoutId]);
+      const expected = {
+        provider_changed: "provider_mismatch", identity_revoked: "recipient_not_verified",
+        identity_unreadable: "verification_unreadable", identity_removed: "identity_removed",
+        identity_throws: "verification_unreadable", recipient_throws: "recipient_payouts_not_enabled",
+        profile_unreadable: "verification_unreadable", recipient_restricted: "recipient_payouts_not_enabled",
+        wrong_recipient: "recipient_payouts_not_enabled", onboarding_incomplete: "recipient_payouts_not_enabled",
+        payouts_disabled: "recipient_payouts_not_enabled",
+      }[scenario];
+      assert.equal(rows(result.body["results"])[0].result, expected);
+      assert.equal(requests, 0);
+      if (scenario === "provider_changed") assert.equal(validations, 0);
+      assert.deepEqual(w.store.payouts.get(payoutId), original);
+      assert.deepEqual(w.fake.control.balances(), balances);
+    });
+  }
+
+  it("a lost persistence response retries with the same payout key and never pays twice", async () => {
+    const payoutId = await plannedPayout();
+    const key = w.store.payouts.get(payoutId)!.idempotencyKey;
+    w.store.failNext("transitionPayout");
+    const first = await executePlannedPayouts(w.deps, [payoutId]);
+    assert.equal(rows(first.body["results"])[0].result, "write_failed");
+    const balances = w.fake.control.balances();
+    const retry = await executePlannedPayouts(w.deps, [payoutId]);
+    assert.equal(rows(retry.body["results"])[0].result, "requested");
+    assert.equal(w.store.payouts.get(payoutId)!.idempotencyKey, key);
+    assert.deepEqual(w.fake.control.balances(), balances);
+    const again = await executePlannedPayouts(w.deps, [payoutId]);
+    assert.equal(rows(again.body["results"])[0].result, "skipped_requested");
+    assert.deepEqual(w.fake.control.balances(), balances);
+  });
+
+  async function lostPayoutResponse() {
+    const payoutId = await plannedPayout();
+    w.store.failNext("transitionPayout");
+    const first = await executePlannedPayouts(w.deps, [payoutId]);
+    assert.equal(rows(first.body["results"])[0].result, "write_failed");
+    const delivery = w.fake.control.webhooks.deliver().find((entry) => JSON.parse(entry.rawBody).data.kind === "payout")!;
+    assert.ok(delivery);
+    const payoutRef = String(JSON.parse(delivery.rawBody).data.payout.payoutRef);
+    return { payoutId, delivery, payoutRef };
+  }
+
+  for (const revoked of ["identity_removed", "identity_revoked", "recipient_restricted"] as const) {
+    it(`payout recovery reconciles signed paid events after ${revoked} without requesting funds again`, async () => {
+      const { payoutId, delivery, payoutRef } = await lostPayoutResponse();
+      if (revoked === "identity_removed") w.store.removeIdentity(BUDDY);
+      if (revoked === "identity_revoked") w.deps = { ...w.deps, personVerified: async () => "not_verified" };
+      if (revoked === "recipient_restricted") w.fake.control.setRecipientOnboarding(w.store.payouts.get(payoutId)!.recipientRef, "restricted");
+      let requests = 0;
+      const provider = w.deps.provider;
+      w.deps = { ...w.deps, provider: { ...provider, requestPayout: async (request) => { requests++; return provider.requestPayout(request); } } };
+      const retry = await executePlannedPayouts(w.deps, [payoutId]);
+      assert.equal(rows(retry.body["results"])[0].result, revoked === "identity_removed" ? "identity_removed"
+        : revoked === "identity_revoked" ? "recipient_not_verified" : "recipient_payouts_not_enabled");
+      w.fake.control.advancePayout(payoutRef);
+      w.fake.control.advancePayout(payoutRef);
+      const paid = w.fake.control.webhooks.deliver().find((entry) => JSON.parse(entry.rawBody).data.payout?.state === "paid")!;
+      const result = await processPaymentWebhook(w.deps, paid);
+      assert.equal(result.body["outcome"], "applied");
+      assert.equal(w.store.payouts.get(payoutId)!.payoutRef, payoutRef);
+      assert.equal(w.store.payouts.get(payoutId)!.state, "paid");
+      assert.equal(w.ledger.balance("user_payable", BUDDY_PARTY, "USD"), 0);
+      const posting = w.ledger.postings.get(`rabpayout:${payoutId}:paid`)!;
+      assert.equal(posting.externalRef, payoutRef);
+      const postingCount = w.ledger.postings.size;
+      assert.equal((await processPaymentWebhook(w.deps, paid)).body["outcome"], "duplicate");
+      assert.equal((await processPaymentWebhook(w.deps, delivery)).body["outcome"], "stale");
+      assert.equal(w.ledger.postings.size, postingCount);
+      assert.equal(requests, 0);
+      assert.equal(w.fake.control.balances().paidOut["USD"], 3600);
+    });
+  }
+
+  for (const mismatch of ["provider", "event_provider", "account", "recipient", "amount", "currency", "kind", "livemode", "reference_kind", "reference_id", "reference_missing", "reference_malformed", "endpoint", "existing_ref", "carried_forward"] as const) {
+    it(`payout recovery refuses signed events with ${mismatch} mismatch`, async () => {
+      const { payoutId, delivery } = await lostPayoutResponse();
+      const event = JSON.parse(delivery.rawBody);
+      const snap = event.data.payout;
+      snap.state = "paid";
+      if (mismatch === "provider") w.store.payouts.set(payoutId, { ...w.store.payouts.get(payoutId)!, provider: "another-provider" });
+      if (mismatch === "event_provider") w.deps = { ...w.deps, provider: { ...w.deps.provider, id: "another-provider" } };
+      if (mismatch === "account") event.account = "another-account";
+      if (mismatch === "recipient") snap.recipientRef = "another-account";
+      if (mismatch === "amount") snap.amount.amountMinor++;
+      if (mismatch === "currency") snap.amount.currency = "GBP";
+      if (mismatch === "kind") snap.kind = "transfer";
+      if (mismatch === "livemode") snap.livemode = true;
+      if (mismatch === "reference_kind") snap.reference.kind = "another_kind";
+      if (mismatch === "reference_id") snap.reference.id = "unknown-payout";
+      if (mismatch === "reference_missing") snap.reference = null;
+      if (mismatch === "reference_malformed") snap.reference = { kind: "rab_monthly_payout" };
+      if (mismatch === "existing_ref") w.store.payouts.set(payoutId, { ...w.store.payouts.get(payoutId)!, payoutRef: "another-payout" });
+      if (mismatch === "carried_forward") w.store.payouts.set(payoutId, { ...w.store.payouts.get(payoutId)!, state: "carried_forward" });
+      const original = structuredClone(w.store.payouts.get(payoutId));
+      const postingCount = w.ledger.postings.size;
+      const signed = w.fake.control.webhooks.signRawBody(JSON.stringify(event), mismatch === "endpoint" ? "platform" : "connect");
+      const verified = await w.deps.provider.verifyAndParseWebhook(signed);
+      assert.equal(verified.status, "ok");
+      const result = await processPaymentWebhook(w.deps, signed);
+      assert.notEqual(result.body["outcome"], "applied");
+      assert.deepEqual(w.store.payouts.get(payoutId), original);
+      assert.equal(w.ledger.postings.size, postingCount);
+    });
+  }
+
+  it("payout recovery retries a failed reference write before posting money", async () => {
+    const { payoutId, payoutRef } = await lostPayoutResponse();
+    w.fake.control.advancePayout(payoutRef);
+    w.fake.control.advancePayout(payoutRef);
+    const paid = w.fake.control.webhooks.deliver().find((entry) => JSON.parse(entry.rawBody).data.payout?.state === "paid")!;
+    const postingCount = w.ledger.postings.size;
+    w.store.failNext("transitionPayout");
+    assert.equal((await processPaymentWebhook(w.deps, paid)).httpStatus, 503);
+    assert.equal(w.store.payouts.get(payoutId)!.payoutRef, null);
+    assert.equal(w.ledger.postings.size, postingCount);
+    assert.equal((await processPaymentWebhook(w.deps, paid)).body["outcome"], "applied");
+    assert.equal(w.store.payouts.get(payoutId)!.state, "paid");
+    assert.equal(w.ledger.postings.size, postingCount + 1);
+  });
+
+  it("payout recovery rejects an invalid signature before binding the reference", async () => {
+    const { payoutId, delivery } = await lostPayoutResponse();
+    const original = structuredClone(w.store.payouts.get(payoutId));
+    const postingCount = w.ledger.postings.size;
+    const result = await processPaymentWebhook(w.deps, { ...delivery, rawBody: delivery.rawBody.replace('"pending"', '"paid"') });
+    assert.equal(result.httpStatus, 400);
+    assert.deepEqual(w.store.payouts.get(payoutId), original);
+    assert.equal(w.ledger.postings.size, postingCount);
+  });
+
+  it("payout recovery does not overwrite a competing reference binding", async () => {
+    const { payoutId, delivery } = await lostPayoutResponse();
+    const transition = w.store.transitionPayout.bind(w.store);
+    const postingCount = w.ledger.postings.size;
+    w.store.transitionPayout = async (id, from, patch) => {
+      w.store.payouts.set(payoutId, { ...w.store.payouts.get(payoutId)!, state: "requested", payoutRef: "competing-payout" });
+      w.store.transitionPayout = transition;
+      return transition(id, from, patch);
+    };
+    assert.equal((await processPaymentWebhook(w.deps, delivery)).httpStatus, 503);
+    assert.equal((await processPaymentWebhook(w.deps, delivery)).httpStatus, 503);
+    assert.equal(w.store.payouts.get(payoutId)!.payoutRef, "competing-payout");
+    assert.equal(w.ledger.postings.size, postingCount);
+  });
+
+  it("payout recovery recognises an accepted transfer even if an admin held the local row afterward", async () => {
+    const { payoutId, delivery, payoutRef } = await lostPayoutResponse();
+    await holdOrReleasePayout(w.deps, { payoutId, action: "hold", reason: "review pending", actorUserId: ADMIN });
+    assert.equal(rows((await executePlannedPayouts(w.deps, [payoutId])).body["results"])[0].result, "skipped_held");
+    assert.equal((await processPaymentWebhook(w.deps, delivery)).body["outcome"], "applied");
+    assert.equal(w.store.payouts.get(payoutId)!.payoutRef, payoutRef);
+    assert.equal(w.store.payouts.get(payoutId)!.state, "pending");
+  });
+});
+
 describe("monthly payouts: finalised, completed, verified; small balances carried forward", () => {
   async function completedAndFinalised(): Promise<void> {
     await paidBooking(w);

@@ -27,6 +27,9 @@
  * (re-asserted by 2470) and 0191 lay down.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { purgeDerivedMedia, type DerivativeErasureSource } from "./DerivedMediaLifecycleService.js";
+import { withMediaCleanup } from "./MediaCleanupTransport.js";
+import { validAssetId, validVersion } from "../../lib/media/adaptive/types.js";
 import { logger } from "../../lib/logger.js"; import { isFlagEnabled } from "../../lib/featureFlags.js";
 
 /** The subset of the request logger this service needs. */
@@ -271,21 +274,126 @@ export async function recoverStaleMediaProcessing(
   return recovered;
 }
 
-async function purgeStorage(sc: SupabaseClient, assetId: string, actorUserId: string): Promise<void> {
-  const { data: asset, error } = await sc.from("media_assets")
-    .select("storage_bucket, storage_path, thumbnail_path, owner_user_id")
-    .eq("id", assetId).maybeSingle();
-  if (error || !asset || asset.owner_user_id !== actorUserId) throw new Error("Media asset owner changed or asset is missing");
-  const paths = [...new Set([asset.storage_path, asset.thumbnail_path].filter((p): p is string => Boolean(p)))];
-  if (paths.length) {
-    const { error: storageError } = await sc.storage.from(asset.storage_bucket).remove(paths);
-    if (storageError) throw storageError;
+const PURGE_COLUMNS = "id, version, storage_bucket, storage_path, size_bytes, thumbnail_path, owner_user_id, media_type, deleted_at, moderation_status, purge_status, updated_at";
+const PURGE_RETRY_COOLDOWN_MS = 300000;
+const PURGE_STALE_PENDING_MS = 1800000;
+
+interface PurgeOptions {
+  signal?: AbortSignal;
+  operationTimeoutMs?: number;
+  timeoutMs?: number;
+  env?: NodeJS.ProcessEnv;
+  expectedVersion?: number;
+}
+
+interface PurgeSource extends DerivativeErasureSource {
+  owner_user_id: string;
+  thumbnail_path: string | null;
+  deleted_at: string;
+  updated_at: string;
+}
+
+function withdrawnPurgeSource(asset: any): asset is PurgeSource {
+  return asset && validAssetId(asset.id) && validAssetId(asset.owner_user_id) && validVersion(asset.version)
+    && typeof asset.deleted_at === "string" && Number.isFinite(Date.parse(asset.deleted_at))
+    && ["owner_deleted", "removed"].includes(asset.moderation_status) && ["pending", "failed"].includes(asset.purge_status)
+    && typeof asset.storage_bucket === "string" && asset.storage_bucket.length > 0
+    && typeof asset.storage_path === "string" && asset.storage_path.length > 0;
+}
+
+async function purgeStorage(client: SupabaseClient, assetId: string, actorUserId: string, options: PurgeOptions = {}): Promise<void> {
+  let claimedVersion: number | undefined;
+  try {
+    await withMediaCleanup(client, async (sc, signal) => {
+      const { data: asset, error } = await sc.from("media_assets").select(PURGE_COLUMNS).eq("id", assetId).maybeSingle();
+      if (error || !withdrawnPurgeSource(asset) || asset.id !== assetId || asset.owner_user_id !== actorUserId
+        || (options.expectedVersion !== undefined && asset.version !== options.expectedVersion)) throw new Error("Media purge source changed or unavailable");
+      claimedVersion = asset.version;
+      await purgeDerivedMedia(sc, asset, options.env);
+      signal.throwIfAborted();
+      const { data: current, error: currentError } = await sc.from("media_assets").select(PURGE_COLUMNS)
+        .eq("id", assetId).eq("version", claimedVersion).eq("owner_user_id", actorUserId).maybeSingle();
+      if (currentError || !withdrawnPurgeSource(current) || current.storage_bucket !== asset.storage_bucket
+        || current.storage_path !== asset.storage_path || current.thumbnail_path !== asset.thumbnail_path) throw new Error("Media purge source changed or unavailable");
+      const paths = [...new Set([asset.storage_path, asset.thumbnail_path].filter((path): path is string => typeof path === "string" && path.length > 0))];
+      const { error: storageError } = await sc.storage.from(asset.storage_bucket).remove(paths);
+      if (storageError) throw storageError;
+      signal.throwIfAborted();
+      const now = new Date().toISOString();
+      const { data: completed, error: completionError } = await sc.from("media_assets")
+        .update({ purge_status: "completed", purged_at: now, purge_error: null, updated_at: now })
+        .eq("id", assetId).eq("owner_user_id", actorUserId).eq("version", claimedVersion)
+        .eq("purge_status", asset.purge_status).eq("deleted_at", asset.deleted_at).select("id, purge_status").maybeSingle();
+      if (completionError || completed?.id !== assetId || completed.purge_status !== "completed") throw new Error("Media purge completion unconfirmed");
+      const { error: auditError } = await sc.from("media_asset_lifecycle_events").insert({ media_asset_id: assetId, actor_user_id: actorUserId,
+        event_type: "purge_succeeded", details: { objectCount: paths.length } });
+      if (auditError) throw auditError;
+    }, options);
+  } catch (error) {
+    if (claimedVersion !== undefined) {
+      try {
+        await withMediaCleanup(client, async sc => {
+          const message = error instanceof Error ? error.message : "Media purge failed";
+          const { data: failed, error: recordError } = await sc.from("media_assets")
+            .update({ purge_status: "failed", purge_error: message.slice(0, 2000), updated_at: new Date().toISOString() })
+            .eq("id", assetId).eq("owner_user_id", actorUserId).eq("version", claimedVersion)
+            .in("purge_status", ["pending", "failed"]).select("id").maybeSingle();
+          if (recordError) throw recordError;
+          if (failed?.id === assetId) {
+            const { error: auditError } = await sc.from("media_asset_lifecycle_events").insert({ media_asset_id: assetId, actor_user_id: actorUserId,
+              event_type: "purge_failed", details: { error: message.slice(0, 2000) } });
+            if (auditError) throw auditError;
+          }
+        }, { timeoutMs: 5000, operationTimeoutMs: options.operationTimeoutMs });
+      } catch (recordError) { logger.warn({ assetId, err: recordError }, "media purge failure could not be recorded"); }
+    }
+    throw error;
   }
-  const now = new Date().toISOString();
-  const { error: completionError } = await sc.from("media_assets").update({ purge_status: "completed", purged_at: now, purge_error: null, updated_at: now }).eq("id", assetId);
-  if (completionError) throw completionError;
-  const { error: auditError } = await sc.from("media_asset_lifecycle_events").insert({ media_asset_id: assetId, actor_user_id: actorUserId, event_type: "purge_succeeded", details: { objectCount: paths.length } });
-  if (auditError) throw auditError;
+}
+
+export async function purgeWithdrawnAccountMedia(client: SupabaseClient, assetId: string, ownerUserId: string,
+  options: PurgeOptions & { expectedVersion: number }): Promise<void> {
+  if (!validAssetId(assetId) || !validAssetId(ownerUserId) || !validVersion(options.expectedVersion)) throw new Error("Invalid account Media purge identity");
+  await purgeStorage(client, assetId, ownerUserId, options);
+}
+
+export async function retryFailedMediaPurges(client: SupabaseClient, options: PurgeOptions & { limit?: number } = {}) {
+  const limit = options.limit ?? 10;
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) throw new Error("Invalid purge retry bound");
+  return withMediaCleanup(client, async (sc, signal) => {
+    const result = { attempted: 0, completed: 0, failed: 0, skipped: 0 };
+    const candidates: PurgeSource[] = [];
+    for (const status of ["failed", "pending"]) {
+      signal.throwIfAborted();
+      const cutoff = new Date(Date.now() - (status === "failed" ? PURGE_RETRY_COOLDOWN_MS : PURGE_STALE_PENDING_MS)).toISOString();
+      const { data: rows, error } = await sc.from("media_assets").select(PURGE_COLUMNS)
+        .eq("purge_status", status).lte("updated_at", cutoff).not("deleted_at", "is", null)
+        .order("updated_at", { ascending: true }).order("id", { ascending: true }).limit(limit);
+      if (error || !Array.isArray(rows)) throw new Error("Media purge retry state unavailable");
+      for (const row of rows) {
+        if (!withdrawnPurgeSource(row)) throw new Error("Invalid media purge retry source");
+        candidates.push(row);
+      }
+    }
+    candidates.sort((left, right) => left.updated_at.localeCompare(right.updated_at) || left.id.localeCompare(right.id));
+    for (const row of candidates.slice(0, limit)) {
+      signal.throwIfAborted();
+      const { data: claim, error: claimError } = await sc.from("media_assets")
+        .update({ purge_status: "pending", updated_at: new Date(Date.now()).toISOString() })
+        .eq("id", row.id).eq("owner_user_id", row.owner_user_id).eq("version", row.version)
+        .eq("purge_status", row.purge_status).eq("updated_at", row.updated_at).select("id, version, purge_status").maybeSingle();
+      if (claimError) throw new Error("Media purge retry claim unconfirmed");
+      if (!claim) { result.skipped++; continue; }
+      if (claim.id !== row.id || !validVersion(claim.version) || claim.version <= row.version || claim.purge_status !== "pending") throw new Error("Invalid media purge retry claim");
+      result.attempted++;
+      try {
+        await purgeStorage(client, row.id, row.owner_user_id, { ...options, signal, expectedVersion: claim.version });
+        result.completed++;
+      } catch { result.failed++; }
+    }
+    signal.throwIfAborted();
+    return result;
+  }, { ...options, timeoutMs: options.timeoutMs ?? 120000 });
 }
 
 /**
@@ -336,26 +444,6 @@ export async function softDeleteMediaAsset(
   // storage call failed would put the object back in front of viewers, which is
   // the one outcome the owner asked not to happen.
   const purge = purgeStorage(sc, assetId, actorUserId).catch(async (purgeError) => {
-    const message = purgeError instanceof Error ? purgeError.message : String(purgeError);
-    const failedAt = new Date().toISOString();
-    try {
-      await sc.from("media_assets").update({
-        purge_status: "failed",
-        purge_error: message.slice(0, 2000),
-        updated_at: failedAt,
-      }).eq("id", assetId);
-      await sc.from("media_asset_lifecycle_events").insert({
-        media_asset_id: assetId,
-        actor_user_id: actorUserId,
-        event_type: "purge_failed",
-        details: { error: message.slice(0, 2000) },
-      });
-    } catch (recordError) {
-      (opts.logger ?? logger).warn(
-        { assetId, err: recordError },
-        "media purge failure could not be recorded",
-      );
-    }
     // Swallowed on purpose: the returned promise is documented as never
     // rejecting so an ignoring caller cannot produce an unhandled rejection.
     (opts.logger ?? logger).warn({ assetId, err: purgeError }, "media asset storage purge failed");

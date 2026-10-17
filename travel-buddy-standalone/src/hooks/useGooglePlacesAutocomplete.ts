@@ -9,7 +9,7 @@
  * fetchGooglePlaceDetails() can be called on selection to enrich a Google Place
  * with its lat/lng (autocomplete results omit coordinates).
  */
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import type { Place } from '../lib/location/placeTypes.ts';
 
 function apiBase(): string {
@@ -49,22 +49,19 @@ export function useGooglePlacesAutocomplete(
 ): UseGooglePlacesResult {
   const [places, setPlaces] = useState<Place[]>([]);
   const [loading, setLoading] = useState(false);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    if (timerRef.current) clearTimeout(timerRef.current);
     if (!query.trim() || query.trim().length < 2) {
       setPlaces([]);
       setLoading(false);
       return;
     }
 
+    let active = true;
+    const controller = new AbortController();
+    setPlaces([]);
     setLoading(true);
-    timerRef.current = setTimeout(async () => {
-      if (abortRef.current) abortRef.current.abort();
-      const ctrl = new AbortController();
-      abortRef.current = ctrl;
+    const timer = setTimeout(async () => {
 
       try {
         const params = new URLSearchParams({ input: query.trim() });
@@ -72,22 +69,24 @@ export function useGooglePlacesAutocomplete(
         if (opts?.countryCode) params.set('countryCode', opts.countryCode);
 
         const res = await fetch(`${apiBase()}/api/places/google-autocomplete?${params}`, {
-          signal: ctrl.signal,
+          signal: controller.signal,
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const body = await res.json();
+        if (!active) return;
         setPlaces((body.places as Place[]) ?? []);
-      } catch (e: any) {
-        if (e?.name === 'AbortError') return;
+      } catch (error) {
+        if (!active || (typeof error === 'object' && error !== null && 'name' in error && error.name === 'AbortError')) return;
         setPlaces([]);
       } finally {
-        setLoading(false);
+        if (active) setLoading(false);
       }
     }, DEBOUNCE_MS);
 
     return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-      if (abortRef.current) abortRef.current.abort();
+      active = false;
+      clearTimeout(timer);
+      controller.abort();
     };
   }, [query, opts?.type, opts?.countryCode]); // eslint-disable-line react-hooks/exhaustive-deps
 

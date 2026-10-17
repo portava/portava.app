@@ -17,7 +17,8 @@ import { sharedSuggestionCache } from '../suggestionCache.ts';
 import { SDK_CAPABILITIES } from '../../contexts/clientCapabilities.ts';
 import { INPUT_CONTEXTS } from '../../types/inputContext.ts';
 import { _seedPolicyForTests } from '../policyStore.ts';
-import type { InputSuggestion, SuggestRequest } from '../../types/inputSuggestion.ts';
+import type { InputSuggestion, SuggestRequest, SuggestResult } from '../../types/inputSuggestion.ts';
+import { setDiscoveryViewerFromSession } from '../../../../services/discoveryViewerScope.ts';
 
 _seedPolicyForTests(INPUT_CONTEXTS, {
   neighborhood_picker: { privacyClass: 'public', zeroStateAssistance: true, offlinePolicy: 'cached_local' },
@@ -34,7 +35,32 @@ function recorder(answer: Record<string, unknown> = { ok: true, requestId: 'q', 
   return { calls, request };
 }
 
-beforeEach(() => sharedSuggestionCache.clear());
+beforeEach(() => {
+  setDiscoveryViewerFromSession('account-a');
+  sharedSuggestionCache.clear();
+});
+
+for (const nextAccount of ['account-b', 'account-a']) {
+  test(`a late prefetch cannot refill the cache after sign-out and sign-in as ${nextAccount}`, async () => {
+    let resolve!: (result: SuggestResult) => void;
+    const pending = prefetchZeroState(HOOD, () => new Promise((complete) => { resolve = complete; }));
+    setDiscoveryViewerFromSession(null);
+    setDiscoveryViewerFromSession(nextAccount);
+    resolve({ ok: true, requestId: 'old', policyVersion: 'v', suggestions: [ROW] });
+    assert.equal(await pending, 'failed');
+    assert.equal(sharedSuggestionCache.size, 0);
+    assert.equal(await prefetchZeroState(HOOD, recorder().request), 'warmed');
+  });
+}
+
+test('a same-account token refresh preserves a pending prefetch', async () => {
+  let resolve!: (result: SuggestResult) => void;
+  const pending = prefetchZeroState(HOOD, () => new Promise((complete) => { resolve = complete; }));
+  setDiscoveryViewerFromSession('account-a');
+  resolve({ ok: true, requestId: 'current', policyVersion: 'v', suggestions: [ROW] });
+  assert.equal(await pending, 'warmed');
+  assert.equal(sharedSuggestionCache.size, 1);
+});
 
 test('warms the field’s empty-text answer under the key its hook reads', async () => {
   const { calls, request } = recorder();

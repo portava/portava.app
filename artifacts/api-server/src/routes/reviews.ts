@@ -26,6 +26,7 @@ import { invalidateDiscoveryCacheForOsmId } from "../lib/discoveryPersistentCach
 import { evictOsmPlaceFromL1Cache } from "./discovery.js";
 
 import { requireAdmin } from "../lib/requireAdmin.js";
+import { checkRateLimit } from "../lib/rateLimit.js";
 
 const router = Router();
 
@@ -910,6 +911,94 @@ router.post("/reviews/:id/report", asyncHandler(async (req, res) => {
   }
 
   res.status(201).json({ ok: true });
+}));
+
+const reportedRemovalId = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i).transform(value => value.toLowerCase());
+const reportedRemovalToken = z.string().regex(/^[0-9a-f]{64}$/);
+const reportedRemovalReason = z.string().trim().refine(value => Array.from(value).length > 0 && Array.from(value).length <= 1000);
+const reportedRemovalBody = z.object({
+  report_id: reportedRemovalId,
+  reason: reportedRemovalReason,
+  expected_review_token: reportedRemovalToken,
+  expected_report_token: reportedRemovalToken,
+}).strict();
+const reportedRemovalContext = z.object({
+  contractVersion: z.literal(1), reviewId: reportedRemovalId, reportId: reportedRemovalId,
+  reportStatus: z.enum(["open", "reviewing"]), reviewToken: reportedRemovalToken, reportToken: reportedRemovalToken,
+  review: z.object({ rating: z.number().int().min(1).max(5), body: z.string().nullable(), state: z.enum(["published", "hidden"]),
+    entityType: z.enum(["trip", "rent_buddy_booking", "place"]), entityId: reportedRemovalId }),
+});
+const reportedRemovalReceipt = z.object({
+  ok: z.literal(true), contractVersion: z.literal(1), operationId: reportedRemovalId, reviewId: reportedRemovalId,
+  reportId: reportedRemovalId, auditId: reportedRemovalId, stateAtCommit: z.literal("removed"), replayed: z.boolean(),
+  committedAt: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/).refine(value => Number.isFinite(Date.parse(value))),
+  reviewedEntityType: z.enum(["trip", "rent_buddy_booking", "place"]), reviewedEntityId: reportedRemovalId,
+});
+
+function reportedRemovalError(res: Parameters<typeof sendError>[0], code?: string): void {
+  if (code === "PT400") sendError(res, "invalid_payload", "Invalid removal intent");
+  else if (code === "PT403") sendError(res, "forbidden", "Admin role required");
+  else if (code === "PT404") sendError(res, "not_found", "Review or report unavailable");
+  else if (code === "PT409") sendError(res, "conflict", "Review context or operation intent changed; refresh before confirming again");
+  else sendError(res, "degraded_unavailable", "Audited review removal unavailable; a sent operation may have committed. Retry the same operation to recover its result.");
+}
+
+router.get("/reviews/:id/reported-removal-context", asyncHandler(async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const reviewId = reportedRemovalId.safeParse(req.params.id);
+  const reportId = reportedRemovalId.safeParse(req.query.report_id);
+  if (!reviewId.success || !reportId.success) { sendError(res, "invalid_payload", "Valid review and report IDs required"); return; }
+  if (!checkRateLimit("reported-review-context", admin.userId, 60, 60_000).allowed) {
+    sendError(res, "rate_limited", "Too many review context requests"); return;
+  }
+  const service = getServiceClient();
+  if (!service) { reportedRemovalError(res); return; }
+  try {
+    const { data, error } = await service.rpc("get_reported_review_removal_context", {
+      p_admin_id: admin.userId, p_review_id: reviewId.data, p_report_id: reportId.data,
+    }).abortSignal(AbortSignal.timeout(6000));
+    if (error) { reportedRemovalError(res, error.code); return; }
+    const context = reportedRemovalContext.safeParse(data);
+    if (!context.success || context.data.reviewId !== reviewId.data || context.data.reportId !== reportId.data) {
+      reportedRemovalError(res); return;
+    }
+    res.setHeader("Cache-Control", "no-store");
+    res.json(context.data);
+  } catch { reportedRemovalError(res); }
+}));
+
+router.post("/reviews/:id/reported-removal", asyncHandler(async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const reviewId = reportedRemovalId.safeParse(req.params.id);
+  const operationId = reportedRemovalId.safeParse(req.headers["idempotency-key"]);
+  const input = reportedRemovalBody.safeParse(req.body);
+  const rawHeaders = z.array(z.string()).optional().safeParse(req.rawHeaders);
+  const ambiguousKey = !rawHeaders.success || (rawHeaders.data !== undefined
+    && rawHeaders.data.filter((value, index) => index % 2 === 0 && value.toLowerCase() === "idempotency-key").length !== 1);
+  if (!reviewId.success || !operationId.success || !input.success || ambiguousKey) { sendError(res, "invalid_payload", "Valid removal intent and one Idempotency-Key required"); return; }
+  if (!checkRateLimit("reported-review-removal", admin.userId, 60, 60_000).allowed) {
+    sendError(res, "rate_limited", "Too many review removal requests"); return;
+  }
+  const service = getServiceClient();
+  if (!service) { reportedRemovalError(res); return; }
+  try {
+    const { data, error } = await service.rpc("remove_reported_review", {
+      p_admin_id: admin.userId, p_review_id: reviewId.data, p_report_id: input.data.report_id,
+      p_operation_id: operationId.data, p_reason: input.data.reason,
+      p_expected_review_token: input.data.expected_review_token, p_expected_report_token: input.data.expected_report_token,
+    }).abortSignal(AbortSignal.timeout(6000));
+    if (error) { reportedRemovalError(res, error.code); return; }
+    const receipt = reportedRemovalReceipt.safeParse(data);
+    if (!receipt.success || receipt.data.reviewId !== reviewId.data || receipt.data.reportId !== input.data.report_id || receipt.data.operationId !== operationId.data) {
+      reportedRemovalError(res); return;
+    }
+    const { reviewedEntityType, reviewedEntityId, ...result } = receipt.data;
+    if (reviewedEntityType === "place") void maybeInvalidateDiscoveryVoteCacheForPlace(service, reviewedEntityId);
+    res.setHeader("Cache-Control", "no-store");
+    res.json(result);
+  } catch { reportedRemovalError(res); }
 }));
 
 export default router;
