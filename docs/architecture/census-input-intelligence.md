@@ -8984,3 +8984,97 @@ Shared fixture: the census-discovery §70 golden (`artifacts/api-server/src/test
 
 Of 373 rows: **319 BUILT-AND-CORRECT, 48 BUILT-BUT-WRONG, 2 NOT-BUILT, 4 CANNOT-VERIFY**. CORRECT is now
 319 / 373 = 85.5 % after G109 and G176 were fixed on the serve path and moved W → C.
+
+## Row moves — 2026-10-17 build and fix (wave 5, input follow-ups)
+
+Five briefs, one of which was already done. **No row changes bucket.** What changed is evidence, and in two
+places the evidence is a test that has not run yet, which is stated where it is used.
+
+**The telemetry sink was already attached.** The brief said `installInputTelemetry()` had no caller. It has had
+one since §18 (2026-09-21): `app/_layout.tsx` mounts `InputTelemetrySetup`
+(`travel-buddy-standalone/app/_layout.tsx:406#<InputTelemetrySetup />`), which calls the installer
+(`travel-buddy-standalone/app/_layout.tsx:214#const handle = installInputTelemetry({`). The installer attaches
+the sink behind the per-name outcome gate (`travel-buddy-standalone/src/platform/input-assistance/services/installInputTelemetry.ts:125#export function installInputTelemetry`).
+The premise came from G263's own cell, which was never restated. Nothing was built for it. Two code comments that
+still said the line was missing were corrected, line-neutrally (`inputTelemetry.ts`, `telemetryTransport.ts`).
+
+**Task outcomes are reported from the two creation screens.** A screen now records which Input field served
+it when it accepts that field's suggestion, and reports once per field when the task's write answers
+(`travel-buddy-standalone/src/platform/input-assistance/services/servedTaskOutcome.ts:111#export function reportServedTask(`).
+Every edit to the two screens is line-neutral, so no citation into either file moved.
+
+**The live-DB suite for G306 exists and has not run.** This environment has no `psql` and no PostGIS harness.
+The suite skips without `LOCAL_DB_URL`, exactly as its siblings do, and is registered beside
+`wallTelemetryRetention30Days.db.test.ts`. So it runs on the CI live-DB tier, where `scripts/local-db/run-tests.sh`
+refuses a skip. A dry run of the same chain against a capturing client (not committed) gave the three rows the
+suite expects: HTTP 200, `accepted: 3`, props rebuilt from the allow-list. That leaves PostgreSQL itself as the one
+untested link. No row moves on a test that has not run.
+
+**The Map search client coarsens the position.** It sent the sheet's device fix to the suggest route at full
+precision. It now uses the suggest body's own helper (`travel-buddy-standalone/src/platform/input-assistance/services/suggestBody.ts:101#export function suggestOrigin(`).
+
+**No engine was migrated.** The ratchet the brief asked for already exists and is enforced. Every remaining
+engine waits on a decision this lane cannot make; the list follows the table.
+
+| row | was | now | evidence |
+| --- | --- | --- | --- |
+| G263 `services/inputTelemetry.ts` | W | **W** | Restated. The cell's central fact ("`setTelemetrySink` is still called from no non-test file") has been false since §18. The app installs the sink at boot (`travel-buddy-standalone/app/_layout.tsx:214#const handle = installInputTelemetry({`, mounted at `travel-buddy-standalone/app/_layout.tsx:406#<InputTelemetrySetup />`). Re-verified this wave: `travel-buddy-standalone/src/platform/input-assistance/services/__tests__/installInputTelemetry.test.ts:252#test('§44/G263: app/_layout.tsx really installs the sink at boot'`, 12/12. Deleting the mount turns 1 of 12 red. Not attaching the sink inside the installer turns 7 of 12 red. Both were restored byte-identically (sha-verified). **Still `W`:** no row from production has been observed in `input_assistance_telemetry_events` (§36.2, §37.3). |
+| G306 Measure usefulness without unnecessarily capturing raw private text | W | **W** | The first TURNS-GREEN clause now has its suite, and **it has not run**. It drives the app's own emitter, installer and batcher. The poster makes `telemetryTransport.ts`'s request. The server side is the real router and `requireUser`, writing into migration 2950's table through `creatorLedgerPsqlClient`, and psql reads the rows back (`artifacts/api-server/src/test/db/inputAssistanceTelemetryLive.db.test.ts:121#it("TL-1 — an impression through the installed sink is stored, and read back"`). It also asserts that raw text never reaches a row, that no column carries the account id, and that an event emitted before install or after dispose stores nothing. It skips without a database the way its siblings do (`artifacts/api-server/src/test/db/inputAssistanceTelemetryLive.db.test.ts:95#{ skip: !HAVE_DB && "no LOCAL_DB_URL" }`). **CI-only and unrun.** Stays `W` until it is green on the live-DB tier. |
+| G355 Telemetry — no prohibited raw private-text capture; action/result linkage works | W | **W** | The linkage half now has an assertion against stored rows, on CI only. The impression and the selection that followed it carry the same serve `request_id` in the table (`artifacts/api-server/src/test/db/inputAssistanceTelemetryLive.db.test.ts:139#it("TL-2 — the selection that followed shares the serve's request id: the §44 join holds in the stored rows"`). It has not run here (see G306). `action_completed` has its caller (G319), and `downstream_task_completed` now has three (G320). **Still `W`:** no production row exists to join. |
+| G320 `downstream_task_completed` | W | **W** | There are two more callers, and each screen now keeps the field that served its task. **Create trip** reports `trip.destination` with the bound canonical city credited, plus an accepted AI title that is still the title at create (`travel-buddy-standalone/src/platform/input-assistance/services/servedTaskOutcome.ts:77#export function tripCreationServed(`, `travel-buddy-standalone/app/trip/new.tsx:279#reportServedTask(served, 'trip_created', true)`). **Create event** reports a location picked from `event.location` on that screen and a structured value applied from `event.title`. Neither of those credits an entity, because neither field keeps per-user memory (`travel-buddy-standalone/src/platform/input-assistance/services/servedTaskOutcome.ts:98#export function eventCreationServed(`, `travel-buddy-standalone/app/events/create/index.tsx:621#reportServedTask(served, 'event_created', true)`). A refused or failed write reports `ok: false` and credits nothing. **Not reported:** multi-city stops (`DestinationListEditor`'s picker passes no `assistContext`), a destination from the description pre-fill, a rewritten AI title, and a location that came with a draft. Proven through the real reporter, the real consent gate and a sink spy: `travel-buddy-standalone/src/components/__tests__/TripCreate.taskOutcome.component.test.tsx:156#it('T1: a picked destination and a created trip — reported once, the canonical city credited'` (6/6), `travel-buddy-standalone/app/events/__tests__/create.taskOutcome.component.test.tsx:259#test('E1: a picked location and a published event — reported once for event.location, nothing credited'` (5/5), and the helper suite (9/9). Red first: 4 of 6 and 3 of 5 failed against the unchanged screens. Mutants: 4 trip, 4 event and 6 helper, all red. One helper mutant survived first, and S3 was strengthened until it failed. The Telegraph composer's call belongs to another lane and is not made. **Still `W`:** 3780 is not in the production ledger, the disclosure awaits approval, and `input_outcome_learning_enabled` is seeded FALSE. Until all three change, the reporter is a no-op. |
+| G176 distance band and nearby ranking | C | **C** | A second sender is now under the row's rule. The cell's "the device fix never leaves the device" held for `buildSuggestBody`, but not for the Map search client, which posted the sheet's position to the same route at full precision. It now uses the same helper: 3 decimals, both halves or neither (`travel-buddy-standalone/src/platform/input-assistance/search/mapSearch.ts:65#const origin = suggestOrigin(opts.lat, opts.lng);`). `travel-buddy-standalone/src/platform/input-assistance/search/__tests__/mapSearch.test.ts:57#test('B3: the device fix leaves the device at 3 decimals (~110 m), the same rule as the suggest body'` and B4 were red first. The sheet's transport test now pins a full-precision fix to `1.352`/`103.82` on the wire. Mutants: 2 node and 1 component, all red. |
+| G6 One platform layer; feature teams must not build independent autocomplete engines | W | **W** | No move. Thirteen engines, ratcheted at thirteen, re-verified this wave: 8/8, and a planted debounce over `fetch` with no abort turns rule 1 red. None was migrated (see the list below). |
+| G16 A single cross-app service, not per-screen implementation | W | **W** | No move, for the same reason as G6. Map search is already served by `/input-assistance/suggest`. The other per-screen engines in this lane's files have no gateway context that serves what they search (see the list below). |
+| G18 Every meaningful text field must register an InputContext | W | **W** | No move. There are still 26 records: 14 mounted and 12 registered but unmounted. One of the twelve, `event.description`, sits on a screen in this lane's files. Its context's only assistance is AI writing, so mounting it means offering opt-in AI drafts for a public event description. That is a product decision (G141 asks the same question for captions), not a migration, so it was not done. The other eleven are on other lanes' screens or on no screen. |
+| G359 Do not build a new autocomplete … until the platform has been evaluated | C | **C** | Re-verified. The ratchet the brief asked for already exists and runs in the mobile node suite (`travel-buddy-standalone/src/platform/input-assistance/services/__tests__/noIndependentEngines.test.ts:97#const ENGINE_CEILING = 13;`). It forbids a new engine anywhere in the client and is shrink-only. No second ratchet was written. It would have been a weaker copy of this one. |
+
+**Why no engine moved (G6, G16, G359's ceiling).** Each of the thirteen, with what it is waiting on:
+
+- `src/components/map/MapSearchSheet.tsx` already asks the gateway (`map.search`, served as a search page). What
+  is left in the sheet is the request lifecycle. The shared hook cannot carry it without a change to every field
+  it serves. It does not parse the saved lane's refusal (`laneRefusals`). It would also apply `global_search`'s
+  debounce, exact-text cache and offline tier to a search page. Moving the loop into `platform/input-assistance/`
+  unchanged would shrink the ratchet without meeting G6's criterion, so it was not done.
+- `src/components/ShareSheet.tsx`, `src/components/DiscoveryShareSheet.tsx` and the invite search in
+  `app/events/create/index.tsx` look up any traveller by name or handle, with avatars. The only person context in
+  §5's 29 is `telegraph_recipient`. It serves the viewer's own graph only and projects no avatar
+  (`artifacts/api-server/src/lib/inputAssistance/socialIdentity.ts:187#export async function resolveRecipientSuggestions(`).
+  Moving these three onto it would narrow who can be shared with or invited. That needs a context decision: a
+  30th context, or a ruling that sharing and inviting are graph-only.
+- `src/hooks/useGooglePlacesAutocomplete.ts` and `src/hooks/usePlaceSearch.ts` are the device-side provider lane
+  under `GlobalPlacePicker`. Moving that lane to the server is OD-INPUT-6's call (G222).
+- `src/hooks/useSearchSuggestions.ts` is §38's gated fallback
+  (`travel-buddy-standalone/src/hooks/useGlobalSearchSuggestions.ts:157#const legacyEnabled`). Retiring it
+  changes what global search shows during a gateway outage.
+- `app/search.tsx`: its live results loop would need a gateway search page for `discovery.search`, with tabs.
+  The server does not serve one.
+- Other lanes' files: `src/components/MentionInput.tsx` and
+  `src/features/telegraph/components/TelegraphSearchScreen.tsx` (Telegraph),
+  `src/features/media/components/MediaActionPanels.tsx` (media),
+  `src/components/layover/LayoverModeSheet.tsx` (layover), and `app/discover.tsx`.
+
+**The twelve unmounted fields (G18).** `event.description` is held for the product decision above. The other
+eleven, by owner:
+
+| owner | fields |
+| --- | --- |
+| Trips | `plan.title`, `trip.stop.place` |
+| Compass / Map | `compass.commandbar`, `map.askCompass` |
+| Media / posts | `post.caption` |
+| Passport | `passport.homebase` |
+| Rent-a-Buddy | `buddy.service_area` |
+| Meetups | `meetup.location` |
+| No screen | `geo.country`, `geo.place`, `geo.address` |
+
+### Headline, restated from the rows (wave 5, input follow-ups)
+
+| bucket | wave-4 verification fixes | now |
+| --- | ---: | ---: |
+| BUILT-AND-CORRECT | 319 | 319 |
+| BUILT-BUT-WRONG | 48 | 48 |
+| NOT-BUILT | 2 | 2 |
+| CANNOT-VERIFY | 4 | 4 |
+| total | 373 | 373 |
+
+Of 373 rows: **319 BUILT-AND-CORRECT, 48 BUILT-BUT-WRONG, 2 NOT-BUILT, 4 CANNOT-VERIFY**. CORRECT is unchanged
+at 319 / 373 = 85.5 %. No row changes bucket.

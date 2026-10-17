@@ -24,7 +24,7 @@ import type { CanonicalPlaceBinding } from '../../src/platform/input-assistance/
 // deduped entity kind, so this surfaces validation only. Degrades to nothing when
 // the (parallel-PR) endpoint is absent; never blocks or changes submit.
 import { useCreationAssistance } from '../../src/hooks/useCreationAssistance.ts';
-import { CreationAssist, AiWritingAssist, CREATION_FIELD_IDS } from '../../src/platform/input-assistance';
+import { CreationAssist, AiWritingAssist, CREATION_FIELD_IDS, reportServedTask, tripCreationServed } from '../../src/platform/input-assistance';
 // Global Input Intelligence — Phase 7 (Compass + AI). OPT-IN, provenance-marked
 // AI title suggestions (§22): nothing is requested until the traveler taps
 // "Suggest with AI", nothing is auto-applied (tap-to-insert into the editable
@@ -76,7 +76,7 @@ export default function NewTrip() {
 
   // §22 — OPT-IN AI title suggestions. Off until the traveler taps the button;
   // the coarse (city-level) draft feeds the model, never coordinates (§29).
-  const [titleAiOptIn, setTitleAiOptIn] = useState(false);
+  const [titleAiOptIn, setTitleAiOptIn] = useState(false); const aiTitleInserted = useRef<string | null>(null); // §45 G320: the AI proposal accepted into the title
   const titleAi = useAiWritingAssist({
     context: 'trip_title',
     fieldId: CREATION_FIELD_IDS.tripTitle,
@@ -253,7 +253,7 @@ export default function NewTrip() {
 
     if (!live) { setError('Sign in to create a trip.'); saveLock.current = false; return; }
     setBusy(true);
-
+    const served = tripCreationServed({ multiCity, binding: destBinding, acceptedAiTitle: aiTitleInserted.current, title }); let outcomeReported = false; // §45 G320: the fields that served this trip
     try {
       // Use first multi-city destination as the primary, or the single place
       const primaryCity = multiCity
@@ -275,8 +275,8 @@ export default function NewTrip() {
         coverImageWidth:  coverImageDims?.width  ?? undefined,
         coverImageHeight: coverImageDims?.height ?? undefined,
       });
-      if (!trip) { setError('Could not create the trip. Try again.'); return; }
-
+      if (!trip) { setError('Could not create the trip. Try again.'); outcomeReported = true; reportServedTask(served, 'trip_created', false); return; }
+      outcomeReported = true; reportServedTask(served, 'trip_created', true); // §45 G320: the trip exists from here on (a no-op without outcome-learning consent)
       // Persist ALL multi-city destinations to trip_destinations (including stop 0).
       // The primary trip fields (destination_city/country) hold a copy for legacy
       // single-destination display; the canonical ordered list lives in trip_destinations
@@ -317,7 +317,7 @@ export default function NewTrip() {
         );
       }
     } catch (e: any) {
-      setError(e?.message ?? 'Something went wrong.');
+      setError(e?.message ?? 'Something went wrong.'); if (!outcomeReported) reportServedTask(served, 'trip_created', false);
     } finally {
       setBusy(false);
       saveLock.current = false;
@@ -378,7 +378,7 @@ export default function NewTrip() {
               proposals={titleAi.proposals}
               loading={titleAi.loading}
               heading="AI title ideas"
-              onInsert={(p) => setTitle(p.insertText)}
+              onInsert={(p) => { aiTitleInserted.current = p.insertText; setTitle(p.insertText); }}
             />
           ) : (
             <Pressable

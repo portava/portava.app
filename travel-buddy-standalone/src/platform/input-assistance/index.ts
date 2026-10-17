@@ -410,3 +410,17 @@ export {
   type VoiceIntakeDeps,
   type VoiceSubmission,
 } from './voice/voiceIntake.ts';
+// §45 / OD-INPUT-1 (census G320): the fields that served a task, reported when
+// the task's write answers. A no-op without outcome-learning consent.
+export {
+  reportServedTask,
+  tripCreationServed,
+  eventCreationServed,
+  tripDestinationServed,
+  servedWithoutCredit,
+  TRIP_DESTINATION_FIELD,
+  TRIP_TITLE_FIELD,
+  EVENT_LOCATION_FIELD,
+  EVENT_TITLE_FIELD,
+  type ServedField,
+} from './services/servedTaskOutcome.ts';
