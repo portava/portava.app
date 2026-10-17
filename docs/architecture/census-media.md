@@ -17403,3 +17403,71 @@ hosted database.
 | CANNOT-VERIFY | 0 | **0** |
 | CONSTRUCTED% | 100.0 % | **100.0 %** (450 / 450) |
 | CORRECT% raw | 92.2 % | **92.2 %** (415 / 450) |
+
+## 55. Row moves — 2026-10-17 build and fix (wave 5, stamps/memory follow-ups): MD385 gets its client entry, and §54.3 is corrected. NO ROW MOVES
+
+Measured on branch `claude/wave4-build-20261017` on 2026-10-17, against the working tree. `head_commit` is not
+re-declared. Every row not named here is unchanged.
+
+### 55.1 What is built for MD385 on the client
+
+- **The service.** `saveOwnPostMediaToMemory` calls `POST /memories/:id/items/from-post` with the post id and the
+  media INDEX. The client never sends a URL
+  (`travel-buddy-standalone/src/services/memoryFromPost.ts:103#body: JSON.stringify({ postId: input.postId, mediaIndex`).
+  It carries a §19 idempotency key. Every server answer becomes a sentence: switched off, not found (the server's
+  one answer for not-yours, missing and deleted), not your Memory, no such media, already in the Memory,
+  unavailable, offline, failed. Only the last three offer Try again. `saveOwnPostToMemory` copies every media item
+  of the post in order, stops at once on a final refusal, and reports how many made it when it stops part-way.
+- **The sheet.** The person picks one of their OWN Memories or makes a new private one titled from the post. A list
+  that could not load says so, with Try again, and the new-Memory path still works. A copy that stopped part-way
+  says "2 of 3 saved", never "saved" (`travel-buddy-standalone/src/features/memories/SaveOwnPostToMemorySheet.tsx`).
+- **The entry.** The post detail overflow offers "Save to a Memory" only on the viewer's own post with media, and
+  only while `memory_from_own_media_enabled` is on. The flag is read through `FeatureFlagsContext` like every
+  other client flag, and it is seeded FALSE, so nothing shows
+  (`travel-buddy-standalone/app/post/[id].tsx:302#const { isEnabled } = useFeatureFlags();`). The server remains
+  the guard. The screen only decides what to offer.
+- **Tested:** 29 client cases in three suites
+  (`travel-buddy-standalone/app/post/__tests__/PostDetail.saveToMemory.component.test.tsx:98#flag OFF (the seeded default): nothing shows`,
+  `travel-buddy-standalone/src/features/memories/__tests__/SaveOwnPostToMemory.component.test.tsx:122#a copy that stopped part-way says how many made it`,
+  `travel-buddy-standalone/src/services/__tests__/memoryFromPost.component.test.ts:34#names the post and the media index`).
+  Red at HEAD's screen: the flag-on own-post case fails. 12 mutants, each restored and checked by sha256, all
+  killed. They cover the flag ignored, the author ignored, the media ignored, a URL sent, feature_disabled read
+  as forbidden, a copy that continues past a refusal, a partial copy reported as saved, another person's Memories
+  offered, Try again offered on a final refusal, a new Memory that is not private, a failed new Memory that still
+  copies, and a 409 counted as a failure. These are jest runs. They are not evidence about a device.
+
+### 55.2 Row moves
+
+| ID | Was | Now | Evidence |
+| --- | --- | --- | --- |
+| MD385 | **W** | **W** | **The client entry §54.2 said was missing is built (§55.1), and the verdict does not move.** D-26j's own-media scope is now offered only on one's own post and is still enforced by the route and by 3999's trigger. **Why W, not C:** 3999 is applied nowhere (A.2). `memory_from_own_media_enabled` is seeded FALSE, so the entry shows nowhere. MD385-Q1 (whether a soft delete or a moderation hold on the source withdraws the copy) is open. The lead registers the server test file, as §54.2 says. |
+
+### 55.3 Correction to §54.3: the image ladder HAS a production producer
+
+§54.3 said `enqueueConfiguredImageVariants` *"is called only by tests. No upload path enqueues an image."* That was
+false when it was written. `POST /api/media/upload` runs `runMediaVendorIngest` once the canonical row is recorded
+(`artifacts/api-server/src/routes/posts.ts:286#runMediaVendorIngest(sc,`). That stage calls
+`enqueueConfiguredImageVariants` for an image whose source generation is approved
+(`artifacts/api-server/src/lib/media/vendors/mediaVendorStages.ts:183#await enqueueConfiguredImageVariants(sc`). With
+the moderation stage off, that is the upload's own version. The call came in with `e1e097cfe`, an ancestor of the
+commit that recorded §54.3. It is fire-and-forget, and it reaches only uploads made while the switch and both 3980
+flags are on.
+
+This pass also enqueues where a Memory photo is STORED. That covers an older upload, a post photo copied in by
+MD385, and an upload whose own enqueue failed. It sits behind the same switch and flags, and it is idempotent per
+asset generation (census-highlights-memories H182, §W5F.1). No verdict here moves on either: the rows that grade
+the ladder are W on 3980 being applied nowhere, and that is unchanged.
+
+### 55.4 Headline, restated from the rows
+
+`check:census-integrity` recounted after this section.
+
+| Measure | §54.4 | **§55.4** |
+| --- | ---: | ---: |
+| Denominator | 450 | **450** |
+| BUILT-AND-CORRECT | 415 | **415** |
+| BUILT-BUT-WRONG | 35 | **35** |
+| NOT-BUILT | 0 | **0** |
+| CANNOT-VERIFY | 0 | **0** |
+| CONSTRUCTED% | 100.0 % | **100.0 %** (450 / 450) |
+| CORRECT% raw | 92.2 % | **92.2 %** (415 / 450) |

@@ -94,6 +94,12 @@ function makeDB(): FakeDB {
     ],
     // Intentionally empty — no GPS-verified posts were ever made.
     passport_stamps: [],
+    // H4, wave 5: the completion writer awards these only to a member with a
+    // check-in on the trip (tripCompletionPresence.ts), and buildStats now
+    // counts a completion stamp's place only with that same evidence
+    // (stampPresenceView.ts). This is the arrival the award rested on. buildStats
+    // at HEAD never read plan_checkins, so the staging is premise-neutral there.
+    plan_checkins: [{ user_id: USER_ID, trip_id: TRIP_ID, status: "arrived", checked_in_at: "2026-01-01T10:00:00Z" }],
     user_follows:    [],
     trip_members:    [],
     trips:           [],

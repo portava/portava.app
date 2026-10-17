@@ -19,7 +19,10 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import express from "express";
 import { buildSharedContext } from "../services/passport/SharedContextService.js";
-import { makePassportDb } from "./helpers/fakePassportDb.js";
+import { makePassportDb as makeRawPassportDb } from "./helpers/fakePassportDb.js";
+import { withEarnedPresenceEvidence } from "./helpers/stampPresenceFixture.js";
+/** H4, wave 5: a presence stamp this suite stages as earned also carries its occurrence evidence (stampPresenceView.ts); premise-neutral at HEAD, which read neither. */
+const makePassportDb = (tables: Record<string, any[]>, opts?: Parameters<typeof makeRawPassportDb>[1]) => makeRawPassportDb(withEarnedPresenceEvidence(tables), opts);
 import { _setTestClient, _clearTestClient } from "../lib/http.js";
 import passportRouter from "../routes/passport.js";
 

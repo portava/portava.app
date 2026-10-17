@@ -23,7 +23,7 @@ import { logAdminAccess, accessReason } from "../lib/adminAudit.js";  import { a
 import { z } from "zod";
 import { sendError } from "../lib/http.js";
 import { awardStamp, revokeStamp, restoreStamp } from "../services/passport/StampAwardEngine.js";
-import { stampEarnedLocationText } from "../services/passport/nonPresenceStampAwards.js";
+import { stampEarnedLocationText } from "../services/passport/nonPresenceStampAwards.js"; import { decidePresenceAward, presenceEvidenceSchema, refusePresenceAward } from "../services/passport/presenceAwardEvidence.js";
 import { NotificationService } from "../services/notifications/NotificationService.js";
 import { NotificationRouter as NotifRouter } from "../services/notifications/NotificationRouter.js";
 import { queryStampWorkerHealth, evaluateCurrentWorkerHealth } from "../lib/stamps/generationWorker.js";
@@ -190,7 +190,7 @@ const adminAwardSchema = z.object({
   sourceId:       z.string().optional(),
   city:           z.string().optional(),
   country:        z.string().optional(),
-  metadata:       z.record(z.unknown()).optional(),
+  metadata:       z.record(z.unknown()).optional(), evidence: presenceEvidenceSchema.optional(), // H4: a place on a presence slug needs occurrence evidence (presenceAwardEvidence.ts)
 });
 
 router.post("/admin/stamps/award", async (req, res) => {
@@ -203,15 +203,15 @@ router.post("/admin/stamps/award", async (req, res) => {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message);
     return;
   }
-
+  const decided = await decidePresenceAward(sc, { userId: parsed.data.userId, definitionSlug: parsed.data.definitionSlug, sourceType: parsed.data.sourceType, sourceId: parsed.data.sourceId, city: parsed.data.city, country: parsed.data.country, metadata: parsed.data.metadata }, parsed.data.evidence); if (!decided.ok) { refusePresenceAward(res, decided); return; } // H4 (wave 5): read and refused BEFORE the engine; nothing is written on a refusal
   const result = await awardStamp(sc, {
     userId:         parsed.data.userId,
     definitionSlug: parsed.data.definitionSlug,
-    sourceType:     parsed.data.sourceType ?? "admin",
-    sourceId:       parsed.data.sourceId,
-    city:           parsed.data.city,
-    country:        parsed.data.country,
-    metadata:       parsed.data.metadata,
+    sourceType:     decided.input.sourceType ?? "admin",
+    sourceId:       decided.input.sourceId,
+    city:           decided.input.city,
+    country:        decided.input.country,
+    metadata:       decided.input.metadata,
     awardReason:    parsed.data.reason,
     adminId,
   });
@@ -232,7 +232,7 @@ router.post("/admin/stamps/award", async (req, res) => {
             // engine did not store it either); a presence stamp still does.
             location: stampEarnedLocationText(
               parsed.data.definitionSlug,
-              { city: parsed.data.city, country: parsed.data.country },
+              { city: decided.input.city, country: decided.input.country },
               result.definitionName,
             ),
             stampId:  result.userStampId ?? '',

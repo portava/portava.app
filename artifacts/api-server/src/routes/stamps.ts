@@ -36,7 +36,7 @@ import {
 } from "../services/passport/StampAwardEngine.js";
 import { NotificationService } from "../services/notifications/NotificationService.js";
 import { NotificationRouter as NotifRouter } from "../services/notifications/NotificationRouter.js";
-import { isBlockedBetween } from "../lib/blockGuard.js";
+import { isBlockedBetween } from "../lib/blockGuard.js"; import { decidePresenceAward, presenceEvidenceSchema, refusePresenceAward } from "../services/passport/presenceAwardEvidence.js"; import { readStampPresenceView, withPresencePlaces } from "../services/passport/stampPresenceView.js";
 
 const router = Router();
 
@@ -80,10 +80,10 @@ const VISIBILITY = z.enum(["public", "friends_only", "private"]);
 // OWNER_STAMP_COLS  — used when the caller is the stamp owner (includes metadata)
 // PUBLIC_STAMP_COLS — used for all non-owner reads (metadata excluded)
 const OWNER_STAMP_COLS =
-  "id, user_id, stamp_definition_id, source_type, earned_at, city, country, " +
+  "id, user_id, stamp_definition_id, source_type, source_id, earned_at, city, country, " +
   "title_override, metadata, visibility, display_on_passport, is_revoked, created_at, catalog_id";
 const PUBLIC_STAMP_COLS =
-  "id, user_id, stamp_definition_id, source_type, earned_at, city, country, " +
+  "id, user_id, stamp_definition_id, source_type, source_id, earned_at, city, country, " +
   "title_override, visibility, display_on_passport, is_revoked, created_at, catalog_id";
 
 // ── Friendship helper ─────────────────────────────────────────────────────────
@@ -302,7 +302,7 @@ router.get("/stamps/me", async (req, res) => {
     total = offsetVal + rows.length + (rows.length === limitVal ? 1 : 0);
   }
 
-  res.json({ stamps: await formatStamps(sc, rows), total });
+  const placeKeyed = !!(city || country); const shown = await formatStamps(sc, rows, { placeKeyed }); if (placeKeyed) total = offsetVal + shown.length + (rows.length === limitVal ? 1 : 0); res.json({ stamps: shown, total }); // H4: a ?city=/?country= read lists only stamps whose place may be shown
 });
 
 // ── GET /stamps/me/unified ────────────────────────────────────────────────────
@@ -456,7 +456,7 @@ router.get("/stamps/user/:userId", async (req, res) => {
   const { data, error } = await query;
   if (error) { sendError(res, "db_error", error.message); return; }
 
-  res.json({ stamps: await formatStamps(sc, data ?? []) });
+  res.json({ stamps: await formatStamps(sc, data ?? [], { thirdParty: true }) }); // H4: another person's stamps never include an unevidenced presence claim
 });
 
 // ── GET /stamps/profile/:username ─────────────────────────────────────────────
@@ -537,7 +537,7 @@ router.get("/stamps/profile/:username", async (req, res) => {
     callerCtx,
   ) as any[];
 
-  const stamps = await formatStamps(sc, filtered);
+  const stamps = await formatStamps(sc, filtered, { thirdParty: callerCtx !== "owner" }); // H4: another person's stamps never include an unevidenced presence claim
   res.json({ stamps });
 });
 
@@ -562,7 +562,7 @@ router.get("/stamps/recent", async (req, res) => {
 
   if (error) { sendError(res, "db_error", error.message); return; }
   const visible = await filterFeedByOwnerPrivacy(sc, auth.user.id, (data ?? []) as any[]);
-  res.json({ stamps: await formatStamps(sc, visible) });
+  res.json({ stamps: await formatStamps(sc, visible, { thirdParty: true }) }); // H4: the public feed never includes an unevidenced presence claim
 });
 
 // ── GET /stamps/city/:city ────────────────────────────────────────────────────
@@ -586,7 +586,7 @@ router.get("/stamps/city/:city", async (req, res) => {
 
   if (error) { sendError(res, "db_error", error.message); return; }
   const visible = await filterFeedByOwnerPrivacy(sc, auth.user.id, (data ?? []) as any[]);
-  res.json({ stamps: await formatStamps(sc, visible) });
+  res.json({ stamps: await formatStamps(sc, visible, { placeKeyed: true }) }); // H4: "stamps in <city>" lists only evidenced presence stamps
 });
 
 // ── GET /stamps/country/:country ──────────────────────────────────────────────
@@ -610,7 +610,7 @@ router.get("/stamps/country/:country", async (req, res) => {
 
   if (error) { sendError(res, "db_error", error.message); return; }
   const visible = await filterFeedByOwnerPrivacy(sc, auth.user.id, (data ?? []) as any[]);
-  res.json({ stamps: await formatStamps(sc, visible) });
+  res.json({ stamps: await formatStamps(sc, visible, { placeKeyed: true }) }); // H4: "stamps in <country>" lists only evidenced presence stamps
 });
 
 // ── GET /stamps/:stampId ──────────────────────────────────────────────────────
@@ -665,7 +665,7 @@ router.get("/stamps/:stampId", async (req, res) => {
 
   // Non-owner: strip metadata from response (same as PUBLIC_STAMP_COLS exclusion)
   const { metadata: _stripped, ...publicStamp } = stamp;
-  const [formattedPublic] = await formatStamps(sc, [publicStamp]);
+  const [formattedPublic] = await formatStamps(sc, [publicStamp], { thirdParty: true }); if (!formattedPublic) { sendError(res, "not_found", "Stamp not found"); return; } // H4: an unevidenced presence claim is not shown to someone else
   res.json({ stamp: formattedPublic });
 });
 
@@ -759,7 +759,7 @@ const internalAwardSchema = z.object({
   lat:            z.number().optional(),
   lng:            z.number().optional(),
   metadata:       z.record(z.unknown()).optional(),
-  awardReason:    z.string().optional(),
+  awardReason:    z.string().optional(), evidence: presenceEvidenceSchema.optional(), // H4: a place on a presence slug needs occurrence evidence (presenceAwardEvidence.ts)
 });
 
 router.post("/stamps/award", async (req, res) => {
@@ -773,8 +773,8 @@ router.post("/stamps/award", async (req, res) => {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message);
     return;
   }
-
-  const result = await awardStamp(sc, parsed.data, req.log);
+  const { evidence, ...awardInput } = parsed.data; const decided = await decidePresenceAward(sc, awardInput, evidence); if (!decided.ok) { refusePresenceAward(res, decided); return; } // H4 (wave 5): read and refused BEFORE the engine; nothing is written on a refusal
+  const result = await awardStamp(sc, decided.input, req.log);
 
   if (result.awarded) {
     (async () => {
@@ -795,7 +795,7 @@ router.post("/stamps/award", async (req, res) => {
             // engine did not store it either); a presence stamp still does.
             location: stampEarnedLocationText(
               parsed.data.definitionSlug,
-              { city: parsed.data.city, country: parsed.data.country },
+              { city: decided.input.city, country: decided.input.country },
               result.definitionName,
             ),
             stampId:  result.userStampId ?? '',
@@ -892,7 +892,7 @@ interface CatalogArtwork {
   /** Full composited stamp (≈1024px). */
   full: string | null;
   /** Thumbnail (≈256px) for grid tiles / icons — Wave 1 premium pipeline. */
-  thumb: string | null;
+  thumb: string | null; /** H4: the catalog entry names a place (its city or country). */ placeScoped?: boolean;
 }
 
 const STAMP_ARTWORK_BUCKET = "stamp-artwork";
@@ -935,8 +935,8 @@ async function buildCatalogArtworkMap(
       .from("universal_stamp_catalog")
       .select(
         withThumb
-          ? "id, stamp_artwork_versions!fk_catalog_active_version(public_url, thumbnail_url)"
-          : "id, stamp_artwork_versions!fk_catalog_active_version(public_url)",
+          ? "id, city, country, stamp_artwork_versions!fk_catalog_active_version(public_url, thumbnail_url)"
+          : "id, city, country, stamp_artwork_versions!fk_catalog_active_version(public_url)",
       )
       .in("id", catalogIds)
       .eq("status", "approved");
@@ -949,11 +949,11 @@ async function buildCatalogArtworkMap(
     if (error) return artworkMap; // tables may not exist yet — degrade silently
 
     // Collect raw paths before signing so full + thumb can be batched.
-    const rawEntries: Array<{ catalogId: string; full: string | null; thumb: string | null }> = [];
+    const rawEntries: Array<{ catalogId: string; full: string | null; thumb: string | null; placeScoped: boolean }> = [];
     for (const row of (data ?? []) as any[]) {
       const v = row.stamp_artwork_versions ?? null;
       rawEntries.push({
-        catalogId: row.id,
+        catalogId: row.id, placeScoped: !!(row.city || row.country),
         full: v?.public_url ?? null,
         thumb: v?.thumbnail_url ?? null,
       });
@@ -995,7 +995,7 @@ async function buildCatalogArtworkMap(
     for (const e of rawEntries) {
       artworkMap.set(e.catalogId, {
         full: resolve(e.full),
-        thumb: resolve(e.thumb),
+        thumb: resolve(e.thumb), placeScoped: e.placeScoped,
       });
     }
   } catch {
@@ -1038,13 +1038,36 @@ function formatStamp(row: any, artworkMap?: Map<string, CatalogArtwork>) {
   };
 }
 
-/** Enriches a stamp array with catalog artwork in one batch query, then formats. */
+/**
+ * Enriches a stamp array with catalog artwork in one batch query, then formats.
+ *
+ * H4 (census-highlights-memories, wave 5 lane 5): every stamp list and every
+ * single stamp this file serves passes through here, so the reader rule is
+ * applied here once (services/passport/stampPresenceView.ts). A stamp's
+ * city/country is served only when it is a presence stamp whose own source's
+ * occurrence evidence holds (a check-in on its trip, a GPS stamp-eligible
+ * postcard for its post); otherwise both are null, and a catalog artwork that
+ * names a place is withheld with them (its `catalogId` is not served). The
+ * owner's own lists keep every row — `GET /stamps/me` is paged by row offset.
+ * A read keyed by a place (`placeKeyed`: ?city=/?country=, /stamps/city/:city,
+ * /stamps/country/:country) drops a stamp whose place may not be shown: it is
+ * not a stamp "in" that place. A read for someone other than the owner
+ * (`thirdParty`) drops a presence stamp whose evidence does not hold: its name
+ * alone ("First trip completed") claims the occurrence.
+ */
 async function formatStamps(
   sc: ReturnType<typeof getServiceClient>,
   rows: any[],
+  opts: { placeKeyed?: boolean; thirdParty?: boolean } = {},
 ): Promise<ReturnType<typeof formatStamp>[]> {
-  const artworkMap = await buildCatalogArtworkMap(sc, rows);
-  return rows.map((r) => formatStamp(r, artworkMap));
+  const view = await readStampPresenceView(sc as any, rows);
+  const kept = rows.filter((r) => (opts.placeKeyed ? view.mayShowPlace(r) : true) && (opts.thirdParty ? view.presenceClaimHolds(r) : true));
+  const placed = withPresencePlaces(view, kept, ["city", "country"]);
+  const artworkMap = await buildCatalogArtworkMap(sc, placed);
+  const shown = placed.map((r) =>
+    !view.mayShowPlace(r) && typeof r.catalog_id === "string" && artworkMap.get(r.catalog_id)?.placeScoped ? { ...r, catalog_id: null } : r,
+  );
+  return shown.map((r) => formatStamp(r, artworkMap));
 }
 
 export default router;

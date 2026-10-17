@@ -181,9 +181,9 @@
       "reads": [
         "readBlockExclusions"
       ],
-      "fingerprint": "e202e67972db8644",
+      "fingerprint": "8a52e444cda3e0e6",
       "closedBy": "withholds",
-      "why": "Returns cards: [], visibleIds: [], degraded: true, blockedRelation: true — the crew is served without any member card."
+      "why": "Returns readDegraded({ cards: [], visibleIds: [], blockedRelation: true }, [\"member_cards_unreadable\"]) — the crew is served without any member card and the block is assumed. Re-judged 2026-10-17 after census L294 moved the degraded flag into the LayoverRead result; the outcome is unchanged."
     },
     {
       "key": "routes/airport.ts::get /airport/sessions/:id/buddies::catch#1",

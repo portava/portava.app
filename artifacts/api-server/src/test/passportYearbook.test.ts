@@ -29,6 +29,8 @@ import {
   type ViewerResolution,
 } from "../services/passport/PassportProjectionService.js";
 import { makePassportDb } from "./helpers/fakePassportDb.js";
+import { evidenceFor } from "./helpers/stampPresenceFixture.js";
+const makeEarnedPassportDb = (tables: Record<string, any[]>) => makePassportDb(earnedStamps(tables));
 
 const OWNER = "owner-1";
 const VIEWER = "viewer-1";
@@ -47,8 +49,31 @@ const T_PRIV = "trip-priv";
 //   • m-priv2 — a private memory on the private trip ("Hidden beach", Sa Pa)
 //   • BLOCKED — a trip companion the owner blocked ("Mallory")
 
+/**
+ * H4, wave 5 (stampPresenceView.ts): a stamp's city/country — which is what a
+ * "new countries" line is made of — reaches a reader only for a PRESENCE stamp
+ * whose own source's evidence holds. This fixture's stamps are the traveller's
+ * real postcards and a completed trip, so each is staged as what it is: a
+ * postcard slug with its post and an eligible postcard, the completion slug
+ * with its trip and an arrival. HEAD selected neither the slug nor the source id
+ * and read no evidence table, so this is premise-neutral there.
+ */
+function earnedStamps(tables: Record<string, any[]>): Record<string, any[]> {
+  const stamps = (tables.user_stamps ?? []).map((r: any) => {
+    if (r.stamp_definitions?.slug) return r;
+    const trip = r.source_type === "trips";
+    return {
+      ...r,
+      source_id: r.source_id ?? `post-${r.id}`,
+      stamp_definitions: { ...(r.stamp_definitions ?? {}), slug: trip ? "first_trip_completed" : "city_explorer" },
+    };
+  });
+  const ev = evidenceFor(stamps);
+  return { ...tables, user_stamps: stamps, plan_checkins: ev.plan_checkins, passport_postcards: ev.passport_postcards };
+}
+
 function seed(overrides: Record<string, any[]> = {}) {
-  return makePassportDb({
+  return makeEarnedPassportDb({
     profiles: [
       { id: OWNER, handle: "wanderer", display_name: "Wanderer", created_at: "2023-01-01" },
       { id: FRIEND, handle: "ana", display_name: "Ana", avatar_url: "https://x/ana.png", show_profile_picture_publicly: true },

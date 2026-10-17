@@ -191,7 +191,7 @@ function makeFakeClient(state: FakeState, tokenMap: Record<string, string>) {
         // than trying to heal a "missing" row and re-awarding.
         return { data: state.awardSucceeds ? null : { id: STAMP_ID }, error: null };
       }
-      if (table === "feature_flags") { return { data: { enabled: state.featureEnabled !== false }, error: null }; }
+      if (table === "feature_flags") { return { data: { enabled: state.featureEnabled !== false }, error: null }; } if (table === "passport_postcards") { return { data: { user_id: USER_ID, post_id: "00000000-0000-4000-8000-0000000011aa", stamp_eligible: true, stamp_revoked: false, location_city: "Kyoto", location_country: "Japan" }, error: null }; } if (table === "posts") { return { data: { status: "active" }, error: null }; } // H4, wave 5: the GPS postcard a presence award's place must rest on (presenceAwardEvidence.ts)
 
       if (table === "profiles") {
         const id = getEq("id");
@@ -610,7 +610,7 @@ for (const routerType of ["admin", "stamps"] as const) {
 
     it("stores the place and announces it", async () => {
       const res = await req(server, "POST", path, {
-        userId: USER_ID, definitionSlug: "city_explorer", reason: "manual", city: "Kyoto", country: "Japan",
+        userId: USER_ID, definitionSlug: "city_explorer", reason: "manual", city: "Kyoto", country: "Japan", evidence: { kind: "verified_postcard", postId: "00000000-0000-4000-8000-0000000011aa" }, // H4, wave 5: a place on a presence slug needs evidence; without it this is a 422 (stampAwardEndpointPresenceEvidence.test.ts)
       }, headers);
       assert.equal(res.status, 201, JSON.stringify(res.body));
       assert.equal(res.body.evidencesPresence, true);

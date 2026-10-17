@@ -158,3 +158,67 @@ export async function countEvidencedCompletedTrips(
     return fail(String(err));
   }
 }
+
+/**
+ * Rows read in one request beyond which a page may have been cut by PostgREST's
+ * max-rows (1,000 on this project). A chunk answering this many is treated as
+ * unreadable, never as complete.
+ */
+export const EVIDENCE_PAGE_CEILING = 1000;
+/** Source ids per request: keeps the URL short and each answer under the ceiling. */
+export const EVIDENCE_CHUNK = 25;
+
+/**
+ * The same evidence, for many (person, trip) pairs at once — the READ side of
+ * H4 (census-highlights-memories, wave 5 lane 5). A stamp reader holds rows
+ * from many trips and many people; asking `readTripPresenceEvidence` once per
+ * trip would be one round trip per row. These reads answer every pair with the
+ * same `plan_checkins` arrival and the same verified `passport_stamps` levels
+ * the award path requires, with the same predicates, in chunks of
+ * EVIDENCE_CHUNK trips (a traveller with thousands of stamps must not become
+ * one unbounded `in.(…)` URL, nor a silently cut page).
+ *
+ * Returns the evidenced pairs as `${userId}|${tripId}`. A source that could
+ * not be read — an error, a throw, or a chunk at the page ceiling — is named
+ * in `unreadable` and contributes nothing; a caller that cannot tell "no
+ * evidence" from "could not look" for a pair must treat the pair as
+ * unverifiable, not as absent.
+ */
+export async function readTripPresenceEvidenceForPairs(
+  sc: SupabaseClient,
+  pairs: ReadonlyArray<{ userId: string; tripId: string }>,
+): Promise<{ present: ReadonlySet<string>; unreadable: string[] }> {
+  const present = new Set<string>();
+  const unreadable = new Set<string>();
+  const wanted = new Set<string>();
+  for (const p of pairs) if (p.userId && p.tripId) wanted.add(`${p.userId}|${p.tripId}`);
+  if (wanted.size === 0) return { present, unreadable: [] };
+  const users = [...new Set([...wanted].map((k) => k.split("|")[0]))];
+  const trips = [...new Set([...wanted].map((k) => k.split("|")[1]))];
+  // Narrow by person too when there are few of them (one traveller's own
+  // Passport); a many-person read (a feed, the graph) filters by trip alone and
+  // matches the person here, so its URL stays bounded.
+  const byUser = users.length <= EVIDENCE_CHUNK;
+
+  const take = (r: Row) => {
+    const key = `${String(r.user_id)}|${String(r.trip_id)}`;
+    if (wanted.has(key)) present.add(key);
+  };
+  for (let i = 0; i < trips.length; i += EVIDENCE_CHUNK) {
+    const chunk = trips.slice(i, i + EVIDENCE_CHUNK);
+    const narrow = (q: any) => (byUser ? q.in("user_id", users) : q);
+    const [checkins, stamps] = await Promise.all([
+      Promise.resolve(
+        narrow(sc.from("plan_checkins").select("user_id, trip_id, status, checked_in_at").in("trip_id", chunk)),
+      ).catch((err: unknown) => ({ data: null, error: { message: String(err) } })) as Promise<{ data: unknown; error: unknown }>,
+      Promise.resolve(
+        narrow(sc.from("passport_stamps").select("user_id, trip_id, verification_level").in("trip_id", chunk)),
+      ).catch((err: unknown) => ({ data: null, error: { message: String(err) } })) as Promise<{ data: unknown; error: unknown }>,
+    ]);
+    if (checkins.error || !Array.isArray(checkins.data) || checkins.data.length >= EVIDENCE_PAGE_CEILING) unreadable.add("plan_checkins");
+    else for (const r of checkins.data as Row[]) if (checkinIsArrival(r)) take(r);
+    if (stamps.error || !Array.isArray(stamps.data) || stamps.data.length >= EVIDENCE_PAGE_CEILING) unreadable.add("passport_stamps");
+    else for (const r of stamps.data as Row[]) if (stampIsVerifiedFix(r)) take(r);
+  }
+  return { present, unreadable: [...unreadable] };
+}

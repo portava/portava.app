@@ -26,7 +26,7 @@ import type { Server } from "node:http";
 import express from "express";
 import pino from "pino";
 import { _setTestClient } from "../lib/http.js";
-import { _setTestServiceClient } from "../lib/supabase.js";
+import { _setTestServiceClient } from "../lib/supabase.js"; import { stageEarnedPresenceInPlace } from "./helpers/stampPresenceFixture.js";
 import compassGraphRouter from "../routes/compassGraph.js";
 import {
   daypartOf,
@@ -77,7 +77,7 @@ function likeToRegex(pattern: string): RegExp {
 }
 
 function makeFakeClient(store: Record<string, Row[]> = {}) {
-  function tbl(name: string): Row[] {
+  function tbl(name: string): Row[] { if (name === "user_stamps" || name === "plan_checkins") stageEarnedPresenceInPlace(store); // H4, wave 5 (stampPresenceView.ts): a presence stamp this suite stages as earned gets its trip and that trip's check-in; HEAD read neither
     if (!store[name]) store[name] = [];
     return store[name]!;
   }

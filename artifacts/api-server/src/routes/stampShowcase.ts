@@ -21,7 +21,7 @@ import { z } from "zod";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
-import { isFlagEnabled } from "../lib/featureFlags.js";
+import { isFlagEnabled } from "../lib/featureFlags.js"; import { readStampPresenceView, withPresencePlaces } from "../services/passport/stampPresenceView.js";
 
 export const MAX_SHOWCASE = 8;
 const FLAG = "stamp_showcase_enabled";
@@ -30,7 +30,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const router = Router();
 
 const STAMP_FIELDS =
-  "id, user_id, stamp_definition_id, source_type, earned_at, city, country, title_override, visibility, is_revoked, " +
+  "id, user_id, stamp_definition_id, source_type, source_id, earned_at, city, country, title_override, visibility, is_revoked, " +
   "stamp_definitions ( slug, name, rarity, stamp_type, category, universal_artwork_url )";
 
 function formatShowcaseStamp(row: any, rank: number) {
@@ -71,7 +71,7 @@ async function loadStamps(sc: any, ids: string[]): Promise<Map<string, any>> {
     .select(STAMP_FIELDS)
     .in("id", ids);
   if (error) throw new Error(error.message);
-  return new Map(((data ?? []) as any[]).map((r) => [r.id, r]));
+  const view = await readStampPresenceView(sc, (data ?? []) as any[]); return new Map(withPresencePlaces(view, (data ?? []) as any[], ["city", "country"]).map((r) => [r.id, { ...r, presenceClaimHolds: view.presenceClaimHolds(r) }])); // H4 (stampPresenceView.ts): a stamp's place is shown only with occurrence evidence
 }
 
 // ── GET /api/stamps/showcase ─────────────────────────────────────────────────
@@ -195,7 +195,7 @@ router.get("/users/:username/stamp-showcase", asyncHandler(async (req, res) => {
   // Public filter: visibility must be public AND not revoked. Order preserved.
   const items = rows
     .map((r) => stamps.get(r.user_stamp_id))
-    .filter((s): s is any => Boolean(s) && s.visibility === "public" && !s.is_revoked)
+    .filter((s): s is any => Boolean(s) && s.visibility === "public" && !s.is_revoked && s.presenceClaimHolds !== false) // H4: an unevidenced presence claim is not shown to someone else
     .map((s, i) => formatShowcaseStamp(s, i));
 
   res.json({ items, enabled: true });

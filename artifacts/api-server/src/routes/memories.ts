@@ -97,7 +97,7 @@ import {
   mergedAudience,
   revokeMemoryAudienceCaches,
 } from "../services/memory/memoryAudienceRevocation.js";
-import { runMemoryDeletionLifecycle } from "../services/memory/memoryDeletionLifecycle.js"; import { reprojectDerivativesAfterNarrowing } from "../services/memoryProjections/narrowingReprojection.js"; import { refuseWideningKeptPrivate, readRecapControls } from "../services/memory/memoryResurfacingControls.js"; import { hiddenItemKeys, itemKey } from "../services/memory/memoryItemVisibility.js"; import { clearsCanonicalOnPatch, correctPlaceHistory, placeCorrectionsForPatch, placesForViewer, recordPlaceCorrections } from "../services/memory/memoryCorrections.js"; import { memoryGraphLinkPath } from "../services/memory/memoryGraphShadow.js"; import { followMemoryRedirect } from "../services/memory/memoryIdRedirects.js"; import { withMemoryItemRenditions } from "../services/memory/memoryItemRenditions.js"; // one line: this file is cited by line
+import { runMemoryDeletionLifecycle } from "../services/memory/memoryDeletionLifecycle.js"; import { reprojectDerivativesAfterNarrowing } from "../services/memoryProjections/narrowingReprojection.js"; import { refuseWideningKeptPrivate, readRecapControls } from "../services/memory/memoryResurfacingControls.js"; import { hiddenItemKeys, itemKey } from "../services/memory/memoryItemVisibility.js"; import { clearsCanonicalOnPatch, correctPlaceHistory, placeCorrectionsForPatch, placesForViewer, recordPlaceCorrections } from "../services/memory/memoryCorrections.js"; import { memoryGraphLinkPath } from "../services/memory/memoryGraphShadow.js"; import { followMemoryRedirect } from "../services/memory/memoryIdRedirects.js"; import { withMemoryItemRenditions, withMemoryCoverRenditions, enqueueMemoryItemRenditions } from "../services/memory/memoryItemRenditions.js"; // one line: this file is cited by line
 import {
   classifyMemoryMediaUrl, memoryItemMediaUrlAccepted, MEMORY_MEDIA_URL_REFUSAL,
   FOREIGN_MEDIA_REFUSAL,
@@ -2235,7 +2235,7 @@ router.post("/memories/:id/items", async (req, res) => {
 
   if (!outcome.ok) { sendCommandFailure(req, res, outcome); return; }
 
-  res.status(201).json({ item: mapItem(outcome.body) });
+  void enqueueMemoryItemRenditions(sc, { mediaUrl: parsed.data.mediaUrl, mediaType: parsed.data.mediaType, ownerId: user.id }, { log: req.log }); res.status(201).json({ item: mapItem(outcome.body) }); // H182 (wave 5): the image ladder for a stored Memory photo, behind the reader's own switch and 3980 flags; never fails the attach
 });
 
 // ── DELETE /memories/:id/items/:itemId ───────────────────────────────────────
@@ -3384,7 +3384,7 @@ async function enrichMemories(
   const coverMap: Record<string, { mediaUrl: string; mediaType: string }> = {};
   for (const r of ((coverRows.data ?? []) as any[]).filter((c) => !hiddenCovers.keys.has(itemKey(c.memory_id, 0)))) {
     coverMap[r.memory_id] = { mediaUrl: r.media_url, mediaType: r.media_type };
-  }
+  } const coverRenditions = await withMemoryCoverRenditions(sc, viewerId, coverMap, log as { warn?: (o: object, m: string) => void } | undefined); // H182 (wave 5): list covers select renditions as GET /memories/:id does; the original mediaUrl always stays
 
   const ownerMap: Record<string, { id: string; name: string | null; handle: string | null; avatarUrl: string | null }> = {};
   for (const r of (ownerRows.data ?? []) as any[]) {
@@ -3399,7 +3399,7 @@ async function enrichMemories(
       likeCount: likeCounts[m.id] ?? 0,
       likedByMe: likedByMeSet.has(m.id),
       savedByMe: savedSet.has(m.id),
-      cover: coverMap[m.id] ?? null,
+      cover: coverRenditions[m.id] ?? coverMap[m.id] ?? null,
       owner: ownerMap[m.owner_id] ?? null,
     })),
   };
@@ -3955,6 +3955,6 @@ router.post("/memories/:id/items/from-post", async (req, res) => {
     row = linked.data[0];
   }
 
-  recordMemoryCreatedFromMediaSignal(sc, { userId: user.id, postId });
+  recordMemoryCreatedFromMediaSignal(sc, { userId: user.id, postId }); void enqueueMemoryItemRenditions(sc, { mediaUrl, mediaType, ownerId: user.id }, { log: req.log }); // H182 (wave 5): the copied photo gets its ladder too
   res.status(201).json({ item: { ...mapItem(row), sourcePostId: postId } });
 });

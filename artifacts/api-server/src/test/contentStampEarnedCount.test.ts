@@ -702,16 +702,25 @@ describe("G. GET /me/profile — stampsEarned is a measurement or null + flag", 
 // of whichever 1,000 rows came back — a cut read served as a measurement.
 
 function manyUserStamps(n: number): Partial<FakeDB> {
+  // H4, wave 5 (stampPresenceView.ts): Countries/Cities count a presence stamp
+  // only with the evidence its source names, so each of these is what such a
+  // stamp is — a GPS-postcard city_explorer naming its post — and its eligible
+  // postcard is staged. The evidence read is chunked, so it does not meet the
+  // 1,000-row cap either. HEAD read neither the source nor the postcards.
   const user_stamps: any[] = [];
+  const passport_postcards: any[] = [];
   for (let i = 0; i < n; i++) {
+    const id = `us000000-0000-4000-8000-${String(i).padStart(12, "0")}`;
     user_stamps.push({
-      id: `us000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+      id,
       user_id: AUTHOR_ID, is_revoked: false, visibility: "public",
       country: `Country ${i % 120}`, city: `City ${i}`,
-      stamp_definitions: { category: "trip", slug: "city_visit", evidences_presence: true },
+      source_type: "posts", source_id: `post-${id}`,
+      stamp_definitions: { category: "trip", slug: "city_explorer", evidences_presence: true },
     });
+    passport_postcards.push({ user_id: AUTHOR_ID, post_id: `post-${id}`, stamp_eligible: true, stamp_revoked: false });
   }
-  return { user_stamps };
+  return { user_stamps, passport_postcards };
 }
 
 describe("H. GET /me/passport/stats — countries and stamps over a 1,000-row server cap", async () => {

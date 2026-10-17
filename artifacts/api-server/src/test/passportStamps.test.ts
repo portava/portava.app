@@ -176,6 +176,14 @@ function makeFakeClient(state: FakeState, userId: string) {
           ...s,
           is_revoked: s.is_revoked ?? false,
           stamp_definitions: definitionFor(s.stamp_type),
+          // H4, wave 5 (stampPresenceView.ts): a passport stamp here is a GPS
+          // fix, so its v2 mirror names the post it was earned from, and the
+          // eligible postcard below is that fix's evidence. HEAD read neither.
+          source_type: "posts",
+          source_id: `post-${s.id}`,
+        })),
+        passport_postcards: (state.stamps ?? []).map((s) => ({
+          user_id: s.user_id, post_id: `post-${s.id}`, stamp_eligible: true, stamp_revoked: false,
         })),
         passport_memories: state.memories ?? [],
         passport_contribution_events: state.contributions ?? [],

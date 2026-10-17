@@ -233,19 +233,19 @@ const REGISTRY: readonly Site[] = [
   },
   {
     file: "routes/adminStamps.ts",
-    args: /definitionSlug: parsed\.data\.definitionSlug/,
+    args: /definitionSlug: parsed\.data\.definitionSlug,[\s\S]*city:\s*decided\.input\.city,\s*country:\s*decided\.input\.country,/,
     slugs: "caller",
     basis: "admin_attestation",
     guard: /reason:\s*z\.string\(\)\.min\(1\)\.max\(500\)/,
-    why: "requireAdmin + a required reason; the engine drops any place on a non-presence slug (OD-1012-STAMP-2)",
+    why: "requireAdmin + a required reason; the engine drops any place on a non-presence slug (OD-1012-STAMP-2); a place on a PRESENCE slug only through decidePresenceAward (a trip check-in or a verified postcard, read), whose place and source replace the caller's (wave 5)",
   },
   {
     file: "routes/stamps.ts",
-    args: /^\s*sc,\s*parsed\.data,\s*req\.log\s*$/,
+    args: /^\s*sc,\s*decided\.input,\s*req\.log\s*$/,
     slugs: "caller",
     basis: "internal_service",
     guard: /if \(!requireInternalSecret\(req, res\)\) return;/,
-    why: "X-Internal-Secret only; its one in-tree caller (callInternalStampAward) is itself uncalled",
+    why: "X-Internal-Secret only; its one in-tree caller (callInternalStampAward) is itself uncalled; a place on a PRESENCE slug only through decidePresenceAward, coordinates refused (wave 5)",
   },
   {
     file: "routes/stampCatalog.ts",
@@ -463,4 +463,36 @@ describe("H4: every stamp award call site is enumerated and classified", () => {
     const metrics = fs.readFileSync(path.join(SRC, "lib/stamps/criteria/metrics.ts"), "utf8");
     assert.match(metrics, /trips_completed: async \(sc, u\) => \(await countEvidencedCompletedTrips\(sc, u\)\)\.count \?\? 0,/);
   });
+});
+
+// ── Wave 5 (lane 5): BD-OD-2's remainder — the two caller-slug endpoints ─────
+//
+// `admin_attestation` and `internal_service` take the slug AND the place from
+// the request. Since §BG the engine drops the place of a non-presence slug; a
+// PRESENCE slug keeps it. These pins hold that each such endpoint hands the
+// engine only what `decidePresenceAward` returned — a place that occurrence
+// evidence read for THIS person shows, or no place — and refuses before the
+// engine otherwise. The behaviour is tested in
+// stampAwardEndpointPresenceEvidence.test.ts; this is the ratchet half.
+describe("H4 (wave 5): a caller-slug award endpoint passes its place through the presence evidence gate", () => {
+  const found = scan();
+  const gated = REGISTRY.filter((s) => s.slugs === "caller" && (s.basis === "admin_attestation" || s.basis === "internal_service"));
+
+  it("there are exactly the two caller-slug endpoints (non-vacuity, and a third must be classified)", () => {
+    assert.deepEqual(gated.map((s) => s.file).sort(), ["routes/adminStamps.ts", "routes/stamps.ts"]);
+  });
+
+  for (const site of gated) {
+    it(`${site.file}: decides before the engine, refuses on a refusal, and awards only the decided input`, () => {
+      const src = found.get(site.file)?.src ?? "";
+      assert.match(src, /const decided = await decidePresenceAward\(sc, /, "the evidence decision is gone");
+      assert.match(src, /if \(!decided\.ok\) \{ refusePresenceAward\(res, decided\); return; \}/, "a refusal no longer stops the award");
+      assert.match(src, /evidence: presenceEvidenceSchema\.optional\(\)/, "the request can no longer name evidence");
+      const call = (found.get(site.file)?.awards ?? []).find((a) => site.args.test(a)) ?? "";
+      assert.ok(call, "the registered award call is gone");
+      assert.doesNotMatch(call, /parsed\.data\.(city|country|lat|lng)\b|parsed\.data\s*,/, "the engine is handed the request's own place again");
+      // The decision runs before the award call in the file.
+      assert.ok(src.indexOf("const decided = await decidePresenceAward(") < src.indexOf(call), "the decision must precede the award");
+    });
+  }
 });

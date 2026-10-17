@@ -62,7 +62,14 @@ function makeSc(opts: FakeOpts = {}) {
             resolve({ data: Array.from({ length: counts.trips ?? 0 }, (_, i) => ({ id: `trip-${i}` })), error: null }); return;
           }
           if (table === "plan_checkins") {
-            resolve({ data: Array.from({ length: counts.trips ?? 0 }, (_, i) => ({ trip_id: `trip-${i}`, status: "arrived", checked_in_at: "2026-01-01T00:00:00Z" })), error: null }); return;
+            // H4, wave 5 (stampPresenceView.ts): a staged VISITED place is a
+            // completion stamp whose trip the traveller checked in on, so its
+            // arrival is staged too (planning places get none). HEAD's metric
+            // read no plan_checkins for these: premise-neutral there.
+            const visited = opts.distinct && opts.distinctEvidencesPresence !== false
+              ? Object.values(opts.distinct).flatMap((vals) => vals.map((_v, i) => ({ user_id: "user-1", trip_id: `stamp-trip-${i}`, status: "arrived", checked_in_at: "2026-01-01T00:00:00Z" })))
+              : [];
+            resolve({ data: [...Array.from({ length: counts.trips ?? 0 }, (_, i) => ({ trip_id: `trip-${i}`, status: "arrived", checked_in_at: "2026-01-01T00:00:00Z" })), ...visited], error: null }); return;
           }
           if (table === "user_stamps" && b._field && opts.distinct) {
             // Each staged value becomes a row carrying an embedded definition.
@@ -70,8 +77,9 @@ function makeSc(opts: FakeOpts = {}) {
             // case in this file stages places the traveller HAS visited; the
             // planning case below sets it false explicitly.
             const presence = opts.distinctEvidencesPresence !== false;
-            const vals = (opts.distinct[`user_stamps.${b._field}`] ?? []).map((v) => ({
+            const vals = (opts.distinct[`user_stamps.${b._field}`] ?? []).map((v, i) => ({
               [b._field]: v,
+              user_id: "user-1", source_type: "trips", source_id: `stamp-trip-${i}`,
               stamp_definitions: { slug: presence ? "first_trip_completed" : "trip_planner", evidences_presence: presence },
             }));
             resolve({ data: vals, error: null }); return;

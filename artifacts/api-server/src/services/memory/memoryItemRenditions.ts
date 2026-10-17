@@ -45,7 +45,7 @@
  * (`SELECTION_BUDGET_MS` for the whole Memory), a throw. No flag is added here.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { createConfiguredImageVariants } from "../../lib/media/imageVariants/bridge.js";
+import { createConfiguredImageVariants, enqueueConfiguredImageVariants, type ImageVariantsIngestSubject } from "../../lib/media/imageVariants/bridge.js"; import { imageVariantsConfigFromEnv } from "../../lib/media/imageVariants/runtime.js"; import { createImageVariantsAccess } from "../../lib/media/imageVariants/canonical.js"; import { imageOriginalPath } from "../media/ImageVariantsService.js";
 import type { ImageVariantDescriptor } from "../../lib/media/imageVariants/descriptor.js";
 
 export const MEMORY_RENDITION_TIERS = Object.freeze({
@@ -153,4 +153,131 @@ export async function withMemoryItemRenditions<T extends ItemLike>(
     }
   }));
   return settled;
+}
+
+// ── H182, wave 5 lane 5: list covers, and the ladder enqueued where a Memory photo is stored ──
+
+/**
+ * The same selection for a LIST's covers (`enrichMemories`: GET /memories,
+ * GET /users/:id/memories, GET /me/saved-memories), keyed by Memory id. Each
+ * cover keeps its original `mediaUrl`; a cover whose ladder is published for
+ * this viewer gains `renditions`. Same gates, same budget, same cap
+ * (MAX_ITEMS_LOOKED_UP covers per page), same "any failure is the original".
+ * With the environment switch off it reads nothing.
+ */
+export async function withMemoryCoverRenditions<C extends { mediaUrl: string; mediaType: string }>(
+  sc: SupabaseClient,
+  viewerId: string,
+  covers: Record<string, C>,
+  log?: { warn?: (o: object, m: string) => void },
+): Promise<Record<string, C & { renditions?: MemoryItemRenditions }>> {
+  const ids = Object.keys(covers);
+  if (ids.length === 0) return covers;
+  const selected = await withMemoryItemRenditions(sc, viewerId, ids.map((id) => covers[id]), log);
+  const out: Record<string, C & { renditions?: MemoryItemRenditions }> = {};
+  ids.forEach((id, i) => { out[id] = selected[i] ?? covers[id]; });
+  return out;
+}
+
+export type MemoryRenditionEnqueueOutcome =
+  /** Not an image item: the ladder is image-only. */
+  | "not_image"
+  /** MEDIA_IMAGE_VARIANTS_ENABLED is not "1", or a 3980 flag is off. Nothing was read past the flags. */
+  | "off"
+  /** Not one of our canonical `post-media` objects, or not the Memory owner's own upload. */
+  | "not_canonical"
+  /** No (single) canonical media_assets row for the object (uploaded before canonical recording). */
+  | "not_found"
+  /** The ladder's own bridge refused (a hold, a stale generation, a mismatched row). */
+  | "refused"
+  /** Already enqueued for this asset generation by this process. No second call. */
+  | "already_enqueued"
+  | "enqueued"
+  /** A read or the queue failed. Logged; the item stands, the original is served. */
+  | "failed";
+
+const ENQUEUED_MAX = 500;
+const enqueuedThisProcess = new Map<string, string>();
+/** Tests only. */
+export function _resetMemoryRenditionEnqueueMemo(): void { enqueuedThisProcess.clear(); }
+
+let testEnqueue: ((sc: unknown, subject: ImageVariantsIngestSubject, env: NodeJS.ProcessEnv) => Promise<string | null>) | undefined;
+/** Tests only: replace the bridge's enqueue. `undefined` restores it. */
+export function _setMemoryRenditionEnqueueForTest(f: typeof testEnqueue): void { testEnqueue = f; }
+
+/**
+ * Enqueue the image ladder for a photo just stored as a Memory item — the one
+ * place a Memory image is stored: `POST /memories/:id/items` and
+ * `POST /memories/:id/items/from-post` (routes/memories.ts, memory_items'
+ * declared writer).
+ *
+ * WHY HERE AS WELL AS AT UPLOAD. `POST /api/media/upload` already reaches the
+ * ladder: `runMediaVendorIngest` (lib/media/vendors/mediaVendorStages.ts) calls
+ * `enqueueConfiguredImageVariants` for an image once its source generation is
+ * approved. That is fire-and-forget and runs only for an upload made while
+ * the switch and flags were on. A photo attached to a Memory later — an older
+ * upload, a post's photo copied in by MD385, an upload whose enqueue failed —
+ * would never get renditions. The attach is where the Memory first needs them.
+ *
+ * GATES, in order, each before any further read:
+ *   1. an image item;
+ *   2. MEDIA_IMAGE_VARIANTS_ENABLED === "1" (no read at all otherwise);
+ *   3. the reference is one of our canonical `post-media` objects
+ *      (`imageOriginalPath`, the reader's own parser) and the Memory owner's
+ *      own (its owner path segment);
+ *   4. `media_canonical_enabled` and `media_derivative_jobs_enabled` (3980),
+ *      read through the ladder's own `access.enabled` — the reader's gate;
+ *   5. exactly one canonical `media_assets` row for the object;
+ *   6. `enqueueConfiguredImageVariants`, which re-checks the switch, the flags
+ *      and that the row is current, and enqueues through 3980's
+ *      `media_derivative_enqueue`.
+ *
+ * IDEMPOTENT PER ASSET. 3980's `media_derivative_enqueue` returns the existing
+ * job for the same (asset, source version, kind, model) rather than inserting a
+ * second; this process also remembers what it enqueued and does not call
+ * again. Never throws: the item is already stored, and a rendition is an
+ * optimisation of a photo the person can already see.
+ */
+export async function enqueueMemoryItemRenditions(
+  sc: SupabaseClient,
+  item: { mediaUrl: unknown; mediaType: unknown; ownerId: string },
+  opts: { env?: NodeJS.ProcessEnv; log?: { warn?: (o: object, m: string) => void } } = {},
+): Promise<{ outcome: MemoryRenditionEnqueueOutcome; jobId?: string }> {
+  const env = opts.env ?? process.env;
+  if (!isImageItem(item.mediaType)) return { outcome: "not_image" };
+  if (env.MEDIA_IMAGE_VARIANTS_ENABLED !== "1") return { outcome: "off" };
+  try {
+    const config = imageVariantsConfigFromEnv(env);
+    const url = typeof item.mediaUrl === "string" ? item.mediaUrl : "";
+    const path = imageOriginalPath(url, config.storageOrigin);
+    if (!path || path.split("/")[0] !== item.ownerId) return { outcome: "not_canonical" };
+    const signal = AbortSignal.timeout(10_000);
+    if (!(await createImageVariantsAccess(sc, config).enabled(signal))) return { outcome: "off" };
+    const reply = await sc.from("media_assets").select("id, version, media_type")
+      .eq("storage_bucket", "post-media").eq("storage_path", path).limit(2);
+    if (reply.error) throw new Error(`media_assets: ${reply.error.message}`);
+    const rows = (reply.data ?? []) as Array<{ id: unknown; version: unknown; media_type: unknown }>;
+    if (rows.length !== 1) return { outcome: "not_found" };
+    const row = rows[0];
+    if (row.media_type !== "image") return { outcome: "not_image" };
+    const key = `${String(row.id)}:${String(row.version)}`;
+    const known = enqueuedThisProcess.get(key);
+    if (known) return { outcome: "already_enqueued", jobId: known };
+    const subject: ImageVariantsIngestSubject = {
+      assetId: typeof row.id === "string" ? row.id : null,
+      sourceVersion: typeof row.version === "number" ? row.version : null,
+      bucket: "post-media", path, mediaType: "image",
+    };
+    const jobId = await (testEnqueue ?? enqueueConfiguredImageVariants)(sc, subject, env);
+    if (!jobId) return { outcome: "refused" };
+    if (enqueuedThisProcess.size >= ENQUEUED_MAX) {
+      const oldest = enqueuedThisProcess.keys().next();
+      if (!oldest.done) enqueuedThisProcess.delete(oldest.value);
+    }
+    enqueuedThisProcess.set(key, jobId);
+    return { outcome: "enqueued", jobId };
+  } catch (err) {
+    opts.log?.warn?.({ err: String((err as Error)?.message ?? err) }, "memories: rendition enqueue failed — the item stands and its original is served");
+    return { outcome: "failed" };
+  }
 }

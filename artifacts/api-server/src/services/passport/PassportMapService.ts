@@ -11,7 +11,7 @@ import type { CallerContext } from "./PassportPrivacyGuard.js";
 import { filterStamps, filterMemories } from "./PassportPrivacyGuard.js";
 import type { StampRow } from "./PassportPrivacyGuard.js";
 import { loadMemories } from "./PassportMemoryService.js";
-import { logger as rootLogger } from "../../lib/logger.js";
+import { logger as rootLogger } from "../../lib/logger.js"; import { readStampPresenceView } from "./stampPresenceView.js";
 
 const logger = rootLogger.child({ service: "PassportMapService" });
 
@@ -440,7 +440,7 @@ async function readAllActiveUserStamps(
   for (;;) {
     let q = db
       .from("user_stamps")
-      .select("id, country, city, visibility, is_revoked, stamp_definitions(category, slug, evidences_presence)")
+      .select("id, user_id, source_type, source_id, country, city, visibility, is_revoked, stamp_definitions(category, slug, evidences_presence)")
       .eq("user_id", userId)
       .eq("is_revoked", false)
       .order("id", { ascending: true });
@@ -462,7 +462,7 @@ async function readAllActiveUserStamps(
 
 export async function buildStats(
   db: SupabaseClient,
-  userId: string,
+  userId: string, opts: { evidenceClient?: SupabaseClient | null } = {}, // H4 (wave 5): the occurrence-evidence read needs the service role when `db` is a caller's RLS client (3363 withholds passport_postcards.stamp_eligible from authenticated)
 ): Promise<PassportStats> {
   // Bug fix (2026-07-28): this previously read from `passport_stamps`, a stale
   // legacy table (last write 2026-05-10) that the live award pipeline
@@ -491,7 +491,7 @@ export async function buildStats(
     };
   }
 
-  const rows = data as any[];
+  const rows = data as any[]; const view = await readStampPresenceView(opts.evidenceClient ?? db, rows, logger); // H4 (wave 5): Countries/Cities count a presence stamp only with the occurrence evidence its own source names (stampPresenceView.ts)
   const countries = new Set<string>();
   const cities = new Set<string>();
   const neighborhoods = new Set<string>();
@@ -536,7 +536,7 @@ export async function buildStats(
     // but an embed that came back without it, or a row read through a path that
     // did not select it, arrives `undefined`. Absent MUST read as "not
     // presence" — over-claiming is the defect, under-claiming is not.
-    const evidencesPresence = def?.evidences_presence === true;
+    const evidencesPresence = def?.evidences_presence === true && view.mayShowPlace(r); // and its source's occurrence evidence holds
     if (evidencesPresence) {
       if (r.country) countries.add(r.country);
       if (r.city) cities.add(r.city);
@@ -560,6 +560,6 @@ export async function buildStats(
     hiddenGemStamps,
     safeReturnStamps,
     totalStamps: rows.length,
-    readFailed: false,
+    readFailed: view.unreadable.length > 0, // H4: unreadable occurrence evidence makes Countries/Cities a floor, not a count
   };
 }

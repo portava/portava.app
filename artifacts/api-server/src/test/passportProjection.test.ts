@@ -81,10 +81,10 @@ function seedDb() {
       // the Bangkok one by a GPS-verified postcard. Since §K.4 only such stamps
       // reach `stats.countries` — a destination attached to a stamp earned
       // without going there is no longer counted as a country visited.
-      { user_id: OWNER, city: "Da Nang", country: "Vietnam", is_revoked: false, visibility: "public", earned_at: "2025-03-30", stamp_definitions: { category: "trip", name: "Vietnam", slug: "first_trip_completed", evidences_presence: true } },
-      { user_id: OWNER, city: "Bangkok", country: "Thailand", is_revoked: false, visibility: "public", earned_at: "2025-02-01", stamp_definitions: { category: "city", name: "Bangkok", slug: "city_explorer", evidences_presence: true } },
+      { user_id: OWNER, city: "Da Nang", country: "Vietnam", is_revoked: false, visibility: "public", earned_at: "2025-03-30", source_type: "trips", source_id: "trip-past", stamp_definitions: { category: "trip", name: "Vietnam", slug: "first_trip_completed", evidences_presence: true } },
+      { user_id: OWNER, city: "Bangkok", country: "Thailand", is_revoked: false, visibility: "public", earned_at: "2025-02-01", source_type: "posts", source_id: "post-bkk", stamp_definitions: { category: "city", name: "Bangkok", slug: "city_explorer", evidences_presence: true } },
     ],
-    passport_stamps: [],
+    passport_stamps: [], plan_checkins: [{ user_id: OWNER, trip_id: "trip-past", status: "arrived", checked_in_at: "2025-03-02T10:00:00Z" }], passport_postcards: [{ user_id: OWNER, post_id: "post-bkk", stamp_eligible: true, stamp_revoked: false }], // H4, wave 5: the evidence each presence stamp's source names (stampPresenceView.ts); HEAD read neither
     trip_members: [
       { trip_id: "trip-past", user_id: OWNER, role: "owner" },
       { trip_id: "trip-now", user_id: OWNER, role: "owner" },

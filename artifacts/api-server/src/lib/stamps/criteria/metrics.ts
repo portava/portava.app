@@ -16,7 +16,7 @@
  *
  * The registry is the single source of truth for which metrics exist; the
  * evaluator rejects criteria referencing anything not registered.
- */ import { countEvidencedCompletedTrips } from "../../../services/passport/tripCompletionPresence.js";
+ */ import { countEvidencedCompletedTrips } from "../../../services/passport/tripCompletionPresence.js"; import { readStampPresenceView } from "../../../services/passport/stampPresenceView.js";
 
 export interface EvalContext {
   /** Metrics supplied by the trigger site (override/augment DB metrics). */
@@ -90,18 +90,18 @@ async function distinctStampField(sc: any, userId: string, field: string): Promi
   try {
     const { data, error } = await sc
       .from("user_stamps")
-      .select(`${field}, stamp_definitions(evidences_presence)`)
+      .select(`${field}, user_id, source_type, source_id, stamp_definitions(slug, evidences_presence)`)
       .eq("user_id", userId)
       .eq("is_revoked", false);
     if (error || !Array.isArray(data)) return 0;
-    const set = new Set<string>();
+    const set = new Set<string>(); const view = await readStampPresenceView(sc, data as any[]); // H4 (wave 5): a been-there count needs the occurrence evidence each stamp's source names (stampPresenceView.ts)
     for (const row of data as any[]) {
       // PostgREST returns an embedded to-one either as an object or, on some
       // shapes, as a single-element array — the same handling buildStats does.
       const def = Array.isArray(row.stamp_definitions)
         ? row.stamp_definitions[0]
         : row.stamp_definitions;
-      if (def?.evidences_presence !== true) continue;
+      if (def?.evidences_presence !== true || !view.mayShowPlace(row)) continue;
       const v = row[field];
       if (typeof v === "string" && v.trim()) set.add(v.trim().toLowerCase());
     }

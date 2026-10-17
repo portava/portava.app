@@ -255,6 +255,11 @@ describe("criteria metrics resolve real counts against real-shaped rows", () => 
       // evidence (tripCompletionPresence.ts); t1 was checked in on.
       plan_checkins: [
         { trip_id: "t1", user_id: USER, status: "arrived", checked_in_at: "2026-01-01T00:00:00Z" },
+        // H4, wave 5 (stampPresenceView.ts): the two Tokyo stamps' trips were
+        // checked in on too — a been-there count needs that evidence. These
+        // trips are not in `trips`, so trips_completed is unchanged.
+        { trip_id: "t3", user_id: USER, status: "arrived", checked_in_at: "2026-01-02T00:00:00Z" },
+        { trip_id: "t4", user_id: USER, status: "left", checked_in_at: "2026-01-03T00:00:00Z" },
       ],
       events: [{ id: "e1", host_id: USER }],
       // `evidences_presence: true` is load-bearing since `distinctStampField`
@@ -263,11 +268,11 @@ describe("criteria metrics resolve real counts against real-shaped rows", () => 
       // be staging two trips planned and never taken. `s3` differs from `s2`
       // only in case, which is what the dedupe is being checked for.
       user_stamps: [
-        { id: "s1", user_id: USER, is_revoked: false, city: "Da Nang", country: "Vietnam",
+        { id: "s1", user_id: USER, is_revoked: false, source_type: "trips", source_id: "t1", city: "Da Nang", country: "Vietnam",
           stamp_definitions: { slug: "first_trip_completed", evidences_presence: true } },
-        { id: "s2", user_id: USER, is_revoked: false, city: "Tokyo",   country: "Japan",
+        { id: "s2", user_id: USER, is_revoked: false, source_type: "trips", source_id: "t3", city: "Tokyo",   country: "Japan",
           stamp_definitions: { slug: "first_trip_completed", evidences_presence: true } },
-        { id: "s3", user_id: USER, is_revoked: false, city: "tokyo",   country: "japan",
+        { id: "s3", user_id: USER, is_revoked: false, source_type: "trips", source_id: "t4", city: "tokyo",   country: "japan",
           stamp_definitions: { slug: "first_trip_completed", evidences_presence: true } },
       ],
     });
