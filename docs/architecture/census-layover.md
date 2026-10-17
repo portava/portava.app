@@ -12371,3 +12371,7 @@ not model it. A one-off probe found no unhinted production embed between two tab
 unchanged.
 
 - NOT-GRADED: artifacts/api-server/src/test/ambiguousEmbedHints.test.ts — the route tests for the five surfaces this correction names, which no layover row grades.
+
+### Correction (2026-10-17, wave 5) — the LAY-4a router regression guard gained one intended change (census-telegraph T254)
+
+The guard's INTENDED set gained `safe_return|circle.need_help_host_alert` (the attention ladder's P0 band is now routed as emergency safety). The cited title at routerRegression.test.ts:66 is kept verbatim, so the anchor holds; it now describes the layover subset of INTENDED. The guard still asserts that the changed set equals INTENDED exactly, and the golden (main's decisions) was not regenerated. No layover verdict moves: layover.return.* are not in the attention ladder and the layover branch runs first.

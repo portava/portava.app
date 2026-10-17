@@ -15523,3 +15523,26 @@ Fable pass 2 ACCEPTED T397 and T256 at C (no row moves here). Three corrections:
 - **T256 wording.** W5N.1 says an unreadable roster, blocks table or thread choice tells nobody. That holds with one deliberate exception: during a raised SAFETY mode, the person who asked for help still reaches members who muted the thread (the mute is overridden; quiet hours are not). The safety lane (W5S.1) states the rule.
 - **T359, the per-card path.** The poller's fix (95027e013) covered the batch poll; the hook's own per-card resolve, used only for a card the thread read did not project, still drew reason `unknown` as revoked. It now reads it as "cannot tell" too (`travel-buddy-standalone/src/features/telegraph/sharing/useShareRevocation.ts:98#first.reason === 'unknown' ? UNKNOWN`), pinned by a new case at the end of shareRevocation.component.test.tsx (red with the old line).
 - **T397, a reading for the owner.** The six Trip pushes that stay outside the notification ledger (`trip_cancelled`, `trip_archived`, `trip_join_request_received`, `trip_invite_accepted`, `trip_invite_declined`, `trip_24h_reminder`) each have exactly one producer, so none can duplicate; the row's clause ("one Plan change must not create redundant ...") does not require them. If the owner reads "deduplicate by underlying causal event" as every push path going through the ledger, T397 returns to W until they do.
+
+## Row moves — 2026-10-17 build and fix (wave 5, P0 safety routing)
+
+APPEND-ONLY, appended by the lead. W5S.1 restated T254 C -> W because `circle.need_help_host_alert`, urgent and P0, was routed as Compass activity (level 7) and held in quiet hours even with the recipient's safety_override on. NotificationRouter now routes every attention-ladder P0_SAFETY event as emergency safety by its band; the router regression guard (owner directive OD-1012-LAY-4a) lists exactly this one type as an intended change, and main's golden is untouched.
+
+### W5P.1 Row moves
+
+| row | was | now | evidence |
+| --- | --- | --- | --- |
+| T254 §19 P0 Safety — interruptive; bypasses ordinary batching where policy requires | W | **C** | **Every P0 safety event is now interruptive under the existing rule, measured through the real router and Compass gate.** W5S.1's defect is fixed: NotificationRouter's Compass type map files every attention-ladder P0_SAFETY event as emergency_safety by its BAND, ahead of any name match (`artifacts/api-server/src/services/notifications/NotificationRouter.ts:60#if (bandFor(n.eventType) === "P0_SAFETY"`). `circle.need_help_host_alert` (`artifacts/api-server/src/domain/telegraph/policies/attentionLadder.ts:174#"circle.need_help_host_alert": "P0_SAFETY"`) had matched "circle" (activity_social, level 7) and was held in quiet hours with `quiet_hours_active` even with the recipient's override on; it is now pushed (`artifacts/api-server/src/test/p0SafetyCompassRouting.test.ts:77#it("circle.need_help_host_alert in quiet hours`). The rule is the existing one and covers all six P0 types (safe_return.reminder, .missed, .trusted_circle_alert, .check_in_prompt, circle.need_help_host_alert, telegraph.sos): pushed in quiet hours and with push off while the recipient's own `safety_override` is on, held while it is off, with the time-sensitive switch off and on (`artifacts/api-server/src/test/p0SafetyCompassRouting.test.ts:100#it("every P0 type obeys the same rule`, `artifacts/api-server/src/test/p0SafetyCompassRouting.test.ts:85#it("…with the override OFF it is HELD`). The gate's own decision record shows all six at level 1 (`artifacts/api-server/src/test/p0SafetyCompassRouting.test.ts:192#it("every P0_SAFETY event reaches the gate`), and ordinary circle activity stays activity_social and is held in quiet hours (`artifacts/api-server/src/test/p0SafetyCompassRouting.test.ts:118#it("ordinary circle activity is unchanged`). The LAY-4a guard records this as its one intended change beyond the layover warnings, and every other type still reproduces main's decisions (`artifacts/api-server/src/services/notifications/__tests__/routerRegression.test.ts:43#const INTENDED = new Set(`). Telegraph's own P0 (`telegraph.sos`), its producer, its doors and the never-coalesced rule are as W5S.1 states. Not this row's: P0 pushes still go out at Expo default priority (only `call.incoming` is sent "high"); that is the safety lane's F2 / Q10, an owner question. |
+
+Stated reading: on the existing rule (urgent plus the recipient's own safety_override, the precedent this row's evidence names) T254 is C. If the owner reads "interruptive" as also requiring a high-priority push (P0 pushes go at the default Expo priority, which Android Doze can delay — safety lane question Q10), T254 returns to W until that is ruled.
+
+### W5P.2 The headline, restated from the rows
+
+| bucket | count |
+| --- | --- |
+| BUILT-AND-CORRECT | **272** |
+| BUILT-BUT-WRONG | **176** |
+| NOT-BUILT | **1** |
+| CANNOT-VERIFY | **2** |
+
+That is **451 = 272 C / 176 W / 1 N / 2 X**: CORRECT 272 of 451 = 60.3 %. T254 moves W -> C.

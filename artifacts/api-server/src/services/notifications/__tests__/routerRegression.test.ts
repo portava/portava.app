@@ -40,7 +40,7 @@ import { runRouterMatrix, digestByType, typeOf, type Decision } from "./routerDe
 const here = dirname(fileURLToPath(import.meta.url));
 const golden = JSON.parse(readFileSync(join(here, "routerDecisionGolden.main.json"), "utf8")) as { digests: Record<string, string> };
 
-const INTENDED = new Set(["airport|layover.return.start_heading_back", "airport|layover.return.leave_now", "airport|layover.return.get_help"]);
+const INTENDED = new Set(["airport|layover.return.start_heading_back", "airport|layover.return.leave_now", "airport|layover.return.get_help", /* 2026-10-17, census-telegraph T254 (W5S.1): circle.need_help_host_alert is §19 P0 SAFETY (urgent) but its name matched "circle", so the Compass gate held it in quiet hours (quiet_hours_active) even with the recipient's safety_override ON. NotificationRouter now maps every attentionLadder P0_SAFETY event to emergency_safety; the other five P0 types (safe_return.* x4, telegraph.sos) already matched by name, so this is the ONLY type that re-routes, and only its quiet+override push changes (src/test/p0SafetyCompassRouting.test.ts). */ "safe_return|circle.need_help_host_alert"]);
 
 let decisions: Decision[] = [];
 before(async () => { decisions = await runRouterMatrix(NotificationRouter as any, _setTestFetch, TEMPLATES); });
