@@ -30,8 +30,8 @@
  * T410); this is what the surface OFFERS, like `actionsWhileLive`.
  *
  * ── HOW EACH INPUT FEEDS THE POLICY ─────────────────────────────────────────
- *   Relationship   BLOCKED (either direction) withholds every other input and
- *                  offers nothing — §15.3, "no subsystem may rediscover a
+ *   Relationship   BLOCKED (either direction) gets the non-member answer, byte for
+ *                  byte (T439): all five withheld, the clock included, nothing offered — §15.3, "no subsystem may rediscover a
  *                  blocked relationship". In a direct conversation it is also
  *                  the gate on Proximity: a bucket is revealed only about
  *                  somebody the viewer has an ACTIVE or TEMPORARY relationship
@@ -53,10 +53,10 @@
  * a floor: "you share nothing" built from a failed read is a statement about
  * two people that is false. `degraded` names every input that was unreadable.
  */
-import type {
-  ConversationCapabilities,
-  ConversationCapabilityName,
-  ResolvedConversationCapabilities,
+import {
+  allDenied, type ConversationCapabilities,
+  type ConversationCapabilityName,
+  type ResolvedConversationCapabilities,
 } from "../../domain/telegraph/contracts/conversationCapabilities.js";
 import type { TelegraphReason } from "../../domain/telegraph/contracts/telegraphReasonCodes.js";
 import type {
@@ -350,48 +350,48 @@ export function decideContextKernel(f: ContextKernelFacts): ContextKernel {
 
   // 1. Not an active member: nothing about the conversation is revealed, not even its clock.
   if (!f.member) {
-    return {
-      ...base,
-      inputs: {
-        relationship: withheld("KERNEL_NOT_MEMBER", null),
-        time: withheld("KERNEL_NOT_MEMBER", null),
-        proximity: withheld("KERNEL_NOT_MEMBER", null),
-        intent: withheld("KERNEL_NOT_MEMBER", null),
-        sharedObjects: withheld("KERNEL_NOT_MEMBER", null),
-      },
-      offeredActions: [],
-      withheldActions: [],
-      inputsRead: [],
-      degraded: caps.degraded,
-      degradedInputs: [],
-    };
+    return nothingRevealed(f, "KERNEL_NOT_MEMBER", caps);
   }
 
   const inputsRead = CONTEXT_KERNEL_INPUTS.filter((k) => k === "time" || (f as any)[k]?.status === "read");
   const degradedInputs = CONTEXT_KERNEL_INPUTS.filter((k) =>
     (f as any)[k]?.status === "unreadable" || (k === "sharedObjects" && f.sharedObjects.status === "read" && f.sharedObjects.value.incomplete));
 
-  // 2. A block, seen by either the capability policy or the relationship read:
-  //    nothing about the other person or what the two share is revealed, and
-  //    nothing is offered. The clock is not about anybody.
+  // 2. A block, seen by either the capability policy or the relationship read,
+  //    gets EXACTLY the non-member answer above — census-telegraph T439. A block
+  //    is the blocker's decision about the viewer, and a blocked member must not
+  //    be able to tell it from "not a member here": a field in which the two
+  //    answers differ would answer "did this person block me?". So ONE builder
+  //    makes both (`nothingRevealed`, at the foot of this file), and the block
+  //    travels only as an internal reason that the wire redacts (KERNEL_BLOCKED
+  //    to KERNEL_NOT_MEMBER, TELEGRAPH_AUTH_BLOCKED to TELEGRAPH_AUTH_NOT_MEMBER).
+  //    What that withholds, each of which this branch used to show:
+  //      - the clock. A non-member is not shown the conversation's time;
+  //      - the conversation type. "unknown", as for a thread that does not exist;
+  //      - §14.1's grants (below);
+  //      - inputsRead and degraded. Nothing read is shown, so nothing is listed
+  //        as read; and the answer rests on the block, which WAS read, so no
+  //        other read's failure can move it — and none is told.
+  //    The gatherer gathers nothing for a member §14.1 saw blocked
+  //    (contextKernel.ts), so no input's failure can change this answer's status.
   const blocked = caps.reasons.canSendMessage === "TELEGRAPH_AUTH_BLOCKED"
     || (f.relationship.status === "read" && f.relationship.value.state === "BLOCKED");
   if (blocked) {
-    return {
-      ...base,
-      inputs: {
-        relationship: withheld("KERNEL_BLOCKED", null),
-        time: revealed(kernelTime(f.nowMs, null)),
-        proximity: withheld("KERNEL_BLOCKED", null),
-        intent: withheld("KERNEL_BLOCKED", null),
-        sharedObjects: withheld("KERNEL_BLOCKED", null),
-      },
-      offeredActions: [],
-      withheldActions: [],
-      inputsRead: inputsRead.filter((k) => k === "time"),
-      degraded: caps.degraded || degradedInputs.length > 0,
-      degradedInputs,
-    };
+    return nothingRevealed(f, "KERNEL_BLOCKED", {
+      // §14.1's own answer is NOT passed through. It still GRANTS a blocked
+      // member canCreatePlan and canViewPreMembershipHistory, and gives policy
+      // reasons (no in-chat payment, no broadcast, a DM invite forms a group)
+      // that a non-member never gets. A stranger's §14.1 answer is every
+      // capability denied as NOT_MEMBER; this is every capability denied as
+      // BLOCKED, which the wire redacts to exactly that.
+      ...allDenied("TELEGRAPH_AUTH_BLOCKED"),
+      // A stranger's §14.1 answer is not degraded, so this one is not either:
+      // whether the trust state, the booking or some input failed to read is
+      // not something a viewer shown nothing may learn, and it cannot change an
+      // answer that withholds everything. The route test pins the two answers
+      // byte-equal (telegraphConversationCapabilities.test.ts, T439 route).
+      degraded: false,
+    });
   }
 
   // 3. Each input on its own reading, then the relationship → proximity gate.
@@ -482,5 +482,47 @@ export function contextKernelForWire(k: ContextKernel, redactCapability: (r: Tel
     inputsRead: k.inputsRead,
     degraded: k.degraded,
     degradedInputs: k.degradedInputs,
+  };
+}
+
+// ── the one answer for a viewer who is shown nothing (census-telegraph T439) ──
+
+/**
+ * The kernel for a viewer who is shown nothing: one who is not an active member
+ * (`reason` KERNEL_NOT_MEMBER, §14.1's own refusal as `caps`), and one who is
+ * blocked (`reason` KERNEL_BLOCKED, every capability denied as BLOCKED). ONE
+ * builder, so the two cannot drift: through `contextKernelForWire` the blocked
+ * answer is byte-identical to a stranger's, and the endpoint cannot be asked
+ * "did this person block me?". The internal answer keeps the honest reason for
+ * the census and the tests; only the wire forgets it.
+ *
+ * Nothing about the conversation: no clock (the Time input is withheld like the
+ * other four), no type ("unknown", as for a thread that does not exist), nothing
+ * read, nothing offered or withheld.
+ */
+function nothingRevealed(
+  f: ContextKernelFacts,
+  reason: "KERNEL_NOT_MEMBER" | "KERNEL_BLOCKED",
+  caps: Pick<ResolvedConversationCapabilities, "capabilities" | "reasons" | "degraded">,
+): ContextKernel {
+  return {
+    conversationId: f.conversationId,
+    viewerId: f.viewerId,
+    conversationType: "unknown",
+    generatedAt: new Date(f.nowMs).toISOString(),
+    inputs: {
+      relationship: withheld(reason, null),
+      time: withheld(reason, null),
+      proximity: withheld(reason, null),
+      intent: withheld(reason, null),
+      sharedObjects: withheld(reason, null),
+    },
+    capabilities: caps.capabilities,
+    capabilityReasons: caps.reasons,
+    offeredActions: [],
+    withheldActions: [],
+    inputsRead: [],
+    degraded: caps.degraded,
+    degradedInputs: [],
   };
 }

@@ -172,7 +172,7 @@ async function readKernelSharedObjects(
   return { status: "read", value: { projection: built.projection, incomplete: built.problems.length > 0 } };
 }
 
-const NOT_GATHERED: KernelReading<never> = { status: "not_applicable", detail: "not gathered: the viewer is not an active member" };
+const NOT_GATHERED: KernelReading<never> = { status: "not_applicable", detail: "not gathered: this viewer is shown nothing here (not an active member, or blocked)" };
 
 /**
  * Gather the five inputs for one viewer in one conversation and decide.
@@ -203,11 +203,11 @@ export async function assembleContextKernel(sc: SupabaseClient, req: ContextKern
   const capabilities = await resolveConversationCapabilities(sc, { viewerId, conversationId });
   const member = !!thread && !!membership && (membership as any).left_at == null;
   const conversationType = thread ? String((thread as any).thread_type ?? "direct") : "unknown";
-  if (!member) {
+  if (!member || capabilities.reasons.canSendMessage === "TELEGRAPH_AUTH_BLOCKED") { // T439: a member §14.1 saw blocked gets the non-member answer (the policy's rule), so nothing is gathered for them either — no roster, input or observation read whose failure could change its status
     return {
       ok: true,
       kernel: decideContextKernel({
-        conversationId, viewerId, conversationType: "unknown", member: false, capabilities,
+        conversationId, viewerId, conversationType: "unknown", member, capabilities,
         relationship: NOT_GATHERED, proximity: NOT_GATHERED, intent: NOT_GATHERED, sharedObjects: NOT_GATHERED, nowMs,
       }),
     };
@@ -226,12 +226,12 @@ export async function assembleContextKernel(sc: SupabaseClient, req: ContextKern
   const counterpartId = conversationType === "direct" && others.length === 1 ? others[0] : null;
   const visibleFrom = visibleFromOf(membership as any, boundOn);
 
-  const relationship = await readKernelRelationship(sc, viewerId, counterpartId, nowMs);
-  const sharedObjects = await readKernelSharedObjects(sc, { conversationId, viewerId, participantIds }, nowMs);
+  const relationship = await readKernelRelationship(sc, viewerId, counterpartId, nowMs); const blockedPair = relationship.status === "read" && relationship.value.state === "BLOCKED"; // T439: a block only the relationship saw (in an archived DM §14.1 reports the archive first) is the same non-member answer, and nothing is gathered across it
+  const sharedObjects = blockedPair ? NOT_GATHERED : await readKernelSharedObjects(sc, { conversationId, viewerId, participantIds }, nowMs);
   const proximity: KernelReading<KernelProximity> = proximityMayBeRead(conversationType, relationship)
     ? await readKernelProximity(sc, viewerId, others, nowMs)
     : { status: "not_applicable", detail: "not read: no relationship here admits a proximity bucket" };
-  const intent = await readKernelIntent(sc, { threadId: conversationId, viewerId, visibleFrom, isE2ee: (thread as any).is_e2ee === true }, nowMs);
+  const intent = blockedPair ? NOT_GATHERED : await readKernelIntent(sc, { threadId: conversationId, viewerId, visibleFrom, isE2ee: (thread as any).is_e2ee === true }, nowMs);
 
   return {
     ok: true,
