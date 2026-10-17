@@ -4737,3 +4737,61 @@ change made here is a test.*
 
 90 + 15 + 1 + 2 = 108. CONSTRUCTED 97.2 % (105 / 108) · CORRECT 83.3 % (90 / 108). The one NOT-BUILT row is
 TV-6a (D-PROVIDER: the Sumsub account, keys, webhook secret and per-market coverage; owner-held).
+
+### Correction (2026-10-17, wave 5) — reviews reviewer embed
+
+*Measured on branch `claude/wave4-build-20261017` against the working tree. `head_commit` is not re-declared. The fix
+is uncommitted and not deployed, so production keeps the defect below until it ships. **NO ROW MOVES.***
+
+**What was broken, in production.** The three review lists — `GET /trips/:id/reviews`, `GET /places/:id/reviews` and
+`GET /users/:id/reviews` — selected `profiles!reviewer_id(...)` from `reviews`. The only foreign key on
+`public.reviews` is `reviews_reviewer_id_fkey`, and it runs to `auth.users`, not `public.profiles`. The lead read this
+from the production catalog, read-only, on 2026-10-17, and migration 0067 and the 2026-08-19 baseline agree. PostgREST
+had no relationship to follow, so it answered PGRST200, and each list answered `db_error` on every call. The embed
+is present at the 2026-07-15 import. No suite could see it: fixtures carried a pretend `profiles` object on each
+review row, and since the wave-W embed guard, the doubles let this one embed through a one-entry ledger,
+`KNOWN_UNBACKED_EMBEDS`.
+
+**What that means for earlier sections.** §27.2's block filter and its fail-closed aggregates were right in the code,
+but no production request reached them, because the reviews read failed first. §40.1 says the identity badge is
+"served on … reviews (trip, place and host)". The code serves it, but no production response carried it. TV-2c was
+`W` for other reasons, and it stays `W`.
+
+**What changed, with no migration.** Each list reads its reviews with no embed. Then ONE batched `.in("id", ids)` read
+of `public.profiles` finds the reviewers of the rows being served, and the route joins them in code
+(`artifacts/api-server/src/routes/reviews.ts:302#const reviewers = await readReviewerProfiles(sc, rows);`,
+`artifacts/api-server/src/routes/reviews.ts:379#const reviewers = await readReviewerProfiles(sc, rows);`,
+`artifacts/api-server/src/routes/reviews.ts:516#const reviewers = await readReviewerProfiles(sc, page.map((p) => p.r));`,
+helper `artifacts/api-server/src/routes/reviews.ts:1072#async function readReviewerProfiles(`). `profiles.id` is the
+auth user id (`profiles_id_fkey` → `auth.users`), so `reviewer_id` is the profile key. The reviewer object keeps
+exactly the embed's fields: id, handle, displayName (under the universal display-name rule), avatarUrl,
+verificationLevel, and identityBadge when its flag is on. The host list cuts its page from the raw rows first, so its
+batch holds at most `limit` ids. Its event reviews, whose embed was keyed, join the same batch, so one standing rule
+covers the whole merged list.
+
+**Two decisions (routine, recorded here).**
+- *Standing.* A review whose reviewer is not `active` (deactivated, pending_deletion or deleted) is withheld from the
+  list, anonymous reviews included (`artifacts/api-server/src/routes/reviews.ts:1084#if ((p.account_status ?? "active") !== "active") continue;`).
+  A reviewer with no profile row is standing-unknown and withheld too. This is the allowlist the other lists of people
+  already apply: engagement likes, follows search and suggestions, and the discovery community byline. The aggregate
+  stays over every published review, as §27.2 decided for blocks. Bans and suspensions (`user_account_states`) are
+  not read here, and no other list of people reads them either.
+- *Failure.* An unreadable profile read is a 503 `degraded_unavailable`, the same answer as an unreadable block list.
+  It is never a list of reviews with blank reviewers, and never a list whose authors' standing went unread.
+
+**The ledger is empty.** `KNOWN_UNBACKED_EMBEDS` held only this entry. Every double now refuses the old embed (PGRST200),
+and the guard suite pins the ledger empty and the embed unissued. census-layover's L295 paragraph on the "one-entry
+ledger" describes the state before this fix.
+
+**Tests.** `artifacts/api-server/src/test/reviewsReviewerTwoStepRead.test.ts:194#it("answers 200 with the shape it was written to return, naming only live columns"`
+(20 cases): each list on the schema-strict double, with live columns and the embed guard on; the exact reviewer key
+set, with no other profile column in the response; a failed batch answering 503 on every list, signed in and out; the
+standing cases; and both doubles refusing the old select. The four suites that drive these lists
+(`reviews.test.ts`, `placeReviews.test.ts`, `identityVerifiedBadges.test.ts`, `tmSocialListGuards.test.ts`) now seed
+`profiles` rows instead of pretend embeds; with the guard suite they run 127/127 green. With the ledger empty, the
+pre-fix route turns 19 of the 43 new-suite and guard cases red. Nine mutants were each killed and then restored by sha256: the embed restored on each
+of the three reads, the batch turned into one read per reviewer, the profile read dropped, a failed read answered as
+"no reviewers", the standing check dropped, `account_status` left out of the select, and the host batch made to omit
+event reviewers.
+
+Rows: none move. Headline unchanged: 90 / 15 / 1 / 2 of 108.

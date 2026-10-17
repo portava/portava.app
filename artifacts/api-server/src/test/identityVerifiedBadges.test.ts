@@ -170,7 +170,7 @@ async function tripReviews(rows: Record<string, any[]>) {
 const review = (id: string, reviewer: string) => ({
   id, reviewer_id: reviewer, entity_type: "trip", entity_id: TRIP, rating: 5, body: "x", tags: [], visibility: "public",
   state: "published", created_at: `2026-09-1${id.length}T00:00:00Z`,
-  profiles: { handle: reviewer.slice(0, 1), display_name: null, avatar_url: null, verification_level: "id_verified" },
+  // census-trust wave 5: no inline `profiles` — the route reads ROWS().profiles by id (reviews has no key to profiles)
 });
 
 describe("GET /trips/:id/reviews carries each reviewer's identityBadge (TV-2c)", () => {

@@ -234,18 +234,17 @@ function foreignKeys(): ForeignKey[] {
  * hidden. A double ACCEPTS these (so the suites that drive them stay runnable)
  * and `fakeLayoverDbEmbedGuard.test.ts` pins that each one is still unbacked and
  * still issued, so an entry cannot outlive its defect.
+ *
+ * EMPTY since 2026-10-17 (census-trust, wave 5). Its one entry was `reviews →
+ * profiles`: routes/reviews.ts embedded `profiles!reviewer_id(...)` from
+ * `reviews`, whose only key (`reviews_reviewer_id_fkey`, confirmed on the
+ * production catalog) runs to auth.users. Production answered PGRST200 and the
+ * three review lists answered db_error. The route now reads the reviews, then
+ * the reviewers' profiles in one batched `.in("id", ids)` read, and every double
+ * REFUSES the old embed again. A new entry needs a finding, an owner, and a case
+ * in `fakeLayoverDbEmbedGuard.test.ts` naming the file that still issues it.
  */
-export const KNOWN_UNBACKED_EMBEDS: ReadonlyArray<{ parent: string; relation: string; finding: string }> = [
-  {
-    parent: "reviews",
-    relation: "profiles",
-    finding:
-      "routes/reviews.ts selects `profiles!reviewer_id(...)` from `reviews`, but `reviews.reviewer_id` references " +
-      "auth.users(id) (0067_reviews.sql; baseline `reviews_reviewer_id_fkey`), not public.profiles, and no " +
-      "migration adds a reviews→profiles key. By the repo's own schema PostgREST answers PGRST200, and the " +
-      "route answers db_error. Not verified against the live catalog. Owner: the reviews route / Trust lane.",
-  },
-];
+export const KNOWN_UNBACKED_EMBEDS: ReadonlyArray<{ parent: string; relation: string; finding: string }> = [];
 
 const JOIN_MODIFIERS = new Set(["inner", "left"]);
 

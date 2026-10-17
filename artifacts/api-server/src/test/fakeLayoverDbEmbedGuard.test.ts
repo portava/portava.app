@@ -204,16 +204,16 @@ describe("L295 wave 5 — the reader knows production's keys, and the column eac
 
 describe("L295 wave 5 — KNOWN_UNBACKED_EMBEDS cannot outlive its defect", () => {
   it("every entry is still unbacked by any declared key, and still issued by production code", () => {
-    assert.ok(KNOWN_UNBACKED_EMBEDS.length > 0);
+    assert.deepEqual(KNOWN_UNBACKED_EMBEDS.map((k) => `${k.parent}→${k.relation}`), [], "census-trust wave 5 emptied the ledger; a new entry needs its own still-issued case here");
     for (const k of KNOWN_UNBACKED_EMBEDS) {
       assert.equal(migrationFkBacksEmbed(k.parent, k.relation), false, `${k.parent}→${k.relation} is backed now: delete its entry`);
     }
-    const reviews = readFileSync(new URL("../routes/reviews.ts", import.meta.url), "utf8");
-    assert.match(reviews, /from\("reviews"\)\s*\.select\("[^"]*profiles!reviewer_id\(/, "the reviews→profiles embed is no longer issued: delete its entry");
+    const reviews = readFileSync(new URL("../routes/reviews.ts", import.meta.url), "utf8"); // census-trust wave 5: the reviews→profiles entry is gone because the embed is no longer issued
+    assert.doesNotMatch(reviews, /\.select\(\s*["'`][^"'`]*profiles!reviewer_id\(/, "routes/reviews.ts issues `profiles!reviewer_id(...)` again; reviews.reviewer_id keys auth.users, so production answers PGRST200");
   });
 
-  it("the ledger is what lets reviews → profiles through; the same embed from a table not on it is refused", () => {
-    assert.deepEqual(selectEmbedRefusals("reviews", "id, profiles!reviewer_id(handle)"), []);
+  it("with the ledger empty, reviews → profiles is REFUSED again, as from any table with no key to profiles", () => {
+    assert.match(selectEmbedRefusals("reviews", "id, profiles!reviewer_id(handle)")[0] ?? "", /no migration declares a foreign key between those tables.*PGRST200/);
     assert.match(selectEmbedRefusals("rent_buddy_profiles", "id, profiles!reviewer_id(handle)")[0] ?? "", /PGRST200/);
   });
 });
