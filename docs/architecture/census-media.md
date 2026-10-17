@@ -17115,3 +17115,212 @@ file and retired entry; same-path changes need new arguments even when mechanica
 acknowledged. Freshness checks age, integrity checks internal counts, citation checks pointers:
 none establishes product correctness. No grade, checker behavior/threshold, schema, flag,
 provider, beta or DB action follows.
+
+## 53. Row moves — 2026-10-17 re-grade after the integration batch (PR #762): the five vendor rows are built up to their runtimes. FIVE ROWS MOVE N → W (MD63, MD277, MD280, MD282, MD293)
+
+Re-grader's section, measured on branch `claude/census-regrade-20261017` at `e1e097cfe` (PR #762's integration
+commit). §52 recorded the batch's Media corrections and moved no grade, and the `review20261017` acknowledgement
+says no verdict was re-measured. This section re-measures this census's five N rows, and the W rows whose subject
+the batch touched, against the code at that commit. Documentation only: no code, migration, flag or database was
+read or written; deployment facts are the repository's own. `head_commit` is not re-declared.
+
+**What moves, and why it is not a ruling.** All five N rows were N for one stated reason (§37, §41.2, §50.2): each
+was "done up to the vendor", a refusing seam with an empty adapter table, and the rulings D-27a, D-27b, D-27c and
+the Media half of D-28 are NOT RULED. The batch filled each seam with a self-hosted implementation: a pinned local
+vision model, CPU FFmpeg, a local Whisper model, a CLIP index on pgvector, an iOS AVFoundation encoder. That is
+construction, so "not built" is no longer true of any of them. It is not a ruling. **D-27a/b/c and D-28 remain NOT
+RULED**: the self-hosted choice is the builder's, not the owner's. Each row still needs an owner ruling, applied
+migrations, a provisioned runtime with installed model weights, and the device or production evidence its own
+EXTERNAL column names before it can be C. **No row moves to C.**
+
+### 53.1 What each row now has
+
+- **MD63 EVIDENCE EXTRACTION.** §20.6's RED WHEN, "any module derives an evidence candidate from pixel or frame
+  content", is met in code.
+  - The vision adapter table is no longer empty
+    (`artifacts/api-server/src/lib/media/vendors/mediaVisionProvider.ts:131#self_hosted_siglip(env = process.env) {`).
+  - The worker scores pixels with a pinned SigLIP model, zero-shot over a closed crowd vocabulary
+    (`tools/media-vision/worker.py:143#scores = self.torch.sigmoid(output.logits_per_image)`).
+  - The result passes through §9's one constructor
+    (`artifacts/api-server/src/lib/media/vendors/imageUnderstandingProvider.ts:95#signals.push(...deriveVisualEvidenceCandidates(IMAGE_UNDERSTANDING_PROVIDER`),
+    still stamped unverified and never observation-eligible
+    (`artifacts/api-server/src/lib/media/vendors/imageUnderstandingContract.ts:21#basis: z.literal("visual_inference"), verified: z.literal(false), eligibleAsObservation: z.literal(false),`).
+  - Video is read only through its stored poster.
+  - **Still wrong:**
+    - the confidence is declared uncalibrated
+      (`artifacts/api-server/src/lib/media/vendors/imageUnderstandingContract.ts:42#confidenceKind: z.literal("uncalibrated_similarity"),`);
+    - only allow-listed owners with explicit consent are processed
+      (`artifacts/api-server/src/lib/media/vendors/imageUnderstandingContract.ts:129#if (env.MEDIA_IMAGE_UNDERSTANDING_ENABLED !== "true"`);
+    - a scene read refuses as soon as any item is not the viewer's own
+      (`artifacts/api-server/src/lib/media/vendors/imageUnderstandingProvider.ts:85#if (source.ownerId !== input.viewerId) return refused("unsupported");`);
+    - the model weights are not installed anywhere;
+    - 3355 is seeded OFF and 3980/3981 are applied nowhere.
+- **MD277 Adaptive playback.** §22.5's RED WHEN, "a rendition ladder (HLS or DASH) exists for an uploaded video and
+  the player selects between renditions", is met in code up to the native player.
+  - The transcoder seam has an adapter
+    (`artifacts/api-server/src/lib/media/vendors/mediaTranscoder.ts:92#self_hosted_ffmpeg(env = process.env) {`).
+  - Every new video is submitted at upload
+    (`artifacts/api-server/src/lib/media/vendors/mediaVendorStages.ts:217#? await submitForTranscode(adapters.transcoder, {`).
+  - The worker encodes two non-upscaled H.264 HLS rungs
+    (`artifacts/api-server/src/lib/media/adaptive/encoder.ts:68#const heights = source.height >= 720 ? [360, 720] : [180, 360];`)
+    and refuses a ladder that collapses to one
+    (`artifacts/api-server/src/lib/media/adaptive/encoder.ts:107#if (renditions[0].height === renditions[1].height) throw new Error("ladder collapsed to one resolution");`).
+  - The ladder is served per viewer behind `authorizeMediaAccess`
+    (`artifacts/api-server/src/routes/mediaAdaptive.ts:25#router.get(["/media/adaptive/source"`), mounted at
+    `artifacts/api-server/src/routes/index.ts:438#router.use(createMediaAdaptiveRouter(sc => createConfiguredAdaptiveRuntime(sc)));`.
+  - Both shared players hand the master playlist to the native player
+    (`travel-buddy-standalone/src/services/media/adaptive.ts:19#return { uri: result.manifestUrl, headers: { Authorization:`;
+    `travel-buddy-standalone/src/components/media/WatchVideoCell.tsx:88#const playback = useAdaptivePlayback(captionSource ?? videoUrl, videoUrl, shouldPlay);`;
+    `travel-buddy-standalone/src/components/ui/SharedVideoPlayer.tsx:87#const playback = useAdaptivePlayback(captionSource ?? uri, playbackUri);`).
+    AVPlayer and ExoPlayer choose the rung; a ladder failure falls back to the original
+    (`travel-buddy-standalone/src/components/media/WatchVideoCell.tsx:126#if (playback.rejectAdaptive()) return;`).
+  - **Still wrong:**
+    - `media_transcoder_enabled` (3357) is seeded OFF
+      (`travel-buddy-standalone/src/hooks/useAdaptivePlayback.ts:10#const enabled = useFeatureFlags().isEnabled('media_transcoder_enabled')`);
+    - 3980 is applied nowhere;
+    - no worker host, private volume or pinned FFmpeg toolchain is provisioned;
+    - D-27b is NOT RULED;
+    - no device run has shown a rung switch under a throttled network, which §37's EXTERNAL asks for.
+- **MD280 Captions.** §22.5's RED WHEN, "a timed text track travels with the asset and the player renders its cues",
+  is met in code for post videos.
+  - **Both §22.5 sources exist.**
+    - A person-authored WebVTT track, written with explicit consent
+      (`artifacts/api-server/src/routes/mediaCaptions.ts:60#router.put("/media/captions/:assetId"`).
+    - A creator-requested local Whisper draft
+      (`artifacts/api-server/src/routes/mediaCaptions.ts:88#router.post("/media/captions/:assetId/asr"`;
+      `artifacts/api-server/src/lib/media/captions/whisperCaptionHandler.ts:80#export function createWhisperCaptionHandler(`).
+      It is never served until the creator reviews and publishes it.
+  - **The track and the player.**
+    - Tracks are bound to the asset's generation by the 3983 manifest.
+    - Both shared players render cues against the reported playback position
+      (`travel-buddy-standalone/src/components/media/TimedCaptionOverlay.tsx:10#const text = cues.filter((cue) => cue.startMs <= position && position < cue.endMs)`).
+    - The original video stays the playable source.
+  - The upload-time caption seam is still empty (`IMPLEMENTED_CAPTION_SOURCES`). Tracks come only from those two
+    owner-requested paths.
+  - **Still wrong:**
+    - `media_captions_enabled` (3358) is seeded OFF
+      (`artifacts/api-server/src/routes/mediaCaptions.ts:27#isFlagEnabled(sc, "media_captions_enabled")`);
+    - 3983 is applied nowhere and no ASR model is installed;
+    - captions are refused for anything but a post video, including a Telegraph message's video
+      (`artifacts/api-server/src/services/media/AuthoredCaptionsService.ts:120#Captions currently support post videos only, not encrypted or other private contexts.`);
+    - D-28's Media half is NOT RULED. That includes whether a server-side ASR behind separate consent satisfies
+      OD-INPUT-5's "on-device first".
+- **MD282 Compression / transcoding.** §22.5's RED WHEN, "video bytes are re-encoded to a bounded bitrate before
+  storage, on the server or the device", is met in code on iOS.
+  - The native module the JS seam looks for now exists
+    (`travel-buddy-standalone/src/services/media/videoCompression.ts:52#export const VIDEO_COMPRESSOR_MODULE = 'PortavaVideoCompressor';`),
+    registered for iOS only
+    (`travel-buddy-standalone/modules/portava-video-compressor/expo-module.config.json:2#"platforms": ["ios"],`).
+  - Its AVFoundation core re-encodes to H.264/AAC under a whole-file bitrate ceiling.
+  - It is already wired at the four upload paths §37 names.
+  - **Still wrong:**
+    - Android has no module;
+    - the seam ships OFF
+      (`travel-buddy-standalone/src/services/media/videoCompression.ts:61#const DEFAULT_ENABLED = false;`);
+    - no Expo bridge compile, app build or device run exists; the harness compiles the core against the iOS SDKs and
+      runs it on macOS AVFoundation only.
+  - The server's HLS rungs (MD277) are bounded-bitrate derivatives made AFTER the original is stored, so they do not
+    meet "before storage".
+- **MD293 "Find places that look like this."** §37's EXTERNAL, "an image-embedding model and a vector index keyed by
+  media id, with deletion when the media is deleted", is met in code.
+  - A local CLIP adapter
+    (`artifacts/api-server/src/lib/media/vendors/mediaVisionProvider.ts:135#local_clip(env = process.env) {`)
+    writes 512-dimension embeddings to pgvector, keyed by asset with `ON DELETE CASCADE`
+    (`artifacts/api-server/src/migrations/3982_media_visual_index.sql:22#asset_id uuid PRIMARY KEY REFERENCES public.media_assets(id) ON DELETE CASCADE,`).
+    A trigger erases them when the source changes, is deleted or is purged
+    (`artifacts/api-server/src/migrations/3982_media_visual_index.sql:219#DELETE FROM public.media_visual_embeddings WHERE asset_id = NEW.id AND (`).
+  - The search asks the index with the viewer's id
+    (`artifacts/api-server/src/services/media/MediaSearchService.ts:1019#const similar = await similarMediaFor(provider`).
+    It re-gates every proposal and rolls the survivors up into places
+    (`artifacts/api-server/src/services/media/MediaSearchService.ts:1068#const places = rollUpPlaces(matched, nowMs);`).
+  - **Still wrong:**
+    - only images whose owner gave visual-index consent are indexed, and each is kept at most 30 days;
+    - the CLIP weights are not installed;
+    - pgvector and 3982 are applied nowhere;
+    - 3355 is seeded OFF;
+    - D-27c is NOT RULED.
+
+### 53.2 Tests run for this section
+
+All were run by the re-grader at `e1e097cfe` on 2026-10-17. The API suites were run from `artifacts/api-server` with
+`env -i … node --import tsx/esm --test`, with loopback listen allowed. The client suites were run with jest from
+`travel-buddy-standalone`. Every count below is pass/total, with 0 failed and 0 skipped.
+
+| Row | Suites | Result |
+| --- | --- | --- |
+| MD63 | `artifacts/api-server/src/test/imageUnderstanding.test.ts` (incl. `artifacts/api-server/src/test/imageUnderstanding.test.ts:94#test("background pixels produce candidate-only metadata` and `artifacts/api-server/src/test/imageUnderstanding.test.ts:253#test("actual Python worker protocol refuses text/URLs and missing weights without downloading"`) | 17/17 |
+| MD63, MD277, MD293 | `artifacts/api-server/src/test/mediaVendorSeams.test.ts`; it pins the three vision adapters, the self-hosted transcoder staying refused without configuration, and the empty caption seam (`artifacts/api-server/src/test/mediaVendorSeams.test.ts:104#it("unimplemented vendors refuse and the self-hosted transcoder remains disabled without configuration"`) | 85/85 |
+| MD277 | `artifacts/api-server/src/test/mediaAdaptive.test.ts` 37/37 · `mediaAdaptiveArtifacts.test.ts` 7/7 · `mediaDerivativeWorker.test.ts` 28/28 · `mediaJobRegistry.test.ts` 3/3 | 75/75 |
+| MD277 | `artifacts/api-server/src/test/mediaAdaptiveEncoding.real.test.ts` through `scripts/run-media-encoding-tests.mjs`, with FFmpeg/ffprobe 8.0 (capabilities verified by the runner); `artifacts/api-server/src/test/mediaAdaptiveEncoding.real.test.ts:12#test("real CPU FFmpeg: synthetic source becomes two measured decodable renditions and a bounded preview"` | 2/2, "no skips or todos" |
+| MD277 | `travel-buddy-standalone/src/components/media/__tests__/MediaAdaptive.component.test.tsx` 6/6 (`travel-buddy-standalone/src/components/media/__tests__/MediaAdaptive.component.test.tsx:39#it('uses the protected manifest with an authorization header and Android format hint'`) · `travel-buddy-standalone/src/components/ui/__tests__/SharedVideoPlayer.component.test.tsx` 9/9 | 15/15 |
+| MD280 | `artifacts/api-server/src/test/mediaAuthoredCaptions.test.ts` 37/37 (incl. `artifacts/api-server/src/test/mediaAuthoredCaptions.test.ts:416#test("deleted parent posts and encrypted/non-post canonical attachments refuse even owner captions"`) · `mediaCaptionRuntime.test.ts` 4/4 · `mediaWhisperCaptions.test.ts` 12/12 | 53/53 |
+| MD280 | `travel-buddy-standalone/src/components/media/__tests__/MediaCaptions.component.test.tsx` 20/20 (`travel-buddy-standalone/src/components/media/__tests__/MediaCaptions.component.test.tsx:50#it('renders start-inclusive/end-exclusive cues`) · `MediaCaptionLanguage.component.test.tsx` 6/6 · `CaptionAsrSheet.component.test.tsx` 10/10 · `travel-buddy-standalone/src/services/media/__tests__/captions.transport.component.test.ts` 8/8 | 44/44 |
+| MD280, MD293, queue | `scripts/run-media-sql-tests.mjs` over its six required files (caption manifest, ASR consent, dubbing caption, visual generation, derivative cleanup, caption translation) on a disposable single-session PGlite with pgvector | 18/18 named tests, all six files executed |
+| MD282 | `travel-buddy-standalone/src/services/media/__tests__/mediaVendorDevice.test.ts` (the JS seam) | 37/37 |
+| MD282 | `travel-buddy-standalone/modules/portava-video-compressor/tests/run-native-fixtures.sh`, run outside the sandbox with Xcode | "NATIVE CORE RESULT: 23 passed"; iphoneos and iphonesimulator SDK object compiles PASS |
+| MD293 | `artifacts/api-server/src/test/mediaVisualIndex.test.ts` 15/15 (`artifacts/api-server/src/test/mediaVisualIndex.test.ts:106#test("seed and every candidate require authorization, consent and current canonical mapping"`) · `mediaVisualIndexRoute.test.ts` 6/6 · `mediaVisualPublication.test.ts` 2/2 · `mediaVisualCanonical.test.ts` 4/4 · `mediaVisualImageAcquisition.test.ts` 9/9 · `mediaVisualReview.test.ts` 18/18 | 54/54 |
+
+**What none of these prove:**
+- real model inference: the vision, CLIP and Whisper weights are absent, and the vision suite proves the worker
+  refuses missing weights without downloading them;
+- a hosted or multi-session PostgreSQL;
+- an Expo app build;
+- a device.
+
+They prove construction and failure behaviour, which is what an N → W move needs. They are not what a C would need.
+
+### 53.3 Row moves
+
+| ID | Was | Now | Evidence |
+| --- | --- | --- | --- |
+| MD63 | **N** | **W** | **EVIDENCE EXTRACTION is built up to its model.** A registered self-hosted SigLIP adapter derives `crowd_level` candidates from pixels, or from a video's stored poster, through `deriveVisualEvidenceCandidates`, unverified and never observation-eligible (§53.1). **TESTED:** §53.2, 17 + 85. **Why W, not C:** D-27a is NOT RULED; the weights are not installed; confidence is uncalibrated similarity; only allow-listed, consenting owners are processed, and only for their own media; 3355 is OFF; 3980/3981 are applied nowhere; D-25's hold on location-sensitive media stands. **Back to N if** the adapter table is emptied or the worker stops reading pixels. |
+| MD277 | **N** | **W** | **A two-rung HLS ladder is built, served per viewer, and handed to the native player by both shared players, with a fallback to the original** (§53.1). **TESTED:** §53.2: 75 + 15 cases, and 2 real FFmpeg 8.0 encodes that decode both rungs. **Why W, not C:** D-27b is NOT RULED; `media_transcoder_enabled` (3357) is seeded OFF; 3980 is applied nowhere; no worker host or toolchain is provisioned; no device run has shown a rung switch. |
+| MD280 | **N** | **W** | **A timed text track travels with the asset's generation and both shared players render its cues.** Its source is either the creator's own WebVTT or a reviewed local Whisper draft (§53.1). **TESTED:** §53.2: 53 + 44 cases and the 3983 manifest SQL test. **Why W, not C:** D-28's Media half is NOT RULED; `media_captions_enabled` (3358) is seeded OFF; 3983 is applied nowhere; no ASR model is installed; the scope is post videos only; there has been no device or assistive-technology run. |
+| MD282 | **N** | **W** | **The iOS native encoder the seam was waiting for exists.** It re-encodes to H.264/AAC under a verified bitrate ceiling before upload, at the four wired upload paths (§53.1). **TESTED:** §53.2: 37 JS cases; 23 native fixtures on real AVFoundation; two iOS SDK object compiles. **Why W, not C:** there is no Android module; `DEFAULT_ENABLED` is false; there is no Expo bridge compile, no app build and no device run (§37.3/§37.4's matrix). |
+| MD293 | **N** | **W** | **A cross-place visual index exists.** It holds CLIP embeddings keyed by asset on pgvector, is erased with the media, and "look like this" proposals are re-gated and rolled up into places (§53.1). **TESTED:** §53.2: 54 cases and the 3981/3982 generation SQL test. **Why W, not C:** D-27c is NOT RULED; the CLIP weights are not installed; pgvector and 3982 are applied nowhere; 3355 is OFF; only consenting owners' images are indexed, for at most 30 days. |
+| MD289 | **W** | **W** | **"Nightlife that looks social tonight" — restated, not moved.** D-27a is still NOT RULED. What changed: a provider now exists (MD63), and the search passes it the viewer's id (`artifacts/api-server/src/services/media/MediaSearchService.ts:978#const scene = await sceneCandidatesFor(provider, base.media.map`). It answers only for the viewer's OWN media, and refuses the whole read when any candidate belongs to someone else (`artifacts/api-server/src/lib/media/vendors/imageUnderstandingProvider.ts:85#if (source.ownerId !== input.viewerId) return refused("unsupported");`). A query about other people's nightlife therefore still cannot be answered in any configuration. The ≥0.6 busy/social rule is still unratified. |
+
+### 53.4 Examined and not moved
+
+- **MD283, MD269.** These need a moderation classifier or a staffed review (D-27d, NOT RULED). Image understanding is
+  a scene tagger, not a classifier, and nothing routes moderation through it.
+- **MD284.** The iOS compressor is not a background uploader. Android still has no foreground service, and there has
+  been no device run.
+- **MD1, MD2, MD3, MD11, MD29, MD87, MD215, MD286, MD402, MD408, MD412, MD419, MD424, MD425, MD427, MD435, MD446.**
+  No flag in their ACTIVATION column was flipped. The batch's World scope and Watch policy repairs (§52.1) leave each
+  one's stated condition as it was.
+- **MD53, MD58, MD65, MD66, MD370, MD445.** D-25's consent, evidence-copy and erasure path is not built.
+- **MD385.** Not built. **MD403.** Owner and device verification remain. **MD162.** No production flow exists.
+- **Rows this census does not grade.** Synthetic dubbing (3986), subtitle translation and retained outputs
+  (3987/3995), viewer dubbing and content-language preferences, post-detail translation, account media erasure and
+  the encoding CI gates have no requirement among the 450. Their suites are not counted above.
+- **C rows on changed files, spot-checked.**
+  - MD285 still holds: a ladder failure falls back without counting toward the hard-fail latch (§53.1).
+  - MD278 still holds.
+  - MD279 still holds.
+
+### 53.5 Headline, restated from the rows
+
+`check:census-integrity` recounted after this section.
+
+| Measure | §51.5 / §52 | **§53.5** |
+| --- | ---: | ---: |
+| Denominator | 450 | **450** |
+| BUILT-AND-CORRECT | 415 | **415** |
+| BUILT-BUT-WRONG | 30 | **35** |
+| NOT-BUILT | 5 | **0** |
+| CANNOT-VERIFY | 0 | **0** |
+| CONSTRUCTED% | 98.9 % | **100.0 %** (450 / 450) |
+| CORRECT% raw | 92.2 % | **92.2 %** (415 / 450) |
+
+**How to read 100 % constructed.** Every requirement now has code. It does not mean every requirement can run.
+Five of the 35 W rows are built against runtimes that exist in no environment: model weights, a worker host, an
+FFmpeg toolchain, pgvector, and a native build. All five also wait on vendor rulings the owner has not made.
+
+**What would turn these back to N, or make them wrong:**
+- an adapter table emptied;
+- a worker that stops reading pixels or audio;
+- a ladder that collapses to one rung;
+- a caption track served before the creator publishes it;
+- an index that outlives its media or its consent;
+- an encoder that returns a file over its bitrate ceiling or not smaller than the source.

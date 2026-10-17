@@ -11277,3 +11277,60 @@ cases, with no failures or skips. The two new tests are registered and watched.
 Compass CT-02 and all Trips verdicts remain unchanged; no schema or hosted activation.
 
 - NOT-GRADED: artifacts/api-server/src/compass/CompassTripContext.ts — §99/§100 cite Compass's consumer of the Trips typed disruption-plan and crew-handle producers; NO ROW MOVES on it, and census-compass grades it.
+
+## §101 — 2026-10-17: re-grade of every N and W row after the integration batch (PR #762). NO ROW MOVES
+
+The integration batch (commit `e1e097cfe`) changed several Trips areas and re-measured no verdict (§98 to
+§100 are citation/claim passes). This pass re-measured all 3 `N` and 128 `W` rows
+(`CENSUS_INTEGRITY_DUMP=N,W`) against that tree. A row moves only when every clause of its requirement is
+now met; none is.
+
+**The batch applied no migration and flipped no flag.** 3720, 3727, 3768, 3970, 3972, 3973 and 3979 are
+still absent from the production-applied migration ledger. Both `trip_kernel_enabled` and
+`trip_operational_projections_enabled` are still seeded FALSE. No row whose last statement rests on one of
+those changed.
+
+What the batch changed, and why no `W` row moves:
+- **Seven typed Compass projections and their consumers** (roster, crew handles, day count, disruption plan,
+  range, saved ideas, Today). The rows they serve are already `C`: TR5, TR360 and TR200–TR212, including
+  TR207. TR213, TR376, TR401 and TR402 stay `W`: the decision table is written and read only while
+  `trip_operational_projections_enabled` is on, so on every deployment the ledger is the per-process ring.
+  Compass CT-02 is graded in census-compass.
+- **Plan-item selection and anchor-grant reads now refuse non-canonical or malformed rows** instead of
+  coercing them. This hardens a reader that already existed. TR116 stays `W` (3727 and 3720 are unapplied,
+  and the client still never writes `privacyScope`). TR256 stays `W` (3970 and 3972 are unapplied, and
+  §31.3.1's anchor condition stands). TR280 stays `C`.
+- **The decision route drains the risk register by id with a ceiling and refuses a capped prefix** (§98).
+  This is a read-side refusal. It does not touch the storage or writer that TR22 and TR84–TR86 are graded
+  on, and it does not settle the question recorded below.
+- **The risk triggers no longer count cancelled transport as a crew-transport mismatch.** TR144 and TR146
+  stay `C`. TR150 stays `W` (BOTH): transport, budget and the meeting point still take a stated party.
+- **Trip-visibility events now require exactly-accepted membership, and the Trip Heartbeat card shows
+  availability.** No row in this census grades either one. Event visibility belongs to the events surface,
+  and the heartbeat card is graded in census-compass.
+
+The 3 `N` rows:
+- **TR176 and TR178** stay `N`. The client still has no Bluetooth dependency and nothing produces or stores
+  relay metadata. The locate-friends precision ladder names a `peer_relay` rung, but no producer fires it.
+- **TR340** stays `N`. The offline bundle still lists map tiles as not carried, because tiles are a client
+  licence the server does not hold.
+
+**Recorded, not graded: a premise for later re-derivation.** §68.1 fact 2 and §73.1 hold the rows on the
+2760-chain tables at `W` on the two flags: *"every one of those tables is still read by nothing"*. The
+`/trips/:tripId/commands` endpoint states that `trip_kernel_enabled` does NOT gate it. It issues every
+family that has no legacy writer (stage, leg, commitment, goal, decision task, risk and others) regardless
+of the flag, and refuses only the plan and participant cutover families. The `/trips/:tripId/structure`
+read takes no flag either. The ledger lists 2760–2796 as applied to production. So for those families, the
+blocker these rows state (for example TR78's *"no database has 2764"*) is not the reason they would stay
+`W`. What the deployed production build runs is still unknown (the Trips production-activation runbook,
+§4). These rows need a row-by-row re-derivation with that evidence. This pass moves none of them.
+
+Tests run on this tree for the changed areas (focused, not a full suite): two API node runs.
+- **Run 1, 384 / 384:** the seven projection suites, risk-trigger lifecycle, Today projection, event-view
+  access, plus the two Layover metrics suites.
+- **Run 2, 617 / 617:** anchor-grant read boundary, private-anchor lifecycle, plan-visibility ruling,
+  decisions route, and the eight Compass trip-consumer suites.
+
+Both runs: 0 failed, 0 skipped.
+
+Headline unchanged: **320 C · 128 W · 3 N** over 451.

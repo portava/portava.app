@@ -12132,3 +12132,54 @@ exercise the same bounded contract. Parent's combined Sensing/Layover run passes
 are not unique requirements. This is client operation ownership, not cancellation
 of a write already accepted by the server, an atomic read/write snapshot or a
 new Layover policy. No row, schema, flag, production state or `head_commit` moves.
+
+## §80 — 2026-10-17: re-grade of every N and W row after the integration batch (PR #762). NO ROW MOVES
+
+The integration batch (commit `e1e097cfe`) changed four Layover areas and re-measured no verdict
+(§78 and §79 record two of them as citation/claim passes). This pass re-measured all 52 `N` and
+159 `W` rows (`CENSUS_INTEGRITY_DUMP=N,W`) against that tree. A row moves only when every clause of
+its requirement is now met; none is. Nothing below reverses an earlier ruling.
+
+What the batch changed, and why no row it touches moves:
+- **Plan-section draft preservation** (a failed add keeps the draft; stale completions cannot clear a
+  newer draft). L74 asks for executable experiences carrying time, return, risk and failure information;
+  this is client request ownership and does not change what a recommendation carries. L74 stays `W`,
+  as its builder and its independent acceptance both state.
+- **Constraints-card operation ownership** (§79). L22, L35, L172 and the six §58.2 rows (L222, L224,
+  L229, L279, L283, L284) rest on `layover_constraints` (2992, behind 3640's flag). The
+  production-applied migration ledger still lists none of 2700, 2992, 3623, 3640 or 3900; only 2860 of
+  this family is there. H24 and lead ruling WAVE-1 hold: L22 and the §58.2 six stay `N`, and L35 and L172
+  stay `W`.
+- **Airport-conditions card read failure** (an offline or undecodable read now reaches the existing
+  unavailable/retry state instead of an endless spinner). No row grades that card's read lifecycle. The
+  traveller-observation channel it reads stays where §53.2 put it: L82, L196 and L276 are `W` on the
+  production apply. Nothing moves.
+- **Admin metrics counted windows** (§78: exact counts, truncation disclosed, unreadable windows refused,
+  malformed generation metadata refused). L208, L212, L214, L215 and L216 stay `W`: the platform exporter
+  exists and nothing binds it (OQ-8, §59.3's rule). L209, L210, L211, L213 and L217 stay `N` on H24. The
+  decision-store reader and writers use the same unapplied storage, so L23, L24, L25, L64, L95, L190, L193
+  and L261 stay `N`.
+
+The other `N` rows, re-checked against the tree:
+- **Crew precision and location** (L124, L132, L158, L166, L203, L277): no migration or code for a
+  layover location grant store exists on this tree (the subject of #569). Unchanged.
+- **L131**: unchanged ruling (§55.4): the shared crew chat waits on a Telegraph crew thread. The Telegraph
+  `LAYOVER_PLAN` shareable predates the batch (#637); it shares a plan card into an existing thread and
+  does not form a crew chat.
+- **L27 / L129**: 3900 is still absent from the production-applied ledger, and its flag is seeded FALSE.
+- **Routes, flights and recovery** (L62, L72, L142, L145, L152, L153, L169): the degraded-state contract still
+  publishes the route as unavailable with no routing provider and flight status as unavailable with no
+  flight feed. No recovery directory exists, no connection detection exists, and the return leg still uses a
+  static time-of-day factor.
+- **Entry permission** (L49, L230): still the owner's `layover_entry_forbid_landside_enabled` decision
+  (§58.4). Unchanged.
+- L10, L30, L32, L43, L159, L160, L161, L173, L218, L244, L245, L248, L274 and L296 keep their last
+  stated reasons. None of the batch's files touches them.
+
+Tests run on this tree for the changed areas (focused, not a full suite):
+- **App (jest):** the constraints-card lifecycle, plan-section write-failure and airport-conditions
+  read-failure suites, 3 suites, **86 / 86**.
+- **API (node):** one 12-file run that includes the admin-metrics and counted-window suites, **384 / 384**,
+  0 skipped.
+
+Headline unchanged: **C=85 W=159 N=52 X=0** over 296.

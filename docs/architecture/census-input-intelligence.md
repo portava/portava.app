@@ -8554,3 +8554,152 @@ new session first, retire only its own request and return the raw place, which
 the picker cannot tell apart from an offline fallback; the raw place can then be
 adopted under the new session. Closing this needs a resolver signal that
 separates "session mismatch" from "offline"; it is documented, not fixed.
+
+## §52 — Row moves, 2026-10-17: re-grade after the integration batch (PR #762). G127 moves `N → W`; G203 and G71 are restated
+
+Measured on `claude/census-regrade-20261017` at `e1e097cfe`, the commit that integrated the 2026-10-15/16 main-app
+correctness batch. That commit's own acknowledgement says no verdict was re-measured. This section does that for
+this census. It changes no code, test, flag, migration or database, and declares no new `head_commit`.
+
+**Method.** The 52 open rows (43 `W`, 9 `N`) were listed with `CENSUS_INTEGRITY_DUMP=N,W`, and each row's latest
+statement was read. The batch's Input files were mapped to the rows they could move, using the builder handbacks
+dated 2026-10-16. The same was done for the `C` rows whose cited files the batch changed. Every suite named below
+was re-run on this tree. A row moves only where its own requirement is now met, or (for `N → W`) where the thing now
+exists but is incomplete.
+
+### 52.1 What the batch changed here, and why most of it moves nothing
+
+| batch work | rows it bears on | outcome |
+| --- | --- | --- |
+| Shared-picker session lease, selection lifetime, fixture and review repairs; canonical-resolver and recent-place owner fences (§50, §51) | G6, G16, G18; `C` rows G200, G226, G358 | **No move.** This is lifecycle safety on existing engines, not migration onto the platform, as every handback says. The engine ratchet still exempts thirteen engines at a ceiling of thirteen (`travel-buddy-standalone/src/platform/input-assistance/services/__tests__/noIndependentEngines.test.ts:97#const ENGINE_CEILING = 13;`, 8/8). The field inventory still holds 26 records, 14 mounted and 12 registered but unmounted. The `C` rows' picker suites pass: GlobalPlacePicker selection-lifetime, canonical-transport-owner, zero-state and location-door suites with the 11 `useInputAssistance` hook suites, 203/203. |
+| `useInputAssistance` request lifecycle: one shared scheduler, an account epoch, a session-scoped cache key, and a 401/403 cache clear | `C` rows G205–G208, G217, G347, G203 | **No bucket change.** G206, G207, G217 and G347 were already repointed in place, with anchors, at the scheduler. G203's evidence was not, and its sentence is now false; it is restated in 52.2. |
+| Map search on Input's scheduler; share-sheet lifecycle fences | G6, G16 | **No move.** Map search, `ShareSheet` and `DiscoveryShareSheet` are still named engines. Map search "still owns requestMapSearchPage fetching" (`travel-buddy-standalone/src/platform/input-assistance/services/__tests__/noIndependentEngines.test.ts:109#'src/components/map/MapSearchSheet.tsx':`). |
+| Event location (§49); paste event links and structured values (§48) | G6, G16, G18, G46, G158 | **No move.** One more field is connected; it is not all fields. G46's and G158's flags are still seeded FALSE (3690, 3691), and neither migration is in the production ledger. Under §43's rule both stay `W`. Suites: 15/15 paste links, 34/34 structured values. The mounted location, structured-value, recent-place, resolver, share-sheet and map-search suites passed together, 187/187. |
+| Prefetch scope fence | G209 (`C`), G361 (`W`) | **No move.** G361 still needs a prefetch from the Trip flow, and `trip.stop.place` is still unmounted (§45.5). |
+| Telegraph / Input document reconciliation | none | Citations were relocated only, and no grade changed. |
+| Buddy payment eligibility (census-discovery B03, §128) | G71, G127, G283 | G127 `N → W` and G71 restated, in 52.3. G283 is already `C` (§44). |
+
+Three `C` rows keep their verdict but now carry stale bare line numbers.
+
+- G29 and G205 say the debounce is "consumed at" line 292 of the hook. Line 292 is now `setLoading(true)`. The
+  debounce is consumed where the scheduler is armed
+  (`travel-buddy-standalone/src/platform/input-assistance/hooks/useInputAssistance.ts:478#}, policy.debounceMs);`).
+- G309 points at line 166 for the request-started event. The event is now emitted inside the scheduled callback
+  (`travel-buddy-standalone/src/platform/input-assistance/hooks/useInputAssistance.ts:296#emitInputEvent('suggestion_request_started'`).
+
+The claims are true. Only the pointers moved.
+
+### 52.2 G203: the cell's evidence is false, and the verdict holds on different evidence
+
+The cell reads *"degrades a 404/offline to `unavailable` and clears the list"*. The hook no longer clears it.
+Offline, it keeps the field's licensed local rows (§30.4, §32). The question is whether any kept row can be AI
+assistance. It cannot, for four separate reasons:
+
+1. **The client has no AI producer.** The mounted AI surfaces get proposals only from the gateway, and only after
+   the user opts in (`travel-buddy-standalone/src/hooks/useAiWritingAssist.ts:92#aiAssist: active ? true : undefined,`).
+   No model ships in the client, and no client module builds an `ai_suggestion` row.
+2. **No AI field may keep rows offline.** The offline arm keeps rows only when the offline policy licenses them
+   (`travel-buddy-standalone/src/platform/input-assistance/hooks/useInputAssistance.ts:411#const mayRetain = offlineSurfaceAllowed(policy.offlinePolicy);`,
+   `travel-buddy-standalone/src/platform/input-assistance/hooks/useInputAssistance.ts:412#const degradedRows = mayRetain ? offlineLocalRows(policy, trimmed, local ?? []) : [];`).
+   Only `static_dictionary`, `cached_local` and `recent_only` are licensed
+   (`travel-buddy-standalone/src/platform/input-assistance/contexts/policyFallback.ts:280#export function offlineSurfaceAllowed(`).
+   Each of the six AI contexts is either `unavailable` or the `server_required` default. `trip_title`, `event_title`
+   and `event_description` are `unavailable` (`artifacts/api-server/src/lib/inputAssistance/policyRegistry.ts:194#offlinePolicy: 'unavailable',`,
+   and the same line at 222 and 229). `caption`, `plan_title` and `compass_prompt` take the default
+   (`artifacts/api-server/src/lib/inputAssistance/policyRegistry.ts:119#offlinePolicy: seed.offlinePolicy ?? 'server_required',`).
+3. **A licensed field's kept rows are never AI rows.** The prefix tier and the local zero state reuse only entity,
+   recent, personalized and structured-value rows.
+4. **The cache cannot replay one on a mounted AI field.** Only `public` fields use the 60-second exact-text cache
+   (`travel-buddy-standalone/src/platform/input-assistance/services/suggestionCache.ts:86#const CACHEABLE_PRIVACY_CLASSES: ReadonlySet<PrivacyClass> = new Set<PrivacyClass>(['public']);`).
+   The two mounted AI fields are raised to `viewer_scoped`: `trip_title`
+   (`artifacts/api-server/src/lib/inputAssistance/policyRegistry.ts:443#trip_title: 'viewer_scoped',`) and
+   `compass_prompt` (`artifacts/api-server/src/lib/inputAssistance/policyRegistry.ts:445#compass_prompt: 'viewer_scoped',`).
+
+Tests re-run on this tree:
+
+- the offline suite, 12/12, including
+  `travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.offline.component.test.tsx:258#test('§32: a SERVER_REQUIRED field renders nothing offline — the gate still holds'`;
+- the local-tier suite, 6/6, including
+  `travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.localTier.component.test.tsx:177#test('§29: an uncacheable (personal) field never READS a local list, even one already cached'`;
+- the race-and-cache suite, 24/24, including
+  `travel-buddy-standalone/src/platform/input-assistance/services/__tests__/raceAndCache.test.ts:243#test('narrowToQuery: a completion / correction / AI row is NEVER reused'`;
+- the local zero-state suite, 10/10, including
+  `travel-buddy-standalone/src/platform/input-assistance/services/__tests__/localZeroState.test.ts:204#test('a row that is not an ANSWER is never replayed into an empty field'`;
+- the local dictionary suite, 33/33, which holds the licence map to `offlineSurfaceAllowed` for all five offline
+  policies.
+
+**A limit, not a defect today.** `caption`, `event_title` and `event_description` are `public`. If an AI writer were
+mounted on one of them, its exact-text cache entry could replay an identical earlier server answer for up to 60
+seconds, without checking whether the network is up. No such writer is mounted. `post.caption` and
+`event.description` are unmounted, and the mounted `event.title` never sends `aiAssist`. The only callers of the AI
+hook are the Trip title (`travel-buddy-standalone/app/trip/new.tsx:80#const titleAi = useAiWritingAssist({`) and the
+Compass prompt.
+
+### 52.3 G127 `N → W`, and G71 restated
+
+G127's cell says *"the only buddy predicate reachable from the suggestion path is still `buddy_verified_at IS NOT NULL`"*.
+That has been false since §44, and the batch adds the remaining leg.
+
+- The gateway's buddy type runs `searchTravelers` as a buddy search
+  (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:2356#const raw = await searchTravelers(sc, q, userId, blockedSet, ageRestrictedSet, 0, pool, true, ctx);`).
+- That search consults the owning domain's eligibility read, with the asked service and window
+  (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:581#const peopleGate = await readDiscoveryPeopleGate(sc, ids, userId, isBuddy ? buddyAskFrom(ctx) : null);`).
+  Every buddy it refuses is withheld before ranking.
+- Three tests prove this through the real gateway (inputAssistanceSearchScope suite, 30/30):
+  - the category is enforced
+    (`artifacts/api-server/src/test/inputAssistanceSearchScope.test.ts:362#B1 buddy_service: a buddy approved only for food`);
+  - the window is enforced
+    (`artifacts/api-server/src/test/inputAssistanceSearchScope.test.ts:374#B2 a buddy who closed every day of the asked window is withheld`);
+  - an unreadable eligibility read withholds every buddy
+    (`artifacts/api-server/src/test/inputAssistanceSearchScope.test.ts:381#B3 unreadable eligibility withholds every buddy and marks the serve partial`).
+- Listing safety is part of the same read: active and admin-active listing, no risk hold or risk review, and no
+  disablement. So is the batch's payment leg. With the launch gate on, it requires payment readiness, booking KYC,
+  current adult identity, hosting standing and a verified, payable recipient in an enabled market. An unreadable
+  source refuses. census-discovery grades that code as B03 (§128). Its suites were re-run here: eligibility 18/18,
+  payments 11/11.
+
+Why G127 is `W` and not `C`: the payment leg the owner defined (OD-INPUT-4) runs only behind
+`discovery_buddy_launch_gate_enabled`. That flag is seeded FALSE (2360). With the seed, a buddy who is not
+payment-ready is still suggested. Payments are also test-mode only (D-OWNER1004-8). The marketplace-launch leg is
+behind the same flag
+(`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:544#if (isBuddy && await buddiesWithheldByLaunchGate(sc)) return [];`).
+
+### 52.4 Rows examined and left
+
+- **Production, device or measurement evidence (the batch changed none of it):** G75, G85, G292, G306,
+  G365–G367, G369, G372, G373, G368, G370, G263, G355, G320, G25, G5, G14, G322, G323, G326.
+- **Flag seeded FALSE and not in the production ledger (§43's rule):** G46, G158, G229, G135, G303.
+- **Owner approval or a missing substrate:** G163 (II-TM-A1), G190, G66, G67, G123, G177, G141, G142, G153, G192,
+  G222, G237, G241, G53.
+- **Code the batch did not reach:** G6, G16, G18 (52.1), G133, G134, G159, G160, G233, G351, G361.
+
+One stale reason is noted and not restated, to avoid churn: G190's cell says the protected-place gate is consulted
+by nothing in the Input layer. The search-protection pass now reaches the Input gateway behind
+`discovery_search_protected_zones_enabled`, seeded FALSE, the flag census-discovery's B04 waits on. G190 stays `W`
+on that flag.
+
+### 52.5 Rows
+
+| ID | from | **to** | evidence |
+| --- | --- | --- | --- |
+| G203 | C | **C** | The cell's "clears the list" is false: offline, the hook keeps licensed local rows. The verdict holds on new evidence (52.2). The client has no AI producer; proposals come only from the gateway on opt-in (`travel-buddy-standalone/src/hooks/useAiWritingAssist.ts:92#aiAssist: active ? true : undefined,`). Offline, rows are kept only under a licensing policy (`travel-buddy-standalone/src/platform/input-assistance/hooks/useInputAssistance.ts:411#const mayRetain = offlineSurfaceAllowed(policy.offlinePolicy);`). Every AI context is `unavailable` or `server_required` (`artifacts/api-server/src/lib/inputAssistance/policyRegistry.ts:194#offlinePolicy: 'unavailable',`, `artifacts/api-server/src/lib/inputAssistance/policyRegistry.ts:119#offlinePolicy: seed.offlinePolicy ?? 'server_required',`). Local tiers never reuse an AI row (`travel-buddy-standalone/src/platform/input-assistance/services/__tests__/raceAndCache.test.ts:243#test('narrowToQuery: a completion / correction / AI row is NEVER reused'`). Both mounted AI fields are `viewer_scoped`, so they are never cached. Proven by `travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.offline.component.test.tsx:258#test('§32: a SERVER_REQUIRED field renders nothing offline — the gate still holds'` (12/12). Limit: an AI writer on a `public` field would need a connectivity check on its cache hit (52.2). |
+| G127 | N | **W** | Now built on the suggestion path. The gateway's buddy search consults the owning domain's eligibility read (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:581#const peopleGate = await readDiscoveryPeopleGate(sc, ids, userId, isBuddy ? buddyAskFrom(ctx) : null);`). That read withholds an unapproved category, a closed window, a listing that is unsafe to show, and any buddy it cannot read. The gateway tests pass 30/30, including `artifacts/api-server/src/test/inputAssistanceSearchScope.test.ts:362#B1 buddy_service: a buddy approved only for food`. Not `C`: the payment, identity and hosting leg (OD-INPUT-4, built in the batch and graded as census-discovery B03) runs only behind `discovery_buddy_launch_gate_enabled`, seeded FALSE (2360). Payments are test-mode only (D-OWNER1004-8). 52.3. |
+| G71 | W | **W** | Restated against what is left. The cell's "no service-category filter, no availability check, and no safety or payment eligibility gate" is false. Category, availability and listing safety hold on the gateway's buddy path (G127, G283). The batch built the payment leg (census-discovery B03, §128). **Still missing:** the launch and payment legs are both behind `discovery_buddy_launch_gate_enabled`, seeded FALSE (2360) (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:544#if (isBuddy && await buddiesWithheldByLaunchGate(sc)) return [];`). Payments are test-mode only (D-OWNER1004-8). This row's own criterion asks for the flag to be observed ON in production. |
+
+### 52.6 Scope note
+
+- NOT-GRADED: travel-buddy-standalone/src/services/messagingOwnerRequest.ts — §51's known-limit paragraph names the shared owner-session lease only to locate a disclosed, unfixed limitation; it changes no grade, and no Input verdict row rests on that file.
+
+### 52.7 Headline, restated from the rows
+
+| bucket | §46.4 | now |
+| --- | ---: | ---: |
+| BUILT-AND-CORRECT | 317 | 317 |
+| BUILT-BUT-WRONG | 43 | 44 |
+| NOT-BUILT | 9 | 8 |
+| CANNOT-VERIFY | 4 | 4 |
+| total | 373 | 373 |
+
+Of 373 rows: **317 BUILT-AND-CORRECT, 44 BUILT-BUT-WRONG, 8 NOT-BUILT, 4 CANNOT-VERIFY**. CONSTRUCTED is now
+361 / 373 = 96.8 %. CORRECT is unchanged at 317 / 373 = 85.0 %. Only G127 changes bucket. G203 and G71 keep their
+buckets on corrected evidence.

@@ -15101,3 +15101,70 @@ remains current, persistent replay or distributed convergence. In-flight token
 work may continue, and abort cannot roll back already-dispatched network work.
 No MLS/encryption, authorization, provider, database or deployment behavior was
 changed or certified. Broader Telegraph acceptance remains separate.
+
+## Row moves — 2026-10-17 re-grade after the integration batch (PR #762). ONE ROW MOVES (T136 N → W); three W rows restated with corrected evidence
+
+Re-grader's section, measured on branch `claude/census-regrade-20261017` at `e1e097cfe` (PR #762's integration
+commit). The batch built and fixed Telegraph-adjacent code, but no verdict here was re-measured. The `review20261017`
+acknowledgement says so, and the four sections above this one each say NO ROW MOVES. This section re-measures this
+census's four N rows, and the W rows whose subject the batch touched, against the code at that commit.
+
+- Documentation only: no code, migration, flag or database was read or written. `head_commit` is not re-declared.
+- **Citations here name only files this census watches.** The Media pipeline the batch built is graded in
+  `census-media.md` §53, which carries its anchors and test counts. Where a row below rests on it, it says
+  "census-media §53" rather than re-citing Media's files.
+
+| id | was | now | why |
+|---|---|---|---|
+| T136 | N | **W** | **Captions/transcripts are optional derivatives; original media remains accessible.** The stated reason, "no caption or transcript pipeline", is no longer true of the tree. The batch built one for Media post videos (census-media §53, MD280). It offers a person-authored WebVTT track or a local Whisper draft that the creator reviews before it is served, stored as a separate per-generation track while the original video stays the playable source. **Telegraph is the surface that does not get it.** A message video plays through the same shared player that mounts the caption controls (`travel-buddy-standalone/src/features/telegraph/media/CompactPlaybackHost.tsx:186#<SharedVideoPlayer`; `travel-buddy-standalone/src/features/telegraph/media/__tests__/CompactPlaybackHost.component.test.tsx:251#it('opens the tapped video full screen in the root host, signed and playing'`, 32/32 run here). But the caption service refuses every attachment that is not a post video (census-media §53, MD280 "Still wrong"). So no message video can carry a caption, and no voice note can carry a transcript (T243). This census grades an analogue built for another programme, which this surface does not use, as W and not N (T148, T221). Where the analogue exists it is also dark: `media_captions_enabled` (3358) is seeded FALSE, 3983 is applied nowhere, no ASR model is installed, and D-28's Media half is NOT RULED. **Turns C when** a Telegraph message's video or voice note can carry an optional caption or transcript derivative, with the original still served, on a deployment that can reach it. **Back to N if** the caption pipeline is removed. |
+| T224 | W | **W** | **Poster/frame generation and adaptive renditions for video — evidence correction, verdict unchanged.** "Adaptive renditions do not exist for any surface" is no longer true. The batch built a two-rung H.264 HLS ladder on a self-hosted FFmpeg worker (census-media §53, MD277; two real FFmpeg 8.0 encodes run there). Every upload through the shared processor (`storeVerifiedMediaUpload`) submits a video to it, and the shared player asks for the ladder before the progressive file. **By code reading, not by any test**, a Telegraph message video travels that path. Its bytes go through the same shared processor, by `/media/upload` or the resumable message session (T223), and it plays through the same shared player (`travel-buddy-standalone/src/features/telegraph/media/CompactPlaybackHost.tsx:186#<SharedVideoPlayer`). **Still W by this census's house rule (T240: a capability nobody can reach is built, not correct):** `media_transcoder_enabled` (3357) is seeded FALSE, `MEDIA_TRANSCODER` names nothing, 3980 is applied nowhere, no worker host or FFmpeg toolchain is provisioned, D-27b is NOT RULED, and no test or device run shows a message video switching rungs. |
+| T243 | W | **W** | **Voice pipeline AUDIO → TRANSCRIPT → optional TRANSLATION — evidence correction, verdict unchanged.** The ceiling's clause "no speech-to-text provider in this tree" is no longer true. The batch built a self-hosted ASR: a local Whisper model behind separate, explicit creator consent, producing a draft the creator must review (census-media §53, MD280). It is not reachable from a voice note. The caption service accepts post videos only, the voice door writes no transcript (`artifacts/api-server/src/routes/telegraphVoice.ts`), and the voice envelope still carries no `transcript` field (`artifacts/api-server/src/test/voicePipelineAuthority.test.ts`, 9/9 run here). **The ceiling stands in substance:** Telegraph voice has no TRANSCRIPT rung, therefore no TRANSLATION rung, and 2989 is still applied nowhere. |
+| T63 | W | **W** | **Voice: waveform, seek, playback speed, optional transcript/translation — the same correction as T243, verdict unchanged.** "No speech-to-text provider is configured in or reachable from this tree" is now half true: a self-hosted ASR exists for Media post videos (census-media §53). It is still not reachable from a voice note, so the fourth clause is still absent (`travel-buddy-standalone/src/features/telegraph/voice/VoiceMessagePlayer.tsx`). |
+
+**Examined and NOT moved, with the reason** (each was read against `e1e097cfe`):
+
+- **T155** (`conversation_snapshots`). Still absent, and §33.7 deliberately declined it.
+- **T405** (GIF provider isolation). There is still no GIF provider; the composer's GIF entry still says so.
+- **T439** (Context Kernel). Still not built; nothing assembles the five inputs.
+- **T47.** The batch's Portava trip picker is mounted on the main thread host. GIF still has no provider, and
+  Portava offers trips only, so two of the eight entries are not fully operable. Its 2026-10-16 restatement stands.
+- **T242.**
+  - The batch's initial-translation lifetime checks and the 2026-10-15 T242 bounded correction do not supply a translation-quality
+    measurement.
+  - Every place a translated message is shown has not been re-audited for the original alongside.
+  - The 2026-10-15 section's own refusal to promote stands.
+- **T240.** 2991 is still applied nowhere (house rule).
+- **T238, T241.** Still hold. The initial pipeline still writes only `original_language` and
+  `language_detection_source` to the message and never replaces the body. Healthy route codes are unchanged
+  (builder handback, not re-run here).
+- **T220, T30.** The batch's block-read honesty fix makes the shared `isBlockedBetween` deny on a non-list answer.
+  It closes §94.6's second bullet, but it consolidates no module's private block read, so both stay W.
+- **T231, T230.** The reply-idempotency repair persists the reply target in the original insert and refuses a replay
+  that changes it. The rows stay W on unapplied 3654 and the flag seeded OFF.
+- **T233, T425.** The SSE attempt-lifetime fix changes no stated blocker: 2810/3654 are unapplied, there is no
+  durable outbox, and "recipient offline" is cross-instance-limited.
+- **T264, T398.** Their 2026-10-16 sections stand.
+- **T359, T409, T445.** The batch moved the event card's private-access read onto the shared reader. F-12 (an open
+  screen hears no revocation) is unchanged.
+- **T222.** Its "no streamable rendition for message media" is now true only because the rendition is dark (T224
+  above). Its verdict and remaining reasons are unchanged; it is not restated, to avoid a second copy of T224's
+  correction.
+- **T309, T422, T45.** Their "no captions/transcript" clauses remain true of Telegraph (T136 above).
+- **The owner-bound send transports** (`messagingOwnerRequest`, the native owner boundary). No row of this census
+  grades client account/session fencing of a send. T401, T235 and T400 rest on server-side device facts these changes
+  do not touch.
+- **Noticed, not this batch's:** T379's last statement ("`TelegraphRelationship` appears in no `.ts` file") has been
+  stale since §68. A resolver exists behind the 3662 flag, which is OFF, and the four independent resolvers remain.
+  It stays W, and its evidence should be restated by the lane that owns §68.
+
+**The headline, restated from the rows** (`check:census-integrity`, after this section):
+
+| bucket | count |
+| --- | --- |
+| BUILT-AND-CORRECT | **262** |
+| BUILT-BUT-WRONG | **184** |
+| NOT-BUILT | **3** |
+| CANNOT-VERIFY | **2** |
+
+That is **451 = 262 C / 184 W / 3 N / 2 X**: CONSTRUCTED 446 of 451 = 98.9 %, CORRECT 262 of 451 = 58.1 %. The only
+bucket change is T136 N → W. Before it: 262 / 183 / 4 / 2 (§92.9 and the 2026-10-16 T264 section).
