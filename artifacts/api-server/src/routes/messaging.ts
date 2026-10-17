@@ -49,7 +49,7 @@ import { resolveSenderConnectedness } from '../domain/telegraph/policies/senderC
 // imported rather than re-derived so the projection cannot disagree with the
 // gate: two implementations of "may this person call" is the defect §30A.1
 // names, not a redundancy.
-import { resolveConversationCapabilities } from '../domain/telegraph/policies/conversationCapabilityPolicy.js';
+import { resolveConversationCapabilities } from '../domain/telegraph/policies/conversationCapabilityPolicy.js'; import { redactForWire } from '../domain/telegraph/contracts/telegraphReasonCodes.js'; // §11.1: the block is not told (wire redaction, used by the page's permissions block) — on this line so no cited line moves
 import { z } from 'zod';
 import { requireUser, sendError } from '../lib/http';
 import { canMessage } from '../lib/messagingPermissions';
@@ -2668,10 +2668,10 @@ router.get('/threads/:threadId/messages', async (req, res) => {
     threadId, ...(resumeInfo ? { resume: { afterSequence: resumeAfter, nextSequence: resumeInfo.nextSequence, hasMore: resumeInfo.hasMore } } : {}), // T233
     permissions: {
       capabilities: resolvedCapabilities.capabilities,
-      reasons: resolvedCapabilities.reasons,
+      reasons: Object.fromEntries(Object.entries(resolvedCapabilities.reasons).map(([name, raw]) => [name, raw === null ? null : redactForWire(raw)])), // §11.1 / census W5.2: the block is not told — the map GET /capabilities applies (server/telegraph/capabilityRoute.ts), so a blocked member reads a stranger's reasons
       inputsRead: resolvedCapabilities.inputsRead,
       degraded: resolvedCapabilities.degraded,
-      degradedReasons: resolvedCapabilities.degradedReasons,
+      degradedReasons: resolvedCapabilities.degradedReasons.map(redactForWire), // the same redaction, as GET /capabilities
     },
   });
 });
