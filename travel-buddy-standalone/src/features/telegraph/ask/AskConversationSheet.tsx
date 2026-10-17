@@ -20,10 +20,10 @@
  */
 import React, { useState } from 'react';
 import { Modal, Pressable, Text, TextInput, View, ActivityIndicator, ScrollView } from 'react-native';
-import { color } from '../../../theme/tokens.ts';
+// census T123: colours come from the scheme's palette (useMessageActionSheet), not the static tokens.
 import { askConversation, type TelegraphSearchError } from '../services/telegraphSearch.ts';
 import type { SearchHit } from '../types/index.ts';
-import { sheet } from '../messageActions/sheetStyles.ts';
+import { useMessageActionSheet } from '../messageActions/sheetStyles.ts';
 
 export interface AskConversationSheetProps {
   visible: boolean;
@@ -50,7 +50,7 @@ function when(iso: string): string {
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleString();
 }
 
-export function AskConversationSheet({ visible, threadId, onClose, onOpenMessage }: AskConversationSheetProps) {
+export function AskConversationSheet({ visible, threadId, onClose, onOpenMessage }: AskConversationSheetProps) { const { palette, sheet } = useMessageActionSheet();
   const [question, setQuestion] = useState('');
   const [busy, setBusy] = useState(false);
   const [answer, setAnswer] = useState<Answer | null>(null);
@@ -97,7 +97,7 @@ export function AskConversationSheet({ visible, threadId, onClose, onOpenMessage
           onChangeText={setQuestion}
           onSubmitEditing={() => { void ask(); }}
           placeholder="When did we agree to meet?"
-          placeholderTextColor={color.faint}
+          placeholderTextColor={palette.faint}
           returnKeyType="search"
           editable={!busy}
           style={sheet.input}
@@ -111,7 +111,7 @@ export function AskConversationSheet({ visible, threadId, onClose, onOpenMessage
           accessibilityRole="button"
           testID="telegraph-ask-submit"
         >
-          {busy ? <ActivityIndicator color={color.onInk} /> : <Text style={sheet.btnLabel}>Ask</Text>}
+          {busy ? <ActivityIndicator color={palette.operationalOn} /> : <Text style={sheet.btnLabel}>Ask</Text>}
         </Pressable>
 
         {error ? (

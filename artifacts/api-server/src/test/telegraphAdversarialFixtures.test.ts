@@ -699,7 +699,7 @@ describe("F-11 — unsend races recipient seen update", () => {
 
 // ── F-12 source object revoked while a cached share card is open ─────────────
 
-describe("F-12 — source object revoked while a cached share card is open (DIVERGENT)", () => {
+describe("F-12 — source object revoked while a cached share card is open (ENFORCED)", () => {
   const component = (name: string) =>
     readFileSync(resolve(process.cwd(), `../../travel-buddy-standalone/src/components/${name}`), "utf8");
   const hook = () =>
@@ -728,19 +728,15 @@ describe("F-12 — source object revoked while a cached share card is open (DIVE
     assert.match(post, /const p = live\.projection;/);
   });
 
-  it("DIVERGENT: the resolve runs once per mount — nothing re-asks while the conversation stays open", () => {
+  it("ENFORCED: a mounted card hears its source through the thread's bounded poll (census T359)", () => {
     const src = hook().replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
-    assert.match(src, /\}, \[threadId, objectType, objectId, messageId, serverKey\]\);/, // serverKey (lane w-tg-cardtruth): the card truth a thread READ carried — it changes only when the page is re-read, so it is no revocation channel and F-12 stays divergent
-      "the resolve effect's dependencies changed — re-read this fixture's status");
-    for (const [what, re] of [
-      ["an interval", /setInterval\s*\(/], ["a timeout", /setTimeout\s*\(/], ["AppState", /AppState/],
-      ["a focus effect", /useFocusEffect/], ["a subscription", /\.subscribe\s*\(|\.channel\s*\(/],
-    ] as const) {
-      assert.equal(re.test(src), false,
-        `EXPECTED BY §29: no source-object revocation bypass via a cached card. ACTUAL until now: ` +
-        `useShareRevocation resolved once per mount. It now uses ${what} — if a mounted card can ` +
-        `hear a revocation, prove it and move F-12 to enforced.`);
-    }
+    assert.match(src, /\}, \[threadId, objectType, objectId, messageId, serverKey\]\);/, "the first resolve's dependencies changed — re-read this fixture");
+    assert.match(src, /shareRevocationPoller\.subscribe\(threadId, \{ objectType, objectId, messageId \}/, "a mounted card no longer subscribes to its thread's poll");
+    assert.match(src, /const heard = polled && polled\.after === serverKey \? polled\.value : null;/, "a poll answer no longer reaches the card, or outranks a newer thread read");
+    const poller = readFileSync(resolve(process.cwd(), "../../travel-buddy-standalone/src/features/telegraph/sharing/shareRevocationPoller.ts"), "utf8");
+    assert.match(poller, /export const POLL_BASE_MS = 60_000;/, "the poll is no longer bounded at 60 s");
+    assert.match(poller, /export const POLL_MAX_MS = 15 \* 60_000;/, "the back-off ceiling changed");
+    assert.match(poller, /resolve: \(threadId, refs\) => resolveShareProjections\(threadId, refs\)/, "the poll no longer asks the page's own batch route");
   });
 });
 

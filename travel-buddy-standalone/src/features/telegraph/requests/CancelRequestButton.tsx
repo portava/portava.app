@@ -16,7 +16,7 @@
  */
 import React, { useState } from 'react';
 import { Alert, Pressable, Text, ActivityIndicator, StyleSheet } from 'react-native';
-import { cancelMessageRequest } from '../../../services/messaging.ts';
+import { cancelMessageRequest } from '../../../services/messaging.ts'; import { useTelegraphTheme, type TelegraphPalette } from '../theme/telegraphTheme.ts';
 
 export interface CancelRequestButtonProps {
   requestId: string;
@@ -25,6 +25,7 @@ export interface CancelRequestButtonProps {
 
 export function CancelRequestButton({ requestId, onCancelled }: CancelRequestButtonProps) {
   const [busy, setBusy] = useState(false);
+  const { palette, styles: s } = useTelegraphTheme(makeStyles);
 
   async function cancel() {
     setBusy(true);
@@ -55,15 +56,16 @@ export function CancelRequestButton({ requestId, onCancelled }: CancelRequestBut
         ]);
       }}
     >
-      {busy ? <ActivityIndicator size="small" color="#92400E" /> : <Text style={s.label}>Cancel</Text>}
+      {busy ? <ActivityIndicator size="small" color={amberFor(palette)} /> : <Text style={s.label}>Cancel</Text>}
     </Pressable>
   );
 }
 
-const s = StyleSheet.create({
-  // Same amber as the banner it sits in (app/messages/[id].tsx `waitingBanner`).
-  btn: { marginLeft: 'auto', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, borderWidth: 1, borderColor: '#92400E' },
-  label: { fontSize: 12, fontWeight: '700', color: '#92400E' },
+// Same amber as the banner it sits in (app/messages/[id].tsx `waitingBanner`), per scheme (census T123).
+const amberFor = (p: TelegraphPalette) => (p.scheme === 'dark' ? '#F2C66D' : '#92400E');
+const makeStyles = (p: TelegraphPalette) => StyleSheet.create({
+  btn: { marginLeft: 'auto', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, borderWidth: 1, borderColor: amberFor(p) },
+  label: { fontSize: 12, fontWeight: '700', color: amberFor(p) },
 });
 
 export default CancelRequestButton;

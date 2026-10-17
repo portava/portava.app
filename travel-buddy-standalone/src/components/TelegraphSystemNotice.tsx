@@ -19,26 +19,26 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Info } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
-import { TG } from '../theme/telegraphTokens.ts';
+import { space, radius, type as t } from '../theme/tokens.ts';
+import { useTelegraphTheme, type TelegraphPalette } from '../features/telegraph/theme/telegraphTheme.ts';
 import { safeUnknownBody } from '../features/telegraph/kinds/unsupportedPayload.ts';
 
 interface Props {
   text: string;
 }
-
 export function TelegraphSystemNotice({ text }: Props) {
+  const { palette, styles } = useTelegraphTheme(makeStyles);
   return (
     <View style={styles.wrap}>
       <View style={styles.pill} testID="telegraph-system-notice">
-        <Info size={11} color={color.mute} />
+        <Info size={11} color={palette.mute} />
         <Text style={styles.text}>{safeUnknownBody(text)}</Text>
       </View>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (p: TelegraphPalette) => StyleSheet.create({
   wrap: {
     alignItems: 'center',
     paddingVertical: space.sm,
@@ -47,9 +47,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: space.xs,
-    backgroundColor: TG.surfaceRaised,
+    backgroundColor: p.surfaceRaised,
     borderWidth: 1,
-    borderColor: TG.recvBorder,
+    borderColor: p.recvBorder,
     borderRadius: radius.pill,
     paddingHorizontal: space.md,
     paddingVertical: 5,
@@ -57,7 +57,7 @@ const styles = StyleSheet.create({
   },
   text: {
     ...t.small,
-    color: color.mute,
+    color: p.mute,
     fontSize: 11,
     textAlign: 'center',
     fontFamily: 'Courier',

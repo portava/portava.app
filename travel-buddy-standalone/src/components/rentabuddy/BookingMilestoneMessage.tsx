@@ -12,7 +12,7 @@ import {
   Star, AlertCircle, UserCheck, PlusCircle,
 } from 'lucide-react-native';
 import { color, space, radius, type as t, icon } from '../../theme/tokens.ts';
-import { TG } from '../../theme/telegraphTokens.ts';
+import { useTelegraphTheme, type TelegraphPalette } from '../../features/telegraph/theme/telegraphTheme.ts';
 
 type MilestoneSubtype =
   | 'rent_buddy_confirmed'
@@ -29,8 +29,11 @@ type MilestoneSubtype =
 interface MilestoneConfig {
   label: string;
   icon: React.ComponentType<{ size: number; color: string }>;
+  /** A fixed hue, or OPERATIONAL: the scheme's teal (census T123 — teal-ink is unreadable on the dark surface). */
   accent: string;
 }
+
+const OPERATIONAL = 'operational';
 
 const MILESTONE_MAP: Record<string, MilestoneConfig> = {
   rent_buddy_confirmed: {
@@ -56,7 +59,7 @@ const MILESTONE_MAP: Record<string, MilestoneConfig> = {
   rent_buddy_route_approved: {
     label: 'Route approved',
     icon: Navigation,
-    accent: color.deep,
+    accent: OPERATIONAL,
   },
   rent_buddy_extra_time: {
     label: 'Extra time added',
@@ -91,12 +94,13 @@ interface Props {
 }
 
 export function BookingMilestoneMessage({ subtype, body }: Props) {
+  const { palette, styles } = useTelegraphTheme(makeStyles);
   const config = MILESTONE_MAP[subtype];
   if (!config) {
     return (
       <View style={styles.wrap}>
         <View style={styles.pill}>
-          <Clock size={11} color={color.mute} />
+          <Clock size={11} color={palette.mute} />
           <Text style={styles.text}>{body ?? subtype.replace(/_/g, ' ')}</Text>
         </View>
       </View>
@@ -105,20 +109,21 @@ export function BookingMilestoneMessage({ subtype, body }: Props) {
 
   const Icon = config.icon;
   const label = body || config.label;
+  const accent = config.accent === OPERATIONAL ? palette.operational : config.accent;
 
   return (
     <View style={styles.wrap}>
-      <View style={[styles.milestone, { borderColor: config.accent + '44' }]}>
-        <View style={[styles.iconWrap, { backgroundColor: config.accent + '20' }]}>
-          <Icon size={14} color={config.accent} />
+      <View style={[styles.milestone, { borderColor: accent + '44' }]}>
+        <View style={[styles.iconWrap, { backgroundColor: accent + '20' }]}>
+          <Icon size={14} color={accent} />
         </View>
-        <Text style={[styles.milestoneText, { color: config.accent }]}>{label}</Text>
+        <Text style={[styles.milestoneText, { color: accent }]}>{label}</Text>
       </View>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (p: TelegraphPalette) => StyleSheet.create({
   wrap: {
     alignItems: 'center',
     paddingVertical: space.sm,
@@ -127,22 +132,22 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: space.xs,
-    backgroundColor: TG.surfaceRaised,
+    backgroundColor: p.surfaceRaised,
     borderWidth: 1,
-    borderColor: TG.recvBorder,
+    borderColor: p.recvBorder,
     borderRadius: radius.pill,
     paddingHorizontal: space.md,
     paddingVertical: 5,
   },
   text: {
     ...t.small,
-    color: color.mute,
+    color: p.mute,
   },
   milestone: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: space.sm,
-    backgroundColor: TG.surfaceRaised,
+    backgroundColor: p.surfaceRaised,
     borderWidth: 1,
     borderRadius: radius.pill,
     paddingHorizontal: space.md,

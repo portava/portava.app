@@ -16,8 +16,8 @@
  */
 import React, { useEffect, useState } from 'react';
 import { Modal, Pressable, Text, TextInput, View, ActivityIndicator } from 'react-native';
-import { color } from '../../../theme/tokens.ts';
-import { sheet } from './sheetStyles.ts';
+// census T123: colours come from the scheme's palette (useMessageActionSheet), not the static tokens.
+import { useMessageActionSheet } from './sheetStyles.ts';
 
 export const EDIT_MAX_CHARS = 4000;
 
@@ -34,7 +34,7 @@ export function canSaveEdit(draft: string, initialBody: string): boolean {
   return next.length > 0 && next.length <= EDIT_MAX_CHARS && next !== initialBody.trim();
 }
 
-export function EditMessageSheet({ visible, initialBody, onClose, onSubmit }: EditMessageSheetProps) {
+export function EditMessageSheet({ visible, initialBody, onClose, onSubmit }: EditMessageSheetProps) { const { palette, sheet } = useMessageActionSheet();
   const [draft, setDraft] = useState(initialBody);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -83,7 +83,7 @@ export function EditMessageSheet({ visible, initialBody, onClose, onSubmit }: Ed
           accessibilityState={{ disabled: !allowed }}
           testID="telegraph-edit-save"
         >
-          {saving ? <ActivityIndicator color={color.onInk} /> : <Text style={sheet.btnLabel}>Save edit</Text>}
+          {saving ? <ActivityIndicator color={palette.operationalOn} /> : <Text style={sheet.btnLabel}>Save edit</Text>}
         </Pressable>
         <Pressable style={sheet.secondaryBtn} onPress={onClose} disabled={saving} accessibilityRole="button">
           <Text style={sheet.secondaryLabel}>Cancel</Text>

@@ -95,7 +95,7 @@ export function SavedMessagesScreen() {
 
       {phase === 'loading' ? (
         <View style={s.center} testID="saved-messages-loading">
-          <ActivityIndicator color={color.signal} />
+          <ActivityIndicator color={color.deep} />
         </View>
       ) : phase === 'error' ? (
         <View style={s.center} testID="saved-messages-error">
@@ -158,7 +158,7 @@ const s = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: space.md, paddingHorizontal: space.xl },
   empty: { ...t.bodyStrong, fontSize: 16, color: color.ink, textAlign: 'center' },
   emptySub: { fontSize: 13, color: color.mute, textAlign: 'center' },
-  btn: { paddingHorizontal: space.lg, paddingVertical: 10, borderRadius: radius.pill, backgroundColor: color.signal },
+  btn: { paddingHorizontal: space.lg, paddingVertical: 10, borderRadius: radius.pill, backgroundColor: color.deep }, // census T124: ordinary emphasis is teal
   btnText: { ...t.bodyStrong, color: color.onInk },
   row: {
     flexDirection: 'row', alignItems: 'center', gap: space.md,

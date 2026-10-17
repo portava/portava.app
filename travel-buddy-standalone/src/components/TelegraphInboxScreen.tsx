@@ -16,7 +16,7 @@ import { HighlightRing } from './HighlightRing.tsx';
 import { HighlightViewer } from './HighlightViewer.tsx';
 import { useHighlightRingState } from '../hooks/useHighlightRingState.ts';
 import { color, space, radius, type as t, typography, avatar } from '../theme/tokens.ts';
-import { TG, TG_AVATAR } from '../theme/telegraphTokens.ts';
+import { TG_AVATAR } from '../theme/telegraphTokens.ts'; import { useTelegraphTheme, useTelegraphStyles, type TelegraphPalette } from '../features/telegraph/theme/telegraphTheme.ts';
 import { TelegraphAvatar, TelegraphRow } from './telegraph/TelegraphPrimitives.tsx';
 import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
 import { useBottomInset } from '../hooks/useBottomInset.ts';
@@ -116,39 +116,39 @@ function navigateToThread(item: ThreadSummary) {
   router.push(`/messages/${item.id}?${params.toString()}`);
 }
 
-const TYPE_BADGE: Record<string, { bg: string; text: string; label: string }> = {
-  direct:              { bg: '#E6EEF8', text: '#2B5EA7', label: 'Direct' },
-  trip:                { bg: '#E0EFEC', text: '#0A3D4A', label: 'Trip' },
-  circle:              { bg: '#F2EBE0', text: '#7A4C20', label: 'Circle' },
-  rent_buddy_booking:  { bg: '#F0EBF9', text: '#6B21A8', label: 'Buddy' },
+const TYPE_BADGE: Record<string, { bg: string; text: string; darkBg: string; darkText: string; label: string }> = { // census T123: each scheme has its own tint
+  direct:              { bg: '#E6EEF8', text: '#2B5EA7', darkBg: '#1E2C3E', darkText: '#8FB5EA', label: 'Direct' },
+  trip:                { bg: '#E0EFEC', text: '#0A3D4A', darkBg: '#173A3C', darkText: '#7FCAD8', label: 'Trip' },
+  circle:              { bg: '#F2EBE0', text: '#7A4C20', darkBg: '#3A2E20', darkText: '#E3B98A', label: 'Circle' },
+  rent_buddy_booking:  { bg: '#F0EBF9', text: '#6B21A8', darkBg: '#2E2340', darkText: '#C9A6F2', label: 'Buddy' },
 };
-
 function TypeBadge({ threadType }: { threadType: string }) {
+  const { palette, styles: s } = useTelegraphTheme(makeStyles);
   const cfg = TYPE_BADGE[threadType];
   if (!cfg) return null;
   return (
-    <View style={[s.typeBadge, { backgroundColor: cfg.bg }]}>
-      <Text style={[s.typeBadgeText, { color: cfg.text }]}>{cfg.label}</Text>
+    <View style={[s.typeBadge, { backgroundColor: palette.scheme === 'dark' ? cfg.darkBg : cfg.bg }]}>
+      <Text style={[s.typeBadgeText, { color: palette.scheme === 'dark' ? cfg.darkText : cfg.text }]}>{cfg.label}</Text>
     </View>
   );
 }
-
 function SkeletonRow() {
+  const s = useTelegraphStyles(makeStyles);
   return (
     <View style={s.row}>
       <View style={s.avatarSkeleton} />
       <View style={{ flex: 1, gap: 7 }}>
         <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-          <View style={{ height: 13, width: '50%', backgroundColor: color.haze, borderRadius: 6 }} />
-          <View style={{ height: 13, width: 44, backgroundColor: color.haze, borderRadius: 6 }} />
+          <View style={[s.skeletonBar, { height: 13, width: '50%' }]} />
+          <View style={[s.skeletonBar, { height: 13, width: 44 }]} />
         </View>
-        <View style={{ height: 11, width: '78%', backgroundColor: color.haze, borderRadius: 6 }} />
+        <View style={[s.skeletonBar, { height: 11, width: '78%' }]} />
       </View>
     </View>
   );
 }
-
 function DmThreadAvatar({ item, currentUserId }: { item: ThreadSummary; currentUserId: string | null }) {
+  const s = useTelegraphStyles(makeStyles);
   const other = item.otherMembers[0];
   const ringState = useHighlightRingState(other?.id ?? null);
   const [viewerOpen, setViewerOpen] = useState(false);
@@ -184,8 +184,8 @@ function ThreadAvatarIcon({ item, currentUserId }: { item: ThreadSummary; curren
   if (item.threadType === 'circle') return <TelegraphAvatar kind="circle" size={TG_AVATAR.row} />;
   return <DmThreadAvatar item={item} currentUserId={currentUserId} />;
 }
-
 function ThreadRow({ item, userId }: { item: ThreadSummary; userId: string | null }) {
+  const { palette, styles: s } = useTelegraphTheme(makeStyles);
   const isGroup = item.threadType !== 'direct';
   const otherMember = item.otherMembers[0];
   const displayName = isGroup
@@ -223,7 +223,7 @@ function ThreadRow({ item, userId }: { item: ThreadSummary; userId: string | nul
                 style={{ marginLeft: 4 }}
                 testID="telegraph-row-muted"
               >
-                <BellOff size={12} color={color.faint} />
+                <BellOff size={12} color={palette.faint} />
               </View>
             )}
             <TypeBadge threadType={item.threadType} />
@@ -266,7 +266,7 @@ function ThreadRow({ item, userId }: { item: ThreadSummary; userId: string | nul
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
             {isAi && (
               <View style={s.aiBadge}>
-                <Bot size={9} color={color.onInk} />
+                <Bot size={9} color={palette.operationalOn} />
                 <Text style={s.aiBadgeText}>AI</Text>
               </View>
             )}
@@ -289,9 +289,9 @@ function ThreadRow({ item, userId }: { item: ThreadSummary; userId: string | nul
     </TelegraphRow>
   );
 }
-
 /** Slim uppercase divider label between inbox sections (DMs / group threads). */
 function SectionDivider({ label }: { label: string }) {
+  const s = useTelegraphStyles(makeStyles);
   return (
     <View style={s.sectionDivider}>
       <Text style={s.sectionDividerText}>{label}</Text>
@@ -343,12 +343,12 @@ const FILTER_EMPTY: Record<FilterKey, string> = {
   unread:   "You're all caught up.",
   requests: 'No pending requests.',
 };
-
 function EmptyState({ filter }: { filter: FilterKey }) {
+  const { palette, styles: s } = useTelegraphTheme(makeStyles);
   return (
     <View style={s.emptyWrap}>
       <View style={s.emptyIcon}>
-        <Zap size={28} color={color.signal} />
+        <Zap size={28} color={palette.operational} />
       </View>
       <Text style={s.emptyTitle}>{FILTER_EMPTY[filter]}</Text>
       <Text style={s.emptyBody}>
@@ -356,15 +356,15 @@ function EmptyState({ filter }: { filter: FilterKey }) {
       </Text>
       <View style={s.emptyActions}>
         <Pressable style={s.emptyBtn} onPress={() => router.push('/discover' as any)}>
-          <Compass size={15} color={color.signal} />
+          <Compass size={15} color={palette.operational} />
           <Text style={s.emptyBtnText}>Find people</Text>
         </Pressable>
         <Pressable style={s.emptyBtn} onPress={() => router.push('/(tabs)/discovery' as any)}>
-          <Globe size={15} color={color.signal} />
+          <Globe size={15} color={palette.operational} />
           <Text style={s.emptyBtnText}>Explore Discovery</Text>
         </Pressable>
         <Pressable style={s.emptyBtn} onPress={() => router.push('/telegraph/new' as any)}>
-          <MessageCirclePlus size={15} color={color.signal} />
+          <MessageCirclePlus size={15} color={palette.operational} />
           <Text style={s.emptyBtnText}>Start Telegraph</Text>
         </Pressable>
       </View>
@@ -375,8 +375,8 @@ function EmptyState({ filter }: { filter: FilterKey }) {
 interface Props {
   topInset?: number;
 }
-
 export function TelegraphInboxScreen({ topInset = 0 }: Props) {
+  const { palette, styles: s } = useTelegraphTheme(makeStyles);
   const insets = useSafeAreaInsets();
   const bottomInset = useBottomInset();
   const { isAuthed, userId } = useSession();
@@ -460,7 +460,7 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
         <View style={s.headerBar}>
           <View style={s.brandRow}>
             <View style={s.brandIcon}>
-              <Zap size={14} color={color.onInk} fill={color.onInk} />
+              <Zap size={14} color={palette.operationalOn} fill={palette.operationalOn} />
             </View>
             <Text style={s.brandName}>Telegraph</Text>
           </View>
@@ -472,7 +472,7 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
               onCompose={() => router.push('/telegraph/new' as any)}
               onSaved={() => router.push('/messages/saved' as any)}
               onSettings={() => router.push('/settings/messages' as any)}
-              composeIcon={<MessageCirclePlus size={20} color={color.signal} />}
+              composeIcon={<MessageCirclePlus size={20} color={palette.operational} />}
             />
           )}
         </View>
@@ -481,11 +481,11 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
       {isAuthed && (
         <><InboxContextBands onOpenThread={(threadId) => router.push(`/messages/${threadId}`)} />
           <View style={s.searchWrap}>
-            <Search size={16} color={color.faint} style={s.searchIcon} />
+            <Search size={16} color={palette.faint} style={s.searchIcon} />
             <TextInput
               style={s.searchInput}
               placeholder="Search Telegraph…"
-              placeholderTextColor={color.faint}
+              placeholderTextColor={palette.faint}
               value={search}
               onChangeText={setSearch}
               clearButtonMode="while-editing"
@@ -509,7 +509,7 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
               style={s.messageSearchRow}
               onPress={() => setMessageSearchOpen(true)}
             >
-              <Search size={14} color={color.signal} />
+              <Search size={14} color={palette.operational} />
               <Text style={s.messageSearchText} numberOfLines={1}>
                 {`Search messages for “${search.trim()}”`}
               </Text>
@@ -584,7 +584,7 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
   // Not signed in — single FlatList with header + sign-in message
   if (!isAuthed) {
     return (
-      <KeyboardSafeScrollView style={{ backgroundColor: TG.surface }}>
+      <KeyboardSafeScrollView style={{ backgroundColor: palette.surface }}>
         <FlatList
           data={[]}
           keyExtractor={() => ''}
@@ -604,7 +604,7 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
   // Requests pane — its own FlatList with the shared header
   if (filter === 'requests') {
     return (
-      <KeyboardSafeScrollView style={{ backgroundColor: TG.surface }}>
+      <KeyboardSafeScrollView style={{ backgroundColor: palette.surface }}>
         <RequestsPane
           requests={filteredRequests}
           loading={reqLoading}
@@ -619,7 +619,7 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
 
   // Loading / error / empty / thread list — single FlatList
   return (
-    <KeyboardSafeScrollView style={{ backgroundColor: TG.surface }}>
+    <KeyboardSafeScrollView style={{ backgroundColor: palette.surface }}>
       <FlatList
         data={
           error || (loading && !refreshing) || filtered.length === 0
@@ -651,7 +651,7 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
               <TelegraphRow
                 avatar={
                   <View style={s.requestsRowIcon}>
-                    <UserCheck size={20} color={color.signal} />
+                    <UserCheck size={20} color={palette.operational} />
                   </View>
                 }
                 onPress={() => setFilter('requests')}
@@ -686,6 +686,7 @@ function RequestCard({
   onAccept: () => Promise<void>;
   onDecline: () => Promise<void>;
 }) {
+  const { palette, styles: rc } = useTelegraphTheme(makeRequestStyles);
   const [accepting, setAccepting] = useState(false);
   const [declining, setDeclining] = useState(false);
   const [blocking, setBlocking] = useState(false);
@@ -828,8 +829,8 @@ function RequestCard({
           disabled={busy}
         >
           {accepting
-            ? <ActivityIndicator size="small" color={color.onInk} style={{ marginRight: 4 }} />
-            : <UserCheck size={14} color={color.onInk} />
+            ? <ActivityIndicator size="small" color={palette.operationalOn} style={{ marginRight: 4 }} />
+            : <UserCheck size={14} color={palette.operationalOn} />
           }
           <Text style={rc.btnAcceptText}>Accept</Text>
         </Pressable>
@@ -839,8 +840,8 @@ function RequestCard({
           disabled={busy}
         >
           {declining
-            ? <ActivityIndicator size="small" color={color.mute} style={{ marginRight: 4 }} />
-            : <UserMinus size={14} color={color.mute} />
+            ? <ActivityIndicator size="small" color={palette.mute} style={{ marginRight: 4 }} />
+            : <UserMinus size={14} color={palette.mute} />
           }
           <Text style={rc.btnDeclineText}>Decline</Text>
         </Pressable>
@@ -849,12 +850,12 @@ function RequestCard({
       {/* Secondary actions: Block + Report */}
       <View style={rc.secondaryRow}>
         <Pressable style={rc.secondaryBtn} onPress={handleBlock} disabled={busy}>
-          <ShieldOff size={13} color={color.faint} />
+          <ShieldOff size={13} color={palette.faint} />
           <Text style={rc.secondaryBtnText}>Block</Text>
         </Pressable>
         <Text style={rc.secondarySep}>·</Text>
         <Pressable style={rc.secondaryBtn} onPress={handleReport} disabled={busy}>
-          <Flag size={13} color={color.faint} />
+          <Flag size={13} color={palette.faint} />
           <Text style={rc.secondaryBtnText}>Report</Text>
         </Pressable>
       </View>
@@ -872,7 +873,7 @@ function RequestCard({
               value={reportNote}
               onChangeText={setReportNote}
               placeholder="Tell us more (optional)"
-              placeholderTextColor={color.mute}
+              placeholderTextColor={palette.mute}
               multiline
               maxLength={500}
             />
@@ -895,33 +896,35 @@ function RequestCard({
   );
 }
 
-const rc = StyleSheet.create({
+// census T123/T124: the scheme's colours. Accept and a verified origin are
+// ordinary emphasis (operational teal); Report keeps its fixed error red.
+const makeRequestStyles = (p: TelegraphPalette) => StyleSheet.create({
   reportOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)' },
   reportSheet: {
-    backgroundColor: color.paperRaised,
+    backgroundColor: p.surfaceRaised,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     paddingHorizontal: space.lg,
     paddingBottom: 34,
     paddingTop: space.sm,
   },
-  reportHandle: { width: 36, height: 4, borderRadius: 2, backgroundColor: color.haze, alignSelf: 'center', marginBottom: space.md },
-  reportTitle: { ...t.bodyStrong, color: color.ink, fontWeight: '700', fontSize: 15, marginBottom: 2 },
-  reportSub: { ...t.small, color: color.mute, marginBottom: space.md },
-  reportDetailInput: { ...t.body, color: color.ink, borderWidth: 1, borderColor: color.haze, borderRadius: radius.md, paddingHorizontal: space.sm, paddingVertical: 10, minHeight: 64, textAlignVertical: 'top', marginTop: 2 },
+  reportHandle: { width: 36, height: 4, borderRadius: 2, backgroundColor: p.haze, alignSelf: 'center', marginBottom: space.md },
+  reportTitle: { ...t.bodyStrong, color: p.recvText, fontWeight: '700', fontSize: 15, marginBottom: 2 },
+  reportSub: { ...t.small, color: p.mute, marginBottom: space.md },
+  reportDetailInput: { ...t.body, color: p.recvText, borderWidth: 1, borderColor: p.haze, borderRadius: radius.md, paddingHorizontal: space.sm, paddingVertical: 10, minHeight: 64, textAlignVertical: 'top', marginTop: 2 },
   reportBtn: { marginTop: space.md, backgroundColor: '#EF4444', borderRadius: radius.md, paddingVertical: 13, alignItems: 'center' },
   reportBtnDisabled: { opacity: 0.45 },
   reportBtnLabel: { ...t.bodyStrong, color: color.onInk, fontWeight: '700' },
   reportBackBtn: { paddingVertical: 10, alignItems: 'center' },
-  reportBackLabel: { ...t.body, color: color.mute },
+  reportBackLabel: { ...t.body, color: p.mute },
   card: {
     marginHorizontal: space.xl,
     marginTop: space.md,
     padding: space.lg,
-    backgroundColor: TG.surfaceRaised,
+    backgroundColor: p.surfaceRaised,
     borderRadius: radius.lg,
     borderWidth: 1,
-    borderColor: TG.recvBorder,
+    borderColor: p.recvBorder,
     gap: space.sm,
   },
   headerRow: { flexDirection: 'row', alignItems: 'center', gap: space.md },
@@ -935,13 +938,13 @@ const rc = StyleSheet.create({
     marginTop: space.sm,
     paddingHorizontal: space.md,
     paddingVertical: 8,
-    backgroundColor: TG.chipFill,
+    backgroundColor: p.chipFill,
     borderRadius: radius.md,
   },
-  safetyText: { ...t.small, color: color.mute, fontSize: 11, flex: 1, lineHeight: 15 },
-  name: { ...t.bodyStrong, color: color.ink, fontWeight: '700' },
-  handle: { ...t.small, color: color.mute, fontSize: 12, marginTop: 1 },
-  time: { ...t.small, color: color.faint, fontSize: 11 },
+  safetyText: { ...t.small, color: p.mute, fontSize: 11, flex: 1, lineHeight: 15 },
+  name: { ...t.bodyStrong, color: p.recvText, fontWeight: '700' },
+  handle: { ...t.small, color: p.mute, fontSize: 12, marginTop: 1 },
+  time: { ...t.small, color: p.faint, fontSize: 11 },
   metaRow: { flexDirection: 'row', gap: 6, flexWrap: 'wrap' },
   // §22: two different claims, two different weights. The verified one is
   // solid because it is a fact the server checked; the claimed one is outlined
@@ -951,33 +954,33 @@ const rc = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 999,
-    backgroundColor: color.signal,
+    backgroundColor: p.operational,
     marginTop: 8,
   },
-  originVerifiedText: { fontSize: 11, fontWeight: '700', color: color.onInk },
+  originVerifiedText: { fontSize: 11, fontWeight: '700', color: p.operationalOn },
   originClaimed: {
     alignSelf: 'flex-start',
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: color.haze,
+    borderColor: p.haze,
     marginTop: 8,
   },
-  originClaimedText: { fontSize: 11, fontWeight: '600', color: color.mute },
+  originClaimedText: { fontSize: 11, fontWeight: '600', color: p.mute },
 
   metaChip: {
     fontSize: 11,
     fontWeight: '600',
-    color: color.deep,
-    backgroundColor: '#E0EFEC',
+    color: p.operational,
+    backgroundColor: p.scheme === 'dark' ? '#173A3C' : '#E0EFEC',
     paddingHorizontal: 7,
     paddingVertical: 2,
     borderRadius: radius.sm,
     overflow: 'hidden',
   },
-  preview: { ...t.body, color: color.mute, lineHeight: 19, fontSize: 13 },
-  previewEmpty: { ...t.small, color: color.faint, fontStyle: 'italic', fontSize: 12 },
+  preview: { ...t.body, color: p.mute, lineHeight: 19, fontSize: 13 },
+  previewEmpty: { ...t.small, color: p.faint, fontStyle: 'italic', fontSize: 12 },
   primaryRow: { flexDirection: 'row', gap: space.sm, marginTop: 2 },
   btn: {
     flex: 1,
@@ -989,14 +992,14 @@ const rc = StyleSheet.create({
     borderRadius: radius.md,
     borderWidth: 1,
   },
-  btnAccept: { backgroundColor: color.signal, borderColor: color.signal },
-  btnAcceptText: { ...t.bodyStrong, color: color.onInk, fontWeight: '700', fontSize: 13 },
-  btnDecline: { backgroundColor: color.paper, borderColor: color.haze },
-  btnDeclineText: { ...t.body, color: color.mute, fontWeight: '600', fontSize: 13 },
+  btnAccept: { backgroundColor: p.operational, borderColor: p.operational },
+  btnAcceptText: { ...t.bodyStrong, color: p.operationalOn, fontWeight: '700', fontSize: 13 },
+  btnDecline: { backgroundColor: p.surface, borderColor: p.haze },
+  btnDeclineText: { ...t.body, color: p.mute, fontWeight: '600', fontSize: 13 },
   secondaryRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
-  secondarySep: { color: color.faint, fontSize: 13 },
+  secondarySep: { color: p.faint, fontSize: 13 },
   secondaryBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 4, paddingHorizontal: 6 },
-  secondaryBtnText: { ...t.small, color: color.faint, fontSize: 12 },
+  secondaryBtnText: { ...t.small, color: p.faint, fontSize: 12 },
 });
 
 // ── Requests pane ─────────────────────────────────────────────────────────────
@@ -1016,6 +1019,7 @@ function RequestsPane({
   listHeader?: React.ReactElement;
   bottomInset: number;
 }) {
+  const { palette, styles: s } = useTelegraphTheme(makeStyles); const rc = useTelegraphStyles(makeRequestStyles);
   // Dedup by requestId in case the API returns duplicates
   const seen = new Set<string>();
   const uniqueRequests = loading ? [] : requests.filter((r) => {
@@ -1033,7 +1037,7 @@ function RequestsPane({
         <>
           {listHeader}
           <View style={rc.safetyBar}>
-            <ShieldOff size={13} color={color.mute} />
+            <ShieldOff size={13} color={palette.mute} />
             <Text style={rc.safetyText}>
               These people aren't in your circles yet. They won't know you've seen their request until you accept.
             </Text>
@@ -1043,7 +1047,7 @@ function RequestsPane({
       ListEmptyComponent={
         loading ? (
           <View style={s.center}>
-            <ActivityIndicator color={color.signal} />
+            <ActivityIndicator color={palette.operational} />
           </View>
         ) : (
           <View style={s.center}>
@@ -1076,7 +1080,10 @@ function RequestsPane({
   );
 }
 
-const s = StyleSheet.create({
+// census T123/T124: the scheme's colours. Telegraph's own mark, unread counts,
+// filter badges and the AI chip are ordinary emphasis — operational teal, not
+// the vermilion §11.1 reserves for safety and urgent change.
+const makeStyles = (p: TelegraphPalette) => StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: space.xl },
 
   header: {
@@ -1091,20 +1098,20 @@ const s = StyleSheet.create({
     width: 28,
     height: 28,
     borderRadius: 8,
-    backgroundColor: color.signal,
+    backgroundColor: p.operational,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  brandName: { fontSize: 22, fontWeight: '800', color: color.ink, letterSpacing: -0.5 },
+  brandName: { fontSize: 22, fontWeight: '800', color: p.recvText, letterSpacing: -0.5 },
 
   searchWrap: {
     flexDirection: 'row',
     alignItems: 'center',
     marginHorizontal: space.xl,
     marginVertical: space.sm,
-    backgroundColor: TG.surfaceRaised,
+    backgroundColor: p.surfaceRaised,
     borderWidth: 1,
-    borderColor: TG.hairline,
+    borderColor: p.hairline,
     borderRadius: radius.pill,
     paddingHorizontal: space.md,
     height: 40,
@@ -1118,13 +1125,13 @@ const s = StyleSheet.create({
     marginBottom: space.sm,
     paddingVertical: space.sm,
   },
-  messageSearchText: { ...(typography.caption as object), color: color.signal, flexShrink: 1 },
-  messageSearchModal: { flex: 1, backgroundColor: color.paper },
+  messageSearchText: { ...(typography.caption as object), color: p.operational, flexShrink: 1 },
+  messageSearchModal: { flex: 1, backgroundColor: p.surface },
   searchInput: {
     flex: 1,
     height: 40,
     ...t.body,
-    color: color.ink,
+    color: p.recvText,
   },
 
   chipsScroll: { flexGrow: 0, marginBottom: space.sm },
@@ -1136,21 +1143,22 @@ const s = StyleSheet.create({
     paddingHorizontal: space.md,
     paddingVertical: 6,
     borderRadius: 20,
-    backgroundColor: color.haze,
+    backgroundColor: p.haze,
   },
-  chipActive: { backgroundColor: color.ink },
-  chipText: { ...t.small, color: color.mute, fontWeight: '500' },
-  chipTextActive: { color: color.onInk },
+  // The active chip inverts the surface: ink on light, light on dark.
+  chipActive: { backgroundColor: p.recvText },
+  chipText: { ...t.small, color: p.mute, fontWeight: '500' },
+  chipTextActive: { color: p.surface },
   chipBadge: {
     minWidth: 16,
     height: 16,
     borderRadius: 8,
-    backgroundColor: color.signal,
+    backgroundColor: p.operational,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 3,
   },
-  chipBadgeText: { fontSize: 10, fontWeight: '700', color: color.onInk },
+  chipBadgeText: { fontSize: 10, fontWeight: '700', color: p.operationalOn },
 
   row: {
     flexDirection: 'row',
@@ -1164,15 +1172,16 @@ const s = StyleSheet.create({
   // Sizing/shape come from <Avatar size>; this carries layout only.
   avatarBox: { flexShrink: 0 },
   // The loading skeleton has no Avatar to size it, so it keeps its own.
-  avatarSkeleton: { width: avatar.s48, height: avatar.s48, borderRadius: avatar.s48 / 2, backgroundColor: color.haze, flexShrink: 0 },
+  avatarSkeleton: { width: avatar.s48, height: avatar.s48, borderRadius: avatar.s48 / 2, backgroundColor: p.haze, flexShrink: 0 },
+  skeletonBar: { backgroundColor: p.haze, borderRadius: 6 },
   groupAvatar: { borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
 
   nameRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space.sm },
   nameLeft: { flexDirection: 'row', alignItems: 'center', flex: 1, gap: 5, flexShrink: 1 },
   nameMeta: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 0 },
-  name: { ...t.bodyStrong, color: color.ink, flexShrink: 1, fontWeight: '600' },
+  name: { ...t.bodyStrong, color: p.recvText, flexShrink: 1, fontWeight: '600' },
   nameBold: { fontWeight: '700' },
-  time: { ...t.small, color: color.faint, fontSize: 11 },
+  time: { ...t.small, color: p.faint, fontSize: 11 },
 
   typeBadge: {
     paddingHorizontal: 6,
@@ -1185,28 +1194,29 @@ const s = StyleSheet.create({
     minWidth: 18,
     height: 18,
     borderRadius: 9,
-    backgroundColor: color.signal,
+    backgroundColor: p.operational,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 4,
   },
-  unreadText: { fontSize: 10, fontWeight: '700', color: color.onInk },
+  unreadText: { fontSize: 10, fontWeight: '700', color: p.operationalOn },
 
   // §19's "needs action" is deliberately NOT the unread colour: an unread
   // message is something to read, and this is something to answer. Same row,
-  // different claim.
+  // different claim — an ink outline, not the teal fill. Not vermilion either:
+  // §11.1 keeps that for safety and urgent change, and an answer owed is neither.
   needsActionTag: {
     alignSelf: 'flex-start',
     paddingHorizontal: 7,
     paddingVertical: 2,
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: color.signal,
+    borderColor: p.recvText,
   },
-  needsActionText: { fontSize: 10, fontWeight: '700', color: color.signal },
+  needsActionText: { fontSize: 10, fontWeight: '700', color: p.recvText },
 
-  preview: { ...t.small, color: color.mute, flex: 1 },
-  previewBold: { color: color.ink, fontWeight: '600' },
+  preview: { ...t.small, color: p.mute, flex: 1 },
+  previewBold: { color: p.recvText, fontWeight: '600' },
 
   aiBadge: {
     flexDirection: 'row',
@@ -1215,21 +1225,21 @@ const s = StyleSheet.create({
     paddingHorizontal: 5,
     paddingVertical: 2,
     borderRadius: 5,
-    backgroundColor: color.signal,
+    backgroundColor: p.operational,
   },
-  aiBadgeText: { fontSize: 9, fontWeight: '700', color: color.onInk, letterSpacing: 0.3 },
+  aiBadgeText: { fontSize: 9, fontWeight: '700', color: p.operationalOn, letterSpacing: 0.3 },
 
   cityTag: {
     alignSelf: 'flex-start',
     paddingHorizontal: 7,
     paddingVertical: 2,
     borderRadius: 6,
-    backgroundColor: '#E0EFEC',
+    backgroundColor: p.scheme === 'dark' ? '#173A3C' : '#E0EFEC',
     marginTop: 1,
   },
-  cityTagText: { fontSize: 10, color: color.deep, fontWeight: '500' },
+  cityTagText: { fontSize: 10, color: p.operational, fontWeight: '500' },
 
-  sep: { height: 1, backgroundColor: color.haze, marginHorizontal: space.xl, opacity: 0.5 },
+  sep: { height: 1, backgroundColor: p.haze, marginHorizontal: space.xl, opacity: 0.5 },
 
   sectionDivider: {
     flexDirection: 'row',
@@ -1245,14 +1255,14 @@ const s = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 1.2,
     textTransform: 'uppercase',
-    color: color.faint,
+    color: p.faint,
   },
-  sectionDividerLine: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: TG.hairline },
+  sectionDividerLine: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: p.hairline },
 
   requestsRowIcon: {
     width: avatar.s48, height: avatar.s48,
     borderRadius: avatar.s48 / 2,
-    backgroundColor: color.signal + '14',
+    backgroundColor: p.operational + '14',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1262,13 +1272,13 @@ const s = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 16,
-    backgroundColor: '#FEF0ED',
+    backgroundColor: p.operational + '14',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: space.sm,
   },
-  emptyTitle: { ...t.bodyStrong, color: color.ink, textAlign: 'center' },
-  emptyBody: { ...t.body, color: color.mute, textAlign: 'center', lineHeight: 20 },
+  emptyTitle: { ...t.bodyStrong, color: p.recvText, textAlign: 'center' },
+  emptyBody: { ...t.body, color: p.mute, textAlign: 'center', lineHeight: 20 },
   emptyActions: { gap: space.sm, marginTop: space.sm, width: '100%' },
   emptyBtn: {
     flexDirection: 'row',
@@ -1278,8 +1288,8 @@ const s = StyleSheet.create({
     paddingVertical: space.md,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: color.haze,
-    backgroundColor: color.paperRaised,
+    borderColor: p.haze,
+    backgroundColor: p.surfaceRaised,
   },
-  emptyBtnText: { ...t.body, color: color.ink },
+  emptyBtnText: { ...t.body, color: p.recvText },
 });

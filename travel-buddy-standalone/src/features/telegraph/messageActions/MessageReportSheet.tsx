@@ -21,13 +21,13 @@
  */
 import React, { useEffect, useState } from 'react';
 import { Modal, Pressable, Text, TextInput, View, ActivityIndicator } from 'react-native';
-import { color } from '../../../theme/tokens.ts';
+// census T123: colours come from the scheme's palette (useMessageActionSheet), not the static tokens.
 import {
   reportMessage,
   MESSAGE_REPORT_REASONS,
   type MessageReportReasonCode,
 } from '../../../services/messaging.ts';
-import { sheet } from './sheetStyles.ts';
+import { useMessageActionSheet, ON_DANGER } from './sheetStyles.ts';
 
 export interface MessageReportSheetProps {
   visible: boolean;
@@ -45,7 +45,7 @@ export function reportReasonText(code: MessageReportReasonCode, detail: string):
   return (extra ? `${label}: ${extra}` : label).slice(0, 200);
 }
 
-export function MessageReportSheet({ visible, messageId, onClose, blockLabel, onBlock }: MessageReportSheetProps) {
+export function MessageReportSheet({ visible, messageId, onClose, blockLabel, onBlock }: MessageReportSheetProps) { const { palette, sheet } = useMessageActionSheet();
   const [reason, setReason] = useState<MessageReportReasonCode | null>(null);
   const [detail, setDetail] = useState('');
   const [sending, setSending] = useState(false);
@@ -81,7 +81,7 @@ export function MessageReportSheet({ visible, messageId, onClose, blockLabel, on
             </Text>
             {onBlock && blockLabel ? (
               <Pressable style={sheet.dangerBtn} onPress={() => { onClose(); onBlock(); }} accessibilityRole="button" testID="telegraph-message-report-block">
-                <Text style={sheet.btnLabel}>{blockLabel}</Text>
+                <Text style={sheet.dangerLabel}>{blockLabel}</Text>
               </Pressable>
             ) : null}
             <Pressable style={sheet.secondaryBtn} onPress={onClose} accessibilityRole="button">
@@ -113,7 +113,7 @@ export function MessageReportSheet({ visible, messageId, onClose, blockLabel, on
                 value={detail}
                 onChangeText={setDetail}
                 placeholder="Anything else we should know? (optional)"
-                placeholderTextColor={color.faint}
+                placeholderTextColor={palette.faint}
                 multiline
                 maxLength={160}
                 editable={!sending}
@@ -129,7 +129,7 @@ export function MessageReportSheet({ visible, messageId, onClose, blockLabel, on
               accessibilityRole="button"
               testID="telegraph-message-report-submit"
             >
-              {sending ? <ActivityIndicator color={color.onInk} /> : <Text style={sheet.btnLabel}>Send report</Text>}
+              {sending ? <ActivityIndicator color={ON_DANGER} /> : <Text style={sheet.dangerLabel}>Send report</Text>}
             </Pressable>
             <Pressable style={sheet.secondaryBtn} onPress={onClose} disabled={sending} accessibilityRole="button">
               <Text style={sheet.secondaryLabel}>Cancel</Text>

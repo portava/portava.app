@@ -41,7 +41,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useGroupChat } from '../hooks/useGroupChat.ts';
 import { useSession } from '../context/SessionContext.tsx';
 import { color, space, radius, type as t, avatar, icon } from '../theme/tokens.ts';
-import { TG, TG_SPACING } from '../theme/telegraphTokens.ts';
+import { TG_SPACING } from '../theme/telegraphTokens.ts'; import { useTelegraphTheme, useTelegraphStyles, type TelegraphPalette } from '../features/telegraph/theme/telegraphTheme.ts'; import { useDataSaver } from '../features/telegraph/hooks/useDataSaver.ts'; import { useFeatureFlags } from '../context/FeatureFlagsContext.tsx'; import { useLinkPreviews } from '../features/telegraph/linkPreview/useLinkPreviews.ts'; import { LinkPreviewCard } from '../features/telegraph/linkPreview/LinkPreviewCard.tsx'; import { LINK_PREVIEWS_FLAG, type LinkPreview } from '../features/telegraph/linkPreview/linkPreviewApi.ts';
 import { TelegraphSystemNotice } from './TelegraphSystemNotice.tsx';
 import { TranslationSettingsSheet } from './TranslationSettingsSheet.tsx';
 import { TripMembersSheet } from './TripMembersSheet.tsx';
@@ -76,8 +76,8 @@ function formatDayLabel(isoDay: string): string {
     weekday: 'long', month: 'long', day: 'numeric',
   });
 }
-
 function DayDivider({ label }: { label: string }) {
+  const dd = useTelegraphStyles(makeDayStyles);
   return (
     <View style={dd.wrap}>
       <View style={dd.line} />
@@ -86,10 +86,10 @@ function DayDivider({ label }: { label: string }) {
     </View>
   );
 }
-const dd = StyleSheet.create({
+const makeDayStyles = (p: TelegraphPalette) => StyleSheet.create({
   wrap: { flexDirection: 'row', alignItems: 'center', marginVertical: 12, paddingHorizontal: 4 },
-  line: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: color.haze },
-  label: { ...t.stamp, fontFamily: 'Courier', fontSize: 10, color: color.mute, paddingHorizontal: 10, letterSpacing: 0.5 },
+  line: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: p.haze },
+  label: { ...t.stamp, fontFamily: 'Courier', fontSize: 10, color: p.mute, paddingHorizontal: 10, letterSpacing: 0.5 },
 });
 
 const REPORT_MSG_REASONS: { code: ReasonCode; label: string }[] = [
@@ -101,7 +101,6 @@ const REPORT_MSG_REASONS: { code: ReasonCode; label: string }[] = [
   { code: 'misinformation', label: 'Misinformation' },
   { code: 'other',          label: 'Something else' },
 ];
-
 function LongPressActionSheet({
   message,
   mine,
@@ -117,6 +116,7 @@ function LongPressActionSheet({
   onReply: (msg: Message) => void;
   onSave: (msg: Message) => void; canEdit?: boolean; showHistory?: boolean; onEdit?: (msg: Message) => void; onHistory?: (msg: Message) => void;
 }) {
+  const { palette, styles: las } = useTelegraphTheme(makeSheetStyles);
   const [showReport, setShowReport] = useState(false);
   const [reportReason, setReportReason] = useState<ReasonCode | null>(null);
   const [reportDetail, setReportDetail] = useState('');
@@ -176,7 +176,7 @@ function LongPressActionSheet({
               value={reportDetail}
               onChangeText={setReportDetail}
               placeholder="Tell us more (optional)"
-              placeholderTextColor={color.mute}
+              placeholderTextColor={palette.mute}
               multiline
               maxLength={500}
             />
@@ -228,7 +228,7 @@ function LongPressActionSheet({
               }
             }}
           >
-            <Icon size={18} color={color.ink} />
+            <Icon size={18} color={palette.recvText} />
             <Text style={las.rowLabel}>{label}</Text>
           </Pressable>
         ))}
@@ -255,42 +255,41 @@ function LongPressActionSheet({
     </Modal>
   );
 }
-const las = StyleSheet.create({
+const makeSheetStyles = (p: TelegraphPalette) => StyleSheet.create({ // census T123/T124: a report is a safety flow — its chosen reason is the attention colour
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)' },
   sheet: {
-    backgroundColor: color.paperRaised,
+    backgroundColor: p.surfaceRaised,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     paddingHorizontal: space.lg,
     paddingBottom: 34,
     paddingTop: space.sm,
   },
-  handle: { width: 36, height: 4, borderRadius: 2, backgroundColor: color.haze, alignSelf: 'center', marginBottom: space.md },
-  preview: { ...t.small, color: color.mute, fontSize: 12, marginBottom: space.sm, fontStyle: 'italic' },
+  handle: { width: 36, height: 4, borderRadius: 2, backgroundColor: p.haze, alignSelf: 'center', marginBottom: space.md },
+  preview: { ...t.small, color: p.mute, fontSize: 12, marginBottom: space.sm, fontStyle: 'italic' },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: space.md,
     paddingVertical: 14,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: color.haze,
+    borderTopColor: p.haze,
   },
-  rowLabel: { ...t.body, color: color.ink },
-  reportTitle: { ...t.bodyStrong, color: color.ink, fontWeight: '700', fontSize: 15, marginBottom: 2 },
-  reportSub: { ...t.small, color: color.mute, marginBottom: space.md },
-  reasonOption: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 11, paddingHorizontal: space.sm, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, marginBottom: 6 },
-  reasonSelected: { borderColor: color.signal, backgroundColor: color.signal + '0A' },
-  reasonText: { ...t.body, color: color.ink },
-  reasonTextSelected: { color: color.signal, fontWeight: '700' },
-  reasonCheck: { fontSize: 14, color: color.signal, fontWeight: '700' },
-  detailInput: { ...t.body, color: color.ink, borderWidth: 1, borderColor: color.haze, borderRadius: radius.md, paddingHorizontal: space.sm, paddingVertical: 10, minHeight: 64, textAlignVertical: 'top', marginTop: 2 },
+  rowLabel: { ...t.body, color: p.recvText },
+  reportTitle: { ...t.bodyStrong, color: p.recvText, fontWeight: '700', fontSize: 15, marginBottom: 2 },
+  reportSub: { ...t.small, color: p.mute, marginBottom: space.md },
+  reasonOption: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 11, paddingHorizontal: space.sm, borderRadius: radius.md, borderWidth: 1, borderColor: p.haze, marginBottom: 6 },
+  reasonSelected: { borderColor: p.attention, backgroundColor: p.attention + '0A' },
+  reasonText: { ...t.body, color: p.recvText },
+  reasonTextSelected: { color: p.attention, fontWeight: '700' },
+  reasonCheck: { fontSize: 14, color: p.attention, fontWeight: '700' },
+  detailInput: { ...t.body, color: p.recvText, borderWidth: 1, borderColor: p.haze, borderRadius: radius.md, paddingHorizontal: space.sm, paddingVertical: 10, minHeight: 64, textAlignVertical: 'top', marginTop: 2 },
   reportBtn: { marginTop: space.md, backgroundColor: '#EF4444', borderRadius: radius.md, paddingVertical: 13, alignItems: 'center' },
   reportBtnDisabled: { opacity: 0.45 },
   reportBtnLabel: { ...t.bodyStrong, color: color.onInk, fontWeight: '700' },
   backBtn: { paddingVertical: 10, alignItems: 'center' },
-  backLabel: { ...t.body, color: color.mute },
+  backLabel: { ...t.body, color: p.mute },
 });
-
 function GroupMessageBubble({
   item,
   mine,
@@ -299,7 +298,7 @@ function GroupMessageBubble({
   readerAvatars,
   autoTranslate,
   defaultShowOriginal,
-  deliveryStatus, sendFailure,
+  deliveryStatus, sendFailure, linkPreview = null,
   onRetry,
 }: {
   item: Message;
@@ -311,9 +310,10 @@ function GroupMessageBubble({
   readerAvatars?: string[];
   autoTranslate: boolean;
   defaultShowOriginal: boolean;
-  deliveryStatus?: 'sending' | 'sent' | 'failed' | null; sendFailure?: SendFailure | null;
+  deliveryStatus?: 'sending' | 'sent' | 'failed' | null; sendFailure?: SendFailure | null; /** census T404: the stored preview, or null (flag off ⇒ always null). */ linkPreview?: LinkPreview | null;
   onRetry?: () => void;
 }) {
+  const { palette, styles } = useTelegraphTheme(makeStyles);
   const [showOriginal, setShowOriginal] = useState(defaultShowOriginal || !autoTranslate);
 
   if (item.deleted) {
@@ -323,7 +323,7 @@ function GroupMessageBubble({
         onLongPress={onLongPress}
         delayLongPress={300}
       >
-        <Text style={[styles.bubbleText, { fontStyle: 'italic', color: mine ? color.onInk + 'AA' : color.mute }]}>
+        <Text style={[styles.bubbleText, { fontStyle: 'italic', color: mine ? palette.sentText + 'AA' : palette.mute }]}>
           This message was deleted.
         </Text>
       </Pressable>
@@ -368,7 +368,7 @@ function GroupMessageBubble({
             </View>
           </View>
         ) : null}
-        <Text style={[styles.bubbleText, mine && styles.bubbleTextMine]}>{bodyToShow}</Text><OriginalAlongside item={item} view={{ mine, autoTranslate, showingOriginal: showOriginal }} />
+        <Text style={[styles.bubbleText, mine && styles.bubbleTextMine]}>{bodyToShow}</Text><OriginalAlongside item={item} view={{ mine, autoTranslate, showingOriginal: showOriginal }} />{linkPreview ? <LinkPreviewCard preview={linkPreview} mine={mine} /> : null}
         <Text style={[styles.bubbleTime, mine && styles.bubbleTimeMine]}>
           {formatTime(item.createdAt)}
           {item.editedAt ? '  ·  edited' : ''}
@@ -400,7 +400,7 @@ function GroupMessageBubble({
       {/* Delivery status — sending / sent / failed (tap-to-retry) */}
       {mine && deliveryStatus === 'sending' && (
         <View style={styles.deliveryRow}>
-          <Clock size={11} color={color.mute} />
+          <Clock size={11} color={palette.mute} />
           <Text style={styles.deliverySending}>Sending…</Text>
         </View>
       )}
@@ -435,14 +435,14 @@ interface Props {
   title?: string;
   memberLabel?: string;
 }
-
 export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
+  const { palette, styles } = useTelegraphTheme(makeStyles);
   // Mute state for the header toggle — persisted via the existing
   // muteThread service (beta-audit: replaces the 'coming soon' stub).
   const [threadMuted, setThreadMuted] = useState(false);
   const insets = useSafeAreaInsets();
   const { userId } = useSession();
-  const { state, thread, messages, sending, errorMessage, reload, send, retrySend, notifyTyping, typingUserIds, edit } = useGroupChat(type, id); const [editingMsg, setEditingMsg] = useState<Message | null>(null); const [historyMsg, setHistoryMsg] = useState<Message | null>(null); // WP-08
+  const { state, thread, messages, sending, errorMessage, reload, send, retrySend, notifyTyping, typingUserIds, edit } = useGroupChat(type, id); const [editingMsg, setEditingMsg] = useState<Message | null>(null); const [historyMsg, setHistoryMsg] = useState<Message | null>(null); const [safetyQuiet, setSafetyQuiet] = useState(false); const dataSaver = useDataSaver(); const { isEnabled: flagEnabled } = useFeatureFlags(); const linkPreviews = useLinkPreviews(thread?.id ?? null, messages, flagEnabled(LINK_PREVIEWS_FLAG) && !safetyQuiet && dataSaver.mayLoad('mediaPreview')); // WP-08; census T404 (Q-LP6): previews only with the flag on, outside safety mode and data saver
   const [input, setInput] = useState('');
   const mediaPicker = useMessageMediaPicker();
   const [showMediaPickerSheet, setShowMediaPickerSheet] = useState(false);
@@ -601,12 +601,12 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
   const Header = (
     <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
       <Pressable style={styles.backBtn} onPress={() => router.back()} hitSlop={8}>
-        <ArrowLeft size={20} color={color.ink} />
+        <ArrowLeft size={20} color={palette.recvText} />
       </Pressable>
-      <View style={[styles.headerIconBadge, type === 'circle' && { backgroundColor: color.ink }]}>
+      <View style={[styles.headerIconBadge, type === 'circle' && { backgroundColor: palette.recvText }]}>
         {type === 'trip'
-          ? <Globe size={14} color={color.onInk} />
-          : <Users size={14} color={color.onInk} />}
+          ? <Globe size={14} color={palette.operationalOn} />
+          : <Users size={14} color={palette.surface} />}
       </View>
       <Pressable style={styles.headerMeta} onPress={() => setShowMembersSheet(true)} hitSlop={6}>
         <Text style={styles.headerName} numberOfLines={1}>{displayTitle}</Text>
@@ -624,7 +624,7 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
               ))}
             </View>
           )}
-          {memberCount === null && <Users size={9} color={color.signal} />}
+          {memberCount === null && <Users size={9} color={palette.operational} />}
           <Text style={styles.headerMembersChip}>
             {memberCount !== null
               ? `${memberCount} ${memberCount === 1 ? 'member' : 'members'}`
@@ -639,7 +639,7 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
           style={styles.headerIconBtn}
           onPress={() => setShowTranslationSheet(true)}
         >
-          <Languages size={18} color={autoTranslate ? color.signal : color.mute} />
+          <Languages size={18} color={autoTranslate ? palette.operational : palette.mute} />
         </Pressable>
         <Pressable
           hitSlop={8}
@@ -651,7 +651,7 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
             if (res.ok) setThreadMuted(next); else Alert.alert(next ? 'Could not mute' : 'Could not unmute', res.message ?? 'Nothing was changed. Please try again.');
           }}
         >
-          <VolumeX size={18} color={threadMuted ? color.signal : color.mute} />
+          <VolumeX size={18} color={threadMuted ? palette.operational : palette.mute} />
         </Pressable>
       </View>
     </View>
@@ -662,7 +662,7 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
       <View style={styles.screen}>
         {Header}
         <View style={styles.center}>
-          <ActivityIndicator color={color.signal} />
+          <ActivityIndicator color={palette.operational} />
         </View>
       </View>
     );
@@ -717,7 +717,7 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
         {type === 'trip' ? (
           <>
             <Pressable style={styles.quickBtn} onPress={() => router.push(`/trip/${id}` as any)}>
-              <Globe size={12} color={color.signal} />
+              <Globe size={12} color={palette.operational} />
               <Text style={styles.quickBtnText}>View Trip</Text>
             </Pressable>
             {/* Add Plan hidden until the in-chat plan flow is built (beta-audit) */}
@@ -725,7 +725,7 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
         ) : (
           <>
             <Pressable style={styles.quickBtn} onPress={() => router.push('/circle' as any)}>
-              <Users size={12} color={color.signal} />
+              <Users size={12} color={palette.operational} />
               <Text style={styles.quickBtnText}>View Circle</Text>
             </Pressable>
             {/* Share Discovery hidden until the picker flow is built (beta-audit) */}
@@ -737,7 +737,7 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
           "at the top of EACH conversation". Renders nothing when the pair (or
           crew) shares no canonical mutual state, and nothing when the read
           failed. */}
-      {thread?.id ? <SafetyModeBar threadId={thread.id} refreshKey={messages[messages.length - 1]?.id ?? null} senderLabel={(uid) => senderLabelFor(messages, uid, userId ?? null)} /> : null}{thread?.id ? <SharedContextRail threadId={thread.id} /> : null}<TelegraphConnectionBanner />{/* §30A.15 */}
+      {thread?.id ? <SafetyModeBar threadId={thread.id} refreshKey={messages[messages.length - 1]?.id ?? null} senderLabel={(uid) => senderLabelFor(messages, uid, userId ?? null)} onModeChange={(m) => setSafetyQuiet(m.deprioritizeEntertainment)} /> : null}{thread?.id ? <SharedContextRail threadId={thread.id} /> : null}<TelegraphConnectionBanner />{/* §30A.15 */}
 
       <FlatList
         ref={listRef}
@@ -842,7 +842,7 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
                 autoTranslate={autoTranslate}
                 defaultShowOriginal={defaultShowOriginal}
                 deliveryStatus={mine ? (m.deliveryStatus ?? null) : null} sendFailure={mine ? (m.sendFailure ?? null) : null}
-                onRetry={mine && m.clientId ? () => retrySend(m.clientId!) : undefined}
+                onRetry={mine && m.clientId ? () => retrySend(m.clientId!) : undefined} linkPreview={linkPreviews.previewFor(m.id)}
               />
             </MessageEntrance>
           );
@@ -907,7 +907,7 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
             </Text>
           </View>
           <Pressable onPress={mediaPicker.clearMedia} hitSlop={8}>
-            <X size={16} color={color.mute} />
+            <X size={16} color={palette.mute} />
           </Pressable>
         </View>
       )}
@@ -924,7 +924,7 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
             </Text>
           </View>
           <Pressable onPress={() => setReplyingTo(null)} hitSlop={8}>
-            <X size={16} color={color.mute} />
+            <X size={16} color={palette.mute} />
           </Pressable>
         </View>
       )}
@@ -970,14 +970,14 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
               onPress={() => setShowMediaPickerSheet(true)}
               hitSlop={6}
             >
-              <Paperclip size={18} color={mediaPicker.media ? color.signal : color.mute} />
+              <Paperclip size={18} color={mediaPicker.media ? palette.operational : palette.mute} />
             </Pressable>
             {/* Share Discovery + AI Suggestions hidden until built (beta-audit) */}
             <MentionInput
               ref={mentionRef}
               style={styles.inputField}
               placeholder="Write a Telegraph…"
-              placeholderTextColor={color.faint}
+              placeholderTextColor={palette.faint}
               value={input}
               onChangeText={(text) => { setInput(text); notifyTyping(text.trim().length > 0); }}
               onBlur={() => notifyTyping(false)}
@@ -1007,9 +1007,9 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
                 disabled={(!input.trim() && !mediaPicker.media) || sending}
               >
                 {sending ? (
-                  <ActivityIndicator size="small" color={color.onInk} />
+                  <ActivityIndicator size="small" color={palette.sentText} />
                 ) : (
-                  <Send size={16} color={(input.trim() || mediaPicker.media) ? '#FFFFFF' : color.faint} />
+                  <Send size={16} color={(input.trim() || mediaPicker.media) ? palette.sentText : palette.faint} />
                 )}
               </Pressable>
             </Animated.View>
@@ -1081,8 +1081,11 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: TG.surface },
+// census T123/T124: the scheme's colours. Ordinary emphasis (quick actions,
+// toggles, members, retry, attachments) is the operational teal; vermilion is
+// kept for safety and urgent change only.
+const makeStyles = (p: TelegraphPalette) => StyleSheet.create({
+  screen: { flex: 1, backgroundColor: p.surface },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: space.xl },
 
   header: {
@@ -1092,44 +1095,44 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.lg,
     paddingBottom: space.md,
     borderBottomWidth: 1,
-    borderBottomColor: color.haze,
-    backgroundColor: color.paperRaised,
+    borderBottomColor: p.haze,
+    backgroundColor: p.surfaceRaised,
   },
   backBtn: { padding: 4, flexShrink: 0 },
   headerIconBadge: {
     width: 26,
     height: 26,
     borderRadius: 8,
-    backgroundColor: color.signal,
+    backgroundColor: p.operational,
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,
   },
   headerMeta: { flex: 1, minWidth: 0 },
-  headerName: { ...t.bodyStrong, color: color.ink, fontWeight: '700' },
+  headerName: { ...t.bodyStrong, color: p.recvText, fontWeight: '700' },
   headerTagRow: { flexDirection: 'row', alignItems: 'center', marginTop: 2, gap: 3 },
-  headerTag: { ...t.stamp, fontFamily: 'Courier', color: color.mute, fontSize: 10, letterSpacing: 0.4 },
-  headerMembersChip: { ...t.stamp, fontFamily: 'Courier', color: color.signal, fontSize: 10, letterSpacing: 0.4 },
+  headerTag: { ...t.stamp, fontFamily: 'Courier', color: p.mute, fontSize: 10, letterSpacing: 0.4 },
+  headerMembersChip: { ...t.stamp, fontFamily: 'Courier', color: p.operational, fontSize: 10, letterSpacing: 0.4 },
   avatarStack: { flexDirection: 'row', alignItems: 'center', marginRight: 2 },
-  stackAvatar: { width: icon.s16, height: icon.s16, borderRadius: icon.s16 / 2, borderWidth: 1, borderColor: color.paperRaised },
+  stackAvatar: { width: icon.s16, height: icon.s16, borderRadius: icon.s16 / 2, borderWidth: 1, borderColor: p.surfaceRaised },
   stackAvatarOverlap: { marginLeft: -6 },
-  stackAvatarFallback: { backgroundColor: color.haze, alignItems: 'center', justifyContent: 'center' },
-  stackAvatarInitial: { fontSize: 8, fontWeight: '700', color: color.ink },
+  stackAvatarFallback: { backgroundColor: p.haze, alignItems: 'center', justifyContent: 'center' },
+  stackAvatarInitial: { fontSize: 8, fontWeight: '700', color: p.recvText },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: 2, flexShrink: 0 },
   headerIconBtn: { padding: 5 },
 
   stateIcon: { fontSize: 36, marginBottom: space.md },
-  stateTitle: { ...t.bodyStrong, color: color.ink, textAlign: 'center', marginBottom: space.sm },
-  stateNote: { ...t.body, color: color.mute, textAlign: 'center', lineHeight: 20 },
+  stateTitle: { ...t.bodyStrong, color: p.recvText, textAlign: 'center', marginBottom: space.sm },
+  stateNote: { ...t.body, color: p.mute, textAlign: 'center', lineHeight: 20 },
 
   retryBtn: {
     marginTop: space.lg,
     paddingHorizontal: space.xl,
     paddingVertical: space.md,
-    backgroundColor: color.signal,
+    backgroundColor: p.operational,
     borderRadius: radius.pill,
   },
-  retryText: { ...t.bodyStrong, color: color.onInk },
+  retryText: { ...t.bodyStrong, color: p.operationalOn },
 
   emptyIcon: { fontSize: 32, marginBottom: space.md },
 
@@ -1138,9 +1141,9 @@ const styles = StyleSheet.create({
   bubbleRow: { flexDirection: 'row', alignItems: 'flex-end', gap: space.sm, maxWidth: '86%' },
   bubbleRowMine: { alignSelf: 'flex-end', flexDirection: 'row-reverse' },
 
-  avatar: { width: avatar.s28, height: avatar.s28, borderRadius: avatar.s28 / 2, backgroundColor: color.haze, overflow: 'hidden', flexShrink: 0 },
+  avatar: { width: avatar.s28, height: avatar.s28, borderRadius: avatar.s28 / 2, backgroundColor: p.haze, overflow: 'hidden', flexShrink: 0 },
   avatarSmall: { width: avatar.s28, height: avatar.s28, borderRadius: avatar.s28 / 2 },
-  avatarInitial: { fontSize: 12, color: color.ink, textAlign: 'center', lineHeight: 28 },
+  avatarInitial: { fontSize: 12, color: p.recvText, textAlign: 'center', lineHeight: 28 },
 
   bubble: {
     borderRadius: TG_SPACING.bubbleRadius,
@@ -1151,31 +1154,31 @@ const styles = StyleSheet.create({
     maxWidth: '100%',
   },
   bubbleOther: {
-    backgroundColor: TG.recvBubble,
+    backgroundColor: p.recvBubble,
     borderWidth: 1,
-    borderColor: TG.recvBorder,
+    borderColor: p.recvBorder,
     borderBottomLeftRadius: TG_SPACING.bubbleTail,
   },
-  bubbleMine: { backgroundColor: TG.sentBubble, borderBottomRightRadius: TG_SPACING.bubbleTail },
+  bubbleMine: { backgroundColor: p.sentBubble, borderBottomRightRadius: TG_SPACING.bubbleTail },
 
-  senderName: { ...t.stamp, fontFamily: 'Courier', color: color.mute, fontSize: 10, marginBottom: 2, letterSpacing: 0.2 },
+  senderName: { ...t.stamp, fontFamily: 'Courier', color: p.mute, fontSize: 10, marginBottom: 2, letterSpacing: 0.2 },
 
-  bubbleText: { ...t.body, color: TG.recvText, lineHeight: 21, flexShrink: 1, flexWrap: 'wrap' },
-  bubbleTextMine: { color: TG.sentText },
+  bubbleText: { ...t.body, color: p.recvText, lineHeight: 21, flexShrink: 1, flexWrap: 'wrap' },
+  bubbleTextMine: { color: p.sentText },
 
-  bubbleTime: { ...t.stamp, fontFamily: 'Courier', color: color.faint, fontSize: 10, marginTop: 2, textAlign: 'right' },
-  bubbleTimeMine: { color: TG.sentTextMute },
+  bubbleTime: { ...t.stamp, fontFamily: 'Courier', color: p.faint, fontSize: 10, marginTop: 2, textAlign: 'right' },
+  bubbleTimeMine: { color: p.sentTextMute },
 
   receiptRow: { flexDirection: 'row', alignItems: 'center', gap: 3, alignSelf: 'flex-end', marginTop: 2, paddingRight: 2 },
-  receiptSent: { fontSize: 10, color: color.signal, fontFamily: 'Courier' },
+  receiptSent: { fontSize: 10, color: p.operational, fontFamily: 'Courier' },
 
   deliveryRow: { flexDirection: 'row', alignItems: 'center', gap: 3, alignSelf: 'flex-end', marginTop: 2, paddingRight: 2 },
-  deliverySending: { fontSize: 10, color: color.mute, fontFamily: 'Courier' },
-  deliverySent: { fontSize: 10, color: color.signal, fontFamily: 'Courier' },
+  deliverySending: { fontSize: 10, color: p.mute, fontFamily: 'Courier' },
+  deliverySent: { fontSize: 10, color: p.operational, fontFamily: 'Courier' },
   deliveryFailed: { fontSize: 10, color: '#EF4444', fontFamily: 'Courier', fontWeight: '600' },
 
-  typingRow: { paddingHorizontal: space.lg, paddingVertical: 5, backgroundColor: color.paper },
-  typingText: { ...t.small, color: color.mute, fontSize: 11, fontStyle: 'italic' },
+  typingRow: { paddingHorizontal: space.lg, paddingVertical: 5, backgroundColor: p.surface },
+  typingText: { ...t.small, color: p.mute, fontSize: 11, fontStyle: 'italic' },
 
   translationRow: {
     flexDirection: 'row',
@@ -1186,20 +1189,20 @@ const styles = StyleSheet.create({
   },
   transLabel: {
     fontSize: 10,
-    color: color.mute,
+    color: p.mute,
     fontFamily: 'Courier',
     letterSpacing: 0.2,
     flexShrink: 1,
   },
   transToggle: {
     fontSize: 10,
-    color: color.signal,
+    color: p.operational,
     fontFamily: 'Courier',
     textDecorationLine: 'underline',
   },
   transUnavailable: {
     fontSize: 10,
-    color: color.mute,
+    color: p.mute,
     fontFamily: 'Courier',
     fontStyle: 'italic',
     letterSpacing: 0.2,
@@ -1213,29 +1216,29 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.md,
     paddingTop: space.sm,
     borderTopWidth: 1,
-    borderTopColor: color.haze,
-    backgroundColor: color.paperRaised,
+    borderTopColor: p.haze,
+    backgroundColor: p.surfaceRaised,
   },
   composeIconBtn: { width: 32, height: 38, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   inputField: {
     flex: 1,
     minHeight: 40,
     maxHeight: 120, // ~5 lines
-    backgroundColor: TG.surface,
+    backgroundColor: p.surface,
     borderRadius: radius.pill,
     borderWidth: 1,
-    borderColor: TG.hairline,
+    borderColor: p.hairline,
     paddingHorizontal: space.lg,
     paddingVertical: 9,
     ...t.body,
-    color: color.ink,
+    color: p.recvText,
   },
   sendBtn: { width: avatar.s40, height: avatar.s40, borderRadius: avatar.s40 / 2, alignItems: 'center', justifyContent: 'center' },
-  sendBtnActive: { backgroundColor: TG.sentBubble },
-  sendBtnDisabled: { backgroundColor: color.haze },
+  sendBtnActive: { backgroundColor: p.sentBubble },
+  sendBtnDisabled: { backgroundColor: p.haze },
 
   noAccessBar: { flex: 1, paddingVertical: space.md, alignItems: 'center' },
-  noAccessText: { ...t.small, color: color.mute, textAlign: 'center' },
+  noAccessText: { ...t.small, color: p.mute, textAlign: 'center' },
 
   quickBar: {
     flexDirection: 'row',
@@ -1243,8 +1246,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.lg,
     paddingVertical: 8,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: color.haze,
-    backgroundColor: color.paperRaised,
+    borderBottomColor: p.haze,
+    backgroundColor: p.surfaceRaised,
   },
   quickBtn: {
     flexDirection: 'row',
@@ -1254,10 +1257,10 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
     borderRadius: radius.pill,
     borderWidth: 1,
-    borderColor: color.signal + '40',
-    backgroundColor: color.signal + '0D',
+    borderColor: p.operational + '40',
+    backgroundColor: p.operational + '0D',
   },
-  quickBtnText: { ...t.stamp, color: color.signal, fontSize: 11, fontWeight: '600' },
+  quickBtnText: { ...t.stamp, color: p.operational, fontSize: 11, fontWeight: '600' },
 
   failedBanner: {
     flexDirection: 'row',
@@ -1265,9 +1268,9 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingHorizontal: space.lg,
     paddingVertical: 7,
-    backgroundColor: '#FEF2F2',
+    backgroundColor: p.scheme === 'dark' ? '#3A1F1F' : '#FEF2F2',
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: '#FECACA',
+    borderTopColor: p.scheme === 'dark' ? '#6B2B2B' : '#FECACA',
   },
   failedBannerText: { ...t.small, color: '#EF4444', flex: 1, fontSize: 11 },
   failedRetryBtn: {
@@ -1278,11 +1281,11 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: radius.pill,
     borderWidth: 1,
-    borderColor: '#FECACA',
+    borderColor: p.scheme === 'dark' ? '#6B2B2B' : '#FECACA',
   },
   failedRetryText: { ...t.stamp, color: '#EF4444', fontSize: 10, fontWeight: '600' },
   readerAvatarRow: { flexDirection: 'row', alignItems: 'center', gap: 2, alignSelf: 'flex-end', marginTop: 2, paddingRight: 2 },
-  readerAvatar: { width: icon.s14, height: icon.s14, borderRadius: icon.s14 / 2, backgroundColor: color.haze },
+  readerAvatar: { width: icon.s14, height: icon.s14, borderRadius: icon.s14 / 2, backgroundColor: p.haze },
 
   replyBar: {
     flexDirection: 'row',
@@ -1290,13 +1293,13 @@ const styles = StyleSheet.create({
     gap: space.sm,
     paddingHorizontal: space.md,
     paddingVertical: 8,
-    backgroundColor: color.paper,
+    backgroundColor: p.surface,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: color.haze,
+    borderTopColor: p.haze,
   },
-  replyBarAccent: { width: 3, height: 32, borderRadius: 2, backgroundColor: color.deep },
-  replyBarSender: { ...t.stamp, color: color.deep, fontWeight: '600', marginBottom: 1 },
-  replyBarBody: { ...t.small, color: color.mute, fontSize: 12 },
+  replyBarAccent: { width: 3, height: 32, borderRadius: 2, backgroundColor: p.operational },
+  replyBarSender: { ...t.stamp, color: p.operational, fontWeight: '600', marginBottom: 1 },
+  replyBarBody: { ...t.small, color: p.mute, fontSize: 12 },
 
   // Media attach preview bar
   attachPreviewBar: {
@@ -1305,61 +1308,61 @@ const styles = StyleSheet.create({
     gap: space.sm,
     paddingHorizontal: space.md,
     paddingVertical: 8,
-    backgroundColor: color.paperRaised,
+    backgroundColor: p.surfaceRaised,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: color.haze,
+    borderTopColor: p.haze,
   },
   attachPreviewChip: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: color.signal + '12',
+    backgroundColor: p.operational + '12',
     borderRadius: radius.pill,
     borderWidth: 1,
-    borderColor: color.signal + '30',
+    borderColor: p.operational + '30',
     paddingHorizontal: space.md,
     paddingVertical: 6,
   },
   attachPreviewIcon: { fontSize: 14 },
-  attachPreviewLabel: { ...t.small, color: color.signal, fontSize: 12, flex: 1 },
+  attachPreviewLabel: { ...t.small, color: p.operational, fontSize: 12, flex: 1 },
 
   // Media picker sheet
   pickerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)' },
   pickerSheet: {
-    backgroundColor: color.paperRaised,
+    backgroundColor: p.surfaceRaised,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     paddingHorizontal: space.lg,
     paddingTop: space.sm,
     gap: 2,
   },
-  pickerHandle: { width: 36, height: 4, borderRadius: 2, backgroundColor: color.haze, alignSelf: 'center', marginBottom: space.md },
-  pickerTitle: { ...t.bodyStrong, color: color.ink, fontWeight: '700', fontSize: 15, marginBottom: space.sm },
+  pickerHandle: { width: 36, height: 4, borderRadius: 2, backgroundColor: p.haze, alignSelf: 'center', marginBottom: space.md },
+  pickerTitle: { ...t.bodyStrong, color: p.recvText, fontWeight: '700', fontSize: 15, marginBottom: space.sm },
   pickerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: space.md,
     paddingVertical: 14,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: color.haze,
+    borderTopColor: p.haze,
   },
   pickerRowIcon: { fontSize: 20 },
-  pickerRowLabel: { ...t.body, color: color.ink },
-  pickerCancelRow: { paddingVertical: 14, alignItems: 'center', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.haze, marginTop: 4 },
-  pickerCancelLabel: { ...t.body, color: color.mute },
+  pickerRowLabel: { ...t.body, color: p.recvText },
+  pickerCancelRow: { paddingVertical: 14, alignItems: 'center', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: p.haze, marginTop: 4 },
+  pickerCancelLabel: { ...t.body, color: p.mute },
 
   replyQuote: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 6,
-    backgroundColor: 'rgba(0,0,0,0.06)',
+    backgroundColor: p.chipFill,
     borderRadius: radius.sm,
     padding: 6,
     marginBottom: 4,
   },
   replyQuoteMine: { backgroundColor: 'rgba(255,255,255,0.18)' },
-  replyQuoteAccent: { width: 3, borderRadius: 2, alignSelf: 'stretch', backgroundColor: color.deep },
-  replyQuoteSender: { ...t.stamp, color: color.deep, fontWeight: '600', marginBottom: 1 },
-  replyQuoteBody: { ...t.small, color: color.ink, fontSize: 12, lineHeight: 16 },
+  replyQuoteAccent: { width: 3, borderRadius: 2, alignSelf: 'stretch', backgroundColor: p.operational },
+  replyQuoteSender: { ...t.stamp, color: p.operational, fontWeight: '600', marginBottom: 1 },
+  replyQuoteBody: { ...t.small, color: p.recvText, fontSize: 12, lineHeight: 16 },
 });

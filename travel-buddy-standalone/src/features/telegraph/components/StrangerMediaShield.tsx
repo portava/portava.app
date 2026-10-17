@@ -33,7 +33,7 @@ import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { EyeOff } from 'lucide-react-native';
 
-import { color, radius, space, typography } from '../../../theme/tokens.ts';
+import { radius, space, typography } from '../../../theme/tokens.ts'; import { useTelegraphTheme, type TelegraphPalette } from '../theme/telegraphTheme.ts';
 
 export interface StrangerMediaShieldProps {
   /** The server's answer. `true` renders children directly. */
@@ -62,7 +62,7 @@ export function StrangerMediaShield({
   messageId,
   children,
 }: StrangerMediaShieldProps) {
-  const [revealed, setRevealed] = useState(false);
+  const [revealed, setRevealed] = useState(false); const { palette, styles: s } = useTelegraphTheme(makeStyles);
 
   const withheld = !senderConnected || dataSaverOn;
   if (!withheld || revealed) return <>{children}</>;
@@ -74,7 +74,7 @@ export function StrangerMediaShield({
 
   return (
     <View testID={`stranger-media-shield-${messageId}`} style={s.wrap}>
-      <EyeOff size={18} color={color.mute} />
+      <EyeOff size={18} color={palette.mute} />
       <Text style={s.title}>
         {mediaKind === 'video' ? 'Video hidden' : 'Photo hidden'}
       </Text>
@@ -99,32 +99,32 @@ export function StrangerMediaShield({
   );
 }
 
-const s = StyleSheet.create({
+const makeStyles = (p: TelegraphPalette) => StyleSheet.create({
   wrap: {
     width: 260,
     minHeight: 150,
     borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: color.haze,
-    backgroundColor: '#F3F2EE',
+    borderColor: p.haze,
+    backgroundColor: p.chipFill,
     alignItems: 'center',
     justifyContent: 'center',
     gap: space.xs,
     paddingHorizontal: space.lg,
     paddingVertical: space.lg,
   },
-  title: { ...(typography.label as object), color: color.ink },
-  body: { ...(typography.caption as object), color: color.mute, textAlign: 'center' },
+  title: { ...(typography.label as object), color: p.recvText },
+  body: { ...(typography.caption as object), color: p.mute, textAlign: 'center' },
   btn: {
     marginTop: space.xs,
     paddingHorizontal: space.md,
     paddingVertical: space.sm,
     borderRadius: radius.pill,
     borderWidth: 1,
-    borderColor: color.haze,
-    backgroundColor: color.paperRaised,
+    borderColor: p.haze,
+    backgroundColor: p.surfaceRaised,
   },
-  btnText: { ...(typography.label as object), color: color.ink },
+  btnText: { ...(typography.label as object), color: p.recvText },
 });
 
 export default StrangerMediaShield;

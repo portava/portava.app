@@ -9078,3 +9078,21 @@ eleven, by owner:
 
 Of 373 rows: **319 BUILT-AND-CORRECT, 48 BUILT-BUT-WRONG, 2 NOT-BUILT, 4 CANNOT-VERIFY**. CORRECT is unchanged
 at 319 / 373 = 85.5 %. No row changes bucket.
+
+## Row moves — 2026-10-17 build and fix (wave 5, telegraph composer)
+
+Built by the wave-5 Telegraph client lane and appended by the lead. APPEND-ONLY. No row changes bucket.
+
+| row | was | now | evidence |
+| --- | --- | --- | --- |
+| G320 `downstream_task_completed` | W | **W** | **The Telegraph composer's call is now made.** "The Telegraph composer's call belongs to another lane and is not made" is no longer true. A person picked from `telegraph.recipient` in New Telegraph is held for the thread it opened (`travel-buddy-standalone/app/telegraph/new.tsx:74#holdRecipientPick(res.data.threadId, recipientServed(r.userId));`) and reported when that thread's send answers — `message_sent`, the person credited on success only, a refused send reported `ok: false` with the hold kept for the retry, an old hold (30 min) dropped unreported (`travel-buddy-standalone/src/features/telegraph/composer/composerTaskOutcome.ts:74#export function reportThreadSend(`, wired at `travel-buddy-standalone/app/messages/[id].tsx:1713#if (!res?.ok) setSendFailed(true); reportThreadSend(id, !!res?.ok);`). A location sheet the composer's "meet at" bar pre-filled reports `telegraph.message` with no credit (`travel-buddy-standalone/app/messages/[id].tsx:2377#if (servedByMeetAt) reportMeetAtSend(res.ok);`). Proven through the real reporter, the real consent gate and a sink spy: `travel-buddy-standalone/src/features/telegraph/__tests__/composerTaskOutcome.component.test.tsx:153#it('N1 picking a person` and `travel-buddy-standalone/src/features/telegraph/__tests__/composerTaskOutcome.component.test.tsx:97#it('O2 a held pick`; nothing without consent (`travel-buddy-standalone/src/features/telegraph/__tests__/composerTaskOutcome.component.test.tsx:119#it('O4 without consent`). **Not reported:** the bar's `share_entity` candidate — its confirmed share runs inside `confirmShareObject`, whose answer the screen does not see, and its mount is source-fenced by meetAtActions.component.test.tsx (input lane). **Still W:** 3780 is not in the production ledger, the disclosure awaits approval and `input_outcome_learning_enabled` is seeded FALSE. |
+
+#### Headline, restated from the rows (wave 5, telegraph composer)
+
+| bucket | before | now |
+| --- | ---: | ---: |
+| BUILT-AND-CORRECT | 319 | 319 |
+| BUILT-BUT-WRONG | 48 | 48 |
+| NOT-BUILT | 2 | 2 |
+| CANNOT-VERIFY | 4 | 4 |
+| total | 373 | 373 |

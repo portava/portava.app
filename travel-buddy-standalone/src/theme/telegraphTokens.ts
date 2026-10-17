@@ -1,12 +1,12 @@
 /**
- * Telegraph design tokens — messaging surface language.
- * Soft off-white surface (distinct from Passport cream), dark-green sent
- * bubbles (on-brand with passport ink), white received bubbles.
- * Purely visual: shared by inbox, conversation, group chat, and requests.
+ * Telegraph design tokens. `TG_AVATAR` and `TG_SPACING` (sizes) are live. `TG`,
+ * `TG_META` and `TG_PILL` are the old single LIGHT palette: no module imports them
+ * (census T123) — colours come from `features/telegraph/theme/telegraphTheme.ts`,
+ * whose light values are these. A ratchet forbids a new import of the three.
  */
 import type { TextStyle, ViewStyle } from 'react-native';
 import { color } from './tokens.ts';
-
+/** @deprecated census T123 — read `useTelegraphPalette()`; the ratchet refuses a new import. */
 export const TG = {
   /** Screen background — soft off-white, distinct from Passport cream #F8F3E8 */
   surface: '#F7F6F3',

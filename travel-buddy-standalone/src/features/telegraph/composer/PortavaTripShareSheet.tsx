@@ -112,7 +112,7 @@ export function PortavaTripShareSheet({ intent, onClose, onSent }: {
         <Text style={styles.note}>This shares a reference, not an invitation. It does not change who can see the trip. People without access may see an unavailable item.</Text>
         {loadError ? <View><Text accessibilityRole="alert" style={styles.error}>{loadError}</Text>
           <Pressable accessibilityRole="button" onPress={() => void load()} style={styles.button}><Text style={styles.action}>Try loading again</Text></Pressable></View>
-          : trips === null ? <ActivityIndicator accessibilityLabel="Loading your trips" color={color.signal} />
+          : trips === null ? <ActivityIndicator accessibilityLabel="Loading your trips" color={color.deep} />
             : trips.length === 0 ? <Text style={styles.note}>You have no owned trips to share.</Text>
               : <FlatList data={trips} keyExtractor={trip => trip.id} style={styles.list}
                 renderItem={({ item }) => <Pressable testID={`portava-trip-choice-${item.id}`} accessibilityRole="radio"
