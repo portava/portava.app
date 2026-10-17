@@ -306,10 +306,10 @@ describe("Compass consumes the context projection (TR202/TR360)", () => {
     assert.deepEqual(out.planItems.map((i: any) => i.day_date), ["2026-09-13"]);
     assert.match(out.planItems[0].title, /Dinner/);
     assert.deepEqual(out.projection, { generatedAt: out.projection.generatedAt, sourceTripVersion: 7, freshness: "live" });
-    const lag = readTripMetric("projection_lag_seconds");
-    assert.equal(lag.length, 1);
-    assert.deepEqual(lag[0]!.labels, { projection: "TripCompassProjection" });
-    assert.equal(lag[0]!.count, 1);
+    const lag = readTripMetric("projection_lag_seconds"); // CT-02: selection now consumes Trips' membership and trip-row projections too
+    assert.deepEqual(lag.map((s) => s.labels.projection).sort(), ["TripCompassMembershipProjection", "TripCompassProjection", "TripCompassTripSummaryProjection"]);
+    assert.deepEqual(lag.find((s) => s.labels.projection === "TripCompassProjection")!.labels, { projection: "TripCompassProjection" });
+    assert.equal(lag.find((s) => s.labels.projection === "TripCompassProjection")!.count, 1);
   });
   it("§12.1 getTripContext(tripId): a named trip is served from the same projection, and only to its crew", async () => {
     const c = install({ trip_plan_items: [planItem({ id: "a" })] });

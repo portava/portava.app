@@ -21,9 +21,9 @@
       "reads": [
         "from(\"blocks\")"
       ],
-      "fingerprint": "83d5084860df355a",
+      "fingerprint": "ecdcfe727281d7c7",
       "closedBy": "rethrows",
-      "why": "A REJECTED blocks read (allSettled status 'rejected') sets safetyListErrored and buildProfile throws 'block/mute safety-list load failed — failing closed'; no profile with an empty exclusion list is built."
+      "why": "A REJECTED blocks read (allSettled status 'rejected') sets safetyListErrored and buildProfile throws 'block/mute safety-list load failed — failing closed'; no profile with an empty exclusion list is built. Re-judged 2026-10-17 (wave 3, CT-02): the two sibling trip reads in the same allSettled moved to Trips projections; the blocks read and its safetyListErrored → throw path are unchanged."
     },
     {
       "key": "compass/CompassTools.ts::refreshHiddenUsers::catch#1",

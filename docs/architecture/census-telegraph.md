@@ -15222,3 +15222,62 @@ Neighbours, re-run after every change in this section: all 118 `src/test/telegra
 | CANNOT-VERIFY | **2** |
 
 That is **451 = 267 C / 179 W / 3 N / 2 X**: CONSTRUCTED 446 of 451 = 98.9 %, CORRECT 267 of 451 = 59.2 %. Before this section: 262 / 184 / 3 / 2 (the 2026-10-17 re-grade above).
+
+## Row moves — 2026-10-17 fixes (wave 3)
+
+Measured on branch `claude/census-regrade-20261017` (stacked on PR #762) on 2026-10-17, against the working tree. `head_commit` is not re-declared. APPEND-ONLY: every earlier section stands as written; a row not named here is unchanged. **No verdict changes.** This section fixes the defect wave 2 found and left (W2.3, last paragraph), restates one W row whose stated remainder was stale, and records the rows examined. No migration, no flag, no hosted database, no device run. Every number below is a local run on fakes; none is evidence about a deployment.
+
+### W3.1 The defect fixed: a cancelled meetup now reaches the rail as cancelled
+
+**What was wrong.** `resolveSharedMeetups` reported the viewer's own RSVP (`going`, `maybe`, `pending`) as the item's status whenever the viewer was on the meetup. A meetup its creator called off kept saying `going`. So the rail's change detection (T132) never saw a critical status and never promoted the cancellation, and `actionsWhileLive` (T320/T411) never saw it either, so the cancelled meetup still offered Join, Leave, Vote and Meet here. There was a second half. The cancel route (`DELETE /meetups/:id`) rewrites every PENDING invite to `cancelled`, and the resolver read only `going`, `maybe` and `pending`. A pending invitee, on either side of the thread, therefore saw the meetup simply vanish from the rail, with no cancellation shown.
+
+**The fix**, four same-line edits in one file (line-neutral; no cited line moves):
+
+- The meetup's own cancellation outranks the viewer's RSVP (`artifacts/api-server/src/services/telegraph/sharedContext.ts:457#status: m.status === "cancelled" ? "cancelled" : viewerOnIt ?`). A live meetup still reports the viewer's RSVP, unchanged.
+- `cancelled` invites are read (`artifacts/api-server/src/services/telegraph/sharedContext.ts:419#.in("status", ["going", "maybe", "pending", "cancelled"]);`). Only the cancel route writes that value: the RSVP schema admits `going`, `maybe` and `declined`. They are held apart from live invites (`artifacts/api-server/src/services/telegraph/sharedContext.ts:430#if (r.status === "cancelled") { if (!invitedUntilCancelled.has(mid))`) and count only for a meetup that is itself cancelled (`artifacts/api-server/src/services/telegraph/sharedContext.ts:446#...(m.status === "cancelled" ? (invitedUntilCancelled.get(m.id as string) ?? []) : [])`). A cancelled invite never puts anyone on a live meetup, and never sets the viewer's RSVP.
+- One consumer had the same gap: Discover Together drew its opportunities from the projection and kept anything inside the time window. It now skips a cancelled object (`artifacts/api-server/src/routes/telegraphSharedContext.ts:627#if (String(item.status ?? "").toLowerCase() === "cancelled") continue;`). This covers a cancelled booking too, which the rail already kept with no actions.
+
+The client needs no change. `detectCriticalChanges` already promotes a status that turns `cancelled`; the server never sent one for a meetup the viewer was on.
+
+**Tests.** `artifacts/api-server/src/test/telegraphSharedContext.test.ts:822#describe("T132 / T263 — a cancelled meetup reaches the rail as cancelled"` covers seven cases: a live meetup keeps the RSVP; a meetup the viewer is going to, then cancelled, reads `cancelled` and offers no action; the viewer's rewritten pending invite keeps the meetup, as cancelled; the counterpart's rewritten pending invite still makes them the counterpart; a cancelled invite puts nobody on a live meetup; a creator's stray cancelled invite does not make their live meetup read as cancelled; and the route serves it as `cancelled` with no actions. `artifacts/api-server/src/test/telegraphDiscoverTogether.test.ts:333#it("a shared plan its creator CANCELLED is not in the set; the live one is"` covers Discover Together, with the live plan as the control.
+
+### W3.2 Row restated (verdict unchanged)
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| T263 §20 Plans — invitation, RSVP, changes, dependencies, coordination trigger | W | **W** | **Evidence correction; the remainder is now one word.** The original row (*"No dependencies and no coordination trigger (T103)"*) is stale on the trigger: T103 is C. "Changes" now reach the conversation for every meetup member: a cancellation is promoted on the rail (W3.1, `artifacts/api-server/src/services/telegraph/sharedContext.ts:457#status: m.status === "cancelled" ? "cancelled" : viewerOnIt ?`), a moved start is promoted as before (T132), and meeting-point change cards are unchanged. Invitation and RSVP are unchanged. **Still W on "dependencies" alone.** The spec names the word once, in §20's Plans line, and defines nothing. No plan-dependency concept exists in any domain, and this section did not invent one (the earlier NEITHER note on T263 stands). |
+
+### W3.3 Tests and mutation proofs, run for this section on 2026-10-17
+
+All server runs are `node --import tsx/esm --test` with `TZ=UTC SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy`, outside the sandbox (both suites listen on loopback). Each mutant was applied alone, its file restored byte-identically, and its sha256 rechecked.
+
+| change | red first | green | whole fix reverted (tests kept) | targeted mutants |
+| --- | --- | --- | --- | --- |
+| the meetup resolver | `telegraphSharedContext.test.ts` 48/52 (4 fail). The live-RSVP and live-meetup guards passed before the fix, as guards should; the creator case was added after, to kill a mutant | 53/53 | 49/53 (4 fail) | 7 of 7 killed: the RSVP outranking the cancellation again; cancelled invites not read; cancelled invites counting for a live meetup; cancelled invites never counting; a cancelled invite setting the viewer's RSVP; the status always the meetup's own (loses the RSVP); cancelled invites merged with live ones |
+| Discover Together | `telegraphDiscoverTogether.test.ts` 11/12 (1 fail) | 12/12 | 11/12 (1 fail) | 1 of 1 killed: the skip comparing the wrong word |
+
+Neighbours, re-run after the last change in this section: all 118 `src/test/telegraph*.test.ts` files gave 2943/2943. `tripPrivateAnchorReaders`, `reachablePersonProjection` and `nearbyRankOrderChannel` gave 400/400. Those are the other suites that import the shared-context module or route, or rank on its items. `blockReadCatchGuard` gave 11/11; this section adds no catch around a block read.
+
+### W3.4 Rows examined in this pass and NOT moved
+
+Wave 2's list (W2.3) stands. In addition:
+
+| id | what still stops it |
+| --- | --- |
+| T4 | Memories in the rail. The stated reason "T117–T122 are still N" is stale: all six are C. The remainder is a rail resolver over shared memories. That needs `memory_tags` tag consent and memory visibility to decide what "shared" means, which the earlier note records as an owner decision on private-by-default |
+| T294 | PRJ-06 is served per request (`GET /threads/:id/drawer`). §45e's demotion (the lead's ruling) asks for a stored index, which needs storage (a migration) |
+| T381, T380 | The relationship is not yet an input to ConversationPolicy. Its route is behind `telegraph_relationship_context_enabled` (3662, unapplied, seeded FALSE). Wiring an ungated input would change live capabilities (calls among them) with no stated rule for what each relationship state does |
+| T214 | LIVE / RECENT / LAST_KNOWN / EXPIRED: the spec names the four values (`LocationShare.lifecycle`) but gives no thresholds, and the census notes NEITHER |
+| T263 | W3.2 above: "dependencies" has no referent |
+| T39 | Visa Buddy has no referent anywhere in Portava |
+
+### W3.5 The headline, restated from the rows
+
+| bucket | count |
+| --- | --- |
+| BUILT-AND-CORRECT | **267** |
+| BUILT-BUT-WRONG | **179** |
+| NOT-BUILT | **3** |
+| CANNOT-VERIFY | **2** |
+
+That is **451 = 267 C / 179 W / 3 N / 2 X**, unchanged from W2.4: CONSTRUCTED 446 of 451 = 98.9 %, CORRECT 267 of 451 = 59.2 %.

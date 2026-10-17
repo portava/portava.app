@@ -21,7 +21,7 @@
  *                 low_exposure — served impressions over LOW_EXPOSURE_WINDOW_MS
  *                   at or below the list's 25th percentile, and below its max
  *                   (a list where everything ties has no low-exposure item);
- *                 emerging_place — the latest place_momentum run says
+ *                 emerging_place — the latest place_momentum run, if current and no zone is active, says
  *                   `emerging` or `rediscovered` (a state that IS a claim;
  *                   `unknown` never qualifies);
  *                 new_trail — the place is a member of a non-archived Trail
@@ -38,7 +38,7 @@
  * It never adds or drops a row: the result is a permutation.
  */
 import { clampGovernorBudget, GOVERNOR_MIN_CANDIDATES, GOVERNOR_POOL_START_SHARE } from "../../services/ranking/FeedSlotAllocator.js";
-import { IN_LIST_CAP } from "./retrievals.js";
+import { IN_LIST_CAP, momentumRunIsCurrent, momentumZonePass } from "./retrievals.js";
 
 export const INVENTORY_BUCKETS = ["new_creator", "low_exposure", "emerging_place", "new_trail"] as const;
 export type InventoryBucket = (typeof INVENTORY_BUCKETS)[number];
@@ -231,12 +231,12 @@ export async function loadInventoryBuckets(
     for (const [id, c] of count) if (c <= p25 && c < max) add(buckets, id, "low_exposure");
   } catch (e) { failedReads.push(e instanceof Error && e.message ? e.message : "low_exposure"); }
 
-  // emerging_place — the latest place_momentum run's claim.
+  // emerging_place — the latest place_momentum run's claim, only while that run is current and no protected zone is active.
   try {
     const head = await sc.from("place_momentum").select("computed_at").order("computed_at", { ascending: false }).limit(1);
     if (head.error) throw new Error("place_momentum.head");
     const run = ((head.data ?? []) as any[])[0]?.computed_at;
-    if (typeof run === "string" && run) {
+    if (typeof run === "string" && run && momentumRunIsCurrent(run, opts.nowMs) && (await momentumZonePass(sc))) {  // 2026-10-17 privacy gate on 3988: the trend API's age bound, then the zone pass (retrievals.ts, foot)
       const ids = [...new Set([...list, ...dbUuids])];
       const { data, error } = await sc.from("place_momentum")
         .select("place_id, trend_state")

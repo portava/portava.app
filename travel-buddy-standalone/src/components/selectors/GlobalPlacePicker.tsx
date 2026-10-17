@@ -38,7 +38,7 @@ import {
   StyleSheet, ActivityIndicator,
 } from 'react-native';
 import { KeyboardSafeScrollView } from '../ui/KeyboardSafeView.tsx';
-import { X, MapPin, Search, Navigation, Clock, TrendingUp, RefreshCw } from 'lucide-react-native';
+import { X, MapPin, Search, Navigation, Clock, TrendingUp, RefreshCw, ClipboardPaste } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ExpoLocation from 'expo-location';
 import { requestLocationForUserAction, USER_PRESS_MAP_CONTEXT } from '../../lib/location/locationRequestDoor.ts'; // the one location door (census-layover L164, §70)
@@ -68,7 +68,7 @@ import { requestSuggestions } from '../../platform/input-assistance/services/inp
 import type { InputContext } from '../../platform/input-assistance/types/inputContext.ts';
 import type { InputSessionContext, InputSuggestion } from '../../platform/input-assistance/types/inputSuggestion.ts';
 import type { CanonicalPlaceBinding } from '../../platform/input-assistance/geographic/canonicalBinding.ts';
-import { useInputAccountEpoch } from '../../platform/input-assistance/hooks/useInputAccountEpoch.ts';
+import { useInputAccountEpoch } from '../../platform/input-assistance/hooks/useInputAccountEpoch.ts'; import { PasteReviewSheet } from '../../platform/input-assistance/paste/PasteReviewSheet.tsx';
 import { ANONYMOUS_VIEWER, currentDiscoveryScope, isCurrentDiscoveryScope, type DiscoveryScope } from '../../services/discoveryViewerScope.ts';
 import { captureMessagingOwnerRequest, type MessagingOwnerRequest } from '../../services/messagingOwnerRequest.ts';
 
@@ -594,6 +594,21 @@ export function GlobalPlacePicker({
     if (acts.length > 0) items.splice(zeroActionAt, 0, { kind: 'section', label: 'Not listed?' }, ...acts);
   }
 
+  // §24 census G159 — the paste surface on a field that takes ONE place. The
+  // server reads a hotel confirmation for the property alone (flight text is
+  // refused); the review screen hands back the one candidate picked, and it is
+  // selected through the same pipeline as a tapped row: resolved, then bound.
+  // It is not written to selection memory: a pasted booking is not a typed pick.
+  const pasteContext = assistContext && SINGLE_PLACE_PASTE_CONTEXTS.has(assistContext) ? assistContext : null;
+  const [pasteOpen, setPasteOpen] = useState(false);
+  useEffect(() => { setPasteOpen(false); }, [visible, accountEpoch]); // a closed, reopened or re-owned picker never shows an old paste
+  const pickPasted = useCallback(async (candidate: InputSuggestion): Promise<boolean> => {
+    const place = suggestionToPlace(candidate);
+    if (!place) return false;
+    await select(place);
+    return true;
+  }, [select]);
+
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={dismiss} statusBarTranslucent>
       {/* Keyboard handling: the sheet is bottom-anchored, so the KAV must lift
@@ -632,6 +647,22 @@ export function GlobalPlacePicker({
               </Pressable>
             )}
           </View>
+
+          {/* §24 census G159 — a field that takes ONE place reads a pasted
+              booking, address or map link, reviewed before anything is set. */}
+          {pasteContext ? (
+            <Pressable
+              style={s.pasteRow}
+              onPress={() => setPasteOpen(true)}
+              disabled={resolvingId != null}
+              accessibilityRole="button"
+              accessibilityLabel="Paste a booking, address or map link"
+              testID="place-paste"
+            >
+              <ClipboardPaste size={14} color={color.signal} />
+              <Text style={s.pasteText}>Paste a booking, address or map link</Text>
+            </Pressable>
+          ) : null}
 
           {/* GPS status messages */}
           {gpsState === 'denied' && (
@@ -800,11 +831,28 @@ export function GlobalPlacePicker({
           />
         </View>
       </KeyboardSafeScrollView>
+      {pasteContext ? (
+        <PasteReviewSheet
+          visible={pasteOpen}
+          context={pasteContext}
+          fieldId={assistFieldId ?? pasteContext}
+          noun="place"
+          composeTitle="Paste a booking, address or map link"
+          composeHelp="A hotel confirmation, an address or a map link. Only the property’s name or address is looked up, and nothing is set until you pick it."
+          onClose={() => setPasteOpen(false)}
+          onPick={pickPasted}
+        />
+      ) : null}
     </Modal>
   );
 }
 
+/** census G159: fields whose value is ONE place, so a pasted booking can bind it. */
+const SINGLE_PLACE_PASTE_CONTEXTS: ReadonlySet<InputContext> = new Set<InputContext>(['event_location', 'place_picker', 'trip_stop_place']);
+
 const s = StyleSheet.create({
+  pasteRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginHorizontal: space.xl, marginBottom: space.sm, paddingVertical: space.sm },
+  pasteText: { ...t.small, color: color.signalStrong, fontWeight: '600' },
   overlay: { flex: 1, justifyContent: 'flex-end' },
   backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(17,17,15,0.45)' },
   sheet: {

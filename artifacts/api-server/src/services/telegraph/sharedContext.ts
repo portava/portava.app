@@ -416,19 +416,19 @@ export async function resolveSharedMeetups(
     .from("meetup_invites")
     .select("meetup_id, user_id, status")
     .in("user_id", participantIds)
-    .in("status", ["going", "maybe", "pending"]);
+    .in("status", ["going", "maybe", "pending", "cancelled"]); // T132/T263: "cancelled" is written only by the meetup cancel route (pending -> cancelled); it counts only for a cancelled meetup, below
   if (error) {
     problems.push({ resolver: "meetups", message: error.message ?? "meetup_invites read failed" });
     return { candidates: [], problems };
   }
   const byMeetup = new Map<string, Set<string>>();
-  const viewerStatus = new Map<string, string>();
+  const viewerStatus = new Map<string, string>(); const invitedUntilCancelled = new Map<string, Set<string>>();
   for (const r of (data ?? []) as Row[]) {
     const mid = r.meetup_id as string;
     if (!mid) continue;
     if (!byMeetup.has(mid)) byMeetup.set(mid, new Set());
-    byMeetup.get(mid)!.add(r.user_id as string);
-    if (r.user_id === viewerId) viewerStatus.set(mid, (r.status as string) ?? "pending");
+    if (r.status === "cancelled") { if (!invitedUntilCancelled.has(mid)) invitedUntilCancelled.set(mid, new Set()); invitedUntilCancelled.get(mid)!.add(r.user_id as string); } else byMeetup.get(mid)!.add(r.user_id as string);
+    if (r.user_id === viewerId && r.status !== "cancelled") viewerStatus.set(mid, (r.status as string) ?? "pending");
   }
   const ids = [...byMeetup.keys()];
   if (ids.length === 0) return { candidates: [], problems };
@@ -443,7 +443,7 @@ export async function resolveSharedMeetups(
   }
   const candidates: SharedContextCandidate[] = [];
   for (const m of (meetups ?? []) as Row[]) {
-    const attending = new Set(byMeetup.get(m.id as string) ?? []);
+    const attending = new Set([...(byMeetup.get(m.id as string) ?? []), ...(m.status === "cancelled" ? (invitedUntilCancelled.get(m.id as string) ?? []) : [])]); // T132/T263: an invitee whose pending invite the cancel route rewrote is still told
     // The creator is a participant even without an invite row of their own.
     if (typeof m.creator_id === "string" && participantIds.includes(m.creator_id)) {
       attending.add(m.creator_id);
@@ -454,7 +454,7 @@ export async function resolveSharedMeetups(
       objectType: "MEETUP",
       objectId: m.id as string,
       title: (m.title as string) ?? "Meetup",
-      status: viewerOnIt ? (viewerStatus.get(m.id as string) ?? (m.status as string) ?? "active") : ((m.status as string) ?? "active"),
+      status: m.status === "cancelled" ? "cancelled" : viewerOnIt ? (viewerStatus.get(m.id as string) ?? (m.status as string) ?? "active") : ((m.status as string) ?? "active"), // T132/T263: the meetup's own cancellation outranks the viewer's RSVP, so the rail can promote it
       currentVersion: (m.updated_at as string) ?? undefined,
       startsAt: (m.starts_at as string) ?? null,
       endsAt: (m.ends_at as string) ?? null,

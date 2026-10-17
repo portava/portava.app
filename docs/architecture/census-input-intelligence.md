@@ -805,7 +805,7 @@ declared and read by nothing (G30). What follows is what actually exists.
 | --- | --- | --- | --- |
 | G231 | Keyword-stuffing resistance in business / Buddy / user descriptions | C | `lib/inputAssistance/rankingSignals.ts:207#export function spamRisk` is the heuristic: token repetition above a prose floor, upper-case ratio over a minimum length, and separator-chained keyword lists, combined by taking the STRONGEST rather than summing so a listing is not punished twice for one habit. It runs over every dispatched row's `title + subtitle` — the fields a business / Buddy / user listing authors — inside `projection.ts`'s signal stack, and demotes by at most `SPAM_MAX_PENALTY`. A clean listing scores 0 and is unchanged. Proven end-to-end in `src/test/inputAssistanceRankingSignals.test.ts`: `"Bangkok Tour Bangkok Tour Bangkok Tour Bangkok"` loses to `"Bangkok Tour Collective"` on the query both match exactly, and both are still returned. MUTATION: `spamRisk → 0` reddens four assertions. **What this is NOT**: it is not moderation, not a block, and not a Buddy-specific rule — §36's other six controls are unaffected and G232 (alias abuse) still has no detector. |
 | G232 | Alias abuse detection | **C** | *`N` -> `C` by the integrating lane on 2026-09-21, on the bar THIS ROW set for itself: "a plausibility rule on the alias APPEND in `buildRowPatch` ... and a test that the provider-id path cannot attach an unrelated name." Both now exist.* THE STATIC HALF was never abusable and is unchanged: the alias tables this layer resolves through (`lib/canonicalLocations.ts:177#export const CITY_GEO_ALIASES`, `lib/inputAssistance/searchQueryHelpers.ts:63-95`) are curated constants in the source tree. THE WRITABLE HALF, which the previous pass found and correctly declined to patch from inside this layer: `canonical_locations.aliases` GROWS at runtime, and rule 1 of `matchCanonical` matches on a shared PROVIDER ID alone (`lib/canonicalLocations.ts:283#const byProvider = rows.find`), so a caller who knows a real row's provider id could attach an arbitrary `place.name` to it through `POST /locations/resolve`. THE GUARD IS ON THE APPEND, NOT THE READ, because refusing to read aliases would break the variants the set exists for: `lib/canonicalLocations.ts:425#export function isPlausibleAlias` requires a shared NON-GENERIC word, or one of four carve-outs this module already implements elsewhere — spacing (`danang`/`da nang`), the stroke/diacritic fold (`searchKey`, migration 2220), the shipped abbreviation dictionary (`saigon`), or an in-order initialism (`hcmc`). THE PROVIDER-ID MATCH IS UNTOUCHED AND THAT IS ASSERTED, not assumed: an implausible name still identifies the row, still returns it, and still backfills its coordinates — a refused alias must never become a refused resolution. Proven at `src/test/canonicalLocations.test.ts:397#alias poisoning: the write is refused, the RESOLUTION is not`, and the BOUNDARY is measured in both directions: removing the guard reddens 3 tests including the end-to-end one, and making it refuse everything reddens 3 including the legitimate-variant append. WHY THIS DOES NOT ALSO CLOSE A SUGGESTION-SIDE ROW: the previous pass's measurement still holds — `suggestCanonicalLocationsFolded` queries `search_key` and `normalized_name` only (`lib/canonicalLocations.ts:728-731`), so no suggestion path reads this column. The damage this closes is to canonical IDENTITY MERGING, which is why the fix is in the write path. STATED LIMIT: two names sharing one rare word still pass, so this narrows the hole rather than closing it, and a row whose every word is generic accepts appends only through the four carve-outs — the fail-closed direction. TURNS RED WHEN: a provider-id match appends a name sharing nothing with the row, or when a refused alias starts costing the resolution. |
-| G233 | Impersonation protections for people and businesses | W | *§9.5 already retracted half this row's evidence (the flags are not dropped) and left one reason standing: "nothing in the suggestion path detects or demotes an impersonating handle. No confusable/homoglyph comparison exists anywhere in the layer." Built 2026-09-21 — and the verdict STILL does not move, for two reasons §9.5 did not reach.* CLOSED by §8.4: the flags are no longer dropped, so a viewer CAN tell the real account from the copy (G180). CLOSED this pass: a confusable comparison now exists and demotes — `lib/inputAssistance/rankingSignals.ts:404#export function handleSignature` folds the substitutions a confusable handle actually uses (digit-for-letter, doubled letter, separators, `rn`→`m`) and `lib/inputAssistance/rankingSignals.ts:436#export function applyImpersonationRisk` demotes an unverified person row whose handle folds to the SAME signature as a verified-or-official row in that answer. It is wired, not defined-and-unread: `lib/inputAssistance/gateway.ts:930#const antiImpersonation = applyImpersonationRisk(diversified);` runs between the diversity term and the rank. Signature EQUALITY, not edit distance, on purpose: a distance threshold fires on @sarah_travels vs @sara_travels — two real people — and nothing here could tell those apart from an impersonation. A demotion, not a removal, for SpamRisk's reason: co-occurrence with a verified twin is a suspicion, not a finding. `account_status` filtering is unchanged and still pre-existing (`socialIdentity.ts`, `test/inputAssistanceInvariants.test.ts` item 1). **STILL WRONG, and why the verdict stands.** (a) The rule is WITHIN-RESPONSE: an impersonator that appears without its target is untouched, because there is no verified twin to compare against and no handle index is consulted. That hole is pinned by an assertion rather than described — `src/test/inputAssistanceRankingSignals.test.ts` §8, "THE HOLE, pinned" — which also shows the same row IS demoted when its target is present, so the boundary is measured, not assumed. (b) BUSINESSES are not covered at all: `verified`/`isOfficial` exist only on `profiles` (`lib/inputAssistance/searchCandidates.ts:675-676`), and a `places` / `hidden_gems` row carries no verification flag of any kind, so there is no genuine-listing signal for a venue to be impersonated AGAINST. The row names people AND businesses; half a requirement is not the requirement. EVIDENCE THAT WOULD CLOSE IT: a handle/name index the suggestion path can consult without its target being present, and a verification signal on business listings. |
+| G233 | Impersonation protections for people and businesses | W | *§9.5 already retracted half this row's evidence (the flags are not dropped) and left one reason standing: "nothing in the suggestion path detects or demotes an impersonating handle. No confusable/homoglyph comparison exists anywhere in the layer." Built 2026-09-21 — and the verdict STILL does not move, for two reasons §9.5 did not reach.* CLOSED by §8.4: the flags are no longer dropped, so a viewer CAN tell the real account from the copy (G180). CLOSED this pass: a confusable comparison now exists and demotes — `lib/inputAssistance/rankingSignals.ts:404#export function handleSignature` folds the substitutions a confusable handle actually uses (digit-for-letter, doubled letter, separators, `rn`→`m`) and `lib/inputAssistance/rankingSignals.ts:436#export function applyImpersonationRisk` demotes an unverified person row whose handle folds to the SAME signature as a verified-or-official row in that answer. It is wired, not defined-and-unread: `lib/inputAssistance/gateway.ts:930#const antiImpersonation = applyImpersonationRisk(diversified` runs between the diversity term and the rank. Signature EQUALITY, not edit distance, on purpose: a distance threshold fires on @sarah_travels vs @sara_travels — two real people — and nothing here could tell those apart from an impersonation. A demotion, not a removal, for SpamRisk's reason: co-occurrence with a verified twin is a suspicion, not a finding. `account_status` filtering is unchanged and still pre-existing (`socialIdentity.ts`, `test/inputAssistanceInvariants.test.ts` item 1). **STILL WRONG, and why the verdict stands.** (a) The rule is WITHIN-RESPONSE: an impersonator that appears without its target is untouched, because there is no verified twin to compare against and no handle index is consulted. That hole is pinned by an assertion rather than described — `src/test/inputAssistanceRankingSignals.test.ts` §8, "THE HOLE, pinned" — which also shows the same row IS demoted when its target is present, so the boundary is measured, not assumed. (b) BUSINESSES are not covered at all: `verified`/`isOfficial` exist only on `profiles` (`lib/inputAssistance/searchCandidates.ts:675-676`), and a `places` / `hidden_gems` row carries no verification flag of any kind, so there is no genuine-listing signal for a venue to be impersonated AGAINST. The row names people AND businesses; half a requirement is not the requirement. EVIDENCE THAT WOULD CLOSE IT: a handle/name index the suggestion path can consult without its target being present, and a verification signal on business listings. |
 | G234 | Duplicate entity suppression | C | `duplicateDetection.ts:241-370`; `gateway.ts:414-425` (per-id dedup across types) and `:591-603` (collapse a duplicate's redundant entity row). |
 | G235 | Rate limits on suggestion-affecting submissions | C ᵖ | `routes/inputAssistance.ts:264#input_assist_suggest` (90/min) and `:404#input_assist_select` (60/min), on the pre-existing `lib/rateLimit` buckets. |
 | G236 | No paid boost into factual confidence or canonical identity priority | C | Structural: `confidence` is a pure function of `matchTier` (`projection.ts:34-41`) plus two clamped boosts (freshness, prior-selection), and `InputSuggestion.source` (`types.ts:227-234`) has no sponsored/promoted value — there is no field a paid signal could enter through. |
@@ -8711,3 +8711,161 @@ The independent verifier of §52 accepted G203 at C but named its one latent pat
 | id | was | now | evidence |
 | --- | --- | --- | --- |
 | G203 offline AI replay | C | **C** | The shared-cache write skips any answer carrying an AI row: `travel-buddy-standalone/src/platform/input-assistance/hooks/useInputAssistance.ts:323#!finalized.some((s) => s.type === 'ai_suggestion')`. Pinned by `travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.aiNotCached.component.test.tsx:58#an answer carrying an AI row is shown but never written to the shared cache` (the AI row is asserted ON SCREEN, so the test cannot pass by the row being filtered first) and its control at `travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.aiNotCached.component.test.tsx:66#CONTROL: the same public field still caches an answer with no AI row`. 2/2 pass; with the guard removed the first goes red (1 failed, 1 passed), restored byte-identical. All 210 input-assistance jest tests pass. |
+
+## Row moves — 2026-10-17 fixes (wave 3)
+
+**G233, impersonation protections for people and businesses.** §8 left two holes and named what would close
+them: "a handle/name index the suggestion path can consult without its target being present, and a verification
+signal on business listings". Both are now built in one module that looks the target up. It returns the rows to
+demote, and the demotion stays in `applyImpersonationRisk`, so a row is demoted once wherever its twin was found
+(`artifacts/api-server/src/lib/inputAssistance/rankingSignals.ts:458#!(r.id !== undefined && indexed?.has(r.id))`).
+
+- **People, target outside the answer.** The index reads active, verified-or-official profiles whose handle folds
+  to the same signature as a person row in the answer
+  (`artifacts/api-server/src/lib/inputAssistance/impersonationIndex.ts:160#export async function indexedImpersonators(`,
+  `artifacts/api-server/src/lib/inputAssistance/impersonationIndex.ts:199#.or('verified.eq.true,is_official.eq.true')`).
+  No column stores the fold, so the read sends a case-insensitive pattern that every spelling of the signature
+  matches, and the exact fold decides on what comes back
+  (`artifacts/api-server/src/lib/inputAssistance/impersonationIndex.ts:200#.filter('handle', 'imatch', pattern)`,
+  `artifacts/api-server/src/lib/inputAssistance/impersonationIndex.ts:121#export function confusablePattern(`).
+  A row that is itself a genuine account is never demoted, which matters on the two projections that carry no
+  verification flag
+  (`artifacts/api-server/src/lib/inputAssistance/impersonationIndex.ts:214#if (genuineIds.has(r.entityId!)) continue;`).
+- **Every person path.** The generic path (global search, buddy search)
+  (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:930#applyImpersonationRisk(diversified, await indexedImpersonators(sc, diversified, { userId }))`),
+  @mentions, which took no impersonation term before
+  (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:519#applyImpersonationRisk(refs, await indexedImpersonators(sc, refs, { userId }))`),
+  and Telegraph recipients, the same
+  (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:488#applyImpersonationRisk(boostedRecips, await indexedImpersonators(sc, boostedRecips, { userId }))`).
+- **Businesses.** §8's "no venue row carries a verification flag" was false for `discovery_places`: its `verified`
+  column exists (0029) and is in the 2026-09-22 production capture. Curated rows carry it, OSM-saved rows are
+  written `false`, and no client can write it: since 2153, clients hold SELECT only, which census-discovery C28
+  verified in production's catalog. An unverified listing whose name folds to an active
+  verified listing's in the same city is demoted
+  (`artifacts/api-server/src/lib/inputAssistance/impersonationIndex.ts:278#.eq('verified', true)`,
+  `artifacts/api-server/src/lib/inputAssistance/impersonationIndex.ts:301#g.city === fact!.city`). Same city on
+  purpose: two real venues in two cities can share a name. Venue names fold diacritics first
+  (`artifacts/api-server/src/lib/inputAssistance/impersonationIndex.ts:82#export function nameSignature(`).
+- **Lookalike letters.** The fold used to drop a Cyrillic, Greek or Armenian letter drawn like a Latin one, so
+  `@portava` spelled with a Cyrillic o never met `@portava`. It now maps them
+  (`artifacts/api-server/src/lib/inputAssistance/rankingSignals.ts:405#const raw = foldLookalikeLetters(`,
+  `artifacts/api-server/src/lib/inputAssistance/rankingSignals.ts:615#export const LOOKALIKE_LETTERS`).
+- **Privacy.** A target outside the answer counts only if the viewer's own people search could show it: not
+  blocked either way, not age-restricted, not opted out of discovery, not Invisible, active
+  (`artifacts/api-server/src/lib/inputAssistance/impersonationIndex.ts:231#const pool = ids.filter((id) => !blocked.has(id) && !ageRestricted.has(id));`,
+  `artifacts/api-server/src/lib/inputAssistance/impersonationIndex.ts:243#return new Set(pool.filter((id) => !hidden.has(id) && !gate.withheld.has(id)));`).
+  A gate it cannot read drops every out-of-answer target. A listing outside the answer counts only if its
+  submitter passes `searchPlaces`' own block rule.
+- **Failure.** The index is a demotion source, never a filter. An unreadable read is logged and the answer keeps
+  its within-answer score.
+- **Cost, not measured.** A typed serve with person or place rows issues up to six bounded pattern reads per kind
+  in parallel, plus one listing-facts read before the listing reads. The gate reads run only when a target exists
+  outside the answer. Nothing here measures this against OD-INPUT-7's p95.
+
+Proof. Each test runs through the real route or the real gateway with a fake client that applies `imatch`:
+- target outside the answer, verified and official:
+  `artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts:1904#an impersonator ALONE in the answer is demoted when its verified target exists`;
+- privacy and fail-closed:
+  `artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts:1931#PRIVACY: a target the viewer's own search could not show does not count`,
+  `artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts:1948#FAIL-CLOSED: a target whose visibility cannot be read does not count`;
+- businesses:
+  `artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts:2006#the verified listing leads its confusable copy when both match`,
+  `artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts:2014#the copy ALONE in the answer is demoted when the verified listing in its city exists`,
+  `artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts:2142#two copies in two cities: only the one beside the verified listing is demoted`;
+- the pattern, including names in scripts the fold drops, which cannot crowd a real twin out of a bounded read:
+  `artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts:2083#Tokyo and Bangkok cannot flood the read`;
+- lookalike letters:
+  `artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts:2195#end to end: a lookalike copy alone in the answer is demoted when its target exists`;
+- @mentions and recipients:
+  `artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts:2254#@mention: the genuine account leads its confusable copy`,
+  `artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts:2277#Telegraph recipient: the genuine contact leads its confusable copy`.
+
+Counts:
+- Ranking signals 114/114 (85 before, 29 added). Golden 42/42.
+- The 35 input-gateway neighbour suites: 901/901 (this includes the paste suite's two G159 cases below).
+- With `gateway.ts` restored to HEAD, 12 fail: 10 behaviour tests and the golden's two gateway cases. Restored
+  byte-identical.
+- 32 targeted mutants, each red alone and each restored byte-identical. They cover every gate, every pattern
+  clause, the city and verification rules, all three call sites and the lookalike fold.
+
+`searchPlatformGolden`'s fixture was re-recorded (`SEARCH_GOLDEN_WRITE=1`) for this change. Compared
+programmatically with HEAD:
+- only the two gateway cases (`global_search`, `place_picker`) changed;
+- their served bodies are identical;
+- their read traces only gain the index reads;
+- every other case is unchanged.
+
+What this does not do:
+- Hidden Gems are user spots, not business listings, and are not compared.
+- A lookalike letter outside the map is dropped by the fold, as before.
+- §8's "THE HOLE" test now pins the boundary of the rule: an impersonator with no genuine twin anywhere keeps its
+  score. Its assertions are unchanged.
+
+**G159, flight and hotel text when the receiving field supports those objects.** §42.22 built the read (a
+hotel confirmation yields its property alone; flight text yields fixed copy) and named what kept it `W`: "It moves
+to `C` when a field that takes a hotel (a place picker) mounts the paste surface." The Event location takes a
+place, and it now carries the paste surface.
+
+- **The mount.** The shared picker carries the paste surface on a field whose value is one place
+  (`travel-buddy-standalone/src/components/selectors/GlobalPlacePicker.tsx:602#const pasteContext = assistContext && SINGLE_PLACE_PASTE_CONTEXTS.has(assistContext)`,
+  `travel-buddy-standalone/src/components/selectors/GlobalPlacePicker.tsx:851#new Set<InputContext>(['event_location', 'place_picker', 'trip_stop_place'])`).
+  The Event screen mounts that field (`travel-buddy-standalone/app/events/create/index.tsx:1001#assistContext="event_location"`), which is
+  a server paste context (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:58#'event_location',`).
+  A city field keeps its list paste in the Trip editor, and the legacy surfaces with no assist context get nothing.
+- **The pick.** The review screen runs in a one-place mode. Only the first answer is pre-ticked, a pick replaces
+  any other, and the rows are radios. The field receives the candidate itself
+  (`travel-buddy-standalone/src/platform/input-assistance/paste/PasteReviewSheet.tsx:118#failed = onPick ? await pickOne(`,
+  `travel-buddy-standalone/src/platform/input-assistance/paste/pasteReview.ts:224#export function pickedCandidate(`). It then goes
+  through the same selection pipeline as a tapped row
+  (`travel-buddy-standalone/src/components/selectors/GlobalPlacePicker.tsx:608#await select(place);`). A pasted pick is not written to
+  selection memory.
+- **The read** is §42.22's: the booking is read before the line splitter
+  (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:481#const booking = classifyTravelBooking(lines);`).
+  On the Event location it resolves the property as a place candidate, and no other line of the booking is in the
+  answer (`artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:1338#ONE item, resolved to the property as a place candidate`).
+  Flight text is refused there too
+  (`artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:1352#flight text is refused on the place field too`).
+
+Proof on the mounted screen, through the real Event screen, picker, review sheet and extract client (only
+`fetch` is faked):
+- `travel-buddy-standalone/app/events/__tests__/create.locationAssistance.component.test.tsx:453#G159: a hotel confirmation pasted into the Event location becomes the venue, after review`.
+  The extract request carries the field's own context and id. Nothing is written before the pick. The location row
+  shows the hotel, and the saved draft carries its name, coordinates, city, country and zone.
+- `travel-buddy-standalone/app/events/__tests__/create.locationAssistance.component.test.tsx:474#G159: flight text is refused on the Event location`.
+  Nothing can be picked and nothing is set.
+
+Also:
+- the one-place mode: `travel-buddy-standalone/src/platform/input-assistance/paste/__tests__/pasteReviewFlow.component.test.tsx:186#G159 one-place mode`;
+- the controls: `travel-buddy-standalone/src/components/selectors/__tests__/GlobalPlacePicker.zeroState.component.test.tsx:353#a city field (the Trip destination) has no booking paste`,
+  `travel-buddy-standalone/src/components/selectors/__tests__/GlobalPlacePicker.zeroState.component.test.tsx:365#a picker closed with the paste review open reopens without it`;
+- the pure helpers: `travel-buddy-standalone/src/platform/input-assistance/paste/__tests__/pasteReview.test.ts:99#one-place field: the candidate handed over is the ticked one`.
+
+Counts:
+- Before the build: the two screen tests were red (`place-paste` not found), 2 failed and 32 passed.
+- With the three client files restored to HEAD: jest 4 failed, 46 passed; node 2 failed, 4 passed. Restored
+  byte-identical.
+- Green: jest 50/50 across the three suites; node 6/6; the server paste suite 98/98.
+- 15 targeted mutants, each red and restored byte-identical. They cover the mount, the context set, the selection
+  call, the reopen reset, pre-tick, replace, role, hand-over, refusal, both copy lines and the three helpers.
+- The app's 1,029 component suites (7,980 tests) and 55 input/location node files (586 tests) pass.
+
+Limit: the review screen is a full-screen modal opened over the picker's own modal. That is proven under the test
+renderer only; how it presents on iOS and Android is an unmeasured device question.
+
+| id | was | now | evidence |
+| --- | --- | --- | --- |
+| G233 impersonation protections for people and businesses | W | **C** | People: a confusable copy is demoted below a verified or official account whether or not the account is in the answer (`artifacts/api-server/src/lib/inputAssistance/impersonationIndex.ts:160#export async function indexedImpersonators(`, `artifacts/api-server/src/lib/inputAssistance/rankingSignals.ts:458#!(r.id !== undefined && indexed?.has(r.id))`), on global search, @mentions and Telegraph recipients (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:930#indexedImpersonators(sc, diversified, { userId })`, `artifacts/api-server/src/lib/inputAssistance/gateway.ts:519#indexedImpersonators(sc, refs, { userId })`, `artifacts/api-server/src/lib/inputAssistance/gateway.ts:488#indexedImpersonators(sc, boostedRecips, { userId })`), only against accounts the viewer's own search could show (`artifacts/api-server/src/lib/inputAssistance/impersonationIndex.ts:243#!hidden.has(id) && !gate.withheld.has(id)`). Businesses: an unverified listing confusable with an active verified `discovery_places` listing in its city is demoted (`artifacts/api-server/src/lib/inputAssistance/impersonationIndex.ts:278#.eq('verified', true)`). Tests `artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts:1904#an impersonator ALONE in the answer is demoted`, `artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts:2014#the copy ALONE in the answer is demoted`, `artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts:2254#@mention: the genuine account leads its confusable copy`; 114/114 + golden 42/42; 12 red with the wiring reverted; 32/32 mutants killed. |
+| G159 flight and hotel text when the receiving field supports those objects | W | **C** | The Event location, a field that takes a place, now mounts the paste surface (`travel-buddy-standalone/src/components/selectors/GlobalPlacePicker.tsx:602#SINGLE_PLACE_PASTE_CONTEXTS.has(assistContext)`, `travel-buddy-standalone/app/events/create/index.tsx:1001#assistContext="event_location"`). A hotel confirmation resolves to the property alone (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:481#const booking = classifyTravelBooking(lines);`), is reviewed as one pick (`travel-buddy-standalone/src/platform/input-assistance/paste/PasteReviewSheet.tsx:240#accessibilityRole={onPick ? 'radio' : 'checkbox'}`), and becomes the event's venue only when picked (`travel-buddy-standalone/app/events/__tests__/create.locationAssistance.component.test.tsx:453#G159: a hotel confirmation pasted into the Event location becomes the venue`). Flight text is refused, since no field takes a flight (`travel-buddy-standalone/app/events/__tests__/create.locationAssistance.component.test.tsx:474#G159: flight text is refused on the Event location`). Red before: 2 failed. With the client files at HEAD: 4 + 2 red. Green: jest 50/50, node 6/6, server 98/98. 15/15 mutants killed. |
+
+### Headline, restated from the rows (wave 3)
+
+| bucket | §52.7 | now |
+| --- | ---: | ---: |
+| BUILT-AND-CORRECT | 317 | 319 |
+| BUILT-BUT-WRONG | 44 | 42 |
+| NOT-BUILT | 8 | 8 |
+| CANNOT-VERIFY | 4 | 4 |
+| total | 373 | 373 |
+
+Of 373 rows: **319 BUILT-AND-CORRECT, 42 BUILT-BUT-WRONG, 8 NOT-BUILT, 4 CANNOT-VERIFY**. CORRECT is now
+319 / 373 = 85.5 %. G233 and G159 change bucket.

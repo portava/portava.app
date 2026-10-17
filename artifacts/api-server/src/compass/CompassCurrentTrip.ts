@@ -48,28 +48,28 @@
  * authorized empty results from dependency failure internally and give an
  * honest user-facing limitation"* and *"Unknown is not zero"*.
  *
- * WHY THE THREE RAW READS BELOW ARE THE SANCTIONED ONES (CT-02)
- * =============================================================
- * CT-02 says stop duplicating the trip tables; it does not say a read of them
- * cannot exist. "Which trip is this user on" is a USER-scoped question, and
- * every Trip projection is built FROM a tripId — none of them can answer it, so
- * there is nothing here to consume. What CT-02 buys is that the union is read
- * ONCE, in this module, instead of in five. `check_trip_conflicts` was the
- * sixth copy and now calls `resolveUserTrips` too.
+ * THE READS ARE TRIPS' NOW (CT-02)
+ * ================================
+ * This module used to hold the three sanctioned raw reads of `trip_members` and
+ * `trips`, on the ground that no Trip projection answered a USER-scoped question.
+ * Trips now publishes those projections (domain/trips/projections/
+ * TripCompassMembershipProjection.ts and TripCompassTripSummaryProjection.ts),
+ * so this module CONSUMES them through the §19.1 consumer rule and reads no
+ * table itself. What it still owns is Compass's: which statuses and roles count
+ * for which surface, and the "prefer active, then earliest start" ordering.
  *
- * These three reads are allow-listed BY NAME, with that reason, in
- * `src/test/compassTripProjectionReads.test.ts`. A fourth appearing in this
- * file — or in `CompassTools.ts` — fails that suite.
+ * `src/test/compassTripProjectionReads.test.ts` case D holds every compass/
+ * module to zero raw Trip-table reads; a read appearing here fails it.
  *
- * NOT PURE — it reads. It writes nothing, and it never widens what the caller
- * may see: membership is the same owner ∪ accepted-member union every caller
- * already used.
+ * NOT PURE — it reads, through Trips. It writes nothing, and it never widens
+ * what the caller may see: membership is the same owner ∪ accepted-member union
+ * every caller already used.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { buildTripCompassMembershipProjection, type TripCompassMemberTrip, type TripCompassMemberTripsResult } from "../domain/trips/projections/TripCompassMembershipProjection.js";
+import { buildTripCompassOwnedTripsProjection, buildTripCompassTripsByIdProjection, type TripCompassTripListResult, type TripCompassTripSummary } from "../domain/trips/projections/TripCompassTripSummaryProjection.js";
+import { acceptTripProjection, TRIP_PROJECTION_SCHEMA_VERSION } from "../domain/trips/contracts/TripProjectionEnvelope.js";
 
-/** Columns every Compass caller needs from a trip row, as one list. */
-const TRIP_COLUMNS =
-  "id, title, destination_city, destination_country, start_date, end_date, status, timezone";
 
 /**
  * The tool's rule: a trip that is happening or is planned.
@@ -152,16 +152,16 @@ export type CurrentTripOutcome =
   | { status: "none" }
   | { status: "unread"; reason: string };
 
-function toCandidate(row: any): CompassTripCandidate {
+function toCandidate(row: TripCompassTripSummary): CompassTripCandidate {
   return {
-    id:                 String(row.id),
-    title:              row.title ?? null,
-    destinationCity:    row.destination_city ?? null,
-    destinationCountry: row.destination_country ?? null,
-    startDate:          typeof row.start_date === "string" ? row.start_date.slice(0, 10) : null,
-    endDate:            typeof row.end_date   === "string" ? row.end_date.slice(0, 10)   : null,
-    status:             row.status ?? null,
-    timezone:           typeof row.timezone === "string" && row.timezone ? row.timezone : null,
+    id:                 row.id,
+    title:              row.title,
+    destinationCity:    row.destinationCity,
+    destinationCountry: row.destinationCountry,
+    startDate:          row.startDate !== null ? row.startDate.slice(0, 10) : null,
+    endDate:            row.endDate   !== null ? row.endDate.slice(0, 10)   : null,
+    status:             row.status,
+    timezone:           row.timezone ? row.timezone : null,
   };
 }
 
@@ -196,8 +196,8 @@ export type MemberTripIdsOutcome =
   | { status: "unread"; reason: string };
 
 /**
- * The trip ids this user is on, by role — the ONE read of `trip_members` that
- * answers "which trips is this user on" for all of Compass.
+ * The trip ids this user is on, by role — Compass's ONE consumer of Trips'
+ * membership projection, answering "which trips is this user on" for Compass.
  *
  * `acceptedOnly` is explicit and defaults to the *wider* answer because that is
  * what `resolveUserTrips` has always done (it filters nothing on `status`, and
@@ -212,23 +212,23 @@ export async function resolveMemberTripIds(
   userId: string,
   opts: { roles: readonly string[]; acceptedOnly?: boolean },
 ): Promise<MemberTripIdsOutcome> {
-  // An unreadable membership table must NOT read as "not a member of
-  // anything": that silently narrows the union and the caller then answers
-  // about the wrong trip, or about none.
-  try {
-    const { data: memberRows, error: memberErr } = await sc
-      .from("trip_members")
-      .select("trip_id, role, status")
-      .eq("user_id", userId)
-      .in("role", opts.roles as string[]);
-    if (memberErr || !Array.isArray(memberRows)) return { status: "unread", reason: "trip_members could not be read" };
-    const rows = ((memberRows ?? []) as any[]).filter((r) =>
-      opts.acceptedOnly === true ? r.status == null || r.status === "accepted" : true,
-    );
-    return { status: "ok", tripIds: rows.map((r) => String(r.trip_id)) };
-  } catch {
+  // An unreadable membership must NOT read as "not a member of anything": that
+  // silently narrows the union and the caller then answers about the wrong
+  // trip, or about none. Trips' projection refuses an errored or non-array read
+  // (§59), and its envelope passes the §19.1 consumer rule before it is used.
+  const built = await buildTripCompassMembershipProjection(sc, userId, { roles: opts.roles });
+  if (!built.ok || !acceptTripProjection(built.projection, {
+    acceptedSchemaVersion: TRIP_PROJECTION_SCHEMA_VERSION, metric: "TripCompassMembershipProjection",
+  }).accepted) {
     return { status: "unread", reason: "trip_members could not be read" };
   }
+  // What "accepted" means (status `accepted`, or not served) is Trips' rule,
+  // stated once in the projection; which callers want only those stays theirs.
+  return {
+    status: "ok",
+    tripIds: opts.acceptedOnly === true ? built.projection.acceptedTripIds : built.projection.tripIds,
+  };
+  // (Read order is the projection's: membership rows as the table served them.)
 }
 
 /**
@@ -247,33 +247,33 @@ export async function resolveUserTrips(
   if (membership.status === "unread") return membership;
   const memberTripIds = membership.tripIds;
 
-  let owned: any[] = [];
-  try {
-    const { data, error } = await sc
-      .from("trips")
-      .select(TRIP_COLUMNS)
-      .eq("owner_id", userId)
-      .in("status", statuses as string[]);
-    if (error || !Array.isArray(data)) return { status: "unread", reason: "trips could not be read" };
-    owned = (data ?? []) as any[];
-  } catch {
-    return { status: "unread", reason: "trips could not be read" };
-  }
+  // The owned trips and the member trips, in the requested statuses, from Trips'
+  // trip-row projection: one typed row shape, each row carrying its own §19.1
+  // envelope, and every envelope must pass the consumer rule before ANY row is
+  // used. Each read failing — an error, a non-array body (§59), a row that is not
+  // a trip row, a refused envelope — is the whole selection `unread`, never a
+  // partial union: a union missing the owned half answers about the wrong trip.
+  //
+  // Order is unchanged: membership, then owned, then member trips; and with no
+  // member trip ids the member read is not issued at all (the projection
+  // answers an empty id list without reading).
+  const owned = acceptedTripRows(
+    await buildTripCompassOwnedTripsProjection(sc, userId, { statuses }),
+  );
+  if (owned === null) return { status: "unread", reason: "trips could not be read" };
 
-  let memberTrips: any[] = [];
-  if (memberTripIds.length > 0) {
-    try {
-      const { data, error } = await sc
-        .from("trips")
-        .select(TRIP_COLUMNS)
-        .in("id", memberTripIds)
-        .in("status", statuses as string[]);
-      if (error || !Array.isArray(data)) return { status: "unread", reason: "trips could not be read" };
-      memberTrips = (data ?? []) as any[];
-    } catch {
-      return { status: "unread", reason: "trips could not be read" };
-    }
-  }
+  const memberTrips = acceptedTripRows(
+    await buildTripCompassTripsByIdProjection(sc, userId, memberTripIds, { statuses }),
+  );
+  if (memberTrips === null) return { status: "unread", reason: "trips could not be read" };
+
+  // Owned first, then member trips; a trip the user both owns and is a member
+  // of appears once (below). Status filtering happened in Trips' read, as it
+  // did in the raw reads it replaced; nothing is filtered again here.
+  //
+  // The rows are TripCompassTripSummary values: typed columns, no `any`, and
+  // the version each was read at is in the projection's `sources`.
+
 
   const seen = new Set<string>();
   const all: CompassTripCandidate[] = [];
@@ -308,4 +308,36 @@ export async function resolveCurrentTrip(
     return String(a.startDate ?? "9999").localeCompare(String(b.startDate ?? "9999"));
   });
   return { status: "ok", trip: sorted[0]! };
+}
+
+/**
+ * The rows of a Trips trip-list projection, if Compass may use them: null when the
+ * projection was unavailable OR any one trip's §19.1 envelope is refused (schema
+ * mismatch, version ahead, stale). One refused source refuses the list, as
+ * check_trip_conflicts does for the range projection's sources — a list missing
+ * one trip is a partial union, which callers here treat as unread.
+ */
+export function acceptedTripRows(built: TripCompassTripListResult): TripCompassTripSummary[] | null {
+  if (!built.ok) return null;
+  for (const source of built.projection.sources) {
+    if (!acceptTripProjection(source, {
+      acceptedSchemaVersion: TRIP_PROJECTION_SCHEMA_VERSION, metric: "TripCompassTripSummaryProjection",
+    }).accepted) return null;
+  }
+  return built.projection.trips;
+}
+
+/**
+ * The membership rows of a Trips member-trips projection (each joined to its
+ * trip), if Compass may use them: null when the projection was unavailable, its
+ * own envelope was refused, or any embedded trip's envelope was refused (§19.1).
+ */
+export function acceptedMemberTrips(built: TripCompassMemberTripsResult): TripCompassMemberTrip[] | null {
+  if (!built.ok) return null;
+  const rule = { acceptedSchemaVersion: TRIP_PROJECTION_SCHEMA_VERSION, metric: "TripCompassMemberTripsProjection" };
+  if (!acceptTripProjection(built.projection, rule).accepted) return null;
+  for (const source of built.projection.sources) {
+    if (!acceptTripProjection(source, rule).accepted) return null;
+  }
+  return built.projection.memberTrips;
 }

@@ -201,3 +201,31 @@ export function itemStatusCopy(item: PasteReviewItem): string | null {
       return item.partial ? 'Some sources couldn’t be checked — confirm this is the right place.' : null;
   }
 }
+
+// ── census G159 (2026-10-17): a field that takes ONE place ───────────────────
+//
+// The Event location picker mounts the review screen for a pasted booking,
+// address or map link. Such a field binds one place, so picking a candidate
+// replaces any other pick, only the first answer is pre-ticked, and the field
+// receives the candidate itself — the same suggestion a typed row would be.
+
+/** Pick (or un-pick) one candidate, clearing every other pick. */
+export function pickOnly(sel: PasteSelection, itemIndex: number, candidateIndex: number): PasteSelection {
+  return sel[itemIndex] === candidateIndex ? {} : { [itemIndex]: candidateIndex };
+}
+
+/** The first pre-ticked item only, for a field that takes one place. */
+export function firstOnly(sel: PasteSelection): PasteSelection {
+  const first = Object.keys(sel).map(Number).sort((a, b) => a - b)[0];
+  return first === undefined ? {} : { [first]: sel[first]! };
+}
+
+/** The candidate the person ticked that the field can bind, or null. */
+export function pickedCandidate(items: readonly PasteReviewItem[], sel: PasteSelection): InputSuggestion | null {
+  for (const item of items) {
+    const ci = sel[item.index];
+    const c = ci === undefined ? undefined : item.candidates[ci];
+    if (c && destinationFromCandidate(c, item.index)) return c;
+  }
+  return null;
+}

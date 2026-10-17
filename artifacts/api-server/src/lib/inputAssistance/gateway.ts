@@ -64,7 +64,7 @@ import {
   EMPTY_TASK_CONSTRAINT,
   type TaskConstraint,
 } from './taskContext';
-import { applyDiversity, applyImpersonationRisk } from './rankingSignals'; import { buildOpenOnMapRow } from './searchActions'; import { resolveNeighborhoodRows } from './neighborhoods';
+import { applyDiversity, applyImpersonationRisk } from './rankingSignals'; import { buildOpenOnMapRow } from './searchActions'; import { resolveNeighborhoodRows } from './neighborhoods'; import { indexedImpersonators } from './impersonationIndex';
 import { extractTemporal } from './semanticParser';
 import type { TemporalWindow } from './rankingSignals';
 import { buildAiAssistedWriting, isAiTextContext } from './aiWriting';
@@ -485,7 +485,7 @@ export async function generateSuggestions(
       : recips;
     return dropDeadRows(
       orderSuggestions(
-        applySessionBias(boostedRecips, sessionContext, normalized),
+        applySessionBias(applyImpersonationRisk(boostedRecips, await indexedImpersonators(sc, boostedRecips, { userId })), sessionContext, normalized), // §36 G233: a recipient copy of a genuine account trails it
         Math.min(limit, policy.maxSuggestions), trustCtx,
       ),
     );
@@ -516,7 +516,7 @@ export async function generateSuggestions(
         if (v) refs = [v];
       }
     }
-    return dropDeadRows(orderSuggestions(refs, Math.min(limit, policy.maxSuggestions), trustCtx));
+    return dropDeadRows(orderSuggestions(applyImpersonationRisk(refs, await indexedImpersonators(sc, refs, { userId })), Math.min(limit, policy.maxSuggestions), trustCtx)); // §36 G233: an @mention copy trails the genuine account
   }
 
   // ── Phase-5 creation assistance (§20/§23/§55) ───────────────────────────────
@@ -920,14 +920,14 @@ export async function generateSuggestions(
   // removal — two real venues can share a name.
   const diversified = applyDiversity(withLive);
 
-  // ── §36 Impersonation (within-response) ─────────────────────────────────────
+  // ── §36 Impersonation (within-response AND indexed) ─────────────────────────
   // A person row that is neither verified nor official, whose handle folds to
-  // the same confusable signature as a verified/official row IN THIS ANSWER, is
-  // demoted below it. Applied AFTER diversity and BEFORE the rank so the
-  // demotion reaches the ordering; identity on every response that contains no
-  // verified person row, which is almost all of them. See rankingSignals.ts for
-  // what this deliberately does not cover (census G233).
-  const antiImpersonation = applyImpersonationRisk(diversified);
+  // the same confusable signature as a verified/official account — in this
+  // answer, or found by impersonationIndex.ts outside it when the viewer's own
+  // search could show it — is demoted once; so is an unverified listing that
+  // folds to an active verified listing in its city. Applied AFTER diversity and
+  // BEFORE the rank so the demotion reaches the ordering (census G233).
+  const antiImpersonation = applyImpersonationRisk(diversified, await indexedImpersonators(sc, diversified, { userId }));
 
   // ── Rank + cap (§9 trust order, §15 tie-break by confidence) ────────────────
   // When the field carries query completions (§13 "SEARCH FOR" rows — global_

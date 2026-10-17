@@ -285,10 +285,29 @@ describe("Typed social roster whole-response and envelope boundary", () => {
 
     it(`${tool} refuses an invalid envelope instead of bypassing consumer acceptance`, async (context) => {
       const store = fixture();
-      context.mock.method(Date.prototype, "toISOString", () => "not-an-instant");
-      const { result, requests } = await dispatch(tool, undefined, store);
+      // CT-02 D: the trip rows are now a Trips projection too, read BEFORE the roster
+      // and accepted through the same §19.1 rule. So that this case still proves the
+      // ROSTER's acceptance (its title), only envelopes generated once the roster has
+      // been requested carry the invalid instant; the trip-row case is pinned below.
+      const fixtureClient = clientFor(store);
+      const realToIso = Date.prototype.toISOString;
+      context.mock.method(Date.prototype, "toISOString", function (this: Date) {
+        return fixtureClient.requests.some(isRoster) ? "not-an-instant" : realToIso.call(this);
+      });
+      const result = await executeCompassTool(fixtureClient.client, VIEWER, null, tool, {}) as ToolResult;
+      const requests = fixtureClient.requests;
       assertUnread(result);
       assert.equal(requests.filter(isRoster).length, 1);
+      assert.equal(requests.some((url) => url.pathname.endsWith("/circle_presence")), false);
+    });
+
+    it(`${tool} refuses an invalid TRIP-ROW envelope before any roster or presence is read (CT-02 D)`, async (context) => {
+      const store = fixture();
+      context.mock.method(Date.prototype, "toISOString", () => "not-an-instant");
+      const { result, requests } = await dispatch(tool, undefined, store);
+      assert.match(result.info, /could not be read/);
+      assert.deepEqual(result.people ?? result.opportunities, []);
+      assert.equal(requests.filter(isRoster).length, 0, "a refused trip list must not reach the roster");
       assert.equal(requests.some((url) => url.pathname.endsWith("/circle_presence")), false);
     });
 

@@ -345,3 +345,32 @@ describe('PR-D2-9 — the picker shows the gateway’s empty-field rows', () => 
     expect(r.queryByText('Recent')).toBeNull();
   });
 });
+
+// census G159 (2026-10-17): the booking paste is mounted only on a field whose
+// value is ONE place (the Event location); a city field keeps its list paste in
+// the Trip editor, and the legacy surfaces with no assist context get nothing.
+describe('census G159 — the paste surface is only on a field that takes one place', () => {
+  it('a city field (the Trip destination) has no booking paste', async () => {
+    mockRequest.mockResolvedValue(served([]));
+    const r = await render(picker());
+    await waitFor(() => expect(mockRequest).toHaveBeenCalled());
+    expect(r.queryByTestId('place-paste')).toBeNull();
+  });
+
+  it('a picker with no assist context has none either', async () => {
+    const r = await render(picker({ assistContext: undefined, assistFieldId: undefined }));
+    expect(r.queryByTestId('place-paste')).toBeNull();
+  });
+
+  it('a picker closed with the paste review open reopens without it', async () => {
+    mockRequest.mockResolvedValue(served([]));
+    const props = { assistContext: 'event_location' as const, usedFor: 'event_location' };
+    const r = await render(picker(props));
+    await fireEvent.press(r.getByTestId('place-paste'));
+    expect(r.getByTestId('paste-input')).toBeTruthy();
+    await r.rerender(picker({ ...props, visible: false }));
+    await r.rerender(picker(props));
+    expect(r.getByTestId('place-paste')).toBeTruthy();
+    expect(r.queryByTestId('paste-input')).toBeNull();
+  });
+});

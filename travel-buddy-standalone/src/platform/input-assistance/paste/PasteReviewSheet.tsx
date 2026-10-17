@@ -20,7 +20,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Check, AlertTriangle, MapPin } from 'lucide-react-native';
 import { color, icon as iconToken, radius, space, type as t } from '../../../theme/tokens.ts';
-import type { InputContext } from '../types/inputContext.ts';
+import type { InputContext } from '../types/inputContext.ts'; import type { InputSuggestion } from '../types/inputSuggestion.ts';
 import { extractPastedEntities } from './pasteExtraction.ts'; import { usePrefersReducedMotion } from '../components/reducedMotion.ts';
 import {
   acceptedDestinations,
@@ -28,7 +28,7 @@ import {
   initialSelection,
   itemStatusCopy,
   reviewSummary,
-  toggleSelection,
+  toggleSelection, pickOnly, firstOnly, pickedCandidate,
   type PasteDestination,
   type PasteExtraction,
   type PasteSelection,
@@ -45,9 +45,9 @@ export interface PasteReviewSheetProps {
    * Persist exactly the ticked destinations. Resolve with the ones that could
    * NOT be saved (empty when all were); they stay on screen with Retry.
    */
-  onConfirm: (destinations: PasteDestination[]) => Promise<PasteDestination[]>;
+  onConfirm?: (destinations: PasteDestination[]) => Promise<PasteDestination[]>;
   /** Optional input accessory rendered beside the paste box (e.g. a dictation button). */
-  renderInputAccessory?: (append: (text: string) => void) => React.ReactNode;
+  renderInputAccessory?: (append: (text: string) => void) => React.ReactNode; /** census G159: a field that takes ONE place — the picked candidate goes here instead of `onConfirm`; resolve false to keep the review open. */ onPick?: (candidate: InputSuggestion) => Promise<boolean>; composeTitle?: string; composeHelp?: string;
 }
 
 type Phase = 'compose' | 'extracting' | 'error' | 'review' | 'applying';
@@ -59,7 +59,7 @@ export function PasteReviewSheet({
   noun = 'destination',
   onClose,
   onConfirm,
-  renderInputAccessory,
+  renderInputAccessory, onPick, composeTitle, composeHelp,
 }: PasteReviewSheetProps) {
   const [text, setText] = useState('');
   const [phase, setPhase] = useState<Phase>('compose');
@@ -100,9 +100,9 @@ export function PasteReviewSheet({
       return;
     }
     setExtraction(res.data);
-    setSelection(initialSelection(res.data.items));
+    setSelection(onPick ? firstOnly(initialSelection(res.data.items)) : initialSelection(res.data.items));
     setPhase('review');
-  }, [text, context, fieldId]);
+  }, [text, context, fieldId, onPick]);
 
   const chosen = useMemo(
     () => (extraction ? acceptedDestinations(extraction.items, selection) : []),
@@ -115,7 +115,7 @@ export function PasteReviewSheet({
     setPhase('applying');
     let failed: PasteDestination[];
     try {
-      failed = await onConfirm(chosen);
+      failed = onPick ? await pickOne(onPick, extraction.items, selection, chosen) : await onConfirm!(chosen);
     } catch {
       failed = chosen;
     }
@@ -128,7 +128,7 @@ export function PasteReviewSheet({
     setSelection((prev) => Object.fromEntries(Object.entries(prev).filter(([k]) => failedIdx.has(Number(k)))));
     setApplyFailed(failed.length);
     setPhase('review');
-  }, [extraction, chosen, onConfirm, onClose]);
+  }, [extraction, chosen, onConfirm, onClose, onPick, selection]);
 
   const append = useCallback((more: string) => {
     setText((prev) => (prev.trim() ? `${prev.replace(/\s+$/, '')}\n${more}` : more));
@@ -147,7 +147,7 @@ export function PasteReviewSheet({
       <View style={styles.screen} testID="paste-review-sheet" accessibilityViewIsModal>
         <View style={styles.header}>
           <Text style={styles.title} accessibilityRole="header">
-            {phase === 'review' || phase === 'applying' ? 'Review before adding' : 'Paste a list, link or coordinates'}
+            {phase === 'review' || phase === 'applying' ? 'Review before adding' : (composeTitle ?? 'Paste a list, link or coordinates')}
           </Text>
           <Pressable onPress={onClose} accessibilityRole="button" accessibilityLabel="Close" hitSlop={8} testID="paste-close">
             <Text style={styles.link}>Close</Text>
@@ -157,7 +157,7 @@ export function PasteReviewSheet({
         {phase === 'compose' || phase === 'error' ? (
           <View style={styles.body}>
             <Text style={styles.help}>
-              One stop per line, a Google Maps, Apple Maps or OpenStreetMap link, or coordinates. Nothing is added until you review it.
+              {composeHelp ?? 'One stop per line, a Google Maps, Apple Maps or OpenStreetMap link, or coordinates. Nothing is added until you review it.'}
             </Text>
             <View style={styles.inputRow}>
               <TextInput
@@ -215,7 +215,7 @@ export function PasteReviewSheet({
                 <View style={styles.errorBox} accessibilityRole="alert" testID="paste-apply-error">
                   <AlertTriangle size={iconToken.s16} color={color.signal} />
                   <Text style={styles.errorText}>
-                    {plural(applyFailed)} couldn’t be added. The others were saved. Try again for these.
+                    {onPick ? 'That place couldn’t be used. Try again.' : `${plural(applyFailed)} couldn’t be added. The others were saved. Try again for these.`}
                   </Text>
                 </View>
               ) : null}
@@ -236,8 +236,8 @@ export function PasteReviewSheet({
                       return (
                         <Pressable
                           key={c.id}
-                          onPress={() => setSelection((prev) => toggleSelection(prev, item.index, ci))}
-                          accessibilityRole="checkbox"
+                          onPress={() => setSelection((prev) => (onPick ? pickOnly : toggleSelection)(prev, item.index, ci))}
+                          accessibilityRole={onPick ? 'radio' : 'checkbox'}
                           accessibilityState={{ checked }}
                           accessibilityLabel={`${c.label}${c.subtitle ? `, ${c.subtitle}` : ''}`}
                           style={[styles.candidate, checked && styles.candidateOn]}
@@ -360,3 +360,17 @@ const styles = StyleSheet.create({
   boxOn: { backgroundColor: color.signal, borderColor: color.signal },
   footer: { flexDirection: 'row', gap: space.sm, paddingVertical: space.md, alignItems: 'center' },
 });
+
+/**
+ * census G159: hand the one ticked candidate to the field. Resolves with the
+ * destinations still to retry — none when the field took the pick.
+ */
+async function pickOne(
+  onPick: (candidate: InputSuggestion) => Promise<boolean>,
+  items: Parameters<typeof pickedCandidate>[0],
+  selection: PasteSelection,
+  chosen: PasteDestination[],
+): Promise<PasteDestination[]> {
+  const candidate = pickedCandidate(items, selection);
+  return candidate && (await onPick(candidate)) ? [] : chosen;
+}

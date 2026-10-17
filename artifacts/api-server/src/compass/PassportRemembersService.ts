@@ -28,7 +28,7 @@
  *     same suppression signal and hides the item here, but NEVER deletes the
  *     user's underlying Postcard / saved place / trip / etc.
  */
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js"; import { acceptedTripRows } from "./CompassCurrentTrip.js"; import { buildTripCompassOwnedTripsProjection } from "../domain/trips/projections/TripCompassTripSummaryProjection.js"; // CT-02
 
 export type RememberGroup =
   | "derived_memory"
@@ -458,24 +458,24 @@ export async function buildSavedContent(
 
   // Trips the owner created. Exclude cancelled/archived.
   await safe(async () => {
-    const { data, error } = await client
-      .from("trips")
-      .select("id, title, status, visibility, destination_city, start_date, end_date, created_at")
-      .eq("owner_id", userId)
-      .order("id", { ascending: false })
-      .limit(SOURCE_LIMIT); if (error) throw error;
-    for (const r of asRows(data)) {
+    // CT-02: the owner's trips come from Trips' typed trip-row projection (newest id
+    // first, capped as before), not a raw `trips` read; every row's §19.1 envelope
+    // must be accepted. Unavailable or refused throws, so `safe` records the group
+    // as unavailable rather than serving an empty list of trips.
+    const owned = acceptedTripRows(await buildTripCompassOwnedTripsProjection(client, userId, { order: "id_desc", limit: SOURCE_LIMIT }));
+    if (owned === null) throw new Error("trips could not be read");
+    for (const r of owned) {
       const status = String(r.status ?? "");
       if (status === "cancelled" || status === "archived") continue;
       items.push(originItem({
         group: "saved_content", label: "Trip",
-        title: String(r.title ?? r.destination_city ?? "Trip"),
-        detail: r.destination_city ? String(r.destination_city) : undefined,
+        title: String(r.title ?? r.destinationCity ?? "Trip"),
+        detail: r.destinationCity ? String(r.destinationCity) : undefined,
         subjectType: "passport:trip", subjectId: String(r.id),
         originTable: "trips", originId: String(r.id),
         visibility: String(r.visibility ?? "private"),
         // A trip's anniversary is when it BEGAN; fall back to when it was created.
-        occurredAt: isoOrUndefined(r.start_date ?? r.created_at),
+        occurredAt: isoOrUndefined(r.startDate ?? r.createdAt),
       }));
     }
   }, failures, "saved_content");

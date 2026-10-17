@@ -31,7 +31,7 @@ import { DailyBriefCard } from '../../src/components/DailyBriefCard';
 import { TripReadinessCard } from '../../src/components/trip/TripReadinessCard';
 import { TripFeasibilityCard } from '../../src/features/trips/planning/TripFeasibilityCard'; import { TripTransportPolicyCard } from '../../src/features/trips/planning/TripTransportPolicyCard.tsx'; import { TripBallotsCard } from '../../src/features/trips/planning/TripBallotsCard.tsx';
 import { TripCrewPresenceCard } from '../../src/features/trips/crew/TripCrewPresenceCard'; import { TripGeofenceCard } from '../../src/features/trips/crew/TripGeofenceCard.tsx'; import { JoinRequestsList } from '../../src/features/trips/joinRequests/JoinRequestsList.tsx';
-import { TripDecisionsCard } from '../../src/features/trips/planning/TripDecisionsCard';
+import { TripDecisionsCard } from '../../src/features/trips/planning/TripDecisionsCard'; import { TripDecisionComposer } from '../../src/features/trips/planning/TripDecisionComposer.tsx'; // census-trips TR85/TR86: the product writer for decision tasks and risks
 import { TripStageSpineCard } from '../../src/components/trip/TripStageSpineCard';
 import { TripMapLayersCard } from '../../src/features/trips/map/TripMapLayersCard'; import { PrivatePlacesCard } from '../../src/features/trips/anchors/PrivatePlacesCard.tsx';
 import { TripTodayCard } from '../../src/features/trips/today/TripTodayCard.tsx';
@@ -117,7 +117,7 @@ function TripDetailScreen() {
   const [chatLoading, setChatLoading] = useState(false);
   const [inviteSheetOpen, setInviteSheetOpen] = useState(false);
   const [linksSheetOpen, setLinksSheetOpen] = useState(false);
-  const [crewRefreshKey, setCrewRefreshKey] = useState(0);
+  const [crewRefreshKey, setCrewRefreshKey] = useState(0); const [decisionsKey, setDecisionsKey] = useState(0); // a decision task or risk just added: re-read the board
   const [meetupDate, setMeetupDate] = useState<string | null>(null);
   const [layoverOpen, setLayoverOpen] = useState(false);
   const [gapDays, setGapDays] = useState<string[]>([]);
@@ -610,7 +610,7 @@ function TripDetailScreen() {
             feasibility, risk register, recommendation — reaching a screen for
             the first time. INSUFFICIENT_BASIS renders as itself; the card's
             whole discipline is not letting it look like approval. */}
-        {live && trip.id ? <TripDecisionsCard tripId={trip.id} /> : null}{live && trip.id ? <TripBallotsCard tripId={trip.id} isOwner={realTrip.ownerId === userId} /> : null}
+        {live && trip.id ? <React.Fragment key={`decisions-${decisionsKey}`}><TripDecisionsCard tripId={trip.id} /></React.Fragment> : null}{live && trip.id ? <TripDecisionComposer tripId={trip.id} onAdded={() => setDecisionsKey((k) => k + 1)} /> : null}{live && trip.id ? <TripBallotsCard tripId={trip.id} isOwner={realTrip.ownerId === userId} /> : null}
 
         {/* ── §5.1 stage spine ─────────────────────────────────────────────
             Stages, legs and plan attendance reaching a screen for the first

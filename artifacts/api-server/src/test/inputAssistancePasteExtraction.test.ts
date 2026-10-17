@@ -1319,3 +1319,42 @@ describe("V-D2f: name labels with a dash or a compound head, inner name labels, 
     assert.deepEqual(inList("Conference Hall"), ["Ben Thanh Market", "Conference Hall", "Hoi An"]);
   });
 });
+
+// ═══ census G159 (2026-10-17, wave 3): a hotel booking into a field that TAKES a place ═══
+//
+// §24: "flight/hotel text when the receiving field supports those objects". The
+// Event location takes a place (`event_location`: entity types place + city), so a
+// pasted hotel confirmation resolves to the property itself — the item the Event
+// screen's picker now lets the person pick (GlobalPlacePicker's paste surface).
+describe("G159: a hotel confirmation pasted into the Event location resolves the property", () => {
+  const SALA = {
+    id: "dp-sala", name: "Sala Danang Beach Hotel", city: "Da Nang", blurb: null, image_url: null,
+    header_image_source: null, image_source_type: null, image_accuracy_status: null, category: "hotel",
+    primary_category: "hotel", lat: 16.06, lng: 108.24, canonical_location_id: null,
+    created_at: "2026-01-01T00:00:00Z", submitted_by: null, status: "active", saved_count: 3, verified: false,
+  };
+  beforeEach(() => { _setTestClient(makeFakeClient({ ...STATE, discovery_places: [SALA] }) as any, true); });
+
+  it("ONE item, resolved to the property as a place candidate; nothing else of the booking is answered", async () => {
+    const r = await extract({ context: "event_location", fieldId: "event.location", text: HOTEL_PASTE });
+    assert.equal(r.status, 200);
+    const body = withoutIssued((await r.json()) as any);
+    assert.equal(body.items.length, 1);
+    assert.equal(body.items[0].status, "resolved");
+    assert.equal(body.items[0].raw, "Sala Danang Beach Hotel");
+    const place = body.items[0].candidates.find((c: any) => c.entityType === "place");
+    assert.ok(place, "the property is a place the field can bind");
+    assert.equal(place.entityId, "dp-sala");
+    assert.deepEqual(leaks(body), [], "no other line of the booking is in the answer");
+    assert.equal(geocodeCalls.length, 0);
+  });
+
+  it("flight text is refused on the place field too — no field takes a flight", async () => {
+    const f = (await (await extract({ context: "event_location", fieldId: "event.location", text: FLIGHT_PASTE })).json()) as any;
+    assert.equal(f.items.length, 1);
+    assert.equal(f.items[0].status, "unsupported");
+    assert.match(f.items[0].reason, /Flight details can’t be added/);
+    assert.deepEqual(f.items[0].candidates, []);
+    assert.deepEqual(leaks(withoutIssued(f)), []);
+  });
+});

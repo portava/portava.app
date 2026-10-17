@@ -812,3 +812,95 @@ describe("T320 / T411 — a rail item offers actions only while its object is li
     assert.ok((await admitted("EVENT", "open")).length > 0);
   });
 });
+
+// ── census-telegraph T132 / T263: a cancelled meetup is reported as cancelled, never as an RSVP ──
+// The rail promotes a change card (§11.2, T132) when an item's status turns critical. The meetup
+// resolver used to report the VIEWER's RSVP ("going") whenever the viewer was on the meetup, so a
+// meetup called off by its creator kept saying "going": never promoted, and still offering actions.
+// And the cancel route (DELETE /meetups/:id) rewrites every PENDING invite to "cancelled", which the
+// resolver did not read — so for a pending invitee (either side) the meetup simply left the rail.
+describe("T132 / T263 — a cancelled meetup reaches the rail as cancelled", () => {
+  const meetupCandidates = async (c: any, viewer = ALICE) => {
+    const { resolveSharedMeetups } = await import("../services/telegraph/sharedContext.js");
+    const r = await resolveSharedMeetups(c as any, viewer, [ALICE, BOB]);
+    assert.deepEqual(r.problems, []);
+    return new Map(r.candidates.map((x) => [x.objectId, x]));
+  };
+  const setMeetup = (c: any, id: string, status: string) => {
+    c._db.meetups.find((m: any) => m.id === id).status = status;
+  };
+  const setInvite = (c: any, id: string, user: string, status: string) => {
+    const row = c._db.meetup_invites.find((r: any) => r.meetup_id === id && r.user_id === user);
+    if (row) row.status = status;
+    else c._db.meetup_invites.push({ meetup_id: id, user_id: user, status });
+  };
+
+  it("a live meetup still reports the viewer's own RSVP", async () => {
+    const c = makeClient({});
+    const byId = await meetupCandidates(c);
+    assert.equal(byId.get(MEETUP_NOW)!.status, "going");
+    assert.equal(byId.get(MEETUP_TODAY)!.status, "pending");
+  });
+
+  it("a meetup the viewer is GOING to, cancelled by its creator, reports cancelled and offers nothing", async () => {
+    const c = makeClient({});
+    setMeetup(c, MEETUP_NOW, "cancelled");
+    const m = (await meetupCandidates(c)).get(MEETUP_NOW)!;
+    assert.equal(m.status, "cancelled", "the meetup's cancellation outranks the viewer's RSVP");
+    const a = admitCandidate(m, Date.now());
+    assert.equal(a.admitted, true);
+    assert.deepEqual((a as any).item.availableActions, [], "nothing cancelled offers an action (actionsWhileLive)");
+  });
+
+  it("the cancel route's rewrite of the VIEWER's pending invite keeps the meetup in the rail, as cancelled", async () => {
+    const c = makeClient({});
+    setMeetup(c, MEETUP_TODAY, "cancelled");
+    setInvite(c, MEETUP_TODAY, ALICE, "cancelled"); // pending -> cancelled, as routes/meetups.ts does
+    const m = (await meetupCandidates(c)).get(MEETUP_TODAY);
+    assert.ok(m, "the invitee who saw it pending is told it was called off, not left to find it gone");
+    assert.equal(m!.status, "cancelled");
+    assert.equal(m!.viewerStillAuthorized, true);
+    assert.deepEqual(m!.counterpartIds, [BOB]);
+  });
+
+  it("the cancel route's rewrite of the COUNTERPART's pending invite still makes them the counterpart", async () => {
+    const c = makeClient({});
+    setMeetup(c, MEETUP_SOLO, "cancelled");
+    setInvite(c, MEETUP_SOLO, BOB, "cancelled");
+    const m = (await meetupCandidates(c)).get(MEETUP_SOLO);
+    assert.ok(m);
+    assert.deepEqual(m!.counterpartIds, [BOB]);
+    assert.equal(m!.status, "cancelled");
+  });
+
+  it("a cancelled invite puts nobody on a meetup that is not itself cancelled", async () => {
+    const c = makeClient({});
+    setInvite(c, MEETUP_SOLO, BOB, "cancelled"); // e.g. cancelled, then reopened by PATCH
+    const solo = (await meetupCandidates(c)).get(MEETUP_SOLO);
+    assert.ok(!solo || solo.counterpartIds.length === 0, "Bob is not on a live meetup through a cancelled invite");
+    setInvite(c, MEETUP_TODAY, ALICE, "cancelled");
+    const today = (await meetupCandidates(c)).get(MEETUP_TODAY);
+    assert.ok(!today || today.viewerStillAuthorized === false, "nor is the viewer");
+  });
+
+  it("a creator's own cancelled invite row never makes their LIVE meetup read as cancelled", async () => {
+    const c = makeClient({});
+    setInvite(c, MEETUP_SOLO, ALICE, "cancelled"); // Alice created it; her stray invite row was rewritten
+    setInvite(c, MEETUP_SOLO, BOB, "going");
+    const m = (await meetupCandidates(c)).get(MEETUP_SOLO)!;
+    assert.equal(m.viewerStillAuthorized, true, "the creator is on it");
+    assert.equal(m.status, "draft", "the meetup's own status, not a false cancellation");
+  });
+
+  it("the route serves the cancelled meetup with status cancelled and no actions", async () => {
+    const c = useState({});
+    setMeetup(c, MEETUP_NOW, "cancelled");
+    const r = await get(`/threads/${THREAD_D}/shared-context`, ALICE);
+    assert.equal(r.status, 200);
+    const p = r.body.sharedContext as TelegraphSharedContextProjection;
+    const item = [...p.now, ...p.upcoming, ...p.unresolved, ...p.past].find((i) => i.objectId === MEETUP_NOW);
+    assert.ok(item);
+    assert.equal(item!.status, "cancelled");
+    assert.deepEqual(item!.availableActions, []);
+  });
+});
