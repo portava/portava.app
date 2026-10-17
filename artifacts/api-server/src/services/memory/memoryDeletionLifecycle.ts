@@ -179,7 +179,7 @@ export interface DeletionLifecycleOptions {
   actorUserId: string;
   /** The audience the Memory had before it was deleted, for the revocation. */
   previous: MemoryAudienceState;
-  now?: Date;
+  now?: Date; /** §24 (H223): the DELETE_MEMORY command / event, named on the projection log lines step 3 writes. */ commandId?: string | null; eventId?: string | null;
   log?: { error: (obj: unknown, msg: string) => void; warn?: (obj: unknown, msg: string) => void } | undefined;
 }
 
@@ -247,7 +247,7 @@ export async function runMemoryDeletionLifecycle(
   //    emptied only when that rebuild fails — so a deletion no longer leaves
   //    the owner's own search answering 410 for good.
   steps.push(await runStep("DERIVATIVES_PURGED", async () => {
-    const r = await reprojectDerivativesAfterNarrowing(sc, { memoryId: opts.memoryId, now, reason: DELETION_REVOCATION_REASON, mustExclude: true });
+    const r = await reprojectDerivativesAfterNarrowing(sc, { memoryId: opts.memoryId, now, reason: DELETION_REVOCATION_REASON, mustExclude: true, commandId: opts.commandId ?? null, eventId: opts.eventId ?? null });
     const facts = { carried: r.carried, rebuiltWithout: r.reprojected, revokedInstead: r.revokedInstead };
     if (r.absent) return { outcome: "not_applicable", detail: "memory_derivative_registry is not deployed", facts };
     if (!r.ok) return { outcome: "failed", retryable: true, detail: `derivatives unresolved: ${r.unresolved.join(", ")}`, facts };

@@ -73,4 +73,12 @@ describe('ballots', () => {
     assert.equal(mod.tallyLine(proposal() as any), '1 yes · 0 no · 0 abstain — 1 of 3 voted');
     assert.equal(mod.tallyLine(proposal({ tally: null }) as any), "We couldn't count the votes");
   });
+
+  // census-trips TR153: the server serves §9.3's `rationale` and `impactSummary`
+  // as their own fields and LIFTS them out of `payload`, so a title that looked
+  // for `payload.rationale` could never find one.
+  it('a proposal with no title or summary is described by the rationale the server serves beside the payload', () => {
+    assert.equal(mod.proposalTitle(proposal({ payload: {}, rationale: 'The museum runs late' }) as any), 'The museum runs late');
+    assert.equal(mod.proposalTitle(proposal({ rationale: 'The museum runs late' }) as any), 'Move dinner to 8pm', 'a title still wins');
+  });
 });

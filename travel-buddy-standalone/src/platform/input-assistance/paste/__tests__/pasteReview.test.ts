@@ -19,7 +19,7 @@ import {
   itemStatusCopy,
   parsePasteExtraction,
   reviewSummary,
-  toggleSelection,
+  toggleSelection, pickOnly, firstOnly, pickedCandidate,
 } from '../pasteReview.ts';
 
 const city = (id: string, name: string, country: string) => ({
@@ -85,4 +85,23 @@ test('every status that is not a clean match says which one it is', () => {
   assert.match(copy[3]!, /couldn’t be checked/);
   assert.equal(copy[4], null);
   assert.notEqual(copy[0], copy[1], 'no match and failed are never the same sentence');
+});
+
+// ── census G159 (2026-10-17): a field that takes ONE place ─────────────────────
+test('one-place field: picking replaces every other pick, and only the first answer is pre-ticked', () => {
+  assert.deepEqual(pickOnly({ 0: 0, 2: 1 }, 1, 0), { 1: 0 }, 'a new pick clears the others');
+  assert.deepEqual(pickOnly({ 1: 0 }, 1, 0), {}, 'picking the picked candidate un-picks it');
+  assert.deepEqual(pickOnly({ 1: 0 }, 1, 1), { 1: 1 }, 'another candidate of the same item replaces it');
+  assert.deepEqual(firstOnly({ 3: 0, 1: 2, 2: 0 }), { 1: 2 });
+  assert.deepEqual(firstOnly({}), {});
+});
+
+test('one-place field: the candidate handed over is the ticked one, and only one the field can bind', () => {
+  const parsed = parsePasteExtraction(answer([
+    item(0, 'resolved', { candidates: [country] }),
+    item(1, 'resolved', { candidates: [city('c-dn', 'Da Nang', 'Vietnam'), city('c-ha', 'Hoi An', 'Vietnam')] }),
+  ]))!;
+  assert.equal(pickedCandidate(parsed.items, { 1: 1 })?.id, 'c-ha');
+  assert.equal(pickedCandidate(parsed.items, { 0: 0 }), null, 'a country row cannot be bound to a place field');
+  assert.equal(pickedCandidate(parsed.items, {}), null);
 });

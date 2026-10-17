@@ -81,6 +81,8 @@ interface State {
   /** An active trip_crew_location_sessions row for Alice on TRIP_MINE. */
   liveShare?: "nearby" | "city_only" | null; /** 3753: the share's purpose (absent = a legacy row with no purpose column). */ liveSharePurpose?: string | null; liveSharePurposeError?: boolean; /** an active row of THIS purpose listed before Alice's share */ liveShareOtherFirst?: string;
   restrictions?: string[];
+  /** census-telegraph T320: the BOOKING_THREAD booking's status and stay-connected opt-ins. */
+  bookingStatus?: string; bookingStayConnected?: [boolean, boolean];
 }
 
 function fixture(state: State) {
@@ -130,7 +132,8 @@ function fixture(state: State) {
       { trip_id: TRIP_OTHER, user_id: BOB, role: "owner", status: "accepted" },
     ],
     rent_buddy_bookings: [
-      { id: "bk-1", telegraph_thread_id: BOOKING_THREAD, status: "confirmed", buddy_id: BOB, traveler_id: ALICE },
+      { id: "bk-1", telegraph_thread_id: BOOKING_THREAD, status: state.bookingStatus ?? "confirmed", buddy_id: BOB, traveler_id: ALICE,
+        stay_connected_traveler: state.bookingStayConnected?.[0] ?? false, stay_connected_buddy: state.bookingStayConnected?.[1] ?? false },
     ],
     trip_crew_location_sessions: state.liveShare
       ? [...(state.liveShareOtherFirst ? [{ id: "ls-other", trip_id: TRIP_MINE, user_id: ALICE, visibility_level: "city_only", status: "active", expires_at: "2099-01-01T00:00:00.000Z", purpose: state.liveShareOtherFirst }] : []), { trip_id: TRIP_MINE, user_id: ALICE, visibility_level: state.liveShare, status: "active",
@@ -151,7 +154,12 @@ function makeClient(state: State) {
 
     const rowsNow = () => {
       const rows = (db[table] ?? []).filter((r) => filters.every((f) => f(r)));
-      return _limit !== null ? rows.slice(0, _limit) : rows;
+      const limited = _limit !== null ? rows.slice(0, _limit) : rows;
+      // census-telegraph T320: the booking row is PROJECTED to the columns asked for, so a policy that
+      // stops selecting the stay-connected opt-ins reads none (other tables keep the whole row, as before).
+      if (table !== "rent_buddy_bookings" || !_sel || /[()*]/.test(_sel)) return limited;
+      const cols = _sel.split(",").map((c) => c.trim());
+      return limited.map((r) => Object.fromEntries(cols.map((c) => [c, r[c]])));
     };
 
     const injected = (): { message: string; code?: string } | null => {
@@ -581,5 +589,48 @@ describe("canShareExactLocation's grant input is purpose-bound (3753)", () => {
       { viewerId: ALICE, conversationId: TRIP_THREAD });
     assert.equal(hidden.reasons.canShareExactLocation, "TELEGRAPH_LOCATION_PRECISION_CEILING",
       "another purpose's active row read first must not hide the crew grant (no limit before the purpose filter)");
+  });
+});
+
+// ── census-telegraph T320: "Buddy booking cancelled → booking-only actions disabled immediately" ──
+//
+// A booking's own thread is where a call is a booking-only action: the call gateway refuses one
+// unless `isRabBookingCallEligible` admits the booking row (routes/calls.ts). §14.1's canCall said
+// TRUE in that thread whatever the booking's state — so the capability every surface reads
+// (GET /threads/:id/capabilities, the thread page's permissions block, Compass's gate) kept offering
+// a call on a cancelled booking. It now asks the same function, on every read.
+describe("T320 — in a booking's thread, canCall follows the booking", () => {
+  const cap = async (state: State) =>
+    resolveConversationCapabilities(makeClient(state), { viewerId: ALICE, conversationId: BOOKING_THREAD });
+
+  for (const status of ["confirmed", "scheduled", "in_progress", "completed_pending_traveler_confirmation", "disputed"]) {
+    it(`a ${status} booking: canCall`, async () => {
+      const r = await cap({ bookingStatus: status });
+      assert.equal(r.capabilities.canCall, true, status);
+    });
+  }
+  for (const status of ["cancelled", "refunded", "pending", "expired"]) {
+    it(`a ${status} booking: no call, and the reason says it is the booking`, async () => {
+      const r = await cap({ bookingStatus: status });
+      assert.equal(r.capabilities.canCall, false, status);
+      assert.equal(r.reasons.canCall, "TELEGRAPH_POLICY_BOOKING_NOT_ACTIVE");
+      assert.equal(r.capabilities.canSendMessage, true, "the conversation itself is not closed by it");
+    });
+  }
+  it("a completed booking: callable only while BOTH parties opted to stay connected (the gateway's rule)", async () => {
+    assert.equal((await cap({ bookingStatus: "completed" })).capabilities.canCall, false);
+    assert.equal((await cap({ bookingStatus: "completed", bookingStayConnected: [true, false] })).capabilities.canCall, false);
+    assert.equal((await cap({ bookingStatus: "completed", bookingStayConnected: [true, true] })).capabilities.canCall, true);
+  });
+  it("re-read every time: the same thread, cancelled after it was confirmed, stops offering the call on the next read", async () => {
+    assert.equal((await cap({ bookingStatus: "confirmed" })).capabilities.canCall, true);
+    assert.equal((await cap({ bookingStatus: "cancelled" })).capabilities.canCall, false);
+  });
+  it("a thread with no booking is untouched", async () => {
+    const r = await resolveConversationCapabilities(makeClient({}), { viewerId: ALICE, conversationId: DM });
+    assert.equal(r.capabilities.canCall, true);
+  });
+  it("the new reason is declared vocabulary", () => {
+    assert.ok(isTelegraphReason("TELEGRAPH_POLICY_BOOKING_NOT_ACTIVE"));
   });
 });

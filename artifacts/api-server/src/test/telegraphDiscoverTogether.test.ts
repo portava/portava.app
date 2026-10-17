@@ -52,6 +52,8 @@ interface State {
   availabilityError?: boolean;
   tripMembersError?: boolean;
   planStartsAt?: string;
+  /** The shared plan's own status (census-telegraph T132/T263: a cancelled plan). */
+  planStatus?: string;
 }
 
 function makeClient(state: State = {}) {
@@ -80,7 +82,7 @@ function makeClient(state: State = {}) {
         title: "Dinner",
         starts_at: state.planStartsAt ?? hr(3),
         ends_at: hr(6),
-        status: "confirmed",
+        status: state.planStatus ?? "confirmed",
         creator_id: ALICE,
         updated_at: null,
         chat_thread_id: TRIP_THREAD,
@@ -323,5 +325,19 @@ describe("§20 Discover Together — a set from availability, time and context",
     _setTestClient(makeClient(), true);
     const r = await get(`/threads/${TRIP_THREAD}/discover-together`, "cccccccc-0000-4000-8000-000000000003");
     assert.ok(r.status === 403 || r.status === 404, `expected a refusal, got ${r.status}`);
+  });
+});
+
+// ── census-telegraph T132 / T263: a cancelled plan is news, never an opportunity ─────────────────
+describe("§20 Discover Together — nothing cancelled is offered as something to do together", () => {
+  it("a shared plan its creator CANCELLED is not in the set; the live one is", async () => {
+    _setTestClient(makeClient({ planStatus: "cancelled" }), true);
+    const r = await get(`/threads/${TRIP_THREAD}/discover-together`, ALICE);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.opportunities.find((o: any) => o.objectId === "meet-1"), undefined,
+      "a called-off dinner inside the window is not an opportunity");
+    _setTestClient(makeClient({}), true);
+    const live = await get(`/threads/${TRIP_THREAD}/discover-together`, ALICE);
+    assert.ok(live.body.opportunities.find((o: any) => o.objectId === "meet-1"), "control: the same plan, live, is");
   });
 });

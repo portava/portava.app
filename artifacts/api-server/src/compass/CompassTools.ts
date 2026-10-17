@@ -49,7 +49,7 @@ import { isAcceptedTripMember, canEditPlan, TripAccessUnavailableError } from ".
 import { buildTripCompassProjection } from "../domain/trips/projections/TripCompassProjection.js";
 import { buildTripCompassRosterProjection } from "../domain/trips/projections/TripCompassRosterProjection.js";
 import { buildTripCompassRangeProjection, type TripCompassRangeItem } from "../domain/trips/projections/TripCompassRangeProjection.js";
-import { buildTripCompassSavedIdeasProjection } from "../domain/trips/projections/TripCompassSavedIdeasProjection.js";
+import { buildTripCompassSavedIdeasProjection } from "../domain/trips/projections/TripCompassSavedIdeasProjection.js"; import { buildTripCompassTripSummaryProjection } from "../domain/trips/projections/TripCompassTripSummaryProjection.js"; import { buildTripCompassCommitmentsProjection } from "../domain/trips/projections/TripCompassCommitmentsProjection.js"; // CT-02: on this line so no cited line moves
 import { resolveCurrentTrip, resolveUserTrips, TOOL_TRIP_STATUSES, isWellFormedTripId, MALFORMED_TRIP_ID_INFO } from "./CompassCurrentTrip.js";
 import { buildTripFreedomProjection } from "../domain/trips/projections/TripFreedomProjection.js";
 import { buildTripRouteChainProjection } from "../domain/trips/projections/TripRouteChainProjection.js";
@@ -1429,16 +1429,16 @@ export async function toolGetCommitments(sc: SupabaseClient, userId: string, arg
   // gate's own describe() names the flag and, when it is the schema that is
   // missing, the migrations. Same sentence the freedom/today projections give.
   if (!gate.enabled) return { commitments: null, info: `Commitments are not enabled: ${describeOperationalGate(gate)}` };
-  const { data, error } = await sc
-    .from("trip_commitments")
-    .select("id, stage_id, type, starts_at, required_arrival_at, place_id, lateness_tolerance, prep_duration, flexibility, confidence")
-    .eq("trip_id", t.id);
-  if (error) return { commitments: null, info: `Commitments unavailable: ${error.message}` };
-  const rows = ((data ?? []) as any[]).sort((a, b) => String(a.required_arrival_at ?? a.starts_at ?? "").localeCompare(String(b.required_arrival_at ?? b.starts_at ?? "")));
+  const built = await buildTripCompassCommitmentsProjection(sc, t.id, userId); // CT-02: Trips' typed commitments, ordered by required arrival else start
+  if (!built.ok) return { commitments: null, info: "Commitments unavailable: the trip's commitments could not be read." };
+  const decision = acceptTripProjection(built.projection, { acceptedSchemaVersion: TRIP_PROJECTION_SCHEMA_VERSION, metric: "TripCompassCommitmentsProjection" });
+  if (!decision.accepted) return { commitments: null, info: `Commitments unavailable (${decision.reason}): ${decision.message}` };
+  // §19.1 accepted; an empty list is a readable "no hard commitments", never a failed read.
+  const rows = built.projection.commitments;
   return {
     commitments: rows.map((c) => ({
-      id: c.id, stageId: c.stage_id ?? null, type: c.type, startsAt: c.starts_at ?? null, requiredArrivalAt: c.required_arrival_at ?? null, placeId: c.place_id ?? null,
-      latenessTolerance: c.lateness_tolerance ?? null, prepDuration: c.prep_duration ?? null, flexibility: c.flexibility ?? null, confidence: c.confidence ?? null,
+      id: c.id, stageId: c.stageId, type: c.type, startsAt: c.startsAt, requiredArrivalAt: c.requiredArrivalAt, placeId: c.placeId,
+      latenessTolerance: c.latenessTolerance, prepDuration: c.prepDuration, flexibility: c.flexibility, confidence: c.confidence,
     })),
     count: rows.length,
     info: rows.length === 0 ? "The trip has no hard commitments." : null,
@@ -1761,14 +1761,14 @@ async function toolAddToTrip(
   // above is a fact about today's code, not a contract. It is not covered by a
   // test and this comment is the record of that, rather than a green case
   // implying otherwise.
-  const { data: trip, error: tripErr } = await sc
-    .from("trips")
-    .select("id, title")
-    .eq("id", tripId)
-    .maybeSingle();
-  if (tripErr) {
+  const tripRead = await buildTripCompassTripSummaryProjection(sc, tripId); // CT-02: the trip row is Trips' typed projection
+  const trip = tripRead.ok ? tripRead.projection.trip : null;
+  if (!tripRead.ok || !acceptTripProjection(tripRead.projection, {
+    acceptedSchemaVersion: TRIP_PROJECTION_SCHEMA_VERSION, metric: "TripCompassTripSummaryProjection",
+  }).accepted) {
     return { error: "Trips are unreadable right now — this is temporary, not a statement about the trip. Nothing was added." };
   }
+  // `trip` is null for a trip that does not exist; canEditPlan above has already refused that case.
 
   let title    = typeof args["title"] === "string" ? (args["title"] as string).slice(0, 120) : "";
   let category = typeof args["category"] === "string" ? (args["category"] as string).slice(0, 60) : "activity";

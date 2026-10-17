@@ -73,7 +73,7 @@ import { decisionUrgency, byUrgency } from "../domain/trips/services/TripDecisio
 import { readTripProposal } from "../domain/trips/contracts/TripProposalContract.js"; import { withholdPrivatePlanItems, PLAN_ITEM_PRIVACY_COLUMNS } from "../domain/trips/policies/privateAnchorAccess.js"; import { planItemAccessFor } from "../server/trips/privateAnchorShares.js";
 import { Router } from "express";
 
-import { requireUser, requireTripMember, sendError } from "../lib/http.js";
+import { requireUser, requireTripMember, sendError } from "../lib/http.js"; import { goalsVisibleTo, TRIP_GOAL_VISIBILITY_COLUMNS } from "../domain/trips/policies/tripGoalVisibility.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
@@ -131,8 +131,8 @@ router.get("/trips/:tripId/decisions", asyncHandler(async (req, res) => {
     return (data ?? []) as any[];
   }
 
-  const goalRows = await readAll("trip_goals", sc.from("trip_goals")
-    .select("id, type, priority, status, evidence_json").eq("trip_id", tripId));
+  const goalRows = goalsVisibleTo(await readAll("trip_goals", sc.from("trip_goals") // 2783: a personal goal is its owner's alone (census-trips TR139)
+    .select("id, type, priority, status, evidence_json, weight, " + TRIP_GOAL_VISIBILITY_COLUMNS).eq("trip_id", tripId)), user.id);
   const taskRows = await readAll("trip_decision_tasks", sc.from("trip_decision_tasks")
     .select("id, type, deadline_at, consequence, assigned_user_id, status").eq("trip_id", tripId));
   let riskRows: any[] = [];
@@ -289,7 +289,7 @@ router.get("/trips/:tripId/decisions", asyncHandler(async (req, res) => {
     tripId,
     asOf: now.toISOString(),
     goals: goalRows.map((g) => ({
-      id: g.id, type: g.type, priority: g.priority, status: g.status,
+      id: g.id, type: g.type, priority: g.priority, status: g.status, scope: g.scope, weight: g.weight ?? null,
       evidence: g.evidence_json ?? {},
     })),
     // §8.2: urgency = f(timeRemaining, availabilityDecay, downstreamImpact,

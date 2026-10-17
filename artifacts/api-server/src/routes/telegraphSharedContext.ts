@@ -190,7 +190,7 @@ router.get(
       // A rail built on a failed read is INCOMPLETE, and says so, rather than
       // presenting an empty rail as the truthful answer "nothing is shared".
       incomplete: result.problems.length > 0,
-      refusedCount: result.refusals.length,
+      refusedCount: result.refusals.length, cancellations: result.cancellations, // census-telegraph T264: shared events this viewer attended that were cancelled — the id and the word, beside the projection
     });
   }),
 );
@@ -624,7 +624,7 @@ router.get(
         ? startsMs <= windowEnds.getTime() && (Number.isFinite(endsMs) ? endsMs >= nowMs : startsMs >= nowMs - 3600_000)
         : false;
       const timed = Number.isFinite(startsMs);
-      if (timed && !inWindow) continue;
+      if (timed && !inWindow) continue; if (String(item.status ?? "").toLowerCase() === "cancelled") continue; // census-telegraph T132/T263: a cancelled object is news the rail promotes, never an opportunity
       opportunities.push({
         objectId: item.objectId,
         objectType: item.objectType,

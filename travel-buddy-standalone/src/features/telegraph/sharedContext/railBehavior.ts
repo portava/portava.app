@@ -245,3 +245,51 @@ export function nextSeenSnapshot(
   }
   return shown;
 }
+
+// ── §11.2 row 5 for an object the server no longer shows (census-telegraph T264) ──────────────
+//
+// A cancelled EVENT is withheld from everyone but its host, so it leaves the projection and
+// `detectCriticalChanges` — which only compares objects present on both sides — cannot see it
+// being called off. The server sends instead a cancellation notice beside the projection
+// (`SharedContextResponse.cancellations`: the id the member's own rail held, and the word). This
+// turns each notice into §11.2's CANCELLED change, against the same "before" the rail already uses:
+// what this account last SAW here (the device record), or, with no record, what this mount showed.
+// A notice about something not seen is not a change, and neither is one for an object already seen
+// as cancelled. The title is the one this mount showed when there is one; the device record keeps
+// no title by design (railSeenStore.ts), and the notice carries none, so otherwise the change is
+// named generically. `nextSeenSnapshot` then keeps the object's old value while the change is
+// pending and lets it go once acknowledged — no new storage rule.
+
+/** How a called-off event is named when neither the notice nor the device record holds its title. */
+export const CANCELLED_EVENT_UNNAMED = 'A shared event you were going to';
+
+/** `found`, plus a CANCELLED change for each valid notice about an object seen and not yet seen cancelled. */
+export function withCancellations(
+  found: CriticalChange[],
+  seen: SeenSnapshot | null,
+  shown: TelegraphSharedContextProjection | null,
+  cancellations: unknown,
+): CriticalChange[] {
+  if (!Array.isArray(cancellations) || cancellations.length === 0) return found;
+  const shownItems = new Map(shown ? flatten(shown).map((i) => [i.objectId, i] as const) : []);
+  const keys = new Set(found.map((c) => c.changeKey));
+  const out = [...found];
+  for (const notice of cancellations) {
+    if (!notice || typeof notice !== 'object') continue;
+    const { objectId, status } = notice as { objectId?: unknown; status?: unknown };
+    if (typeof objectId !== 'string' || objectId.length === 0 || status !== 'cancelled') continue;
+    const before = seen ? seen[objectId] : shownItems.get(objectId);
+    if (!before || (before.status ?? '').toLowerCase() === 'cancelled') continue;
+    const changeKey = `${objectId}:status:cancelled`;
+    if (keys.has(changeKey)) continue;
+    keys.add(changeKey);
+    out.push({
+      objectId,
+      title: shownItems.get(objectId)?.title ?? CANCELLED_EVENT_UNNAMED,
+      changeKey,
+      reason: 'CANCELLED',
+      startsAt: before.startsAt ?? undefined,
+    });
+  }
+  return out;
+}

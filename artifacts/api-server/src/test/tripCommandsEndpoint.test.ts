@@ -14,7 +14,7 @@
  * command type the kernel dispatches is either issuable HERE or has a named
  * legacy route and a cutover of its own. Nothing may fall between.
  */
-import { describe, it } from "node:test";
+import { describe, it, after } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
@@ -180,5 +180,129 @@ describe("failures stay distinguishable", () => {
     // the kernel keeps for exactly this.
     assert.match(route, /idempotency_key is required/);
     assert.ok(!/idempotencyKey: randomUUID\(\)/.test(route));
+  });
+});
+
+// ── Behaviour over the REAL router, with both Trips flags explicitly FALSE ────
+//
+// Everything above reads the route's source. These drive it: a fake database
+// whose `feature_flags` rows say trip_kernel_enabled and
+// trip_operational_projections_enabled are FALSE — production's state — and a
+// fake `trip_kernel_execute` that records what it was handed.
+describe("POST /trips/:tripId/commands over HTTP, both Trips flags FALSE", () => {
+  const OWNER = "11111111-0000-4000-8000-0000000000a1";
+  const TRIP = "aaaaaaaa-0000-4000-8000-0000000000a2";
+  type Harness = { base: string; close(): Promise<void> };
+  let h: Harness;
+  let call: (base: string, m: "POST", p: string, u: string, b?: unknown) => Promise<{ status: number; body: any }>;
+  let kernelCalls: Array<{ name: string; args: any }> = [];
+
+  async function setup() {
+    const harness = await import("./telegraphCertificationHarness.js");
+    const { _setTestClient } = await import("../lib/http.js");
+    const { _setTestServiceClient } = await import("../lib/supabase.js");
+    const router = (await import("../server/trips/commandRoute.js")).default;
+    const c = harness.makeFakeClient({
+      trips: [{ id: TRIP, owner_id: OWNER }],
+      trip_members: [{ trip_id: TRIP, user_id: OWNER, role: "owner", status: "accepted", permissions: null }],
+      feature_flags: [
+        { flag: "trip_kernel_enabled", enabled: false },
+        { flag: "trip_operational_projections_enabled", enabled: false },
+      ],
+    });
+    (c as any).rpc = async (name: string, args: any) => {
+      kernelCalls.push({ name, args });
+      return { data: { ok: true, duplicate: false, version: kernelCalls.length, event_id: `e${kernelCalls.length}`, sequence: kernelCalls.length, result: { id: "r1" }, contract_version: 2 }, error: null };
+    };
+    _setTestClient(c as never, true);
+    _setTestServiceClient(c as never);
+    if (!h) h = await harness.startRouter(router);
+    call = harness.call as typeof call;
+  }
+  const post = async (body: unknown) => { await setup(); kernelCalls = []; return call(h.base, "POST", `/trips/${TRIP}/commands`, OWNER, body); };
+  after(async () => { if (h) await h.close(); });
+
+  // census-trips TR78, TR79, TR81, TR84, TR85, TR86, TR22: the stage, leg,
+  // commitment, goal, decision-task and risk families are issued with BOTH flags FALSE. The flag is a cutover
+  // switch for families with a legacy writer; these have none.
+  for (const [type, payload] of [
+    ["ADD_STAGE", { stage_type: "city", city_id: "c1", timezone: "Europe/Paris", sequence: 1 }],
+    ["ADD_LEG", { from_stage_id: "s1", to_stage_id: "s2", leg_type: "train" }],
+    ["ADD_COMMITMENT", { stage_id: "s2", type: "event", starts_at: "2026-10-20T19:00:00Z", required_arrival_at: "2026-10-20T18:45:00Z" }],
+    ["ADD_GOAL", { type: "food", priority: 0.5 }],
+    ["ADD_DECISION_TASK", { type: "pick_dinner", deadline_at: "2026-10-20T18:00:00Z" }],
+    ["ADD_RISK", { likelihood: "medium", impact: "high" }],
+  ] as const) {
+    it(`${type} reaches trip_kernel_execute while trip_kernel_enabled is FALSE`, async () => {
+      const r = await post({ type, idempotency_key: `k-${type}`, payload });
+      assert.equal(r.status, 200, JSON.stringify(r.body).slice(0, 300));
+      assert.equal(kernelCalls.length, 1);
+      assert.equal(kernelCalls[0]!.name, "trip_kernel_execute");
+      assert.equal(kernelCalls[0]!.args.p_command.type, type);
+      assert.deepEqual(kernelCalls[0]!.args.p_command.payload, payload);
+      assert.equal(kernelCalls[0]!.args.p_command.actor_user_id, OWNER);
+    });
+  }
+
+  // census-trips TR153: §9.3's three payload fields are written under ONE key
+  // each at this door too — it is the one proposal writer that runs with the
+  // kernel flag off — and a malformed one is refused before the kernel.
+  describe("CREATE_PROPOSAL: §9.3's contract fields, canonical at the door (TR153)", () => {
+    it("camelCase spellings are written under the canonical keys, once, and the change body is untouched", async () => {
+      const r = await post({
+        type: "CREATE_PROPOSAL", idempotency_key: "p-1",
+        payload: {
+          proposal_type: "move_plan", decision_rule: "majority",
+          payload_json: { planId: "pl1", to: "20:00", affectedObjects: ["pl1", "c2"], impactSummary: "dinner moves 1h", rationale: "the museum runs late" },
+        },
+      });
+      assert.equal(r.status, 200, JSON.stringify(r.body).slice(0, 300));
+      const sent = kernelCalls[0]!.args.p_command.payload;
+      assert.equal(sent.proposal_type, "move_plan");
+      assert.equal(sent.decision_rule, "majority");
+      assert.deepEqual(sent.payload_json, {
+        planId: "pl1", to: "20:00",
+        affected_objects: ["pl1", "c2"], rationale: "the museum runs late", impact_summary: "dinner moves 1h",
+      });
+    });
+
+    it("a payload with no contract fields reaches the kernel exactly as sent", async () => {
+      const payload = { proposal_type: "other", payload_json: { note: "x" } };
+      const r = await post({ type: "CREATE_PROPOSAL", idempotency_key: "p-2", payload });
+      assert.equal(r.status, 200);
+      assert.deepEqual(kernelCalls[0]!.args.p_command.payload, payload);
+    });
+
+    it("a null payload_json, and a null contract field, are \"not recorded\": passed / omitted, never refused", async () => {
+      const r1 = await post({ type: "CREATE_PROPOSAL", idempotency_key: "p-n1", payload: { proposal_type: "other", payload_json: null } });
+      assert.equal(r1.status, 200);
+      assert.equal(kernelCalls[0]!.args.p_command.payload.payload_json, null);
+      const r2 = await post({ type: "CREATE_PROPOSAL", idempotency_key: "p-n2", payload: { proposal_type: "other", payload_json: { note: "x", rationale: null, impactSummary: "costs 10" } } });
+      assert.equal(r2.status, 200);
+      assert.deepEqual(kernelCalls[0]!.args.p_command.payload.payload_json, { note: "x", impact_summary: "costs 10" });
+    });
+
+    for (const [label, payload_json] of [
+      ["affected objects that are not an array", { affected_objects: "pl1" }],
+      ["an affected object that is not an id", { affected_objects: ["pl1", 7] }],
+      ["a rationale that is not text", { rationale: 42 }],
+      ["an impact summary that is not text", { impactSummary: { cost: 3 } }],
+      ["two spellings of one field that disagree", { affected_objects: ["a"], affectedObjects: ["b"] }],
+      ["a payload_json that is not an object", ["not", "an", "object"]],
+    ] as const) {
+      it(`refused before the kernel: ${label}`, async () => {
+        const r = await post({ type: "CREATE_PROPOSAL", idempotency_key: `bad-${label}`, payload: { proposal_type: "other", payload_json } });
+        assert.equal(r.status, 400, JSON.stringify(r.body).slice(0, 300));
+        assert.equal(r.body.error, "invalid_payload");
+        assert.equal(kernelCalls.length, 0, "a malformed contract field never reaches trip_kernel_execute");
+      });
+    }
+
+    it("other families are not rewritten: a `rationale` key on ADD_GOAL passes through verbatim", async () => {
+      const payload = { type: "food", priority: 0.5, rationale: 7 };
+      const r = await post({ type: "ADD_GOAL", idempotency_key: "g-r", payload });
+      assert.equal(r.status, 200);
+      assert.deepEqual(kernelCalls[0]!.args.p_command.payload, payload);
+    });
   });
 });

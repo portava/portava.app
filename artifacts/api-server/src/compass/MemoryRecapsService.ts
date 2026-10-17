@@ -41,7 +41,7 @@
  * tests inject a fixed date. This module never reads the wall clock as the source
  * of truth for windowing or anniversary matching.
  */
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js"; import { buildTripCompassTripSummaryProjection } from "../domain/trips/projections/TripCompassTripSummaryProjection.js"; import { acceptTripProjection, TRIP_PROJECTION_SCHEMA_VERSION } from "../domain/trips/contracts/TripProjectionEnvelope.js"; // CT-02
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import {
   buildSavedContent,
@@ -313,18 +313,18 @@ async function resolveTripWindow(
   tripId: string,
 ): Promise<{ from: string | null; to: string | null; label: string } | null> {
   {
-    const { data, error } = await client
-      .from("trips")
-      .select("id, title, destination_city, start_date, end_date, created_at, status")
-      .eq("id", tripId)
-      .eq("owner_id", userId) // OWNERSHIP: a borrowed trip id resolves to nothing
-      .maybeSingle();
+    // CT-02: the trip row is Trips' typed projection, owner-scoped there (a borrowed
+    // trip id resolves to `trip: null`), not a raw `trips` read.
+    const built = await buildTripCompassTripSummaryProjection(client, tripId, { ownerId: userId });
+    const error = !built.ok ? built.reason : !acceptTripProjection(built.projection, {
+      acceptedSchemaVersion: TRIP_PROJECTION_SCHEMA_VERSION, metric: "TripCompassTripSummaryProjection",
+    }).accepted ? "TRIP_PROJECTION_REFUSED" : null;
     // A failed read is an error, never "Trip not found." (tm-followups WP-12).
-    if (error) throw new Error(`trips read failed — cannot resolve the recap window (${readErr(error)})`);
-    if (!data) return null;
-    const r = data as Record<string, unknown>;
-    const start = isoLike(r.start_date) ?? isoLike(r.created_at);
-    const end = isoLike(r.end_date);
+    if (error) throw new Error(`trips read failed — cannot resolve the recap window (${error})`);
+    const r = built.ok ? built.projection.trip : null;
+    if (!r) return null;
+    const start = isoLike(r.startDate) ?? isoLike(r.createdAt);
+    const end = isoLike(r.endDate);
     // Window is [start-of-day(start), end-of-day(end)]. If only a start exists,
     // bound the window to that single day so a trip with no end still recaps.
     const from = start ? new Date(new Date(start).getTime()).toISOString() : null;
@@ -338,7 +338,7 @@ async function resolveTripWindow(
       e.setUTCHours(23, 59, 59, 999);
       to = e.toISOString();
     }
-    const label = String(r.title ?? r.destination_city ?? "Trip");
+    const label = String(r.title ?? r.destinationCity ?? "Trip");
     return { from, to, label };
   }
 }

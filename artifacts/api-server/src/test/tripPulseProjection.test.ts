@@ -241,3 +241,23 @@ describe("§15.1 transport reliability on the pulse (2782's column, TR287)", () 
     assert.equal(byId.has("tx3"), false, "a completed segment has nothing left to be reliable about");
   });
 });
+
+// census-trips TR139 (2783): the pulse is read for ONE viewer, and a personal
+// goal is its owner's alone — another member's never shapes this viewer's pulse.
+describe("2783 — the pulse reads the viewer's goals: shared, and their own personal ones", () => {
+  it("counts shared + own personal goals; another member's personal goal and an unread scope are not read", async () => {
+    const tables = base();
+    tables.trip_goals = [
+      { id: "g1", trip_id: TRIP_ID, type: "social", scope: "shared", owner_user_id: null, status: "open" },
+      { id: "g2", trip_id: TRIP_ID, type: "rest", scope: "personal", owner_user_id: OWNER_ID, status: "open" },
+      { id: "g3", trip_id: TRIP_ID, type: "experience", scope: "personal", owner_user_id: "22222222-2222-2222-2222-222222222222", status: "open" },
+      { id: "g4", trip_id: TRIP_ID, type: "budget", status: "open" },
+    ];
+    const owner = await buildTripPulseProjection(makeClient(withStages(tables)) as any, TRIP_ID, OWNER_ID, { now: NOW });
+    assert.ok(owner.ok, JSON.stringify(owner));
+    assert.equal(owner.projection.context.goals, 2);
+    const member = await buildTripPulseProjection(makeClient(withStages(tables)) as any, TRIP_ID, "22222222-2222-2222-2222-222222222222", { now: NOW });
+    assert.ok(member.ok, JSON.stringify(member));
+    assert.equal(member.projection.context.goals, 2);
+  });
+});

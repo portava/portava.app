@@ -320,7 +320,7 @@ describe("Compass get_today_state consumes the Today projection (TR203)", () => 
     // own composition consumes Health and Freedom; then Today itself.
     // §16 / §13: Today also composes the Trip Pulse and Opportunity projections now.
     assert.deepEqual(readTripMetric("projection_lag_seconds").map((s) => s.labels.projection).sort(),
-      ["TripCompassProjection", "TripFreedomProjection", "TripHealthProjection", "TripOpportunityProjection", "TripPulseProjection", "TripTodayProjection"]);
+      ["TripCompassMembershipProjection", "TripCompassProjection", "TripCompassTripSummaryProjection", "TripFreedomProjection", "TripHealthProjection", "TripOpportunityProjection", "TripPulseProjection", "TripTodayProjection"]); // CT-02: selection is Trips' too
     const stranger: any = await toolGetTodayState(c as any, OTHER_ID, { tripId: TRIP_ID });
     assert.equal(stranger.today, null);
   });

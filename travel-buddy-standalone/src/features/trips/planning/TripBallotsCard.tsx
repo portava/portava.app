@@ -109,6 +109,9 @@ export function TripBallotsCard({ tripId, isOwner, load = fetchTripDecisions, ca
             <Vote size={14} color={color.deep} />
             <View style={{ flex: 1 }}>
               <Text style={s.title}>{proposalTitle(p)}</Text>
+              {/* §9.3 (census-trips TR153): why it was proposed and what it changes, as the server states them. */}
+              {p.rationale && p.rationale.trim() && p.rationale.trim() !== proposalTitle(p) ? <Text style={s.detail} testID={`ballot-why-${p.id}`}>Why: {p.rationale.trim()}</Text> : null}
+              {p.impactSummary && p.impactSummary.trim() ? <Text style={s.detail} testID={`ballot-impact-${p.id}`}>Impact: {p.impactSummary.trim()}</Text> : null}
               <Text style={s.detail}>Rule: {RULE_LABEL[p.decisionRule] ?? p.decisionRule}</Text>
               <Text style={s.detail} testID={`ballot-tally-${p.id}`}>{tallyLine(p)}</Text>
               <Text style={s.detail} testID={`ballot-myvote-${p.id}`}>{myVoteLabel(p.myVote)}</Text>

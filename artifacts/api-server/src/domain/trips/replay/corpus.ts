@@ -101,7 +101,7 @@ const hop = (travelMinutes: number | null): HopTravel => ({
 });
 const commitment = (id: string, type: string, at: string, point: GeoPoint, o: Partial<EngineCommitment> = {}): EngineCommitment => ({
   id, type, startsAt: new Date(at), requiredArrivalAt: new Date(at), endsAt: null,
-  place: { placeId: id, point }, flexibility: "fixed", prepMinutes: 0, latenessToleranceMinutes: 0, ...o,
+  place: { placeId: id, point }, flexibility: "fixed", prepMinutes: 0, latenessToleranceMinutes: 0, hardConstraints: [], confidence: null, ...o,
 });
 const plan = (id: string, title: string, startsAt: string, endsAt: string, o: Partial<StatePlan> = {}): StatePlan => ({
   id, title, status: "confirmed", startsAt, endsAt, dayDate: SCENARIO_DAY, participantIds: ["me"], planScope: "SOLO", confirmed: true, ...o,

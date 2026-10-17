@@ -192,10 +192,10 @@ export function failureClassOf(a: Pick<CommandAudit, "outcome" | "reason">): Mem
  *
  * SEVEN OF §24's EIGHT FIELDS, AND THE EIGHTH SAID PLAINLY. `projectionName` is
  * null here and always will be: a command is not a projection, and this is the
- * COMMAND log. §24's eighth field belongs to the PROJECTION log, and this
- * repository has no reachable one to put it in — `services/memoryProjections/
- * derivativeRegistry.ts` is the projection half and its storage is migration
- * 2730, written and unapplied, so nothing there has ever run outside a test.
+ * COMMAND log. §24's eighth field belongs to the PROJECTION log, which is
+ * `services/memoryProjections/projectionLog.ts`: every §18 rebuild and
+ * fail-closed revocation writes it (2730 is applied), with these same eight
+ * keys and this line's `commandId` / `eventId`, so the two logs join (H223).
  * The key is emitted as an explicit null rather than omitted, so a reader
  * grepping the eight field names finds eight, and finds this one empty on
  * purpose instead of wondering whether it was dropped.

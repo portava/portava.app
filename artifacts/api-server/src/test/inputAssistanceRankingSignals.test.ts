@@ -64,7 +64,7 @@ import {
 } from "../lib/inputAssistance/taskContext.js";
 import { extractTemporal } from "../lib/inputAssistance/semanticParser.js";
 import { POLICY_VERSION } from "../lib/inputAssistance/policyRegistry.js";
-import type { SearchResult } from "../routes/discoverySearch.js"; import type { InputSuggestion } from "../lib/inputAssistance/types.js";
+import type { SearchResult } from "../routes/discoverySearch.js"; import type { InputSuggestion } from "../lib/inputAssistance/types.js"; import { confusablePattern, nameSignature, indexedImpersonators, MAX_INDEX_SIGNATURES, MAX_PATTERN_POSITIONS } from "../lib/inputAssistance/impersonationIndex.js";
 // The client half of §20: the row's badge words. Imported across the package
 // boundary on purpose — a second copy of this list on the server would be a
 // second source of truth for a user-facing string.
@@ -757,10 +757,10 @@ describe("§18 task feasibility end-to-end (G122/G124/G125/G96/G107)", () => {
 // A handle built to be misread as a verified account's ranked exactly like any
 // other substring match.
 //
-// G233 STAYS BUILT-BUT-WRONG after this, deliberately, and the last two tests
-// here are what that costs: an impersonator that appears without its target is
-// untouched, and BUSINESSES are not covered at all because no venue row carries
-// a verification flag to be impersonated against.
+// The within-answer rule alone left two holes — an impersonator without its
+// target in the answer, and BUSINESSES. The last test here pins the first
+// hole's boundary (no genuine twin ANYWHERE); both are closed by the index
+// (impersonationIndex.ts) and proven in the G233 index blocks at file end.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe("§36 impersonation (G233) — the confusable signature", () => {
@@ -886,12 +886,12 @@ describe("§36 impersonation end-to-end (G233) — through POST /input-assistanc
     );
   });
 
-  it("THE HOLE, pinned: an impersonator ALONE in the answer is not demoted (why G233 stays W)", async () => {
+  it("THE HOLE's boundary, pinned: an impersonator with NO genuine twin anywhere is not demoted", async () => {
     // This is not a wish — it is the boundary of the rule, asserted so nobody
-    // reads the term as broader coverage than it has. No verified twin is in
-    // this answer, so there is nothing to compare against and the copy ranks
-    // exactly as it did before. Closing it needs a handle index the suggestion
-    // path does not have.
+    // reads the term as broader coverage than it has. No verified twin exists
+    // in this answer OR in the profiles the index reads, so the copy ranks
+    // exactly as it did before. A twin outside the answer is the index's case
+    // ("§36 impersonation — the index (G233)" at the end of this file).
     setup({
       profiles: [person(FAKE, "p0rtava", "Portava Travel", false)],
       profile_privacy_settings: [{ user_id: FAKE, show_real_name: true, allow_profile_discovery: true }],
@@ -1806,5 +1806,482 @@ describe("G98 RelationshipFit — followed people in personalized input fields",
       allowPersonalization: true, tripFit: true,
     });
     assert.equal(projected.confidence, SIGNAL_CEILING - PRIVACY_RISK_DEMOTION);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// §36 impersonation — THE INDEX (census G233, 2026-10-17 wave 3)
+//
+// The two holes the census held G233 at BUILT-BUT-WRONG for, each closed by
+// LOOKING THE TARGET UP (lib/inputAssistance/impersonationIndex.ts):
+//   (a) an impersonator alone in the answer was untouched — its verified target
+//       was not in the answer and nothing else was consulted;
+//   (b) businesses were not covered — `discovery_places.verified` was read by
+//       nothing on the suggestion path.
+// Each target counts only when the viewer's own search could have shown it; a
+// target that cannot be checked counts as absent (the copy keeps its score).
+// Every test here runs on `global_search`, the mounted search bar.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * makeFakeClient plus PostgREST's case-insensitive regex filter (`imatch`, ~*),
+ * and an optional read failure chosen per query (table, selected columns, and
+ * whether the query carried an `imatch` filter).
+ */
+function setupIndexed(
+  state: FakeState,
+  failWhen: (q: { table: string; cols: string; imatch: boolean; nth: number }) => boolean = () => false,
+) {
+  const inner = makeFakeClient(state) as any;
+  const reads = new Map<string, number>();
+  _setTestClient({
+    ...inner,
+    from: (table: string) => {
+      const b = inner.from(table);
+      const extra: Array<(r: any) => boolean> = [];
+      let cols = "";
+      const select0 = b.select;
+      b.select = (c?: string) => { cols = String(c ?? ""); return select0.call(b, c); };
+      b.filter = (col: string, op: string, val: string) => {
+        if (op !== "imatch") throw new Error(`fake: unsupported filter operator ${op}`);
+        const re = new RegExp(val, "i");
+        extra.push((r) => re.test(String(r[col] ?? "")));
+        return b;
+      };
+      const then0 = b.then;
+      b.then = (onF: any, onR: any) => {
+        const nth = (reads.get(table) ?? 0) + 1;
+        reads.set(table, nth);
+        if (failWhen({ table, cols, imatch: extra.length > 0, nth })) {
+          return Promise.resolve({ data: null, error: { message: `fake: ${table} unreadable` } }).then(onF, onR);
+        }
+        return then0.call(
+          b,
+          (res: any) => onF({ ...res, data: Array.isArray(res.data) ? res.data.filter((r: any) => extra.every((f) => f(r))) : res.data }),
+          onR,
+        );
+      };
+      return b;
+    },
+  } as any, true);
+}
+
+describe("§36 impersonation — the index (G233): the target need not be in the answer", () => {
+  const REAL = "bb000000-0000-4000-a000-000000000002";
+  const FAKE = "cc000000-0000-4000-a000-000000000003";
+
+  function person(id: string, handle: string, name: string, over: Record<string, unknown> = {}) {
+    return {
+      id, handle, username: handle, name, display_name: name, avatar_url: null,
+      is_private: false, home_city: null, home_country: null, account_status: "active",
+      verified: false, is_official: false, show_profile_picture_publicly: true, ...over,
+    };
+  }
+  function people(profiles: any[], extra: FakeState = {}): FakeState {
+    return {
+      profiles,
+      profile_privacy_settings: profiles.map((p) => ({ user_id: p.id, show_real_name: true, allow_profile_discovery: true })),
+      blocks: [], user_privacy_settings: [], user_follows: [], friend_requests: [],
+      user_friendships: [], canonical_locations: [], location_preferences: [],
+      ...extra,
+    };
+  }
+  // The copy matches the query by name. The target's NAME does not, so it is
+  // never in the answer — only its handle is confusable with the copy's.
+  const copy = person(FAKE, "p0rtava", "Portava Travel");
+  const target = (over: Record<string, unknown> = {}) => person(REAL, "portava", "Somebody Else", { verified: true, ...over });
+
+  async function copyConfidence(state: FakeState, failWhen?: Parameters<typeof setupIndexed>[1]): Promise<number> {
+    setupIndexed(state, failWhen);
+    const r = await suggest({ context: "global_search", text: "Portava Travel" });
+    assert.equal(r.status, 200, "the answer is served whatever the index says");
+    const body = await r.json() as any;
+    const rows = body.suggestions.filter((s: any) => s.entityType === "user");
+    assert.deepEqual(rows.map((s: any) => s.entityId), [FAKE], "premise: the copy is the only person in the answer");
+    return rows[0].confidence as number;
+  }
+
+  it("an impersonator ALONE in the answer is demoted when its verified target exists", async () => {
+    const alone = await copyConfidence(people([copy]));
+    const targeted = await copyConfidence(people([copy, target()]));
+    assert.ok(alone > IMPERSONATION_DEMOTION, "premise: there is a score to demote");
+    assert.ok(
+      Math.abs(targeted - (alone - IMPERSONATION_DEMOTION)) < 1e-9,
+      `the copy loses exactly one IMPERSONATION_DEMOTION (alone ${alone}, targeted ${targeted})`,
+    );
+  });
+
+  it("an OFFICIAL target counts the same way", async () => {
+    const alone = await copyConfidence(people([copy]));
+    const targeted = await copyConfidence(people([copy, target({ verified: false, is_official: true })]));
+    assert.ok(Math.abs(targeted - (alone - IMPERSONATION_DEMOTION)) < 1e-9);
+  });
+
+  it("CONTROL: an unverified look-alike, or a verified account that is only SIMILAR, does not count", async () => {
+    const alone = await copyConfidence(people([copy]));
+    assert.equal(await copyConfidence(people([copy, target({ verified: false })])), alone, "nothing genuine to impersonate");
+    assert.equal(await copyConfidence(people([copy, target({ handle: "portavas", username: "portavas" })])), alone, "a different signature");
+  });
+
+  it("CONTROL: a suspended target does not count", async () => {
+    const alone = await copyConfidence(people([copy]));
+    assert.equal(await copyConfidence(people([copy, target({ account_status: "suspended" })])), alone);
+  });
+
+  it("PRIVACY: a target the viewer's own search could not show does not count", async () => {
+    const alone = await copyConfidence(people([copy]));
+    // Blocked, either direction.
+    assert.equal(await copyConfidence(people([copy, target()], { blocks: [{ blocker_id: REAL, blocked_id: ME }] })), alone, "blocked");
+    // Opted out of discovery.
+    const optedOut = people([copy, target()]);
+    optedOut.profile_privacy_settings = [
+      { user_id: FAKE, show_real_name: true, allow_profile_discovery: true },
+      { user_id: REAL, show_real_name: true, allow_profile_discovery: false },
+    ];
+    assert.equal(await copyConfidence(optedOut), alone, "opted out of discovery");
+    // Invisible to discovery.
+    assert.equal(await copyConfidence(people([copy, target()], { location_preferences: [{ user_id: REAL, location_mode: "off" }] })), alone, "invisible");
+    // Age-restricted.
+    assert.equal(await copyConfidence(people([copy, target()], { user_privacy_settings: [{ user_id: REAL, age_restriction_enabled: true }] })), alone, "age-restricted");
+  });
+
+  it("FAIL-CLOSED: a target whose visibility cannot be read does not count", async () => {
+    const alone = await copyConfidence(people([copy]));
+    // The search itself reads `blocks` first; only the index's own check fails.
+    const afterIndex = (tables: string[]) => {
+      let indexed = false;
+      return (q: { table: string; imatch: boolean }) => {
+        if (q.imatch) indexed = true;
+        return indexed && tables.includes(q.table);
+      };
+    };
+    for (const t of ["blocks", "user_privacy_settings", "profile_privacy_settings", "location_preferences"]) {
+      assert.equal(await copyConfidence(people([copy, target()]), afterIndex([t])), alone, `${t} unreadable`);
+    }
+  });
+
+  it("FAIL-SOFT: an unreadable index serves the answer at its within-answer score", async () => {
+    const alone = await copyConfidence(people([copy]));
+    assert.equal(await copyConfidence(people([copy, target()]), (q) => q.imatch), alone);
+  });
+
+  it("the verified account still leads its copy when both are in the answer — demoted once, not twice", async () => {
+    setupIndexed(people([copy, person(REAL, "portava", "Portava Travel", { verified: true })]));
+    const r = await suggest({ context: "global_search", text: "Portava Travel" });
+    const rows = ((await r.json()) as any).suggestions.filter((s: any) => s.entityType === "user");
+    assert.deepEqual(rows.map((s: any) => s.entityId), [REAL, FAKE]);
+    const alone = await copyConfidence(people([copy]));
+    assert.ok(Math.abs(rows[1].confidence - (alone - IMPERSONATION_DEMOTION)) < 1e-9, "one demotion, whichever source found the twin");
+  });
+});
+
+describe("§36 impersonation — businesses (G233): an unverified listing confusable with a verified one in the same city", () => {
+  const BLOCKER = "ee000000-0000-4000-a000-000000000005";
+  function place(id: string, name: string, city: string, over: Record<string, unknown> = {}) {
+    return {
+      id, name, city, blurb: null, image_url: null, header_image_source: null, image_source_type: null,
+      image_accuracy_status: null, category: "cafe", primary_category: "cafe",
+      lat: 13.7, lng: 100.5, canonical_location_id: null, created_at: "2026-01-01T00:00:00Z",
+      submitted_by: null, status: "active", saved_count: 0, verified: false, ...over,
+    };
+  }
+  const listings = (rows: any[], extra: FakeState = {}): FakeState => ({
+    discovery_places: rows, blocks: [], user_privacy_settings: [], canonical_locations: [], ...extra,
+  });
+  const copy = place("p-copy", "Blue B0ttle Coffee", "Bangkok");
+  const genuine = (over: Record<string, unknown> = {}) => place("p-genuine", "Blue Bottle Coffee", "Bangkok", { verified: true, ...over });
+
+  async function placeRows(state: FakeState, text: string, failWhen?: Parameters<typeof setupIndexed>[1]) {
+    setupIndexed(state, failWhen);
+    const r = await suggest({ context: "global_search", text });
+    assert.equal(r.status, 200);
+    return ((await r.json()) as any).suggestions.filter((s: any) => s.entityType === "place");
+  }
+  async function copyAlone(state: FakeState, failWhen?: Parameters<typeof setupIndexed>[1]): Promise<number> {
+    const rows = await placeRows(state, "B0ttle", failWhen);
+    assert.deepEqual(rows.map((s: any) => s.entityId), ["p-copy"], "premise: the copy is the only listing in the answer");
+    return rows[0].confidence as number;
+  }
+
+  it("the verified listing leads its confusable copy when both match — the copy is seeded FIRST", async () => {
+    // RED BEFORE THE FIX: no rule read `discovery_places.verified`, both rows
+    // scored the same tier, and input order put the copy first.
+    const rows = await placeRows(listings([copy, genuine()]), "Coffee");
+    assert.deepEqual(rows.map((s: any) => s.entityId), ["p-genuine", "p-copy"], "the verified listing leads");
+    assert.ok(rows[0].confidence > rows[1].confidence, "by confidence, not by input order");
+  });
+
+  it("the copy ALONE in the answer is demoted when the verified listing in its city exists", async () => {
+    const alone = await copyAlone(listings([copy]));
+    const targeted = await copyAlone(listings([copy, genuine()]));
+    assert.ok(Math.abs(targeted - (alone - IMPERSONATION_DEMOTION)) < 1e-9, `alone ${alone}, targeted ${targeted}`);
+  });
+
+  it("CONTROL: a verified namesake in ANOTHER city, an inactive one, or an unverified one does not count", async () => {
+    const alone = await copyAlone(listings([copy]));
+    assert.equal(await copyAlone(listings([copy, genuine({ city: "Paris" })])), alone, "another city — two real venues can share a name");
+    assert.equal(await copyAlone(listings([copy, genuine({ status: "pending" })])), alone, "not active");
+    assert.equal(await copyAlone(listings([copy, genuine({ verified: false })])), alone, "nothing genuine to impersonate");
+  });
+
+  it("PRIVACY: a verified listing whose submitter the viewer is blocked with does not count; unreadable blocks count as blocked", async () => {
+    const alone = await copyAlone(listings([copy]));
+    const submitted = genuine({ submitted_by: BLOCKER });
+    assert.equal(await copyAlone(listings([copy, submitted], { blocks: [{ blocker_id: ME, blocked_id: BLOCKER }] })), alone, "blocked submitter");
+    let indexed = false;
+    const blocksAfterIndex = (q: { table: string; imatch: boolean }) => { if (q.imatch) indexed = true; return indexed && q.table === "blocks"; };
+    assert.equal(await copyAlone(listings([copy, submitted]), blocksAfterIndex), alone, "block state unreadable");
+    assert.ok(await copyAlone(listings([copy, submitted])) < alone, "CONTROL: the same submitter, not blocked, counts");
+  });
+
+  it("FAIL-SOFT: unreadable listing facts or an unreadable index leave the copy at its score", async () => {
+    const alone = await copyAlone(listings([copy]));
+    assert.equal(await copyAlone(listings([copy, genuine()]), (q) => q.table === "discovery_places" && /verified/.test(q.cols) && !q.imatch), alone, "facts unreadable");
+    assert.equal(await copyAlone(listings([copy, genuine()]), (q) => q.table === "discovery_places" && q.imatch), alone, "index unreadable");
+  });
+});
+
+describe("§36 impersonation — the index's lookup pattern (G233)", () => {
+  // The read cannot ask PostgREST for signature equality, so it sends a pattern
+  // every spelling of the signature satisfies, and the exact fold decides on what
+  // comes back. A pattern that MISSES a spelling is a twin never found; these
+  // pin that it does not.
+  const matches = (sig: string, s: string) => new RegExp(confusablePattern(sig)!, "i").test(s);
+
+  it("every confusable spelling of a handle matches the pattern of its signature", () => {
+    const sig = handleSignature("@portava");
+    for (const v of ["portava", "@p0rtava", "@portavaa", "@port_ava", "PORTAVA", "p.0.r.t.4.v.a", "@pp0rrt__avva"]) {
+      assert.equal(handleSignature(v), sig, `premise: ${v} folds to ${sig}`);
+      assert.ok(matches(sig, v), `${v} must reach the exact fold`);
+    }
+    const m = handleSignature("@mamma_mia");
+    for (const v of ["mamma_mia", "rnarnrna_rnia", "@m4mm4.mia", "r_n_a_m_m_a__mia"]) {
+      assert.equal(handleSignature(v), m, `premise: ${v} folds to ${m}`);
+      assert.ok(matches(m, v), `${v} (rn → m) must reach the exact fold`);
+    }
+  });
+
+  it("a venue name folds its diacritics, and the accented spelling still matches", () => {
+    assert.equal(nameSignature("Café de Flore"), nameSignature("Cafe de Flore"));
+    assert.equal(nameSignature("Phở Hòa"), nameSignature("Pho Hoa"));
+    assert.equal(nameSignature("Blue B0ttle Coffee"), nameSignature("Blue Bottle Coffee"));
+    assert.notEqual(nameSignature("Blue Bottle Coffee"), nameSignature("Blue Bottle Tea"));
+    for (const v of ["Café de Flore", "CAFÉ DE FLORE", "Cafe\u0301 de Flore"]) {
+      assert.ok(matches(nameSignature("Cafe de Flore"), v), v);
+    }
+    assert.ok(matches(nameSignature("Pho Hoa"), "Phở Hòa"));
+  });
+
+  it("is narrow enough to be a filter, and built from signature characters only", () => {
+    assert.equal(matches(handleSignature("@portava"), "bangkok_eats"), false);
+    assert.equal(matches(handleSignature("@portava"), "portavas"), false, "an extra kept letter is another signature");
+    assert.equal(confusablePattern("ab"), null, "too short to be a handle");
+    assert.equal(confusablePattern("a.b(c)|d"), null, "nothing but [a-z0-9] reaches the pattern");
+    assert.ok(confusablePattern("portava")!.startsWith("^") && confusablePattern("portava")!.endsWith("$"), "anchored at both ends");
+  });
+
+  it("a name in a script the fold drops never matches a Latin signature on its own — Tokyo and Bangkok cannot flood the read", () => {
+    // Every character of these names is dropped by the fold, so none of them is
+    // a twin of anything; were each pattern position satisfiable by a dropped
+    // character, a city full of such listings would fill TWIN_READ_LIMIT and
+    // push a real twin out of the read.
+    for (const v of ["スターバックスコーヒー渋谷店", "สตาร์บัคส์ สาขาสยามพารากอน"]) {
+      assert.equal(nameSignature(v), "", `premise: ${v} folds to nothing`);
+      assert.equal(matches(nameSignature("Starbucks"), v), false, v);
+    }
+    assert.ok(matches(nameSignature("Starbucks"), "スターバックス Starbucks"), "a Latin name beside another script still matches");
+  });
+
+  it("a signature longer than the pattern bound matches on its prefix — still every spelling", () => {
+    const long = handleSignature("@the_quick_brown_fox_jumps_over");
+    assert.ok(long.length > MAX_PATTERN_POSITIONS, "premise");
+    assert.equal(confusablePattern(long)!.endsWith("$"), false, "a prefix pattern is not end-anchored");
+    assert.equal(handleSignature("@th3_quick_br0wn_f0x_jump5_0v3r"), long, "premise: the spelling folds to the long signature");
+    assert.ok(matches(long, "@th3_quick_br0wn_f0x_jump5_0v3r"));
+  });
+
+  it("one bounded read per signature, at most MAX_INDEX_SIGNATURES of them", async () => {
+    const issued: string[] = [];
+    const sc = {
+      from: (table: string) => {
+        const b: any = {
+          select: () => b, eq: () => b, or: () => b, in: () => b, limit: () => b,
+          filter: (_c: string, _o: string, v: string) => { issued.push(`${table}:${v}`); return b; },
+          then: (onF: any) => Promise.resolve({ data: [], error: null }).then(onF),
+        };
+        return b;
+      },
+    };
+    const rows = Array.from({ length: MAX_INDEX_SIGNATURES + 4 }, (_, i) => ({
+      id: `r${i}`, entityType: "user", entityId: `u${i}`, subtitle: `@handle_${String.fromCharCode(97 + i)}${String.fromCharCode(97 + i)}x`,
+    }));
+    await indexedImpersonators(sc, rows, { userId: ME });
+    assert.equal(issued.length, MAX_INDEX_SIGNATURES, "bounded per serve");
+    assert.ok(issued.every((q) => q.startsWith("profiles:^")), "each read carries one anchored pattern");
+  });
+});
+
+describe("§36 impersonation — businesses (G233): city and verification are decided per listing", () => {
+  function place(id: string, name: string, city: string, over: Record<string, unknown> = {}) {
+    return {
+      id, name, city, blurb: null, image_url: null, header_image_source: null, image_source_type: null,
+      image_accuracy_status: null, category: "cafe", primary_category: "cafe",
+      lat: 13.7, lng: 100.5, canonical_location_id: null, created_at: "2026-01-01T00:00:00Z",
+      submitted_by: null, status: "active", saved_count: 0, verified: false, ...over,
+    };
+  }
+  const listings = (rows: any[]): FakeState => ({ discovery_places: rows, blocks: [], user_privacy_settings: [], canonical_locations: [] });
+  async function scores(state: FakeState, text: string): Promise<Record<string, number>> {
+    setupIndexed(state);
+    const r = await suggest({ context: "global_search", text });
+    assert.equal(r.status, 200);
+    const rows = ((await r.json()) as any).suggestions.filter((s: any) => s.entityType === "place");
+    return Object.fromEntries(rows.map((s: any) => [s.entityId, s.confidence]));
+  }
+
+  it("two copies in two cities: only the one beside the verified listing is demoted", async () => {
+    const bkk = place("p-copy-bkk", "Blue B0ttle Coffee", "Bangkok");
+    const par = place("p-copy-par", "Blue B0ttle Coffee", "Paris");
+    const base = await scores(listings([bkk, par]), "B0ttle");
+    const withGenuine = await scores(listings([bkk, par, place("p-genuine", "Blue Bottle Coffee", "Bangkok", { verified: true })]), "B0ttle");
+    assert.deepEqual(Object.keys(withGenuine).sort(), ["p-copy-bkk", "p-copy-par"], "premise: both copies, not the genuine listing, are in the answer");
+    assert.ok(Math.abs(withGenuine["p-copy-bkk"]! - (base["p-copy-bkk"]! - IMPERSONATION_DEMOTION)) < 1e-9, "the Bangkok copy is demoted");
+    assert.equal(withGenuine["p-copy-par"], base["p-copy-par"], "the Paris namesake is not — the genuine listing is not in its city");
+  });
+
+  it("a verified listing is never the one demoted, even beside a verified namesake in its city", async () => {
+    const pair = (verified: boolean) => listings([
+      place("p-one", "Blue Bottle Coffee", "Bangkok", { verified }),
+      place("p-two", "Blue Bottle Coffee", "Bangkok", { verified }),
+    ]);
+    assert.deepEqual(await scores(pair(true), "Bottle"), await scores(pair(false), "Bottle"));
+  });
+});
+
+describe("§36 impersonation (G233) — letters from other scripts drawn like Latin ones", () => {
+  // The textbook confusable is not a digit: it is a Cyrillic or Greek letter that
+  // renders like its Latin twin. The fold used to DROP such a letter, so
+  // "@portava" spelled with a Cyrillic o folded to "prtava" and never met "@portava".
+  const CYRILLIC_O = "\u043e", GREEK_O = "\u03bf", CYRILLIC_A = "\u0430", CYRILLIC_ES = "\u0441", CYRILLIC_CAPITAL_O = "\u041e";
+
+  it("folds Cyrillic and Greek lookalikes onto the Latin letter they are drawn as", () => {
+    const real = handleSignature("@portava");
+    assert.equal(handleSignature(`@p${CYRILLIC_O}rtava`), real, "Cyrillic o");
+    assert.equal(handleSignature(`@p${GREEK_O}rtava`), real, "Greek omicron");
+    assert.equal(handleSignature(`@port${CYRILLIC_A}va`), real, "Cyrillic a");
+    assert.equal(handleSignature(`@P${CYRILLIC_CAPITAL_O}RTAVA`), real, "an upper-case lookalike, lower-cased first");
+    assert.equal(nameSignature(`Blue Bottle ${CYRILLIC_ES}offee`), nameSignature("Blue Bottle Coffee"), "Cyrillic es in a venue name");
+  });
+
+  it("the lookup pattern reaches a lookalike spelling, in either case", () => {
+    const re = new RegExp(confusablePattern(handleSignature("@portava"))!, "i");
+    assert.ok(re.test(`p${CYRILLIC_O}rtava`));
+    assert.ok(re.test(`P${CYRILLIC_CAPITAL_O}RTAVA`));
+    assert.ok(re.test(`p${GREEK_O}rt${CYRILLIC_A}va`));
+    // Both cases are carried in the pattern itself: a database whose case folding
+    // does not cover other scripts must still match an upper-case lookalike.
+    assert.ok(confusablePattern(handleSignature("@portava"))!.includes(CYRILLIC_CAPITAL_O), "the upper-case face is in the pattern");
+  });
+
+  it("the within-answer rule demotes a lookalike copy beside its verified target", () => {
+    const rows = [
+      { entityType: "user", subtitle: `@p${CYRILLIC_O}rtava`, confidence: 0.9 },
+      { entityType: "user", subtitle: "@portava", confidence: 0.85, verified: true },
+    ];
+    const out = applyImpersonationRisk(rows);
+    assert.ok(Math.abs(out[0]!.confidence! - (0.9 - IMPERSONATION_DEMOTION)) < 1e-9);
+  });
+
+  it("end to end: a lookalike copy alone in the answer is demoted when its target exists", async () => {
+    const REAL = "bb000000-0000-4000-a000-000000000002";
+    const FAKE = "cc000000-0000-4000-a000-000000000003";
+    const person = (id: string, handle: string, name: string, verified: boolean) => ({
+      id, handle, username: handle, name, display_name: name, avatar_url: null, is_private: false,
+      home_city: null, home_country: null, account_status: "active", verified, is_official: false,
+      show_profile_picture_publicly: true,
+    });
+    const state = (profiles: any[]): FakeState => ({
+      profiles,
+      profile_privacy_settings: profiles.map((p) => ({ user_id: p.id, show_real_name: true, allow_profile_discovery: true })),
+      blocks: [], user_privacy_settings: [], user_follows: [], friend_requests: [], user_friendships: [],
+      canonical_locations: [], location_preferences: [],
+    });
+    const copy = person(FAKE, `p${CYRILLIC_O}rtava`, "Portava Travel", false);
+    const confidence = async (s: FakeState) => {
+      setupIndexed(s);
+      const body = (await (await suggest({ context: "global_search", text: "Portava Travel" })).json()) as any;
+      const rows = body.suggestions.filter((x: any) => x.entityType === "user");
+      assert.deepEqual(rows.map((x: any) => x.entityId), [FAKE]);
+      return rows[0].confidence as number;
+    };
+    const alone = await confidence(state([copy]));
+    const targeted = await confidence(state([copy, person(REAL, "portava", "Somebody Else", true)]));
+    assert.ok(Math.abs(targeted - (alone - IMPERSONATION_DEMOTION)) < 1e-9, `alone ${alone}, targeted ${targeted}`);
+  });
+});
+
+describe("§36 impersonation (G233) — @mentions and Telegraph recipients, which took no impersonation term at all", () => {
+  // Neither projection carries a verified/official flag, so the within-answer
+  // rule could not see a genuine account here even when it was in the list. The
+  // index looks the genuine account up and recognises it by its own id, so the
+  // copy trails it and the genuine account is never the one demoted.
+  const REAL = "bb000000-0000-4000-a000-000000000002";
+  const COPY = "cc000000-0000-4000-a000-000000000003";
+  function person(id: string, handle: string, name: string, over: Record<string, unknown> = {}) {
+    return {
+      id, handle, username: handle, name, display_name: name, avatar_url: null, is_private: false,
+      home_city: null, home_country: null, account_status: "active", verified: false, is_official: false,
+      show_profile_picture_publicly: true, ...over,
+    };
+  }
+  const genuine = person(REAL, "portava", "Portava Real", { verified: true });
+  const copy = person(COPY, "p0rtava", "Portava Copy");
+  const people = (profiles: any[], extra: FakeState = {}): FakeState => ({
+    profiles,
+    profile_privacy_settings: profiles.map((p) => ({ user_id: p.id, show_real_name: true, allow_profile_discovery: true })),
+    blocks: [], user_privacy_settings: [], user_follows: [], friend_requests: [], user_friendships: [],
+    location_preferences: [], message_thread_members: [], trip_members: [], user_message_settings: [],
+    circle_memberships: [], canonical_locations: [],
+    ...extra,
+  });
+  async function persons(state: FakeState, context: string, text: string): Promise<any[]> {
+    setupIndexed(state);
+    const r = await suggest({ context, text });
+    assert.equal(r.status, 200);
+    return ((await r.json()) as any).suggestions.filter((s: any) => s.entityType === "user");
+  }
+
+  it("@mention: the genuine account leads its confusable copy — the copy is seeded FIRST", async () => {
+    // RED BEFORE THE FIX: no impersonation term ran on the @mention path; both
+    // rows scored the same and input order put the copy first.
+    const out = await persons(people([copy, genuine]), "comment", "@ava");
+    assert.deepEqual(out.map((s) => s.entityId), [REAL, COPY]);
+    assert.ok((out[0].confidence ?? 0) > (out[1].confidence ?? 0), "by confidence, not by input order");
+  });
+
+  it("@mention: a copy alone in the list is demoted when the genuine account exists outside it", async () => {
+    const alone = await persons(people([copy]), "comment", "@p0rt");
+    const targeted = await persons(people([copy, genuine]), "comment", "@p0rt");
+    assert.deepEqual(alone.map((s) => s.entityId), [COPY]);
+    assert.deepEqual(targeted.map((s) => s.entityId), [COPY], "premise: the genuine account is not in this list");
+    assert.ok(Math.abs((targeted[0].confidence ?? 0) - ((alone[0].confidence ?? 0) - IMPERSONATION_DEMOTION)) < 1e-9);
+  });
+
+  it("@mention: a genuine account is never the one demoted, even beside another genuine look-alike", async () => {
+    const solo = await persons(people([genuine]), "comment", "@ava");
+    const two = await persons(people([person(COPY, "p0rtava", "Portava Two", { is_official: true }), genuine]), "comment", "@ava");
+    assert.equal(two.length, 2);
+    for (const s of two) assert.equal(s.confidence, solo[0].confidence, `${s.entityId} keeps its score`);
+  });
+
+  it("Telegraph recipient: the genuine contact leads its confusable copy — the copy is seeded FIRST", async () => {
+    // RED BEFORE THE FIX: recipients scored a flat 0.8 and took no impersonation
+    // term, so input order put the copy first.
+    const out = await persons(
+      people([copy, genuine], { user_follows: [{ follower_id: ME, following_id: COPY }, { follower_id: ME, following_id: REAL }] }),
+      "telegraph_recipient", "ava",
+    );
+    assert.deepEqual(out.map((s) => s.entityId), [REAL, COPY]);
+    assert.ok((out[0].confidence ?? 0) > (out[1].confidence ?? 0));
   });
 });

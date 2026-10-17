@@ -83,15 +83,14 @@ const DUPLICATED_TABLES = ["trips", "trip_members", "trip_plan_items"] as const;
  * fails too, so the justifications cannot outlive the code they justify.
  */
 const ALLOWED: Array<{ file: string; table: string; why: string }> = [
-  // CompassCurrentTrip.ts IS the sanctioned copy. "Which trip is this user on"
-  // is a USER-scoped question and no Trip projection answers it: every trip
-  // projection is built FROM a tripId. CT-02's remedy for selection was to make
-  // the duplication one module instead of five, which is what these three are.
-  { file: "compass/CompassCurrentTrip.ts", table: "trip_members", why: "selection: the owner ∪ accepted-member union, in the ONE module CT-02 moved it to" },
-  { file: "compass/CompassCurrentTrip.ts", table: "trips",        why: "selection: the owned trips in the requested statuses" },
-  { file: "compass/CompassCurrentTrip.ts", table: "trips",        why: "selection: the member trips in the requested statuses" },
-  // The survivors in CompassTools.ts, each with the reason no projection covers it.
-  { file: "compass/CompassTools.ts", table: "trips",            why: "add_to_trip: the trip's title for the proposal card. Documented in place as defence-in-depth behind canEditPlan; building a whole context projection (two reads) on a write path to read one column is a worse trade, not a better one" },
+  // CompassCurrentTrip.ts held three sanctioned copies (membership, owned trips,
+  // member trips) while no Trip projection answered a USER-scoped question. Trips
+  // now publishes those (TripCompassMembershipProjection, TripCompassTripSummary-
+  // Projection) and the module consumes them, so its entries are gone: case D
+  // holds it — and every other compass/ module — to zero.
+  // CompassTools.ts's last survivor (add_to_trip's title read) now comes from
+  // TripCompassTripSummaryProjection — one read, the same as before — so the
+  // list is empty and both owned files hold zero raw reads.
 ];
 
 /**
@@ -341,5 +340,179 @@ describe("CT-02 C — real client transport shapes retain the unread state", () 
       assert.ok(reads.length > 0);
       assert.equal(ambientFetch.mock.callCount(), 0);
     }
+  });
+});
+
+// ── D. The WHOLE of compass/: no module reads a Trip table (CT-02 closed) ─────
+//
+// Cases A–C held CT-02 to the two modules one lane owned, with an allow-list,
+// because "zero raw reads in compass/" was false: census-compass §62 measured 22
+// literal selects of `trips` / `trip_members` / `trip_plan_items` across 12
+// compass/ files. This case is that census measure as a test — the same AST
+// count (literal `.from(<table>)` call chains, comments and string examples
+// excluded) — over EVERY source file under compass/, and it asserts zero.
+//
+// It is stricter than the census measure in two ways, both on purpose:
+//   - it counts every Trip-aggregate table (`trips`, `trip_*`), not only the
+//     three §62 named — a raw `trip_commitments` read is the same duplication;
+//   - a `.from(<expression>)` whose table is not a literal must resolve, or be
+//     named below with what it can be, so a dynamic read cannot hide a trip table.
+//
+// The ONE named exception is the Autopilot's own store. `trip_autopilot_settings`
+// and `trip_autopilot_proposals` are created by 20260728_compass_autopilot.sql
+// for Compass's autopilot and read by nothing in Trips; their WRITE path is
+// census-compass CT-01's row (the kernel), not this one. Every other `trip*`
+// read in compass/ must come through a Trips-owned projection.
+//
+// TEST-FIRST — what red looked like before the migration: 21 literal selects in
+// 12 files (§62's 22, less one migrated since) plus `trip_commitments` in
+// CompassTools: 22 offending reads in 12 files.
+import ts from "typescript";
+import { readdirSync, statSync } from "node:fs";
+import { join, relative } from "node:path";
+
+const COMPASS_DIR = resolve(HERE, "..", "compass");
+const COMPASS_OWNED_TRIP_TABLES: Record<string, string> = {
+  trip_autopilot_settings: "Compass's autopilot store (20260728_compass_autopilot.sql); its writes are CT-01's kernel row",
+  trip_autopilot_proposals: "Compass's autopilot store (20260728_compass_autopilot.sql); its writes are CT-01's kernel row",
+};
+/** Non-literal `.from(x)` sites that cannot be resolved to a constant, and what they can be. */
+const DYNAMIC_FROM_SITES: Record<string, { count: number; why: string }> = {
+  "CompassGraphEngine.ts|table": { count: 4, why: "the graph's own deletion/cleanup helpers; every caller passes a compass_graph_* / compass_city_* literal" },
+};
+const BUILTIN_RECEIVERS = new Set(["Array", "Buffer", "Object", "Set", "Map", "String", "Uint8Array", "Int8Array", "Float32Array", "Float64Array"]);
+
+function compassSources(dir: string): string[] {
+  const out: string[] = [];
+  for (const name of readdirSync(dir)) {
+    const p = join(dir, name);
+    if (statSync(p).isDirectory()) { if (name !== "__tests__" && name !== "node_modules") out.push(...compassSources(p)); continue; }
+    if (/\.tsx?$/.test(name) && !/\.test\.tsx?$/.test(name) && !name.endsWith(".d.ts")) out.push(p);
+  }
+  return out.sort();
+}
+
+interface FromSite { file: string; line: number; table: string | null; expr: string }
+
+function fromSites(path: string): FromSite[] {
+  const text = readFileSync(path, "utf8");
+  const sf = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
+  const consts = new Map<string, string>();
+  const sites: FromSite[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer
+      && (ts.isStringLiteral(node.initializer) || ts.isNoSubstitutionTemplateLiteral(node.initializer))) {
+      consts.set(node.name.text, node.initializer.text);
+    }
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === "from"
+      && node.arguments.length >= 1
+      && !(ts.isIdentifier(node.expression.expression) && BUILTIN_RECEIVERS.has(node.expression.expression.text))) {
+      const arg = node.arguments[0]!;
+      const line = sf.getLineAndCharacterOfPosition(node.getStart()).line + 1;
+      const literal = ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg) ? arg.text : null;
+      sites.push({ file: relative(COMPASS_DIR, path), line, table: literal, expr: arg.getText(sf) });
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  // Resolve identifiers bound to a string constant in the same file.
+  return sites.map((s) => (s.table === null && consts.has(s.expr) ? { ...s, table: consts.get(s.expr)! } : s));
+}
+
+const isTripTable = (table: string) => /^trips$|^trip_/.test(table);
+
+describe("CT-02 D — no compass/ module reads a Trip table; every one comes through a Trips projection", () => {
+  const files = compassSources(COMPASS_DIR);
+  const sites = files.flatMap(fromSites);
+
+  it("the scan sees the directory (a vacuous scan proves nothing)", () => {
+    assert.ok(files.length >= 50, `only ${files.length} compass/ source files were scanned`);
+    assert.ok(files.some((f) => f.endsWith("CompassTools.ts")) && files.some((f) => f.endsWith("CompassGraphEngine.ts")));
+    assert.ok(sites.filter((s) => s.table !== null).length >= 100, `only ${sites.length} .from() sites were found — the parser is not reading the code`);
+    assert.ok(sites.some((s) => s.table === "trip_autopilot_settings"), "the scan no longer sees the one table it exempts by name — re-check the exemption");
+  });
+
+  it("zero literal reads of trips / trip_* in compass/, other than the Autopilot's own store", () => {
+    const offending = sites.filter((s) => s.table !== null && isTripTable(s.table) && !(s.table in COMPASS_OWNED_TRIP_TABLES));
+    assert.deepEqual(
+      offending.map((s) => `${s.file}:${s.line} ${s.table}`), [],
+      `${offending.length} raw Trip-table read(s) in compass/ across ${new Set(offending.map((s) => s.file)).size} file(s). ` +
+      "Consume a Trips projection (domain/trips/projections/TripCompass*Projection.ts) instead of reading the table.",
+    );
+  });
+
+  it("every non-literal .from(x) in compass/ resolves to a non-trip table, or is a named dynamic site with the count it has", () => {
+    const dynamic = sites.filter((s) => s.table === null);
+    const byKey = new Map<string, number>();
+    for (const s of dynamic) byKey.set(`${s.file}|${s.expr}`, (byKey.get(`${s.file}|${s.expr}`) ?? 0) + 1);
+    assert.deepEqual(
+      Object.fromEntries([...byKey].sort()),
+      Object.fromEntries(Object.entries(DYNAMIC_FROM_SITES).map(([k, v]) => [k, v.count]).sort()),
+      "an unresolvable .from(expression) appeared or vanished in compass/: resolve it to a literal, or name it here with what it can be",
+    );
+    for (const s of sites) if (s.table !== null && s.expr !== JSON.stringify(s.table) && isTripTable(s.table)) {
+      assert.fail(`${s.file}:${s.line} reads ${s.table} through the constant ${s.expr}`);
+    }
+  });
+
+  it("the exemptions carry reasons, and name only tables a Trips module does not read", () => {
+    for (const [table, why] of Object.entries(COMPASS_OWNED_TRIP_TABLES)) {
+      assert.ok(why.length > 40, `${table}: say why it is Compass's`);
+      assert.match(why, /compass_autopilot\.sql/);
+    }
+  });
+});
+
+// ── D2. The Compass ROUTE files read no Trip table either ─────────────────────
+//
+// census-compass measured CT-02 over compass/ (§61/§62), but census-compass also
+// watches the Compass route files, and four raw reads lived there: the traveller
+// match's two destination-overlap reads, the trip-surface feed's member list, and
+// the thread context's trip city. They come through Trips projections too. A
+// WRITE is not this row's subject — the one in routes/compass.ts is the
+// `trip-kernel:legacy-path` flag-off twin of ADD_PLAN, which CT-01 (the kernel
+// write path) grades — so writes are reported, not counted, and named exactly.
+const ROUTES_DIR = resolve(HERE, "..", "routes");
+const COMPASS_ROUTE_WRITES: Record<string, string> = {
+  "compass.ts|trip_plan_items|insert": "the `trip-kernel:legacy-path` flag-off twin of ADD_PLAN — census-compass CT-01's write path, not a read",
+};
+
+function routeFromSites(path: string): Array<{ file: string; line: number; table: string; op: string }> {
+  const text = readFileSync(path, "utf8");
+  const sf = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
+  const out: Array<{ file: string; line: number; table: string; op: string }> = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === "from"
+      && node.arguments.length === 1 && (ts.isStringLiteral(node.arguments[0]!) || ts.isNoSubstitutionTemplateLiteral(node.arguments[0]!))) {
+      const ops: string[] = [];
+      for (let p: ts.Node | undefined = node.parent; p && (ts.isPropertyAccessExpression(p) || ts.isCallExpression(p)); p = p.parent) {
+        if (ts.isPropertyAccessExpression(p)) ops.push(p.name.text);
+      }
+      const write = ops.find((o) => ["insert", "update", "upsert", "delete"].includes(o));
+      out.push({ file: relative(ROUTES_DIR, path), line: sf.getLineAndCharacterOfPosition(node.getStart()).line + 1,
+        table: (node.arguments[0] as ts.StringLiteral).text, op: write ?? "select" });
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return out;
+}
+
+describe("CT-02 D2 — the Compass route files read no Trip table; their trip facts come through Trips projections", () => {
+  const files = readdirSync(ROUTES_DIR).filter((f) => /^compass[A-Za-z]*\.ts$/.test(f)).map((f) => join(ROUTES_DIR, f));
+  const sites = files.flatMap(routeFromSites).filter((s) => isTripTable(s.table) && !(s.table in COMPASS_OWNED_TRIP_TABLES));
+
+  it("the scan sees the route files", () => {
+    assert.ok(files.some((f) => f.endsWith("/compass.ts")) && files.length >= 5, `scanned: ${files.join(", ")}`);
+  });
+
+  it("zero literal Trip-table READS in routes/compass*.ts", () => {
+    const reads = sites.filter((s) => s.op === "select");
+    assert.deepEqual(reads.map((s) => `${s.file}:${s.line} ${s.table}`), [], "consume a Trips projection instead of reading the table");
+  });
+
+  it("the Trip-table WRITES there are exactly the named kernel-twin ones (CT-01's, not this row's)", () => {
+    const writes = sites.filter((s) => s.op !== "select").map((s) => `${s.file}|${s.table}|${s.op}`).sort();
+    assert.deepEqual(writes, Object.keys(COMPASS_ROUTE_WRITES).sort());
   });
 });

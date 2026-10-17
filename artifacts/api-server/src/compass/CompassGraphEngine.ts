@@ -40,7 +40,7 @@ import type { RankingFactor } from "./CompassRecommendationEngine.js";
 import { canonicalCityKey } from "../lib/canonicalLocations.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { mayPublishRhythm } from "../lib/compassRhythmGate.js";
-import { logger as rootLogger } from "../lib/logger.js"; import { cityConfidenceWindowedCorpus } from "./cityConfidenceWindowedReads.js";
+import { logger as rootLogger } from "../lib/logger.js"; import { cityConfidenceWindowedCorpus } from "./cityConfidenceWindowedReads.js"; import { tripGraphSourceRows, toTripGraphSourceFact } from "../domain/trips/projections/TripGraphSourceProjection.js"; // CT-02
 import { guardMemoryRows, excludedMemories } from "../services/memory/memoryReaderGuard.js"; // census H10 H48 H49 H73 H92 H188 H210 (RECON-W A1): the owner's per-Memory controls
 import { readMemoryPrecisionGate, precisionColumnSelectable, precisionClampApplies, type MemoryPrecisionGate } from "../lib/memoryPrecisionGate.js"; import { publicationPrecision } from "../lib/memoryLocationPrecision.js"; import { memoryPlaceLabelsForNonOwner } from "./memoryPlaceLabels.js"; // §10 on the graph's Memory reads (census-compass §47)  // census-discovery §85 H-P21-4
 
@@ -753,26 +753,26 @@ export async function buildGraphFromSources(
 
   // 2. Trips → person —took_trip→ city; ≥2 trips to a city → returned_to
   try {
-    const { data } = await db
-      .from("trips")
-      .select("id, owner_id, destination_city, start_date, end_date, destination_lat, destination_lng")
-      .limit(BUILD_LIMIT);
+    // CT-02: the ONE Trips-owned source read (domain/trips/projections/
+    // TripGraphSourceProjection.ts), shared with the reconcile's `supportReads`.
+    const { data, error } = await tripGraphSourceRows(db)
+      .limit(BUILD_LIMIT); if (error) throw error; // unread: this source contributes nothing (the catch below), as a null `data` did
     const tripsPerUserCity = new Map<string, number>();
-    for (const r of (data as any[]) ?? []) {
-      const city = normCity(r.destination_city);
-      if (!r.owner_id || !city) continue;
-      const at = r.start_date ? String(r.start_date) : null;
-      registerCityCoordinates(city, r.destination_lat, r.destination_lng);
-      batch.node("person", String(r.owner_id));
+    for (const raw of (data as any[]) ?? []) { const t = toTripGraphSourceFact(raw); if (!t) continue; // Trips types the row; one that is not a trip fact decides nothing
+      const city = normCity(t.destinationCity);
+      if (!t.ownerId || !city) continue;
+      const at = t.startDate ? String(t.startDate) : null;
+      registerCityCoordinates(city, t.destinationLat, t.destinationLng);
+      batch.node("person", String(t.ownerId));
       batch.node("city", city, city);
-      batch.node("trip", String(r.id), city);
-      batch.edge({ src_type: "person", src_key: String(r.owner_id), dst_type: "trip", dst_key: String(r.id), edge_type: "took_trip", at });
-      batch.edge({ src_type: "trip", src_key: String(r.id), dst_type: "city", dst_key: city, edge_type: "destination", at });
-      const k = `${r.owner_id}|${city}`;
+      batch.node("trip", String(t.tripId), city);
+      batch.edge({ src_type: "person", src_key: String(t.ownerId), dst_type: "trip", dst_key: String(t.tripId), edge_type: "took_trip", at });
+      batch.edge({ src_type: "trip", src_key: String(t.tripId), dst_type: "city", dst_key: city, edge_type: "destination", at });
+      const k = `${t.ownerId}|${city}`;
       tripsPerUserCity.set(k, (tripsPerUserCity.get(k) ?? 0) + 1);
       if ((tripsPerUserCity.get(k) ?? 0) >= 2) {
         // Cross-trip relationship: the same person, multiple trips, same city.
-        batch.edge({ src_type: "person", src_key: String(r.owner_id), dst_type: "city", dst_key: city, edge_type: "returned_to", at });
+        batch.edge({ src_type: "person", src_key: String(t.ownerId), dst_type: "city", dst_key: city, edge_type: "returned_to", at });
       }
     }
   } catch { /* fail-soft */ }
@@ -2402,9 +2402,9 @@ const supportReads = {
     .from("user_stamps")
     .select("user_id, city, country, earned_at, is_revoked, lat, lng, stamp_definitions(evidences_presence)")
     .eq("is_revoked", false),
-  trips: (db: SupabaseClient) => db
-    .from("trips")
-    .select("id, owner_id, destination_city, start_date, end_date, destination_lat, destination_lng"),
+  // CT-02: the build's own read, through the one Trips-owned literal
+  // (TripGraphSourceProjection.ts), so columns and predicates cannot diverge.
+  trips: (db: SupabaseClient) => tripGraphSourceRows(db),
   events: (db: SupabaseClient) => db
     .from("events")
     .select("id, city, category, starts_at, location_lat, location_lng, circle_id"),

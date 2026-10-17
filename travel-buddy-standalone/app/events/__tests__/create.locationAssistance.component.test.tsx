@@ -404,3 +404,82 @@ test.each(['query', 'clear', 'close', 'unmount', 'account', 'relogin', 'privacy 
   if (change !== 'unmount') expect(screen.queryByText('Canonical Sky36, Da Nang')).toBeNull();
   expect(writes()).toHaveLength(0);
 });
+
+// ── census G159 (2026-10-17, wave 3): a pasted booking on a field that takes a place ──
+// §24: "flight/hotel text when the receiving field supports those objects". The
+// Event location takes a place, so its picker carries the paste surface: a hotel
+// confirmation is read for the property alone (server: lib/inputAssistance/
+// pasteExtraction.ts#classifyTravelBooking), reviewed, and only the property the
+// person picks becomes the location. Flight text is refused; no field takes one.
+const SALA_ID = '33333333-3333-4333-8333-333333333333';
+const salaRow = {
+  ...canonicalRow,
+  id: `event_location:places:${SALA_ID}`, entityId: SALA_ID, label: 'Sala Danang Beach Hotel',
+  action: { type: 'open_entity', entityType: 'place', entityId: SALA_ID },
+  structuredValue: { ...canonicalRow.structuredValue, venueId: SALA_ID, venue: 'Sala Danang Beach Hotel', lat: 16.06, lng: 108.24 },
+};
+const HOTEL_TEXT = 'Booking confirmation\nGuest name: Nguyen Van A\nHotel: Sala Danang Beach Hotel\nCheck-in: Fri 10 Oct 2026';
+const FLIGHT_TEXT = 'Your e-ticket\nFlight VN 123  SGN → DAD';
+function extractItem(over: Record<string, unknown>) {
+  return {
+    index: 0, raw: 'Sala Danang Beach Hotel', source: 'text', query: 'Sala Danang Beach Hotel', lat: null, lng: null,
+    timeHint: null, dayLabel: null, status: 'resolved', reason: null, partial: false, candidates: [salaRow], ...over,
+  };
+}
+function serveExtract(items: unknown[]) {
+  const extracts: any[] = [];
+  const base = fetchMock.getMockImplementation()!;
+  fetchMock.mockImplementation(async (url: string, init: RequestInit = {}) => {
+    if (!url.endsWith('/api/input-assistance/extract')) return base(url, init);
+    const body = JSON.parse(String(init.body ?? '{}'));
+    extracts.push(body);
+    return { ok: true, status: 200, json: async () => ({
+      requestId: 'paste-1', policyVersion: 'test-policy-v1', context: body.context, fieldId: body.fieldId,
+      shape: 'single', truncated: false, mutated: false, items,
+    }) };
+  });
+  return extracts;
+}
+async function pasteIntoLocation(text: string) {
+  await mountLocation();
+  await openPicker('');
+  await fireEvent.press(screen.getByTestId('place-paste'));
+  expect(screen.getByText(/Only the property’s name or address is looked up/)).toBeTruthy();
+  await fireEvent.changeText(screen.getByTestId('paste-input'), text);
+  await fireEvent.press(screen.getByTestId('paste-extract'));
+  await screen.findByTestId('paste-item-0');
+}
+
+test('G159: a hotel confirmation pasted into the Event location becomes the venue, after review', async () => {
+  const extracts = serveExtract([extractItem({})]);
+  await pasteIntoLocation(HOTEL_TEXT);
+  // The field's own context and id; the server reads the property alone.
+  expect(extracts).toEqual([{ context: 'event_location', fieldId: 'event.location', text: HOTEL_TEXT }]);
+  // Review before anything happens: the property is offered as ONE pick, nothing is written.
+  const candidate = screen.getByTestId('paste-candidate-0-0');
+  expect(candidate.props.accessibilityLabel).toBe('Sala Danang Beach Hotel, Da Nang');
+  expect(candidate.props.accessibilityRole).toBe('radio');
+  expect(writes()).toHaveLength(0);
+  await fireEvent.press(screen.getByTestId('paste-confirm'));
+  await waitFor(() => expect(screen.queryByPlaceholderText('City, venue or address…')).toBeNull());
+  expect(screen.getByText('Sala Danang Beach Hotel, Da Nang')).toBeTruthy();
+  expect(screen.getByDisplayValue('Da Nang')).toBeTruthy();
+  await saveNext();
+  expect(draftPayload()).toMatchObject({
+    locationName: 'Sala Danang Beach Hotel, Da Nang', locationLat: 16.06, locationLng: 108.24,
+    city: 'Da Nang', country: 'Vietnam', timezone: 'Asia/Ho_Chi_Minh',
+  });
+});
+
+test('G159: flight text is refused on the Event location — nothing to pick, nothing set', async () => {
+  serveExtract([extractItem({
+    raw: 'Flight details can’t be added as a place. Add the destination city instead.', query: null,
+    status: 'unsupported', reason: 'Flight details can’t be added as a place. Add the destination city instead.', candidates: [],
+  })]);
+  await pasteIntoLocation(FLIGHT_TEXT);
+  expect(screen.getByTestId('paste-item-status-0')).toBeTruthy();
+  expect(screen.getByTestId('paste-confirm').props.accessibilityState).toMatchObject({ disabled: true });
+  await fireEvent.press(screen.getByTestId('paste-close'));
+  expect(screen.queryByText('Sala Danang Beach Hotel, Da Nang')).toBeNull();
+  expect(writes()).toHaveLength(0);
+});

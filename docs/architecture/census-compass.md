@@ -2695,7 +2695,7 @@ bound its error and answers *"Place search unavailable right now."* **Step 1 of 
 honest and step 2 was not**, and the two sit in one file.
 
 Two further reads were bound in the same pass. One —
-`artifacts/api-server/src/compass/CompassTools.ts:1764#const { data: trip, error: tripErr }` — is
+`artifacts/api-server/src/compass/CompassTools.ts:1766#if (!tripRead.ok || !acceptTripProjection(tripRead.projection, {` — is
 DEFENCE IN DEPTH AND UNREACHABLE TODAY, and is recorded as such rather than counted: `canEditPlan`
 reads the same row three lines earlier and THROWS on an unreadable one. A mutation deleting that
 branch leaves the whole suite green, and that survivor is written into the test's own header instead
@@ -3825,7 +3825,7 @@ unreadable presence setting was the same defect one step earlier: `getSenseSetti
 
 **What was built.** Every evaluator read now goes through `senseRows`
 (`artifacts/api-server/src/compass/CompassSenseEngine.ts:786#function senseRows(`), which throws `SenseReadError` on a bound error. The evaluators'
-catches rethrow (`artifacts/api-server/src/compass/CompassSenseEngine.ts:277#throw err;`, `artifacts/api-server/src/compass/CompassSenseEngine.ts:336#throw err;`, `artifacts/api-server/src/compass/CompassSenseEngine.ts:375#throw err;`,
+catches rethrow (`artifacts/api-server/src/compass/CompassSenseEngine.ts:277#throw err;`, `artifacts/api-server/src/compass/CompassSenseEngine.ts:336#throw err;`, `artifacts/api-server/src/compass/CompassSenseEngine.ts:372#}).accepted) throw new SenseReadError("trip_plan_items"`,
 `artifacts/api-server/src/compass/CompassSenseEngine.ts:460#throw err;`), and an unread trip throws instead of reading as "no trip"
 (`artifacts/api-server/src/compass/CompassSenseEngine.ts:355#throw new SenseReadError("trips"`). `evaluateSenseSignals` settles the five
 independently (`artifacts/api-server/src/compass/CompassSenseEngine.ts:512#Promise.allSettled([`) and returns `{ candidates, failedSources }`
@@ -4691,8 +4691,8 @@ become re-exports of C's and no caller changes.
 
 | reader | what it served before | proof (each: a failing-then-passing case and a mutation that turns it red) |
 | --- | --- | --- |
-| Autopilot plan read | every member's items with title, place, coordinates — conflicts and travel times computed from them (`artifacts/api-server/src/compass/CompassAutopilotEngine.ts:324#const visible = withholdPrivatePlanItems((data ?? []) as any[], await planItemAccessFor(sc, tripId, viewerId));`) | compass-autopilot: a member's private item yields no title and no travel-time conflict; made public, it conflicts |
-| Live today plan | titles of everyone's items (`artifacts/api-server/src/compass/CompassLiveEngine.ts:284#items: withholdPrivatePlanItems((data ?? []) as any[], access)`) | compass-live: the slot stays, the title is "Private plan" |
+| Autopilot plan read | every member's items with title, place, coordinates — conflicts and travel times computed from them (`artifacts/api-server/src/domain/trips/projections/TripCompassPlanProjection.ts:169#const visible = await visibleTo(sc, tripId, viewerId, data.map(toPlanRow));`) | compass-autopilot: a member's private item yields no title and no travel-time conflict; made public, it conflicts |
+| Live today plan | titles of everyone's items (`artifacts/api-server/src/domain/trips/projections/TripCompassPlanProjection.ts:193#const visible = await visibleTo(sc, tripId, viewerId, data);`) | compass-live: the slot stays, the title is "Private plan" |
 | trip context (today's plan; disruptions) | titles in the prompt; TODAY uses its typed producer at `artifacts/api-server/src/compass/CompassTripContext.ts:164#const planned = await buildTripCompassTodayProjection`; disruption-input privacy now lives in its typed producer (`artifacts/api-server/src/domain/trips/projections/TripCompassDisruptionPlanProjection.ts:37#const visibleRows = withholdPrivatePlanItems`), consumed before live claims at `artifacts/api-server/src/compass/CompassTripContext.ts:429#const planned = await buildTripCompassDisruptionPlanProjection` | historical compass-trip-context A2 remains historical; current TODAY and disruption producer/consumer evidence is bounded to those paths (§61), not whole-Compass convergence |
 | `check_trip_conflicts`, `get_current_trip`, `simulate_plan` | titles of everyone's items | `artifacts/api-server/src/test/compass-tools.test.ts:319#it("check_trip_conflicts: the viewer's own and the public items keep their titles; the private and NULL-flag ones are 'Private plan'"`, its `get_current_trip` sibling, and the simulate case in the trip replan suite |
 | Map meeting points | an item with a NULL privacy flag was drawn (`=== true` test) (`artifacts/api-server/src/lib/mapProducers/meetingPointProducer.ts:159#if (item.location_is_private !== false) return { skipped: "private_location" };`) | mapMeetingPointProducer |
@@ -5127,7 +5127,7 @@ Memories decides nothing
 A failed flag read therefore never deletes Memory edges. When an owner tightens their rung, the next
 rebuild retires the edges that the new rung no longer supports.
 
-Tests: `artifacts/api-server/src/test/compassGraphRevocation.test.ts:499#describe("§47 — a Memory reaches the world graph`
+Tests: `artifacts/api-server/src/test/compassGraphRevocation.test.ts:511#describe("§47 — a Memory reaches the world graph`
 (9 cases, 29/29). Mutations, each red, then restored:
 
 | mutation | result |
@@ -5794,9 +5794,9 @@ untouched historical assertions and deployment states are not newly verified.
 CT-02's membership, owned-trip and member-trip list reads now require arrays, including when the
 client returns no error. An empty HTTP body, JSON null, object or string must take the existing
 unread outcome rather than select an empty or partial union
-(`artifacts/api-server/src/compass/CompassCurrentTrip.ts:224#if (memberErr || !Array.isArray(memberRows))`,
-`artifacts/api-server/src/compass/CompassCurrentTrip.ts:257#if (error || !Array.isArray(data))`,
-`artifacts/api-server/src/compass/CompassCurrentTrip.ts:271#if (error || !Array.isArray(data))`).
+(`artifacts/api-server/src/domain/trips/projections/TripCompassMembershipProjection.ts:121#if (error || !Array.isArray(data)) return UNAVAILABLE;`,
+`artifacts/api-server/src/domain/trips/projections/TripCompassTripSummaryProjection.ts:152#if (!Array.isArray(data)) return UNAVAILABLE;`,
+`artifacts/api-server/src/domain/trips/projections/TripCompassTripSummaryProjection.ts:208#return listFrom(viewerId, data, opts.now ?? new Date());`).
 The typed projection likewise preserves the real trip but marks a non-array plan unread
 (`artifacts/api-server/src/domain/trips/projections/TripCompassProjection.ts:195#if (itemsErr || !Array.isArray(items))`).
 Readable empty arrays still mean empty. Selection, permissions, windows, caps and wire vocabulary
@@ -5939,3 +5939,70 @@ picker fixture run passes 50 tests in four suites with open-handle detection;
 38 of those exercise Heartbeat. Overlapping runs are not additive coverage.
 No full requirement, device, hosted or activation certification follows. All
 grades and totals remain unchanged.
+
+## Row moves — 2026-10-17 fixes (wave 3)
+
+Measured on branch `claude/census-regrade-20261017` (stacked on PR #762) on 2026-10-17, against the working tree. `head_commit` is not re-declared. Every row not named here is unchanged. **One row moves, `W → C`: CT-02.** This is a code change, not a re-reading: §62's remainder (*"other raw consumers"*) and §59's (*"equivalent typed multi-trip/count/roster contracts and consumer migration, not a capped projection substitution"*) are built, and the measure §61/§62 used now reads zero.
+
+### What CT-02 asked for, and what was left
+
+The row asks that Compass consume typed Trip projections rather than duplicate Trip semantics. §62 measured **22 literal `.from(table)` selects of `trips` / `trip_members` / `trip_plan_items` in 12 `compass/` files** (fourteen `trips`, four `trip_members`, four `trip_plan_items`). Re-measured at the start of this pass with the same AST count: 21 in 12 files (one had gone since), plus one raw `trip_commitments` read in `CompassTools` that §62's three-table count did not name. Four more raw reads sat in the Compass route file, which this census also watches. §55 recorded why they had not been swapped onto `TripCompassProjection`: each answers a question that projection does not (a list of the user's trips, a membership union, an uncapped day, a joined membership row), and a capped substitution would narrow the answer. So the fix is new Trips-owned projections with those shapes, not substitution.
+
+### The Trips projections built (all in `domain/trips/projections/`, all Trips-owned)
+
+- **Trip rows**, one typed row shape for every Compass trip read: owned trips (`artifacts/api-server/src/domain/trips/projections/TripCompassTripSummaryProjection.ts:169#export async function buildTripCompassOwnedTripsProjection(`), named trips (`artifacts/api-server/src/domain/trips/projections/TripCompassTripSummaryProjection.ts:195#export async function buildTripCompassTripsByIdProjection(`), other owners' trips by visibility (`artifacts/api-server/src/domain/trips/projections/TripCompassTripSummaryProjection.ts:222#export async function buildTripCompassTripsByOwnersProjection(`) and one trip (`artifacts/api-server/src/domain/trips/projections/TripCompassTripSummaryProjection.ts:256#export async function buildTripCompassTripSummaryProjection(`). Every row carries its own §19.1 envelope, attributed to `trips.version` read in the same row, so attribution costs no extra read. A non-array body is unavailable, never an empty list (`artifacts/api-server/src/domain/trips/projections/TripCompassTripSummaryProjection.ts:152#if (!Array.isArray(data)) return UNAVAILABLE;`). Status and visibility filters are parameters now, so the static enum check that once caught `in_progress` and `"friends"` cannot read them. Trips refuses an unknown `trip_status` or `trip_visibility` label before any read (`artifacts/api-server/src/domain/trips/projections/TripCompassTripSummaryProjection.ts:101#export const TRIP_STATUS_LABELS`, `artifacts/api-server/src/domain/trips/projections/TripCompassTripSummaryProjection.ts:107#export const TRIP_VISIBILITY_LABELS`).
+- **Memberships**: the user's memberships by role, with Trips' one "accepted" rule stated once (`artifacts/api-server/src/domain/trips/projections/TripCompassMembershipProjection.ts:96#export function isAcceptedMembershipStatus(`, `artifacts/api-server/src/domain/trips/projections/TripCompassMembershipProjection.ts:110#export async function buildTripCompassMembershipProjection(`). It also covers the fallback feed's joined membership row (`artifacts/api-server/src/domain/trips/projections/TripCompassMembershipProjection.ts:149#export async function buildTripCompassMemberTripsProjection(`) and one trip's member ids (`artifacts/api-server/src/domain/trips/projections/TripCompassMembershipProjection.ts:204#export async function buildTripCompassTripMemberIdsProjection(`). A membership SET spans trips, so its own envelope is `unattributable`, which is §19.1's word for live and unversioned. Embedded trips carry their row's version.
+- **Plans**: the whole live plan, which is the Autopilot's universe (`artifacts/api-server/src/domain/trips/projections/TripCompassPlanProjection.ts:155#export async function buildTripCompassPlanProjection(`), and one day's live plan, which Live and Sense read (`artifacts/api-server/src/domain/trips/projections/TripCompassPlanProjection.ts:179#export async function buildTripCompassDayPlanProjection(`). Both are uncapped, read `trips.version` first, and apply OD-TRIP-3 / §96 through the one grant-aware loader (`artifacts/api-server/src/domain/trips/projections/TripCompassPlanProjection.ts:149#rows: withholdPrivatePlanItems(rows, access),`). An unread access read is disclosed (`accessStatus`) rather than refused, which keeps the consumers' existing behaviour.
+- **Commitments** (`artifacts/api-server/src/domain/trips/projections/TripCompassCommitmentsProjection.ts:66#export async function buildTripCompassCommitmentsProjection(`): §5.1's fields, typed, in "required arrival, else start" order.
+- **The privacy columns by id** move to the Trips module that owns the access loader (`artifacts/api-server/src/server/trips/privateAnchorShares.ts:331#export async function readTripPlanItemPrivacy(`). `compass/planItemAccess.ts` now delegates to it (`artifacts/api-server/src/compass/planItemAccess.ts:44#return readTripPlanItemPrivacy(sc, tripId);`).
+- **The graph's trip facts** (`artifacts/api-server/src/domain/trips/projections/TripGraphSourceProjection.ts:54#export function tripGraphSourceRows(`, `artifacts/api-server/src/domain/trips/projections/TripGraphSourceProjection.ts:71#export function toTripGraphSourceFact(`). This is a typed SOURCE contract, not a §19.1 projection, and its header says why. The world-graph rebuild pages every trip with its own completeness accounting. A per-trip "reject as stale" envelope stamped on 5,000 rows that nothing compares would be decoration. What CT-02 needs from it holds: one Trips-owned literal and a typed fact. City canonicalisation and edge vocabulary stay graph semantics.
+
+### Every consumer, moved
+
+| `compass/` module (raw reads before) | consumes now |
+| --- | --- |
+| `CompassCurrentTrip` (3: membership, owned, member trips) | `artifacts/api-server/src/compass/CompassCurrentTrip.ts:219#const built = await buildTripCompassMembershipProjection`, `artifacts/api-server/src/compass/CompassCurrentTrip.ts:261#await buildTripCompassOwnedTripsProjection(sc, userId, { statuses }),`, `artifacts/api-server/src/compass/CompassCurrentTrip.ts:266#await buildTripCompassTripsByIdProjection(sc, userId, memberTripIds, { statuses }),`, every envelope through `artifacts/api-server/src/compass/CompassCurrentTrip.ts:320#export function acceptedTripRows(` |
+| `CompassTools` (2: `add_to_trip`'s trip row; `get_commitments`) | `artifacts/api-server/src/compass/CompassTools.ts:1764#const tripRead = await buildTripCompassTripSummaryProjection(sc, tripId);`, `artifacts/api-server/src/compass/CompassTools.ts:1432#const built = await buildTripCompassCommitmentsProjection(sc, t.id, userId);` |
+| `CompassAutopilotEngine` (4: the plan; the trip row ×3) | `artifacts/api-server/src/compass/CompassAutopilotEngine.ts:318#const built = await buildTripCompassPlanProjection(sc, tripId, viewerId);`, `artifacts/api-server/src/compass/CompassAutopilotEngine.ts:1100#async function readAutopilotTrip(` |
+| `CompassLiveEngine`, `CompassSenseEngine` (1 each: today's plan) | `artifacts/api-server/src/compass/CompassLiveEngine.ts:274#const built = await buildTripCompassDayPlanProjection(sc, tripId, viewerId, today);`, `artifacts/api-server/src/compass/CompassSenseEngine.ts:367#const built = await buildTripCompassDayPlanProjection(sc, tripId, viewerId, today);` |
+| `CompassProfileService` (2: owned, member trips) | `artifacts/api-server/src/compass/CompassProfileService.ts:77#buildTripCompassOwnedTripsProjection(db, userId),`, `artifacts/api-server/src/compass/CompassProfileService.ts:80#buildTripCompassTripsByIdProjection(db, userId, memberTripIds),` |
+| `CompassSocialEngine` (1: context trips) | `artifacts/api-server/src/compass/CompassSocialEngine.ts:403#await buildTripCompassTripsByIdProjection(sc, userId, membership.tripIds` |
+| `CompassFallbackFeedBuilder` (3: owned; the membership join ×2) | `artifacts/api-server/src/compass/CompassFallbackFeedBuilder.ts:305#buildTripCompassOwnedTripsProjection(db, userId, { statuses: ["active", "upcoming"], limit: 5 }),`, `artifacts/api-server/src/compass/CompassFallbackFeedBuilder.ts:306#buildTripCompassMemberTripsProjection(db, userId, { limit: 5 }),`, `artifacts/api-server/src/compass/CompassFallbackFeedBuilder.ts:369#const member = acceptedMemberTrips(await buildTripCompassMemberTripsProjection` |
+| `MemoryRecapsService`, `PassportRemembersService` (1 each: owned trips) | `artifacts/api-server/src/compass/MemoryRecapsService.ts:318#const built = await buildTripCompassTripSummaryProjection(client, tripId, { ownerId: userId });`, `artifacts/api-server/src/compass/PassportRemembersService.ts:465#const owned = acceptedTripRows(await buildTripCompassOwnedTripsProjection` |
+| `CompassGraphEngine` (2: build and reconcile) | `artifacts/api-server/src/compass/CompassGraphEngine.ts:758#const { data, error } = await tripGraphSourceRows(db)`, `artifacts/api-server/src/compass/CompassGraphEngine.ts:2407#trips: (db: SupabaseClient) => tripGraphSourceRows(db),` |
+| `planItemAccess` (1: privacy columns) | `artifacts/api-server/src/compass/planItemAccess.ts:44#return readTripPlanItemPrivacy(sc, tripId);` |
+| `routes/compass.ts` (4: the traveller match ×2, the trip feed's members, the thread's trip city) | `artifacts/api-server/src/routes/compass.ts:3953#const aliceTripRows = acceptedTripRows(await buildTripCompassOwnedTripsProjection`, `artifacts/api-server/src/routes/compass.ts:3962#const travTripRows = acceptedTripRows(await buildTripCompassTripsByOwnersProjection`, `artifacts/api-server/src/routes/compass.ts:4317#const members = await buildTripCompassTripMemberIdsProjection(sc, tripId);`, `artifacts/api-server/src/routes/compass.ts:4840#const tripRead = await buildTripCompassTripSummaryProjection(sc, tripId);` |
+
+Every consumer passes each projection through the §19.1 consumer rule before it uses a row. A refusal is the consumer's existing "could not be read" outcome, never an empty one. **Behaviour is preserved by construction.** Each consumer's filters, caps, order and failure outcome are the projection's parameters or its own code, unchanged. The cited surfaces that change: the trip rows now carry `version`, and the plan projections add one `trips.version` read. That is the same I/O trade §61 recorded, so no query reduction is claimed. The roster-envelope case in `compassSocialTripRosterConsumer.test.ts` now mocks the invalid instant only after the roster is requested, because the trip rows read before it would otherwise refuse first. That earlier refusal is pinned as its own case.
+
+### The test that is the census measure
+
+`compassTripProjectionReads.test.ts` case D is §61/§62's AST count as a test, over every source file under `compass/` (`artifacts/api-server/src/test/compassTripProjectionReads.test.ts:424#describe("CT-02 D`). It is stricter in two ways: it counts every `trips` / `trip_*` table, and a `.from(expression)` must resolve to a non-trip table or be named with its count (`artifacts/api-server/src/test/compassTripProjectionReads.test.ts:435#it("zero literal reads of trips / trip_* in compass/`, `artifacts/api-server/src/test/compassTripProjectionReads.test.ts:444#it("every non-literal .from(x) in compass/ resolves`). Case D2 holds the Compass route files to zero literal trip-table reads (`artifacts/api-server/src/test/compassTripProjectionReads.test.ts:509#it("zero literal Trip-table READS in routes/compass*.ts"`). Case A's allow-list of sanctioned survivors is now empty, as its own rule requires. The projections' own contract is `tripCompassConsumerProjections.test.ts` (`artifacts/api-server/src/test/tripCompassConsumerProjections.test.ts:98#describe("TripCompassTripSummaryProjection`, `artifacts/api-server/src/test/tripCompassConsumerProjections.test.ts:264#describe("TripCompassPlanProjection`, `artifacts/api-server/src/test/tripCompassConsumerProjections.test.ts:241#describe("acceptedTripRows / acceptedMemberTrips`).
+
+- **Red first:** case D failed on the tree before the migration with **22 offending reads in 12 files** (the 21 measured plus `trip_commitments`). Case D2 failed with routes/compass.ts at HEAD (4 reads).
+- **Green:** `compassTripProjectionReads.test.ts` 37/37. `tripCompassConsumerProjections.test.ts` 38/38. The focused neighbour run is 195 files: every suite importing `compass/`, every suite importing a changed Trips projection or the access module, and every suite mounting `routes/compass.ts`, live-only suites excluded. It passed 4925/4925, 0 skipped.
+- **Mutation (each applied alone, the source restored byte-identically by sha256), 13/13 killed:** the 12 `compass/` consumers reverted (3 fail); `routes/compass.ts` reverted (1 fail); `CompassSocialEngine` alone reverted (1 fail); every membership status counted as accepted (1 fail); a non-array trip body read as empty (11 fail); plan privacy skipped (3 fail); the day plan not dropping cancelled/removed rows (1 fail); commitment order dropped (1 fail); `acceptedTripRows` skipping the sources (1 fail); the roster acceptance bypassed (2 fail: the narrowed case still catches it); the by-owner visibility filter dropped (1 fail); status labels unchecked (1 fail); an errored day plan served as an empty day (5 fail).
+
+### What this does not claim
+
+- **The Autopilot's own store is still read and written in `compass/`.** `trip_autopilot_settings` and `trip_autopilot_proposals` are created for Compass's autopilot (`20260728_compass_autopilot.sql`). Their write path is CT-01's row, which stays W on exactly that. Case D names this exemption, and the write in `routes/compass.ts` (the flag-off twin of ADD_PLAN) by its reason.
+- **No runtime, hosted or production claim.** This is source-dependency migration with behaviour pinned on fakes, the measure every prior CT-02 statement used. Nothing here enables a flag. The consumers behind flags (opportunity, operational projections, autopilot) are still behind them, and CT-08 and CT-09 do not move.
+- **Two guard ratchets need a central edit (reported to the lead, not made):** `check:silent-supabase-reads` asks for `CompassGraphEngine.ts::S2` to go 11 → 10. The build's trip read now binds its error and throws into the source's existing fail-soft catch (`artifacts/api-server/src/compass/CompassGraphEngine.ts:174#if (error) throw error;`). Also, the new test file needs registering in the `test` script.
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| CT-02 `TripCompassProjection` typed Trip projections | W | **C** | Compass now consumes Trips-owned typed projections for every trip fact it reads, with no raw read left to duplicate Trip semantics: zero literal selects of `trips` / `trip_*` (other than Compass's own autopilot store, CT-01's) across `compass/` and the Compass route files (`artifacts/api-server/src/test/compassTripProjectionReads.test.ts:435#it("zero literal reads of trips / trip_* in compass/`, `artifacts/api-server/src/test/compassTripProjectionReads.test.ts:509#it("zero literal Trip-table READS in routes/compass*.ts"`), down from §62's 22 in 12 files plus `trip_commitments` and four route reads. The shapes §55/§59 said were missing are built: multi-trip lists, a membership union, uncapped plans and days, joined membership rows and commitments, each with the §19.1 envelope and accepted through `acceptTripProjection` (`artifacts/api-server/src/compass/CompassCurrentTrip.ts:320#export function acceptedTripRows(`, `artifacts/api-server/src/compass/CompassCurrentTrip.ts:335#export function acceptedMemberTrips(`). The day count, roster and range projections were already consumed. Evidence and limits are above. |
+
+### Headline
+
+| figure | after §58 | after wave 3 |
+|---|---:|---:|
+| Denominator | 141 | **141** |
+| BUILT-AND-CORRECT | 126 | **127** |
+| BUILT-BUT-WRONG | 12 | **11** |
+| NOT-BUILT | 1 | **1** |
+| CANNOT-VERIFY | 2 | **2** |
+
+127 + 11 + 1 + 2 = 141.
+
+- NOT-GRADED: artifacts/api-server/src/migrations/20260728_compass_autopilot.sql — the wave-3 limits cite it only to name where the exempt Autopilot store comes from; CT-01 grades that store's write path, and no row here rests on the migration.

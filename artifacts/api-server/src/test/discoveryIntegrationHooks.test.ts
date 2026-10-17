@@ -238,7 +238,7 @@ const seedGenerated = (w: WorldState) => {
   // the route's own radius filter drops them after ranking and the page is the pool's near rows plus what was generated.
   for (let i = 0; i < 200; i++) w.tables.discovery_places!.push(communityRow(`fill-${i}`, { saved_count: 0, rating: null, lat: 26.6, lng: -80.19 }));
   w.tables.discovery_places!.push(communityRow(GEN, { category: "beaches", primary_category: "beaches", name: "Generated Beach", saved_count: 50, rating: 4.9 }));
-  w.tables.place_momentum = [{ place_id: `db/${GEN}`, trend_state: "trending", recent_rate: 9, computed_at: "2026-09-28T03:00:00.000Z", source_surface: "discovery" }];
+  w.tables.place_momentum = [{ place_id: `db/${GEN}`, trend_state: "trending", recent_rate: 9, computed_at: new Date(Date.now() - 60_000).toISOString(), source_surface: "discovery" }];  // a CURRENT run: since 2026-10-17 a run older than the trend API's bound is no run (retrievals.ts momentumRunIsCurrent)
 };
 
 describe("R1 — §85 R1: the served PDE calls pass the tab, which bounds a generated row's category", () => {
@@ -573,7 +573,7 @@ describe("R2p — §94 (DC-17): the platform path's served rows carry the platfo
 const seedGeneratedFood = (w: WorldState) => {
   for (let i = 0; i < 200; i++) w.tables.discovery_places!.push(communityRow(`fill-${i}`, { saved_count: 0, rating: null, lat: 26.6, lng: -80.19 }));
   w.tables.discovery_places!.push(communityRow(GEN, { name: "Generated Food", saved_count: 50, rating: 4.9, lat: 25.78, lng: -80.2 }));
-  w.tables.place_momentum = [{ place_id: `db/${GEN}`, trend_state: "trending", recent_rate: 9, computed_at: "2026-09-28T03:00:00.000Z", source_surface: "discovery" }];
+  w.tables.place_momentum = [{ place_id: `db/${GEN}`, trend_state: "trending", recent_rate: 9, computed_at: new Date(Date.now() - 60_000).toISOString(), source_surface: "discovery" }];  // a CURRENT run: since 2026-10-17 a run older than the trend API's bound is no run (retrievals.ts momentumRunIsCurrent)
 };
 
 describe("R1c — §94 (R-X3-1): a generated row is served with the request's distance", () => {

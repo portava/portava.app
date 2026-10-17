@@ -55,8 +55,8 @@ import {
   rebuildProjection,
   type ClientLike,
 } from "./derivativeRegistry.js";
-import { isTableAbsentError } from "../../lib/tableAbsence.js";
-import { listProjectionIds, type ProjectionId, type ProjectionScope } from "./projectionRegistry.js";
+import { isTableAbsentError } from "../../lib/tableAbsence.js"; import { logProjectionOperation, projectionNameOfScopeKey, type ProjectionTrace } from "./projectionLog.js"; // §24 (H223)
+import { listProjectionIds, getProjectionDefinition, type ProjectionId, type ProjectionScope } from "./projectionRegistry.js";
 
 export interface NarrowingReport {
   /** Every step ran and nothing that should have changed was left unchanged. */
@@ -93,13 +93,13 @@ export function parseScopeKey(scopeKey: string): { projectionId: ProjectionId; s
   return { projectionId: projection as ProjectionId, scope };
 }
 
-async function revokeOne(client: ClientLike, id: string, reason: string, now: Date): Promise<boolean> {
+async function revokeOne(client: ClientLike, id: string, reason: string, now: Date, scopeKey: string, trace: ProjectionTrace): Promise<boolean> {
   const { data, error } = await client
     .from("memory_derivative_registry") // = DERIVATIVE_REGISTRY_TABLE, written as a literal so check:write-path-columns can verify the columns (a dynamic table name is a blind spot); pinned equal by test/memoryNarrowingReprojection.test.ts
     .update({ revocation_state: "REVOKED", revoked_at: now.toISOString(), revocation_reason: reason, payload_json: [], row_count: 0 })
     .in("id", [id])
     .select("id");
-  return !error && Array.isArray(data) && data.length === 1;
+  const ok = !error && Array.isArray(data) && data.length === 1; const projectionName = projectionNameOfScopeKey(scopeKey); logProjectionOperation({ operation: "revoke", outcome: ok ? "revoked" : "refused", projectionName, scopeKey, sourceVersion: null, engineVersion: getProjectionDefinition(projectionName as ProjectionId)?.builder_version ?? null, reason: ok ? reason : "revocation_unconfirmed", rowCount: ok ? 0 : null, trace }); return ok; // §24 (H223): a revocation is a projection operation and logs as one
 }
 
 /**
@@ -109,7 +109,7 @@ async function revokeOne(client: ClientLike, id: string, reason: string, now: Da
 export async function reprojectDerivativesAfterNarrowing(
   client: ClientLike,
   input: {
-    memoryId: string; now: Date; reason: string;
+    memoryId: string; now: Date; reason: string; /** §24 (H223): the command / event that caused this, named on each projection log line. */ commandId?: string | null; eventId?: string | null;
     /**
      * Lead ruling H-5: the Memory was DELETED, so no audience keeps it. A
      * re-derived registration that still carries it is revoked, never counted
@@ -133,7 +133,7 @@ export async function reprojectDerivativesAfterNarrowing(
 
 async function reproject(
   client: ClientLike,
-  input: { memoryId: string; now: Date; reason: string; mustExclude?: boolean },
+  input: { memoryId: string; now: Date; reason: string; mustExclude?: boolean; commandId?: string | null; eventId?: string | null },
   report: NarrowingReport,
 ): Promise<NarrowingReport> {
   const found = await client
@@ -153,14 +153,14 @@ async function reproject(
     report.unresolved.push(`registry page full: ${rows.length} registrations returned, more may carry this Memory — re-derived these, the rest on the next run`);
   }
   const carrying = rows.filter((r) => (r.source_memory_ids ?? []).includes(input.memoryId));
-  report.carried = carrying.length;
+  report.carried = carrying.length; const trace: ProjectionTrace = { memoryId: input.memoryId, commandId: input.commandId ?? null, eventId: input.eventId ?? null, reason: input.reason }; // §24 (H223)
 
   for (const reg of carrying) {
     const parsed = parseScopeKey(reg.scope_key);
     let rebuilt: Awaited<ReturnType<typeof rebuildProjection>> | null = null;
     if (parsed) {
       try {
-        rebuilt = await rebuildProjection(client, parsed.projectionId, parsed.scope, input.now);
+        rebuilt = await rebuildProjection(client, parsed.projectionId, parsed.scope, input.now, { trace });
       } catch {
         rebuilt = null;
       }
@@ -172,7 +172,7 @@ async function reproject(
       // A deleted Memory that a rebuild still carries falls through to the revoke.
     }
     // Fail closed: what cannot be re-derived is emptied.
-    if (await revokeOne(client, reg.id, `${input.reason}: re-derivation failed`, input.now)) {
+    if (await revokeOne(client, reg.id, `${input.reason}: re-derivation failed`, input.now, reg.scope_key, trace)) {
       report.revokedInstead += 1;
     } else {
       report.ok = false;

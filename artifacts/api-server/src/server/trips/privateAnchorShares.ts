@@ -318,3 +318,30 @@ export async function findVisibleSourcedPlanItem(
   const seen = rows.find((r) => canSeePlanItemLocation(access, r));
   return { error: null, item: seen ? { id: String(seen.id) } : null };
 }
+
+/**
+ * The privacy columns of a trip's plan items, by id — for a reader whose rows came
+ * from a projection that does not carry them (census-trips §90; census-compass
+ * CT-02). Compass read `trip_plan_items` itself for this (compass/planItemAccess.ts);
+ * the read is Trips' and Compass re-exports it. `null` = could not be read (an
+ * error, or a body that is not rows), and the caller must then withhold every item
+ * it cannot prove public — never treat the map as "no private items".
+ */
+export type TripPlanItemPrivacy = { creator_id: unknown; location_is_private: unknown; privacy_scope: unknown };
+export async function readTripPlanItemPrivacy(
+  sc: SupabaseClient,
+  tripId: string,
+): Promise<Map<string, TripPlanItemPrivacy> | null> {
+  try {
+    const { data, error } = await sc.from("trip_plan_items").select("id, creator_id, location_is_private, privacy_scope").eq("trip_id", tripId);
+    if (error || !Array.isArray(data)) return null;
+    const out = new Map<string, TripPlanItemPrivacy>();
+    for (const r of data as Array<{ id: unknown } & TripPlanItemPrivacy>) {
+      if (r === null || typeof r !== "object") return null;
+      out.set(String(r.id), { creator_id: r.creator_id, location_is_private: r.location_is_private, privacy_scope: r.privacy_scope });
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}
