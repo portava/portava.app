@@ -11691,3 +11691,7 @@ profiles", the members error unread, the stops error unread. `routePlanMembers.t
 - NOT-GRADED: artifacts/api-server/src/test/routePlanMembers.test.ts — named above only as the existing suite that stays green; no Trips verdict rests on it.
 
 Rows: none move. Headline unchanged: 451 = 326 C / 123 W / 2 N / 0 X.
+
+### Correction (2026-10-17, wave 5) — independent verification, pass 1: TR255 is the projection, not a drawn map
+
+Fable pass 1 ACCEPTED TR255 at C on the same footing as TR259 and TR260 (the §14.1 rows grade the map PROJECTION contract; TR260 is C with no coordinates at all). Said plainly so no reader assumes more: no app map draws stage pins. The trip screen's map-layers card renders the projection's layers as counts in words (`travel-buddy-standalone/src/features/trips/map/TripMapLayersCard.tsx`, its header "WHY THIS IS NOT A MAP"); a city-anchored stage's coarse centre is in the server projection and is not drawn anywhere. No row moves.
