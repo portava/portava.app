@@ -187,7 +187,7 @@ export async function resolveVenueBindings(
   for (const p of places) {
     const linkId = (p.metadata as { livingPageId?: string } | undefined)?.livingPageId;
     if (linkId && canonicalById === null) continue; // the failed-read case
-    const md = p.metadata as { lat?: number | null; lng?: number | null } | undefined;
+    const md = p.metadata as { lat?: number | null; lng?: number | null; coordsPrecision?: unknown } | undefined; const exact = md?.coordsPrecision === undefined; // §24: a position the protection pass coarsened or withheld is not the venue's (rule 1) — no coordinates, so no zone
     out.set(
       p.id,
       venueBinding(
@@ -195,8 +195,8 @@ export async function resolveVenueBindings(
           id: p.id,
           name: p.title,
           city: p.locationPreview ?? null,
-          lat: md?.lat ?? null,
-          lng: md?.lng ?? null,
+          lat: exact ? (md?.lat ?? null) : null,
+          lng: exact ? (md?.lng ?? null) : null,
         },
         linkId ? (canonicalById?.get(linkId) ?? null) : null,
       ),
@@ -664,17 +664,17 @@ export async function generateSuggestions(
         let geoCityResults = scope.skip('cities') ? [] : geoRes.rows.map(canonicalToCityResult); [perTypeResults, geoCityResults] = await protectGatewayCandidates(sc, perTypeResults, geoCityResults); const allCandidates = perTypeResults.flat();
         const verdict = classifyFeasibility(allCandidates, taskConstraint); for (const id of verdict.tripFitIds) tripFitSink.add(id); // §9 G53 step 4
 
-        // §17/G109 venue bindings. Only for GEO PICKER contexts: a picker is a
-        // field whose SELECTION prefills dependents, which is the premise the
-        // binding exists to serve. global_search is a navigation surface — a row
-        // there opens an entity page and fills nothing, so binding it would ship
-        // a structured value with no consumer.
-        const venueBindings = GEO_PICKER_CONTEXTS.has(context)
-          ? await resolveVenueBindings(
-              sc,
-              allCandidates.filter((r) => r.type === 'places'),
-            )
-          : new Map<string, CanonicalVenueBinding>();
+        // §17/G109 venue bindings belong to the GEO PICKERS (a field whose
+        // SELECTION prefills dependents), and a geo picker never reaches this
+        // branch: `isGeoPicker` sends it down the path above, where
+        // dispatchAndProject binds its venues. A `GEO_PICKER_CONTEXTS.has(context)`
+        // test stood here until the wave-5 fix; it was false on this branch by
+        // construction, so on the serve path no venue was ever bound (census
+        // G109, restated C → W on independent verification 2026-10-17).
+        // global_search is a navigation surface — a row there opens an entity
+        // page and fills nothing — so the map is empty on purpose and the
+        // projection call below keeps one shape on both branches.
+        const venueBindings = new Map<string, CanonicalVenueBinding>();
 
         const seenIds = new Set<string>(); let openOnMap: InputSuggestion | null = null; // §21 G134 (lead ruling PR-D2-6)
         dispatchTypes.forEach((t, idx) => {
@@ -987,7 +987,7 @@ async function dispatchAndProject(
     ),
   ), []);
 
-  const verdict = classifyFeasibility(perTypeResults.flat(), p.taskConstraint); for (const id of verdict.tripFitIds) p.tripFitSink?.add(id); for (const r of perTypeResults.flat()) if (r.type === 'places') p.placeSink?.push(r); // §9 G53 step 4; census G153/G192 place sink
+  const verdict = classifyFeasibility(perTypeResults.flat(), p.taskConstraint); for (const id of verdict.tripFitIds) p.tripFitSink?.add(id); for (const r of perTypeResults.flat()) if (r.type === 'places') p.placeSink?.push(r); /* §9 G53 step 4; census G153/G192 place sink */ const venueBindings = GEO_PICKER_CONTEXTS.has(p.context) ? await resolveVenueBindings(sc, perTypeResults.flat().filter((r) => r.type === 'places')) : new Map<string, CanonicalVenueBinding>(); // §17 G109: this is the picker path, so its venues are bound HERE (census G109 wave-5 fix; before it, nothing on the serve path bound one)
   const out: InputSuggestion[] = [];
   const seen = new Set<string>();
   for (const items of perTypeResults) {
@@ -998,7 +998,7 @@ async function dispatchAndProject(
         projectSearchResult(r, p.context, POLICY_VERSION, p.q, {
           temporalWindow: p.temporalWindow,
           demoted: verdict.demotedIds.has(r.id),
-          tripFit: verdict.tripFitIds.has(r.id), origin: p.distanceOrigin ?? null, // §28 G176
+          tripFit: verdict.tripFitIds.has(r.id), origin: p.distanceOrigin ?? null, venueBinding: venueBindings.get(r.id) ?? null, // §28 G176; §17 G109
         }),
       );
     }

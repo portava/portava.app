@@ -8949,3 +8949,38 @@ The independent verifier (Fable, 2026-10-17) proved, with a probe through the re
 
 Of 373 rows: **317 BUILT-AND-CORRECT, 50 BUILT-BUT-WRONG, 2 NOT-BUILT, 4 CANNOT-VERIFY**. CORRECT is now
 317 / 373 = 85.0 % after G109 and G176 were restated C → W on independent verification.
+
+## Row moves — 2026-10-17 wave-4 verification fixes
+
+The two rows restated C → W above are fixed on the serve path. Each is now proven through `POST /input-assistance/suggest`, not at the resolver and not with a body no client sends.
+
+**G109.** The geo-picker branch now binds its own venues. `dispatchAndProject` resolves the bindings for its places and hands each one to the projector. The always-false picker test on the generic branch is gone: that branch never serves a picker, so its map is empty on purpose. One rule is new. A position the §24 protection pass coarsened or withheld is not the venue's position, so that venue binds its City and Country but no Coordinates and no Timezone. This follows the row's own rule 1: absent prefill beats wrong prefill.
+
+**G176.** There is one wire transport for the viewer's position: the top-level `lat`/`lng` pair. The route already reads it there, and the Map search client already sends it there. The app's `InputSessionContext.lat/lng` stays the hook's input. `buildSuggestBody` is the wire mapper. It lifts a valid pair to the top level, rounds it to 3 decimals (~110 m, the neighbourhood-level precision the meetup pin already uses) and strips it from the forwarded session. So the device fix never leaves the device, and no server consumer of the session (AI writing, paste, task constraint) can receive a position inside it. The server's `SuggestSessionContext` stays ID-only. Two real callers hold a consented position and now reach the route: the shared place picker (an already-granted permission and the last known fix) and the search screen (only while permission is granted).
+
+Things that did not need to change:
+- The cache keys. The hook's key already rounds to 2 decimals, and its scope key excludes the pair.
+- Logging. The route logs no position.
+- The location-purpose registry. It governs tables that RETAIN coordinates, and a purpose with no table is a check failure. This position is transient: it is not stored, not logged and not telemetered.
+
+One stale clause elsewhere: G222's "the picker sends no coordinates" is no longer true. G222 stays `W` for its other reasons.
+
+Shared fixture: the census-discovery §70 golden (`artifacts/api-server/src/test/fixtures/searchPlatformGolden.json`) was re-recorded (`SEARCH_GOLDEN_WRITE=1`). Compared programmatically with HEAD, only "gateway place_picker zork" changed. Its four place rows each gained a `structuredValue` (unlinked venues, so `country: null`). Its read trace and every other case are byte-equal.
+
+| row | was | now | evidence |
+| --- | --- | --- | --- |
+| G109 venue binding | W | **C** | The picker path binds its venues (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:990#const venueBindings = GEO_PICKER_CONTEXTS.has(p.context)`) and projects each binding (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:1001#venueBinding: venueBindings.get(r.id) ?? null`). The generic branch's map is empty on purpose (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:677#const venueBindings = new Map<string, CanonicalVenueBinding>();`). A protected position binds no coordinates (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:190#const exact = md?.coordsPrecision === undefined;`). Through the route, in place_picker and event_location, 'Sky36' carries Da Nang, Vietnam, the venue's own coordinates and Asia/Ho_Chi_Minh, and `canonical_locations` is read once, by id (`artifacts/api-server/src/test/inputAssistanceServePathBindings.test.ts:213#through POST /input-assistance/suggest carries City, Country`). Refusals on the same path: a failed canonical read gives no binding (`artifacts/api-server/src/test/inputAssistanceServePathBindings.test.ts:253#a FAILED canonical read serves the venue with NO binding`), and global_search gives none (`artifacts/api-server/src/test/inputAssistanceServePathBindings.test.ts:262#global_search serves the same venue with no binding`). Red first: 4 of 6 cases (the 2 refusals held before). 4 of 4 gateway mutants red. |
+| G176 distance band and nearby ranking | W | **C** | The app sends the position where the route reads it (`artifacts/api-server/src/routes/inputAssistance.ts:227#const lat = clampCoord(body.lat, 90);`): coarsened, validated, both halves or neither, and never inside the session (`travel-buddy-standalone/src/platform/input-assistance/services/suggestBody.ts:35#const origin = suggestOrigin(req.sessionContext?.lat, req.sessionContext?.lng);`, `travel-buddy-standalone/src/platform/input-assistance/services/suggestBody.ts:101#export function suggestOrigin(`). The real callers: `travel-buddy-standalone/src/components/selectors/GlobalPlacePicker.tsx:257#return { ...base, lat: nearbyCoords.lat, lng: nearbyCoords.lng };` and `travel-buddy-standalone/src/hooks/useGlobalSearchSuggestions.ts:122#if (lat != null) s.lat = lat;`. The server tests post the APP's own `buildSuggestBody` output. The place picker gets its band (`artifacts/api-server/src/test/inputAssistanceServePathBindings.test.ts:313#place_picker: a nearby place carries its coarse band`). Global search gets the band and the nearby order (`artifacts/api-server/src/test/inputAssistanceServePathBindings.test.ts:321#band on the near place, and the near place ranks first`). Invalid positions never reach the wire (`artifacts/api-server/src/test/inputAssistanceServePathBindings.test.ts:335#invalid positions never reach the wire`). Through the real event screen's picker, a granted fix goes out as a 3-decimal top-level pair, never in the session and never in a cache key (`travel-buddy-standalone/src/components/selectors/__tests__/GlobalPlacePicker.selectionLifetime.component.test.tsx:1030#G176: a granted position reaches the suggest wire`). Red first: 4 of 5 server, 2 of 3 app node and 1 of 2 picker cases (the refusals held before). 5 of 6 `suggestBody` mutants red; the 6th is equivalent. |
+
+#### Headline, restated from the rows (wave-4 verification fixes)
+
+| bucket | wave-4 verification | now |
+| --- | ---: | ---: |
+| BUILT-AND-CORRECT | 317 | 319 |
+| BUILT-BUT-WRONG | 50 | 48 |
+| NOT-BUILT | 2 | 2 |
+| CANNOT-VERIFY | 4 | 4 |
+| total | 373 | 373 |
+
+Of 373 rows: **319 BUILT-AND-CORRECT, 48 BUILT-BUT-WRONG, 2 NOT-BUILT, 4 CANNOT-VERIFY**. CORRECT is now
+319 / 373 = 85.5 % after G109 and G176 were fixed on the serve path and moved W → C.

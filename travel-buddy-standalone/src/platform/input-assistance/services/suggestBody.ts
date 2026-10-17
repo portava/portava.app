@@ -27,8 +27,16 @@ export function buildSuggestBody(req: SuggestRequest): Record<string, unknown> {
     fieldId: req.fieldId,
     text: req.text,
     limit: req.limit,
-    sessionContext: req.sessionContext,
+    sessionContext: sessionWithoutPosition(req.sessionContext),
   };
+
+  // §15/§28 (census G176) — the viewer's position rides at the TOP LEVEL, the
+  // one place the route reads it, coarsened; never inside the session object.
+  const origin = suggestOrigin(req.sessionContext?.lat, req.sessionContext?.lng);
+  if (origin) {
+    body.lat = origin.lat;
+    body.lng = origin.lng;
+  }
 
   // §22 opt-in — ONLY a literal true opts in. Anything else omits the key.
   if (req.aiAssist === true) body.aiAssist = true;
@@ -55,4 +63,51 @@ export function buildSuggestBody(req: SuggestRequest): Record<string, unknown> {
   }
 
   return body;
+}
+
+// ── §15/§28 the viewer's position on the wire (census G176) ──────────────────
+//
+// THE DEFECT. Two callers hold a position the user already granted — the shared
+// GlobalPlacePicker (silent nearby detection: an already-granted permission and
+// the last known fix) and the search screen (`useGlobalSearchSuggestions`, only
+// while permission is granted) — and both put it in `sessionContext.lat/lng`,
+// which is where `InputSessionContext` declares it. This builder forwarded that
+// object verbatim, so the fix went over the wire at full device precision, and
+// the route — which reads the position from the top-level `lat`/`lng` only, as
+// the Map search client (`search/mapSearch.ts`) sends it — dropped it. No real
+// client ever got the §28 distance band or the nearby ordering.
+//
+// ONE TRANSPORT. The position goes where the route reads it: the top-level pair.
+// It is stripped from the forwarded session object, so it cannot reach any
+// server consumer of the session (task constraint, AI writing context, paste)
+// by riding inside it; the server's `SuggestSessionContext` stays ID-only.
+//
+// PRECISION. Rounded to SUGGEST_ORIGIN_DECIMALS = 3 (~110 m), the codebase's
+// neighbourhood-level rule (`lib/meetupPin.ts`). The finest band edge is 0.5 km,
+// and 3 decimals move a point by at most ~78 m, so the band stays meaningful;
+// the device fix itself never leaves the device. The hook's cache key is coarser
+// still (2 decimals, `SuggestionCache.key`) and the scope key excludes the pair
+// (`inputSessionScopeKey`), so neither the raw fix nor this value is a key.
+//
+// VALIDITY. Both halves or neither: finite numbers, |lat| <= 90, |lng| <= 180.
+// Anything else sends no position at all, never half of one.
+
+/** Decimal places kept on the suggest request's viewer position (~110 m). */
+export const SUGGEST_ORIGIN_DECIMALS = 3;
+
+const ORIGIN_FACTOR = 10 ** SUGGEST_ORIGIN_DECIMALS;
+
+/** The coarse, validated pair for the wire, or null when there is no usable pair. */
+export function suggestOrigin(lat: unknown, lng: unknown): { lat: number; lng: number } | null {
+  if (typeof lat !== 'number' || typeof lng !== 'number') return null;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+  return { lat: Math.round(lat * ORIGIN_FACTOR) / ORIGIN_FACTOR, lng: Math.round(lng * ORIGIN_FACTOR) / ORIGIN_FACTOR };
+}
+
+/** The session as forwarded: identical when it carries no position, otherwise without `lat`/`lng`. */
+function sessionWithoutPosition(session: SuggestRequest['sessionContext']): SuggestRequest['sessionContext'] {
+  if (!session || (!('lat' in session) && !('lng' in session))) return session;
+  const { lat: _lat, lng: _lng, ...rest } = session;
+  return rest;
 }
