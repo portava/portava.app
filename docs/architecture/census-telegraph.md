@@ -9995,7 +9995,7 @@ Declared 2026-09-27 by the coverage-guard fix (census-media §32.14). Each line 
 - NOT-GRADED: travel-buddy-standalone/app/(rent-a-buddy)/buddy/[id].tsx — Rent-a-Buddy's buddy-profile screen, named in §15.3 only to explain why BUDDY_SERVICE's deep link was withdrawn (the screen takes a buddy id, not a service id); the share-family verdicts rest on the registry and its declared-no-screen list, not on this screen.
 - NOT-GRADED: travel-buddy-standalone/app/layover/[id].tsx — census-layover's screen, named in §15.8 item 7 only as where other lanes' failing citations pointed at that moment; this census grades nothing in it.
 - NOT-GRADED: artifacts/api-server/src/routes/airport.ts — census-layover's route, named in §16.7 only as another lane's in-flight work that had doc-citations and freshness red; no Telegraph row cites it.
-- NOT-GRADED: artifacts/api-server/src/routes/trips.ts — census-trips' route, cited in §17.1 as one of three callers showing lib/chatSync.ts is a live path; §17.7 moves only T349, which does not rest on it, and the roster-eviction fix rests on lib/chatSync.ts and services/groupChatSync.ts, both watched.
+- WITHDRAWN 2026-10-17 (W5N.1: T397 now rests on this file, so it is graded and must be watched), was "NOT-GRADED": `artifacts/api-server/src/routes/trips.ts` — census-trips' route, cited in §17.1 as one of three callers showing lib/chatSync.ts is a live path; §17.7 moves only T349, which does not rest on it, and the roster-eviction fix rests on lib/chatSync.ts and services/groupChatSync.ts, both watched.
 - NOT-GRADED: artifacts/api-server/src/test/notNullWrites.test.ts — a NOT NULL write guard over routes/groupChat.ts, named in §17.6 because §17.4's synthesized translation row tripped its body-null regex and M19 narrowed the pattern; §17.7's one move (T349) does not rest on it.
 - NOT-GRADED: travel-buddy-standalone/src/hooks/useMessaging.ts — the unread-badge hook, cited in §19.6 item 4 only to price an owner decision (omitting newHighlights would change the wire, not the badge); the decision is surfaced, not taken, and no verdict moved on it.
 - NOT-GRADED: artifacts/api-server/src/test/generated/liveColumns.json — the generated live-schema column snapshot, read in §19.7 only to confirm independently that no visa* table exists for T39's VISA_CARD half; §19.7 leaves T39 where §13 put it and moves nothing on that reading.
@@ -11808,7 +11808,7 @@ Each mutation was applied alone, the named suites run, and the file restored and
   module that creates nothing are not crossings.
 - `typecheck:tests` at its baseline (863 across 115); the mobile tree is not touched by §52.
 
-- NOT-GRADED: artifacts/api-server/src/routes/meetups.ts — F5's door, listed for lane C (its in-flight diff holds the file); this census grades the `canCreatePlan` capability, not the meetups route.
+- WITHDRAWN 2026-10-17 (W5N.1: T397 now rests on this file, so it is graded and must be watched), was "NOT-GRADED": `artifacts/api-server/src/routes/meetups.ts` — F5's door, listed for lane C (its in-flight diff holds the file); this census grades the `canCreatePlan` capability, not the meetups route.
 - NOT-GRADED: artifacts/api-server/src/lib/tripTrustGate.ts — named in §51.1 as lane C's rule, now on `main` through #641; Telegraph's `readPlanTarget` is graded instead, and the swap waits on lane C.
 
 ### 52.4 What would turn this red
