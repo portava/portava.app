@@ -43,11 +43,17 @@
  *   error/unknown-column-42703 — no schema knowledge. An unknown column reads as
  *     `undefined` instead of failing the whole statement. Use
  *     schemaStrictSupabase for that question.
+ *
+ * An EMBED (`x(...)` in a select list) THROWS unless a migration-declared
+ * foreign key joins the two tables (census-layover L295). This double resolves
+ * no embed, but it must not answer one PostgREST would refuse (PGRST200) as if
+ * the join existed. The rule is `helpers/migrationForeignKeys.ts`.
  */
 import http from "node:http";
 import express from "express";
 import { _setTestClient } from "../../lib/http.js";
 import { projectionKeys, projectRow } from "./selectProjection.js";
+import { assertSelectEmbedsBacked } from "./migrationForeignKeys.js";
 
 export interface TableSpec {
   rows?: any[];
@@ -123,7 +129,7 @@ function pgrst116(n: number) {
   };
 }
 
-function buildQuery(spec: TableSpec) {
+function buildQuery(spec: TableSpec, table: string) {
   let rows = [...(spec.rows ?? [])];
   const err = spec.error ?? null;
   // `null` = do not project (the historical behaviour: the whole seeded row).
@@ -149,6 +155,7 @@ function buildQuery(spec: TableSpec) {
 
   const q: any = {
     select(fields?: string, o?: { count?: string; head?: boolean }) {
+      assertSelectEmbedsBacked("fakeMapDb", table, fields);
       projection = projectionKeys(fields);
       if (o?.count) countMode = String(o.count);
       if (o?.head) headOnly = true;
@@ -248,7 +255,7 @@ export function makeFakeMapDb(state: FakeState, opts: FakeMapDbOptions) {
           ? { data: { user: { id: opts.userId } }, error: null }
           : { data: { user: null }, error: { message: "Unauthorized" } },
     },
-    from: (table: string) => buildQuery(specOf(state, table)),
+    from: (table: string) => buildQuery(specOf(state, table), table),
     rpc: (fn: string, args: Record<string, unknown>) => {
       rpcCalls.push({ fn, args });
       const h = opts.rpc?.[fn];

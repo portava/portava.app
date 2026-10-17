@@ -58,8 +58,14 @@
  *   rpc/success, rpc/error-resolves, rpc/unknown-function — no rpc surface.
  *     `.rpc()` THROWS rather than answering a stored procedure it knows nothing
  *     about.
+ *
+ * An EMBED (`x(...)` in a select list) THROWS unless a migration-declared
+ * foreign key joins the two tables (census-layover L295): `selectedColumns`
+ * drops embeds from the column check, so without this a join production
+ * refuses (PGRST200) passed here unexamined. See `migrationForeignKeys.ts`.
  */
 import { liveColumns } from "./liveColumns.ts";
+import { assertSelectEmbedsBacked } from "./migrationForeignKeys.js";
 import { projectionKeys, projectRow } from "./selectProjection.js";
 
 export type Row = Record<string, unknown>;
@@ -243,6 +249,7 @@ export function makeSchemaStrictClient(
 
     const b: any = {
       select: (cols?: string, o?: { count?: string; head?: boolean }) => {
+        assertSelectEmbedsBacked("schemaStrictSupabase", table, cols);
         selected = true;
         if (o?.count) countMode = String(o.count);
         if (cols) note(selectedColumns(cols), `select("${cols}")`);

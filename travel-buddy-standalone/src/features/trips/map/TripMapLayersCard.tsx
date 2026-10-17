@@ -26,11 +26,12 @@
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
-import { Layers, CloudOff, AlertTriangle } from 'lucide-react-native';
+import { Layers, CloudOff, AlertTriangle, MapPinOff } from 'lucide-react-native';
 
 import { color, space, radius, type as t, shadow } from '../../../theme/tokens.ts';
 import {
   fetchTripMapProjection, allPoints, unreadLayers, isAttributable, LAYER_LABEL,
+  stagesNotDrawn, coarseStagePoints,
   type ProjectionRead,
 } from './tripMapProjection.ts';
 
@@ -84,10 +85,14 @@ export function TripMapLayersCard({ tripId, load = fetchTripMapProjection }: Pro
   // either — on a two-stop trip, "1 private location" is close to naming it.
   const shown = allPoints(p).length;
   const missing = unreadLayers(p);
+  // census-trips wave-5 follow-up: a stage with no known position is not drawn,
+  // and a city-anchored one is drawn at its city's centre. Both are said here.
+  const notDrawn = stagesNotDrawn(p) ?? [];
+  const coarse = coarseStagePoints(p).length;
 
-  // Read, and genuinely nothing to show, and nothing failed. The one honest
-  // blank.
-  if (shown === 0 && missing.length === 0) return null;
+  // Read, and genuinely nothing to show, and nothing failed, and no stage left
+  // off the map. The one honest blank.
+  if (shown === 0 && missing.length === 0 && notDrawn.length === 0) return null;
 
   return (
     <View style={[s.wrap, missing.length > 0 && s.wrapWarn]} testID="trip-map-layers-card">
@@ -106,6 +111,33 @@ export function TripMapLayersCard({ tripId, load = fetchTripMapProjection }: Pro
           )}
         </View>
       </View>
+
+      {coarse > 0 && (
+        <View style={s.row} testID="trip-map-stages-coarse">
+          <Layers size={14} color={color.mute} />
+          <View style={{ flex: 1 }}>
+            <Text style={s.detail}>
+              {coarse} stage{coarse === 1 ? ' is' : 's are'} drawn at {coarse === 1 ? 'its' : 'their'} city&apos;s centre, not at an exact spot.
+            </Text>
+          </View>
+        </View>
+      )}
+
+      {notDrawn.length > 0 && (
+        // A stage whose anchor has no position is on the stage list and not on
+        // the map. Without this line an absent pin reads as an absent stage.
+        <View style={s.row} testID="trip-map-stages-not-drawn">
+          <MapPinOff size={14} color={color.mute} />
+          <View style={{ flex: 1 }}>
+            <Text style={s.title}>
+              {notDrawn.length} stage{notDrawn.length === 1 ? '' : 's'} not on the map
+            </Text>
+            <Text style={s.detail}>
+              No position is known for {notDrawn.length === 1 ? 'its' : 'their'} city or place, so {notDrawn.length === 1 ? 'it is' : 'they are'} listed with the trip&apos;s stages but not drawn.
+            </Text>
+          </View>
+        </View>
+      )}
 
       {missing.length > 0 && (
         // The load-bearing line. Without it, a map missing its saved places

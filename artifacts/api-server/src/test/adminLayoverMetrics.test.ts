@@ -158,7 +158,7 @@ describe("L215 — the fallback ladder emits when it fires", () => {
   it("an airport with no row falls to the static dataset and is counted as no_airport_row", async () => {
     const db = makeLayoverDb({ airport_profiles: [] }, {});
     const r = await lookupByIata(db as never, "TPE");
-    assert.equal(r.fromStatic, true);
+    assert.deepEqual([r.kind, r.kind === "read" && r.value.fromStatic], ["read", true]); // census L294: a clean miss is a READ static answer
     assert.deepEqual(staleFallbackCounters(), { "static_dataset:lookupByIata:no_airport_row": 1 });
   });
 
@@ -171,7 +171,7 @@ describe("L215 — the fallback ladder emits when it fires", () => {
   it("a curated row does not fire the ladder", async () => {
     const db = makeLayoverDb({ airport_profiles: [{ id: "a", iata_code: "TPE", name: "Taoyuan", city: "Taoyuan", country: "Taiwan", country_code: "TW", lat: 25, lng: 121, timezone: "Asia/Taipei" }] }, {});
     const r = await lookupByIata(db as never, "TPE");
-    assert.equal(r.fromStatic, false);
+    assert.deepEqual([r.kind, r.kind === "read" && r.value.fromStatic], ["read", false]); // census L294: a curated row is a READ
     assert.deepEqual(staleFallbackCounters(), {});
   });
 

@@ -403,3 +403,22 @@ describe("the read is this crew's, and only this crew's", () => {
     assert.equal(b.body.crewmates[0].proximity, null);
   });
 });
+
+// census-layover L294 (wave 5): `publishableUserIds` is a LayoverRead. A degraded
+// consent read is "could not check", never "nobody consented" and never "paused".
+describe("L294 — an unreadable sharing-preferences read is said as one", () => {
+  it("the read withholds every crewmate and names the consent read", async () => {
+    stage({ grants: [grantRow("a"), grantRow("b")], failures: { "location_preferences:select": { message: "boom" } } });
+    const b = await call(TOKENS.b, "GET", loc(SESS.b));
+    assert.equal(b.status, 200, JSON.stringify(b.body));
+    assert.equal(b.body.crewmates.length, 0);
+    assert.equal(b.body.crewmatesWithheld, "sharing_preferences_unreadable");
+  });
+
+  it("a share whose sharer's own settings cannot be read is a 503, not 'paused'", async () => {
+    stage({ failures: { "location_preferences:select": { message: "boom" } } });
+    const share = await call(TOKENS.a, "POST", loc(SESS.a), { label: "Old town", expiresAt: iso(Date.now() + 30 * MIN) });
+    assert.equal(share.status, 503, JSON.stringify(share.body));
+    assert.notEqual(share.body.reason, "sharing_paused");
+  });
+});

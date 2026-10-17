@@ -97,10 +97,12 @@ describe("L294/C2 — an unreadable presence read degrades visibly", () => {
       { failures: { "layover_sessions:select": { message: "relation unavailable" } } },
     );
     const r = await cityPresence(db as any, USER_ID, "Taoyuan");
-    assert.equal(r.count, 0, "failing closed is right — nobody is published on an outage");
-    assert.equal(r.degraded, true, "…and the zero must not be reported as a measurement");
-    assert.ok(r.degradedReasons.includes("presence_unreadable"),
-      `expected a named reason, got ${JSON.stringify(r.degradedReasons)}`);
+    // census L294 (wave 5): a LayoverRead — the zero is a FALLBACK, never a read value.
+    assert.equal(r.kind, "degraded", "…and the zero must not be reported as a measurement");
+    if (r.kind !== "degraded") return;
+    assert.equal(r.fallback.count, 0, "failing closed is right — nobody is published on an outage");
+    assert.ok(r.reasons.includes("presence_unreadable"),
+      `expected a named reason, got ${JSON.stringify(r.reasons)}`);
   });
 
   it("an unreadable blocks table degrades too, with its own reason", async () => {
@@ -146,9 +148,8 @@ describe("L294/C2 — an unreadable presence read degrades visibly", () => {
       {},
     );
     const r = await cityPresence(db as any, USER_ID, "Taoyuan");
-    assert.equal(r.count, 0);
-    assert.equal(r.degraded, false, "a successful read that found nobody is a measurement, not an outage");
-    assert.deepEqual(r.degradedReasons, []);
+    assert.deepEqual(r, { kind: "read", value: { count: 0, travelers: [], visibleUserIds: [] } },
+      "a successful read that found nobody is a measurement, not an outage");
   });
 });
 
@@ -173,5 +174,55 @@ describe("disclosePresence carries the read's degradation, not only the gate's",
     // RESTATED 2026-10-08 (D-PRESENCE-K-4): the L2 rung serves no count beside its roster.
     assert.strictEqual(d.count, null);
     assert.equal(d.countWithheld, "roster_visible");
+  });
+});
+
+// census-layover L294 (wave 5): `publishableUserIds` is a LayoverRead. Its degraded
+// branch is the presence answer's REFUSAL, never the measured `empty`.
+describe("L294 — an unreadable consent read refuses, it does not measure a zero", () => {
+  it("a traveller in the city, consent unreadable: nobody published, and the zero is degraded with the store's reason", async () => {
+    const db = makeLayoverDb(
+      {
+        layover_sessions: [sessionRow({ id: "session-2", user_id: "user-2", share_city_status: true, manual_city: "Taoyuan", airport_id: null })],
+        blocks: [], profiles: [], location_preferences: [],
+      },
+      { failures: { "location_preferences:select": { message: "relation unavailable" } } },
+    );
+    const r = await cityPresence(db as unknown as Parameters<typeof cityPresence>[0], USER_ID, "Taoyuan");
+    assert.equal(r.kind, "degraded", "an outage is not 'nobody else is here'");
+    if (r.kind !== "degraded") return;
+    assert.equal(r.fallback.count, 0);
+    assert.deepEqual(r.fallback.travelers, []);
+    assert.ok(r.reasons.includes("sharing_preferences_unreadable"), JSON.stringify(r.reasons));
+  });
+
+  it("census L294: a traveller is published and named — a full measurement is a READ", async () => {
+    const db = makeLayoverDb(
+      {
+        layover_sessions: [sessionRow({ id: "session-2", user_id: "user-2", share_city_status: true, manual_city: "Taoyuan", airport_id: null })],
+        blocks: [], profiles: [{ id: "user-2", handle: "two", name: "Two", avatar_url: null }], location_preferences: [],
+      },
+      {},
+    );
+    const r = await cityPresence(db as unknown as Parameters<typeof cityPresence>[0], USER_ID, "Taoyuan");
+    assert.equal(r.kind, "read", JSON.stringify(r));
+    if (r.kind !== "read") return;
+    assert.equal(r.value.count, 1);
+    assert.deepEqual(r.value.visibleUserIds, ["user-2"]);
+  });
+
+  it("census L294: unreadable traveller cards make the answer DEGRADED, its measured count kept in the fallback", async () => {
+    const db = makeLayoverDb(
+      {
+        layover_sessions: [sessionRow({ id: "session-2", user_id: "user-2", share_city_status: true, manual_city: "Taoyuan", airport_id: null })],
+        blocks: [], profiles: [], location_preferences: [],
+      },
+      { failures: { "profiles:select": { message: "relation unavailable" } } },
+    );
+    const r = await cityPresence(db as unknown as Parameters<typeof cityPresence>[0], USER_ID, "Taoyuan");
+    assert.equal(r.kind, "degraded", JSON.stringify(r));
+    if (r.kind !== "degraded") return;
+    assert.equal(r.fallback.count, 1, "the count was measured; the cards were not");
+    assert.deepEqual(r.reasons, ["traveller_cards_unreadable"]);
   });
 });

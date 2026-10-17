@@ -63,7 +63,14 @@
  * function name — that silence made an rpc failure invisible to every caller's
  * `if (error)` branch. It now resolves PGRST202, the real client's own answer,
  * and `spec.rpc` registers real handlers.
+ *
+ * An EMBED (`x(...)` in a select list) THROWS unless a migration-declared
+ * foreign key joins the two tables (census-layover L295). This double resolves
+ * no embed, but it must not answer one PostgREST would refuse (PGRST200) as if
+ * the join existed: that is a test asserting a join production cannot perform.
+ * The rule and the FK reader are `helpers/migrationForeignKeys.ts`.
  */
+import { assertSelectEmbedsBacked } from "./migrationForeignKeys.js";
 
 export interface FakeFilter {
   col: string;
@@ -299,6 +306,7 @@ export function makeFailClosedClient(spec: FakeClientSpec): any {
 
       const builder: any = {
         select(_cols?: string, opts?: { count?: string; head?: boolean }) {
+          assertSelectEmbedsBacked("failClosedSupabase", table, _cols);
           selected = true;
           if (opts?.count) countMode = opts.count;
           if (opts?.head) headOnly = true;

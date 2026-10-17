@@ -152,7 +152,7 @@ async function crewLocationBody(sc: SupabaseClient, viewerId: string, session: L
     grants: grants.value,
     liveMemberIds,
     blocked: blocks.ok ? blocks.ids : null,
-    publishable: publish.degraded ? null : new Set(publish.allowed),
+    publishable: publish.kind === "read" ? new Set(publish.value.allowed) : null,
     signalsFor: (g: CrewGrantRow) => crewShareSignalsFor({
       grant: g,
       crew: { status: crew.status, expiresAt: crew.expiresAt },
@@ -237,8 +237,8 @@ router.post("/airport/sessions/:id/crew/location", asyncHandler(async (req, res)
   // A sharer who paused sharing (or switched location off) is not published
   // by any read, so a share they make now would be one nobody may see.
   const self = await publishableUserIds(sc, [userId]);
-  if (self.degraded) { sendError(res, "degraded_unavailable", "Your sharing settings could not be checked. Please try again."); return; }
-  if (!self.allowed.includes(userId)) {
+  if (self.kind === "degraded") { sendError(res, "degraded_unavailable", "Your sharing settings could not be checked. Please try again."); return; }
+  if (!self.value.allowed.includes(userId)) {
     sendError(res, "conflict", "Your location sharing is paused in Settings, so nothing can be shared.", { reason: "sharing_paused" }); return;
   }
 

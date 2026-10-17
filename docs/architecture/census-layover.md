@@ -11220,7 +11220,7 @@ per-abort choice?* Nothing here answers it. The plan's fail-closed default is bu
    fix round 1, F1 — before it, only `location_preferences` was read).
    An unreadable block list or sharing table tells nobody
    (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:304#if (!blocked.ok) return untold("blocks_unreadable");`,
-   `artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:310#if (sharing.degraded) return untold("sharing_preferences_unreadable");`).
+   `artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:310#if (sharing.kind === "degraded") return untold("sharing_preferences_unreadable");`).
    So the recipients are never more than the faces the traveller already sees on `GET /crew`.
 5. **Minimal text, in-app only.** "Your layover crew" / "<name> is heading back to the airport.", the name only when
    the traveller shows their real name, otherwise "A crew member"
@@ -12275,3 +12275,79 @@ No row moves. This section changes no count, so the headline is the latest headl
 ### Correction (2026-10-17, wave-4 integration)
 
 The wave-4 section above says the crew-location work is not mounted. That is no longer true: `routes/index.ts` now mounts `layoverCrewLocation` (folded onto its last line), and `travel-buddy-standalone/app/layover/[id].tsx` mounts `LayoverCrewLocationCard` beside `LayoverCrewSection`, with its read feeding the map's `crewLocations`. L124 now has its screen wiring and L132's card is reachable. Grading is unchanged: under this census's WAVE-1 ruling the rows stay N while migration 3996 is unapplied and `layover_crew_location_enabled` is seeded FALSE.
+
+## Row moves — 2026-10-17 build and fix (wave 5, layover/map). NO ROW MOVES
+
+Measured on branch `claude/wave4-build-20261017` against the working tree, 2026-10-17. `head_commit` is not re-declared. Every row not named here is unchanged. This lane closed the two gaps §65.4 and §55.9 left open on L295 and L294 and checked L236's registration. None of the three moves, for the reasons in the table.
+
+### L295 — every double §65.4 named is behind the embed guard, and the guard reads production's keys
+
+§65.4 ended: *"`failClosedSupabase`, `schemaStrictSupabase` and `fakeMapDb` are not yet behind the embed guard."* Each now calls the guard from its own `select()`, before it answers. The guard is unchanged in its rule and its signature (`artifacts/api-server/src/test/helpers/migrationForeignKeys.ts:125#export function assertSelectEmbedsBacked(`). A planted `rent_buddy_profiles → airport_profiles` embed is refused by each double, nested forms included (`artifacts/api-server/src/test/fakeLayoverDbEmbedGuard.test.ts:117#PLANTED: failClosedSupabase refuses`).
+
+Putting 123 more suites behind the guard showed that the first cut read too little. It read only `src/migrations/*.sql`, and most of production's keys predate that chain: `trip_members → trips`, `user_follows → profiles` and `event_reviews → profiles` read as unbacked. The reader now also reads the 2026-08-19 production structure dump, and stays additive (`artifacts/api-server/src/test/helpers/migrationForeignKeys.ts:153#const BASELINE = path.resolve(`). It also records which column each key runs along and what it is named. So a column embed (`profiles:submitted_by!left(...)`) lands on the table its key references, and a `!hint` that names no key between the two tables is refused (`artifacts/api-server/src/test/fakeLayoverDbEmbedGuard.test.ts:163#keys that predate the migration chain count`, `artifacts/api-server/src/test/fakeLayoverDbEmbedGuard.test.ts:181#PLANTED: a hint naming no key between the tables is refused`). Two cases are not modelled, and the file says so: an unhinted embed between two tables joined by more than one key (PostgREST's PGRST201) is accepted, and a many-to-many embed through a junction table is refused.
+
+**One embed in production code has no key behind it in the repo's own schema.** `routes/reviews.ts` selects `profiles!reviewer_id(...)` from `reviews` on three reads. But `reviews.reviewer_id` references `auth.users(id)` (0067; the baseline's `reviews_reviewer_id_fkey`), not `public.profiles`, and no migration adds a `reviews → profiles` key. By that schema PostgREST answers PGRST200, and those reads answer `db_error`. **This was not checked against the live catalog**; one catalog query settles it. The embed is recorded rather than hidden: the doubles accept it from a one-entry ledger, so the two suites that drive those reads stay runnable. A case fails the moment the embed stops being issued or a key starts backing it (`artifacts/api-server/src/test/fakeLayoverDbEmbedGuard.test.ts:206#every entry is still unbacked by any declared key`). The fix, a key migration or a two-step read, belongs to the reviews route's owner, so this lane leaves it to them.
+
+Across the 217 suites that use any of the five doubles or the guard, the run is 4060/4060 with the guard on.
+
+### L294 — the typed read-result convention, its guard, and eight of twelve reads moved onto it
+
+§55.9: *"'Degraded confidence a handler cannot skip' is a property of every layover read's return type … It needs a typed-read-result convention applied across the layover stores."* **The convention:** a read that can answer with a fail-closed substitute returns `LayoverRead<T>`, either `{ kind: "read", value }` or `{ kind: "degraded", fallback, reasons }` (`artifacts/api-server/src/services/layover/layoverRead.ts:61#export type LayoverRead<T> =`). The substitute is deliberately not named `value`, so `r.value` does not compile until the handler has narrowed to a real read. The guard has the compiler prove that on a planted handler (`artifacts/api-server/src/test/layoverReadResultGuard.test.ts:172#the convention's whole point, checked by the compiler`). A degraded read must name at least one reason, checked at runtime too (`artifacts/api-server/src/services/layover/layoverRead.ts:75#export function readDegraded<T>(`). `readDisclosure` turns any number of reads back into the `{ degraded, degradedReasons }` pair the wire already speaks, so no client contract moved.
+
+**The guard** reads every `async` function in `services/airport`, `services/layover`, `routes/airport.ts` and `routes/layover*.ts` with the TypeScript checker, inferred return types included. It fails on any whose result carries a read-confidence boolean (`degraded`, `unreadable`, `readable`, …) beside data and is not on a ledger that may only shrink. A ledger entry that no longer has the shape also fails (`artifacts/api-server/src/test/layoverReadResultGuard.test.ts:54#const NOT_YET_MIGRATED`). Reads that already had a typed shape, the `{ ok: true } | { ok: false }` unions and `readConstraintFlags`'s `readable: true | false`, are correctly not flagged.
+
+**Migrated, one store at a time, with the neighbours green after each:**
+- `readTripGhostMode` (`artifacts/api-server/src/services/airport/LayoverPrivacyGuard.ts:296#): Promise<LayoverRead<boolean>> {`).
+- `publishableUserIds`, with all six of its call sites.
+- The four airport lookups. The static answer to an outage is now a fallback, and the legacy `resolveBy*` projections take it knowingly, exactly as before (`artifacts/api-server/src/services/airport/AirportProfileService.ts:190#export type AirportLookup = LayoverRead<AirportAnswer>;`).
+- `cityPresence`. Unreadable traveller cards now make the whole answer degraded, with the measured count kept in the fallback (`artifacts/api-server/src/routes/airport.ts:2014#): Promise<CityPresenceRead> {`).
+- `crewMemberCards`.
+
+The type system found the two places where a handler read the data without the boolean.
+
+**Remaining on the ledger, and why each is not a mechanical change:**
+- `evaluateSharingGate`. Its result also feeds the synchronous `disclosePresence`, and its `reasons` list mixes the traveller's own switches with read failures, which the wire serves as `withheld`. Converting it changes the meaning of a served field.
+- `markReturning`. It is a write (`applied` beside `failed`), not a read.
+- `landsideMaturityDecision`. `signalsReadable` sits inside a decision record that is itself disclosed.
+- `readLayoverLive`. Its `readable` conflates a flag that is off, a policy gate that refuses, and a thrown read, and only a log line reads it.
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L295 | W | W | The fixture half is now closed for every double §65.4 named, and the guard reads production's keys and the column a join runs along (`artifacts/api-server/src/test/fakeLayoverDbEmbedGuard.test.ts:117#PLANTED: failClosedSupabase refuses`). The other half, a layover test on a real CI schema, still turns on the U-1 grading call about `layoverClientBoundary.db.test.ts`. That call is the lead's. |
+| L294 | W | W (improved) | The convention exists and new data-beside-boolean reads are refused (`artifacts/api-server/src/test/layoverReadResultGuard.test.ts:136#every data-beside-boolean read is on the ledger`). Eight of twelve reads are migrated. C2 asks it of every layover read, and four remain on the ledger for the reasons above. |
+| L236 | W | W | Registered like its siblings, and not moved. `layoverClientBoundary.db.test.ts` is in the api-server `test` list, where it skips without a database. It is also in `scripts/local-db/run-tests.sh`'s `src/test/db/*.db.test.ts` glob, which CI's `api-server-local-db` job runs (`test:db-local`). This lane cannot run it: there is no PostgreSQL here. One observation for the lead: it skips at the `describe` level, which node's TAP reports as `# skipped 0`, so run-tests.sh's *"refuses skipped > 0"* would not see that file skip on its own. Only the job-wide "no test passed" check catches a skip, and it does so only when every suite skips together. |
+
+### Tests and mutation proofs, run for this section on 2026-10-17
+
+Runs used `node --import tsx/esm --test` with `TZ=UTC`, on fakes. Loopback suites ran outside the sandbox, and the wide runs ran under `heavy.sh`. Every mutant was reverted byte-identically, and its sha256 was rechecked.
+
+| what | result |
+| --- | --- |
+| L295 red first | with the four helpers restored to HEAD, the guard suite does not load (the new exports are absent) |
+| L295 green | the guard suite, 23/23. The 217 suites that use a double or the guard, 4060/4060 |
+| L295 mutants | 10 of 10 killed: each of the three doubles' guard calls removed; the baseline not read; column embeds not resolved; the hint check dropped; the ledger dropped; nesting off the raw name; the guard silenced; a join modifier read as a hint |
+| L294 red first | with `LayoverPrivacyGuard.ts` restored, the guard names both reads as new (*"new data-beside-boolean read(s): …readTripGhostMode … publishableUserIds"*), and 6 shape cases fail |
+| L294 green | the guard, 11/11. The 126 neighbour suites (presence, crew, crew location, abort notice, airport lookups, external replan, admin metrics), 2858/2858 |
+| L294 mutants on the stores and their callers | 30 run, 28 killed. Covered: each store's degraded branch returned as a read; the gate dropping the ghost reason; the presence refusal and the crew-card reason swallowed; a degraded consent read taken as an empty set (crew location) or as "paused" (share); the abort notice's degraded branch removed; the population read answering ok; the static fallback for an outage as a read, and a clean miss as degraded; the search route's disclosure dropped (query and IATA); session creation not refusing a degraded lookup (IATA and city); the replan port using a degraded lookup; the legacy projections dropping the fallback (IATA and city); `cityPresence`'s measured zero degraded, its refusal measured, its final return forced either way; the roster disclosure dropped; and crewMemberCards' blocks, consent, card-read and throw exits plus its disclosure. Six of these first survived on branches no suite had reached, and the tests added for them now kill them. **Two survive:** (1) EQUIVALENT: the presence route serving `[]` instead of a degraded roster's fallback travellers, because every degraded exit of `cityPresence` carries no traveller; (2) the offer surface reading a degraded card read's `blockedRelation` as `false`, which differs only when the card read throws on the offer surface, and no suite drives that |
+| L294 guard and convention mutants | 12 of 12 killed: the `degraded` name not recognised; a literal counted as a plain boolean; sync functions flagged; union members not walked; a lone flag flagged; the fresh and stale ledger checks disabled; the degraded variant exposing `value` (type and runtime); empty reasons accepted; the disclosure dropping reasons; `matchRead` taking the read branch for a degraded one |
+| Static | `tsc -p artifacts/api-server` clean. check-test-typecheck: none of this lane's files is above its baseline (the run's only file above baseline is `stampAwardEndpointPresenceEvidence.test.ts`, another lane's). The silent-read, silent-write, enum-literal, location-purpose and route-auth guards pass. `check:writerless-reads` moves `canonical_locations` from 9 readers to 10 for census-trips' stage layer, with the reason on the line |
+
+### Citation repointed in this section
+
+§74's citation of `LayoverCrewAbortNotice.ts:310` now carries that line's new text. It is the same line and the same claim: an unreadable sharing read tells nobody. Only the shape of the check moved to `LayoverRead`.
+
+### Cited, not graded
+
+- NOT-GRADED: artifacts/api-server/src/routes/reviews.ts — named only for the unbacked `reviews → profiles` embed the guard found; the reviews route belongs to another lane.
+
+### Headline
+
+| bucket | was (wave 4) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 86 | 86 |
+| BUILT-BUT-WRONG | 158 | 158 |
+| NOT-BUILT | 52 | 52 |
+| CANNOT-VERIFY | 0 | 0 |
+| total | 296 | 296 |
+
+**No row moves.** 296 = 86 C / 158 W / 52 N / 0 X.

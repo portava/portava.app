@@ -61,7 +61,7 @@ import { readCrewPresenceLayer } from "../../../domain/trips/projections/TripMap
 import { liveEnvelope, type TripProjectionEnvelope } from "../../../domain/trips/contracts/TripProjectionEnvelope.js";
 import { buildTripOpportunityProjection } from "../../../domain/trips/projections/TripOpportunityProjection.js";
 import { describeOperationalGate, tripOperationalProjectionsGate } from "../../../domain/trips/policies/tripOperationalProjections.js"; import { visiblePrivateAnchorLayer, withheldPlanItemStopIds, planItemAccessFor } from "../privateAnchorShares.js";
-import { planScopeAdmitsViewer } from "../../../domain/trips/policies/privateAnchorAccess.js";
+import { planScopeAdmitsViewer } from "../../../domain/trips/policies/privateAnchorAccess.js"; import { cityCentres, stageLayerPoints, stageReading, type StageNotDrawn } from "./tripStageMapLayer.js";
 
 const router = Router();
 const log = logger.child({ mod: "tripMapProjection" });
@@ -144,14 +144,17 @@ export async function serveMapProjection(req: Request<{ tripId: string }>, res: 
 
   // ── stage (§14.1 "stage") ────────────────────────────────────────────────
   // trip_stages carries place_id/city_id, not lat/lng, so a stage's point is
-  // its anchor's. A stage with no resolvable anchor is not a map object and is
-  // simply absent — distinct from the layer being unread, which is what a
-  // FAILED anchor read produces.
+  // its anchor's: the place's own, or — for a city-anchored stage, which is
+  // what TripStructureComposer issues — its canonical city's centre, marked
+  // coarse (tripStageMapLayer.ts; census-trips wave-5 follow-up). A stage with
+  // no position is not a map object: it is listed in `stagesNotDrawn` with its
+  // reason, which is distinct from the layer being unread — what a FAILED anchor read produces.
   let stagePoints: Layer<MapPoint> = unread("not read");
+  let stagesNotDrawn: StageNotDrawn[] = [];
   {
     const { data, error } = await sc
       .from("trip_stages")
-      .select("id, stage_type, state, sequence, place_id")
+      .select("id, stage_type, state, sequence, place_id, city_id")
       .eq("trip_id", tripId);
     if (error) {
       log.warn({ err: error.message, tripId }, "map projection: stages unread");
@@ -159,20 +162,17 @@ export async function serveMapProjection(req: Request<{ tripId: string }>, res: 
     } else {
       const rows = (data ?? []) as any[];
       const coords = await placeCoords(rows.map((s) => s.place_id ?? ""));
-      if (coords === null) {
+      const cities = coords === null ? null : await cityCentres(sc, rows.map((s) => s.city_id ?? ""));
+      if (coords === null || cities === null) {
         // The stages read fine and their locations did not. An unread LAYER,
         // not a set of unlocated stages.
-        stagePoints = unread("the places these stages are anchored to could not be read");
+        stagePoints = unread(coords === null ? "the places these stages are anchored to could not be read" : "the cities these stages are anchored to could not be read");
+        if (cities === null && coords !== null) log.warn({ tripId }, "map projection: stage cities unread");
       } else {
-        stagePoints = ok(rows.flatMap((s) => {
-          const c = s.place_id ? coords.get(s.place_id) : undefined;
-          if (!c) return [];
-          return [{
-            id: s.id, kind: "stage", lat: c.lat, lng: c.lng,
-            label: s.stage_type ?? null,
-            meta: { state: s.state, sequence: s.sequence },
-          }];
-        }));
+        // A city's centre is drawn only for a city-class canonical row, and
+        // says it is coarse; nothing is drawn for an anchor with no position.
+        const built = stageLayerPoints(rows, coords, cities);
+        stagePoints = ok(built.points); stagesNotDrawn = built.notDrawn;
       }
     }
   }
@@ -502,6 +502,10 @@ export async function serveMapProjection(req: Request<{ tripId: string }>, res: 
     safetyLogisticsReading,
     /** §14.1 crew presence: how many of the crew are drawn at a permitted coordinate, how many are summarised, and why (§14.4, §10.2). */
     crewPresenceReading,
+    /** §14.1 stage (census-trips wave-5 follow-up): every stage that is NOT on the map, with its reason, so a legend can
+     *  say so rather than let an absent pin read as an absent stage. Empty when the layer is unread (it says so itself). */
+    stagesNotDrawn,
+    stageReading: stagePoints.status === "ok" ? stageReading(stagePoints.items, stagesNotDrawn) : "not assembled: the stage layer is unread",
   });
 }
 

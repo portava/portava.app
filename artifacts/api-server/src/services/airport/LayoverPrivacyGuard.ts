@@ -216,7 +216,7 @@ export function isSharingAllowed(opts: {
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../../lib/logger.js";
-import { loadPreferences } from "../location/LocationPermissionService.js";
+import { loadPreferences } from "../location/LocationPermissionService.js"; import { readValue, readDegraded, matchRead, readDisclosure, type LayoverRead } from "../layover/layoverRead.js";
 
 const privacyLogger = rootLogger.child({ service: "LayoverPrivacyGuard" });
 
@@ -287,14 +287,14 @@ export interface SharingGateResult {
  * returns `false` WITHOUT reading — absence of a switch is not a switch set to
  * off, and inventing a global one would be fabricating a setting.
  *
- * A read that FAILS returns `ghostMode: true`: closed means "hidden".
+ * A read that FAILS is DEGRADED, with `true` as its fallback: closed means "hidden" (census L294: a `LayoverRead`, so no caller can take that `true` as read).
  */
 export async function readTripGhostMode(
   db: SupabaseClient,
   tripId: string | null | undefined,
   userId: string,
-): Promise<{ ghostMode: boolean; degraded: boolean }> {
-  if (!tripId) return { ghostMode: false, degraded: false };
+): Promise<LayoverRead<boolean>> {
+  if (!tripId) return readValue(false);
   const { data, error } = await db
     .from("trip_crew_location_preferences")
     .select("ghost_mode_enabled")
@@ -306,9 +306,9 @@ export async function readTripGhostMode(
       { err: error, tripId, userId },
       "trip_crew_location_preferences unreadable — ghost mode assumed ON (closed); this traveller is not published",
     );
-    return { ghostMode: true, degraded: true };
+    return readDegraded(true, ["ghost_mode_unreadable"]);
   }
-  return { ghostMode: Boolean((data as any)?.ghost_mode_enabled), degraded: false };
+  return readValue(Boolean((data as any)?.ghost_mode_enabled));
 }
 
 /**
@@ -333,27 +333,27 @@ export async function evaluateSharingGate(
     loadPreferences(db, ctx.userId),
     readTripGhostMode(db, ctx.tripId ?? null, ctx.userId),
   ]);
-
+  const ghostMode = matchRead(ghost, { read: (on) => on, degraded: (closed) => closed }); // the closed fallback, taken knowingly: ghost_mode_unreadable is reported below
   const allowed = isSharingAllowed({
     locationMode: prefs.locationMode,
     sharingPaused: prefs.sharingPaused,
-    ghostMode: ghost.ghostMode,
+    ghostMode,
   });
 
   const reasons: SharingDenialReason[] = [];
   if (prefs.sharingPaused) reasons.push("sharing_paused");
   if (prefs.locationMode === "off") reasons.push("location_mode_off");
-  if (ghost.ghostMode) reasons.push("ghost_mode");
+  if (ghostMode) reasons.push("ghost_mode");
   if (prefs.degraded) reasons.push("preferences_unreadable");
-  if (ghost.degraded) reasons.push("ghost_mode_unreadable");
+  if (ghost.kind === "degraded") reasons.push("ghost_mode_unreadable");
 
   return {
     allowed,
     reasons,
-    degraded: prefs.degraded || ghost.degraded,
+    degraded: prefs.degraded || readDisclosure(ghost).degraded,
     locationMode: prefs.locationMode,
     sharingPaused: prefs.sharingPaused,
-    ghostMode: ghost.ghostMode,
+    ghostMode,
   };
 }
 
@@ -372,7 +372,7 @@ export async function evaluateSharingGate(
  * it is deliberately preserved here, because treating "never opened settings"
  * as a refusal would empty the feature for almost everyone.
  *
- * An UNREADABLE `location_preferences` denies the whole set. That is the only
+ * An UNREADABLE `location_preferences` is DEGRADED (census L294), its fallback denying the whole set. That is the only
  * safe answer: the alternative is publishing people whose opt-out this server
  * could not see.
  *
@@ -384,8 +384,8 @@ export async function evaluateSharingGate(
 export async function publishableUserIds(
   db: SupabaseClient,
   userIds: string[],
-): Promise<{ allowed: string[]; denied: string[]; degraded: boolean }> {
-  if (userIds.length === 0) return { allowed: [], denied: [], degraded: false };
+): Promise<LayoverRead<{ allowed: string[]; denied: string[] }>> {
+  if (userIds.length === 0) return readValue({ allowed: [], denied: [] });
   const { data, error } = await db
     .from("location_preferences")
     .select("user_id, location_mode, sharing_paused")
@@ -395,7 +395,7 @@ export async function publishableUserIds(
       { err: error, candidates: userIds.length },
       "location_preferences unreadable — no traveller is published; a failed read is not consent",
     );
-    return { allowed: [], denied: [...userIds], degraded: true };
+    return readDegraded({ allowed: [], denied: [...userIds] }, ["sharing_preferences_unreadable"]);
   }
 
   const byUser = new Map<string, { location_mode?: string; sharing_paused?: boolean }>();
@@ -414,7 +414,7 @@ export async function publishableUserIds(
     });
     (ok ? allowed : denied).push(id);
   }
-  return { allowed, denied, degraded: false };
+  return readValue({ allowed, denied });
 }
 
 export interface PresenceTraveler {

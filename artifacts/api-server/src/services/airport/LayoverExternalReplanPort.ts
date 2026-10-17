@@ -397,14 +397,14 @@ async function resolveAirport(
   }
 
   const lookup = await lookupByIata(db, airportRef);
-  if (lookup.degraded) {
+  if (lookup.kind === "degraded") {
     return refuse(
-      `airport lookup for ${airportRef} is degraded (${lookup.degradedReasons.join(",")}) — ` +
+      `airport lookup for ${airportRef} is degraded (${lookup.reasons.join(",")}) — ` +
         "refusing rather than replanning against constants that are not this airport's",
     );
   }
-  if (!lookup.airport) return refuse(`no airport known for ${airportRef}`);
-  return { ok: true, airport: feasibilityAirport(lookup.airport), entryCountry: layoverAirportCountry(lookup.airport) };
+  if (!lookup.value.airport) return refuse(`no airport known for ${airportRef}`);
+  return { ok: true, airport: feasibilityAirport(lookup.value.airport), entryCountry: layoverAirportCountry(lookup.value.airport) };
 }
 
 /**
