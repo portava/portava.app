@@ -8,7 +8,7 @@
  *   C. runCollectionsTick — stale-lock sweeper does not crash with no stuck rows.
  *   D. Contributor stamp threshold logic — fires for each threshold crossed,
  *      uses contribution_count (canonical field name), stamp failure is non-fatal.
- *   E. runStaleSweep — re-queues stale living-cache rows.
+ *   E. runStaleSweep — re-queues overdue place collections (place_best_of).
  *   F. runCollectionsTick — empty queue is a no-op.
  *
  * Run: node --import tsx/esm --test src/test/placeCollectionsWorker.test.ts
@@ -109,12 +109,15 @@ function makeFakeSc(opts: {
           if (_patch != null) _wantsSelect = true; // RETURNING mode
           return builder;
         },
-        upsert(row: any, _opts?: any) {
-          capturedUpserts.push({ table, row });
-          if (table === "place_cache_invalidation_queue") {
-            const idx = currentQueueRows.findIndex((r) => r.place_id === row.place_id);
-            if (idx >= 0) { currentQueueRows[idx] = { ...currentQueueRows[idx], ...row }; }
-            else          { currentQueueRows.push({ ...row }); }
+        // One row or many (the stale sweep re-queues a page at a time).
+        upsert(rows: any, _opts?: any) {
+          for (const row of Array.isArray(rows) ? rows : [rows]) {
+            capturedUpserts.push({ table, row });
+            if (table === "place_cache_invalidation_queue") {
+              const idx = currentQueueRows.findIndex((r) => r.place_id === row.place_id);
+              if (idx >= 0) { currentQueueRows[idx] = { ...currentQueueRows[idx], ...row }; }
+              else          { currentQueueRows.push({ ...row }); }
+            }
           }
           return Promise.resolve({ data: null, error: null });
         },
@@ -164,7 +167,8 @@ function makeFakeSc(opts: {
           if (table === "posts") {
             return Promise.resolve({ data: postRows, error: null });
           }
-          if (table === "place_living_cache") {
+          // The stale sweep walks overdue place_best_of rows (owner ruling 2026-10-17).
+          if (table === "place_best_of") {
             return Promise.resolve({ data: staleCacheRows, error: null });
           }
           return Promise.resolve({ data: [], error: null });
@@ -172,6 +176,14 @@ function makeFakeSc(opts: {
         // Resolves UPDATE chains (with or without .select() RETURNING).
         then(resolve: (v: any) => any) {
           if (_isDelete) return resolve({ data: null, error: null });
+          // The stale sweep's reads with no .limit(): the overdue count, and the
+          // queue state of a page (`.in(place_id, …)`).
+          if (table === "place_best_of" && !_patch) {
+            return resolve({ data: staleCacheRows, error: null, count: staleCacheRows.length });
+          }
+          if (table === "place_cache_invalidation_queue" && !_patch) {
+            return resolve({ data: currentQueueRows.filter((r) => _filters.every((f) => f(r))), error: null });
+          }
           if (table === "place_cache_invalidation_queue" && _patch) {
             // Identify rows matching all filters before mutation.
             const matched = currentQueueRows.filter((r) => _filters.every((f) => f(r)));
@@ -410,7 +422,7 @@ describe("D. Contributor stamp threshold logic", () => {
 
 // ── E. runStaleSweep ──────────────────────────────────────────────────────────
 
-describe("E. runStaleSweep — re-queues stale living-cache rows", () => {
+describe("E. runStaleSweep — re-queues overdue place collections (place_best_of; owner ruling 2026-10-17)", () => {
   it("returns requeued=0 when no stale rows exist", async () => {
     const sc = makeFakeSc({ staleCacheRows: [] });
     const result = await runStaleSweep(sc);
@@ -420,8 +432,8 @@ describe("E. runStaleSweep — re-queues stale living-cache rows", () => {
   it("upserts stale place_ids into the invalidation queue with status=pending", async () => {
     const capturedUpserts: Array<{ table: string; row: any }> = [];
     const sc = makeFakeSc({
-      staleCacheRows: [{ place_id: PLACE_ID, cached_at: new Date(0).toISOString() }],
-      // An ACTIVE place: more than 20 active posts (the sweep reads them from posts; wave 5).
+      staleCacheRows: [{ place_id: PLACE_ID, updated_at: new Date(0).toISOString() }],
+      // A busy place (more than 20 active posts); since the owner's ruling a quiet one is re-queued too.
       postRows: Array.from({ length: 21 }, (_, i) => ({ id: `post-${i}` })),
       capturedUpserts,
     });
@@ -679,16 +691,17 @@ describe("H. Mid-flight invalidation: enqueue during processing preserves re-que
   });
 });
 
-// ── I. Sweep collides with processing — lock-expiry guard prevents re-claim ───
+// ── I. Sweep meets a row being processed — it leaves it alone; the lock guard still holds ───
 
-describe("I. Sweep collides with processing — lock guard blocks immediate re-claim", () => {
+describe("I. Sweep collides with processing — the sweep skips an in-flight row; the lock guard blocks re-claim", () => {
   afterEach(() => { _setTestAwardStamp(null); });
 
-  it("a row reset to pending by the stale sweep while under an active lock is not re-claimed before the lock expires", async () => {
+  it("the sweep leaves a processing row untouched, and a row reset to pending under an active lock is not re-claimed", async () => {
     // A row is 'processing' with a lock expiring in 5 minutes (active lock).
-    // The stale sweep fires (triggered by a stale place_living_cache entry) and
-    // unconditionally upserts status='pending' on the queue row.
-    // The claim query must NOT pick it up because locked_until > now.
+    // Before the owner's ruling (2026-10-17) the stale sweep upserted
+    // status='pending' over it, changing queued_at so the worker's mark-done
+    // failed and the place was refreshed twice. The sweep now reads the queue
+    // state of each page and leaves a pending or processing row to the drain.
 
     const futurelock = new Date(Date.now() + 5 * 60 * 1000).toISOString();
 
@@ -702,27 +715,30 @@ describe("I. Sweep collides with processing — lock guard blocks immediate re-c
       },
     ];
 
-    // runStaleSweep scans place_living_cache for rows older than 6h, then upserts
-    // those place_ids into the invalidation queue with status='pending'.
-    // Provide a stale cache entry so the sweep actually fires the upsert.
+    // The place's collections are overdue, so without the in-flight check the
+    // sweep would re-queue it.
     const staleCacheRows: FakeRow[] = [
-      { place_id: PLACE_ID, cached_at: new Date(0).toISOString() },
+      { place_id: PLACE_ID, updated_at: new Date(0).toISOString() },
     ];
 
     const capturedUpserts: Array<{ table: string; row: any }> = [];
-    // An ACTIVE place (more than 20 active posts), so the sweep re-queues it (wave 5: read from posts).
     const postRows: FakeRow[] = Array.from({ length: 21 }, (_, i) => ({ id: `post-${i}` }));
     const sc = makeFakeSc({ queueRows, staleCacheRows, capturedUpserts, postRows });
 
-    // Sweep detects the stale cache entry and re-queues it, overwriting the
-    // processing row's status with 'pending'.
-    await runStaleSweep(sc);
-
+    const swept = await runStaleSweep(sc);
+    assert.strictEqual(swept.inFlight, 1);
+    assert.strictEqual(swept.requeued, 0);
     const afterSweep = sc._getQueueRows().find((r: FakeRow) => r.place_id === PLACE_ID);
-    assert.strictEqual(afterSweep?.status, "pending", "Sweep must set status=pending");
+    assert.strictEqual(afterSweep?.status, "processing", "the sweep must not reset an in-flight row");
+    assert.strictEqual(afterSweep?.queued_at, "2026-07-28T00:00:00.000Z", "nor change its version token");
 
-    // Now run a tick — the claim query filters locked_until IS NULL OR < now.
-    // Since locked_until is in the future, the row must NOT be claimed.
+    // An invalidation (enqueueLivingCacheInvalidation) still can reset it to
+    // pending while the lock is live; the claim query filters
+    // locked_until IS NULL OR < now, so the row must NOT be claimed yet.
+    await sc.from("place_cache_invalidation_queue").upsert(
+      { place_id: PLACE_ID, queued_at: new Date().toISOString(), status: "pending" },
+      { onConflict: "place_id" },
+    );
     _setTestAwardStamp(() => Promise.resolve({ awarded: false, reason: "test" }));
     const result = await runCollectionsTick(sc);
 

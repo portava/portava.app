@@ -9522,17 +9522,105 @@ only), so no row moves.
 
 **What changed, with no migration.** The sweep now reads activity from posts. It uses the predicate the worker
 already counts a place's posts by (`canonical_place_id`, `status = 'active'`) and reads at most 21 ids per place
-(`artifacts/api-server/src/lib/places/placeCollectionsWorker.ts:671#.limit(POST_COUNT_THRESHOLD + 1);`). It examines
-the 200 most recently stale rows. A quiet place gets no invalidation and so stays stale; most-recent-first means such
+(`artifacts/api-server/src/lib/places/placeCollectionsWorker.ts:817#.limit(POST_COUNT_THRESHOLD + 1);`). It examines
+the 200 most recently stale rows (superseded by the owner's ruling: see the next correction). A quiet place gets no invalidation and so stays stale; most-recent-first means such
 places cannot fill every slot. A place whose activity cannot be read is skipped and counted, and is never re-queued
-on a guess (`artifacts/api-server/src/lib/places/placeCollectionsWorker.ts:636#export async function runStaleSweep(`).
+on a guess (`artifacts/api-server/src/lib/places/placeCollectionsWorker.ts:835#export async function runStaleSweep(`).
 The cited lines above the sweep do not move.
 
-**Tests.** `artifacts/api-server/src/test/placeCollectionsStaleSweep.test.ts:66#it("re-queues the busy place only, as pending (the 42703 re-queued nothing)"`
-(5 cases on schemaStrictSupabase). Red first: 3 of 5 are red on the pre-fix worker. Four mutants were killed, each
+**Tests.** `artifacts/api-server/src/test/placeCollectionsStaleSweep.test.ts:63#it("re-queues every overdue place, busy and quiet, as pending; a fresh one is not examined"`
+(5 cases on schemaStrictSupabase; rewritten for the next correction, whose ruling re-queues quiet places too). Red first: 3 of 5 are red on the pre-fix worker. Four mutants were killed, each
 restored and checked by sha256: the old embed put back, `<= 20` loosened to `< 20`, the active filter dropped, and
 oldest-first ordering. The worker's own suite (`artifacts/api-server/src/test/placeCollectionsWorker.test.ts`) had to give its two sweep fixtures 21 active posts. Its fake answered
 the old read whatever columns it named, which is how the dead column stayed green.
 
 - NOT-GRADED: artifacts/api-server/src/test/placeCollectionsStaleSweep.test.ts — this correction's own test; no H row rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/placeCollectionsWorker.test.ts — the worker's suite, whose two sweep fixtures gained active posts; no H row rests on it.
+
+### Correction (2026-10-17, wave 5) — place stale sweep: owner-ruled backlog processing
+
+*Measured on branch `claude/wave4-build-20261017` against the working tree. Uncommitted and undeployed. No migration.
+**NO ROW MOVES.***
+
+**The ruling.** The owner ruled on 2026-10-17 ("Place-collection refresh limit"). The hourly refresh examined only
+the 200 most recently stale places, so once more than 200 were stale some were skipped run after run. The ruling
+asks for six things: the longest-waiting places first, in paginated batches; busy places first without starving
+quiet ones; the backlog continued automatically; refresh failures, backlog size and maximum waiting time tracked;
+and capacity that scales with the backlog.
+
+**What the sweep measured on, and why that changed.** A refresh is `processPlace`, reached through the queue. It
+rebuilds `place_best_of` and `place_top_contributors`. It never rebuilds `place_living_cache`. Its step C asks
+`routes/placeLiving.ts` for `assembleLivingPage`
+(`artifacts/api-server/src/lib/places/placeCollectionsWorker.ts:546#const living = await mod.assembleLivingPage`).
+That module exports no such function; its assembler is module-private
+(`artifacts/api-server/src/routes/placeLiving.ts:136#async function assembleLivingPayload(`). So `living` is always
+undefined and the write never happens. The route rebuilds the living cache itself when a page is viewed. The old
+sweep keyed on `place_living_cache.cached_at`, so a place it refreshed stayed "stale" until someone opened the
+page, and it was re-queued every hour. An oldest-first walk on that key would start on the same already-refreshed
+places every run and never drain. The sweep now walks `place_best_of.updated_at`, which a refresh does advance.
+Step A writes it, or throws. The dead hook itself is NOT fixed here. Wiring the private assembler into the worker
+would spend a paid AI-summary call on pages nobody is viewing; that is a cost decision for the owner.
+
+**What changed (worker tail; every cited line above line 607 is unmoved).**
+- *Oldest first, keyset pages.* The sweep walks overdue rows on `(updated_at, place_id)` in pages of 100. It reads
+  the rest of the last instant past its id, then later instants, and never uses OFFSET
+  (`artifacts/api-server/src/lib/places/placeCollectionsWorker.ts:787#.eq("updated_at", after.updated_at)`).
+- *Resume point.* It is derived from the data, not stored. Production has no table for a cursor:
+  `scheduler_watermarks` is 3505, unapplied. A re-queued place is refreshed by the drain and leaves the set, so the
+  next run's first page is the head of what is left.
+- *In-flight places.* A place already pending or processing in the queue is counted and skipped, never re-queued
+  (`artifacts/api-server/src/lib/places/placeCollectionsWorker.ts:910#if (waiting.has(row.place_id))`). Before,
+  re-asserting `pending` over a processing row changed its `queued_at`, failed its mark-done, and refreshed it twice.
+- *Lanes.* Half of each run (the aging lane) goes to the longest-waiting places whatever their traffic
+  (`artifacts/api-server/src/lib/places/placeCollectionsWorker.ts:685#export const STALE_SWEEP_AGING_SHARE = 0.5;`).
+  The traffic lane takes busy places (more than 20 active posts, read as before) further along the walk. Unused
+  traffic slots go to the quiet places the walk passed, oldest first
+  (`artifacts/api-server/src/lib/places/placeCollectionsWorker.ts:930#while (trafficLeft > 0 && filled < held.length)`).
+  Quiet places are now refreshed too; the ruling says less-active places must not be starved. A place whose
+  activity cannot be read is ranked with the quiet ones and never promoted on a guess.
+- *The bound.* Overdue order is first-in-first-out. In a run that reads and writes cleanly, the aging lane re-queues
+  R ≥ 100 places ahead of any other eligible place. So a place k eligible places from the head is re-queued within
+  floor(k / R) + 1 runs. When the backlog fits one budget, every eligible place is re-queued in the run that sees it.
+- *Capacity.* The budget is pages = clamp(ceil(backlog / 100), 2, 6): 200 to 600 places per run, and the walk
+  scans at most twice that
+  (`artifacts/api-server/src/lib/places/placeCollectionsWorker.ts:711#export function staleSweepBudget(`). The 15-minute
+  tick claims only 20 rows, which is 80 an hour. So each run drains what it queued itself
+  (`artifacts/api-server/src/lib/places/placeCollectionsWorker.ts:982#export async function runCollectionsDrain(`),
+  with at most 61 passes. While backlog remains, a follow-up run is armed 15 minutes later, at most 3 times between
+  hourly runs (`artifacts/api-server/src/lib/places/placeCollectionsWorker.ts:1162#export function staleSweepFollowUpDelayMs(`).
+  That caps the sweep at 4 runs and 2 400 re-queued places an hour.
+- *Tracked.* Each run records the backlog (an exact count), the maximum wait, the budget, lane counts, the in-flight
+  count, the drain's claimed/processed/errors, and five kinds of sweep failure. One structured
+  `place_collections.stale_sweep_complete` line is logged per run. A status getter in the house shape exposes
+  attempt, success, consecutive failures, failure strings, the last run and total refresh failures
+  (`artifacts/api-server/src/lib/places/placeCollectionsWorker.ts:1024#export function getPlaceCollectionsSweepStatus(`).
+  It is not yet registered in `routes/health.ts` or `lib/schedulerCoverage.ts`; another lane holds both files. A
+  tick pass that cannot read or lock its queue now returns `errors: 1`, so the drain counts it
+  (`artifacts/api-server/src/lib/places/placeCollectionsWorker.ts:380#return { ...result, errors: 1 };`). This edit
+  is line-neutral.
+- *Not done.* `place_best_of` has no index on `updated_at`, so the count and each page scan a table with one row
+  per precomputed place. No migration number is available to add one.
+
+**Tests.** There are three suites.
+- `artifacts/api-server/src/test/placeCollectionsBacklogSweep.test.ts:236#it("700 overdue, budget 600: the 600 that waited longest go`
+  has 22 cases on an in-memory database. That database orders on two keys and drains through the real
+  `runCollectionsTick`/`processPlace`. The cases cover: oldest-first; ties across page boundaries; a 1 500 backlog
+  walked over three runs, each place once; busy-cannot-starve-quiet and its converse; the floor(k / R) + 1 bound
+  on a randomized backlog with arrivals; within-capacity; budget and drain bounds; in-flight; five failure paths,
+  one failing place not blocking the rest; status, health detail and log line; follow-up bounds.
+- The schema-strict suite was rewritten (5 cases): no dead column on any query of the walk.
+- In the worker suite, E's fixture moved to `place_best_of`, and I now proves the sweep leaves an in-flight row
+  untouched.
+
+Red first: on the pre-ruling worker, 22 of 22 backlog cases, 5 of 5 schema-strict cases and 2 worker cases
+(E2, I) are red. 15 mutants were killed. Each was restored and checked by sha256: aging share 0; newest-first walk;
+tie read dropped; budget cap removed; in-flight skip removed; drain errors not a failure; fill lane removed; traffic
+lane by age only; no drain; max wait from the newest row; unreadable activity promoted; follow-up bound removed;
+unreadable queue state re-queued blind; count failure not counted; an empty backlog read as an unknown wait. These
+are local runs on fakes, not evidence about a deployment.
+
+**No row moves.** No H row grades the sweep. H4 cites this worker only for its contributor-stamp award. `processPlace` is
+unchanged, and `runCollectionsTick` changed only in its two line-neutral claim-error returns.
+
+- NOT-GRADED: artifacts/api-server/src/test/placeCollectionsBacklogSweep.test.ts — this correction's own suite; no H row rests on it.
+- NOT-GRADED: artifacts/api-server/src/routes/placeLiving.ts — cited only to show the assembler the worker's living-cache step cannot reach; no H row grades it here.

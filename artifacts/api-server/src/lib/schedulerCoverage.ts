@@ -109,7 +109,7 @@ export const STARTED_SCHEDULERS: readonly SchedulerRow[] = [
   { start: "startMemoryProjectionScheduler" },
   { start: "startNotificationMaintenanceScheduler", reportedAs: ["notificationMaintenanceScheduler"] },
   { start: "startPendingUploadSweepScheduler" }, { start: "startMessageMediaPartsSweepScheduler", reportedAs: ["messageMediaPartsSweep"] }, // census-telegraph T223 (3656): raw message-media parts past their cutoff; line-neutral
-  { start: "startPlaceCollectionsWorker" },
+  { start: "startPlaceCollectionsWorker", reportedAs: ["placeCollectionsStaleSweep"] }, // owner ruling 2026-10-17: backlog, max wait and failures at /healthz/schedulers
   { start: "startPlaceCooccurrenceRebuildScheduler" },
   { start: "startPlaceDayLifecycleWorker" },
   { start: "startPostPlaceBackfillWorker" },

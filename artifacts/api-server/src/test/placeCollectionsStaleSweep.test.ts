@@ -1,28 +1,27 @@
 /**
- * census-highlights-memories (wave 5, 2026-10-17) — the hourly stale-cache sweep
- * re-queues busy places, counted from posts.
+ * census-highlights-memories (wave 5, 2026-10-17) — the hourly overdue sweep,
+ * on the live schema.
  *
  * Run: node --import tsx/esm --test src/test/placeCollectionsStaleSweep.test.ts
  *
- * THE DEFECT. runStaleSweep (lib/places/placeCollectionsWorker.ts) read
- * `place_living_cache.select("place_id, places!inner(post_count)")` and
- * filtered `.gt("places.post_count", 20)`. `places` has no post_count — no SQL
- * in the repository declares one, and production does not have one — so
- * PostgREST failed the read with 42703 and the sweep re-queued NOTHING, every
- * hour the worker ran (PLACE_COLLECTIONS_WORKER_ENABLED=true). A busy place's
- * living page went stale between invalidations. Found by
- * test/schemaColumnProductionScan.test.ts (class A).
+ * HISTORY. runStaleSweep (lib/places/placeCollectionsWorker.ts) first read
+ * `place_living_cache.select("place_id, places!inner(post_count)")`. `places`
+ * has no post_count, so PostgREST failed the read with 42703 and the sweep
+ * re-queued nothing (found by test/schemaColumnProductionScan.test.ts, class A).
+ * The fix read activity from posts and examined the 200 most recently stale
+ * living caches. The owner then ruled (2026-10-17, "Place-collection refresh
+ * limit") that the longest-waiting places go first, in paginated batches, busy
+ * ones first without starving quiet ones. The sweep now walks place_best_of
+ * — the collections it refreshes — oldest-first in keyset pages; why that table
+ * and not place_living_cache is in the worker's sweep header.
  *
- * THE FIX. The activity signal is read from posts with the predicate the worker
- * already counts a place's posts by (canonical_place_id, status = 'active'), at
- * most 21 ids per place. Proven on schemaStrictSupabase, whose tables are the
- * live schema's:
- *   1. a stale cache row of a place with MORE than 20 active posts is re-queued
- *      (pending); 20 exactly is not; non-active posts do not count;
- *   2. a fresh cache row is not examined;
- *   3. no statement names a column the live schema lacks;
- *   4. a place whose activity cannot be read is skipped, never re-queued on a guess;
- *   5. the most recently stale rows are examined first.
+ * THIS FILE proves the sweep on schemaStrictSupabase, whose tables are the live
+ * schema's: no statement names a column production lacks, on every query the
+ * walk makes (the count, the first page, and a second page's tie and later
+ * reads). Behaviour in depth — key order, lanes, bounds, drain, metrics — is in
+ * placeCollectionsBacklogSweep.test.ts, on a database that models ordering on
+ * two keys. This double keeps only the LAST order key, so the ids below sort
+ * the same way as their ages.
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -30,31 +29,29 @@ import assert from "node:assert/strict";
 import { makeSchemaStrictClient, type Seed, type Row } from "./helpers/schemaStrictSupabase.js";
 import { runStaleSweep } from "../lib/places/placeCollectionsWorker.js";
 
-const BUSY = "a1000000-0000-4000-a000-000000000001";
-const EDGE = "a2000000-0000-4000-a000-000000000002";
-const QUIET = "a3000000-0000-4000-a000-000000000003";
-const FRESH_BUSY = "a4000000-0000-4000-a000-000000000004";
 const HOUR = 60 * 60 * 1000;
-const ago = (h: number) => new Date(Date.now() - h * HOUR).toISOString();
+const NOW = Date.now();
+const ago = (h: number) => new Date(NOW - h * HOUR).toISOString();
+// Older place ⇒ smaller id, so the double's one-key order agrees with the age order.
+const pid = (i: number) => `a${String(i).padStart(7, "0")}-0000-4000-a000-000000000000`;
 
 function posts(placeId: string, n: number, status = "active"): Row[] {
   return Array.from({ length: n }, (_, i) => ({ id: `${placeId}-${status}-${i}`, canonical_place_id: placeId, status }));
 }
 
-function world(): Seed {
+const BUSY = pid(1);
+const QUIET = pid(2);
+const FRESH_BUSY = pid(9_000_000);
+
+function world(extraOverdue = 0): Seed {
   return {
-    place_living_cache: [
-      { place_id: BUSY, payload: {}, cached_at: ago(7), sparse: false },
-      { place_id: EDGE, payload: {}, cached_at: ago(8), sparse: false },
-      { place_id: QUIET, payload: {}, cached_at: ago(9), sparse: false },
-      { place_id: FRESH_BUSY, payload: {}, cached_at: ago(1), sparse: false },
+    place_best_of: [
+      { place_id: BUSY, updated_at: ago(9) },
+      { place_id: QUIET, updated_at: ago(8) },
+      ...Array.from({ length: extraOverdue }, (_, i) => ({ place_id: pid(10 + i), updated_at: ago(7.5 - i / 10_000) })),
+      { place_id: FRESH_BUSY, updated_at: ago(1) },
     ],
-    posts: [
-      ...posts(BUSY, 21),
-      ...posts(EDGE, 20),
-      ...posts(QUIET, 3), ...posts(QUIET, 40, "deleted"),
-      ...posts(FRESH_BUSY, 50),
-    ],
+    posts: [...posts(BUSY, 21), ...posts(QUIET, 3), ...posts(QUIET, 40, "deleted"), ...posts(FRESH_BUSY, 50)],
     place_cache_invalidation_queue: [],
   };
 }
@@ -62,50 +59,56 @@ function world(): Seed {
 const queued = (strict: ReturnType<typeof makeSchemaStrictClient>) =>
   strict.writes.filter((w) => w.table === "place_cache_invalidation_queue").flatMap((w) => w.rows);
 
-describe("schema-strict: runStaleSweep re-queues stale caches of places with more than 20 active posts", () => {
-  it("re-queues the busy place only, as pending (the 42703 re-queued nothing)", async () => {
+describe("schema-strict: runStaleSweep walks overdue place collections", () => {
+  it("re-queues every overdue place, busy and quiet, as pending; a fresh one is not examined", async () => {
     const strict = makeSchemaStrictClient(world());
-    const r = await runStaleSweep(strict);
-    assert.equal(r.requeued, 1);
-    assert.deepEqual(queued(strict).map((q) => [q.place_id, q.status]), [[BUSY, "pending"]]);
+    const r = await runStaleSweep(strict, { now: NOW });
+    assert.equal(r.backlog, 2);
+    assert.equal(r.requeued, 2);
+    assert.deepEqual(queued(strict).map((q) => [q.place_id, q.status]), [[BUSY, "pending"], [QUIET, "pending"]]);
+    assert.ok(!queued(strict).some((q) => q.place_id === FRESH_BUSY), "rebuilt an hour ago");
   });
 
-  it("20 active posts is not more than 20; 40 deleted posts do not make a place busy; a fresh cache is not examined", async () => {
-    const strict = makeSchemaStrictClient(world());
-    await runStaleSweep(strict);
-    const ids = queued(strict).map((q) => q.place_id);
-    assert.ok(!ids.includes(EDGE), "exactly 20");
-    assert.ok(!ids.includes(QUIET), "3 active + 40 deleted");
-    assert.ok(!ids.includes(FRESH_BUSY), "cached an hour ago");
-  });
-
-  it("names no column the live schema lacks", async () => {
-    const strict = makeSchemaStrictClient(world());
-    await runStaleSweep(strict);
+  it("names no column the live schema lacks — the count, the first page and a second page's tie and later reads", async () => {
+    const strict = makeSchemaStrictClient(world(150));
+    const r = await runStaleSweep(strict, { now: NOW });
+    assert.ok(r.pagesRead >= 2, `a second keyset page was read (${r.pagesRead})`);
+    assert.equal(r.requeued, 152);
     assert.deepEqual(strict.deadColumnErrors, []);
   });
 
-  it("a place whose activity cannot be read is skipped, not re-queued", async () => {
-    const strict = makeSchemaStrictClient(world());
+  it("a place whose activity cannot be read is counted and ranked with the quiet ones, never promoted", async () => {
+    const strict = makeSchemaStrictClient(world(150));
     const failingPosts = {
       from: (t: string) => (t === "posts"
         ? { select: () => ({ eq: () => ({ eq: () => ({ limit: async () => ({ data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } }) }) }) }) }
         : strict.from(t)),
     };
-    const r = await runStaleSweep(failingPosts);
-    assert.equal(r.requeued, 0);
-    assert.deepEqual(queued(strict), []);
+    const r = await runStaleSweep(failingPosts, { now: NOW });
+    // Budget 200, aging lane 100: the other 52 are traffic candidates whose activity is unreadable.
+    assert.equal(r.failures.activityUnreadable, 52);
+    assert.equal(r.selected.filter((s) => s.lane === "traffic").length, 0);
+    assert.equal(r.requeued, 152, "quiet places are refreshed too, so nothing waits on the unreadable signal");
   });
 
-  it("examines the most recently stale rows first (a quiet place stuck stale cannot hold the batch)", async () => {
+  it("a place already pending or processing is left to the drain", async () => {
     const seed = world();
-    // 200 quiet places that went stale long ago, older than every row above.
-    for (let i = 0; i < 200; i++) {
-      seed.place_living_cache!.push({ place_id: `q${String(i).padStart(3, "0")}`, payload: {}, cached_at: ago(100 + i), sparse: false });
-    }
+    seed.place_cache_invalidation_queue = [
+      { place_id: BUSY, status: "processing", queued_at: ago(0.1), locked_until: ago(-0.05), locked_by: "w" },
+    ];
     const strict = makeSchemaStrictClient(seed);
-    const r = await runStaleSweep(strict);
-    assert.equal(r.requeued, 1, "the busy place is still in the batch");
-    assert.deepEqual(queued(strict).map((q) => q.place_id), [BUSY]);
+    const r = await runStaleSweep(strict, { now: NOW });
+    assert.equal(r.inFlight, 1);
+    assert.deepEqual(queued(strict).map((q) => q.place_id), [QUIET]);
+  });
+
+  it("the longest-waiting places go first: of 702 overdue, the newest 102 wait for the next run", async () => {
+    const strict = makeSchemaStrictClient(world(700));
+    const r = await runStaleSweep(strict, { now: NOW });
+    assert.equal(r.requeued, 600);
+    const ids = queued(strict).map((q) => q.place_id);
+    assert.ok(ids.includes(BUSY) && ids.includes(QUIET), "the two oldest");
+    assert.ok(!ids.includes(pid(10 + 699)), "the newest");
+    assert.equal(r.backlogRemains, true);
   });
 });

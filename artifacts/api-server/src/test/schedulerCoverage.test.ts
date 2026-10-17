@@ -138,14 +138,14 @@ describe("what the coverage count says", () => {
     // 61 -> 62, 14 -> 15 and 7 -> 8 the same way on 2026-10-10 (lane H-REST, census H157): startHighlightExpiryEventScheduler reports AND writes job_health, so 45 holds. 62 -> 63, 15 -> 16 and 8 -> 9 the same way at the merge of lane T-REL (census-telegraph T154, 3655): startTelegraphOutboxDrainScheduler reports as `telegraphOutboxDrain` AND writes that job_health row, so 45 holds.
     // 63 -> 64 and 16 -> 17 with lane T-REL (census-telegraph T223, 3656): startMessageMediaPartsSweepScheduler reports to /healthz/schedulers as `messageMediaPartsSweep` and writes no job_health row, so 9 durable and 45 invisible hold.
     assert.equal(cov.started, 65); // 64 -> 65, 17 -> 18 and 10 -> 11 with the Telegraph safety re-drive (Fable pass 3 §1.1): startSafetySignalRedriveScheduler reports as `safetySignalRedrive` AND writes that job_health row, so 45 holds
-    assert.equal(cov.reported, 18);
+    assert.equal(cov.reported, 19); // 18 -> 19: startPlaceCollectionsWorker reports as `placeCollectionsStaleSweep` (owner ruling 2026-10-17); it writes no job_health row, so 45 invisible -> 44
     // Moved DOWN on 2026-10-03: startHealthMonitorLoop now writes its own
     // `stamp_health_monitor` job_health row, so the stamp health monitor is no
     // longer one of the jobs whose stopping leaves no trace. 4 durable -> 5,
     // 46 invisible -> 45.
     assert.equal(cov.persisted, 11); // 9 -> 10 at the merge of main (63 / 16 / 9 / 45) with lane L-DATA (census-layover L261): startLayoverAuditRetentionScheduler, already reported, also writes job_health for its snapshot-compaction phase; no scheduler gained or lost a trace, so 45 holds
-    assert.equal(cov.unobservable.length, 45);
-    assert.equal(cov.started, cov.unobservable.length + 20, "18 reported + 11 durable overlap on 9 rows");
+    assert.equal(cov.unobservable.length, 44);
+    assert.equal(cov.started, cov.unobservable.length + 21, "19 reported + 11 durable overlap on 9 rows");
   });
 
   /**
