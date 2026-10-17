@@ -8927,3 +8927,15 @@ context the §5 union does not have. Both are also dark: `compass_ai_writing_ena
 Of 373 rows: **319 BUILT-AND-CORRECT, 48 BUILT-BUT-WRONG, 2 NOT-BUILT, 4 CANNOT-VERIFY**. CONSTRUCTED is now
 367 / 373 = 98.4 %. CORRECT is unchanged at 319 / 373 = 85.5 %. G123, G177, G222, G237, G153 and G192 change
 bucket.
+
+### Restated after independent verification (2026-10-17, wave 4) — two C rows were overstated
+
+The independent verifier (Fable, 2026-10-17) proved, with a probe through the real serve path, that two rows graded C do not hold in production. Accuracy before the number: both are restated W until fixed.
+
+| id | was | now | remaining gap |
+| --- | --- | --- | --- |
+| G109 venue binding | C | **W** | The geo-picker branch of the gateway (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:600`) goes through `dispatchAndProject` without ever passing a venue binding; `resolveVenueBindings` sits in the generic branch behind a test that is always false there, so on the serve path a picked venue never carries its city / country / coordinates binding. The row's tests call the resolver and projector directly, not the serve path. |
+| G176 distance band and nearby ranking | C | **W** | `routes/inputAssistance.ts` reads the band's origin only from top-level `lat`/`lng`; `parseSessionContext` keeps only `tripId`/`cityId`, and no app caller sends coordinates (`buildSuggestBody` never emits them). The band and nearby ranking therefore never fire for a real client; the row's end-to-end test posts top-level coordinates no client sends. |
+
+Of 373 rows: **317 BUILT-AND-CORRECT, 50 BUILT-BUT-WRONG, 2 NOT-BUILT, 4 CANNOT-VERIFY**. CORRECT is now
+317 / 373 = 85.0 % after G109 and G176 were restated C → W on independent verification.

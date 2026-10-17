@@ -12271,3 +12271,7 @@ All server runs used `node --import tsx/esm --test` with `TZ=UTC`. The migration
 | Neighbours | 26 API files: the crew, presence, Locate My Friends, location-purpose, Telegraph lifecycle and supabase-contract suites, 739/739. The app layover sensing guard plus the client contract, 50/50. Every layover component suite, 42 suites, 447/447 |
 
 No row moves. This section changes no count, so the headline is the latest headline table above it.
+
+### Correction (2026-10-17, wave-4 integration)
+
+The wave-4 section above says the crew-location work is not mounted. That is no longer true: `routes/index.ts` now mounts `layoverCrewLocation` (folded onto its last line), and `travel-buddy-standalone/app/layover/[id].tsx` mounts `LayoverCrewLocationCard` beside `LayoverCrewSection`, with its read feeding the map's `crewLocations`. L124 now has its screen wiring and L132's card is reachable. Grading is unchanged: under this census's WAVE-1 ruling the rows stay N while migration 3996 is unapplied and `layover_crew_location_enabled` is seeded FALSE.
