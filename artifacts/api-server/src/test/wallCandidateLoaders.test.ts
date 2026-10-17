@@ -33,10 +33,10 @@ function viewerCtx(over: Partial<ProjectViewerContext> = {}): ProjectViewerConte
 function blocksClient(rows: Array<{ blocker_id: string; blocked_id: string }> = []) {
   return {
     from() {
-      const b: any = {
+      const preds: Array<(r: any) => boolean> = []; const b: any = { // census-telegraph T220: eq/in narrow, as PostgREST does
         select: () => b,
-        or: () => b,
-        then: (onF: any, onR: any) => Promise.resolve({ data: rows, error: null }).then(onF, onR),
+        or: () => b, eq: (c: string, v: unknown) => { preds.push((r) => r[c] === v); return b; }, in: (c: string, vs: unknown[]) => { preds.push((r) => vs.includes(r[c])); return b; },
+        then: (onF: any, onR: any) => Promise.resolve({ data: rows.filter((r) => preds.every((p) => p(r))), error: null }).then(onF, onR),
       };
       return b;
     },

@@ -22,7 +22,7 @@ import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
 import { COMPASS_QUICK_ACTION_TYPES } from "../lib/compassDecisionActions.js";
-import { requireUser, sendError, canEditPlan, isAcceptedTripMember } from "../lib/http.js";
+import { requireUser, sendError, canEditPlan, isAcceptedTripMember } from "../lib/http.js"; import { readBlockExclusions } from "../lib/exclusionSet.js";
 import { getServiceClient } from "../lib/supabase.js";
 import {
   tripKernelClient,
@@ -3700,18 +3700,18 @@ router.get("/compass/recommendations", async (req, res) => {
       // Bidirectional block set — fail-closed: any error returns empty list
       const buddyBlockedIds = new Set<string>();
       try {
-        const { data: blkRows, error: blkErr } = await sc
-          .from("blocks")
-          .select("blocked_id, blocker_id")
-          .or(`blocker_id.eq.${user.id},blocked_id.eq.${user.id}`);
-        if (blkErr) {
+        // census-telegraph T220: the shared reader — the same whole-list read
+        // in both directions. It never rejects: a returned error, a thrown read
+        // and a non-list answer are all `ok: false`.
+        const blocks = await readBlockExclusions(sc, user.id);
+        if (!blocks.ok) {
           res.json({ recommendations: [], surface, error: "block_check_failed" });
           return;
         }
-        for (const bRow of (blkRows ?? []) as any[]) {
-          if (bRow.blocker_id === user.id) buddyBlockedIds.add(bRow.blocked_id);
-          if (bRow.blocked_id === user.id) buddyBlockedIds.add(bRow.blocker_id);
-        }
+        // Every counter-party of a block row touching the viewer, either way —
+        // the set the loop that stood here built from `blocker_id` /
+        // `blocked_id`.
+        for (const id of blocks.ids) buddyBlockedIds.add(id);
       } catch {
         res.json({ recommendations: [], surface, error: "block_check_failed" });
         return;
@@ -3874,18 +3874,18 @@ router.get("/compass/recommendations", async (req, res) => {
       // Bidirectional block set — fail-closed: any error returns empty list
       const travBlockedIds = new Set<string>();
       try {
-        const { data: blkRows, error: blkErr } = await sc
-          .from("blocks")
-          .select("blocked_id, blocker_id")
-          .or(`blocker_id.eq.${user.id},blocked_id.eq.${user.id}`);
-        if (blkErr) {
+        // census-telegraph T220: the shared reader — the same whole-list read
+        // in both directions. It never rejects: a returned error, a thrown read
+        // and a non-list answer are all `ok: false`.
+        const blocks = await readBlockExclusions(sc, user.id);
+        if (!blocks.ok) {
           res.json({ recommendations: [], surface, error: "block_check_failed" });
           return;
         }
-        for (const bRow of (blkRows ?? []) as any[]) {
-          if (bRow.blocker_id === user.id) travBlockedIds.add(bRow.blocked_id);
-          if (bRow.blocked_id === user.id) travBlockedIds.add(bRow.blocker_id);
-        }
+        // Every counter-party of a block row touching the viewer, either way —
+        // the set the loop that stood here built from `blocker_id` /
+        // `blocked_id`.
+        for (const id of blocks.ids) travBlockedIds.add(id);
       } catch {
         res.json({ recommendations: [], surface, error: "block_check_failed" });
         return;

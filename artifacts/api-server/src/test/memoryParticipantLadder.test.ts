@@ -35,7 +35,7 @@ import {
   canSeeParticipant,
   type ParticipantFacts,
 } from "../services/memory/memoryParticipantVisibility.js";
-import { PERSON_VISIBILITY_LADDER } from "../services/highlights/highlightProjectionPolicy.js";
+import { PERSON_VISIBILITY_LADDER } from "../services/highlights/highlightProjectionPolicy.js"; import { orPredicate } from "./helpers/postgrestOrFilter.js"; // census-telegraph T220: a real `.or()` (the shared block readers narrow inside one)
 
 const MEM_ID   = "11111111-1111-1111-1111-111111111111";
 const TRIP_ID  = "22222222-2222-2222-2222-222222222222";
@@ -72,7 +72,7 @@ function makeClient(state: Record<string, Row[]>, failing: Set<string> = new Set
       select: () => b,
       eq: (k: string, v: unknown) => { filters.push((r) => r[k] === v); return b; },
       neq: (k: string, v: unknown) => { filters.push((r) => r[k] !== v); return b; },
-      in: (k: string, v: unknown[]) => { filters.push((r) => v.includes(r[k])); return b; },
+      in: (k: string, v: unknown[]) => { filters.push((r) => v.includes(r[k])); return b; }, or: (expr: string) => { filters.push(orPredicate(expr)); return b; },
       limit: () => b,
       maybeSingle: async () => (err ? { data: null, error: err } : { data: rows()[0] ?? null, error: null }),
       then: (resolve: Function) => resolve(err ? { data: null, error: err } : { data: rows(), error: null }),

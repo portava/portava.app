@@ -75,7 +75,7 @@ function pgClient(db: Database, opts: { failSelect?: (table: string, columns: st
         select(c?: string) { if (op === "select") cols = columns(c); else returning = columns(c); return q; },
         eq(c: string, v: unknown) { values.push(v); where.push(`${ident(c)}::text = $${values.length}::text`); return q; },
         neq(c: string, v: unknown) { values.push(v); where.push(`${ident(c)}::text <> $${values.length}::text`); return q; },
-        in(c: string, vs: unknown[]) { values.push(vs.map(String)); where.push(`${ident(c)}::text = ANY($${values.length}::text[])`); return q; },
+        in(c: string, vs: unknown[]) { values.push(vs.map(String)); where.push(`${ident(c)}::text = ANY($${values.length}::text[])`); return q; }, or(expr: string) { const parts: string[] = []; for (const g of expr.match(/and\([^)]*\)|[^,]+/g) ?? []) { parts.push("(" + g.replace(/^and\(|\)$/g, "").split(",").map((t) => { const m = /^([a-z_]+)\.eq\.(.+)$/.exec(t.trim()); if (!m) throw new Error(`pgClient: unsupported or() term ${t}`); values.push(m[2]); return `${ident(m[1])}::text = $${values.length}::text`; }).join(" AND ") + ")"); } where.push("(" + parts.join(" OR ") + ")"); return q; }, // census-telegraph T220: the shared pair gate narrows inside one `.or(and(…),and(…))`
         is(c: string, v: unknown) { assert.equal(v, null); where.push(`${ident(c)} IS NULL`); return q; },
         order() { return q; }, limit() { return q; },
         delete() { op = "delete"; return q; },

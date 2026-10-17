@@ -26,7 +26,7 @@ import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import memoryActionsRouter from "../routes/memoryActions.js";
 import { _setMemoryActionDeps, type MemoryActionDeps } from "../services/memory/memoryActionService.js";
-import type { TripWindowsRead } from "../domain/trips/services/TripFreedomConsumers.js";
+import type { TripWindowsRead } from "../domain/trips/services/TripFreedomConsumers.js"; import { orPredicate } from "./helpers/postgrestOrFilter.js"; // census-telegraph T220: a real `.or()` (the shared block readers narrow inside one)
 
 const OWNER = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const FRIEND = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -163,7 +163,7 @@ function makeClient(store: Record<string, any[]>, failReads: Set<string>, failIn
       delete() { isWrite = true; return obj; },
       eq(c: string, v: any) { filters.push((r) => r[c] === v); return obj; },
       neq(c: string, v: any) { filters.push((r) => r[c] !== v); return obj; },
-      in(c: string, vs: any[]) { usedIn = true; const s = new Set(vs); filters.push((r) => s.has(r[c])); return obj; },
+      in(c: string, vs: any[]) { usedIn = true; const s = new Set(vs); filters.push((r) => s.has(r[c])); return obj; }, or(expr: string) { filters.push(orPredicate(expr)); return obj; },
       is(c: string, v: any) { filters.push((r) => (v === null ? r[c] == null : r[c] === v)); return obj; },
       order() { return obj; },
       limit(n: number) { limitN = n; return obj; },

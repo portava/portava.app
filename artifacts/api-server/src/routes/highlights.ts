@@ -2,7 +2,7 @@ import { Router } from "express";
 import type { Response } from "express";
 import { auditServedResurfacing } from "../services/highlights/resurfacingSuppressionAudit.js";
 import { requireUser, sendError } from "../lib/http";
-import { getServiceClient } from "../lib/supabase";
+import { getServiceClient } from "../lib/supabase"; import { isExcluded, readBlockExclusions, readPairExclusion } from "../lib/exclusionSet.js";
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
 import {
   canViewHighlight,
@@ -614,12 +614,12 @@ export async function decideHighlightViewAccess(
   // resurfacing"; §28.11: never swallow a failure into a plausible-looking
   // permissive answer.
   if (viewerId !== ownerId) {
-    const [blockedByMe, blockingMe] = await Promise.all([
-      sc.from("blocks").select("blocked_id").eq("blocker_id", viewerId).eq("blocked_id", ownerId).maybeSingle(),
-      sc.from("blocks").select("blocker_id").eq("blocker_id", ownerId).eq("blocked_id", viewerId).maybeSingle(),
-    ]);
-    if (blockedByMe.error || blockingMe.error) return notFound("blocks_unreadable");
-    if (blockedByMe.data || blockingMe.data) return notFound("blocked");
+    // census-telegraph T220: the shared pair read — both directions in one
+    // `.limit(1)` read; a returned error, a thrown read and a non-list answer
+    // are all `ok: false`, kept apart from a real block as before.
+    const pair = await readPairExclusion(sc, viewerId, ownerId);
+    if (!pair.ok) return notFound("blocks_unreadable");
+    if (isExcluded(pair, ownerId)) return notFound("blocked");
   }
 
   // Resolve circle/trip membership when needed
@@ -720,15 +720,15 @@ export async function decideHighlightViewAccessMany(
   let blocksUnreadable = false;
   const blocked = new Set<string>();
   if (others.length > 0) {
-    const [byMe, ofMe] = await Promise.all([
-      sc.from("blocks").select("blocked_id").eq("blocker_id", viewerId).in("blocked_id", others),
-      sc.from("blocks").select("blocker_id").eq("blocked_id", viewerId).in("blocker_id", others),
-    ]);
-    if (byMe.error || ofMe.error) {
+    // census-telegraph T220: the shared reader — the same two `.in()` reads
+    // over the owner set (chunked at BLOCK_AMONG_CHUNK); every failure is
+    // `ok: false`, where a thrown read used to escape the batch.
+    const read = await readBlockExclusions(sc, viewerId, { among: others });
+    if (!read.ok) {
       blocksUnreadable = true;
     } else {
-      for (const r of (byMe.data ?? []) as Array<{ blocked_id: string }>) blocked.add(r.blocked_id);
-      for (const r of (ofMe.data ?? []) as Array<{ blocker_id: string }>) blocked.add(r.blocker_id);
+      // every counter-party of a block row between the viewer and these owners
+      for (const id of read.ids) blocked.add(id);
     }
   }
 
@@ -1157,16 +1157,16 @@ router.get("/users/:userId/highlights", async (req, res) => {
   // answer here (it is what a genuine block returns) and keeps the route's
   // contract; it does not pretend the user has no highlights, it declines to
   // decide who may see them.
-  const [blocker, blocked] = await Promise.all([
-    client.from("blocks").select("blocked_id").eq("blocker_id", user.id).eq("blocked_id", targetId).maybeSingle(),
-    client.from("blocks").select("blocked_id").eq("blocker_id", targetId).eq("blocked_id", user.id).maybeSingle(),
-  ]);
-  if (blocker.error || blocked.error) {
-    req.log.error({ err: blocker.error ?? blocked.error }, "highlights: block lookup failed — failing closed");
+  // census-telegraph T220: the shared pair read, through the same (user)
+  // client — both directions in one `.limit(1)` read; every failure is
+  // `ok: false`, logged and served empty exactly as the error was.
+  const pair = await readPairExclusion(client, user.id, targetId);
+  if (!pair.ok) {
+    req.log.error({ err: pair.reason }, "highlights: block lookup failed — failing closed");
     res.status(200).json({ highlights: [] });
     return;
   }
-  if (blocker.data || blocked.data) {
+  if (isExcluded(pair, targetId)) {
     res.status(200).json({ highlights: [] });
     return;
   }
@@ -2925,22 +2925,22 @@ router.get("/highlights/following-feed", async (req, res) => {
 
   // 2. Resolve blocked users (both directions) and filter them out. FAIL CLOSED
   //    — see /highlights/active above for why `data ?? []` on an error is a leak.
-  const [blockedByMe, blockingMe] = await Promise.all([
-    sc.from("blocks").select("blocked_id").eq("blocker_id", user.id),
-    sc.from("blocks").select("blocker_id").eq("blocked_id", user.id),
-  ]);
-  if (blockedByMe.error || blockingMe.error) {
+  // census-telegraph T220: the shared reader, SCOPED to the people this feed
+  // can show — the set is used only to filter `followingIds`, so the scoped
+  // read answers exactly what the two whole-list reads did, chunked, and can
+  // never be cut at db-max-rows. Every failure is `ok: false`.
+  const blocks = await readBlockExclusions(sc, user.id, { among: followingIds });
+  if (!blocks.ok) {
     req.log.error(
-      { err: blockedByMe.error ?? blockingMe.error },
+      { err: blocks.reason },
       "highlights: following-feed block lookup failed — failing closed",
     );
     sendError(res, "db_error", "Could not resolve block state");
     return;
   }
-  const blockedIds = new Set<string>([
-    ...((blockedByMe.data ?? []).map((r: any) => r.blocked_id as string)),
-    ...((blockingMe.data ?? []).map((r: any) => r.blocker_id as string)),
-  ]);
+  // every counter-party of a block row between the viewer and someone they
+  // follow, either way — the only ids the filter below ever asks about
+  const blockedIds = blocks.ids;
   const eligibleIds = followingIds.filter((id: string) => !blockedIds.has(id));
   if (eligibleIds.length === 0) {
     res.status(200).json({ users: [] });

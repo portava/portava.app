@@ -53,7 +53,7 @@ function makeSc(state: FakeState) {
         select() { return chain; },
         eq(c: string, v: string) { eqs[c] = v; return chain; },
         in(_c: string, vals: string[]) { inq = { vals }; return chain; },
-        or() { return chain; },
+        or() { return chain; }, limit() { return chain; }, // census-telegraph T220: the shared pair read ends `.limit(1)`
         maybeSingle() { return Promise.resolve(resolveSingle(table, eqs, inq)); },
         then(onF: any, onR: any) { return Promise.resolve(resolveMany(table)).then(onF, onR); },
       };

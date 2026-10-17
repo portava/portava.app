@@ -9994,7 +9994,7 @@ Declared 2026-09-27 by the coverage-guard fix (census-media §32.14). Each line 
 - NOT-GRADED: artifacts/api-server/src/test/docCitations.test.ts — the citation guard's own suite, named in §10.20 because a broken anchor in this census also fails it; it measures citations and grades no Telegraph behaviour.
 - NOT-GRADED: travel-buddy-standalone/app/(rent-a-buddy)/buddy/[id].tsx — Rent-a-Buddy's buddy-profile screen, named in §15.3 only to explain why BUDDY_SERVICE's deep link was withdrawn (the screen takes a buddy id, not a service id); the share-family verdicts rest on the registry and its declared-no-screen list, not on this screen.
 - NOT-GRADED: travel-buddy-standalone/app/layover/[id].tsx — census-layover's screen, named in §15.8 item 7 only as where other lanes' failing citations pointed at that moment; this census grades nothing in it.
-- NOT-GRADED: artifacts/api-server/src/routes/airport.ts — census-layover's route, named in §16.7 only as another lane's in-flight work that had doc-citations and freshness red; no Telegraph row cites it.
+- WITHDRAWN 2026-10-17 (W5B.1: T220 now rests on this file, so it is graded and must be watched), was "NOT-GRADED": `artifacts/api-server/src/routes/airport.ts` — census-layover's route, named in §16.7 only as another lane's in-flight work that had doc-citations and freshness red; no Telegraph row cites it.
 - WITHDRAWN 2026-10-17 (W5N.1: T397 now rests on this file, so it is graded and must be watched), was "NOT-GRADED": `artifacts/api-server/src/routes/trips.ts` — census-trips' route, cited in §17.1 as one of three callers showing lib/chatSync.ts is a live path; §17.7 moves only T349, which does not rest on it, and the roster-eviction fix rests on lib/chatSync.ts and services/groupChatSync.ts, both watched.
 - NOT-GRADED: artifacts/api-server/src/test/notNullWrites.test.ts — a NOT NULL write guard over routes/groupChat.ts, named in §17.6 because §17.4's synthesized translation row tripped its body-null regex and M19 narrowed the pattern; §17.7's one move (T349) does not rest on it.
 - NOT-GRADED: travel-buddy-standalone/src/hooks/useMessaging.ts — the unread-badge hook, cited in §19.6 item 4 only to price an owner decision (omitting newHighlights would change the wire, not the badge); the decision is surfaced, not taken, and no verdict moved on it.
@@ -15546,3 +15546,19 @@ Stated reading: on the existing rule (urgent plus the recipient's own safety_ove
 | CANNOT-VERIFY | **2** |
 
 That is **451 = 272 C / 176 W / 1 N / 2 X**: CORRECT 272 of 451 = 60.3 %. T254 moves W -> C.
+
+## Row moves — 2026-10-17 build and fix (wave 5, T220 private block reads)
+
+Built by the wave-5 T220 lane and appended by the lead. APPEND-ONLY.
+
+### W5B.1 Row moves
+
+| row | was | now | evidence |
+| --- | --- | --- | --- |
+| T220 §15 No subsystem may independently "rediscover" a blocked relationship | W | **W** | **Fifteen modules consult the shared readers instead of re-reading `blocks`, and the rest are held by a ratchet that cannot grow.** Counted by an AST ratchet over non-test server code outside `lib/blockGuard.ts`, `lib/blocks.ts` and `lib/exclusionSet.ts` — every `.from("blocks")`, plus `blocks` handed to a table reader (`readWholeColumn(sc, "blocks", …)` in `lib/mediaEligibility.ts`, which §54's grep did not count): 72 reads in 25 files before this section, 32 in 13 after, and zero in the client (`artifacts/api-server/src/test/privateBlockReadRatchet.test.ts:97#export const MAX_TOTAL = 32;`). Moved: stamps, airport, CreatorActivityScoreService, circleAccessGuard, memoryReadPolicy, mediaFeed, contentStamps, posts, profileVisibility, CompassNotificationEngine, WallProjectionService, telegraphSharedContext, and part of follows, compass and highlights — through `readBlockExclusions` (`artifacts/api-server/src/routes/airport.ts:2050#const blocks = await readBlockExclusions(sc, userId);`), `readPairExclusion` (`artifacts/api-server/src/routes/mediaFeed.ts:2154#const pair = await readPairExclusion(sc, viewerUserId, authorId);`) and `isBlockedBetween` (`artifacts/api-server/src/services/memory/memoryReadPolicy.ts:257#return isBlockedBetween(sc, a, b);`). Still W: 32 reads in 13 modules still rediscover the relationship, each because it needs what the shared readers do not give — a DIRECTION (follows' passport counts, `interactionPermissions`, `CompassProfileService`, `CompassTools`), a row COUNT (admin), ONE direction only (compass `surface=passport`), key PAGING (`mediaEligibility`), a batch coalescer's per-direction shape (`shareables`, T448), or a per-direction whole-list cut the one-`.or` whole-list reader would lower (pulse, highlights `/active`, memories, `CompassFallbackFeedBuilder`) — or the block list's own CRUD (`routes/blocks.ts`). A directional reader in the definitions of record would retire most of them. |
+
+**Correction to an earlier citation.** §-text at line 3368 (and the acknowledgement ledger) cites `lib/circleAccessGuard.ts:493` and `services/wall/WallProjectionService.ts:179` as private `.from("blocks")` reads. Since this lane both lines hold the shared reader's call (`readBlockExclusions`), so those two citations now describe migrated sites, not private reads. No row rests on them as private.
+
+Headline unchanged: **451 = 272 C / 176 W / 1 N / 2 X**.
+
+Also recorded (independent verification, pass 3 wording): W5P.1's "main's golden is untouched" means the golden was generated from main's router and that commit did not change it.

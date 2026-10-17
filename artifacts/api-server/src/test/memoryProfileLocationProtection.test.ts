@@ -46,7 +46,7 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
-import memoriesRouter from "../routes/memories.js";
+import memoriesRouter from "../routes/memories.js"; import { orPredicate } from "./helpers/postgrestOrFilter.js"; // census-telegraph T220: a real `.or()` (the shared block readers narrow inside one)
 
 const OWNER  = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const VIEWER = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
@@ -128,7 +128,7 @@ function makeClient(state: State) {
       delete() { return builder; },
       eq(c: string, v: any) { filters.push((r) => r[c] === v); return builder; },
       neq(c: string, v: any) { filters.push((r) => r[c] !== v); return builder; },
-      in(c: string, v: any[]) { filters.push((r) => v.includes(r[c])); return builder; },
+      in(c: string, v: any[]) { filters.push((r) => v.includes(r[c])); return builder; }, or(expr: string) { filters.push(orPredicate(expr)); return builder; },
       lt(c: string, v: any) { filters.push((r) => r[c] < v); return builder; },
       gt(c: string, v: any) { filters.push((r) => r[c] > v); return builder; },
       is(c: string, v: any) { filters.push((r) => r[c] === v); return builder; },

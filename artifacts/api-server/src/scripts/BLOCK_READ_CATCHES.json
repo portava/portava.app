@@ -9,11 +9,11 @@
       "key": "compass/CompassNotificationEngine.ts::evaluateNotification::catch#1",
       "kind": "catch",
       "reads": [
-        "from(\"blocks\")"
+        "readPairExclusion"
       ],
       "fingerprint": "6577d22e14843e24",
       "closedBy": "denies",
-      "why": "A thrown blocked-sender check suppresses the push (decide('suppressed_blocked_sender', 'block_state_unknown')); nothing is sent to or about a person whose block state is unknown."
+      "why": "A thrown blocked-sender check suppresses the push (decide('suppressed_blocked_sender', 'block_state_unknown')); nothing is sent to or about a person whose block state is unknown. Re-judged 2026-10-17 (wave 5, census-telegraph T220): the two directional maybeSingle reads in this try became one readPairExclusion, which never rejects — every block-read failure is `ok: false` and takes the unknown branch (the same log line and block_state_unknown ledger reason); this catch (unchanged) still answers any other throw in the block with the same suppression."
     },
     {
       "key": "compass/CompassProfileService.ts::buildProfile::allSettled#1",
@@ -169,11 +169,11 @@
       "key": "routes/airport.ts::cityPresence::catch#1",
       "kind": "catch",
       "reads": [
-        "from(\"blocks\")"
+        "readBlockExclusions"
       ],
       "fingerprint": "172bb0e6c5cb5bcf",
       "closedBy": "refuses",
-      "why": "Returns refuse('presence_threw') — layover city presence serves nobody and says so."
+      "why": "Returns refuse('presence_threw') — layover city presence serves nobody and says so. Re-judged 2026-10-17 (wave 5, census-telegraph T220): the private blocks read in this try moved onto readBlockExclusions, which never rejects; a failed block read now refuses 'blocks_unreadable' inside the try, and this catch (unchanged) still answers every other throw in cityPresence."
     },
     {
       "key": "routes/airport.ts::crewMemberCards::catch#1",
@@ -189,31 +189,31 @@
       "key": "routes/airport.ts::get /airport/sessions/:id/buddies::catch#1",
       "kind": "catch",
       "reads": [
-        "from(\"blocks\")"
+        "readBlockExclusions"
       ],
       "fingerprint": "3b67dc4345bebc8d",
       "closedBy": "withholds",
-      "why": "Sets rows = [] and pushes degradedReasons 'blocks_unreadable' — no buddy is served."
+      "why": "Sets rows = [] and pushes degradedReasons 'blocks_unreadable' — no buddy is served. Re-judged 2026-10-17 (wave 5, census-telegraph T220): the read in this try is now readBlockExclusions, which never rejects — every block-read failure takes the `!blocks.ok` branch (same rows = [] and 'blocks_unreadable'); this catch (unchanged) is a backstop for the rest of the block."
     },
     {
       "key": "routes/compass.ts::get /compass/recommendations::catch#1",
       "kind": "catch",
       "reads": [
-        "from(\"blocks\")"
+        "readBlockExclusions"
       ],
       "fingerprint": "1daec5e7b859a8ea",
       "closedBy": "refuses",
-      "why": "Answers { recommendations: [], error: 'block_check_failed' } — an empty list that says the block check failed."
+      "why": "Answers { recommendations: [], error: 'block_check_failed' } — an empty list that says the block check failed. Re-judged 2026-10-17 (wave 5, census-telegraph T220): the read in this try is now readBlockExclusions, which never rejects — every block-read failure takes the `!blocks.ok` branch and answers the same block_check_failed refusal; this catch (unchanged) is a backstop only."
     },
     {
       "key": "routes/compass.ts::get /compass/recommendations::catch#2",
       "kind": "catch",
       "reads": [
-        "from(\"blocks\")"
+        "readBlockExclusions"
       ],
       "fingerprint": "1daec5e7b859a8ea",
       "closedBy": "refuses",
-      "why": "Answers { recommendations: [], error: 'block_check_failed' } — an empty list that says the block check failed."
+      "why": "Answers { recommendations: [], error: 'block_check_failed' } — an empty list that says the block check failed. Re-judged 2026-10-17 (wave 5, census-telegraph T220): the read in this try is now readBlockExclusions, which never rejects — every block-read failure takes the `!blocks.ok` branch and answers the same block_check_failed refusal; this catch (unchanged) is a backstop only."
     },
     {
       "key": "routes/compass.ts::get /compass/recommendations::catch#3",
@@ -269,21 +269,21 @@
       "key": "routes/follows.ts::get /users/search::catch#1",
       "kind": "catch",
       "reads": [
-        "from(\"blocks\")"
+        "readBlockExclusions"
       ],
       "fingerprint": "1d080d3d71314aed",
       "closedBy": "refuses",
-      "why": "Sets blockQueryFailed; the handler then answers db_error 'block state could not be read; nothing was searched'."
+      "why": "Sets blockQueryFailed; the handler then answers db_error 'block state could not be read; nothing was searched'. Re-judged 2026-10-17 (wave 5, census-telegraph T220): the read in this try is now readBlockExclusions, which never rejects — every block-read failure takes the `!blocks.ok` branch, which sets the same failure flag; this catch (unchanged) is a backstop only."
     },
     {
       "key": "routes/follows.ts::get /users/suggestions::catch#1",
       "kind": "catch",
       "reads": [
-        "from(\"blocks\")"
+        "readBlockExclusions"
       ],
       "fingerprint": "db3c50ca8b87d9d6",
       "closedBy": "withholds",
-      "why": "Sets blockStateUnknown; the handler then answers { users: [] } — no suggestion is served."
+      "why": "Sets blockStateUnknown; the handler then answers { users: [] } — no suggestion is served. Re-judged 2026-10-17 (wave 5, census-telegraph T220): the read in this try is now readBlockExclusions, which never rejects — every block-read failure takes the `!blocks.ok` branch, which sets the same failure flag; this catch (unchanged) is a backstop only."
     },
     {
       "key": "routes/mapTravelers.ts::get /map/travelers::catch#1",
@@ -299,11 +299,11 @@
       "key": "routes/mediaFeed.ts::get /media/gems-feed::catch#1",
       "kind": "catch",
       "reads": [
-        "from(\"blocks\")"
+        "readBlockExclusions"
       ],
       "fingerprint": "956fe962b371d5e9",
       "closedBy": "withholds",
-      "why": "Notes the failed source and sets allRows = [] — the gems feed is served empty and says which read failed (census-media §47)."
+      "why": "Notes the failed source and sets allRows = [] — the gems feed is served empty and says which read failed (census-media §47). Re-judged 2026-10-17 (wave 5, census-telegraph T220): the read in this try is now readBlockExclusions (scoped to the page's submitters), which never rejects; its `ok: false` is thrown into this catch as `new Error(reason)`, so every block-read failure still lands here and answers the same empty, blocks-naming page."
     },
     {
       "key": "routes/memories.ts::get /memories/graph::catch#1",
@@ -380,11 +380,11 @@
       "key": "services/ranking/CreatorActivityScoreService.ts::_fetchBlockedIds::catch#1",
       "kind": "catch",
       "reads": [
-        "from(\"blocks\")"
+        "readBlockExclusions"
       ],
       "fingerprint": "0847226a2a022c88",
       "closedBy": "answers-unreadable",
-      "why": "Adds 'blocks' to degraded and returns null; the aggregator zeroes the block-scoped signals (pinned in exclusionSetContract.test.ts §4)."
+      "why": "Adds 'blocks' to degraded and returns null; the aggregator zeroes the block-scoped signals (pinned in exclusionSetContract.test.ts §4). Re-judged 2026-10-17 (wave 5, census-telegraph T220): the read in this try is now readBlockExclusions, which never rejects — every block-read failure takes the `!blocks.ok` branch (the same degraded.add('blocks') and null); this catch (unchanged) is a backstop only."
     },
     {
       "key": "services/telegraph/identityAcrossBlocks.ts::identityWithheldAcrossBlocks::catch#1",
@@ -420,11 +420,11 @@
       "key": "services/wall/WallProjectionService.ts::loadBlockedAuthorIds::catch#1",
       "kind": "catch",
       "reads": [
-        "from(\"blocks\")"
+        "readBlockExclusions"
       ],
       "fingerprint": "ba95bc9b6989be2d",
       "closedBy": "withholds",
-      "why": "Returns new Set(unique) — every candidate author is treated as blocked, so the Wall shows none of them."
+      "why": "Returns new Set(unique) — every candidate author is treated as blocked, so the Wall shows none of them. Re-judged 2026-10-17 (wave 5, census-telegraph T220): the one `.or(in.(…))` read in this try became readBlockExclusions scoped to the authors, which never rejects — every block-read failure takes the `!read.ok` branch and returns new Set(unique), the same answer; this catch (unchanged) is a backstop only."
     },
     {
       "key": "services/layover/LayoverCrewAbortNotice.ts::tellCrewOfAbort::catch#1",

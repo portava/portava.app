@@ -4,7 +4,7 @@ import { nameVisibilitySet, nameVisibleFor, readNameVisibilitySet } from "../lib
 import { decideUnfollow, isUuid } from "../lib/followDecisions";
 import { normalizedFriendshipPair } from "../lib/friendDecisions";
 import { resolveInteractionPermissions } from "../services/interactionPermissions";
-import { getSeenIds, markAsSeen, clearSeen, dailySeed, seededShuffle } from "../lib/suggestionSeenCache";
+import { getSeenIds, markAsSeen, clearSeen, dailySeed, seededShuffle } from "../lib/suggestionSeenCache"; import { readBlockExclusions } from "../lib/exclusionSet";
 import { isKillSwitchEngaged } from "../lib/featureFlags"; import { discoveryRefusal, sendDiscoveryRefusal } from "../lib/discoveryRefusal"; // census-discovery §106 (tm-people): the people search's stop refuses rather than posing as a miss
 import { safeOrIlikeValue } from "../lib/postgrestFilter"; import { ownerAvailabilityWithheld } from "../services/telegraph/availabilityInvisibility"; // lead ruling P-T1a
 
@@ -732,19 +732,19 @@ router.get("/users/search", async (req, res) => {
   let blockedSet = new Set<string>();
   let blockQueryFailed = false;
   try {
-    const { data: blockRows, error: blockErr } = await sc
-      .from("blocks")
-      .select("blocked_id, blocker_id")
-      .or(`blocker_id.eq.${user.id},blocked_id.eq.${user.id}`);
-    if (blockErr) {
+    // census-telegraph T220: the shared reader. The same whole-list read in
+    // both directions; it never rejects, so a returned error, a thrown read
+    // and a non-list answer all arrive here as `ok: false`.
+    const blocks = await readBlockExclusions(sc, user.id);
+    if (!blocks.ok) {
       // Any DB error: fail safe (return empty set, filter will remove all).
       blockQueryFailed = true;
-      req.log.warn({ err: blockErr }, "blocks query failed; suppressing results");
+      req.log.warn({ err: blocks.reason }, "blocks query failed; suppressing results");
     } else {
-      for (const b of (blockRows ?? [])) {
-        if ((b as any).blocker_id === user.id) blockedSet.add((b as any).blocked_id);
-        else blockedSet.add((b as any).blocker_id);
-      }
+      // Every counter-party of a block row touching the caller, either way —
+      // the set the loop that stood here built from `blocker_id` /
+      // `blocked_id`.
+      blockedSet = new Set(blocks.ids);
     }
   } catch (e) {
     // Network-level or unexpected error — fail safe.
@@ -963,21 +963,21 @@ router.get("/users/suggestions", async (req, res) => {
   const blockedSet = new Set<string>();
   let blockStateUnknown = false;
   try {
-    const { data: blockRows, error: blockErr } = await sc
-      .from("blocks")
-      .select("blocked_id, blocker_id")
-      .or(`blocker_id.eq.${user.id},blocked_id.eq.${user.id}`);
-    if (blockErr) {
+    // census-telegraph T220: the shared reader — the same whole-list read in
+    // both directions. It never rejects: a returned error, a thrown read and a
+    // non-list answer all arrive here as `ok: false`.
+    const blocks = await readBlockExclusions(sc, user.id);
+    if (!blocks.ok) {
       blockStateUnknown = true;
       req.log.warn(
-        { code: (blockErr as any)?.code, err: blockErr, userId: user.id },
+        { reason: blocks.reason, userId: user.id },
         "follow suggestions: block-state read failed — returning no suggestions (fail-closed)",
       );
     } else {
-      for (const b of (blockRows ?? [])) {
-        if ((b as any).blocker_id === user.id) blockedSet.add((b as any).blocked_id);
-        else blockedSet.add((b as any).blocker_id);
-      }
+      // Every counter-party of a block row touching the caller, either way —
+      // the set the loop that stood here built from `blocker_id` /
+      // `blocked_id`.
+      for (const id of blocks.ids) blockedSet.add(id);
     }
   } catch (err) {
     blockStateUnknown = true;

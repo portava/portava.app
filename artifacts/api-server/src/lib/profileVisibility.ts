@@ -44,7 +44,7 @@
 
 import { logger } from "./logger.js";
 import { isTableAbsentError } from "./tableAbsence.js";
-import { isRestrictionRowInForce } from "./accountStateGate.js";
+import { isRestrictionRowInForce } from "./accountStateGate.js"; import { isExcluded, readPairExclusion } from "./exclusionSet.js";
 
 export type VisibilityLevel = "full" | "followers_only" | "limited_preview" | "blocked" | "unavailable";
 
@@ -245,12 +245,12 @@ export async function resolveProfileVisibility(
 
   // ── 2. Block check (FAIL-CLOSED) ───────────────────────────────────────────
   if (viewerId) {
-    const { data: blockRows, error: blockErr } = await sc
-      .from("blocks")
-      .select("blocker_id")
-      .or(`and(blocker_id.eq.${viewerId},blocked_id.eq.${targetId}),and(blocker_id.eq.${targetId},blocked_id.eq.${viewerId})`);
-    if (blockErr) throw new Error(`Block check failed: ${blockErr.message}`);
-    if ((blockRows ?? []).length > 0) {
+    // census-telegraph T220: the shared pair read — the same `.or()` over both
+    // directions, with `.limit(1)`; every failure (returned, thrown, a non-list
+    // answer) is `ok: false` and is thrown here exactly as the error was.
+    const pair = await readPairExclusion(sc, viewerId, targetId);
+    if (!pair.ok) throw new Error(`Block check failed: ${pair.reason}`);
+    if (isExcluded(pair, targetId)) {
       return { visibility: "blocked", privacySettings: null };
     }
   }

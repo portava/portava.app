@@ -2044,18 +2044,18 @@ export async function cityPresence(
     if (userIds.length === 0) return empty;
 
     // Exclude blocked users in both directions — fail closed on error.
-    const { data: blockRows, error: blockErr } = await sc
-      .from("blocks")
-      .select("blocker_id, blocked_id")
-      .or(`blocker_id.eq.${userId},blocked_id.eq.${userId}`);
-    if (blockErr) {
-      logger.warn({ err: blockErr, userId }, "layover city presence: blocks unreadable — serving nobody, and saying so");
+    // census-telegraph T220: through the shared reader. The same whole-list
+    // read; a returned error, a thrown read, a non-list answer and a row that
+    // names no counter-party are all `ok: false`, and all refuse here.
+    const blocks = await readBlockExclusions(sc, userId);
+    if (!blocks.ok) {
+      logger.warn({ err: blocks.reason, userId }, "layover city presence: blocks unreadable — serving nobody, and saying so");
       return refuse("blocks_unreadable");
     }
-    const excluded = new Set<string>();
-    for (const b of (blockRows ?? []) as any[]) {
-      excluded.add(b.blocker_id === userId ? b.blocked_id : b.blocker_id);
-    }
+    // Every counter-party of a block row touching the viewer, either way: the
+    // set the loop that stood here built by hand from `blocker_id` /
+    // `blocked_id`.
+    const excluded = blocks.ids;
     const notBlocked = userIds.filter((id) => !excluded.has(id));
     // A candidate's own sharing opt-out is checked HERE, not only at the
     // session flag. `share_city_status` on the session is what the traveller
@@ -3685,19 +3685,19 @@ router.get("/airport/sessions/:id/buddies", async (req, res) => {
     // an outage into "nobody is blocked" and recommended meeting a blocked
     // person. Matches cityPresence above (routes/airport.ts cityPresence).
     try {
-      const { data: blockRows, error: blockErr } = await sc
-        .from("blocks")
-        .select("blocker_id, blocked_id")
-        .or(`blocker_id.eq.${user.id},blocked_id.eq.${user.id}`);
-      if (blockErr) {
-        logger.warn({ err: blockErr, userId: user.id }, "layover buddies: blocks unreadable — serving none");
+      // census-telegraph T220: the shared reader — the same whole-list read,
+      // and it never rejects: every failure is `ok: false`, so the catch below
+      // is a backstop for this block, not the path a failed read takes.
+      const blocks = await readBlockExclusions(sc, user.id);
+      if (!blocks.ok) {
+        logger.warn({ err: blocks.reason, userId: user.id }, "layover buddies: blocks unreadable — serving none");
         rows = [];
         degradedReasons.push("blocks_unreadable");
       } else {
-        const excluded = new Set<string>();
-        for (const b of (blockRows ?? []) as any[]) {
-          excluded.add(b.blocker_id === user.id ? b.blocked_id : b.blocker_id);
-        }
+        const excluded = blocks.ids; // every counter-party of a block row
+        // touching the viewer, either way — the set the loop that stood here
+        // built by hand from `blocker_id` / `blocked_id`. A row that names no
+        // counter-party is now `ok: false` (above), never skipped.
         rows = rows.filter((b) => !excluded.has(b.user_id));
       }
     } catch (err) {

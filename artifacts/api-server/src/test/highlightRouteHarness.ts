@@ -12,7 +12,7 @@
  * conservative direction for a block filter, and the wrong one here, because it
  * would empty the feed and make every suppression case pass vacuously.
  * Measured: with that harness the positive control returned zero Highlights.
- */
+ */ import { orPredicate as sharedOrPredicate } from "./helpers/postgrestOrFilter.js"; // census-telegraph T220: `and(...)` groups (the shared pair read) go to the shared parser
 export interface FakeClient {
   from(table: string): any;
   rpc(name: string, args?: any): Promise<{ data: any; error: any }>;
@@ -139,7 +139,7 @@ export function makeClient(
         if (op === "is") preds.push((r) => (v === null ? r?.[col] != null : r?.[col] !== v));
         return proxy;
       },
-      or(expr: string) { preds.push(orPredicate(expr)); return proxy; },
+      or(expr: string) { preds.push(/\band\(/.test(expr) ? sharedOrPredicate(expr) : orPredicate(expr)); return proxy; },
       ilike(col: string, pattern: string) {
         const needle = String(pattern).replace(/%/g, "").toLowerCase();
         preds.push((r) => typeof r?.[col] === "string" && r[col].toLowerCase().includes(needle));

@@ -1107,4 +1107,28 @@ describe("Stamp feed read-path privacy", () => {
     const body = await res.json();
     assert.equal((body.stamps ?? []).length, 1, "public passport still served");
   });
+
+  // census-telegraph T220 (wave 5): the feeds' block filter moved onto the shared
+  // reader. Its FAILURE half had no test — serving the unfiltered page on an
+  // unreadable `blocks` survived every suite — so the feeds are pinned here.
+  it("an unreadable blocks table serves nobody on the feeds, never the unfiltered page (T220)", async () => {
+    const unreadable: any = new Proxy({}, {
+      get: (_t, k) => k === "then"
+        ? (resolve: any) => resolve({ data: null, error: { message: "blocks unreadable (planted)", code: "XX000" } })
+        : () => unreadable,
+    });
+    const healthy = makeClient(state);
+    _setTestClient({ ...healthy, from: (t: string) => (t === "blocks" ? unreadable : healthy.from(t)) }, true);
+    try {
+      for (const path of ["/stamps/recent", "/stamps/city/Da%20Nang", "/stamps/country/Vietnam"]) {
+        const res = await get(path);
+        assert.equal(res.status, 200, `${path} status`);
+        const ids = ownerIds(await res.json());
+        assert.ok(!ids.has(CAROL_ID), `${path}: an unreadable block list must not serve even a public owner`);
+        assert.ok(!ids.has(DAVE_ID), `${path}: an unreadable block list must not serve the blocked owner`);
+      }
+    } finally {
+      _setTestClient(makeClient(state), true);
+    }
+  });
 });

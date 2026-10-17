@@ -17,7 +17,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { Router } from "express";
-import { z } from "zod";
+import { z } from "zod"; import { isExcluded, readBlockExclusions, readPairExclusion } from "../lib/exclusionSet.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireUser, sendError, isAcceptedTripMember } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
@@ -969,14 +969,14 @@ router.get("/media/gems-feed", asyncHandler(async (req, res) => {
   let allRows = allRowsRaw; const gemsFailed = new FailedSources(req.log, "gems feed"); // census-media §47: every read this feed could not make is named in failedSources
   if (submitterIdsForBlocks.length > 0) {
     try {
-      const [blockedRes, blockerRes] = await Promise.all([
-        sc.from("blocks").select("blocked_id").eq("blocker_id", user.id).in("blocked_id", submitterIdsForBlocks),
-        sc.from("blocks").select("blocker_id").eq("blocked_id", user.id).in("blocker_id", submitterIdsForBlocks),
-      ]);
-      if (blockedRes.error || blockerRes.error) throw (blockedRes.error ?? blockerRes.error);
-      const blocked = new Set<string>();
-      for (const r of (blockedRes.data as any[]) ?? []) blocked.add(r.blocked_id as string);
-      for (const r of (blockerRes.data as any[]) ?? []) blocked.add(r.blocker_id as string);
+      // census-telegraph T220: the shared reader — the same two `.in()` reads
+      // over this page's submitters, chunked; every failure is `ok: false`,
+      // and it is thrown into the catch below exactly as the error was.
+      const read = await readBlockExclusions(sc, user.id, { among: submitterIdsForBlocks });
+      if (!read.ok) throw new Error(read.reason);
+      const blocked = read.ids;
+      // (every counter-party of a block row between the viewer and these
+      // submitters, either way — what the two loops that stood here collected)
       allRows = allRowsRaw.filter((g: any) => !g.submitted_by || !blocked.has(g.submitted_by as string));
     } catch (err) {
       gemsFailed.note("blocks", err); req.log.warn({ userId: user.id }, "gems feed: block-state unknown — returning empty feed"); // §47: fail-closed AND said
@@ -2148,11 +2148,11 @@ async function verifyMediaAccess(
     const tripId: string | null = (postRow as any).trip_id ?? null;
 
     // Block check (both directions) — use count to stay cardinality-safe; treat any error as blocked (fail-closed).
-    const { count: blockCount, error: blockError } = await sc
-      .from("blocks")
-      .select("blocker_id", { count: "exact", head: true })
-      .or(`and(blocker_id.eq.${viewerUserId},blocked_id.eq.${authorId}),and(blocker_id.eq.${authorId},blocked_id.eq.${viewerUserId})`);
-    if (blockError) return "unreadable"; if ((blockCount ?? 0) > 0) return null; // §47: still refused when unread — as "could not check", not "not found"
+    // census-telegraph T220: the shared pair read (`.limit(1)`, so a mutual
+    // block's two rows are as safe as the count was); a returned error, a thrown
+    // read and a non-list answer are all `ok: false`.
+    const pair = await readPairExclusion(sc, viewerUserId, authorId);
+    if (!pair.ok) return "unreadable"; if (isExcluded(pair, authorId)) return null; // §47: still refused when unread — as "could not check", not "not found"
 
     // Visibility check — a private post requires follow or ownership.
     // ("friends" used to be tested here too. `posts.visibility` is the enum
@@ -2205,11 +2205,11 @@ async function verifyMediaAccess(
 
     // Block check for gems (only when submitted_by is set) — fail-closed on error.
     if (submittedBy && submittedBy !== viewerUserId) {
-      const { count: blockCount, error: blockError } = await sc
-        .from("blocks")
-        .select("blocker_id", { count: "exact", head: true })
-        .or(`and(blocker_id.eq.${viewerUserId},blocked_id.eq.${submittedBy}),and(blocker_id.eq.${submittedBy},blocked_id.eq.${viewerUserId})`);
-      if (blockError) return "unreadable"; if ((blockCount ?? 0) > 0) return null;
+      // census-telegraph T220: the shared pair read, as for posts above; every
+      // failure is `ok: false` and answers "unreadable" (→ 503), a block in
+      // either direction answers null (→ not found).
+      const pair = await readPairExclusion(sc, viewerUserId, submittedBy);
+      if (!pair.ok) return "unreadable"; if (isExcluded(pair, submittedBy)) return null;
     }
 
     return { kind: "gem", submittedBy };

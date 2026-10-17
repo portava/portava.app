@@ -36,7 +36,7 @@ import {
 } from "../services/passport/StampAwardEngine.js";
 import { NotificationService } from "../services/notifications/NotificationService.js";
 import { NotificationRouter as NotifRouter } from "../services/notifications/NotificationRouter.js";
-import { isBlockedBetween } from "../lib/blockGuard.js"; import { decidePresenceAward, presenceEvidenceSchema, refusePresenceAward } from "../services/passport/presenceAwardEvidence.js"; import { readStampPresenceView, withPresencePlaces } from "../services/passport/stampPresenceView.js";
+import { isBlockedBetween } from "../lib/blockGuard.js"; import { readBlockExclusions } from "../lib/exclusionSet.js"; import { decidePresenceAward, presenceEvidenceSchema, refusePresenceAward } from "../services/passport/presenceAwardEvidence.js"; import { readStampPresenceView, withPresencePlaces } from "../services/passport/stampPresenceView.js";
 
 const router = Router();
 
@@ -152,14 +152,14 @@ async function filterFeedByOwnerPrivacy(
     ((profs ?? []) as any[]).filter((p) => p.passport_visibility === "private").map((p) => p.id),
   );
 
-  const [{ data: outBlocks, error: e1 }, { data: inBlocks, error: e2 }] = await Promise.all([
-    sc.from("blocks").select("blocked_id").eq("blocker_id", callerId).in("blocked_id", ownerIds),
-    sc.from("blocks").select("blocker_id").eq("blocked_id", callerId).in("blocker_id", ownerIds),
-  ]);
-  if (e1 || e2) return []; // fail closed — an unreadable blocks table denies
-  const blockedSet = new Set<string>();
-  for (const b of (outBlocks ?? []) as any[]) blockedSet.add(b.blocked_id);
-  for (const b of (inBlocks ?? []) as any[]) blockedSet.add(b.blocker_id);
+  // census-telegraph T220: the shared reader, not a private copy of it. Both
+  // directions over these owners — the same two `.in()` reads, chunked at
+  // BLOCK_AMONG_CHUNK — and EVERY failure (a returned error, a thrown read, an
+  // answer that is not a row list, a row that names no counter-party) is
+  // `ok: false`. A thrown read used to escape this filter as an exception.
+  const blocks = await readBlockExclusions(sc, callerId, { among: ownerIds });
+  if (!blocks.ok) return []; // fail closed — an unreadable blocks table denies
+  const blockedSet = blocks.ids;
 
   return rows.filter(
     (r) => r.user_id === callerId || (!privateSet.has(r.user_id) && !blockedSet.has(r.user_id)),

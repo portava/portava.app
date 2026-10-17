@@ -28,15 +28,15 @@ function viewerCtx(over: Partial<ProjectViewerContext> = {}): ProjectViewerConte
 function blocksClient(rows: Array<{ blocker_id: string; blocked_id: string }>, opts: { error?: unknown } = {}) {
   return {
     from(_table: string) {
-      const b: any = {
+      const preds: Array<(r: any) => boolean> = []; const b: any = { // census-telegraph T220: eq/in narrow, as PostgREST does — the projection reads one direction per `.in()` now
         select() {
           return b;
         },
-        or() {
+        eq(c: string, v: unknown) { preds.push((r) => r[c] === v); return b; }, in(c: string, vs: unknown[]) { preds.push((r) => vs.includes(r[c])); return b; }, or() {
           return b;
         },
         then(onF: any, onR: any) {
-          const result = opts.error ? { data: null, error: opts.error } : { data: rows, error: null };
+          const result = opts.error ? { data: null, error: opts.error } : { data: rows.filter((r) => preds.every((p) => p(r))), error: null };
           return Promise.resolve(result).then(onF, onR);
         },
       };
