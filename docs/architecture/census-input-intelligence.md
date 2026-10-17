@@ -8703,3 +8703,11 @@ on that flag.
 Of 373 rows: **317 BUILT-AND-CORRECT, 44 BUILT-BUT-WRONG, 8 NOT-BUILT, 4 CANNOT-VERIFY**. CONSTRUCTED is now
 361 / 373 = 96.8 %. CORRECT is unchanged at 317 / 373 = 85.0 %. Only G127 changes bucket. G203 and G71 keep their
 buckets on corrected evidence.
+
+## Row moves — 2026-10-17 G203 hardening (wave 2)
+
+The independent verifier of §52 accepted G203 at C but named its one latent path: the exact-text cache hit returns before any network attempt, and the cache write did not exclude AI rows, so mounting the AI hook on a `public` field (`post.caption`, `event.description`) would have replayed AI output offline for the cache's lifetime. That path is now closed in code, not by the absence of a mount.
+
+| id | was | now | evidence |
+| --- | --- | --- | --- |
+| G203 offline AI replay | C | **C** | The shared-cache write skips any answer carrying an AI row: `travel-buddy-standalone/src/platform/input-assistance/hooks/useInputAssistance.ts:323#!finalized.some((s) => s.type === 'ai_suggestion')`. Pinned by `travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.aiNotCached.component.test.tsx:58#an answer carrying an AI row is shown but never written to the shared cache` (the AI row is asserted ON SCREEN, so the test cannot pass by the row being filtered first) and its control at `travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.aiNotCached.component.test.tsx:66#CONTROL: the same public field still caches an answer with no AI row`. 2/2 pass; with the guard removed the first goes red (1 failed, 1 passed), restored byte-identical. All 210 input-assistance jest tests pass. |
