@@ -17517,3 +17517,44 @@ nothing.
 - NOT-GRADED: artifacts/api-server/src/test/helpers/migrationForeignKeys.ts — the test doubles' embed guard, cited above as the evidence that the doubles now refuse an ambiguous embed; test machinery, and no row rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/selectEmbedForeignKeyScan.test.ts — the static embed scan whose ambiguous-embed ledger is now empty; test machinery, and no row rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/ambiguousEmbedHints.test.ts — the route tests for this correction, which moves no row.
+
+### Correction (2026-10-17, wave 5) — 3999's own-media trigger no longer blocks re-parenting
+
+**The defect.** An independent verifier found this, and it is confirmed here. 3999's guard fires on an UPDATE of
+`memory_id`, and it demanded a live source post on every such UPDATE. 3676's split moves items by changing `memory_id`
+alone (`artifacts/api-server/src/migrations/3676_memory_graph_kernel.sql:337#UPDATE public.memory_items SET memory_id = v_new_id WHERE memory_id = v_memory_id AND id = ANY (v_items);`),
+and so does its merge (`artifacts/api-server/src/migrations/3676_memory_graph_kernel.sql:236#UPDATE public.memory_items i`).
+A split or merge of the owner's own Memory therefore raised D-26j whenever a moved item's source post had been
+soft-deleted or held since it was linked. Both migrations are applied nowhere, so nothing failed in a deployment.
+Before the fix, PGlite ran the real 3676 after 3999, and three new tests failed on that raise: the direct
+re-parent, the split and the merge.
+
+**The fix, in 3999 only, line-neutral.** An INSERT keeps the full check, as does an UPDATE that changes
+`source_post_id` or `media_url`: the post must be the owner's own, live, and the media must be that post's. An UPDATE that changes
+neither re-checks ownership only
+(`artifacts/api-server/src/migrations/3999_memory_items_source_post.sql:129#Re-parenting (an UPDATE moving memory_id alone: 3676's split / merge) needs ownership only.`).
+Both paths share the ownership clause
+(`artifacts/api-server/src/migrations/3999_memory_items_source_post.sql:128#AND p.author_id = m.owner_id`), so a
+move into someone else's Memory is still refused. 3676 never makes that move. Before its first write, it refuses
+any Memory the actor does not own
+(`artifacts/api-server/src/migrations/3676_memory_graph_kernel.sql:207#owner_id IS DISTINCT FROM v_actor`), and a
+split's new Memory copies the source row, owner included. A NULL link is never checked. If both columns change at
+once, the full check applies. No cited line moved, and §54.1's five anchors hold.
+
+**TESTED:** `artifacts/api-server/src/test/memoryFromOwnMedia.pglite.test.ts`, now 18/18. A second suite applies
+3676 after 3999 in PGlite and drives its real `memory_graph_kernel_execute`
+(`artifacts/api-server/src/test/memoryFromOwnMedia.pglite.test.ts:496#3676 SPLIT_MEMORY moves a linked item whose source post was soft-deleted`,
+`artifacts/api-server/src/test/memoryFromOwnMedia.pglite.test.ts:507#3676 MERGE_MEMORY absorbs a Memory holding a linked item whose source post is held`,
+`artifacts/api-server/src/test/memoryFromOwnMedia.pglite.test.ts:456#re-parenting into another owner's Memory is still refused`,
+`artifacts/api-server/src/test/memoryFromOwnMedia.pglite.test.ts:466#a new or re-pointed link still needs the owner's own live post and its own media`).
+Twelve trigger mutants were run, each restored and checked by sha256, and eleven were killed. The survivor drops
+the `TG_OP = 'UPDATE'` guard, which is equivalent by construction: OLD is NULL on INSERT. These are local PGlite runs
+over a schema subset, not evidence about a hosted database.
+
+**Open, not fixed here.** A 3676 merge of two of the owner's Memories that each hold a copy of the same post photo
+still raises 23505 on 3999's one-copy-per-Memory index (§54.1), because the merge does not de-duplicate items. This
+was reproduced in PGlite. The fix belongs either to 3676's merge or to the index, so it is the lead's call.
+
+**No row moves.** MD385 stays W, because 3999 is applied nowhere (A.2).
+
+- NOT-GRADED: artifacts/api-server/src/migrations/3676_memory_graph_kernel.sql — the Memory merge/split kernel (census-highlights-memories), cited as the writer whose re-parenting this correction unblocks; no media row rests on it.

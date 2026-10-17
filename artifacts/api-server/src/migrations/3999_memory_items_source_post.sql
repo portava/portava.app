@@ -19,15 +19,15 @@
 --                reference to the media's origin a Memory item has ever had.
 --
 -- ── OWN MEDIA ONLY, IN THE DATABASE TOO ──────────────────────────────────────
--- memory_items_source_post_guard refuses any INSERT or any UPDATE of
--- source_post_id / memory_id / media_url whose link is not:
---   * a post whose author_id is the OWNER of the Memory the item belongs to;
---   * a live post (status 'active', deleted_at NULL);
---   * with this item's media_url among that post's own media_urls.
--- The route checks the same before it writes; the trigger is the backstop for
--- any other writer (memory_items is service-role only since 3814, so there is
--- no client writer, and this guard does not depend on that staying true).
--- SECURITY INVOKER: it reads posts and memories as whoever writes the row.
+-- memory_items_source_post_guard refuses an INSERT, or an UPDATE changing
+-- source_post_id or media_url, unless the link is to a post (a) whose author_id
+-- is the OWNER of the item's Memory, (b) live (status 'active', deleted_at NULL),
+-- (c) carrying this item's media_url among its own media_urls. An UPDATE moving
+-- memory_id alone (3676's split / merge re-parent) re-checks (a) only: a source
+-- post since soft-deleted or held never pins the owner's copy to one of their own
+-- Memories, and a move into anyone else's Memory is still refused. The route
+-- checks the same first; the trigger backstops every other writer, not relying
+-- on 3814's service-role-only grant. SECURITY INVOKER: reads as the writer.
 --
 -- ── WITHDRAWAL ───────────────────────────────────────────────────────────────
 -- ON DELETE CASCADE: when the source post ROW is erased (account erasure hard-
@@ -108,7 +108,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS memory_items_source_post_media_uniq
   ON public.memory_items (memory_id, source_post_id, media_url) WHERE source_post_id IS NOT NULL;
 
 COMMENT ON COLUMN public.memory_items.source_post_id IS
-  '3999 (census-media MD385, ruling D-26j): the post this item was made from, when it was made from one. Only a live post whose author owns the Memory, and only that post''s own media (memory_items_source_post_guard). Cascades with the post row.';
+  '3999 (census-media MD385, ruling D-26j): the post this item was made from, when it was made from one. Only a live post whose author owns the Memory, and only that post''s own media (memory_items_source_post_guard); moving the item to another Memory re-checks ownership only. Cascades with the post row.';
 
 CREATE OR REPLACE FUNCTION public.memory_items_source_post_guard()
 RETURNS trigger
@@ -126,9 +126,10 @@ BEGIN
       JOIN public.memories m ON m.id = NEW.memory_id
      WHERE p.id = NEW.source_post_id
        AND p.author_id = m.owner_id
-       AND p.status = 'active'
-       AND p.deleted_at IS NULL
-       AND NEW.media_url = ANY (p.media_urls)
+       -- Re-parenting (an UPDATE moving memory_id alone: 3676's split / merge) needs ownership only.
+       AND ((TG_OP = 'UPDATE' AND NEW.source_post_id IS NOT DISTINCT FROM OLD.source_post_id
+                              AND NEW.media_url IS NOT DISTINCT FROM OLD.media_url)
+            OR (p.status = 'active' AND p.deleted_at IS NULL AND NEW.media_url = ANY (p.media_urls)))
   ) THEN
     RAISE EXCEPTION 'memory_items.source_post_id: an item may be made only from a live post of the Memory''s own owner, and only from that post''s own media (D-26j)'
       USING ERRCODE = 'check_violation';
@@ -136,7 +137,6 @@ BEGIN
   RETURN NEW;
 END
 $fn$;
-
 REVOKE ALL ON FUNCTION public.memory_items_source_post_guard() FROM PUBLIC, anon, authenticated;
 
 DROP TRIGGER IF EXISTS memory_items_source_post_guard ON public.memory_items;

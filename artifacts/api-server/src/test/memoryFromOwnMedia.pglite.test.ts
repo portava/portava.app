@@ -357,3 +357,171 @@ describe("MD385 — migration 3999 in PGlite, and POST /memories/:id/items/from-
     } finally { await bare.close(); }
   });
 });
+
+// ── Re-parenting: 3676's SPLIT_MEMORY / MERGE_MEMORY over 3999's guard ────────
+//
+// 3676 moves an item between two Memories of ONE owner by an UPDATE of memory_id
+// alone (its owner check refuses any other Memory before the first write). The
+// link was checked when it was made, so a re-parent re-checks ownership only: a
+// source post soft-deleted or held since never blocks a split or merge of the
+// owner's own Memory, and a move into anyone else's Memory is still refused.
+
+const graphKernel = readFileSync(new URL("../migrations/3676_memory_graph_kernel.sql", import.meta.url), "utf8");
+const MY_SECOND_MEMORY = "10000000-0000-4000-8000-000000000003";
+const MY_HELD_POST = "20000000-0000-4000-8000-000000000005";
+
+/** What 3676 reads and writes beyond BASE_SCHEMA: 2710's kernel tables, 3674's
+ *  redirects and source_mode, the tags/likes/saves a merge folds, the relation a
+ *  split records, and the FALSE flag 3676's postcondition reads. */
+const GRAPH_SCHEMA = `
+  ALTER TABLE public.memories ADD COLUMN hidden_user_ids uuid[] NOT NULL DEFAULT '{}', ADD COLUMN title text,
+    ADD COLUMN created_at timestamptz NOT NULL DEFAULT now(), ADD COLUMN source_mode text NOT NULL DEFAULT 'USER_CREATED';
+  CREATE TABLE public.memory_domain_events (event_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    memory_id uuid NOT NULL REFERENCES public.memories(id) ON DELETE CASCADE, sequence bigint NOT NULL, type text NOT NULL,
+    actor_user_id uuid, causation_id uuid, correlation_id uuid, payload_json jsonb NOT NULL DEFAULT '{}',
+    schema_version integer NOT NULL DEFAULT 1, occurred_at timestamptz NOT NULL, UNIQUE (memory_id, sequence));
+  CREATE TABLE public.memory_event_outbox (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    event_id uuid NOT NULL REFERENCES public.memory_domain_events(event_id) ON DELETE CASCADE, memory_id uuid NOT NULL, type text NOT NULL);
+  CREATE TABLE public.memory_command_receipts (actor_user_id uuid NOT NULL, idempotency_key text NOT NULL, command_id uuid NOT NULL,
+    command_type text NOT NULL, memory_id uuid, event_id uuid NOT NULL, event_type text NOT NULL, result_json jsonb NOT NULL,
+    PRIMARY KEY (actor_user_id, idempotency_key));
+  CREATE TABLE public.memory_command_audit (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, command_id uuid NOT NULL,
+    command_type text NOT NULL, memory_id uuid, actor_user_id uuid NOT NULL, idempotency_key text NOT NULL, outcome text NOT NULL,
+    reason text, event_id uuid);
+  CREATE TABLE public.memory_id_redirects (old_memory_id uuid PRIMARY KEY, new_memory_id uuid NOT NULL, owner_id uuid NOT NULL,
+    reason text NOT NULL, command_id uuid);
+  CREATE TABLE public.memory_tags (memory_id uuid NOT NULL, tagged_user_id uuid NOT NULL, status text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(), UNIQUE (memory_id, tagged_user_id));
+  CREATE TABLE public.memory_likes (memory_id uuid NOT NULL, user_id uuid NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), UNIQUE (memory_id, user_id));
+  CREATE TABLE public.memory_saves (memory_id uuid NOT NULL, user_id uuid NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), UNIQUE (memory_id, user_id));
+  CREATE TABLE public.memory_relations (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, owner_id uuid NOT NULL,
+    source_type text NOT NULL, source_id uuid NOT NULL, target_type text NOT NULL, target_id text NOT NULL, relation_type text NOT NULL,
+    confidence numeric(4,3), source_mode text, detector_version text, reason_code text);
+  INSERT INTO public.feature_flags (flag, enabled) VALUES ('memory_merge_split_enabled', false);
+  GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
+  GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO service_role;
+`;
+
+describe("3999's guard under re-parenting, and 3676's real split / merge applied after it", { concurrency: 1 }, () => {
+  let db: Database;
+  const rows = async (text: string, p: unknown[] = []) => (await db.query<any>(text, p)).rows;
+  const asService = async (text: string, p: unknown[] = []) => {
+    await db.exec("SET ROLE service_role");
+    try { return (await db.query<any>(text, p)).rows; } finally { await db.exec("RESET ROLE"); }
+  };
+  const link = async (memory: string, url: string, postId: string, position = 0) =>
+    (await asService(`INSERT INTO public.memory_items (memory_id, media_url, source_post_id, position) VALUES ($1, $2, $3, $4) RETURNING id`,
+      [memory, url, postId, position]))[0].id as string;
+  const softDelete = (postId: string) => db.query(`UPDATE public.posts SET status = 'deleted', deleted_at = now() WHERE id = $1`, [postId]);
+  const item = async (id: string) => (await rows(`SELECT memory_id, media_url, source_post_id FROM public.memory_items WHERE id = $1`, [id]))[0];
+  const graph = (type: string, actor: string, memoryId: string, payload: Record<string, unknown>) =>
+    asService(`SELECT public.memory_graph_kernel_execute($1::jsonb) AS r`, [JSON.stringify({
+      type, actor_user_id: actor, memory_id: memoryId, payload, command_id: crypto.randomUUID(),
+      correlation_id: crypto.randomUUID(), idempotency_key: crypto.randomUUID() })]).then((r) => r[0].r);
+
+  before(async () => {
+    db = await newDb(true);
+    await db.exec(GRAPH_SCHEMA);
+    await db.exec(graphKernel);
+  });
+
+  beforeEach(async () => {
+    await db.exec(`TRUNCATE public.memory_items, public.memory_domain_events, public.memory_event_outbox, public.memory_command_receipts,
+      public.memory_command_audit, public.memory_id_redirects, public.memory_relations CASCADE;
+      DELETE FROM public.posts; DELETE FROM public.memories;`);
+    await db.query(`INSERT INTO public.memories (id, owner_id) VALUES ($1, $2), ($3, $2), ($4, $5)`,
+      [MY_MEMORY, ME, MY_SECOND_MEMORY, OTHER_MEMORY, OTHER]);
+    await db.query(`INSERT INTO public.posts (id, author_id, status, deleted_at, media_urls, media_type) VALUES
+      ($1, $2, 'active', NULL, ARRAY[$3, $4], 'image'),
+      ($5, $6, 'active', NULL, ARRAY[$7], 'image'),
+      ($8, $2, 'deleted', now(), ARRAY[$3], 'image'),
+      ($9, $2, 'hidden', NULL, ARRAY[$3], 'image')`,
+      [MY_POST, ME, MY_URL_0, MY_URL_1, OTHER_POST, OTHER, OTHER_URL, MY_DELETED_POST, MY_HELD_POST]);
+  });
+
+  after(async () => { await db?.close(); });
+
+  it("re-parenting between two of the owner's Memories re-checks ownership only: a source since soft-deleted, held or edited does not block it", async () => {
+    const id = await link(MY_MEMORY, MY_URL_0, MY_POST);
+    await softDelete(MY_POST);
+    await asService(`UPDATE public.memory_items SET memory_id = $1 WHERE id = $2`, [MY_SECOND_MEMORY, id]);
+    assert.deepEqual(await item(id), { memory_id: MY_SECOND_MEMORY, media_url: MY_URL_0, source_post_id: MY_POST });
+    await db.query(`UPDATE public.posts SET status = 'hidden', deleted_at = NULL WHERE id = $1`, [MY_POST]);
+    await asService(`UPDATE public.memory_items SET memory_id = $1 WHERE id = $2`, [MY_MEMORY, id]);
+    await db.query(`UPDATE public.posts SET status = 'active', media_urls = '{}' WHERE id = $1`, [MY_POST]);
+    await asService(`UPDATE public.memory_items SET memory_id = $1, position = 7 WHERE id = $2`, [MY_SECOND_MEMORY, id]);
+    assert.deepEqual(await item(id), { memory_id: MY_SECOND_MEMORY, media_url: MY_URL_0, source_post_id: MY_POST });
+  });
+
+  it("re-parenting into another owner's Memory is still refused, whether the source post is live or not", async () => {
+    const id = await link(MY_MEMORY, MY_URL_0, MY_POST);
+    await assert.rejects(asService(`UPDATE public.memory_items SET memory_id = $1 WHERE id = $2`, [OTHER_MEMORY, id]),
+      (e: any) => e?.code === "23514" && /D-26j/.test(e.message), "live source");
+    await softDelete(MY_POST);
+    await assert.rejects(asService(`UPDATE public.memory_items SET memory_id = $1 WHERE id = $2`, [OTHER_MEMORY, id]),
+      (e: any) => e?.code === "23514" && /D-26j/.test(e.message), "soft-deleted source");
+    assert.deepEqual(await item(id), { memory_id: MY_MEMORY, media_url: MY_URL_0, source_post_id: MY_POST });
+  });
+
+  it("a new or re-pointed link still needs the owner's own live post and its own media, even when memory_id moves with it", async () => {
+    for (const [postId, url, why] of [[MY_DELETED_POST, MY_URL_0, "a soft-deleted post"], [MY_HELD_POST, MY_URL_0, "a held post"],
+      [OTHER_POST, OTHER_URL, "someone else's post"]]) {
+      await assert.rejects(link(MY_MEMORY, url, postId), /D-26j/, `insert linking ${why}`);
+    }
+    const id = await link(MY_MEMORY, MY_URL_0, MY_POST);
+    const refused: Array<[string, unknown[], string]> = [
+      [`source_post_id = $1`, [MY_DELETED_POST], "re-pointing at a soft-deleted post"],
+      [`source_post_id = $1`, [MY_HELD_POST], "re-pointing at a held post"],
+      [`source_post_id = $1, memory_id = $2`, [MY_DELETED_POST, MY_SECOND_MEMORY], "re-pointing and re-parenting at once"],
+      [`media_url = $1`, [OTHER_URL], "a URL the post does not carry"],
+    ];
+    for (const [set, values, why] of refused) {
+      await assert.rejects(asService(`UPDATE public.memory_items SET ${set} WHERE id = $${values.length + 1}`, [...values, id]), /D-26j/, why);
+    }
+    await softDelete(MY_POST);
+    await assert.rejects(asService(`UPDATE public.memory_items SET media_url = $1, memory_id = $2 WHERE id = $3`, [MY_URL_1, MY_SECOND_MEMORY, id]),
+      /D-26j/, "a re-parent that also changes the media is a new copy: the source must be live");
+    assert.deepEqual(await item(id), { memory_id: MY_MEMORY, media_url: MY_URL_0, source_post_id: MY_POST });
+    await db.query(`UPDATE public.posts SET status = 'active', deleted_at = NULL WHERE id = $1`, [MY_POST]);
+    await asService(`UPDATE public.memory_items SET source_post_id = $1, memory_id = $2 WHERE id = $3`, [MY_POST, MY_SECOND_MEMORY, id]);
+    assert.equal((await item(id)).memory_id, MY_SECOND_MEMORY, "both columns at once, to a live own post: accepted");
+  });
+
+  it("an item with no source link is not the guard's business: it moves without a check", async () => {
+    const [{ id }] = await asService(`INSERT INTO public.memory_items (memory_id, media_url) VALUES ($1, $2) RETURNING id`, [MY_MEMORY, OTHER_URL]);
+    await asService(`UPDATE public.memory_items SET memory_id = $1 WHERE id = $2`, [OTHER_MEMORY, id]);
+    assert.equal((await item(id)).memory_id, OTHER_MEMORY);
+  });
+
+  it("3676 SPLIT_MEMORY moves a linked item whose source post was soft-deleted to the owner's new Memory", async () => {
+    const linked = await link(MY_MEMORY, MY_URL_0, MY_POST);
+    await asService(`INSERT INTO public.memory_items (memory_id, media_url, position) VALUES ($1, $2, 1)`, [MY_MEMORY, MY_URL_1]);
+    await softDelete(MY_POST);
+    const r = await graph("SPLIT_MEMORY", ME, MY_MEMORY, { item_ids: [linked] });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    const newId = r.result.new_memory_id;
+    assert.deepEqual(await item(linked), { memory_id: newId, media_url: MY_URL_0, source_post_id: MY_POST });
+    assert.deepEqual(await rows(`SELECT owner_id FROM public.memories WHERE id = $1`, [newId]), [{ owner_id: ME }]);
+  });
+
+  it("3676 MERGE_MEMORY absorbs a Memory holding a linked item whose source post is held", async () => {
+    const linked = await link(MY_SECOND_MEMORY, MY_URL_1, MY_POST);
+    await asService(`INSERT INTO public.memory_items (memory_id, media_url) VALUES ($1, $2)`, [MY_MEMORY, MY_URL_0]);
+    await db.query(`UPDATE public.posts SET status = 'hidden' WHERE id = $1`, [MY_POST]);
+    const r = await graph("MERGE_MEMORY", ME, MY_MEMORY, { absorbed_memory_ids: [MY_SECOND_MEMORY] });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.equal(r.result.moved.items, 1);
+    assert.deepEqual(await item(linked), { memory_id: MY_MEMORY, media_url: MY_URL_1, source_post_id: MY_POST });
+  });
+
+  it("3676 never re-parents across owners: another owner's Memory is refused before any item moves", async () => {
+    const mine = await link(MY_MEMORY, MY_URL_0, MY_POST);
+    const theirs = await link(OTHER_MEMORY, OTHER_URL, OTHER_POST);
+    const merge = await graph("MERGE_MEMORY", ME, MY_MEMORY, { absorbed_memory_ids: [OTHER_MEMORY] });
+    assert.deepEqual([merge.ok, merge.reason], [false, "MEMORY_AUTH_NOT_OWNER"]);
+    const split = await graph("SPLIT_MEMORY", OTHER, MY_MEMORY, { item_ids: [mine] });
+    assert.deepEqual([split.ok, split.reason], [false, "MEMORY_AUTH_NOT_OWNER"]);
+    assert.equal((await item(mine)).memory_id, MY_MEMORY);
+    assert.equal((await item(theirs)).memory_id, OTHER_MEMORY);
+  });
+});
