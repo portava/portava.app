@@ -73,8 +73,8 @@ describe("§23 Rain invalidates tour — risk trigger, fallback opportunity, boo
     // 2. the fallback opportunity — the window between the hotel and dinner
     const freedom = computeFreedomWindows({
       commitments: [
-        { id: "A", type: "check_in", startsAt: new Date(T("11:00")), endsAt: null, requiredArrivalAt: new Date(T("11:00")), latenessToleranceMinutes: 0, prepMinutes: 0, flexibility: "fixed", place: { placeId: "hotel", point: HOTEL } },
-        { id: "B", type: "dinner", startsAt: new Date(T("20:00")), endsAt: null, requiredArrivalAt: new Date(T("20:00")), latenessToleranceMinutes: 0, prepMinutes: 15, flexibility: "fixed", place: { placeId: "rest", point: HOTEL } },
+        { id: "A", type: "check_in", startsAt: new Date(T("11:00")), endsAt: null, requiredArrivalAt: new Date(T("11:00")), latenessToleranceMinutes: 0, prepMinutes: 0, flexibility: "fixed", place: { placeId: "hotel", point: HOTEL }, hardConstraints: [], confidence: null },
+        { id: "B", type: "dinner", startsAt: new Date(T("20:00")), endsAt: null, requiredArrivalAt: new Date(T("20:00")), latenessToleranceMinutes: 0, prepMinutes: 15, flexibility: "fixed", place: { placeId: "rest", point: HOTEL }, hardConstraints: [], confidence: null },
       ],
       hops: [{ travelMinutes: 0, confidence: "HIGH" as any, routed: false, unknownReason: null }],
       participants: ["me", "ana"], tripStart: new Date(T("00:00", "12")), tripEnd: new Date(T("23:59", "15")),

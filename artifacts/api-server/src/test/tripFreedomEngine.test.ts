@@ -29,7 +29,7 @@ const Q: GeoPoint = { lat: 48.9, lng: 2.4 };
 function c(id: string, o: Partial<EngineCommitment> = {}): EngineCommitment {
   return {
     id, type: "event", startsAt: null, requiredArrivalAt: null, endsAt: null,
-    place: { placeId: `place-${id}`, point: P }, flexibility: "flexible", prepMinutes: 0, latenessToleranceMinutes: 0, ...o,
+    place: { placeId: `place-${id}`, point: P }, flexibility: "flexible", prepMinutes: 0, latenessToleranceMinutes: 0, hardConstraints: [], confidence: null, ...o,
   };
 }
 const hop = (travelMinutes: number | null, o: Partial<HopTravel> = {}): HopTravel =>

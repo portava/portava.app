@@ -349,7 +349,7 @@ describe("F. §82 certification: what TR341/TR412 can and cannot get from the re
   const T = (hh: string) => new Date(`2026-10-06T${hh}:00:00.000Z`);
   const commitment = (id: string, o: Partial<EngineCommitment>): EngineCommitment => ({
     id, type: "event", startsAt: null, requiredArrivalAt: null, endsAt: null, place: { placeId: `p-${id}`, point: P },
-    flexibility: "flexible", prepMinutes: 0, latenessToleranceMinutes: 0, ...o,
+    flexibility: "flexible", prepMinutes: 0, latenessToleranceMinutes: 0, hardConstraints: [], confidence: null, ...o,
   });
   const adapter = createGoogleRoutesTravelTimeProvider({
     apiKey: "k", now: () => new Date("2026-10-06T09:00:00Z"),
