@@ -15,7 +15,10 @@
  * `lib/blocks.ts` and `lib/discoveryLocalMomentum.ts` issue, nothing more):
  *   GET     select=<plain columns>, filters eq/neq/gt/gte/lt/lte/is/in/like/ilike
  *           (and `not.` of each), `or=(...)` with `and(...)` groups, order,
- *           limit, offset. One level of FK-hinted embedding,
+ *           limit, offset; `Prefer: count=exact` answers the total over the
+ *           filters in `Content-Range`, as PostgREST does (the bounded Trail
+ *           reads refuse a page whose total they cannot establish). One level
+ *           of FK-hinted embedding,
  *           `relation!constraint(cols)`, resolved against the REAL foreign key
  *           (./postgrestEmbed.ts) — the form the account-state gate's read of
  *           `profiles` uses on every authenticated request. An embed whose
@@ -366,9 +369,25 @@ export function makeTrailBridge(opts: BridgeOptions = {}): BridgeHandle {
         log.push({ method, path: `${url.pathname}${url.search}`, sql: `(${err.body.code})` });
         return json(err.body, 400);
       }
-      sql = `SELECT COALESCE(json_agg(_q), '[]'::json)::text FROM (SELECT ${columns} FROM ${t}`
-        + `${whereClause(params, "")}${orderClause(params.get("order"))}`
-        + `${limit !== null ? ` LIMIT ${Number(limit)}` : ""}${offset !== null ? ` OFFSET ${Number(offset)}` : ""}) _q;`;
+      const inner = `SELECT ${columns} FROM ${t}${whereClause(params, "")}${orderClause(params.get("order"))}`
+        + `${limit !== null ? ` LIMIT ${Number(limit)}` : ""}${offset !== null ? ` OFFSET ${Number(offset)}` : ""}`;
+      // `Prefer: count=…` (supabase-js `{ count: "exact" }`): PostgREST answers the TOTAL over the same
+      // filters, ignoring limit/offset, in `Content-Range: <first>-<last>/<total>` (`*/<total>` for an
+      // empty page). One statement, so the page and its total share a snapshot as they do there.
+      if (/count=(exact|planned|estimated)/.test(prefer)) {
+        sql = `SELECT json_build_object('rows', (SELECT COALESCE(json_agg(_q), '[]'::json) FROM (${inner}) _q),`
+          + ` 'total', (SELECT count(*) FROM ${t}${whereClause(params, "")}))::text;`;
+        log.push({ method, path: `${url.pathname}${url.search}`, sql });
+        const e = await exec(sql);
+        if (!e.ok) return pgError(e);
+        const { rows: pageRows, total } = JSON.parse(e.stdout) as { rows: Row[]; total: number };
+        const first = offset !== null ? Number(offset) : 0;
+        const range = pageRows.length === 0 ? `*/${total}` : `${first}-${first + pageRows.length - 1}/${total}`;
+        return new Response(JSON.stringify(pageRows), {
+          status: 200, headers: { "content-type": "application/json", "content-range": range },
+        });
+      }
+      sql = `SELECT COALESCE(json_agg(_q), '[]'::json)::text FROM (${inner}) _q;`;
       log.push({ method, path: `${url.pathname}${url.search}`, sql });
       const e = await exec(sql);
       if (!e.ok) return pgError(e);

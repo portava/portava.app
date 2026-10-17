@@ -286,7 +286,10 @@ ROLLBACK;`).filter((l) => l.startsWith("SNAP")).map((l) => JSON.parse(l.slice(4)
       // reading 3497's helper without 3725's owner controls and 3726's latest-correction clause (#714 CI: the
       // postconditionAmendments db suite re-ran 3726's postcondition and found "lost 3725's owner-controls
       // exclusion"). Both files are CREATE OR REPLACE + grants + comment, and each one's precondition needs the one before.
-      for (const later of ["3725_discovery_trend_post_owner_controls.sql", "3726_discovery_trend_post_latest_correction.sql"]) {
+      // 3988 patches 3497's rebuild and 3726's helper in place (it fingerprints both before and after), so it is
+      // re-applied last: without it the chain end would keep 3497's raw rebuild beside 3988's patched context.
+      for (const later of ["3725_discovery_trend_post_owner_controls.sql", "3726_discovery_trend_post_latest_correction.sql",
+        "3988_discovery_trend_protected_contributions.sql"]) {
         const r = psql(readFileSync(resolve(__dir, "../../migrations/" + later), "utf8"));
         assert.equal(r.status, 0, `${later}: ${r.stderr}`);
       }
