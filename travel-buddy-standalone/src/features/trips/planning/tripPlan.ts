@@ -1,5 +1,5 @@
 import { supabase, isSupabaseConfigured } from '../../../lib/supabase.ts';
-import type { TripPlanItem, TripPlanCategory, TripPlanItemStatus, TripPlanSourceType, TripPlanLockType } from '../../../types/models.ts';
+import type { TripPlanItem, TripPlanCategory, TripPlanItemStatus, TripPlanSourceType, TripPlanLockType } from '../../../types/models.ts'; import type { TripPlanPrivacyScope } from './tripPlanPrivacy.ts';
 import { freshToken as freshApiToken } from '../../../services/apiToken.ts';
 
 const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
@@ -39,7 +39,7 @@ export interface CreatePlanItemPayload {
   locationIsPrivate?: boolean;
   notes?: string;
   sortOrder?: number;
-  lockType?: TripPlanLockType;
+  lockType?: TripPlanLockType; /** §6.3 (census-trips TR116): omit to write none — the server then writes the create it always made. */ privacyScope?: TripPlanPrivacyScope; selectedMemberIds?: string[];
 }
 
 export interface UpdatePlanItemPayload {
@@ -55,7 +55,7 @@ export interface UpdatePlanItemPayload {
   locationIsPrivate?: boolean;
   notes?: string | null;
   sortOrder?: number;
-  lockType?: TripPlanLockType;
+  lockType?: TripPlanLockType; /** §6.3: the author sets any of the offered scopes; anyone else may only narrow (server, OD-1012-PRIV-5). */ privacyScope?: TripPlanPrivacyScope; selectedMemberIds?: string[];
 }
 
 export type PlanEditPermission = 'owner_only' | 'all_members' | 'specific_members';
