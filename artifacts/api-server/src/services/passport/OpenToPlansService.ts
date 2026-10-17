@@ -323,11 +323,11 @@ export async function recordInferredWindow(
  * List a user's OWN windows. Expired windows are omitted by default (§31); pass
  * includeExpired to see the full history. Sorted soonest-ending first.
  */
-export async function listWindows(
+export async function listWindowsRead(
   db: SupabaseClient,
   userId: string,
   opts: { includeExpired?: boolean; nowMs?: number } = {},
-): Promise<AvailabilityWindow[]> {
+): Promise<AvailabilityWindow[] | null> {
   const nowMs = opts.nowMs ?? Date.now();
   const { data, error } = await db
     .from("availability_windows")
@@ -336,12 +336,21 @@ export async function listWindows(
 
   if (error) {
     logger.error({ table: "availability_windows", op: "select", message: error.message }, "listWindows failed");
-    return [];
+    return null;
   }
-  let windows = (data ?? []).map(rowToWindow);
+  if (data == null) return null;
+  let windows = data.map(rowToWindow);
   if (!opts.includeExpired) windows = windows.filter((w) => !isExpired(w, nowMs));
   windows.sort((a, b) => effectiveExpiry(a) - effectiveExpiry(b));
   return windows;
+}
+
+export async function listWindows(
+  db: SupabaseClient,
+  userId: string,
+  opts: { includeExpired?: boolean; nowMs?: number } = {},
+): Promise<AvailabilityWindow[]> {
+  return (await listWindowsRead(db, userId, opts)) ?? [];
 }
 
 /** A user's currently-ACTIVE windows (started and not expired). */
@@ -359,18 +368,18 @@ export async function getActiveWindows(
  * people (Telegraph §4 Nearby & Available / §30A.2 ReachablePersonProjection).
  *
  * ── WHY IT RETURNS null AND listWindows RETURNS [] ───────────────────────────
- * `listWindows` above logs a failed read and returns an empty array. For a
- * self-view that is a tolerable shape — the person sees their own screen empty
- * and knows something is wrong. For a MULTI-PERSON projection it is not: an
+ * `listWindows` retains its legacy empty-array fallback on failed reads. The
+ * owner editor uses `listWindowsRead` to distinguish failure from no saved
+ * windows. For a MULTI-PERSON projection the distinction also matters: an
  * empty array from a failed read means "none of these twenty people is
  * available", which the caller publishes as an answer. supabase-js RESOLVES the
  * failure as `{ data: null, error }`, so nothing throws and no `try/catch`
  * notices.
  *
  * So this function distinguishes the two: `null` means the read FAILED and the
- * caller must say so, an empty Map means nobody has a window. The existing
- * single-owner function is left exactly as it is; adding a second, honest shape
- * beside it is safer than changing a return type five call sites depend on.
+ * caller must say so, an empty Map means nobody has a window. Legacy single-owner
+ * callers retain the original array contract rather than changing their shared
+ * fallback behavior.
  *
  * Expired windows are NOT filtered here — the caller passes the same `nowMs`
  * to `isVisibleTo`, which re-applies §31's expiry per viewer.

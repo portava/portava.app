@@ -6,7 +6,7 @@
  * in-flight requests are deduplicated so two simultaneous identical queries
  * share one Promise.
  */
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import type { Place } from '../lib/location/placeTypes.ts';
 import {
   getCached,
@@ -79,11 +79,8 @@ export function usePlaceSearch(
   const [results, setResults] = useState<Place[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    if (timerRef.current) clearTimeout(timerRef.current);
     if (!query.trim()) {
       setResults([]);
       setLoading(false);
@@ -101,11 +98,12 @@ export function usePlaceSearch(
       return;
     }
 
+    let active = true;
+    const controller = new AbortController();
+    setResults([]);
+    setError(null);
     setLoading(true);
-    timerRef.current = setTimeout(async () => {
-      if (abortRef.current) abortRef.current.abort();
-      const ctrl = new AbortController();
-      abortRef.current = ctrl;
+    const timer = setTimeout(async () => {
 
       try {
         const params = new URLSearchParams({ q: query.trim() });
@@ -121,29 +119,32 @@ export function usePlaceSearch(
           places = await existing;
         } else {
           const res = await fetch(`${apiBase()}/api/places/search?${params}`, {
-            signal: ctrl.signal,
+            signal: controller.signal,
           });
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const body = await res.json();
+          if (!active) return;
           places = body.places ?? [];
           setCached(cacheKey, places);
         }
+        if (!active) return;
         setResults(places);
         setError(null);
-      } catch (e: any) {
-        if (e?.name === 'AbortError') return;
+      } catch (error) {
+        if (!active || (typeof error === 'object' && error !== null && 'name' in error && error.name === 'AbortError')) return;
         setError('Location search unavailable.');
         setResults([]);
       } finally {
-        setLoading(false);
+        if (active) setLoading(false);
       }
     }, DEBOUNCE_MS);
 
     return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-      if (abortRef.current) abortRef.current.abort();
+      active = false;
+      clearTimeout(timer);
+      controller.abort();
     };
-  }, [query, opts?.refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [query, opts?.countryCode, opts?.type, opts?.lat, opts?.lng, opts?.refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return { results, loading, error };
 }

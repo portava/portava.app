@@ -155,7 +155,7 @@ export async function logImpression(
     }
 
     // Fatigue tracking — fire-and-forget, gated by feature flag
-    const fatigueEnabled = await isFatigueEnabled(sc).catch(() => false);
+    const fatigueEnabled = !REPLAYED_IMPRESSION_BATCHES.has(rows) && await isFatigueEnabled(sc).catch(() => false);
     if (fatigueEnabled) {
       const creatorIds = scored
         .map((s) => s.candidate.authorId as string | null | undefined)
@@ -622,7 +622,7 @@ function reportFatigueWriteFailure(err: unknown): void {
 // Declared at the foot for the reason the fatigue sinks above give: the
 // citations into this file sit at fixed lines.
 
-import { servedRecommendationId, serveIdFor, screenFeaturesForStorage, isDuplicateExposureReplay, DISCOVERY_EVENT_SCHEMA_VERSION, DISCOVERY_EVENT_PRIVACY_CLASS, type ServeExposure } from "./discoveryRecommendationRecord.js";
+import { servedRecommendationId, serveIdFor, screenFeaturesForStorage, discoveryExposureRowIdFor, isDuplicateDiscoveryExposureRow, DISCOVERY_EVENT_SCHEMA_VERSION, DISCOVERY_EVENT_PRIVACY_CLASS, type ServeExposure } from "./discoveryRecommendationRecord.js";
 import { isMissingRecommendationIdSchema, noteRecommendationIdAbsent, recommendationIdSchemaAbsent } from "./rankEventsProvenance.js";
 import { DISCOVERY_PDE_MODEL_VERSION, pdeFeatureProvenanceFeatures } from "./discoveryRankProvenance.js";
 import { reasonCodesFromSignals } from "./discoveryReasonCodes.js";
@@ -650,7 +650,7 @@ function discoveryExposureColumns(
 ): Record<string, string | number> {
   if (surface !== "discovery" || recommendationIdSchemaAbsent()) return {};
   return {
-    recommendation_id: servedRecommendationId(e, position, itemId),
+    recommendation_id: servedRecommendationId(e, position, itemId), id: discoveryExposureRowIdFor(servedRecommendationId(e, position, itemId)),
     schema_version:    DISCOVERY_EVENT_SCHEMA_VERSION,
     privacy_class:     DISCOVERY_EVENT_PRIVACY_CLASS,
   };
@@ -708,7 +708,7 @@ async function settleImpressionInsert(
 ): Promise<{ error: unknown }> {
   const error = result?.error ?? null;
   if (surface !== "discovery" || !error) return { error };
-  if (isDuplicateExposureReplay(error)) {
+  if (isDuplicateDiscoveryExposureRow(error, rows)) {
     REPLAYED_IMPRESSION_BATCHES.add(rows);
     return { error: null };
   }

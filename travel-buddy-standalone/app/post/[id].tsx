@@ -19,6 +19,7 @@ import { OfficialBadge } from '../../src/components/OfficialBadge';
 import { ReportSheet } from '../../src/components/ReportSheet';
 import { PostWrongPlaceSheet } from '../../src/components/PostWrongPlaceSheet';
 import { CommentsSection } from '../../src/components/CommentsSheet';
+import { TranslatedContent } from '../../src/components/TranslatedContent.tsx';
 import { MediaStampOverlay } from '../../src/components/StampOverlayBadge';
 import { SharedVideoPlayer } from '../../src/components/ui/SharedVideoPlayer';
 import { getPostById, type PostRow } from '../../src/services/posts';
@@ -208,7 +209,9 @@ function PostDetailCard({ post, commentCount }: { post: PostRow; commentCount: n
       )}
 
       {post.content ? (
-        <Text style={card.content}>{post.content}</Text>
+        <TranslatedContent entityType="post" entityId={post.id} field="content" original={post.content} style={card.content}>
+          <Text style={card.content}>{post.content}</Text>
+        </TranslatedContent>
       ) : null}
 
       {loc ? (

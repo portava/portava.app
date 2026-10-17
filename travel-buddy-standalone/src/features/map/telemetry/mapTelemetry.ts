@@ -73,8 +73,13 @@
  * `POST /api/media/analytics/batch` (see hooks/useMediaAnalytics.ts) and
  * `POST /api/compass/analytics` (services/compass.ts).
  *
- * Until a transport is configured, events stay QUEUED (bounded) rather than
- * being discarded, so telemetry fired during app boot is not lost.
+ * Until a transport is configured, events stay QUEUED (bounded). The screen
+ * binds an auth observer once; it stays subscribed across map unmounts so
+ * same-account retries survive but account changes discard all prior state.
+ * Unowned boot events are discarded at that first binding. Owner ids and
+ * epochs are local only, never part of the request schema. The transport also
+ * checks the token subject for isolation before sending; authentication and
+ * authorization remain the server's responsibility.
  */
 
 import type { MapMode } from '../vocabulary.ts';
@@ -840,6 +845,7 @@ export function containsDisallowedKey(value: unknown, depth = 0): boolean {
 // ── Envelope and batch ────────────────────────────────────────────────────────
 
 export const MAP_TELEMETRY_SCHEMA_VERSION = '1.0';
+export const MAP_TELEMETRY_MAX_BATCH_EVENTS = 100;
 
 export interface MapTelemetryEvent {
   name: MapEventName;
@@ -867,7 +873,7 @@ export interface MapTelemetryBatch {
     mapSessionId: MapSessionId | null;
     /** Events dropped since the last batch that reported drops. NEVER silent. */
     dropped: number;
-    /** Lifetime drop count for this app run. */
+    /** Lifetime drop count for this account epoch in this app run. */
     droppedTotal: number;
     /** Drops broken down by cause, since the last reporting batch. */
     droppedByReason: Partial<Record<DropReason, number>>;
@@ -940,6 +946,11 @@ let queue: MapTelemetryEvent[] = [];
 let timerHandle: unknown = null;
 let flushing = false;
 let flushAgain = false;
+let ownerId: string | null | undefined;
+let ownerEpoch = 0;
+let unsubscribeOwner: (() => void) | null = null;
+let observedAuthOwner = false;
+const ownerListeners = new Set<() => void>();
 
 let sessionId: MapSessionId | null = null;
 let sessionSynthetic = false;
@@ -964,6 +975,48 @@ export function configureMapTelemetry(overrides: Partial<MapTelemetryConfig>): v
 /** Install (or remove) the network transport. */
 export function setMapTelemetryTransport(transport: MapTelemetryTransport | null): void {
   config = { ...config, transport };
+}
+
+function setMapTelemetryOwner(nextOwner: string | null): void {
+  if (ownerId === nextOwner) return;
+  ownerId = nextOwner;
+  ownerEpoch += 1;
+  clearMapTelemetryState();
+  setMapTelemetryTransport(null);
+  for (const listener of ownerListeners) listener();
+}
+
+export function subscribeMapTelemetryOwner(listener: () => void): () => void {
+  ownerListeners.add(listener);
+  return () => { ownerListeners.delete(listener); };
+}
+
+export function captureMapTelemetryOwner(expectedOwner?: string | null): { isCurrent: () => boolean } | null {
+  if (ownerId === null || (expectedOwner !== undefined && ownerId !== expectedOwner)) return null;
+  const epoch = ownerEpoch;
+  return { isCurrent: () => epoch === ownerEpoch };
+}
+
+export function bindMapTelemetryOwner(
+  userId: string | null,
+  subscribeAuth: (listener: (userId: string | null) => void) => () => void,
+): { isCurrent: () => boolean } | null {
+  if (unsubscribeOwner === null) {
+    setMapTelemetryOwner(userId);
+    try {
+      unsubscribeOwner = subscribeAuth((nextOwner) => {
+        observedAuthOwner = true;
+        setMapTelemetryOwner(nextOwner);
+      });
+    } catch {
+      setMapTelemetryOwner(null);
+      return null;
+    }
+  } else if (!observedAuthOwner) {
+    setMapTelemetryOwner(userId);
+  }
+  if (userId === null || ownerId !== userId) return null;
+  return captureMapTelemetryOwner(userId);
 }
 
 // ── Correlation ids ───────────────────────────────────────────────────────────
@@ -1037,6 +1090,7 @@ function ensureSession(name: MapEventName): void {
  */
 export function emitMapEvent<N extends MapEventName>(name: N, payload: MapEventPayloads[N]): void {
   try {
+    if (ownerId === null) return;
     if (!(MAP_EVENT_NAMES as readonly string[]).includes(name)) {
       recordDrop('unknown_event');
       return;
@@ -1103,7 +1157,9 @@ function enqueue(event: MapTelemetryEvent): void {
 function scheduleFlush(): void {
   if (timerHandle !== null) return;
   if (queue.length === 0) return;
+  const epoch = ownerEpoch;
   timerHandle = config.scheduler.setTimeout(() => {
+    if (epoch !== ownerEpoch) return;
     timerHandle = null;
     void flushMapTelemetry();
   }, config.flushIntervalMs);
@@ -1135,8 +1191,9 @@ export function flushMapTelemetry(): Promise<void> {
   const transport = config.transport;
   if (!transport) return Promise.resolve();
 
-  const events = queue;
-  queue = [];
+  const epoch = ownerEpoch;
+  const queueDepth = queue.length;
+  const events = queue.splice(0, MAP_TELEMETRY_MAX_BATCH_EVENTS);
 
   const batch: MapTelemetryBatch = {
     events,
@@ -1146,15 +1203,18 @@ export function flushMapTelemetry(): Promise<void> {
       dropped: droppedPending,
       droppedTotal,
       droppedByReason: { ...droppedByReason },
-      queueDepth: events.length,
+      queueDepth,
     },
   };
   const reportedDrops = droppedPending;
   const reportedByReason = { ...droppedByReason };
 
   flushing = true;
+  let delivered = false;
   return transport(batch)
     .then(() => {
+      if (epoch !== ownerEpoch) return;
+      delivered = true;
       consecutiveFailures = 0;
       // Only clear the drop counters that this batch actually reported, so a
       // drop occurring during the in-flight request is not swallowed.
@@ -1167,6 +1227,7 @@ export function flushMapTelemetry(): Promise<void> {
       }
     })
     .catch(() => {
+      if (epoch !== ownerEpoch) return;
       consecutiveFailures += 1;
       if (consecutiveFailures >= config.maxDeliveryAttempts) {
         consecutiveFailures = 0;
@@ -1183,8 +1244,9 @@ export function flushMapTelemetry(): Promise<void> {
       }
     })
     .then(() => {
+      if (epoch !== ownerEpoch) return;
       flushing = false;
-      if (flushAgain) {
+      if (flushAgain || (delivered && queue.length > 0)) {
         flushAgain = false;
         return flushMapTelemetry();
       }
@@ -1236,10 +1298,8 @@ export function mapTelemetryDiagnostics(): MapTelemetryDiagnostics {
   };
 }
 
-/** Full reset — test-only. */
-export function _resetMapTelemetryForTests(): void {
+function clearMapTelemetryState(): void {
   cancelTimer();
-  config = defaultConfig();
   queue = [];
   timerHandle = null;
   flushing = false;
@@ -1252,6 +1312,18 @@ export function _resetMapTelemetryForTests(): void {
   droppedTotal = 0;
   droppedByReason = {};
   consecutiveFailures = 0;
+}
+
+/** Full reset — test-only. */
+export function _resetMapTelemetryForTests(): void {
+  unsubscribeOwner?.();
+  unsubscribeOwner = null;
+  ownerListeners.clear();
+  observedAuthOwner = false;
+  ownerId = undefined;
+  ownerEpoch += 1;
+  clearMapTelemetryState();
+  config = defaultConfig();
 }
 
 // ── The real transport (constructed by the app, injected here) ────────────────
@@ -1267,6 +1339,19 @@ export interface FetchTelemetryTransportOptions {
   path?: string;
 }
 
+function tokenOwner(token: string): string | null {
+  try {
+    const part = token.split('.')[1];
+    if (!part || typeof globalThis.atob !== 'function') return null;
+    const base64 = part.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4);
+    const claims = JSON.parse(globalThis.atob(padded)) as { sub?: unknown } | null;
+    return typeof claims?.sub === 'string' ? claims.sub : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Builds the batched, authenticated, fire-and-forget POST the rest of the app
  * already uses for analytics (see useMediaAnalytics.ts). The server stamps the
@@ -1279,10 +1364,15 @@ export function createFetchTelemetryTransport(
 ): MapTelemetryTransport {
   const doFetch = opts.fetchImpl ?? ((globalThis as { fetch?: typeof fetch }).fetch as typeof fetch);
   const path = opts.path ?? '/api/map/telemetry';
+  const epoch = ownerEpoch;
+  const boundOwner = ownerId;
   return async (batch: MapTelemetryBatch) => {
+    if (epoch !== ownerEpoch) throw new Error('telemetry_owner_changed');
     if (!opts.baseUrl || typeof doFetch !== 'function') throw new Error('telemetry_transport_unavailable');
     const token = await opts.getToken();
+    if (epoch !== ownerEpoch) throw new Error('telemetry_owner_changed');
     if (!token) throw new Error('telemetry_unauthenticated');
+    if (boundOwner !== undefined && tokenOwner(token) !== boundOwner) throw new Error('telemetry_owner_changed');
     const res = await doFetch(`${opts.baseUrl}${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },

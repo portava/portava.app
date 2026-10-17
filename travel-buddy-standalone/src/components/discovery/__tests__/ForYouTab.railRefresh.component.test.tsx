@@ -23,6 +23,7 @@ import { render, screen, waitFor, act } from '@testing-library/react-native';
 const mockGetDiscoveryPlaces       = jest.fn();
 const mockGetCachedDiscoveryPlaces = jest.fn();
 const mockGetDiscoveryFeed         = jest.fn();
+const mockUseCommunityDiscovery = jest.fn((_city?: string | null, _sortBy?: string | null, _refreshKey?: number) => ({ gems: [], picks: [], places: [], loading: false }));
 
 // NOTE: intentionally exhaustive — the real module imports Supabase; spreading
 // requireActual would load the client and OOM the Jest runner.
@@ -56,7 +57,7 @@ jest.mock('../../../hooks/compass/useCompassFeed', () => ({
 
 // NOTE: intentionally exhaustive — the real hook fetches community posts.
 jest.mock('../../../hooks/useCommunityDiscovery', () => ({
-  useCommunityDiscovery: () => ({ gems: [], picks: [], places: [], loading: false }),
+  useCommunityDiscovery: (city?: string | null, sortBy?: string | null, refreshKey?: number) => mockUseCommunityDiscovery(city, sortBy, refreshKey),
 }));
 
 // ── Heavy child component stubs ───────────────────────────────────────────────
@@ -142,6 +143,7 @@ describe('ForYouTab — a pull refetches the Live-from-events rail (§94.10)', (
     await act(async () => { scroll.props.refreshControl.props.onRefresh(); });
 
     await waitFor(() => expect(mockGetDiscoveryFeed).toHaveBeenCalledTimes(2));
+    expect(mockUseCommunityDiscovery).toHaveBeenLastCalledWith('Lisbon', undefined, 1);
     expect(await screen.findByTestId('post-stub-post-1')).toBeTruthy();
     expect(screen.queryByTestId('discovery-event-posts-rail-refused')).toBeNull();
   });

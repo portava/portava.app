@@ -77,7 +77,7 @@ human action in the Replit UI.**
 
 Run in this worktree. It is `checkSentryOtelDeps.ts && node ./build.mjs`; the
 second is an esbuild bundle that writes only to `artifacts/api-server/dist`
-(`artifacts/api-server/build.mjs:143#outdir`). It reads no network and no
+(`artifacts/api-server/build.mjs:164#outdir`). It reads no network and no
 database. Output: `dist/index.mjs` (10.2 MB), `dist/sentry-preload.mjs`, four
 pino worker bundles, and source maps. Two warnings about
 `expo/tsconfig.base` not resolving; both are non-fatal.
@@ -153,13 +153,13 @@ Optional-but-feature-disabling keys, same source
 `AI_INTEGRATIONS_OPENAI_BASE_URL`, `AI_INTEGRATIONS_OPENAI_API_KEY`,
 `INTERNAL_API_SECRET`, `MAPBOX_TOKEN`, `SENSING_CONTRIBUTOR_PEPPER`.
 
-**VERIFIED.** `scripts/build-production.sh` applies **no migrations**; neither
-does any workflow. `docs/migrations.md:137#Nothing` states it outright:
-"Nothing in the merge path applies migrations". So a deploy of this HEAD ships
-code whose migrations may not be on the production database, and the repo's own
-answer to that is `pnpm run check:migration-ledger`
-(`artifacts/api-server/package.json:230#check:migration-ledger`), which needs
-database credentials this environment does not have.
+**VERIFIED locally.** The production build runs the API and frontend builds, not migrations (`scripts/build-production.sh:8#pnpm --filter`, `scripts/build-production.sh:11#node travel-buddy-standalone/scripts/build.js`).
+The older statement that no workflow applies migrations is too broad: the manually dispatched beta workflow
+(`.github/workflows/beta-db.yml:141#workflow_dispatch`) has an explicit apply step (`.github/workflows/beta-db.yml:678#db:apply-migrations`).
+Pending beta application requires `apply=yes` (`.github/workflows/beta-db.yml:647#if:`, with the dry-run alternative at `:632#if:`); this is not evidence that production has this branch's schema.
+A production build therefore does not establish migration readiness. The repository's ledger comparison remains `pnpm run check:migration-ledger`
+(`artifacts/api-server/package.json:243#check:migration-ledger`); its missing-credentials outcome is explicitly non-success (`artifacts/api-server/src/scripts/checkMigrationLedger.ts:55#Exit code 2`).
+This documentation pass does not use database credentials, invoke workflows or verify any deployment or activation state.
 
 ### 1.5 Deployment readiness checklist
 
@@ -449,19 +449,19 @@ Base URL `https://portava.replit.app`. All unauthenticated.
 
 1. **The deploy is live and is this build.**
    `GET /api/healthz` → **200** `{"status":"ok"}`.
-   (`artifacts/api-server/src/routes/health.ts:37#healthz`.) A non-200, or an
+   (`artifacts/api-server/src/routes/health.ts:38#healthz`.) A non-200, or an
    HTML error page, means the process is not serving — most likely the
    `process.exit(1)` from §1.4.
 2. **Background jobs are not failing.**
    `GET /api/healthz/schedulers` → **200** when healthy, **503** when any job is
    failing, **503** with `"no scheduler reported"` if the report list is empty
-   (`artifacts/api-server/src/routes/health.ts:524#schedulers`). The body names
+   (`artifacts/api-server/src/routes/health.ts:527#schedulers`). The body names
    each job and its status, so this one request distinguishes "deployed but
    idle" from "deployed and working".
 3. **Cleanup and delayed-publish are alive.**
    `GET /api/healthz/cleanup` and `GET /api/healthz/delayed-publish`
-   (`artifacts/api-server/src/routes/health.ts:42#cleanup`,
-   `artifacts/api-server/src/routes/health.ts:74#delayed-publish`). These are
+   (`artifacts/api-server/src/routes/health.ts:45#cleanup`,
+   `artifacts/api-server/src/routes/health.ts:77#delayed-publish`). These are
    DB-backed, so a 200 here is also evidence the service client has real
    credentials — which `/api/healthz` alone does **not** prove.
 4. **Admin surface is closed to the public.**

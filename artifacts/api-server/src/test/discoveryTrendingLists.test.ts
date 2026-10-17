@@ -30,6 +30,9 @@ import {
 } from "../lib/discoveryTrendExplanation.js";
 import { TREND_STATE_MODEL_VERSION_V2, TREND_FEATURE_VERSION_V2, TREND_PRIOR_MS, explainTrendReading } from "../lib/discoveryTrendState.js";
 import { clearProtectedZoneCache } from "../lib/protectedZoneStore.js";
+import { loadLocalMomentum, readLocalTrendStates, readRetestReadings, _resetLocalMomentumCacheForTest } from "../lib/discoveryLocalMomentum.js";
+import { runTrendRebuildTick, _setTestClient as setRebuildClient } from "../lib/discoveryTrendRebuildScheduler.js";
+import { unfilteredTrendBlockReason } from "../lib/discoveryTrendProducerPrivacy.js";
 
 type Row = Record<string, any>;
 const K = TREND_DISCLOSURE_MIN_TRAVELERS;
@@ -92,7 +95,7 @@ function SEED(): Record<string, Row[]> {
 }
 
 /** PostgREST-shaped fake; anything unmodelled throws. */
-function makeDb(seed: Record<string, Row[]>, faults: { erroring?: string[]; missing?: string[] } = {}) {
+function makeDb(seed: Record<string, Row[]>, faults: { erroring?: string[]; missing?: string[]; capped?: string[] } = {}) {
   const tables: Record<string, Row[]> = { ...seed };
   const reads: string[] = [];
   function from(table: string) {
@@ -105,9 +108,11 @@ function makeDb(seed: Record<string, Row[]>, faults: { erroring?: string[]; miss
       if (faults.erroring?.includes(table)) return { data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } };
       let out = (tables[table] ?? []).filter((r) => filters.every((f) => f(r)));
       for (const o of [...orders].reverse()) out = [...out].sort((a, b) => (String(a[o.col] ?? "") < String(b[o.col] ?? "") ? -1 : String(a[o.col] ?? "") > String(b[o.col] ?? "") ? 1 : 0) * (o.asc ? 1 : -1));
+      const count = out.length;
+      if (faults.capped?.includes(table)) out = out.slice(0, 1);
       if (range) out = out.slice(range[0], range[1] + 1);
       if (limitN !== null) out = out.slice(0, limitN);
-      return { data: out.map((r) => (selected.length > 0 ? Object.fromEntries(selected.filter((c) => c in r).map((c) => [c, r[c]])) : { ...r })), error: null };
+      return { data: out.map((r) => (selected.length > 0 ? Object.fromEntries(selected.filter((c) => c in r).map((c) => [c, r[c]])) : { ...r })), count, error: null };
     };
     const b: any = {
       select(cols?: string) { selected = String(cols ?? "").split(",").map((c) => c.trim()).filter(Boolean); return b; },
@@ -314,7 +319,8 @@ describe("L-H — emerging places and Trails", () => {
     return s;
   }
   it("L-H1. an active Trail whose place members emerged across ≥ k travellers is listed; archived Trails and post members are not folded", async () => {
-    withDb(trailSeed(K + 2));
+    assert.equal(K, 15);
+    withDb(trailSeed(K));
     const r = await get("emerging", "lisbon");
     assert.deepEqual(r.body.items.map((i: any) => i.placeId), [`db/${pid(1)}`]);
     assert.deepEqual(r.body.trails.map((t: any) => t.trailId), [T1]);
@@ -322,7 +328,7 @@ describe("L-H — emerging places and Trails", () => {
     assert.equal(r.body.trailsUnavailable, null);
   });
   it("L-H2. below k travellers the Trail is not listed; without 2910 the Trails half says so", async () => {
-    withDb(trailSeed(K - 3));
+    withDb(trailSeed(K - 1));
     assert.deepEqual((await get("emerging", "lisbon")).body.trails, []);
     withDb(trailSeed(K + 2), { missing: ["trails"] });
     const r = await get("emerging", "lisbon");
@@ -419,10 +425,129 @@ describe("L-Z — protected zones, Local Pulse (gap 1)", () => {
     assert.equal(zoneAllowsPosition("p", "P", 38.71, -9.13, zones), true, "outside: published");
     assert.equal(zoneAllowsPosition("p", "P", 38.71, -9.13, null), false, "unreadable policy: withheld");
     assert.equal(zoneAllowsPosition("p", "P", 38.71, -9.13, []), true, "asked, no zones: published");
-    assert.equal(zoneAllowsPosition("p", "P", null, null, null), true, "no position: no zone can decide it");
+    assert.equal(zoneAllowsPosition("p", "P", null, null, null), false, "no position cannot establish zone clearance");
     // A COARSEN zone also withholds here: these wires have no coarse rung.
     const med = [{ id: "m", category: "medical_facility" as const, shape: "circle" as const, center: { lat: 38.71, lng: -9.13 }, radiusMeters: 300 }];
     assert.equal(zoneAllowsPosition("p", "P", 38.71, -9.13, med), false, "coarsened is not published at full precision");
+  });
+});
+
+describe("Q12 regression — incomplete zone clearance", () => {
+  it("fails closed when the contributor read is truncated", async () => {
+    withDb(SEED(), { capped: ["place_momentum"] });
+    const response = await get("areas", "lisbon");
+    assert.equal(response.status, 503);
+    assert.equal(response.body.reason, "eligibility_read_failed");
+  });
+
+  it("withholds a cell when a contributing place has disappeared", async () => {
+    const seed = SEED();
+    seed.discovery_places = seed.discovery_places!.filter((place) => place.id !== pid(13));
+    withDb(seed);
+    const response = await get("areas", "lisbon");
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body.areas, []);
+  });
+
+  it("withholds a cell with a contributor whose identifier cannot be resolved", async () => {
+    const seed = SEED();
+    seed.place_momentum!.push(pm(99, "unknown", null, { place_id: "external/unknown" }));
+    withDb(seed);
+    assert.deepEqual((await get("areas", "lisbon")).body.areas, []);
+  });
+
+  it("rejects absent, non-finite and out-of-range coordinates even with an empty zone policy", () => {
+    for (const [lat, lng] of [[null, null], [undefined, -9], ["38.7", -9], [NaN, -9], [38, Infinity], [91, 0], [0, -181]]) {
+      assert.equal(zoneAllowsPosition("place", "Place", lat, lng, []), false, `${lat},${lng}`);
+    }
+    assert.equal(zoneAllowsPosition("place", "Place", 0, 0, []), true);
+  });
+
+  it("withholds a cell and emerging Trail whose place position is missing", async () => {
+    const seed = SEED();
+    seed.discovery_places = seed.discovery_places!.map((place) => ({ ...place, lat: null, lng: null }));
+    seed.trails = [{ id: "trail", destination: "lisbon", review_state: "approved", lifecycle_status: "active" }];
+    seed.content_trails = [{ trail_id: "trail", source_type: "place", source_id: pid(1) }];
+    seed.rank_events = Array.from({ length: 40 }, (_, index) => ({
+      id: `event-${index}`, user_id: `traveller-${index % K}`, item_id: `db/${pid(1)}`, surface: "discovery",
+      outcome: "save", served_at: iso(3_600_000 + index * 900_000), outcome_at: iso(3_500_000 + index * 900_000),
+    }));
+    withDb(seed);
+    const areas = (await get("areas", "lisbon")).body.areas;
+    const trails = (await get("emerging", "lisbon")).body.trails;
+    assert.deepEqual({ areas, trails }, { areas: [], trails: [] });
+  });
+});
+
+describe("Q12 regression — unfiltered trend producers", () => {
+  const zone = { id: "home", category: "private_residence", shape: "circle", action: "suppress", center_lat: 38.71, center_lng: -9.13, radius_meters: 200, active: true };
+  function producerSeed(normalised: boolean) {
+    const seed = SEED();
+    seed.feature_flags!.push({ flag: "discovery_trend_normalised_enabled", enabled: normalised });
+    seed.rank_events = Array.from({ length: 40 }, (_, index) => ({
+      id: `event-${index}`, user_id: `traveller-${index % K}`, item_id: `db/${pid(1)}`, surface: "discovery",
+      outcome: "save", served_at: iso(3_600_000 + index * 900_000), outcome_at: iso(3_500_000 + index * 900_000),
+    }));
+    return seed;
+  }
+
+  for (const normalised of [false, true]) {
+    it(`blocks v${normalised ? 2 : 1} production and cached readings after zone policy changes`, async () => {
+      _resetLocalMomentumCacheForTest();
+      const seed = producerSeed(normalised);
+      const database = makeDb(seed);
+      const nowMs = Date.now();
+      const options = { cacheKey: "privacy-regression", nowMs };
+      await loadLocalMomentum(database, [`db/${pid(1)}`], options);
+      assert.equal(readLocalTrendStates(options.cacheKey, nowMs)[`db/${pid(1)}`]?.state, "emerging");
+      database.tables.protected_zones = [zone];
+      const result = await loadLocalMomentum(database, [`db/${pid(1)}`], options);
+      assert.deepEqual(result.values, {});
+      assert.deepEqual(readLocalTrendStates(options.cacheKey, nowMs), {});
+      assert.deepEqual(readRetestReadings(options.cacheKey, nowMs), {});
+    });
+
+    it(`v${normalised ? 2 : 1} does not read events when zone policy is unreadable`, async () => {
+      _resetLocalMomentumCacheForTest();
+      const database = makeDb(producerSeed(normalised), { erroring: ["protected_zones"] });
+      const result = await loadLocalMomentum(database, [`db/${pid(1)}`], { cacheKey: "privacy-error", nowMs: Date.now() });
+      assert.deepEqual(result.values, {});
+      assert.ok(!database.reads.includes("rank_events"));
+    });
+  }
+
+  it("scheduler does not rebuild with active or unreadable zones, or prune without retention authorization", async () => {
+    try {
+      for (const mode of ["active", "unreadable"] as const) {
+        const seed = producerSeed(true);
+        seed.feature_flags!.push({ flag: "discovery_trend_rebuild_scheduler_enabled", enabled: true });
+        seed.protected_zones = mode === "active" ? [zone] : [];
+        const database = makeDb(seed, mode === "unreadable" ? { erroring: ["protected_zones"] } : {});
+        const calls: string[] = [];
+        setRebuildClient({ ...database, rpc: async (name: string) => { calls.push(name); return { data: 1, error: null }; } });
+        const result = await runTrendRebuildTick(Date.now());
+        assert.deepEqual(result, { status: "skipped", reason: mode === "active" ? "protected_zone_filter_required" : "protected_zone_policy_unreadable", pruned: "retention_off" });
+        assert.deepEqual(calls, []);
+        assert.ok(!database.reads.includes("place_momentum"));
+        assert.ok(!database.reads.includes("area_momentum"));
+      }
+    } finally {
+      setRebuildClient(null);
+    }
+  });
+
+  it("the producer gate requires an explicitly empty policy and never caches clearance", async () => {
+    const seed = producerSeed(true);
+    const database = makeDb(seed);
+    assert.equal(await unfilteredTrendBlockReason(database), null);
+    database.tables.protected_zones = [{ id: "inactive", active: false }];
+    assert.equal(await unfilteredTrendBlockReason(database), null);
+    database.tables.protected_zones = [{ id: "distant-or-malformed", active: true }];
+    assert.equal(await unfilteredTrendBlockReason(database), "protected_zone_filter_required");
+    assert.equal(await unfilteredTrendBlockReason(makeDb(seed, { missing: ["protected_zones"] })), "protected_zone_policy_unreadable");
+    assert.equal(await unfilteredTrendBlockReason({ from() { throw new Error("timeout"); } }), "protected_zone_policy_unreadable");
+    const unread = { select: () => unread, eq: () => unread, limit: async () => ({ data: null, error: null }) };
+    assert.equal(await unfilteredTrendBlockReason({ from: () => unread }), "protected_zone_policy_unreadable");
   });
 });
 

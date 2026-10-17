@@ -19,6 +19,9 @@ import React from 'react';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import { ShareSheet } from '../ShareSheet.tsx';
 import { DiscoveryShareSheet } from '../DiscoveryShareSheet.tsx';
+import { _resetDiscoveryViewerScopeForTests, setDiscoveryViewerFromSession } from '../../services/discoveryViewerScope.ts';
+
+const mockSearchToken = `e30.${Buffer.from(JSON.stringify({ sub: 'synthetic-viewer' })).toString('base64url')}.synthetic`;
 
 // NOTE: intentionally exhaustive — requireActual would construct the real
 // Supabase client, whose auto-refresh timer outlives the test environment.
@@ -27,8 +30,8 @@ jest.mock('../../lib/supabase', () => ({
   authedClient: () => null,
   supabase: {
     auth: {
-      getSession: async () => ({ data: { session: { access_token: 'tok', expires_at: Math.floor(Date.now() / 1000) + 3600 } } }),
-      refreshSession: async () => ({ data: { session: { access_token: 'tok' } } }),
+      getSession: async () => ({ data: { session: { access_token: mockSearchToken, expires_at: Math.floor(Date.now() / 1000) + 3600 } } }),
+      refreshSession: async () => ({ data: { session: { access_token: mockSearchToken } } }),
     },
   },
 }));
@@ -86,6 +89,8 @@ const SEARCH_FAILED = /couldn.t search people/i;
 beforeAll(() => { process.env.EXPO_PUBLIC_API_BASE_URL = 'http://api.test'; });
 
 beforeEach(() => {
+  _resetDiscoveryViewerScopeForTests();
+  setDiscoveryViewerFromSession('synthetic-viewer');
   searchReplies = new Map();
   deferred = [];
   deferSearch = false;

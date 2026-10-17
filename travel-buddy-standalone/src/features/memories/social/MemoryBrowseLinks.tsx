@@ -21,6 +21,12 @@ export function MemoryBrowseLinks({ memory, isOwner }: { memory: Memory; isOwner
   return (
     <View style={s.wrap}>
       {isOwner ? (
+        <Pressable testID="memory-open-chapters" style={s.link} onPress={() => router.push('/memory/chapters' as never)} accessibilityRole="button">
+          <Clock size={14} color={color.deep} />
+          <Text style={s.text}>Your Life Chapters</Text>
+        </Pressable>
+      ) : null}
+      {isOwner ? (
         <Pressable testID="memory-open-timeline" style={s.link} onPress={() => router.push('/memory/timeline' as never)} accessibilityRole="button">
           <Clock size={14} color={color.deep} />
           <Text style={s.text}>Your timeline</Text>

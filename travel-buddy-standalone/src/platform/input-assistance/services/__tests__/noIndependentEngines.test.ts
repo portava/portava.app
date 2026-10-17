@@ -19,8 +19,10 @@
  *   - a request somewhere in the file (`fetch(`, supabase, `.rpc(`, or a call
  *     named search…/fetch…/get…/load…/query…/lookup…/request…/run…/api…);
  *   - a `setTimeout(` whose callback names a request or a typed-text identifier.
- * No abort is required: cancelling the stale request is good practice, not
- * what makes a loop an engine.
+ * Delegating the timer to `createInputRequestScheduler().schedule(...)` also
+ * matches even when the request is passed as a callback. Shared cancellation is not
+ * shared suggestion ownership. No abort is required: cancelling the stale
+ * request is good practice, not what makes a loop an engine.
  *
  * THE SCAN is the whole standalone client root — every `.ts/.tsx/.js/.jsx`
  * file — minus `node_modules`, dot-directories, tests (`__tests__`, `__mocks__`,
@@ -47,10 +49,11 @@
  *      the platform, fails until this detector is taught that shape.
  *
  * MEASURED AT THIS COMMIT: THIRTEEN engines, not the four the census named.
- * The four (`useGooglePlacesAutocomplete`, `usePlaceSearch`, `MentionInput`,
- * the gated `useSearchSuggestions`) carry an abort; the nine others do not,
- * which is why the abort-requiring shape never saw them. The truth is
- * "thirteen, ratcheted at thirteen" until they are migrated (G6/G16).
+ * Originally only four (`useGooglePlacesAutocomplete`, `usePlaceSearch`,
+ * `MentionInput`, the gated `useSearchSuggestions`) carried an abort; the
+ * abort-requiring shape missed the other nine. Map now shares Input's
+ * cancellation scheduler but still owns its fetch/response loop. The truth
+ * remains "thirteen, ratcheted at thirteen" until engine migration (G6/G16).
  *
  * WHAT IT DOES NOT CATCH, stated rather than implied: a request fired on every
  * keystroke with no timer at all; a debounce whose callback names neither a
@@ -102,9 +105,9 @@ const KNOWN_ENGINES: Readonly<Record<string, string>> = {
     'Its own 200 ms @-mention/#-tag debounce and abort, mounted on six composers. Unmigrated (G6/G16).',
   'src/hooks/useSearchSuggestions.ts':
     'Legacy search typeahead, run only as the gated fallback (useGlobalSearchSuggestions legacyEnabled) — §38 degradation, still its own engine (G6).',
-  // The nine the abort-requiring shape could not see (none carries an abort).
+  // The nine the original abort-requiring shape could not see.
   'src/components/map/MapSearchSheet.tsx':
-    'Map search: a 300 ms per-keystroke debounce over requestMapSearchPage. The request is the platform transport, but the keystroke loop is the screen\'s own.',
+    'Map search delegates its 300 ms timer/cancellation to Input, but still owns requestMapSearchPage fetching, response handling and map ordering. Lifecycle safety only; unmigrated (G6/G16).',
   'src/components/DiscoveryShareSheet.tsx':
     'Share-to-traveller picker: a 350 ms debounce over searchUsers(text) on every keystroke.',
   'src/components/ShareSheet.tsx':
@@ -186,9 +189,8 @@ function walk(dir: string, out: string[]): void {
 }
 
 /** The body of every `setTimeout(` call, bracket-matched. */
-function timerBodies(src: string): string[] {
+function timerBodies(src: string, re = /\bsetTimeout\s*\(/g): string[] {
   const bodies: string[] = [];
-  const re = /\bsetTimeout\s*\(/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(src))) {
     let i = m.index + m[0].length;
@@ -206,9 +208,41 @@ function timerBodies(src: string): string[] {
 
 /** The engine-shaped timer callbacks in one file (empty when the file has no shape). */
 function engineTimers(src: string): string[] {
-  if (!/\bclearTimeout\s*\(/.test(src) || !REQUEST.test(src)) return [];
-  return timerBodies(src).filter((body) => REQUEST.test(body) || TYPED.test(body));
+  const direct = REQUEST.test(src) && /\bclearTimeout\s*\(/.test(src)
+    ? timerBodies(src).filter((body) => REQUEST.test(body) || TYPED.test(body))
+    : [];
+  const delegated = /\bcreateInputRequestScheduler\b/.test(src)
+    ? timerBodies(src, /\.\s*schedule\s*\(/g)
+    : [];
+  return [...direct, ...delegated];
 }
+
+test('G359 delegated scheduling does not hide an independently owned request', () => {
+  const source = `
+    import { createInputRequestScheduler } from './platform/input-assistance/services/inputRequestScheduler.ts';
+    const scheduler = createInputRequestScheduler();
+    scheduler.schedule(() => requestMapSearchPage(query), 300);
+  `;
+  assert.equal(engineTimers(source).length, 1);
+  assert.equal(engineTimers(source.replace('() => requestMapSearchPage(query)', 'runSearch')).length, 1);
+  assert.equal(engineTimers(source.replace('scheduler.schedule(() => requestMapSearchPage(query), 300);', '')).length, 0);
+  assert.equal(engineTimers(`${source}\nscheduler.schedule(() => searchUsers(text), 200);`).length, 2);
+  assert.ok(engineTimers(read('src/components/map/MapSearchSheet.tsx')).length > 0);
+  assert.ok('src/components/map/MapSearchSheet.tsx' in KNOWN_ENGINES);
+});
+
+test('G359 a delegated request in a NOT_ENGINE file is not covered by its old timer exemptions', () => {
+  const file = 'src/components/DiscoveryWall.tsx';
+  const source = `${read(file)}
+    const scheduler = createInputRequestScheduler();
+    scheduler.schedule(() => searchUsers(query), 200);
+  `;
+  const uncovered = engineTimers(source).filter((body) =>
+    !NOT_ENGINES[file].timers.some((pattern) => pattern.test(body)),
+  );
+  assert.equal(uncovered.length, 1);
+  assert.match(uncovered[0], /searchUsers/);
+});
 
 function clientFiles(): string[] {
   const files: string[] = [];

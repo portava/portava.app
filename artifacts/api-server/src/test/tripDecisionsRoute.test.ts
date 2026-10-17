@@ -39,8 +39,15 @@ const TRIP_ID  = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 
 type Row = Record<string, any>;
 
-function makeClient(tables: Record<string, Row[]>, errorOn: string[] = []) {
+type FakeOptions = {
+  maxRows?: number;
+  riskPage?: (page: number, rows: Row[]) => { data: unknown; error: { message: string } | null };
+};
+
+function makeClient(tables: Record<string, Row[]>, errorOn: string[] = [], options: FakeOptions = {}) {
+  const riskReads: Row[][] = [];
   return {
+    riskReads,
     auth: {
       getUser: async (token: string) => {
         if (token === "owner-token") return { data: { user: { id: OWNER_ID } }, error: null };
@@ -76,16 +83,35 @@ function makeClient(tables: Record<string, Row[]>, errorOn: string[] = []) {
         return f;
       }
       const filters: Array<(r: Row) => boolean> = [];
+      const orders: Array<{ column: string; ascending: boolean }> = [];
+      let limit = Infinity;
       let single = false;
       const settle = () => {
-        const rows = (tables[table] ?? []).filter((r) => filters.every((f) => f(r)));
+        const rows = (tables[table] ?? []).filter((row) => filters.every((filter) => filter(row)))
+          .sort((left, right) => {
+            for (const { column, ascending } of orders) {
+              if (left[column] < right[column]) return ascending ? -1 : 1;
+              if (left[column] > right[column]) return ascending ? 1 : -1;
+            }
+            return 0;
+          })
+          .slice(0, Math.min(limit, options.maxRows ?? 1000));
+        if (table === "trip_risks") {
+          riskReads.push(rows);
+          if (options.riskPage) return options.riskPage(riskReads.length, rows);
+        }
         return { data: single ? rows[0] ?? null : rows, error: null };
       };
       const chain: any = {
         select: () => chain,
         eq: (c: string, v: any) => { filters.push((r) => r[c] === v); return chain; },
         in: (c: string, v: any[]) => { filters.push((r) => v.includes(r[c])); return chain; },
-        order: () => chain, limit: () => chain,
+        gt: (column: string, value: string) => { filters.push((row) => row[column] > value); return chain; },
+        order: (column: string, options: { ascending?: boolean } = {}) => {
+          orders.push({ column, ascending: options.ascending !== false });
+          return chain;
+        },
+        limit: (count: number) => { limit = count; return chain; },
         maybeSingle: async () => { single = true; return settle(); },
         single: async () => { single = true; return settle(); },
         then: (onF: any, onR: any) => Promise.resolve(settle()).then(onF, onR),
@@ -139,10 +165,11 @@ async function get(
   });
   return { status: res.status, body: await res.json().catch(() => null) };
 }
-function install(tables: Record<string, Row[]>, errorOn: string[] = []) {
-  const c = makeClient({ ...base, ...tables }, errorOn);
+function install(tables: Record<string, Row[]>, errorOn: string[] = [], options: FakeOptions = {}) {
+  const c = makeClient({ ...base, ...tables }, errorOn, options);
   _setTestClient(c as any, true);
   _setTestServiceClient(c as any);
+  return c;
 }
 
 beforeEach(async () => { if (!server) await start(); });
@@ -348,6 +375,150 @@ describe("§8 — unconstrained jsonb is not trusted", () => {
     });
     const r = await get();
     assert.deepEqual(r.body.recommendations[0].reasons, ["NO_PROPOSALS"]);
+  });
+});
+
+describe("TR22 — the complete risk register precedes every recommendation", () => {
+  const riskId = (index: number) => `60000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
+  const closedRisks = (count: number) => Array.from({ length: count }, (_, index) => risk({
+    id: riskId(index), status: "closed", impact: "low",
+  }));
+  const blockingRisk = (index: number) => risk({
+    id: riskId(index), impact: "high", trigger_json: { affects: ["e1"] },
+  });
+  const fixture = (risks: Row[]) => ({
+    trip_goals: [], trip_decision_tasks: [dtask()], trip_risks: risks,
+    trip_proposals: [prop({
+      payload_json: { decision_task_id: "t1", affected_objects: ["e1"], feasibility_verdict: "FEASIBLE_UNVERIFIED" },
+    })],
+  });
+  const assertRefused = (response: { status: number; body: any }) => {
+    assert.equal(response.status, 503, JSON.stringify(response.body).slice(0, 300));
+    assert.equal(response.body.error, "degraded_unavailable");
+    assert.equal(response.body.message, "Could not read this trip's risks, so no recommendation can be made");
+    assert.equal(response.body.recommendations, undefined);
+    assert.equal(response.body.risks, undefined);
+    assert.equal(response.body.elementRisks, undefined);
+  };
+
+  for (const [closedCount, maxRows, pageLengths] of [
+    [1000, 1000, [1000, 1, 0]],
+    [4, 2, [2, 2, 1, 0]],
+  ] as const) {
+    it(`a HIGH risk behind ${closedCount} closed risks blocks the option with a ${maxRows}-row server cap`, async () => {
+      const blocking = blockingRisk(closedCount);
+      const client = install(fixture([blocking, ...closedRisks(closedCount)].reverse()), [], { maxRows });
+      const response = await get();
+      assert.equal(response.status, 200);
+      assert.equal(response.body.recommendations[0].kind, "DO_NOT_RECOMMEND");
+      assert.ok(response.body.recommendations[0].options[0].reasons.includes("BLOCKED_BY_HIGH_RISK"));
+      assert.equal(response.body.risks.length, closedCount + 1);
+      assert.equal(new Set(response.body.risks.map((row: Row) => row.id)).size, closedCount + 1);
+      assert.deepEqual(response.body.elementRisks[0].riskIds, [blocking.id]);
+      assert.deepEqual(client.riskReads.map((rows) => rows.length), pageLengths);
+    });
+  }
+
+  it("every page remains scoped to the requested trip", async () => {
+    const client = install(fixture([
+      ...closedRisks(4), blockingRisk(4),
+      blockingRisk(5),
+    ].map((row) => row.impact === "high" ? { ...row, trip_id: "another-trip" } : row)), [], { maxRows: 2 });
+    const response = await get();
+    assert.equal(response.status, 200);
+    assert.equal(response.body.recommendations[0].kind, "RECOMMEND");
+    assert.equal(response.body.risks.length, 4);
+    assert.deepEqual(response.body.elementRisks, []);
+    assert.deepEqual(client.riskReads.map((rows) => rows.length), [2, 2, 0]);
+  });
+
+  for (const failure of ["returned", "thrown"] as const) {
+    it(`refuses a ${failure} error on a later page instead of recommending from the prefix`, async () => {
+      const client = install(fixture([...closedRisks(2), blockingRisk(2)]), [], {
+        maxRows: 2,
+        riskPage(page, rows) {
+          if (page === 2) {
+            if (failure === "thrown") throw new Error("risk page unavailable");
+            return { data: null, error: { message: "risk page unavailable" } };
+          }
+          return { data: rows, error: null };
+        },
+      });
+      assertRefused(await get());
+      assert.equal(client.riskReads.length, 2);
+    });
+  }
+
+  for (const [name, data] of [
+    ["null", null],
+    ["undefined", undefined],
+    ["object", {}],
+    ["array-like object", { length: 0 }],
+    ["string", "unreadable"],
+    ["null row", [null]],
+    ["missing row id", [{ ...blockingRisk(2), id: undefined }]],
+    ["empty row id", [{ ...blockingRisk(2), id: "" }]],
+    ["missing impact", [{ ...blockingRisk(2), impact: undefined }]],
+    ["missing likelihood", [{ ...blockingRisk(2), likelihood: undefined }]],
+    ["missing status", [{ ...blockingRisk(2), status: undefined }]],
+    ["unknown impact", [{ ...blockingRisk(2), impact: "unknown" }]],
+    ["unknown likelihood", [{ ...blockingRisk(2), likelihood: "unknown" }]],
+    ["unknown status", [{ ...blockingRisk(2), status: "unknown" }]],
+  ] as const) {
+    for (const failedPage of [1, 2]) {
+      it(`refuses malformed ${name} on page ${failedPage}, even without a database error`, async () => {
+        const client = install(fixture([...closedRisks(2), blockingRisk(2)]), [], {
+          maxRows: 2,
+          riskPage: (page, rows) => ({ data: page === failedPage ? data : rows, error: null }),
+        });
+        assertRefused(await get());
+        assert.equal(client.riskReads.length, failedPage);
+      });
+    }
+  }
+
+  it("refuses a repeated page rather than accepting a non-advancing cursor", async () => {
+    const client = install(fixture([...closedRisks(2), blockingRisk(2)]), [], {
+      maxRows: 2,
+      riskPage: (page, rows) => ({ data: page === 2 ? closedRisks(2) : rows, error: null }),
+    });
+    assertRefused(await get());
+    assert.equal(client.riskReads.length, 2);
+  });
+
+  it("a complete register exactly at the 10,000-row ceiling is still usable", async () => {
+    const client = install(fixture([...closedRisks(9999), blockingRisk(9999)]));
+    const response = await get();
+    assert.equal(response.status, 200);
+    assert.equal(response.body.risks.length, 10_000);
+    assert.equal(response.body.recommendations[0].kind, "DO_NOT_RECOMMEND");
+    assert.equal(client.riskReads.length, 11);
+    assert.deepEqual(client.riskReads.at(-1), []);
+  });
+
+  it("refuses a register beyond the 10,000-row ceiling without scanning the remainder", async () => {
+    const client = install(fixture([...closedRisks(11_000), blockingRisk(11_000)]));
+    assertRefused(await get());
+    assert.equal(client.riskReads.length, 11);
+    assert.equal(client.riskReads.flat().length, 11_000);
+  });
+
+  it("a genuinely empty register permits the unchanged recommendation", async () => {
+    const client = install(fixture([]), [], { maxRows: 2 });
+    const response = await get();
+    assert.equal(response.status, 200);
+    assert.equal(response.body.recommendations[0].kind, "RECOMMEND");
+    assert.deepEqual(response.body.risks, []);
+    assert.deepEqual(response.body.elementRisks, []);
+    assert.deepEqual(client.riskReads, [[]]);
+  });
+
+  it("a non-member is refused before reading any risk page", async () => {
+    const client = install(fixture([blockingRisk(0)]));
+    const response = await get("other-token");
+    assert.equal(response.status, 403);
+    assert.equal(response.body.recommendations, undefined);
+    assert.deepEqual(client.riskReads, []);
   });
 });
 

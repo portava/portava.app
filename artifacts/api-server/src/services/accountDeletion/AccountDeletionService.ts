@@ -131,6 +131,7 @@ import { presenceFusion } from "../../presence/fusion/store.js";
 import { resolveStoragePath } from "../../lib/storagePath.js";
 import { ownerFromPath } from "../../lib/mediaAccess.js";
 import { requestProviderDeletionForUser } from "../identityVerification/providerErasure.js";
+import { assertAccountMediaEmpty, eraseAccountMedia } from "./accountMediaDeletion.js";
 
 const logger = rootLogger.child({ service: "AccountDeletionService" });
 
@@ -157,7 +158,7 @@ const REFERENCE_BUCKETS: readonly string[] = [POST_MEDIA_BUCKET, PROFILE_MEDIA_B
  * the STEPS change; bump the policy version when the RULES do.
  */
 export const DELETION_POLICY_VERSION = "d6-2026-08-23";
-export const DELETION_WORKER_VERSION = "2026-08-31.4";
+export const DELETION_WORKER_VERSION = "2026-10-16.1";
 
 /** Per-step outcome. Steps are independent so one failure cannot hide another. */
 export interface DeletionStepResult {
@@ -486,10 +487,9 @@ export { LAYOVER_AUDIT_RETENTION_DAYS } from "../../lib/layoverEventPseudonymisa
  *
  * Fatal steps (profile anonymisation, auth-user deletion, marking the request
  * completed) fail the whole call, leaving the request pending so callers retry.
- * Content and storage steps are recorded but do not abort the run: a user
- * whose media bucket is momentarily unavailable must still lose their posts,
- * their email, and their profile — a stalled deletion is worse than a partial
- * one, and the request stays auditable via `steps`.
+ * Canonical Media uncertainty also blocks finalization, preserving source and
+ * request identity for retry. Other content/storage steps retain their existing
+ * independent best-effort outcomes.
  */
 export async function executeAccountDeletion(
   sc: any,
@@ -499,6 +499,17 @@ export async function executeAccountDeletion(
   const executedAt = new Date().toISOString();
   const steps: DeletionStepResult[] = [];
   const warnings: string[] = [];
+  const tombstonedCounts: Record<string, number> = {};
+  const deletedCounts: Record<string, number> = {};
+  const mediaOk = await step(steps, "erase_canonical_account_media", async () => {
+    const count = await eraseAccountMedia(sc, userId);
+    if (count > 0) deletedCounts.media_assets = count;
+    return count;
+  });
+  if (!mediaOk) {
+    warnings.push("Media cleanup unconfirmed — account deletion remains pending; retry is safe");
+    return { ok: false, userId, executedAt, steps, warnings, deletedCounts, tombstonedCounts };
+  }
 
   // ── 1. Collect storage paths BEFORE the rows that hold them are deleted ────
   const storageTargets: Array<{ bucket: string; path: string }> = [];
@@ -528,29 +539,6 @@ export async function executeAccountDeletion(
             if (row.feed_storage_path) storageTargets.push({ bucket, path: row.feed_storage_path });
           }
           // The count this step reports is ROWS read, as it always was.
-          return rows.length;
-        },
-      ),
-  );
-
-  const maPathsOk = await pagedCollectStep(
-    steps,
-    warnings,
-    { name: "collect_media_asset_paths", subject: "media_assets", noun: "paths" },
-    (readAll) =>
-      readAll(
-        () =>
-          sc
-            .from("media_assets")
-            .select("storage_bucket, storage_path, thumbnail_path")
-            .or(`owner_user_id.eq.${userId},uploader_user_id.eq.${userId}`)
-            .order("id", { ascending: true }),
-        (rows) => {
-          for (const row of rows) {
-            const bucket = (row.storage_bucket as string) || POST_MEDIA_BUCKET;
-            if (row.storage_path) storageTargets.push({ bucket, path: row.storage_path });
-            if (row.thumbnail_path) storageTargets.push({ bucket, path: row.thumbnail_path });
-          }
           return rows.length;
         },
       ),
@@ -858,9 +846,6 @@ export async function executeAccountDeletion(
   // post. Dispute holds and other shared-history dependencies are NOT checked —
   // no such marker exists on posts today. When one does, it belongs in
   // hasThirdPartyInterest() and nowhere else.
-  const tombstonedCounts: Record<string, number> = {};
-  const deletedCounts: Record<string, number> = {};
-
   //
   // THIS FUNCTION DECIDES BETWEEN TOMBSTONE AND HARD DELETE, so its two reads
   // are preconditions for an IRREVERSIBLE action and their `.error` is
@@ -1029,15 +1014,6 @@ export async function executeAccountDeletion(
     );
   });
   if (!verOk) warnings.push("identity verification rows may remain");
-
-  // media_assets has no cascade from profiles — delete explicitly.
-  const maOk = await step(steps, "delete_media_assets", async () => {
-    must(
-      await sc.from("media_assets").delete().or(`owner_user_id.eq.${userId},uploader_user_id.eq.${userId}`),
-      "delete media_assets",
-    );
-  });
-  if (!maOk) warnings.push("media_assets rows may remain");
 
   // ── Memory UGC rows (audit MEM·H2) ────────────────────────────────────────
   // The user's trip Memories and everything hanging off them. memory_items,
@@ -1438,6 +1414,7 @@ export async function executeAccountDeletion(
   }
 
   if (opts.contentOnly) {
+    await step(steps, "confirm_account_media_empty", () => assertAccountMediaEmpty(sc, userId));
     return { ok: steps.every((s) => s.ok), userId, executedAt, steps, warnings, deletedCounts, tombstonedCounts };
   }
 
@@ -1463,6 +1440,12 @@ export async function executeAccountDeletion(
   });
   if (!sensingOk) {
     warnings.push("sensing capability state may remain — deletion aborted before profile anonymisation; retry is safe");
+    return { ok: false, userId, executedAt, steps, warnings, deletedCounts, tombstonedCounts };
+  }
+
+  const mediaEmpty = await step(steps, "confirm_account_media_empty", () => assertAccountMediaEmpty(sc, userId));
+  if (!mediaEmpty) {
+    warnings.push("Media cleanup changed or unreadable — account deletion remains pending; retry is safe");
     return { ok: false, userId, executedAt, steps, warnings, deletedCounts, tombstonedCounts };
   }
 
@@ -1503,6 +1486,12 @@ export async function executeAccountDeletion(
 
   if (!profileOk) {
     logger.error({ userId, steps }, "executeAccountDeletion: profile anonymisation failed — aborting");
+    return { ok: false, userId, executedAt, steps, warnings, deletedCounts, tombstonedCounts };
+  }
+
+  const mediaBeforeAuth = await step(steps, "confirm_account_media_before_auth", () => assertAccountMediaEmpty(sc, userId));
+  if (!mediaBeforeAuth) {
+    warnings.push("Media cleanup changed or unreadable — auth deletion withheld and request remains pending");
     return { ok: false, userId, executedAt, steps, warnings, deletedCounts, tombstonedCounts };
   }
 
@@ -1547,6 +1536,7 @@ export async function executeAccountDeletion(
   let markedOk = false;
   if (authOk) {
     markedOk = await step(steps, "mark_request_completed", async () => {
+      await assertAccountMediaEmpty(sc, userId);
       must(
         await sc
           .from("user_deletion_requests")

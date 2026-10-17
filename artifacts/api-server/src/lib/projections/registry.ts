@@ -114,6 +114,19 @@ export const PROJECTIONS: readonly ProjectionEntry[] = [
       "is the externally consumed half. Self-consumption here is the design, not a stranded projection.",
   },
   {
+    key: "CREATOR_ATTRIBUTION_SCAN_CURSOR",
+    kind: "queue",
+    storage: ["creator_attribution_scan_cursors"],
+    producers: ["services/creators/CreatorAttributionProducers.ts"],
+    consumers: ["services/creators/CreatorAttributionProducers.ts"],
+    reason:
+      "Scan checkpoint, not a projection: attributeCompletedTravelPartnerBookings reads its own " +
+      "travel_partner row (after_booking_id, cycle_upper_id, revision) at the start of every pass and " +
+      "advances it with a revision-compare-and-swap UPDATE in checkpoint(), so a bounded pass resumes " +
+      "where the last one stopped. Read back only by the producer that writes it, by construction; the " +
+      "externally consumed output of this producer is the creator attribution ledger, not the cursor.",
+  },
+  {
     key: "PLACE_COLLECTIONS",
     kind: "projection",
     storage: ["place_best_of", "place_living_cache", "place_top_contributors"],

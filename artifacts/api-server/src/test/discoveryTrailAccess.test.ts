@@ -83,6 +83,7 @@ function makeDb(seed: Record<string, Row[]>, erroring: string[] = []) {
     const filters: Array<(r: Row) => boolean> = [];
     let limitN: number | null = null;
     let range: [number, number] | null = null;
+    let countRequested = false;
     const store = () => (tables[table] ??= []);
     const fail = () => ({ data: null, error: { code: "57014", message: "statement timeout" } });
     const rows = () => {
@@ -92,7 +93,7 @@ function makeDb(seed: Record<string, Row[]>, erroring: string[] = []) {
       return out;
     };
     const b: any = {
-      select() { return b; },
+      select(_columns?: string, options?: { count?: string }) { countRequested = options?.count === "exact"; return b; },
       eq(c: string, v: any) { filters.push((r) => r[c] === v); return b; },
       neq(c: string, v: any) { filters.push((r) => r[c] !== v); return b; },
       in(c: string, v: any[]) { filters.push((r) => v.includes(r[c])); return b; },
@@ -140,7 +141,9 @@ function makeDb(seed: Record<string, Row[]>, erroring: string[] = []) {
         return d;
       },
       then(res: (r: any) => any, rej?: (e: any) => any) {
-        return Promise.resolve(broken.has(table) ? fail() : { data: rows(), error: null }).then(res, rej);
+        return Promise.resolve(broken.has(table) ? fail() : { data: rows(), error: null,
+          ...(countRequested ? { count: store().filter((row) => filters.every((filter) => filter(row))).length } : {}),
+        }).then(res, rej);
       },
     };
     return b;
@@ -207,7 +210,7 @@ describe("ARCHIVED — a Trail the database hides from clients is hidden by the 
   const seed = () => ({
     trails: [trail(T_GONE, { review_state: "approved", lifecycle_status: "archived" }), trail(T), trail(T_KID, { parent_trail_id: T, review_state: "approved", lifecycle_status: "archived" })],
     content_trails: [member("m-1", { trail_id: T_GONE })],
-    trail_edges: [{ from_trail_id: T, to_trail_id: T_KID, edge_type: "child", strength: 1 }],
+    trail_edges: [{ from_trail_id: T, to_trail_id: T_KID, edge_type: "child", strength: 1, review_state: "accepted" }],
   });
 
   it("every read of an archived Trail is 404, as for a Trail that does not exist", async () => {
@@ -517,7 +520,7 @@ describe("DV-24 — the parent pointer is navigable even when its edge was never
   it("a pair the edge table already carries is listed once", async () => {
     const db = makeDb({
       trails: [trail(T), trail(T_KID, { parent_trail_id: T })],
-      trail_edges: [{ from_trail_id: T, to_trail_id: T_KID, edge_type: "child", strength: 1 }],
+      trail_edges: [{ from_trail_id: T, to_trail_id: T_KID, edge_type: "child", strength: 1, review_state: "accepted" }],
     });
     assert.equal((await relatedTrails(db, T)).edges.length, 1);
   });

@@ -630,14 +630,12 @@ describe("CT-02 F — the membership union is read in ONE module, and the diverg
       "an unwritten product decision must be named where the constants are, as the status sets are");
   });
 
-  it("CompassTripContext's reason for staying raw is the one that is TRUE at this tree", () => {
+  it("CompassTripContext consumes the typed today projection instead of its migrated raw read", () => {
     const src = SRC("compass/CompassTripContext.ts");
-    // The retired sentence may survive as a QUOTATION of itself (the comment
-    // records what it used to say); what must not survive is it being the
-    // module's operative reason. So: the live reason must be stated, and the
-    // retired one must be marked retired where it appears.
-    assert.match(src, /both of which are now FALSE/,
-      "a reason that expired must be recorded as expired, not silently replaced");
-    assert.match(src, /starts_at|startsAt/, "the live reason is the columns the projection does not carry");
+    const grounding = src.slice(src.indexOf("export async function buildTripContextLines"), src.indexOf("// ═════════"));
+    assert.match(grounding, /buildTripCompassTodayProjection\(sc, trip.id, userId, today\)/);
+    assert.match(grounding, /acceptTripProjection\(planned.projection/);
+    assert.match(grounding, /hhmm\(item.startsAt, tz\)/);
+    assert.doesNotMatch(grounding, /\.from\("trip_plan_items"\)/);
   });
 });

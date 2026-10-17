@@ -196,7 +196,7 @@ test('every consumer of each changed component is enumerated, from a scan of app
 });
 
 test('every use of a new token is in a component this guard measures', () => {
-  const changed = new Set(CHANGED.map((c) => c.file));
+  const changed = new Set([...CHANGED.map((c) => c.file), ...tokenAdopters().map((a) => a.file)]); // tokenAdopters(): measured at the tail
   for (const token of ['signalStrong', 'muteStrong']) {
     const users = CLIENT_FILES.filter((f) => f !== SF.tokens && new RegExp(`\\bcolor\\.${token}\\b`).test(source(f)));
     assert.ok(users.length > 0, `color.${token} is unused`);
@@ -407,3 +407,55 @@ function nestedConsumerPairs(): ConsumerPair[] {
     at: [[file, '<MediaAttachmentTray'], [file, ground], ...errorText.at.filter(([f]) => f === SF_NESTED.tray)], component: SF_NESTED.tray, consumer: file,
   }));
 }
+
+// ═══ New-token adopters outside §33, appended at the TAIL so the lines §33 cites do not move ═══
+// A component §33 did not change may still adopt `signalStrong` / `muteStrong` — that is what the tokens are
+// for. It is NOT folded into §33's recorded counts above (those describe §33's own change), but it is held to
+// the same proof: its consumers are enumerated from a scan, every pair the new token forms is anchored in the
+// source on the ground it is actually drawn on, and every such pair clears WCAG AA. Test 3 above accepts a
+// token use only in a file listed here or in CHANGED, so an unmeasured adopter still turns the guard red.
+
+interface TokenAdopter {
+  file: string;
+  draws: RegExp;
+  consumers: readonly string[];
+  pairs: readonly ConsumerPair[];
+}
+
+function tokenAdopters(): TokenAdopter[] {
+  const tripSheet = 'src/features/telegraph/composer/PortavaTripShareSheet.tsx';
+  // PortavaSheet paints its own ground (s.sheet → color.paperRaised), so every consumer sees the same pair.
+  const sheetGround: Needle = ['src/components/ui/PortavaSheet.tsx', /sheet: \{[^}]*backgroundColor: color\.paperRaised,/];
+  return [{
+    file: tripSheet, draws: /<PortavaTripShareSheet\b/, consumers: ['app/messages/[id].tsx'],
+    pairs: [{
+      id: 'portavaTripShare.error', fg: color.signalStrong, on: 'sheetPaperRaised', kind: 'text',
+      at: [[tripSheet, '<PortavaSheet visible='], [tripSheet, 'error: { ...typography.body, color: color.signalStrong },'], sheetGround],
+      component: tripSheet, consumer: 'intrinsic',
+    }],
+  }];
+}
+
+test('every new-token adopter outside §33 is enumerated, anchored, and clears AA on its own ground', () => {
+  const adopters = tokenAdopters();
+  assert.ok(adopters.length > 0);
+  for (const a of adopters) {
+    assert.ok(!CHANGED.some((c) => c.file === a.file), `${a.file} is a §33 component — measure it there`);
+    const found = importersOf(a.file).filter((f) => a.draws.test(source(f))).sort();
+    assert.deepEqual(found, [...a.consumers].sort(), `${a.file}: its consumers changed — measure the new one's pairs here`);
+    // Every new-token use in the adopter is one of its measured pairs (by the style line each pair anchors).
+    const tokenLines = source(a.file).split('\n').filter((l) => /\bcolor\.(signalStrong|muteStrong)\b/.test(l)).map((l) => l.trim());
+    const anchored = new Set(a.pairs.flatMap((p) => p.at.filter(([f, n]) => f === a.file && typeof n === 'string').map(([, n]) => (n as string).trim())));
+    assert.deepEqual(tokenLines.filter((l) => !anchored.has(l)), [], `${a.file}: a new-token use with no measured pair`);
+    for (const p of a.pairs) {
+      for (const [file, needle] of p.at) {
+        const text = source(file);
+        assert.ok(typeof needle === 'string' ? text.includes(needle) : needle.test(text), `${p.id}: ${file} does not contain ${String(needle)}`);
+      }
+      assert.notEqual(p.kind, 'decor', `${p.id}: a new-token pair is asserted, never decor`);
+      const ratio = measureRatio(p.fg, ALL_SHEET_SURFACES[p.on]);
+      const bar = THRESHOLD[p.kind as Exclude<Kind, 'decor'>];
+      assert.ok(ratio >= bar, `${p.id}: ${ratio.toFixed(2)} < ${bar}`);
+    }
+  }
+});

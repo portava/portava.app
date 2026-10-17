@@ -438,7 +438,7 @@ describe("GET /api/discovery/search — block exclusion (travelers)", () => {
 // (`rent_buddy_enabled`, false in production). The launch leg now sits behind
 // `discovery_buddy_launch_gate_enabled` (migration 2360, seeded FALSE): with
 // the gate absent/false/unreadable NOTHING changes; with it on, buddies are
-// withheld unless the marketplace flag reads true.
+// withheld unless the marketplace flag reads true AND identity/payment readiness passes.
 
 describe("GET /api/discovery/search — buddy launch-eligibility gate", () => {
   const BUDDY = "ff000000-0000-4000-a000-0000000000b1";
@@ -485,9 +485,10 @@ describe("GET /api/discovery/search — buddy launch-eligibility gate", () => {
     assert.deepEqual(await buddyIds("buddies"), []);
   });
 
-  it("gate ON + marketplace launched: buddies returned", async () => {
+  it("gate ON + marketplace launched alone cannot admit buddies without identity/payment readiness", async () => {
     setup({ profiles: [buddyRow], rent_buddy_profiles: [eligibleMarketplaceRow(BUDDY)], feature_flags: [gateOn, launched] });
-    assert.deepEqual(await buddyIds("buddies"), [BUDDY]);
+    assert.deepEqual(await buddyIds("buddies"), []);
+    assert.deepEqual(await buddyIds("travelers"), [BUDDY]);
   });
 
   it("feature_flags UNREADABLE: the gate fails toward legacy (buddies unchanged)", async () => {

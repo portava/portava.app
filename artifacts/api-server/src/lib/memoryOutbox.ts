@@ -125,6 +125,7 @@ export const MEMORY_EVENT_TYPES = [
   "highlight.expired",
   "highlight.pinned",
   "highlight.hidden",
+  "resurfacing.policy_changed",
 ] as const;
 export type MemoryEventType = (typeof MEMORY_EVENT_TYPES)[number];
 
@@ -153,6 +154,7 @@ export const MEMORY_DOMAIN_EVENT_TYPES = MEMORY_EVENT_TYPES.filter((t) => t.star
 
 /** The events whose subject is a HIGHLIGHT (§17). */
 export const HIGHLIGHT_DOMAIN_EVENT_TYPES = MEMORY_EVENT_TYPES.filter((t) => t.startsWith("highlight."));
+export const POLICY_DOMAIN_EVENT_TYPES = MEMORY_EVENT_TYPES.filter((type) => type.startsWith("resurfacing."));
 
 export function isMemoryEventType(v: unknown): v is MemoryEventType {
   return typeof v === "string" && (MEMORY_EVENT_TYPES as readonly string[]).includes(v);
@@ -233,6 +235,7 @@ export interface MemoryOutboxRow {
    */
   memory_id: string | null;
   highlight_id: string | null;
+  policy_owner_id?: string | null;
   type: MemoryEventType;
   created_at: string;
   published_at: string | null;
@@ -265,7 +268,7 @@ export async function readUnpublishedOutbox(
 ): Promise<OutboxReadResult> {
   const { data, error } = await sc
     .from(MEMORY_OUTBOX_TABLE)
-    .select("id, event_id, memory_id, highlight_id, type, created_at, published_at, attempts")
+    .select("id, event_id, memory_id, highlight_id, policy_owner_id, type, created_at, published_at, attempts")
     .is("published_at", null)
     .order("id", { ascending: true })
     .limit(limit);

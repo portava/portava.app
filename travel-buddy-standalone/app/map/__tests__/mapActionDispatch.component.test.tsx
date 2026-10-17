@@ -104,6 +104,20 @@ const GEM: MapObject = {
 
 const mockObjects = [EVENT, ZONE];
 const mockEntities = mapObjectsToEntities(mockObjects);
+let mockUserId: string | null = 'map-viewer';
+
+jest.mock('../../../src/context/SessionContext', () => ({
+  ...jest.requireActual('../../../src/context/SessionContext'),
+  useSession: () => ({ userId: mockUserId, isAuthed: mockUserId !== null, loading: false }),
+}));
+
+jest.mock('../../../src/services/auth', () => ({
+  ...jest.requireActual('../../../src/services/auth'),
+  onAuthChange: (listener: (userId: string | null) => void) => {
+    listener(mockUserId);
+    return () => {};
+  },
+}));
 
 jest.mock('expo-router', () => {
   const React = require('react');
@@ -392,6 +406,8 @@ async function selectAndGetAction(entityId: string) {
 }
 
 beforeEach(() => {
+  mockUserId = 'map-viewer';
+  jest.requireActual('../../../src/features/map/telemetry/mapTelemetry')._resetMapTelemetryForTests();
   shareSpy = jest.spyOn(Share, 'share').mockResolvedValue({ action: 'sharedAction' } as never);
   alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
   rsvp().mockClear();
@@ -466,6 +482,17 @@ describe('FullScreenMapScreen — §25 share', () => {
 });
 
 describe('FullScreenMapScreen — §25 join', () => {
+  it('asks a signed-out viewer to sign in without issuing an RSVP', async () => {
+    mockUserId = null;
+    const onAction = await selectAndGetAction('event:e1');
+
+    await act(async () => { onAction('join', EVENT); });
+
+    expect(rsvp()).not.toHaveBeenCalled();
+    expect(alertSpy).toHaveBeenCalledWith('Sign in required', 'Sign in to join this event.');
+    expect(emitted('plan_joined')).toHaveLength(0);
+  });
+
   it('RSVPs to the event with its bare id', async () => {
     const onAction = await selectAndGetAction('event:e1');
 

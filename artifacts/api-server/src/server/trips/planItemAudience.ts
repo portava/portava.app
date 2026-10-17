@@ -36,6 +36,7 @@ export const PLAN_ITEM_AUDIENCE_TABLE = "trip_plan_item_audience";
 export const PLAN_SELECTION_FLAG = "trip_plan_selected_participants_enabled";
 
 export const PLAN_ITEM_AUDIENCE_MAX = 50;
+const CANONICAL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export type SelectionStore = "available" | "absent" | "unread";
 
@@ -67,7 +68,14 @@ export async function readSelectedPlanItemIds(sc: SupabaseClient, tripId: string
       .eq("trip_id", tripId)
       .eq("member_id", viewerId);
     if (error) return isAbsentTableError(error) ? new Set() : null;
-    return new Set(((data ?? []) as Array<{ plan_item_id: string }>).map((r) => String(r.plan_item_id)));
+    if (!Array.isArray(data)) return null;
+    const selected = new Set<string>();
+    for (const row of data) {
+      if (row === null || typeof row !== "object" || Array.isArray(row)
+        || typeof row.plan_item_id !== "string" || !CANONICAL_UUID.test(row.plan_item_id)) return null;
+      selected.add(row.plan_item_id);
+    }
+    return selected;
   } catch {
     return null;
   }

@@ -39,7 +39,7 @@
  * answered with it. A failed save shows the server's sentence and keeps the
  * previous answer; pressing again retries.
  */
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
 import { Luggage, RefreshCw, HelpCircle } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
@@ -107,7 +107,11 @@ const STATE_TONE_FG: Record<string, string> = {
   unknown: color.mute,
 };
 
-export function LayoverConstraintsCard({ sessionId, canEdit, refreshKey = 0, onChanged, creationNotice = null }: Props) {
+export function LayoverConstraintsCard(props: Props) {
+  return <SessionConstraintsCard key={props.sessionId} {...props} />;
+}
+
+function SessionConstraintsCard({ sessionId, canEdit, refreshKey = 0, onChanged, creationNotice = null }: Props) {
   const [state, setState] = useState<LoadState>({ kind: 'loading' });
   /** The control that is saving, e.g. `baggageMode:UNKNOWN`. One save at a time. */
   const [saving, setSaving] = useState<string | null>(null);
@@ -117,8 +121,36 @@ export function LayoverConstraintsCard({ sessionId, canEdit, refreshKey = 0, onC
   const [declaredHere, setDeclaredHere] = useState(false);
   /** Only the newest read may land: a slow answer must not replace a newer one. */
   const readTicket = useRef(0);
+  const appliedReadTicket = useRef(0);
+  const mounted = useRef(false);
+  const pendingDeclaration = useRef<object | null>(null);
+  const editScope = useMemo(() => ({ active: false, canEdit }), [canEdit]);
+  const changedCallback = useRef(onChanged);
+
+  useLayoutEffect(() => {
+    changedCallback.current = onChanged;
+  }, [onChanged]);
+
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      readTicket.current += 1;
+    };
+  }, []);
+
+  useLayoutEffect(() => {
+    editScope.active = true;
+    setSaving(null);
+    setSaveError(null);
+    return () => {
+      editScope.active = false;
+      pendingDeclaration.current = null;
+    };
+  }, [editScope]);
 
   const load = useCallback(async () => {
+    if (!mounted.current) return;
     const ticket = ++readTicket.current;
     let next: LoadState;
     try {
@@ -131,7 +163,8 @@ export function LayoverConstraintsCard({ sessionId, canEdit, refreshKey = 0, onC
       // a future throw becomes a stated failure and not a spinner for ever.
       next = { kind: 'failed', message: READ_FAILED };
     }
-    if (ticket !== readTicket.current) return;
+    if (!mounted.current || ticket !== readTicket.current) return;
+    appliedReadTicket.current = ticket;
     setState(next);
   }, [sessionId]);
 
@@ -139,19 +172,23 @@ export function LayoverConstraintsCard({ sessionId, canEdit, refreshKey = 0, onC
 
   const declare = useCallback(async (key: string, patch: LayoverConstraintPatch) => {
     // A closed layover is read-only whatever was pressed.
-    if (saving || !canEdit) return;
+    if (!mounted.current || !editScope.active || !editScope.canEdit || pendingDeclaration.current) return;
+    const operation = {};
+    pendingDeclaration.current = operation;
     setSaving(key);
     setSaveError(null);
     setNotice(null);
     // A read still in flight was asked BEFORE this declaration and must not
     // land on top of its answer.
-    readTicket.current += 1;
+    const ticket = ++readTicket.current;
     let outcome: Awaited<ReturnType<typeof updateLayoverConstraints>>;
     try {
       outcome = await updateLayoverConstraints(sessionId, patch);
     } catch {
       outcome = { ok: false, reason: 'unreachable', message: 'Your details could not be saved. Please try again.', retryable: true };
     }
+    if (!mounted.current || !editScope.active || pendingDeclaration.current !== operation) return;
+    pendingDeclaration.current = null;
     setSaving(null);
     if (!outcome.ok) {
       // The previous answer stays on screen: it is still the last thing the
@@ -159,11 +196,11 @@ export function LayoverConstraintsCard({ sessionId, canEdit, refreshKey = 0, onC
       setSaveError(outcome.message);
       return;
     }
-    setState({ kind: 'ready', answer: outcome.answer });
+    if (appliedReadTicket.current < ticket) setState({ kind: 'ready', answer: outcome.answer });
     setNotice(unsavedNote(outcome.unsaved));
     setDeclaredHere(true);
-    onChanged?.();
-  }, [sessionId, saving, canEdit, onChanged]);
+    changedCallback.current?.();
+  }, [sessionId, editScope]);
 
   if (state.kind === 'unsupported') return null;
 

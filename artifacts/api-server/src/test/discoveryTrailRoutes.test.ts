@@ -116,6 +116,7 @@ function makeDb(
     let selectCols: string | null = null;
     let limitN: number | null = null;
     let rangeAZ: [number, number] | null = null;
+    let countRequested = false;
     const store = () => (tables[table] ??= []);
     const missingError = () => {
       if (missingStyle === "postgres") {
@@ -144,7 +145,9 @@ function makeDb(
       return out;
     };
     const broken = () => missing.has(table) || erroring.has(table);
-    const run = () => (broken() ? err() : { data: rows(), error: null });
+    const run = () => (broken() ? err() : { data: rows(), error: null,
+      ...(countRequested ? { count: store().filter((row) => filters.every((filter) => filter(row))).length } : {}),
+    });
     const one = () => {
       if (broken()) return Promise.resolve(err());
       const r = rows();
@@ -152,7 +155,7 @@ function makeDb(
     };
 
     const b: any = {
-      select(cols?: string) { selectCols = cols ?? null; return b; },
+      select(cols?: string, options?: { count?: string }) { selectCols = cols ?? null; countRequested = options?.count === "exact"; return b; },
       eq(c: string, v: any) { filters.push((r) => r[c] === v); return b; },
       neq(c: string, v: any) { filters.push((r) => r[c] !== v); return b; },
       in(c: string, v: any[]) { filters.push((r) => v.includes(r[c])); return b; },
@@ -198,15 +201,18 @@ function makeDb(
         return result;
       },
       delete() {
+        let representation = false;
         const d: any = {
           eq(c: string, v: any) { filters.push((r) => r[c] === v); return d; },
+          select() { representation = true; return d; },
           then(res: any) {
             if (broken()) return Promise.resolve(err()).then(res);
+            const matched = store().filter((r) => filters.every((filter) => filter(r)));
             const keep = store().filter((r) => !filters.every((f) => f(r)));
             const removed = store().length - keep.length;
             tables[table] = keep;
             writes.push({ table, op: "delete", rows: removed });
-            return Promise.resolve({ data: null, error: null }).then(res);
+            return Promise.resolve({ data: representation ? matched.map((row) => ({ ...row })) : null, error: null }).then(res);
           },
         };
         return d;
@@ -317,7 +323,7 @@ const SEED = (): Record<string, Row[]> => ({
     member(M2, { source_id: PLACE_B, contributor_id: OTHER, content_state: "evergreen", confidence: 0.9, created_at: iso(10 * 86_400_000) }),
   ],
   trail_edges: [
-    { from_trail_id: T_DARK, to_trail_id: T_ROOF, edge_type: "child", strength: 0.8, updated_at: iso(0) },
+    { from_trail_id: T_DARK, to_trail_id: T_ROOF, edge_type: "child", strength: 0.8, review_state: "accepted", updated_at: iso(0) },
   ],
   // Present and empty so a test that seeds outcome rows assigns into a declared
   // field instead of widening the seed with an untyped one.

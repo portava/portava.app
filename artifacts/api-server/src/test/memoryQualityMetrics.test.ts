@@ -8,9 +8,9 @@
  *     the kept Memory's stored value of a shown component now differs. Clearing
  *     counts. A fill, a revert, a dismissal and a deletion do not. A MERGE
  *     survivor and an ambiguous link are excluded from both sides.
- *   - The time half has no client correction surface, so the overall
- *     false_memory_rate is UNPRODUCIBLE, never a structural low. A guard pins
- *     the declaration against the client source.
+ *   - Both kinds have an owner correction surface. A missing surface still
+ *     makes false_memory_rate UNPRODUCIBLE, never a structural low. A guard
+ *     pins the declaration against connected client controls and transport.
  *   - A Do Again plan converts when the same person saves the same place to a
  *     trip inside the window. The rate is over MATURED plans only. Re-compiles
  *     of one plan are one plan.
@@ -31,6 +31,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import express from "express";
+import { createClient } from "@supabase/supabase-js";
 import { _setTestClient } from "../lib/http.js";
 import memoryCandidatesRouter from "../routes/memoryCandidates.js";
 import memoryActionsRouter from "../routes/memoryActions.js";
@@ -115,13 +116,14 @@ describe("false_memory_rate — the definition (pure)", () => {
     assert.equal(r.byAssertion.time.value, null);
   });
 
-  it("with today's surfaces the total is UNPRODUCIBLE on the time half; the place half is its own rate over DECIDED candidates", () => {
+  it("if the time surface is unavailable the total is UNPRODUCIBLE; the place half is its own rate over DECIDED candidates", () => {
     const r = computeFalseMemoryRate({
       surfaced: [shown("e1"), shown("e2"), shown("e3")],
       episodes: eps({ e1: "confirmed", e2: "rejected", e3: "candidate" }),
       links: new Map([["e1", ["m1"]]]),
       memories: new Map([["m1", kept("m1", { city: "Sintra" })]]),
       mergeSurvivors: new Set(),
+      correctionSurfaces: { ...CORRECTION_SURFACES, time: null },
     });
     assert.equal(r.status, "UNPRODUCIBLE", "a time correction cannot be made from the app, so the total would be low by construction");
     assert.equal(r.value, null);
@@ -132,6 +134,19 @@ describe("false_memory_rate — the definition (pure)", () => {
     assert.deepEqual([r.byAssertion.time.status, r.byAssertion.time.value, r.byAssertion.time.decided, r.byAssertion.time.corrected], ["UNPRODUCIBLE", null, 2, 0]);
     assert.equal(r.byAssertion.time.correctionSurface, null);
     assert.deepEqual([r.population.decided, r.population.kept, r.population.undecided], [2, 1, 1]);
+  });
+
+  it("the connected owner time surface permits the unchanged corrected-over-decided calculation", () => {
+    const result = computeFalseMemoryRate({
+      surfaced: [shown("e1"), shown("e2"), shown("e3")],
+      episodes: eps({ e1: "confirmed", e2: "rejected", e3: "candidate" }),
+      links: new Map([["e1", ["m1"]]]),
+      memories: new Map([["m1", kept("m1", { startsAt: null })]]), mergeSurvivors: new Set(),
+    });
+    assert.deepEqual([result.status, result.value, result.numerator, result.denominator], ["OK", 0.25, 1, 4]);
+    assert.deepEqual([result.byAssertion.time.status, result.byAssertion.time.value, result.byAssertion.time.corrected], ["OK", 0.5, 1]);
+    assert.equal(result.byAssertion.time.correctionSurface, CORRECTION_SURFACES.time);
+    assert.deepEqual([result.population.decided, result.population.undecided], [2, 1]);
   });
 
   it("R2: an UNDECIDED candidate is counted, and is in neither side of any rate", () => {
@@ -405,7 +420,7 @@ describe("the recorders", () => {
 describe("the log line carries counts and rates only", () => {
   it("one line per metric, UNPRODUCIBLE said in the message, no identifier", () => {
     const lines: Array<{ obj: any; msg: string }> = [];
-    const r1 = computeFalseMemoryRate({ surfaced: [shown("e1")], episodes: eps({ e1: "confirmed" }), links: new Map([["e1", ["m1"]]]), memories: new Map([["m1", kept("m1")]]), mergeSurvivors: new Set() });
+    const r1 = computeFalseMemoryRate({ surfaced: [shown("e1")], episodes: eps({ e1: "confirmed" }), links: new Map([["e1", ["m1"]]]), memories: new Map([["m1", kept("m1")]]), mergeSurvivors: new Set(), correctionSurfaces: { ...CORRECTION_SURFACES, time: null } });
     const r2 = computeDoAgainConversion({ plans: [plan()], saves: [], nowMs: T0 + W });
     recordQualityMetrics({ info: (obj, msg) => lines.push({ obj, msg }) }, [r1, r2]);
     assert.deepEqual(lines.map((l) => l.obj.metric), ["false_memory_rate", "do_again_conversion"]);
@@ -417,20 +432,29 @@ describe("the log line carries counts and rates only", () => {
   });
 });
 
-// ── The client cannot correct a time: the declaration is pinned ─────────────
+// ── The connected client time controls: the declaration is pinned ──────────
 
 describe("CORRECTION_SURFACES is pinned to the client source", () => {
-  it("UpdateMemoryInput has no startsAt/endsAt, and the time surface is declared null to match", () => {
+  it("the declared time surface connects owner inputs to loaded times and the existing Save transport", () => {
     const src = readFileSync(path.join(REPO, "travel-buddy-standalone/src/services/memories.ts"), "utf8");
     const m = /export interface UpdateMemoryInput \{([\s\S]*?)\n\}/.exec(src);
     assert.ok(m, "UpdateMemoryInput not found — re-point this guard at the client's Memory PATCH input");
     const body = m![1]!;
     assert.match(body, /locationCity\?/, "the place surface is there");
-    const clientCanCorrectTime = /\b(startsAt|endsAt)\??\s*:/.test(body);
-    assert.equal(clientCanCorrectTime, CORRECTION_SURFACES.time !== null,
-      "the client's PATCH input and CORRECTION_SURFACES.time disagree: if the app can now correct a Memory's time, name that surface in CORRECTION_SURFACES.time (memoryQualityMetrics.ts)");
+    assert.match(body, /startsAt\?: string \| null/);
+    assert.match(body, /endsAt\?: string \| null/);
+    assert.equal(CORRECTION_SURFACES.time, "travel-buddy-standalone/app/memory/edit.tsx -> PATCH /api/memories/:id (startsAt / endsAt)");
     const edit = readFileSync(path.join(REPO, "travel-buddy-standalone/app/memory/edit.tsx"), "utf8");
-    assert.equal(/\b(startsAt|endsAt)\b/.test(edit), CORRECTION_SURFACES.time !== null, "app/memory/edit.tsx and CORRECTION_SURFACES.time disagree");
+    assert.match(edit, /<MemoryTimeInputs bound="start" value=\{startTime\} onChange=\{setStartTime\}/);
+    assert.match(edit, /<MemoryTimeInputs bound="end" value=\{endTime\} onChange=\{setEndTime\}/);
+    assert.match(edit, /setStartTime\(memoryTimeDraft\(m\.startsAt\)\)/);
+    assert.match(edit, /setEndTime\(memoryTimeDraft\(m\.endsAt\)\)/);
+    assert.match(edit, /memoryTimeValue\(startTime, 'start'\)/);
+    assert.match(edit, /memoryTimeValue\(endTime, 'end'\)/);
+    assert.match(edit, /startsAt: startResult\.value/);
+    assert.match(edit, /endsAt: endResult\.value/);
+    assert.match(edit, /await updateMemory\(id, \{ \.\.\.patch, operationId: lastSave\.current\.operationId \}, request\)/);
+    assert.match(src, /body: JSON\.stringify\(patch\)/);
     assert.notEqual(CORRECTION_SURFACES.place, null);
   });
 });
@@ -451,7 +475,10 @@ type Store = Record<string, any[]>;
 let gen = 0;
 const newId = () => `e${String(++gen).padStart(7, "0")}-0000-4000-8000-000000000000`;
 
-interface FakeOpts { failReads?: Set<string> }
+interface FakeOpts {
+  failReads?: Set<string>;
+  savedPlacesClient?: { from(table: string): any };
+}
 
 /** A table-backed PostgREST stand-in that APPLIES writes; 2320's replay and dedupe keys modelled. Unknown tables read empty. */
 function makeClient(store: Store, opts: FakeOpts) {
@@ -584,7 +611,12 @@ async function start(opts: FakeOpts & { mutate?: (s: Store) => void } = {}): Pro
   resetHighlightSchemaMemo();
   const store = seed();
   opts.mutate?.(store);
-  _setTestClient(makeClient(store, opts) as any, true);
+  const client = makeClient(store, opts);
+  _setTestClient({
+    ...client,
+    from: (table: string) => table === "trip_saved_places" && opts.savedPlacesClient
+      ? opts.savedPlacesClient.from(table) : client.from(table),
+  } as any, true);
   _setMemoryActionDeps({
     liveStatus: async () => null,
     tripWindows: async () => ({ ok: false, info: "test: free time not checked" }) as any,
@@ -653,7 +685,7 @@ describe("GET /admin/memory/metrics — end to end over the real routers", () =>
     assert.match(b.scope, /this process/);
   });
 
-  it("H217: the inbox surfaces two, the owner keeps one and corrects its place through PATCH /memories/:id — place 1/1 over the DECIDED one, total UNPRODUCIBLE on the time half", async () => {
+  it("H217: the inbox surfaces two, the owner keeps one and corrects its place and time through the editor's PATCH contract", async () => {
     app = await start();
     assert.equal((await call(app, "POST", "/api/me/memory-candidates/detect", OWNER, { tripId: TRIP })).status, 200);
     const list = await call(app, "GET", "/api/me/memory-candidates", OWNER);
@@ -679,10 +711,10 @@ describe("GET /admin/memory/metrics — end to end over the real routers", () =>
     b = await metrics(app);
     fm = b.quality.false_memory_rate;
     assert.deepEqual([fm.byAssertion.place.status, fm.byAssertion.place.surfaced, fm.byAssertion.place.decided, fm.byAssertion.place.corrected, fm.byAssertion.place.value], ["OK", 2, 1, 1, 1]);
-    assert.deepEqual([fm.byAssertion.time.status, fm.byAssertion.time.decided, fm.byAssertion.time.corrected], ["UNPRODUCIBLE", 1, 0]);
-    assert.equal(fm.status, "UNPRODUCIBLE");
-    assert.equal(fm.value, null);
-    assert.match(fm.blockedBy, /time: no client surface/);
+    assert.deepEqual([fm.byAssertion.time.status, fm.byAssertion.time.decided, fm.byAssertion.time.corrected], ["OK", 1, 0]);
+    assert.equal(fm.status, "OK");
+    assert.equal(fm.value, 0.5);
+    assert.equal(fm.blockedBy, null);
     assert.deepEqual([fm.numerator, fm.denominator], [1, 2]);
     // Dismissing the other one DECIDES it: now the place half is over both.
     const other = list.body.candidates.find((c: any) => c.id !== a.id);
@@ -690,12 +722,13 @@ describe("GET /admin/memory/metrics — end to end over the real routers", () =>
     fm = (await metrics(app)).quality.false_memory_rate;
     assert.deepEqual([fm.byAssertion.place.decided, fm.byAssertion.place.corrected, fm.byAssertion.place.value, fm.population.undecided], [2, 1, 0.5, 0]);
 
-    // The bare API CAN move the time; that is counted, and the total stays refused.
+    // The owner editor now sends this time patch; the same correction is counted.
     const timed = await call(app, "PATCH", `/api/memories/${kept.body.memoryId}`, OWNER, { startsAt: "2026-03-02T18:00:00.000Z" });
     assert.equal(timed.status, 200, JSON.stringify(timed.body));
     fm = (await metrics(app)).quality.false_memory_rate;
     assert.equal(fm.byAssertion.time.corrected, 1);
-    assert.equal(fm.status, "UNPRODUCIBLE");
+    assert.equal(fm.status, "OK");
+    assert.equal(fm.value, 0.5);
     assertNoIds(app, b);
   });
 
@@ -895,4 +928,164 @@ describe("GET /admin/memory/metrics — end to end over the real routers", () =>
     assert.notEqual(r.status, 200);
     assert.equal((await metrics(app)).quality.do_again_conversion.plans.tracked, 0);
   });
+});
+
+describe("H222 read honesty over the actual action and admin routes", () => {
+  const save = { user_id: OWNER, place_id: PLACE_OPEN, saved_at: new Date(T0 + 60_000).toISOString() };
+
+  async function servePlan(read: () => unknown) {
+    let now = T0;
+    let reads = 0;
+    _setMemoryQualityClock(() => now);
+    const query = {
+      select() { return query; },
+      in() { return query; },
+      gte() { return query; },
+      lt() { return query; },
+      async limit() { reads += 1; return read(); },
+    };
+    app = await start({ savedPlacesClient: { from(table) {
+      assert.equal(table, "trip_saved_places");
+      return query;
+    } } });
+    const compiled = await call(app, "GET", `/api/memories/${MEM_DA}/actions/DO_AGAIN`, OWNER);
+    assert.equal(compiled.status, 200, JSON.stringify(compiled.body));
+    assert.equal(compiled.body.compiled.addToTrip.id, PLACE_OPEN);
+    return { mature() { now += W; }, reads: () => reads };
+  }
+
+  const malformedRows: Array<[string, unknown]> = [
+    ["null row", null],
+    ["array row", []],
+    ["scalar row", true],
+    ["missing columns", {}],
+    ["missing viewer", { place_id: PLACE_OPEN, saved_at: save.saved_at }],
+    ["null viewer", { ...save, user_id: null }],
+    ["numeric viewer", { ...save, user_id: 123 }],
+    ["blank viewer", { ...save, user_id: " " }],
+    ["malformed viewer id", { ...save, user_id: "not-a-uuid" }],
+    ["missing place", { user_id: OWNER, saved_at: save.saved_at }],
+    ["numeric place", { ...save, place_id: 123 }],
+    ["array place", { ...save, place_id: [PLACE_OPEN] }],
+    ["missing time", { user_id: OWNER, place_id: PLACE_OPEN }],
+    ["null time", { ...save, saved_at: null }],
+    ["numeric time", { ...save, saved_at: 0 }],
+    ["array time", { ...save, saved_at: [save.saved_at] }],
+    ["unreadable time", { ...save, saved_at: "not-a-date" }],
+    ["date shorthand", { ...save, saved_at: "0" }],
+    ["nonexistent calendar date", { ...save, saved_at: "2026-02-30T12:00:00Z" }],
+    ["invalid time on a nullable place", { ...save, place_id: null, saved_at: "not-a-date" }],
+  ];
+  for (const [name, row] of malformedRows) {
+    it(`refuses ${name} rather than exporting zero or a partial count`, async () => {
+      const fixture = await servePlan(() => ({ data: [save, row], error: null }));
+      fixture.mature();
+      const exported = await metrics(app!);
+      const result = exported.quality.do_again_conversion;
+      assert.equal(fixture.reads(), 1);
+      assert.deepEqual([result.status, result.value, result.numerator, result.denominator], ["UNPRODUCIBLE", null, null, 1]);
+      assert.ok(result.blockedBy);
+      assertNoIds(app!, exported);
+    });
+  }
+
+  const malformedReplies: Array<[string, unknown]> = [
+    ["null envelope", null],
+    ["missing envelope", undefined],
+    ["missing data", { error: null }],
+    ["null data", { data: null, error: null }],
+    ["object data", { data: {}, error: null }],
+    ["string data", { data: "[]", error: null }],
+    ["boolean data", { data: false, error: null }],
+    ["missing error status", { data: [save] }],
+    ["failure alongside stale rows", { data: [save], error: { message: "synthetic failure" } }],
+  ];
+  for (const [name, reply] of malformedReplies) {
+    it(`refuses ${name}`, async () => {
+      const fixture = await servePlan(() => reply);
+      fixture.mature();
+      const result = (await metrics(app!)).quality.do_again_conversion;
+      assert.equal(fixture.reads(), 1);
+      assert.deepEqual([result.status, result.value, result.numerator, result.denominator], ["UNPRODUCIBLE", null, null, 1]);
+    });
+  }
+
+  const legitimateReads: Array<[string, unknown[], number]> = [
+    ["empty rows", [], 0],
+    ["nullable place", [{ ...save, place_id: null }], 0],
+    ["text place reference", [{ ...save, place_id: "provider:historic-place" }], 0],
+    ["blank text place reference", [{ ...save, place_id: "" }], 0],
+    ["one conversion", [save], 1],
+    ["duplicate projected saves", [save, save], 1],
+    ["microseconds and a timezone offset", [{ ...save, saved_at: "2026-03-02T14:01:00.123456-05:00" }], 1],
+    ["other viewers and places", [{ ...save, user_id: OTHER }, { ...save, place_id: PLACE_TWO }], 0],
+    ["outside the half-open window", [{ ...save, saved_at: new Date(T0 - 1).toISOString() }, { ...save, saved_at: new Date(T0 + W).toISOString() }], 0],
+    ["save exactly at the opening", [{ ...save, saved_at: new Date(T0).toISOString() }], 1],
+  ];
+  for (const [name, rows, converted] of legitimateReads) {
+    it(`preserves ${name}`, async () => {
+      const fixture = await servePlan(() => ({ data: rows, error: null }));
+      fixture.mature();
+      const exported = await metrics(app!);
+      const result = exported.quality.do_again_conversion;
+      assert.equal(fixture.reads(), 1);
+      assert.deepEqual([result.status, result.value, result.numerator, result.denominator], ["OK", converted, converted, 1]);
+      assertNoIds(app!, exported);
+    });
+  }
+
+  it("withholds the whole rate when a later chunk is malformed", async () => {
+    let reads = 0;
+    const fixture = await servePlan(() => ({ data: ++reads === 1 ? [save] : null, error: null }));
+    for (let index = 0; index < 100; index += 1) {
+      noteDoAgainCompiled({ viewerId: OWNER, memoryId: `extra-plan-${index}`, placeId: PLACE_OPEN });
+    }
+    fixture.mature();
+    const result = (await metrics(app!)).quality.do_again_conversion;
+    assert.equal(fixture.reads(), 2);
+    assert.deepEqual([result.status, result.value, result.numerator, result.denominator], ["UNPRODUCIBLE", null, null, 101]);
+  });
+
+  it("does not read saves for an unfinished window or a missing denominator", async () => {
+    const fixture = await servePlan(() => { throw new Error("must not read saves"); });
+    const pending = (await metrics(app!)).quality.do_again_conversion;
+    assert.deepEqual([pending.status, pending.value, pending.denominator, pending.plans.pending], ["UNPRODUCIBLE", null, 0, 1]);
+    _resetMemoryQualityMetrics();
+    const empty = (await metrics(app!)).quality.do_again_conversion;
+    assert.deepEqual([empty.status, empty.value, empty.denominator, empty.plans.tracked], ["UNPRODUCIBLE", null, 0, 0]);
+    assert.equal(fixture.reads(), 0);
+  });
+
+  it("keeps the admin guard ahead of the source read", async () => {
+    const fixture = await servePlan(() => { throw new Error("must not read saves"); });
+    fixture.mature();
+    assert.equal((await call(app!, "GET", "/api/admin/memory/metrics", OWNER)).status, 403);
+    assert.equal(fixture.reads(), 0);
+  });
+
+  for (const [name, body] of [["null", "null"], ["empty", ""]]) {
+    it(`rejects an installed-client ${name} success body through the admin route`, async () => {
+      let now = T0;
+      let reads = 0;
+      _setMemoryQualityClock(() => now);
+      const savedPlacesClient = createClient("http://127.0.0.1:9", "dummy", {
+        auth: { autoRefreshToken: false, persistSession: false },
+        global: { fetch: async (url) => {
+          const requested = new URL(String(url));
+          assert.equal(requested.origin, "http://127.0.0.1:9");
+          assert.equal(requested.pathname, "/rest/v1/trip_saved_places");
+          assert.equal(requested.searchParams.get("select"), "user_id,place_id,saved_at");
+          reads += 1;
+          return new Response(body, { status: 200, headers: { "content-type": "application/json" } });
+        } },
+      });
+      app = await start({ savedPlacesClient });
+      const compiled = await call(app, "GET", `/api/memories/${MEM_DA}/actions/DO_AGAIN`, OWNER);
+      assert.equal(compiled.status, 200, JSON.stringify(compiled.body));
+      now += W;
+      const result = (await metrics(app)).quality.do_again_conversion;
+      assert.equal(reads, 1);
+      assert.deepEqual([result.status, result.value, result.numerator, result.denominator], ["UNPRODUCIBLE", null, null, 1]);
+    });
+  }
 });

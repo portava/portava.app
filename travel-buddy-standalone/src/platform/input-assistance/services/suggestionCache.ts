@@ -12,8 +12,17 @@
  *
  * Pure module (no React, no network, no RN) — unit-tested under node:test.
  */
-import type { InputSuggestion } from '../types/inputSuggestion.ts';
+import type { InputSuggestion, InputSessionContext } from '../types/inputSuggestion.ts';
 import type { PrivacyClass } from '../types/inputContext.ts';
+import { sha256Hex } from '../../../lib/sensing/commitment.ts';
+import { onDiscoveryScopeChange } from '../../../services/discoveryViewerScope.ts';
+
+export function inputSessionScopeKey(sessionContext?: InputSessionContext): string {
+  const entries = Object.entries(sessionContext ?? {})
+    .filter(([key, value]) => key !== 'lat' && key !== 'lng' && value !== undefined)
+    .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0);
+  return entries.length === 0 ? '' : sha256Hex(JSON.stringify(entries));
+}
 
 /**
  * §29/§32 — the privacy classes whose suggestions must NOT be held in the
@@ -214,3 +223,4 @@ export class SuggestionCache {
  * `new SuggestionCache(...)` with an injected clock instead of touching this.
  */
 export const sharedSuggestionCache = new SuggestionCache();
+onDiscoveryScopeChange(() => sharedSuggestionCache.clear());

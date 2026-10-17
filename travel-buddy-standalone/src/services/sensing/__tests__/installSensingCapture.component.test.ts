@@ -63,6 +63,7 @@ jest.mock('../deviceSensorSources.ts', () => ({
 jest.mock('../acousticMeterSource.ts', () => ({ createAcousticMeterSource: () => null }));
 // NOTE: exhaustive-by-design — the permission store is native.
 jest.mock('../acousticSensingPermission.ts', () => ({
+  onAcousticSensingPermissionChange: () => () => {},
   readAcousticSensingPermission: async () => ({ granted: false, osGranted: false }),
 }));
 // NOTE: exhaustive-by-design — records what the installer registers.

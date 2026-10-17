@@ -3,7 +3,7 @@
  *
  * Interface + MockTranslationProvider (dev/test) + OpenAITranslationProvider.
  * Provider selection via env vars:
- *   TRANSLATION_PROVIDER        — 'mock' (default) | 'openai'
+ *   TRANSLATION_PROVIDER        — 'self-hosted' (default) | 'openai' (explicit legacy opt-in) | 'mock' (test only)
  *   TRANSLATION_ENABLED         — 'true' | 'false' (default 'true')
  *   TRANSLATION_TIMEOUT_MS      — number (default 8000)
  *
@@ -11,6 +11,7 @@
  */
 
 import { getOpenAI } from './openai';
+import { SelfHostedTranslationProvider } from './selfHostedTranslation.js';
 
 // ── Shapes ────────────────────────────────────────────────────────────────────
 
@@ -159,15 +160,61 @@ export class OpenAITranslationProvider implements TranslationProvider {
 
 let _provider: TranslationProvider | null = null;
 
+export function getSelfHostedTranslationProvider(): TranslationProvider {
+  return new SelfHostedTranslationProvider();
+}
+
 export function getTranslationProvider(): TranslationProvider {
   if (_provider) return _provider;
-  const name = (process.env.TRANSLATION_PROVIDER ?? 'mock').toLowerCase();
-  if (name === 'openai') {
-    _provider = new OpenAITranslationProvider();
-  } else {
+  const name = (process.env.TRANSLATION_PROVIDER ?? 'self-hosted').toLowerCase();
+  if (name === 'mock' && process.env.NODE_ENV === 'test') {
     _provider = new MockTranslationProvider();
+  } else if (name === 'openai') {
+    _provider = new OpenAITranslationProvider();
+  } else if (name === 'self-hosted') {
+    _provider = new SelfHostedTranslationProvider();
+  } else {
+    _provider = new SelfHostedTranslationProvider({});
   }
   return _provider;
+}
+
+export async function translatePreservingEntities(
+  provider: TranslationProvider,
+  text: string,
+  source: string,
+  target: string,
+  beforeDispatch?: () => Promise<boolean>,
+): Promise<TranslateTextResult> {
+  if (text.length > 8_000) throw new Error('translation_input_limit');
+  const protectedPattern = /(?:https?:\/\/|www\.)[^\s<>]+|[\p{L}\p{N}._%+-]+@[\p{L}\p{N}.-]+\.[\p{L}]{2,}|@\[[^\]\r\n]+\]\([^\)\r\n]+\)|@[\p{L}\p{N}_]+|#[\p{L}\p{M}\p{N}_]+|\r\n|[\r\n]/gu;
+  const fragments = [...text.matchAll(protectedPattern)];
+  if (fragments.length > 32) throw new Error('translation_input_limit');
+  let position = 0;
+  let translatedText = '';
+  let identity: TranslateTextResult | undefined;
+  const deadline = Date.now() + TRANSLATION_TIMEOUT_MS;
+  const translate = async (fragment: string) => {
+    if (Date.now() >= deadline) throw new Error('translation_timeout');
+    if (!/[\p{L}\p{N}]/u.test(fragment)) return fragment;
+    const leading = fragment.match(/^\s*/u)![0];
+    const trailing = fragment.match(/\s*$/u)![0];
+    if (beforeDispatch && await beforeDispatch() !== true) throw new Error('translation_source_unavailable');
+    if (Date.now() >= deadline) throw new Error('translation_timeout');
+    const result = await provider.translateText(fragment.trim(), source, target);
+    if (!result.translatedText?.trim() || result.translatedText.length > 32_000 || !result.providerVersion) throw new Error('translation_invalid_response');
+    if (identity && (identity.provider !== result.provider || identity.providerVersion !== result.providerVersion)) throw new Error('translation_engine_changed');
+    identity = result;
+    return leading + result.translatedText.trim() + trailing;
+  };
+  for (const fragment of fragments) {
+    translatedText += await translate(text.slice(position, fragment.index));
+    translatedText += fragment[0];
+    position = fragment.index! + fragment[0].length;
+  }
+  translatedText += await translate(text.slice(position));
+  if (!identity) throw new Error('translation_no_prose');
+  return { translatedText, provider: identity.provider, providerVersion: identity.providerVersion };
 }
 
 /**

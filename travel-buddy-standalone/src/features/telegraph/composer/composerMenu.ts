@@ -66,7 +66,7 @@ export const COMPOSER_ENTRIES: readonly ComposerEntry[] = [ // §6.1's eight, in
     kind: 'PORTAVA_OBJECT',
     available: false,
     unavailableReason:
-      'Sharing a Portava object into a thread works end to end on the server (POST /threads/:id/share) and the card renders and revokes correctly; what is missing is an in-composer object picker to choose WHICH object.',
+      'Trip sharing is available only in a supported conversation with confirmed sending access and no end-to-end encryption.',
   },
 ] as const;
 
@@ -96,7 +96,10 @@ export function availableEntryCount(): number {
 export const ENTERTAINMENT_ENTRY_IDS: readonly ComposerEntryId[] = ['GIF'];
 
 /** The entries the + menu offers, given whether the conversation's safety mode puts entertainment away. */
-export function composerEntriesFor(opts: { deprioritizeEntertainment: boolean }): readonly ComposerEntry[] {
-  if (!opts.deprioritizeEntertainment) return COMPOSER_ENTRIES;
-  return COMPOSER_ENTRIES.filter((e) => !ENTERTAINMENT_ENTRY_IDS.includes(e.id));
+export function composerEntriesFor(opts: { deprioritizeEntertainment: boolean; portavaTripsAvailable?: boolean }): readonly ComposerEntry[] {
+  return COMPOSER_ENTRIES
+    .filter((entry) => !opts.deprioritizeEntertainment || !ENTERTAINMENT_ENTRY_IDS.includes(entry.id))
+    .map((entry) => entry.id === 'PORTAVA' && opts.portavaTripsAvailable === true
+      ? { ...entry, label: 'Portava (Trips)', available: true, unavailableReason: null }
+      : entry);
 }

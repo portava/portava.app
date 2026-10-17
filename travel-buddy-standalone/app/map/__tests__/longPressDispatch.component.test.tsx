@@ -39,6 +39,12 @@ import {
   type LongPressTarget,
 } from '../../../src/features/map/interaction/longPress.ts';
 import type { MapAction } from '../../../src/types/mapObjects.ts';
+import { supabase } from '../../../src/lib/supabase.ts';
+import { _resetMapTelemetryForTests } from '../../../src/features/map/telemetry/mapTelemetry.ts';
+import {
+  disposeObservedOwnerSession,
+  seedObservedOwnerSession,
+} from '../../../src/services/__tests__/observedOwnerSessionFixture.ts';
 
 /** A place-level event with its own page — everything §25 can offer is legal. */
 const EVENT: MapObject = {
@@ -115,6 +121,33 @@ jest.mock('../../../src/context/SessionContext', () => ({
     refreshAccountStatus: async () => {},
   }),
 }));
+
+// The signed-in viewer must also be an OBSERVED auth session, not just a name in
+// SessionContext: the screen binds its owner (bindMapTelemetryOwner) to the
+// Supabase auth listener, and §12 refuses to start a session for an unobserved
+// owner. This is an SDK transport stub, not a mock of the owner path: it records
+// onAuthStateChange listeners on `auth.listeners` (what
+// services/__tests__/observedOwnerSessionFixture.ts drives) and, like the real
+// SDK, delivers INITIAL_SESSION with the current session to each new subscriber.
+// Plain functions, not jest.fn, so restoring mocks cannot strip them.
+jest.mock('@supabase/supabase-js', () => {
+  const listeners = new Set<any>();
+  const auth: any = {
+    currentSession: null,
+    listeners,
+    getSession: async () => ({ data: { session: auth.currentSession } }),
+    refreshSession: async () => ({ data: { session: auth.currentSession } }),
+    onAuthStateChange: (listener: any) => {
+      listeners.add(listener);
+      void Promise.resolve().then(() => {
+        if (listeners.has(listener)) listener('INITIAL_SESSION', auth.currentSession);
+      });
+      return { data: { subscription: { unsubscribe: () => listeners.delete(listener) } } };
+    },
+  };
+  return { ...jest.requireActual('@supabase/supabase-js'), createClient: () => ({ auth }) };
+});
+jest.mock('../../../src/lib/supabase.ts', () => ({ ...jest.requireActual('../../../src/lib/supabase.ts'), isSupabaseConfigured: true }));
 
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/services/passportStamps', () => ({
@@ -375,6 +408,11 @@ async function startGroupSession() {
 }
 
 beforeEach(() => {
+  // A fresh owner binding per test, then the SessionContext viewer signed in as
+  // an observed SDK session (the stub's INITIAL_SESSION replays it on bind).
+  _resetMapTelemetryForTests();
+  (supabase.auth as unknown as { currentSession: unknown }).currentSession =
+    seedObservedOwnerSession('viewer-1', 'long-press-session');
   shareSpy = jest.spyOn(Share, 'share').mockResolvedValue({ action: 'sharedAction' } as never);
   alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
   locateMock().startLocateFriendsSession.mockClear();
@@ -386,6 +424,8 @@ beforeEach(() => {
 afterEach(() => {
   shareSpy.mockRestore();
   alertSpy.mockRestore();
+  disposeObservedOwnerSession();
+  (supabase.auth as unknown as { currentSession: unknown }).currentSession = null;
 });
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

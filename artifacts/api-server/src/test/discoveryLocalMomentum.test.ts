@@ -146,6 +146,10 @@ function fakeClient(
 
   const client = {
     from(table: string) {
+      if (table === "protected_zones") {
+        const policy = { select: () => policy, eq: () => policy, limit: async () => ({ data: [], error: null }) };
+        return policy;
+      }
       assert.equal(table, "rank_events");
       const orders: Array<{ col: string; asc: boolean }> = [];
       let from = 0;

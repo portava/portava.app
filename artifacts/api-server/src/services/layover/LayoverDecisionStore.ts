@@ -701,25 +701,24 @@ export async function decisionsInWindow(
   fromIso: string,
   toIso: string,
 ): Promise<DecisionRead<{ records: DecisionRecord[]; truncated: boolean }>> {
-  const { data, error } = await db
+  const response = await db
     .from("layover_certified_computations")
-    .select(DECISION_COLUMNS)
+    .select(DECISION_COLUMNS, { count: "exact" })
     .gte("computed_at", fromIso)
     .lt("computed_at", toIso)
     .order("computed_at", { ascending: false })
     .limit(DECISION_WINDOW_LIMIT + 1);
-  if (error) {
-    logger.warn({ err: error.message, fromIso, toIso }, "decision window read failed — refusing rather than reporting an empty window");
+  const window = countedLayoverWindow(response, DECISION_COLUMNS, DECISION_WINDOW_LIMIT);
+  if (!window) {
+    logger.warn({ err: response.error?.message ?? "invalid counted window", fromIso, toIso }, "decision window read failed — refusing rather than reporting an empty window");
     return FAILED;
   }
-  const rows = (data ?? []) as Array<Record<string, any>>;
-  const truncated = rows.length > DECISION_WINDOW_LIMIT;
-  const records = rows.slice(0, DECISION_WINDOW_LIMIT).map((r) => toDecisionRecord(r));
+  const records = window.rows.map((row) => toDecisionRecord(row));
   if (records.some((r) => r === null)) {
     logger.warn({ fromIso, toIso }, "decision window contains a row that will not replay — refusing the whole window");
     return FAILED;
   }
-  return { ok: true, value: { records: records.filter((r): r is DecisionRecord => r !== null), truncated } };
+  return { ok: true, value: { records: records.filter((r): r is DecisionRecord => r !== null), truncated: window.truncated } };
 }
 
 // ── L64 — the recommendation cites the snapshot it was certified under ──────
@@ -807,17 +806,32 @@ export async function storedComputationsInWindow(
   fromIso: string,
   toIso: string,
 ): Promise<DecisionRead<{ rows: StoredComputationRow[]; truncated: boolean }>> {
-  const { data, error } = await db
+  const response = await db
     .from("layover_certified_computations")
-    .select(STORED_COMPUTATION_COLUMNS)
+    .select(STORED_COMPUTATION_COLUMNS, { count: "exact" })
     .gte("computed_at", fromIso)
     .lt("computed_at", toIso)
     .order("computed_at", { ascending: false })
     .limit(STORED_COMPUTATION_READ_LIMIT);
-  if (error) {
-    logger.warn({ err: error.message, fromIso, toIso }, "stored computation window read failed — refusing rather than replaying an empty window");
+  const window = countedLayoverWindow(response, STORED_COMPUTATION_COLUMNS, DECISION_WINDOW_LIMIT);
+  if (!window) {
+    logger.warn({ err: response.error?.message ?? "invalid counted window", fromIso, toIso }, "stored computation window read failed — refusing rather than replaying an empty window");
     return FAILED;
   }
-  const rows = (data ?? []) as unknown as StoredComputationRow[];
-  return { ok: true, value: { rows: rows.slice(0, DECISION_WINDOW_LIMIT), truncated: rows.length > DECISION_WINDOW_LIMIT } };
+  return { ok: true, value: { rows: window.rows as unknown as StoredComputationRow[], truncated: window.truncated } };
+}
+
+export function countedLayoverWindow(
+  response: { data: unknown; count?: unknown; error?: unknown },
+  columns: string,
+  limit: number,
+): { rows: Record<string, unknown>[]; truncated: boolean } | null {
+  const { data, count, error } = response;
+  if (error || !Array.isArray(data) || typeof count !== "number" || !Number.isSafeInteger(count) ||
+      count < data.length || data.length > limit + 1 || (data.length === 0 && count !== 0)) return null;
+  const selectedColumns = columns.split(",").map((column) => column.trim());
+  if (!data.every((row) => row !== null && typeof row === "object" && !Array.isArray(row) &&
+      selectedColumns.every((column) => Object.hasOwn(row, column) && row[column] !== undefined))) return null;
+  const rows = data.slice(0, limit) as Record<string, unknown>[];
+  return { rows, truncated: count > rows.length };
 }

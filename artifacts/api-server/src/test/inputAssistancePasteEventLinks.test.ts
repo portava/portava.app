@@ -58,7 +58,7 @@ function makeFakeClient(state: FakeState, tableErrors: Set<string> = new Set()) 
       const builder: any = {
         select() { return builder; },
         insert: write("insert"), update: write("update"), upsert: write("upsert"), delete: write("delete"),
-        eq(c: string, v: any) { filters.push((r) => r[c] === v); return builder; },
+        eq(c: string, v: any) { if (table === "events" && c === "id") eventLookups.push(v); filters.push((r) => r[c] === v); return builder; },
         neq(c: string, v: any) { filters.push((r) => r[c] !== v); return builder; },
         in(c: string, vs: any[]) { filters.push((r) => vs.includes(r[c])); return builder; },
         not() { return builder; },
@@ -119,14 +119,14 @@ let server: Server;
 before(async () => {
   const app = express();
   app.use(express.json());
-  app.use((req, _res, next) => { (req as any).log = { info() {}, warn() {}, error() {}, debug() {} }; next(); });
+  app.use((req, _res, next) => { (req as any).log = Object.fromEntries(["info", "warn", "error", "debug"].map((level) => [level, (...args: unknown[]) => capturedLogs.push(args)])); next(); });
   app.use("/api", inputAssistanceRouter);
   server = createServer(app);
   await new Promise<void>((res) => server.listen(0, "127.0.0.1", res));
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}/api`;
 });
 after(() => server.close());
-beforeEach(() => { _resetRateLimit(); writes.length = 0; });
+beforeEach(() => { _resetRateLimit(); writes.length = 0; eventLookups.length = 0; capturedLogs.length = 0; });
 afterEach(() => assert.deepEqual(writes, [], "the extract endpoint must never write (G162)"));
 
 async function extract(state: FakeState, text: string, errors?: Set<string>) {
@@ -240,4 +240,83 @@ describe("G158 — POST /input-assistance/extract with an event link", () => {
     const { readLinkedEvent } = await import("../lib/inputAssistance/pasteEventLinks.js");
     assert.deepEqual(await readLinkedEvent(sc, ME, EV), { ok: false });
   });
+});
+
+import http from "node:http";
+import https from "node:https";
+import { syncBuiltinESMExports } from "node:module";
+import { _setTestOpenAI } from "../lib/openai.js";
+import { logger } from "../lib/logger.js";
+
+const eventLookups: string[] = [];
+const capturedLogs: unknown[] = [];
+const MALFORMED_PATHS = ["%", "%E0%A4%A", "%FF"];
+
+describe("G158 — malformed event-path encoding is a local refusal", () => {
+  for (const path of MALFORMED_PATHS) {
+    it(`refuses ${path} without losing an independent valid event link`, () => {
+      const malformed = `https://portava.app/event/${path}?share=${TOKEN}`;
+      assert.equal(parseEventLink(malformed, {}), null);
+      const alone = classifyPaste(malformed);
+      assert.equal(alone.items[0]?.unsupported, "unsupported_link");
+      const mixed = classifyPaste(`${malformed}\nhttps://portava.app/event/${EV}`);
+      assert.equal(mixed.items.length, 2);
+      assert.equal(mixed.items[0]?.unsupported, "unsupported_link");
+      assert.equal(mixed.items[1]?.source, "event_link");
+      assert.equal(mixed.items[1]?.eventId, EV);
+      assert.ok(!JSON.stringify(mixed).includes(TOKEN));
+    });
+  }
+
+  it("still accepts encoded valid UUIDs and refuses foreign-host encoded UUIDs", () => {
+    const encoded = `%30${EV.slice(1)}`;
+    assert.deepEqual(parseEventLink(`https://portava.app/event/${encoded}`, {}), { eventId: EV });
+    assert.equal(parseEventLink(`https://foreign.example/event/${encoded}`, {}), null);
+  });
+
+  for (const enabled of [false, true]) {
+    it(`returns the normal mixed-paste envelope with event links ${enabled ? "enabled" : "disabled"}, no writes or providers`, async (context) => {
+      const providerCalls: string[] = [];
+      const realFetch = globalThis.fetch;
+      context.mock.method(globalThis, "fetch", async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        const url = input instanceof Request ? input.url : String(input);
+        if (url.startsWith(`${base}/`)) return realFetch(input, init);
+        providerCalls.push(url);
+        throw new Error("outbound provider denied");
+      });
+      for (const transport of [http, https]) for (const method of ["request", "get"] as const) {
+        context.mock.method(transport, method, () => { providerCalls.push(method); throw new Error("outbound provider denied"); });
+      }
+      syncBuiltinESMExports();
+      context.after(() => { context.mock.restoreAll(); syncBuiltinESMExports(); _setTestOpenAI(null); });
+      const provider = new Proxy(function () {}, {
+        get: () => { providerCalls.push("openai"); return provider; },
+        apply: () => { providerCalls.push("openai"); throw new Error("provider denied"); },
+      });
+      _setTestOpenAI(provider as any);
+      for (const level of ["info", "warn", "error", "debug"] as const) {
+        context.mock.method(logger, level, (...args: unknown[]) => { capturedLogs.push(args); });
+      }
+      for (const path of MALFORMED_PATHS) {
+        eventLookups.length = 0;
+        const malformed = `https://portava.app/event/${path}?share=${TOKEN}`;
+        const valid = `https://portava.app/event/${EV}?share=${TOKEN}`;
+        const state = STATE({ feature_flags: [{ flag: INPUT_PASTE_EVENT_LINKS_FLAG, enabled }] });
+        const { status, raw, body } = await extract(state, `${malformed}\n${valid}\nHoi An`);
+        assert.equal(status, 200);
+        assert.equal(body.items[0]?.status, "unsupported");
+        assert.equal(body.items[0]?.unsupported, "unsupported_link");
+        assert.equal(body.items[1]?.status, enabled ? "resolved" : "unsupported");
+        assert.equal(body.items[2]?.status, "resolved");
+        assert.ok(body.items[2].candidates.some((candidate: any) => candidate.entityId === HOI_AN.id));
+        assert.deepEqual(eventLookups, enabled ? [EV] : []);
+        for (const secret of [TOKEN, malformed, valid]) {
+          assert.ok(!raw.includes(secret));
+          assert.ok(!JSON.stringify(capturedLogs).includes(secret));
+        }
+      }
+      assert.deepEqual(providerCalls, []);
+      assert.deepEqual(writes, []);
+    });
+  }
 });

@@ -42,7 +42,7 @@ import {
   createDeviceMotionSource,
 } from './deviceSensorSources.ts';
 import { createAcousticMeterSource } from './acousticMeterSource.ts';
-import { readAcousticSensingPermission } from './acousticSensingPermission.ts';
+import { onAcousticSensingPermissionChange, readAcousticSensingPermission } from './acousticSensingPermission.ts';
 import { createSensingTransport } from './sensingTransport.ts';
 import { registerSensingZoneSource } from './sensingZoneHint.ts';
 import { SECURE_KEYS, getSecure, setSecure } from '../../lib/secureStore.ts';
@@ -97,6 +97,8 @@ export function _resetSensingDeviceSecret(): void {
 export function installSensingCapture(): SensingCaptureInstallation {
   let capture: SensingCaptureHandle | null = null;
   let disposed = false;
+  let reconciliation = 0;
+  let captureGeneration = 0;
   let acoustic: AcousticPermission = ACOUSTIC_PERMISSION_DENIED;
   /** Whether the person's upload consent is in effect. Checked before EVERY send. */
   let uploadAllowed = false;
@@ -115,22 +117,37 @@ export function installSensingCapture(): SensingCaptureInstallation {
   });
 
   function stop(): void {
+    captureGeneration += 1;
     capture?.stop();
     capture = null;
     // The Compass zone hint dies with the loop: no capture, no zone to name.
     registerSensingZoneSource(null);
   }
 
-  async function start(): Promise<void> {
-    if (disposed || capture) return;
-    if (!apiBase()) return;
-    const decision = sensingCaptureDecision(await readSensingConsent());
+  async function recheck(): Promise<void> {
+    if (disposed) return;
+    const expected = ++reconciliation;
+    uploadAllowed = false;
+    transport.reset();
+    const current = () => !disposed && expected === reconciliation;
+    let decision = { capture: false, upload: false };
+    try {
+      if (apiBase()) decision = sensingCaptureDecision(await readSensingConsent());
+    } catch {}
+    if (!current()) return;
+    if (!decision.capture) {
+      stop();
+      return;
+    }
+    let next = ACOUSTIC_PERMISSION_DENIED;
+    try { next = await readAcousticSensingPermission(); } catch {}
+    if (!current()) return;
     uploadAllowed = decision.upload;
-    if (!decision.capture) return;
-    if (disposed) return;
-
-    acoustic = await readAcousticSensingPermission();
-    if (disposed) return;
+    const changed = acousticCaptureAllowed(acoustic) !== acousticCaptureAllowed(next);
+    acoustic = next;
+    if (changed) stop();
+    if (capture) return;
+    const generation = ++captureGeneration;
 
     capture = startSensingCapture({
       motion: createDeviceMotionSource(),
@@ -144,7 +161,7 @@ export function installSensingCapture(): SensingCaptureInstallation {
       },
       submit: async (payload) => {
         // OD-MAP-6: capture alone never sends anything off the phone.
-        if (!uploadAllowed) return;
+        if (disposed || generation !== captureGeneration || !uploadAllowed) return;
         await transport.submit(payload);
       },
     });
@@ -154,40 +171,35 @@ export function installSensingCapture(): SensingCaptureInstallation {
     registerSensingZoneSource(() => running.currentZone());
   }
 
-  void start();
+  void recheck();
 
   // Re-check consent on every foreground AND on every change made in Settings:
   // a withdrawal (here or on another device) must stop capture or sending, not
   // wait for a relaunch.
-  async function recheck(): Promise<void> {
-    const decision = apiBase() !== '' ? sensingCaptureDecision(await readSensingConsent()) : { capture: false, upload: false };
-    uploadAllowed = decision.upload;
-    if (!decision.upload) transport.reset();
-    if (!decision.capture) {
-      stop();
-      return;
-    }
-    const before = acousticCaptureAllowed(acoustic);
-    acoustic = await readAcousticSensingPermission();
-    // The meter source is built at start(), so a grant that arrived while the
-    // loop was running needs a restart to attach it — and a revocation needs
-    // one to detach it, which matters far more. (`sensingCapture` also
-    // re-checks the permission per window, so a revocation never produces an
-    // acoustic feature even in the instant before this restart.)
-    if (acousticCaptureAllowed(acoustic) !== before) stop();
-    await start();
-  }
   const sub = AppState.addEventListener('change', (state: AppStateStatus) => {
     if (state !== 'active') return;
     void recheck();
   });
   const unsubscribeConsent = onSensingConsentChange(() => { if (!disposed) void recheck(); });
+  const unsubscribeAcoustic = onAcousticSensingPermissionChange((state) => {
+    if (disposed) return;
+    acoustic = state.permission;
+    uploadAllowed = false;
+    transport.reset();
+    stop();
+    void recheck();
+  });
 
   return {
     dispose() {
       disposed = true;
+      reconciliation += 1;
+      uploadAllowed = false;
+      acoustic = ACOUSTIC_PERMISSION_DENIED;
+      transport.reset();
       stop();
       unsubscribeConsent();
+      unsubscribeAcoustic();
       try {
         sub.remove();
       } catch {

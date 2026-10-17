@@ -139,14 +139,18 @@ import {
   type ToggleableLayerId,
 } from '../../src/features/map/layers/layerModel.ts';
 import {
+  bindMapTelemetryOwner,
+  captureMapTelemetryOwner,
   createFetchTelemetryTransport,
   describeMapObject,
   emitMapEvent,
   endMapSession,
   notifyMapAppStateChange,
   setMapTelemetryTransport,
+  subscribeMapTelemetryOwner,
 } from '../../src/features/map/telemetry/mapTelemetry.ts';
 import { freshToken } from '../../src/services/apiToken.ts';
+import { onAuthChange } from '../../src/services/auth.ts';
 import {
   MAP_OBJECT_KINDS,
   precisionRank,
@@ -393,7 +397,13 @@ async function joinMapObject(
   discovery: 'map' | 'compass',
 ): Promise<void> {
   if (obj.kind !== 'event') return;
+  const telemetryOwner = captureMapTelemetryOwner();
+  if (!telemetryOwner) {
+    Alert.alert('Sign in required', 'Sign in to join this event.');
+    return;
+  }
   const res = await rsvpEvent(rawObjectId(obj.id), 'going');
+  if (!telemetryOwner.isCurrent()) return;
   if (!res.ok) {
     Alert.alert('Could not RSVP', (res as { message?: string }).message ?? 'Please try again.');
     return;
@@ -1340,28 +1350,45 @@ function FullScreenMapScreenInner() {
   }, [mode, machine.mode, cameraCenter]);
 
   // ── §35 telemetry ───────────────────────────────────────────────────────────
-  // Transport is installed once per map session. Without one the emitter keeps
-  // queueing rather than discarding, so boot-time events survive.
+  // Retries survive map unmounts only within the same authenticated owner epoch.
+  const [telemetryOwner, setTelemetryOwner] = useState<ReturnType<typeof captureMapTelemetryOwner>>(null);
   useEffect(() => {
-    setMapTelemetryTransport(
-      createFetchTelemetryTransport({
-        baseUrl: process.env.EXPO_PUBLIC_API_BASE_URL ?? '',
-        getToken: freshToken,
-      }),
-    );
-    const sub = AppState.addEventListener('change', notifyMapAppStateChange);
-    emitMapEvent('map_opened', {
-      entry: entryPoint,
-      mode: machine.mode,
-      zoom: cameraZoom ?? paramZoom,
-      hasTripContext: entityTypes.includes('trips'),
-      hasCrewContext: entityTypes.includes('friends'),
-    });
-    return () => {
-      sub.remove();
-      endMapSession();
+    bindMapTelemetryOwner(userId, onAuthChange);
+    let stopSession: (() => void) | undefined;
+    const startSession = () => {
+      stopSession?.();
+      stopSession = undefined;
+      const owner = captureMapTelemetryOwner(userId);
+      setTelemetryOwner(owner);
+      if (!owner) return;
+      setMapTelemetryTransport(
+        createFetchTelemetryTransport({
+          baseUrl: process.env.EXPO_PUBLIC_API_BASE_URL ?? '',
+          getToken: freshToken,
+        }),
+      );
+      const sub = AppState.addEventListener('change', (state) => {
+        if (owner.isCurrent()) notifyMapAppStateChange(state);
+      });
+      emitMapEvent('map_opened', {
+        entry: entryPoint,
+        mode: machine.mode,
+        zoom: cameraZoom ?? paramZoom,
+        hasTripContext: entityTypes.includes('trips'),
+        hasCrewContext: entityTypes.includes('friends'),
+      });
+      stopSession = () => {
+        sub.remove();
+        if (owner.isCurrent()) void endMapSession();
+      };
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    startSession();
+    const unsubscribe = subscribeMapTelemetryOwner(startSession);
+    return () => {
+      unsubscribe();
+      stopSession?.();
+    };
+  }, [userId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── §28 offline base-map hygiene ─────────────────────────────────────────────
   // "Clearly label stale cached intelligence" applies to cached geography too:
@@ -2180,6 +2207,20 @@ function FullScreenMapScreenInner() {
   // stranding bug the un-gated DELETE route was written to prevent.
   const [locateSessionId, setLocateSessionId] = useState<string | null>(null);
   const [locateStarting, setLocateStarting] = useState(false);
+  const locateEpoch = useRef(0);
+  useEffect(() => {
+    const resetLocateState = () => {
+      locateEpoch.current++;
+      setLocateSessionId(null);
+      setLocateStarting(false);
+    };
+    resetLocateState();
+    const unsubscribe = subscribeMapTelemetryOwner(resetLocateState);
+    return () => {
+      locateEpoch.current++;
+      unsubscribe();
+    };
+  }, [userId]);
   // §12 "temporary and auto-expiring": the session's lifetime is CHOSEN here,
   // not baked in. Defaults to two hours (the length the old frozen chip used)
   // and every offered option is ≤ the server's 12h cap.
@@ -2193,6 +2234,9 @@ function FullScreenMapScreenInner() {
       // server's [1, 720]-minute window never reaches the API. There is no
       // default here — an unusable value is refused, not silently corrected.
       if (!isTtlWithinBound(ttlMinutes)) return;
+      const telemetryOwner = captureMapTelemetryOwner();
+      if (!telemetryOwner) return;
+      const requestEpoch = locateEpoch.current;
       setLocateStarting(true);
       const res = await startLocateFriendsSession({
         groupScopeKind: scope.kind,
@@ -2200,13 +2244,14 @@ function FullScreenMapScreenInner() {
         // §12 "temporary and auto-expiring" — required, never defaulted here.
         ttlMinutes,
       }).catch(() => null);
+      if (!telemetryOwner.isCurrent() || requestEpoch !== locateEpoch.current) return;
       setLocateStarting(false);
       if (!res || !res.ok || !res.data.session) return;
 
       setLocateSessionId(res.data.session.id);
       // §35 crew_locate_started, with the rung ACTUALLY requested after the
       // purpose ceiling was applied — not the one this screen asked for.
-      emitMapEvent('crew_locate_started', {
+      if (telemetryOwner?.isCurrent()) emitMapEvent('crew_locate_started', {
         crewSize: countBucket(0),
         requestedPrecision: res.data.requestedClass,
         ttl: durationBucketMs(ttlMinutes * 60_000),
@@ -2904,7 +2949,7 @@ function FullScreenMapScreenInner() {
         onClose={() => { setContributeObject(null); setArrivalPromptId(null); }}
         onRequestMedia={requestContributionMedia}
         onSubmit={(contribution) => {
-          if (!contributeObject) return;
+          if (!contributeObject || !telemetryOwner?.isCurrent()) return;
           // §38: a submission whose sheet was opened by an arrival carries
           // prompt:'arrival' — the loop's VERIFY step, attributable to the pick
           // the user was routed to. Everything else is a manual 'sheet' open.
@@ -3175,6 +3220,7 @@ function FullScreenMapScreenInner() {
         surface={meetSurface}
         onClose={() => setMeetTarget(null)}
         onRefused={(info) => {
+          if (!telemetryOwner?.isCurrent()) return;
           const subject =
             meetTarget?.kind === 'object' ? describeMapObject(meetTarget.object) : null;
           // Only an object can be refused — a user's own dropped pin always
@@ -3188,6 +3234,7 @@ function FullScreenMapScreenInner() {
           }
         }}
         onCreated={(info) => {
+          if (!telemetryOwner?.isCurrent()) return;
           const subject =
             meetTarget?.kind === 'object' ? describeMapObject(meetTarget.object) : null;
           if (subject) {

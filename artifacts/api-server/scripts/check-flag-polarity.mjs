@@ -970,6 +970,12 @@ const INERT_SEEDED_FLAGS = [
   // using it — it is the vocabulary for the next time a scanner fix surfaces a
   // flag nobody has examined, and removing it would mean re-deciding what that
   // state is called under time pressure.
+  {
+    flag: 'memory_snapshots_enabled', seededIn: '3990_memory_snapshots.sql:7', kind: 'CAPABILITY',
+    disposition: 'owner-decision',
+    reason:
+      'READ IN SQL, NOT TYPESCRIPT (owner decision 2026-10-17). memory_snapshot_private.enabled() at 3990_memory_snapshots.sql:10-17 reads it together with memory_kernel_enabled (FOR SHARE NOWAIT, count = 2 AND bool_and(enabled IS TRUE)), and the prepare, append and read snapshot RPCs call that function (purge deliberately does not, so erasure stays available while the feature is off, as the 3990 seed row states), so the flag is enforced at the transaction boundary and fails closed: an absent row or either flag off means disabled. A redundant TypeScript pre-check was considered and declined: it would change the error order (not_found vs feature_disabled) and add a second, weaker reading of the same switch.',
+  },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1306,6 +1312,16 @@ const DIRECT_READS = [
   { file: 'routes/stamps.ts',                      flag: 'stamp_system_v2_enabled',       reason: `Read directly, error branch ${V}: catch returns 503 feature_not_available, same as the disabled path. Fail-closed.` },
   { file: 'services/passport/UnifiedStampService.ts', flag: 'stamp_unified_view_enabled', reason: `Read directly, error branch ${V}: checks \`error\` → false, legacy counts stay authoritative. Fail-closed.` },
   { file: 'services/trust/TrustEventService.ts',   flag: 'trust_engine_enabled',          reason: `Read directly, error branch ${V}: catch → false. Fail-closed.` },
+  // ── Schema-presence markers: the row says a migration is installed, not that a feature is on (owner-verified 2026-10-17) ──
+  {
+    file: 'services/accountDeletion/accountMediaDeletion.ts', shape: 'var',
+    covers: ['media_caption_translation_enabled', 'media_dubbing_enabled', 'media_derivative_jobs_enabled'],
+    reason: 'markerInstalled() selects only `flag`, never `enabled`: a present row means the Media migration that created the retained table is installed, so its rows must be purged before the account finalises. An error, an undefined body or a row naming another flag throws (unavailable) and the erasure step retries with the request still pending; null means the schema is absent and there is nothing to purge. Fail-closed for erasure. Known limit: an operator who DELETES a marker row makes that purge skip silently. Verified by the owner 2026-10-17.',
+  },
+  { file: 'services/media/DerivedMediaLifecycleService.ts', flag: 'media_derivative_jobs_enabled', reason: 'derivativeSchemaStatus(): schema-presence marker (selects `flag`, not `enabled`). An error or undefined body throws "schema unavailable" and a row naming another flag throws "schema invalid", so derivative erasure retries; null means the derivative schema is absent and there is nothing to purge. Fail-closed for erasure. Verified by the owner 2026-10-17.' },
+  { file: 'services/media/DerivedMediaLifecycleService.ts', flag: 'media_caption_translation_enabled', reason: 'purgeCaptionTranslation(): schema-presence marker (selects `flag`, not `enabled`). An error throws "schema unavailable"; an undefined body or another flag name throws "schema invalid"; null means the translation schema is absent and there is nothing to purge. Fail-closed for erasure. Verified by the owner 2026-10-17.' },
+  { file: 'services/media/RetainedCaptionTranslationReconciler.ts', flag: 'media_caption_translation_enabled', reason: 'Reconciler schema-presence marker (selects `flag`, not `enabled`). An error or undefined body throws "schema unavailable" and another flag name throws "schema invalid", so the cleanup run fails and retries; null returns schemaInstalled:false with nothing scanned. Fail-closed for erasure. Verified by the owner 2026-10-17.' },
+  { file: 'services/memory/resurfacingPolicyCommand.ts', flag: 'memory_resurfacing_policy_enabled', reason: 'writeResurfacingPolicy() gate: an error, a throw, a missing result or a non-boolean `enabled` answers {reason:"unavailable"} (503), never "off"; only an absent row or enabled=false means disabled. Stricter than the shared gates on purpose (resurfacingPolicyCommand.test.ts pins missing/invalid/null enabled -> 503). Fail-closed. Verified by the owner 2026-10-17.' },
   { file: 'services/trust/TrustGamingDetectionService.ts', flag: 'trust_gaming_detection_enabled', reason: `Read directly, error branch ${V}: no try/catch, but checks \`error\` explicitly, logs, and returns false. Fail-closed against a returned error; an outright throw propagates to the caller.` },
 
   // ── Fail-closed, but by a variable INITIALIZED OUTSIDE THE TRY, which is ──

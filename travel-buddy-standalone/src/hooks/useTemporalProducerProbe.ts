@@ -29,8 +29,8 @@
  *
  * ## Cost, and how it is kept small
  *
- * One request per mounted map screen, fired as soon as a position is known and
- * never repeated — a ref latches it, so a moving camera does not re-probe.
+ * One request per enabled interval, fired as soon as a position is known.
+ * A ref latches it, so a moving camera neither cancels nor repeats the probe.
  * `limit: 1` and a viewport a few hundred metres across keep the body near
  * empty; the flag check on the server answers before any of the producers run,
  * which is the case this is actually asking about.
@@ -79,33 +79,39 @@ export function useTemporalProducerProbe(
 ): TemporalProducerProbe {
   const { lat, lng, tz, enabled = true } = args;
   const [probe, setProbe] = useState<TemporalProducerProbe>(null);
-  const firedRef = useRef(false);
+  const requestRef = useRef<{ controller: AbortController } | null>(null);
+
+  useEffect(() => {
+    setProbe(null);
+    return () => {
+      requestRef.current?.controller.abort();
+      requestRef.current = null;
+    };
+  }, [enabled]);
 
   useEffect(() => {
     if (!enabled) return;
-    if (firedRef.current) return;
+    if (requestRef.current) return;
     if (lat == null || lng == null) return;
-    firedRef.current = true;
 
-    const controller = new AbortController();
-    let cancelled = false;
+    const request = { controller: new AbortController() };
+    requestRef.current = request;
     void (async () => {
-      const result = await fetchMapTemporal({
-        bbox: bboxFromCenter(lat, lng, PROBE_RADIUS_KM),
-        zoom: 12,
-        offset: PROBE_OFFSET,
-        tz,
-        limit: 1,
-        signal: controller.signal,
-      });
-      if (!cancelled) setProbe(result);
+      try {
+        const result = await fetchMapTemporal({
+          bbox: bboxFromCenter(lat, lng, PROBE_RADIUS_KM),
+          zoom: 12,
+          offset: PROBE_OFFSET,
+          tz,
+          limit: 1,
+          signal: request.controller.signal,
+        });
+        if (requestRef.current === request) setProbe(result);
+      } catch {
+        if (requestRef.current === request) setProbe({ ok: false });
+      }
     })();
-
-    return () => {
-      cancelled = true;
-      controller.abort();
-    };
   }, [enabled, lat, lng, tz]);
 
-  return probe;
+  return enabled ? probe : null;
 }

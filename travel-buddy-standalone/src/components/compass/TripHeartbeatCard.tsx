@@ -26,6 +26,7 @@ const STATUS_META: Record<TripHeartbeat['status'], { label: string; color: strin
   healthy: { label: 'On track', color: '#16a34a', bg: '#f0fdf4' },
   attention: { label: 'Needs attention', color: '#d97706', bg: '#fffbeb' },
   at_risk: { label: 'At risk', color: '#dc2626', bg: '#fef2f2' },
+  unknown: { label: 'Could not check', color: '#64748b', bg: '#f1f5f9' },
 };
 
 export function TripHeartbeatCard({ tripId }: { tripId: string }) {
@@ -98,7 +99,15 @@ export function TripHeartbeatCard({ tripId }: { tripId: string }) {
   }
   if (!heartbeat) return null;
 
-  const meta = STATUS_META[heartbeat.status] ?? STATUS_META.healthy;
+  const reportedMeta = typeof heartbeat.status === 'string' && Object.prototype.hasOwnProperty.call(STATUS_META, heartbeat.status)
+    ? STATUS_META[heartbeat.status]
+    : STATUS_META.unknown;
+  const incomplete = reportedMeta === STATUS_META.unknown
+    || !Array.isArray(heartbeat.unreadSources)
+    || heartbeat.unreadSources.length > 0
+    || heartbeat.itemCounts == null
+    || heartbeat.pendingProposals == null;
+  const meta = incomplete && reportedMeta === STATUS_META.healthy ? STATUS_META.unknown : reportedMeta;
 
   return (
     <View style={styles.card} testID="trip-heartbeat-card">
@@ -155,7 +164,13 @@ export function TripHeartbeatCard({ tripId }: { tripId: string }) {
         </View>
       ) : null}
 
-      {heartbeat.issues.length === 0 && heartbeat.risks.length === 0 ? (
+      {incomplete ? (
+        <Text style={styles.issueText} testID="trip-heartbeat-incomplete">
+          Some trip information could not be read. This check is incomplete.
+        </Text>
+      ) : null}
+
+      {heartbeat.status === 'healthy' && !incomplete && heartbeat.issues.length === 0 && heartbeat.risks.length === 0 ? (
         <Text style={styles.okText}>No conflicts or risks detected. Everything looks workable.</Text>
       ) : null}
 

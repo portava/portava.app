@@ -19,13 +19,16 @@ import type { CryptoPort } from './threadCrypto.ts';
 /** Single source of truth — see SECURE_KEYS.MLS_PENDING_KEY_PACKAGE. */
 const PENDING_KP_KEY = SECURE_KEYS.MLS_PENDING_KEY_PACKAGE;
 
-export const realCryptoPort: CryptoPort = {
+export const realCryptoPort = {
   isNative,
   hasGroupSession,
   // mlsSession returns { ciphertextB64 } | null; the port speaks in strings so
   // threadCrypto's null-check is the single place a failure is interpreted.
-  encryptForThread: async (threadId, plaintext) =>
-    (await encryptForThread(threadId, plaintext))?.ciphertextB64 ?? null,
+  encryptForThread: async (threadId: string, plaintext: string, assertCurrent?: () => void) => {
+    const result = await encryptForThread(threadId, plaintext, assertCurrent);
+    assertCurrent?.();
+    return result?.ciphertextB64 ?? null;
+  },
   decryptFromThread,
   initGroupAsInitiator,
   initGroupAsRecipient,
@@ -39,4 +42,4 @@ export const realCryptoPort: CryptoPort = {
   getPendingKeyPackageState: () => getSecure(PENDING_KP_KEY),
   setPendingKeyPackageState: async (stateB64: string) => { await setSecure(PENDING_KP_KEY, stateB64); },
   clearPendingKeyPackageState: async () => { await deleteSecure(PENDING_KP_KEY); },
-};
+} satisfies CryptoPort;

@@ -140,7 +140,7 @@ const LEGACY_SIDE = new Set([
 ]);
 
 /** Files that touch the COMMAND kernel's log. */
-const KERNEL_SIDE = new Set([
+const KERNEL_SIDE = new Set([ "migrations/3990_memory_snapshots.sql", "migrations/3992_memory_import_batches.sql", "migrations/3993_owner_resurfacing_policy.sql", "test/MemorySnapshot.pglite.test.ts", "test/memoryImportBatches.pglite.test.ts", "test/memoryImportBatches.postgres.test.ts", "test/resurfacingPolicyCommand.test.ts", "test/resurfacingPolicy.native.test.ts", "test/memoryTimeCorrection.test.ts",
   "migrations/2711_memory_kernel_execute.sql",
   "lib/memoryOutbox.ts",
   "test/memoryCommandKernelFake.ts",
@@ -212,7 +212,7 @@ const KERNEL_SIDE = new Set([
  * point and must survive. The ownership record and this checker necessarily
  * name both as data.
  */
-const BOTH_ALLOWED = new Set([
+const BOTH_ALLOWED = new Set([ "test/MemorySnapshotLockFixture.ts",
   "migrations/2710_memory_command_kernel_tables.sql",
   "lib/memoryTableOwnership.ts",
   "scripts/checkMemoryTableOwnership.ts",

@@ -110,7 +110,7 @@ export function creatorPsqlClient(opts: CreatorPsqlClientOptions = {}): any {
       let limit: number | null = null;
       let offset: number | null = null;
       let single: "none" | "single" | "maybe" = "none";
-      let write: null | { kind: "insert" | "upsert"; rows: any[]; onConflict?: string; ignore?: boolean; many: boolean } = null;
+      let write: null | { kind: "insert" | "upsert" | "update"; rows: any[]; onConflict?: string; ignore?: boolean; many: boolean } = null;
       /** An embed PostgREST would refuse (no such relationship): the statement resolves with its error. */
       let selectError: PgError | null = null;
 
@@ -130,7 +130,14 @@ export function creatorPsqlClient(opts: CreatorPsqlClientOptions = {}): any {
           return { data: single === "none" ? (data ? [data] : []) : data, error: null };
         }
         let result: { data: any; error: PgError | null };
-        if (write) {
+        if (write?.kind === "update") {
+          const payload = write.rows[0];
+          const assignments = Object.entries(payload).map(([column, value]) => `${ident(column)} = ${lit(value)}`);
+          if (!where.length || !assignments.length) throw new Error("psqlClient: update requires filters and assignments");
+          const sql = `UPDATE public.${table} SET ${assignments.join(", ")} WHERE ${where.join(" AND ")}`;
+          log.push({ table, sql });
+          result = runWrite(sql);
+        } else if (write) {
           const keys = [...new Set(write.rows.flatMap((r) => Object.keys(r)))].map(ident);
           const values = write.rows
             .map((r) => `(${keys.map((k) => (k in r ? lit(r[k]) : "DEFAULT")).join(", ")})`)
@@ -179,6 +186,7 @@ export function creatorPsqlClient(opts: CreatorPsqlClientOptions = {}): any {
         eq(col: string, v: unknown) { where.push(`${ident(col)} = ${lit(v)}`); return b; },
         neq(col: string, v: unknown) { where.push(`${ident(col)} <> ${lit(v)}`); return b; },
         lte(col: string, v: unknown) { where.push(`${ident(col)} <= ${lit(v)}`); return b; },
+        gt(column: string, value: unknown) { where.push(`${ident(column)} > ${lit(value)}`); return b; },
         in(col: string, vals: unknown[]) {
           where.push(vals.length === 0 ? "false" : `${ident(col)} IN (${vals.map(lit).join(", ")})`);
           return b;
@@ -192,13 +200,14 @@ export function creatorPsqlClient(opts: CreatorPsqlClientOptions = {}): any {
         single() { single = "single"; return run(); },
         maybeSingle() { single = "maybe"; return run(); },
         insert(p: any) { write = { kind: "insert", rows: Array.isArray(p) ? p : [p], many: Array.isArray(p) }; return b; },
+        update(payload: Record<string, unknown>) { write = { kind: "update", rows: [payload], many: false }; return b; },
         upsert(p: any, o: { onConflict?: string; ignoreDuplicates?: boolean } = {}) {
           write = { kind: "upsert", rows: Array.isArray(p) ? p : [p], onConflict: o.onConflict, ignore: o.ignoreDuplicates, many: Array.isArray(p) };
           return b;
         },
         then(onF: any, onR: any) { return run().then(onF, onR); },
       };
-      for (const op of ["or", "not", "is", "gt", "gte", "lt", "ilike", "update", "delete"]) {
+      for (const op of ["or", "not", "is", "gte", "lt", "ilike", "delete"]) {
         b[op] = () => { throw new Error(`psqlClient: '${op}' is not modelled — add it rather than assume it works`); };
       }
       return b;

@@ -26,7 +26,7 @@ band was uncertainty *about* does not exist.
 
 `checkCensusIntegrity.ts` collects denominator candidates from three patterns and then takes
 the largest (`artifacts/api-server/src/scripts/checkCensusIntegrity.ts:439-442#const candidates: number[] = [];`,
-`artifacts/api-server/src/scripts/checkCensusIntegrity.ts:444#const statedDenominator = uniqueDenoms.length > 0`).
+`artifacts/api-server/src/scripts/checkCensusIntegrity.ts:447#const statedDenominator = uniqueDenoms.length > 0`).
 The third pattern is `/ NNN = <number> %`. In census-discovery it matches exactly one thing
 that is not a requirement count:
 
@@ -223,7 +223,7 @@ Recomputed from `check:census-integrity`'s own per-census rows at `f71cfb85f`:
 
 With 351 out of the candidate set, parsed rows (188) equal the denominator (188), and that is
 the condition under which the headline check fires
-(`artifacts/api-server/src/scripts/checkCensusIntegrity.ts:537#if (r.statedDenominator !== null && parsedTotal === r.statedDenominator && r.statedHeadline) {`).
+(`artifacts/api-server/src/scripts/checkCensusIntegrity.ts:540#if (r.statedDenominator !== null && parsedTotal === r.statedDenominator && r.statedHeadline) {`).
 Measured on the scratch copy, it fires immediately:
 
 > `census-discovery.md: its stated headline is C 101 / W 85 / N 2 / X 0 but its own rows count
@@ -279,7 +279,7 @@ remaining-surfaces re-census own the `census-*.md` files.
   if any target does not in fact cover the obligation, that DSV2 row is a real uncounted
   requirement and the denominator is 189 or more. Each ruling is reviewable in §11.4; this
   document accepts them as stated and did not re-grade them.
-- **The candidate regex changing.** If `artifacts/api-server/src/scripts/checkCensusIntegrity.ts:442#candidates.push(Number(m[1]));` is narrowed so a percentage
+- **The candidate regex changing.** If `artifacts/api-server/src/scripts/checkCensusIntegrity.ts:445#candidates.push(Number(m[1]));` is narrowed so a percentage
   sentence can no longer become a denominator, §1's finding becomes historical rather than
   current — and §7's consequence arrives with it.
 

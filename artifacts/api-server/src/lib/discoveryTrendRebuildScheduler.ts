@@ -28,6 +28,7 @@
 import { getServiceClient, isServiceClientReady } from "./supabase.js";
 import { logger as rootLogger } from "./logger.js";
 import { getFlagRow, isFlagEnabled } from "./featureFlags.js";
+import { unfilteredTrendBlockReason, type TrendProducerPrivacyBlock } from "./discoveryTrendProducerPrivacy.js";
 // The API's freshness bound IS this constant (lib/discoveryTrendExplanation TREND_SNAPSHOT_MAX_AGE_MS = MOMENTUM_CACHE_TTL_MS);
 // imported from its source so the explanation module keeps its one importer (its route).
 import { MOMENTUM_CACHE_TTL_MS as TREND_SNAPSHOT_MAX_AGE_MS } from "./discoveryLocalMomentum.js";
@@ -44,10 +45,13 @@ let _testClient: any | null = null;
 /** Inject a fake client in tests; pass null to restore. */
 export function _setTestClient(sc: any | null): void { _testClient = sc; }
 
+type TrendSnapshotPrune = "retention_off" | "keep_days_unset" | "pruned" | "prune_failed";
+
 export type TrendRebuildTick =
   | { status: "skipped"; reason: "already_running" | "no_client" | "disabled" }
+  | { status: "skipped"; reason: TrendProducerPrivacyBlock; pruned: TrendSnapshotPrune }
   | { status: "failed"; reason: string; pNow: string }
-  | { status: "ran"; pNow: string; written: number | null; pruned: "retention_off" | "keep_days_unset" | "pruned" | "prune_failed" };
+  | { status: "ran"; pNow: string; written: number | null; pruned: TrendSnapshotPrune };
 
 /** The run instant for a tick at `nowMs`: the start of its five-minute boundary. */
 export function rebuildInstant(nowMs: number): string {
@@ -60,6 +64,20 @@ export function keepDaysOf(metadata: Record<string, unknown> | null | undefined)
   return typeof v === "number" && Number.isInteger(v) && v > 0 ? v : null;
 }
 
+async function pruneTrendSnapshots(sc: any, pNow: string): Promise<TrendSnapshotPrune> {
+  if (!(await isFlagEnabled(sc, "discovery_trend_snapshot_retention_enabled"))) return "retention_off";
+  const keep = keepDaysOf((await getFlagRow(sc, "discovery_trend_snapshot_retention_enabled"))?.metadata);
+  if (keep === null) return "keep_days_unset";
+  const before = new Date(Date.parse(pNow) - keep * DAY_MS).toISOString();
+  const places = await sc.from("place_momentum").delete().lt("computed_at", before);
+  const areas = await sc.from("area_momentum").delete().lt("computed_at", before);
+  if (places?.error || areas?.error) {
+    logger.warn({ place: places?.error?.message, area: areas?.error?.message, before }, "DiscoveryTrendRebuildScheduler: retention prune failed");
+    return "prune_failed";
+  }
+  return "pruned";
+}
+
 /** One tick. Exported so a test can drive it without timers. */
 export async function runTrendRebuildTick(nowMs: number = Date.now()): Promise<TrendRebuildTick> {
   if (_running) return { status: "skipped", reason: "already_running" };
@@ -68,7 +86,13 @@ export async function runTrendRebuildTick(nowMs: number = Date.now()): Promise<T
   _running = true;
   try {
     if (!(await isFlagEnabled(sc, "discovery_trend_rebuild_scheduler_enabled"))) return { status: "skipped", reason: "disabled" };
+    const privacyBlock = await unfilteredTrendBlockReason(sc);
     const pNow = rebuildInstant(nowMs);
+    if (privacyBlock) {
+      const pruned = await pruneTrendSnapshots(sc, pNow);
+      logger.info({ pNow, reason: privacyBlock, pruned }, "DiscoveryTrendRebuildScheduler: rebuild withheld");
+      return { status: "skipped", reason: privacyBlock, pruned };
+    }
     const { data, error } = await sc.rpc("rebuild_place_momentum", { p_now: pNow });
     if (error) {
       logger.warn({ code: error?.code, message: error?.message, pNow }, "DiscoveryTrendRebuildScheduler: rebuild failed");
@@ -76,20 +100,7 @@ export async function runTrendRebuildTick(nowMs: number = Date.now()): Promise<T
     }
     const written = typeof data === "number" ? data : null;
 
-    let pruned: "retention_off" | "keep_days_unset" | "pruned" | "prune_failed" = "retention_off";
-    if (await isFlagEnabled(sc, "discovery_trend_snapshot_retention_enabled")) {
-      const keep = keepDaysOf((await getFlagRow(sc, "discovery_trend_snapshot_retention_enabled"))?.metadata);
-      if (keep === null) pruned = "keep_days_unset";
-      else {
-        const before = new Date(Date.parse(pNow) - keep * DAY_MS).toISOString();
-        const a = await sc.from("place_momentum").delete().lt("computed_at", before);
-        const b = await sc.from("area_momentum").delete().lt("computed_at", before);
-        if (a?.error || b?.error) {
-          logger.warn({ place: a?.error?.message, area: b?.error?.message, before }, "DiscoveryTrendRebuildScheduler: retention prune failed");
-          pruned = "prune_failed";
-        } else pruned = "pruned";
-      }
-    }
+    const pruned = await pruneTrendSnapshots(sc, pNow);
     logger.info({ pNow, written, pruned }, "DiscoveryTrendRebuildScheduler: run stored");
     return { status: "ran", pNow, written, pruned };
   } finally {

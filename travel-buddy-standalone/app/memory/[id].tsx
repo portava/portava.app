@@ -268,7 +268,7 @@ export default function MemoryDetailScreen() {
           <View>
             {items.map((item) => (
               <View key={item.id} style={s.mediaItem}>
-                {item.mediaUrl ? (
+                {isOwner && (item.mediaType === 'video' || item.mediaType?.startsWith('video/')) && item.mediaUrl ? <MemoryVideoSegments ownerId={memory.ownerId} memoryId={memory.id} itemId={item.id} uri={item.mediaUrl} style={s.mediaImage} /> : item.mediaUrl ? (
                   <CachedImage
                     source={{ uri: item.mediaUrl }}
                     style={s.mediaImage}
@@ -376,6 +376,7 @@ export default function MemoryDetailScreen() {
           </View>
 
           {/* Like / save / share (HM-F09, HM-F13), people (HM-F12), own history (HM-F11) */}
+          {userId && isOwner && memory.id === id ? <MemoryResurfacingControl ownerId={userId} memoryId={id} /> : null}
           <MemorySocialBar memory={memory} isOwner={isOwner} />
           {/* §14 Executable Memories: Do this again / Add to trip / Take me back, compiled against the world now */}
           <MemoryActionBar memoryId={memory.id} autoAction={isAutoAction(requestedAction) ? requestedAction : null} />
@@ -493,3 +494,5 @@ import { MemoryParticipantsSection, MemoryTagConsentFallback } from '../../src/f
 import { MemoryBrowseLinks } from '../../src/features/memories/social/MemoryBrowseLinks.tsx';
 import type { MemoryWithParticipants } from '../../src/services/memorySocial.ts';
 import { MemoryActionBar, isAutoAction } from '../../src/features/memories/actions/MemoryActionBar.tsx';
+import { MemoryVideoSegments } from '../../src/features/memories/MemoryVideoSegments.tsx';
+import { MemoryResurfacingControl } from '../../src/features/memories/MemoryResurfacingControl.tsx';

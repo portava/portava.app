@@ -123,6 +123,36 @@ const GOLDEN = {
 const byId = (body: any) => new Map<string, any>((body.items as any[]).map((it) => [it.submittedBy?.id, it.submittedBy]));
 
 describe("C19 — the community byline's canonical shape, behind a FALSE flag", () => {
+  it("does not permit HTTP caching of viewer-specific or anonymous bylines", async () => {
+    for (const enabled of [false, true]) {
+      use(world([flag(FLAG, enabled)]));
+      for (const token of [TOKEN, null]) {
+        const response = await fetch(`${base}/discovery/community?city=Miami&limit=50`, {
+          headers: token ? { authorization: `Bearer ${token}` } : {},
+        });
+        assert.equal(response.status, 200);
+        const body = await response.json();
+        assert.equal(byId(body).get(VIEWER).displayName, token ? "Vera Viewer" : null);
+        assert.equal(response.headers.get("cache-control"), "private, no-store");
+        assert.ok(response.headers.get("vary")?.toLowerCase().split(/,\s*/).includes("authorization"));
+      }
+    }
+  });
+
+  it("rechecks revoked name consent and withholds other names when the privacy read fails", async () => {
+    const current = world([flag(FLAG, true)]);
+    use(current);
+    assert.equal(byId(await community(TOKEN)).get(OPTED).displayName, "Otto Opted");
+    current.tables.profile_privacy_settings = [];
+    assert.equal(byId(await community(TOKEN)).get(OPTED).displayName, null);
+    current.tables.profile_privacy_settings = [{ user_id: OPTED, show_real_name: true }];
+    current.errorOps.add("profile_privacy_settings.select");
+    const by = byId(await community(TOKEN));
+    assert.equal(by.get(OPTED).name, null);
+    assert.equal(by.get(OPTED).displayName, null);
+    assert.equal(by.get(VIEWER).displayName, "Vera Viewer");
+  });
+
   it("G0 flag ABSENT: the served body is the golden captured before §94, for a signed-in and an anonymous viewer", async () => {
     use(world([]));
     const signedIn = normalized(await community(TOKEN));

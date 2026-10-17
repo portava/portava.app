@@ -491,6 +491,32 @@ describe("transform parameters are bounded, and the two handlers agree", () => {
  *     never put in a response body.
  *   routes/adminMedia.ts — signs for 300s behind `requireAdmin` to HEAD the
  *     object for its size and dimensions. The URL is never put in a response.
+ *
+ * Four WORKER-ACQUISITION sites (2026-10-16) sign so a server-side worker can
+ * download the canonical bytes it is about to process. In each, the URL lives
+ * only in a local, is fetched with `redirect: "error"` by the same function,
+ * and is never returned, logged or put in a response; every failure throws a
+ * fixed string. What authorizes each one is a canonical-row re-check, not a
+ * viewer — there is no viewer:
+ *   lib/media/adaptive/service.ts — downloadAdaptiveSource signs for 60s the
+ *     (bucket, path) of a job whose source processJob's current()
+ *     (service.ts:97-110) re-proves right before the download: lease held,
+ *     flag on, sameSource(canonicalSource(…)) — canonical.ts:11-25: ready,
+ *     approved, not deleted/purged, post-media, path under the owner's folder; it refuses a URL off config.storageOrigin (service.ts:16)
+ *     and streams into a 0600 staging file.
+ *   lib/media/imageVariants/canonical.ts — createImageVariantsAcquirer signs
+ *     for 15s only after access.current(source) re-reads the canonical row and
+ *     the owner's account (canonical.ts:38-48, :63), refuses a URL whose origin
+ *     or object path differs (:69-70), and re-checks the row after reading.
+ *   lib/media/vendors/imageUnderstandingPixels.ts — readImageUnderstandingStorageBytes
+ *     signs for 15s between two beforeRead() calls, which runImageUnderstandingJob
+ *     wires to assertImageUnderstandingSource (flag, active owner, published post,
+ *     matching post_media and media_assets rows, owner consent); refuses a URL off
+ *     the pinned origin or object path (:72).
+ *   lib/media/visualIndex/canonicalImageAcquisition.ts — signs for 15s between
+ *     two check() calls (flag, active owner, canonical row, unexpired visual
+ *     consent grant; :67-83), refuses a URL off the pinned origin or object
+ *     path (:89-90), and re-checks before returning the bytes.
  * `authorizes: "mediaAccess"` is the only value that may hand the URL to a
  * caller, and this test asserts those files import the guard.
  */
@@ -498,6 +524,10 @@ const SIGNING_SITES: ReadonlySet<string> = new Set([
   "routes/mediaFile.ts",
   "routes/postcards.ts",
   "routes/adminMedia.ts",
+  "lib/media/adaptive/service.ts",
+  "lib/media/imageVariants/canonical.ts",
+  "lib/media/vendors/imageUnderstandingPixels.ts",
+  "lib/media/visualIndex/canonicalImageAcquisition.ts",
 ]);
 const RELAY_FILES: ReadonlySet<string> = new Set(["routes/mediaFile.ts"]);
 

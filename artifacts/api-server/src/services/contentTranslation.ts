@@ -17,6 +17,7 @@ import {
   TRANSLATION_TIMEOUT_MS,
   languageDisplayName,
   validateTranslation,
+  translatePreservingEntities,
 } from '../lib/translation';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -68,7 +69,7 @@ async function translateWithRetry(
   let lastErr: unknown;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      return await withTimeout(prov.translateText(text, source, target), TRANSLATION_TIMEOUT_MS);
+      return await withTimeout(translatePreservingEntities(prov, text, source, target), TRANSLATION_TIMEOUT_MS);
     } catch (e) {
       lastErr = e;
     }

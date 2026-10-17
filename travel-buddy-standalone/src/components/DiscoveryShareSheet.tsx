@@ -5,7 +5,7 @@
  * The user picks a recent thread and optionally adds a caption.
  * Sends the card as msgType='system', subtype='discovery_card'.
  */
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -35,6 +35,9 @@ import { getMyThreads, sendMessage, openDirectThread } from '../services/messagi
 import type { ThreadSummary } from '../services/messaging.ts';
 import { searchUsers } from '../services/follows.ts';
 import type { TravelerSearchResult } from '../services/follows.ts';
+import { useInputAccountEpoch } from '../platform/input-assistance/hooks/useInputAccountEpoch.ts';
+import { createInputRequestScheduler } from '../platform/input-assistance/services/inputRequestScheduler.ts';
+import { currentDiscoveryScope, isCurrentDiscoveryScope } from '../services/discoveryViewerScope.ts';
 
 export interface DiscoverySharePayload {
   sourceId: string;
@@ -127,69 +130,104 @@ export function DiscoveryShareSheet({ visible, item, onClose }: Props) {
   // Search
   const [threadSearch, setThreadSearch] = useState('');
   const [userResults, setUserResults] = useState<TravelerSearchResult[]>([]);
-  const [searchingUsers, setSearchingUsers] = useState(false); const [userSearchFailed, setUserSearchFailed] = useState(false); const userSearchSeqRef = useRef(0); // census-discovery §106 (tm-people): the last people search's read failed; the generation of the latest search
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [searchingUsers, setSearchingUsers] = useState(false);
+  const [userSearchFailed, setUserSearchFailed] = useState(false);
+  const accountEpoch = useInputAccountEpoch();
+  const context = useMemo(() => ({ active: false, scope: currentDiscoveryScope() }), [visible, accountEpoch, item?.sourceId, item?.sourceType]);
+  const currentContext = useRef(context);
+  const scheduler = useMemo(createInputRequestScheduler, []);
+  const actionVersionRef = useRef(0);
+  const actionVersion = actionVersionRef.current;
+  const sendingRef = useRef(false);
+  const isCurrent = () => context.active && currentContext.current === context && isCurrentDiscoveryScope(context.scope);
+  const isCurrentAction = () => isCurrent() && actionVersion === actionVersionRef.current;
 
-  useEffect(() => {
-    if (!visible) return;
-    setSelectedId(null);
-    setCaption('');
+  function resetSearch() {
+    actionVersionRef.current++;
+    scheduler.cancel();
     setThreadSearch('');
     setUserResults([]);
-    setLoadingThreads(true);
-    getMyThreads()
-      .then((res) => {
-        if (res.ok && res.data) {
-          setThreads(res.data.threads.slice(0, 15));
-        }
-      })
-      .catch(() => {})
-      .finally(() => setLoadingThreads(false));
-  }, [visible]);
+    setSearchingUsers(false);
+    setUserSearchFailed(false);
+    setSelectedId(null);
+    sendingRef.current = false;
+    setSending(false);
+  }
 
-  // Reset search state when sheet closes
-  useEffect(() => {
-    if (!visible) {
-      if (debounceRef.current) clearTimeout(debounceRef.current); userSearchSeqRef.current++; setUserSearchFailed(false); // a closed sheet takes no late answer
-      setThreadSearch('');
-      setUserResults([]);
+  function handleClose() {
+    if (!isCurrent()) return;
+    context.active = false;
+    resetSearch();
+    setThreads([]);
+    onClose();
+  }
+
+  useLayoutEffect(() => {
+    let active = true;
+    const isCurrentHydration = () => active && isCurrent();
+    currentContext.current = context;
+    context.active = visible;
+    resetSearch();
+    setCaption('');
+    setThreads([]);
+    setLoadingThreads(visible);
+    if (visible) {
+      getMyThreads()
+        .then((res) => {
+          if (isCurrentHydration() && res.ok && res.data) setThreads(res.data.threads.slice(0, 15));
+        })
+        .catch(() => {})
+        .finally(() => { if (isCurrentHydration()) setLoadingThreads(false); });
     }
-  }, [visible]);
+    return () => {
+      active = false;
+      context.active = false;
+      scheduler.cancel();
+    };
+  }, [context]);
 
   function handleSearchChange(text: string) {
-    setThreadSearch(text); const seq = ++userSearchSeqRef.current; setUserSearchFailed(false); // a new query: whatever is in flight answers a question no longer asked
-    setSelectedId(null);
-
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-
-    if (!text.trim()) {
-      setUserResults([]);
-      setSearchingUsers(false);
-      return;
-    }
-
-    debounceRef.current = setTimeout(async () => {
-      setSearchingUsers(true);
+    if (!isCurrent()) return;
+    resetSearch();
+    setThreadSearch(text);
+    if (!text.trim()) return;
+    setSearchingUsers(true);
+    scheduler.schedule(async (request) => {
+      const isCurrentRequest = () => isCurrent() && request.isCurrent();
+      if (!isCurrentRequest()) return;
       try {
-        const res = await searchUsers(text.trim(), 10); if (seq !== userSearchSeqRef.current) return; // only the latest request writes the People section
+        const res = await searchUsers(text.trim(), 10, { ...request, isCurrent: isCurrentRequest, scope: context.scope });
+        if (!isCurrentRequest()) return;
         if (res.ok && res.data) {
           setUserResults(res.data);
         } else {
-          setUserResults([]); setUserSearchFailed(true); // a failed read is not "No people found"
+          setUserResults([]);
+          setUserSearchFailed(true);
         }
       } catch {
-        if (seq === userSearchSeqRef.current) { setUserResults([]); setUserSearchFailed(true); }
+        if (isCurrentRequest()) {
+          setUserResults([]);
+          setUserSearchFailed(true);
+        }
       } finally {
-        if (seq === userSearchSeqRef.current) setSearchingUsers(false);
+        if (isCurrentRequest()) setSearchingUsers(false);
       }
     }, 350);
   }
 
+  function selectThread(thread: ThreadSummary) {
+    if (!isCurrentAction() || sendingRef.current || !threads.includes(thread) || selectedId === thread.id) return;
+    actionVersionRef.current++;
+    setSelectedId(thread.id);
+  }
+
   async function handleUserResultPress(user: TravelerSearchResult) {
-    if (!item) return;
+    if (!item || !isCurrentAction() || sendingRef.current || !userResults.includes(user)) return;
+    sendingRef.current = true;
     setSending(true);
     try {
       const threadRes = await openDirectThread(user.id);
+      if (!isCurrentAction()) return;
       if (!threadRes.ok || !threadRes.data) {
         Alert.alert('Could not send', 'Could not open a chat with this user. Please try again.');
         return;
@@ -210,16 +248,20 @@ export function DiscoveryShareSheet({ visible, item, onClose }: Props) {
         msgType: 'system',
         subtype: 'discovery_card',
       });
+      if (!isCurrentAction()) return;
       if (msgRes.ok) {
-        onClose();
+        handleClose();
         Alert.alert('Sent!', 'Discovery place shared to your chat.');
       } else {
         Alert.alert('Could not send', 'Something went wrong. Please try again.');
       }
     } catch {
-      Alert.alert('Could not send', 'Something went wrong. Please try again.');
+      if (isCurrentAction()) Alert.alert('Could not send', 'Something went wrong. Please try again.');
     } finally {
-      setSending(false);
+      if (isCurrentAction()) {
+        sendingRef.current = false;
+        setSending(false);
+      }
     }
   }
 
@@ -239,7 +281,8 @@ export function DiscoveryShareSheet({ visible, item, onClose }: Props) {
   const isSearchActive = threadSearch.trim().length > 0;
 
   async function handleSend() {
-    if (!selectedId || !item) return;
+    if (!selectedId || !item || !isCurrentAction() || sendingRef.current || !threads.some(thread => thread.id === selectedId)) return;
+    sendingRef.current = true;
     setSending(true);
     try {
       const payload = {
@@ -258,23 +301,27 @@ export function DiscoveryShareSheet({ visible, item, onClose }: Props) {
         JSON.stringify(payload),
         { msgType: 'system', subtype: 'discovery_card' },
       );
+      if (!isCurrentAction()) return;
       if (res.ok) {
-        onClose();
+        handleClose();
         Alert.alert('Sent!', 'Discovery place shared to your chat.');
       } else {
         Alert.alert('Could not send', 'Something went wrong. Please try again.');
       }
     } catch {
-      Alert.alert('Could not send', 'Something went wrong. Please try again.');
+      if (isCurrentAction()) Alert.alert('Could not send', 'Something went wrong. Please try again.');
     } finally {
-      setSending(false);
+      if (isCurrentAction()) {
+        sendingRef.current = false;
+        setSending(false);
+      }
     }
   }
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={handleClose}>
       <KeyboardSafeScrollView style={{ justifyContent: 'flex-end' }}>
-      <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+      <Pressable style={StyleSheet.absoluteFill} onPress={handleClose} />
       <View style={s.sheet}>
         <View style={s.handle} />
 
@@ -286,7 +333,7 @@ export function DiscoveryShareSheet({ visible, item, onClose }: Props) {
             </View>
             <Text style={s.title}>Share to Telegraph</Text>
           </View>
-          <Pressable onPress={onClose} hitSlop={8}>
+          <Pressable onPress={handleClose} hitSlop={8}>
             <X size={18} color={color.mute} />
           </Pressable>
         </View>
@@ -345,7 +392,7 @@ export function DiscoveryShareSheet({ visible, item, onClose }: Props) {
             style={s.newThreadRow}
             onPress={() => {
               // BUG CC/CD fix: defer navigation until after the sheet close animation.
-              closeThenNavigate(onClose, '/(tabs)/messages');
+              closeThenNavigate(handleClose, '/(tabs)/messages');
             }}
           >
             <View style={s.newThreadIcon}>
@@ -377,7 +424,7 @@ export function DiscoveryShareSheet({ visible, item, onClose }: Props) {
                 <ThreadRow
                   thread={thread}
                   selected={selectedId === thread.id}
-                  onPress={() => setSelectedId(thread.id)}
+                  onPress={() => selectThread(thread)}
                 />
               )}
               ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: color.haze }} />}
@@ -396,7 +443,7 @@ export function DiscoveryShareSheet({ visible, item, onClose }: Props) {
                 <ThreadRow
                   thread={thread}
                   selected={selectedId === thread.id}
-                  onPress={() => setSelectedId(thread.id)}
+                  onPress={() => selectThread(thread)}
                 />
                 {i < filteredThreads.length - 1 && (
                   <View style={{ height: 1, backgroundColor: color.haze }} />

@@ -207,7 +207,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
     }, [destination, compass.refresh]),
   );
 
-  const community = useCommunityDiscovery(destination ?? null, sortBy);
+  const community = useCommunityDiscovery(destination ?? null, sortBy, railRefreshKey);
 
   // All OSM/Compass items + community places unified for DiscoveryMapView.
   const mapPlaces = useMemo<DiscoveryPlace[]>(() => {

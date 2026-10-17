@@ -38,12 +38,20 @@ const NOW = Date.parse("2026-09-27T12:03:17Z");
 const H = 3_600_000;
 
 // ── S: the scheduler ────────────────────────────────────────────────────────
-function schedDb(flags: Record<string, { enabled: boolean; metadata?: unknown } | "error">, rpc: { data?: unknown; error?: unknown } = { data: 7 }) {
+function schedDb(
+  flags: Record<string, { enabled: boolean; metadata?: unknown } | "error">,
+  rpc: { data?: unknown; error?: unknown } = { data: 7 },
+  zonePolicy: { data: unknown; error: unknown } = { data: [], error: null },
+) {
   const calls: string[] = [];
   return {
     calls,
     rpc(name: string, args: Record<string, unknown>) { calls.push(`rpc:${name}:${String(args["p_now"])}`); return Promise.resolve({ data: rpc.data ?? null, error: rpc.error ?? null }); },
     from(table: string) {
+      if (table === "protected_zones") {
+        const policy = { select: () => policy, eq: () => policy, limit: async () => zonePolicy };
+        return policy;
+      }
       let flag = ""; let op = "select";
       const b: any = {
         select() { return b; },
@@ -114,6 +122,45 @@ describe("S — DC-07: the rebuild scheduler", () => {
     assert.deepEqual(await runTrendRebuildTick(NOW), { status: "failed", reason: "42883", pNow: "2026-09-27T12:00:00.000Z" });
     assert.ok(!db.calls.some((c) => c.startsWith("delete:")));
   });
+
+  for (const mode of ["active", "unreadable"] as const) {
+    const zonePolicy = mode === "active" ? { data: [{ id: "protected-place" }], error: null }
+      : { data: null, error: { code: "57014" } };
+    const reason = mode === "active" ? "protected_zone_filter_required" : "protected_zone_policy_unreadable";
+
+    it(`S7. ${mode} zone policy blocks rebuilding without blocking approved retention`, async () => {
+      const db = schedDb({
+        discovery_trend_rebuild_scheduler_enabled: { enabled: true },
+        discovery_trend_snapshot_retention_enabled: { enabled: true, metadata: { keep_days: 30 } },
+      }, undefined, zonePolicy);
+      _setTestClient(db);
+      assert.deepEqual(await runTrendRebuildTick(NOW), { status: "skipped", reason, pruned: "pruned" });
+      assert.deepEqual(db.calls, [
+        "delete:place_momentum:computed_at<2026-08-28T12:00:00.000Z",
+        "delete:area_momentum:computed_at<2026-08-28T12:00:00.000Z",
+      ]);
+    });
+
+    it(`S7. ${mode} zone policy does not authorize retention or enable a disabled scheduler`, async () => {
+      for (const retention of [undefined, "error", { enabled: false, metadata: { keep_days: 30 } },
+        { enabled: true }, { enabled: true, metadata: { keep_days: 0 } }, { enabled: true, metadata: { keep_days: 1.5 } }] as const) {
+        const db = schedDb({
+          discovery_trend_rebuild_scheduler_enabled: { enabled: true },
+          ...(retention === undefined ? {} : { discovery_trend_snapshot_retention_enabled: retention }),
+        }, undefined, zonePolicy);
+        _setTestClient(db);
+        assert.equal((await runTrendRebuildTick(NOW)).status, "skipped");
+        assert.deepEqual(db.calls, []);
+      }
+      const disabled = schedDb({
+        discovery_trend_rebuild_scheduler_enabled: { enabled: false },
+        discovery_trend_snapshot_retention_enabled: { enabled: true, metadata: { keep_days: 30 } },
+      }, undefined, zonePolicy);
+      _setTestClient(disabled);
+      assert.deepEqual(await runTrendRebuildTick(NOW), { status: "skipped", reason: "disabled" });
+      assert.deepEqual(disabled.calls, []);
+    });
+  }
 
   it("S6. the API server starts it (one call site)", () => {
     const idx = readFileSync(join(SRC, "index.ts"), "utf8");

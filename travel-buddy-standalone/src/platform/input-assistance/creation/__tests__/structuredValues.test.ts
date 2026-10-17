@@ -78,3 +78,15 @@ test('a length needs a start: none → no patch (not offered); with one → end 
     { endDateStr: '2026-10-10', endTime: '01:00' },
   );
 });
+
+test('event-time application preserves explicit dates, same-day clocks and missing or invalid dates', () => {
+  const overnight = { kind: 'event_time' as const, date: null, startTime: '22:00', endDate: null, endTime: '02:00' };
+  assert.deepEqual(eventFormPatch({ ...overnight, endDate: '2030-06-09' }, { ...EMPTY, startDateStr: '2030-06-07' }),
+    { startTime: '22:00', endTime: '02:00', endDateStr: '2030-06-09' });
+  assert.deepEqual(eventFormPatch({ ...overnight, startTime: '10:00', endTime: '14:00' }, { ...EMPTY, startDateStr: '2030-06-07' }),
+    { startTime: '10:00', endTime: '14:00', endDateStr: '2030-06-07' });
+  for (const startDateStr of ['', 'not a date', '2026-02-30']) {
+    assert.deepEqual(eventFormPatch(overnight, { ...EMPTY, startDateStr }),
+      { startTime: '22:00', endTime: '02:00', endDateStr: startDateStr });
+  }
+});

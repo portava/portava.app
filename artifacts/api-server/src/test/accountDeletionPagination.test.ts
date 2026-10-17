@@ -72,6 +72,7 @@ interface Op {
   range?: [number, number];
   limit?: number;
   paths?: string[];
+  values?: Record<string, unknown>;
 }
 
 /**
@@ -100,7 +101,7 @@ function makeClient(opts: {
    */
   ignoreRange?: string[];
 } = {}) {
-  const rows: Record<string, any[]> = { posts: [], ...(opts.rows ?? {}) };
+  const rows: Record<string, any[]> = { posts: [], ...structuredClone(opts.rows ?? {}) };
   const fail = opts.fail ?? {};
   const failFromPage = opts.failFromPage ?? {};
   const ignoreRange = new Set(opts.ignoreRange ?? []);
@@ -117,6 +118,13 @@ function makeClient(opts: {
       if (f[0] === "eq" && row[f[1]] !== f[2]) return false;
       if (f[0] === "in" && !(f[2] as any[]).includes(row[f[1]])) return false;
       if (f[0] === "neq" && row[f[1]] === f[2]) return false;
+      if (f[0] === "is" && row[f[1]] !== f[2]) return false;
+      if (f[0] === "gt" && !(row[f[1]] > f[2])) return false;
+      if (f[0] === "lte" && !(row[f[1]] <= f[2])) return false;
+      if (f[0] === "or" && !String(f[1]).split(",").some(part => {
+        const [column, operator, value] = part.split(".");
+        return operator === "eq" && row[column!] === value;
+      })) return false;
     }
     return true;
   }
@@ -130,12 +138,14 @@ function makeClient(opts: {
       _limit: undefined as number | undefined,
       _range: undefined as [number, number] | undefined,
       _ordered: false,
-      select() { q._op = "select"; return q; },
+      select() { return q; },
       delete() { q._op = "delete"; return q; },
       update(v: any) { q._op = "update"; q._values = v; return q; },
       upsert(v: any) { q._op = "upsert"; q._values = v; return q; },
       insert(v: any) { q._op = "insert"; q._values = v; return q; },
       eq(c: string, v: any) { q._filters.push(["eq", c, v]); return q; },
+      is(column: string, value: unknown) { q._filters.push(["is", column, value]); return q; },
+      gt(column: string, value: unknown) { q._filters.push(["gt", column, value]); return q; },
       neq(c: string, v: any) { q._filters.push(["neq", c, v]); return q; },
       not(c: string, op: string, v: any) { q._filters.push(["not", c, op, v]); return q; },
       lte(c: string, v: any) { q._filters.push(["lte", c, v]); return q; },
@@ -155,6 +165,7 @@ function makeClient(opts: {
           table,
           op: q._op,
           filters: q._filters,
+          values: q._values,
           ...(q._range ? { range: q._range } : {}),
           ...(q._limit != null ? { limit: q._limit } : {}),
         });
@@ -162,7 +173,7 @@ function makeClient(opts: {
         if (failFromPage[key] != null && page >= failFromPage[key]) {
           return Promise.resolve({ data: null, error: { message: `${key}: page ${page} exploded` } });
         }
-        if (q._op !== "select") return Promise.resolve({ data: null, error: null });
+        if (q._op !== "select" && !["media_assets", "user_deletion_requests", "profiles"].includes(table)) return Promise.resolve({ data: null, error: null });
 
         if (ignoreRange.has(table)) {
           // The pathological backend: a full page, forever, whatever we asked for.
@@ -174,6 +185,13 @@ function makeClient(opts: {
         if (q._ordered) data = [...data].sort((a, b) => String(a?.id ?? "").localeCompare(String(b?.id ?? "")));
         if (q._range) data = data.slice(q._range[0], q._range[1] + 1);
         else if (q._limit != null) data = data.slice(0, q._limit);
+        if (q._op === "update") for (const row of data) {
+          Object.assign(row, q._values);
+          if (table === "media_assets") row.version += 3;
+        }
+        if (q._op === "delete") rows[table] = rows[table]!.filter(row => !data.includes(row));
+        if (q._single && data.length > 1) return Promise.resolve({ data: null, error: { message: "Multiple rows" } });
+        data = structuredClone(data);
         if (q._single) return Promise.resolve({ data: data.length > 0 ? data[0] : null, error: null });
         return Promise.resolve({ data, error: null });
       },
@@ -183,6 +201,7 @@ function makeClient(opts: {
 
   return {
     _ops: ops,
+    _rows: rows,
     _reads: readCount,
     _storageRemoved: storageRemoved,
     _authDeleted: authDeleted,
@@ -283,21 +302,21 @@ describe("account deletion — collection pages through every row", () => {
   });
 
   it("pages EVERY set-returning collection step, not just the one under test", async () => {
-    // The structural claim: one shared pager, used by all of them. Each table
-    // gets more rows than a single page holds; each step must report the full
-    // count. A step that slipped back to an unpaginated read reports
-    // COLLECTION_PAGE_SIZE here and nothing else changes.
     const N = COLLECTION_PAGE_SIZE + 11;
     const idx = Array.from({ length: N }, (_, i) => i);
     const memoryIds = idx.map((i) => seqId("mem", i));
     const c = makeClient({
       rows: {
+        profiles: [{ id: USER_ID, account_status: "deletion_pending", avatar_url: null, cover_photo_url: null }],
+        user_deletion_requests: [{ user_id: USER_ID, status: "pending" }],
         post_media: idx.map((i) => ({
           id: seqId("pm", i), user_id: USER_ID,
           storage_bucket: POST_MEDIA_BUCKET, storage_path: `${USER_ID}/pm-${i}.jpg`,
         })),
         media_assets: idx.map((i) => ({
-          id: seqId("ma", i), owner_user_id: USER_ID,
+          id: `33333333-3333-4333-8333-${String(i).padStart(12, "0")}`, owner_user_id: USER_ID, uploader_user_id: null,
+          version: 4, thumbnail_path: null, media_type: "image", size_bytes: 128, deleted_at: null,
+          updated_at: "2026-10-16T00:00:00.000Z", moderation_status: "approved", processing_status: "ready", purge_status: "not_requested",
           storage_bucket: POST_MEDIA_BUCKET, storage_path: `${USER_ID}/ma-${i}.jpg`,
         })),
         memories: memoryIds.map((id) => ({ id, owner_id: USER_ID })),
@@ -328,12 +347,44 @@ describe("account deletion — collection pages through every row", () => {
       },
     });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: "admin-1" });
+    const outcomes = [];
+    const removedPerRun = [];
+    for (let pass = 0; pass < Math.ceil(N / 100); pass += 1) {
+      const before = c._rows.media_assets!.length;
+      const outcome = await executeAccountDeletion(c, USER_ID, { actorId: "admin-1" });
+      outcomes.push(outcome);
+      const remaining = c._rows.media_assets!.length;
+      removedPerRun.push(before - remaining);
+      assert.equal(before - remaining, Math.min(100, before), "each run must make bounded, distinct source progress");
+      if (remaining > 0) {
+        assert.equal(outcome.ok, false, "unprocessed Media must keep this run retryable");
+        assert.equal(c._rows.user_deletion_requests![0].status, "pending");
+        assert.equal(c._rows.user_deletion_requests![0].user_id, USER_ID);
+        assert.equal(c._rows.profiles![0].account_status, "deletion_pending");
+        assert.deepEqual(c._authDeleted, []);
+        assert.equal(stepOf(outcome, "erase_canonical_account_media").ok, false);
+        assert.ok(outcome.warnings.some(warning => warning.includes("Media cleanup unconfirmed")));
+        assert.equal(c._ops.filter(operation => operation.table === "profiles" && operation.op === "update").length, 0);
+      }
+    }
+    const out = outcomes.at(-1)!;
     assert.equal(out.ok, true, JSON.stringify(out.steps));
+    assert.deepEqual(removedPerRun, [100, 100, 100, 100, 100, 11]);
+    assert.equal(c._rows.media_assets!.length, 0);
+    assert.equal(c._rows.user_deletion_requests![0].status, "completed");
+    assert.equal(c._rows.user_deletion_requests![0].user_id, null);
+    assert.deepEqual(c._authDeleted, [USER_ID]);
+    assert.equal(stepOf(out, "erase_canonical_account_media").count, 11);
+    const canonicalDeletes = c._ops.filter(operation => operation.table === "media_assets" && operation.op === "delete");
+    assert.equal(canonicalDeletes.length, N);
+    assert.equal(new Set(canonicalDeletes.map(operation => operation.filters!.find(filter => filter[0] === "eq" && filter[1] === "id")[2])).size, N);
+    for (const operation of canonicalDeletes) {
+      assert.ok(operation.filters!.some(filter => filter[0] === "eq" && filter[1] === "version" && filter[2] === 10));
+      assert.ok(operation.filters!.some(filter => filter[0] === "eq" && filter[1] === "purge_status" && filter[2] === "completed"));
+    }
 
     for (const name of [
       "collect_post_media_paths",
-      "collect_media_asset_paths",
       "collect_memory_media_paths",
       "collect_intel_evidence_paths",
       "collect_story_media_paths",

@@ -36,7 +36,7 @@ export function TranslationToggle({ tx }: Props) {
           <Text style={styles.labelText}>{translationLabel}</Text>
         ) : null}
         {translationLabel ? <Text style={styles.separator}> · </Text> : null}
-        <Pressable onPress={toggle} hitSlop={8}>
+        <Pressable accessibilityRole="button" onPress={(event) => { event?.stopPropagation(); toggle(); }} hitSlop={8}>
           <Text style={styles.toggleText}>See original</Text>
         </Pressable>
       </View>
@@ -45,7 +45,7 @@ export function TranslationToggle({ tx }: Props) {
 
   return (
     <View style={styles.row}>
-      <Pressable onPress={toggle} hitSlop={8}>
+      <Pressable accessibilityRole="button" onPress={(event) => { event?.stopPropagation(); toggle(); }} hitSlop={8}>
         <Text style={styles.toggleText}>See translation</Text>
       </Pressable>
     </View>

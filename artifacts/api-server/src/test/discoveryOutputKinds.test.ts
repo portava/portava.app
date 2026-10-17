@@ -88,6 +88,16 @@ describe("DC-01 — Trails, Shared Moments and emerging discoveries, ranked by P
     assert.deepEqual(off.items, []);
   });
 
+  it("K3. Shared Moments refuse unreadable owner standing instead of treating an inactive owner as active", async () => {
+    const db = makeFakeCandidateDb(momentWorld(), { erroring: ["profiles"] });
+    const result = await rankSharedMomentsForViewer(db, viewer(), { nowMs: NOW });
+    assert.deepEqual(result.items, []);
+    assert.equal(result.status, "unavailable");
+    assert.equal(result.rankedBy, "none");
+    assert.equal(result.unavailable, "profiles.standing");
+    assert.deepEqual(db.writes, []);
+  });
+
   it("K4. emerging discoveries: the latest run's claims, under the route's eligibility, with their trend state", async () => {
     const w = world(); w["feature_flags"] = [flagRow("discovery_output_kinds_enabled", true)];
     w["place_momentum"]!.push({ place_id: `db/${P.BLOCKED}`, trend_state: "rediscovered", recent_rate: 99, computed_at: w["place_momentum"]![0]!["computed_at"] });

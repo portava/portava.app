@@ -65,19 +65,30 @@ export async function readThreadNotificationStates(
   if (flag === "unknown") return { ok: false };
   const levelsOn = flag === "on";
   if (userIds.length === 0) return { ok: true, levelsOn, states: new Map() };
-  const base = levelsOn
-    ? sc.from("message_thread_members").select("user_id, muted_at, notification_level, muted_until")
-    : sc.from("message_thread_members").select("user_id, muted_at");
-  const { data, error } = await base
-    .eq("thread_id", threadId)
-    .in("user_id", [...userIds])
-    .is("left_at", null);
-  if (error) return { ok: false };
-  const states = new Map<string, ThreadNotificationState>();
-  for (const row of (data ?? []) as Row[]) {
-    if (typeof row.user_id === "string") states.set(row.user_id, stateOf(row, levelsOn));
+  try {
+    const base = levelsOn
+      ? sc.from("message_thread_members").select("user_id, muted_at, notification_level, muted_until")
+      : sc.from("message_thread_members").select("user_id, muted_at");
+    const { data, error } = await base
+      .eq("thread_id", threadId)
+      .in("user_id", [...userIds])
+      .is("left_at", null);
+    if (error || !Array.isArray(data)) return { ok: false };
+    const requestedUsers = new Set(userIds);
+    const states = new Map<string, ThreadNotificationState>();
+    for (const value of data) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return { ok: false };
+      const row = value as Row;
+      if (typeof row.user_id !== "string" || !requestedUsers.has(row.user_id) || states.has(row.user_id)) return { ok: false };
+      if (row.muted_at !== null && typeof row.muted_at !== "string") return { ok: false };
+      if (levelsOn && (levelFromColumn(row.notification_level) === null
+        || (row.muted_until !== null && typeof row.muted_until !== "string"))) return { ok: false };
+      states.set(row.user_id, stateOf(row, levelsOn));
+    }
+    return { ok: true, levelsOn, states };
+  } catch {
+    return { ok: false };
   }
-  return { ok: true, levelsOn, states };
 }
 
 export type WriteChoiceResult =

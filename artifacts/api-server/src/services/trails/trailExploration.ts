@@ -51,6 +51,7 @@ import {
   TRAIL_EXPOSURE_MIN_EVIDENCE, TRAIL_EXPOSURE_EXPAND_RATE, TRAIL_EXPLORATION_IMPRESSION_CEILING, TRAIL_EXPLORATION_SLOT_PCT,
 } from "../../lib/discoveryTrailHealth.js";
 import { isTrailContentTransitionAllowed, isTrailContentState, type TrailContentState } from "../../lib/discoveryTrailObject.js";
+import { readBoundedTrailRows } from "./trailRead.js";
 
 const logger = rootLogger.child({ mod: "trailExploration" });
 
@@ -187,8 +188,11 @@ export function rotateExplorationSlots(cands: readonly RotationCandidate[], page
 export async function readTrailOwnExposures(sc: any, trailId: string, nowMs: number): Promise<Record<string, number> | null> {
   const since = new Date(nowMs - MOMENTUM_BASELINE_WINDOW_MS).toISOString().slice(0, 10);
   try {
-    const { data, error } = await sc.from("trail_member_exposures").select("source_type, source_id, impressions")
-      .eq("trail_id", trailId).gte("served_on", since);
+    const { data, error } = await readBoundedTrailRows((from, to) => sc.from("trail_member_exposures")
+      .select("source_type, source_id, impressions", { count: "exact" })
+      .eq("trail_id", trailId).gte("served_on", since)
+      .order("served_on", { ascending: true }).order("source_type", { ascending: true }).order("source_id", { ascending: true })
+      .range(from, to));
     if (error || !Array.isArray(data)) {
       logger.warn({ trailId, code: error?.code }, "trail own exposures unread — exploration slots withheld");
       return null;
@@ -213,7 +217,8 @@ export async function readStateChangedAt(sc: any, rowIds: readonly string[]): Pr
     const out = new Map<string, number | null>();
     for (const r of data as any[]) {
       const at = typeof r.content_state_changed_at === "string" ? Date.parse(r.content_state_changed_at) : NaN;
-      out.set(String(r.id), Number.isFinite(at) ? at : null);
+      if (r.content_state_changed_at === null) out.set(String(r.id), null);
+      else if (Number.isFinite(at)) out.set(String(r.id), at);
     }
     return out;
   } catch {

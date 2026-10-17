@@ -17,8 +17,8 @@
  *   5. a DRIFT GUARD: the domain source lines this module mirrors still say what
  *      the mirror assumes.
  *
- * Payment eligibility is NOT built: no processor exists (09_Payment_Architecture
- * §1). Nothing here pretends it is.
+ * Payment and current identity eligibility are covered by
+ * discoveryPeopleBuddyPayments.test.ts, behind the existing Buddy launch gate.
  *
  * Run: SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy \
  *      node --import tsx/esm --test src/test/discoveryPeopleBuddy.test.ts
@@ -144,7 +144,8 @@ describe("B03 — the rule, leg by leg", () => {
     const failing = (bad: string, mode: "resolve" | "reject") => ({
       from: (t: string) => {
         const b: any = {
-          select: () => b, in: () => b, lte: () => b,
+          select: () => b, in: () => b, lte: () => b, eq: () => b,
+          maybeSingle: () => Promise.resolve({ data: null, error: null }),
           then: (f: any, r: any) => (t === bad
             ? (mode === "reject" ? Promise.reject(new Error("reset")) : Promise.resolve({ data: null, error: { message: "boom" } }))
             : Promise.resolve({ data: t === "rent_buddy_profiles" ? [row({ user_id: "u-1" })] : [], error: null })).then(f, r),

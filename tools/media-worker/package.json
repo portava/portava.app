@@ -1,0 +1,7 @@
+{
+  "name": "portava-media-worker-validation",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node test-queue.mjs" },
+  "devDependencies": { "@electric-sql/pglite": "0.2.17" }
+}

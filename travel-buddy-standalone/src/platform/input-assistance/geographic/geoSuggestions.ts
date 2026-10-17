@@ -48,6 +48,34 @@ function gatewayPlaceId(s: InputSuggestion): string {
   return `gw-${basis || s.id}`;
 }
 
+function canonicalVenuePlace(suggestion: InputSuggestion, binding: Record<string, unknown>): Place | null {
+  const venueId = typeof binding.venueId === 'string' ? clean(binding.venueId) : null;
+  const name = typeof binding.venue === 'string' ? clean(binding.venue) : null;
+  if (!venueId || !name || suggestion.entityId !== venueId || suggestion.entityType !== 'place'
+    || suggestion.source !== 'canonical' || (binding.source != null && binding.source !== 'canonical')
+    || !['entity', 'disambiguation'].includes(suggestion.type)
+    || suggestion.locationPrecision != null || clean(suggestion.label) !== name) return null;
+  const action = suggestion.action;
+  if (action && (action.type !== 'open_entity' || action.entityType !== 'place' || action.entityId !== venueId)) return null;
+  for (const field of ['city', 'country', 'countryCode', 'timezone']) {
+    if (binding[field] != null && typeof binding[field] !== 'string') return null;
+  }
+  const lat = binding.lat ?? null;
+  const lng = binding.lng ?? null;
+  if ((lat != null || lng != null) && (typeof lat !== 'number' || !Number.isFinite(lat) || Math.abs(lat) > 90
+    || typeof lng !== 'number' || !Number.isFinite(lng) || Math.abs(lng) > 180)) return null;
+  const subtitle = clean(suggestion.subtitle);
+  return {
+    id: gatewayPlaceId(suggestion), type: 'place', name,
+    displayName: subtitle && !foldForMatch(subtitle).includes(foldForMatch(name)) ? `${name}, ${subtitle}` : name,
+    canonicalId: venueId, source: 'canonical', region: null, district: null,
+    city: clean(binding.city as string | undefined), country: clean(binding.country as string | undefined),
+    countryCode: clean(binding.countryCode as string | undefined), timezone: clean(binding.timezone as string | undefined),
+    lat: lat as number | null, lng: lng as number | null,
+    confidence: typeof suggestion.confidence === 'number' ? suggestion.confidence : undefined,
+  };
+}
+
 /**
  * Map a gateway geographic `InputSuggestion` to a `Place`.
  *
@@ -61,7 +89,14 @@ function gatewayPlaceId(s: InputSuggestion): string {
 export function suggestionToPlace(s: InputSuggestion): Place | null {
   // An ACTION row (Open on map, Use approximate area, Add a new Gem, …) is not a
   // place, whatever its label or structured value says — as the docstring states.
-  if (!s || s.type === 'action') return null;
+  if (!s || !['entity', 'recent', 'personalized', 'disambiguation'].includes(s.type)
+    || s.locationPrecision != null) return null;
+  if (s.structuredValue && typeof s.structuredValue === 'object'
+    && 'kind' in s.structuredValue && s.structuredValue.kind === 'approximate_area') return null;
+  if (s.structuredValue && typeof s.structuredValue === 'object'
+    && 'entityType' in s.structuredValue && s.structuredValue.entityType === 'venue') {
+    return canonicalVenuePlace(s, s.structuredValue as Record<string, unknown>);
+  }
   const sv = s.structuredValue as Partial<Place> | undefined;
   if (sv && typeof sv === 'object' && typeof sv.name === 'string' && sv.name.trim()) {
     // Trust an embedded Place but ensure the canonical id + a stable id survive.

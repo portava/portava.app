@@ -24,6 +24,8 @@ import availabilityRouter from "../routes/availability.js";
 import {
   createWindow,
   listWindows,
+  listWindowsRead,
+  listWindowsForOwners,
   projectPublicWindows,
   recordInferredWindow,
   validateCreate,
@@ -47,6 +49,10 @@ const FLAG      = "open_to_plans_windows_enabled";
 interface FlagRow { flag: string; enabled: boolean }
 
 interface State {
+  windowFault?: "error" | "partial_error" | "null" | "undefined" | "throw" | "nonarray";
+  flagFault?: "error" | "throw";
+  windowReads?: number;
+  windowQueries?: Array<{ columns?: string; filters: Array<{ method: string; column: string; value: unknown }> }>;
   users: Record<string, { id: string } | null>;
   feature_flags: FlagRow[];
   availability_windows: any[];
@@ -65,18 +71,19 @@ function baseState(flagEnabled: boolean): State {
 function makeFakeClient(state: State) {
   function from(table: string) {
     const filters: Array<(r: any) => boolean> = [];
+    const query: { columns?: string; filters: Array<{ method: string; column: string; value: unknown }> } = { filters: [] };
     let _op: "select" | "insert" | "update" | "delete" = "select";
     let _payload: any = null;
     let _insertRow: any = null;
 
     const b: any = {
-      select() { return b; },
+      select(columns?: string) { query.columns = columns; return b; },
       insert(row: any) { _op = "insert"; _insertRow = Array.isArray(row) ? row[0] : row; return b; },
       update(p: any) { _op = "update"; _payload = p; return b; },
       delete() { _op = "delete"; return b; },
-      eq(c: string, v: any) { filters.push((r: any) => r[c] === v); return b; },
+      eq(column: string, value: any) { query.filters.push({ method: "eq", column, value }); filters.push((row: any) => row[column] === value); return b; },
       neq(c: string, v: any) { filters.push((r: any) => r[c] !== v); return b; },
-      in(c: string, vals: any[]) { filters.push((r: any) => vals.includes(r[c])); return b; },
+      in(column: string, values: any[]) { query.filters.push({ method: "in", column, value: values }); filters.push((row: any) => values.includes(row[column])); return b; },
       is() { return b; },
       not() { return b; },
       order() { return b; },
@@ -96,12 +103,27 @@ function makeFakeClient(state: State) {
     }
 
     async function resolveList() {
+      if (table === "availability_windows" && _op === "select") {
+        state.windowReads = (state.windowReads ?? 0) + 1;
+        (state.windowQueries ??= []).push(query);
+        if (state.windowFault === "throw") throw new Error("synthetic_private_database_detail");
+        if (state.windowFault === "error" || state.windowFault === "partial_error") {
+          return { data: state.windowFault === "partial_error" ? matched() : null, error: { message: "synthetic_private_database_detail" } };
+        }
+        if (state.windowFault === "null") return { data: null, error: null };
+        if (state.windowFault === "undefined") return { data: undefined, error: null };
+        if (state.windowFault === "nonarray") return { data: {}, error: null };
+      }
       if (_op === "insert") return { data: [insertRow()], error: null };
       if (_op === "update") { const rows = matched(); for (const r of rows) Object.assign(r, _payload); return { data: rows, error: null }; }
       if (_op === "delete") { const rows = matched(); (state as any)[table] = src().filter((r) => !filters.every((f) => f(r))); return { data: rows, error: null }; }
       return { data: matched(), error: null };
     }
     async function resolveSingle() {
+      if (table === "feature_flags") {
+        if (state.flagFault === "throw") throw new Error("synthetic_private_flag_detail");
+        if (state.flagFault === "error") return { data: null, error: { message: "synthetic_private_flag_detail" } };
+      }
       if (_op === "insert") return { data: insertRow(), error: null };
       if (_op === "update") { const rows = matched(); for (const r of rows) Object.assign(r, _payload); return { data: rows[0] ?? null, error: null }; }
       return { data: matched()[0] ?? null, error: null };
@@ -166,6 +188,225 @@ function tonightBody(extra: Record<string, unknown> = {}) {
     ...extra,
   };
 }
+
+function ownedWindowRow(id: string, nowMs: number, extra: Record<string, unknown> = {}) {
+  return {
+    id, user_id: ALICE_ID, type: "one_time",
+    start_at: new Date(nowMs - 60_000).toISOString(), end_at: new Date(nowMs + 3_600_000).toISOString(),
+    trip_id: null, open_to_plans: true, intents: ["Food"], group_preference: "small_group",
+    max_travel_minutes: 20, visibility: "private", source: "explicit", social_availability: "crew_only",
+    expires_at: null, created_at: new Date(nowMs).toISOString(), updated_at: new Date(nowMs).toISOString(),
+    ...extra,
+  };
+}
+
+describe("owner read failures", () => {
+  for (const fault of ["error", "partial_error", "null", "undefined"] as const) {
+    it(`GET refuses ${fault} with sanitized db_error and can recover the existing window`, async () => {
+      const state = baseState(true);
+      state.availability_windows.push(ownedWindowRow("existing-private", Date.now()));
+      state.windowFault = fault;
+      const server = await startServer(state);
+      try {
+        const response = await req(server.port, "GET", "/api/me/availability-windows", "alice-tok");
+        assert.equal(response.status, 500);
+        assert.deepEqual(response.body, { error: "db_error", message: "A database error occurred. Please try again." });
+        assert.equal(state.windowReads, 1);
+        state.windowFault = undefined;
+        const recovered = await req(server.port, "GET", "/api/me/availability-windows", "alice-tok");
+        assert.equal(recovered.status, 200);
+        assert.ok(recovered.body && typeof recovered.body === "object" && "enabled" in recovered.body && "windows" in recovered.body);
+        assert.ok(Array.isArray(recovered.body.windows));
+        assert.equal(recovered.body.enabled, true);
+        assert.deepEqual(recovered.body.windows.map((window: any) => window.id), ["existing-private"]);
+        assert.equal(recovered.body.windows[0].visibility, "private");
+        assert.equal(state.windowReads, 2);
+      } finally { await server.close(); }
+    });
+  }
+});
+
+describe("owner read handler contracts", () => {
+  for (const fault of ["throw", "nonarray"] as const) {
+    it(`GET sanitizes ${fault} without leaking a successful envelope`, async () => {
+      const state = baseState(true);
+      state.windowFault = fault;
+      const server = await startServer(state);
+      try {
+        const response = await req(server.port, "GET", "/api/me/availability-windows", "alice-tok");
+        assert.equal(response.status, 500);
+        assert.deepEqual(response.body, { error: "db_error", message: "A database error occurred. Please try again." });
+        assert.equal(state.windowReads, 1);
+      } finally { await server.close(); }
+    });
+  }
+
+  for (const gate of ["off", "missing", "error", "throw"] as const) {
+    it(`GET preserves the ${gate} flag envelope without a window read`, async () => {
+      const state = baseState(gate !== "off");
+      if (gate === "missing") state.feature_flags = [];
+      if (gate === "error" || gate === "throw") state.flagFault = gate;
+      state.windowFault = "throw";
+      const server = await startServer(state);
+      try {
+        const response = await req(server.port, "GET", "/api/me/availability-windows", "alice-tok");
+        assert.equal(response.status, 200);
+        assert.deepEqual(response.body, { windows: [], enabled: false });
+        assert.equal(state.windowReads ?? 0, 0);
+      } finally { await server.close(); }
+    });
+  }
+
+  for (const token of [undefined, "invalid-token"]) {
+    it(`GET refuses ${token ?? "missing token"} before reading windows`, async () => {
+      const state = baseState(true);
+      state.windowFault = "throw";
+      const server = await startServer(state);
+      try {
+        const response = await req(server.port, "GET", "/api/me/availability-windows", token);
+        assert.equal(response.status, 401);
+        assert.equal(state.windowReads ?? 0, 0);
+      } finally { await server.close(); }
+    });
+  }
+
+  it("GET preserves genuinely empty enabled success", async () => {
+    const server = await startServer(baseState(true));
+    try {
+      const response = await req(server.port, "GET", "/api/me/availability-windows", "alice-tok");
+      assert.equal(response.status, 200);
+      assert.deepEqual(response.body, { windows: [], enabled: true });
+      assert.equal(server.state.windowReads, 1);
+    } finally { await server.close(); }
+  });
+
+  it("GET preserves authenticated own scope, future/private/inferred windows, expiry order and history parsing", async () => {
+    const state = baseState(true);
+    const nowMs = Date.now();
+    state.availability_windows.push(
+      ownedWindowRow("later", nowMs),
+      ownedWindowRow("other-owner", nowMs, { user_id: BOB_ID }),
+      ownedWindowRow("expired", nowMs, { end_at: new Date(nowMs - 1_000).toISOString() }),
+      ownedWindowRow("future-inferred", nowMs, { start_at: new Date(nowMs + 60_000).toISOString(), source: "plan_derived" }),
+      ownedWindowRow("ttl-first", nowMs, { expires_at: new Date(nowMs + 30_000).toISOString() }),
+    );
+    const server = await startServer(state);
+    try {
+      for (const parameter of ["", "?includeExpired=0", "?includeExpired=false", "?includeExpired=TRUE", `?userId=${BOB_ID}`]) {
+        const response = await req(server.port, "GET", `/api/me/availability-windows${parameter}`, "alice-tok");
+        assert.equal(response.status, 200);
+        assert.ok(response.body && typeof response.body === "object" && "windows" in response.body);
+        assert.ok(Array.isArray(response.body.windows));
+        assert.deepEqual(response.body.windows.map((window: any) => window.id), ["ttl-first", "later", "future-inferred"]);
+        assert.ok(response.body.windows.every((window: any) => window.userId === ALICE_ID && window.visibility === "private"));
+        assert.equal(response.body.windows[2].source, "plan_derived");
+      }
+      for (const parameter of ["1", "true"]) {
+        const response = await req(server.port, "GET", `/api/me/availability-windows?includeExpired=${parameter}`, "alice-tok");
+        assert.equal(response.status, 200);
+        assert.ok(response.body && typeof response.body === "object" && "windows" in response.body);
+        assert.ok(Array.isArray(response.body.windows));
+        assert.deepEqual(response.body.windows.map((window: any) => window.id), ["expired", "ttl-first", "later", "future-inferred"]);
+      }
+    } finally { await server.close(); }
+  });
+});
+
+describe("owner read service compatibility", () => {
+  for (const fault of ["error", "partial_error", "null", "undefined"] as const) {
+    it(`nullable read distinguishes ${fault} while legacy list keeps its empty fallback`, async () => {
+      const state = baseState(true);
+      state.availability_windows.push(ownedWindowRow("unread", Date.now()));
+      state.windowFault = fault;
+      const client = makeFakeClient(state) as any;
+      assert.equal(await listWindowsRead(client, ALICE_ID), null);
+      assert.deepEqual(await listWindows(client, ALICE_ID), []);
+      assert.equal(state.windowReads, 2);
+    });
+  }
+
+  for (const fault of ["throw", "nonarray"] as const) {
+    it(`both service reads still reject ${fault} without a new row-validation fallback`, async () => {
+      const state = baseState(true);
+      state.windowFault = fault;
+      const client = makeFakeClient(state) as any;
+      const expected = fault === "throw" ? /synthetic_private_database_detail/ : TypeError;
+      await assert.rejects(listWindowsRead(client, ALICE_ID), expected);
+      await assert.rejects(listWindows(client, ALICE_ID), expected);
+      assert.equal(state.windowReads, 2);
+    });
+  }
+
+  it("uses the same single owner query and permissive projection, including genuine empty success", async () => {
+    const state = baseState(true);
+    const nowMs = 1_800_000_000_000;
+    state.availability_windows.push(ownedWindowRow("owned", nowMs, { max_travel_minutes: 0, intents: null }));
+    const client = makeFakeClient(state) as any;
+    const windows = await listWindowsRead(client, ALICE_ID, { nowMs });
+    assert.deepEqual(windows, [{
+      id: "owned", userId: ALICE_ID, type: "one_time",
+      startAt: new Date(nowMs - 60_000).toISOString(), endAt: new Date(nowMs + 3_600_000).toISOString(),
+      tripId: null, openToPlans: true, intents: [], groupPreference: "small_group", maxTravelMinutes: 0,
+      visibility: "private", source: "explicit", socialAvailability: "crew_only", expiresAt: null,
+      createdAt: new Date(nowMs).toISOString(), updatedAt: new Date(nowMs).toISOString(),
+    }]);
+    assert.equal(state.windowReads, 1);
+    assert.deepEqual(state.windowQueries, [{
+      columns: "id, user_id, type, start_at, end_at, trip_id, open_to_plans, intents, group_preference, max_travel_minutes, visibility, source, social_availability, expires_at, created_at, updated_at",
+      filters: [{ method: "eq", column: "user_id", value: ALICE_ID }],
+    }]);
+    assert.deepEqual(await listWindows(client, ALICE_ID, { nowMs }), windows);
+    assert.equal(state.windowReads, 2);
+    state.availability_windows = [];
+    assert.deepEqual(await listWindowsRead(client, ALICE_ID, { nowMs }), []);
+    assert.deepEqual(await listWindows(client, ALICE_ID, { nowMs }), []);
+  });
+
+  it("keeps exact effective-expiry boundaries, invalid TTL fallback, stable ties and includeExpired", async () => {
+    const state = baseState(true);
+    const nowMs = 1_800_000_000_000;
+    const deadline = new Date(nowMs + 3_600_000).toISOString();
+    state.availability_windows.push(
+      ownedWindowRow("end-boundary", nowMs, { end_at: new Date(nowMs).toISOString(), expires_at: deadline }),
+      ownedWindowRow("invalid-ttl", nowMs, { expires_at: "invalid" }),
+      ownedWindowRow("ttl-boundary", nowMs, { expires_at: new Date(nowMs).toISOString() }),
+      ownedWindowRow("future-tie", nowMs, { start_at: new Date(nowMs + 60_000).toISOString() }),
+    );
+    const client = makeFakeClient(state) as any;
+    const current = await listWindowsRead(client, ALICE_ID, { nowMs });
+    assert.deepEqual(current?.map(window => window.id), ["invalid-ttl", "future-tie"]);
+    assert.deepEqual(await listWindows(client, ALICE_ID, { nowMs }), current);
+    const previous = await listWindowsRead(client, ALICE_ID, { nowMs: nowMs - 1 });
+    assert.deepEqual(previous?.map(window => window.id), ["end-boundary", "ttl-boundary", "invalid-ttl", "future-tie"]);
+    assert.deepEqual(await listWindowsRead(client, ALICE_ID, { nowMs, includeExpired: true }), previous);
+  });
+
+  it("leaves bulk refusal, empty, rejected, grouping and unfiltered order contracts unchanged", async () => {
+    const state = baseState(true);
+    const client = makeFakeClient(state) as any;
+    state.windowFault = "error";
+    assert.equal(await listWindowsForOwners(client, [ALICE_ID]), null);
+    state.windowFault = "throw";
+    await assert.rejects(listWindowsForOwners(client, [ALICE_ID]), /synthetic_private_database_detail/);
+    const reads = state.windowReads;
+    assert.deepEqual(await listWindowsForOwners(client, []), new Map());
+    assert.equal(state.windowReads, reads);
+    state.windowFault = "null";
+    assert.deepEqual(await listWindowsForOwners(client, [ALICE_ID]), new Map());
+    state.windowFault = undefined;
+    assert.deepEqual(await listWindowsForOwners(client, [ALICE_ID]), new Map());
+    const nowMs = Date.now();
+    state.availability_windows.push(
+      ownedWindowRow("later", nowMs),
+      ownedWindowRow("expired", nowMs, { end_at: new Date(nowMs - 1_000).toISOString() }),
+      ownedWindowRow("other-owner", nowMs, { user_id: BOB_ID }),
+    );
+    const grouped = await listWindowsForOwners(client, [ALICE_ID, ALICE_ID, ""]);
+    assert.deepEqual([...grouped!.keys()], [ALICE_ID]);
+    assert.deepEqual(grouped!.get(ALICE_ID)?.map(window => window.id), ["later", "expired"]);
+    assert.deepEqual(state.windowQueries?.at(-1)?.filters, [{ method: "in", column: "user_id", value: [ALICE_ID] }]);
+  });
+});
 
 // ── HTTP: auth + flag gate ──────────────────────────────────────────────────────
 

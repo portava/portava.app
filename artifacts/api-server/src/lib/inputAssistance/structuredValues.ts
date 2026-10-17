@@ -217,12 +217,13 @@ function extractDurations(text: string, timeSpans: Array<[number, number]>): num
 
 const PARTY_RES: RegExp[] = [
   /\b(?:for\s+)?(\d{1,3})\s*(?:people|persons|ppl|guests|pax|travell?ers|friends)\b/g,
-  /\b(?:party|group|table)\s+of\s+(\d{1,3})\b/g,
+  /\b(?:party|group|table)\s+of\s+(\d{1,3})\b(?![.,]\d)/g,
 ];
 
 function extractPartySizes(text: string): number[] {
   const out = new Set<number>();
   for (const re of PARTY_RES) for (const m of text.matchAll(re)) {
+    if (/(?:[+\-−]|(?:^|[^\p{L}])[.,])$/u.test(text.slice(0, m.index))) return [];
     const n = Number(m[1]);
     if (Number.isInteger(n) && n >= 1 && n <= 500) out.add(n);
   }

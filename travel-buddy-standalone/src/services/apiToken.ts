@@ -59,3 +59,25 @@ export async function freshToken(): Promise<string | null> {
     return session.access_token;
   } catch { return null; }
 }
+
+/**
+ * Owner binding for a token this module already handed out: true only when the
+ * CURRENT session is still `ownerId`'s and its access token is exactly `token`.
+ *
+ * Callers that must not send one person's request under another person's
+ * session (a sign-out/sign-in between `freshToken()` and the fetch) used to
+ * re-read `getSession()` themselves and compare `access_token` — the very
+ * pattern `getSession.bypassGuard.test.ts` forbids outside this file, because a
+ * second token-reading site is where an unrefreshed token leaks out. The check
+ * lives here so the token still only ever comes from `freshToken()`; this
+ * function answers a yes/no and never returns a token. Any read failure is a
+ * "no" (fail closed).
+ */
+export async function isCurrentSessionToken(ownerId: string, token: string): Promise<boolean> {
+  if (!ownerId || !token) return false;
+  try {
+    const { data } = await _client.auth.getSession();
+    const session = data?.session as { access_token?: string; user?: { id?: string } } | null | undefined;
+    return session?.user?.id === ownerId && session.access_token === token;
+  } catch { return false; }
+}

@@ -178,13 +178,13 @@ export const KNOWN_WRITERLESS_READS: Record<
 
   // ── HUMAN-CURATED ALLOWLISTS — empty ON PURPOSE, not defects ──────────────
   protected_zones: {
-    readers: 3,
+    readers: 4,
     classification: "human-allowlist",
     note:
       "Migration 2217 says so outright: 'SHIPS EMPTY BY DESIGN: which places are protected is " +
       "a policy decision with a named owner, not a schema decision, and the list of rows is " +
       "itself a map of exactly what it protects.' service_role only. Emptiness is the correct " +
-      "fail-closed default.",
+      "fail-closed default. FOUR readers since 2026-10-17: lib/discoveryTrendProducerPrivacy.ts asks only whether ANY active row exists, and fails closed both ways — an unreadable list blocks the unfiltered trend build (protected_zone_policy_unreadable), and any active zone blocks it until a per-row filter exists (protected_zone_filter_required); only a readable, empty list lets it run.",
   },
   // intel_live_promoted_scopes — STRUCK OFF 2026-09-07. Migration 2430 gave it a
   // writer (system_promote/withdraw/expire_intel_live_scope, called only by
@@ -236,7 +236,7 @@ export const KNOWN_WRITERLESS_READS: Record<
       "rather than emitting one with a null country, because §17 prefills dependent fields " +
       "from that value and an outage rendered as `country: null` would write 'this venue is " +
       "in no country' into a field the user can see. EIGHT since 2026-09-27 (census-discovery §46, B01): lib/discoverySearchCanonical.ts adds THREE literal SELECT sites — the suggest Cities reader's prefix and contains reads over the stored fold `search_key`, and the centroid widening's one batched `.in('search_key', …)` — each a read of reference rows and nothing else; the suggest reads refuse on a failed read (D11) and the centroid read fails soft to an unplaced row. NINE since 2026-10-08 (lead ruling PR-D2-7c, census-input-intelligence §42.37): `nearestCatalogCity` in lib/inputAssistance/pasteExtraction.ts names a pasted coordinate from this registry INSTEAD of the third-party reverse geocoder — one literal SELECT of id/kind/name/lat/lng for city/town rows inside a bounded 0.5-degree box, limit 200, nearest within 40 km; a SELECT and nothing else, and a failed read is a failed paste item, never a no-match.",
-  },
+  }, media_caption_asr_config: { readers: 1, classification: "external-seed", note: "Operator-provisioned singleton activation record (3983_media_caption_manifest.sql:16-25), NOT a dead lane. It ships EMPTY on purpose: no row, enabled=false, an unverified runtime or an empty language list all make readCaptionAsrConfig() (services/media/CaptionAsrService.ts:27-34) return null, so automatic transcription stays OFF; a read error answers degraded_unavailable. A row is written by an operator only after a self-hosted ASR runtime is verified (the CHECK requires runtime_verified_at and at least one language whenever enabled). No paid provider is wired." }, media_caption_translation_config: { readers: 1, classification: "external-seed", note: "Operator-provisioned singleton activation record (3987_media_caption_translation.sql:3-11), NOT a dead lane. It ships EMPTY on purpose: no row, enabled=false, an unverified runtime or no allowed language pair keeps caption translation OFF (services/media/CaptionTranslationService.ts reads it at :26). A row is written by an operator only after a self-hosted translation runtime is verified (the CHECK requires runtime_verified_at and at least one pair whenever enabled)." },
 };
 
 /** file -> text, for the crude "is this route path mentioned anywhere else" test. */

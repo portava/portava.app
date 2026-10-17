@@ -60,6 +60,13 @@ import { render, act, screen, fireEvent, waitFor } from '@testing-library/react-
 import EditMemoryScreen from '../../../app/memory/edit.tsx';
 import { getMemory, updateMemory } from '../../services/memories.ts';
 
+jest.mock('../../context/SessionContext.tsx', () => { return {
+  useSession: () => ({ userId: 'user-1', loading: false }),
+}; });
+jest.mock('../../lib/supabase.ts', () => { return { supabase: { auth: {
+  onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } } }),
+} } }; });
+
 // ── Module mocks ───────────────────────────────────────────────────────────────
 
 jest.mock('expo-router', () => ({
@@ -116,13 +123,16 @@ type UpdateResult = { ok: true; memory: typeof LOADED_MEMORY };
 
 const getMemoryMock    = getMemory    as jest.Mock;
 const updateMemoryMock = updateMemory as jest.Mock;
+const originalFetch = global.fetch;
 
 // ── Setup ──────────────────────────────────────────────────────────────────────
 
 beforeEach(() => {
+  global.fetch = jest.fn(async () => ({ ok: true, status: 200, json: async () => ({ enabled: false, types: [] }) })) as unknown as typeof fetch;
   getMemoryMock.mockReset().mockResolvedValue({ ok: true, memory: LOADED_MEMORY });
   updateMemoryMock.mockReset();
 });
+afterEach(() => { global.fetch = originalFetch; });
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 

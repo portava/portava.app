@@ -3,7 +3,7 @@
 // The token helper is required LAZILY in freshToken below: a static apiToken → lib/supabase → react-native edge would stop
 // this module loading (and type-checking) under Node, where the route→client leg drives it (census-discovery §60, DC-33).
 import type { DiscoveryEventPost } from '../types/discovery.ts';
-import { openDiscoveryLease, isCurrentDiscoveryScope, isLeaseViewerCurrent, onDiscoveryScopeChange, VIEWER_CHANGED_ERROR, type DiscoveryLease, type DiscoveryScope } from './discoveryViewerScope.ts';
+import { openDiscoveryLease, currentDiscoveryScope, viewerKeyForToken, isCurrentDiscoveryScope, isLeaseViewerCurrent, onDiscoveryScopeChange, VIEWER_CHANGED_ERROR, type DiscoveryLease, type DiscoveryScope } from './discoveryViewerScope.ts';
 import { stampCandidateReceipt } from '../features/discovery/candidateProjection.ts';
 import { placeLiveAnchorOf, liveCoordParam, type PlaceLiveAnchor } from '../features/discovery/placeLiveAnchor.ts';
 
@@ -434,13 +434,13 @@ export interface CommunityPlaceItem {
    *                it, else null. Never a handle. Optional on this type only
    *                because a pre-rollout server may omit it; absent is read as
    *                "withheld" by `features/discovery/communityByline.ts`.
-   *   name         LEGACY, kept additively. Carries the literal `"@username"`
-   *                when the name is withheld — which is exactly why no client
-   *                surface may render it as an identity. §6 D2 retires it.
+   *   name         Legacy presentation while the canonical-byline flag is off;
+   *                with the flag on, null when withheld. Never a fallback for
+   *                displayName, regardless of the flag state.
    */
   submittedBy: {
     id: string;
-    name: string;
+    name: string | null;
     displayName?: string | null;
     avatarUrl: string | null;
     handle: string | null;
@@ -476,7 +476,7 @@ export async function getCommunityPlaces(
   type: 'hidden_gem' | 'traveler_pick' | 'all' = 'all',
   limit = 20,
   sortBy?: string | null,
-): Promise<{ ok: true; data: CommunityDiscoveryResult; scope?: DiscoveryScope } | { ok: false; error: string }> {
+): Promise<{ ok: true; data: CommunityDiscoveryResult; scope?: DiscoveryScope; cacheable?: boolean } | { ok: false; error: string }> {
   const base = apiBase();
   if (!base) return { ok: false, error: 'API not configured' };
 
@@ -484,9 +484,12 @@ export async function getCommunityPlaces(
   if (sortBy) params.set('sortBy', sortBy);
   const lease = openDiscoveryLease(await freshToken());  // bylines, blocks and mutes are per viewer — VIEWER SCOPE, foot of file
   try {
-    const res = await fetch(`${base}/api/discovery/community?${params}`, lease.init);
+    const init: RequestInit & { cache: 'no-store' } = { ...lease.init, cache: 'no-store' }; const res = await fetch(`${base}/api/discovery/community?${params}`, init);
     if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
-    return communityForLease(lease, withParsedRefusal<CommunityDiscoveryResult>(await res.json()));
+    const cacheable = !(res.headers?.get('Cache-Control') ?? '').split(',').some((directive) =>
+      ['no-store', 'no-cache'].includes(directive.split('=')[0].trim().toLowerCase()),
+    );
+    return communityForLease(lease, withParsedRefusal<CommunityDiscoveryResult>(await res.json()), cacheable);
   } catch {
     return { ok: false, error: 'Network error — check your connection' };
   }
@@ -1032,9 +1035,10 @@ export function postSearchSignal(
 ): void {
   const base = apiBase();
   if (!base) return;
+  const accountScope = currentDiscoveryScope();
   freshToken()
     .then((token) => {
-      if (!token) return;
+      if (!token || !isCurrentDiscoveryScope(accountScope) || viewerKeyForToken(token) !== accountScope.viewer) return;
       return fetch(`${base}/api/compass/signals/search`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -1353,16 +1357,18 @@ function _liveCacheEntry(key: string): { data: DiscoveryResult; at: number; scop
 
 /**
  * The community answer for the lease it was fetched under. Bylines, blocks and
- * mutes are all per viewer, so an answer fetched for a viewer who is no longer
- * the viewer is DISCARDED; otherwise its scope rides along so the hook's cache
- * can refuse it if a block or dismissal landed while it was in flight.
+ * mutes are all per viewer. An answer predating a viewer or permission-scope
+ * change is discarded, not merely excluded from the cache: it may carry a
+ * previously authorised name. The HTTP cache policy also binds the hook cache.
  */
 function communityForLease(
   lease: DiscoveryLease,
   data: CommunityDiscoveryResult,
-): { ok: true; data: CommunityDiscoveryResult; scope: DiscoveryScope } | { ok: false; error: string } {
+  cacheable: boolean,
+): { ok: true; data: CommunityDiscoveryResult; scope: DiscoveryScope; cacheable: boolean } | { ok: false; error: string } {
   if (!isLeaseViewerCurrent(lease)) return { ok: false, error: VIEWER_CHANGED_ERROR };
-  return { ok: true, data, scope: lease.scope };
+  if (!isCurrentDiscoveryScope(lease.scope)) return { ok: false, error: 'Discovery permissions changed while this loaded.' };
+  return { ok: true, data, scope: lease.scope, cacheable };
 }
 
 // ── TOKEN SOURCE (test seam) ──────────────────────────────────────────────────

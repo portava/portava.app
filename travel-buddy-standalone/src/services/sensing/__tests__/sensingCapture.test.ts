@@ -388,6 +388,66 @@ describe('§3 — eligibility carries the identity; ingest carries the credentia
   ) as { payload: SensingContributionPayload; identity: { commitment: string; rotationEpoch: number }; body: Record<string, unknown> };
   const payload = CONTRACT.payload;
 
+  for (const stage of ['token', 'session', 'body', 'commitment'] as const) {
+    test(`reset fences pending ${stage} before contribution dispatch`, async () => {
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => { release = resolve; });
+      let entered!: () => void;
+      const waiting = new Promise<void>((resolve) => { entered = resolve; });
+      const pause = async () => { entered(); await held; };
+      const calls: string[] = [];
+      const transport = createSensingTransport({
+        baseUrl: 'http://127.0.0.1:9', now: () => T_START,
+        getEligibilityToken: async () => { if (stage === 'token') await pause(); return 'synthetic'; },
+        commitmentFor: async () => { if (stage === 'commitment') await pause(); return CONTRACT.identity.commitment; },
+        fetchImpl: async (input) => {
+          calls.push(String(input));
+          if (String(input).endsWith('/session')) {
+            if (stage === 'session') await pause();
+            const response = new Response(JSON.stringify({ credential: 'old', rotationEpoch: CONTRACT.identity.rotationEpoch, expiresAt: new Date(T_START + 60000).toISOString() }));
+            if (stage === 'body') {
+              const original = response.json.bind(response);
+              response.json = async () => { await pause(); return original(); };
+            }
+            return response;
+          }
+          return new Response('{}', { status: 201 });
+        },
+      });
+      const pending = transport.submit(payload);
+      await waiting; transport.reset(); release();
+      assert.equal((await pending).ok, false);
+      assert.equal(calls.filter((url) => url.endsWith('/contributions')).length, 0);
+    });
+  }
+
+  test('a late old 401 cannot erase a newer cached credential', async () => {
+    let release!: (response: Response) => void;
+    const held = new Promise<Response>((resolve) => { release = resolve; });
+    let entered!: () => void;
+    const waiting = new Promise<void>((resolve) => { entered = resolve; });
+    let sessions = 0;
+    let ingests = 0;
+    const transport = createSensingTransport({
+      baseUrl: 'http://127.0.0.1:9', now: () => T_START,
+      getEligibilityToken: async () => 'synthetic', commitmentFor: async () => CONTRACT.identity.commitment,
+      fetchImpl: async (input) => {
+        if (String(input).endsWith('/session')) {
+          sessions += 1;
+          return new Response(JSON.stringify({ credential: `credential-${sessions}`, rotationEpoch: CONTRACT.identity.rotationEpoch, expiresAt: new Date(T_START + 60000).toISOString() }));
+        }
+        ingests += 1;
+        if (ingests === 1) { entered(); return held; }
+        return new Response('{}', { status: 201 });
+      },
+    });
+    const old = transport.submit(payload); await waiting; transport.reset();
+    assert.equal((await transport.submit(payload)).ok, true);
+    release(new Response('{}', { status: 401 })); await old;
+    assert.equal((await transport.submit(payload)).ok, true);
+    assert.equal(sessions, 2);
+  });
+
   test('the ingest request carries the opaque credential and NO Authorization header', async () => {
     const { calls, transport } = transportHarness();
     const out = await transport.submit(payload);

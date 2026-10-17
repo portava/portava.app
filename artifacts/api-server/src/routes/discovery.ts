@@ -2858,6 +2858,8 @@ export interface CommunityDiscoveryItem {
 const VALID_PLACE_TYPES = new Set(["hidden_gem", "traveler_pick", "all"]);
 
 router.get("/discovery/community", async (req, res) => {
+  res.setHeader("Cache-Control", "private, no-store");
+  res.vary("Authorization");
   const city = (req.query.city as string | undefined)?.trim();
   if (!city) {
     sendError(res, "invalid_payload", "city is required");

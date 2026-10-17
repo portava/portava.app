@@ -154,7 +154,7 @@ function commCacheKey(city: string, sortBy?: string | null) {
   return `${city.toLowerCase().trim()}:${sortBy ?? ''}`;
 }
 
-export function useCommunityDiscovery(city: string | null, sortBy?: string | null): CommunityDiscoveryState {
+export function useCommunityDiscovery(city: string | null, sortBy?: string | null, refreshKey = 0): CommunityDiscoveryState {
   const cKey = city ? commCacheKey(city, sortBy) : null;
   const cachedEntry = cKey ? liveCommEntry(cKey) : null;
 
@@ -166,6 +166,7 @@ export function useCommunityDiscovery(city: string | null, sortBy?: string | nul
     return EMPTY;
   });
   const abortRef = useRef<AbortController | null>(null);
+  const refreshRef = useRef(refreshKey);
 
   const load = useCallback(async (c: string) => {
     abortRef.current?.abort();
@@ -180,6 +181,12 @@ export function useCommunityDiscovery(city: string | null, sortBy?: string | nul
 
       if (!result.ok) {
         setState((prev) => ({ ...prev, loading: false }));
+        return;
+      }
+
+      const scope = result.scope ?? currentDiscoveryScope();
+      if (!isCurrentDiscoveryScope(scope)) {
+        setState(EMPTY);
         return;
       }
 
@@ -212,14 +219,14 @@ export function useCommunityDiscovery(city: string | null, sortBy?: string | nul
       // the device's own memory — and because nothing re-fetched, nothing could
       // notice the server had recovered.
       //
-      // A `partial` refusal IS cached: the items it carries are real.
+      // A `partial` refusal is cacheable only if the response allows reuse.
       //
       // Nor with an answer whose scope moved while it was in flight: the
-      // service already discarded one fetched for another viewer, and one that
-      // predates a block or dismissal is shown but not kept. Tagged with the
+      // service already discarded one fetched for another viewer or before a
+      // block or dismissal. Tagged with the
       // scope it was FETCHED in, which is the only scope that may read it.
-      const scope = result.scope ?? currentDiscoveryScope();
-      if (cKey && !refused && isCurrentDiscoveryScope(scope)) {
+      if (cKey && (refused || result.cacheable === false)) _communityCache.delete(cKey);
+      if (cKey && !refused && result.cacheable !== false && isCurrentDiscoveryScope(scope)) {
         _communityCache.set(cKey, { state: fresh, at: Date.now(), scope });
       }
     } catch {
@@ -230,33 +237,36 @@ export function useCommunityDiscovery(city: string | null, sortBy?: string | nul
   }, [sortBy, cKey]);
 
   useEffect(() => {
+    const refreshing = refreshRef.current !== refreshKey;
+    refreshRef.current = refreshKey;
     if (!city) {
       setState(EMPTY);
       return;
     }
+    if (refreshing && cKey) _communityCache.delete(cKey);
     // Skip the network call if the cache is still fresh
     const hit = cKey ? liveCommEntry(cKey) : null;
     if (hit && Date.now() - hit.at < COMM_CACHE_TTL) {
       setState({ ...hit.state, loading: false });
-      return;
+    } else {
+      setState({ ...EMPTY, loading: true });
+      void load(city);
     }
-    load(city);
     return () => { abortRef.current?.abort(); };
-  }, [city, load, cKey]);
+  }, [city, load, cKey, refreshKey]);
 
-  // An account switch or sign-out while this hook is MOUNTED: the gems on
-  // screen are the previous viewer's — their bylines, their blocks — so they
-  // are dropped and re-fetched as the new viewer rather than left up until
+  // An account switch, sign-out or invalidation while this hook is MOUNTED:
+  // the bylines and blocks on screen predate that scope, so they
+  // are dropped and re-fetched rather than left up until
   // the next remount. A viewer being learned for the first time (undefined →
   // somebody) is not a switch: nothing on screen belonged to anybody else.
   useEffect(() => {
-    let viewer = currentDiscoveryScope().viewer;
+    let scope = currentDiscoveryScope();
     return onDiscoveryScopeChange(() => {
-      const next = currentDiscoveryScope().viewer;
-      if (next === viewer) return;
-      const switched = viewer !== undefined;
-      viewer = next;
-      if (!switched || !city) return;
+      const next = currentDiscoveryScope();
+      const learnedViewer = scope.viewer === undefined && next.viewer !== undefined;
+      scope = next;
+      if (learnedViewer || !city) return;
       setState({ gems: [], picks: [], places: [], loading: true, refused: false, incomplete: false });
       void load(city);
     });

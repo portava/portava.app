@@ -3,7 +3,7 @@
  * meter, inline add form, and the non-negotiable "back at the airport"
  * terminal row.
  */
-import React, { useState } from 'react';
+import React, { useLayoutEffect, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, Pressable, TextInput, Switch, ActivityIndicator,
 } from 'react-native';
@@ -47,7 +47,11 @@ const DUR_CHOICES = [30, 45, 60, 90, 120];
  */
 const TRAVEL_CHOICES = [10, 20, 30, 45, 60];
 
-export function LayoverPlanSection({
+export function LayoverPlanSection(props: Props) {
+  return <LayoverPlanEditor key={props.sessionId} {...props} />;
+}
+
+function LayoverPlanEditor({
   sessionId, stops, planFit, timezone, canEdit, onChanged, onError,
 }: Props) {
   const [adding, setAdding] = useState(false);
@@ -56,28 +60,64 @@ export function LayoverPlanSection({
   const [durationMin, setDurationMin] = useState(60);
   const [travelMin, setTravelMin] = useState(20);
   const [insideAirport, setInsideAirport] = useState(false);
+  const activeRequest = useRef<object | null>(null);
+  const draftRevision = useRef(0);
 
-  const run = async (fn: () => Promise<StopsResponse | null>, failMsg: string) => {
-    if (busy) return;
+  useLayoutEffect(() => {
+    setBusy(false);
+    return () => { activeRequest.current = null; };
+  }, [canEdit]);
+
+  const updateDraft = (update: () => void) => {
+    draftRevision.current += 1;
+    update();
+  };
+
+  const run = async (
+    fn: () => Promise<StopsResponse | null>,
+    failMsg: string,
+    onSuccess?: () => void,
+  ): Promise<boolean> => {
+    if (!canEdit || activeRequest.current) return false;
+    const request = {};
+    activeRequest.current = request;
     setBusy(true);
     try {
       const res = await fn();
-      if (res) onChanged(res);
-      else onError(failMsg);
+      if (activeRequest.current !== request) return false;
+      if (!res) {
+        onError(failMsg);
+        return false;
+      }
+      onChanged(res);
+      if (activeRequest.current === request) onSuccess?.();
+      return true;
+    } catch {
+      if (activeRequest.current === request) onError(failMsg);
+      return false;
     } finally {
-      setBusy(false);
+      if (activeRequest.current === request) {
+        activeRequest.current = null;
+        setBusy(false);
+      }
     }
   };
 
   const handleAdd = () => {
     const name = title.trim();
     if (!name) { onError('Give the stop a name first.'); return; }
-    run(
+    const revision = draftRevision.current;
+    void run(
       () => addPlanStop(sessionId, {
         title: name, durationMin, travelMin: insideAirport ? 0 : travelMin, insideAirport,
       }),
       'Could not add the stop.',
-    ).then(() => { setTitle(''); setAdding(false); });
+      () => {
+        if (draftRevision.current !== revision) return;
+        setTitle('');
+        setAdding(false);
+      },
+    );
   };
 
   const handleMove = (index: number, dir: -1 | 1) => {
@@ -176,7 +216,7 @@ export function LayoverPlanSection({
 
       {/* Add stop */}
       {canEdit && !adding && (
-        <Pressable style={styles.addBtn} onPress={() => setAdding(true)}>
+        <Pressable style={styles.addBtn} onPress={() => updateDraft(() => setAdding(true))}>
           <Plus size={15} color={color.deep} />
           <Text style={styles.addBtnText}>Add a stop</Text>
         </Pressable>
@@ -186,19 +226,19 @@ export function LayoverPlanSection({
         <View style={styles.form}>
           <View style={styles.formHead}>
             <Text style={styles.formTitle}>New stop</Text>
-            <Pressable hitSlop={8} onPress={() => setAdding(false)}><X size={16} color={color.mute} /></Pressable>
+            <Pressable hitSlop={8} onPress={() => updateDraft(() => setAdding(false))}><X size={16} color={color.mute} /></Pressable>
           </View>
           <TextInput
             style={styles.input}
             placeholder="e.g. Ramen at the old market"
             placeholderTextColor={color.faint}
             value={title}
-            onChangeText={setTitle}
+            onChangeText={(value) => updateDraft(() => setTitle(value))}
           />
           <Text style={styles.formLabel}>How long there?</Text>
           <View style={styles.chipRow}>
             {DUR_CHOICES.map((d) => (
-              <Pressable key={d} style={[styles.chip, durationMin === d && styles.chipActive]} onPress={() => setDurationMin(d)}>
+              <Pressable key={d} style={[styles.chip, durationMin === d && styles.chipActive]} onPress={() => updateDraft(() => setDurationMin(d))}>
                 <Text style={[styles.chipText, durationMin === d && styles.chipTextActive]}>{fmtDur(d)}</Text>
               </Pressable>
             ))}
@@ -208,7 +248,7 @@ export function LayoverPlanSection({
               <Text style={styles.formLabel}>Travel time (one way)</Text>
               <View style={styles.chipRow}>
                 {TRAVEL_CHOICES.map((d) => (
-                  <Pressable key={d} style={[styles.chip, travelMin === d && styles.chipActive]} onPress={() => setTravelMin(d)}>
+                  <Pressable key={d} style={[styles.chip, travelMin === d && styles.chipActive]} onPress={() => updateDraft(() => setTravelMin(d))}>
                     <Text style={[styles.chipText, travelMin === d && styles.chipTextActive]}>{`${d}m`}</Text>
                   </Pressable>
                 ))}
@@ -217,7 +257,7 @@ export function LayoverPlanSection({
           )}
           <View style={styles.switchRow}>
             <Text style={styles.formLabel}>Inside the airport</Text>
-            <Switch value={insideAirport} onValueChange={setInsideAirport} trackColor={{ true: color.deep, false: color.haze }} />
+            <Switch value={insideAirport} onValueChange={(value) => updateDraft(() => setInsideAirport(value))} trackColor={{ true: color.deep, false: color.haze }} />
           </View>
           <Pressable style={[styles.saveBtn, busy && { opacity: 0.6 }]} onPress={handleAdd} disabled={busy}>
             <Text style={styles.saveBtnText}>Add to plan</Text>

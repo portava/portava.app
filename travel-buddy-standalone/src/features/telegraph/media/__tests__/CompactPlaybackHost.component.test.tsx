@@ -50,7 +50,7 @@ jest.mock('expo-av', () => {
       playAsync: mockPlayAsync,
       pauseAsync: mockPauseAsync,
       setStatusAsync: mockSetStatusAsync,
-    }));
+    }), []); // stable handle: the real expo-av Video is a class instance ref
     return <V testID="native-video" />;
   });
   Video.displayName = 'Video';

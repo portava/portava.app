@@ -136,7 +136,7 @@ const CONSUMERS: Record<string, Consumer> = {
   },
   'src/hooks/useCommunityDiscovery.ts': {
     uses: ['getCommunityPlaces'],
-    branches: ["const refused = result.data.refusal?.coverage === 'nothing';", 'if (cKey && !refused && isCurrentDiscoveryScope(scope)) {'],
+    branches: ["const refused = result.data.refusal?.coverage === 'nothing';", 'if (cKey && !refused && result.cacheable !== false && isCurrentDiscoveryScope(scope)) {'],
     proofs: [{ file: 'src/hooks/__tests__/useCommunityDiscovery.refusal.component.test.tsx', mentions: 'refused' }],
     partial: 'rows kept and cached WITH `incomplete`, so a cached replay still says so',
     partialBranches: ["incomplete: result.data.refusal?.coverage === 'partial'"],

@@ -597,14 +597,13 @@ export async function personalizedTrending(sc: any, viewerId: string, destinatio
  *     wires name a thing at full precision or not at all; there is no coarse
  *     rung on a trend list or a pulse, so a coarsen decision withholds here too.
  *
- * TRUE for a row with no usable position: no zone can say where an unpositioned
- * row stands. Whether an unpositioned row may be named at all is not this
- * gate's question — the caller's own read already answered it.
+ * FALSE for a row with no usable position: its zone clearance is unknown.
  */
 export function zoneAllowsPosition(
   id: string, title: string, lat: unknown, lng: unknown, zones: readonly ProtectedZone[] | null,
 ): boolean {
-  if (typeof lat !== "number" || typeof lng !== "number") return true;
+  if (typeof lat !== "number" || typeof lng !== "number" || !Number.isFinite(lat) || !Number.isFinite(lng)
+    || Math.abs(lat) > 90 || Math.abs(lng) > 180) return false;
   if (zones === null) return false;
   if (zones.length === 0) return true;
   const probe: MapObject = { id, kind: "place", geometry: { type: "Point", coordinates: [lng, lat] },
@@ -652,15 +651,17 @@ async function zoneClearCells(
     // from free text, and a comma or a quote in it would carry a PostgREST
     // filter delimiter into the expression. The run and the (validated)
     // destination bound the read; the cells are matched in process.
-    const { data, error } = await sc.from("place_momentum").select("place_id, cell_key")
+    const { data, error, count } = await sc.from("place_momentum").select("place_id, cell_key", { count: "exact" })
       .eq("source_surface", "discovery").eq("computed_at", computedAt).eq("city", destination);
-    if (error || !Array.isArray(data)) return null;
+    if (error || !Array.isArray(data) || count !== data.length) return null;
     const cellsOf = new Map<string, string[]>();   // place key → the wanted cells it fed
+    const withheld = new Set<string>();
     for (const r of data as Array<Record<string, unknown>>) {
       const cell = r["cell_key"], pid = r["place_id"];
-      if (typeof cell !== "string" || !wanted.has(cell) || typeof pid !== "string") continue;
+      if (typeof cell !== "string" || !wanted.has(cell)) continue;
+      if (typeof pid !== "string") { withheld.add(cell); continue; }
       const key = placeKey(pid);
-      if (!UUID.test(key)) continue;
+      if (!UUID.test(key)) { withheld.add(cell); continue; }
       const seen = cellsOf.get(key);
       if (seen) seen.push(cell); else cellsOf.set(key, [cell]);
     }
@@ -674,10 +675,14 @@ async function zoneClearCells(
     // drop positioned places silently because a list of places can be short;
     // a pulse of cells cannot say "this one is missing", so it says 503.
     if (zones === null) return null;
-    const withheld = new Set<string>();
+    const cleared = new Set<string>();
     for (const r of places.data as Array<Record<string, unknown>>) {
-      if (zoneAllowsPosition(String(r["id"]), String(r["name"] ?? r["id"]), r["lat"], r["lng"], zones)) continue;
-      for (const c of cellsOf.get(String(r["id"]).toLowerCase()) ?? []) withheld.add(c);
+      if (zoneAllowsPosition(String(r["id"]), String(r["name"] ?? r["id"]), r["lat"], r["lng"], zones)) {
+        cleared.add(String(r["id"]).toLowerCase());
+      }
+    }
+    for (const [placeId, cells] of cellsOf) {
+      if (!cleared.has(placeId)) for (const cell of cells) withheld.add(cell);
     }
     return new Set([...accounted].filter((c) => !withheld.has(c)));
   } catch {

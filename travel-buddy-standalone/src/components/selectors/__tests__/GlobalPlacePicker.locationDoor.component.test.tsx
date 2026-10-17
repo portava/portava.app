@@ -77,6 +77,7 @@ import * as ExpoLocation from 'expo-location';
 import { GlobalPlacePicker } from '../GlobalPlacePicker.tsx';
 import { getCurrentGps } from '../../../services/location.ts';
 import { requestLocationForUserAction } from '../../../lib/location/locationRequestDoor.ts';
+import { setDiscoveryViewerFromSession } from '../../../services/discoveryViewerScope.ts';
 
 const gps = getCurrentGps as jest.MockedFunction<typeof getCurrentGps>;
 const door = requestLocationForUserAction as jest.MockedFunction<typeof requestLocationForUserAction>;
@@ -85,6 +86,7 @@ const requestPerm = ExpoLocation.requestForegroundPermissionsAsync as jest.Mock;
 const takeFix = ExpoLocation.getCurrentPositionAsync as jest.Mock;
 
 beforeEach(() => {
+  setDiscoveryViewerFromSession(null);
   gps.mockReset();
   door.mockClear();
   getPerm.mockClear();

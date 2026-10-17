@@ -28,7 +28,7 @@ import {
   VISIBILITY_POLICIES,
   SOCIAL_AVAILABILITY,
   createWindow,
-  listWindows,
+  listWindowsRead,
   updateWindow,
   clearWindow,
 } from "../services/passport/OpenToPlansService.js";
@@ -726,8 +726,16 @@ router.get("/me/availability-windows", async (req, res) => {
   }
 
   const includeExpired = req.query.includeExpired === "1" || req.query.includeExpired === "true";
-  const windows = await listWindows(client, user.id, { includeExpired });
-  res.json({ windows, enabled: true });
+  try {
+    const windows = await listWindowsRead(client, user.id, { includeExpired });
+    if (windows === null) {
+      sendError(res, "db_error");
+      return;
+    }
+    res.json({ windows, enabled: true });
+  } catch {
+    sendError(res, "db_error");
+  }
 });
 
 // ── POST /api/me/availability-windows ────────────────────────────────────────

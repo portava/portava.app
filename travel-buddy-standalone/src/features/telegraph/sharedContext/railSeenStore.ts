@@ -16,6 +16,7 @@
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getCurrentAccountId } from '../../../services/accountId.ts';
+import { onAuthChange } from '../../../services/auth.ts';
 import type { SeenSnapshot } from './railBehavior.ts';
 
 export const RAIL_SEEN_PREFIX = 'telegraph_rail_seen_v1_';
@@ -29,6 +30,64 @@ export type RailSeenRead =
   | { key: string; state: 'none' }
   | { key: string; state: 'seen'; snapshot: SeenSnapshot }
   | { key: string; state: 'unreadable' };
+
+export interface RailSeenScope {
+  readonly accountId: string;
+  readonly key: string;
+  isCurrent: () => boolean;
+  dispose: () => void;
+}
+
+const accountGenerations = new Map<string, number>();
+const accountOperations = new Map<string, Promise<unknown>>();
+const writeOwners = new WeakMap<RailSeenScope, () => { isCurrent: () => boolean; release: () => void } | null>();
+
+function orderedForAccount<Result>(accountId: string, operation: () => Promise<Result>): Promise<Result> {
+  const previous = accountOperations.get(accountId) ?? Promise.resolve();
+  const pending = previous.catch(() => {}).then(operation);
+  accountOperations.set(accountId, pending);
+  const settled = () => { if (accountOperations.get(accountId) === pending) accountOperations.delete(accountId); };
+  void pending.then(settled, settled);
+  return pending;
+}
+
+export async function captureRailSeenScope(threadId: string, expectedAccountId: string): Promise<RailSeenScope | null> {
+  const generation = accountGenerations.get(expectedAccountId) ?? 0;
+  let active = true;
+  let authorized = true;
+  let confirmed = false;
+  let pendingWrites = 0;
+  const ownerCurrent = () => authorized && (accountGenerations.get(expectedAccountId) ?? 0) === generation;
+  const unsubscribe = onAuthChange((accountId) => {
+    if (!authorized || accountId === expectedAccountId) return;
+    authorized = false;
+    if (confirmed) void clearRailSeenForUser(expectedAccountId);
+  });
+  const releaseIfIdle = () => { if (!active && pendingWrites === 0) unsubscribe(); };
+  const scope: RailSeenScope = {
+    accountId: expectedAccountId,
+    key: railSeenKey(threadId, expectedAccountId),
+    isCurrent: () => active && ownerCurrent(),
+    dispose: () => { active = false; releaseIfIdle(); },
+  };
+  writeOwners.set(scope, () => {
+    if (!scope.isCurrent()) return null;
+    pendingWrites++;
+    return { isCurrent: ownerCurrent, release: () => { pendingWrites--; releaseIfIdle(); } };
+  });
+  try {
+    const accountId = await getCurrentAccountId();
+    if (accountId !== expectedAccountId || !scope.isCurrent()) {
+      scope.dispose();
+      return null;
+    }
+    confirmed = true;
+    return scope;
+  } catch {
+    scope.dispose();
+    return null;
+  }
+}
 
 function parseSnapshot(raw: string): SeenSnapshot | null {
   try {
@@ -49,39 +108,51 @@ function parseSnapshot(raw: string): SeenSnapshot | null {
   }
 }
 
-export async function readRailSeen(threadId: string): Promise<RailSeenRead> {
-  const accountId = await getCurrentAccountId();
-  if (!accountId) return { key: null, state: 'no_account' };
-  const key = railSeenKey(threadId, accountId);
-  let raw: string | null;
-  try {
-    raw = await AsyncStorage.getItem(key);
-  } catch {
-    return { key, state: 'unreadable' };
-  }
-  if (raw === null) return { key, state: 'none' };
-  // A record that does not parse cannot say what was seen; it is replaced on the
-  // next write, like a first visit (it holds nothing worth refusing over).
-  const snapshot = parseSnapshot(raw);
-  return snapshot ? { key, state: 'seen', snapshot } : { key, state: 'none' };
+export async function readRailSeen(scope: RailSeenScope): Promise<RailSeenRead> {
+  return orderedForAccount<RailSeenRead>(scope.accountId, async () => {
+    if (!scope.isCurrent()) return { key: null, state: 'no_account' };
+    const key = scope.key;
+    let raw: string | null;
+    try {
+      raw = await AsyncStorage.getItem(key);
+    } catch {
+      return { key, state: 'unreadable' };
+    }
+    if (!scope.isCurrent()) return { key: null, state: 'no_account' };
+    if (raw === null) return { key, state: 'none' };
+    // A record that does not parse cannot say what was seen; it is replaced on the
+    // next write, like a first visit (it holds nothing worth refusing over).
+    const snapshot = parseSnapshot(raw);
+    return snapshot ? { key, state: 'seen', snapshot } : { key, state: 'none' };
+  });
 }
 
-export async function writeRailSeen(key: string, snapshot: SeenSnapshot): Promise<void> {
+export async function writeRailSeen(scope: RailSeenScope, snapshot: SeenSnapshot): Promise<void> {
+  const owner = writeOwners.get(scope)?.();
+  if (!owner) return;
   try {
-    await AsyncStorage.setItem(key, JSON.stringify({ v: 1, items: snapshot }));
+    const serialized = JSON.stringify({ v: 1, items: snapshot });
+    await orderedForAccount(scope.accountId, async () => {
+      if (owner.isCurrent()) await AsyncStorage.setItem(scope.key, serialized);
+    });
   } catch {
     // Best effort: a write that fails leaves the previous record, which still
     // describes something the member saw.
+  } finally {
+    owner.release();
   }
 }
 
 /** Sign-out: remove every rail record of this account on the device. */
 export async function clearRailSeenForUser(userId: string): Promise<void> {
-  try {
-    const keys = await AsyncStorage.getAllKeys();
-    const mine = keys.filter((k) => k.startsWith(RAIL_SEEN_PREFIX) && k.endsWith(`_${userId}`));
-    if (mine.length > 0) await AsyncStorage.multiRemove(mine);
-  } catch {
-    // Non-fatal at sign-out, like the other per-account sweeps.
-  }
+  accountGenerations.set(userId, (accountGenerations.get(userId) ?? 0) + 1);
+  return orderedForAccount(userId, async () => {
+    try {
+      const keys = await AsyncStorage.getAllKeys();
+      const mine = keys.filter((k) => k.startsWith(RAIL_SEEN_PREFIX) && k.endsWith(`_${userId}`));
+      if (mine.length > 0) await AsyncStorage.multiRemove(mine);
+    } catch {
+      // Non-fatal at sign-out, like the other per-account sweeps.
+    }
+  });
 }

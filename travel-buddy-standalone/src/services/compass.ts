@@ -1280,12 +1280,13 @@ export interface TripHeartbeatRisk {
 }
 
 export interface TripHeartbeat {
-  status: 'healthy' | 'attention' | 'at_risk';
+  status: 'healthy' | 'attention' | 'at_risk' | 'unknown';
   issues: TripHeartbeatIssue[];
   risks: TripHeartbeatRisk[];
-  pendingProposals: number;
-  itemCounts: { fixed: number; flexible: number; optional: number; total: number };
+  pendingProposals: number | null;
+  itemCounts: { fixed: number; flexible: number; optional: number; total: number } | null;
   nextItem: { id: string; title: string; startsAt: string | null; dayDate: string | null } | null;
+  unreadSources: string[];
 }
 
 export interface AutopilotProposalChange {

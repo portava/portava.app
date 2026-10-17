@@ -73,6 +73,7 @@ export interface SharedContextItem {
   status: string;
   availableActions: TelegraphAction[];
   orderBand: SharedContextBand;
+  eventAttendance?: Array<{ userId: string; label: string }> | null;
 }
 
 export interface TelegraphSharedContextProjection {

@@ -45,7 +45,7 @@ import { mayDiscloseGemIdentity } from "../hiddenGems/HiddenGemPrivacyGuard.js";
 import { canReadMemory } from "../memory/memoryReadPolicy.js"; import { readMemoryPrecisionGate, precisionColumnSelectable, precisionClampApplies } from "../../lib/memoryPrecisionGate.js"; import { memoryPlaceLabelsForNonOwner } from "../../lib/memoryLocationPrecision.js"; // §10 on the Memory card (lane R, 2026-10-07); on this line so no cited line moves
 import { applyHistoryWindow, historyBoundEnabled, visibleFromOf } from "../groupChatHistoryBound.js";
 import { decideHighlightViewAccess } from "../../routes/highlights.js";
-import { canViewEvent, checkEventEligibility } from "../../routes/events.js";
+import { checkEventEligibility } from "../../routes/events.js"; import { readEventViewAccess } from "../../lib/eventViewAccess.js";
 import { isFlagEnabled } from "../../lib/featureFlags.js"; import { storageImageOrNull } from "./messageTreeImages.js"; // census-telegraph T446 (B58 TM-1): on this line so no cited line moves
 import { absenceDisclosure } from "../../lib/privacy/absenceDisclosure.js";
 import { nameVisibilitySet, presentedName, resolveHandle } from "../../lib/publicIdentity.js";
@@ -495,7 +495,7 @@ const loadEvent: Loader = async (client, id, viewerId) => {
     if (!att) return { state: UNAVAILABLE("private"), projection: null };
   }
   if (!mine) {
-    if (!(await canViewEvent(client, r, viewerId))) return { state: UNAVAILABLE("private"), projection: null };
+    const access = await readEventViewAccess(client, r as unknown as Parameters<typeof readEventViewAccess>[1], viewerId); if (access !== "allowed") return { state: UNAVAILABLE(access === "unavailable" ? "unknown" : "private"), projection: null };
     const eligible = await checkEventEligibility(client, r, viewerId);
     if (!eligible.ok) {
       return { state: UNAVAILABLE(eligible.unavailable === true ? "unknown" : "unauthorized"), projection: null };

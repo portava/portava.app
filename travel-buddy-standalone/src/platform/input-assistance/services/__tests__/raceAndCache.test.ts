@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createSequenceGuard } from '../raceGuard.ts';
-import { SuggestionCache } from '../suggestionCache.ts';
+import { SuggestionCache, inputSessionScopeKey } from '../suggestionCache.ts';
 import { foldForMatch, resolveLocalAlias, isFoldedPrefix } from '../queryNormalization.ts';
 import {
   dedupeSuggestions,
@@ -76,6 +76,25 @@ test('cache key: coord jitter under ~1km does not bust the key', () => {
   const a = SuggestionCache.key('f', 'da', 16.0544, 108.2022);
   const b = SuggestionCache.key('f', 'DA ', 16.0548, 108.2019); // case + <1km drift
   assert.equal(a, b, 'folded query + rounded coords must produce the same key');
+});
+
+test('session scope: property order and omitted values canonicalize without exposing raw scope', () => {
+  const first = inputSessionScopeKey({ tripId: 'private-trip', eventId: 'private-event', cityId: undefined, lat: 1, lng: 2 });
+  const second = inputSessionScopeKey({ eventId: 'private-event', tripId: 'private-trip', lat: 3, lng: 4 });
+  assert.equal(first, second);
+  assert.match(first, /^[a-f0-9]{64}$/);
+  assert.equal(inputSessionScopeKey(), '');
+  assert.equal(inputSessionScopeKey({ lat: 1, lng: 2, tripId: undefined }), '');
+});
+
+test('session scope: field names and delimiter-bearing values cannot alias', () => {
+  const trip = inputSessionScopeKey({ tripId: 'private-id' });
+  const event = inputSessionScopeKey({ eventId: 'private-id' });
+  assert.notEqual(trip, event);
+  assert.notEqual(
+    inputSessionScopeKey({ tripId: 'trip|event', eventId: 'one' }),
+    inputSessionScopeKey({ tripId: 'trip', eventId: 'event|one' }),
+  );
 });
 
 test('cache: LRU eviction drops the oldest, keeps the most-recently-used', () => {

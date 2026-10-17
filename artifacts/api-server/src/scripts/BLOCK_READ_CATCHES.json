@@ -306,6 +306,16 @@
       "why": "Notes the failed source and sets allRows = [] — the gems feed is served empty and says which read failed (census-media §47)."
     },
     {
+      "key": "routes/memories.ts::get /memories/graph::catch#1",
+      "kind": "catch",
+      "reads": [
+        "from(\"blocks\")"
+      ],
+      "fingerprint": "43998f76c4b51eec",
+      "closedBy": "answers-unreadable",
+      "why": "A thrown participant-block read aborts graph construction and returns degraded_unavailable (503), never a graph with an empty block list or participant identities. memoryGraphModel tests both returned and thrown block failures through the mounted route."
+    },
+    {
       "key": "routes/messaging.ts::get /me/unread-counts::catch#1",
       "kind": "catch",
       "reads": [

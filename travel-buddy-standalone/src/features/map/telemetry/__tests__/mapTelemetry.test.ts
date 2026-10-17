@@ -696,6 +696,109 @@ describe('mapTelemetry — bounded queue', () => {
 // ── 5. Flush triggers ─────────────────────────────────────────────────────────
 
 describe('mapTelemetry — flush triggers', () => {
+  it('drains an in-flight backlog in server-sized chunks, in order', async () => {
+    const batches: MapTelemetryBatch[] = [];
+    let releaseFirst!: () => void;
+    setMapTelemetryTransport(async (batch) => {
+      batches.push(batch);
+      if (batches.length === 1) await new Promise<void>((resolve) => { releaseFirst = resolve; });
+    });
+    openMap();
+    const ref = describeMapObject(mapObject());
+    for (let index = 1; index < 170; index += 1) {
+      emitMapEvent('place_opened', { ref, source: 'marker', rank: index });
+    }
+    assert.equal(batches[0]?.events.length, 20);
+    assert.equal(mapTelemetryDiagnostics().queueDepth, 150);
+    releaseFirst();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.deepEqual(batches.map((batch) => batch.events.length), [20, 100, 50]);
+    assert.deepEqual(batches.flatMap((batch) => batch.events.map((event) => event.seq)),
+      Array.from({ length: 170 }, (_, index) => index + 1));
+    assert.equal(mapTelemetryDiagnostics().queueDepth, 0);
+    assert.equal(mapTelemetryDiagnostics().droppedTotal, 0);
+  });
+
+  it('chunks a queue accumulated before transport installation', async () => {
+    configureMapTelemetry({ transport: null, batchSize: 1000 });
+    openMap();
+    const ref = describeMapObject(mapObject());
+    for (let index = 1; index < 170; index += 1) {
+      emitMapEvent('place_opened', { ref, source: 'marker', rank: index });
+    }
+    setMapTelemetryTransport(transport.fn);
+    await flushMapTelemetry();
+    assert.deepEqual(transport.batches.map((batch) => batch.events.length), [100, 70]);
+    assert.deepEqual(transport.batches.map((batch) => batch.meta.queueDepth), [170, 70]);
+    assert.equal(transport.events.length, 170);
+  });
+
+  it('retries a failed middle chunk before the unsent tail without losing events', async () => {
+    const attempts: MapTelemetryBatch[] = [];
+    const delivered: MapTelemetryEvent[] = [];
+    let releaseFirst!: () => void;
+    setMapTelemetryTransport(async (batch) => {
+      attempts.push(batch);
+      if (attempts.length === 1) await new Promise<void>((resolve) => { releaseFirst = resolve; });
+      if (attempts.length === 2) throw new Error('middle chunk failed');
+      delivered.push(...batch.events);
+    });
+    openMap();
+    const ref = describeMapObject(mapObject());
+    for (let index = 1; index < 170; index += 1) {
+      emitMapEvent('place_opened', { ref, source: 'marker', rank: index });
+    }
+    releaseFirst();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.deepEqual(attempts.map((batch) => batch.events.length), [20, 100]);
+    assert.equal(mapTelemetryDiagnostics().queueDepth, 150);
+    await flushMapTelemetry();
+    assert.deepEqual(attempts.map((batch) => batch.events.length), [20, 100, 100, 50]);
+    assert.deepEqual(attempts[1]?.events, attempts[2]?.events);
+    assert.deepEqual(delivered.map((event) => event.seq),
+      Array.from({ length: 170 }, (_, index) => index + 1));
+    assert.equal(mapTelemetryDiagnostics().droppedTotal, 0);
+  });
+
+  it('drops only the exhausted chunk and reports its loss on the surviving tail', async () => {
+    configureMapTelemetry({ transport: null, batchSize: 1000 });
+    openMap();
+    const ref = describeMapObject(mapObject());
+    for (let index = 1; index < 170; index += 1) {
+      emitMapEvent('place_opened', { ref, source: 'marker', rank: index });
+    }
+    transport.failFor(3);
+    setMapTelemetryTransport(transport.fn);
+    await flushMapTelemetry();
+    await flushMapTelemetry();
+    await flushMapTelemetry();
+    assert.equal(mapTelemetryDiagnostics().queueDepth, 70);
+    assert.equal(mapTelemetryDiagnostics().droppedByReason.delivery_failed, 100);
+    await flushMapTelemetry();
+    assert.deepEqual(transport.events.map((event) => event.seq),
+      Array.from({ length: 70 }, (_, index) => index + 101));
+    assert.equal(transport.batches[0]?.meta.dropped, 100);
+    assert.equal(transport.batches[0]?.meta.droppedTotal, 100);
+    assert.equal(mapTelemetryDiagnostics().droppedPending, 0);
+  });
+
+  it('reports overflow once across bounded chunks without changing the queue limit', async () => {
+    configureMapTelemetry({ transport: null, batchSize: 1000 });
+    openMap();
+    const ref = describeMapObject(mapObject());
+    for (let index = 1; index < 250; index += 1) {
+      emitMapEvent('place_opened', { ref, source: 'marker', rank: index });
+    }
+    assert.equal(mapTelemetryDiagnostics().queueDepth, 200);
+    setMapTelemetryTransport(transport.fn);
+    await flushMapTelemetry();
+    assert.deepEqual(transport.batches.map((batch) => batch.events.length), [100, 100]);
+    assert.deepEqual(transport.batches.map((batch) => batch.meta.dropped), [50, 0]);
+    assert.deepEqual(transport.batches.map((batch) => batch.meta.droppedTotal), [50, 50]);
+    assert.deepEqual(transport.events.map((event) => event.seq),
+      Array.from({ length: 200 }, (_, index) => index + 51));
+  });
+
   it('flushes on size', async () => {
     configureMapTelemetry({ batchSize: 4, flushIntervalMs: 999_999 });
     openMap();

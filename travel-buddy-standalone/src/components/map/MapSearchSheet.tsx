@@ -33,6 +33,9 @@ import { mapChrome } from '../../theme/mapChrome.ts';
 import { space, radius, type as t } from '../../theme/tokens.ts';
 import { postSearchSignal } from '../../services/discovery.ts';
 import { requestMapSearchPage } from '../../platform/input-assistance/services/inputAssistance.ts';
+import { createInputRequestScheduler, type InputRequest } from '../../platform/input-assistance/services/inputRequestScheduler.ts';
+import { useInputAccountEpoch } from '../../platform/input-assistance/hooks/useInputAccountEpoch.ts';
+import { currentDiscoveryScope } from '../../services/discoveryViewerScope.ts';
 import { SEARCH_PARTIAL_NOTICE } from '../../services/discoveryCoverageNotice.ts';
 import { toMapSearchResults } from '../../features/map/search/searchAdapter.ts';
 import {
@@ -147,6 +150,9 @@ export function MapSearchSheet({
   onSelect,
 }: MapSearchSheetProps) {
   const insets = useSafeAreaInsets();
+  const accountEpoch = useInputAccountEpoch();
+  const renderedEpoch = useRef(accountEpoch);
+  const scopeCurrent = renderedEpoch.current === accountEpoch;
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<MapSearchResult[]>([]);
   const [loading, setLoading] = useState(false);
@@ -154,12 +160,10 @@ export function MapSearchSheet({
   /** Set when the server REFUSED rather than failed. See `SearchNotice`. */
   const [notice, setNotice] = useState<SearchNotice | null>(null); const [tooShort, setTooShort] = useState(false); // §80: nothing searchable yet
 
-  // Guards against a slow early query overwriting a fast later one.
-  const seqRef = useRef(0);
+  const schedulerRef = useRef(createInputRequestScheduler());
 
   const run = useCallback(
-    async (q: string) => {
-      const seq = ++seqRef.current;
+    async (q: string, request: InputRequest) => {
       if (q.trim().length < MIN_QUERY_LENGTH) {
         setResults([]);
         setError(null);
@@ -184,9 +188,9 @@ export function MapSearchSheet({
       // same §24 protected-zone pass, and each lane's coverage on the envelope
       // — `refusal` for the fan-out, `savedRefusal` for the saved heading. The
       // notices below are unchanged because the facts they read are unchanged.
-      const res = await requestMapSearchPage(q, opts).catch(() => null);
+      const res = await requestMapSearchPage(q, opts, request.signal).catch(() => null);
       // A stale response must not replace a newer one.
-      if (seq !== seqRef.current) return;
+      if (!request.isCurrent()) return;
       setLoading(false);
       if (!res || !res.ok) {
         setError(res && !res.ok ? res.error : 'Search failed');
@@ -233,11 +237,23 @@ export function MapSearchSheet({
     [lat, lng, city],
   );
 
+  const scheduleSearch = useCallback((delayMs: number) => {
+    const scheduler = schedulerRef.current;
+    scheduler.cancel();
+    renderedEpoch.current = accountEpoch;
+    setResults([]);
+    setError(null);
+    setNotice(null);
+    setTooShort(false);
+    const searchable = visible && query.trim().length >= MIN_QUERY_LENGTH;
+    setLoading(searchable);
+    if (searchable) scheduler.schedule((request) => void run(query, request), delayMs);
+  }, [query, visible, run, accountEpoch]);
+
   useEffect(() => {
-    if (!visible) return;
-    const id = setTimeout(() => void run(query), DEBOUNCE_MS);
-    return () => clearTimeout(id);
-  }, [query, visible, run]);
+    scheduleSearch(DEBOUNCE_MS);
+    return schedulerRef.current.cancel;
+  }, [scheduleSearch]);
 
   // Reset on close so reopening is not haunted by the last search.
   useEffect(() => {
@@ -253,8 +269,8 @@ export function MapSearchSheet({
     // preferGeographic sinks results the map cannot place, so a search from a
     // MAP surface leads with what it can actually show. Group ORDER stays §27's
     // fixed list — only the order within a group moves.
-    () => groupResults(results, { preferGeographic: true }),
-    [results],
+    () => groupResults(scopeCurrent ? results : [], { preferGeographic: true }),
+    [results, scopeCurrent],
   );
 
   if (!visible) return null;
@@ -271,7 +287,7 @@ export function MapSearchSheet({
           placeholderTextColor={mapChrome.textOnDarkFaint}
           autoFocus
           returnKeyType="search"
-          onSubmitEditing={() => void run(query)}
+          onSubmitEditing={() => scheduleSearch(0)}
           accessibilityLabel="Search the map"
         />
         {loading ? <ActivityIndicator size="small" color={mapChrome.textOnDarkMute} /> : null}
@@ -286,9 +302,9 @@ export function MapSearchSheet({
       </View>
 
       <ScrollView style={styles.list} keyboardShouldPersistTaps="handled">
-        {error ? <Text style={styles.note}>{error}</Text> : null}
+        {scopeCurrent && error ? <Text style={styles.note}>{error}</Text> : null}
 
-        {!error && notice ? (
+        {scopeCurrent && !error && notice ? (
           <Text style={styles.note} accessibilityLabel={notice.text}>
             {notice.text}
           </Text>
@@ -297,7 +313,7 @@ export function MapSearchSheet({
         {/* `notice.nothingServed` is the guard that matters: with it absent,
             a refused search falls through to "Nothing matched", which claims a
             result set the server never produced. */}
-        {!error &&
+        {scopeCurrent && !error &&
         !loading &&
         !notice?.nothingServed && !tooShort &&
         query.trim().length >= MIN_QUERY_LENGTH &&
@@ -314,7 +330,7 @@ export function MapSearchSheet({
                 <Pressable
                   key={`${r.type}:${r.id}`}
                   style={styles.row}
-                  onPress={() => onSelect(r, frameFor(r))}
+                  onPress={() => { if (currentDiscoveryScope().epoch === accountEpoch) onSelect(r, frameFor(r)); }}
                   accessibilityRole="button"
                   accessibilityLabel={
                     geographic ? `${r.title}, show on map` : `${r.title}, open details`

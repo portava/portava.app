@@ -45,6 +45,7 @@ import { inertModifiers } from "../discoveryModifiers.js";
 import { listTrails, type TrailRow } from "../../services/trails/TrailService.js";
 import { loadSharedMomentCandidates } from "../../services/wall/WallCandidateLoaders.js";
 import { fetchBlockedSet } from "../blocks.js";
+import { inactiveSubmitterIds, submitterInGoodStanding } from "../discoveryCacheEligibility.js";
 import { loadPipelineFlags, PIPELINE_FLAGS_OFF } from "./pipelineFlags.js";
 import { cityPrefixOf, momentumPlaceIds, IN_LIST_CAP, type RetrievalContext } from "./retrievals.js";
 import { materialiseCandidates, type MaterialisedPlace } from "./materialize.js";
@@ -132,8 +133,10 @@ export async function rankSharedMomentsForViewer(
   // unreadable block set drops every moment (fail closed, Wall spec §23).
   const blocked = loaded.candidates.length > 0 ? await fetchBlockedSet(sc, viewer.userId) : new Set<string>();
   if (blocked === null) return { kind: "shared_moments", status: "unavailable", rankedBy: "none", items: [], unavailable: "blocks" };
+  const inactive = await inactiveSubmitterIds(sc, loaded.candidates.map((candidate) => candidate.authorId));
+  if (inactive === null) return { kind: "shared_moments", status: "unavailable", rankedBy: "none", items: [], unavailable: "profiles.standing" };
   const rows = loaded.candidates
-    .filter((c) => c.objectType === "shared_moment" && (c.authorAccountStatus ?? "active") === "active" && !c.isDeleted && !blocked.has(c.authorId))
+    .filter((c) => c.objectType === "shared_moment" && (c.authorAccountStatus ?? "active") === "active" && submitterInGoodStanding(c.authorId, inactive) && !c.isDeleted && !blocked.has(c.authorId))
     .map((c) => {
       const city = loaded.signals.get(c.canonicalObjectId)?.city ?? null;
       const item: RankableMoment = { id: c.canonicalObjectId, ownerId: c.authorId, title: c.text ?? null, city, publishedAt: c.publishedAt };
