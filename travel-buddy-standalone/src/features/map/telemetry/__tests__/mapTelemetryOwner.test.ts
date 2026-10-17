@@ -1,16 +1,16 @@
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { URL as NodeURL } from 'node:url';
+import { fileURLToPath } from 'node:url'; import { dirname } from 'node:path';
 import ts from 'typescript';
 import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
 import * as telemetry from '../mapTelemetry.ts';
 import type { MapTelemetryBatch, FetchTelemetryTransportOptions } from '../mapTelemetry.ts';
 
-const screenPath = new NodeURL('../../../../../app/map/index.tsx', import.meta.url);
-const screenSource = readFileSync(screenPath, 'utf8');
-const screenAst = ts.createSourceFile(screenPath.pathname, screenSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+const __dir = dirname(fileURLToPath(import.meta.url)); const screenPath = `${__dir}/../../../../../app/map/index.tsx`;
+const screenSource = readFileSync(`${__dir}/../../../../../app/map/index.tsx`, 'utf8');
+const screenAst = ts.createSourceFile(screenPath, screenSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const effects: string[] = [];
 function findTelemetryEffect(node: ts.Node): void {
   if (ts.isExpressionStatement(node) && ts.isCallExpression(node.expression)
@@ -126,7 +126,7 @@ function harness(initialOwner = 'account-A', notifyInitialOwner = true) {
               cleanup = effect();
             },
           };
-          new Function(...Object.keys(bindings), effectCode)(...Object.values(bindings));
+          new Function(...Object.keys(bindings).filter((k) => k !== 'default'), effectCode)(...Object.entries(bindings).filter(([k]) => k !== 'default').map(([, v]) => v));
         },
         unmount() { cleanup?.(); cleanup = undefined; dependencies = undefined; },
       };
@@ -151,9 +151,9 @@ describe('mapTelemetry — real screen owner lifecycle effect', () => {
   it('rebinds a mounted screen after a coalesced same-ID logout/login', async () => {
     const auth = harness();
     const bindings = { ...auth.bindings(), useEffect: React.useEffect };
-    const Screen = new Function(...Object.keys(bindings),
+    const Screen = new Function(...Object.keys(bindings).filter((k) => k !== 'default'),
       `return function Screen({ userId }) { ${effectCode}; return null; };`,
-    )(...Object.values(bindings)) as React.ComponentType<{ userId: string | null }>;
+    )(...Object.entries(bindings).filter(([k]) => k !== 'default').map(([, v]) => v)) as React.ComponentType<{ userId: string | null }>;
     const environment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
     const previous = environment.IS_REACT_ACT_ENVIRONMENT;
     environment.IS_REACT_ACT_ENVIRONMENT = true;
@@ -463,7 +463,7 @@ function screenOperation(expression: string, bindings: Record<string, unknown>):
   const code = ts.transpileModule(expression, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
   }).outputText;
-  return new Function(...Object.keys(bindings), `${code}; return operation;`)(...Object.values(bindings));
+  return new Function(...Object.keys(bindings).filter((k) => k !== 'default'), `${code}; return operation;`)(...Object.entries(bindings).filter(([k]) => k !== 'default').map(([, v]) => v));
 }
 
 function producerExpression(name: 'joinMapObject' | 'startLocateFriends'): string {

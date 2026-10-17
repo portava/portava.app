@@ -19,7 +19,7 @@ import type { AuthChangeEvent, Session } from '@supabase/supabase-js';
 let mockOwner: string | null = 'owner-a';
 let mockSessionGeneration = 0;
 type MockAuthListener = (event: AuthChangeEvent, session: Session | null) => void;
-var mockAuthListeners: Set<MockAuthListener> | undefined;
+var mockAuthListeners: Set<MockAuthListener> | undefined; // eslint-disable-line no-var -- jest hoists the jest.mock factory above this line and it initialises the set; a `let` would still be in its TDZ there
 const token = (owner = mockOwner) => owner ? `header.${btoa(JSON.stringify({ sub: owner, session_id: `picker-session-${owner}-${mockSessionGeneration}` }))}.signature` : null;
 function mockSession(owner = mockOwner): Session | null {
   if (!owner) return null;

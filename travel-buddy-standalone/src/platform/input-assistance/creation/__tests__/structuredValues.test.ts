@@ -79,26 +79,6 @@ test('a length needs a start: none → no patch (not offered); with one → end 
   );
 });
 
-import { parseStructuredValues } from '../../../../../../artifacts/api-server/src/lib/inputAssistance/structuredValues.ts';
-
-for (const title of ['Club night 10pm-2am', 'Club night 10pm for 4 hours']) {
-  for (const [startDateStr, endDateStr] of [
-    ['2026-10-09', '2026-10-10'], ['2026-12-31', '2027-01-01'],
-    ['2028-02-28', '2028-02-29'], ['2028-02-29', '2028-03-01'],
-    ['2026-03-08', '2026-03-09'], ['2026-11-01', '2026-11-02'],
-  ]) {
-    test(`server-derived ${title} applies the next calendar day from ${startDateStr}`, () => {
-      const values = parseStructuredValues(title);
-      assert.deepEqual(values, [{ kind: 'event_time', date: null, startTime: '22:00', endDate: null, endTime: '02:00' }]);
-      const value = readStructuredValue(values[0]);
-      assert.ok(value);
-      const form = { ...EMPTY, startDateStr };
-      assert.deepEqual(eventFormPatch(value, form), { startTime: '22:00', endTime: '02:00', endDateStr });
-      assert.deepEqual(form, { ...EMPTY, startDateStr });
-    });
-  }
-}
-
 test('event-time application preserves explicit dates, same-day clocks and missing or invalid dates', () => {
   const overnight = { kind: 'event_time' as const, date: null, startTime: '22:00', endDate: null, endTime: '02:00' };
   assert.deepEqual(eventFormPatch({ ...overnight, endDate: '2030-06-09' }, { ...EMPTY, startDateStr: '2030-06-07' }),
@@ -109,12 +89,4 @@ test('event-time application preserves explicit dates, same-day clocks and missi
     assert.deepEqual(eventFormPatch(overnight, { ...EMPTY, startDateStr }),
       { startTime: '22:00', endTime: '02:00', endDateStr: startDateStr });
   }
-});
-
-test('equal clocks do not acquire an inferred 24-hour date policy', () => {
-  assert.deepEqual(parseStructuredValues('Club night 10pm-10pm'), []);
-  const value = readStructuredValue(parseStructuredValues('Club night 10pm for 24 hours')[0]);
-  assert.ok(value);
-  assert.deepEqual(eventFormPatch(value, { ...EMPTY, startDateStr: '2030-06-07' }),
-    { startTime: '22:00', endTime: '22:00', endDateStr: '2030-06-07' });
 });

@@ -29,8 +29,8 @@ pnpm --filter @workspace/api-server db:local:down     # stop a cluster up.sh boo
    never run. A stale override aborts the replay. A file may fail **only** if
    `KNOWN_UNREPLAYABLE.json`
    names it with its verbatim error, and a listed file that replays in order
-   aborts the run so the list can only shrink. The two listed files are one
-   PostgreSQL 17 privilege and one seed-row precondition — neither an order
+   aborts the run so the list can only shrink. The three listed files are one
+   PostgreSQL 17 privilege, one seed-row precondition and one extension the CI image lacks (pgvector, 3982) — none an order
    defect (docs/migrations.md § "Apply-order overrides" records the ten that
    were, and how each was resolved); every `trip_*` object, the kernel and the
    projection worker replay cleanly, and `up.sh` refuses to finish unless they
