@@ -5,7 +5,7 @@
  *  - Coalesces repeated "new message" events within a configurable window.
  *  - Throttles nearby-recommendation events (1 per location per interval).
  *  - Rate-limits Compass suggestions (max N per day).
- *  - Deduplicates on (user_id, category, source_type, source_id) within a rolling window.
+ *  - Deduplicates on (user_id, category, source_type, source_id) within a rolling window — and (census-telegraph T397) on the UNDERLYING causal event, across every category (rule 0b, hasCausalDuplicate).
  *
  * ── THE ROLLING WINDOW IS WHERE TELEGRAPH §19'S PRIORITY BANDS LAND ──────────
  * §19 declares six attention bands (P0 Safety … P5 AI), and census-telegraph
@@ -56,7 +56,7 @@ export class NotificationDeduplicationService {
     category: string;
     eventType: string;
     sourceType?: string;
-    sourceId?: string; /** OD-1012-LAY-1/4a: an essential warning — an unreadable ledger does not suppress it; its attempts are bounded instead (rule 4, essentialAttemptBudget.ts). */ essential?: boolean; /** OD-1012-LAY-1 (V-L99 D1): rows written before this instant are not duplicates of this one — something newer superseded them; `unknown` = that could not be read (rule 4). */ notBefore?: string | 'unknown';
+    sourceId?: string; /** OD-1012-LAY-1/4a: an essential warning — an unreadable ledger does not suppress it; its attempts are bounded instead (rule 4, essentialAttemptBudget.ts). */ essential?: boolean; /** OD-1012-LAY-1 (V-L99 D1): rows written before this instant are not duplicates of this one — something newer superseded them; `unknown` = that could not be read (rule 4). */ notBefore?: string | 'unknown'; /** census-telegraph T397: the UNDERLYING event this notification is about (causalEventIdOf, file foot). Any notification to this user carrying the same id, in ANY category, makes this one a duplicate (rule 0b). */ causalEventId?: string;
   }): Promise<DeduplicationResult> {
     const { userId, category, eventType, sourceType, sourceId } = params; let capped = false; const unreadable = params.essential === true ? () => { const ok = takeEssentialAttempt(essentialAttemptKey(params)); capped = !ok; return ok; } : 'duplicate' as const; // OD-1012-LAY-4a: an essential is ATTEMPTED on an unreadable ledger, within a bound (essentialAttemptBudget.ts)
 
@@ -69,7 +69,7 @@ export class NotificationDeduplicationService {
     if (ladderWindowMs === null) {
       logger.debug({ userId, eventType }, 'dedup: ephemeral band is not persisted');
       return { isDuplicate: true, reason: 'ephemeral_not_persisted' };
-    }
+    } if (ladderWindowMs !== 0 && isCausalEventId(params.causalEventId) && await this.hasCausalDuplicate(userId, params.causalEventId, unreadable)) { logger.debug({ userId, eventType }, 'dedup: the same causal event already notified this user'); return { isDuplicate: true, reason: capped ? 'essential_attempt_cap' : 'causal_duplicate' }; } // 0b. census-telegraph T397 (§30A.6): one underlying event, one notification, whatever category reports it — see hasCausalDuplicate. P0 is exempt (never suppressed).
 
     // 1. Message coalescing: suppress repeated "new message" for the same thread.
     // The window comes from the ladder (P2 = 5 minutes, the same number this
@@ -231,4 +231,78 @@ export class NotificationDeduplicationService {
       return COMPASS_DAILY_LIMIT;
     }
   }
+
+  /**
+   * census-telegraph T397 — §30A.6: "Deduplicate notifications by underlying
+   * causal event. A single Plan change must not create redundant Plan, Trip,
+   * Telegraph, and Compass notifications."
+   *
+   * Every other rule in `check()` keys on the notification's OWN coordinates
+   * (category, event type, source), so two producers in two categories that
+   * report one change can never match each other — which is exactly the
+   * redundancy the clause names. This rule keys on the EVENT: a producer that
+   * passes `causalEventId` (minted by `causalEventIdOf` from the change itself,
+   * never from the producer's category) asks "has this person already been told
+   * about this event, by anyone?", and the id is persisted in
+   * `notifications.metadata.causal_event_id` by NotificationService.create so the
+   * next producer can find it. No category, event-type or source filter, on
+   * purpose.
+   *
+   * The window is a query bound, not a policy: one event's notifications are
+   * produced within seconds of each other, and a day is far past any of them.
+   * An UNREADABLE ledger answers exactly as `hasRecentNotification` does — a
+   * duplicate, except that an essential warning is attempted within its bound.
+   */
+  private async hasCausalDuplicate(
+    userId: string,
+    causalEventId: string,
+    onUnreadable: 'duplicate' | (() => boolean),
+  ): Promise<boolean> {
+    const unknown = (err: unknown): boolean => {
+      if (onUnreadable === 'duplicate') { logger.warn({ err, userId }, 'dedup: causal-event read failed, suppressing as duplicate'); return true; }
+      const attempt = onUnreadable(); logger.warn({ err, userId, essential: true }, attempt ? 'dedup: causal-event read failed, ESSENTIAL warning attempted (bounded)' : 'dedup: causal-event read failed, ESSENTIAL warning NOT attempted: bounded-attempt cap reached'); return !attempt;
+    };
+    try {
+      const since = new Date(Date.now() - CAUSAL_DEDUP_WINDOW_MS).toISOString();
+      const { data, error } = await this.db
+        .from('notifications')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('metadata->>causal_event_id', causalEventId)
+        .gt('created_at', since)
+        .limit(1);
+      if (error || !Array.isArray(data)) return unknown(error ?? 'not a row list');
+      return data.length > 0;
+    } catch (err) {
+      return unknown(err);
+    }
+  }
+}
+
+/** census-telegraph T397: how far back the causal rule looks — a query bound (see hasCausalDuplicate). */
+export const CAUSAL_DEDUP_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+const CAUSAL_ID = /^[A-Z][A-Z_]{1,40}:[A-Za-z0-9._:-]{1,200}(@[A-Za-z0-9._:-]{1,64})?$/;
+
+/** A causal event id this service will act on: the shape `causalEventIdOf` mints, nothing else. */
+export function isCausalEventId(v: unknown): v is string {
+  return typeof v === 'string' && CAUSAL_ID.test(v);
+}
+
+/**
+ * census-telegraph T397 — the ONE way a producer names the underlying event.
+ *
+ * Built from the CHANGE, never from the producer: the object that changed (its
+ * §5 family, upper case, and its id) and, where the source domain versions its
+ * changes, the version the change produced. So the Plan, Trip, Telegraph and
+ * Compass producers reporting one Plan change compute the same id — `PLAN:<id>@<version>`
+ * — without knowing about each other, and the second one to reach a person is
+ * a duplicate. A coordination act is its own event: the message that records it
+ * (`MESSAGE:<id>`). Returns null for anything that would not round-trip through
+ * `isCausalEventId`, so a malformed id is never stored as if it named an event.
+ */
+export function causalEventIdOf(e: { objectType: string; objectId: string; version?: string | number | null }): string | null {
+  const v = e.version === undefined || e.version === null || e.version === '' ? '' : `@${String(e.version)}`;
+  const id = `${e.objectType}:${e.objectId}${v}`;
+  return isCausalEventId(id) ? id : null;
 }

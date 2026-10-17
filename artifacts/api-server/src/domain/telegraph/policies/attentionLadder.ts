@@ -177,12 +177,12 @@ export const EVENT_BAND: Readonly<Record<string, AttentionBand>> = dispatchTable
   //   "meetup moved"  -> circle.meeting_point_updated  (the host moved it)
   //   "pickup"        -> trip.departure_reminder       (be somewhere, at a time)
   //   "return state"  -> safe_return.cleared           (they are back)
-  // Nothing else is claimed for P1. An invite is not a plan changing under
+  // Nothing else is claimed for P1 except §30A.6's COORDINATION cause (wave 5, below). An invite is not a plan changing under
   // someone who already made arrangements around it, which is the specific harm
   // a 30-minute swallow does here.
   "circle.meeting_point_updated": "P1_COORDINATION", // :974
   "trip.departure_reminder": "P1_COORDINATION",      // :640
-  "safe_return.cleared": "P1_COORDINATION",          // :271
+  "safe_return.cleared": "P1_COORDINATION", "telegraph.coordination": "P1_COORDINATION", // :271 · "telegraph.coordination" is §30A.6's own COORDINATION cause (census T395, wave 5)
 
   // P2 — ordinary conversation. The window is 5 minutes, which is the window
   // telegraph.message already had; the point is that P1 above is now SHORTER

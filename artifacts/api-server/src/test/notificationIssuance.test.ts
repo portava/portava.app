@@ -286,3 +286,29 @@ describe("VACUITY GUARD", () => {
     );
   });
 });
+
+// ── census-telegraph T397 (wave 5): the causal-event read, through the REAL client ──
+
+describe("T397 (wave 5) — the causal-event dedupe read, as PostgREST receives it", () => {
+  it("asks for metadata->>causal_event_id for this user, with no category, event type or source — one event, whatever reports it", async () => {
+    const { NotificationDeduplicationService } = await import("../services/notifications/NotificationDeduplicationService.js");
+    calls = [];
+    const sc = realClient(() => []);
+    await new NotificationDeduplicationService(sc as any).check({ userId: USER_ID, category: "trips", eventType: "trip.plan_updated", sourceType: "trip", sourceId: "trip-1", causalEventId: "PLAN:plan-1@7" });
+    const causal = callsTo("notifications", "GET").find((c) => new URLSearchParams(c.query).has("metadata->>causal_event_id"));
+    assert.ok(causal, `no causal read was sent: ${calls.map((c) => c.query).join(" | ")}`);
+    const q = new URLSearchParams(causal!.query);
+    assert.equal(q.get("metadata->>causal_event_id"), "eq.PLAN:plan-1@7");
+    assert.equal(q.get("user_id"), `eq.${USER_ID}`);
+    for (const k of ["category", "event_type", "source_type", "source_id"]) assert.equal(q.has(k), false, `the causal read is narrowed by ${k}`);
+  });
+
+  it("create PERSISTS the id in metadata, beside the caller's own metadata", async () => {
+    calls = [];
+    const sc = realClient((c) => (c.method === "POST" && c.path === "/rest/v1/notifications" ? { ...INSERTED_ROW, metadata: c.body?.metadata ?? {} } : []));
+    await new NotificationService(sc as any).create({ userId: USER_ID, eventType: "trip.invite_received", params: { actor: "A" }, metadata: { k: 1 }, causalEventId: "TRIP:trip-1@3" });
+    const post = callsTo("notifications", "POST")[0];
+    assert.ok(post, "no insert was issued");
+    assert.deepEqual(post!.body.metadata, { k: 1, causal_event_id: "TRIP:trip-1@3" });
+  });
+});

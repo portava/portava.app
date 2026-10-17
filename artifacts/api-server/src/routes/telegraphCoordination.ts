@@ -33,8 +33,8 @@ import { asyncHandler } from "../lib/asyncHandler.js";
 import { logger as rootLogger } from "../lib/logger.js";
 import { guardTelegraphThreadWrite, sendThreadWriteRefusal } from "../lib/telegraphThreadWrite.js"; import { boundAnnouncementsForViewer, textOfPayload } from "../domain/telegraph/policies/groupControlsPolicy.js"; import { getServiceClient } from "../lib/supabase.js";
 import { emitCoordinationCompleted, publishToThread } from "../lib/telegraphEvents.js"; import { publishMessageCreated } from "../lib/telegraphOutboxDrainScheduler.js"; // census-telegraph T154 (V-TR F1)
-import { createCoordinationSession } from "../services/telegraph/coordinationSessions.js"; import { readSessionRowsThroughCheckpoint } from "../services/telegraph/conversationSnapshots.js"; // census-telegraph T155
-import { writeThreadEnvelope } from "../services/telegraph/threadEnvelopeWrites.js";
+import { coordinationActOf, notifyCoordinationAct } from "../services/telegraph/coordinationNotifications.js"; import { createCoordinationSession } from "../services/telegraph/coordinationSessions.js"; import { readSessionRowsThroughCheckpoint } from "../services/telegraph/conversationSnapshots.js"; // census-telegraph T155
+import { writeThreadEnvelope } from "../services/telegraph/threadEnvelopeWrites.js"; import { isFlagEnabled } from "../lib/featureFlags.js"; import { schemaToStamp, type SchemaStampResult } from "../services/telegraph/structuredSchemas.js"; // census-telegraph T429 (wave 5): the coordination write stamps its schema
 import { projectCloseout, projectNextStep, projectSharedRides } from "../services/telegraph/coordinationStages.js";
 import { SHARED_RIDE_ACTION, findReplayedProposal, proposalAction, rideJoinRefusal } from "../services/telegraph/sharedRideWrites.js"; // census-telegraph T107
 import {
@@ -88,7 +88,7 @@ export const COORDINATION_SCAN_LIMIT = 400;
 
 const PostSchema = z.object({
   kind: z.string().min(1).max(40),
-  payload: z.unknown(),
+  payload: z.unknown(), schema: z.unknown().optional(), // T429 (wave 5): the schema id a client asks for; with the flag ON it must be the one this server writes for the kind
 });
 
 type MemberGate =
@@ -333,7 +333,7 @@ router.post(
     if (!validated.ok) {
       sendError(res, "invalid_payload", validated.error);
       return;
-    }
+    } const schemaStamp = await coordinationSchemaStamp(client, validated.kind, parsed.data.schema); if (!schemaStamp.ok) { sendError(res, "invalid_payload", schemaStamp.error); return; } if (schemaStamp.schemaId) (validated.envelope as { schema?: string }).schema = schemaStamp.schemaId; // T429 (wave 5): before the guard, so a refused schema spends no burst allowance; OFF = the body is byte-for-byte the old envelope
 
     const guard = await guardTelegraphThreadWrite(client, threadId, user.id, { safety: validated.kind === "COORDINATION" && (validated.envelope as { payload?: { state?: unknown } }).payload?.state === "NEED_HELP", groupSend: { contribution: ["ACKNOWLEDGEMENT", "VOTE", "COMMITMENT_RESPONSE", "ACTION_RESPONSE"].includes(validated.kind) ? "response" : "post", text: textOfPayload((validated.envelope as { payload?: unknown }).payload) } }); // OD-TRUST-5: "I need help" is never refused by a Trust restriction
     if (!guard.ok) {
@@ -372,7 +372,7 @@ router.post(
         planObjectId: p.planObjectId ?? null,
         note: p.note ?? null,
         idempotencyKey: String(p.idempotencyKey ?? ""),
-        visibleFrom: gate.visibleFrom,
+        visibleFrom: gate.visibleFrom, schemaId: schemaStamp.schemaId, // T429 (wave 5): the session's own writer stamps it
       });
       if (!created.ok) {
         if (created.code === "db_error") {
@@ -401,11 +401,11 @@ router.post(
         createdAt: created.session.startedAt,
         msgType: "coordination_session",
         subtype: null,
-        kind: "COORDINATION_SESSION",
+        kind: "COORDINATION_SESSION", ...(schemaStamp.schemaId ? { schema: schemaStamp.schemaId } : {}), // T429 (wave 5): the id the session row was stamped with (flag ON), as the typed-message route echoes it
         duplicate: created.duplicate,
         session: created.session,
       });
-      if (!created.duplicate) {
+      if (!created.duplicate) { void notifyCoordinationAct(getServiceClient() ?? client, { threadId, actorId: user.id, act: "SESSION_STARTED", messageId: created.messageId, nowMs: Date.parse(created.session.startedAt) || Date.now() }, { log }); // census-telegraph T395 (wave 5): §30A.6's COORDINATION cause — the other members are told; never awaited, never fails the write
         void publishMessageCreated(client, threadId, { // T154 (V-TR F1): the drainer owns message.created when fan-out is in force
           type: "message.created",
           payload: {
@@ -697,10 +697,10 @@ router.post(
       createdAt: m.created_at,
       msgType: m.msg_type,
       subtype: m.subtype,
-      kind: validated.kind,
+      kind: validated.kind, ...(schemaStamp.schemaId ? { schema: schemaStamp.schemaId } : {}), // T429 (wave 5): the stamped id (flag ON); absent while the flag is off
     });
 
-    // §13.2 `coordination.completed`. Emitted from the ARROW that was just
+    { const act = coordinationActOf(validated.kind, (validated.envelope as { payload?: unknown }).payload); if (act) void notifyCoordinationAct(getServiceClient() ?? client, { threadId, actorId: user.id, act, messageId: String(m.id), nowMs: Date.parse(String(m.created_at)) || Date.now() }, { log }); /* census-telegraph T395 (wave 5): a §9.1 quick state tells the other members (NEED_HELP is SAFETY, not this cause) */ } // §13.2 `coordination.completed`. Emitted from the ARROW that was just
     // accepted rather than from a re-read: the gate above proved this
     // transition legal from `transitionSession`'s state, so a terminal `to` is
     // a terminal session and no second read can disagree with the write that
@@ -1719,4 +1719,26 @@ async function readSessionRowsSnapshotAware(
     { threadId, visibleFrom, viewerId, columns: COORD_COLUMNS, tailLimit: SESSION_SCAN_LIMIT },
     () => readSessionRowsForThread(client, threadId, visibleFrom, viewerId),
   );
+}
+
+// ── census-telegraph T429 (wave 5) — the coordination write stamps its schema ──
+//
+// §30A.16 names `coordination.status.v1`, and the registry
+// (services/telegraph/structuredSchemas.ts) names one schema per coordination
+// kind. The typed and share writes already stamped theirs; this route did not,
+// so its rows were classified by inference. With
+// `telegraph_structured_schemas_enabled` ON, every envelope this route writes —
+// the generic insert and the session writer alike — carries its NAMED schema,
+// and a client that names a schema must name the one this server writes for
+// the kind (a version it does not know, or another kind's, is refused and
+// nothing is written). OFF (the seed): the body is byte-for-byte the old
+// envelope and a `schema` field in the request is ignored, exactly as the
+// typed-message route treats it.
+async function coordinationSchemaStamp(
+  client: SupabaseClient,
+  kind: string,
+  requested: unknown,
+): Promise<{ ok: true; schemaId: string | null } | Extract<SchemaStampResult, { ok: false }>> {
+  if (!(await isFlagEnabled(getServiceClient() ?? client, "telegraph_structured_schemas_enabled"))) return { ok: true, schemaId: null };
+  return schemaToStamp({ kind }, requested);
 }

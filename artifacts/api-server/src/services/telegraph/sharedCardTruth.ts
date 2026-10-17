@@ -70,7 +70,7 @@ export const SHARED_CARD_KINDS = [
   "event_context_card",
   "booking_card",
   "meetup_card",
-  "circle_status_card",
+  "circle_status_card", "highlight_reply", // census-telegraph T409 (wave 5): the one source-domain producer outside the eight (routes/highlights.ts), joined to §5's HIGHLIGHT family — highlightReplyCard() at the file foot
 ] as const;
 export type SharedCardKind = (typeof SHARED_CARD_KINDS)[number];
 
@@ -82,7 +82,7 @@ export interface SharedCardSpec {
   /** `null` = any subtype under these message types. */
   readonly subtypes: readonly string[] | null;
   /** The §5 reference the body names, or null when it names none this server can resolve. */
-  readonly refOf: (body: Body) => ShareRef | null;
+  readonly refOf: (body: Body, row?: CardRowLike) => ShareRef | null; // T409 (wave 5): the row too, for a producer whose LEGACY rows named the source in a column rather than the body
   /** Fields that ARE the reference or the card's own discriminator — never source content. */
   readonly referenceFields: readonly string[];
   /** Fields the SENDER wrote (their caption) — theirs to show, not the source's. */
@@ -90,7 +90,7 @@ export interface SharedCardSpec {
   /** The live form, in this card's legacy shape, drawn ONLY from the server's projection. */
   readonly liveFields: (p: TelegraphShareProjection, status: string) => Body;
   /** Why this card exists and who writes it — the registry is read by people too. */
-  readonly note: string; /** Fix round 1: when set, the NON-live form is this plain sentence, not JSON — for kinds an installed client prints as a plain pill or bubble (never as an actionable card), so an older build shows words instead of the withheld JSON. Names nothing from the source. */ readonly withheldLabel?: string;
+  readonly note: string; /** Fix round 1: when set, the NON-live form is this plain sentence, not JSON — for kinds an installed client prints as a plain pill or bubble (never as an actionable card), so an older build shows words instead of the withheld JSON. Names nothing from the source. */ readonly withheldLabel?: string; /** T409 (wave 5): when set, EVERY form a reader serves (live, unavailable, withheld) is this fixed sentence — for a kind an installed client prints as a plain bubble in every state, so it never prints JSON; the truth rides beside it as `card`. Names nothing from the source. */ readonly textForm?: string;
 }
 
 const str = (v: unknown): string | null => (typeof v === "string" && v.trim().length > 0 && v.length <= 200 ? v.trim() : null);
@@ -258,7 +258,7 @@ export const SHARED_CARD_REGISTRY: Readonly<Record<SharedCardKind, SharedCardSpe
     senderFields: [],
     liveFields: () => ({}),
     note: "Server-authored by routes/circle.ts postCircleStatusCard; a meeting-point card carried the venue and area labels.",
-  },
+  }, highlight_reply: highlightReplyCard(), // census-telegraph T409 (wave 5): defined at the file foot (a hoisted declaration, so the cited lines below do not move)
 };
 
 // ── recognising a card ───────────────────────────────────────────────────────
@@ -359,7 +359,7 @@ function pick(body: Body | null, fields: readonly string[]): Body {
 export function servedCardBody(kind: SharedCardKind, body: Body | null, truth: SharedCardTruth): string {
   const spec = SHARED_CARD_REGISTRY[kind];
   const kept = { ...pick(body, spec.referenceFields), ...pick(body, spec.senderFields) };
-  if (truth.state === "live") return JSON.stringify({ ...kept, ...spec.liveFields(truth.projection, truth.status) });
+  if (spec.textForm !== undefined) return spec.textForm; /* T409 (wave 5) */ if (truth.state === "live") return JSON.stringify({ ...kept, ...spec.liveFields(truth.projection, truth.status) });
   return spec.withheldLabel ?? JSON.stringify({ ...kept, withheld: true }); // fix round 1: a plain neutral sentence where an installed client would otherwise print the withheld JSON
 }
 
@@ -428,7 +428,7 @@ export async function resolveSharedCards(
     if (!kind) continue;
     const id = String(row.id ?? "");
     if (!id) continue;
-    const named = SHARED_CARD_REGISTRY[kind].refOf(parseCardBody(row.body) ?? {});
+    const named = SHARED_CARD_REGISTRY[kind].refOf(parseCardBody(row.body) ?? {}, row);
     // Fix round 1 (F1): a source id is resolved only in its canonical form —
     // the Discovery feed's `db/<uuid>` is the place it names — and an id that
     // is still not a uuid names nothing a §5 family can read. It is withheld
@@ -538,3 +538,44 @@ export function normalizeSourceId(raw: unknown): string | null {
   const id = t.startsWith("db/") ? t.slice(3) : t;
   return SOURCE_UUID.test(id) ? id : null;
 }
+
+// ── census-telegraph T409 (wave 5) — the Highlight reply, joined to §5 ───────
+//
+// `POST /highlights/:id/reply` writes a context row (`msg_type: "highlight_reply"`)
+// before the reply text. It was the one source-domain producer outside the eight
+// joined kinds: §30A.10's preview, authorization, current state, actions, search
+// behaviour and revocation reached every other card through its §5 family and
+// never reached this one. It now resolves through the HIGHLIGHT family's loader
+// (services/telegraph/shareables.ts, the same gate as the single-Highlight
+// routes: blocks either way, deletion, expiry, visibility, the owner's §10/§11
+// projection controls), so a reader serves its truth as `card` — live, or
+// unavailable with the reason — and search indexes the live projection only.
+//
+// THE REFERENCE. New rows carry it in the body (`{"type":"highlight_reply",
+// "highlightId":"<uuid>"}`) and leave `subtype` empty; rows written before this
+// change carried the Highlight's id in `subtype` — an identifier in the
+// discriminator column, the §29 shape census-telegraph recorded as a finding —
+// and are read from there, so no reply already in a thread loses its join.
+//
+// THE BODY. Every form is the producer's own fixed sentence (`textForm`): an
+// installed client has no renderer for this kind and prints the body as a
+// bubble, so it must never be handed JSON, and the sentence is what it always
+// printed. It names nothing from the Highlight.
+function highlightReplyCard(): SharedCardSpec {
+  return {
+    msgTypes: ["highlight_reply"],
+    subtypes: null,
+    refOf: (b, row) => {
+      const id = normalizeSourceId(b.highlightId) ?? normalizeSourceId(row?.subtype);
+      return id ? { objectType: "HIGHLIGHT", objectId: id } : null;
+    },
+    referenceFields: ["type", "highlightId"],
+    senderFields: [],
+    liveFields: (p) => ({ title: p.title }),
+    note: "Server-authored by POST /highlights/:id/reply as the context row before the reply text; carries only a reference (legacy rows: the id in subtype) and a fixed sentence.",
+    textForm: "↩ Replied to your highlight", // a literal: this runs while the registry is built, before any const below it exists
+  };
+}
+
+/** The one sentence a highlight-reply row ever shows as its body — the producer writes nothing else a client prints. */
+export const HIGHLIGHT_REPLY_TEXT: string = SHARED_CARD_REGISTRY.highlight_reply.textForm!;

@@ -1194,6 +1194,24 @@ export const TEMPLATES: NotificationTemplate[] = [
     title: () => 'Your layover crew',
     body: ({ actor }) => `${actor ?? 'A crew member'} is heading back to the airport.`,
   }),
+
+  // ── Telegraph coordination (census-telegraph T395 — §30A.6's COORDINATION) ──
+  // Somebody in the conversation opened a coordination session or declared a
+  // §9.1 quick state (services/telegraph/coordinationNotifications.ts decides
+  // who is told). The words are FIXED per act: `act` is one of that module's
+  // closed phrases, never the sender's note or place label, so no free text
+  // reaches a lock screen. `actor` is the shown name only for a person who
+  // shows their real name, else their @handle, else "Someone". Appended LAST so
+  // every template row routerDecisionMatrix.ts indexes before it keeps its index.
+  tpl({
+    eventType: 'telegraph.coordination',
+    category: 'telegraph',
+    defaultPriority: 'important',
+    defaultChannels: ['in_app', 'push'],
+    title: () => 'Coordination update',
+    body: ({ actor, act }) => `${actor || 'Someone'} ${act || 'posted a coordination update'}`,
+    actionUrl: ({ threadId }) => threadId ? `/messages/${threadId}` : '/messages',
+  }),
 ];
 
 const TEMPLATE_MAP = new Map<string, NotificationTemplate>(

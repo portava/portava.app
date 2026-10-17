@@ -297,7 +297,7 @@ export const TELEGRAPH_SLOS: readonly TelegraphSlo[] = [
     target: { kind: "count", max: 0 },
     severity: "safety",
     status: "measured",
-    emitters: ["src/lib/blockGuard.ts"],
+    emitters: ["src/lib/blockGuard.ts", "src/services/telegraph/contextKernel.ts"], // wave 5: the kernel gatherer's own pair read (readKernelPairBlock) counts here too
     note:
       "Shares the block guard's emitter with SLO-05 and states the stricter half: " +
       "a block-guard evaluation that could not complete is an enforcement FAILURE " +

@@ -932,7 +932,7 @@ export const CLIENT_SHARED_STORE_RE =
   /\bcreateContext\s*[<(]|\buseSyncExternalStore\s*[<(]|from\s+["'](?:zustand|jotai|valtio|mobx|redux|@reduxjs\/toolkit|react-redux|recoil)/;
 
 export const REVIEWED_CLIENT_SHARED_STORES: readonly { readonly file: string; readonly carries: string }[] = [
-  { file: "src/components/stamps/StampEarnedToast.tsx", carries: "showStampToast(stamp) and checkForNewStamps(delay) — a PassportStampNew from /stamps/me; no message content. A thread screen consumes it, nothing of the thread is handed in." },
+  { file: "src/context/StampAnimationContext.tsx", carries: "triggerStamp(params) — screen coordinates of the stamp icon and target, a StampTheme and the onImpact/onComplete callbacks the caller passes — plus isAnimating and cancelStamp: the stamp overlay's animation lock. No message content (wave 5: newly reached by a history-reading unit; reviewed)." }, /* wave 5 */ { file: "src/components/stamps/StampEarnedToast.tsx", carries: "showStampToast(stamp) and checkForNewStamps(delay) — a PassportStampNew from /stamps/me; no message content. A thread screen consumes it, nothing of the thread is handed in." },
   { file: "src/context/BlockedIdsContext.tsx", carries: "blockedIds / blockerIds (user-id sets), load state, addBlock/removeBlock(id) — ids only." },
   { file: "src/context/CallContext.tsx", carries: "call state (phase, session, peer, participants, roles, device toggles, an error/notice string the call layer sets) and call actions — no message content." },
   { file: "src/context/FeatureFlagsContext.tsx", carries: "the flag lookups (isEnabled, isLivePlacesEnabled: a flag name to a boolean) over the server's flag map — booleans." },
@@ -943,4 +943,136 @@ export const REVIEWED_CLIENT_SHARED_STORES: readonly { readonly file: string; re
   { file: "src/features/telegraph/media/useCompactPlaybackSource.ts", carries: "reports a thread's messages to compactPlaybackStore.ts, which keeps ONLY id, senderId, deleted, msgType, mediaType and mediaUrl per message (reportMessageSource projects before storing) — never body, translation or caption; the host reads them to decide whether the docked video may keep playing (census-telegraph §90)." },
   { file: "src/hooks/useRecentPlaces.ts", carries: "a module-level useSyncExternalStore cache of Place[] from GET /api/me/recent-places (publishCache at useRecentPlaces.ts:44 is its only writer), plus loading, saveRecent(place, usedFor) which POSTs a Place, and reload — places only, no message content. It imports services/messagingOwnerRequest.ts only for the owner-scoped bearer token." },
   { file: "src/platform/input-assistance/hooks/useInputAccountEpoch.ts", carries: "useSyncExternalStore over services/discoveryViewerScope.ts: returns currentDiscoveryScope().epoch — a single number that changes on account switch; no content of any kind." },
+];
+
+// ── Wave 5 (2026-10-17): T366's last stated hole — module-level state and device storage ──
+//
+// census-telegraph T366 (§67.2, its latest statement): "on the client, content
+// kept in a module-level variable (outside a context or store module) or in
+// device storage between two screens is not followed." Both are channels a
+// screen can leave content in for another screen to pick up, with no call or
+// JSX prop between them — the same shape §66 closed for contexts and stores.
+// Both are now reviewed channels, by the same rule: a history-reading unit
+// (`isReaderUnit`: it reads conversation history, or history reaches it through
+// a JSX prop) that WRITES one is a crossing into a channel, and every such
+// channel is on a closed list with what it holds. A new one is red until it is
+// reviewed here; a listed one that no longer qualifies is red until removed.
+//
+//   MODULE STATE  a client module's top-level mutable binding — a `let`, or a
+//                 top-level `const` Map/Set/array/object some other unit of
+//                 the file mutates. A reader WRITES it when the reader's own
+//                 unit mutates it, or the reader passes arguments to an
+//                 imported function whose unit mutates it (one hop: the
+//                 function that holds the write is the reviewed entry point).
+//   DEVICE        AsyncStorage / SecureStore / local or session storage /
+//   STORAGE       expo-file-system writes, MMKV. A reader writes it when the
+//                 reader's own unit calls a write, or passes arguments to an
+//                 imported function whose unit does. Each reviewed WRITE
+//                 STATEMENT is pinned by its exact text, so a write that
+//                 starts storing something else is red until re-reviewed.
+//
+// What this does not follow, stated: a write reached through two or more
+// helpers (the token cache every API call refreshes would make that rule name
+// almost every screen), and data flow inside a unit (a reviewed writer is
+// trusted to hold what its entry says; a NEW writer or entry point is not).
+
+/** A device-storage write, by API. */
+export const CLIENT_DEVICE_STORAGE_WRITE_RE =
+  /\bAsyncStorage\s*\.\s*(?:setItem|mergeItem|multiSet|multiMerge)\b|\bSecureStore\s*\.\s*setItemAsync\b|\b(?:local|session)Storage\s*\.\s*setItem\b|\bFileSystem\s*\.\s*(?:writeAsStringAsync|copyAsync|moveAsync)\b|\bnew\s+MMKV\b|\bsetItemAsync\s*\(|\bwriteAsStringAsync\s*\(/;
+
+const escapeName = (n: string) => n.replace(/\$/g, "\\$");
+
+/** A write to binding `name`: a reassignment, a compound assignment, a property or index assignment, or a mutating method. */
+export function stateWriteRe(name: string): RegExp {
+  const n = escapeName(name);
+  return new RegExp(
+    `(?<![.\\w$])${n}\\s*(?:\\.\\s*(?:set|add|push|unshift|splice|delete|clear|pop|shift|sort|reverse|fill)\\s*\\(|\\[[^\\]]*\\]\\s*=(?!=)|\\.\\s*[A-Za-z_$][\\w$]*\\s*=(?!=)|=(?!=)|\\+=|-=|\\?\\?=|\\|\\|=|&&=|\\+\\+|--)|Object\\.assign\\(\\s*${n}\\b`,
+  );
+}
+
+/**
+ * A file's top-level mutable state: every top-level `let`, and every top-level
+ * `const` initialised with a Map/Set/array/object that a unit OTHER than its
+ * declaration mutates.
+ */
+export function moduleStateBindings(units: readonly CodeUnit[]): string[] {
+  const out: string[] = [];
+  for (const u of units) {
+    const text = u.code.trim();
+    const l = /^(?:export\s+)?let\s+([A-Za-z0-9_$]+)/.exec(text);
+    if (l) { out.push(l[1]!); continue; }
+    const c = /^(?:export\s+)?const\s+([A-Za-z0-9_$]+)\s*(?::[^=]+)?=\s*(?:new\s+(?:Map|Set|WeakMap|WeakSet|Array)\b|\[|\{)/.exec(text);
+    if (c && units.some((v) => v !== u && stateWriteRe(c[1]!).test(v.code))) out.push(c[1]!);
+  }
+  return out;
+}
+
+/** Does `unit` write one of `bindings` (other than the one it declares)? */
+export function unitWritesState(unit: CodeUnit, bindings: readonly string[]): boolean {
+  return bindings.some((b) => !unit.declares.includes(b) && stateWriteRe(b).test(unit.code));
+}
+
+/** Does `code` call `local` with at least one argument — i.e. hand it data? */
+export function passesArguments(code: string, local: string): boolean {
+  return new RegExp(`(?<![.\\w$])${escapeName(local)}\\s*\\(\\s*[^)\\s]`).test(code);
+}
+
+/** The device-storage write statements in `code`, whitespace collapsed — what a review pins. */
+export function deviceStorageWrites(code: string): string[] {
+  const out: string[] = [];
+  const re = new RegExp(CLIENT_DEVICE_STORAGE_WRITE_RE.source, "g");
+  for (const m of code.matchAll(re)) {
+    const start = m.index!;
+    let depth = 0;
+    let end = start;
+    for (let i = start; i < code.length; i++) {
+      const ch = code[i];
+      if (ch === "(") depth++;
+      else if (ch === ")") { depth--; if (depth === 0) { end = i + 1; break; } }
+      else if ((ch === ";" || ch === "\n") && depth === 0 && i > start + m[0].length) { end = i; break; }
+    }
+    out.push(code.slice(start, Math.max(end, start + m[0].length)).replace(/\s+/g, " ").trim());
+  }
+  return out;
+}
+
+/** A client module whose top-level state a history-reading unit writes, reviewed. Paths under travel-buddy-standalone/. */
+export interface ReviewedClientModuleState {
+  readonly file: string;
+  /** How readers reach the write: an imported function's name, or `self:<unit>` for the module's own reader unit. Exactly the computed set. */
+  readonly writers: readonly string[];
+  readonly carries: string;
+}
+
+export const REVIEWED_CLIENT_MODULE_STATE: readonly ReviewedClientModuleState[] = [
+  { file: "src/components/trip/NeighborhoodMatchSheet.tsx", writers: ["self:LocationCheckSheet"], carries: "`_sessionMapFullScreen = true` when the person opens the map full screen — one boolean UI preference for the session; no content." },
+  { file: "src/features/telegraph/connection/sequenceCursorStore.ts", writers: ["noteThreadCursor"], carries: "cursors: thread id → the last §12 sequence NUMBER this device has seen (bounded, recency-ordered) — integers, never a message." },
+  { file: "src/features/telegraph/kinds/useAnnouncementAcknowledgement.ts", writers: ["self:load", "self:useAnnouncementAcknowledgement", "useAnnouncementAcknowledgement"], carries: "cache: thread id → the in-flight GET /threads/:id/announcements promise for TTL_MS. That answer DOES hold conversation content — each announcement's title and the acknowledgement notes — but the map is module-private (only _resetAnnouncementCache is exported beside the hook), and the hook returns only { acknowledged, acknowledgedCount } for one announcement. No other module can read the cached answer." },
+  { file: "src/features/telegraph/lifecycle/readerFaces.ts", writers: ["publishReaderFaces"], carries: "faces: reader id → avatar URL or null, as the read-receipts route answered (the store REVIEWED_CLIENT_SHARED_STORES lists through useReaderAvatars) — no message content." },
+  { file: "src/features/telegraph/media/compactPlaybackStore.ts", writers: ["openMessageVideo"], carries: "session: the playing video's stored media reference and poster reference, its presentation, the (source, thread, message ids) that hold it and their sender ids — media references and ids, never body, translation or caption (sources are projected before storing, census-telegraph §90)." },
+  { file: "src/features/telegraph/sharedContext/railSeenStore.ts", writers: ["captureRailSeenScope"], carries: "accountGenerations / accountOperations / writeOwners: per-account generation counters and the write-ownership closures that keep one account's rail-seen record from being written after a switch — numbers and functions, no content." },
+  { file: "src/hooks/useHighlightRingState.ts", writers: ["invalidateHighlightCache", "useHighlightRingState"], carries: "cache / inFlight: user id → the Highlight ring state (whether that person has unseen Highlights) and its fetch promise; invalidateHighlightCache only deletes — state flags, no content." },
+  { file: "src/hooks/useMessaging.ts", writers: ["self:useUnreadCounts"], carries: "unreadCountsListeners: the set of subscriber callbacks for unread-count patches (thread id → count) — functions; the patches are counts." },
+  { file: "src/lib/batchSignMedia.ts", writers: ["_evictBatchSignEntry"], carries: "the reader only EVICTS a signed-URL cache entry by its URL (_cache.delete) when an image fails to load — it removes, it never stores." },
+  { file: "src/lib/location/resolveCanonical.ts", writers: ["resolveCanonicalPlace"], carries: "cache / cacheOwner: place id → the canonical Place the server resolved, scoped to the signed-in account — places only." },
+  { file: "src/services/compass.ts", writers: ["reportCompassViewed"], carries: "reportedViewedIds: the keys of Compass items whose 'viewed' outcome was already reported (so it is sent once) — ids only." },
+  { file: "src/services/discovery.ts", writers: ["getDiscoveryPlaces"], carries: "_CLIENT_CACHE: (destination, category, radius, page, intent) → the Discovery places page and its viewer scope — places, no conversation content." },
+  { file: "src/services/memoryResurfacingControls.ts", writers: ["readMemoryDoNotResurface", "writeMemoryDoNotResurface"], carries: "pendingIntents: memory key → the person's pending do-not-resurface choice (a boolean and its request identity) while the write is in flight — a setting about an existing Memory, never content, and it creates no Memory." },
+  { file: "src/services/savedPostsCache.ts", writers: ["setSaved"], carries: "_store: user id → post id → saved (boolean) — whether a post is bookmarked; no content." },
+];
+
+/** A client module whose history-reading unit writes device storage (or hands data to one that does), reviewed. */
+export interface ReviewedClientDeviceStorage {
+  readonly file: string;
+  /** Each write statement, exactly as `deviceStorageWrites` prints it. A changed statement is a new write. */
+  readonly writes: readonly string[];
+  readonly carries: string;
+}
+
+export const REVIEWED_CLIENT_DEVICE_STORAGE: readonly ReviewedClientDeviceStorage[] = [
+  { file: "app/messages/[id].tsx", writes: ["AsyncStorage.setItem(`thread_ai_hidden:${id}`, next ? '1' : '0')", "AsyncStorage.setItem(`thread_translation:${id}`, JSON.stringify({ autoTranslate: at, showOriginal: so }))"], carries: "Two per-thread display choices keyed by thread id: whether the AI tray is hidden ('1'/'0'), and the translation toggles { autoTranslate, showOriginal } — booleans, no message content." },
+  { file: "src/components/GroupChatScreen.tsx", writes: ["AsyncStorage.setItem(`thread_translation:${id}`, JSON.stringify({ autoTranslate: at, showOriginal: so }))"], carries: "The group thread's translation toggles { autoTranslate, showOriginal } keyed by thread id — booleans." },
+  { file: "src/features/telegraph/coordination/CoordinationPanel.tsx", writes: ["AsyncStorage.setItem(closeoutDismissKey(threadId, closeoutPlanId), '1')"], carries: "A '1' under a (thread id, plan id) key once the person dismisses the closeout card — a flag." },
+  { file: "src/features/telegraph/sharedContext/railSeenStore.ts", writes: ["AsyncStorage.setItem(scope.key, serialized)"], carries: "serialized = { v: 1, items: snapshot }: shared-context item id → { status, startsAt } as last seen, so the rail can promote a CHANGE (census T132) — object status and time, never message content." },
+  { file: "src/features/trips/planning/TripPlanSection.tsx", writes: ["AsyncStorage.setItem(`tripPlanMode:${tripId}`, m)"], carries: "The trip plan's view mode (a ViewMode string such as 'list' or 'map') keyed by trip id." },
 ];

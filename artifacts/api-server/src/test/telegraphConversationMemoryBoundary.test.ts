@@ -1271,3 +1271,109 @@ describe("T366 hardening, round 5 (§67) — verification of 096e1bab4 (V-T3 F1,
     assert.deepEqual(taintedOf(mk('title="Recap"')), [], "CONTROL: a panel given only literals taints the store");
   });
 });
+
+/* ── Wave 5 (2026-10-17): T366's last stated hole — module-level state and device storage ── */
+
+const w5mb = await import("../domain/telegraph/policies/conversationMemoryBoundary.js");
+
+/** Channels a history-reading unit writes: module state (by entry point) and device storage (by write statement). */
+function writtenChannels(a: Analysis) {
+  const stateOf = new Map(a.files.map((f) => [f, w5mb.moduleStateBindings(a.units.get(f)!)]));
+  const moduleState = new Map<string, Set<string>>();
+  const storage = new Map<string, Set<string>>();
+  const put = (m: Map<string, Set<string>>, k: string, v: string) => { if (!m.has(k)) m.set(k, new Set()); m.get(k)!.add(v); };
+  for (const f of a.files) for (const u of a.units.get(f)!) {
+    if (!a.isReaderUnit(f, u)) continue;
+    if (w5mb.unitWritesState(u, stateOf.get(f)!)) put(moduleState, f, `self:${u.declares[0] ?? "default"}`);
+    for (const w of w5mb.deviceStorageWrites(u.code)) put(storage, f, w);
+    for (const i of a.linksOf(f).imports) {
+      if (!i.target) continue;
+      const theirs = a.units.get(i.target) ?? [];
+      for (const b of i.bindings) {
+        if (!w5mb.passesArguments(u.code, b.local)) continue;
+        const du = theirs.find((x) => x.declares.includes(b.exported));
+        if (!du) continue;
+        if (w5mb.unitWritesState(du, stateOf.get(i.target) ?? [])) put(moduleState, i.target, b.exported);
+        for (const w of w5mb.deviceStorageWrites(du.code)) put(storage, i.target, w);
+      }
+    }
+  }
+  const rel = (m: Map<string, Set<string>>) => [...m].map(([f, s]) => ({ file: relative(CLIENT, f), items: [...s].sort() })).sort((x, y) => x.file.localeCompare(y.file));
+  return { moduleState: rel(moduleState), storage: rel(storage), stateOf };
+}
+
+describe("T366 hardening, round 6 (wave 5) — module-level state and device storage are reviewed channels too", () => {
+  const client = clientAnalysis();
+  const live = writtenChannels(client);
+
+  it("the inventories are not vacuous", () => {
+    if (process.env.T366_W5_PRINT) console.log(JSON.stringify({ moduleState: live.moduleState, storage: live.storage }, null, 1)); // re-print the live sets after a JUDGED change
+    assert.ok([...live.stateOf.values()].filter((s) => s.length > 0).length >= 50, "module state is not being seen");
+    assert.ok(live.moduleState.length >= 5 && live.storage.length >= 3, JSON.stringify({ state: live.moduleState.length, storage: live.storage.length }));
+  });
+
+  it("every module whose top-level state history-reading code writes is reviewed, by entry point — and every entry is live", () => {
+    assert.deepEqual(live.moduleState, w5mb.REVIEWED_CLIENT_MODULE_STATE.map((r) => ({ file: r.file, items: [...r.writers].sort() })).sort((x, y) => x.file.localeCompare(y.file)),
+      "conversation content may be left in a module-level variable for another screen — review what it holds into REVIEWED_CLIENT_MODULE_STATE");
+    for (const r of w5mb.REVIEWED_CLIENT_MODULE_STATE) assert.ok(r.carries.length > 40, r.file);
+  });
+
+  it("every device-storage write history-reading code makes is reviewed, by its exact statement — and every entry is live", () => {
+    assert.deepEqual(live.storage, w5mb.REVIEWED_CLIENT_DEVICE_STORAGE.map((r) => ({ file: r.file, items: [...r.writes].sort() })).sort((x, y) => x.file.localeCompare(y.file)),
+      "conversation content may be written to device storage for another screen — review what each write stores into REVIEWED_CLIENT_DEVICE_STORAGE");
+    for (const r of w5mb.REVIEWED_CLIENT_DEVICE_STORAGE) assert.ok(r.carries.length > 40, r.file);
+  });
+
+  it("a synthetic module-level cache fed by a thread read is caught; fed by something else, or only read, it is not", () => {
+    const cache = join(CLIENT, "src/lib/__t366_w5_threadCache.ts");
+    const screen = join(CLIENT, "app/__t366_w5_screen.tsx");
+    const mk = (read: string, call: string) => writtenChannels(clientAnalysis(new Map([
+      [cache, "const lastThread = new Map();\nexport function rememberThread(id, msgs) { lastThread.set(id, msgs); }\nexport function peekThread(id) { return lastThread.get(id); }"],
+      [screen, [
+        "import { getThreadMessages } from '../src/services/messaging.ts';",
+        "import { getMyTrips } from '../src/services/trips.ts';",
+        "import { rememberThread, peekThread } from '../src/lib/__t366_w5_threadCache.ts';",
+        `export default function Screen({ id }) { useEffect(() => { void ${read}(id).then((r) => ${call}); }, []); return null; }`,
+      ].join("\n")],
+    ])));
+    const hit = (x: ReturnType<typeof writtenChannels>) => x.moduleState.find((m) => m.file === "src/lib/__t366_w5_threadCache.ts");
+    assert.deepEqual(hit(mk("getThreadMessages", "rememberThread(id, r.data)"))?.items, ["rememberThread"]);
+    assert.equal(hit(mk("getMyTrips", "rememberThread(id, r.data)")), undefined, "CONTROL: a trips read is not history");
+    assert.equal(hit(mk("getThreadMessages", "peekThread(id)")), undefined, "CONTROL: reading the cache writes nothing");
+  });
+
+  it("a module-level `let` the reader's own unit assigns is caught", () => {
+    const screen = join(CLIENT, "app/__t366_w5_let.tsx");
+    const a = clientAnalysis(new Map([[screen, [
+      "import { getThreadMessages } from '../src/services/messaging.ts';",
+      "let lastBody = null;",
+      "export default function Screen({ id }) { useEffect(() => { void getThreadMessages(id).then((r) => { lastBody = r.data; }); }, []); return null; }",
+    ].join("\n")]]));
+    assert.deepEqual(writtenChannels(a).moduleState.find((m) => m.file === "app/__t366_w5_let.tsx")?.items, ["self:default"]);
+  });
+
+  it("a thread read written to device storage — directly, or through a helper it hands the data to — is caught, by statement", () => {
+    const helper = join(CLIENT, "src/lib/__t366_w5_persist.ts");
+    const screen = join(CLIENT, "app/__t366_w5_store.tsx");
+    const x = writtenChannels(clientAnalysis(new Map([
+      [helper, "export async function persistDraft(key, value) { await AsyncStorage.setItem(key, JSON.stringify(value)); }"],
+      [screen, [
+        "import { getThreadMessages } from '../src/services/messaging.ts';",
+        "import { persistDraft } from '../src/lib/__t366_w5_persist.ts';",
+        "export default function Screen({ id }) { useEffect(() => { void getThreadMessages(id).then(async (r) => { await SecureStore.setItemAsync('last', String(r.data)); await persistDraft('t', r.data); }); }, []); return null; }",
+      ].join("\n")],
+    ])));
+    assert.deepEqual(x.storage.find((m) => m.file === "app/__t366_w5_store.tsx")?.items, ["SecureStore.setItemAsync('last', String(r.data))"]);
+    assert.deepEqual(x.storage.find((m) => m.file === "src/lib/__t366_w5_persist.ts")?.items, ["AsyncStorage.setItem(key, JSON.stringify(value))"]);
+  });
+
+  it("stateWriteRe and moduleStateBindings: a declaration is not a write; a mutation is", () => {
+    const units = codeUnits("export const MODES = ['a', 'b'];\nconst cache = new Map();\nexport function put(k, v) { cache.set(k, v); }\nlet n = 0;");
+    assert.deepEqual(w5mb.moduleStateBindings(units).sort(), ["cache", "n"], "MODES is never mutated, so it is not state");
+    assert.equal(w5mb.stateWriteRe("x").test("const y = x.get(1);"), false);
+    assert.equal(w5mb.stateWriteRe("x").test("x[k] = 1"), true);
+    assert.equal(w5mb.stateWriteRe("x").test("obj.x = 1"), false, "a property of another object is not the binding");
+    assert.equal(w5mb.passesArguments("rememberThread(id, msgs)", "rememberThread"), true);
+    assert.equal(w5mb.passesArguments("peekThread()", "peekThread"), false);
+  });
+});

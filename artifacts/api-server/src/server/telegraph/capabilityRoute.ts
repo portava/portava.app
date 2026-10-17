@@ -93,7 +93,7 @@ router.get(
     // §24 / census T295: the member count and the E2EE flag the thread screen
     // used to read from raw tables. Members only — a non-member gets nulls, the
     // same answer as a thread that does not exist (see conversationFacts.ts).
-    const facts = await readConversationFacts(sc, threadId, user.id);
+    const facts = await readConversationFacts(sc, threadId, user.id, resolved.reasons.canSendMessage === "TELEGRAPH_AUTH_BLOCKED"); // wave 5 (block parity): a blocked member's facts are a stranger's — nulls, through the same one read — so this answer is byte-identical to theirs
 
     res.status(200).json({
       conversationId: resolved.conversationId,

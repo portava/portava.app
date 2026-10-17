@@ -266,3 +266,90 @@ describe("T408 hardening — the trees, read whole", () => {
     }
   });
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * WAVE 5 (2026-10-17) — census-telegraph T408: an ALLOWLIST of approved copy.
+ * The latest statement keeps T408 W because the copy check is a keyword
+ * pattern a paraphrase passes ("No one can capture this chat", "Snapshots are
+ * blocked in this conversation", "This chat is capture-protected"). At a
+ * detection site, copy is now an exact allowlist; elsewhere, a wider
+ * claim-shaped net with a closed reviewed list.
+ * ════════════════════════════════════════════════════════════════════════ */
+
+const w5 = await import("../domain/telegraph/policies/screenshotSignal.js");
+const { TEMPLATES } = await import("../services/notifications/NotificationTemplateService.js");
+const VERIFIER_PARAPHRASES = ["No one can capture this chat", "Snapshots are blocked in this conversation", "This chat is capture-protected"];
+
+/** Every claim-shaped user-facing string in `files`, collapsed. */
+function claimsIn(files: readonly string[]): Array<{ file: string; text: string }> {
+  const out: Array<{ file: string; text: string }> = [];
+  for (const f of files) {
+    const raw = readFileSync(f, "utf8");
+    const code = /\.(?:json|html|hbs|ejs|txt|xml|plist)$/.test(f) ? raw : stripComments(raw);
+    for (const t of userFacingStrings(code)) if (w5.claimsCaptureProtection(t)) out.push({ file: relative(REPO, f), text: collapse(t) });
+  }
+  return out;
+}
+
+describe("T408 wave 5 — at a detection site, copy is an exact allowlist (any wording not on it is red)", () => {
+  it("the three paraphrases the verifier named passed BOTH old checks; at a site, each is unapproved copy", () => {
+    for (const s of VERIFIER_PARAPHRASES) {
+      assert.equal(isScreenshotGuarantee(s), false, `the old deny-list now catches "${s}" — this case pins the gap`);
+      assert.equal(mentionsScreenCapture(s), false, `the old mention pattern now catches "${s}" — this case pins the gap`);
+      const site = `import * as SC from "expo-screen-capture";\nexport function Banner() { SC.addScreenshotListener(() => undefined); return <Text>${s}</Text>; }`;
+      assert.deepEqual(w5.unapprovedSiteCopy(site), [s], s);
+    }
+  });
+
+  it("a site that shows only approved sentences is clean; specifiers and identifiers are not copy", () => {
+    const [took, informational] = w5.APPROVED_SCREEN_CAPTURE_COPY.map((c) => c.text);
+    const site = `import * as SC from "expo-screen-capture"; import { x } from "../lib/y";\nconst a = "${took}"; const b = '${informational}'; const k = "took_screenshot"; style={{ align: "flex-start" }}`;
+    assert.deepEqual(w5.unapprovedSiteCopy(site), []);
+    assert.deepEqual(w5.unapprovedSiteCopy(`const t = "Protected";`), ["Protected"], "a one-word claim is copy too");
+  });
+
+  it("every approved sentence is informational: not a guarantee, by the deny-list or by a reviewer's reason", () => {
+    assert.ok(w5.APPROVED_SCREEN_CAPTURE_COPY.length > 0);
+    const keys = new Set<string>();
+    for (const c of w5.APPROVED_SCREEN_CAPTURE_COPY) {
+      assert.equal(isScreenshotGuarantee(c.text), false, c.text);
+      assert.ok(c.why.length > 40, `${c.key}: a reason, not a label`);
+      assert.ok(!keys.has(c.key), `${c.key} twice`);
+      keys.add(c.key);
+    }
+  });
+
+  it("every declared site (none today) shows only approved copy", () => {
+    for (const s of SCREENSHOT_SIGNAL_SITES) {
+      assert.deepEqual(w5.unapprovedSiteCopy(stripComments(readFileSync(join(REPO, s.file), "utf8"))), [], `${s.file} shows copy that is not approved`);
+    }
+  });
+});
+
+describe("T408 wave 5 — everywhere else, a wider net with a closed reviewed list", () => {
+  it("the claim shape catches the verifier's paraphrases and their kin, and not the signal itself", () => {
+    for (const s of [...VERIFIER_PARAPHRASES, "Messages here can't be copied", "We stop screenshots", "Screen recording is off for this chat", "Your chats are secure from capture"]) {
+      assert.equal(w5.claimsCaptureProtection(s), true, s);
+    }
+    for (const s of ["Alex took a screenshot", "A transferred screenshot is not a ticket.", "Copy link", "Blocked users"]) {
+      assert.equal(w5.claimsCaptureProtection(s), false, s);
+    }
+  });
+
+  it("every claim-shaped string in the client's shipped copy and the rendered notification templates is reviewed, and every reviewed one is still there", () => {
+    const params = { actor: "Alex", name: "Alex", preview: "See you at 8", act: "is on the way", threadId: "t", title: "Dinner", location: "Pier", tripTitle: "Hue" };
+    const found = [
+      ...claimsIn(SHIPPED_CLIENT),
+      ...TEMPLATES.flatMap((t) => [t.title(params), t.body(params)].filter((x) => w5.claimsCaptureProtection(x)).map((x) => ({ file: `template:${t.eventType}`, text: collapse(x) }))),
+    ];
+    const reviewed = new Map(w5.REVIEWED_CLAIM_SHAPED_COPY.map((r) => [r.text, r]));
+    const unreviewed = found.filter((f) => !reviewed.has(f.text)).map((f) => `${f.file}: ${f.text}`);
+    assert.deepEqual(unreviewed, [], "§30A.9: a string pairing a protection word with a copying word must be reviewed onto REVIEWED_CLAIM_SHAPED_COPY with why it is not a promise that capture is stopped");
+    const seen = new Set(found.map((f) => f.text));
+    for (const r of w5.REVIEWED_CLAIM_SHAPED_COPY) {
+      assert.ok(seen.has(r.text), `"${r.text}" is reviewed and no longer appears — remove it`);
+      assert.equal(isScreenshotGuarantee(r.text), false, r.text);
+      assert.ok(r.why.length > 30, r.text);
+    }
+  });
+});

@@ -32,7 +32,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { readFlagState } from "../../lib/featureFlags.js";
+import { readFlagState } from "../../lib/featureFlags.js"; import { readPairExclusion } from "../../lib/exclusionSet.js"; import { recordTelegraphMetric } from "../../domain/telegraph/services/telegraphObservability.js"; import { allDenied } from "../../domain/telegraph/contracts/conversationCapabilities.js"; // wave 5: the gatherer's own block read (readKernelPairBlock, file foot)
 import { resolveConversationCapabilities } from "../../domain/telegraph/policies/conversationCapabilityPolicy.js";
 import type { TelegraphRelationship } from "../../domain/telegraph/contracts/telegraphRelationship.js";
 import { applyHistoryWindow, historyBoundEnabled, membershipSelect, visibleFromOf, withinWindow } from "../groupChatHistoryBound.js";
@@ -74,7 +74,7 @@ export interface ContextKernelRequest {
 
 export type ContextKernelResult =
   | { readonly ok: true; readonly kernel: ContextKernel }
-  | { readonly ok: false; readonly stage: "thread" | "membership" | "roster"; readonly message: string };
+  | { readonly ok: false; readonly stage: "thread" | "membership" | "roster" | "blocks"; readonly message: string };
 
 /**
  * Proximity through the §30A.2 pipeline, unmodified and in the route's order,
@@ -223,7 +223,7 @@ export async function assembleContextKernel(sc: SupabaseClient, req: ContextKern
   const participantIds = [...new Set(((roster as Array<{ user_id: string }> | null) ?? []).map((r) => String(r.user_id)))].slice(0, KERNEL_MAX_PARTICIPANTS);
   if (!participantIds.includes(viewerId)) participantIds.push(viewerId);
   const others = participantIds.filter((id) => id !== viewerId);
-  const counterpartId = conversationType === "direct" && others.length === 1 ? others[0] : null;
+  const counterpartId = conversationType === "direct" && others.length === 1 ? others[0] : null; const pairBlock = await readKernelPairBlock(sc, viewerId, counterpartId); if (pairBlock === "unreadable") return { ok: false, stage: "blocks", message: "block state unreadable" }; if (pairBlock === "blocked") return { ok: true, kernel: decideContextKernel({ conversationId, viewerId, conversationType: "unknown", member: true, capabilities: { ...capabilities, ...allDenied("TELEGRAPH_AUTH_BLOCKED") }, relationship: NOT_GATHERED, proximity: NOT_GATHERED, intent: NOT_GATHERED, sharedObjects: NOT_GATHERED, nowMs }) }; // wave 5: a block §14.1 did not report (its own roster read failed, or the block landed between the two reads) is the same stranger's answer, gathered no further; an unreadable blocks table refuses like the reads above
   const visibleFrom = visibleFromOf(membership as any, boundOn);
 
   const relationship = await readKernelRelationship(sc, viewerId, counterpartId, nowMs); const blockedPair = relationship.status === "read" && relationship.value.state === "BLOCKED"; // T439: a block only the relationship saw (in an archived DM §14.1 reports the archive first) is the same non-member answer, and nothing is gathered across it
@@ -240,4 +240,38 @@ export async function assembleContextKernel(sc: SupabaseClient, req: ContextKern
       relationship, proximity, intent, sharedObjects, nowMs,
     }),
   };
+}
+
+// ── wave 5 — the gatherer's own block read (census-telegraph §14.1 / T439) ────
+
+/**
+ * The pair's block state, read by the gatherer itself, after its own roster
+ * read named the counterpart.
+ *
+ * §14.1's resolver reads it first, and a block it reports never reaches here
+ * (the short-circuit in `assembleContextKernel`). This read covers what that
+ * one cannot: a block §14.1 never saw because ITS roster read failed — it then
+ * answers a degraded refusal, not a block, and the gather used to carry on and
+ * reveal the shared objects, the band and the intent — and a block created
+ * between the two reads.
+ *
+ * `readPairExclusion`, not `isBlockedBetween`: the kernel must tell
+ * "unreadable" from "blocked". `isBlockedBetween` folds a failed read into
+ * `true`, which here would serve a member a stranger's answer during an
+ * outage; this read REFUSES instead (503, `stage: "blocks"`), as the thread,
+ * membership and roster reads already do. `readPairExclusion` never rejects, so
+ * there is no catch here for blockReadCatchGuard to judge. The read is counted
+ * on SLO-14 (`block_enforcement_failures`): a refusal made without knowing is
+ * a violation, a read that answered is ok — the guard's own semantics.
+ */
+export async function readKernelPairBlock(
+  sc: SupabaseClient,
+  viewerId: string,
+  counterpartId: string | null,
+): Promise<"not_applicable" | "clear" | "blocked" | "unreadable"> {
+  if (!counterpartId) return "not_applicable";
+  const pair = await readPairExclusion(sc, viewerId, counterpartId);
+  recordTelegraphMetric("block_enforcement_failures", pair.ok ? "ok" : "violation");
+  if (!pair.ok) return "unreadable";
+  return pair.ids.has(counterpartId) ? "blocked" : "clear";
 }

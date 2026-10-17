@@ -2744,9 +2744,9 @@ router.post("/highlights/:id/reply", async (req, res) => {
   const { error: ctxErr } = await sc.from("messages").insert({
     thread_id: threadId,
     sender_id: user.id,
-    body: `↩ Replied to your highlight`,
+    body: JSON.stringify({ type: "highlight_reply", highlightId: id }), // census-telegraph T409 (wave 5): the reference rides in the body, as every joined card's does; every reader serves the fixed sentence (services/telegraph/sharedCardTruth.ts highlightReplyCard)
     msg_type: "highlight_reply",
-    subtype: id,
+    subtype: null, // T409 (wave 5): the Highlight's id no longer sits in the discriminator column (the §29 finding); rows written before are still read from it
   });
   if (ctxErr) {
     req.log.warn({ err: ctxErr, threadId }, "highlight reply: context message insert failed");

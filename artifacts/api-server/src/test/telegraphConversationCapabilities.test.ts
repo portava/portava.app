@@ -82,7 +82,7 @@ interface State {
   liveShare?: "nearby" | "city_only" | null; /** 3753: the share's purpose (absent = a legacy row with no purpose column). */ liveSharePurpose?: string | null; liveSharePurposeError?: boolean; /** an active row of THIS purpose listed before Alice's share */ liveShareOtherFirst?: string;
   restrictions?: string[];
   /** census-telegraph T320: the BOOKING_THREAD booking's status and stay-connected opt-ins. */
-  bookingStatus?: string; bookingStayConnected?: [boolean, boolean];
+  bookingStatus?: string; bookingStayConnected?: [boolean, boolean]; /** wave 5: DM_BLOCKED is archived (§14.1 used to report the archive before the block) */ blockedArchived?: boolean; /** wave 5: the conversation-facts own-membership read (`user_id`, maybeSingle) fails */ factsOwnReadError?: boolean;
 }
 
 function fixture(state: State) {
@@ -92,7 +92,7 @@ function fixture(state: State) {
       : [{ flag: "telegraph_history_bound_enabled", enabled: state.flag }],
     message_threads: [
       { id: DM, thread_type: "direct", status: "active", trip_id: null, circle_owner_id: null, is_e2ee: false },
-      { id: DM_BLOCKED, thread_type: "direct", status: "active", trip_id: null, circle_owner_id: null, is_e2ee: false },
+      { id: DM_BLOCKED, thread_type: "direct", status: state.blockedArchived ? "archived" : "active", trip_id: null, circle_owner_id: null, is_e2ee: false },
       { id: TRIP_THREAD, thread_type: "trip", status: "active", trip_id: TRIP_MINE, circle_owner_id: null, is_e2ee: false },
       { id: TRIP_FOREIGN, thread_type: "trip", status: "active", trip_id: TRIP_OTHER, circle_owner_id: null, is_e2ee: false },
       { id: ARCHIVED, thread_type: "direct", status: "archived", trip_id: null, circle_owner_id: null, is_e2ee: false },
@@ -189,7 +189,7 @@ function makeClient(state: State) {
       limit(n: number) { _limit = n; return proxy; },
       order() { return proxy; },
       maybeSingle() {
-        const err = injected();
+        const err = injected() ?? (table === "message_thread_members" && state.factsOwnReadError && _sel === "user_id" ? { message: "facts own read blew up" } : null);
         if (err) return Promise.resolve({ data: null, error: err });
         return Promise.resolve({ data: rowsNow()[0] ?? null, error: null });
       },
@@ -456,7 +456,7 @@ describe("GET /threads/:threadId/capabilities", () => {
     assert.notEqual(blockedRes.body.reasons.canSendMessage, "TELEGRAPH_AUTH_BLOCKED",
       "putting the block on the wire tells the blocked user they were blocked");
     assert.equal(blockedRes.body.reasons.canSendMessage, "TELEGRAPH_AUTH_NOT_MEMBER");
-    assert.equal(strangerRes.body.reasons.canSendMessage, "TELEGRAPH_AUTH_NOT_MEMBER");
+    assert.equal(strangerRes.body.reasons.canSendMessage, "TELEGRAPH_AUTH_NOT_MEMBER"); assert.deepEqual({ ...blockedRes.body, conversationId: "<url id>" }, { ...strangerRes.body, conversationId: "<url id>" }, "wave 5: the WHOLE answer is a stranger's, not one reason — only the id the caller put in the URL differs (byte-level cases at the file foot)");
   });
 
   it("a non-member gets 200, not 403 — the endpoint is not a thread-existence oracle", async () => {
@@ -1201,5 +1201,166 @@ describe("T439 — GET /threads/:threadId/context-kernel is mounted on the capab
     const { status, body } = await get(DM, ALICE);
     assert.equal(status, 503);
     assert.equal(body.error, "degraded_unavailable");
+  });
+});
+
+/* ── wave 5 — block parity on GET /capabilities, and the gatherer's own block read ── */
+
+/**
+ * The rule is the census's own (§14.1 build, "The block is not told"): a block
+ * is a true reason that must not reach the person it was made about, so a
+ * blocked member is answered as a stranger. Wave 4 made the context kernel
+ * honour it; GET /capabilities on the same router still answered a blocked
+ * member with §14.1's member answer (canCreatePlan and
+ * canViewPreMembershipHistory granted, policy reasons, all eight inputs read,
+ * a member count) with only three reasons redacted. A client calling it could
+ * tell. Asserted here on the WHOLE response, as bytes.
+ *
+ * Normalised, and only when two DIFFERENT conversations are compared:
+ * `conversationId`, the id the caller put in the URL, echoed back. Nothing else
+ * — this response carries no clock.
+ */
+describe("wave 5 — a blocked member's GET /capabilities is a stranger's, byte for byte", () => {
+  let server: any;
+  let base = "";
+
+  before(async () => {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", capabilityRouter);
+    server = createServer(app);
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    base = `http://127.0.0.1:${server.address().port}/api`;
+  });
+
+  after(async () => {
+    _setTestClient(null, false);
+    await new Promise<void>((r) => server.close(() => r()));
+  });
+
+  async function raw(threadId: string, asUser: string, s: State = {}) {
+    const c = makeClient(s);
+    _setTestClient(c, true);
+    const res = await fetch(`${base}/threads/${threadId}/capabilities`, { headers: { authorization: `Bearer ${asUser}` } });
+    return { status: res.status, text: await res.text(), client: c };
+  }
+
+  it("the same conversation: the blocked member's answer IS the outsider's, every byte", async () => {
+    const blocked = await raw(DM_BLOCKED, ALICE);  // a member; Carl blocked her
+    const outsider = await raw(DM_BLOCKED, BOB);   // the same conversation, asked by someone never in it
+    assert.equal(blocked.status, 200);
+    assert.equal(outsider.status, 200);
+    assert.equal(blocked.text, outsider.text, "any byte that differs answers 'did this person block me?'");
+    assert.ok(!blocked.text.includes("BLOCKED"));
+  });
+
+  it("a conversation she was never in: the same answer, the echoed id aside", async () => {
+    const blocked = await raw(DM_BLOCKED, ALICE);
+    const stranger = await raw(STRANGER, ALICE);
+    const unId = (t: string, id: string) => t.split(id).join("<url id>");
+    assert.equal(unId(blocked.text, DM_BLOCKED), unId(stranger.text, STRANGER));
+  });
+
+  it("an ARCHIVED blocked DM is the same stranger's answer: the block is consulted before the archive", async () => {
+    const blocked = await raw(DM_BLOCKED, ALICE, { blockedArchived: true });
+    const outsider = await raw(DM_BLOCKED, BOB, { blockedArchived: true });
+    assert.equal(blocked.text, outsider.text);
+  });
+
+  it("the facts are a stranger's: the member count and E2EE flag are not even read for a blocked member", async () => {
+    const blocked = await raw(DM_BLOCKED, ALICE);
+    assert.ok(!blocked.client._observed.selects.some((x: { table: string; sel: string }) => x.table === "message_threads" && x.sel === "is_e2ee"),
+      "the E2EE read is a member's; a blocked member's facts come from the one own-membership read a stranger makes");
+    const member = await raw(DM, ALICE);
+    assert.ok(member.client._observed.selects.some((x: { table: string; sel: string }) => x.table === "message_threads" && x.sel === "is_e2ee"), "control: a member's facts ARE read");
+    assert.equal(JSON.parse(member.text).conversation.memberCount, 2);
+  });
+
+  it("a failed facts read degrades the blocked member's answer exactly as it degrades the outsider's: the same one read, the same failure", async () => {
+    const blocked = await raw(DM_BLOCKED, ALICE, { factsOwnReadError: true });
+    const outsider = await raw(DM_BLOCKED, BOB, { factsOwnReadError: true });
+    assert.equal(JSON.parse(outsider.text).conversation.degraded, true, "control: the stranger's facts read failed");
+    assert.equal(blocked.text, outsider.text);
+  });
+
+  it("the policy keeps the honest reason and gives the stranger's shape: all denied, read as far as membership, not degraded", async () => {
+    const blocked = await resolveConversationCapabilities(makeClient({}), { viewerId: ALICE, conversationId: DM_BLOCKED });
+    const outsider = await resolveConversationCapabilities(makeClient({}), { viewerId: BOB, conversationId: DM_BLOCKED });
+    for (const name of CONVERSATION_CAPABILITY_NAMES) {
+      assert.equal(blocked.capabilities[name], false, `${name} is granted to a blocked member`);
+      assert.equal(blocked.reasons[name], "TELEGRAPH_AUTH_BLOCKED", "the census and the tests see the honest reason");
+    }
+    assert.deepEqual(blocked.inputsRead, outsider.inputsRead);
+    assert.equal(blocked.degraded, false);
+    assert.equal(blocked.conversationType, outsider.conversationType);
+  });
+});
+
+describe("wave 5 — the kernel gatherer reads the pair's block itself, and refuses when it cannot", () => {
+  /** kClient, with the Nth read of `blocks` answered as given ("pass" = the fixture's answer). */
+  function sequencedBlocks(base: any, answers: Array<"pass" | "error" | "blocked">) {
+    let n = 0;
+    return {
+      ...base,
+      from(table: string) {
+        if (table !== "blocks") return base.from(table);
+        const a = answers[n++] ?? "pass";
+        if (a === "pass") return base.from(table);
+        base.reads.push(table);
+        const out = a === "error" ? { data: null, error: { message: "blocks unreadable" } } : { data: [{ blocker_id: CARL }], error: null };
+        const p: any = new Proxy({}, { get(_o, k) { if (k === "then") return (res: any, rej?: any) => Promise.resolve(out).then(res, rej); if (k === "catch" || k === "finally") return undefined; return () => p; } });
+        return p;
+      },
+    };
+  }
+  const shared = (extra: Record<string, any[]> = {}) => kBase({
+    meetups: [{ id: K_MEETUP, creator_id: CARL, title: "Dinner", starts_at: new Date(K_NOW - 30 * 60_000).toISOString(), ends_at: new Date(K_NOW + 60 * 60_000).toISOString(), status: "active", updated_at: new Date(K_NOW - 60 * 60_000).toISOString() }],
+    meetup_invites: [{ meetup_id: K_MEETUP, user_id: ALICE, status: "going" }, { meetup_id: K_MEETUP, user_id: CARL, status: "going" }],
+    messages: [{ id: "m1", thread_id: DM_BLOCKED, sender_id: ALICE, created_at: new Date(K_NOW - 3 * 60_000).toISOString(), msg_type: "text", body: "let's meet up later", deleted_at: null }],
+    ...extra,
+  });
+  const unblocked = () => { const rows = shared(); rows.blocks = []; return rows; };
+
+  it("a block §14.1 did not report (it landed after §14.1's read) is the stranger's answer, gathered no further", async () => {
+    const c = sequencedBlocks(kClient({ rows: unblocked() }), ["pass", "blocked"]);
+    const r = await kAssemble(c as any, { viewerId: ALICE, conversationId: DM_BLOCKED, nowMs: K_NOW });
+    assert.ok(r.ok);
+    const outsider = await kAssemble(kClient({ rows: unblocked() }), { viewerId: BOB, conversationId: DM_BLOCKED, nowMs: K_NOW });
+    assert.ok(outsider.ok);
+    assert.equal(JSON.stringify(kWire(r.kernel, kRedact)), JSON.stringify(kWire(outsider.kernel, kRedact)), "the same bytes as someone never in the conversation");
+    for (const t of ["meetups", "meetup_invites", "messages"]) assert.ok(!c.reads.includes(t), `${t} was read across a block`);
+  });
+
+  it("an unreadable blocks table at the gatherer's read REFUSES (stage blocks), never the stranger's answer and never a gather", async () => {
+    const { _resetTelegraphMetrics, telegraphSloSnapshot } = await import("../domain/telegraph/services/telegraphObservability.js");
+    _resetTelegraphMetrics();
+    const c = sequencedBlocks(kClient({ rows: unblocked() }), ["pass", "error"]);
+    const r = await kAssemble(c as any, { viewerId: ALICE, conversationId: DM_BLOCKED, nowMs: K_NOW });
+    assert.equal(r.ok, false);
+    assert.equal(!r.ok && r.stage, "blocks");
+    for (const t of ["meetups", "meetup_invites", "messages"]) assert.ok(!c.reads.includes(t), `${t} was read with block state unknown`);
+    const slo = telegraphSloSnapshot().find((x) => x.metric === "block_enforcement_failures")!;
+    assert.equal(slo.violations, 1, "SLO-14 counts the refusal made without knowing");
+    assert.equal(slo.ok, 1, "…and §14.1's own read, which answered");
+    _resetTelegraphMetrics();
+  });
+
+  it("no block: the pair is read and the conversation is gathered as before", async () => {
+    const c = kClient({ rows: unblocked() });
+    const r = await kAssemble(c, { viewerId: ALICE, conversationId: DM_BLOCKED, nowMs: K_NOW });
+    assert.ok(r.ok);
+    assert.equal(r.kernel.inputs.sharedObjects.revealed, true, "control: the shared meetup IS revealed to a member nobody blocked");
+    assert.equal(c.reads.filter((t: string) => t === "blocks").length >= 2, true, "§14.1 read the pair, and so did the gatherer");
+  });
+
+  it("an ARCHIVED blocked DM with the relationship flag OFF (as deployed) is the stranger's answer, gathered no further", async () => {
+    const rows = shared(); rows.message_threads = rows.message_threads.map((t: any) => (t.id === DM_BLOCKED ? { ...t, status: "archived" } : t));
+    const c = kClient({ rows });
+    const r = await kAssemble(c, { viewerId: ALICE, conversationId: DM_BLOCKED, nowMs: K_NOW });
+    assert.ok(r.ok);
+    const outsider = await kAssemble(kClient({ rows }), { viewerId: BOB, conversationId: DM_BLOCKED, nowMs: K_NOW });
+    assert.ok(outsider.ok);
+    assert.equal(JSON.stringify(kWire(r.kernel, kRedact)), JSON.stringify(kWire(outsider.kernel, kRedact)));
+    for (const t of ["meetups", "meetup_invites", "messages"]) assert.ok(!c.reads.includes(t), `${t} was read across a block`);
   });
 });

@@ -85,7 +85,7 @@ export interface TelegraphShareProjection {
    * where the source has one.
    */
   projectionVersion: string | null;
-  deepLink: string;
+  deepLink: string; /** census-telegraph T265 (wave 5): PLACE only — Discovery's own live intelligence for this place, exactly as Discovery would serve it, and ABSENT whenever Discovery would serve none (its flags off). See placeLiveIntelligence at the file foot. */ liveIntelligence?: PlaceLiveIntelligence;
 }
 
 export type UnavailableReason = "deleted" | "private" | "unauthorized" | "not_found" | "unknown";
@@ -551,7 +551,7 @@ const loadMeetup: Loader = async (client, id, viewerId) => {
 };
 
 /** Places — a canonical place. Public by nature; a merged/duplicate row degrades. */
-const loadPlace: Loader = async (client, id) => {
+const loadPlace: Loader = async (client, id) => withPlaceLiveIntelligence(client, id, await loadPlaceRow(client, id)); const loadPlaceRow = async (client: SupabaseClient, id: string): Promise<Loaded> => { // T265 (wave 5): the row read is unchanged; the live layer is added at the file foot
   const { data, error } = await client
     .from("places")
     .select("id, name, city, neighborhood, primary_category, status, updated_at")
@@ -1612,3 +1612,54 @@ function postVersionForViewer(r: Row): string | null {
   if (modeUnread || mode === "delayed_until_exit") return typeof r.created_at === "string" ? r.created_at : null;
   return (r.updated_at as string) ?? null;
 }
+
+// ── census-telegraph T265 (wave 5) — §20 Places: "current intelligence" ─────
+//
+// The Telegraph place card re-resolved the place's current name, neighbourhood
+// and status (T46), not Discovery's live intelligence. This adds exactly what
+// Discovery puts on its own wire for a place — the grounded why-now from
+// lib/discoveryLiveRank, in the live claims' own vocabulary, and how long it
+// stays valid — through Discovery's own functions, so the card cannot say
+// anything Discovery would not:
+//
+//   - FLAGS. Discovery serves why-now only through its candidate projection
+//     (`discovery_candidate_projection_enabled`) over a live grade
+//     (`discovery_live_rank_enabled`, 2850, seeded FALSE), behind the intel
+//     live-label gates (lib/liveClaimRead.liveLabelsServable). Any of them off
+//     ⇒ no `liveIntelligence` at all: the projection is byte-for-byte what it
+//     was.
+//   - LABELS. `whyNowOf` / `whyNowValidForMsOf` (lib/discoveryCandidate) copy
+//     the grade's reasons and compose none: null when nothing was observed,
+//     when the gates refused the look, or when the read failed — never an empty
+//     endorsement. The grade reads only lib/discoveryLiveRankRead's
+//     RANK_CLAIM_TYPES, none of which lib/intelContracts rules "never" for a
+//     live label (pinned by test), and a place the grade DEMOTES as unsafe
+//     carries the safety reading alone (Sensing §7) — the ranker's own rule.
+//   - NEVER A FAILURE. A thrown or refused read leaves the projection as it
+//     was; the place card never fails because the live layer did.
+export interface PlaceLiveIntelligence {
+  /** Discovery's grounded reasons, in the live claims' vocabulary; null when nothing observed backs one. */
+  readonly whyNow: string[] | null;
+  /** ms from this read until the earliest claim behind `whyNow` expires; null with `whyNow`. */
+  readonly whyNowValidForMs: number | null;
+}
+
+/** Discovery's live intelligence for one canonical place, or null whenever Discovery would serve none. */
+export async function placeLiveIntelligence(sc: SupabaseClient, placeId: string, nowMs: number = Date.now()): Promise<PlaceLiveIntelligence | null> {
+  if (!(await candidateProjectionEnabled(sc))) return null;
+  const graded = await withDiscoveryLiveRank(sc, [{ id: placeId, canonicalPlaceId: placeId, distanceKm: null }], { nowMs });
+  if (!graded.applied) return null;
+  const ctx = { liveRankById: graded.byId };
+  return { whyNow: whyNowOf(placeId, ctx), whyNowValidForMs: whyNowValidForMsOf(placeId, ctx, nowMs) };
+}
+
+async function withPlaceLiveIntelligence(client: SupabaseClient, id: string, loaded: Loaded): Promise<Loaded> {
+  if (!loaded.state.available || !loaded.projection) return loaded;
+  let live: PlaceLiveIntelligence | null = null;
+  try { live = await placeLiveIntelligence(client, id); } catch { live = null; }
+  return live ? { ...loaded, projection: { ...loaded.projection, liveIntelligence: live } } : loaded;
+}
+
+// Imported at the foot so the cited lines above do not move (census-telegraph T265, wave 5).
+import { candidateProjectionEnabled, whyNowOf, whyNowValidForMsOf } from "../../lib/discoveryCandidate.js";
+import { withDiscoveryLiveRank } from "../../lib/discoveryLiveRankRead.js";
