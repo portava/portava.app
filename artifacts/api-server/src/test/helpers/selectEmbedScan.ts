@@ -32,7 +32,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
-import { parseForeignKeys, parseSelectEmbeds, selectEmbedRefusals, type ForeignKey } from "./migrationForeignKeys.js";
+import { parseSelectEmbeds, selectEmbedRefusalDetails, type EmbedRefusal } from "./migrationForeignKeys.js";
 
 const API_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const SRC = path.join(API_ROOT, "src");
@@ -53,8 +53,12 @@ export interface EmbedSite {
   variants: string[];
   /** `parent→relation` for every embed in any variant. */
   embeds: string[];
-  /** Why PostgREST would refuse an embed here, per the declared keys. Empty when every embed is backed. */
-  refusals: Array<{ parent: string; relation: string; why: string }>;
+  /**
+   * Why PostgREST would refuse an embed here, per the declared keys: PGRST200
+   * (no key) or PGRST201 (more than one, and no hint that picks one). Empty when
+   * every embed resolves to exactly one relationship.
+   */
+  refusals: Array<{ parent: string; relation: string; why: string; code: EmbedRefusal["code"]; keys: string[] }>;
 }
 
 export interface UnresolvedSite {
@@ -543,12 +547,6 @@ function views(): Set<string> {
 
 // ── The scan ─────────────────────────────────────────────────────────────────
 
-/** Parse "`rel(...)` is embedded from `parent`" / "`rel!hint(...)` is embedded from `parent`" out of a refusal. */
-function refusalKey(why: string): { parent: string; relation: string } {
-  const m = /`([a-z_][a-z0-9_]*)(?:![^`(]*)?\(\.\.\.\)` is embedded from `([a-z_][a-z0-9_]*)`/.exec(why);
-  return m ? { relation: m[1], parent: m[2] } : { relation: "?", parent: "?" };
-}
-
 const EMBED_SHAPE = /[a-z_]\s*(?:![a-z_]+)?\s*\(/i;
 const scanCache = new Map<string, EmbedScan>();
 
@@ -579,10 +577,10 @@ export function scanSelectEmbeds(root: string = SRC): EmbedScan {
       const refusals: EmbedSite["refusals"] = [];
       const seen = new Set<string>();
       for (const v of variants) {
-        for (const why of selectEmbedRefusals(table, v)) {
-          if (seen.has(why)) continue;
-          seen.add(why);
-          refusals.push({ ...refusalKey(why), why });
+        for (const r of selectEmbedRefusalDetails(table, v)) {
+          if (seen.has(r.why)) continue;
+          seen.add(r.why);
+          refusals.push({ parent: r.parent, relation: r.relation, why: r.why, code: r.code, keys: r.keys });
         }
       }
       (viewSet.has(table.toLowerCase()) ? viewSites : embedSites).push({ ...site, table, variants, embeds, refusals });
@@ -650,11 +648,12 @@ export function scanSelectEmbeds(root: string = SRC): EmbedScan {
   return result;
 }
 
-/** Every unbacked embed, keyed the way the allow-list is: `file → parent→relation`. */
+/** Every unbacked embed (PGRST200), keyed the way the allow-list is: `file → parent→relation`. */
 export function unbackedEmbedKeys(scan: EmbedScan = scanSelectEmbeds()): Map<string, EmbedSite[]> {
   const out = new Map<string, EmbedSite[]>();
   for (const s of scan.embedSites) {
     for (const r of s.refusals) {
+      if (r.code !== "PGRST200") continue;
       const key = `${s.file} → ${r.parent}→${r.relation}`;
       const list = out.get(key) ?? [];
       if (!list.includes(s)) list.push(s);
@@ -664,14 +663,14 @@ export function unbackedEmbedKeys(scan: EmbedScan = scanSelectEmbeds()): Map<str
   return out;
 }
 
-// ── Ambiguity: an unhinted embed across a pair joined by more than one key ───
+// ── Ambiguity: an embed across a pair joined by more than one key ──────────
 //
 // PostgREST refuses `rel(...)` with PGRST201 when more than one relationship
-// joins the two tables (either direction) and no `!hint` picks one. The guard
-// does not model this (it reads keys additively, so a dropped key still counts
-// and it cannot call a pair ambiguous without risking a false refusal). The
-// scan REPORTS it instead, for the declared keys: a hint naming the key is
-// always accepted, so asking new code for one is never wrong.
+// joins the two tables (either direction) and no `!hint` picks exactly one. The
+// guard (`migrationForeignKeys.ts`) MODELS this since wave 5 (2026-10-17), so
+// the doubles refuse it and this scan reads the same verdict, from the same
+// de-duplicated keys, as a PGRST201 refusal. A hint naming the key is always
+// accepted by production when the key exists, so asking for one is never wrong.
 
 export interface AmbiguousEmbed {
   file: string;
@@ -681,56 +680,21 @@ export interface AmbiguousEmbed {
   keys: string[];
 }
 
-let fkList: ForeignKey[] | null = null;
-function declaredForeignKeys(): ForeignKey[] {
-  if (fkList) return fkList;
-  const files = [
-    ...fs.readdirSync(path.join(SRC, "migrations")).filter((n) => n.endsWith(".sql")).sort().map((n) => path.join(SRC, "migrations", n)),
-    path.join(API_ROOT, "baseline/20260819_baseline_structure.sql"),
-  ];
-  const uniq = new Map<string, ForeignKey>();
-  for (const f of files) for (const fk of parseForeignKeys(fs.readFileSync(f, "utf8"))) uniq.set(`${fk.from}|${fk.to}|${fk.columns.join(",")}`, fk);
-  fkList = [...uniq.values()];
-  return fkList;
-}
-
-function splitTopLevelItems(cols: string): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let cur = "";
-  for (const ch of cols) {
-    if (ch === "(") depth++;
-    if (ch === ")") depth--;
-    if (ch === "," && depth === 0) { out.push(cur); cur = ""; continue; }
-    cur += ch;
-  }
-  out.push(cur);
-  return out.map((x) => x.trim()).filter(Boolean);
-}
-
-function ambiguousIn(table: string, cols: string, at: { file: string; line: number }, out: AmbiguousEmbed[]) {
-  const fks = declaredForeignKeys();
-  for (const item of splitTopLevelItems(cols)) {
-    const open = item.indexOf("(");
-    if (open < 0) continue;
-    let spec = item.slice(0, open).trim().replace(/^\.\.\./, "");
-    if (spec.includes(":")) spec = spec.slice(spec.lastIndexOf(":") + 1).trim();
-    const [name, ...hints] = spec.split("!").map((x) => x.trim().toLowerCase());
-    if (!name || ["count", "sum", "avg", "min", "max"].includes(name)) continue;
-    const realHints = hints.filter((h) => h && h !== "inner" && h !== "left");
-    const viaColumn = fks.find((fk) => fk.from === table && fk.columns.length === 1 && fk.columns[0] === name);
-    if (!viaColumn && realHints.length === 0) {
-      const between = fks.filter((fk) => (fk.from === table && fk.to === name) || (fk.from === name && fk.to === table));
-      if (between.length > 1) out.push({ ...at, parent: table, relation: name, keys: between.map((fk) => `${fk.from}.${fk.columns.join("+")} → ${fk.to} (${fk.name})`) });
-    }
-    ambiguousIn(viaColumn ? viaColumn.to : name, item.slice(open + 1, item.lastIndexOf(")")), at, out);
-  }
-}
-
-/** Every unhinted embed whose two tables are joined by more than one declared key (PGRST201 if production still has them all). */
-export function ambiguousUnhintedEmbeds(scan: EmbedScan = scanSelectEmbeds()): AmbiguousEmbed[] {
+/**
+ * Every embed PostgREST could not resolve to ONE relationship (PGRST201): no
+ * hint across a multiply-keyed pair, or a hint that selects more than one key.
+ */
+export function ambiguousEmbeds(scan: EmbedScan = scanSelectEmbeds()): AmbiguousEmbed[] {
   const out: AmbiguousEmbed[] = [];
-  for (const s of scan.embedSites) for (const v of s.variants) ambiguousIn(s.table.toLowerCase(), v, { file: s.file, line: s.line }, out);
   const seen = new Set<string>();
-  return out.filter((a) => { const k = `${a.file}:${a.line}:${a.parent}:${a.relation}`; if (seen.has(k)) return false; seen.add(k); return true; });
+  for (const s of scan.embedSites) {
+    for (const r of s.refusals) {
+      if (r.code !== "PGRST201") continue;
+      const k = `${s.file}:${s.line}:${r.parent}:${r.relation}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push({ file: s.file, line: s.line, parent: r.parent, relation: r.relation, keys: r.keys });
+    }
+  }
+  return out;
 }

@@ -63,9 +63,21 @@
  * foreign key joins the two tables (census-layover L295): `selectedColumns`
  * drops embeds from the column check, so without this a join production
  * refuses (PGRST200) passed here unexamined. See `migrationForeignKeys.ts`.
+ * Since wave 5 (2026-10-17) it also THROWS on an embed more than one key could
+ * answer and no `!hint` narrows to one (PGRST201): `profiles(...)` from `posts`
+ * (author_id, created_by, updated_by) is the case that killed five reads.
+ *
+ * `joinEmbeds: true` (opt-in, wave 5) goes one step further: each embed is
+ * MATERIALISED from the seed along the one relationship it resolves to — a key
+ * on the parent gives an object (or null), a key on the embedded table gives an
+ * array, `!inner` drops a parent with no match — and its columns are checked
+ * against the live schema like the base table's (42703). So a test seeds flat
+ * tables, and a wrong hint returns the wrong person or the wrong shape instead
+ * of whatever nested object the fixture was written with. Without the option,
+ * embeds behave as before: the seeded row is returned whole.
  */
 import { liveColumns } from "./liveColumns.ts";
-import { assertSelectEmbedsBacked } from "./migrationForeignKeys.js";
+import { assertSelectEmbedsBacked, resolveSelectEmbeds, type ResolvedEmbed } from "./migrationForeignKeys.js";
 import { projectionKeys, projectRow } from "./selectProjection.js";
 
 export type Row = Record<string, unknown>;
@@ -91,6 +103,15 @@ export interface SchemaStrictOptions {
    * SUPABASE_CONFORMANCE=1.
    */
   syntheticColumns?: Record<string, string[]>;
+  /**
+   * Materialise embeds from the seed along the relationship the guard resolves
+   * (see the header). A select whose embed this cannot materialise (a spread,
+   * an aggregate, a composite key, a pair only the table-level reader links)
+   * THROWS rather than guess. NOT MODELLED: PostgREST answers an object, not
+   * an array, when the embedded table's key column is itself unique (one-to-
+   * one); this always answers a key on the embedded table with an array.
+   */
+  joinEmbeds?: boolean;
 }
 
 export interface SchemaStrictClient {
@@ -145,6 +166,92 @@ export function selectedColumns(select: string): string[] {
     .filter((part) => part.length > 0 && part !== "*");
 }
 
+// ── joinEmbeds (wave 5, 2026-10-17) ───────────────────────────────────────────
+
+const EMBED_AGGREGATES = new Set(["count", "sum", "avg", "min", "max"]);
+
+/** One level of a select list: its plain columns, `*`, and its embeds with their own plans. */
+interface JoinPlan {
+  star: boolean;
+  plain: Array<[string, string]>;
+  embeds: Array<{ node: ResolvedEmbed; plan: JoinPlan }>;
+}
+
+function topLevelItems(select: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let cur = "";
+  for (const ch of select) {
+    if (ch === "(") depth++;
+    if (ch === ")") depth--;
+    if (ch === "," && depth === 0) { parts.push(cur); cur = ""; continue; }
+    cur += ch;
+  }
+  parts.push(cur);
+  return parts.map((p) => p.trim()).filter((p) => p.length > 0);
+}
+
+function planJoin(table: string, select: string, nodes: ResolvedEmbed[]): JoinPlan {
+  const refuse = (why: string): never => {
+    throw new Error(`schemaStrictSupabase(joinEmbeds): ${why} in select("${select}") from ${table}; this double does not model it.`);
+  };
+  const plan: JoinPlan = { star: false, plain: [], embeds: [] };
+  let next = 0;
+  for (const item of topLevelItems(select)) {
+    const open = item.indexOf("(");
+    if (open >= 0) {
+      const head = item.slice(0, open).trim();
+      const name = head.replace(/^\.\.\./, "").split(":").pop()!.split("!")[0]!.trim().toLowerCase();
+      if (EMBED_AGGREGATES.has(name)) refuse(`the aggregate \`${item}\``);
+      const node = nodes[next++];
+      if (!node || node.relation !== name) refuse(`the embed \`${item}\` (unresolved)`);
+      if (node!.spread) refuse(`the spread \`${item}\``);
+      const rel = node!.relationship;
+      if (!rel) refuse(`\`${item}\`, whose pair only the table-level key reader links (no column-aware key to join on)`);
+      if (rel!.key.columns.length !== 1) refuse(`\`${item}\` along the composite key ${rel!.key.name}`);
+      plan.embeds.push({ node: node!, plan: planJoin(node!.target, node!.select, node!.children) });
+      continue;
+    }
+    if (item === "*") { plan.star = true; continue; }
+    if (item.includes("::") || item.includes('"') || item.includes("->") || EMBED_AGGREGATES.has(item.toLowerCase())) refuse(`\`${item}\``);
+    const colon = item.indexOf(":");
+    plan.plain.push(colon >= 0 ? [item.slice(0, colon).trim(), item.slice(colon + 1).trim()] : [item, item]);
+  }
+  return plan;
+}
+
+/**
+ * One row as PostgREST would return it under `plan`, or null when an `!inner`
+ * embed found nothing. A key that names no referenced column references `id`.
+ */
+function materialise(seed: Seed, row: Row, plan: JoinPlan): Row | null {
+  const out: Row = plan.star ? { ...row } : {};
+  for (const [key, col] of plan.plain) {
+    if (Object.prototype.hasOwnProperty.call(row, col)) out[key] = row[col];
+  }
+  for (const { node, plan: sub } of plan.embeds) {
+    const { key, cardinality } = node.relationship!;
+    const ref = key.refColumns[0] ?? "id";
+    const candidates = seed[node.target] ?? [];
+    if (cardinality === "many-to-one") {
+      const local = row[key.columns[0]!];
+      const hit = local == null ? undefined : candidates.find((t) => t[ref] === local);
+      const value = hit ? materialise(seed, hit, sub) : null;
+      if (node.inner && value === null) return null;
+      out[node.outputKey] = value;
+    } else {
+      const local = row[ref];
+      const value = local == null ? [] : candidates
+        .filter((t) => t[key.columns[0]!] === local)
+        .map((t) => materialise(seed, t, sub))
+        .filter((v): v is Row => v !== null);
+      if (node.inner && value.length === 0) return null;
+      out[node.outputKey] = value;
+    }
+  }
+  return out;
+}
+
 export function makeSchemaStrictClient(
   seed: Seed = {},
   opts: SchemaStrictOptions = {},
@@ -177,7 +284,7 @@ export function makeSchemaStrictClient(
 
   function from(table: string) {
     const filters: Array<(r: Row) => boolean> = [];
-    let dead: { column: string; where: string } | null = null;
+    let dead: { column: string; where: string; table: string } | null = null;
     let limit: number | null = null;
     let orderKey: { key: string; asc: boolean } | null = null;
     let written: Row[] | null = null;
@@ -187,9 +294,21 @@ export function makeSchemaStrictClient(
     // `null` = do not project (the historical behaviour). See selectProjection.ts.
     let projection: Array<[string, string]> | null = null;
     let op: "insert" | "upsert" | "update" | null = null;
+    // joinEmbeds only: the plan the read materialises its embeds along.
+    let joinPlan: JoinPlan | null = null;
 
-    function fail(column: string, where: string) {
-      if (!dead) dead = { column, where };
+    function fail(column: string, where: string, at: string = table) {
+      if (!dead) dead = { column, where, table: at };
+    }
+
+    /** An embed's columns are columns of the table it lands on: checked there, failing the whole statement (42703). */
+    function noteEmbedColumns(plan: JoinPlan, where: string) {
+      for (const { node, plan: sub } of plan.embeds) {
+        const before = deadColumnErrors.length;
+        checkColumns(node.target, sub.plain.map(([, col]) => col), `${where} embed ${node.outputKey}`);
+        for (let i = before; i < deadColumnErrors.length; i++) fail(deadColumnErrors[i].column, deadColumnErrors[i].where, node.target);
+        noteEmbedColumns(sub, where);
+      }
     }
 
     function note(columns: string[], where: string) {
@@ -206,7 +325,7 @@ export function makeSchemaStrictClient(
           data: null,
           error: {
             code: PG_UNDEFINED_COLUMN,
-            message: `column ${table}.${dead.column} does not exist`,
+            message: `column ${dead.table}.${dead.column} does not exist`,
             details: dead.where,
           },
           count: null,
@@ -235,6 +354,14 @@ export function makeSchemaStrictClient(
         return { data: projection ? affected.map((r) => projectRow(r, projection!) as Row) : affected, error: null, count: null };
       }
       let out = (seed[table] ?? []).filter((r) => filters.every((f) => f(r)));
+      const joined = new Map<Row, Row>();
+      if (joinPlan) {
+        out = out.filter((r) => {
+          const m = materialise(seed, r, joinPlan!);
+          if (m) joined.set(r, m);
+          return m !== null;
+        });
+      }
       if (orderKey) {
         const { key, asc } = orderKey;
         out = [...out].sort((a, b) => {
@@ -244,7 +371,8 @@ export function makeSchemaStrictClient(
       }
       if (limit !== null) out = out.slice(0, limit);
       // `count` mirrors PostgREST's Content-Range: null unless the caller asked.
-      return { data: projection ? out.map((r) => projectRow(r, projection!) as Row) : out, error: null, count: countMode ? out.length : null };
+      const data = joinPlan ? out.map((r) => joined.get(r)!) : projection ? out.map((r) => projectRow(r, projection!) as Row) : out;
+      return { data, error: null, count: countMode ? out.length : null };
     }
 
     const b: any = {
@@ -258,6 +386,13 @@ export function makeSchemaStrictClient(
         // whole seeded row, so a read of a column the caller never selected was
         // undefined in production and green here.
         projection = projectionKeys(cols);
+        if (opts.joinEmbeds && cols) {
+          const nodes = resolveSelectEmbeds(table, cols);
+          if (nodes.length > 0) {
+            joinPlan = planJoin(table, cols, nodes);
+            noteEmbedColumns(joinPlan, `select("${cols}")`);
+          }
+        }
         return b;
       },
       eq: (col: string, val: unknown) => {

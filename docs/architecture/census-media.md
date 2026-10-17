@@ -15207,13 +15207,13 @@ kept everywhere, as mapPublicPost keeps them.
   is unchanged; the filter is at
   `artifacts/api-server/src/routes/placeLiving.ts:635#const formattedPosts = posts.filter((p: any) => !postPlaceWithheldFrom(p, timelineViewer?.user.id))`).
 - **The Place Day feed** SELECTs the mode
-  (`artifacts/api-server/src/routes/placeDays.ts:102#publish_at, location_privacy_mode, published_at, profiles(id, is_private)")`)
+  (`artifacts/api-server/src/routes/placeDays.ts:102#publish_at, location_privacy_mode, published_at, profiles!author_id(id, is_private)")`)
   and skips another author's withheld post before paging
   (`artifacts/api-server/src/routes/placeDays.ts:114#let visible = chunk.filter((p) => !blocked.has(p.author_id) && isEligiblePlaceDayPost(p)); visible = visible.filter`).
   The sequence a viewer can page through is the old sequence minus those posts,
   in the same order (C6 walks every page).
 - **Place Day recaps** SELECT the mode
-  (`artifacts/api-server/src/routes/placeRecaps.ts:60#publish_at, location_privacy_mode, profiles(id, is_private)")`)
+  (`artifacts/api-server/src/routes/placeRecaps.ts:60#publish_at, location_privacy_mode, profiles!author_id(id, is_private)")`)
   and never copy another author's withheld post into a recap: the eligibility
   line lane Q cited is unchanged
   (`artifacts/api-server/src/routes/placeRecaps.ts:64#const candidates = ((data ?? []) as any[]).filter((post) => !blocked.has(post.author_id) && isEligiblePlaceDayPost(post));`),
@@ -17471,3 +17471,49 @@ the ladder are W on 3980 being applied nowhere, and that is unchanged.
 | CANNOT-VERIFY | 0 | **0** |
 | CONSTRUCTED% | 100.0 % | **100.0 %** (450 / 450) |
 | CORRECT% raw | 92.2 % | **92.2 %** (415 / 450) |
+
+### Correction (2026-10-17, wave 5) — the Place Day feed, Place Day and Moment recaps, the recap list and the Shared Moment feed: ambiguous embed never resolved in production
+
+**The production fact.** The lead read the production catalog on 2026-10-17 (read-only). `public.posts` has three
+foreign keys to `public.profiles`: `posts_author_id_fkey` (author_id), `posts_created_by_fkey` (created_by) and
+`posts_updated_by_fkey` (updated_by). `public.live_place_recaps` and `public.live_place_recap_versions` key each other
+both ways: `live_place_recaps_current_version_fk` and `live_place_recap_versions_recap_id_fkey`. PostgREST refuses an
+unhinted embed across either pair (PGRST201). Five reads this census cites (§42.6 (3), §43.2, §50.3, §50.7) were such
+embeds, so none of them ever answered in production. No error was swallowed: each route turned it into `db_error`.
+- The Place Day feed, `GET /places/:id/place-days/:date/feed`, always failed
+  (`artifacts/api-server/src/routes/placeDays.ts:102#profiles!author_id(id, is_private)`).
+- No Place Day recap or Moment recap could be created or regenerated. `collectSources` answered "could not be
+  verified" (`artifacts/api-server/src/routes/placeRecaps.ts:60#profiles!author_id(id, is_private)`,
+  `artifacts/api-server/src/routes/placeRecaps.ts:42#profiles!author_id(id, is_private))`).
+- The place's recap list, `GET /places/:placeId/recaps`, always failed
+  (`artifacts/api-server/src/routes/placeRecaps.ts:151#live_place_recap_versions!live_place_recap_versions_recap_id_fkey!inner(`).
+- The Shared Moment feed, `GET /shared-moments/:id/feed`, always failed
+  (`artifacts/api-server/src/routes/sharedMoments.ts:314#profiles!author_id(id, is_private))`).
+
+§43.2 says the Place Day feed "SELECTs the mode" and skips another author's withheld post, and that Place Day recaps
+never copy one. §50.7 lists the Place Day feed among the readers given the 24-hour window. All three describe code
+that never got past its read in production. It narrowed nothing there and disclosed nothing: a read that fails
+shows no place.
+
+**The fix.** One hint per read, on the same line, so no cited line moves. `profiles!author_id(...)`: every caller
+hands that profile to `excludePrivateAuthorPosts` as the author's privacy. `live_place_recap_versions!live_place_recap_versions_recap_id_fkey!inner(...)`:
+the list of versions the client sorts by version number; the current-version key would answer one object. §43.2's
+two anchors at `placeDays.ts:102` and `placeRecaps.ts:60` are repointed to the hinted text, and their claims are
+unchanged. The test doubles now refuse an ambiguous embed, as PostgREST does
+(`artifacts/api-server/src/test/helpers/migrationForeignKeys.ts`). The scan's ambiguous-embed ledger is empty
+(`artifacts/api-server/src/test/selectEmbedForeignKeyScan.test.ts`). `artifacts/api-server/src/test/ambiguousEmbedHints.test.ts`
+drives each route on the schema-strict double, which joins flat seeded tables along the key the hint names.
+10 of 10 source mutants are killed: each read unhinted, or hinted to `created_by`, `updated_by` or the
+current-version key. These are local runs on fakes, not evidence about a deployment.
+
+**No row moves.** `placeDays.ts` and `placeRecaps.ts` are NOT-GRADED here (§42.10). MD79 (`C`) lists the Place Day
+feed among seven readers given the window (§50.7). That reader never answered, so nobody saw a place through it,
+the author included. That is less than the ruling allows, never more, which §50.9 already accepts for the four
+closed readers. The row rests on the disclosure ending and on the author bypass on the two `routes/posts.ts` feeds,
+and neither depends on this read. MD222 rests on the media context graph and the People lens's
+`shared_moment_memberships` read, not on the contribution feed. MD100 rests on the invite endpoint, which embeds
+nothing.
+
+- NOT-GRADED: artifacts/api-server/src/test/helpers/migrationForeignKeys.ts — the test doubles' embed guard, cited above as the evidence that the doubles now refuse an ambiguous embed; test machinery, and no row rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/selectEmbedForeignKeyScan.test.ts — the static embed scan whose ambiguous-embed ledger is now empty; test machinery, and no row rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/ambiguousEmbedHints.test.ts — the route tests for this correction, which moves no row.

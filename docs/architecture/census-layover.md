@@ -12351,3 +12351,23 @@ Runs used `node --import tsx/esm --test` with `TZ=UTC`, on fakes. Loopback suite
 | total | 296 | 296 |
 
 **No row moves.** 296 = 86 C / 158 W / 52 N / 0 X.
+
+### Correction (2026-10-17, wave 5) — L295's guard: an embed more than one key could answer is now refused (PGRST201)
+
+The guard accepted an unhinted embed between two tables joined by more than one key. PostgREST refuses that read
+(PGRST201). On the production catalog (read-only, the lead, 2026-10-17), five production reads were such embeds and
+never answered: `posts` has three keys to `profiles`, and `live_place_recaps` and `live_place_recap_versions` key each
+other both ways (census-media, census-highlights-memories and census-passport carry the surface corrections). The
+guard now collects every relationship between the two tables in both directions, de-duplicated across the migration
+chain and the baseline. It keeps the ones a hint selects (a constraint name, or either end of a single-column key)
+and refuses when more than one remains, on every double that calls it. The guard suite's CONTROL "a key-backed embed
+is accepted" embedded `user_account_states(state)` from `profiles` with no hint. Two keys join that pair (`user_id`,
+`set_by`), so that CONTROL asserted a join production refuses. It now carries the hint production's account-state
+gate uses. The suite's line numbers are unchanged. Tests: `artifacts/api-server/src/test/ambiguousEmbedHints.test.ts`.
+A many-to-many relationship through a junction table also counts towards PGRST201 in PostgREST, and the guard does
+not model it. A one-off probe found no unhinted production embed between two tables that a junction also joins.
+
+**L295 stays `W`.** This closes more of the fixture half. The other half, a layover test on a real CI schema, is
+unchanged.
+
+- NOT-GRADED: artifacts/api-server/src/test/ambiguousEmbedHints.test.ts — the route tests for the five surfaces this correction names, which no layover row grades.

@@ -145,7 +145,7 @@ describe("L295 wave 5 — every double refuses an embed no declared key backs", 
     assert.equal(fc.error, null);
     const ss = await makeSchemaStrictClient({ trip_members: [{ trip_id: "t1" }] }).from("trip_members").select("trip_id, trips!inner(destination_city)");
     assert.equal(ss.error, null);
-    const fm = await makeFakeMapDb({ profiles: [{ id: "u" }] }, { token: "t", userId: "u" }).from("profiles").select("id, user_account_states(state)");
+    const fm = await makeFakeMapDb({ profiles: [{ id: "u" }] }, { token: "t", userId: "u" }).from("profiles").select("id, user_account_states!user_account_states_user_id_fkey(state)"); // wave 5: hinted as lib/accountStateGate.ts hints it; unhinted is PGRST201 (user_id AND set_by key profiles)
     assert.equal(fm.error, null);
   });
 });

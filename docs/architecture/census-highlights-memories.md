@@ -9475,3 +9475,34 @@ These are local runs, on fakes, fixtures and PGlite. They are not evidence about
 ### Correction (2026-10-17, wave 5) — the Telegraph stamp share card applies the presence rule
 
 **H4's one open reader is closed. H4 does not move: it stays W for the historical rows awaiting the owner's data repair (OD-1012-STAMP-4).** §W5F.1 named one open reader, the Telegraph STAMP share card, which printed a stamp's stored `[city, country]` to a conversation without the rule. The card's loader now selects what the verdict reads (`user_id`, `source_type`, `source_id`, `stamp_definitions(slug)`) and applies `services/passport/stampPresenceView.ts` after its existing block, revocation and privacy gates (`artifacts/api-server/src/services/telegraph/shareables.ts:931#const presence = await readStampPresenceView(client, [r as StampPresenceRow]);`). A presence stamp whose own source's evidence does not hold is `not_found`: the card goes to other people, and the stamp's name alone claims the visit. Unreadable evidence is `unknown`, so it is never shown and never read as evidence. The subtitle is the evidenced place only, and an achievement keeps its card without its stored place. The registry entry is now `gated` (`artifacts/api-server/src/test/stampReaderCallSites.test.ts:280#verdict: "gated", mustSelect: GATED,`). The open set is empty, and the §W5F.2 tally is now gated 23, with no open reader. Tests: `artifacts/api-server/src/test/telegraphStampCardPresence.test.ts:86#describe("H4 — the Telegraph STAMP card names a place only with presence evidence"`. The shared `telegraphShareFamilies` fixture's public stamp now stages its postcard evidence on the same lines, so its "Hue, VN" assertion rests on evidence. With the loader at HEAD, the three suites run 69/78; with the change they run 78/78. 5 of 5 mutants are killed: the claim check dropped, unreadable not answered `unknown`, the raw stored place in the subtitle, the slug not selected, and the view read over no rows. Each was restored and checked by sha256. These are local runs on fakes, not evidence about a deployment.
+
+### Correction (2026-10-17, wave 5) — HM-F19's recap list and HM-F17's approved-contribution feed: ambiguous embed never resolved in production
+
+**The production fact.** The lead read the production catalog on 2026-10-17 (read-only).
+`public.live_place_recaps` and `public.live_place_recap_versions` key each other both ways
+(`live_place_recaps_current_version_fk`, `live_place_recap_versions_recap_id_fkey`), and `public.posts` has three keys
+to `public.profiles` (`posts_author_id_fkey`, `posts_created_by_fkey`, `posts_updated_by_fkey`). PostgREST refuses an
+unhinted embed across either pair (PGRST201). Two server reads behind §TM.2's flows were such embeds:
+- **HM-F19.** `GET /places/:placeId/recaps` embedded `live_place_recap_versions!inner(...)`. `!inner` is a join
+  modifier, not a hint. The route always answered `db_error`. §TM.2 says "The place screen shows your recaps of the
+  place", but in production it showed only the honest error with Try again. §TM.2's own fix is what kept that
+  failure from reading as "no recaps".
+- **HM-F17.** `GET /shared-moments/:id/feed` embedded `profiles(...)` under each contribution's post, so the member
+  feed always answered `db_error`. The "Approved contributions" panel showed its error with Try again, and the
+  organiser's "remove a contribution" was never offered, because it is offered only on a feed item.
+
+**The fix.** One hint each, on the same line:
+`artifacts/api-server/src/routes/placeRecaps.ts:151#live_place_recap_versions!live_place_recap_versions_recap_id_fkey!inner(`
+returns every version of the recap as the array `PlaceRecapsSection` sorts by `version_number`. The current-version
+key would answer one object, which the client cannot spread, and would drop a recap with no current version.
+`artifacts/api-server/src/routes/sharedMoments.ts:314#profiles!author_id(id, is_private))` names the post's author.
+The test doubles now refuse an ambiguous embed. `artifacts/api-server/src/test/ambiguousEmbedHints.test.ts` drives
+both routes on the schema-strict double from flat seeded tables. A wrong hint, or no hint, turns each case red.
+These are local runs on fakes, not evidence about a deployment.
+
+**No row moves.** HM-F17 and HM-F19 are flows, not graded rows. The server router and the client section are
+NOT-GRADED here (Shared Moments and place recaps are Live Places objects, and no H row grades them). H53 grades a
+Memory's shared-experience anchor, not a Shared Moment's feed.
+
+- NOT-GRADED: artifacts/api-server/src/routes/placeRecaps.ts — the recap list route behind HM-F19, cited above. Place recaps are a Live Places object, and no H row grades them.
+- NOT-GRADED: artifacts/api-server/src/test/ambiguousEmbedHints.test.ts — the route tests for this correction, which moves no row.

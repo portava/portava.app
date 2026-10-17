@@ -17,9 +17,11 @@
  *   1. fails on any embed no declared key backs, unless it is on
  *      KNOWN_UNBACKED_SELECT_EMBEDS (file + relation + finding). The list is
  *      SHRINK-ONLY: an entry the scan no longer finds fails until it is deleted;
- *   2. fails on a NEW unhinted embed across a pair of tables joined by more than
- *      one declared key (PostgREST answers PGRST201), the current ones being
- *      KNOWN_AMBIGUOUS_UNHINTED_EMBEDS, shrink-only too;
+ *   2. fails on an embed PostgREST cannot resolve to ONE relationship (no hint
+ *      across a pair joined by more than one declared key, or a hint selecting
+ *      more than one: PGRST201), unless it is on KNOWN_AMBIGUOUS_EMBEDS. That
+ *      ledger is EMPTY since the five wave-5 reads were hinted (2026-10-17), and
+ *      shrink-only too;
  *   3. fails when a file gains a `.select(` the scan cannot resolve (a new blind
  *      spot) beyond UNRESOLVED_SELECT_CEILING;
  *   4. proves itself on a planted tree (each resolution path finds its plant).
@@ -29,7 +31,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { scanSelectEmbeds, unbackedEmbedKeys, ambiguousUnhintedEmbeds, type EmbedScan } from "./helpers/selectEmbedScan.js";
+import { scanSelectEmbeds, unbackedEmbedKeys, ambiguousEmbeds, type EmbedScan } from "./helpers/selectEmbedScan.js";
+import { describeRelationship, resolveSelectEmbeds, selectEmbedRefusalDetails, type ResolvedEmbed } from "./helpers/migrationForeignKeys.js";
 
 /**
  * Embeds production code issues that no declared key backs. EMPTY: the four
@@ -39,18 +42,21 @@ import { scanSelectEmbeds, unbackedEmbedKeys, ambiguousUnhintedEmbeds, type Embe
 const KNOWN_UNBACKED_SELECT_EMBEDS: ReadonlyArray<{ file: string; parent: string; relation: string; finding: string }> = [];
 
 /**
- * Unhinted embeds across a pair of tables the declared keys join more than once.
- * PostgREST refuses such an embed with PGRST201 unless all but one key are gone
- * from the live catalog: the reader is additive (a dropped key still counts), so
- * each entry is "ambiguous by the repo's schema, NOT verified on the live
- * catalog". Each fix is a hint naming the key: `profiles!author_id(...)`.
+ * Embeds PostgREST cannot resolve to ONE relationship (PGRST201). EMPTY since
+ * 2026-10-17 (wave 5): the five it held were verified on the PRODUCTION catalog
+ * (posts has three keys to profiles: posts_author_id_fkey, posts_created_by_fkey,
+ * posts_updated_by_fkey; live_place_recaps and live_place_recap_versions key each
+ * other both ways) and each now names its key:
+ *   routes/placeDays.ts:101, routes/placeRecaps.ts:41 and :59, routes/sharedMoments.ts:314
+ *     → `profiles!author_id(...)` (the post's author: every caller reads it as the author's privacy);
+ *   routes/placeRecaps.ts:151
+ *     → `live_place_recap_versions!live_place_recap_versions_recap_id_fkey!inner(...)` (every
+ *       version of the recap, the array the client sorts by version_number).
+ * The doubles now REFUSE an ambiguous embed too (helpers/migrationForeignKeys.ts).
+ * A new entry needs `file`, the `parent→relation` the scan reports, a finding
+ * and an owner, and must be removed with its fix.
  */
-const KNOWN_AMBIGUOUS_UNHINTED_EMBEDS: ReadonlyArray<{ file: string; parent: string; relation: string; finding: string }> = [
-  { file: "src/routes/placeDays.ts", parent: "posts", relation: "profiles", finding: "`profiles(id, is_private)` from posts; posts has three keys to profiles (author_id, created_by, updated_by; baseline posts_*_fkey). Owner: place days (census-media / place lane)." },
-  { file: "src/routes/placeRecaps.ts", parent: "posts", relation: "profiles", finding: "two reads (shared_moment_contributions → posts → `profiles(...)`, and posts → `profiles(...)`); the same three keys. Owner: place recaps." },
-  { file: "src/routes/placeRecaps.ts", parent: "live_place_recaps", relation: "live_place_recap_versions", finding: "`live_place_recap_versions!inner(...)` (`!inner` is a join modifier, not a hint) across recap_id → live_place_recaps AND live_place_recaps.current_version_id → versions. Owner: place recaps." },
-  { file: "src/routes/sharedMoments.ts", parent: "posts", relation: "profiles", finding: "shared_moment_contributions → posts → `profiles(id, is_private)`; the same three keys. Owner: shared moments." },
-];
+const KNOWN_AMBIGUOUS_EMBEDS: ReadonlyArray<{ file: string; parent: string; relation: string; finding: string }> = [];
 
 /**
  * `.select(` sites the scan cannot resolve, per file (counted by site, not by
@@ -107,15 +113,76 @@ describe("every embed production code issues has a declared foreign key behind i
   });
 });
 
-describe("unhinted embeds across a multiply-keyed pair (PGRST201) are on a shrink-only ledger", () => {
+describe("an embed PostgREST cannot resolve to one relationship (PGRST201) is on a shrink-only ledger, now empty", () => {
   it("no NEW ambiguous embed; every ledger entry is still found", () => {
-    const found = ambiguousUnhintedEmbeds(scan);
+    const found = ambiguousEmbeds(scan);
     const keyOf = (x: { file: string; parent: string; relation: string }) => `${x.file} → ${x.parent}→${x.relation}`;
-    const allowed = new Set(KNOWN_AMBIGUOUS_UNHINTED_EMBEDS.map(keyOf));
+    const allowed = new Set(KNOWN_AMBIGUOUS_EMBEDS.map(keyOf));
     const fresh = found.filter((a) => !allowed.has(keyOf(a))).map((a) => `${a.file}:${a.line} ${a.parent}→${a.relation} (keys: ${a.keys.join("; ")})`);
     assert.deepEqual(fresh, [], `hint the key (e.g. profiles!author_id(...)); PostgREST cannot choose between these:\n${fresh.join("\n")}`);
     const stillFound = new Set(found.map(keyOf));
     assert.deepEqual([...allowed].filter((k) => !stillFound.has(k)), [], "fixed: delete the ledger entry");
+  });
+
+  it("the ledger is empty: any ambiguous embed in production code now fails this suite", () => {
+    assert.deepEqual(KNOWN_AMBIGUOUS_EMBEDS, []);
+    assert.deepEqual(ambiguousEmbeds(scan).map((a) => `${a.file}:${a.line} ${a.parent}→${a.relation}`), []);
+  });
+});
+
+// ── The five wave-5 reads: each resolves to the key it means ────────────────
+//
+// Read from the scan (the select exactly as the source spells it, at the cited
+// line), then resolved by the guard the doubles use. "author" is the post's
+// author_id: every caller hands the embedded profile to excludePrivateAuthorPosts
+// as THAT author's privacy (placeDays.ts and placeRecaps.ts:59 key it by
+// author_id; placeRecaps.ts:41 by contributor_id, which POST
+// /shared-moments/:id/contributions requires to be the post's author). The
+// recap list is every version of the recap: the client sorts that ARRAY by
+// version_number (travel-buddy-standalone PlaceRecapsSection `latestTitle`).
+
+describe("the five wave-5 reads resolve to the relationship each one means", () => {
+  const AUTHOR = "posts.author_id → profiles (posts_author_id_fkey, many-to-one)";
+  const VERSIONS = "live_place_recap_versions.recap_id → live_place_recaps (live_place_recap_versions_recap_id_fkey, one-to-many)";
+  const CONTRIBUTION_POST = "shared_moment_contributions.post_id → posts (shared_moment_contributions_post_id_fkey, many-to-one)";
+  const SITES: ReadonlyArray<{ at: string; table: string; expect: string[] }> = [
+    { at: "src/routes/placeDays.ts:101", table: "posts", expect: [`profiles ${AUTHOR}`] },
+    { at: "src/routes/placeRecaps.ts:41", table: "shared_moment_contributions", expect: [`posts ${CONTRIBUTION_POST}`, `profiles ${AUTHOR}`] },
+    { at: "src/routes/placeRecaps.ts:59", table: "posts", expect: [`profiles ${AUTHOR}`] },
+    { at: "src/routes/placeRecaps.ts:151", table: "live_place_recaps", expect: [`live_place_recap_versions ${VERSIONS} inner`] },
+    { at: "src/routes/sharedMoments.ts:314", table: "shared_moment_contributions", expect: [`posts ${CONTRIBUTION_POST}`, `profiles ${AUTHOR}`] },
+  ];
+  const flat = (nodes: ResolvedEmbed[]): ResolvedEmbed[] => nodes.flatMap((n) => [n, ...flat(n.children)]);
+  const siteOf = (at: string) => {
+    const hits = scan.embedSites.filter((s) => `${s.file}:${s.line}` === at);
+    assert.equal(hits.length, 1, `${at}: the scan must find exactly one embedding select here (cited lines must not move)`);
+    assert.equal(hits[0]!.variants.length, 1, `${at}: one spelling`);
+    return hits[0]!;
+  };
+
+  for (const site of SITES) {
+    it(`${site.at}: ${site.expect.map((e) => e.split(" ")[0]).join(" → ")} along the intended key, and nothing is refused`, () => {
+      const s = siteOf(site.at);
+      assert.equal(s.table, site.table);
+      assert.deepEqual(s.refusals, []);
+      const got = flat(resolveSelectEmbeds(s.table, s.variants[0]!)).map((n) =>
+        `${n.outputKey} ${n.relationship ? describeRelationship(n.relationship) : "UNRESOLVED"}${n.inner ? " inner" : ""}`);
+      assert.deepEqual(got, site.expect);
+    });
+  }
+
+  it("RED-FIRST, in place: each select with its hint stripped is refused as ambiguous (PGRST201), naming every key", () => {
+    for (const site of SITES) {
+      const s = siteOf(site.at);
+      const unhinted = s.variants[0]!.replace("profiles!author_id(", "profiles(").replace("live_place_recap_versions!live_place_recap_versions_recap_id_fkey!inner(", "live_place_recap_versions!inner(");
+      assert.notEqual(unhinted, s.variants[0], `${site.at}: the hint the fix added is where this test expects it`);
+      const refusals = selectEmbedRefusalDetails(s.table, unhinted);
+      assert.deepEqual(refusals.map((r) => r.code), ["PGRST201"], site.at);
+      const expected = site.table === "live_place_recaps"
+        ? ["live_place_recap_versions_recap_id_fkey", "live_place_recaps_current_version_fk"]
+        : ["posts_author_id_fkey", "posts_created_by_fkey", "posts_updated_by_fkey"];
+      for (const k of expected) assert.ok(refusals[0]!.keys.some((d) => d.includes(`(${k},`)), `${site.at}: ${k} is a candidate`);
+    }
   });
 });
 
@@ -148,6 +215,9 @@ describe("the scan finds each kind of plant", () => {
     w("fn.ts", `function cols(extra: string) { return "id, " + extra; }\nexport async function g(sc: any) { return sc.from("posts").select(cols("discovery_places(name)")); }\n`);
     w("ambiguous.ts", `export async function h(sc: any) { return sc.from("posts").select("id, profiles(id)"); }\n`);
     w("hinted.ts", `export async function i(sc: any) { return sc.from("posts").select("id, profiles!author_id(id)"); }\n`);
+    w("twoWay.ts", `export async function l(sc: any) { return sc.from("live_place_recaps").select("id, live_place_recap_versions!inner(title)"); }\n`);
+    w("twoWayHinted.ts", `export async function m(sc: any) { return sc.from("live_place_recaps").select("id, live_place_recap_versions!live_place_recap_versions_recap_id_fkey!inner(title), current:live_place_recap_versions!current_version_id(title)"); }\n`);
+    w("overHinted.ts", `export async function n(sc: any) { return sc.from("posts").select("id, profiles!id(id)"); }\n`);
     w("dynamic.ts", `export async function j(sc: any, x: () => string) { return sc.from("posts").select(x()); }\n`);
     w("skipped.test.ts", `export async function k(sc: any) { return sc.from("reviews").select("id, profiles(handle)"); }\n`);
     planted = scanSelectEmbeds(root);
@@ -172,11 +242,16 @@ describe("the scan finds each kind of plant", () => {
   it("CONTROL: a backed embed and a hinted one pass; a test file is not production", () => {
     assert.ok(planted.embedSites.some((s) => s.file === "backed.ts" && s.refusals.length === 0));
     assert.ok(planted.embedSites.some((s) => s.file === "hinted.ts" && s.refusals.length === 0));
+    assert.ok(planted.embedSites.some((s) => s.file === "twoWayHinted.ts" && s.refusals.length === 0), "a constraint hint and a column hint each pick one direction");
     assert.ok(!planted.embedSites.some((s) => s.file === "skipped.test.ts"));
   });
 
-  it("an unhinted embed across a multiply-keyed pair is reported; the hinted one is not", () => {
-    assert.deepEqual(ambiguousUnhintedEmbeds(planted).map((a) => `${a.file} ${a.parent}→${a.relation}`), ["ambiguous.ts posts→profiles"]);
+  it("an unhinted embed across a multiply-keyed pair is reported (`!inner` is not a hint; a pair keyed both ways counts both); so is a hint that selects several keys; the hinted ones are not", () => {
+    assert.deepEqual(ambiguousEmbeds(planted).map((a) => `${a.file} ${a.parent}→${a.relation}`).sort(), [
+      "ambiguous.ts posts→profiles",
+      "overHinted.ts posts→profiles",
+      "twoWay.ts live_place_recaps→live_place_recap_versions",
+    ]);
   });
 
   it("an unresolvable select is reported, not guessed", () => {
