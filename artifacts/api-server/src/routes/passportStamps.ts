@@ -521,7 +521,7 @@ router.get("/me/passport/stats", async (req, res) => {
   const sc = getServiceClient();
 
   const [stats, tripResult, followersResult, followingResult, stampsEarnedResult, milestonesResult] = await Promise.all([
-    buildStats(client, user.id),
+    buildStats(client, user.id, { evidenceClient: sc }), // H4 (wave 5): occurrence evidence is a server-side check, read with the service role
     countUserTrips(sc ?? client, user.id),
     client.from("user_follows").select("follower_id", { count: "exact", head: true }).eq("following_id", user.id),
     client.from("user_follows").select("following_id", { count: "exact", head: true }).eq("follower_id", user.id),

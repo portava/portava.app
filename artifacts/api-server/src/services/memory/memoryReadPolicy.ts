@@ -33,7 +33,7 @@
  *
  * `routes/memories.ts` imports every symbol here and re-derives none of them.
  */
-import { logger } from "../../lib/logger.js";
+import { logger } from "../../lib/logger.js"; import { isBlockedBetween } from "../../lib/blockGuard.js"; import { readBlockExclusions } from "../../lib/exclusionSet.js";
 
 // ── Visibility helpers ─────────────────────────────────────────────────────────
 
@@ -245,16 +245,16 @@ export async function acceptedCrewOfTrip(
 /** Check blocks in both directions. Returns true if blocked. */
 export async function isBlocked(sc: any, a: string, b: string): Promise<boolean> {
   if (a === b) return false;
-  const [r1, r2] = await Promise.all([
-    sc.from("blocks").select("blocked_id").eq("blocker_id", a).eq("blocked_id", b).maybeSingle(),
-    sc.from("blocks").select("blocker_id").eq("blocker_id", b).eq("blocked_id", a).maybeSingle(),
-  ]);
+  // census-telegraph T220: the shared two-party gate, not a private copy of
+  // it. Both directions in one `.limit(1)` read (a mutual block's two rows can
+  // never raise), and TRUE for a returned error, a thrown read (which used to
+  // escape this function) and a non-list answer alike.
   // Fail CLOSED: if either block lookup errors we cannot prove the two users are
   // unblocked, so treat them as blocked. supabase-js resolves (does not throw)
   // on a DB error, so an unchecked error here would silently read as "not
   // blocked" and leak the owner's memory content to a blocked viewer.
-  if (r1.error || r2.error) return true;
-  return Boolean(r1.data) || Boolean(r2.data);
+  // (lib/blockGuard.ts states the same rule once, for every caller.)
+  return isBlockedBetween(sc, a, b);
 }
 
 /**
@@ -274,14 +274,14 @@ export async function blockedAmong(
   const others = [...new Set(ownerIds.filter((o) => typeof o === "string" && o !== viewerId))];
   const blocked = new Set<string>();
   if (others.length === 0) return { ok: true, blocked };
-  const [byViewer, ofViewer] = await Promise.all([
-    sc.from("blocks").select("blocked_id").eq("blocker_id", viewerId).in("blocked_id", others),
-    sc.from("blocks").select("blocker_id").eq("blocked_id", viewerId).in("blocker_id", others),
-  ]);
-  if (byViewer.error) return { ok: false, error: byViewer.error };
-  if (ofViewer.error) return { ok: false, error: ofViewer.error };
-  for (const r of (byViewer.data ?? []) as Array<{ blocked_id: string }>) blocked.add(r.blocked_id);
-  for (const r of (ofViewer.data ?? []) as Array<{ blocker_id: string }>) blocked.add(r.blocker_id);
+  // census-telegraph T220: the shared reader — the same two `.in()` reads over
+  // these owners (chunked at BLOCK_AMONG_CHUNK); a returned error, a thrown read
+  // and a non-list answer are all `ok: false`, reported here as the error.
+  const read = await readBlockExclusions(sc, viewerId, { among: others });
+  if (!read.ok) return { ok: false, error: read.reason };
+  // Every counter-party of a block row between the viewer and these owners,
+  // either way — what the two loops that stood here collected.
+  for (const id of read.ids) blocked.add(id);
   return { ok: true, blocked };
 }
 

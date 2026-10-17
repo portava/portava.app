@@ -356,12 +356,12 @@ router.get('/tags/suggestions', async (req, res) => {
   // surface='message' → only @user mentions are meaningful; skip entity lookup
   const entitySuggestions: any[] = [];
   if (includeEntities) {
-    // Trips the caller is a member of
+    // Trips the caller is an ACCEPTED member of (wave 5, 2026-10-17: `trips` has title / destination_city, never name / destination, and that 42703 emptied this list on every call; an invited, declined, removed or departed row is not membership — test/tagSuggestionsTripEntities.test.ts)
     try {
       const { data: memberRows } = await sc
         .from('trip_members')
-        .select('trip_id, trips(id, name, destination, status)')
-        .eq('user_id', user.id)
+        .select('trip_id, trips(id, name:title, destination:destination_city, status)')
+        .eq('user_id', user.id).eq('status', 'accepted')
         .limit(100);
       for (const r of (memberRows ?? []) as any[]) {
         const t = r.trips;

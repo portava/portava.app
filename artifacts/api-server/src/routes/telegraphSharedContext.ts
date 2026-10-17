@@ -32,7 +32,7 @@ import { Router } from "express";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isAcceptedTripMember, requireUser, sendError } from "../lib/http.js";
 import { asyncHandler } from "../lib/asyncHandler.js"; import { availabilityWithheldOwners } from "../services/telegraph/availabilityInvisibility.js"; // §4.3: invisible mode withholds the header's availability
-import { logger as rootLogger } from "../lib/logger.js";
+import { logger as rootLogger } from "../lib/logger.js"; import { readBlockExclusions } from "../lib/exclusionSet.js";
 import {
   buildSharedContextProjection,
   railModeFor,
@@ -261,17 +261,17 @@ router.get(
     if (others.length > 0) {
       const [profilesRes, iBlockedRes, blockedMeRes] = await Promise.all([
         client.from("profiles").select("id, handle, username, name, display_name, full_name, avatar_url, is_private").in("id", others),
-        client.from("blocks").select("blocked_id").eq("blocker_id", user.id).in("blocked_id", others),
-        client.from("blocks").select("blocker_id").eq("blocked_id", user.id).in("blocker_id", others),
+        readBlockExclusions(client, user.id, { among: others }), // census-telegraph T220: the shared reader — BOTH directions over `others`, through the same (user) client, chunked
+        null, // `blockedMeRes`: the inbound direction is read inside the shared reader above; the slot keeps the line §45d.3 cites (:262) as it was
       ]);
-      if (iBlockedRes.error || blockedMeRes.error) {
-        log.warn({ threadId, message: (iBlockedRes.error ?? blockedMeRes.error)?.message }, "block state unreadable; the header shows no identity and no availability");
+      if (!iBlockedRes.ok) {
+        log.warn({ threadId, message: iBlockedRes.reason }, "block state unreadable; the header shows no identity and no availability");
         blocked = null;
       } else {
-        blocked = new Set<string>([
-          ...((iBlockedRes.data ?? []) as Array<{ blocked_id?: unknown }>).map((r) => String(r.blocked_id)),
-          ...((blockedMeRes.data ?? []) as Array<{ blocker_id?: unknown }>).map((r) => String(r.blocker_id)),
-        ]);
+        // Every counter-party of a block row between the viewer and the others,
+        // either way — what the two maps that stood here collected. A thrown read,
+        // a non-list answer or a row naming no counter-party is now `ok: false`.
+        blocked = iBlockedRes.ids; void blockedMeRes;
       }
       if (profilesRes.error) {
         log.warn({ threadId, message: profilesRes.error.message }, "header identities unreadable; header shows the thread title alone");

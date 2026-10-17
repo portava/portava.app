@@ -111,13 +111,39 @@ describe("§17 sharing gate — the traveller's own settings decide", () => {
     // No global ghost-mode store exists. Absence of a switch is not a switch
     // set to off, and it is certainly not a switch set to on: the gate must
     // neither deny on it nor claim to have read it.
-    const { ghostMode, degraded } = await readTripGhostMode(
+    const ghost = await readTripGhostMode(
       db({ failures: { "trip_crew_location_preferences:select": { message: "boom" } } }),
       null,
       USER,
     );
-    assert.equal(ghostMode, false);
-    assert.equal(degraded, false, "a read that was never issued cannot be degraded");
+    // census L294: a LayoverRead. A read that was never issued cannot be degraded.
+    assert.deepEqual(ghost, { kind: "read", value: false });
+  });
+
+  it("census L294: an UNREADABLE ghost-mode row is DEGRADED, its closed `true` a fallback, never a read value", async () => {
+    const ghost = await readTripGhostMode(
+      db({ failures: { "trip_crew_location_preferences:select": { message: "boom" } } }),
+      TRIP,
+      USER,
+    );
+    assert.deepEqual(ghost, { kind: "degraded", fallback: true, reasons: ["ghost_mode_unreadable"] });
+    assert.equal("value" in ghost, false);
+    // and the gate built on it still closes, and says which read failed
+    const gate = await evaluateSharingGate(
+      db({ prefs: [{ user_id: USER, location_mode: "nearby", sharing_paused: false }], failures: { "trip_crew_location_preferences:select": { message: "boom" } } }),
+      { userId: USER, tripId: TRIP },
+    );
+    assert.equal(gate.allowed, false);
+    assert.equal(gate.ghostMode, true);
+    assert.equal(gate.degraded, true);
+    assert.deepEqual(gate.reasons, ["ghost_mode", "ghost_mode_unreadable"]);
+  });
+
+  it("census L294: a stored switch is a READ value, on and off", async () => {
+    for (const on of [true, false]) {
+      const ghost = await readTripGhostMode(db({ crewPrefs: [{ trip_id: TRIP, user_id: USER, ghost_mode_enabled: on }] }), TRIP, USER);
+      assert.deepEqual(ghost, { kind: "read", value: on });
+    }
   });
 
   // ── THE FALSE-CONSENT CASE ────────────────────────────────────────────────
@@ -170,9 +196,10 @@ describe("§14 publish side — nobody is published on someone else's session fl
       }),
       ["a", "b", "c", "d"],
     );
-    assert.deepEqual(r.allowed.sort(), ["c", "d"]);
-    assert.deepEqual(r.denied.sort(), ["a", "b"]);
-    assert.equal(r.degraded, false);
+    assert.equal(r.kind, "read");
+    if (r.kind !== "read") return;
+    assert.deepEqual(r.value.allowed.sort(), ["c", "d"]);
+    assert.deepEqual(r.value.denied.sort(), ["a", "b"]);
   });
 
   it("an UNREADABLE location_preferences publishes NOBODY", async () => {
@@ -183,9 +210,13 @@ describe("§14 publish side — nobody is published on someone else's session fl
       }),
       ["a", "b", "c"],
     );
-    assert.deepEqual(r.allowed, [], "a failed read must not publish anyone");
-    assert.deepEqual(r.denied.sort(), ["a", "b", "c"]);
-    assert.equal(r.degraded, true);
+    // census L294: DEGRADED, and the closed answer is a FALLBACK — there is no `value` to publish from.
+    assert.equal(r.kind, "degraded");
+    if (r.kind !== "degraded") return;
+    assert.equal("value" in r, false);
+    assert.deepEqual(r.fallback.allowed, [], "a failed read must not publish anyone");
+    assert.deepEqual(r.fallback.denied.sort(), ["a", "b", "c"]);
+    assert.deepEqual(r.reasons, ["sharing_preferences_unreadable"]);
   });
 
   it("an empty candidate set issues no query and is not degraded", async () => {
@@ -193,7 +224,7 @@ describe("§14 publish side — nobody is published on someone else's session fl
       db({ failures: { "location_preferences:select": { message: "db down" } } }),
       [],
     );
-    assert.deepEqual(r, { allowed: [], denied: [], degraded: false });
+    assert.deepEqual(r, { kind: "read", value: { allowed: [], denied: [] } });
   });
 });
 

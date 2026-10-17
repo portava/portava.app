@@ -41,7 +41,7 @@ import { canonicalCityKey } from "../lib/canonicalLocations.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { mayPublishRhythm } from "../lib/compassRhythmGate.js";
 import { logger as rootLogger } from "../lib/logger.js"; import { cityConfidenceWindowedCorpus } from "./cityConfidenceWindowedReads.js"; import { tripGraphSourceRows, toTripGraphSourceFact } from "../domain/trips/projections/TripGraphSourceProjection.js"; // CT-02
-import { guardMemoryRows, excludedMemories } from "../services/memory/memoryReaderGuard.js"; // census H10 H48 H49 H73 H92 H188 H210 (RECON-W A1): the owner's per-Memory controls
+import { guardMemoryRows, excludedMemories } from "../services/memory/memoryReaderGuard.js"; import { readStampPresenceView, type StampPresenceView } from "../services/passport/stampPresenceView.js"; // census H10 H48 H49 H73 H92 H188 H210 (RECON-W A1): the owner's per-Memory controls — and H4 (wave 5): a `visited` edge needs the occurrence evidence its stamp's source names
 import { readMemoryPrecisionGate, precisionColumnSelectable, precisionClampApplies, type MemoryPrecisionGate } from "../lib/memoryPrecisionGate.js"; import { publicationPrecision } from "../lib/memoryLocationPrecision.js"; import { memoryPlaceLabelsForNonOwner } from "./memoryPlaceLabels.js"; // §10 on the graph's Memory reads (census-compass §47)  // census-discovery §85 H-P21-4
 
 const logger = rootLogger.child({ service: "CompassGraphEngine" });
@@ -700,7 +700,7 @@ const BUILD_LIMIT = 5000;
  * Returns the numbers of nodes/edges upserted.
  */
 export async function buildGraphFromSources(
-  db: SupabaseClient, opts: { strength?: (e: GraphEdgeObservation) => number; retireBelow?: number; memoryPrecision?: MemoryPrecisionGate; memoryUse?: (rows: any[]) => Promise<any[] | null> } = {}, // §81 (DV-51): the decay rule, when the rebuild runs under it; §47: the §10 gate, passed by the replay (which serves source tables only); A1: the owner-controls guard, likewise (graphMemoryUse)
+  db: SupabaseClient, opts: { strength?: (e: GraphEdgeObservation) => number; retireBelow?: number; memoryPrecision?: MemoryPrecisionGate; memoryUse?: (rows: any[]) => Promise<any[] | null>; stampPresence?: (rows: any[]) => Promise<StampPresenceView> } = {}, // §81 (DV-51): the decay rule, when the rebuild runs under it; §47: the §10 gate, passed by the replay (which serves source tables only); A1: the owner-controls guard, likewise (graphMemoryUse)
 ): Promise<{ nodesUpserted: number; edgesUpserted: number; nodesFailed: number; edgesFailed: number }> {
   const batch = new GraphBatch();
 
@@ -708,10 +708,10 @@ export async function buildGraphFromSources(
   try {
     const { data } = await db
       .from("user_stamps")
-      .select("user_id, city, country, earned_at, is_revoked, lat, lng, stamp_definitions(evidences_presence)")
+      .select("user_id, city, country, earned_at, is_revoked, lat, lng, source_type, source_id, stamp_definitions(slug, evidences_presence)")
       .eq("is_revoked", false)
       .limit(BUILD_LIMIT);
-    for (const r of (data as any[]) ?? []) {
+    const presence = await (opts.stampPresence ?? ((rs: any[]) => readStampPresenceView(db, rs)))(Array.prototype.slice.call((data as any[]) ?? [])); for (const r of (data as any[]) ?? []) { // H4: evidence read on the REAL database (the replay passes its own, as it does memoryUse); `slice`, not a spread, so the replay's iterated-to-the-end check still sees only THIS loop
       const city = normCity(r.city);
       if (!r.user_id || !city) continue;
       const at = r.earned_at ? String(r.earned_at) : null;
@@ -735,7 +735,7 @@ export async function buildGraphFromSources(
       // evidence of a visit.
       const def = Array.isArray(r.stamp_definitions) ? r.stamp_definitions[0] : r.stamp_definitions;
       registerCityCoordinates(city, r.lat, r.lng);
-      if (def?.evidences_presence !== true) continue;
+      if (def?.evidences_presence !== true || !presence.mayShowPlace(r)) continue; // H4 (wave 5): and the occurrence evidence its source names holds (stampPresenceView.ts)
       batch.edge({ src_type: "person", src_key: String(r.user_id), dst_type: "city", dst_key: city, edge_type: "visited", at });
       if (at) {
         const slice = timeSliceKey(new Date(at), city, { lat: r.lat, lng: r.lng });
@@ -2400,7 +2400,7 @@ async function retireRows(db: SupabaseClient, table: string, column: string, key
 const supportReads = {
   user_stamps: (db: SupabaseClient) => db
     .from("user_stamps")
-    .select("user_id, city, country, earned_at, is_revoked, lat, lng, stamp_definitions(evidences_presence)")
+    .select("user_id, city, country, earned_at, is_revoked, lat, lng, source_type, source_id, stamp_definitions(slug, evidences_presence)")
     .eq("is_revoked", false),
   // CT-02: the build's own read, through the one Trips-owned literal
   // (TripGraphSourceProjection.ts), so columns and predicates cannot diverge.
@@ -2470,7 +2470,7 @@ interface Replay {
  * revocation must not inherit — and applies `.eq()` / `.neq()`, so the build's
  * own predicates narrow what the reconcile read.
  */
-async function replayBuild(rows: Partial<Record<GraphSourceTable, SupportRow[]>>, strength: ((e: GraphEdgeObservation) => number) | undefined, memoryPrecision: MemoryPrecisionGate, memoryUse: (rows: any[]) => Promise<any[] | null>): Promise<Replay> {
+async function replayBuild(rows: Partial<Record<GraphSourceTable, SupportRow[]>>, strength: ((e: GraphEdgeObservation) => number) | undefined, memoryPrecision: MemoryPrecisionGate, memoryUse: (rows: any[]) => Promise<any[] | null>, stampPresence?: (rows: any[]) => Promise<StampPresenceView>): Promise<Replay> {
   const replay: Replay = { edges: new Set(), nodes: new Set(), sound: true, weights: new Map() };
   const read = new Set<string>();
   const finished = new Set<string>();
@@ -2519,8 +2519,8 @@ async function replayBuild(rows: Partial<Record<GraphSourceTable, SupportRow[]>>
   try {
     // A1: the owner-controls guard reads the REAL database (the stand-in serves
     // source tables only); a guard that could not read is an unsound replay.
-    const guardedUse = async (rs: any[]) => { const out = await memoryUse(rs); if (out === null) replay.sound = false; return out; };
-    await buildGraphFromSources({ from } as unknown as SupabaseClient, { ...(strength ? { strength } : {}), memoryPrecision, memoryUse: guardedUse });
+    const guardedUse = async (rs: any[]) => { const out = await memoryUse(rs); if (out === null) replay.sound = false; return out; }; const guardedPresence = stampPresence ? async (rs: any[]) => { const v = await stampPresence(rs); if (v.unreadable.length > 0) replay.sound = false; return v; } : undefined; // H4: unreadable evidence is an unsound replay, never "retire the edge"
+    await buildGraphFromSources({ from } as unknown as SupabaseClient, { ...(strength ? { strength } : {}), memoryPrecision, memoryUse: guardedUse, ...(guardedPresence ? { stampPresence: guardedPresence } : {}) });
   } catch {
     replay.sound = false;
   }
@@ -2620,7 +2620,7 @@ export async function reconcileEdgeSupport(db: SupabaseClient, opts: { decay?: G
     // supported, so a replay that reads Memories decides nothing (undecided),
     // never "retire them all" — a failed flag read must not become a delete.
     if ("memories" in reads && memoryGate === "unreadable") return null;
-    return replayBuild(rows, decay?.strength, memoryGate, (rs) => graphMemoryUse(db, rs));
+    return replayBuild(rows, decay?.strength, memoryGate, (rs) => graphMemoryUse(db, rs), (rs) => readStampPresenceView(db, rs));
   };
 
   // ── Source-anchored nodes (trip, event, circle) ────────────────────────────

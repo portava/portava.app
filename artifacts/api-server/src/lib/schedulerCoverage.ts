@@ -3,7 +3,7 @@
  * whether each one is still running.
  *
  * ── WHY THIS FILE EXISTS ─────────────────────────────────────────────────────
- * `index.ts` starts 64 schedulers at boot (63 until lane T-REL's message-media parts sweep, which reports; 62 until lane T-REL's Telegraph outbox drainer and 61 until H-REST's highlight expiry events, each of which reports and writes job_health; 60 until both lane R's layover audit retention sweep and lane H's Memory deletion redrive were merged, 58 until #549; each of those three reports, and the redrive also writes job_health). Every one is a `setInterval` inside
+ * `index.ts` starts 65 schedulers at boot (64 until the Telegraph safety re-drive (Fable pass 3 §1.1), which reports and writes job_health; 63 until lane T-REL's message-media parts sweep, which reports; 62 until lane T-REL's Telegraph outbox drainer and 61 until H-REST's highlight expiry events, each of which reports and writes job_health; 60 until both lane R's layover audit retention sweep and lane H's Memory deletion redrive were merged, 58 until #549; each of those three reports, and the redrive also writes job_health). Every one is a `setInterval` inside
  * the process, and `.replit` sets `deploymentTarget = "autoscale"`, which
  * suspends a container after fifteen idle minutes; a suspended container's
  * event loop does not advance. On 2026-09-30 15:28 all 58 stopped together and
@@ -109,13 +109,13 @@ export const STARTED_SCHEDULERS: readonly SchedulerRow[] = [
   { start: "startMemoryProjectionScheduler" },
   { start: "startNotificationMaintenanceScheduler", reportedAs: ["notificationMaintenanceScheduler"] },
   { start: "startPendingUploadSweepScheduler" }, { start: "startMessageMediaPartsSweepScheduler", reportedAs: ["messageMediaPartsSweep"] }, // census-telegraph T223 (3656): raw message-media parts past their cutoff; line-neutral
-  { start: "startPlaceCollectionsWorker" },
+  { start: "startPlaceCollectionsWorker", reportedAs: ["placeCollectionsStaleSweep"] }, // owner ruling 2026-10-17: backlog, max wait and failures at /healthz/schedulers
   { start: "startPlaceCooccurrenceRebuildScheduler" },
   { start: "startPlaceDayLifecycleWorker" },
   { start: "startPostPlaceBackfillWorker" },
   { start: "startPushRetryWorker" },
   { start: "startRankingFatigueSweeper" },
-  { start: "startSafeReturnScheduler" },
+  { start: "startSafeReturnScheduler" }, { start: "startSafetySignalRedriveScheduler", reportedAs: ["safetySignalRedrive"], persists: ["safetySignalRedrive"] }, // Fable pass 3 §1.1: reports and writes job_health, so the 45 holds; line-neutral
   { start: "startSensingPublicationScheduler" },
   { start: "startSensingRetentionScheduler" },
   { start: "startStoryRetentionScheduler", reportedAs: ["storyRetention"], persists: ["storyRetention"] },

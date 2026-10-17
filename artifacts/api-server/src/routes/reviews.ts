@@ -123,14 +123,14 @@ async function checkEligibility(
       return (tripRow as any)?.status === "completed";
     }
     case "rent_buddy_booking": {
-      const { data } = await sc
-        .from("rent_buddy_bookings")
-        .select("id, status")
-        .eq("id", entityId)
-        .or(`traveler_id.eq.${userId},buddy_user_id.eq.${userId}`)
-        .in("status", ["completed"])
-        .maybeSingle();
-      return !!data;
+      // buddy_id references rent_buddy_profiles(id), not a user — there is no buddy_user_id (wave 5, 2026-10-17) — so the buddy side is two reads.
+      const { data: booking, error: bookingErr } = await sc.from("rent_buddy_bookings").select("id, status, traveler_id, buddy_id")
+        .eq("id", entityId).eq("status", "completed").maybeSingle();
+      if (bookingErr || !booking) return false; // unreadable is not eligible (fail closed), as for every entity type here
+      if ((booking as any).traveler_id === userId) return true;
+      if (!(booking as any).buddy_id) return false;
+      const { data: buddy, error: buddyErr } = await sc.from("rent_buddy_profiles").select("user_id").eq("id", (booking as any).buddy_id).maybeSingle();
+      return !buddyErr && (buddy as any)?.user_id === userId;
     }
     default:
       return false;
@@ -289,7 +289,7 @@ router.get("/trips/:id/reviews", asyncHandler(async (req, res) => {
 
   const { data: reviews, error } = await sc
     .from("reviews")
-    .select("id, rating, body, tags, visibility, created_at, reviewer_id, profiles!reviewer_id(handle, display_name, avatar_url, verification_level)")
+    .select("id, rating, body, tags, visibility, created_at, reviewer_id") // census-trust wave 5: no `profiles!reviewer_id(...)` embed — reviews.reviewer_id keys auth.users, not profiles (PGRST200); see readReviewerProfiles
     .eq("entity_type", "trip")
     .eq("entity_id", id)
     .eq("state", "published")
@@ -299,7 +299,7 @@ router.get("/trips/:id/reviews", asyncHandler(async (req, res) => {
   if (error) { req.log.error({ err: error }, "get trip reviews"); sendError(res, "db_error", error.message); return; }
 
   const rows = await dropBlockedReviewers(sc, auth.user.id, (reviews as any[]) ?? []); if (!rows) { sendError(res, "degraded_unavailable", "Your block list could not be read"); return; } // TM-social (TRUST-F13): no review by someone in a block relation with the viewer
-
+  const reviewers = await readReviewerProfiles(sc, rows); if (!reviewers) { req.log.error("get trip reviews: reviewer profiles unreadable"); sendError(res, "degraded_unavailable", REVIEWER_PROFILES_UNREADABLE); return; } const shown = withReviewerProfiles(rows, reviewers); // census-trust wave 5: step two, one batched profiles read
   // Aggregate across all reviews for this trip (not just the current page)
   const { data: allForCount, error: countErr } = await sc
     .from("reviews")
@@ -316,13 +316,13 @@ router.get("/trips/:id/reviews", asyncHandler(async (req, res) => {
 
   // Universal display-name rule: reviewer real names default to hidden (@handle)
   // unless the reviewer opted in. Anonymous reviews carry no reviewer at all.
-  const reviewerIds = rows
+  const reviewerIds = shown
     .filter((r: any) => r.visibility !== "anonymous")
     .map((r: any) => r.reviewer_id as string);
   const allowedNames = await nameVisibilitySet(sc, reviewerIds); const badges = await readVerifiedBadges(sc, reviewerIds); // census-trust TV-2c (flag seeded OFF → none)
 
   res.json({
-    reviews: rows.map((r: any) => ({
+    reviews: shown.map((r: any) => ({
       id:         r.id,
       rating:     r.rating,
       body:       r.body ?? null,
@@ -366,7 +366,7 @@ router.get("/places/:id/reviews", asyncHandler(async (req, res) => {
 
   const { data: reviews, error } = await sc
     .from("reviews")
-    .select("id, rating, body, tags, visibility, created_at, reviewer_id, profiles!reviewer_id(handle, display_name, avatar_url, verification_level)")
+    .select("id, rating, body, tags, visibility, created_at, reviewer_id") // census-trust wave 5: no `profiles!reviewer_id(...)` embed — reviews.reviewer_id keys auth.users, not profiles (PGRST200); see readReviewerProfiles
     .eq("entity_type", "place")
     .eq("entity_id", id)
     .eq("state", "published")
@@ -376,7 +376,7 @@ router.get("/places/:id/reviews", asyncHandler(async (req, res) => {
   if (error) { req.log.error({ err: error }, "get place reviews"); sendError(res, "db_error", error.message); return; }
 
   const rows = await dropBlockedReviewers(sc, viewerId, (reviews as any[]) ?? []); if (!rows) { sendError(res, "degraded_unavailable", "Your block list could not be read"); return; } // TM-social (TRUST-F13): no review by someone in a block relation with the viewer
-
+  const reviewers = await readReviewerProfiles(sc, rows); if (!reviewers) { req.log.error("get place reviews: reviewer profiles unreadable"); sendError(res, "degraded_unavailable", REVIEWER_PROFILES_UNREADABLE); return; } const shown = withReviewerProfiles(rows, reviewers); // census-trust wave 5: step two, one batched profiles read
   const { data: allForCount, error: countErr } = await sc
     .from("reviews")
     .select("rating")
@@ -392,13 +392,13 @@ router.get("/places/:id/reviews", asyncHandler(async (req, res) => {
 
   // Universal display-name rule: reviewer real names default to hidden (@handle)
   // unless the reviewer opted in. Viewer may be unauthenticated (viewerId null).
-  const reviewerIds = rows
+  const reviewerIds = shown
     .filter((r: any) => r.visibility !== "anonymous")
     .map((r: any) => r.reviewer_id as string);
   const allowedNames = await nameVisibilitySet(sc, reviewerIds); const badges = await readVerifiedBadges(sc, reviewerIds); // census-trust TV-2c (flag seeded OFF → none)
 
   res.json({
-    reviews: rows.map((r: any) => ({
+    reviews: shown.map((r: any) => ({
       id:         r.id,
       rating:     r.rating,
       body:       r.body ?? null,
@@ -465,7 +465,7 @@ router.get("/users/:id/reviews", asyncHandler(async (req, res) => {
   const [tripReviewsRes, eventReviewsRes] = await Promise.all([
     // All trip reviews for aggregate
     tripIds.length > 0
-      ? sc.from("reviews").select("id, rating, body, tags, visibility, entity_type, entity_id, created_at, reviewer_id, profiles!reviewer_id(handle, display_name, avatar_url, verification_level)")
+      ? sc.from("reviews").select("id, rating, body, tags, visibility, entity_type, entity_id, created_at, reviewer_id") // census-trust wave 5: no profiles embed (reviews.reviewer_id keys auth.users); the page's reviewers are read below
           .or(tripOrParts.join(","))
           .eq("state", "published")
           .order("created_at", { ascending: false })
@@ -473,7 +473,7 @@ router.get("/users/:id/reviews", asyncHandler(async (req, res) => {
 
     // All event reviews from legacy event_reviews table
     eventIds.length > 0
-      ? sc.from("event_reviews").select("id, rating, body, anonymous, event_id, reviewer_id, created_at, profiles!reviewer_id(handle, display_name, avatar_url, verification_level)")
+      ? sc.from("event_reviews").select("id, rating, body, anonymous, event_id, reviewer_id, created_at") // event_reviews → profiles IS keyed; its reviewers join the same batch below so one standing rule covers the merged list
           .in("event_id", eventIds)
           .order("created_at", { ascending: false })
       : Promise.resolve({ data: [], error: null }),
@@ -509,9 +509,12 @@ router.get("/users/:id/reviews", asyncHandler(async (req, res) => {
       ? (r.profiles?.display_name ?? null)
       : null;
 
-  // Merge + sort by date, return most recent `limit` items
-  const merged = [
-    ...tripRows.map((r: any) => ({
+  // Merge + sort by date, return most recent `limit` items. The page is cut from the RAW rows first (census-trust wave 5),
+  // so the reviewer read is ONE batch of at most `limit` ids, and a withheld reviewer shortens the page as on trips/places.
+  const page = [...tripRows.map((r: any) => ({ kind: "trip" as const, r })), ...eventRows.map((r: any) => ({ kind: "event" as const, r }))]
+    .sort((a, b) => new Date(b.r.created_at).getTime() - new Date(a.r.created_at).getTime()).slice(0, limit);
+  const reviewers = await readReviewerProfiles(sc, page.map((p) => p.r)); if (!reviewers) { req.log.error("get user host reviews: reviewer profiles unreadable"); sendError(res, "degraded_unavailable", REVIEWER_PROFILES_UNREADABLE); return; }
+  const merged = page.filter((p) => reviewers.has(p.r.reviewer_id)).map(({ kind, r: row }) => { const r: any = { ...row, profiles: reviewers.get(row.reviewer_id) }; return kind === "trip" ? {
       id:         r.id,
       rating:     r.rating,
       body:       r.body ?? null,
@@ -527,8 +530,7 @@ router.get("/users/:id/reviews", asyncHandler(async (req, res) => {
         avatarUrl:       r.profiles?.avatar_url ?? null,
         verificationLevel: r.profiles?.verification_level ?? null, ...identityBadgeField(badges, r.reviewer_id),
       },
-    })),
-    ...eventRows.map((r: any) => ({
+    } : {
       id:         r.id,
       rating:     r.rating,
       body:       r.body ?? null,
@@ -544,10 +546,8 @@ router.get("/users/:id/reviews", asyncHandler(async (req, res) => {
         avatarUrl:       r.profiles?.avatar_url ?? null,
         verificationLevel: r.profiles?.verification_level ?? null, ...identityBadgeField(badges, r.reviewer_id),
       },
-    })),
-  ]
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-    .slice(0, limit);
+    };
+  });
 
   res.json({
     avgRating,
@@ -1022,3 +1022,82 @@ async function dropBlockedReviewers(sc: any, viewerId: string | null, rows: any[
   return rows.filter((r: any) => !blocked.has(r.reviewer_id as string));
 }
 import { readVerifiedBadges, identityBadgeField } from "../services/identityVerification/verifiedBadges.js"; // census-trust TV-2c
+
+/**
+ * census-trust (wave 5, 2026-10-17) — the reviewer reference, read in two steps.
+ *
+ * WHAT WAS BROKEN. The trip, place and host lists embedded
+ * `profiles!reviewer_id(...)` from `reviews`. The only foreign key on
+ * public.reviews is `reviews_reviewer_id_fkey`: reviews.reviewer_id →
+ * auth.users(id) (read from the production catalog 2026-10-17; migration 0067
+ * and the 2026-08-19 baseline agree). PostgREST had no relationship from
+ * `reviews` to `profiles` to follow, answered PGRST200, and all three lists
+ * answered `db_error` on every call.
+ *
+ * NOW, no migration. The reviews are read on their own; then ONE batched read
+ * of public.profiles by id finds the reviewers of the rows being served, and
+ * they are joined here. profiles.id IS the auth user id (`profiles_id_fkey` →
+ * auth.users(id)), so `reviewer_id` is the profile key. `profiles` is attached
+ * to each row under the embed's old key, so every render below it is unchanged.
+ *
+ * THE FIELDS. Exactly the embed's four: handle, display_name, avatar_url,
+ * verification_level. `account_status` is read to decide standing and is never
+ * returned.
+ *
+ * STANDING. A review whose reviewer is not `active` (deactivated,
+ * pending_deletion, deleted) is withheld from the LIST, anonymous reviews
+ * included, because the server knows the author even when the reader does not.
+ * That is the allowlist the other rosters of people apply (engagement likes,
+ * follows search and suggestions, the discovery community byline, census-discovery
+ * §47). A reviewer with NO profile row is standing-unknown and withheld too. A
+ * NULL status reads as active (lib/http.ts's convention; the column is NOT
+ * NULL). The aggregate is not recomputed: it stays over every published review,
+ * as §27 decided for blocks (a count is not content).
+ *
+ * FAILURE. `null` when the read fails. The caller answers 503
+ * `degraded_unavailable`, as it does for an unreadable block list. Serving the
+ * rows anyway would show reviewers with no handle as if they had none, or show
+ * a hidden account's review because its standing was never read.
+ */
+const REVIEWER_PROFILE_COLUMNS = "id, handle, display_name, avatar_url, verification_level, account_status";
+const REVIEWER_PROFILES_UNREADABLE = "Reviewer profiles could not be read";
+
+interface ReviewerProfile {
+  handle: string | null;
+  display_name: string | null;
+  avatar_url: string | null;
+  verification_level: string | null;
+}
+
+async function readReviewerProfiles(
+  sc: any,
+  rows: ReadonlyArray<{ reviewer_id?: unknown }>,
+): Promise<Map<string, ReviewerProfile> | null> {
+  const ids = [...new Set(rows.map((r) => r.reviewer_id).filter((v): v is string => typeof v === "string" && v !== ""))];
+  if (ids.length === 0) return new Map();
+  try {
+    const { data, error } = await sc.from("profiles").select(REVIEWER_PROFILE_COLUMNS).in("id", ids);
+    if (error || !Array.isArray(data)) return null;
+    const out = new Map<string, ReviewerProfile>();
+    for (const p of data as Array<Record<string, unknown>>) {
+      if (typeof p?.id !== "string") continue;
+      if ((p.account_status ?? "active") !== "active") continue;
+      out.set(p.id, {
+        handle: (p.handle as string | null | undefined) ?? null,
+        display_name: (p.display_name as string | null | undefined) ?? null,
+        avatar_url: (p.avatar_url as string | null | undefined) ?? null,
+        verification_level: (p.verification_level as string | null | undefined) ?? null,
+      });
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+/** The rows whose reviewer is in good standing, each carrying its profile under the embed's old key. */
+function withReviewerProfiles(rows: any[], reviewers: Map<string, ReviewerProfile>): any[] {
+  return rows
+    .filter((r: any) => reviewers.has(r.reviewer_id as string))
+    .map((r: any) => ({ ...r, profiles: reviewers.get(r.reviewer_id as string) }));
+}

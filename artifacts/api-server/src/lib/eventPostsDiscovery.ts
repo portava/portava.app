@@ -358,8 +358,8 @@ async function fetchPathB(
   city: string | null,
 ): Promise<RawPost[] | null> {
   try {
-    // Join posts → discovery_places via location_place_id = osm_id
-    // Filter for event-category venues.
+    // Step one: the posts. Step two (below): the venues they name, keyed on
+    // discovery_places.osm_id = location_place_id. Filter for event-category venues.
     let query = db
       .from("posts")
       .select(`
@@ -378,15 +378,8 @@ async function fetchPathB(
         status,
         post_status,
         deleted_at,
-        publish_eligible_at, location_privacy_mode, published_at,
-        discovery_places!posts_location_place_id_fkey (
-          name,
-          primary_category,
-          city,
-          lat,
-          lng
-        )
-      `)
+        publish_eligible_at, location_privacy_mode, published_at
+      `) // census-discovery wave 5: no `discovery_places!posts_location_place_id_fkey(...)` embed — posts.location_place_id is TEXT with no foreign key, and no constraint of that name exists (PGRST200 on every call); see readEventVenuesByOsmId
       .eq("visibility", "public")
       .eq("status", "active")
       .is("deleted_at", null)
@@ -401,23 +394,30 @@ async function fetchPathB(
     const { data, error } = await query;
     if (error || !data) return null;
 
-    // post_media is canonical for storage-backed media; posts.media_urls holds
-    // external references only (ruled 2026-08-12).
-    const storageMedia = await fetchPostMediaMap(
-      db,
-      (data as any[]).map((r: any) => r.posts?.id).filter(Boolean),
-    );
-    const results: RawPost[] = [];
-    for (const post of data as any[]) {
-      const place = Array.isArray(post.discovery_places)
-        ? post.discovery_places[0]
-        : post.discovery_places;
+    // Step two: ONE batched venue read. An unreadable venue read is an
+    // unreadable path (null), never "no post here is at an events venue".
+    const venues = await readEventVenuesByOsmId(db, data as any[]);
+    if (!venues) return null;
 
+    const matched: Array<{ post: any; place: EventVenue }> = [];
+    for (const post of data as any[]) {
+      const place = venues.get(post.location_place_id);
       if (!place) continue;
       if (place.primary_category !== "events") continue;
-
       if (!postPassesStaticFilters(post)) continue;
+      matched.push({ post, place });
+    }
 
+    // post_media is canonical for storage-backed media; posts.media_urls holds
+    // external references only (ruled 2026-08-12). Read for the matched posts:
+    // this used to pass `r.posts?.id` from rows that ARE posts, so it was handed
+    // no ids and storage-backed media never reached a venue post.
+    const storageMedia = await fetchPostMediaMap(
+      db,
+      matched.map(({ post }) => post.id).filter(Boolean),
+    );
+    const results: RawPost[] = [];
+    for (const { post, place } of matched) {
       // Store the best available proximity coords alongside the post so the
       // caller can apply the radiusKm gate without another DB round-trip.
       const proximityLat: number | null = place.lat ?? post.public_lat ?? null;
@@ -591,4 +591,71 @@ function eventPostForViewer(post: RawPost, viewerId: string | null, nowMs: numbe
   if (!(post.placeWithheld || locationDisclosureEndPassed(post.placeDisclosureEndsAt, nowMs)) || (viewerId != null && post.authorId === viewerId)) return post; // MD79: the cached window end is checked NOW, not when the row was cached
   if (post.sourceKind === "venue_category") return null;
   return { ...post, venueName: post.venueLabel, publicLat: null, publicLng: null };
+}
+
+// ── census-discovery (wave 5, 2026-10-17): Path B's venues, read in two steps ──
+// Appended at the tail so no cited line above moves; function declarations hoist.
+/**
+ * WHAT WAS BROKEN. Path B embedded `discovery_places!posts_location_place_id_fkey(...)`
+ * from `posts`. posts.location_place_id is TEXT with no foreign key in
+ * production (catalog read 2026-10-17; the 2026-08-19 baseline and every
+ * migration agree), and no constraint of that name exists anywhere, so
+ * PostgREST answered PGRST200. The path answered null on every call: every
+ * signed-in GET /discovery/feed carried `failedSources: ["event_posts"]` (§94),
+ * no venue post was ever served, and nothing was ever cached.
+ *
+ * NOW, no migration. The posts are read on their own; then ONE batched read of
+ * discovery_places finds the venues they name, on the join this module has
+ * always documented: discovery_places.osm_id = posts.location_place_id (text =
+ * text, `discovery_places_osm_id_idx`, unique where not null).
+ *
+ * WHAT THE TEXT HOLDS. location_place_id is a client-supplied provider
+ * reference (z.string().max(256), routes/posts.ts and routes/postcards.ts):
+ * the picker writes `nominatim-<n>` and Google ids, legacy rows `legacy-<city>`,
+ * the seeds `seed-place-<city>`. osm_id only ever holds `node|way|relation/<digits>`
+ * (routes/wishlist.ts writes it behind OSM_ID_RE). So only OSM-shaped keys are
+ * sent: anything else cannot name a venue, and free text never reaches the
+ * filter (postgrest-js quotes `,()` in an `.in()` value but not `"`, so a crafted
+ * id could otherwise reshape the list or fail the read for the whole city).
+ *
+ * FAILURE. `null` when the read fails; the path answers null (readFailed, not
+ * cached), exactly as an unreadable posts read does.
+ */
+interface EventVenue {
+  name: string | null;
+  primary_category: string | null;
+  city: string | null;
+  lat: number | null;
+  lng: number | null;
+}
+
+const OSM_PLACE_KEY = /^(node|way|relation)\/\d+$/;
+
+async function readEventVenuesByOsmId(
+  db: SupabaseClient,
+  posts: ReadonlyArray<{ location_place_id?: unknown }>,
+): Promise<Map<string, EventVenue> | null> {
+  const keys = [...new Set(posts.map((p) => p?.location_place_id).filter((v): v is string => typeof v === "string" && OSM_PLACE_KEY.test(v)))];
+  if (keys.length === 0) return new Map();
+  try {
+    const { data, error } = await db
+      .from("discovery_places")
+      .select("osm_id, name, primary_category, city, lat, lng")
+      .in("osm_id", keys);
+    if (error || !Array.isArray(data)) return null;
+    const out = new Map<string, EventVenue>();
+    for (const row of data as Array<Record<string, unknown>>) {
+      if (typeof row?.osm_id !== "string") continue;
+      out.set(row.osm_id, {
+        name: (row.name as string | null | undefined) ?? null,
+        primary_category: (row.primary_category as string | null | undefined) ?? null,
+        city: (row.city as string | null | undefined) ?? null,
+        lat: typeof row.lat === "number" ? row.lat : null,
+        lng: typeof row.lng === "number" ? row.lng : null,
+      });
+    }
+    return out;
+  } catch {
+    return null;
+  }
 }

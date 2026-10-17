@@ -52,7 +52,7 @@
 import { Router } from "express";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { getServiceClient } from "../lib/supabase.js";
-import { resolveProfileVisibility } from "../lib/profileVisibility.js";
+import { resolveProfileVisibility } from "../lib/profileVisibility.js"; import { readStampPresenceView } from "../services/passport/stampPresenceView.js";
 import { nameVisibleFor } from "../lib/publicIdentity.js"; import { readMemoryPrecisionGate, precisionColumnSelectable, precisionClampApplies } from "../lib/memoryPrecisionGate.js"; import { memoryPlaceLabelsForNonOwner } from "../lib/memoryLocationPrecision.js"; // §10 on the Memory preview (lane R, 2026-10-07)
 
 const router = Router();
@@ -556,7 +556,7 @@ const ENTITY_SPECS: EntitySpec[] = [
     async resolve(sc, id) {
       const { data } = await sc
         .from("user_stamps")
-        .select("title_override, visibility, is_revoked, city, country, stamp_definition_id")
+        .select("title_override, visibility, is_revoked, city, country, stamp_definition_id, user_id, source_type, source_id, stamp_definitions(slug)")
         .eq("id", id)
         .maybeSingle();
       if (!data) return null;
@@ -573,7 +573,7 @@ const ENTITY_SPECS: EntitySpec[] = [
           .maybeSingle();
         name = clamp(def?.name, 60);
       }
-      const where = joinPlace(data.city, data.country);
+      const view = await readStampPresenceView(sc, [data as any]); if (!view.presenceClaimHolds(data as any)) return null; const placed = view.place(data as any); const where = joinPlace(placed.city, placed.country); // H4: "a stamp earned in <place>" only with occurrence evidence, and no public page for an unevidenced presence claim (stampPresenceView.ts)
       if (!name) name = where;
       return {
         title: `${name || "Stamp"} · ${APP_NAME} Passport`,

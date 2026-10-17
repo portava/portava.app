@@ -88,7 +88,7 @@ export interface CreateSessionInput {
   visibleFrom?: string | null;
   /** §9's DERIVED state for the plan, when the caller has computed one. */
   derivedState?: Parameters<typeof projectConversationSessions>[2];
-  now?: Date;
+  now?: Date; /** census-telegraph T429 (wave 5): the §30A.16 schema id to stamp on the envelope; null/absent = unstamped (the flag OFF). */ schemaId?: string | null;
 }
 
 /**
@@ -206,7 +206,7 @@ export async function createCoordinationSession(
     .insert({
       thread_id: input.threadId,
       sender_id: input.actorUserId,
-      body: JSON.stringify(validated.envelope),
+      body: JSON.stringify(input.schemaId ? { ...(validated.envelope as Record<string, unknown>), schema: input.schemaId } : validated.envelope),
       created_at: nowIso,
       msg_type: validated.msgType,
       subtype: validated.subtype,

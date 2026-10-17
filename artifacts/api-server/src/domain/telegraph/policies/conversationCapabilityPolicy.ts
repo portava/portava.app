@@ -170,7 +170,7 @@ export async function resolveConversationCapabilities(
     const others = ((otherRows as any[]) ?? []).map((r) => String(r.user_id));
     if (others.length === 1 && others[0]) counterpartId = others[0];
     if (counterpartId) {
-      blocked = await isBlockedBetween(sc, viewerId, counterpartId);
+      blocked = await isBlockedBetween(sc, viewerId, counterpartId); if (blocked) return refuse("TELEGRAPH_AUTH_BLOCKED", conversationType); // wave 5 (block parity): a block is answered EXACTLY as a stranger's refusal at :146 — every capability denied, inputsRead as far as membership, not degraded, and before the archive is consulted — so the only difference is this honest reason, which every wire redacts to NOT_MEMBER (census §14.1 "The block is not told")
       inputsRead.push("blockState");
     } else {
       inputsRead.push("blockState"); // read, and found not to apply (group thread)

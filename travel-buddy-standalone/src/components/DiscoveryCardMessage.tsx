@@ -36,9 +36,9 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { Compass, MapPin, Bookmark, CalendarPlus, ExternalLink } from 'lucide-react-native';
-import { DisplayMediaImage } from './ui/DisplayMediaImage.tsx';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
-import { TG } from '../theme/telegraphTokens.ts';
+import { DisplayMediaImage } from './ui/DisplayMediaImage.tsx'; import { messageTreeMediaOrNull } from '../features/telegraph/media/messageTreeMedia.ts';
+import { space, radius, type as t } from '../theme/tokens.ts';
+import { useTelegraphTheme, type TelegraphPalette } from '../features/telegraph/theme/telegraphTheme.ts';
 import { TripWishlistPicker, type AddToTripPayload } from './discovery/TripWishlistPicker.tsx';
 import { toggleSave } from '../services/discoveryBookmarks.ts'; import { saveDiscoveryCardViaTelegraph } from '../services/discoveryCardSave.ts';
 import { useShareRevocation, revokedLabel } from '../features/telegraph/sharing/useShareRevocation.ts';
@@ -81,7 +81,7 @@ const CATEGORY_COLORS: Record<string, string> = {
   beach: '#0EA5E9',
   attraction: '#10B981',
   activity: '#6366F1',
-  'for_you': color.signal,
+  'for_you': 'operational', // census T124: the scheme's teal, resolved at render (it was vermilion)
   place: '#6B7280',
 };
 
@@ -96,7 +96,7 @@ interface Props {
 export function DiscoveryCardMessage({ body, mine, threadId = null, messageId = null, serverCard = null }: Props) {
   const payload = parsePayload(body);
   const [pickerVisible, setPickerVisible] = useState(false);
-
+  const { palette, styles: card } = useTelegraphTheme(makeCardStyles);
   const mappedType = legacySourceTypeToObjectType(payload?.sourceType);
   const revocation = useShareRevocation(
     threadId,
@@ -107,7 +107,7 @@ export function DiscoveryCardMessage({ body, mine, threadId = null, messageId = 
   if (revocation.state === 'unavailable') {
     return (
       <View style={[card.wrap, card.wrapRevoked, mine && card.wrapMine]} testID="discovery-card-revoked">
-        <Text style={[card.fallback, mine && { color: color.onInk + 'AA' }]}>
+        <Text style={[card.fallback, mine && { color: palette.sentText + 'AA' }]}>
           {revokedLabel(revocation.reason)}
         </Text>
       </View>
@@ -117,7 +117,7 @@ export function DiscoveryCardMessage({ body, mine, threadId = null, messageId = 
   if (!payload) {
     return (
       <View style={[card.wrap, mine && card.wrapMine]}>
-        <Text style={[card.fallback, mine && { color: color.onInk + 'AA' }]}>Discovery card</Text>
+        <Text style={[card.fallback, mine && { color: palette.sentText + 'AA' }]}>Discovery card</Text>
       </View>
     );
   }
@@ -125,7 +125,7 @@ export function DiscoveryCardMessage({ body, mine, threadId = null, messageId = 
   if (mode === 'loading') {
     return (
       <View style={[card.wrap, mine && card.wrapMine]} testID="discovery-card-loading">
-        <Text style={[card.fallback, mine && { color: color.onInk + 'AA' }]}>Loading…</Text>
+        <Text style={[card.fallback, mine && { color: palette.sentText + 'AA' }]}>Loading…</Text>
       </View>
     );
   }
@@ -136,19 +136,19 @@ export function DiscoveryCardMessage({ body, mine, threadId = null, messageId = 
     // snapshot, which is exactly what a revoked place would still look like.
     return (
       <View style={[card.wrap, mine && card.wrapMine]} testID="discovery-card-reference">
-        <Text style={[card.brandLabel, mine && { color: color.onInk + 'BB' }]}>
+        <Text style={[card.brandLabel, mine && { color: palette.sentText + 'BB' }]}>
           {objectKindLabel(mappedType ?? 'PLACE').toUpperCase()}
         </Text>
         {payload.caption ? (
           <Text style={[card.caption, mine && card.captionMine]} numberOfLines={2}>"{payload.caption}"</Text>
         ) : null}
-        <Text style={[card.fallback, mine && { color: color.onInk + 'AA' }]}>{REFERENCE_COPY}</Text>
+        <Text style={[card.fallback, mine && { color: palette.sentText + 'AA' }]}>{REFERENCE_COPY}</Text>
         <Pressable
           style={[card.actionBtn, mine && card.actionBtnMine]}
           testID="discovery-card-view"
           onPress={() => router.push(`/(tabs)/discovery?placeId=${encodeURIComponent(payload.sourceId)}` as Href)}
         >
-          <ExternalLink size={11} color={mine ? color.onInk : color.signal} />
+          <ExternalLink size={11} color={mine ? palette.sentText : palette.operational} />
           <Text style={[card.actionLabel, mine && card.actionLabelMine]}>View</Text>
         </Pressable>
       </View>
@@ -163,11 +163,11 @@ export function DiscoveryCardMessage({ body, mine, threadId = null, messageId = 
   const offered = offeredCardActions(mode, live ? live.actions : []);
   const shownTitle = projection ? projection.title : payload.title;
   const shownPlace = projection ? projection.subtitle : payload.city;
-  const shownImage = projection ? projection.imageUrl : payload.imageUrl;
+  const shownImage = messageTreeMediaOrNull(projection ? projection.imageUrl : payload.imageUrl); // census T446: storage or nothing
   const shownBlurb = projection ? null : payload.blurb;
   const shownPrice = projection ? null : payload.priceLevel;
   const chipLabel = projection ? objectKindLabel(projection.objectType) : payload.category;
-  const accentColor = CATEGORY_COLORS[payload.category.toLowerCase()] ?? CATEGORY_COLORS.place;
+  const accentHue = CATEGORY_COLORS[payload.category.toLowerCase()] ?? CATEGORY_COLORS.place; const accentColor = accentHue === 'operational' ? palette.operational : accentHue;
 
   const addPayload: AddToTripPayload = {
     id:       payload.sourceId,
@@ -197,7 +197,7 @@ export function DiscoveryCardMessage({ body, mine, threadId = null, messageId = 
             testID="discovery-card-add-to-plan"
             onPress={() => setPickerVisible(true)}
           >
-            <CalendarPlus size={11} color={mine ? color.onInk : color.signal} />
+            <CalendarPlus size={11} color={mine ? palette.sentText : palette.operational} />
             <Text style={[card.actionLabel, mine && card.actionLabelMine]}>Add to Plan</Text>
           </Pressable>
   );
@@ -209,7 +209,7 @@ export function DiscoveryCardMessage({ body, mine, threadId = null, messageId = 
             accessibilityLabel={`Suggest meeting at ${shownTitle}`}
             onPress={() => { void proposeMeetHere(); }}
           >
-            <MapPin size={11} color={mine ? color.onInk : color.signal} />
+            <MapPin size={11} color={mine ? palette.sentText : palette.operational} />
             <Text style={[card.actionLabel, mine && card.actionLabelMine]}>Meet here</Text>
           </Pressable>
   );
@@ -238,7 +238,7 @@ export function DiscoveryCardMessage({ body, mine, threadId = null, messageId = 
               }
             }}
           >
-            <Bookmark size={11} color={mine ? color.onInk : color.signal} />
+            <Bookmark size={11} color={mine ? palette.sentText : palette.operational} />
             <Text style={[card.actionLabel, mine && card.actionLabelMine]}>Save</Text>
           </Pressable>
   );
@@ -249,9 +249,9 @@ export function DiscoveryCardMessage({ body, mine, threadId = null, messageId = 
         {/* Header */}
         <View style={card.header}>
           <View style={card.compassBadge}>
-            <Compass size={11} color={color.onInk} />
+            <Compass size={11} color={palette.operationalOn} />
           </View>
-          <Text style={[card.brandLabel, mine && { color: color.onInk + 'BB' }]}>DISCOVERY</Text>
+          <Text style={[card.brandLabel, mine && { color: palette.sentText + 'BB' }]}>DISCOVERY</Text>
           <View style={[card.chip, { backgroundColor: accentColor + '22' }]}>
             <Text style={[card.chipText, { color: accentColor }]}>
               {chipLabel}
@@ -279,7 +279,7 @@ export function DiscoveryCardMessage({ body, mine, threadId = null, messageId = 
 
         {/* Location */}
         <View style={card.locRow}>
-          <MapPin size={11} color={mine ? color.onInk + 'AA' : color.mute} />
+          <MapPin size={11} color={mine ? palette.sentText + 'AA' : palette.mute} />
           <Text style={[card.loc, mine && card.locMine]} numberOfLines={1}>{shownPlace ?? ''}</Text>
           {shownPrice ? (
             <Text style={[card.price, mine && card.priceMine]}> · {shownPrice}</Text>
@@ -314,7 +314,7 @@ export function DiscoveryCardMessage({ body, mine, threadId = null, messageId = 
                   : ('/(tabs)/discovery' as Href)
             )}
           >
-            <ExternalLink size={11} color={mine ? color.onInk : color.signal} />
+            <ExternalLink size={11} color={mine ? palette.sentText : palette.operational} />
             <Text style={[card.actionLabel, mine && card.actionLabelMine]}>View</Text>
           </Pressable>
           {offered.addToTrip ? <><View style={[card.divider, mine && card.dividerMine]} />{addToPlanButton}</> : null}
@@ -332,20 +332,22 @@ export function DiscoveryCardMessage({ body, mine, threadId = null, messageId = 
   );
 }
 
-const card = StyleSheet.create({
+// census T123/T124: the scheme's colours; a card the viewer SENT is a sent bubble
+// (it was vermilion), and the Discovery mark and actions are the operational teal.
+const makeCardStyles = (p: TelegraphPalette) => StyleSheet.create({
   wrap: {
-    backgroundColor: TG.surfaceRaised,
+    backgroundColor: p.surfaceRaised,
     borderRadius: radius.lg,
     borderWidth: 1,
-    borderColor: TG.recvBorder,
+    borderColor: p.recvBorder,
     borderBottomLeftRadius: 4,
     padding: space.md,
     gap: 6,
     maxWidth: CARD_MAX_WIDTH,
   },
   wrapMine: {
-    backgroundColor: color.signal,
-    borderColor: color.signal,
+    backgroundColor: p.sentBubble,
+    borderColor: p.sentBubble,
     borderBottomLeftRadius: radius.lg,
     borderBottomRightRadius: 4,
   },
@@ -354,39 +356,39 @@ const card = StyleSheet.create({
     borderStyle: 'dashed',
     backgroundColor: 'transparent',
   },
-  fallback: { ...t.small, color: color.mute, fontStyle: 'italic' },
+  fallback: { ...t.small, color: p.mute, fontStyle: 'italic' },
   thumbnail: {
     width: '100%',
     borderRadius: radius.sm,
-    backgroundColor: color.haze,
+    backgroundColor: p.haze,
   },
 
   header: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  compassBadge: { width: 18, height: 18, borderRadius: 5, backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center' },
-  brandLabel: { ...t.stamp, fontFamily: 'Courier', fontSize: 9, color: color.signal, letterSpacing: 1, flex: 1 },
+  compassBadge: { width: 18, height: 18, borderRadius: 5, backgroundColor: p.operational, alignItems: 'center', justifyContent: 'center' },
+  brandLabel: { ...t.stamp, fontFamily: 'Courier', fontSize: 9, color: p.operational, letterSpacing: 1, flex: 1 },
   chip: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8 },
   chipText: { fontSize: 9, fontFamily: 'Courier', fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.3 },
 
-  title: { ...t.bodyStrong, color: color.ink, fontWeight: '700', fontSize: 14, lineHeight: 18 },
-  titleMine: { color: color.onInk },
+  title: { ...t.bodyStrong, color: p.recvText, fontWeight: '700', fontSize: 14, lineHeight: 18 },
+  titleMine: { color: p.sentText },
 
   locRow: { flexDirection: 'row', alignItems: 'center', gap: 3 },
-  loc: { ...t.small, color: color.mute, fontSize: 11, flex: 1 },
-  locMine: { color: color.onInk + 'BB' },
-  price: { ...t.small, color: color.mute, fontSize: 11 },
-  priceMine: { color: color.onInk + 'AA' },
+  loc: { ...t.small, color: p.mute, fontSize: 11, flex: 1 },
+  locMine: { color: p.sentText + 'BB' },
+  price: { ...t.small, color: p.mute, fontSize: 11 },
+  priceMine: { color: p.sentText + 'AA' },
 
-  blurb: { ...t.small, color: color.mute, fontSize: 12, lineHeight: 16 },
-  blurbMine: { color: color.onInk + 'BB' },
+  blurb: { ...t.small, color: p.mute, fontSize: 12, lineHeight: 16 },
+  blurbMine: { color: p.sentText + 'BB' },
 
-  caption: { ...t.small, color: color.faint, fontSize: 11, fontStyle: 'italic', lineHeight: 15 },
-  captionMine: { color: color.onInk + '99' },
+  caption: { ...t.small, color: p.faint, fontSize: 11, fontStyle: 'italic', lineHeight: 15 },
+  captionMine: { color: p.sentText + '99' },
 
-  actions: { flexDirection: 'row', alignItems: 'center', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.haze, marginTop: 2, paddingTop: 6 },
+  actions: { flexDirection: 'row', alignItems: 'center', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: p.haze, marginTop: 2, paddingTop: 6 },
   actionBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 3, paddingVertical: 4 },
   actionBtnMine: {},
-  actionLabel: { ...t.small, color: color.signal, fontWeight: '700', fontSize: 10 },
-  actionLabelMine: { color: color.onInk },
-  divider: { width: StyleSheet.hairlineWidth, height: 14, backgroundColor: color.haze },
-  dividerMine: { backgroundColor: color.onInk + '33' },
+  actionLabel: { ...t.small, color: p.operational, fontWeight: '700', fontSize: 10 },
+  actionLabelMine: { color: p.sentText },
+  divider: { width: StyleSheet.hairlineWidth, height: 14, backgroundColor: p.haze },
+  dividerMine: { backgroundColor: p.sentText + '33' },
 });

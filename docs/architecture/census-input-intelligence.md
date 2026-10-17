@@ -8869,3 +8869,277 @@ renderer only; how it presents on iOS and Android is an unmeasured device questi
 
 Of 373 rows: **319 BUILT-AND-CORRECT, 42 BUILT-BUT-WRONG, 8 NOT-BUILT, 4 CANNOT-VERIFY**. CORRECT is now
 319 / 373 = 85.5 %. G233 and G159 change bucket.
+
+## Row moves — 2026-10-17 build and fix (wave 4)
+
+Six NOT-BUILT rows are built this wave. None reaches `C`: each is dark behind a flag that is seeded FALSE, or
+still lacks a source for one of its halves, and the row says which. No paid provider was added (OD-INPUT-6).
+G141 and G142 stay `N` (see "Not moved" below).
+
+**The operating-status pair (G123, G177).** A state may be shown or used only if something writes it and keeps
+it current (`artifacts/api-server/src/lib/inputAssistance/operatingStatus.ts:41#export const OPERATING_STATUS_CONTEXTS`).
+There are two such sources. Events: the RSVP capacity writer moves `events.state` between `open`, `full` and
+`waitlist`, and the event search already reads it. `started` and `completed` are not used: the start transition
+is owner-blocked, so a stored value is no evidence of anything happening now. Places: a Live Intelligence `closure.state` claim, read through the same gated
+read the freshness label uses. The intel contracts rule a closure claim never a live label, so it is a ranking
+input only. Before this wave, a closure claim fell through to the generic "Recently confirmed" label and got
+the freshness boost, so a shut place was promoted. A `discovery_places` row has no hours column, and FSQ's
+`open_now` is a static ingest value (D-67), so a place has no open/closed state that may be shown.
+
+**The provider cluster (G222, G237, G153, G192).** One module federates provider candidates on the server
+(`artifacts/api-server/src/lib/inputAssistance/providerFederation.ts:441#export async function buildProviderSuggestions(`).
+It runs inside the gateway for the venue pickers only
+(`artifacts/api-server/src/lib/inputAssistance/gateway.ts:629#suggestions.push(...(await buildProviderSuggestions(sc,`).
+The one approved source is the free dataset the tree already holds: FSQ OS Places in `fsq_places` (migration
+0184), behind that dataset's own flag `fsq_places_enabled`, seeded FALSE
+(`artifacts/api-server/src/lib/inputAssistance/providerFederation.ts:177#export const APPROVED_PROVIDER_ADAPTERS`).
+A read happens only inside a 25 km box around the request's position, or within the task's city. With neither,
+nothing is read. The picker lists provider rows in their own attributed section, after the canonical matches
+(`travel-buddy-standalone/src/components/selectors/GlobalPlacePicker.tsx:563#items.push(...providerSectionItems(providerRows, gatewayById));`).
+
+Shared fixture: the census-discovery §70 golden (`artifacts/api-server/src/test/fixtures/searchPlatformGolden.json`)
+was re-recorded. Only "gateway place_picker zork" changed. Its served body is identical, and its read trace gains
+one `feature_flags` read (the provider flag). Every other case is byte-equal.
+
+| id | was | now | evidence |
+| --- | --- | --- | --- |
+| G123 closed or unavailable where the current operating status is relevant | N | **W** | Global search is the field where the current state matters (`artifacts/api-server/src/lib/inputAssistance/operatingStatus.ts:41#['global_search']`). A FULL event the viewer is not going to is demoted there (`artifacts/api-server/src/lib/inputAssistance/projection.ts:125#eventUnavailable(r, context)`). So is a place whose best current closure claim says temporarily closed or closed for a private event (`artifacts/api-server/src/lib/inputAssistance/liveSuggestions.ts:294#closedIds.add(id)`, `artifacts/api-server/src/lib/inputAssistance/liveSuggestions.ts:305#if (closedIds.has(id)) return demoteShut(s);`). A closure claim no longer becomes a label or a boost (`artifacts/api-server/src/lib/inputAssistance/liveSuggestions.ts:180#envelopes = liveLabelEligible(envelopes);`). Not acted on: `permanently_closed`, a materially conflicted claim, and any venue picker. Tests: `artifacts/api-server/src/test/inputAssistanceLiveIntelligence.test.ts:420#temporarily_closed: demoted by INFEASIBLE_DEMOTION in global search`, `artifacts/api-server/src/test/inputAssistanceLiveIntelligence.test.ts:456#relevance: in a venue picker (event_location)`, `artifacts/api-server/src/test/inputAssistanceGlobalSearch.test.ts:520#global search: a FULL event scores exactly INFEASIBLE_DEMOTION`, `artifacts/api-server/src/test/inputAssistanceGlobalSearch.test.ts:538#through the gateway: both events are served`. Red first: 9 closure and 2 event tests failed. Green: 30/30 and 17/17. 11 of 11 mutants red. **Still missing:** the place half reads Live Intelligence, which is off in production (its flag chain, pilot switch and per-scope promotion). |
+| G177 open/closed or availability state where valid | N | **W** | An event row states its current availability (`artifacts/api-server/src/lib/inputAssistance/projection.ts:167#if (availability) suggestion.availability = availability;`): only `full` or `waitlist`, never `open`, `started`, `completed` or an unknown value (`artifacts/api-server/src/lib/inputAssistance/operatingStatus.ts:49#export function eventAvailability(`). The row renders it and announces it through the shared badge helper, which renders nothing for an unknown value (`travel-buddy-standalone/src/platform/input-assistance/components/suggestionBadges.ts:48#const avail = availabilityBadge(s.availability);`). That helper drives the Wall's SmartInput. Tests: `artifacts/api-server/src/test/inputAssistanceGlobalSearch.test.ts:494#full → 'full', waitlist → 'waitlist'`, `artifacts/api-server/src/test/inputAssistanceGlobalSearch.test.ts:499#open, started, completed, an unknown and a missing state state NOTHING`, `travel-buddy-standalone/src/platform/input-assistance/components/__tests__/availabilityBadge.component.test.tsx:26#G177: a full event says so on the row and to a screen reader`, `travel-buddy-standalone/src/platform/input-assistance/components/__tests__/availabilityBadge.component.test.tsx:38#G177: an unknown or absent availability renders nothing`. Red first: 2 server and 3 client tests failed. Green: 4/4 and 17/17. 5 of 5 mutants red. **Still missing:** places. Nothing in the suggestion path holds an open/closed state that may be shown: no hours column on `discovery_places` (that needs a migration), and closure claims are barred from labels. |
+| G222 provider federation preferred on the server | N | **W** | The gateway federates provider candidates on the server for the venue pickers (`artifacts/api-server/src/lib/inputAssistance/providerFederation.ts:59#export const PROVIDER_LANE_CONTEXTS`). It reads only approved adapters whose flag is on (`artifacts/api-server/src/lib/inputAssistance/providerFederation.ts:246#((await a.isApproved(sc)) ? a : null)`). Rows are `source: 'provider'` (`artifacts/api-server/src/lib/inputAssistance/providerFederation.ts:417#source: 'provider',`), capped at three (`artifacts/api-server/src/lib/inputAssistance/providerFederation.ts:483#.slice(0, PROVIDER_ROW_MAX)`), attributed, and bound as a Place the canonical resolver knows. They sit at §9 step 9, below every canonical row. The picker lists them after the canonical matches with the attribution. A provider read failure keeps the canonical rows and is a partial refusal. Tests: `artifacts/api-server/src/test/inputAssistanceVenueBinding.test.ts:361#flag off (the seed): no provider row, and the dataset is never read`, `artifacts/api-server/src/test/inputAssistanceVenueBinding.test.ts:368#flag on: a matching venue is served as source "provider"`, `artifacts/api-server/src/test/inputAssistanceVenueBinding.test.ts:391#a provider row never outranks a canonical row`, `artifacts/api-server/src/test/inputAssistanceVenueBinding.test.ts:404#bounded read: a box around the position`, `artifacts/api-server/src/test/inputAssistanceVenueBinding.test.ts:444#a provider read failure keeps every canonical row`, `travel-buddy-standalone/src/components/selectors/__tests__/GlobalPlacePicker.zeroState.component.test.tsx:415#provider rows are listed after the canonical matches`. Green: 32/32 and 15/15. **Still missing:** `fsq_places_enabled` is seeded FALSE and the dataset is ingested per city. The picker sends no coordinates (the route drops the session's lat/lng), so the lane needs a task city. The device still federates Google autocomplete and `/places/search` itself; moving that paid lane to the server is OD-INPUT-6's call. |
+| G237 provider neutrality, no favour for the first-integrated source | N | **W** | The server's merge orders by name-match tier, distance, name and record id. It never orders by source key or registration order, and the same venue from two sources is kept once by completeness (`artifacts/api-server/src/lib/inputAssistance/providerFederation.ts:202#export function neutralProviderOrder(`). Tests: `artifacts/api-server/src/test/inputAssistanceVenueBinding.test.ts:572#registration order does not decide`, `artifacts/api-server/src/test/inputAssistanceVenueBinding.test.ts:580#a better match from the LATER-registered source leads`, `artifacts/api-server/src/test/inputAssistanceVenueBinding.test.ts:587#the provider key is never read`, `artifacts/api-server/src/test/inputAssistanceVenueBinding.test.ts:594#identical rows score identically`. **Still missing:** one approved source exists, behind a FALSE flag. Two device-side merges sit outside this rule. The picker's own merge lists Google rows first, a vendor display choice not changed here. The server's `/places/search` appends Foursquare venues after Nominatim rows, which is outside this lane. |
+| G153 provider disagreement: show the canonical record or a choice, never overwrite | N | **W** | A provider record of a venue Portava already has (same name, within 150 m) is dropped. The canonical row stays byte-identical, and the facts the record disagreed on are named (`artifacts/api-server/src/lib/inputAssistance/providerFederation.ts:341#export function resolveProviderConflicts(`, `artifacts/api-server/src/lib/inputAssistance/providerFederation.ts:480#const { kept } = resolveProviderConflicts(federated, canonical);`). An uncertain match (same name, up to 1.5 km away; or a missing position, unless the two cities differ) is offered as a separate choice that says why. Tests: `artifacts/api-server/src/test/inputAssistanceVenueBinding.test.ts:458#the SAME venue from the provider`, `artifacts/api-server/src/test/inputAssistanceVenueBinding.test.ts:471#an UNCERTAIN match (same name, 600 m away)`. **Still missing:** live only when `fsq_places_enabled` is on. |
+| G192 the precedence chain (canonical identity first, AI guess last) | N | **W** | §30's seven rungs are declared in order (`artifacts/api-server/src/lib/inputAssistance/providerFederation.ts:264#export const PRECEDENCE_LADDER`), and every suggestion source maps to one (`artifacts/api-server/src/lib/inputAssistance/providerFederation.ts:282#export function precedenceRung(`). When two rows assert the same entity, the lower rung loses whatever the arrival order. Distinct or uncertain rows are all kept, as choices (`artifacts/api-server/src/lib/inputAssistance/providerFederation.ts:304#export function resolveByPrecedence<`). It is consulted where canonical places and provider records meet. Tests: `artifacts/api-server/src/test/inputAssistanceVenueBinding.test.ts:516#canonical identity beats approved provider state in EITHER arrival order`, `artifacts/api-server/src/test/inputAssistanceVenueBinding.test.ts:524#down the whole ladder`. Red first for the cluster: 13 failed. With every edited production file back at HEAD (the two new modules kept): 17 server and 6 client tests red. 31 of 31 provider mutants red. **Still missing:** the verified/current-authoritative rung has no row source. The community and cached-history rungs never meet a canonical row for the same entity at a shared dedup. The provider rung is dark behind the flag. |
+
+**Not moved.** G141 (postcard and Memory writing help) needs the spec owner to decide whether `caption` covers
+postcards and Memories, or to add a 30th context; §5 pins the union at 29. G142 (buddy listing text) needs a
+context the §5 union does not have. Both are also dark: `compass_ai_writing_enabled` has no production row.
+
+### Headline, restated from the rows (wave 4)
+
+| bucket | wave 3 | now |
+| --- | ---: | ---: |
+| BUILT-AND-CORRECT | 319 | 319 |
+| BUILT-BUT-WRONG | 42 | 48 |
+| NOT-BUILT | 8 | 2 |
+| CANNOT-VERIFY | 4 | 4 |
+| total | 373 | 373 |
+
+Of 373 rows: **319 BUILT-AND-CORRECT, 48 BUILT-BUT-WRONG, 2 NOT-BUILT, 4 CANNOT-VERIFY**. CONSTRUCTED is now
+367 / 373 = 98.4 %. CORRECT is unchanged at 319 / 373 = 85.5 %. G123, G177, G222, G237, G153 and G192 change
+bucket.
+
+### Restated after independent verification (2026-10-17, wave 4) — two C rows were overstated
+
+The independent verifier (Fable, 2026-10-17) proved, with a probe through the real serve path, that two rows graded C do not hold in production. Accuracy before the number: both are restated W until fixed.
+
+| id | was | now | remaining gap |
+| --- | --- | --- | --- |
+| G109 venue binding | C | **W** | The geo-picker branch of the gateway (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:600`) goes through `dispatchAndProject` without ever passing a venue binding; `resolveVenueBindings` sits in the generic branch behind a test that is always false there, so on the serve path a picked venue never carries its city / country / coordinates binding. The row's tests call the resolver and projector directly, not the serve path. |
+| G176 distance band and nearby ranking | C | **W** | `routes/inputAssistance.ts` reads the band's origin only from top-level `lat`/`lng`; `parseSessionContext` keeps only `tripId`/`cityId`, and no app caller sends coordinates (`buildSuggestBody` never emits them). The band and nearby ranking therefore never fire for a real client; the row's end-to-end test posts top-level coordinates no client sends. |
+
+#### Headline, restated from the rows (wave-4 verification)
+
+| bucket | wave 4 | now |
+| --- | ---: | ---: |
+| BUILT-AND-CORRECT | 319 | 317 |
+| BUILT-BUT-WRONG | 48 | 50 |
+| NOT-BUILT | 2 | 2 |
+| CANNOT-VERIFY | 4 | 4 |
+| total | 373 | 373 |
+
+Of 373 rows: **317 BUILT-AND-CORRECT, 50 BUILT-BUT-WRONG, 2 NOT-BUILT, 4 CANNOT-VERIFY**. CORRECT is now
+317 / 373 = 85.0 % after G109 and G176 were restated C → W on independent verification.
+
+## Row moves — 2026-10-17 wave-4 verification fixes
+
+The two rows restated C → W above are fixed on the serve path. Each is now proven through `POST /input-assistance/suggest`, not at the resolver and not with a body no client sends.
+
+**G109.** The geo-picker branch now binds its own venues. `dispatchAndProject` resolves the bindings for its places and hands each one to the projector. The always-false picker test on the generic branch is gone: that branch never serves a picker, so its map is empty on purpose. One rule is new. A position the §24 protection pass coarsened or withheld is not the venue's position, so that venue binds its City and Country but no Coordinates and no Timezone. This follows the row's own rule 1: absent prefill beats wrong prefill.
+
+**G176.** There is one wire transport for the viewer's position: the top-level `lat`/`lng` pair. The route already reads it there, and the Map search client already sends it there. The app's `InputSessionContext.lat/lng` stays the hook's input. `buildSuggestBody` is the wire mapper. It lifts a valid pair to the top level, rounds it to 3 decimals (~110 m, the neighbourhood-level precision the meetup pin already uses) and strips it from the forwarded session. So the device fix never leaves the device, and no server consumer of the session (AI writing, paste, task constraint) can receive a position inside it. The server's `SuggestSessionContext` stays ID-only. Two real callers hold a consented position and now reach the route: the shared place picker (an already-granted permission and the last known fix) and the search screen (only while permission is granted).
+
+Things that did not need to change:
+- The cache keys. The hook's key already rounds to 2 decimals, and its scope key excludes the pair.
+- Logging. The route logs no position.
+- The location-purpose registry. It governs tables that RETAIN coordinates, and a purpose with no table is a check failure. This position is transient: it is not stored, not logged and not telemetered.
+
+One stale clause elsewhere: G222's "the picker sends no coordinates" is no longer true. G222 stays `W` for its other reasons.
+
+Shared fixture: the census-discovery §70 golden (`artifacts/api-server/src/test/fixtures/searchPlatformGolden.json`) was re-recorded (`SEARCH_GOLDEN_WRITE=1`). Compared programmatically with HEAD, only "gateway place_picker zork" changed. Its four place rows each gained a `structuredValue` (unlinked venues, so `country: null`). Its read trace and every other case are byte-equal.
+
+| row | was | now | evidence |
+| --- | --- | --- | --- |
+| G109 venue binding | W | **C** | The picker path binds its venues (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:990#const venueBindings = GEO_PICKER_CONTEXTS.has(p.context)`) and projects each binding (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:1001#venueBinding: venueBindings.get(r.id) ?? null`). The generic branch's map is empty on purpose (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:677#const venueBindings = new Map<string, CanonicalVenueBinding>();`). A protected position binds no coordinates (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:190#const exact = md?.coordsPrecision === undefined;`). Through the route, in place_picker and event_location, 'Sky36' carries Da Nang, Vietnam, the venue's own coordinates and Asia/Ho_Chi_Minh, and `canonical_locations` is read once, by id (`artifacts/api-server/src/test/inputAssistanceServePathBindings.test.ts:213#through POST /input-assistance/suggest carries City, Country`). Refusals on the same path: a failed canonical read gives no binding (`artifacts/api-server/src/test/inputAssistanceServePathBindings.test.ts:253#a FAILED canonical read serves the venue with NO binding`), and global_search gives none (`artifacts/api-server/src/test/inputAssistanceServePathBindings.test.ts:262#global_search serves the same venue with no binding`). Red first: 4 of 6 cases (the 2 refusals held before). 4 of 4 gateway mutants red. |
+| G176 distance band and nearby ranking | W | **C** | The app sends the position where the route reads it (`artifacts/api-server/src/routes/inputAssistance.ts:227#const lat = clampCoord(body.lat, 90);`): coarsened, validated, both halves or neither, and never inside the session (`travel-buddy-standalone/src/platform/input-assistance/services/suggestBody.ts:35#const origin = suggestOrigin(req.sessionContext?.lat, req.sessionContext?.lng);`, `travel-buddy-standalone/src/platform/input-assistance/services/suggestBody.ts:101#export function suggestOrigin(`). The real callers: `travel-buddy-standalone/src/components/selectors/GlobalPlacePicker.tsx:257#return { ...base, lat: nearbyCoords.lat, lng: nearbyCoords.lng };` and `travel-buddy-standalone/src/hooks/useGlobalSearchSuggestions.ts:122#if (lat != null) s.lat = lat;`. The server tests post the APP's own `buildSuggestBody` output. The place picker gets its band (`artifacts/api-server/src/test/inputAssistanceServePathBindings.test.ts:313#place_picker: a nearby place carries its coarse band`). Global search gets the band and the nearby order (`artifacts/api-server/src/test/inputAssistanceServePathBindings.test.ts:321#band on the near place, and the near place ranks first`). Invalid positions never reach the wire (`artifacts/api-server/src/test/inputAssistanceServePathBindings.test.ts:335#invalid positions never reach the wire`). Through the real event screen's picker, a granted fix goes out as a 3-decimal top-level pair, never in the session and never in a cache key (`travel-buddy-standalone/src/components/selectors/__tests__/GlobalPlacePicker.selectionLifetime.component.test.tsx:1030#G176: a granted position reaches the suggest wire`). Red first: 4 of 5 server, 2 of 3 app node and 1 of 2 picker cases (the refusals held before). 5 of 6 `suggestBody` mutants red; the 6th is equivalent. |
+
+#### Headline, restated from the rows (wave-4 verification fixes)
+
+| bucket | wave-4 verification | now |
+| --- | ---: | ---: |
+| BUILT-AND-CORRECT | 317 | 319 |
+| BUILT-BUT-WRONG | 50 | 48 |
+| NOT-BUILT | 2 | 2 |
+| CANNOT-VERIFY | 4 | 4 |
+| total | 373 | 373 |
+
+Of 373 rows: **319 BUILT-AND-CORRECT, 48 BUILT-BUT-WRONG, 2 NOT-BUILT, 4 CANNOT-VERIFY**. CORRECT is now
+319 / 373 = 85.5 % after G109 and G176 were fixed on the serve path and moved W → C.
+
+## Row moves — 2026-10-17 build and fix (wave 5, input follow-ups)
+
+Five briefs, one of which was already done. **No row changes bucket.** What changed is evidence, and in two
+places the evidence is a test that has not run yet, which is stated where it is used.
+
+**The telemetry sink was already attached.** The brief said `installInputTelemetry()` had no caller. It has had
+one since §18 (2026-09-21): `app/_layout.tsx` mounts `InputTelemetrySetup`
+(`travel-buddy-standalone/app/_layout.tsx:406#<InputTelemetrySetup />`), which calls the installer
+(`travel-buddy-standalone/app/_layout.tsx:214#const handle = installInputTelemetry({`). The installer attaches
+the sink behind the per-name outcome gate (`travel-buddy-standalone/src/platform/input-assistance/services/installInputTelemetry.ts:125#export function installInputTelemetry`).
+The premise came from G263's own cell, which was never restated. Nothing was built for it. Two code comments that
+still said the line was missing were corrected, line-neutrally (`inputTelemetry.ts`, `telemetryTransport.ts`).
+
+**Task outcomes are reported from the two creation screens.** A screen now records which Input field served
+it when it accepts that field's suggestion, and reports once per field when the task's write answers
+(`travel-buddy-standalone/src/platform/input-assistance/services/servedTaskOutcome.ts:111#export function reportServedTask(`).
+Every edit to the two screens is line-neutral, so no citation into either file moved.
+
+**The live-DB suite for G306 exists and has not run.** This environment has no `psql` and no PostGIS harness.
+The suite skips without `LOCAL_DB_URL`, exactly as its siblings do, and is registered beside
+`wallTelemetryRetention30Days.db.test.ts`. So it runs on the CI live-DB tier, where `scripts/local-db/run-tests.sh`
+refuses a skip. A dry run of the same chain against a capturing client (not committed) gave the three rows the
+suite expects: HTTP 200, `accepted: 3`, props rebuilt from the allow-list. That leaves PostgreSQL itself as the one
+untested link. No row moves on a test that has not run.
+
+**The Map search client coarsens the position.** It sent the sheet's device fix to the suggest route at full
+precision. It now uses the suggest body's own helper (`travel-buddy-standalone/src/platform/input-assistance/services/suggestBody.ts:101#export function suggestOrigin(`).
+
+**No engine was migrated.** The ratchet the brief asked for already exists and is enforced. Every remaining
+engine waits on a decision this lane cannot make; the list follows the table.
+
+| row | was | now | evidence |
+| --- | --- | --- | --- |
+| G263 `services/inputTelemetry.ts` | W | **W** | Restated. The cell's central fact ("`setTelemetrySink` is still called from no non-test file") has been false since §18. The app installs the sink at boot (`travel-buddy-standalone/app/_layout.tsx:214#const handle = installInputTelemetry({`, mounted at `travel-buddy-standalone/app/_layout.tsx:406#<InputTelemetrySetup />`). Re-verified this wave: `travel-buddy-standalone/src/platform/input-assistance/services/__tests__/installInputTelemetry.test.ts:252#test('§44/G263: app/_layout.tsx really installs the sink at boot'`, 12/12. Deleting the mount turns 1 of 12 red. Not attaching the sink inside the installer turns 7 of 12 red. Both were restored byte-identically (sha-verified). **Still `W`:** no row from production has been observed in `input_assistance_telemetry_events` (§36.2, §37.3). |
+| G306 Measure usefulness without unnecessarily capturing raw private text | W | **W** | The first TURNS-GREEN clause now has its suite, and **it has not run**. It drives the app's own emitter, installer and batcher. The poster makes `telemetryTransport.ts`'s request. The server side is the real router and `requireUser`, writing into migration 2950's table through `creatorLedgerPsqlClient`, and psql reads the rows back (`artifacts/api-server/src/test/db/inputAssistanceTelemetryLive.db.test.ts:121#it("TL-1 — an impression through the installed sink is stored, and read back"`). It also asserts that raw text never reaches a row, that no column carries the account id, and that an event emitted before install or after dispose stores nothing. It skips without a database the way its siblings do (`artifacts/api-server/src/test/db/inputAssistanceTelemetryLive.db.test.ts:95#{ skip: !HAVE_DB && "no LOCAL_DB_URL" }`). **CI-only and unrun.** Stays `W` until it is green on the live-DB tier. |
+| G355 Telemetry — no prohibited raw private-text capture; action/result linkage works | W | **W** | The linkage half now has an assertion against stored rows, on CI only. The impression and the selection that followed it carry the same serve `request_id` in the table (`artifacts/api-server/src/test/db/inputAssistanceTelemetryLive.db.test.ts:139#it("TL-2 — the selection that followed shares the serve's request id: the §44 join holds in the stored rows"`). It has not run here (see G306). `action_completed` has its caller (G319), and `downstream_task_completed` now has three (G320). **Still `W`:** no production row exists to join. |
+| G320 `downstream_task_completed` | W | **W** | There are two more callers, and each screen now keeps the field that served its task. **Create trip** reports `trip.destination` with the bound canonical city credited, plus an accepted AI title that is still the title at create (`travel-buddy-standalone/src/platform/input-assistance/services/servedTaskOutcome.ts:77#export function tripCreationServed(`, `travel-buddy-standalone/app/trip/new.tsx:279#reportServedTask(served, 'trip_created', true)`). **Create event** reports a location picked from `event.location` on that screen and a structured value applied from `event.title`. Neither of those credits an entity, because neither field keeps per-user memory (`travel-buddy-standalone/src/platform/input-assistance/services/servedTaskOutcome.ts:98#export function eventCreationServed(`, `travel-buddy-standalone/app/events/create/index.tsx:621#reportServedTask(served, 'event_created', true)`). A refused or failed write reports `ok: false` and credits nothing. **Not reported:** multi-city stops (`DestinationListEditor`'s picker passes no `assistContext`), a destination from the description pre-fill, a rewritten AI title, and a location that came with a draft. Proven through the real reporter, the real consent gate and a sink spy: `travel-buddy-standalone/src/components/__tests__/TripCreate.taskOutcome.component.test.tsx:156#it('T1: a picked destination and a created trip — reported once, the canonical city credited'` (6/6), `travel-buddy-standalone/app/events/__tests__/create.taskOutcome.component.test.tsx:259#test('E1: a picked location and a published event — reported once for event.location, nothing credited'` (5/5), and the helper suite (9/9). Red first: 4 of 6 and 3 of 5 failed against the unchanged screens. Mutants: 4 trip, 4 event and 6 helper, all red. One helper mutant survived first, and S3 was strengthened until it failed. The Telegraph composer's call belongs to another lane and is not made. **Still `W`:** 3780 is not in the production ledger, the disclosure awaits approval, and `input_outcome_learning_enabled` is seeded FALSE. Until all three change, the reporter is a no-op. |
+| G176 distance band and nearby ranking | C | **C** | A second sender is now under the row's rule. The cell's "the device fix never leaves the device" held for `buildSuggestBody`, but not for the Map search client, which posted the sheet's position to the same route at full precision. It now uses the same helper: 3 decimals, both halves or neither (`travel-buddy-standalone/src/platform/input-assistance/search/mapSearch.ts:65#const origin = suggestOrigin(opts.lat, opts.lng);`). `travel-buddy-standalone/src/platform/input-assistance/search/__tests__/mapSearch.test.ts:57#test('B3: the device fix leaves the device at 3 decimals (~110 m), the same rule as the suggest body'` and B4 were red first. The sheet's transport test now pins a full-precision fix to `1.352`/`103.82` on the wire. Mutants: 2 node and 1 component, all red. |
+| G6 One platform layer; feature teams must not build independent autocomplete engines | W | **W** | No move. Thirteen engines, ratcheted at thirteen, re-verified this wave: 8/8, and a planted debounce over `fetch` with no abort turns rule 1 red. None was migrated (see the list below). |
+| G16 A single cross-app service, not per-screen implementation | W | **W** | No move, for the same reason as G6. Map search is already served by `/input-assistance/suggest`. The other per-screen engines in this lane's files have no gateway context that serves what they search (see the list below). |
+| G18 Every meaningful text field must register an InputContext | W | **W** | No move. There are still 26 records: 14 mounted and 12 registered but unmounted. One of the twelve, `event.description`, sits on a screen in this lane's files. Its context's only assistance is AI writing, so mounting it means offering opt-in AI drafts for a public event description. That is a product decision (G141 asks the same question for captions), not a migration, so it was not done. The other eleven are on other lanes' screens or on no screen. |
+| G359 Do not build a new autocomplete … until the platform has been evaluated | C | **C** | Re-verified. The ratchet the brief asked for already exists and runs in the mobile node suite (`travel-buddy-standalone/src/platform/input-assistance/services/__tests__/noIndependentEngines.test.ts:97#const ENGINE_CEILING = 13;`). It forbids a new engine anywhere in the client and is shrink-only. No second ratchet was written. It would have been a weaker copy of this one. |
+
+**Why no engine moved (G6, G16, G359's ceiling).** Each of the thirteen, with what it is waiting on:
+
+- `src/components/map/MapSearchSheet.tsx` already asks the gateway (`map.search`, served as a search page). What
+  is left in the sheet is the request lifecycle. The shared hook cannot carry it without a change to every field
+  it serves. It does not parse the saved lane's refusal (`laneRefusals`). It would also apply `global_search`'s
+  debounce, exact-text cache and offline tier to a search page. Moving the loop into `platform/input-assistance/`
+  unchanged would shrink the ratchet without meeting G6's criterion, so it was not done.
+- `src/components/ShareSheet.tsx`, `src/components/DiscoveryShareSheet.tsx` and the invite search in
+  `app/events/create/index.tsx` look up any traveller by name or handle, with avatars. The only person context in
+  §5's 29 is `telegraph_recipient`. It serves the viewer's own graph only and projects no avatar
+  (`artifacts/api-server/src/lib/inputAssistance/socialIdentity.ts:187#export async function resolveRecipientSuggestions(`).
+  Moving these three onto it would narrow who can be shared with or invited. That needs a context decision: a
+  30th context, or a ruling that sharing and inviting are graph-only.
+- `src/hooks/useGooglePlacesAutocomplete.ts` and `src/hooks/usePlaceSearch.ts` are the device-side provider lane
+  under `GlobalPlacePicker`. Moving that lane to the server is OD-INPUT-6's call (G222).
+- `src/hooks/useSearchSuggestions.ts` is §38's gated fallback
+  (`travel-buddy-standalone/src/hooks/useGlobalSearchSuggestions.ts:157#const legacyEnabled`). Retiring it
+  changes what global search shows during a gateway outage.
+- `app/search.tsx`: its live results loop would need a gateway search page for `discovery.search`, with tabs.
+  The server does not serve one.
+- Other lanes' files: `src/components/MentionInput.tsx` and
+  `src/features/telegraph/components/TelegraphSearchScreen.tsx` (Telegraph),
+  `src/features/media/components/MediaActionPanels.tsx` (media),
+  `src/components/layover/LayoverModeSheet.tsx` (layover), and `app/discover.tsx`.
+
+**The twelve unmounted fields (G18).** `event.description` is held for the product decision above. The other
+eleven, by owner:
+
+| owner | fields |
+| --- | --- |
+| Trips | `plan.title`, `trip.stop.place` |
+| Compass / Map | `compass.commandbar`, `map.askCompass` |
+| Media / posts | `post.caption` |
+| Passport | `passport.homebase` |
+| Rent-a-Buddy | `buddy.service_area` |
+| Meetups | `meetup.location` |
+| No screen | `geo.country`, `geo.place`, `geo.address` |
+
+### Headline, restated from the rows (wave 5, input follow-ups)
+
+| bucket | wave-4 verification fixes | now |
+| --- | ---: | ---: |
+| BUILT-AND-CORRECT | 319 | 319 |
+| BUILT-BUT-WRONG | 48 | 48 |
+| NOT-BUILT | 2 | 2 |
+| CANNOT-VERIFY | 4 | 4 |
+| total | 373 | 373 |
+
+Of 373 rows: **319 BUILT-AND-CORRECT, 48 BUILT-BUT-WRONG, 2 NOT-BUILT, 4 CANNOT-VERIFY**. CORRECT is unchanged
+at 319 / 373 = 85.5 %. No row changes bucket.
+
+## Row moves — 2026-10-17 build and fix (wave 5, telegraph composer)
+
+Built by the wave-5 Telegraph client lane and appended by the lead. APPEND-ONLY. No row changes bucket.
+
+| row | was | now | evidence |
+| --- | --- | --- | --- |
+| G320 `downstream_task_completed` | W | **W** | **The Telegraph composer's call is now made.** "The Telegraph composer's call belongs to another lane and is not made" is no longer true. A person picked from `telegraph.recipient` in New Telegraph is held for the thread it opened (`travel-buddy-standalone/app/telegraph/new.tsx:74#holdRecipientPick(res.data.threadId, recipientServed(r.userId));`) and reported when that thread's send answers — `message_sent`, the person credited on success only, a refused send reported `ok: false` with the hold kept for the retry, an old hold (30 min) dropped unreported (`travel-buddy-standalone/src/features/telegraph/composer/composerTaskOutcome.ts:74#export function reportThreadSend(`, wired at `travel-buddy-standalone/app/messages/[id].tsx:1713#if (!res?.ok) setSendFailed(true); reportThreadSend(id, !!res?.ok);`). A location sheet the composer's "meet at" bar pre-filled reports `telegraph.message` with no credit (`travel-buddy-standalone/app/messages/[id].tsx:2377#if (servedByMeetAt) reportMeetAtSend(res.ok);`). Proven through the real reporter, the real consent gate and a sink spy: `travel-buddy-standalone/src/features/telegraph/__tests__/composerTaskOutcome.component.test.tsx:153#it('N1 picking a person` and `travel-buddy-standalone/src/features/telegraph/__tests__/composerTaskOutcome.component.test.tsx:97#it('O2 a held pick`; nothing without consent (`travel-buddy-standalone/src/features/telegraph/__tests__/composerTaskOutcome.component.test.tsx:119#it('O4 without consent`). **Not reported:** the bar's `share_entity` candidate — its confirmed share runs inside `confirmShareObject`, whose answer the screen does not see, and its mount is source-fenced by meetAtActions.component.test.tsx (input lane). **Still W:** 3780 is not in the production ledger, the disclosure awaits approval and `input_outcome_learning_enabled` is seeded FALSE. |
+
+#### Headline, restated from the rows (wave 5, telegraph composer)
+
+| bucket | before | now |
+| --- | ---: | ---: |
+| BUILT-AND-CORRECT | 319 | 319 |
+| BUILT-BUT-WRONG | 48 | 48 |
+| NOT-BUILT | 2 | 2 |
+| CANNOT-VERIFY | 4 | 4 |
+| total | 373 | 373 |
+
+## Row moves — 2026-10-17 build and fix (wave 5, G160)
+
+Built by the wave-5 G160 lane. APPEND-ONLY. No row changes bucket. G160's stated reason is no longer true and is restated against what is left; G18's count is restated because this build declares one more field.
+
+| row | was | now | evidence |
+| --- | --- | --- | --- |
+| G160 Itinerary blocks | W | **W** | **The old reason is false; the row stays W on what is left.** "NOT built: §24's 'Create 3 Trip stops' with their TIMES" no longer holds. The trip screen's structure composer now mounts an itinerary paste. The §24 extract route reads the paste under `trip_stop_place` and writes nothing (`travel-buddy-standalone/src/features/trips/planning/TripItineraryPaste.tsx:158#extract({ context: 'trip_stop_place', fieldId: GEO_FIELD_IDS.tripStopPlace`), and each line that matched a place is reviewed beside the instant it was read as. On the confirm tap, and only then, each ticked stop is one `ADD_COMMITMENT` with `starts_at`, built by the composer's own `commitmentCommand` (an additive, optional `startsAt` that must carry its offset) and sent in paste order (`travel-buddy-standalone/src/features/trips/planning/TripItineraryPaste.tsx:194#const sent = prior ? { key: prior.key, input: prior.input }`). The kernel stores it as a timestamptz (`artifacts/api-server/src/migrations/2765_trip_kernel_leg_and_commitment_families.sql:210#(v_payload->>'starts_at')::timestamptz,`). **Nothing is guessed** (`travel-buddy-standalone/src/features/trips/planning/itineraryProposal.ts:120#export function stopState(`). A bare "7" is held for morning or evening (`travel-buddy-standalone/src/platform/input-assistance/paste/itineraryTimes.ts:58#return { kind: 'meridiem'`). A day the trip's dates do not pin down (two Fridays, no heading, "Day 9" of a five-day trip) is held with the days to pick from. The zone rule is the composer's: the matched place's zone, else the trip's, else the phone's, taken only on a tap and labelled as the phone's (`travel-buddy-standalone/src/features/trips/planning/itineraryProposal.ts:135#const zone = pick.zone ?? tripZone ?? phoneZone;`). A wall time the clocks skip is refused, not moved (`travel-buddy-standalone/src/platform/input-assistance/paste/itineraryTimes.ts:240#if (hits.length === 0) return { kind: 'skipped' };`), and one that happens twice is held for the person to pick. **Nothing fails silently:** each stop shows "Added", the refusal with its reason, or "Couldn't reach the trip … Nothing was added", and the outcome is counted (`travel-buddy-standalone/src/features/trips/planning/TripItineraryPaste.tsx:268#{addedCount} of {results.length} added.`). An unreachable kernel is retried with the same key and payload. **Gates.** The census names no flag, consent or disclosure for this row, and the path has none to name: no model, no provider, no learning write. The control is hidden while the policy authority answers `no_assistance` for `trip.stop.place`, the rule `SmartInput` applies (`travel-buddy-standalone/src/features/trips/planning/TripItineraryPaste.tsx:204#policy.mode === 'no_assistance') return null;`). Proven through the real composer, extract client, proposal and builder, with only `fetch`, the token, the trip read and the kernel issuer faked: `travel-buddy-standalone/src/features/trips/planning/__tests__/TripItineraryPaste.component.test.tsx:110#it('C1 the trip screen` (7/7), plus `itineraryProposal.test.ts` (10/10) and `itineraryTimes.test.ts` (15/15). Red first: removing the mount line turns 7 of 7 red, and dropping `starts_at` from the builder turns 2 node and 2 component cases red. Twelve mutants (guess pm, move a skipped time, take the earlier of two instants, take the first of two matching weekdays, apply the phone's zone untapped, pre-tick a partial answer, a fresh key on retry, an outcome line without the failures, no gate, a pre-chosen type, stop at the first failure, a zone-less instant) all turned red and were restored byte-identically (sha-verified). **Still W:** (1) a stop keeps its time and type but NOT its place or its words. `trip_commitments` has no label column, and its `place_id` is not in the venue's id-space (a `discovery_places` id), so nothing is written there. The review says this before anything is sent (`travel-buddy-standalone/src/features/trips/planning/TripItineraryPaste.tsx:283#Each ticked stop becomes a commitment`). (2) Nothing on the trip screen reads a commitment's time back: the stage spine counts commitments and shows no time. (3) A line that matches no place is dropped by the server (lead ruling PR-D2-7c), so §24's own example ("Dinner at 7", "Rooftop at 9", "Club around 11", with no named venue) yields no stops. (4) `starts_at` landing is read from the kernel's SQL, not observed: the live tier's commitment case sends none. |
+| G18 Every meaningful text field must register an InputContext | W | **W** | No move. The count is restated: 26 records, now 15 mounted and 11 registered but unmounted. `trip.stop.place` is declared by the itinerary paste (`travel-buddy-standalone/src/platform/input-assistance/contexts/fieldInventory.ts:295#screenRoute: '/trip/[id]',`). The api-server inventory suite holds that as a measurement, 14/14 (`artifacts/api-server/src/test/inputAssistanceFieldInventory.test.ts:312#MUTATION-PROOF: flip any row's migrationStatus`); reverting the record to unmounted turns 1 of 14 red. It is a paste box only: no typeahead declares the context. The Trips line of the unmounted table now holds `plan.title` alone. |
+| G162 Bulk extraction must always lead to a review screen before persistent mutation | C | **C** | A second bulk path is held to the same rule. The itinerary paste issues no kernel command while its review is up, after ticks and choices, or after Close; only the confirm tap sends (`travel-buddy-standalone/src/features/trips/planning/__tests__/TripItineraryPaste.component.test.tsx:131#it('C2 the proposal is shown`). The stops' kind is never assumed: with no type chosen the confirm stays disabled, and a pre-chosen type is a red mutant. |
+
+#### Headline, restated from the rows (wave 5, G160)
+
+| bucket | before | now |
+| --- | ---: | ---: |
+| BUILT-AND-CORRECT | 319 | 319 |
+| BUILT-BUT-WRONG | 48 | 48 |
+| NOT-BUILT | 2 | 2 |
+| CANNOT-VERIFY | 4 | 4 |
+| total | 373 | 373 |
+
+### Correction (2026-10-17, wave 5) — FSQ city places: ten fsq_places columns do not exist in production
+
+*Measured on branch `claude/wave4-build-20261017` against the working tree. Uncommitted and undeployed. **NO ROW MOVES.***
+
+**What was broken, in production.** `GET /api/cities/:cityKey/places` reads the FSQ OS Places layer through
+`getCityPlaces`. That read selected ten "extended" columns that no SQL in the repository ever declared: `tel`,
+`website`, `rating`, `price`, `stats`, `photos`, `hours`, `features`, `amenities` and `photo_url`. `fsq_places` has the
+19 columns of migration 0184; the baseline and the 2026-09-22 production capture agree. PostgREST failed the whole read
+with 42703. `getCityPlaces` gave its fail-soft empty answer, and the route answered `200 { places: [], enabled: true }`
+for every city. Production has `fsq_places_enabled` TRUE (2026-09-22 capture). The provider cluster above calls the
+flag "seeded FALSE"; that describes the seed, not production. The provider federation that G222 grades reads only
+0184's columns and was not affected. No row grades the city places route, so no row moves.
+
+**What changed, with no migration.** The select names only `fsq_places`' own columns
+(`artifacts/api-server/src/lib/fsq/fsqPlaces.ts:164#ONLY fsq_places' own columns`). The `FsqPlace` fields the open
+dataset has no value for now answer null or `[]`, which their type already allowed. Nothing is invented. A failed read
+is now logged before the empty answer.
+
+**Tests.** `artifacts/api-server/src/test/fsqPlacesProductionColumns.test.ts:94#it("names no dead column and returns the city's places (the 42703 answered none)"`
+(3 cases on schemaStrictSupabase). Red first: 3 of 3 are red on the pre-fix read. Two mutants were killed, each
+restored and checked by sha256: all ten names put back, and one name (`photos`) put back.
+
+- NOT-GRADED: artifacts/api-server/src/lib/fsq/fsqPlaces.ts — the FSQ city read, cited for this fix; no G row grades it.
+- NOT-GRADED: artifacts/api-server/src/test/fsqPlacesProductionColumns.test.ts — this correction's own test; no G row rests on it.
+
+Rows: none move. Headline unchanged: 319 BUILT-AND-CORRECT, 48 BUILT-BUT-WRONG, 2 NOT-BUILT, 4 CANNOT-VERIFY of 373.

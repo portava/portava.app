@@ -25,8 +25,8 @@ import { X, AlertCircle, RefreshCw } from 'lucide-react-native';
 import { DisplayMediaImage } from './ui/DisplayMediaImage.tsx';
 import { VideoThumbnail } from './ui/VideoThumbnail.tsx';
 import { openMessageVideo } from '../features/telegraph/media/compactPlaybackStore.ts';
-import { color, radius, space, type as t } from '../theme/tokens.ts';
-import { TG } from '../theme/telegraphTokens.ts';
+import { color, radius, space, type as t } from '../theme/tokens.ts'; import { messageTreeMediaOrNull } from '../features/telegraph/media/messageTreeMedia.ts';
+import { useTelegraphTheme, type TelegraphPalette } from '../features/telegraph/theme/telegraphTheme.ts';
 
 /** Max display width for inline media inside a bubble (pt). */
 const BUBBLE_MEDIA_WIDTH = 260;
@@ -50,15 +50,13 @@ export interface MessageMediaBubbleProps {
   onCancel?: () => void;
   onRetry?: () => void;
 }
-
 function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 }
-
 export function MessageMediaBubble({
   mediaType,
-  mediaUrl,
-  thumbnailUrl,
+  mediaUrl: rawMediaUrl,
+  thumbnailUrl: rawThumbnailUrl,
   durationSeconds,
   mine,
   senderName,
@@ -68,6 +66,8 @@ export function MessageMediaBubble({
   onCancel,
   onRetry,
 }: MessageMediaBubbleProps) {
+  const { palette, styles: s } = useTelegraphTheme(makeStyles);
+  const mediaUrl = messageTreeMediaOrNull(rawMediaUrl); const thumbnailUrl = messageTreeMediaOrNull(rawThumbnailUrl); // census T446: storage or nothing
   // ── Uploading state ───────────────────────────────────────────────────────
   if (uploadState === 'uploading') {
     return (
@@ -77,7 +77,7 @@ export function MessageMediaBubble({
         )}
         <View style={s.uploadingContent}>
           <View style={s.progressRingWrap}>
-            <ActivityIndicator size="large" color={mine ? '#fff' : color.signal} />
+            <ActivityIndicator size="large" color={mine ? palette.sentText : palette.operational} />
             <Text style={[s.progressPct, mine && s.progressPctMine]}>
               {Math.round(uploadProgress * 100)}%
             </Text>
@@ -87,7 +87,7 @@ export function MessageMediaBubble({
           </Text>
           {onCancel && (
             <Pressable style={s.cancelBtn} onPress={onCancel} hitSlop={8}>
-              <X size={14} color={mine ? '#fff' : color.mute} />
+              <X size={14} color={mine ? palette.sentText : palette.mute} />
               <Text style={[s.cancelText, mine && s.cancelTextMine]}>Cancel</Text>
             </Pressable>
           )}
@@ -166,21 +166,22 @@ export function MessageMediaBubble({
   );
 }
 
-const s = StyleSheet.create({
+// census T123: the scheme's colours. The failed state keeps its fixed error red.
+const makeStyles = (p: TelegraphPalette) => StyleSheet.create({
   bubble: {
     borderRadius: 14,
     overflow: 'hidden',
     maxWidth: BUBBLE_MEDIA_WIDTH,
   },
   bubbleOther: {
-    backgroundColor: TG.recvBubble,
+    backgroundColor: p.recvBubble,
     borderWidth: 1,
-    borderColor: TG.recvBorder,
+    borderColor: p.recvBorder,
     borderBottomLeftRadius: 4,
     alignSelf: 'flex-start',
   },
   bubbleMine: {
-    backgroundColor: TG.sentBubble,
+    backgroundColor: p.sentBubble,
     borderBottomRightRadius: 4,
     alignSelf: 'flex-end',
   },
@@ -191,7 +192,7 @@ const s = StyleSheet.create({
   senderName: {
     ...t.stamp,
     fontFamily: 'Courier',
-    color: color.mute,
+    color: p.mute,
     fontSize: 10,
     marginBottom: 2,
     paddingHorizontal: 10,
@@ -213,25 +214,25 @@ const s = StyleSheet.create({
   time: {
     ...t.stamp,
     fontFamily: 'Courier',
-    color: color.faint,
+    color: p.faint,
     fontSize: 10,
     textAlign: 'right',
     paddingHorizontal: 10,
     paddingVertical: 5,
   },
-  timeMine: { color: TG.sentTextMute },
+  timeMine: { color: p.sentTextMute },
 
   // Uploading
   uploadingBubble: { padding: space.md },
   uploadingContent: { alignItems: 'center', gap: 8, paddingVertical: space.sm },
   progressRingWrap: { position: 'relative', alignItems: 'center', justifyContent: 'center' },
-  progressPct: { ...t.stamp, fontSize: 11, color: color.mute, marginTop: 4 },
-  progressPctMine: { color: TG.sentTextMute },
-  uploadingLabel: { ...t.small, color: color.mute, fontSize: 12, textAlign: 'center' },
-  uploadingLabelMine: { color: TG.sentTextMute },
-  cancelBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 4, paddingHorizontal: 8, borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze },
-  cancelText: { ...t.stamp, color: color.mute, fontSize: 11 },
-  cancelTextMine: { color: TG.sentTextMute },
+  progressPct: { ...t.stamp, fontSize: 11, color: p.mute, marginTop: 4 },
+  progressPctMine: { color: p.sentTextMute },
+  uploadingLabel: { ...t.small, color: p.mute, fontSize: 12, textAlign: 'center' },
+  uploadingLabelMine: { color: p.sentTextMute },
+  cancelBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 4, paddingHorizontal: 8, borderRadius: radius.pill, borderWidth: 1, borderColor: p.haze },
+  cancelText: { ...t.stamp, color: p.mute, fontSize: 11 },
+  cancelTextMine: { color: p.sentTextMute },
 
   // Failed
   failedBubble: { padding: space.md },

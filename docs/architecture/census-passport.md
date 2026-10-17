@@ -2952,3 +2952,23 @@ strict typing diagnostics; no new diagnostics remain in that file. This is not
 exhaustive field validation, cross-account transport cancellation, atomic saving,
 device acceptance or deployed availability. P45/P61/P77 and all census grades,
 counts and `head_commit` remain unchanged.
+
+### Correction (2026-10-17, wave 5) — P120's Shared Moments evidence: the member feed's ambiguous embed never resolved in production
+
+**The production fact.** The lead read the production catalog on 2026-10-17 (read-only). `public.posts` has three
+keys to `public.profiles`: `posts_author_id_fkey`, `posts_created_by_fkey` and `posts_updated_by_fkey`. The Shared
+Moment member feed, `GET /shared-moments/:id/feed`, embedded `profiles(...)` under each contribution's post with no
+hint. PostgREST cannot choose a key there (PGRST201), so the feed always answered `db_error` in production. It is
+one of the `routes/sharedMoments.ts` reads P120 names as applying the block set (`fetchBlockedSet`).
+
+**The fix.** The embed names the author on the same line
+(`artifacts/api-server/src/routes/sharedMoments.ts:314#profiles!author_id(id, is_private))`). The test doubles now
+refuse an ambiguous embed, as PostgREST does, and
+`artifacts/api-server/src/test/ambiguousEmbedHints.test.ts` drives the feed on the schema-strict double. These are
+local runs on fakes, not evidence about a deployment.
+
+**No row moves.** P120 grades whether a Passport block propagates. A feed that always failed served nothing to a
+blocked person, so the block held there. It held by failing, not by the block check. The router's other reads,
+including the participation reads, resolve and apply the block set as before.
+
+- NOT-GRADED: artifacts/api-server/src/test/ambiguousEmbedHints.test.ts — the route tests for this correction, which moves no row.

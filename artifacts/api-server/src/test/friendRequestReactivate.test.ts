@@ -61,7 +61,7 @@ function makeClient(state: FakeState) {
       order() { return b; },
       maybeSingle: () => resolve(true),
       single: () => resolve(false),
-      then(onF: any, onR: any) { return resolve(true).then(onF, onR); },
+      then(onF: any, onR: any) { return (insertPayload || updatePayload ? resolve(true) : Promise.resolve({ data: rows(), error: null })).then(onF, onR); }, // census-telegraph T220 part 2: a plain read answers a LIST — one row or null is a shape the shared block readers refuse
     };
 
     async function resolve(maybe: boolean) {

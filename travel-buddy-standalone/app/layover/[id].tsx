@@ -58,7 +58,7 @@ import { LayoverPlanSection } from '../../src/components/layover/LayoverPlanSect
 import { LayoverRecsSection } from '../../src/components/layover/LayoverRecsSection';
 import { LayoverMapCard } from '../../src/components/layover/LayoverMapCard';
 import { LayoverPeopleSection } from '../../src/components/layover/LayoverPeopleSection';
-import { LayoverCrewSection } from '../../src/components/layover/LayoverCrewSection';
+import { LayoverCrewSection } from '../../src/components/layover/LayoverCrewSection'; import { LayoverCrewLocationCard } from '../../src/components/layover/LayoverCrewLocationCard'; import type { CrewLocationRead } from '../../src/services/layoverCrewLocation'; // census-layover L132/L124 (on this line so no line below moves)
 import { LayoverDiscoveryCard } from '../../src/components/layover/LayoverDiscoveryCard';
 import { LayoverSafeReturnCard } from '../../src/components/layover/LayoverSafeReturnCard';
 import { LayoverEndSheet } from '../../src/components/layover/LayoverEndSheet'; import { endLayoverToast } from '../../src/components/layover/layoverEndToast';
@@ -161,7 +161,7 @@ export default function LayoverDashboardScreen() {
     degraded: true, degradedReasons: ['not_yet_read'], withheld: [],
   });
   const [buddies, setBuddies] = useState<LayoverBuddiesAnswer | null>(null); // L273/L294: the answer, null until read
-  const [shareBusy, setShareBusy] = useState(false);
+  const [shareBusy, setShareBusy] = useState(false); const [crewLoc, setCrewLoc] = useState<CrewLocationRead | null>(null); // census-layover L124 — the crew location card's last read; the map draws crewmates only from an available, in-crew one
   const [addingRecId, setAddingRecId] = useState<string | null>(null);
   const [reminderBusy, setReminderBusy] = useState(false);
   const [endBusy, setEndBusy] = useState(false);
@@ -943,7 +943,7 @@ export default function LayoverDashboardScreen() {
               airportReturn={airportReturn}
               envelope={overview.safeEnvelope ?? null} envelopeGate={overview.safeEnvelopeGate ?? null}
               candidateFeasibility={candidateFeasibility}
-              offline={overview.offlineBundle ?? null}
+              offline={overview.offlineBundle ?? null} crewLocations={crewLoc && crewLoc.ok && crewLoc.available && crewLoc.inCrew ? crewLoc.crewmates : null} /* census-layover L124: the SAME read the crew location card landed; feature off, no crew or a failed read is null */
               nowMs={nowMs} budgetChips={overview.mapBudgetChips ?? null} sessionId={id ?? null} /* census-layover L118: the server-offered time-budget chips; each press is a server simulation */
             />
             {/* The overview's `othersInCity` is a SECOND count, from the
@@ -998,7 +998,7 @@ export default function LayoverDashboardScreen() {
               sessionId={session.id}
               timezone={airport.timezone}
               refreshKey={dataEpoch}
-            />
+            /><LayoverCrewLocationCard sessionId={session.id} timezone={airport.timezone} refreshKey={dataEpoch} onRead={setCrewLoc} />{/* census-layover L132 — §14 L4 temporary location. A SIBLING of the crew section, never inside it (its own read would join the section's fetches); it draws nothing unless the server says the feature is on and this traveller is in a crew */}
           </View>
         )}
       </ScrollView>

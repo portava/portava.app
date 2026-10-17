@@ -265,7 +265,7 @@ export function buildTripPassportProjection(inputs: PostTripInputs): TripPasspor
 /* ── the reader ─────────────────────────────────────────────────────────── */
 
 import { tripOperationalProjectionsGate } from "../policies/tripOperationalProjections.js";
-import { logger } from "../../../lib/logger.js";
+import { logger } from "../../../lib/logger.js"; import { readStampPresenceView } from "../../../services/passport/stampPresenceView.js";
 import { withholdPrivatePlanItems, PLAN_ITEM_PRIVACY_COLUMNS, ownerOnlyAccess, canSeePlanItemLocation } from "../policies/privateAnchorAccess.js";
 import { planItemAccessFor } from "../../../server/trips/privateAnchorShares.js";
 
@@ -312,7 +312,7 @@ export async function readPostTripInputs(sc: any, tripId: string, viewerId: stri
 
   let stamps: PostTripStamp[] | null = null;
   const { data: st, error: stErr } = await sc.from("user_stamps")
-    .select("id, stamp_definition_id, earned_at, city, country, is_revoked")
+    .select("id, user_id, source_type, source_id, stamp_definition_id, earned_at, city, country, is_revoked")
     .eq("user_id", viewerId).eq("source_type", "trips").eq("source_id", tripId);
   if (stErr) { unread.push("user_stamps"); log.warn({ err: stErr.message, tripId }, "post-trip: stamps unreadable"); }
   else {
@@ -324,11 +324,24 @@ export async function readPostTripInputs(sc: any, tripId: string, viewerId: stri
       if (dErr) { unread.push("stamp_definitions"); log.warn({ err: dErr.message, tripId }, "post-trip: stamp definitions unreadable"); }
       else for (const d of (defs ?? []) as any[]) names.set(String(d.id), { slug: d.slug ?? null, name: d.name ?? null });
     }
-    stamps = rows.map((r) => ({
-      id: String(r.id), definitionId: String(r.stamp_definition_id),
-      slug: names.get(String(r.stamp_definition_id))?.slug ?? null, name: names.get(String(r.stamp_definition_id))?.name ?? null,
-      city: r.city ?? null, country: r.country ?? null, earnedAt: r.earned_at ?? null, revoked: r.is_revoked === true,
-    }));
+    // census-highlights-memories H4 (wave 5, services/passport/stampPresenceView.ts):
+    // "what this trip contributed to the viewer's Passport" names a stamp's
+    // place only when it is a presence stamp whose occurrence evidence (a
+    // check-in on THIS trip) holds, and drops a completion stamp minted for a
+    // trip nobody checked in on — its name alone claims the trip was taken. An
+    // unreadable definition leaves the slug empty, which reads as not presence:
+    // the stamp stays as an achievement, without a place.
+    const slugged = rows.map((r) => ({ ...r, slug: names.get(String(r.stamp_definition_id))?.slug ?? "" }));
+    const view = await readStampPresenceView(sc as any, slugged, log);
+    if (view.unreadable.length > 0) unread.push(...view.unreadable.map((t) => `${t} (stamp evidence)`));
+    stamps = slugged.filter((r) => view.presenceClaimHolds(r)).map((r) => {
+      const place = view.place(r);
+      return {
+        id: String(r.id), definitionId: String(r.stamp_definition_id),
+        slug: names.get(String(r.stamp_definition_id))?.slug ?? null, name: names.get(String(r.stamp_definition_id))?.name ?? null,
+        city: place.city, country: place.country, earnedAt: r.earned_at ?? null, revoked: r.is_revoked === true,
+      };
+    });
   }
 
   let outcomes: PostTripOutcome[] | null = null;

@@ -33,7 +33,7 @@ import type { CompassItem, CompassItemType, CompassProfile } from "./types.js";
 import { runSafetyFilterBatch }                              from "./CompassSafetyFilter.js";
 import { sanitizeItem }                                      from "./CompassPrivacyGuard.js";
 import { getFlags }                                          from "./flags.js";
-import { isPostPublished }                                   from "../lib/postVisibility.js";
+import { isPostPublished }                                   from "../lib/postVisibility.js"; import { readBlockDirections } from "../lib/exclusionSet.js"; // census-telegraph T220; on this line so no cited line moves
 import { loadBoostLiftWithheld }                             from "./CompassFeedBuilder.js"; import { acceptedTripRows, acceptedMemberTrips } from "./CompassCurrentTrip.js"; import { buildTripCompassOwnedTripsProjection, type TripCompassTripSummary } from "../domain/trips/projections/TripCompassTripSummaryProjection.js"; import { buildTripCompassMemberTripsProjection } from "../domain/trips/projections/TripCompassMembershipProjection.js"; // CT-02
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -224,20 +224,20 @@ function applySafetyAndPrivacy(
  * was converted into a leak on exactly the DB-degradation path it guards.
  */
 async function loadBlockedIds(db: SupabaseClient, userId: string): Promise<Set<string>> {
-  const blocked = new Set<string>();
-  const [outgoingRes, incomingRes] = await Promise.all([
-    db.from("blocks").select("blocked_id").eq("blocker_id", userId),
-    db.from("blocks").select("blocker_id").eq("blocked_id",  userId),
-  ]);
-  if (outgoingRes.error || incomingRes.error) {
+  // census-telegraph T220: both directions through the shared reader, readBlockDirections —
+  // each read WHOLE by key (one range-less read per direction was cut at db-max-rows, and
+  // the blocks past the cut were served here) — and EVERY failure (a returned error, a
+  // thrown read, an answer that is not a row list, a row naming nobody) is `ok: false`.
+  const blocks = await readBlockDirections(db, userId);
+  if (!blocks.ok) {
     throw new Error(
       "CompassFallbackFeedBuilder: block-list load failed — failing closed: " +
-      (outgoingRes.error?.message ?? incomingRes.error?.message),
+      blocks.reason,
     );
   }
-  for (const r of ((outgoingRes.data as any[]) ?? [])) blocked.add(r.blocked_id as string);
-  for (const r of ((incomingRes.data as any[]) ?? [])) blocked.add(r.blocker_id as string);
-  return blocked;
+  // The same throw, so buildFallbackFeed degrades to the safety tools as it always did;
+  // and a block either way hides the person here: the union of the two directions.
+  return new Set<string>(blocks.ids);
 }
 
 // ── Category fetchers ─────────────────────────────────────────────────────────

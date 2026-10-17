@@ -21,7 +21,7 @@
  * (arrival/night/budget, etc.) explicit, inspectable inputs to the prompt.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { CompassProfile, CompassContextState, CompassIntentMode } from "./types.js";
+import type { CompassProfile, CompassContextState, CompassIntentMode } from "./types.js"; import { readStampPresenceView, withPresencePlaces } from "../services/passport/stampPresenceView.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -264,13 +264,13 @@ export async function buildStructuredCompassContext(
     // lat/lng columns intentionally NOT selected
     const { data: stamps } = await sc
       .from("user_stamps")
-      .select("title_override, city, country, earned_at, is_revoked, stamp_definitions(name)")
+      .select("title_override, city, country, earned_at, is_revoked, user_id, source_type, source_id, stamp_definitions(slug, name)")
       .eq("user_id", userId)
       .eq("is_revoked", false)
       .order("earned_at", { ascending: false })
       .limit(10);
-
-    result.recentStamps = ((stamps ?? []) as any[])
+    const stampView = await readStampPresenceView(sc, (stamps ?? []) as any[]); // H4 (wave 5, stampPresenceView.ts): the AI is told a stamp's place only with occurrence evidence, and never an unevidenced presence claim
+    result.recentStamps = withPresencePlaces(stampView, ((stamps ?? []) as any[]).filter((r) => stampView.presenceClaimHolds(r)), ["city", "country"])
       .map((r) => stripCoordinateFields(r))
       .map((r: any) => {
         const defName = r.stamp_definitions?.name ?? null;

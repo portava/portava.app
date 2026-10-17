@@ -51,6 +51,8 @@ interface FakeState {
   trips?: any[];
   posts?: any[];
   events?: any[];
+  /** H4, wave 5: GPS-postcard evidence for presence stamps (stampPresenceView.ts). */
+  passportPostcards?: any[];
   /** When true, stamp_award_events inserts will always fail with a generic error */
   failAuditInserts?: boolean;
 }
@@ -73,6 +75,7 @@ function makeClient(state: FakeState = {}) {
     trips:                  state.trips ?? [],
     posts:                  state.posts ?? [],
     events:                 state.events ?? [],
+    passport_postcards:     state.passportPostcards ?? [],
   };
 
   const userId = state.currentUserId ?? ALICE_ID;
@@ -1027,11 +1030,17 @@ describe("Stamp feed read-path privacy", () => {
   let server: ReturnType<typeof createServer>;
   let port: number;
 
+  // H4, wave 5 (stampPresenceView.ts): a city or country feed lists a stamp
+  // "in" Da Nang only when it is a presence stamp whose own evidence holds. These
+  // are GPS-postcard city stamps, so each names its post (and embeds its slug)
+  // and the eligible postcards are staged below. HEAD read neither: the
+  // privacy assertions here are unchanged.
   const stamp = (uid: string, id: string) => ({
-    id, user_id: uid, stamp_definition_id: DEF_ID, source_type: "manual",
+    id, user_id: uid, stamp_definition_id: DEF_ID, source_type: "posts", source_id: `post-${id}`,
     earned_at: "2026-07-01T00:00:00Z", city: "Da Nang", country: "Vietnam",
     title_override: null, visibility: "public", display_on_passport: true,
     is_revoked: false, created_at: "2026-07-01T00:00:00Z", catalog_id: null,
+    stamp_definitions: { slug: "city_explorer", name: "City Explorer" },
   });
   const state: FakeState = {
     currentUserId: ALICE_ID,
@@ -1048,6 +1057,9 @@ describe("Stamp feed read-path privacy", () => {
       stamp(DAVE_ID,  "s-dave"),
     ],
     blocks: [{ id: "blk-1", blocker_id: ALICE_ID, blocked_id: DAVE_ID }],
+    passportPostcards: [ALICE_ID, BOB_ID, CAROL_ID, DAVE_ID].map((uid) => ({
+      user_id: uid, post_id: `post-s-${uid === ALICE_ID ? "alice" : uid === BOB_ID ? "bob" : uid === CAROL_ID ? "carol" : "dave"}`, stamp_eligible: true, stamp_revoked: false,
+    })),
   };
 
   before(async () => {
@@ -1094,5 +1106,29 @@ describe("Stamp feed read-path privacy", () => {
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.equal((body.stamps ?? []).length, 1, "public passport still served");
+  });
+
+  // census-telegraph T220 (wave 5): the feeds' block filter moved onto the shared
+  // reader. Its FAILURE half had no test — serving the unfiltered page on an
+  // unreadable `blocks` survived every suite — so the feeds are pinned here.
+  it("an unreadable blocks table serves nobody on the feeds, never the unfiltered page (T220)", async () => {
+    const unreadable: any = new Proxy({}, {
+      get: (_t, k) => k === "then"
+        ? (resolve: any) => resolve({ data: null, error: { message: "blocks unreadable (planted)", code: "XX000" } })
+        : () => unreadable,
+    });
+    const healthy = makeClient(state);
+    _setTestClient({ ...healthy, from: (t: string) => (t === "blocks" ? unreadable : healthy.from(t)) }, true);
+    try {
+      for (const path of ["/stamps/recent", "/stamps/city/Da%20Nang", "/stamps/country/Vietnam"]) {
+        const res = await get(path);
+        assert.equal(res.status, 200, `${path} status`);
+        const ids = ownerIds(await res.json());
+        assert.ok(!ids.has(CAROL_ID), `${path}: an unreadable block list must not serve even a public owner`);
+        assert.ok(!ids.has(DAVE_ID), `${path}: an unreadable block list must not serve the blocked owner`);
+      }
+    } finally {
+      _setTestClient(makeClient(state), true);
+    }
   });
 });

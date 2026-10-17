@@ -19,7 +19,7 @@ import { isFlagEnabled } from "../../lib/featureFlags.js";
 import { NotificationPreferenceService } from "./NotificationPreferenceService.js";
 import { TEMPLATES } from "./NotificationTemplateService.js";
 import type { NotificationRow } from "./NotificationService.js"; import { iosTimeSensitiveRolloutEnabled, returnActionIsEssential, returnWarningActionOf, returnWarningPushDelivery } from "../airport/LayoverReturnEscalation.js"; import { timeSensitiveCapableTokens } from "../../lib/pushDeviceCapability.js";
-import type { NotificationPriority, NotificationChannel } from "./NotificationTemplateService.js";
+import type { NotificationPriority, NotificationChannel } from "./NotificationTemplateService.js"; import { bandFor } from "../../domain/telegraph/policies/attentionLadder.js";
 import {
   evaluateNotification,
   type NotificationType,
@@ -57,7 +57,7 @@ function mapToCompassNotificationType(n: NotificationRow): NotificationType {
   const cat = (n.category ?? "").toLowerCase();
   const evt = (n.eventType ?? "").toLowerCase(); const returnAction = returnWarningActionOf(n.eventType); if (returnAction) return returnActionIsEssential(returnAction) ? "emergency_safety" : "trip_critical"; // OD-1012-LAY-1: a layover return warning is about the traveller's OWN flight, never a world change the Attention Engine may budget away; "leave now" is the ladder's urgent rung
 
-  if (cat === "safety" || evt.includes("sos") || evt.includes("safe_return") || evt.includes("danger")) {
+  if (bandFor(n.eventType) === "P0_SAFETY" || cat === "safety" || evt.includes("sos") || evt.includes("safe_return") || evt.includes("danger")) { // census-telegraph T254 (2026-10-17): a §19 P0 SAFETY event (attentionLadder's EVENT_BAND) is emergency_safety by its BAND, not its name — circle.need_help_host_alert matched "circle" (activity_social) and was held in quiet hours even with the recipient's safety_override on
     return "emergency_safety";
   }
   if (cat === "moderation" || evt.includes("block") || evt.includes("suspend") || evt.includes("report_confirmed")) {

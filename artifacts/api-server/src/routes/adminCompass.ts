@@ -132,10 +132,10 @@ router.get("/admin/compass/dashboard", async (req, res) => {
       completedEventsRes,
       upcomingEventsRes,
     ] = await Promise.allSettled([
-      // Abuse flags (last 30 days)
+      // Abuse flags (last 30 days), by `detected_at`: the table has no `created_at`, and filtering on it failed this read with 42703 on every call, so the dashboard showed zero flags (wave 5, 2026-10-17, test/adminCompassAbuseFlagsWindow.test.ts)
       sc.from("compass_abuse_flags")
         .select("severity, status")
-        .gte("created_at", thirtyDaysAgo),
+        .gte("detected_at", thirtyDaysAgo),
 
       // Safety filter fires (last 30 days)
       sc.from("compass_safety_filter_logs")

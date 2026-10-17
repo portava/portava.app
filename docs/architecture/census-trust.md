@@ -4715,3 +4715,225 @@ a token failure, whereas the corrected UI retains Retry for the same intent.
 The other 33 original probes pass. These overlapping counts are not unique
 requirements, device acceptance or a production-readiness claim. Native evidence
 uses disposable local PostgreSQL 17.11 only; hosted Linux CI remains unobserved.
+
+## Row moves — 2026-10-17 build and fix (wave 4)
+
+*Measured on branch `claude/wave4-build-20261017` at `40db3ff94` plus uncommitted wave-4 work. No database was
+read or written, no flag was touched, no provider was called. `head_commit` is not re-declared. **ONE ROW MOVES:
+TV-7c, N → W.** No legal text was written: every sentence the row rests on was already in the tree, and the one
+change made here is a test.*
+
+| id | was | now | the evidence |
+|---|---|---|---|
+| TV-7c the identity-check data flow, documented in the privacy surface | N | **W** | **Built, and mounted.** A Settings → Privacy entry (`travel-buddy-standalone/app/settings/index.tsx:552#accessibilityLabel="Privacy information"`, `travel-buddy-standalone/app/settings/index.tsx:555#router.push('/settings/privacy-policy')`; route `travel-buddy-standalone/src/navigation/portavaRoutes.ts:1985#'settings-privacy-policy'`) opens a screen (`travel-buddy-standalone/app/settings/privacy-policy.tsx:22#export default function PrivacyInformationScreen()`) that documents V-7's data flow end to end: the session and the provider's hosted flow (`travel-buddy-standalone/app/settings/privacy-policy.tsx:46#How an identity check works`); what the check never stores and what it keeps, rendered from the schema-tested lists TV-2b already grades C (`travel-buddy-standalone/app/settings/privacy-policy.tsx:61#VERIFICATION_NEVER_STORED.map(`, `travel-buddy-standalone/app/settings/privacy-policy.tsx:69#VERIFICATION_KEPT.map(`); the erasure ORDER TV-7a grades C (`travel-buddy-standalone/app/settings/privacy-policy.tsx:79#Account deletion includes asking the verification service to delete its copy before` — the code is `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:997#const r = await requestProviderDeletionForUser(sc, userId);` before `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1010#"delete_identity_verifications"`); and the 90-day purge TV-7b grades C (`travel-buddy-standalone/app/settings/privacy-policy.tsx:84#The documented cleanup targets failed or expired checks older than 90 days` — `artifacts/api-server/src/services/identityVerification/retention.ts:31#export const PURGEABLE_STATUSES` and `artifacts/api-server/src/services/identityVerification/retention.ts:34#export const VERIFICATION_RETENTION_DAYS = 90;`). **Pinned:** 9 mounted cases in `travel-buddy-standalone/app/settings/__tests__/privacyPolicy.component.test.tsx:32#describe('TV-7c — limited privacy information, not a published policy'` and 3 on the Settings entry in `travel-buddy-standalone/app/settings/__tests__/privacyPolicy.settingsLink.component.test.tsx:55#describe('TV-7c — Settings privacy information entry'` (12/12 jest, run here), plus `travel-buddy-standalone/src/lib/__tests__/verificationDisclosure.test.ts` (10/10) holding both lists to the schema. Mutation-checked here: dropping the kept-list section turns 1 case red; unwiring the Settings entry turns 3 red; rewriting the erasure sentence to drop the order turned **nothing** red, so a case pinning it was added (`travel-buddy-standalone/app/settings/__tests__/privacyPolicy.component.test.tsx:119#describe('TV-7c — the stated erasure order of the identity-check data flow'`), red on that mutant, green on the tree. **Why W and not C — what remains is the owner's:** the surface says first that it is NOT the privacy policy (`travel-buddy-standalone/app/settings/privacy-policy.tsx:38#Not an approved privacy policy`). The requirement places the data flow IN the privacy policy, and no approved policy exists: `privacy-policy-draft.md` is a draft for legal review with unfilled company, contact, address, date and vendor fields, and no policy URL is configured (§40.4). The provider is unnamed on purpose and its privacy link is absent, because D-PROVIDER's account is not live (TV-6a). One operational column is not named on the screen: `provider_mode` (3930: `test`/`live`/`local_mock`), which is not personal data. OWNER DECISION: the reviewed policy text or its published URL, which then carries or links this section. That closes the row with a client change of a link. |
+
+### Headline, restated from the rows
+
+| BUILT-AND-CORRECT | **90** |
+|---|---|
+| BUILT-BUT-WRONG | **15** |
+| NOT-BUILT | **1** |
+| CANNOT-VERIFY | **2** |
+
+90 + 15 + 1 + 2 = 108. CONSTRUCTED 97.2 % (105 / 108) · CORRECT 83.3 % (90 / 108). The one NOT-BUILT row is
+TV-6a (D-PROVIDER: the Sumsub account, keys, webhook secret and per-market coverage; owner-held).
+
+### Correction (2026-10-17, wave 5) — reviews reviewer embed
+
+*Measured on branch `claude/wave4-build-20261017` against the working tree. `head_commit` is not re-declared. The fix
+is uncommitted and not deployed, so production keeps the defect below until it ships. **NO ROW MOVES.***
+
+**What was broken, in production.** The three review lists — `GET /trips/:id/reviews`, `GET /places/:id/reviews` and
+`GET /users/:id/reviews` — selected `profiles!reviewer_id(...)` from `reviews`. The only foreign key on
+`public.reviews` is `reviews_reviewer_id_fkey`, and it runs to `auth.users`, not `public.profiles`. The lead read this
+from the production catalog, read-only, on 2026-10-17, and migration 0067 and the 2026-08-19 baseline agree. PostgREST
+had no relationship to follow, so it answered PGRST200, and each list answered `db_error` on every call. The embed
+is present at the 2026-07-15 import. No suite could see it: fixtures carried a pretend `profiles` object on each
+review row, and since the wave-W embed guard, the doubles let this one embed through a one-entry ledger,
+`KNOWN_UNBACKED_EMBEDS`.
+
+**What that means for earlier sections.** §27.2's block filter and its fail-closed aggregates were right in the code,
+but no production request reached them, because the reviews read failed first. §40.1 says the identity badge is
+"served on … reviews (trip, place and host)". The code serves it, but no production response carried it. TV-2c was
+`W` for other reasons, and it stays `W`.
+
+**What changed, with no migration.** Each list reads its reviews with no embed. Then ONE batched `.in("id", ids)` read
+of `public.profiles` finds the reviewers of the rows being served, and the route joins them in code
+(`artifacts/api-server/src/routes/reviews.ts:302#const reviewers = await readReviewerProfiles(sc, rows);`,
+`artifacts/api-server/src/routes/reviews.ts:379#const reviewers = await readReviewerProfiles(sc, rows);`,
+`artifacts/api-server/src/routes/reviews.ts:516#const reviewers = await readReviewerProfiles(sc, page.map((p) => p.r));`,
+helper `artifacts/api-server/src/routes/reviews.ts:1072#async function readReviewerProfiles(`). `profiles.id` is the
+auth user id (`profiles_id_fkey` → `auth.users`), so `reviewer_id` is the profile key. The reviewer object keeps
+exactly the embed's fields: id, handle, displayName (under the universal display-name rule), avatarUrl,
+verificationLevel, and identityBadge when its flag is on. The host list cuts its page from the raw rows first, so its
+batch holds at most `limit` ids. Its event reviews, whose embed was keyed, join the same batch, so one standing rule
+covers the whole merged list.
+
+**Two decisions (routine, recorded here).**
+- *Standing.* A review whose reviewer is not `active` (deactivated, pending_deletion or deleted) is withheld from the
+  list, anonymous reviews included (`artifacts/api-server/src/routes/reviews.ts:1084#if ((p.account_status ?? "active") !== "active") continue;`).
+  A reviewer with no profile row is standing-unknown and withheld too. This is the allowlist the other lists of people
+  already apply: engagement likes, follows search and suggestions, and the discovery community byline. The aggregate
+  stays over every published review, as §27.2 decided for blocks. Bans and suspensions (`user_account_states`) are
+  not read here, and no other list of people reads them either.
+- *Failure.* An unreadable profile read is a 503 `degraded_unavailable`, the same answer as an unreadable block list.
+  It is never a list of reviews with blank reviewers, and never a list whose authors' standing went unread.
+
+**The ledger is empty.** `KNOWN_UNBACKED_EMBEDS` held only this entry. Every double now refuses the old embed (PGRST200),
+and the guard suite pins the ledger empty and the embed unissued. census-layover's L295 paragraph on the "one-entry
+ledger" describes the state before this fix.
+
+**Tests.** `artifacts/api-server/src/test/reviewsReviewerTwoStepRead.test.ts:194#it("answers 200 with the shape it was written to return, naming only live columns"`
+(20 cases): each list on the schema-strict double, with live columns and the embed guard on; the exact reviewer key
+set, with no other profile column in the response; a failed batch answering 503 on every list, signed in and out; the
+standing cases; and both doubles refusing the old select. The four suites that drive these lists
+(`reviews.test.ts`, `placeReviews.test.ts`, `identityVerifiedBadges.test.ts`, `tmSocialListGuards.test.ts`) now seed
+`profiles` rows instead of pretend embeds; with the guard suite they run 127/127 green. With the ledger empty, the
+pre-fix route turns 19 of the 43 new-suite and guard cases red. Nine mutants were each killed and then restored by sha256: the embed restored on each
+of the three reads, the batch turned into one read per reviewer, the profile read dropped, a failed read answered as
+"no reviewers", the standing check dropped, `account_status` left out of the select, and the host batch made to omit
+event reviewers.
+
+Rows: none move. Headline unchanged: 90 / 15 / 1 / 2 of 108.
+
+### Correction (2026-10-17, wave 5) — admin appeals queue: the appellant embed never resolved in production
+
+*Measured on branch `claude/wave4-build-20261017` against the working tree. `head_commit` is not re-declared. The fix
+is uncommitted and not deployed, so production keeps the defect below until it ships. **NO ROW MOVES.***
+
+**What was broken, in production.** The admin queue `GET /api/appeals` selected
+`profiles!appellant_id(handle, display_name, avatar_url)` from `appeals`. The only foreign key on
+`public.appeals.appellant_id` is `appeals_appellant_id_fkey`, and it runs to `auth.users`, not `public.profiles`. The
+lead read this from the production catalog, read-only, on 2026-10-17; migration 0070 and the 2026-08-19 baseline agree.
+PostgREST answered PGRST200, so the queue answered `db_error` on every call: no admin could list appeals. The
+appellant-facing doors (`POST /api/appeals`, `GET /api/appeals/me`, `GET /api/appeals/me/restrictions`) and the
+restoration queue never embedded and were not affected. No Trust row rests on the admin list, so none moves.
+
+**What changed, with no migration.** The page of appeals is read with no embed
+(`artifacts/api-server/src/routes/appeals.ts:204#.select("id, appellant_id, target_type, target_id, reason, evidence_url, state, moderator_id, resolution_note, created_at, updated_at")`). Then ONE
+batched `.in("id", ids)` read of `public.profiles` finds that page's appellants
+(`artifacts/api-server/src/routes/appeals.ts:215#const appellants = await readAppellantProfiles(sc, (data as any[]) ?? []);`,
+helper `artifacts/api-server/src/routes/appeals.ts:694#async function readAppellantProfiles(`). The appellant object is
+unchanged: handle, displayName, avatarUrl.
+
+**Two decisions (routine, recorded here).**
+- *Standing: none applied.* This is an admin queue, and the admin user surfaces (`GET /admin/users`,
+  `/admin/users/:id/moderation-summary`) read a profile whatever its `account_status`. A deactivated, pending-deletion
+  or deleted account's appeal is still owed a decision, so it stays listed with its appellant's handle. An appellant
+  with no profile row is listed with null fields, as the embed rendered a missing row. This differs on purpose from the
+  people-list rule the review lists apply.
+- *Failure.* An unreadable profile batch answers `db_error`, as an unreadable appeals page does, never a queue of
+  nameless appellants.
+
+**Tests.** `artifacts/api-server/src/test/appealsAppellantTwoStepRead.test.ts:137#it("answers 200 with the shape it was written to return, naming only live columns"`
+(10 cases: shape and live columns on the schema-strict double, the state filter and page window, the empty queue, the
+non-admin refusal, all three non-active states, a missing profile row, the failed batch with its healthy twin, and both
+doubles refusing the old select). Red first: 8 of 10 red on the pre-fix route. Four mutants killed and restored by
+sha256: the embed put back (10 red, including the static scan below), the batch dropped, a failed batch answered as
+"no appellants", one read per appellant.
+
+**A static scan now covers every select.** `artifacts/api-server/src/test/selectEmbedForeignKeyScan.test.ts` reads
+every `.select(` under `artifacts/api-server/src` (5,258 resolved; 121 that embed) with
+`artifacts/api-server/src/test/helpers/selectEmbedScan.ts` and checks each embed against the declared keys. It found
+exactly this defect, `route_plan_members → profiles` (census-trips) and `posts → discovery_places` (census-discovery),
+and fails on any new one. Its two other ledgers are reported in the wave-5 handback.
+
+Rows: none move. Headline unchanged: 90 / 15 / 1 / 2 of 108.
+
+### Correction (2026-10-17, wave 5) — event-page reviews: the reviewer-standing rule the other review lists apply
+
+*Same branch and tree. Uncommitted and undeployed. **NO ROW MOVES.***
+
+**The divergence.** The review-list correction above (reviews reviewer embed) withholds a review whose reviewer is not
+`active`, and the host's merged list applies that rule to event reviews too. `GET /api/events/:id/reviews` applied
+none: its embed was keyed (`event_reviews_reviewer_id_fkey` → profiles) and it read no `account_status`. A
+deactivated reviewer's event review therefore showed on the event page and was withheld from the host's list.
+
+**What changed.** The event page reads its page of `event_reviews` with no embed, then the reviewers in ONE batched
+read with `account_status`
+(`artifacts/api-server/src/routes/events.ts:4547#readEventReviewerProfiles(sc, (reviews as any[]) ?? []);`),
+and withholds a row whose reviewer is not in good standing
+(`artifacts/api-server/src/routes/events.ts:7116#async function readEventReviewerProfiles(`, whose standing check is `account_status ?? "active"`): the same
+rule, anonymous reviews included, a missing profile row withheld, a NULL status read as active. The reviewer object
+keeps its four fields and `account_status` never leaves the route. An unreadable batch is 503
+`degraded_unavailable`, as on the other review lists. Withheld rows shorten the page, as on the trip and place lists.
+
+**Not changed here.** The event page's list still applies no block filter, unlike the trip, place and host lists
+(§27.2). That is recorded, not fixed.
+
+**Tests.** `artifacts/api-server/src/test/eventReviewsReviewerStanding.test.ts:150#it("answers 200 with the shape it was written to return, naming only live columns"`
+(7 cases). Red first: 6 of 7 red on the pre-fix route (the seventh is the NULL-status control). Four mutants killed:
+the standing check dropped, `account_status` left out of the select, a failed batch answered as "no reviewers",
+rows left unfiltered.
+
+Rows: none move. Headline unchanged: 90 / 15 / 1 / 2 of 108.
+
+### Correction (2026-10-17, wave 5) — booking reviews: rent_buddy_bookings.buddy_user_id does not exist in production
+
+*Measured on branch `claude/wave4-build-20261017` against the working tree. `head_commit` is not re-declared. The fix
+is uncommitted and not deployed, so production keeps the defect below until it ships. **NO ROW MOVES.***
+
+**What was broken, in production.** `POST /api/reviews` with `entityType: "rent_buddy_booking"` checked eligibility with
+`.or(traveler_id.eq.U,buddy_user_id.eq.U)`. `rent_buddy_bookings` has no `buddy_user_id`. No SQL in the repository
+declares it, and the 2026-09-22 production capture does not have it. The buddy column is `buddy_id`, and it references
+`rent_buddy_profiles(id)`, not a user. PostgREST failed the read with 42703, and the result read as "no booking". Both
+the traveller and the buddy were refused with `403 review_not_eligible`. `rent_buddy_enabled` is FALSE in production, so
+few users were reached. No row of this census grades booking-review eligibility: its review rows grade the review lists'
+reviewer reads and block filters. So no row moves.
+
+**What changed, with no migration.** Eligibility is now two reads. The first reads the completed booking's
+`traveler_id` and `buddy_id`
+(`artifacts/api-server/src/routes/reviews.ts:127#await sc.from("rent_buddy_bookings").select("id, status, traveler_id, buddy_id")`).
+For a caller who is not the traveller, the second reads the buddy profile's `user_id`
+(`artifacts/api-server/src/routes/reviews.ts:132#await sc.from("rent_buddy_profiles").select("user_id")`). A read that
+fails means not eligible, as it does for every entity type in the check. The edit is line-neutral, so no citation into
+the route moves.
+
+**How it was found.** `artifacts/api-server/src/test/schemaColumnProductionScan.test.ts` (class A: declared by no SQL;
+an `.or()` column).
+
+**Tests.** `artifacts/api-server/src/test/reviewsRentBuddyBookingEligibility.test.ts:109#it("the buddy — the user who owns the booking's buddy profile — may review it (201)"`
+(6 cases on schemaStrictSupabase). Red first: 5 of 6 are red on the pre-fix route; the stranger control passes. Four
+mutants were killed, each restored and checked by sha256: the old column put back in the select, the buddy compared
+by profile id, the completed filter dropped, and the traveller refused.
+
+- NOT-GRADED: artifacts/api-server/src/test/reviewsRentBuddyBookingEligibility.test.ts — this correction's own test; no Trust row rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/schemaColumnProductionScan.test.ts — the repository-wide scan that found the defect; no Trust row rests on it.
+
+Rows: none move. Headline unchanged: 90 / 15 / 1 / 2 of 108.
+
+### Correction (2026-10-17, wave 5) — Rent-a-Buddy earnings summary and fee editor: rent_buddy_fee_rules.platform_fee_basis_points does not exist in production
+
+*Same branch and tree. Uncommitted and undeployed. **NO ROW MOVES.***
+
+**What was broken, in production.** Migration 3601 adds `rent_buddy_fee_rules.platform_fee_basis_points`. It is held
+for production (owner hold D-OWNER1004-14), and the 2026-10-17 apply packet excludes it. The fee resolver selects only
+that column, so every production read of the schedule fails with 42703. Refusing is right, because the rate cannot be
+known there. But the answers were wrong:
+- `GET /api/rent-a-buddy/me/earnings/summary` has no `rent_buddy_enabled` check, and it answered `500 db_error` to
+  every user with an active buddy profile;
+- `PATCH /api/rent-a-buddy/admin/fee-rules` answered `500 db_error`.
+
+No row of this census grades either route. This correction is recorded here because this census watches
+`routes/rentABuddyMarketplace.ts`.
+
+**What changed, with no migration.** The resolver marks a read that failed for that column
+(`artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts:556#export function isFeeScheduleSchemaAbsent(`). Both routes
+now answer `503 degraded_unavailable` and state the reason
+(`artifacts/api-server/src/routes/rentABuddyMarketplace.ts:2199#return feeSchedule.schemaAbsent ? sendError(res, 'degraded_unavailable', FEE_SCHEDULE_NOT_DEPLOYED)`,
+`artifacts/api-server/src/routes/rentABuddyMarketplace.ts:2832#isFeeScheduleSchemaAbsent(feeErr) ? sendError(res, 'degraded_unavailable', FEE_SCHEDULE_NOT_DEPLOYED_ADMIN)`).
+No rate is invented and nothing is written. Any other read failure is still a 500. Both route edits are line-neutral,
+so no citation into the route file moves. Both answers clear when 3601 is applied. Two other readers of the column
+are behind `rent_buddy_enabled` = FALSE and are unchanged: the dashboard summary in `routes/rentABuddy.ts` and the
+earnings ledger.
+
+**Tests.** `artifacts/api-server/src/test/rentBuddyFeeScheduleNotDeployed.test.ts:151#it("answers 503 degraded_unavailable with the reason, and publishes no fee or earnings figure"`
+(6 cases on schemaStrictSupabase). Its `rent_buddy_fee_rules` is the live schema's and lacks the column, so the 42703
+comes from the real schema. Red first: both 503 cases are red on the pre-fix routes. Four mutants were killed, each
+restored and checked by sha256: either route put back to 500, the marker never set, and the marker set for any
+missing column.
+
+- NOT-GRADED: artifacts/api-server/src/test/rentBuddyFeeScheduleNotDeployed.test.ts — this correction's own test; no Trust row rests on it.
+- NOT-GRADED: artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts — the fee resolver, cited for the marker; no Trust row grades fees, and census-layover is the census that watches this file.
+
+Rows: none move. Headline unchanged: 90 / 15 / 1 / 2 of 108.

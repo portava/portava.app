@@ -2479,11 +2479,11 @@ router.post("/posts/:postId/like", async (req, res) => {
   // Bidirectional block check — matches /stamps access control.
   const authorId: string = (post as any).author_id;
   if (authorId !== user.id) {
-    const { count: blockCount, error: blockErr } = await sc
-      .from("blocks")
-      .select("blocker_id", { count: "exact", head: true })
-      .or(`and(blocker_id.eq.${user.id},blocked_id.eq.${authorId}),and(blocker_id.eq.${authorId},blocked_id.eq.${user.id})`);
-    if (blockErr || (blockCount ?? 0) > 0) { sendError(res, "not_found", "Post not found"); return; }
+    const blocked = isExcluded(await readPairExclusion(sc, user.id, authorId), authorId); // census-telegraph T220: the shared pair read
+    // `isExcluded` answers TRUE for an unreadable pair, so a returned error, a
+    // thrown read and a non-list answer refuse exactly as a block does (a head
+    // count that came back null with no error used to read as "no block").
+    if (blocked) { sendError(res, "not_found", "Post not found"); return; }
   }
 
   const allowed = await checkEngagePermission(res, post as any, user.id, client);
@@ -2795,10 +2795,10 @@ router.post("/posts/:postId/comments", async (req, res) => {
 
   // Block check: fail-closed count query (avoids maybeSingle multi-row error)
   if (callerId !== authorId) {
-    const { count: blockCount, error: blockErr } = await sc.from("blocks")
-      .select("id", { count: "exact", head: true })
-      .or(`and(blocker_id.eq.${callerId},blocked_id.eq.${authorId}),and(blocker_id.eq.${authorId},blocked_id.eq.${callerId})`);
-    if (blockErr || (blockCount ?? 0) > 0) { sendError(res, "blocked_user", "Cannot comment on this post"); return; }
+    const blocked = isExcluded(await readPairExclusion(sc, callerId, authorId), authorId); // census-telegraph T220: the shared pair read
+    // TRUE for a block either way and for every failure — returned, thrown,
+    // non-list (a null head count with no error used to read as "no block").
+    if (blocked) { sendError(res, "blocked_user", "Cannot comment on this post"); return; }
   }
 
   // Post owner can always comment on their own post
@@ -3481,10 +3481,10 @@ router.post("/posts/:postId/comments/:commentId/replies", async (req, res) => {
 
   // Block check: fail-closed count query (avoids maybeSingle multi-row error)
   if (callerId !== authorId) {
-    const { count: blockCount, error: blockErr } = await sc.from("blocks")
-      .select("id", { count: "exact", head: true })
-      .or(`and(blocker_id.eq.${callerId},blocked_id.eq.${authorId}),and(blocker_id.eq.${authorId},blocked_id.eq.${callerId})`);
-    if (blockErr || (blockCount ?? 0) > 0) { sendError(res, "blocked_user", "Cannot comment on this post"); return; }
+    const blocked = isExcluded(await readPairExclusion(sc, callerId, authorId), authorId); // census-telegraph T220: the shared pair read
+    // TRUE for a block either way and for every failure — returned, thrown,
+    // non-list (a null head count with no error used to read as "no block").
+    if (blocked) { sendError(res, "blocked_user", "Cannot comment on this post"); return; }
   }
 
   if (callerId !== authorId && commentsSetting !== "everyone") {

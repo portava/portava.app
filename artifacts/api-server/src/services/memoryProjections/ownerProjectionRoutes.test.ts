@@ -27,7 +27,7 @@ import http from "node:http";
 import express from "express";
 import { _setTestClient } from "../../lib/http.js";
 import memoriesRouter from "../../routes/memories.js";
-import { getProjectionDefinition } from "./projectionRegistry.js";
+import { getProjectionDefinition } from "./projectionRegistry.js"; import { orPredicate } from "../../test/helpers/postgrestOrFilter.js"; // census-telegraph T220: a real `.or()` (the shared block readers narrow inside one)
 import {
   UNAVAILABLE_SIGNIFICANCE_INPUTS,
   deriveSignificance,
@@ -125,7 +125,7 @@ function makeClient(state: FakeState, failTables = new Set<string>()) {
       // `place_id.eq.<uuid>,canonical_location_id.eq.<uuid>`. Parsed rather
       // than ignored, so a route that sent a malformed OR would not quietly
       // pass here and fail against the real database.
-      or(expr: string) {
+      or(expr: string) { if (/\band\(/.test(expr)) { filters.push(orPredicate(expr)); return builder; } // T220: the shared pair gate sends `and(...)` disjuncts
         const terms = expr.split(",").map((t) => {
           const m = /^([a-z_]+)\.eq\.(.+)$/.exec(t.trim());
           if (!m) throw new Error(`fake client: unsupported or() term ${t}`);

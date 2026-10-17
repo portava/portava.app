@@ -19,7 +19,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CompassProfile } from "./types.js";
-import { getDecayedWeights } from "./CompassSearchDecayService.js";
+import { getDecayedWeights } from "./CompassSearchDecayService.js"; import { readBlockDirections } from "../lib/exclusionSet.js"; // census-telegraph T220; on this line so no cited line moves
 
 import { getTrustProfileResult } from "../services/trust/TrustScoreService.js";
 // census-compass CT-02 — the ONE membership seam; this file had the fourth copy.
@@ -101,12 +101,12 @@ async function buildProfile(
       .select("location_mode, sharing_paused, safe_return_enabled")
       .eq("user_id", userId)
       .maybeSingle(),
-    db.from("blocks")
-      .select("blocked_id")
-      .eq("blocker_id", userId),
-    db.from("blocks")
-      .select("blocker_id")
-      .eq("blocked_id", userId),
+    // census-telegraph T220: BOTH block directions from ONE shared reader, readBlockDirections —
+    // each read WHOLE by key (a range-less read was cut at db-max-rows) and EVERY failure (a
+    // returned error, a thrown read, an answer that is not a row list, a row naming nobody)
+    // answered `ok: false`; it never rejects. One slot: the reader keeps the two directions
+    // apart itself (`outgoing` → blockedUserIds, `incoming` → blockerUserIds, below).
+    readBlockDirections(db, userId),
     db.from("safe_return_sessions")
       .select("id")
       .eq("user_id", userId)
@@ -133,8 +133,8 @@ async function buildProfile(
     prefProfileRes,
     locStateRes,
     locPrefRes,
-    blockSentRes,
-    blockRecvRes,
+    blockDirsRes,
+    // (one slot since census-telegraph T220: both block directions are in blockDirsRes)
     safeReturnRes,
     bookingRes,
     compassPrefsRes,
@@ -187,8 +187,8 @@ async function buildProfile(
   const prefProf   = prefProfileRes.status === "fulfilled" ? (prefProfileRes.value.data as any) : null;
   const locState   = locStateRes.status   === "fulfilled" ? (locStateRes.value.data as any) : null;
   const locPref    = locPrefRes.status    === "fulfilled" ? (locPrefRes.value.data as any) : null;
-  const blocksSent = blockSentRes.status  === "fulfilled" ? ((blockSentRes.value.data as any[]) ?? []) : [];
-  const blocksRecv = blockRecvRes.status  === "fulfilled" ? ((blockRecvRes.value.data as any[]) ?? []) : [];
+  const blockDirs  = blockDirsRes.status  === "fulfilled" ? blockDirsRes.value : null; // census-telegraph T220: never rejects — null only if it somehow did
+  // (blocksSent / blocksRecv are blockDirs.outgoing / blockDirs.incoming — read below, after the fail-closed check)
   const safeReturn    = safeReturnRes.status    === "fulfilled" ? ((safeReturnRes.value.data as any[]) ?? [])  : [];
   const bookings      = bookingRes.status       === "fulfilled" ? ((bookingRes.value.data as any[]) ?? [])      : [];
   const compassPrefs  = compassPrefsRes?.status === "fulfilled" ? (compassPrefsRes.value.data as any)           : null;
@@ -201,8 +201,8 @@ async function buildProfile(
   // and surfacing a blocked user's content. If any safety-list load errored,
   // refuse to build the profile rather than serve one that can leak.
   const safetyListErrored =
-    blockSentRes.status === "rejected" || (blockSentRes.status === "fulfilled" && (blockSentRes.value as any).error) ||
-    blockRecvRes.status === "rejected" || (blockRecvRes.status === "fulfilled" && (blockRecvRes.value as any).error) ||
+    !blockDirs || !blockDirs.ok || // census-telegraph T220: every block-read failure is ok:false — a returned error, a thrown read, a non-list answer, a row naming nobody
+    // (both directions are one read: either one failing is `!blockDirs.ok` — half a block list is not a block list)
     (mutesRes ? (mutesRes.status === "rejected" || (mutesRes.status === "fulfilled" && (mutesRes.value as any).error)) : false);
   if (safetyListErrored) {
     throw new Error("CompassProfileService: block/mute safety-list load failed — failing closed");
@@ -242,8 +242,8 @@ async function buildProfile(
         : 'semi_private';
 
   // ── Block arrays for downstream exclusion ─────────────────────────────────
-  const blockedUserIds: string[] = blocksSent.map((r: any) => r.blocked_id as string);
-  const blockerUserIds: string[] = blocksRecv.map((r: any) => r.blocker_id as string);
+  const blockedUserIds: string[] = blockDirs?.ok ? [...blockDirs.outgoing] : [];
+  const blockerUserIds: string[] = blockDirs?.ok ? [...blockDirs.incoming] : [];
   const mutedUserIds:   string[] = mutedRows.map((r: any) => r.muted_id as string);
 
   return {

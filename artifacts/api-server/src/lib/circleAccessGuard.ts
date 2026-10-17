@@ -30,7 +30,7 @@
  */
 
 import { isKillSwitchEngaged } from "./featureFlags.js";
-import { isBlockedBetween } from "./blockGuard.js";
+import { isBlockedBetween } from "./blockGuard.js"; import { exclusions, isExcluded, readBlockExclusions } from "./exclusionSet.js";
 import { logger as rootLogger } from "./logger.js";
 
 const log = rootLogger.child({ lib: "circleAccessGuard" });
@@ -489,10 +489,10 @@ export async function canBeSeenByViewersBatch(
       .eq("context_type", contextType)
       .eq("context_id", contextId)
       .maybeSingle(),
-    sc
-      .from("blocks")
-      .select("blocker_id, blocked_id")
-      .or(`blocker_id.eq.${targetUserId},blocked_id.eq.${targetUserId}`),
+    // census-telegraph T220: the TARGET's block rows, through the shared reader.
+    readBlockExclusions(sc, targetUserId),
+    // (The same whole-list read; it never rejects — every failure is `ok:
+    // false`, where a thrown read used to reject this whole Promise.all.)
     sc
       .from("user_account_states")
       .select("state, expires_at")
@@ -534,7 +534,7 @@ export async function canBeSeenByViewersBatch(
     [
       ["circle_visibility_settings", (settingsRes as any).error],
       ["circle_context_settings", (ctxRes as any).error],
-      ["blocks", (blocksRes as any).error],
+      ["blocks", blocksRes.ok ? null : blocksRes.reason],
       ["user_account_states", (statesRes as any).error],
       ["circle_presence", (presenceRes as any).error],
     ] as Array<[string, unknown]>
@@ -615,19 +615,19 @@ export async function canBeSeenByViewersBatch(
   // blocked. The deny is reported as "unavailable" rather than "blocked" for the
   // reason this file's docblock gives: a failed read must not be reported to the
   // caller as a fact about a relationship nobody established.
-  const blocksUnreadable = Boolean((blocksRes as any).error);
+  const blocksUnreadable = !blocksRes.ok;
   if (blocksUnreadable) {
     console.warn(
       "canBeSeenByViewersBatch: blocks read FAILED — denying every viewer as unavailable",
-      describeReadError((blocksRes as any).error),
+      describeReadError(blocksRes.ok ? null : blocksRes.reason),
     );
   }
-  const blocks = (blocksRes.data ?? []) as Array<{ blocker_id: string; blocked_id: string }>;
-  const blockedWithTarget = new Set<string>();
-  for (const b of blocks) {
-    if (b.blocker_id === targetUserId) blockedWithTarget.add(b.blocked_id);
-    if (b.blocked_id === targetUserId) blockedWithTarget.add(b.blocker_id);
-  }
+  // Every counter-party of a block row touching the target, either way: the
+  // set the loop that stood here built from `blocker_id` / `blocked_id`. The
+  // test below is `isExcluded`, which answers TRUE for an unreadable set, so
+  // this gate is closed by construction as well as by `blocksUnreadable`
+  // (which denies first, as "unavailable").
+  const blockedWithTarget = blocksRes;
 
   let targetRestricted = false;
   {
@@ -671,7 +671,7 @@ export async function canBeSeenByViewersBatch(
       out.set(viewerId, { allowed: false, reason: "unavailable" });
       continue;
     }
-    if (blockedWithTarget.has(viewerId)) {
+    if (isExcluded(blockedWithTarget, viewerId)) {
       out.set(viewerId, { allowed: false, reason: "blocked" });
       continue;
     }
@@ -789,11 +789,11 @@ export async function canViewCirclePresenceBatch(
           .in("user_id", memberTargets)
       : Promise.resolve({ data: [] }),
     memberTargets.length > 0
-      ? sc
-          .from("blocks")
-          .select("blocker_id, blocked_id")
-          .or(`blocker_id.eq.${viewerId},blocked_id.eq.${viewerId}`)
-      : Promise.resolve({ data: [] }),
+      // census-telegraph T220: the VIEWER's block rows, through the shared
+      // reader (the same whole-list read; every failure is `ok: false`). No
+      // target needs no read: an empty, READABLE set, as `{ data: [] }` was.
+      ? readBlockExclusions(sc, viewerId)
+      : Promise.resolve(exclusions([])),
     memberTargets.length > 0
       ? sc
           .from("user_account_states")
@@ -821,14 +821,14 @@ export async function canViewCirclePresenceBatch(
   // is "block state unknown", not "no blocks". Every target in this sweep is
   // withheld rather than served to a viewer who may have blocked them, and the
   // denial says "unavailable" rather than naming a block that was never read.
-  const blocksUnreadable = Boolean((blocksRes as any).error);
+  const blocksUnreadable = !blocksRes.ok;
   if (blocksUnreadable) {
     console.warn(
       "canViewCirclePresenceBatch: blocks read FAILED — denying every target as unavailable",
-      describeReadError((blocksRes as any).error),
+      describeReadError(blocksRes.ok ? null : blocksRes.reason),
     );
   }
-  const blocks = (blocksRes.data ?? []) as Array<{ blocker_id: string; blocked_id: string }>;
+  const blocks = blocksRes; // the viewer's counter-parties, either way (an ExclusionSet)
   const now = new Date();
   const restricted = new Set<string>();
   for (const r of (statesRes.data ?? []) as Array<{ user_id: string; state: string; expires_at: string | null }>) {
@@ -906,11 +906,11 @@ export async function canViewCirclePresenceBatch(
       }
     }
 
-    const mutualBlock = blocks.some(
-      (b) =>
-        (b.blocker_id === viewerId && b.blocked_id === targetUserId) ||
-        (b.blocker_id === targetUserId && b.blocked_id === viewerId),
-    );
+    // A block row between the viewer and this target, in either direction:
+    // `blocks` holds the viewer's counter-parties, and `isExcluded` answers
+    // TRUE for an unreadable set (which is denied just below, first, as
+    // "unavailable").
+    const mutualBlock = isExcluded(blocks, targetUserId);
     if (blocksUnreadable) {
       out.set(targetUserId, { allowed: false, reason: "unavailable" });
       continue;

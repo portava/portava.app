@@ -48,8 +48,8 @@ import { decideHighlightViewAccess } from "../../routes/highlights.js";
 import { checkEventEligibility } from "../../routes/events.js"; import { readEventViewAccess } from "../../lib/eventViewAccess.js";
 import { isFlagEnabled } from "../../lib/featureFlags.js"; import { storageImageOrNull } from "./messageTreeImages.js"; // census-telegraph T446 (B58 TM-1): on this line so no cited line moves
 import { absenceDisclosure } from "../../lib/privacy/absenceDisclosure.js"; import { actionsWhileLive } from "./actionLiveness.js"; // census-telegraph T320/T411; on this line so no cited line moves
-import { nameVisibilitySet, presentedName, resolveHandle } from "../../lib/publicIdentity.js";
-import { resolveAccountRestriction } from "../../lib/accountStateGate.js";
+import { nameVisibilitySet, presentedName, resolveHandle } from "../../lib/publicIdentity.js"; import { readPairDirections } from "../../lib/exclusionSet.js"; // census-telegraph T220; on this line so no cited line moves
+import { resolveAccountRestriction } from "../../lib/accountStateGate.js"; import { readStampPresenceView, type StampPresenceRow } from "../passport/stampPresenceView.js"; // census-highlights-memories H4: the STAMP card's place
 import {
   readProjectionInputs,
   publicProjectionVerdict,
@@ -85,7 +85,7 @@ export interface TelegraphShareProjection {
    * where the source has one.
    */
   projectionVersion: string | null;
-  deepLink: string;
+  deepLink: string; /** census-telegraph T265 (wave 5): PLACE only — Discovery's own live intelligence for this place, exactly as Discovery would serve it, and ABSENT whenever Discovery would serve none (its flags off). See placeLiveIntelligence at the file foot. */ liveIntelligence?: PlaceLiveIntelligence;
 }
 
 export type UnavailableReason = "deleted" | "private" | "unauthorized" | "not_found" | "unknown";
@@ -290,13 +290,13 @@ type BlockRead = "clear" | "blocked" | "unreadable";
 
 async function readBlockBetween(client: SupabaseClient, viewerId: string, ownerId: unknown): Promise<BlockRead> {
   if (typeof ownerId !== "string" || ownerId.length === 0 || ownerId === viewerId) return "clear";
-  const [byOwner, byViewer] = await Promise.all([
-    client.from("blocks").select("blocker_id").eq("blocker_id", ownerId).eq("blocked_id", viewerId).limit(1),
-    client.from("blocks").select("blocker_id").eq("blocker_id", viewerId).eq("blocked_id", ownerId).limit(1),
-  ]);
-  if (byOwner.error || byViewer.error) return "unreadable";
-  const any = (rows: unknown) => Array.isArray(rows) && rows.length > 0;
-  return any(byOwner.data) || any(byViewer.data) ? "blocked" : "clear";
+  // census-telegraph T220: the shared pair reader issues exactly the two reads this
+  // made — `.select("blocker_id").eq().eq().limit(1)`, owner→viewer then viewer→owner —
+  // so services/telegraph/coalescedReads.ts still folds every card's pair into ONE
+  // `.in().in()` query (T448), and it answers EVERY failure (a returned error, a thrown
+  // read, an answer that is not a row list) as unreadable: `unknown` here, never clear.
+  const pair = await readPairDirections(client, ownerId, viewerId);
+  return !pair.ok ? "unreadable" : pair.aBlockedB || pair.bBlockedA ? "blocked" : "clear";
 }
 
 function refusedByBlock(b: Exclude<BlockRead, "clear">): Loaded {
@@ -551,7 +551,7 @@ const loadMeetup: Loader = async (client, id, viewerId) => {
 };
 
 /** Places — a canonical place. Public by nature; a merged/duplicate row degrades. */
-const loadPlace: Loader = async (client, id) => {
+const loadPlace: Loader = async (client, id) => withPlaceLiveIntelligence(client, id, await loadPlaceRow(client, id)); const loadPlaceRow = async (client: SupabaseClient, id: string): Promise<Loaded> => { // T265 (wave 5): the row read is unchanged; the live layer is added at the file foot
   const { data, error } = await client
     .from("places")
     .select("id, name, city, neighborhood, primary_category, status, updated_at")
@@ -912,7 +912,7 @@ const loadStamp: Loader = async (client, id, viewerId) => {
   const { data, error } = await client
     .from("user_stamps")
     .select(
-      "id, user_id, stamp_definition_id, title_override, city, country, visibility, display_on_passport, is_revoked, earned_at",
+      "id, user_id, stamp_definition_id, title_override, city, country, visibility, display_on_passport, is_revoked, earned_at, source_type, source_id, stamp_definitions(slug)",
     )
     .eq("id", id)
     .maybeSingle();
@@ -928,7 +928,7 @@ const loadStamp: Loader = async (client, id, viewerId) => {
   const mine = r.user_id === viewerId;
   if (!mine && (r.visibility !== "public" || r.display_on_passport === false)) {
     return { state: UNAVAILABLE("private"), projection: null };
-  }
+  } const presence = await readStampPresenceView(client, [r as StampPresenceRow]); { const v = presence.verdict(r as StampPresenceRow); if (v === "unverifiable") return { state: UNAVAILABLE("unknown"), projection: null }; if (!presence.presenceClaimHolds(r as StampPresenceRow)) return { state: UNAVAILABLE("not_found"), projection: null }; } const place = presence.place(r as StampPresenceRow & { city?: unknown; country?: unknown }); // census-highlights-memories H4 (wave 5): a presence stamp — its name claims an occurrence — reaches a conversation only with its own source's evidence, and a place only then; unreadable evidence is `unknown`, never shown
   // A block, EITHER way, refuses (read first, above) — `GET /stamps/:stampId` answers not_found on
   // `isBlocked` (bidirectional, fail-closed). Lane R N1, 2026-10-06: this
   // loader read no `blocks`, so a blocked viewer resolved the stamp's title,
@@ -954,7 +954,7 @@ const loadStamp: Loader = async (client, id, viewerId) => {
       "STAMP",
       id,
       title ?? "Stamp",
-      [r.city, r.country].filter(Boolean).join(", ") || null,
+      [place.city, place.country].filter(Boolean).join(", ") || null, // H4: the evidenced place, or none
       icon,
       (r.earned_at as string) ?? null,
     ),
@@ -1612,3 +1612,54 @@ function postVersionForViewer(r: Row): string | null {
   if (modeUnread || mode === "delayed_until_exit") return typeof r.created_at === "string" ? r.created_at : null;
   return (r.updated_at as string) ?? null;
 }
+
+// ── census-telegraph T265 (wave 5) — §20 Places: "current intelligence" ─────
+//
+// The Telegraph place card re-resolved the place's current name, neighbourhood
+// and status (T46), not Discovery's live intelligence. This adds exactly what
+// Discovery puts on its own wire for a place — the grounded why-now from
+// lib/discoveryLiveRank, in the live claims' own vocabulary, and how long it
+// stays valid — through Discovery's own functions, so the card cannot say
+// anything Discovery would not:
+//
+//   - FLAGS. Discovery serves why-now only through its candidate projection
+//     (`discovery_candidate_projection_enabled`) over a live grade
+//     (`discovery_live_rank_enabled`, 2850, seeded FALSE), behind the intel
+//     live-label gates (lib/liveClaimRead.liveLabelsServable). Any of them off
+//     ⇒ no `liveIntelligence` at all: the projection is byte-for-byte what it
+//     was.
+//   - LABELS. `whyNowOf` / `whyNowValidForMsOf` (lib/discoveryCandidate) copy
+//     the grade's reasons and compose none: null when nothing was observed,
+//     when the gates refused the look, or when the read failed — never an empty
+//     endorsement. The grade reads only lib/discoveryLiveRankRead's
+//     RANK_CLAIM_TYPES, none of which lib/intelContracts rules "never" for a
+//     live label (pinned by test), and a place the grade DEMOTES as unsafe
+//     carries the safety reading alone (Sensing §7) — the ranker's own rule.
+//   - NEVER A FAILURE. A thrown or refused read leaves the projection as it
+//     was; the place card never fails because the live layer did.
+export interface PlaceLiveIntelligence {
+  /** Discovery's grounded reasons, in the live claims' vocabulary; null when nothing observed backs one. */
+  readonly whyNow: string[] | null;
+  /** ms from this read until the earliest claim behind `whyNow` expires; null with `whyNow`. */
+  readonly whyNowValidForMs: number | null;
+}
+
+/** Discovery's live intelligence for one canonical place, or null whenever Discovery would serve none. */
+export async function placeLiveIntelligence(sc: SupabaseClient, placeId: string, nowMs: number = Date.now()): Promise<PlaceLiveIntelligence | null> {
+  if (!(await candidateProjectionEnabled(sc))) return null;
+  const graded = await withDiscoveryLiveRank(sc, [{ id: placeId, canonicalPlaceId: placeId, distanceKm: null }], { nowMs });
+  if (!graded.applied) return null;
+  const ctx = { liveRankById: graded.byId };
+  return { whyNow: whyNowOf(placeId, ctx), whyNowValidForMs: whyNowValidForMsOf(placeId, ctx, nowMs) };
+}
+
+async function withPlaceLiveIntelligence(client: SupabaseClient, id: string, loaded: Loaded): Promise<Loaded> {
+  if (!loaded.state.available || !loaded.projection) return loaded;
+  let live: PlaceLiveIntelligence | null = null;
+  try { live = await placeLiveIntelligence(client, id); } catch { live = null; }
+  return live ? { ...loaded, projection: { ...loaded.projection, liveIntelligence: live } } : loaded;
+}
+
+// Imported at the foot so the cited lines above do not move (census-telegraph T265, wave 5).
+import { candidateProjectionEnabled, whyNowOf, whyNowValidForMsOf } from "../../lib/discoveryCandidate.js";
+import { withDiscoveryLiveRank } from "../../lib/discoveryLiveRankRead.js";

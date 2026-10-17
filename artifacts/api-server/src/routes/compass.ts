@@ -22,7 +22,7 @@ import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
 import { COMPASS_QUICK_ACTION_TYPES } from "../lib/compassDecisionActions.js";
-import { requireUser, sendError, canEditPlan, isAcceptedTripMember } from "../lib/http.js";
+import { requireUser, sendError, canEditPlan, isAcceptedTripMember } from "../lib/http.js"; import { readBlockExclusions, readBlockDirection } from "../lib/exclusionSet.js";
 import { getServiceClient } from "../lib/supabase.js";
 import {
   tripKernelClient,
@@ -132,7 +132,7 @@ import {
 } from "../compass/CompassMemoryService.js";
 import { buildProjectedMemoryBlock } from "../compass/ProjectedMemoryPrompt.js";
 import { buildRememberSurface } from "../compass/PassportRemembersService.js";
-import { generateRecap, buildOnThisDay, type RecapKind } from "../compass/MemoryRecapsService.js";
+import { generateRecap, buildOnThisDay, type RecapKind } from "../compass/MemoryRecapsService.js"; import { trackPartialToolLog, partialToolLogOf, compassAiFailureFallback, compassAiFailureFallbackWithRetrieval } from "../compass/compassMemoryFallback.js"; // census H266: the deterministic Memory fallback
 import { recordIntentFromQuery } from "../lib/intentMemory.js";
 import { buildLiveChatContextLines }             from "../compass/CompassLiveEngine.js";
 import {
@@ -1317,7 +1317,7 @@ async function runToolCallingLoop(
   signal?:  AbortSignal,
 ): Promise<ToolLoopOutcome> {
   const convo: any[] = [...messages];
-  const toolLog: ToolExecution[] = [];
+  const toolLog: ToolExecution[] = trackPartialToolLog<ToolExecution>(messages); // H266: readable by the caller if a model call below throws
   const proposals: AddToTripProposal[] = [];
 
   for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
@@ -2016,7 +2016,7 @@ router.post("/compass/ask", async (req, res) => {
         clientAbort.signal,
       ));
       const _parsed = _parseModelResponse(finalRaw);
-      const _rawMessage  = finalRaw === "" ? SUMMARISE_EMPTY_FALLBACK_MESSAGE : _parsed.message;
+      const _rawMessage  = finalRaw === "" ? compassAiFailureFallback(toolLog, SUMMARISE_EMPTY_FALLBACK_MESSAGE).message : _parsed.message;
       // Sensing `:148`. The tokens are already on the wire — the client rebuilds
       // the bubble from the accumulated deltas — so the correction is sent as
       // one more delta rather than by rewriting what was said.
@@ -2077,7 +2077,7 @@ router.post("/compass/ask", async (req, res) => {
         return;
       }
       req.log.error({ err, userId: user.id }, "compass/ask stream failed");
-      res.write(`data: ${JSON.stringify({ error: true, message: HONEST_FALLBACK_MESSAGE })}\n\n`);
+      res.write(`data: ${JSON.stringify({ error: true, ...(await compassAiFailureFallbackWithRetrieval(partialToolLogOf(messages), () => executeCompassTool(sc, user.id, guardProfile as any, "memory_search", { query: prompt }), HONEST_FALLBACK_MESSAGE)) })}\n\n`);
       res.end();
     }
     return;
@@ -2089,7 +2089,7 @@ router.post("/compass/ask", async (req, res) => {
       sc, user.id, guardProfile, messages as any, req.log,
     ));
     const _parsed = _parseModelResponse(finalRaw);
-    const _rawMessage  = finalRaw === "" ? SUMMARISE_EMPTY_FALLBACK_MESSAGE : _parsed.message;
+    const _rawMessage  = finalRaw === "" ? compassAiFailureFallback(toolLog, SUMMARISE_EMPTY_FALLBACK_MESSAGE).message : _parsed.message;
     // Sensing `:148` — the same boundary the streamed branch applies, on the
     // same tool log, so the two branches cannot publish different answers.
     const _grounded    = groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence);
@@ -2147,7 +2147,7 @@ router.post("/compass/ask", async (req, res) => {
     appendSystemEvent(sc, conversationId, "assistant_unavailable", { fallbackReason: "ai_error" }).catch(() => {});
     res.json({
       conversationId,
-      message:        HONEST_FALLBACK_MESSAGE,
+      ...(await compassAiFailureFallbackWithRetrieval(partialToolLogOf(messages), () => executeCompassTool(sc, user.id, guardProfile as any, "memory_search", { query: prompt }), HONEST_FALLBACK_MESSAGE)), // H266: Memory facts, rendered; the sentence only when there are none
       payload:        null,
       quickActions:   [],
       promptVersion:  COMPASS_ASK_PROMPT_VERSION,
@@ -3700,18 +3700,18 @@ router.get("/compass/recommendations", async (req, res) => {
       // Bidirectional block set — fail-closed: any error returns empty list
       const buddyBlockedIds = new Set<string>();
       try {
-        const { data: blkRows, error: blkErr } = await sc
-          .from("blocks")
-          .select("blocked_id, blocker_id")
-          .or(`blocker_id.eq.${user.id},blocked_id.eq.${user.id}`);
-        if (blkErr) {
+        // census-telegraph T220: the shared reader — the same whole-list read
+        // in both directions. It never rejects: a returned error, a thrown read
+        // and a non-list answer are all `ok: false`.
+        const blocks = await readBlockExclusions(sc, user.id);
+        if (!blocks.ok) {
           res.json({ recommendations: [], surface, error: "block_check_failed" });
           return;
         }
-        for (const bRow of (blkRows ?? []) as any[]) {
-          if (bRow.blocker_id === user.id) buddyBlockedIds.add(bRow.blocked_id);
-          if (bRow.blocked_id === user.id) buddyBlockedIds.add(bRow.blocker_id);
-        }
+        // Every counter-party of a block row touching the viewer, either way —
+        // the set the loop that stood here built from `blocker_id` /
+        // `blocked_id`.
+        for (const id of blocks.ids) buddyBlockedIds.add(id);
       } catch {
         res.json({ recommendations: [], surface, error: "block_check_failed" });
         return;
@@ -3874,18 +3874,18 @@ router.get("/compass/recommendations", async (req, res) => {
       // Bidirectional block set — fail-closed: any error returns empty list
       const travBlockedIds = new Set<string>();
       try {
-        const { data: blkRows, error: blkErr } = await sc
-          .from("blocks")
-          .select("blocked_id, blocker_id")
-          .or(`blocker_id.eq.${user.id},blocked_id.eq.${user.id}`);
-        if (blkErr) {
+        // census-telegraph T220: the shared reader — the same whole-list read
+        // in both directions. It never rejects: a returned error, a thrown read
+        // and a non-list answer are all `ok: false`.
+        const blocks = await readBlockExclusions(sc, user.id);
+        if (!blocks.ok) {
           res.json({ recommendations: [], surface, error: "block_check_failed" });
           return;
         }
-        for (const bRow of (blkRows ?? []) as any[]) {
-          if (bRow.blocker_id === user.id) travBlockedIds.add(bRow.blocked_id);
-          if (bRow.blocked_id === user.id) travBlockedIds.add(bRow.blocker_id);
-        }
+        // Every counter-party of a block row touching the viewer, either way —
+        // the set the loop that stood here built from `blocker_id` /
+        // `blocked_id`.
+        for (const id of blocks.ids) travBlockedIds.add(id);
       } catch {
         res.json({ recommendations: [], surface, error: "block_check_failed" });
         return;
@@ -4360,19 +4360,19 @@ router.get("/compass/recommendations", async (req, res) => {
       // Load block list — fail-CLOSED: on any error, return empty to prevent leaking blocked users
       let blockedIds: Set<string>;
       try {
-        const { data: blocks, error: blocksErr } = await sc
-          .from("blocks")
-          .select("blocked_id")
-          .eq("blocker_id", user.id);
-        if (blocksErr) {
-          req.log.warn({ err: blocksErr }, "compass/recommendations: block-list fetch failed; returning empty");
+        // census-telegraph T220: still ONE direction — blocked_id where blocker_id is the
+        // viewer (widening it is a product decision) — through the shared reader:
+        // read WHOLE by key, where one range-less read was cut at db-max-rows.
+        const blocks = await readBlockDirection(sc, user.id, "outgoing");
+        if (!blocks.ok) {
+          req.log.warn({ err: blocks.reason }, "compass/recommendations: block-list fetch failed; returning empty");
           res.json({ recommendations: [], surface });
           return;
         }
-        blockedIds = new Set<string>();
-        for (const b of (blocks ?? []) as any[]) {
-          if (b.blocked_id) blockedIds.add(b.blocked_id);
-        }
+        blockedIds = new Set<string>(blocks.ids);
+        // Every failure — a returned error, a thrown read, an answer that is not a
+        // row list, a row naming nobody — is `!ok` and takes the empty answer above;
+        // `(blocks ?? [])` read a non-list as "blocked nobody" and served everyone.
       } catch (err) {
         req.log.warn({ err }, "compass/recommendations: block-list fetch threw; returning empty");
         res.json({ recommendations: [], surface });

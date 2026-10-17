@@ -22,7 +22,7 @@
  * endpoints. Thread access is gated ONLY by message_thread_members rows.
  */
 
-import { Router } from 'express'; import { decoratePlatformReads } from '../services/telegraph/platformReadDecorations.js';
+import { Router } from 'express'; import { decoratePlatformReads } from '../services/telegraph/platformReadDecorations.js'; import { notifyNewMessage, messageCausalEventId } from '../services/telegraph/messageNotifications.js'; // census-telegraph T256 (wave 5): the MESSAGE notification
 import { isBlockedBetween } from '../lib/blockGuard.js';
 // Telegraph §22 — the six travel-scam families and link reputation, computed
 // for the recipient at read time. Pure; no I/O, no clock.
@@ -49,7 +49,7 @@ import { resolveSenderConnectedness } from '../domain/telegraph/policies/senderC
 // imported rather than re-derived so the projection cannot disagree with the
 // gate: two implementations of "may this person call" is the defect §30A.1
 // names, not a redundancy.
-import { resolveConversationCapabilities } from '../domain/telegraph/policies/conversationCapabilityPolicy.js';
+import { resolveConversationCapabilities } from '../domain/telegraph/policies/conversationCapabilityPolicy.js'; import { redactForWire } from '../domain/telegraph/contracts/telegraphReasonCodes.js'; // §11.1: the block is not told (wire redaction, used by the page's permissions block) — on this line so no cited line moves
 import { z } from 'zod';
 import { requireUser, sendError } from '../lib/http';
 import { canMessage } from '../lib/messagingPermissions';
@@ -2668,10 +2668,10 @@ router.get('/threads/:threadId/messages', async (req, res) => {
     threadId, ...(resumeInfo ? { resume: { afterSequence: resumeAfter, nextSequence: resumeInfo.nextSequence, hasMore: resumeInfo.hasMore } } : {}), // T233
     permissions: {
       capabilities: resolvedCapabilities.capabilities,
-      reasons: resolvedCapabilities.reasons,
+      reasons: Object.fromEntries(Object.entries(resolvedCapabilities.reasons).map(([name, raw]) => [name, raw === null ? null : redactForWire(raw)])), // §11.1 / census W5.2: the block is not told — the map GET /capabilities applies (server/telegraph/capabilityRoute.ts), so a blocked member reads a stranger's reasons
       inputsRead: resolvedCapabilities.inputsRead,
       degraded: resolvedCapabilities.degraded,
-      degradedReasons: resolvedCapabilities.degradedReasons,
+      degradedReasons: resolvedCapabilities.degradedReasons.map(redactForWire), // the same redaction, as GET /capabilities
     },
   });
 });
@@ -3146,7 +3146,7 @@ router.post('/threads/:threadId/messages', async (req, res) => {
               eventType: 'pulse.user_tagged',
               actorId: user.id,
               sourceType: 'message',
-              sourceId: m.id,
+              sourceId: m.id, causalEventId: messageCausalEventId(m.id), // census-telegraph T397/T256: the message is the event — a tagged member is not told twice by the MESSAGE producer
               ...(tagger.unreadable
                 ? {
                     title: 'You were mentioned in a message',
@@ -3210,7 +3210,7 @@ router.post('/threads/:threadId/messages', async (req, res) => {
     },
     { excludeUserId: user.id },
   );
-  void publishToThread(sc, threadId, {
+  void notifyNewMessage(getServiceClient() ?? sc, { threadId, senderId: user.id, messageId: m.id, msgType: m.msg_type ?? 'text', subtype: m.subtype ?? null, nowMs: Date.parse(now) }, { log: req.log }); /* census-telegraph T256: one notification per other member, after the answer */ void publishToThread(sc, threadId, {
     type: 'thread.updated',
     payload: { lastMessageAt: now },
   });
@@ -3444,7 +3444,7 @@ router.post('/threads/:threadId/media', async (req, res) => {
       .eq('id', threadId);
   } catch { /* non-fatal */ }
 
-  // Publish real-time event to thread members
+  void notifyNewMessage(getServiceClient() ?? sc, { threadId, senderId: user.id, messageId: msg.id, msgType: 'media', nowMs: Date.parse(now) }, { log: req.log }); // census-telegraph T256 (the media door) · Publish real-time event to thread members
   try {
     await publishMessageCreated(sc, threadId, { // T154 (V-TR F1): one publisher for every door — the drainer owns message.created when fan-out is in force
       type: 'message.created',

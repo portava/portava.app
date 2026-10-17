@@ -1078,7 +1078,7 @@ already made; the one visible-behaviour repair is behind a flag seeded FALSE.
 | --- | --- | --- | --- |
 | L53 | W | **C** | `9c26efba`: `computeReturnDeadline` (`LayoverSafetyEngine.ts:213`) is the single anchor; 1-Lipschitz ramp; 1,520,640-case sweep in `test/layoverDeadlineMonotonicity.test.ts`. Also closes headline defect 2 (one buffer per response). Not spec-attributable (cites the census, not the spec). |
 | L201 | ? | **C** (tree) | `2335_layover_recommendation_write_boundary.sql`: `layover_recs_owner` FOR SELECT, `authenticated` = SELECT only, measured on CI (`pg_policies`, `role_table_grants`, `column_privileges` INSERT/UPDATE = 0). **Production still open.** |
-| L199 | N | W | 2410 carries four postconditions (`2410_layover_recommendation_identity.sql:82-103`); `security/authorization-contract.json:211` now pins `layover_recommendations` (grants, no client-writable columns, one SELECT policy). `layover_sessions` / `layover_plan_stops` remain uncontracted — the contract's invariant 1 requires SELECT-only client grants and those tables are owner-writable by design. 0127 still has no postconditions. |
+| L199 | N | W | 2410 carries four postconditions (`2410_layover_recommendation_identity.sql:82-103`); `security/authorization-contract.json:217` now pins `layover_recommendations` (grants, no client-writable columns, one SELECT policy). `layover_sessions` / `layover_plan_stops` remain uncontracted — the contract's invariant 1 requires SELECT-only client grants and those tables are owner-writable by design. 0127 still has no postconditions. |
 | L41 | N | W | `computeReturnState` (`LayoverSafetyEngine.ts:383`) derives RETURN_SOON at `hardReturn − 30 min` (`RETURN_SOON_LEAD_MIN`, `:84`), wired into every window (`:463`) and serialised to the client by `serializeWindow`. No notification fires and discovery is not de-emphasised — those effects are client/Safe Return work. |
 | L42 | N | W | RETURN_NOW at `hardReturn`; CONNECTION_AT_RISK once the traffic + time-of-day cushion is consumed (`:382-392`). No CTA switches. |
 | L140 | N | **C** | The ladder NORMAL → RETURN_SOON → RETURN_NOW → CONNECTION_AT_RISK exists as a deterministic, certified derivation with two proved properties — monotone in time and in the cutoff — over 3 timezones incl. two DST falls-back (`test/layoverReturnState.test.ts`, 20k+ and 10k+ point sweeps). L141–L145 (what happens AT the state) stay N. Spec-attributable. |
@@ -11220,7 +11220,7 @@ per-abort choice?* Nothing here answers it. The plan's fail-closed default is bu
    fix round 1, F1 — before it, only `location_preferences` was read).
    An unreadable block list or sharing table tells nobody
    (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:304#if (!blocked.ok) return untold("blocks_unreadable");`,
-   `artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:310#if (sharing.degraded) return untold("sharing_preferences_unreadable");`).
+   `artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:310#if (sharing.kind === "degraded") return untold("sharing_preferences_unreadable");`).
    So the recipients are never more than the faces the traveller already sees on `GET /crew`.
 5. **Minimal text, in-app only.** "Your layover crew" / "<name> is heading back to the airport.", the name only when
    the traveller shows their real name, otherwise "A crew member"
@@ -12214,3 +12214,164 @@ All runs were `node --import tsx/esm --test` with `TZ=UTC`, on fakes, with no cl
 | total | 296 | 296 |
 
 **1 move: L57 W → C.** 296 = 86 C / 158 W / 52 N / 0 X. CORRECT% is 86 / 296 = 29.1 %.
+
+## Row moves — 2026-10-17 build and fix (wave 4, crew location lane). NO ROW MOVES
+
+Measured on branch `claude/wave4-build-20261017` against the working tree, 2026-10-17. `head_commit` is not re-declared. This lane built the §14 L4 grant store that §26.2, §28.2 and §80 name as the blocker of six rows ("no location grant store"), with its rules, routes and client surfaces. **It moves none of them**, for two reasons that each hold on their own:
+
+1. **H24 and lead ruling WAVE-1** (§58.6, reaffirmed in §80 today): storage that exists only in an unapplied migration grades `N` in this census. The grant store is migration 3996, applied to no database, and its flag `layover_crew_location_enabled` is seeded FALSE. The wave-4 brief's N→W rule disagrees; WAVE-1 settles that for this census, so the lead decides whether it still governs.
+2. **Nothing new is mounted.** `routes/layoverCrewLocation.ts` is not in `routes/index.ts`, and the client card and the map prop are not wired into `app/layover/[id].tsx`. Both are central or screen edits that this lane reported and did not make.
+
+### What was built
+
+- **The share is Telegraph's scoped share, reused rather than copied.** The expiry rule is `checkLocationShareWindow` itself: it must be in the future, at most `MAX_LOCATION_SHARE_HOURS` (4 h), and a body with no expiry is a pin and is refused (`artifacts/api-server/src/services/layover/LayoverCrewLocation.ts:173#const window = checkLocationShareWindow("LOCATION"`). Precision is Telegraph's ladder (area / venue / exact). The purpose is one of `TELEGRAPH_SHARE_PURPOSES`, paired with precision as Telegraph's scope sheet pairs it. The client sheet uses Telegraph's own window list.
+- **The layover's end.** A share is cut at the sharer's boarding time (or departure) and at the crew's end (`artifacts/api-server/src/services/layover/LayoverCrewLocation.ts:197#if (boardingMs < endMs) { endMs = boardingMs; endsBecause = "boarding"; }`, `artifacts/api-server/src/services/layover/LayoverCrewLocation.ts:198#if (crewEndMs < endMs) { endMs = crewEndMs; endsBecause = "crew_ends"; }`). At read time, every §14.1 terminator ends it through the existing ladder (`artifacts/api-server/src/services/layover/LayoverCrewLocation.ts:280#export function crewShareSignalsFor(input: {`): crew disbanded or expired, an airport re-entry reported after the share began, boarding, a session that is no longer live (or is unreadable), and leaving the crew.
+- **What is stored, by rung.** Area stores a label and never a coordinate. Venue stores the centre of a 150 m cell, never the point. Exact stores the point, only with the separate control on, and only where the §24 protected-zone policy allows it (`artifacts/api-server/src/services/layover/LayoverCrewLocation.ts:210#const allowed = narrowestOfPrecisions(RUNG_FOR[precision], FEATURE_PRECISION_CEILING.crew, protectionCeiling(point, ctx.zones));`). An unreadable zone policy drops the coordinate.
+- **Who sees it.** A crewmate's share is shown only through the existing `locationPrecisionFor` gate (`artifacts/api-server/src/services/layover/LayoverCrewLocation.ts:443#const gate = locationPrecisionFor({`). The share must belong to this crew and come from a live member, the share must be live, neither person may have blocked the other, and the sharer's preferences must still publish them. An unreadable block list or preference read withholds every crewmate and says why.
+- **Storage (3996).** Two tables. `layover_crew_location_grants` holds one current share per member (`artifacts/api-server/src/migrations/3996_layover_crew_location_grants.sql:123#CREATE TABLE IF NOT EXISTS public.layover_crew_location_grants (`). `layover_crew_location_controls` holds the precise switch, default FALSE (`artifacts/api-server/src/migrations/3996_layover_crew_location_grants.sql:114#precise_sharing_enabled  BOOLEAN     NOT NULL DEFAULT FALSE,`). Both FK `(crew_id, user_id)` to the membership, ON DELETE CASCADE. The expiry is NOT NULL with no default and is CHECK-bounded to 4 hours (`artifacts/api-server/src/migrations/3996_layover_crew_location_grants.sql:148#CHECK (expires_at > granted_at AND expires_at <= granted_at + interval '4 hours'),`). A guard trigger requires a live membership on the same session, a live crew and no share outliving it, and the precise control for exact (`artifacts/api-server/src/migrations/3996_layover_crew_location_grants.sql:167#CREATE OR REPLACE FUNCTION public.layover_crew_location_grant_guard()`). Rows are deleted, not hidden, when the member leaves, the crew disbands, the crew is swept, the session is deleted, or the precise control turns off. The tables are service-role only. Two audit event types carry precision and times, never a label or a coordinate.
+- **Routes.** Four of them:
+  - the read, `artifacts/api-server/src/routes/layoverCrewLocation.ts:204#router.get("/airport/sessions/:id/crew/location"`;
+  - the share, `artifacts/api-server/src/routes/layoverCrewLocation.ts:220#router.post("/airport/sessions/:id/crew/location"`;
+  - the stop, never flag-gated, `artifacts/api-server/src/routes/layoverCrewLocation.ts:274#router.delete("/airport/sessions/:id/crew/location"`;
+  - the precise control, `artifacts/api-server/src/routes/layoverCrewLocation.ts:285#router.put("/airport/sessions/:id/crew/location/precise-control"`. A share past its scope is purged when it is read (`artifacts/api-server/src/routes/layoverCrewLocation.ts:169#if (projected.ended.length > 0) await deleteCrewGrants(`).
+- **Client.** `LayoverCrewLocationCard` offers Exact only while the separate switch is on (`travel-buddy-standalone/src/components/layover/LayoverCrewLocationCard.tsx:137#const offered: CrewSharePrecision[] = precise ? ['area', 'venue', 'exact'] : ['area', 'venue'];`). It lists crewmates with a proximity bucket and offers a one-tap stop. `LayoverMapCard` gains `crewLocations`: exact draws at its point, venue at its cell centre, area draws no pin, and a crew pin never opens the add-to-plan sheet (`travel-buddy-standalone/src/components/layover/LayoverMapCard.tsx:262#for (const c of crewLocations ?? []) {`).
+
+### The six rows
+
+| id | was | now | why it does not move, and what moves it |
+| --- | --- | --- | --- |
+| L132 L4 temporary location | N | **N** | Explicit (the owner's own request writes the row), scoped (crew, purpose, precision), auto-expiring (at most 4 h, boarding, crew end, read-time evaluation, deletion). Held by H24 (3996 unapplied, flag FALSE) and by the unmounted router and card. Tests: `artifacts/api-server/src/services/layover/__tests__/layoverCrewLocationRules.test.ts:163#it("every terminator §14.1 names ends a live share, and the first one is the reason"`. |
+| L124 map element crew member | N | **N** | The map element exists behind an explicit live share (`travel-buddy-standalone/src/components/layover/__tests__/LayoverMapCard.crewMembers.component.test.tsx:82#it('exact draws at its point, venue at its cell centre, area draws no pin'`). The screen does not pass `crewLocations` yet, and the storage is 3996 (H24). |
+| L158 precise crew/live location, session scoped | N | **N** | Exact shares end with the session (boarding, session end, crew end) and are deleted, not kept (`artifacts/api-server/src/test/layoverCrewLocationMigration.test.ts:162#await t.test("L166: exact needs the separate control ON, and turning it off deletes the exact share"`). H24. |
+| L166 precise crew sharing, separate control off by default | N | **N** | The control is its own table, default FALSE, its own route and its own switch. Turning it off deletes the exact share (`artifacts/api-server/src/services/layover/__tests__/layoverCrewLocationRules.test.ts:192#describe("L166 — precise crew sharing is a SEPARATE control, off by default"`). H24. |
+| L203 crew membership/location rows require membership and explicit permission | N | **N** | The location half §28.2 found missing now exists. A grant row cannot exist without a membership row (composite FK), and the guard trigger refuses one for a member who left (`artifacts/api-server/src/test/layoverCrewLocationMigration.test.ts:132#await t.test("L203: a share needs a LIVE membership on the same session"`). The route shows nothing across crews (`artifacts/api-server/src/services/layover/__tests__/layoverCrewLocationRoute.test.ts:326#it("someone in another crew sees nothing of this crew's shares"`). H24. |
+| L277 Locate My Friends crew proximity | N | **N** | Server and UI half only: a proximity bucket, never a distance, only when the viewer shares a point too (`artifacts/api-server/src/services/layover/__tests__/layoverCrewLocationRoute.test.ts:372#it("a bucket, only when both share a point"`). The native/offline half is not built and is not this lane's. This is not a Locate My Friends (2219) session: `group_scope_kind` has no layover crew value. Even after the press this row is W, not C. |
+
+### Rows examined and not built
+
+- **L129** (L1 opt-in intent): already built (§51.1, §55.1). It stays `N` on H24: 3900 is not in the production-applied ledger and both presence flags are FALSE.
+- **L131** (L3 crew formed, shared chat): §55.4's ruling stands. The chat is a Telegraph crew thread. Telegraph files are another lane's, and a crew thread needs `thread_type 'group'` (3660, not in the production ledger) plus a crew-to-thread link.
+- **L159** (operational checkpoints): `layover_checkpoints` is 2992, unapplied (H24). "Bounded diagnostics" has no ratified period: the §67 proposal's owner questions are open.
+- **L160** (raw flight operational cache): no flight feed exists, so there is nothing to cache. That is a provider decision.
+- **L161** (aggregate airport timing): there is no producer. Its source, `layover_outcomes`, is 2992 (unapplied), and the cohort floor is §67 owner question Q8.
+- **L274** (Visa Buddy): **an owner decision already made, and not yet applied here.** `docs/ops/lead-rulings-20261007-media.md` D-41 names this row and rules *"No Layover path through Rent-a-Buddy offers visa help"*. census-passport moved P59 on the same ruling. Recording the withdrawal of L274 is the lead's grading call, so this lane leaves it `N`.
+
+### Tests and mutation proofs, run for this section on 2026-10-17
+
+All server runs used `node --import tsx/esm --test` with `TZ=UTC`. The migration suite ran on PGlite (`DISCOVERY_PGLITE_MODULE`). Every mutant was reverted byte-identically and its sha256 rechecked.
+
+| what | result |
+| --- | --- |
+| Red before the code existed | rules, route, client contract and card suites failed to load; map crew suite 3 of 4 red (only the no-share control passed) |
+| Green | rules 28/28, route 23/23, migration 17/17 (5 static + 12 executed), client contract 9/9, card 10/10, map crew 4/4 |
+| All four server production files reverted together | rules, route and migration suites all fail to load |
+| Targeted server mutants | 21 of 21 killed, among them: precise control not required; a coordinate stored at area; no boarding clamp; blocks ignored; an unreadable block list clearing everyone; a paused sharer published; venue storing the raw point; protected zones ignored; no purge on read; the share read not scoped to the crew |
+| Migration mutants | 12 of 12 killed: each guard clause, each ending trigger, a 24 h window, a coordinate at area, a client privilege, the vocabulary, the flag seeded ON |
+| Client mutants | 15 of 16 killed. The survivor is equivalent: dropping the `available` check still returns null at the `inCrew` check |
+| Neighbours | 26 API files: the crew, presence, Locate My Friends, location-purpose, Telegraph lifecycle and supabase-contract suites, 739/739. The app layover sensing guard plus the client contract, 50/50. Every layover component suite, 42 suites, 447/447 |
+
+No row moves. This section changes no count, so the headline is the latest headline table above it.
+
+### Correction (2026-10-17, wave-4 integration)
+
+The wave-4 section above says the crew-location work is not mounted. That is no longer true: `routes/index.ts` now mounts `layoverCrewLocation` (folded onto its last line), and `travel-buddy-standalone/app/layover/[id].tsx` mounts `LayoverCrewLocationCard` beside `LayoverCrewSection`, with its read feeding the map's `crewLocations`. L124 now has its screen wiring and L132's card is reachable. Grading is unchanged: under this census's WAVE-1 ruling the rows stay N while migration 3996 is unapplied and `layover_crew_location_enabled` is seeded FALSE.
+
+## Row moves — 2026-10-17 build and fix (wave 5, layover/map). NO ROW MOVES
+
+Measured on branch `claude/wave4-build-20261017` against the working tree, 2026-10-17. `head_commit` is not re-declared. Every row not named here is unchanged. This lane closed the two gaps §65.4 and §55.9 left open on L295 and L294 and checked L236's registration. None of the three moves, for the reasons in the table.
+
+### L295 — every double §65.4 named is behind the embed guard, and the guard reads production's keys
+
+§65.4 ended: *"`failClosedSupabase`, `schemaStrictSupabase` and `fakeMapDb` are not yet behind the embed guard."* Each now calls the guard from its own `select()`, before it answers. The guard is unchanged in its rule and its signature (`artifacts/api-server/src/test/helpers/migrationForeignKeys.ts:125#export function assertSelectEmbedsBacked(`). A planted `rent_buddy_profiles → airport_profiles` embed is refused by each double, nested forms included (`artifacts/api-server/src/test/fakeLayoverDbEmbedGuard.test.ts:117#PLANTED: failClosedSupabase refuses`).
+
+Putting 123 more suites behind the guard showed that the first cut read too little. It read only `src/migrations/*.sql`, and most of production's keys predate that chain: `trip_members → trips`, `user_follows → profiles` and `event_reviews → profiles` read as unbacked. The reader now also reads the 2026-08-19 production structure dump, and stays additive (`artifacts/api-server/src/test/helpers/migrationForeignKeys.ts:153#const BASELINE = path.resolve(`). It also records which column each key runs along and what it is named. So a column embed (`profiles:submitted_by!left(...)`) lands on the table its key references, and a `!hint` that names no key between the two tables is refused (`artifacts/api-server/src/test/fakeLayoverDbEmbedGuard.test.ts:163#keys that predate the migration chain count`, `artifacts/api-server/src/test/fakeLayoverDbEmbedGuard.test.ts:181#PLANTED: a hint naming no key between the tables is refused`). Two cases are not modelled, and the file says so: an unhinted embed between two tables joined by more than one key (PostgREST's PGRST201) is accepted, and a many-to-many embed through a junction table is refused.
+
+**One embed in production code has no key behind it in the repo's own schema.** `routes/reviews.ts` selects `profiles!reviewer_id(...)` from `reviews` on three reads. But `reviews.reviewer_id` references `auth.users(id)` (0067; the baseline's `reviews_reviewer_id_fkey`), not `public.profiles`, and no migration adds a `reviews → profiles` key. By that schema PostgREST answers PGRST200, and those reads answer `db_error`. **This was not checked against the live catalog**; one catalog query settles it. The embed is recorded rather than hidden: the doubles accept it from a one-entry ledger, so the two suites that drive those reads stay runnable. A case fails the moment the embed stops being issued or a key starts backing it (`artifacts/api-server/src/test/fakeLayoverDbEmbedGuard.test.ts:206#every entry is still unbacked by any declared key`). The fix, a key migration or a two-step read, belongs to the reviews route's owner, so this lane leaves it to them.
+
+Across the 217 suites that use any of the five doubles or the guard, the run is 4060/4060 with the guard on.
+
+### L294 — the typed read-result convention, its guard, and eight of twelve reads moved onto it
+
+§55.9: *"'Degraded confidence a handler cannot skip' is a property of every layover read's return type … It needs a typed-read-result convention applied across the layover stores."* **The convention:** a read that can answer with a fail-closed substitute returns `LayoverRead<T>`, either `{ kind: "read", value }` or `{ kind: "degraded", fallback, reasons }` (`artifacts/api-server/src/services/layover/layoverRead.ts:61#export type LayoverRead<T> =`). The substitute is deliberately not named `value`, so `r.value` does not compile until the handler has narrowed to a real read. The guard has the compiler prove that on a planted handler (`artifacts/api-server/src/test/layoverReadResultGuard.test.ts:172#the convention's whole point, checked by the compiler`). A degraded read must name at least one reason, checked at runtime too (`artifacts/api-server/src/services/layover/layoverRead.ts:75#export function readDegraded<T>(`). `readDisclosure` turns any number of reads back into the `{ degraded, degradedReasons }` pair the wire already speaks, so no client contract moved.
+
+**The guard** reads every `async` function in `services/airport`, `services/layover`, `routes/airport.ts` and `routes/layover*.ts` with the TypeScript checker, inferred return types included. It fails on any whose result carries a read-confidence boolean (`degraded`, `unreadable`, `readable`, …) beside data and is not on a ledger that may only shrink. A ledger entry that no longer has the shape also fails (`artifacts/api-server/src/test/layoverReadResultGuard.test.ts:54#const NOT_YET_MIGRATED`). Reads that already had a typed shape, the `{ ok: true } | { ok: false }` unions and `readConstraintFlags`'s `readable: true | false`, are correctly not flagged.
+
+**Migrated, one store at a time, with the neighbours green after each:**
+- `readTripGhostMode` (`artifacts/api-server/src/services/airport/LayoverPrivacyGuard.ts:296#): Promise<LayoverRead<boolean>> {`).
+- `publishableUserIds`, with all six of its call sites.
+- The four airport lookups. The static answer to an outage is now a fallback, and the legacy `resolveBy*` projections take it knowingly, exactly as before (`artifacts/api-server/src/services/airport/AirportProfileService.ts:190#export type AirportLookup = LayoverRead<AirportAnswer>;`).
+- `cityPresence`. Unreadable traveller cards now make the whole answer degraded, with the measured count kept in the fallback (`artifacts/api-server/src/routes/airport.ts:2014#): Promise<CityPresenceRead> {`).
+- `crewMemberCards`.
+
+The type system found the two places where a handler read the data without the boolean.
+
+**Remaining on the ledger, and why each is not a mechanical change:**
+- `evaluateSharingGate`. Its result also feeds the synchronous `disclosePresence`, and its `reasons` list mixes the traveller's own switches with read failures, which the wire serves as `withheld`. Converting it changes the meaning of a served field.
+- `markReturning`. It is a write (`applied` beside `failed`), not a read.
+- `landsideMaturityDecision`. `signalsReadable` sits inside a decision record that is itself disclosed.
+- `readLayoverLive`. Its `readable` conflates a flag that is off, a policy gate that refuses, and a thrown read, and only a log line reads it.
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L295 | W | W | The fixture half is now closed for every double §65.4 named, and the guard reads production's keys and the column a join runs along (`artifacts/api-server/src/test/fakeLayoverDbEmbedGuard.test.ts:117#PLANTED: failClosedSupabase refuses`). The other half, a layover test on a real CI schema, still turns on the U-1 grading call about `layoverClientBoundary.db.test.ts`. That call is the lead's. |
+| L294 | W | W (improved) | The convention exists and new data-beside-boolean reads are refused (`artifacts/api-server/src/test/layoverReadResultGuard.test.ts:136#every data-beside-boolean read is on the ledger`). Eight of twelve reads are migrated. C2 asks it of every layover read, and four remain on the ledger for the reasons above. |
+| L236 | W | W | Registered like its siblings, and not moved. `layoverClientBoundary.db.test.ts` is in the api-server `test` list, where it skips without a database. It is also in `scripts/local-db/run-tests.sh`'s `src/test/db/*.db.test.ts` glob, which CI's `api-server-local-db` job runs (`test:db-local`). This lane cannot run it: there is no PostgreSQL here. One observation for the lead: it skips at the `describe` level, which node's TAP reports as `# skipped 0`, so run-tests.sh's *"refuses skipped > 0"* would not see that file skip on its own. Only the job-wide "no test passed" check catches a skip, and it does so only when every suite skips together. |
+
+### Tests and mutation proofs, run for this section on 2026-10-17
+
+Runs used `node --import tsx/esm --test` with `TZ=UTC`, on fakes. Loopback suites ran outside the sandbox, and the wide runs ran under `heavy.sh`. Every mutant was reverted byte-identically, and its sha256 was rechecked.
+
+| what | result |
+| --- | --- |
+| L295 red first | with the four helpers restored to HEAD, the guard suite does not load (the new exports are absent) |
+| L295 green | the guard suite, 23/23. The 217 suites that use a double or the guard, 4060/4060 |
+| L295 mutants | 10 of 10 killed: each of the three doubles' guard calls removed; the baseline not read; column embeds not resolved; the hint check dropped; the ledger dropped; nesting off the raw name; the guard silenced; a join modifier read as a hint |
+| L294 red first | with `LayoverPrivacyGuard.ts` restored, the guard names both reads as new (*"new data-beside-boolean read(s): …readTripGhostMode … publishableUserIds"*), and 6 shape cases fail |
+| L294 green | the guard, 11/11. The 126 neighbour suites (presence, crew, crew location, abort notice, airport lookups, external replan, admin metrics), 2858/2858 |
+| L294 mutants on the stores and their callers | 30 run, 28 killed. Covered: each store's degraded branch returned as a read; the gate dropping the ghost reason; the presence refusal and the crew-card reason swallowed; a degraded consent read taken as an empty set (crew location) or as "paused" (share); the abort notice's degraded branch removed; the population read answering ok; the static fallback for an outage as a read, and a clean miss as degraded; the search route's disclosure dropped (query and IATA); session creation not refusing a degraded lookup (IATA and city); the replan port using a degraded lookup; the legacy projections dropping the fallback (IATA and city); `cityPresence`'s measured zero degraded, its refusal measured, its final return forced either way; the roster disclosure dropped; and crewMemberCards' blocks, consent, card-read and throw exits plus its disclosure. Six of these first survived on branches no suite had reached, and the tests added for them now kill them. **Two survive:** (1) EQUIVALENT: the presence route serving `[]` instead of a degraded roster's fallback travellers, because every degraded exit of `cityPresence` carries no traveller; (2) the offer surface reading a degraded card read's `blockedRelation` as `false`, which differs only when the card read throws on the offer surface, and no suite drives that |
+| L294 guard and convention mutants | 12 of 12 killed: the `degraded` name not recognised; a literal counted as a plain boolean; sync functions flagged; union members not walked; a lone flag flagged; the fresh and stale ledger checks disabled; the degraded variant exposing `value` (type and runtime); empty reasons accepted; the disclosure dropping reasons; `matchRead` taking the read branch for a degraded one |
+| Static | `tsc -p artifacts/api-server` clean. check-test-typecheck: none of this lane's files is above its baseline (the run's only file above baseline is `stampAwardEndpointPresenceEvidence.test.ts`, another lane's). The silent-read, silent-write, enum-literal, location-purpose and route-auth guards pass. `check:writerless-reads` moves `canonical_locations` from 9 readers to 10 for census-trips' stage layer, with the reason on the line |
+
+### Citation repointed in this section
+
+§74's citation of `LayoverCrewAbortNotice.ts:310` now carries that line's new text. It is the same line and the same claim: an unreadable sharing read tells nobody. Only the shape of the check moved to `LayoverRead`.
+
+### Cited, not graded
+
+- NOT-GRADED: artifacts/api-server/src/routes/reviews.ts — named only for the unbacked `reviews → profiles` embed the guard found; the reviews route belongs to another lane.
+
+### Headline
+
+| bucket | was (wave 4) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 86 | 86 |
+| BUILT-BUT-WRONG | 158 | 158 |
+| NOT-BUILT | 52 | 52 |
+| CANNOT-VERIFY | 0 | 0 |
+| total | 296 | 296 |
+
+**No row moves.** 296 = 86 C / 158 W / 52 N / 0 X.
+
+### Correction (2026-10-17, wave 5) — L295's guard: an embed more than one key could answer is now refused (PGRST201)
+
+The guard accepted an unhinted embed between two tables joined by more than one key. PostgREST refuses that read
+(PGRST201). On the production catalog (read-only, the lead, 2026-10-17), five production reads were such embeds and
+never answered: `posts` has three keys to `profiles`, and `live_place_recaps` and `live_place_recap_versions` key each
+other both ways (census-media, census-highlights-memories and census-passport carry the surface corrections). The
+guard now collects every relationship between the two tables in both directions, de-duplicated across the migration
+chain and the baseline. It keeps the ones a hint selects (a constraint name, or either end of a single-column key)
+and refuses when more than one remains, on every double that calls it. The guard suite's CONTROL "a key-backed embed
+is accepted" embedded `user_account_states(state)` from `profiles` with no hint. Two keys join that pair (`user_id`,
+`set_by`), so that CONTROL asserted a join production refuses. It now carries the hint production's account-state
+gate uses. The suite's line numbers are unchanged. Tests: `artifacts/api-server/src/test/ambiguousEmbedHints.test.ts`.
+A many-to-many relationship through a junction table also counts towards PGRST201 in PostgREST, and the guard does
+not model it. A one-off probe found no unhinted production embed between two tables that a junction also joins.
+
+**L295 stays `W`.** This closes more of the fixture half. The other half, a layover test on a real CI schema, is
+unchanged.
+
+- NOT-GRADED: artifacts/api-server/src/test/ambiguousEmbedHints.test.ts — the route tests for the five surfaces this correction names, which no layover row grades.
+
+### Correction (2026-10-17, wave 5) — the LAY-4a router regression guard gained one intended change (census-telegraph T254)
+
+The guard's INTENDED set gained `safe_return|circle.need_help_host_alert` (the attention ladder's P0 band is now routed as emergency safety). The cited title at routerRegression.test.ts:66 is kept verbatim, so the anchor holds; it now describes the layover subset of INTENDED. The guard still asserts that the changed set equals INTENDED exactly, and the golden (main's decisions) was not regenerated. No layover verdict moves: layover.return.* are not in the attention ladder and the layover branch runs first.

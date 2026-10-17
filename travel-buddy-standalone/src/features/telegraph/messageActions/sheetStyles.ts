@@ -5,14 +5,28 @@
  * the same family rather than four new designs.
  */
 import { StyleSheet } from 'react-native';
-import { color, radius, space, type as t } from '../../../theme/tokens.ts';
+import { radius, space, type as t } from '../../../theme/tokens.ts';
+import { useTelegraphTheme, type TelegraphPalette } from '../theme/telegraphTheme.ts';
 
 export const DANGER = '#EF4444';
+/** Text on the fixed DANGER fill, in both schemes. */
+export const ON_DANGER = '#FFFFFF';
 
-export const sheet = StyleSheet.create({
+/**
+ * census T123/T124 — the sheets read the scheme's palette. Their primary
+ * action (save an edit, ask, retry) is ordinary emphasis: the operational teal.
+ * A selected REPORT reason is a safety choice: the attention colour. The
+ * destructive action keeps its fixed red.
+ */
+export function useMessageActionSheet(): { palette: TelegraphPalette; sheet: ReturnType<typeof makeSheet> } {
+  const { palette, styles } = useTelegraphTheme(makeSheet);
+  return { palette, sheet: styles };
+}
+
+export const makeSheet = (p: TelegraphPalette) => StyleSheet.create({
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)' },
   sheet: {
-    backgroundColor: color.paperRaised,
+    backgroundColor: p.surfaceRaised,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     paddingHorizontal: space.lg,
@@ -20,18 +34,18 @@ export const sheet = StyleSheet.create({
     paddingBottom: 34,
     maxHeight: '85%',
   },
-  handle: { width: 36, height: 4, borderRadius: 2, backgroundColor: color.haze, alignSelf: 'center', marginBottom: space.md },
-  title: { ...t.bodyStrong, color: color.ink, fontWeight: '700', fontSize: 15, marginBottom: 2 },
-  sub: { ...t.small, color: color.mute, marginBottom: space.md },
-  body: { ...t.body, color: color.ink },
-  note: { ...t.small, color: color.mute },
+  handle: { width: 36, height: 4, borderRadius: 2, backgroundColor: p.haze, alignSelf: 'center', marginBottom: space.md },
+  title: { ...t.bodyStrong, color: p.recvText, fontWeight: '700', fontSize: 15, marginBottom: 2 },
+  sub: { ...t.small, color: p.mute, marginBottom: space.md },
+  body: { ...t.body, color: p.recvText },
+  note: { ...t.small, color: p.mute },
   error: { ...t.small, color: DANGER, marginTop: space.sm },
   center: { paddingVertical: space.xl, alignItems: 'center', justifyContent: 'center' },
   input: {
     ...t.body,
-    color: color.ink,
+    color: p.recvText,
     borderWidth: 1,
-    borderColor: color.haze,
+    borderColor: p.haze,
     borderRadius: radius.md,
     paddingHorizontal: space.sm,
     paddingVertical: 10,
@@ -46,22 +60,23 @@ export const sheet = StyleSheet.create({
     paddingHorizontal: space.sm,
     borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: color.haze,
+    borderColor: p.haze,
     marginBottom: 6,
   },
-  optionSelected: { borderColor: color.signal, backgroundColor: color.signal + '0A' },
-  optionText: { ...t.body, color: color.ink },
-  optionTextSelected: { color: color.signal, fontWeight: '700' },
-  primaryBtn: { marginTop: space.md, backgroundColor: color.signal, borderRadius: radius.md, paddingVertical: 13, alignItems: 'center' },
+  optionSelected: { borderColor: p.attention, backgroundColor: p.attention + '0A' },
+  optionText: { ...t.body, color: p.recvText },
+  optionTextSelected: { color: p.attention, fontWeight: '700' },
+  primaryBtn: { marginTop: space.md, backgroundColor: p.operational, borderRadius: radius.md, paddingVertical: 13, alignItems: 'center' },
   dangerBtn: { marginTop: space.md, backgroundColor: DANGER, borderRadius: radius.md, paddingVertical: 13, alignItems: 'center' },
   btnDisabled: { opacity: 0.45 },
-  btnLabel: { ...t.bodyStrong, color: color.onInk, fontWeight: '700' },
+  btnLabel: { ...t.bodyStrong, color: p.operationalOn, fontWeight: '700' },
+  dangerLabel: { ...t.bodyStrong, color: ON_DANGER, fontWeight: '700' },
   secondaryBtn: { paddingVertical: 10, alignItems: 'center' },
-  secondaryLabel: { ...t.body, color: color.mute },
+  secondaryLabel: { ...t.body, color: p.mute },
   card: {
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: color.haze,
+    borderTopColor: p.haze,
     paddingVertical: space.md,
   },
-  meta: { ...t.small, color: color.mute, marginBottom: 4 },
+  meta: { ...t.small, color: p.mute, marginBottom: 4 },
 });

@@ -59,7 +59,7 @@ import {
   publicationPrecision,
   resolveMemoryLocationCeiling,
   coarsenMemoryLocation,
-} from "../lib/memoryLocationPrecision.js";
+} from "../lib/memoryLocationPrecision.js"; import { loadAudienceCeilings, withAudienceCeiling, type AudienceCeilings } from "../services/memory/memoryVisibilityPolicies.js"; // §3.6 (3997, census H33): the owner's per-audience publication ceiling; on this line so no cited line moves
 // §17 Command Bus and Domain Events. Every canonical Memory write below crosses
 // this boundary: a typed command, an actor, an idempotency key, an audit row
 // and — when the kernel is enabled — a domain event in the same transaction as
@@ -97,7 +97,7 @@ import {
   mergedAudience,
   revokeMemoryAudienceCaches,
 } from "../services/memory/memoryAudienceRevocation.js";
-import { runMemoryDeletionLifecycle } from "../services/memory/memoryDeletionLifecycle.js"; import { reprojectDerivativesAfterNarrowing } from "../services/memoryProjections/narrowingReprojection.js"; import { refuseWideningKeptPrivate, readRecapControls } from "../services/memory/memoryResurfacingControls.js"; import { hiddenItemKeys, itemKey } from "../services/memory/memoryItemVisibility.js"; import { clearsCanonicalOnPatch, correctPlaceHistory, placeCorrectionsForPatch, placesForViewer, recordPlaceCorrections } from "../services/memory/memoryCorrections.js"; import { memoryGraphLinkPath } from "../services/memory/memoryGraphShadow.js"; import { followMemoryRedirect } from "../services/memory/memoryIdRedirects.js"; // one line: this file is cited by line
+import { runMemoryDeletionLifecycle } from "../services/memory/memoryDeletionLifecycle.js"; import { reprojectDerivativesAfterNarrowing } from "../services/memoryProjections/narrowingReprojection.js"; import { refuseWideningKeptPrivate, readRecapControls } from "../services/memory/memoryResurfacingControls.js"; import { hiddenItemKeys, itemKey } from "../services/memory/memoryItemVisibility.js"; import { clearsCanonicalOnPatch, correctPlaceHistory, placeCorrectionsForPatch, placesForViewer, recordPlaceCorrections } from "../services/memory/memoryCorrections.js"; import { memoryGraphLinkPath } from "../services/memory/memoryGraphShadow.js"; import { followMemoryRedirect } from "../services/memory/memoryIdRedirects.js"; import { withMemoryItemRenditions, withMemoryCoverRenditions, enqueueMemoryItemRenditions } from "../services/memory/memoryItemRenditions.js"; // one line: this file is cited by line
 import {
   classifyMemoryMediaUrl, memoryItemMediaUrlAccepted, MEMORY_MEDIA_URL_REFUSAL,
   FOREIGN_MEDIA_REFUSAL,
@@ -127,7 +127,7 @@ function isUuid(s: string) { return UUID_RE.test(s); }
 
 interface MemoryGemContext {
   gems: RestrictiveGem[];
-  determined: boolean;
+  determined: boolean; audience?: AudienceCeilings; // §3.6 (3997, H33): the owners' per-audience publication ceilings, read with the gems so every non-owner door that loads one has the other
 }
 
 async function loadMemoryGemContext(
@@ -139,9 +139,9 @@ async function loadMemoryGemContext(
       placeIds: [],
       cities: rows.map((r) => r?.location_city ?? null),
     });
-    return { gems, determined: true };
+    return { gems, determined: true, audience: await loadAudienceCeilings(db, rows) }; // never throws: an unreadable policy is a clamp, not an exception
   } catch {
-    return { gems: [], determined: false };
+    return { gems: [], determined: false, audience: await loadAudienceCeilings(db, rows) };
   }
 }
 
@@ -182,7 +182,7 @@ function protectMemoryRow(
   // Flag on ⇒ the row's rung; a row that does not carry the key, or carries
   // null / a value off the ladder, is clamped to 'hidden' — the read-side
   // normalization that keeps an unreadable policy from being served as 'exact'.
-  const ownerPrecision = publicationPrecision(row, precisionEnabled);
+  const ownerPrecision = withAudienceCeiling(publicationPrecision(row, precisionEnabled), ctx.audience, row); // §3.6/§28.7 (3997, H33): never finer than the owner's ceiling for this Memory's audience
   const ceiling = resolveMemoryLocationCeiling(ownerPrecision, gemCeiling);
   if (ceiling == null) return row; // no constraint from either source → unchanged
   const d = coarsenMemoryLocation(row, ceiling);
@@ -216,7 +216,7 @@ import {
   acceptedCrewOfTrip,
   isBlocked,
   type MemoryReadSurface,
-} from "../services/memory/memoryReadPolicy.js";
+} from "../services/memory/memoryReadPolicy.js"; import { readBlockDirections } from "../lib/exclusionSet.js"; // census-telegraph T220; on this line so no cited line moves
 
 export type { MemoryReadSurface };
 
@@ -237,18 +237,18 @@ async function loadBlockedIds(
   sc: any,
   viewerId: string,
 ): Promise<{ ok: true; ids: Set<string> } | { ok: false; error: unknown }> {
-  const [blockedByMe, blockingMe] = await Promise.all([
-    sc.from("blocks").select("blocked_id").eq("blocker_id", viewerId),
-    sc.from("blocks").select("blocker_id").eq("blocked_id", viewerId),
-  ]);
-  if (blockedByMe.error || blockingMe.error) {
-    return { ok: false, error: blockedByMe.error ?? blockingMe.error };
+  // census-telegraph T220: both directions through the shared reader, readBlockDirections —
+  // each read WHOLE by key — and EVERY failure (a returned error, a thrown read, an answer
+  // that is not a row list, a row naming nobody) `ok: false`, kept in this function's shape.
+  const blocks = await readBlockDirections(sc, viewerId);
+  if (!blocks.ok) {
+    return { ok: false, error: blocks.reason };
   }
   return {
     ok: true,
     ids: new Set<string>([
-      ...((blockedByMe.data ?? []).map((r: any) => r.blocked_id as string)),
-      ...((blockingMe.data ?? []).map((r: any) => r.blocker_id as string)),
+      ...blocks.ids, // both directions: everyone the viewer blocked, and everyone who blocked them
+      // (this set feeds a DB-side `.not(owner_id in …)`; one range-less read per direction was cut at db-max-rows, and the owners past the cut were served)
     ]),
   };
 }
@@ -938,7 +938,7 @@ async function serveCrewSearch(
     limit: body.limit,
   });
 
-  if (!result.ok) {
+  if (!result.ok) { if (result.reason === "entity_unresolved") { sendError(res, "not_found", "That place or person is not known. Nothing similar was searched in its place."); return; } // §28.3 (H262): "unknown" is not "no matches" and not "try again"
     switch (result.reason) {
       case "invalid_intent":
       case "filter_unsupported":
@@ -1088,7 +1088,7 @@ router.post("/memories/search", async (req, res) => {
     limit: body.limit,
   });
 
-  if (!result.ok) {
+  if (!result.ok) { if (result.reason === "entity_unresolved") { sendError(res, "not_found", "That place or person is not known. Nothing similar was searched in its place."); return; } // §28.3 (H262): "unknown" is not "no matches" and not "try again"
     switch (result.reason) {
       case "invalid_intent":
       case "filter_unsupported":
@@ -1222,26 +1222,26 @@ router.get("/memories/graph", async (req, res) => {
     const linked = await memoryGraphLinkPath(sc, { ownerId: user.id, moments, placeRows: memoryRows, log: req.log });
     if (!linked.ok) { sendError(res, "degraded_unavailable", "We could not build your memory graph. Please try again."); return; }
     const participantIds = [...new Set([...people.values()].flat())];
-    const blockedIds = new Set<string>();
-    for (const batch of chunkIds(participantIds.filter((id) => id !== user.id))) {
-      for (const direction of ["outgoing", "incoming"] as const) {
-        const outgoing = direction === "outgoing";
-        const { data: blockRows, error: blockError, count: blockCount } = await sc
-          .from("blocks")
-          .select("blocker_id, blocked_id", { count: "exact" })
-          .eq(outgoing ? "blocker_id" : "blocked_id", user.id)
-          .in(outgoing ? "blocked_id" : "blocker_id", batch);
-        const parsedBlocks = z.array(graphBlockSchema).safeParse(blockRows);
-        if (blockError || !countedGraphRows(blockRows, blockCount, true) || !parsedBlocks.success
-          || parsedBlocks.data.some((block) => outgoing
-            ? block.blocker_id !== user.id || !batch.includes(block.blocked_id)
-            : block.blocked_id !== user.id || !batch.includes(block.blocker_id))) {
-          sendError(res, "degraded_unavailable", "We could not build your memory graph. Please try again.");
-          return;
-        }
-        for (const block of parsedBlocks.data) blockedIds.add(outgoing ? block.blocked_id : block.blocker_id);
-      }
+    // census-telegraph T220: the participants' blocks through the shared reader,
+    // readBlockDirections scoped to them (`among`) — whose scoped read IS the read this
+    // route made by hand: `select("blocker_id, blocked_id", { count: "exact" })`, the
+    // viewer's column `.eq()`, the counter-party `.in()`, one chunk at a time — and which
+    // holds each answer to its own filter as this route did (countedGraphRows,
+    // graphBlockSchema, the scope test): a count that is missing or disagrees with the
+    // rows, a row whose viewer column is not the viewer or whose counter-party is outside
+    // its chunk, a row naming nobody, a returned error and a thrown read are each
+    // `ok: false`, and each is the same 503. Chunks are BLOCK_AMONG_CHUNK (150) rather
+    // than IN_LIST_CHUNK (200); the answer is the same set.
+    const participantBlocks = await readBlockDirections(sc, user.id, {
+      among: participantIds.filter((id) => id !== user.id),
+    });
+    if (!participantBlocks.ok) {
+      sendError(res, "degraded_unavailable", "We could not build your memory graph. Please try again.");
+      return;
     }
+    // A block either way hides that participant: outgoing ∪ incoming, as the two
+    // per-direction loops built it.
+    const blockedIds = new Set<string>(participantBlocks.ids);
     const disclosed = projectParticipants({
       memoryOwnerId: user.id,
       memoryVisibility: null,
@@ -1764,7 +1764,7 @@ router.get("/memories/:id", async (req, res) => {
   res.json({
     memory: {
       ...mapMemory(withCanonicalPayload(safeMemory, canonPayload), user.id), ...(redirectedFrom ? { redirectedFrom } : {}),
-      items: ((items.data ?? []) as any[]).filter((it) => !hiddenItems.keys.has(itemKey(id, it.position))).map(mapItem),
+      items: await withMemoryItemRenditions(sc, user.id, ((items.data ?? []) as any[]).filter((it) => !hiddenItems.keys.has(itemKey(id, it.position))).map(mapItem), req.log), // H182: tiny/card/viewer renditions, only behind MEDIA_IMAGE_VARIANTS_ENABLED and 3980's two flags; the original always stays
       tags: participants.participants,
       anonymousParticipants: participants.anonymousCount,
       likeCount: likeCount.count ?? 0,
@@ -2235,7 +2235,7 @@ router.post("/memories/:id/items", async (req, res) => {
 
   if (!outcome.ok) { sendCommandFailure(req, res, outcome); return; }
 
-  res.status(201).json({ item: mapItem(outcome.body) });
+  void enqueueMemoryItemRenditions(sc, { mediaUrl: parsed.data.mediaUrl, mediaType: parsed.data.mediaType, ownerId: user.id }, { log: req.log }); res.status(201).json({ item: mapItem(outcome.body) }); // H182 (wave 5): the image ladder for a stored Memory photo, behind the reader's own switch and 3980 flags; never fails the attach
 });
 
 // ── DELETE /memories/:id/items/:itemId ───────────────────────────────────────
@@ -3384,7 +3384,7 @@ async function enrichMemories(
   const coverMap: Record<string, { mediaUrl: string; mediaType: string }> = {};
   for (const r of ((coverRows.data ?? []) as any[]).filter((c) => !hiddenCovers.keys.has(itemKey(c.memory_id, 0)))) {
     coverMap[r.memory_id] = { mediaUrl: r.media_url, mediaType: r.media_type };
-  }
+  } const coverRenditions = await withMemoryCoverRenditions(sc, viewerId, coverMap, log as { warn?: (o: object, m: string) => void } | undefined); // H182 (wave 5): list covers select renditions as GET /memories/:id does; the original mediaUrl always stays
 
   const ownerMap: Record<string, { id: string; name: string | null; handle: string | null; avatarUrl: string | null }> = {};
   for (const r of (ownerRows.data ?? []) as any[]) {
@@ -3399,7 +3399,7 @@ async function enrichMemories(
       likeCount: likeCounts[m.id] ?? 0,
       likedByMe: likedByMeSet.has(m.id),
       savedByMe: savedSet.has(m.id),
-      cover: coverMap[m.id] ?? null,
+      cover: coverRenditions[m.id] ?? coverMap[m.id] ?? null,
       owner: ownerMap[m.owner_id] ?? null,
     })),
   };
@@ -3836,3 +3836,125 @@ async function protectRecapRows(sc: any, rows: any[], viewerId: string): Promise
   const gemCtx = await loadMemoryGemContext(sc, withRung); const placed = await placesForViewer(sc, withRung, viewerId, new Date()); if (!placed.ok) return null; // H-16: a crew member's recap shows places through the owner's corrections; unreadable ⇒ the route refuses
   return placed.rows.map((r) => protectMemoryRow(r, gemCtx, viewerId, precisionClampApplies(gate)));
 }
+
+// ── POST /memories/:id/items/from-post — census-media MD385, ruling D-26j ─────
+// "Save to a Memory" from the caller's OWN post. Appended at the end of the
+// file so no cited line above moves. The decisions are
+// services/memory/memoryFromOwnMedia.ts's; the one write is here, because this
+// file is memory_items' declared writer (lib/memoryTableOwnership.ts).
+import {
+  gateMemoryFromOwnMedia,
+  resolveOwnPostMedia,
+  MAX_POST_MEDIA_INDEX,
+} from "../services/memory/memoryFromOwnMedia.js";
+import { recordMemoryCreatedFromMediaSignal } from "../lib/mediaAnalytics.js";
+
+const fromOwnPostSchema = z.object({
+  postId: z.string().uuid(),
+  /** Which of the post's own media; the URL is never taken from the client. */
+  mediaIndex: z.number().int().min(0).max(MAX_POST_MEDIA_INDEX).default(0),
+  caption: z.string().max(500).nullable().optional(),
+  position: z.number().int().min(0).default(0),
+}).strict();
+
+router.post("/memories/:id/items/from-post", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { id } = req.params;
+  if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid memory id"); return; }
+  const parsed = fromOwnPostSchema.safeParse(req.body ?? {});
+  if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  // Flag, then storage. Absent storage refuses: an item without its source link
+  // is the one thing this route must never write.
+  const gate = await gateMemoryFromOwnMedia(sc);
+  if (!gate.ok) {
+    if (gate.reason === "disabled") { sendError(res, "feature_disabled"); return; }
+    req.log.error({ memoryId: id, reason: gate.reason, detail: gate.detail }, "memories from-post: refused before anything was read");
+    sendError(res, "degraded_unavailable", "Saving to a Memory is not available right now.");
+    return;
+  }
+
+  const idempotencyKey = requireIdempotencyKey(req, res);
+  if (idempotencyKey === null) return;
+
+  const loaded = await loadMemoryForCommand(sc, id);
+  if (!loaded.ok) { sendCommandFailure(req, res, loaded); return; }
+  if (loaded.row.owner_id !== user.id) { sendError(res, "forbidden", "Not your memory"); return; }
+
+  const source = await resolveOwnPostMedia(sc, { viewerId: user.id, postId: parsed.data.postId, mediaIndex: parsed.data.mediaIndex });
+  if (!source.ok) {
+    if (source.reason === "not_found") { sendError(res, "not_found", "No post of yours with that id"); return; }
+    if (source.reason === "no_such_media") { sendError(res, "invalid_payload", "That post has no media at that position"); return; }
+    req.log.error({ memoryId: id, detail: source.detail }, "memories from-post: the source post could not be read — refusing");
+    sendError(res, "degraded_unavailable", "Could not read that post. Please try again.");
+    return;
+  }
+  const { postId, mediaUrl, mediaType } = source.value;
+
+  const outcome = await dispatchMemoryCommand<any>({
+    sc,
+    commandType: "ADD_MEDIA",
+    memoryId: id,
+    actorUserId: user.id,
+    idempotencyKey,
+    sourceVersion: loaded.row.updated_at ?? null,
+    payload: {
+      media_type: mediaType,
+      position: parsed.data.position,
+      write: { memory_id: id, media_url: mediaUrl, media_type: mediaType, caption: parsed.data.caption ?? null, position: parsed.data.position },
+    },
+    legacy: async () => {
+      const { data, error } = await sc
+        .from("memory_items")
+        .insert({
+          memory_id: id,
+          media_url: mediaUrl,
+          media_type: mediaType,
+          caption: parsed.data.caption ?? null,
+          position: parsed.data.position,
+          source_post_id: postId,
+        })
+        .select("id, media_url, media_type, caption, position, created_at, source_post_id")
+        .single();
+      if (error) {
+        req.log.error({ err: error, memoryId: id }, "memories from-post: insert refused");
+        return { ok: false, http: { code: error.code === "23505" ? "conflict" : "db_error", message: error.code === "23505" ? "That photo is already in this Memory" : error.message } };
+      }
+      return { ok: true, body: data };
+    },
+  });
+  if (!outcome.ok) { sendCommandFailure(req, res, outcome); return; }
+
+  // The kernel's ADD_MEDIA (2711) writes the five columns it knows. Its item
+  // carries no source link, so the link is written here, and if it cannot be
+  // the item is taken back out: an unlinked copy is never left behind.
+  let row = outcome.body as any;
+  if (row?.source_post_id !== postId) {
+    const linked = await sc.from("memory_items").update({ source_post_id: postId })
+      .eq("id", row?.id).eq("memory_id", id).select("id, media_url, media_type, caption, position, created_at, source_post_id");
+    if (linked.error || !Array.isArray(linked.data) || linked.data.length !== 1) {
+      req.log.error({ err: linked.error, memoryId: id, itemId: row?.id }, "memories from-post: the source link could not be written — removing the item");
+      const undo = await dispatchMemoryCommand<any>({
+        sc, commandType: "REMOVE_MEDIA", memoryId: id, actorUserId: user.id,
+        idempotencyKey: `${idempotencyKey}:from-post-unlinked`, payload: { item_id: row?.id },
+        legacy: async () => {
+          const { error } = await sc.from("memory_items").delete().eq("id", row?.id).eq("memory_id", id);
+          return error ? { ok: false, http: { code: "db_error", message: error.message } } : { ok: true, body: null };
+        },
+      });
+      if (!undo.ok) req.log.error({ memoryId: id, itemId: row?.id }, "memories from-post: the unlinked item could not be removed");
+      sendError(res, "degraded_unavailable", "Could not save that photo to your Memory. Please try again.");
+      return;
+    }
+    row = linked.data[0];
+  }
+
+  recordMemoryCreatedFromMediaSignal(sc, { userId: user.id, postId }); void enqueueMemoryItemRenditions(sc, { mediaUrl, mediaType, ownerId: user.id }, { log: req.log }); // H182 (wave 5): the copied photo gets its ladder too
+  res.status(201).json({ item: { ...mapItem(row), sourcePostId: postId } });
+});

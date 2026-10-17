@@ -80,9 +80,9 @@ import {
   HIGHLIGHT_DOMAIN_EVENT_TYPES, MEMORY_DOMAIN_EVENT_TYPES,
   MEMORY_EVENT_TABLE,
   isMemoryEventType,
-  type MemoryEventType,
+  type MemoryEventType, readEventPayload, payloadMayNarrowAudience, // §23 (H203): the event's privacy-filtered payload
 } from "../../lib/memoryOutbox.js";
-import { rebuildProjection } from "./derivativeRegistry.js";
+import { rebuildProjection } from "./derivativeRegistry.js"; import { reprojectDerivativesAfterNarrowing } from "./narrowingReprojection.js"; // §23 (H203)
 import { invalidate as invalidateCompassCache } from "../../compass/CompassCacheEngine.js";
 import type { ProjectionId, ProjectionScope } from "./projectionRegistry.js";
 import {
@@ -496,7 +496,7 @@ export async function drainMemoryOutbox(
         failed += 1;
         await failOutboxRow(sc, row.id, scopeResult.reason);
       } else {
-        const r = await rebuildForEvent(sc, row, scopeResult.scope, now, projections);
+        const r = subject === "memory" ? await rebuildMemoryEventFromPayload(sc, row, scopeResult.scope, now, projections) : await rebuildForEvent(sc, row, scopeResult.scope, now, projections); // §23 (H203): a Memory event's payload decides the search index's work
         outcome = {
           id: row.id, eventId: row.event_id, eventType: row.type, memoryId: row.memory_id,
           rebuilt: r.rebuilt, skipped: r.skipped, failed: r.failed, failureClass: r.failureClass,
@@ -733,4 +733,66 @@ export async function readHighlightProjectionScope(
     ok: true,
     scope: { owner_id: data.owner_id, viewer_id: data.owner_id, trip_id: null, place_id: null },
   };
+}
+
+// ── §23 (census H203): the worker consumes the event's privacy-filtered payload ──
+/**
+ * "Search/index workers consume privacy-filtered event payloads where possible
+ * rather than raw entire rows."
+ *
+ * For a Memory event the worker now:
+ *   1. READS THE EVENT'S PAYLOAD through the event store's one boundary
+ *      (lib/memoryOutbox.ts readEventPayload). The payload is ids, the command,
+ *      the §5 transition and the audience class — never a title, caption,
+ *      coordinate, allow / hide list or media URL — and a payload that carries
+ *      any of those is REFUSED, not consumed. An unreadable payload fails the
+ *      event (retried); a missing one fails it too, and is visible as such.
+ *   2. Rebuilds the owner's own projections at the event's scope, as before.
+ *   3. Rebuilds the PUBLIC SEARCH INDEX at the scope the public search serves
+ *      ({owner, no viewer}: memorySearchService's `public` target), from the
+ *      privacy-filtered public source read (derivativeRegistry
+ *      readPublicIndexSources: public + published rows and the published
+ *      columns only). Built at the event's owner-viewer scope, it was a
+ *      registration no search read.
+ *   4. When the PAYLOAD says the Memory may have left an audience (an audience
+ *      other than public, or a lifecycle state other than ACTIVE), re-derives
+ *      every registration still carrying it — revoking any that cannot be
+ *      re-derived (narrowingReprojection's fail-closed path) — decided from the
+ *      payload and the registry, never from the Memory's row. A narrowing that
+ *      could not be resolved fails the event, so it is retried.
+ */
+async function rebuildMemoryEventFromPayload(
+  sc: any,
+  row: ClaimedOutboxRow,
+  scope: ProjectionScope,
+  now: Date,
+  projections: readonly ProjectionId[],
+): Promise<{ rebuilt: number; skipped: number; failed: number; failureClass: string | null }> {
+  const read = await readEventPayload(sc, row.event_id);
+  if (!read.ok) return { rebuilt: 0, skipped: 0, failed: 1, failureClass: read.reason };
+
+  const r = await rebuildForEvent(sc, row, scope, now, projections.filter((p) => p !== "PublicMemoryProjection"));
+  if (projections.includes("PublicMemoryProjection")) {
+    const pub = await rebuildForEvent(sc, row, publicIndexScope(scope.owner_id), now, ["PublicMemoryProjection"]);
+    r.rebuilt += pub.rebuilt;
+    r.skipped += pub.skipped;
+    r.failed += pub.failed;
+    r.failureClass = r.failureClass ?? pub.failureClass;
+  }
+  if (typeof row.memory_id === "string" && payloadMayNarrowAudience(read.payload)) {
+    const report = await reprojectDerivativesAfterNarrowing(sc, {
+      memoryId: row.memory_id, now, reason: row.type, eventId: row.event_id,
+      mustExclude: read.payload.to_state === "DELETED",
+    });
+    if (!report.ok && !report.absent) {
+      r.failed += 1;
+      r.failureClass = r.failureClass ?? "narrowing_unresolved";
+    }
+  }
+  return r;
+}
+
+/** The scope the public search reads its index at (memorySearchService resolveTarget, `public`). */
+export function publicIndexScope(ownerId: string): ProjectionScope {
+  return { owner_id: ownerId, viewer_id: null, trip_id: null, place_id: null, person_id: null };
 }

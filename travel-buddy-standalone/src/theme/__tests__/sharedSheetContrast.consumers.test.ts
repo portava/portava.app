@@ -247,8 +247,8 @@ const CONSUMER_PAIRS: ConsumerPair[] = [
   { id: 'commentsSection.input.placeholder', fg: color.mute, was: color.faint, on: 'sheetPaper', kind: 'text', at: [...POST, [SF.comments, '\n                  placeholder={inputPlaceholder}\n                  placeholderTextColor={color.mute}']], component: SF.comments, consumer: 'app/post/[id].tsx' },
   // MentionInput's hashtag-cap warning sits on whatever holds the input.
   ...([
-    ['app/messages/[id].tsx', 'sheetPaperRaised', /compose: \{[^}]*backgroundColor: color\.paperRaised,/],
-    ['src/components/GroupChatScreen.tsx', 'sheetPaperRaised', /compose: \{[^}]*backgroundColor: color\.paperRaised,/],
+    ['app/messages/[id].tsx', 'sheetPaperRaised', /compose: \{[^}]*backgroundColor: p\.surfaceRaised,/], // census-telegraph T123: the Telegraph composers read the scheme's palette, whose LIGHT surfaceRaised is #FFFFFF (sheetPaperRaised); the DARK compose bar is not modelled here
+    ['src/components/GroupChatScreen.tsx', 'sheetPaperRaised', /compose: \{[^}]*backgroundColor: p\.surfaceRaised,/],
     ['src/components/HighlightComposer.tsx', 'sheetPaper', /sheet: \{\s*backgroundColor: color\.paper,/],
     ['src/components/PostcardComposer.tsx', 'sheetPaper', 'root: { flex: 1, backgroundColor: color.paper },'],
     ['src/components/PulseCreate.tsx', 'sheetPaper', 'page: { flex: 1, backgroundColor: color.paper },'],

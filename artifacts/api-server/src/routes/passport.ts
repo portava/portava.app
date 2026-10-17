@@ -41,7 +41,7 @@ import {
   type PassportTelemetryEvent,
 } from "../lib/passportTelemetry.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
-import { checkRateLimit } from "../lib/rateLimit.js";
+import { checkRateLimit } from "../lib/rateLimit.js"; import { readStampPresenceView } from "../services/passport/stampPresenceView.js";
 
 const router = Router();
 
@@ -1075,10 +1075,10 @@ async function fetchPublicStampPreview(
 ): Promise<StampPreviewData | null> {
   if (!STAMP_UUID_RE.test(stampId)) return null;
   try {
-    const BASE_COLS = "id, city, country, earned_at, title_override, visibility, is_revoked, catalog_id";
+    const BASE_COLS = "id, city, country, earned_at, title_override, visibility, is_revoked, catalog_id, user_id, source_type, source_id";
     let { data, error } = await sc
       .from("user_stamps")
-      .select(`${BASE_COLS}, stamp_definitions(name, stamp_type, universal_artwork_url)`)
+      .select(`${BASE_COLS}, stamp_definitions(slug, name, stamp_type, universal_artwork_url)`)
       .eq("id", stampId)
       .eq("user_id", ownerId)
       .maybeSingle();
@@ -1087,7 +1087,7 @@ async function fetchPublicStampPreview(
     if (error && (error as any).code === "42703") {
       ({ data, error } = await sc
         .from("user_stamps")
-        .select(`${BASE_COLS}, stamp_definitions(name, stamp_type)`)
+        .select(`${BASE_COLS}, stamp_definitions(slug, name, stamp_type)`)
         .eq("id", stampId)
         .eq("user_id", ownerId)
         .maybeSingle());
@@ -1097,7 +1097,7 @@ async function fetchPublicStampPreview(
     if (data.is_revoked) return null;
     // Crawlers are anonymous: only public stamps may be previewed.
     if (data.visibility && data.visibility !== "public") return null;
-
+    { const view = await readStampPresenceView(sc, [data]); if (!view.presenceClaimHolds(data)) return null; if (!view.mayShowPlace(data)) { data = { ...data, city: null, country: null }; if (data.catalog_id) { const { data: cat, error: catErr } = await sc.from("universal_stamp_catalog").select("city, country").eq("id", data.catalog_id).maybeSingle(); if (catErr || !cat || cat.city || cat.country) data = { ...data, catalog_id: null }; } } } // H4 (stampPresenceView.ts): the preview names a place, and shows place art, only for an evidenced presence stamp
     const def = data.stamp_definitions ?? null;
     const label =
       data.title_override ??

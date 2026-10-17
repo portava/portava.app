@@ -41,7 +41,7 @@ import { useConversationProjection } from '../../src/features/telegraph/conversa
 import { useTrip } from '../../src/hooks/useBackend';
 import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t, avatar, icon } from '../../src/theme/tokens';
-import { TG, TG_SPACING } from '../../src/theme/telegraphTokens';
+import { TG_SPACING } from '../../src/theme/telegraphTokens'; import { useTelegraphTheme, useTelegraphStyles, type TelegraphPalette } from '../../src/features/telegraph/theme/telegraphTheme.ts';
 import { TelegraphSuggestionTray, clearTelegraphSuggestionsCache } from '../../src/components/TelegraphSuggestionTray';
 import { TelegraphSystemNotice } from '../../src/components/TelegraphSystemNotice'; import { sharedCardNoticeText } from '../../src/features/telegraph/sharing/sharedCardNotice.ts'; // census-telegraph T448: one line, so no cited line moves
 import { MeetupCreationSheet } from '../../src/components/MeetupCreationSheet';
@@ -103,7 +103,7 @@ import { MessageMediaBubble } from '../../src/components/MessageMediaBubble';
 import { MessageSafetyBanner } from '../../src/features/telegraph/components/MessageSafetyBanner';
 import { StrangerMediaShield } from '../../src/features/telegraph/components/StrangerMediaShield';
 // Telegraph §16.2 / §17.4 — data-saver and the degradation ladder.
-import { useDataSaver } from '../../src/features/telegraph/hooks/useDataSaver';
+import { useDataSaver } from '../../src/features/telegraph/hooks/useDataSaver'; import { reportThreadSend, reportMeetAtSend } from '../../src/features/telegraph/composer/composerTaskOutcome.ts'; import { useFeatureFlags } from '../../src/context/FeatureFlagsContext.tsx'; import { useLinkPreviews } from '../../src/features/telegraph/linkPreview/useLinkPreviews.ts'; import { LinkPreviewCard } from '../../src/features/telegraph/linkPreview/LinkPreviewCard.tsx'; import { LINK_PREVIEWS_FLAG, type LinkPreview } from '../../src/features/telegraph/linkPreview/linkPreviewApi.ts'; // census T404, one line: this file is cited by line
 import * as Haptics from 'expo-haptics';
 import { usePlainBottomInset } from '../../src/hooks/useBottomInset';
 import * as Clipboard from 'expo-clipboard';
@@ -148,7 +148,7 @@ function formatDayLabel(isoDay: string): string {
   });
 }
 
-function DayDivider({ label }: { label: string }) {
+function DayDivider({ label }: { label: string }) { const dd = useTelegraphStyles(makeDayStyles);
   return (
     <View style={dd.wrap}>
       <View style={dd.line} />
@@ -157,10 +157,10 @@ function DayDivider({ label }: { label: string }) {
     </View>
   );
 }
-const dd = StyleSheet.create({
+const makeDayStyles = (p: TelegraphPalette) => StyleSheet.create({
   wrap: { flexDirection: 'row', alignItems: 'center', marginVertical: 12, paddingHorizontal: 4 },
-  line: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: color.haze },
-  label: { ...t.stamp, fontFamily: 'Courier', fontSize: 10, color: color.mute, paddingHorizontal: 10, letterSpacing: 0.5 },
+  line: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: p.haze },
+  label: { ...t.stamp, fontFamily: 'Courier', fontSize: 10, color: p.mute, paddingHorizontal: 10, letterSpacing: 0.5 },
 });
 
 // ── Long-press action sheet ───────────────────────────────────────────────────
@@ -189,7 +189,7 @@ function LongPressActionSheet({
   onReply: (msg: Message) => void;
   onSave: (msg: Message) => void;
   onUnsent: (id: string) => void; onEdit?: (msg: Message) => void; onHistory?: (msg: Message) => void; canEdit?: boolean; blockLabel?: string; onBlockSender?: () => void;
-}) {
+}) { const { palette, styles: las } = useTelegraphTheme(makeSheetStyles);
   const plainInsetForSheets = usePlainBottomInset();
   const [showReport, setShowReport] = useState(false);
   const [busy, setBusy] = useState<null | 'unsend' | 'memory'>(null);
@@ -234,7 +234,7 @@ function LongPressActionSheet({
                 }
               }}
             >
-              <Icon size={18} color={color.ink} />
+              <Icon size={18} color={palette.recvText} />
               <Text style={las.rowLabel}>{label}</Text>
             </Pressable>
           ))}
@@ -258,7 +258,7 @@ function LongPressActionSheet({
               }
             }}
           >
-            <Sparkles size={18} color={color.ink} />
+            <Sparkles size={18} color={palette.recvText} />
             <Text style={las.rowLabel}>Save to Memory</Text>
           </Pressable>
 
@@ -271,8 +271,8 @@ function LongPressActionSheet({
               leaves a redacted slot. */}
           {mine && threadId && !canOfferUnsend(receipt) && receipt ? (
             <View style={las.row}>
-              <RefreshCw size={18} color={color.faint} />
-              <Text style={[las.rowLabel, { color: color.mute }]}>
+              <RefreshCw size={18} color={palette.faint} />
+              <Text style={[las.rowLabel, { color: palette.mute }]}>
                 {receiptLabel(receipt)} — too late to unsend
               </Text>
             </View>
@@ -297,7 +297,7 @@ function LongPressActionSheet({
                 }
               }}
             >
-              <RefreshCw size={18} color={color.ink} />
+              <RefreshCw size={18} color={palette.recvText} />
               <Text style={las.rowLabel}>Unsend</Text>
             </Pressable>
           )}
@@ -335,26 +335,26 @@ function LongPressActionSheet({
     </>
   );
 }
-const las = StyleSheet.create({
+const makeSheetStyles = (p: TelegraphPalette) => StyleSheet.create({ // census T123/T124: a report is a safety flow — its chosen reason is the attention colour
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)' },
-  sheet: { backgroundColor: color.paperRaised, borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingHorizontal: space.lg, paddingBottom: 34, paddingTop: space.sm },
-  handle: { width: 36, height: 4, borderRadius: 2, backgroundColor: color.haze, alignSelf: 'center', marginBottom: space.md },
-  preview: { ...t.small, color: color.mute, fontSize: 12, marginBottom: space.sm, fontStyle: 'italic' },
-  row: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: 14, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.haze },
-  rowLabel: { ...t.body, color: color.ink },
-  reportTitle: { ...t.bodyStrong, color: color.ink, fontWeight: '700', fontSize: 15, marginBottom: 2 },
-  reportSub: { ...t.small, color: color.mute, marginBottom: space.md },
-  reasonOption: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 11, paddingHorizontal: space.sm, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, marginBottom: 6 },
-  reasonSelected: { borderColor: color.signal, backgroundColor: color.signal + '0A' },
-  reasonText: { ...t.body, color: color.ink },
-  reasonTextSelected: { color: color.signal, fontWeight: '700' },
-  reasonCheck: { fontSize: 14, color: color.signal, fontWeight: '700' },
-  detailInput: { ...t.body, color: color.ink, borderWidth: 1, borderColor: color.haze, borderRadius: radius.md, paddingHorizontal: space.sm, paddingVertical: 10, minHeight: 64, textAlignVertical: 'top', marginTop: 2 },
+  sheet: { backgroundColor: p.surfaceRaised, borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingHorizontal: space.lg, paddingBottom: 34, paddingTop: space.sm },
+  handle: { width: 36, height: 4, borderRadius: 2, backgroundColor: p.haze, alignSelf: 'center', marginBottom: space.md },
+  preview: { ...t.small, color: p.mute, fontSize: 12, marginBottom: space.sm, fontStyle: 'italic' },
+  row: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: 14, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: p.haze },
+  rowLabel: { ...t.body, color: p.recvText },
+  reportTitle: { ...t.bodyStrong, color: p.recvText, fontWeight: '700', fontSize: 15, marginBottom: 2 },
+  reportSub: { ...t.small, color: p.mute, marginBottom: space.md },
+  reasonOption: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 11, paddingHorizontal: space.sm, borderRadius: radius.md, borderWidth: 1, borderColor: p.haze, marginBottom: 6 },
+  reasonSelected: { borderColor: p.attention, backgroundColor: p.attention + '0A' },
+  reasonText: { ...t.body, color: p.recvText },
+  reasonTextSelected: { color: p.attention, fontWeight: '700' },
+  reasonCheck: { fontSize: 14, color: p.attention, fontWeight: '700' },
+  detailInput: { ...t.body, color: p.recvText, borderWidth: 1, borderColor: p.haze, borderRadius: radius.md, paddingHorizontal: space.sm, paddingVertical: 10, minHeight: 64, textAlignVertical: 'top', marginTop: 2 },
   reportBtn: { marginTop: space.md, backgroundColor: '#EF4444', borderRadius: radius.md, paddingVertical: 13, alignItems: 'center' },
   reportBtnDisabled: { opacity: 0.45 },
   reportBtnLabel: { ...t.bodyStrong, color: color.onInk, fontWeight: '700' },
   backBtn: { paddingVertical: 10, alignItems: 'center' },
-  backLabel: { ...t.body, color: color.mute },
+  backLabel: { ...t.body, color: p.mute },
 });
 
 /** Format a single time-poll slot as "Fri Jun 27 · 7:00 PM" (exact) or "Fri Jun 27 · Evening" (block) */
@@ -436,7 +436,7 @@ function CreatorAvatar({ creator }: { creator: MeetupCreator | null }) {
 const AVATAR_SIZE = 26;
 const AVATAR_OVERLAP = 8;
 
-function AttendeeAvatar({ attendee }: { attendee: AttendeePreview }) {
+function AttendeeAvatar({ attendee }: { attendee: AttendeePreview }) { const as = useTelegraphStyles(makeAvatarStackStyles);
   const onPress = () => {
     if (attendee.handle) router.push(`/u/${attendee.handle}` as any);
   };
@@ -447,7 +447,7 @@ function AttendeeAvatar({ attendee }: { attendee: AttendeePreview }) {
   );
 }
 
-function AvatarStack({ attendees, totalGoing }: { attendees: AttendeePreview[]; totalGoing: number }) {
+function AvatarStack({ attendees, totalGoing }: { attendees: AttendeePreview[]; totalGoing: number }) { const as = useTelegraphStyles(makeAvatarStackStyles);
   if (attendees.length === 0) return null;
   const overflow = totalGoing - attendees.length;
   return (
@@ -467,18 +467,18 @@ function AvatarStack({ attendees, totalGoing }: { attendees: AttendeePreview[]; 
   );
 }
 
-const as = StyleSheet.create({
+const makeAvatarStackStyles = (p: TelegraphPalette) => StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   avatarSlot: { zIndex: 1 },
   avatarWrap: {},
   // Sizing/shape come from <Avatar size>; this is the overlap ring only.
-  avatarRing: { borderWidth: 2, borderColor: color.paperRaised },
-  overflowBadge: { width: AVATAR_SIZE, height: AVATAR_SIZE, borderRadius: AVATAR_SIZE / 2, borderWidth: 2, borderColor: color.paperRaised, backgroundColor: color.haze, alignItems: 'center', justifyContent: 'center', zIndex: 1 },
-  overflowText: { fontSize: 9, fontWeight: '700', color: color.mute },
-  goingLabel: { fontSize: 10, color: color.mute, fontWeight: '500', marginLeft: 2 },
+  avatarRing: { borderWidth: 2, borderColor: p.surfaceRaised },
+  overflowBadge: { width: AVATAR_SIZE, height: AVATAR_SIZE, borderRadius: AVATAR_SIZE / 2, borderWidth: 2, borderColor: p.surfaceRaised, backgroundColor: p.haze, alignItems: 'center', justifyContent: 'center', zIndex: 1 },
+  overflowText: { fontSize: 9, fontWeight: '700', color: p.mute },
+  goingLabel: { fontSize: 10, color: p.mute, fontWeight: '500', marginLeft: 2 },
 });
 
-function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boolean }) {
+function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boolean }) { const { palette, styles: mc } = useTelegraphTheme(makeMeetupStyles);
   const { isAuthed } = useSession();
   const [counts, setCounts] = useState<MeetupCounts | null>(null);
   const [myRsvp, setMyRsvp] = useState<RsvpStatus | null>(null);
@@ -614,8 +614,8 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
       <View style={mc.row}>
         <View style={[mc.icon, isConfirmed && mc.iconConfirmed]}>
           {isConfirmed
-            ? <CheckCircle size={14} color={color.success} />
-            : <CalendarClock size={14} color={color.signal} />}
+            ? <CheckCircle size={14} color={palette.success} />
+            : <CalendarClock size={14} color={palette.operational} />}
         </View>
         <Text style={[mc.label, isConfirmed && mc.labelConfirmed]}>
           {isConfirmed ? 'Confirmed' : 'Meetup'}
@@ -680,7 +680,7 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
                 disabled={rsvping !== null}
               >
                 {isBusy
-                  ? <ActivityIndicator size="small" color={isActive ? color.onInk : color.signal} style={{ width: 14, height: 14 }} />
+                  ? <ActivityIndicator size="small" color={isActive ? palette.operationalOn : palette.operational} style={{ width: 14, height: 14 }} />
                   : <Text style={mc.rsvpEmoji}>{opt.emoji}</Text>
                 }
                 <Text style={[mc.rsvpLabel, isActive && mc.rsvpLabelActive]}>{opt.label}</Text>
@@ -691,47 +691,47 @@ function MeetupCard({ payload, mine }: { payload: MeetupCardPayload; mine: boole
       ) : isConfirmed ? (
         <View style={mc.footer}>
           <Text style={[mc.see, mine && mc.seeMine]}>Tap to view details</Text>
-          <ArrowRight size={12} color={mine ? color.onInk + 'AA' : color.success} />
+          <ArrowRight size={12} color={mine ? palette.mute : palette.success} />
         </View>
       ) : (
         <View style={mc.footer}>
           <Text style={[mc.see, mine && mc.seeMine]}>Tap to view meetup</Text>
-          <ArrowRight size={12} color={mine ? color.onInk + 'AA' : color.signal} />
+          <ArrowRight size={12} color={mine ? palette.mute : palette.operational} />
         </View>
       )}
     </Pressable>
   );
 }
 
-const mc = StyleSheet.create({
-  card: { borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised, padding: space.md, gap: space.sm, minWidth: 200, maxWidth: 280 },
-  cardMine: { backgroundColor: color.signal + '22', borderColor: color.signal + '55' },
-  cardConfirmed: { borderColor: color.success + '55', backgroundColor: color.success + '0A' },
+const makeMeetupStyles = (p: TelegraphPalette) => StyleSheet.create({ // census T123/T124: the scheme's colours; a meetup is ordinary emphasis (teal)
+  card: { borderRadius: radius.md, borderWidth: 1, borderColor: p.haze, backgroundColor: p.surfaceRaised, padding: space.md, gap: space.sm, minWidth: 200, maxWidth: 280 },
+  cardMine: { backgroundColor: p.operational + '22', borderColor: p.operational + '55' },
+  cardConfirmed: { borderColor: p.success + '55', backgroundColor: p.success + '0A' },
   row: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  icon: { width: icon.s22, height: icon.s22, borderRadius: icon.s22 / 2, backgroundColor: '#E0F2FE', alignItems: 'center', justifyContent: 'center' },
-  iconConfirmed: { backgroundColor: color.success + '22' },
-  label: { ...t.small, color: color.mute, fontWeight: '700', fontSize: 10, letterSpacing: 0.5, textTransform: 'uppercase' },
-  labelConfirmed: { color: color.success },
-  pendingBadge: { marginLeft: 'auto', backgroundColor: '#FFF3CD', borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1 },
-  pendingBadgeText: { fontSize: 9, fontWeight: '600', color: '#856404', letterSpacing: 0.3 },
-  title: { ...t.bodyStrong, color: color.ink, fontWeight: '700' },
-  titleMine: { color: color.ink },
+  icon: { width: icon.s22, height: icon.s22, borderRadius: icon.s22 / 2, backgroundColor: p.scheme === 'dark' ? '#1B3442' : '#E0F2FE', alignItems: 'center', justifyContent: 'center' },
+  iconConfirmed: { backgroundColor: p.success + '22' },
+  label: { ...t.small, color: p.mute, fontWeight: '700', fontSize: 10, letterSpacing: 0.5, textTransform: 'uppercase' },
+  labelConfirmed: { color: p.success },
+  pendingBadge: { marginLeft: 'auto', backgroundColor: p.scheme === 'dark' ? '#3D3416' : '#FFF3CD', borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1 },
+  pendingBadgeText: { fontSize: 9, fontWeight: '600', color: p.scheme === 'dark' ? '#E8C766' : '#856404', letterSpacing: 0.3 },
+  title: { ...t.bodyStrong, color: p.recvText, fontWeight: '700' },
+  titleMine: { color: p.recvText },
   metaRow: { flexDirection: 'row', alignItems: 'center' },
   rsvpBar: { marginTop: 2 },
-  meta: { ...t.small, color: color.mute, fontSize: 11 },
-  metaConfirmed: { color: color.success, fontWeight: '600' },
-  plannedBy: { ...t.small, color: color.faint, fontSize: 10, fontStyle: 'italic' },
+  meta: { ...t.small, color: p.mute, fontSize: 11 },
+  metaConfirmed: { color: p.success, fontWeight: '600' },
+  plannedBy: { ...t.small, color: p.faint, fontSize: 10, fontStyle: 'italic' },
   creatorRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  creatorText: { ...t.small, color: color.mute, fontSize: 11, flex: 1 },
+  creatorText: { ...t.small, color: p.mute, fontSize: 11, flex: 1 },
   footer: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
-  see: { ...t.small, color: color.signal, fontSize: 11 },
-  seeMine: { color: color.signal },
+  see: { ...t.small, color: p.operational, fontSize: 11 },
+  seeMine: { color: p.operational },
   rsvpRow: { flexDirection: 'row', gap: 5, marginTop: 6 },
-  rsvpBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 3, paddingVertical: 5, paddingHorizontal: 4, borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paper, minWidth: 0 },
-  rsvpBtnActive: { backgroundColor: color.signal, borderColor: color.signal },
+  rsvpBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 3, paddingVertical: 5, paddingHorizontal: 4, borderRadius: radius.pill, borderWidth: 1, borderColor: p.haze, backgroundColor: p.surface, minWidth: 0 },
+  rsvpBtnActive: { backgroundColor: p.operational, borderColor: p.operational },
   rsvpEmoji: { fontSize: 11 },
-  rsvpLabel: { ...t.small, fontWeight: '700', color: color.ink, fontSize: 10 },
-  rsvpLabelActive: { color: color.onInk },
+  rsvpLabel: { ...t.small, fontWeight: '700', color: p.recvText, fontSize: 10 },
+  rsvpLabelActive: { color: p.operationalOn },
 });
 
 // ── Message bubble ────────────────────────────────────────────────────────────
@@ -750,7 +750,7 @@ function MessageBubble({
   readerAvatars,
   dismissedAiMsgIds,
   onDismissAiCard,
-  deliveryStatus, sendFailure,
+  deliveryStatus, sendFailure, linkPreview = null,
   onRetry,
   onRetryTranslation,
   currentUserId,
@@ -780,8 +780,8 @@ function MessageBubble({
   isCircleMember?: boolean | null;
   onCircleCardPress?: () => void;
   /** Telegraph §5.3: the thread a shared card is being rendered in. */
-  threadId?: string | null;
-}) {
+  threadId?: string | null; /** census T404: the stored preview for this message, or null (flag off ⇒ always null). */ linkPreview?: LinkPreview | null;
+}) { const { palette, styles } = useTelegraphTheme(makeStyles);
   const [pickerPayload, setPickerPayload] = useState<AddToTripPayload | null>(null);
   const [showOriginal, setShowOriginal] = useState(defaultShowOriginal || !autoTranslate);
 
@@ -824,7 +824,7 @@ function MessageBubble({
         onLongPress={onLongPress}
         delayLongPress={300}
       >
-        <Text style={[styles.bubbleText, { fontStyle: 'italic', color: mine ? color.onInk + 'AA' : color.mute }]}>
+        <Text style={[styles.bubbleText, { fontStyle: 'italic', color: mine ? palette.sentText + 'AA' : palette.mute }]}>
           This message was deleted.
         </Text>
       </Pressable>
@@ -1025,9 +1025,9 @@ function MessageBubble({
           hashtagUsages={isTranslated ? undefined : item.hashtagUsages}
           currentUserId={currentUserId}
           style={[styles.bubbleText, mine && styles.bubbleTextMine]}
-          mentionColor={mine ? 'rgba(255,255,255,0.90)' : undefined}
-          hashtagColor={mine ? 'rgba(255,255,255,0.80)' : undefined}
-        /><OriginalAlongside item={item} view={{ mine, autoTranslate, showingOriginal: showOriginal }} />
+          mentionColor={mine ? 'rgba(255,255,255,0.90)' : palette.operational}
+          hashtagColor={mine ? 'rgba(255,255,255,0.80)' : palette.operational}
+        /><OriginalAlongside item={item} view={{ mine, autoTranslate, showingOriginal: showOriginal }} />{linkPreview ? <LinkPreviewCard preview={linkPreview} mine={mine} /> : null}
 
         {(groupEnd || item.editedAt) ? (
           <Text style={[styles.bubbleTime, mine && styles.bubbleTimeMine]}>
@@ -1044,7 +1044,7 @@ function MessageBubble({
               </Text>
             ) : isTranslated ? (
               <View style={[styles.transPill, mine && styles.transPillMine]}>
-                <Languages size={9} color={mine ? color.onInk : color.mute} />
+                <Languages size={9} color={mine ? palette.sentText : palette.mute} />
                 <Text style={[styles.transLabel, mine && styles.transLabelMine]}>
                   {item.translationLabel ?? 'Translated'}
                 </Text>
@@ -1077,7 +1077,7 @@ function MessageBubble({
       {/* Delivery status — sending / sent / failed (tap-to-retry) */}
       {mine && deliveryStatus === 'sending' && (
         <View style={styles.deliveryRow}>
-          <Clock size={11} color={color.mute} />
+          <Clock size={11} color={palette.mute} />
           <Text style={styles.deliverySending}>Sending…</Text>
         </View>
       )}
@@ -1138,7 +1138,7 @@ function AddToPlanSheet({
   suggestion: TelegraphSuggestion | null;
   onClose: () => void;
   onConfirm: (tripId: string) => void;
-}) {
+}) { const { palette, styles: sheetStyles } = useTelegraphTheme(makeAddToPlanStyles);
   const plainInsetForSheets = usePlainBottomInset();
   const [selectedTripId, setSelectedTripId] = useState<string | null>(null);
 
@@ -1173,7 +1173,7 @@ function AddToPlanSheet({
             ]}
             onPress={() => setSelectedTripId('current')}
           >
-            {selectedTripId === 'current' && <Check size={12} color={color.onInk} />}
+            {selectedTripId === 'current' && <Check size={12} color={palette.operationalOn} />}
           </Pressable>
         </View>
 
@@ -1202,7 +1202,7 @@ interface MeetupSheetCtx {
   initialLocation?: string;
 }
 
-export default function TelegraphThread() {
+export default function TelegraphThread() { const { palette, styles } = useTelegraphTheme(makeStyles); // census T123: every colour on this screen is the scheme's
   const { id, title, threadType, contextId, otherUserId, muted } = useLocalSearchParams<{ id: string; title?: string; threadType?: string; contextId?: string; otherUserId?: string; muted?: string }>();
   const insets = useSafeAreaInsets();
   const { userId } = useSession();
@@ -1257,7 +1257,7 @@ export default function TelegraphThread() {
   const mediaPicker = useMessageMediaPicker();
   // Telegraph §16.2 / §17.4 — the degradation ladder. Consulted here for
   // media; the AI tray consults it for `ai`.
-  const dataSaver = useDataSaver();
+  const dataSaver = useDataSaver(); const { isEnabled: flagEnabled } = useFeatureFlags(); const linkPreviews = useLinkPreviews(id ?? null, messages, flagEnabled(LINK_PREVIEWS_FLAG) && !safetyQuiet && dataSaver.mayLoad('mediaPreview')); // census T404: off (the seed), a raised safety mode or data saver ⇒ no request and no preview (Q-LP6)
   const [showMediaPickerSheet, setShowMediaPickerSheet] = useState(false);
 
   function handleBlockPress() {
@@ -1686,7 +1686,7 @@ export default function TelegraphThread() {
         durationSeconds: uploadRes.durationSeconds,
         body: text || undefined,
       });
-      if (res.ok) {
+      reportThreadSend(id, res.ok); if (res.ok) { // §45 G320: a held New Telegraph pick, reported on its send (no-op without consent)
         mediaPicker.clearMedia();
         if (text) setInput('');
         listRef.current?.scrollToEnd({ animated: true });
@@ -1710,7 +1710,7 @@ export default function TelegraphThread() {
       replyToBody: currentReply.displayBody ?? currentReply.body ?? null,
       replyToSenderName: currentReply.senderName ?? null,
     } : undefined);
-    if (!res?.ok) setSendFailed(true);
+    if (!res?.ok) setSendFailed(true); reportThreadSend(id, !!res?.ok); // §45 G320: a held New Telegraph pick, reported on its send (no-op without consent)
     listRef.current?.scrollToEnd({ animated: true });
   }
 
@@ -1801,7 +1801,7 @@ export default function TelegraphThread() {
     return (
       <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
         <Pressable style={styles.backBtn} onPress={() => router.back()} hitSlop={8}>
-          <ArrowLeft size={20} color={color.ink} />
+          <ArrowLeft size={20} color={palette.recvText} />
         </Pressable>
 
         {/* Direct: small avatar — tappable to open the other person's profile */}
@@ -1822,12 +1822,12 @@ export default function TelegraphThread() {
         {/* Trip / Circle: coloured badge */}
         {threadType === 'trip' && (
           <View style={styles.headerIconBadge}>
-            <Globe size={14} color={color.onInk} />
+            <Globe size={14} color={palette.operationalOn} />
           </View>
         )}
         {threadType === 'circle' && (
-          <View style={[styles.headerIconBadge, { backgroundColor: color.ink }]}>
-            <Users size={14} color={color.onInk} />
+          <View style={[styles.headerIconBadge, { backgroundColor: palette.recvText }]}>
+            <Users size={14} color={palette.surface} />
           </View>
         )}
 
@@ -1839,7 +1839,7 @@ export default function TelegraphThread() {
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
             <Text style={styles.headerName} numberOfLines={1}>{displayName}</Text>
             {isDirect && dmProfile?.name && (
-              <CheckCircle size={13} color={color.signal} />
+              <CheckCircle size={13} color={palette.operational} />
             )}
             {/* E-2: lock badge.
                 Suppressed entirely while E2EE_CLAIM_UI_ENABLED is false — the
@@ -1868,17 +1868,17 @@ export default function TelegraphThread() {
                     });
                   }}
                 >
-                  <Lock size={13} color={color.signal} />
+                  <Lock size={13} color={palette.operational} />
                 </Pressable>
               ) : (
-                <Lock size={13} color={color.signal} accessibilityLabel="End-to-end encrypted" />
+                <Lock size={13} color={palette.operational} accessibilityLabel="End-to-end encrypted" />
               )
             )}
           </View>
           <View style={styles.headerTagRow}>
             {compact ? (
               <>
-                <Zap size={9} color={color.signal} fill={color.signal} />
+                <Zap size={9} color={palette.operational} fill={palette.operational} />
                 <Text style={styles.headerTag}>Telegraph</Text>
               </>
             ) : (
@@ -1910,7 +1910,7 @@ export default function TelegraphThread() {
                 testID="telegraph-open-recap"
                 onPress={() => setShowRecap(true)}
               >
-                <Sparkles size={18} color={color.mute} />
+                <Sparkles size={18} color={palette.mute} />
               </Pressable>
             ) : null}
             <Pressable
@@ -1921,7 +1921,7 @@ export default function TelegraphThread() {
               testID="telegraph-open-content-drawer"
               onPress={() => setShowContentDrawer(true)}
             >
-              <Info size={18} color={color.mute} />
+              <Info size={18} color={palette.mute} />
             </Pressable>
             {canShowCallButtons && (
               <>
@@ -1932,7 +1932,7 @@ export default function TelegraphThread() {
                   accessibilityLabel="Start voice call"
                   onPress={() => { void startThreadCall('voice'); }}
                 >
-                  <Phone size={18} color={color.signal} />
+                  <Phone size={18} color={palette.operational} />
                 </Pressable>
                 <Pressable
                   hitSlop={8}
@@ -1941,12 +1941,12 @@ export default function TelegraphThread() {
                   accessibilityLabel="Start video call"
                   onPress={() => { void startThreadCall('video'); }}
                 >
-                  <Video size={18} color={color.signal} />
+                  <Video size={18} color={palette.operational} />
                 </Pressable>
               </>
             )}
             <Pressable hitSlop={8} style={styles.headerIconBtn} onPress={() => setShowTranslationSheet(true)}>
-              <Languages size={18} color={autoTranslate ? color.signal : color.mute} />
+              <Languages size={18} color={autoTranslate ? palette.operational : palette.mute} />
             </Pressable>
             <Pressable
               hitSlop={8}
@@ -1960,10 +1960,10 @@ export default function TelegraphThread() {
                 if (r.ok) setThreadIsMuted(next); else Alert.alert(next ? 'Could not mute' : 'Could not unmute', r.message ?? 'Nothing was changed. Please try again.');
               }}
             >
-              <VolumeX size={18} color={threadIsMuted ? color.signal : color.mute} />
+              <VolumeX size={18} color={threadIsMuted ? palette.operational : palette.mute} />
             </Pressable>
             <Pressable style={styles.headerIconBtn} onPress={() => setShowSafetySheet(true)} hitSlop={8}>
-              <MoreVertical size={18} color={color.mute} />
+              <MoreVertical size={18} color={palette.mute} />
             </Pressable>
           </View>
         )}
@@ -1977,11 +1977,11 @@ export default function TelegraphThread() {
       return (
         <View style={styles.quickBar}>
           <Pressable style={styles.quickBtn} onPress={() => router.push(`/trip/${contextId}` as any)}>
-            <Globe size={12} color={color.signal} />
+            <Globe size={12} color={palette.operational} />
             <Text style={styles.quickBtnText}>View Trip</Text>
           </Pressable>
           <Pressable style={styles.quickBtn} onPress={handlePlanMeetupButton}>
-            <CalendarClock size={12} color={color.signal} />
+            <CalendarClock size={12} color={palette.operational} />
             <Text style={styles.quickBtnText}>Add Plan</Text>
           </Pressable>
         </View>
@@ -1992,7 +1992,7 @@ export default function TelegraphThread() {
         <View style={styles.quickBar}>
           {/* /circle/<id> is not a route — the circle screen is /circle (beta-audit fix) */}
           <Pressable style={styles.quickBtn} onPress={() => router.push('/circle' as any)}>
-            <Users size={12} color={color.signal} />
+            <Users size={12} color={palette.operational} />
             <Text style={styles.quickBtnText}>View Circle</Text>
           </Pressable>
           {/* Share Discovery hidden until the picker flow is built (beta-audit) */}
@@ -2004,29 +2004,29 @@ export default function TelegraphThread() {
 
   if (loading) {
     return (
-      <View style={{ flex: 1, backgroundColor: color.paper }}>
+      <View style={{ flex: 1, backgroundColor: palette.surface }}>
         <ThreadHeader compact />
-        <View style={styles.center}><ActivityIndicator color={color.signal} /></View>
+        <View style={styles.center}><ActivityIndicator color={palette.operational} /></View>
       </View>
     );
   }
 
   if (error) {
     return (
-      <View style={{ flex: 1, backgroundColor: color.paper }}>
+      <View style={{ flex: 1, backgroundColor: palette.surface }}>
         <ThreadHeader compact />
         <View style={styles.center}>
           <Text style={styles.errText}>{error}</Text>
           <Pressable
             style={{
               marginTop: space.md, paddingHorizontal: space.xl, paddingVertical: space.sm,
-              borderRadius: radius.pill, borderWidth: 1, borderColor: color.signal,
+              borderRadius: radius.pill, borderWidth: 1, borderColor: palette.operational,
             }}
             onPress={reload}
             accessibilityRole="button"
             accessibilityLabel="Retry loading messages"
           >
-            <Text style={{ ...t.bodyStrong, color: color.signal }}>Try again</Text>
+            <Text style={{ ...t.bodyStrong, color: palette.operational }}>Try again</Text>
           </Pressable>
         </View>
       </View>
@@ -2194,7 +2194,7 @@ export default function TelegraphThread() {
                 onRetryTranslation={!mine && m.id ? () => { retryTranslation(m.id).catch(() => {}); } : undefined}
                 currentUserId={userId ?? undefined}
                 isCircleMember={isCircleMember}
-                onCircleCardPress={m.msgType === 'circle_status_card' ? onCircleCardPress : undefined}
+                onCircleCardPress={m.msgType === 'circle_status_card' ? onCircleCardPress : undefined} linkPreview={linkPreviews.previewFor(m.id)}
               />
               {/*
                 Telegraph §22: the traveller-facing half of the travel-scam
@@ -2220,7 +2220,7 @@ export default function TelegraphThread() {
           onPress={() => listRef.current?.scrollToEnd({ animated: true })}
           hitSlop={8}
         >
-          <ChevronDown size={18} color={color.ink} />
+          <ChevronDown size={18} color={palette.recvText} />
         </Pressable>
       )}
 
@@ -2238,7 +2238,7 @@ export default function TelegraphThread() {
       {/* Waiting-for-reply banner — shown when the user's first message is pending acceptance */}
       {isWaitingForReply && (
         <View style={styles.waitingBanner}>
-          <Clock size={14} color="#92400E" />
+          <Clock size={14} color={palette.scheme === 'dark' ? '#F2C66D' : '#92400E'} />
           <Text style={styles.waitingBannerText}>
             Waiting for reply — your message is in their requests.
           </Text>{outgoingRequestId ? <CancelRequestButton requestId={outgoingRequestId} onCancelled={() => { void reloadOutgoingRequest(); }} /> : null}
@@ -2311,7 +2311,7 @@ export default function TelegraphThread() {
             </Text>
           </View>
           <Pressable onPress={mediaPicker.clearMedia} hitSlop={8}>
-            <X size={16} color={color.mute} />
+            <X size={16} color={palette.mute} />
           </Pressable>
         </View>
       )}
@@ -2328,7 +2328,7 @@ export default function TelegraphThread() {
             </Text>
           </View>
           <Pressable onPress={() => setReplyingTo(null)} hitSlop={8}>
-            <X size={16} color={color.mute} />
+            <X size={16} color={palette.mute} />
           </Pressable>
         </View>
       )}
@@ -2372,9 +2372,9 @@ export default function TelegraphThread() {
         authorId={userId ?? null}
         onCancel={() => { setTypedCompose(null); setLocationDraft(null); }}
         onSubmit={async (kind: SendableKind, payload: unknown) => {
-          setTypedCompose(null); setLocationDraft(null);
+          setTypedCompose(null); setLocationDraft(null); const servedByMeetAt = locationDraft !== null; // §45 G320: only the "meet at" bar pre-fills this sheet
           if (!id) return;
-          const res = await sendTypedMessage(id, kind, payload);
+          const res = await sendTypedMessage(id, kind, payload); if (servedByMeetAt) reportMeetAtSend(res.ok); reportThreadSend(id, res.ok); // §45 G320 (no-op without consent)
           if (!res.ok) {
             Alert.alert('Could not send', res.message ?? 'Please try again.');
             return;
@@ -2423,19 +2423,19 @@ export default function TelegraphThread() {
           accessibilityLabel="Add to this message"
           testID="telegraph-composer-plus"
         >
-          <Paperclip size={18} color={mediaPicker.media ? color.signal : color.mute} />
+          <Paperclip size={18} color={mediaPicker.media ? palette.operational : palette.mute} />
         </Pressable>
 
         {/* Plan meetup button */}
         {isAcceptedMember && (
           <Pressable style={styles.composeIconBtn} onPress={handlePlanMeetupButton} hitSlop={6}>
-            <CalendarClock size={18} color={color.signal} />
+            <CalendarClock size={18} color={palette.operational} />
           </Pressable>
         )}
 
         {/* Discovery card stub */}
         {false ? <Pressable style={styles.composeIconBtn} hitSlop={6}>
-          <Compass size={18} color={color.mute} />
+          <Compass size={18} color={palette.mute} />
           </Pressable> : null}
 
         {/* Ask Compass chip — gated by COMPASS_TELEGRAPH feature flag */}
@@ -2446,7 +2446,7 @@ export default function TelegraphThread() {
             hitSlop={6}
             accessibilityLabel="Ask Compass for recommendations"
           >
-            <Bot size={18} color={color.signal} />
+            <Bot size={18} color={palette.operational} />
           </Pressable>
         )}
 
@@ -2454,7 +2454,7 @@ export default function TelegraphThread() {
           ref={mentionRef}
           style={[styles.inputField, isWaitingForReply && { opacity: 0.45 }]}
           placeholder={isWaitingForReply ? 'Waiting for reply…' : 'Write a Telegraph…'}
-          placeholderTextColor={color.faint}
+          placeholderTextColor={palette.faint}
           value={input}
           onChangeText={(text) => { setInput(text); notifyTyping(text.trim().length > 0 && dataSaver.mayLoad('typing')); }}
           onBlur={() => notifyTyping(false)}
@@ -2481,9 +2481,9 @@ export default function TelegraphThread() {
             disabled={!hasInput || sending || isWaitingForReply}
           >
             {sending ? (
-              <ActivityIndicator size="small" color={color.onInk} />
+              <ActivityIndicator size="small" color={palette.sentText} />
             ) : (
-              <Send size={16} color={hasInput ? '#FFFFFF' : color.faint} />
+              <Send size={16} color={hasInput ? palette.sentText : palette.faint} />
             )}
           </Pressable>
         </Animated.View>
@@ -2620,11 +2620,14 @@ export default function TelegraphThread() {
   );
 }
 
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: TG.surface },
+// census T123/T124: the scheme's colours. Ordinary emphasis — the trip badge,
+// quick actions, translation toggles, attachments, receipts — is the operational
+// teal; §11.1 keeps vermilion for safety and urgent change only.
+const makeStyles = (p: TelegraphPalette) => StyleSheet.create({
+  screen: { flex: 1, backgroundColor: p.surface },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  errText: { ...t.body, color: color.mute },
-  emptyText: { ...t.small, color: color.mute },
+  errText: { ...t.body, color: p.mute },
+  emptyText: { ...t.small, color: p.mute },
 
   header: {
     flexDirection: 'row',
@@ -2633,27 +2636,27 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.lg,
     paddingBottom: space.md,
     borderBottomWidth: 1,
-    borderBottomColor: color.haze,
-    backgroundColor: color.paperRaised,
+    borderBottomColor: p.haze,
+    backgroundColor: p.surfaceRaised,
   },
   backBtn: { padding: 4 },
   headerIconBadge: {
     width: 26,
     height: 26,
     borderRadius: 8,
-    backgroundColor: color.signal,
+    backgroundColor: p.operational,
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,
   },
   headerMeta: { flex: 1 },
-  headerName: { ...t.bodyStrong, color: color.ink, fontWeight: '700' },
+  headerName: { ...t.bodyStrong, color: p.recvText, fontWeight: '700' },
   headerTagRow: { flexDirection: 'row', alignItems: 'center', marginTop: 2, gap: 3 },
-  headerTag: { ...t.stamp, fontFamily: 'Courier', color: color.mute, fontSize: 10, letterSpacing: 0.4 },
+  headerTag: { ...t.stamp, fontFamily: 'Courier', color: p.mute, fontSize: 10, letterSpacing: 0.4 },
 
   senderLabel: {
     ...t.small,
-    color: color.mute,
+    color: p.mute,
     fontSize: 11,
     fontFamily: 'Courier',
     marginBottom: 2,
@@ -2667,35 +2670,35 @@ const styles = StyleSheet.create({
 
   bubble: { borderRadius: TG_SPACING.bubbleRadius, paddingHorizontal: 13, paddingTop: 8, paddingBottom: 6 },
   bubbleOther: {
-    backgroundColor: TG.recvBubble,
+    backgroundColor: p.recvBubble,
     borderWidth: 1,
-    borderColor: TG.recvBorder,
+    borderColor: p.recvBorder,
     borderBottomLeftRadius: TG_SPACING.bubbleTail,
   },
-  bubbleMine: { backgroundColor: TG.sentBubble, borderBottomRightRadius: TG_SPACING.bubbleTail },
+  bubbleMine: { backgroundColor: p.sentBubble, borderBottomRightRadius: TG_SPACING.bubbleTail },
   // Middle-of-group bubbles keep fully rounded corners (no tail)
   bubbleOtherMid: { borderBottomLeftRadius: TG_SPACING.bubbleRadius },
   bubbleMineMid: { borderBottomRightRadius: TG_SPACING.bubbleRadius },
 
-  bubbleText: { ...t.body, color: TG.recvText, lineHeight: 21, flexShrink: 1, flexWrap: 'wrap' },
-  bubbleTextMine: { color: TG.sentText },
+  bubbleText: { ...t.body, color: p.recvText, lineHeight: 21, flexShrink: 1, flexWrap: 'wrap' },
+  bubbleTextMine: { color: p.sentText },
 
   bubbleTime: {
     ...t.stamp,
     fontFamily: 'Courier',
-    color: color.faint,
+    color: p.faint,
     fontSize: 10,
     marginTop: 2,
     textAlign: 'right',
   },
-  bubbleTimeMine: { color: TG.sentTextMute },
+  bubbleTimeMine: { color: p.sentTextMute },
 
   transPill: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
     alignSelf: 'flex-start',
-    backgroundColor: TG.chipFill,
+    backgroundColor: p.chipFill,
     borderRadius: radius.pill,
     paddingHorizontal: 7,
     paddingVertical: 2,
@@ -2708,9 +2711,9 @@ const styles = StyleSheet.create({
     bottom: 130,
     width: avatar.s40, height: avatar.s40,
     borderRadius: avatar.s40 / 2,
-    backgroundColor: TG.surfaceRaised,
+    backgroundColor: p.surfaceRaised,
     borderWidth: 1,
-    borderColor: TG.hairline,
+    borderColor: p.hairline,
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#11110F',
@@ -2730,12 +2733,12 @@ const styles = StyleSheet.create({
 
   translationFlash: {
     borderRadius: radius.lg,
-    backgroundColor: color.signal + '28',
+    backgroundColor: p.operational + '28',
   },
 
   transLabel: {
     fontSize: 10,
-    color: color.mute,
+    color: p.mute,
     fontFamily: 'Courier',
     letterSpacing: 0.2,
     flexShrink: 1,
@@ -2744,17 +2747,17 @@ const styles = StyleSheet.create({
 
   transToggle: {
     fontSize: 10,
-    color: color.signal,
+    color: p.operational,
     fontFamily: 'Courier',
     textDecorationLine: 'underline',
   },
-  transToggleMine: { color: color.onInk + 'CC' },
+  transToggleMine: { color: p.sentText + 'CC' },
   transRetryRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
-  transRetry: { fontSize: 11, color: color.signal, textDecorationLine: 'underline' },
+  transRetry: { fontSize: 11, color: p.operational, textDecorationLine: 'underline' },
 
   transUnavailable: {
     fontSize: 10,
-    color: color.mute,
+    color: p.mute,
     fontFamily: 'Courier',
     fontStyle: 'italic',
     letterSpacing: 0.2,
@@ -2767,13 +2770,13 @@ const styles = StyleSheet.create({
     gap: space.sm,
     paddingHorizontal: space.md,
     paddingVertical: 8,
-    backgroundColor: color.paper,
+    backgroundColor: p.surface,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: color.haze,
+    borderTopColor: p.haze,
   },
-  replyBarAccent: { width: 3, height: 32, borderRadius: 2, backgroundColor: color.deep },
-  replyBarSender: { ...t.stamp, color: color.deep, fontWeight: '600', marginBottom: 1 },
-  replyBarBody: { ...t.small, color: color.mute, fontSize: 12 },
+  replyBarAccent: { width: 3, height: 32, borderRadius: 2, backgroundColor: p.operational },
+  replyBarSender: { ...t.stamp, color: p.operational, fontWeight: '600', marginBottom: 1 },
+  replyBarBody: { ...t.small, color: p.mute, fontSize: 12 },
 
   // Media attach preview bar
   attachPreviewBar: {
@@ -2782,63 +2785,63 @@ const styles = StyleSheet.create({
     gap: space.sm,
     paddingHorizontal: space.md,
     paddingVertical: 8,
-    backgroundColor: color.paperRaised,
+    backgroundColor: p.surfaceRaised,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: color.haze,
+    borderTopColor: p.haze,
   },
   attachPreviewChip: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: color.signal + '12',
+    backgroundColor: p.operational + '12',
     borderRadius: radius.pill,
     borderWidth: 1,
-    borderColor: color.signal + '30',
+    borderColor: p.operational + '30',
     paddingHorizontal: space.md,
     paddingVertical: 6,
   },
   attachPreviewIcon: { fontSize: 14 },
-  attachPreviewLabel: { ...t.small, color: color.signal, fontSize: 12, flex: 1 },
+  attachPreviewLabel: { ...t.small, color: p.operational, fontSize: 12, flex: 1 },
 
   // Media picker sheet
   pickerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)' },
   pickerSheet: {
-    backgroundColor: color.paperRaised,
+    backgroundColor: p.surfaceRaised,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     paddingHorizontal: space.lg,
     paddingTop: space.sm,
     gap: 2,
   },
-  pickerHandle: { width: 36, height: 4, borderRadius: 2, backgroundColor: color.haze, alignSelf: 'center', marginBottom: space.md },
-  pickerTitle: { ...t.bodyStrong, color: color.ink, fontWeight: '700', fontSize: 15, marginBottom: space.sm },
+  pickerHandle: { width: 36, height: 4, borderRadius: 2, backgroundColor: p.haze, alignSelf: 'center', marginBottom: space.md },
+  pickerTitle: { ...t.bodyStrong, color: p.recvText, fontWeight: '700', fontSize: 15, marginBottom: space.sm },
   pickerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: space.md,
     paddingVertical: 14,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: color.haze,
+    borderTopColor: p.haze,
   },
   pickerRowIcon: { fontSize: 20 },
-  pickerRowLabel: { ...t.body, color: color.ink },
-  pickerCancelRow: { paddingVertical: 14, alignItems: 'center', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.haze, marginTop: 4 },
-  pickerCancelLabel: { ...t.body, color: color.mute },
+  pickerRowLabel: { ...t.body, color: p.recvText },
+  pickerCancelRow: { paddingVertical: 14, alignItems: 'center', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: p.haze, marginTop: 4 },
+  pickerCancelLabel: { ...t.body, color: p.mute },
 
   replyQuote: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 6,
-    backgroundColor: 'rgba(0,0,0,0.06)',
+    backgroundColor: p.chipFill,
     borderRadius: radius.sm,
     padding: 6,
     marginBottom: 4,
   },
   replyQuoteMine: { backgroundColor: 'rgba(255,255,255,0.18)' },
-  replyQuoteAccent: { width: 3, borderRadius: 2, alignSelf: 'stretch', backgroundColor: color.deep },
-  replyQuoteSender: { ...t.stamp, color: color.deep, fontWeight: '600', marginBottom: 1 },
-  replyQuoteBody: { ...t.small, color: color.ink, fontSize: 12, lineHeight: 16 },
+  replyQuoteAccent: { width: 3, borderRadius: 2, alignSelf: 'stretch', backgroundColor: p.operational },
+  replyQuoteSender: { ...t.stamp, color: p.operational, fontWeight: '600', marginBottom: 1 },
+  replyQuoteBody: { ...t.small, color: p.recvText, fontSize: 12, lineHeight: 16 },
 
   compose: {
     flexDirection: 'row',
@@ -2847,21 +2850,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.md,
     paddingTop: space.sm,
     borderTopWidth: 1,
-    borderTopColor: color.haze,
-    backgroundColor: color.paperRaised,
+    borderTopColor: p.haze,
+    backgroundColor: p.surfaceRaised,
   },
   inputField: {
     flex: 1,
     minHeight: 40,
     maxHeight: 120, // ~5 lines
-    backgroundColor: TG.surface,
+    backgroundColor: p.surface,
     borderRadius: radius.pill,
     borderWidth: 1,
-    borderColor: TG.hairline,
+    borderColor: p.hairline,
     paddingHorizontal: space.lg,
     paddingVertical: 9,
     ...t.body,
-    color: color.ink,
+    color: p.recvText,
   },
   // DM avatar in header
   dmAvatarWrap: { flexShrink: 0 },
@@ -2871,28 +2874,28 @@ const styles = StyleSheet.create({
   headerIconBtn: { padding: 5 },
 
   // Quick-action bar (trip/circle)
-  quickBar: { flexDirection: 'row', gap: space.sm, paddingHorizontal: space.lg, paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.haze, backgroundColor: color.paperRaised },
-  quickBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 5, borderRadius: radius.pill, borderWidth: 1, borderColor: color.signal + '55', backgroundColor: color.signal + '0A' },
-  quickBtnText: { ...t.small, color: color.signal, fontSize: 11, fontWeight: '600' },
+  quickBar: { flexDirection: 'row', gap: space.sm, paddingHorizontal: space.lg, paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: p.haze, backgroundColor: p.surfaceRaised },
+  quickBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 5, borderRadius: radius.pill, borderWidth: 1, borderColor: p.operational + '55', backgroundColor: p.operational + '0A' },
+  quickBtnText: { ...t.small, color: p.operational, fontSize: 11, fontWeight: '600' },
 
   // Read receipt
   receiptRow: { flexDirection: 'row', alignItems: 'center', gap: 3, alignSelf: 'flex-end', marginTop: 2, paddingRight: 2 },
   readerAvatarRow: { flexDirection: 'row', alignItems: 'center', gap: 2, alignSelf: 'flex-end', marginTop: 2, paddingRight: 2 },
-  receiptSent: { fontSize: 10, color: color.signal, fontFamily: 'Courier' },
+  receiptSent: { fontSize: 10, color: p.operational, fontFamily: 'Courier' },
   receiptFailRow: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   receiptFail: { fontSize: 10, color: '#EF4444', fontFamily: 'Courier' },
 
   deliveryRow: { flexDirection: 'row', alignItems: 'center', gap: 3, alignSelf: 'flex-end', marginTop: 2, paddingRight: 2 },
-  deliverySending: { fontSize: 10, color: color.mute, fontFamily: 'Courier' },
-  deliverySent: { fontSize: 10, color: color.signal, fontFamily: 'Courier' },
+  deliverySending: { fontSize: 10, color: p.mute, fontFamily: 'Courier' },
+  deliverySent: { fontSize: 10, color: p.operational, fontFamily: 'Courier' },
   deliveryFailed: { fontSize: 10, color: '#EF4444', fontFamily: 'Courier', fontWeight: '600' },
 
   typingRow: {
     paddingHorizontal: space.lg,
     paddingVertical: 5,
-    backgroundColor: color.paper,
+    backgroundColor: p.surface,
   },
-  typingText: { ...t.small, color: color.mute, fontSize: 11, fontStyle: 'italic' },
+  typingText: { ...t.small, color: p.mute, fontSize: 11, fontStyle: 'italic' },
 
   // Composer icon buttons (attach, meetup, discovery, ai)
   composeIconBtn: { width: 32, height: 38, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
@@ -2904,11 +2907,11 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingHorizontal: space.lg,
     paddingVertical: 7,
-    backgroundColor: '#FFFBEB',
+    backgroundColor: p.scheme === 'dark' ? '#3A3016' : '#FFFBEB',
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: '#FDE68A',
+    borderTopColor: p.scheme === 'dark' ? '#6B5A1E' : '#FDE68A',
   },
-  waitingBannerText: { ...t.small, color: '#92400E', flex: 1, fontSize: 11 },
+  waitingBannerText: { ...t.small, color: p.scheme === 'dark' ? '#F2C66D' : '#92400E', flex: 1, fontSize: 11 },
 
   // Failed-send banner above the composer
   failedBanner: {
@@ -2917,26 +2920,26 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingHorizontal: space.lg,
     paddingVertical: 7,
-    backgroundColor: '#FEF2F2',
+    backgroundColor: p.scheme === 'dark' ? '#3A1F1F' : '#FEF2F2',
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: '#FECACA',
+    borderTopColor: p.scheme === 'dark' ? '#6B2B2B' : '#FECACA',
   },
   failedBannerText: { ...t.small, color: '#EF4444', flex: 1, fontSize: 11 },
-  failedRetryBtn: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 8, paddingVertical: 4, borderRadius: radius.pill, borderWidth: 1, borderColor: '#FECACA' },
+  failedRetryBtn: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 8, paddingVertical: 4, borderRadius: radius.pill, borderWidth: 1, borderColor: p.scheme === 'dark' ? '#6B2B2B' : '#FECACA' },
   failedRetryText: { ...t.stamp, color: '#EF4444', fontSize: 10, fontWeight: '600' },
 
   sendBtn: { width: avatar.s40, height: avatar.s40, borderRadius: avatar.s40 / 2, alignItems: 'center', justifyContent: 'center' },
-  sendBtnActive: { backgroundColor: TG.sentBubble },
-  sendBtnDisabled: { backgroundColor: color.haze },
+  sendBtnActive: { backgroundColor: p.sentBubble },
+  sendBtnDisabled: { backgroundColor: p.haze },
 });
 
-const sheetStyles = StyleSheet.create({
+const makeAddToPlanStyles = (p: TelegraphPalette) => StyleSheet.create({
   overlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.4)',
   },
   sheet: {
-    backgroundColor: color.paperRaised,
+    backgroundColor: p.surfaceRaised,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     padding: space.xl,
@@ -2947,43 +2950,43 @@ const sheetStyles = StyleSheet.create({
     width: 36,
     height: 4,
     borderRadius: 2,
-    backgroundColor: color.haze,
+    backgroundColor: p.haze,
     alignSelf: 'center',
     marginBottom: space.md,
   },
-  title: { ...t.heading, color: color.ink, fontWeight: '700', fontSize: 18 },
-  subtitle: { ...t.body, color: color.mute, fontSize: 13 },
-  sectionLabel: { ...t.stamp, fontFamily: 'Courier', fontSize: 11, color: color.mute, marginTop: space.md, letterSpacing: 0.5 },
+  title: { ...t.heading, color: p.recvText, fontWeight: '700', fontSize: 18 },
+  subtitle: { ...t.body, color: p.mute, fontSize: 13 },
+  sectionLabel: { ...t.stamp, fontFamily: 'Courier', fontSize: 11, color: p.mute, marginTop: space.md, letterSpacing: 0.5 },
   tripOption: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: space.sm },
-  tripName: { ...t.body, color: color.ink },
+  tripName: { ...t.body, color: p.recvText },
   radioBtn: {
     width: icon.s22, height: icon.s22,
     borderRadius: icon.s22 / 2,
     borderWidth: 2,
-    borderColor: color.haze,
+    borderColor: p.haze,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  radioBtnSelected: { backgroundColor: color.signal, borderColor: color.signal },
-  hint: { ...t.small, color: color.mute, fontSize: 12 },
+  radioBtnSelected: { backgroundColor: p.operational, borderColor: p.operational },
+  hint: { ...t.small, color: p.mute, fontSize: 12 },
   input: {
-    backgroundColor: color.paper,
+    backgroundColor: p.surface,
     borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: color.haze,
+    borderColor: p.haze,
     paddingHorizontal: space.md,
     paddingVertical: 10,
     ...t.body,
-    color: color.ink,
+    color: p.recvText,
   },
   confirmBtn: {
     marginTop: space.md,
-    backgroundColor: color.signal,
+    backgroundColor: p.operational,
     borderRadius: radius.md,
     paddingVertical: 14,
     alignItems: 'center',
   },
-  confirmLabel: { ...t.bodyStrong, color: color.onInk, fontWeight: '700' },
+  confirmLabel: { ...t.bodyStrong, color: p.operationalOn, fontWeight: '700' },
   cancelBtn: { paddingVertical: 10, alignItems: 'center' },
-  cancelLabel: { ...t.body, color: color.mute },
+  cancelLabel: { ...t.body, color: p.mute },
 });

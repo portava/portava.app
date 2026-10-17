@@ -91,6 +91,13 @@ function makeDB(overrides: Partial<FakeDB> = {}): FakeDB {
     profiles:             [{ id: OWNER_ID, role: "user" }],
     blocks:               [],
     plan_editors:         [],
+    // H4 (census-highlights-memories): a completion stamp needs occurrence
+    // evidence. Every case here is about a trip the owner TOOK, so the owner
+    // checked in on it; tripCompletionPresenceEvidence.test.ts covers the
+    // trip nobody took.
+    plan_checkins: [
+      { trip_id: TRIP_ID, user_id: OWNER_ID, status: "arrived", checked_in_at: "2020-01-03T10:00:00Z" },
+    ],
     ...overrides,
   };
 }

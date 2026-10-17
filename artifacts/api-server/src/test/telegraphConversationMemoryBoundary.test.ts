@@ -55,8 +55,8 @@ import {
   sqlCrossesBoundary,
   stringConstsIn,
   stripComments, objectConstsIn, importedConsts, jsxReferences, references, REVIEWED_CLIENT_JSX_NON_FLOWS, jsxPassesData, dynamicImportLocal, fromSites, // §64
-  REVIEWED_OPAQUE_READ_HELPERS, REVIEWED_CLIENT_SHARED_STORES, CLIENT_SHARED_STORE_RE, // §66
-  type CodeUnit,
+  REVIEWED_OPAQUE_READ_HELPERS, REVIEWED_CLIENT_SHARED_STORES, CLIENT_SHARED_STORE_RE, REVIEWED_PREDICATE_READS, isReviewedPredicateRead, predicateReadProblems, declaredSignature, historySelects, // §66; wave 5: predicate reads
+  type CodeUnit, type ReviewedPredicateRead,
 } from "../domain/telegraph/policies/conversationMemoryBoundary.js";
 
 const PKG = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -290,7 +290,7 @@ interface Analysis {
   isReaderUnit(file: string, unit: CodeUnit): boolean;
   /** Local names in `file` (its own and imported, aliases and namespaces applied) that reach a read / a creation. */
   namesFor(file: string): { readers: Set<string>; creators: Set<string>; opaque: Set<string> };
-  crossings(file: string): ReturnType<typeof crossingsThrough>;
+  crossings(file: string): ReturnType<typeof crossingsThrough>; /** wave 5: the history reads a unit seeds the readers fixpoint with (before the predicate exemption). */ knownReadsOf(file: string, unit: CodeUnit): string[];
 }
 
 type Seed = (file: string, unitCode: string, consts: ReadonlyMap<string, string>, fileCode: string) => string[];
@@ -311,7 +311,7 @@ function analyse(
   seedCreates: Seed,
   unknownReads: Seed = () => [],
   jsx = false,
-  opaqueReads: Seed | null = null,
+  opaqueReads: Seed | null = null, notASeed: (file: string, unitCode: string) => boolean = () => false, // wave 5: a REVIEWED_PREDICATE_READS unit does not seed the readers fixpoint
 ): Analysis {
   const files = [...sources.keys()];
   const code = new Map(files.map((f) => [f, withoutModuleStatements(sources.get(f)!)]));
@@ -405,7 +405,7 @@ function analyse(
   };
   const creates = (f: string, u: CodeUnit) => [...seedCreates(f, u.code, consts.get(f)!, code.get(f)!), ...argUses(f, u, "writes", memory).known];
 
-  const readers = reachingNamesThrough(units, (f) => links.get(f)!, (f, c) => knownReads(f, unitOf.get(f)!.get(c)!).length > 0);
+  const readers = reachingNamesThrough(units, (f) => links.get(f)!, (f, c) => !notASeed(f, c) && knownReads(f, unitOf.get(f)!.get(c)!).length > 0); // wave 5: crossings() still judges the predicate unit by its own reads
   // §66: an unresolvable `.from(expr)` that is not the unit's own table parameter
   // (that one is resolved at the call sites) SEEDS a second fixpoint — the
   // "opaque readers" — so a caller of such a helper counts as a POSSIBLE history
@@ -450,7 +450,7 @@ function analyse(
     }
   }
   return {
-    files, units, code, readers, creators, namesFor,
+    files, units, code, readers, creators, namesFor, knownReadsOf: (f, u) => knownReads(f, u),
     linksOf: (f) => links.get(f)!,
     sourceOf: (f) => sources.get(f)!,
     isReaderUnit: (f, u) => baseReader(f, u) || isFed(f, u),
@@ -481,14 +481,14 @@ const opaqueReadsExcept = (reviewedList: readonly { file: string; unit: string }
 };
 const serverOpaqueReads = opaqueReadsExcept(REVIEWED_OPAQUE_READ_HELPERS);
 
-function serverAnalysis(extra: Map<string, string> = new Map(), opaqueSeed: Seed = serverOpaqueReads): Analysis {
+function serverAnalysis(extra: Map<string, string> = new Map(), opaqueSeed: Seed = serverOpaqueReads, predicates: readonly ReviewedPredicateRead[] = REVIEWED_PREDICATE_READS): Analysis {
   const sources = new Map<string, string>([...codeOf, ...extra]);
   return analyse(sources, (from, spec) => {
     if (!spec.startsWith(".")) return null;
     const base = resolve(dirname(from), spec).replace(/\.js$/, "");
     for (const cand of [`${base}.ts`, join(base, "index.ts")]) if (sources.has(cand)) return cand;
     return null;
-  }, serverReads, serverCreates, serverUnknownReads, false, opaqueSeed);
+  }, serverReads, serverCreates, serverUnknownReads, false, opaqueSeed, (f, c) => isReviewedPredicateRead(relative(PKG, f), c, predicates));
 }
 
 const server = serverAnalysis();
@@ -766,14 +766,14 @@ function clientWalk(dir: string, out: string[] = []): string[] {
 }
 
 /** The server's own endpoints, classified by the server analysis: a GET that reads history, a write that creates a memory. */
-function serverEndpoints(): { reads: Set<string>; creates: Set<string> } {
+function serverEndpoints(a: Analysis = server): { reads: Set<string>; creates: Set<string> } {
   const reads = new Set<string>();
   const creates = new Set<string>();
-  for (const f of server.files) {
-    const n = server.namesFor(f);
-    const fileCode = server.code.get(f)!;
+  for (const f of a.files) {
+    const n = a.namesFor(f);
+    const fileCode = a.code.get(f)!;
     const consts = stringConstsIn(fileCode);
-    for (const u of server.units.get(f)!) {
+    for (const u of a.units.get(f)!) {
       const m = /^router\.(get|post|put|patch|delete)\(\s*["'`]([^"'`]+)["'`]/.exec(u.code);
       if (!m) continue;
       const path = m[2]!.replace(/:[A-Za-z0-9_]+/g, "X").replace(/\*[A-Za-z0-9_]*/g, "X");
@@ -800,15 +800,15 @@ function apiCalls(unit: string): Array<{ path: string; method: string }> {
   }
   return out;
 }
-const clientReads = (_f: string, u: string): string[] => [
-  ...apiCalls(u).filter((c) => c.method === "GET" && endpoints.reads.has(c.path)).map((c) => `GET ${c.path}`),
+const clientReads = (_f: string, u: string, ep: { reads: Set<string> } = endpoints): string[] => [
+  ...apiCalls(u).filter((c) => c.method === "GET" && ep.reads.has(c.path)).map((c) => `GET ${c.path}`),
   ...conversationReadsResolved(u, stringConstsIn(u)).filter((x) => !x.startsWith("?")),
 ];
-const clientCreates = (_f: string, u: string): string[] => [
-  ...apiCalls(u).filter((c) => c.method !== "GET" && endpoints.creates.has(c.path)).map((c) => `${c.method} ${c.path}`),
+const clientCreates = (_f: string, u: string, ep: { creates: Set<string> } = endpoints): string[] => [
+  ...apiCalls(u).filter((c) => c.method !== "GET" && ep.creates.has(c.path)).map((c) => `${c.method} ${c.path}`),
   ...memoryCreationsResolved(u, stringConstsIn(u)).filter((x) => !x.startsWith("?")),
 ];
-function clientAnalysis(extra: Map<string, string> = new Map()): Analysis {
+function clientAnalysis(extra: Map<string, string> = new Map(), ep: { reads: Set<string>; creates: Set<string> } = endpoints): Analysis {
   const sources = new Map<string, string>([
     ...[...clientWalk(join(CLIENT, "src")), ...clientWalk(join(CLIENT, "app"))].map((f) => [f, stripComments(readFileSync(f, "utf8"))] as [string, string]),
     ...extra,
@@ -822,7 +822,7 @@ function clientAnalysis(extra: Map<string, string> = new Map()): Analysis {
     base = base.replace(/\.(js|ts|tsx)$/, "");
     for (const cand of [`${base}.ts`, `${base}.tsx`, join(base, "index.ts"), join(base, "index.tsx")]) if (sources.has(cand)) return cand;
     return null;
-  }, clientReads, clientCreates, () => [], true);
+  }, (f, u) => clientReads(f, u, ep), (f, u) => clientCreates(f, u, ep), () => [], true);
 }
 
 describe("T366 — the mobile app (§45c: 'the mobile app is not scanned at all')", () => {
@@ -1269,5 +1269,268 @@ describe("T366 hardening, round 5 (§67) — verification of 096e1bab4 (V-T3 F1,
       .filter(() => a.files.some((f) => a.units.get(f)!.some((u) => a.isReaderUnit(f, u) && a.linksOf(f).imports.some((i) => i.target === store && i.bindings.some((b) => references(u.code, b.local))))));
     assert.deepEqual(taintedOf(mk("messages={messages}")), [store], "the panel fed history through a JSX prop is not seen feeding the store");
     assert.deepEqual(taintedOf(mk('title="Recap"')), [], "CONTROL: a panel given only literals taints the store");
+  });
+});
+
+/* ── Wave 5 (2026-10-17): T366's last stated hole — module-level state and device storage ── */
+
+const w5mb = await import("../domain/telegraph/policies/conversationMemoryBoundary.js");
+
+/** Channels a history-reading unit writes: module state (by entry point) and device storage (by write statement). */
+function writtenChannels(a: Analysis) {
+  const stateOf = new Map(a.files.map((f) => [f, w5mb.moduleStateBindings(a.units.get(f)!)]));
+  const moduleState = new Map<string, Set<string>>();
+  const storage = new Map<string, Set<string>>();
+  const put = (m: Map<string, Set<string>>, k: string, v: string) => { if (!m.has(k)) m.set(k, new Set()); m.get(k)!.add(v); };
+  for (const f of a.files) for (const u of a.units.get(f)!) {
+    if (!a.isReaderUnit(f, u)) continue;
+    if (w5mb.unitWritesState(u, stateOf.get(f)!)) put(moduleState, f, `self:${u.declares[0] ?? "default"}`);
+    for (const w of w5mb.deviceStorageWrites(u.code)) put(storage, f, w);
+    for (const i of a.linksOf(f).imports) {
+      if (!i.target) continue;
+      const theirs = a.units.get(i.target) ?? [];
+      for (const b of i.bindings) {
+        if (!w5mb.passesArguments(u.code, b.local)) continue;
+        const du = theirs.find((x) => x.declares.includes(b.exported));
+        if (!du) continue;
+        if (w5mb.unitWritesState(du, stateOf.get(i.target) ?? [])) put(moduleState, i.target, b.exported);
+        for (const w of w5mb.deviceStorageWrites(du.code)) put(storage, i.target, w);
+      }
+    }
+  }
+  const rel = (m: Map<string, Set<string>>) => [...m].map(([f, s]) => ({ file: relative(CLIENT, f), items: [...s].sort() })).sort((x, y) => x.file.localeCompare(y.file));
+  return { moduleState: rel(moduleState), storage: rel(storage), stateOf };
+}
+
+describe("T366 hardening, round 6 (wave 5) — module-level state and device storage are reviewed channels too", () => {
+  const client = clientAnalysis();
+  const live = writtenChannels(client);
+
+  it("the inventories are not vacuous", () => {
+    if (process.env.T366_W5_PRINT) console.log(JSON.stringify({ moduleState: live.moduleState, storage: live.storage }, null, 1)); // re-print the live sets after a JUDGED change
+    assert.ok([...live.stateOf.values()].filter((s) => s.length > 0).length >= 50, "module state is not being seen");
+    assert.ok(live.moduleState.length >= 5 && live.storage.length >= 3, JSON.stringify({ state: live.moduleState.length, storage: live.storage.length }));
+  });
+
+  it("every module whose top-level state history-reading code writes is reviewed, by entry point — and every entry is live", () => {
+    assert.deepEqual(live.moduleState, w5mb.REVIEWED_CLIENT_MODULE_STATE.map((r) => ({ file: r.file, items: [...r.writers].sort() })).sort((x, y) => x.file.localeCompare(y.file)),
+      "conversation content may be left in a module-level variable for another screen — review what it holds into REVIEWED_CLIENT_MODULE_STATE");
+    for (const r of w5mb.REVIEWED_CLIENT_MODULE_STATE) assert.ok(r.carries.length > 40, r.file);
+  });
+
+  it("every device-storage write history-reading code makes is reviewed, by its exact statement — and every entry is live", () => {
+    assert.deepEqual(live.storage, w5mb.REVIEWED_CLIENT_DEVICE_STORAGE.map((r) => ({ file: r.file, items: [...r.writes].sort() })).sort((x, y) => x.file.localeCompare(y.file)),
+      "conversation content may be written to device storage for another screen — review what each write stores into REVIEWED_CLIENT_DEVICE_STORAGE");
+    for (const r of w5mb.REVIEWED_CLIENT_DEVICE_STORAGE) assert.ok(r.carries.length > 40, r.file);
+  });
+
+  it("a synthetic module-level cache fed by a thread read is caught; fed by something else, or only read, it is not", () => {
+    const cache = join(CLIENT, "src/lib/__t366_w5_threadCache.ts");
+    const screen = join(CLIENT, "app/__t366_w5_screen.tsx");
+    const mk = (read: string, call: string) => writtenChannels(clientAnalysis(new Map([
+      [cache, "const lastThread = new Map();\nexport function rememberThread(id, msgs) { lastThread.set(id, msgs); }\nexport function peekThread(id) { return lastThread.get(id); }"],
+      [screen, [
+        "import { getThreadMessages } from '../src/services/messaging.ts';",
+        "import { getMyTrips } from '../src/services/trips.ts';",
+        "import { rememberThread, peekThread } from '../src/lib/__t366_w5_threadCache.ts';",
+        `export default function Screen({ id }) { useEffect(() => { void ${read}(id).then((r) => ${call}); }, []); return null; }`,
+      ].join("\n")],
+    ])));
+    const hit = (x: ReturnType<typeof writtenChannels>) => x.moduleState.find((m) => m.file === "src/lib/__t366_w5_threadCache.ts");
+    assert.deepEqual(hit(mk("getThreadMessages", "rememberThread(id, r.data)"))?.items, ["rememberThread"]);
+    assert.equal(hit(mk("getMyTrips", "rememberThread(id, r.data)")), undefined, "CONTROL: a trips read is not history");
+    assert.equal(hit(mk("getThreadMessages", "peekThread(id)")), undefined, "CONTROL: reading the cache writes nothing");
+  });
+
+  it("a module-level `let` the reader's own unit assigns is caught", () => {
+    const screen = join(CLIENT, "app/__t366_w5_let.tsx");
+    const a = clientAnalysis(new Map([[screen, [
+      "import { getThreadMessages } from '../src/services/messaging.ts';",
+      "let lastBody = null;",
+      "export default function Screen({ id }) { useEffect(() => { void getThreadMessages(id).then((r) => { lastBody = r.data; }); }, []); return null; }",
+    ].join("\n")]]));
+    assert.deepEqual(writtenChannels(a).moduleState.find((m) => m.file === "app/__t366_w5_let.tsx")?.items, ["self:default"]);
+  });
+
+  it("a thread read written to device storage — directly, or through a helper it hands the data to — is caught, by statement", () => {
+    const helper = join(CLIENT, "src/lib/__t366_w5_persist.ts");
+    const screen = join(CLIENT, "app/__t366_w5_store.tsx");
+    const x = writtenChannels(clientAnalysis(new Map([
+      [helper, "export async function persistDraft(key, value) { await AsyncStorage.setItem(key, JSON.stringify(value)); }"],
+      [screen, [
+        "import { getThreadMessages } from '../src/services/messaging.ts';",
+        "import { persistDraft } from '../src/lib/__t366_w5_persist.ts';",
+        "export default function Screen({ id }) { useEffect(() => { void getThreadMessages(id).then(async (r) => { await SecureStore.setItemAsync('last', String(r.data)); await persistDraft('t', r.data); }); }, []); return null; }",
+      ].join("\n")],
+    ])));
+    assert.deepEqual(x.storage.find((m) => m.file === "app/__t366_w5_store.tsx")?.items, ["SecureStore.setItemAsync('last', String(r.data))"]);
+    assert.deepEqual(x.storage.find((m) => m.file === "src/lib/__t366_w5_persist.ts")?.items, ["AsyncStorage.setItem(key, JSON.stringify(value))"]);
+  });
+
+  it("stateWriteRe and moduleStateBindings: a declaration is not a write; a mutation is", () => {
+    const units = codeUnits("export const MODES = ['a', 'b'];\nconst cache = new Map();\nexport function put(k, v) { cache.set(k, v); }\nlet n = 0;");
+    assert.deepEqual(w5mb.moduleStateBindings(units).sort(), ["cache", "n"], "MODES is never mutated, so it is not state");
+    assert.equal(w5mb.stateWriteRe("x").test("const y = x.get(1);"), false);
+    assert.equal(w5mb.stateWriteRe("x").test("x[k] = 1"), true);
+    assert.equal(w5mb.stateWriteRe("x").test("obj.x = 1"), false, "a property of another object is not the binding");
+    assert.equal(w5mb.passesArguments("rememberThread(id, msgs)", "rememberThread"), true);
+    assert.equal(w5mb.passesArguments("peekThread()", "peekThread"), false);
+  });
+});
+
+/* ── Wave 5 correction (2026-10-17): predicate reads ─────────────────────────
+ * 60d199e2d made GET /memories/:id re-authorize each rendition through
+ * lib/mediaAccess.ts, whose `decide` reads `messages` to answer "is this key a
+ * message's media the viewer may see?" and returns a boolean. The fixpoint
+ * classed GET /memories/X as a history read, and three client units that read a
+ * Memory and add to one went red. REVIEWED_PREDICATE_READS: a unit whose history
+ * read leaves only as a declared boolean does not SEED the readers fixpoint.
+ * Every property that makes that true is checked here, on the real tree and on
+ * mutated copies of it. */
+
+describe("T366 wave 5 correction — a history read consumed only as a yes/no (REVIEWED_PREDICATE_READS) does not seed the readers fixpoint", () => {
+  const MEDIA_ACCESS = join(SRC, "lib/mediaAccess.ts");
+  const unitsOf = (src: string) => codeUnits(withoutModuleStatements(src));
+  const unitIn = (src: string, head: string) => unitsOf(src).find((u) => u.code.trim().startsWith(head))!.code;
+  /** The real (comment-stripped) mediaAccess source with one unit rewritten. */
+  const mutate = (head: string, fn: (unit: string) => string) => { const src = codeOf.get(MEDIA_ACCESS)!; const u = unitIn(src, head); return src.replace(u, fn(u)); };
+  const DECIDE = "async function decide(";
+  const problemsIn = (src: string) => {
+    const code = withoutModuleStatements(src);
+    const consts = stringConstsIn(code);
+    const units = codeUnits(code);
+    const u = units.find((x) => x.code.trim().startsWith(DECIDE));
+    return predicateReadProblems(REVIEWED_PREDICATE_READS[0]!, units, u ? serverReads(MEDIA_ACCESS, u.code, consts, code) : [], consts);
+  };
+  const clientViolations = (a: Analysis) => a.files.flatMap((f) => a.crossings(f)
+    .filter((c) => !REVIEWED_CLIENT_JSX_NON_FLOWS.some((r) => relative(CLIENT, f) === r.file && c.unit.startsWith(r.unit) && c.creates.every((x) => r.components.some((k) => x === `call:${k}`))))
+    .map((c) => `${relative(CLIENT, f)} :: ${c.unit} — reads ${c.reads.join(",")} → creates ${c.creates.join(",")}`)).sort();
+  const MEMORY_DETAIL = "app/memory/[id].tsx :: export default function MemoryDetailScreen()";
+
+  it("every entry holds on the real tree: a declared boolean, primitive parameters, no module state, exactly its reads and selects", () => {
+    assert.ok(REVIEWED_PREDICATE_READS.length >= 1);
+    for (const r of REVIEWED_PREDICATE_READS) {
+      const abs = join(PKG, r.file);
+      assert.ok(server.units.has(abs), `${r.file} is not in the scan`);
+      assert.ok(existsSync(join(PKG, r.pinnedBy)), `${r.pinnedBy} is named as the pin and does not exist`);
+      assert.ok(r.why.length > 80, `${r.file}: the argument is missing`);
+      const units = server.units.get(abs)!;
+      const u = units.find((x) => x.code.trim().startsWith(r.unit));
+      assert.ok(u, `${r.file}: ${r.unit} not found — remove or repoint the entry`);
+      assert.deepEqual(predicateReadProblems(r, units, server.knownReadsOf(abs, u!), stringConstsIn(server.code.get(abs)!)), [], `${r.file} ${r.unit} is no longer a predicate read`);
+      assert.equal(server.readers.get(abs)!.has(declaredSignature(u!.code)!.name), false, "a reviewed predicate is still a reader — the exemption is not applied");
+    }
+  });
+
+  it("each entry's effect is EXACTLY its `declassifies` and `clears`: un-reviewed, those GET endpoints become history reads and those server units cross — nothing else", () => {
+    const crossingsOf = (a: Analysis) => new Set(a.files.flatMap((f) => (allowed.has(f) ? [] : a.crossings(f).map((c) => `${relative(PKG, f)} :: ${c.unit}`))));
+    const base = crossingsOf(server);
+    for (const r of REVIEWED_PREDICATE_READS) {
+      const without = serverAnalysis(new Map(), serverOpaqueReads, REVIEWED_PREDICATE_READS.filter((x) => x !== r));
+      const ep = serverEndpoints(without);
+      assert.deepEqual([...ep.reads].filter((p) => !endpoints.reads.has(p)).sort(), [...r.declassifies].sort(),
+        `${r.file} ${r.unit}: the GET endpoints whose ONLY history read is this predicate changed — argue each new one in \`declassifies\`, or drop a stale one`);
+      assert.deepEqual([...endpoints.reads].filter((p) => !ep.reads.has(p)), [], "un-reviewing a predicate REMOVED a read");
+      assert.deepEqual([...ep.creates].sort(), [...endpoints.creates].sort(), "a predicate read changed the creation vocabulary");
+      assert.deepEqual([...crossingsOf(without)].filter((c) => !base.has(c)).sort(), [...r.clears].sort(),
+        "the SERVER crossings this predicate keeps green changed — review that each new unit carries nothing of the read into the Memory and pin it in `clears`, or drop a stale one");
+    }
+  });
+
+  it("the false positive, reproduced and cleared: un-reviewed, MemoryDetailScreen (getMemory → addMemoryItem) crosses again, and every crossing that returns comes through a Memory endpoint (`clientMayClear`) alone", () => {
+    const without = serverEndpoints(serverAnalysis(new Map(), serverOpaqueReads, []));
+    assert.ok(without.reads.has("/memories/X"), "un-reviewed, GET /memories/X is not a history read — the false positive went away for another reason; re-check the entry");
+    assert.equal(endpoints.reads.has("/memories/X"), false, "GET /memories/X is still classed as a conversation-history read");
+    const back = clientViolations(clientAnalysis(new Map(), without));
+    assert.ok(back.some((v) => v.startsWith(MEMORY_DETAIL) && v.includes("call:getMemory") && v.includes("call:addMemoryItem")), JSON.stringify(back));
+    // The other declassified endpoints serve bytes or caption text of an object the CALLER names, which may be a
+    // message's media. Their history classification was incidental, so it is kept as a tripwire: the review may clear
+    // only crossings that come through an endpoint that serves Memories (`clientMayClear`). Through a media or caption endpoint: red.
+    for (const r of REVIEWED_PREDICATE_READS) assert.deepEqual(r.clientMayClear.filter((x) => !r.declassifies.includes(x)), [], "clientMayClear names an endpoint the entry does not declassify"); const memoriesOnly = clientViolations(clientAnalysis(new Map(), { reads: new Set([...endpoints.reads, ...REVIEWED_PREDICATE_READS.flatMap((r) => r.clientMayClear)]), creates: endpoints.creates }));
+    assert.deepEqual(back, memoriesOnly, "a client unit crosses through a media / caption endpoint the predicate declassified — review what it does with the object's bytes or captions");
+  });
+
+  it("mutation: decide made to hand the row out — a widened return type, an out-parameter, an inferred return — is refused", () => {
+    assert.deepEqual(problemsIn(codeOf.get(MEDIA_ACCESS)!), [], "CONTROL: the real source holds");
+    const widened = problemsIn(mutate(DECIDE, (u) => u.replace("): Promise<boolean> {", "): Promise<boolean | { thread_id: string; sender_id: string }> {")));
+    assert.ok(widened.some((p) => p.startsWith("declares return type Promise<boolean | {")), JSON.stringify(widened));
+    const outParam = problemsIn(mutate(DECIDE, (u) => u.replace("path: string,\n)", "path: string,\n  out: { row?: unknown },\n)")));
+    assert.ok(outParam.some((p) => p.startsWith("parameter out:")), JSON.stringify(outParam));
+    const inferred = problemsIn(mutate(DECIDE, (u) => u.replace("): Promise<boolean> {", ") {")));
+    assert.ok(inferred.some((p) => p.includes("(none: inferred)")), JSON.stringify(inferred));
+  });
+
+  it("mutation: decide leaving something in module state, selecting what was said, reading a second history table, or no longer reading one, is refused", () => {
+    const state = problemsIn(mutate(DECIDE, (u) => u.replace("): Promise<boolean> {", "): Promise<boolean> {\n  allowCache.set(path, Date.now());")));
+    assert.ok(state.includes("writes module-level state another unit can read"), JSON.stringify(state));
+    const body = problemsIn(mutate(DECIDE, (u) => u.replace('.select("thread_id, sender_id, created_at")', '.select("thread_id, sender_id, created_at, body")')));
+    assert.ok(body.some((p) => p.startsWith("selects ")), JSON.stringify(body));
+    const second = problemsIn(mutate(DECIDE, (u) => u.replace("): Promise<boolean> {", '): Promise<boolean> {\n  const { data: tr } = await sc.from("message_translations").select("message_id").limit(1);')));
+    assert.ok(second.some((p) => p.startsWith("reads message_translations,messages")), JSON.stringify(second));
+    const none = problemsIn(mutate(DECIDE, (u) => u.replace('.from("messages")', '.from("trips")')));
+    assert.ok(none.includes("no longer reads conversation history — remove the entry"), JSON.stringify(none));
+  });
+
+  it("mutation: authorizeMediaAccess made to return a messages row of its own — GET /memories/X is a history read again and MemoryDetailScreen crosses (red)", () => {
+    const mutated = mutate("export async function authorizeMediaAccess(", (u) => u.replace("): Promise<boolean> {",
+      '): Promise<boolean | { row: unknown }> {\n  const { data: row } = await sc.from("messages").select("body").limit(1);\n  if (row) return { row };'));
+    const ep = serverEndpoints(serverAnalysis(new Map([[MEDIA_ACCESS, mutated]])));
+    assert.ok(ep.reads.has("/memories/X"), "a non-listed unit's own history read was not followed");
+    assert.ok(clientViolations(clientAnalysis(new Map(), ep)).some((v) => v.startsWith(MEMORY_DETAIL)), "the client crossing did not return");
+  });
+
+  it("the exemption is per UNIT: another unit of mediaAccess.ts that reads messages is a reader", () => {
+    const src = codeOf.get(MEDIA_ACCESS)! + '\nexport async function peekMessage(sc: SupabaseClient, id: string): Promise<boolean> { const { data } = await sc.from("messages").select("thread_id").eq("id", id); return Boolean(data); }\n';
+    const a = serverAnalysis(new Map([[MEDIA_ACCESS, src]]));
+    assert.equal(a.readers.get(MEDIA_ACCESS)!.has("peekMessage"), true, "a boolean helper beside the reviewed one is exempted too");
+    assert.equal(a.readers.get(MEDIA_ACCESS)!.has("decide"), false, "CONTROL");
+  });
+
+  it("a planted crossing through a NON-listed boolean helper is caught; listing it clears only its seed — a direct read beside it, and its own creation, still count", () => {
+    const helper = join(SRC, "lib/__t366_w5p_inThread.ts");
+    const route = join(SRC, "routes/__t366_w5p_route.ts");
+    const helperSrc = 'import type { SupabaseClient } from "@supabase/supabase-js";\nexport async function inThread(sc: SupabaseClient, id: string): Promise<boolean> { const { data } = await sc.from("messages").select("thread_id").eq("id", id).limit(1); return Boolean(data?.length); }';
+    const routeSrc = (body: string) => [
+      'import { executeMemoryCommand } from "../lib/memoryCommandBus.js";',
+      'import { inThread } from "../lib/__t366_w5p_inThread.js";',
+      'router.post("/w5p/:id", async (req, res) => {',
+      body,
+      '  await executeMemoryCommand(sc, { commandType: "CREATE_MEMORY", payload: req.body });',
+      "});",
+    ].join("\n");
+    const listed: ReviewedPredicateRead = { file: "src/lib/__t366_w5p_inThread.ts", unit: "export async function inThread(", reads: ["messages"], selects: ["thread_id"], declassifies: [], clientMayClear: [], clears: [], why: "synthetic", pinnedBy: "src/test/telegraphConversationMemoryBoundary.test.ts" };
+    const crossings = (body: string, list: readonly ReviewedPredicateRead[], h = helperSrc) =>
+      serverAnalysis(new Map([[helper, h], [route, routeSrc(body)]]), serverOpaqueReads, list);
+    const guarded = "  if (!(await inThread(sc, req.params.id))) return;";
+    const planted = crossings(guarded, REVIEWED_PREDICATE_READS).crossings(route);
+    assert.equal(planted.length, 1, "a boolean helper that reads messages, NOT reviewed, must still make its caller a reader");
+    assert.ok(planted[0]!.reads.includes("call:inThread"), JSON.stringify(planted));
+    assert.equal(crossings(guarded, [...REVIEWED_PREDICATE_READS, listed]).crossings(route).length, 0, "CONTROL: reviewed as a predicate, it no longer seeds");
+    assert.deepEqual(predicateReadProblems(listed, unitsOf(helperSrc), ["messages"]), [], "CONTROL: the synthetic entry holds");
+    assert.equal(crossings(`${guarded}\n  const { data } = await sc.from("messages").select("body");`, [...REVIEWED_PREDICATE_READS, listed]).crossings(route).length, 1, "a direct read beside the predicate still counts");
+    const creating = helperSrc.replace("import type", 'import { executeMemoryCommand } from "./memoryCommandBus.js";\nimport type')
+      .replace("return Boolean(data?.length); }", "await executeMemoryCommand(sc, { payload: data }); return Boolean(data?.length); }");
+    assert.equal(crossings(guarded, [...REVIEWED_PREDICATE_READS, listed], creating).crossings(helper).length, 1, "a reviewed predicate that itself creates a memory still crosses");
+  });
+});
+
+describe("T366 wave 5 correction — PIN for the reviewed composerTaskOutcome module state (REVIEWED_CLIENT_MODULE_STATE)", () => {
+  it("the thread screen hands reportThreadSend only (id, the send result); reportThreadSend only deletes the hold; only holdRecipientPick sets it, with a user pick and a time", () => {
+    const thread = stripComments(readFileSync(join(CLIENT, "app/messages/[id].tsx"), "utf8"));
+    const calls = callArguments(thread, "reportThreadSend");
+    assert.ok(calls.length >= 1, "the thread screen no longer reports a send — remove or re-review the entry");
+    for (const args of calls) {
+      assert.equal(args.length, 2, `reportThreadSend(${args.join(", ")}): the thread screen hands it more than (id, ok)`);
+      assert.equal(args[0], "id");
+      assert.match(args[1]!, /^!*res\??\.ok$/, `reportThreadSend's second argument is not the send result: ${args[1]}`);
+    }
+    const mod = stripComments(readFileSync(join(CLIENT, "src/features/telegraph/composer/composerTaskOutcome.ts"), "utf8"));
+    const units = codeUnits(mod);
+    const report = units.find((u) => u.declares.includes("reportThreadSend"))!.code;
+    assert.deepEqual([...report.matchAll(/\bheld\s*\.\s*(\w+)\s*\(/g)].map((m) => m[1]).sort(), ["delete", "delete", "get"], "reportThreadSend touches the hold other than reading and deleting it");
+    assert.deepEqual(units.filter((u) => /\bheld\s*\.\s*set\s*\(/.test(u.code)).map((u) => u.declares[0]), ["holdRecipientPick"], "something other than holdRecipientPick sets the hold");
+    assert.match(units.find((u) => u.declares.includes("holdRecipientPick"))!.code, /held\.set\(threadId, \{ served, at: now \}\)/);
+    assert.match(mod, /const held = new Map<string, \{ served: ServedField; at: number \}>\(\);/, "the hold's shape changed — re-review what it carries");
+    assert.match(units.find((u) => u.declares.includes("recipientServed"))!.code, /entities: \[\{ entityType: 'user', entityId: id \}\]/, "a recipient pick no longer names exactly one user");
   });
 });

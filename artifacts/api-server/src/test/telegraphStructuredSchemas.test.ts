@@ -412,3 +412,80 @@ describe("T431 — share projections offer only the actions the client declared"
     assert.equal(on.body.headers.schemas, CLIENT_SCHEMAS_HEADER);
   });
 });
+
+// ── census-telegraph T429 (wave 5): the coordination route stamps its schema ──
+
+describe("T429 (wave 5) — POST /threads/:id/coordination stamps the named schema", () => {
+  let coordServer: ReturnType<typeof createServer>;
+  let coordBase = "";
+  before(async () => {
+    const { default: telegraphCoordinationRouter } = await import("../routes/telegraphCoordination.js");
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => { (req as any).log = { error() {}, warn() {}, info() {}, debug() {} }; next(); });
+    app.use("/api", telegraphCoordinationRouter);
+    coordServer = createServer(app);
+    await new Promise<void>((resolve) => coordServer.listen(0, "127.0.0.1", resolve));
+    coordBase = `http://127.0.0.1:${(coordServer.address() as { port: number }).port}/api`;
+  });
+  after(async () => {
+    await new Promise<void>((resolve) => coordServer.close(() => resolve()));
+  });
+  async function post(body: unknown) {
+    const r = await fetch(`${coordBase}/threads/${THREAD}/coordination`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${ALICE}`, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const text = await r.text();
+    let parsed: any = null;
+    try { parsed = JSON.parse(text); } catch { parsed = text; }
+    return { status: r.status, body: parsed };
+  }
+  const status = { kind: "COORDINATION", payload: { state: "ON_MY_WAY" } };
+
+  it("flag OFF (the seed): the stored body is exactly the old envelope, and a `schema` field is ignored", async () => {
+    const c = writeClient({});
+    _setTestClient(c, true);
+    const r = await post({ ...status, schema: "nonsense.v7" });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.deepEqual(Object.keys(JSON.parse(c._db.messages!.at(-1)!.body)).sort(), ["envelopeVersion", "kind", "payload"]);
+    assert.equal(r.body.schema, undefined, "no id is named while the flag is off");
+  });
+
+  it("flag ON: a quick state is stored as coordination.status.v1 — §30A.16's own id — and reads back by its DECLARED schema", async () => {
+    const c = writeClient({ schemas: true });
+    _setTestClient(c, true);
+    const r = await post(status);
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    const row = c._db.messages!.at(-1)!;
+    assert.equal(JSON.parse(row.body).schema, "coordination.status.v1");
+    assert.equal(r.body.schema, "coordination.status.v1", "the response names the stamped id, as the typed-message route's does");
+    const read = storedSchemaOf(row);
+    assert.ok(read.structured && read.valid && read.schemaId === "coordination.status.v1", "the stamped row validates under the schema it names");
+  });
+
+  it("flag ON: a schema this server does not write for the kind is refused, and nothing is written", async () => {
+    const c = writeClient({ schemas: true });
+    _setTestClient(c, true);
+    const n = c._db.messages!.length;
+    for (const bad of ["coordination.status.v2", "announcement.v1", "coordination.vote.v1", "nonsense"]) {
+      const r = await post({ ...status, schema: bad });
+      assert.equal(r.status, 400, bad);
+    }
+    assert.equal(c._db.messages!.length, n, "a refused schema still wrote a row");
+    const named = await post({ ...status, schema: "coordination.status.v1" });
+    assert.equal(named.status, 201, "the right id, named, is accepted");
+  });
+
+  it("flag ON: the session writer stamps coordination.session.v1 too (its own insert, not the generic one)", async () => {
+    const c = writeClient({ schemas: true });
+    _setTestClient(c, true);
+    const r = await post({ kind: "COORDINATION_SESSION", payload: { title: "Dinner", idempotencyKey: "k-1" } });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    const row = c._db.messages!.at(-1)!;
+    assert.equal(JSON.parse(row.body).schema, "coordination.session.v1");
+    assert.equal(r.body.schema, "coordination.session.v1");
+    assert.equal(storedSchemaOf(row).structured && (storedSchemaOf(row) as { valid: boolean }).valid, true);
+  });
+});

@@ -193,7 +193,7 @@ import {
   evaluateSharingGate,
   publishableUserIds,
   disclosePresence,
-} from "../services/airport/LayoverPrivacyGuard.js";
+} from "../services/airport/LayoverPrivacyGuard.js"; import { readDisclosure, matchRead, readValue, readDegraded, type LayoverRead } from "../services/layover/layoverRead.js";
 // abortToAirport ships now that 2741 is APPLIED TO PRODUCTION (20260908133347),
 // which is what makes its 'safe_return_aborted' ledger insert legal.
 import {
@@ -537,16 +537,16 @@ router.get("/airport/search", async (req, res) => {
   let degradedReasons: string[] = [];
   if (q) {
     const r = await lookupAirports(sc, q);
-    results = r.airports; degraded = r.degraded; degradedReasons = r.degradedReasons;
+    results = matchRead(r, { read: (v) => v.airports, degraded: (f) => f.airports }); ({ degraded, degradedReasons } = readDisclosure(r)); // census L294: the static fallback is served KNOWINGLY, and disclosed
   } else if (iata) {
     const r = await lookupByIata(sc, iata);
-    results = r.airport ? [r.airport] : []; degraded = r.degraded; degradedReasons = r.degradedReasons;
+    const a = matchRead(r, { read: (v) => v.airport, degraded: (f) => f.airport }); results = a ? [a] : []; ({ degraded, degradedReasons } = readDisclosure(r)); // census L294: the static fallback is served KNOWINGLY, and disclosed
   } else if (lat != null && lng != null) {
     const r = await lookupByGps(sc, lat, lng);
-    results = r.airport ? [r.airport] : []; degraded = r.degraded; degradedReasons = r.degradedReasons;
+    const a = matchRead(r, { read: (v) => v.airport, degraded: (f) => f.airport }); results = a ? [a] : []; ({ degraded, degradedReasons } = readDisclosure(r)); // census L294: the static fallback is served KNOWINGLY, and disclosed
   } else if (city) {
     const r = await lookupByCity(sc, city);
-    results = r.airport ? [r.airport] : []; degraded = r.degraded; degradedReasons = r.degradedReasons;
+    const a = matchRead(r, { read: (v) => v.airport, degraded: (f) => f.airport }); results = a ? [a] : []; ({ degraded, degradedReasons } = readDisclosure(r)); // census L294: the static fallback is served KNOWINGLY, and disclosed
   }
 
   res.json({ airports: results, featureEnabled: true, degraded, degradedReasons });
@@ -600,19 +600,19 @@ router.post("/airport/sessions", async (req, res) => {
   // would otherwise be permanent for that traveller's whole layover.
   if (!airport && (p.iata ?? p.manualIata)) {
     const looked = await lookupByIata(sc, (p.iata ?? p.manualIata)!);
-    if (looked.degraded) {
+    if (looked.kind === "degraded") {
       sendError(res, "degraded_unavailable", "Airport details could not be loaded. Please try again.");
       return;
     }
-    airport = looked.airport;
+    airport = looked.value.airport;
   }
   if (!airport && p.manualCity) {
     const looked = await lookupByCity(sc, p.manualCity);
-    if (looked.degraded) {
+    if (looked.kind === "degraded") {
       sendError(res, "degraded_unavailable", "Airport details could not be loaded. Please try again.");
       return;
     }
-    airport = looked.airport;
+    airport = looked.value.airport;
   }
 
   // Ensure a DB profile row exists so the session can reference it (static and
@@ -2003,19 +2003,19 @@ function computePlanFit(record: LayoverFeasibilityRecord, stops: any[]) {
 export interface CityPresence {
   count: number;
   travelers: Array<{ id: string; handle: string | null; name: string | null; avatarUrl: string | null }>;
-  degraded: boolean;
-  degradedReasons: string[]; /** census L129 — EVERY cleared traveller's id, for the intent counts only; never serialised (the routes pick fields). */ visibleUserIds: string[];
-}
+  /** census L294: no `degraded` beside the data — `cityPresence` answers a LayoverRead<CityPresence>, and a degraded answer is a FALLBACK. */
+  /** census L129 — EVERY cleared traveller's id, for the intent counts only; never serialised (the routes pick fields). */ visibleUserIds: string[];
+} export type CityPresenceRead = LayoverRead<CityPresence>;
 
 export async function cityPresence(
   sc: any,
   userId: string,
   city: string | null,
-): Promise<CityPresence> {
-  const empty: CityPresence = { count: 0, travelers: [], degraded: false, degradedReasons: [], visibleUserIds: [] };
-  const refuse = (reason: string): CityPresence => ({
-    count: 0, travelers: [], degraded: true, degradedReasons: [reason], visibleUserIds: [],
-  });
+): Promise<CityPresenceRead> {
+  const empty: CityPresenceRead = readValue({ count: 0, travelers: [], visibleUserIds: [] }); // a MEASURED zero
+  const refuse = (reason: string): CityPresenceRead => readDegraded<CityPresence>(// nobody published, and NOT a measurement
+    { count: 0, travelers: [], visibleUserIds: [] }, [reason],
+  );
   if (!city || city === "Unknown") return empty;
   try {
     const nowIso = new Date().toISOString();
@@ -2044,18 +2044,18 @@ export async function cityPresence(
     if (userIds.length === 0) return empty;
 
     // Exclude blocked users in both directions — fail closed on error.
-    const { data: blockRows, error: blockErr } = await sc
-      .from("blocks")
-      .select("blocker_id, blocked_id")
-      .or(`blocker_id.eq.${userId},blocked_id.eq.${userId}`);
-    if (blockErr) {
-      logger.warn({ err: blockErr, userId }, "layover city presence: blocks unreadable — serving nobody, and saying so");
+    // census-telegraph T220: through the shared reader. The same whole-list
+    // read; a returned error, a thrown read, a non-list answer and a row that
+    // names no counter-party are all `ok: false`, and all refuse here.
+    const blocks = await readBlockExclusions(sc, userId);
+    if (!blocks.ok) {
+      logger.warn({ err: blocks.reason, userId }, "layover city presence: blocks unreadable — serving nobody, and saying so");
       return refuse("blocks_unreadable");
     }
-    const excluded = new Set<string>();
-    for (const b of (blockRows ?? []) as any[]) {
-      excluded.add(b.blocker_id === userId ? b.blocked_id : b.blocker_id);
-    }
+    // Every counter-party of a block row touching the viewer, either way: the
+    // set the loop that stood here built by hand from `blocker_id` /
+    // `blocked_id`.
+    const excluded = blocks.ids;
     const notBlocked = userIds.filter((id) => !excluded.has(id));
     // A candidate's own sharing opt-out is checked HERE, not only at the
     // session flag. `share_city_status` on the session is what the traveller
@@ -2064,11 +2064,11 @@ export async function cityPresence(
     // who paused sharing stays on the list. An unreadable table publishes
     // NOBODY -- for a presence surface the empty answer is the safe one.
     const publishable = await publishableUserIds(sc, notBlocked);
-    const visible = publishable.allowed;
+    const visible = publishable.kind === "read" ? publishable.value.allowed : []; // census L294: a degraded read has no `value`
     // `publishableUserIds` fails CLOSED on an unreadable preferences table and
     // reports it; an empty list that came from an outage is not a measured zero.
     if (visible.length === 0) {
-      return publishable.degraded ? refuse("sharing_preferences_unreadable") : empty;
+      return publishable.kind === "degraded" ? refuse("sharing_preferences_unreadable") : empty;
     }
 
     let travelers: Array<{ id: string; handle: string | null; name: string | null; avatarUrl: string | null }> = [];
@@ -2099,15 +2099,15 @@ export async function cityPresence(
       profileDegraded.push("traveller_cards_unreadable");
     }
 
-    return {
-      count: visible.length, visibleUserIds: visible,
-      travelers,
-      degraded: profileDegraded.length > 0 || publishable.degraded,
-      degradedReasons: [
-        ...profileDegraded,
-        ...(publishable.degraded ? ["sharing_preferences_unreadable"] : []),
-      ],
-    };
+    const measured: CityPresence = { count: visible.length, visibleUserIds: visible, travelers };
+    const why = [...profileDegraded, ...readDisclosure(publishable).degradedReasons];
+    // census L294: cards that could not be read degrade the WHOLE answer. The count
+    // is measured, but the answer is not the full measurement, so it is served
+    // as a FALLBACK with its reasons rather than as a read.
+    return why.length > 0
+      ? readDegraded(measured, why as unknown as readonly [string, ...string[]])
+      : readValue(measured);
+    // (one return, two kinds)
   } catch (err) {
     // Not dead code the way a supabase-js catch is: `publishableUserIds` and
     // `nameVisibilitySet` are ordinary async functions and either may throw.
@@ -3105,7 +3105,7 @@ async function crewPayload(
   const solution = certifyCrewPlan(unsplitPlan(solver.members, []), solver.members, { nowMs });
 
   const otherIds = members.map((m) => m.userId).filter((id) => id !== viewerId);
-  const cards = await crewMemberCards(sc, viewerId, otherIds);
+  const cardsRead = await crewMemberCards(sc, viewerId, otherIds); const cards = matchRead(cardsRead, { read: (c) => c, degraded: (fallback) => fallback }); // census L294: a degraded read's fallback (no card, no identity) is served KNOWINGLY, and disclosed below
 
   // §14.1 / census-layover L138 — the "meet here" gate, on the crew card as
   // well as on the Compass answer. `meetActionAvailability` decides; this route
@@ -3148,8 +3148,8 @@ async function crewPayload(
       // the wire, as they always were.
       solution: publishedCrewSolution(solution, viewerId, cards.visibleIds),
       members: cards.cards, yourLandside: viewerLandside, landsideClearance: CREW_LANDSIDE_CLEARANCE, // the crew is NOT cleared to leave the airport as a group: each member reads their own gate, and this is the viewer's
-      degraded: cards.degraded,
-      degradedReasons: cards.degradedReasons,
+      degraded: readDisclosure(cardsRead).degraded,
+      degradedReasons: readDisclosure(cardsRead).degradedReasons,
     },
   };
 }
@@ -3166,9 +3166,9 @@ async function crewMemberCards(
   sc: any,
   viewerId: string,
   otherIds: string[],
-): Promise<{ cards: Array<Record<string, unknown>>; visibleIds: string[]; degraded: boolean; degradedReasons: string[]; /** §14.1 / L138: a block relation with a crewmate, OR a block list that could not be read. Both withhold the meeting point. */ blockedRelation: boolean }> {
-  if (otherIds.length === 0) return { cards: [], visibleIds: [], degraded: false, degradedReasons: [], blockedRelation: false };
-  const reasons: string[] = [];
+): Promise<LayoverRead<{ cards: Array<Record<string, unknown>>; visibleIds: string[]; /** §14.1 / L138: a block relation with a crewmate, OR a block list that could not be read. Both withhold the meeting point. */ blockedRelation: boolean }>> { // census L294: a LayoverRead, degraded with named reasons
+  if (otherIds.length === 0) return readValue({ cards: [], visibleIds: [], blockedRelation: false });
+  const reasons: string[] = []; const settle = <T,>(v: T): LayoverRead<T> => (reasons.length > 0 ? readDegraded(v, reasons as unknown as readonly [string, ...string[]]) : readValue(v));
   try {
     // Scoped to the crew (`among`): two `.in()` reads that can only return a
     // row involving the viewer AND a crewmate — never anybody else's block.
@@ -3181,7 +3181,7 @@ async function crewMemberCards(
       // `blockedRelation: true` for the SAME reason the cards are dropped: an
       // unreadable block list is "we could not check", and §14.1's meet gate
       // must read that as a block, never as "there is nothing to stop us".
-      return { cards: [], visibleIds: [], degraded: true, degradedReasons: ["blocks_unreadable"], blockedRelation: true };
+      return readDegraded({ cards: [], visibleIds: [], blockedRelation: true }, ["blocks_unreadable"]);
     }
     const blockedRelation = otherIds.some((id) => blocked.ids.has(id));
     // `visibleIds` is what `publishedCrewSolution` scopes the solver's
@@ -3191,9 +3191,9 @@ async function crewMemberCards(
     const notBlocked = otherIds.filter((id) => !blocked.ids.has(id));
 
     const publishable = await publishableUserIds(sc, notBlocked);
-    if (publishable.degraded) reasons.push("sharing_preferences_unreadable");
-    const visible = publishable.allowed;
-    if (visible.length === 0) return { cards: [], visibleIds: [], degraded: reasons.length > 0, degradedReasons: reasons, blockedRelation };
+    if (publishable.kind === "degraded") reasons.push(...publishable.reasons);
+    const visible = publishable.kind === "read" ? publishable.value.allowed : [];
+    if (visible.length === 0) return settle({ cards: [], visibleIds: [], blockedRelation });
 
     const { data: profiles, error: profErr } = await sc
       .from("profiles")
@@ -3201,23 +3201,23 @@ async function crewMemberCards(
       .in("id", visible);
     if (profErr) {
       logger.warn({ err: profErr }, "layover crew: profiles unreadable — crew served without member cards");
-      return { cards: [], visibleIds: [], degraded: true, degradedReasons: [...reasons, "member_cards_unreadable"], blockedRelation };
+      reasons.push("member_cards_unreadable"); return settle({ cards: [], visibleIds: [], blockedRelation });
     }
     const allowedNames = await nameVisibilitySet(sc, visible);
-    return {
+    return settle({
       cards: ((profiles ?? []) as any[]).map((p) => ({
         id: p.id,
         handle: p.handle ?? null,
         name: allowedNames.has(p.id as string) ? (p.name ?? null) : null,
         avatarUrl: p.avatar_url ?? null,
       })),
-      visibleIds: visible, degraded: reasons.length > 0,
-      degradedReasons: reasons,
+      visibleIds: visible,
+      // degradation, if any, rides in the LayoverRead (census L294), not beside the cards
       blockedRelation,
-    };
+    });
   } catch (err) {
     logger.warn({ err, viewerId }, "layover crew member cards threw — crew served without them");
-    return { cards: [], visibleIds: [], degraded: true, degradedReasons: ["member_cards_unreadable"], blockedRelation: true };
+    return readDegraded({ cards: [], visibleIds: [], blockedRelation: true }, ["member_cards_unreadable"]);
   }
 }
 
@@ -3313,7 +3313,7 @@ function crewMeetGateFor(
       const solver = await crewSolverMembers(sc, members, nowMs);
       const otherIds = members.map((m) => m.userId).filter((id) => id !== viewerId);
       const cards = await crewMemberCards(sc, viewerId, otherIds);
-      return crewMeetFactsFrom(viewerId, crew.id, members, solver.ok ? solver.members : null, cards.blockedRelation);
+      return crewMeetFactsFrom(viewerId, crew.id, members, solver.ok ? solver.members : null, matchRead(cards, { read: (c) => c.blockedRelation, degraded: (fallback) => fallback.blockedRelation }));
     },
   };
 }
@@ -3591,8 +3591,8 @@ router.get("/airport/sessions/:id/presence", async (req, res) => {
   const d = disclosePresence({
     gate, sessionOptedIn: true, ladderEnabled,
     count: counted.ok ? counted.count : null, countWithheld: counted.ok ? counted.withheld : "unreadable",
-    travelers: roster?.travelers ?? [],
-    presenceRead: roster ? { degraded: roster.degraded, reasons: roster.degradedReasons } : counted.ok ? undefined : { degraded: true, reasons: [counted.reason] },
+    travelers: roster ? matchRead(roster, { read: (r) => r.travelers, degraded: (fallback) => fallback.travelers }) : [], // census L294: the roster's fallback is served KNOWINGLY; presenceRead below discloses it
+    presenceRead: roster ? { degraded: readDisclosure(roster).degraded, reasons: readDisclosure(roster).degradedReasons } : counted.ok ? undefined : { degraded: true, reasons: [counted.reason] },
   });
 
   res.json({
@@ -3685,19 +3685,19 @@ router.get("/airport/sessions/:id/buddies", async (req, res) => {
     // an outage into "nobody is blocked" and recommended meeting a blocked
     // person. Matches cityPresence above (routes/airport.ts cityPresence).
     try {
-      const { data: blockRows, error: blockErr } = await sc
-        .from("blocks")
-        .select("blocker_id, blocked_id")
-        .or(`blocker_id.eq.${user.id},blocked_id.eq.${user.id}`);
-      if (blockErr) {
-        logger.warn({ err: blockErr, userId: user.id }, "layover buddies: blocks unreadable — serving none");
+      // census-telegraph T220: the shared reader — the same whole-list read,
+      // and it never rejects: every failure is `ok: false`, so the catch below
+      // is a backstop for this block, not the path a failed read takes.
+      const blocks = await readBlockExclusions(sc, user.id);
+      if (!blocks.ok) {
+        logger.warn({ err: blocks.reason, userId: user.id }, "layover buddies: blocks unreadable — serving none");
         rows = [];
         degradedReasons.push("blocks_unreadable");
       } else {
-        const excluded = new Set<string>();
-        for (const b of (blockRows ?? []) as any[]) {
-          excluded.add(b.blocker_id === user.id ? b.blocked_id : b.blocker_id);
-        }
+        const excluded = blocks.ids; // every counter-party of a block row
+        // touching the viewer, either way — the set the loop that stood here
+        // built by hand from `blocker_id` / `blocked_id`. A row that names no
+        // counter-party is now `ok: false` (above), never skipped.
         rows = rows.filter((b) => !excluded.has(b.user_id));
       }
     } catch (err) {
@@ -4715,8 +4715,8 @@ export async function cityIntentPopulation(
   ));
   if (ids.length === 0) return { ok: true, ids: [] };
   const publishable = await publishableUserIds(sc, ids);
-  if (publishable.degraded) return { ok: false, reason: "sharing_preferences_unreadable" };
-  return { ok: true, ids: publishable.allowed };
+  if (publishable.kind === "degraded") return { ok: false, reason: "sharing_preferences_unreadable" };
+  return { ok: true, ids: publishable.value.allowed };
 }
 
 /**

@@ -32,7 +32,7 @@ are files, tables, routes, event types and literals, each re-derived on every ru
 
 ### 2. Migrations that touch a messaging table
 
-36 of 799 migration files reference at least one messaging table.
+37 of 803 migration files reference at least one messaging table.
 
 MEASURED ON THE SQL WITH COMMENTS STRIPPED. A table named only in a `--` or
 `/* */` comment is not counted; before this, 13 of the 37 files listed here
@@ -84,6 +84,7 @@ touch no messaging table.
 - `src/migrations/3763_trip_membership_thread_atomic.sql`
 - `src/migrations/3770_trip_hard_delete_thread_guard.sql`
 - `src/migrations/3825_telegraph_message_link_previews.sql`
+- `src/migrations/3998_telegraph_conversation_snapshots.sql`
 
 ### 3. Server routes that read or write a messaging table
 
@@ -149,7 +150,9 @@ hook in `src/lib/telegraphBroadcast.ts`.
 - `src/services/notifications/NotificationService.ts`
 - `src/services/notifications/NotificationTemplateService.ts`
 - `src/services/notifications/RealtimeActivityService.ts`
+- `src/services/notifications/causalEvents.ts`
 - `src/services/notifications/essentialAttemptBudget.ts`
+- `src/services/notifications/planNotifications.ts`
 
 `NotificationRouter` writes a `msg_type: 'system'` message into a thread, with the notification's own event type as the `subtype` — so the Telegraph subtype vocabulary is, in practice, the notification event vocabulary.
 
@@ -180,7 +183,7 @@ Processing and EXIF policy: `src/lib/mediaProcessing.ts`. Access: `src/lib/media
 
 `subtype` (static literals): `call_ended`, `call_started`, `compass_card`, `discovery_card`, `e2ee_welcome`, `event_context_card`, `hidden_gem`, `layover_suggestion`, `meetup`, `meetup_cancelled`, `meetup_confirmed`, `post_card`
 
-28 site(s) COMPUTE a message type rather than writing a literal, so no
+27 site(s) COMPUTE a message type rather than writing a literal, so no
 fixed enumeration of `subtype` is complete. They are declared in
 `src/domain/telegraph/policies/shareAuthorizationPolicy.ts` and re-derived by
 `check:telegraph-share-producers`:
@@ -202,7 +205,6 @@ fixed enumeration of `subtype` is complete. They are declared in
 - `artifacts/api-server/src/lib/calls/callStoreAdapter.ts` — `` subtype: `call_${session.status}` ``
 - `artifacts/api-server/src/routes/messaging.ts` — `` msg_type: msgType | subtype (both from resolveClientDiscriminator, a closed list) ``
 - `artifacts/api-server/src/routes/circle.ts` — `` subtype: cardSubtype ``
-- `artifacts/api-server/src/routes/highlights.ts` — `` subtype: id ``
 - `artifacts/api-server/src/routes/rentABuddy.ts` — `` subtype: `booking_status_${newStatus}` ``
 - `artifacts/api-server/src/services/notifications/NotificationRouter.ts` — `` subtype: notification.eventType ``
 - `travel-buddy-standalone/src/components/CircleStatusCardMessage.logic.ts` — `` subtype: subtype! `` (parser / passthrough, writes no message)

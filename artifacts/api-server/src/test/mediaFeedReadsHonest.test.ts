@@ -487,6 +487,37 @@ describe("Gates, more actions, and ranking (census-media §47)", () => {
     assert.ok(r.body.failedSources.includes("blocks"));
   });
 
+  // census-telegraph T220 (wave 5): the gems feed and verifyMediaAccess read
+  // `blocks` through the shared readers now. Their FAILURE halves were pinned
+  // (MG6, MA5); the plain BLOCKED halves were not, and ignoring a block
+  // survived every suite. A block in either direction is pinned here.
+  for (const [label, row] of [["the submitter blocked the viewer", { blocker_id: CREATOR, blocked_id: VIEWER }], ["the viewer blocked the submitter", { blocker_id: VIEWER, blocked_id: CREATOR }]] as const) {
+    it(`T220 — Gems: ${label} → the gem is not served (and is, with no block)`, async () => {
+      use(seed());
+      const clean = await get("/media/gems-feed");
+      assert.equal(clean.status, 200, JSON.stringify(clean.body));
+      assert.ok(item(clean.body.items, GEM), "CONTROL: with no block the gem is served");
+      use(seed({ tables: { ...seed().tables, blocks: [row] } }));
+      const r = await get("/media/gems-feed");
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      assert.equal(item(r.body.items, GEM), undefined, "a blocked submitter's gem must not be served");
+    });
+
+    it(`T220 — POST /media/:id/save on a post and on a gem: ${label} → 404, not saved`, async () => {
+      use(seed({ tables: { ...seed().tables, blocks: [row] } }));
+      const post = await call("POST", `/media/${P1}/save`);
+      assert.equal(post.status, 404, JSON.stringify(post.body));
+      const gem = await call("POST", `/media/${GEM}/save`);
+      assert.equal(gem.status, 404, JSON.stringify(gem.body));
+    });
+  }
+
+  it("T220 — POST /media/:gem/save with the block read failing: 503, never 404 (MA5's gem twin)", async () => {
+    use(seed({ failReads: { blocks: true } }));
+    const r = await call("POST", `/media/${GEM}/save`);
+    assert.equal(r.status, 503, JSON.stringify(r.body));
+  });
+
   it("EL1 — a creator blocked past the viewer's first 1,000 blocks is still filtered out", async () => {
     const spec = seed();
     spec.tables.blocks = Array.from({ length: 1_000 }, (_, i) => ({ blocker_id: VIEWER, blocked_id: `0aaaaaaa-0000-4000-a000-${n12(i)}` }));

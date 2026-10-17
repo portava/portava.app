@@ -21,7 +21,7 @@ import { loadMemories } from "./PassportMemoryService.js";
 import { filterMemories, type CallerContext } from "./PassportPrivacyGuard.js";
 import { fetchBlockedSet } from "../../lib/blocks.js";
 import { nameVisibilitySet, sanitizeIdentity } from "../../lib/publicIdentity.js";
-import { mayDiscloseGemIdentity } from "../hiddenGems/HiddenGemPrivacyGuard.js";
+import { mayDiscloseGemIdentity } from "../hiddenGems/HiddenGemPrivacyGuard.js"; import { readStampPresenceView, withPresencePlaces } from "./stampPresenceView.js";
 
 export interface JourneyMemory {
   id: string;
@@ -300,10 +300,10 @@ async function stampsByTrip(sc: SupabaseClient, userId: string): Promise<Map<str
   try {
     const { data } = await sc
       .from("user_stamps")
-      .select("source_type, source_id, city, country, earned_at, is_revoked, stamp_definitions(name)")
+      .select("user_id, source_type, source_id, city, country, earned_at, is_revoked, stamp_definitions(slug, name)")
       .eq("user_id", userId)
       .eq("is_revoked", false);
-    for (const r of ((data as any[]) ?? [])) {
+    const view = await readStampPresenceView(sc, (data as any[]) ?? []); for (const r of withPresencePlaces(view, ((data as any[]) ?? []).filter((x) => view.presenceClaimHolds(x)), ["city", "country"])) { // H4 (stampPresenceView.ts): a journey names a stamp's place only with occurrence evidence, and drops a presence stamp whose evidence does not hold
       if (norm(r.source_type) !== "trips" || !r.source_id) continue;
       const arr = map.get(r.source_id) ?? [];
       arr.push({

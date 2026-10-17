@@ -33,7 +33,7 @@ import {
 } from 'react-native';
 import { Search as SearchIcon, X } from 'lucide-react-native';
 
-import { color, radius, space, typography } from '../../../theme/tokens.ts';
+import { color, radius, space, typography } from '../../../theme/tokens.ts'; import { useTelegraphTheme, type TelegraphPalette } from '../theme/telegraphTheme.ts';
 import { SEARCH_BUCKETS, type SearchBucket, type SearchHit, type SearchResult } from '../types/index.ts';
 import { searchTelegraph, type TelegraphSearchError } from '../services/telegraphSearch.ts';
 
@@ -60,6 +60,7 @@ export function TelegraphSearchScreen({
   onOpenMessage,
   onClose,
 }: TelegraphSearchScreenProps) {
+  const { palette, styles: s } = useTelegraphTheme(makeStyles);
   const [query, setQuery] = useState(initialQuery);
   const [bucket, setBucket] = useState<SearchBucket | null>(null);
   const [result, setResult] = useState<SearchResult | null>(null);
@@ -137,19 +138,19 @@ export function TelegraphSearchScreen({
         ))}
       </View>
     );
-  }, [counts, bucket, pickBucket]);
+  }, [counts, bucket, pickBucket, s]);
 
   return (
     <View testID="telegraph-search-screen" style={s.root}>
       <View style={s.searchRow}>
-        <SearchIcon size={16} color={color.mute} />
+        <SearchIcon size={16} color={palette.mute} />
         <TextInput
           testID="telegraph-search-input"
           accessibilityLabel="Search conversations"
           value={query}
           onChangeText={onChange}
           placeholder={conversationId ? 'Search this conversation' : 'Search your conversations'}
-          placeholderTextColor={color.faint}
+          placeholderTextColor={palette.faint}
           style={s.input}
           autoCorrect={false}
           returnKeyType="search"
@@ -157,14 +158,14 @@ export function TelegraphSearchScreen({
         />
         {onClose && (
           <Pressable testID="telegraph-search-close" accessibilityLabel="Close search" onPress={onClose} hitSlop={10}>
-            <X size={16} color={color.mute} />
+            <X size={16} color={palette.mute} />
           </Pressable>
         )}
       </View>
 
       {header}
 
-      {busy && <ActivityIndicator testID="telegraph-search-busy" style={s.busy} color={color.signal} />}
+      {busy && <ActivityIndicator testID="telegraph-search-busy" style={s.busy} color={palette.operational} />}
 
       {/* Three distinct empty states — see the header. */}
       {!busy && query.trim().length < MIN_QUERY && (
@@ -225,36 +226,36 @@ export function TelegraphSearchScreen({
   );
 }
 
-const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: color.paper, paddingHorizontal: space.lg, paddingTop: space.md },
+const makeStyles = (p: TelegraphPalette) => StyleSheet.create({
+  root: { flex: 1, backgroundColor: p.surface, paddingHorizontal: space.lg, paddingTop: space.md },
   searchRow: {
     flexDirection: 'row', alignItems: 'center', gap: space.sm,
-    borderWidth: 1, borderColor: color.haze, borderRadius: radius.pill,
-    paddingHorizontal: space.md, paddingVertical: space.sm, backgroundColor: color.paperRaised,
+    borderWidth: 1, borderColor: p.haze, borderRadius: radius.pill,
+    paddingHorizontal: space.md, paddingVertical: space.sm, backgroundColor: p.surfaceRaised,
   },
-  input: { flex: 1, ...(typography.caption as object), color: color.ink, paddingVertical: 2 },
+  input: { flex: 1, ...(typography.caption as object), color: p.recvText, paddingVertical: 2 },
   counts: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginTop: space.md },
   countChip: {
     flexDirection: 'row', alignItems: 'center', gap: space.xs,
-    borderWidth: 1, borderColor: color.haze, borderRadius: radius.pill,
-    paddingHorizontal: space.md, paddingVertical: space.xs, backgroundColor: color.paperRaised,
+    borderWidth: 1, borderColor: p.haze, borderRadius: radius.pill,
+    paddingHorizontal: space.md, paddingVertical: space.xs, backgroundColor: p.surfaceRaised,
   },
-  countChipActive: { backgroundColor: color.ink, borderColor: color.ink },
-  countLabel: { ...(typography.label as object), color: color.mute },
-  countLabelActive: { color: color.onInk },
-  countValue: { ...(typography.label as object), color: color.ink },
+  countChipActive: { backgroundColor: p.recvText, borderColor: p.recvText }, // inverts the surface in either scheme
+  countLabel: { ...(typography.label as object), color: p.mute },
+  countLabelActive: { color: p.surface },
+  countValue: { ...(typography.label as object), color: p.recvText },
   busy: { marginTop: space.xl },
-  empty: { ...(typography.caption as object), color: color.mute, marginTop: space.xl, textAlign: 'center' },
+  empty: { ...(typography.caption as object), color: p.mute, marginTop: space.xl, textAlign: 'center' },
   degraded: { ...(typography.caption as object), color: color.warn, marginTop: space.md },
-  note: { ...(typography.caption as object), color: color.faint, marginTop: space.sm },
+  note: { ...(typography.caption as object), color: p.faint, marginTop: space.sm },
   hit: {
-    paddingVertical: space.md, borderBottomWidth: 1, borderBottomColor: color.haze, gap: 2,
+    paddingVertical: space.md, borderBottomWidth: 1, borderBottomColor: p.haze, gap: 2,
   },
   hitHeader: { flexDirection: 'row', justifyContent: 'space-between' },
-  hitBucket: { ...(typography.label as object), color: color.mute },
-  hitDate: { ...(typography.caption as object), color: color.faint },
-  hitTitle: { ...(typography.label as object), color: color.ink },
-  hitSnippet: { ...(typography.caption as object), color: color.mute },
+  hitBucket: { ...(typography.label as object), color: p.mute },
+  hitDate: { ...(typography.caption as object), color: p.faint },
+  hitTitle: { ...(typography.label as object), color: p.recvText },
+  hitSnippet: { ...(typography.caption as object), color: p.mute },
 });
 
 export default TelegraphSearchScreen;

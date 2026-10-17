@@ -252,7 +252,6 @@ describe("GET /api/places/:id/reviews", () => {
             id: REVIEW_ID, entity_type: "place", entity_id: PLACE_ID, rating: 5,
             body: "Great place!", tags: ["friendly"], visibility: "public",
             state: "published", reviewer_id: USER_ID, created_at: new Date().toISOString(),
-            profiles: { handle: "alice", display_name: "Alice", avatar_url: null },
           },
           {
             id: "33333333-3333-3333-3333-333333333333", entity_type: "place",
@@ -260,10 +259,14 @@ describe("GET /api/places/:id/reviews", () => {
             visibility: "public", state: "published",
             reviewer_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
             created_at: new Date().toISOString(),
-            profiles: { handle: "bob", display_name: "Bob", avatar_url: null },
           },
         ],
       },
+      // census-trust wave 5: reviewers are read from `profiles` by id (reviews has no key to profiles, so no embed).
+      profiles: { rows: [
+        { id: USER_ID, handle: "alice", display_name: "Alice", avatar_url: null, verification_level: "none", account_status: "active" },
+        { id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", handle: "bob", display_name: "Bob", avatar_url: null, verification_level: "none", account_status: "active" },
+      ] },
     });
     try {
       const res = await fetchGet(url, `/api/places/${PLACE_ID}/reviews`, "valid-token");
@@ -293,9 +296,9 @@ describe("GET /api/places/:id/reviews", () => {
           id: REVIEW_ID, entity_type: "place", entity_id: PLACE_ID, rating: 4,
           body: "Nice", tags: [], visibility: "anonymous", state: "published",
           reviewer_id: USER_ID, created_at: new Date().toISOString(),
-          profiles: { handle: "alice", display_name: "Alice", avatar_url: null },
         }],
       },
+      profiles: { rows: [{ id: USER_ID, handle: "alice", display_name: "Alice", avatar_url: null, verification_level: "none", account_status: "active" }] },
     });
     try {
       const res = await fetchGet(url, `/api/places/${PLACE_ID}/reviews`, "valid-token");

@@ -459,3 +459,101 @@ describe("global_search — privacy (§29)", () => {
     assert.equal(hasPerson, false, "fail-closed: no people when block state is unknown");
   });
 });
+
+// ═════════════════════════════════════════════════════════════════════════════
+// §28 "Open/closed or availability state where valid" (census G177) and §20
+// "Closed or unavailable where current operating status is relevant" (census
+// G123) — an EVENT's availability (wave 4, 2026-10-17).
+//
+// The event search already reads `events.state` into `metadata.status`. Two of
+// its values are current facts a writer keeps up to date — the RSVP capacity
+// writer moves an event between `open`, `full` and `waitlist` — so a row now
+// SAYS so (§28), and in global search, where a person looks for something to
+// join, a FULL event they are not already going to is demoted (§20). `started`
+// and `completed` have no current writer (the start transition is
+// owner-blocked), so they state nothing; an unknown value states nothing.
+// ═════════════════════════════════════════════════════════════════════════════
+import { projectSearchResult } from "../lib/inputAssistance/projection.js";
+import { INFEASIBLE_DEMOTION } from "../lib/inputAssistance/rankingSignals.js";
+import { eventAvailability } from "../lib/inputAssistance/operatingStatus.js";
+import type { SearchResult } from "../lib/inputAssistance/searchCandidates.js";
+
+const FUTURE_START = "2099-06-01T19:00:00.000Z";
+
+function eventResult(id: string, state: string | undefined, over: Partial<SearchResult> = {}): SearchResult {
+  return {
+    id, type: "events", title: "Rooftop Jazz Night", subtitle: "Da Nang", avatarUrl: null, imageUrl: null,
+    fallbackInitials: "RJ", locationPreview: "Da Nang, Vietnam", matchedReason: null,
+    actionState: { isAttending: false }, privacyState: { isPublic: true }, accessState: { canAccess: true },
+    destinationRoute: `/event/${id}`, metadata: { hostId: "host-1", status: state, lat: null, lng: null },
+    createdAt: null, startsAt: FUTURE_START, ...over,
+  };
+}
+
+describe("§28 G177 — an event row states its current availability", () => {
+  it("full → 'full', waitlist → 'waitlist'", () => {
+    assert.equal(projectSearchResult(eventResult("e1", "full"), "global_search", "v", "jazz").availability, "full");
+    assert.equal(projectSearchResult(eventResult("e2", "waitlist"), "global_search", "v", "jazz").availability, "waitlist");
+  });
+
+  it("open, started, completed, an unknown and a missing state state NOTHING", () => {
+    for (const state of ["open", "started", "completed", "sold_out", undefined]) {
+      const s = projectSearchResult(eventResult("e3", state), "global_search", "v", "jazz");
+      assert.equal("availability" in s, false, `state ${String(state)} must carry no availability key`);
+    }
+  });
+
+  it("only events: a place row whose metadata happens to say 'full' carries none", () => {
+    const place = { ...eventResult("p1", "full"), type: "places" as const, destinationRoute: "/place/p1" };
+    assert.equal(eventAvailability(place), null);
+    assert.equal("availability" in projectSearchResult(place, "global_search", "v", "jazz"), false);
+  });
+
+  it("availability is shown wherever the row is (a Telegraph share included)", () => {
+    assert.equal(projectSearchResult(eventResult("e4", "full"), "telegraph_message", "v", "jazz").availability, "full");
+  });
+});
+
+describe("§20 G123 — a full event is demoted where the operating state is relevant", () => {
+  const conf = (r: SearchResult, context: any = "global_search") => projectSearchResult(r, context, "v", "Rooftop Jazz Night").confidence ?? 0;
+
+  it("global search: a FULL event scores exactly INFEASIBLE_DEMOTION below the same event open", () => {
+    const open = conf(eventResult("e1", "open"));
+    const full = conf(eventResult("e1", "full"));
+    assert.ok(Math.abs(open - full - INFEASIBLE_DEMOTION) < 1e-9, `open ${open}, full ${full}`);
+  });
+
+  it("a viewer already going is not shut out: no demotion", () => {
+    assert.equal(conf(eventResult("e1", "full", { actionState: { isAttending: true } })), conf(eventResult("e1", "open")));
+  });
+
+  it("a waitlist is still a way in: no demotion", () => {
+    assert.equal(conf(eventResult("e1", "waitlist")), conf(eventResult("e1", "open")));
+  });
+
+  it("a Telegraph share is not about joining: no demotion there", () => {
+    assert.equal(conf(eventResult("e1", "full"), "telegraph_message"), conf(eventResult("e1", "open"), "telegraph_message"));
+  });
+
+  it("through the gateway: both events are served, the open one first, the full one labelled", async () => {
+    const HOST = "ee000000-0000-4000-a000-000000000005";
+    const ev = (id: string, title: string, state: string) => ({
+      id, title, host_id: HOST, cover_url: null, city: "Da Nang", country: "Vietnam", starts_at: FUTURE_START,
+      visibility: "public", state, created_at: "2026-01-01T00:00:00Z", location_lat: null, location_lng: null, show_exact_location: false,
+    });
+    setup({
+      // The FULL event is listed first, so arrival order alone would lead with it.
+      events: [ev("ev-full", "Jazz Night", "full"), ev("ev-open", "Jazz Night", "open")],
+      event_rsvps: [],
+      profiles: [traveler(HOST, "host", "Event Host")],
+      blocks: [], user_privacy_settings: [], user_follows: [], friend_requests: [], user_friendships: [],
+    });
+    const r = await post({ context: "global_search", text: "Jazz Night" });
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const events = (body.suggestions as any[]).filter((s) => s.entityType === "event");
+    assert.deepEqual(events.map((s) => s.entityId), ["ev-open", "ev-full"], "the full event is demoted, not removed");
+    assert.equal(events[1].availability, "full");
+    assert.equal("availability" in events[0], false, "an open event states nothing");
+  });
+});

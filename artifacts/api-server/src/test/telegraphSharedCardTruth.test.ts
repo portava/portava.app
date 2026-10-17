@@ -186,7 +186,7 @@ function snapshotBody(kind: SharedCardKind, ref: Record<string, unknown>): Recor
     case "meetup_card":
       return { meetupId: MEETUP_INVITED, title: `${SNAP} title`, locationName: `${SNAP} place`, timeBlock: `${SNAP}`, approximateDate: `${SNAP}`, plannedByName: `${SNAP} name`, ...ref };
     case "circle_status_card":
-      return { subtype: "meeting_point", venueLabel: `${SNAP} venue`, approxArea: `${SNAP} area`, ...ref };
+      return { subtype: "meeting_point", venueLabel: `${SNAP} venue`, approxArea: `${SNAP} area`, ...ref }; case "highlight_reply": return { type: "highlight_reply", highlightId: H_OWN, caption: `${SNAP} caption`, ...ref }; // T409 (wave 5): a snapshot field it never carries, so a leak would still show
   }
 }
 
@@ -198,7 +198,7 @@ const ROW_SHAPE: Record<SharedCardKind, [string, string | null]> = {
   event_context_card: ["system", "event_context_card"],
   booking_card: ["booking_card", "booking_status_confirmed"],
   meetup_card: ["system", "meetup"],
-  circle_status_card: ["circle_status_card", "meeting_point"],
+  circle_status_card: ["circle_status_card", "meeting_point"], highlight_reply: ["highlight_reply", null], // T409 (wave 5)
 };
 
 // ── 1. recognition ───────────────────────────────────────────────────────────
@@ -251,11 +251,11 @@ describe("T445 — a served body never carries a field of the sender's snapshot"
       for (const t of truths) {
         const served = servedCardBody(kind, body, t);
         assert.ok(!served.includes(SNAP), `${kind}/${t.state} leaked a snapshot field: ${served}`);
-        if (t.state === "live" && kind !== "circle_status_card") assert.ok(served.includes("LIVE title"), `${kind} live form lacks the projection: ${served}`);
+        if (t.state === "live" && kind !== "circle_status_card" && SHARED_CARD_REGISTRY[kind].textForm === undefined) assert.ok(served.includes("LIVE title"), `${kind} live form lacks the projection: ${served}`); if (SHARED_CARD_REGISTRY[kind].textForm !== undefined) assert.equal(served, SHARED_CARD_REGISTRY[kind].textForm, `${kind}/${t.state}: the fixed sentence in every state (T409)`);
         const label = SHARED_CARD_REGISTRY[kind].withheldLabel;
         if (t.state !== "live") {
           if (label) assert.equal(served, label, `${kind}/${t.state}: a plain neutral sentence (fix round 1)`);
-          else assert.equal(JSON.parse(served).withheld, true, `${kind}/${t.state}`);
+          else if (SHARED_CARD_REGISTRY[kind].textForm === undefined) assert.equal(JSON.parse(served).withheld, true, `${kind}/${t.state}`);
         }
       }
       // the inbox / edit-history form, which resolves nothing
@@ -620,5 +620,91 @@ describe("T320 / T411 — a booking card offers booking-only actions only while 
     const m = /const addTimeAllowedStatuses = \[([^\]]*)\];/.exec(src);
     assert.ok(m, "the booking domain's allow-list moved — re-read this pin");
     assert.deepEqual([...BOOKING_OPERATIONAL_STATUSES].sort(), m![1].match(/"([a-z_]+)"/g)!.map((q) => q.slice(1, -1)).sort());
+  });
+});
+
+// ── census-telegraph T409 (wave 5): the Highlight reply joined to §5's HIGHLIGHT family ──
+
+const H_OWN = "66666666-0000-4000-8000-000000000001";     // the VIEWER's own public Highlight
+const H_PRIVATE = "66666666-0000-4000-8000-000000000002"; // SENDER's followers-only Highlight
+const H_GONE = "66666666-0000-4000-8000-000000000003";    // the VIEWER's, deleted
+
+describe("T409 (wave 5) — a highlight_reply row is a joined card: preview, authorization, state, search and revocation are the HIGHLIGHT family's", () => {
+  function hClient(opts: FakeOpts = {}) {
+    const c = makeClient(opts);
+    c.db.highlights = [
+      { id: H_OWN, owner_id: VIEWER, caption: "Sunset at the pier (now)", location_name: "Pier", location_city: "Da Nang", visibility: "public", expires_at: "2099-01-01T00:00:00Z", deleted_at: null, archived_at: null, media_url: null, media_type: "image", updated_at: "2026-10-01T00:00:00Z" },
+      { id: H_PRIVATE, owner_id: SENDER, caption: "followers only", location_name: null, location_city: null, visibility: "followers", expires_at: "2099-01-01T00:00:00Z", deleted_at: null, archived_at: null, media_url: null, media_type: "image", updated_at: null },
+      { id: H_GONE, owner_id: VIEWER, caption: "gone", location_name: null, location_city: null, visibility: "public", expires_at: "2099-01-01T00:00:00Z", deleted_at: "2026-10-02T00:00:00Z", archived_at: null, media_url: null, media_type: "image", updated_at: null },
+    ];
+    return c;
+  }
+  const newRow = (highlightId: string) => row("highlight_reply", null, { type: "highlight_reply", highlightId });
+  const legacyRow = (highlightId: string) => row("highlight_reply", highlightId, "↩ Replied to your highlight");
+
+  it("is recognised by its msg_type, whatever its subtype (new rows: none; legacy rows: the Highlight's id)", () => {
+    assert.equal(sharedCardKindOf(newRow(H_OWN)), "highlight_reply");
+    assert.equal(sharedCardKindOf(legacyRow(H_OWN)), "highlight_reply");
+  });
+
+  it("the Highlight's owner (the person replied to) reads it LIVE, from the Highlight as it is now — new and legacy rows alike", async () => {
+    for (const r of [newRow(H_OWN), legacyRow(H_OWN)]) {
+      const { client } = hClient();
+      const t = (await resolveSharedCards(client, VIEWER, [{ row: r }])).get(r.id);
+      assert.equal(t?.state, "live", JSON.stringify(t));
+      assert.equal(t?.state === "live" && t.objectType, "HIGHLIGHT");
+      assert.equal(t?.state === "live" && t.objectId, H_OWN);
+      assert.ok(t?.state === "live" && t.deepLink.length > 0);
+      assert.ok((sharedCardIndexText(t, r) ?? "").length > 0, "search indexes the live projection");
+    }
+  });
+
+  it("a Highlight the reader may not see is UNAVAILABLE (private), and nothing of it is indexed", async () => {
+    const { client } = hClient();
+    const r = newRow(H_PRIVATE);
+    const t = (await resolveSharedCards(client, VIEWER, [{ row: r }])).get(r.id);
+    assert.equal(t?.state, "unavailable");
+    assert.equal(t?.state === "unavailable" && t.reason, "private");
+    assert.equal(sharedCardIndexText(t, r), null);
+  });
+
+  it("revocation: a deleted Highlight is unavailable (deleted) on the next read", async () => {
+    const { client } = hClient();
+    const r = legacyRow(H_GONE);
+    const t = (await resolveSharedCards(client, VIEWER, [{ row: r }])).get(r.id);
+    assert.equal(t?.state === "unavailable" && t.reason, "deleted");
+  });
+
+  it("an unreadable highlights table is UNAVAILABLE (unknown), never live and never the snapshot", async () => {
+    const { client } = hClient({ failTables: ["highlights"] });
+    const r = newRow(H_OWN);
+    const t = (await resolveSharedCards(client, VIEWER, [{ row: r }])).get(r.id);
+    assert.equal(t?.state === "unavailable" && t.reason, "unknown");
+  });
+
+  it("a row naming no Highlight is withheld and never reaches the table", async () => {
+    const { client, reads } = hClient();
+    const r = row("highlight_reply", "not-a-uuid", "↩ Replied to your highlight");
+    assert.deepEqual((await resolveSharedCards(client, VIEWER, [{ row: r }])).get(r.id), { kind: "highlight_reply", state: "withheld", reason: "no_source" });
+    assert.equal(reads.highlights ?? 0, 0);
+  });
+
+  it("every reader serves the producer's fixed sentence in every state — an installed client, which prints this kind as a bubble, never gets JSON", async () => {
+    const { client } = hClient();
+    const rows = [newRow(H_OWN), newRow(H_PRIVATE), legacyRow(H_GONE)];
+    const out = await applySharedCardTruth(client, VIEWER, rows);
+    for (const r of out.rows) assert.equal(r.body, "↩ Replied to your highlight");
+    assert.equal(withheldCardBody(newRow(H_OWN)), "↩ Replied to your highlight", "the inbox preview too");
+  });
+
+  it("the producer writes the reference in the body and leaves the discriminator column alone", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync(new URL("../routes/highlights.ts", import.meta.url), "utf8");
+    const at = src.indexOf('msg_type: "highlight_reply"');
+    assert.ok(at > 0, "the producer moved — re-read this pin");
+    const insert = src.slice(src.lastIndexOf(".insert({", at), src.indexOf("});", at));
+    assert.match(insert, /body: JSON\.stringify\(\{ type: "highlight_reply", highlightId: id \}\)/);
+    assert.match(insert, /subtype: null/);
+    assert.doesNotMatch(insert, /subtype: id\b/, "the Highlight's id is back in the discriminator column (§29)");
   });
 });

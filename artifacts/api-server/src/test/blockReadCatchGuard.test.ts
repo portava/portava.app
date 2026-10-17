@@ -67,7 +67,7 @@ const READERS = new Set([
   "isBlockedBetween", "fetchBlockedSet",
   "readBlockExclusions", "readPairExclusion", "readGroupBlockExclusions",
   "identityWithheldAcrossBlocks", "readerFacesFor",
-  "withheldLocationIds", "withholdLocationAcrossBlocks", "dropBlockedSenders",
+  "withheldLocationIds", "withholdLocationAcrossBlocks", "dropBlockedSenders", "readBlockDirection", "readBlockDirections", "readPairDirections", "countBlockRows", // census-telegraph T220 part 2
 ]);
 
 /** How a site is closed. Each value says what a thrown block read turns into there. */
@@ -231,7 +231,7 @@ export const READER_RULES: Array<{ file: string; fn: string; catchMust: RegExp; 
   { file: "lib/exclusionSet.ts", fn: "readPairExclusion", catchMust: /^return exclusionsUnavailable\(err\);?$/, says: "return exclusionsUnavailable(err)" },
   { file: "lib/exclusionSet.ts", fn: "readGroupBlockExclusions", catchMust: /^return exclusionsUnavailable\(err\);?$/, says: "return exclusionsUnavailable(err)" },
   { file: "lib/blockGuard.ts", fn: "isBlockedBetween", catchMust: /^return deniedAfterThrow\(\);?$/, says: "return deniedAfterThrow() (which returns true)" },
-  { file: "lib/blocks.ts", fn: "fetchBlockedSet", catchMust: /^return null;?$/, says: "return null" },
+  { file: "lib/blocks.ts", fn: "fetchBlockedSet", catchMust: /^return null;?$/, says: "return null" }, ...directionalReaderRules(),
 ];
 
 export function checkReaders(read: (file: string) => string): string[] {
@@ -282,7 +282,7 @@ function scanTree(): { files: number; reads: number; sites: CatchSite[] } {
   const sites: CatchSite[] = [];
   for (const f of files) {
     const text = readFileSync(join(SRC, f), "utf8");
-    if (!/blocks|isBlockedBetween|fetchBlockedSet|Exclusion|AcrossBlocks|BlockedSenders|readerFacesFor|withheldLocationIds/.test(text)) continue;
+    if (!/blocks|isBlockedBetween|fetchBlockedSet|Exclusion|AcrossBlocks|BlockedSenders|readerFacesFor|withheldLocationIds|BlockDirection|PairDirections|countBlockRows/.test(text)) continue;
     const sf = ts.createSourceFile(f, text, ts.ScriptTarget.Latest, true);
     const count = (n: ts.Node): void => { if (isBlockRead(n)) reads += 1; ts.forEachChild(n, count); };
     count(sf);
@@ -419,4 +419,31 @@ describe("blockReadCatchGuard — planted violations go red", () => {
     assert.ok(checkReaders(helperOpen).some((p) => /deniedAfterThrow/.test(p)));
     assert.deepEqual(checkReaders(real), [], "CONTROL: the real readers pass");
   });
+
+  it("THE READERS (T220 part 2): each directional, whole, batched and count reader is held — a catch that answers open is red", () => {
+    const real = (f: string) => readFileSync(join(SRC, f), "utf8");
+    assert.deepEqual(directionalReaderRules().map((r) => r.fn), ["readBlockDirection", "readBlockDirections", "readPairDirections", "countBlockRows"]);
+    const opens: Array<[string, RegExp, string]> = [
+      ["readBlockDirection", /(return await readBlockDirectionOnce\(sc, viewerId, direction, opts\?\.among\);\n\s*\} catch \(err\) \{\n\s*)return exclusionsUnavailable\(err\);/, "$1return exclusions([]);"],
+      ["readBlockDirections", /(ids: new Set\(\[\.\.\.outgoing\.ids, \.\.\.incoming\.ids\]\) \};\n\s*\} catch \(err\) \{\n\s*)return exclusionsUnavailable\(err\);/, "$1return { ok: true, outgoing: new Set(), incoming: new Set(), ids: new Set() };"],
+      ["readPairDirections", /(ids: new Set\(ab \|\| ba \? \[b\] : \[\]\) \};\n\s*\} catch \(err\) \{\n\s*)return exclusionsUnavailable\(err\);/, "$1return { ok: true, aBlockedB: false, bBlockedA: false, ids: new Set() };"],
+      ["countBlockRows", /(return await countBlockRowsOnce\(sc, userId, direction\);\n\s*\} catch \(err\) \{\n\s*)return exclusionsUnavailable\(err\);/, "$1return { ok: true, count: 0 };"],
+    ];
+    for (const [fn, re, to] of opens) {
+      const planted = (f: string) => (f === "lib/exclusionSet.ts" ? real(f).replace(re, to) : real(f));
+      assert.notEqual(planted("lib/exclusionSet.ts"), real("lib/exclusionSet.ts"), `the planted edit for ${fn} did not apply`);
+      assert.ok(checkReaders(planted).some((p) => p.includes(`#${fn} — a block read`)), `${fn} answering open on a throw passed`);
+    }
+  });
 });
+
+/**
+ * census-telegraph T220 part 2: the readers added to lib/exclusionSet.ts for
+ * the last private block reads. A function declaration, hoisted, so the rules
+ * join READER_RULES without moving any line above the cited `it`s.
+ */
+function directionalReaderRules(): Array<{ file: string; fn: string; catchMust: RegExp; says: string }> {
+  return ["readBlockDirection", "readBlockDirections", "readPairDirections", "countBlockRows"].map((fn) => (
+    { file: "lib/exclusionSet.ts", fn, catchMust: /^return exclusionsUnavailable\(err\);?$/, says: "return exclusionsUnavailable(err)" }
+  ));
+}

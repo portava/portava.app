@@ -683,29 +683,29 @@ router.get("/route-plans/:id/members", asyncHandler(async (req, res) => {
     }
   }
 
-  // Fetch joined members from route_plan_members + their profiles
-  const { data: members } = await (client as any)
+  // Fetch joined members from route_plan_members; their profiles are step two (readRoutePlanMemberProfiles)
+  const { data: members, error: membersErr } = await (client as any)
     .from("route_plan_members")
-    .select("user_id, joined_at, profiles(id, display_name, handle, avatar_url)")
+    .select("user_id, joined_at") // census-trips wave 5: no `profiles(...)` embed — route_plan_members.user_id keys auth.users, not profiles (PGRST200, which the unread error turned into `members: []`)
     .eq("route_plan_id", id);
-
+  if (membersErr) { req.log.error({ err: membersErr }, "route plan members read failed"); sendError(res, "db_error", "Route plan members could not be read"); return; }
   // Shared checkpoint progress
-  const { data: stops } = await (client as any)
+  const { data: stops, error: stopsErr } = await (client as any)
     .from("route_stops")
     .select("id, checkpoint_status")
     .eq("route_plan_id", id);
-
+  if (stopsErr) { req.log.error({ err: stopsErr }, "route plan progress read failed"); sendError(res, "db_error", "Route plan progress could not be read"); return; } // census-trips wave 5: an unread error showed 0 of 0 stops
   const totalStops    = (stops ?? []).length;
   const arrivedCount  = (stops ?? []).filter(
     (s: Record<string, unknown>) => s.checkpoint_status === "arrived",
   ).length;
 
   // Universal display-name rule: members show @handle unless opted in.
-  const allowedMemberNames = await nameVisibilitySet(
+  const memberProfiles = await readRoutePlanMemberProfiles(getServiceClient() ?? client, (members as any[]) ?? []); if (!memberProfiles) { req.log.error("route plan members: profiles unreadable"); sendError(res, "db_error", "Route plan member profiles could not be read"); return; } const allowedMemberNames = await nameVisibilitySet(
     getServiceClient(),
     (members ?? []).map((m: any) => m.user_id),
   );
-  const result = (members ?? []).map((m: any) => ({
+  const result = ((members as any[]) ?? []).map((row: any) => ({ ...row, profiles: memberProfiles.get(row.user_id) ?? null })).map((m: any) => ({ // census-trips wave 5: step two's profile under the embed's old key
     userId:      m.user_id,
     displayName: (m.user_id === user.id || allowedMemberNames.has(m.user_id as string))
       ? (m.profiles?.display_name ?? "Traveler")
@@ -911,3 +911,62 @@ async function fetchFullPlan(client: ReturnType<typeof import("../lib/supabase.j
 }
 
 export default router;
+
+/**
+ * census-trips (wave 5, 2026-10-17) — the route-plan members' profiles, read in
+ * two steps.
+ *
+ * WHAT WAS BROKEN. GET /api/route-plans/:id/members embedded `profiles(...)`
+ * from `route_plan_members`. That table's user_id key,
+ * `route_plan_members_user_id_fkey`, runs to auth.users (production catalog,
+ * read 2026-10-17; migration 0059 and the 2026-08-19 baseline agree), and no key
+ * joins it to public.profiles. PostgREST answered PGRST200. The route read only
+ * `data`, so the refusal reached the client as `members: []`: no route plan in
+ * production ever showed who had joined.
+ *
+ * NOW, no migration. The members are read on their own; then ONE batched read
+ * of public.profiles by id, on the service client as GET /trips/:tripId/members
+ * reads its crew (the caller is already authorised as the plan's owner or an
+ * accepted trip member above). profiles.id IS the auth user id, so `user_id` is
+ * the profile key. The fields are exactly the embed's.
+ *
+ * STANDING. None applied, as on the trip's own crew roster (GET
+ * /trips/:tripId/members lists every member whatever their account state). A
+ * member with no profile row is listed as "Traveler" with no avatar, as the
+ * embed rendered a missing row.
+ *
+ * FAILURE. `null` when the read fails; the route answers `db_error`, as it now
+ * does for an unreadable members or stops read. Nothing is served as "nobody
+ * joined" or "0 of 0 stops" because a read failed.
+ */
+const ROUTE_PLAN_MEMBER_PROFILE_COLUMNS = "id, display_name, handle, avatar_url";
+
+interface RoutePlanMemberProfile {
+  display_name: string | null;
+  handle: string | null;
+  avatar_url: string | null;
+}
+
+async function readRoutePlanMemberProfiles(
+  sc: any,
+  rows: ReadonlyArray<{ user_id?: unknown }>,
+): Promise<Map<string, RoutePlanMemberProfile> | null> {
+  const ids = [...new Set(rows.map((r) => r.user_id).filter((v): v is string => typeof v === "string" && v !== ""))];
+  if (ids.length === 0) return new Map();
+  try {
+    const { data, error } = await sc.from("profiles").select(ROUTE_PLAN_MEMBER_PROFILE_COLUMNS).in("id", ids);
+    if (error || !Array.isArray(data)) return null;
+    const out = new Map<string, RoutePlanMemberProfile>();
+    for (const p of data as Array<Record<string, unknown>>) {
+      if (typeof p?.id !== "string") continue;
+      out.set(p.id, {
+        display_name: (p.display_name as string | null | undefined) ?? null,
+        handle: (p.handle as string | null | undefined) ?? null,
+        avatar_url: (p.avatar_url as string | null | undefined) ?? null,
+      });
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}

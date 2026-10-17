@@ -4,7 +4,7 @@ import { nameVisibilitySet, nameVisibleFor, readNameVisibilitySet } from "../lib
 import { decideUnfollow, isUuid } from "../lib/followDecisions";
 import { normalizedFriendshipPair } from "../lib/friendDecisions";
 import { resolveInteractionPermissions } from "../services/interactionPermissions";
-import { getSeenIds, markAsSeen, clearSeen, dailySeed, seededShuffle } from "../lib/suggestionSeenCache";
+import { getSeenIds, markAsSeen, clearSeen, dailySeed, seededShuffle } from "../lib/suggestionSeenCache"; import { readBlockExclusions, readPairDirections } from "../lib/exclusionSet";
 import { isKillSwitchEngaged } from "../lib/featureFlags"; import { discoveryRefusal, sendDiscoveryRefusal } from "../lib/discoveryRefusal"; // census-discovery §106 (tm-people): the people search's stop refuses rather than posing as a miss
 import { safeOrIlikeValue } from "../lib/postgrestFilter"; import { ownerAvailabilityWithheld } from "../services/telegraph/availabilityInvisibility"; // lead ruling P-T1a
 
@@ -732,19 +732,19 @@ router.get("/users/search", async (req, res) => {
   let blockedSet = new Set<string>();
   let blockQueryFailed = false;
   try {
-    const { data: blockRows, error: blockErr } = await sc
-      .from("blocks")
-      .select("blocked_id, blocker_id")
-      .or(`blocker_id.eq.${user.id},blocked_id.eq.${user.id}`);
-    if (blockErr) {
+    // census-telegraph T220: the shared reader. The same whole-list read in
+    // both directions; it never rejects, so a returned error, a thrown read
+    // and a non-list answer all arrive here as `ok: false`.
+    const blocks = await readBlockExclusions(sc, user.id);
+    if (!blocks.ok) {
       // Any DB error: fail safe (return empty set, filter will remove all).
       blockQueryFailed = true;
-      req.log.warn({ err: blockErr }, "blocks query failed; suppressing results");
+      req.log.warn({ err: blocks.reason }, "blocks query failed; suppressing results");
     } else {
-      for (const b of (blockRows ?? [])) {
-        if ((b as any).blocker_id === user.id) blockedSet.add((b as any).blocked_id);
-        else blockedSet.add((b as any).blocker_id);
-      }
+      // Every counter-party of a block row touching the caller, either way —
+      // the set the loop that stood here built from `blocker_id` /
+      // `blocked_id`.
+      blockedSet = new Set(blocks.ids);
     }
   } catch (e) {
     // Network-level or unexpected error — fail safe.
@@ -963,21 +963,21 @@ router.get("/users/suggestions", async (req, res) => {
   const blockedSet = new Set<string>();
   let blockStateUnknown = false;
   try {
-    const { data: blockRows, error: blockErr } = await sc
-      .from("blocks")
-      .select("blocked_id, blocker_id")
-      .or(`blocker_id.eq.${user.id},blocked_id.eq.${user.id}`);
-    if (blockErr) {
+    // census-telegraph T220: the shared reader — the same whole-list read in
+    // both directions. It never rejects: a returned error, a thrown read and a
+    // non-list answer all arrive here as `ok: false`.
+    const blocks = await readBlockExclusions(sc, user.id);
+    if (!blocks.ok) {
       blockStateUnknown = true;
       req.log.warn(
-        { code: (blockErr as any)?.code, err: blockErr, userId: user.id },
+        { reason: blocks.reason, userId: user.id },
         "follow suggestions: block-state read failed — returning no suggestions (fail-closed)",
       );
     } else {
-      for (const b of (blockRows ?? [])) {
-        if ((b as any).blocker_id === user.id) blockedSet.add((b as any).blocked_id);
-        else blockedSet.add((b as any).blocker_id);
-      }
+      // Every counter-party of a block row touching the caller, either way —
+      // the set the loop that stood here built from `blocker_id` /
+      // `blocked_id`.
+      for (const id of blocks.ids) blockedSet.add(id);
     }
   } catch (err) {
     blockStateUnknown = true;
@@ -1763,14 +1763,14 @@ router.get("/users/:userId", async (req, res) => {
       sc.from("profiles").select(PUBLIC_PASSPORT_FIELDS).eq("id", target).maybeSingle(),
       sc.from("user_follows").select("*", { count: "exact", head: true }).eq("following_id", target),
       sc.from("user_follows").select("*", { count: "exact", head: true }).eq("follower_id", target),
-      needBlockCheck
-        ? sc.from("blocks").select("blocker_id", { count: "exact", head: true })
-            .eq("blocker_id", callerId!).eq("blocked_id", target)
-        : Promise.resolve({ count: 0, error: null }),
-      needBlockCheck
-        ? sc.from("blocks").select("blocker_id", { count: "exact", head: true })
-            .eq("blocker_id", target).eq("blocked_id", callerId!)
-        : Promise.resolve({ count: 0, error: null }),
+      // census-telegraph T220: both block slots come from ONE shared pair read —
+      // readPairDirections, one `.eq().eq().limit(1)` read per direction (these
+      // were two head counts) — mapped onto the `{ count, error }` pair the gate
+      // below reads, so nothing below moved. The reader answers EVERY failure (a
+      // returned error, a thrown read, an answer that is not a row list) as
+      // unreadable, and each now takes the gate's 503; a head count that came back
+      // with no count and no error used to read as "not blocked" (`?? 0`).
+      ...passportBlockSlots(sc, callerId, target, needBlockCheck),
     ]);
 
   if (profileRes.error || !profileRes.data) {
@@ -1955,14 +1955,14 @@ router.get("/users/by-handle/:handle", async (req, res) => {
     await Promise.all([
       sc.from("user_follows").select("*", { count: "exact", head: true }).eq("following_id", target),
       sc.from("user_follows").select("*", { count: "exact", head: true }).eq("follower_id", target),
-      needBlockCheck
-        ? sc.from("blocks").select("blocker_id", { count: "exact", head: true })
-            .eq("blocker_id", callerId!).eq("blocked_id", target)
-        : Promise.resolve({ count: 0, error: null }),
-      needBlockCheck
-        ? sc.from("blocks").select("blocker_id", { count: "exact", head: true })
-            .eq("blocker_id", target).eq("blocked_id", callerId!)
-        : Promise.resolve({ count: 0, error: null }),
+      // census-telegraph T220: the same shared pair read and the same mapping as
+      // GET /users/:userId above (passportBlockSlots, at the foot of this file):
+      // caller→target then target→caller, `{ count, error }` each, and an
+      // unreadable read — a returned error, a thrown read, an answer that is
+      // not a row list — is the error the gate below refuses on with a 503,
+      // never `count ?? 0`. Without a caller, or on one's own profile, both
+      // slots are `{ count: 0, error: null }` and nothing is read.
+      ...passportBlockSlots(sc, callerId, target, needBlockCheck),
     ]);
 
   // ── THE BLOCK GATE MUST NOT BE ANSWERED BY A READ THAT FAILED ──────────────
@@ -2041,3 +2041,20 @@ router.get("/users/by-handle/:handle", async (req, res) => {
 
 export default router;
 import { readVerifiedBadges, identityBadgeField } from "../services/identityVerification/verifiedBadges.js";
+
+/**
+ * census-telegraph T220: the passport's two block slots — caller blocked
+ * target, target blocked caller — from ONE shared pair read. `readPairDirections`
+ * answers both directions; each slot is mapped onto the `{ count, error }` shape
+ * the block gate reads (a row is a count of 1). Unreadable → both slots carry
+ * the error, so the gate's 503 fires exactly as it does for a returned error.
+ * No check needed (anonymous, or one's own profile) → the same
+ * `{ count: 0, error: null }` the handlers resolved before, and no read.
+ */
+type PassportBlockSlot = { count: number | null; error: { message: string } | null };
+function passportBlockSlots(sc: any, callerId: string | null, target: string, need: boolean): [Promise<PassportBlockSlot>, Promise<PassportBlockSlot>] {
+  if (!need || !callerId) return [Promise.resolve({ count: 0, error: null }), Promise.resolve({ count: 0, error: null })];
+  const pair = readPairDirections(sc, callerId, target);
+  const slot = (dir: "aBlockedB" | "bBlockedA") => pair.then((p): PassportBlockSlot => (p.ok ? { count: p[dir] ? 1 : 0, error: null } : { count: null, error: { message: p.reason } }));
+  return [slot("aBlockedB"), slot("bBlockedA")];
+}

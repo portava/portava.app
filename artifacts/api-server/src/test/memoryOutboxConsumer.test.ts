@@ -59,7 +59,7 @@ import {
   OUTBOX_FAIL_FN,
   type ClaimedOutboxRow,
 } from "../services/memoryProjections/outboxConsumer.js";
-import { HIGHLIGHT_DOMAIN_EVENT_TYPES, MEMORY_DOMAIN_EVENT_TYPES } from "../lib/memoryOutbox.js";
+import { HIGHLIGHT_DOMAIN_EVENT_TYPES, MEMORY_DOMAIN_EVENT_TYPES, MEMORY_EVENT_TABLE } from "../lib/memoryOutbox.js";
 import { getProjectionDefinition } from "../services/memoryProjections/projectionRegistry.js";
 
 // ── the fake ─────────────────────────────────────────────────────────────────
@@ -77,7 +77,7 @@ interface FakeOpts {
   /** What memory_outbox_ack returns. Default: the number of ids asked for. */
   ack?: number | "error" | "not_a_number";
   /** memories rows by id. Absent id ⇒ no row (a hard-deleted Memory). */
-  memories?: Record<string, { owner_id: string; trip_id?: string | null; place_id?: string | null }>;
+  memories?: Record<string, { owner_id: string; trip_id?: string | null; place_id?: string | null; visibility?: string }>;
   /** Make the memories read fail outright. */
   memoriesError?: boolean;
   /** highlights rows by id. Absent id ⇒ no row (a hard-deleted Highlight). */
@@ -127,14 +127,14 @@ function makeFake(opts: FakeOpts = {}) {
       owner_id: m.owner_id,
       trip_id: m.trip_id ?? null,
       place_id: m.place_id ?? null,
-      title: null, caption: null, visibility: "private", state: "published",
+      title: null, caption: null, visibility: m.visibility ?? "private", state: "published",
       starts_at: "2026-01-01T00:00:00.000Z", ends_at: null,
       event_id: null, location_city: null, location_country: null,
       created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z",
       allowed_user_ids: [], hidden_user_ids: [],
     })),
     memory_items: [],
-    memory_tags: [],
+    memory_tags: [], [MEMORY_EVENT_TABLE]: Array.isArray(opts.claim) ? opts.claim.map((r) => ({ event_id: r.event_id, payload_json: { command_type: "UPDATE_MEMORY", from_state: "ACTIVE", to_state: "ACTIVE", visibility: null, refs: { memory_id: r.memory_id } } })) : [], // H203: a claimed row's event exists (2711 writes both in one transaction), with a privacy-filtered payload that narrows nothing
     memory_derivative_registry: [],
     // §18's ProfileHighlightProjection reads this table as a second source, so
     // the fake has to hold it or the Highlight half of the drain would fail for
@@ -436,7 +436,7 @@ describe("§17 at-least-once: the rebuild happens BEFORE the ack", () => {
   it("does not ack a truncated rebuild and completes it when the full source is available", async () => {
     const options: FakeOpts = {
       claim: [row({ id: 8, memory_id: "m1" })],
-      memories: { m1: { owner_id: "u1" }, m2: { owner_id: "u1" } },
+      memories: { m1: { owner_id: "u1", visibility: "public" }, m2: { owner_id: "u1", visibility: "public" } }, // public: the public index reads only public rows (§23, H203), so they must be truncated too for the assertion below to bind
       sourceRowLimit: 1,
     };
     const client = makeFake(options);

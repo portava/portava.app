@@ -59,7 +59,7 @@ export function DataSaverRow({ state }: DataSaverRowProps) {
         value={ds.level === 'on'}
         disabled={ds.loading}
         onValueChange={(next) => { void ds.setLevel(next ? 'on' : 'off'); }}
-        trackColor={{ false: color.haze, true: color.signal }}
+        trackColor={{ false: color.haze, true: color.deep }} // census T124: an ordinary toggle is teal, not the attention colour
         thumbColor={color.paperRaised}
         ios_backgroundColor={color.haze}
       />

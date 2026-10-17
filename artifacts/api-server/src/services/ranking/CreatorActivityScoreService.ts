@@ -99,7 +99,7 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { logger as rootLogger } from "../../lib/logger.js";
+import { logger as rootLogger } from "../../lib/logger.js"; import { readBlockExclusions } from "../../lib/exclusionSet.js";
 
 import { getTrustProfileResult } from "../trust/TrustScoreService.js";
 const logger = rootLogger.child({ service: "CreatorActivityScoreService" });
@@ -672,19 +672,19 @@ export class CreatorSignalAggregator {
     userId: string,
   ): Promise<Set<string> | null> {
     try {
-      // blocks table: blocker_id, blocked_id
-      const { data, error } = await (this.db as any)
-        .from("blocks")
-        .select("blocker_id, blocked_id")
-        .or(`blocker_id.eq.${userId},blocked_id.eq.${userId}`);
-      if (error) { degraded.add("blocks"); return null; }
+      // census-telegraph T220: the shared reader — the same whole-list read
+      // (blocker_id, blocked_id over `.or`), and it never rejects: a returned
+      // error, a thrown read and a non-list answer are all `ok: false`.
+      const blocks = await readBlockExclusions(this.db as any, userId);
+      if (!blocks.ok) { degraded.add("blocks"); return null; }
 
-      const ids = new Set<string>();
-      for (const r of (data as any[]) ?? []) {
-        if (r.blocker_id !== userId) ids.add(String(r.blocker_id));
-        if (r.blocked_id !== userId) ids.add(String(r.blocked_id));
-      }
-      return ids;
+      // Every counter-party of a block row touching the creator, either way —
+      // the set the loop that stood here built from `blocker_id` and
+      // `blocked_id` by skipping the creator's own id (a self-block cannot
+      // exist: CHECK blocks_no_self). A row that names no counter-party is now
+      // `ok: false` above — withheld as unreadable, never skipped as if it
+      // were absent.
+      return new Set(blocks.ids);
     } catch {
       degraded.add("blocks");
       return null;

@@ -45,7 +45,7 @@ import {
   type AttentionRelevance,
   type AttentionRoute,
 } from "../lib/attentionEngine.js";
-import { readDeliveredInWindow } from "../lib/contextKernelRead.js";
+import { readDeliveredInWindow } from "../lib/contextKernelRead.js"; import { isExcluded, readPairExclusion } from "../lib/exclusionSet.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -549,25 +549,25 @@ export async function evaluateNotification(
 
   if (db && senderId) {
     try {
-      // Two separate queries so eq()-only fake DB in tests can exercise both paths.
-      const [
-        { data: senderBlockedRecipient, error: senderBlockErr },
-        { data: recipientBlockedSender, error: recipientBlockErr },
-      ] =
-        await Promise.all([
-          db
-            .from("blocks")
-            .select("id")
-            .eq("blocker_id", senderId)
-            .eq("blocked_id", userId)
-            .maybeSingle(),
-          db
-            .from("blocks")
-            .select("id")
-            .eq("blocker_id", userId)
-            .eq("blocked_id", senderId)
-            .maybeSingle(),
-        ]);
+      // census-telegraph T220: the shared pair read, not a private copy of it.
+      // Both directions in ONE `.or()` read with `.limit(1)` (a mutual block's
+      // two rows can never raise), and it NEVER rejects: a returned error, a
+      // thrown read and an answer that is not a row list are all `ok: false`,
+      // so every failure takes the unknown branch below — the catch at the foot
+      // is a backstop for the rest of this block, not the path a failed read
+      // takes. It replaces two `.eq().eq().maybeSingle()` reads, one per
+      // direction, written that way so an eq()-only fake could serve them; the
+      // fakes model `.or()` now (test/helpers/postgrestOrFilter.ts).
+      const pair = await readPairExclusion(db, senderId, userId);
+      // One read, so one failure: it is bound as the sender-side error and the
+      // recipient side is null. The log line and the ledger reason below are
+      // unchanged — `silentSchemaErrorCatches.test.ts` pins both.
+      const senderBlockErr: { message: string } | null = pair.ok ? null : { message: pair.reason };
+      const recipientBlockErr: { message: string } | null = null;
+      // A block row in EITHER direction is the block. `isExcluded` would also
+      // answer TRUE for an unreadable pair, but that case has already returned
+      // through the unknown branch, with its own distinct ledger reason.
+      const blockedEitherWay = isExcluded(pair, userId);
       // maybeSingle() returns `data: null` both when there is no block row and
       // when the query was rejected — and this gate's whole contract is that a
       // blocked sender "must never reach the recipient via push". PostgREST
@@ -604,7 +604,7 @@ export async function evaluateNotification(
         // later as "this person is blocked".
         return decide("suppressed_blocked_sender", `block_state_unknown:${senderId}`);
       }
-      if (senderBlockedRecipient || recipientBlockedSender) {
+      if (blockedEitherWay) {
         return decide("suppressed_blocked_sender", `blocked:${senderId}`);
       }
     } catch (err) {

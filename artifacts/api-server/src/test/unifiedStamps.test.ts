@@ -34,7 +34,7 @@ function makeSc(opts: {
   v2?: any[];
   v1?: any[];
   art?: Record<string, string>;
-  flagOn?: boolean;
+  flagOn?: boolean; postcards?: any[]; // H4, wave 5: a GPS postcard stamp's evidence (stampPresenceView.ts)
 } = {}) {
   return {
     from(table: string) {
@@ -49,7 +49,7 @@ function makeSc(opts: {
         },
         then(resolve: any) {
           if (table === "user_stamps") { resolve({ data: opts.v2 ?? [], error: null }); return; }
-          if (table === "passport_stamps") { resolve({ data: opts.v1 ?? [], error: null }); return; }
+          if (table === "passport_stamps") { resolve({ data: opts.v1 ?? [], error: null }); return; } if (table === "passport_postcards") { resolve({ data: opts.postcards ?? [], error: null }); return; }
           if (table === "universal_stamp_catalog") {
             const rows = (b._in ?? []).map((id: string) => ({
               id, stamp_artwork_versions: { public_url: opts.art?.[id] ?? null },
@@ -99,8 +99,8 @@ describe("UnifiedStampService", () => {
   });
 
   it("dedups by place tuple when catalog_id absent", async () => {
-    const sc = makeSc({
-      v2: [v2Row({ catalog_id: null, city: "Cebu", country: "Philippines", stamp_definitions: { name: "Cebu", rarity: "common", stamp_type: "city" } })],
+    const sc = makeSc({ postcards: [{ user_id: U, post_id: "post-cebu", stamp_eligible: true, stamp_revoked: false }], // H4: the v2 row is an evidenced GPS-postcard stamp, so its place is a place to dedupe on
+      v2: [v2Row({ catalog_id: null, city: "Cebu", country: "Philippines", user_id: U, source_type: "posts", source_id: "post-cebu", stamp_definitions: { name: "Cebu", rarity: "common", stamp_type: "city", slug: "city_explorer" } })],
       v1: [v1Row({ catalog_id: null, city: "Cebu", country: "Philippines" })],
     });
     const r = await buildUnifiedStamps(sc, U);
@@ -110,8 +110,8 @@ describe("UnifiedStampService", () => {
   });
 
   it("case-insensitive place dedup", async () => {
-    const sc = makeSc({
-      v2: [v2Row({ catalog_id: null, city: "TOKYO", country: "JAPAN" })],
+    const sc = makeSc({ postcards: [{ user_id: U, post_id: "post-tokyo", stamp_eligible: true, stamp_revoked: false }],
+      v2: [v2Row({ catalog_id: null, city: "TOKYO", country: "JAPAN", user_id: U, source_type: "posts", source_id: "post-tokyo", stamp_definitions: { name: "Tokyo", rarity: "rare", stamp_type: "city", slug: "city_explorer" } })],
       v1: [v1Row({ catalog_id: null, city: "tokyo", country: "japan", stamp_type: "city" })],
     });
     const r = await buildUnifiedStamps(sc, U);

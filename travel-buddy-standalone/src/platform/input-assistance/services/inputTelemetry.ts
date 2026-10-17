@@ -138,11 +138,11 @@ export function emitInputEvent(
 // `POST /api/input-assistance/telemetry`, with `telemetryBatcher.ts` /
 // `telemetryTransport.ts` on this side of the wire.
 //
-// What remains is ONE LINE, and it is not in this layer: nothing calls
-// `setTelemetrySink(installInputTelemetryTransport())` at app bootstrap
-// (travel-buddy-standalone/app/_layout.tsx). Until something does, these events
-// are still produced and dropped, and census G263 is still correctly W. Saying
-// so here is the difference between a narrowed gap and a closed one.
+// That ONE LINE now exists, outside this layer: `app/_layout.tsx` mounts
+// `InputTelemetrySetup`, which calls `installInputTelemetry` (the sink, gated per
+// name by `gateOutcomeEvents`). What keeps census G263 at W is not the client:
+// no production row exists until the serve-log table is in production and read.
+// Saying so here is the difference between a narrowed gap and a closed one.
 
 import type { InputSuggestion } from '../types/inputSuggestion.ts';
 

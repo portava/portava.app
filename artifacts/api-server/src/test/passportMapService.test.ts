@@ -44,6 +44,7 @@ import {
   STATS_SLUG_BUCKETS,
 } from "../services/passport/PassportMapService.js";
 import { makePassportDb } from "./helpers/fakePassportDb.js";
+import { evidenceFor, postSourced } from "./helpers/stampPresenceFixture.js";
 
 const OWNER = "map-owner-1";
 const STRANGER = "map-stranger-1";
@@ -243,13 +244,15 @@ describe("buildStats — the four category counters", () => {
   });
 
   it("counts distinct countries and cities", async () => {
-    const db = makePassportDb({
-      user_stamps: [
-        userStamp("city_explorer", { city: "Da Nang", country: "Vietnam" }),
-        userStamp("city_explorer", { city: "Da Nang", country: "Vietnam" }),
-        userStamp("city_explorer", { city: "Bangkok", country: "Thailand" }),
-      ],
-    });
+    // H4, wave 5: each city_explorer is a GPS-verified postcard's stamp, so each
+    // carries its post as source and the eligible postcard as evidence
+    // (stampPresenceView.ts). buildStats at HEAD read neither: premise-neutral.
+    const rows = [
+      userStamp("city_explorer", { city: "Da Nang", country: "Vietnam", ...postSourced(OWNER, "post-dn-1") }),
+      userStamp("city_explorer", { city: "Da Nang", country: "Vietnam", ...postSourced(OWNER, "post-dn-2") }),
+      userStamp("city_explorer", { city: "Bangkok", country: "Thailand", ...postSourced(OWNER, "post-bkk") }),
+    ];
+    const db = makePassportDb({ user_stamps: rows, ...evidenceFor(rows) });
     const stats = await buildStats(db as any, OWNER);
     assert.equal(stats.countries, 2);
     assert.equal(stats.cities, 2);

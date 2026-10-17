@@ -69,7 +69,7 @@ export interface InputSuggestion {
    * level denies placement entirely; `'approximate'` means it may carry a
    * centroid. Never a coordinate, and `'exact'` is not producible.
    */
-  locationPrecision?: 'approximate' | 'hidden'; /** §28 G176 — a coarse distance band; rendered only through `distanceBandLabel`, which refuses unknown values. */ distanceBand?: string; /** §20 G179 — the viewer's own relationship to a typed place ('in_trip' | 'saved'); rendered only through `relationshipBadge`, which refuses unknown values. */ relationship?: string;
+  locationPrecision?: 'approximate' | 'hidden'; /** §28 G176 — a coarse distance band; rendered only through `distanceBandLabel`, which refuses unknown values. */ distanceBand?: string; /** §20 G179 — the viewer's own relationship to a typed place ('in_trip' | 'saved'); rendered only through `relationshipBadge`, which refuses unknown values. */ relationship?: string; /** §28 G177 — an event's current availability ('full' | 'waitlist'); rendered only through `availabilityBadge`, which refuses unknown values. */ availability?: string; /** §9 step 9 / census G222 — the required attribution of the provider a `source: 'provider'` row came from; the picker shows it under that row's section. */ attribution?: string;
 
   source:
     | 'canonical'

@@ -27,7 +27,7 @@ import {
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { absenceDisclosure } from "../lib/privacy/absenceDisclosure.js";
 import { sendTripRefusal } from "../domain/trips/contracts/tripReasonCodes.js";
-import { sendTripPush } from "../domain/trips/policies/tripPush.js";
+import { sendTripPush } from "../domain/trips/policies/tripPush.js"; import { tripJoinRequestEventId } from "../services/notifications/causalEvents.js"; // census-telegraph T397
 import { nameVisibilitySet, sanitizeIdentity, nameVisibleFor, presentedName } from "../lib/publicIdentity.js";
 import { truncateDisplayName } from "../lib/displayName.js";
 import {
@@ -1140,25 +1140,25 @@ router.post("/trips/:tripId/join-requests/:requestId/approve", async (req, res) 
         sc2.from("trips").select("title").eq("id", tripId).maybeSingle(),
         sc2.from("profiles").select("expo_push_token").eq("id", requestedUserId).maybeSingle(),
       ]);
-      await sendTripPush(sc2, { userId: requestedUserId, tokens: [(requesterRow as any)?.expo_push_token] }, {
+      // In-app notification FIRST — it is the ledger entry (census-telegraph T397).
+      // notifRouter.route() is intentionally NOT called here; the push below is
+      // sent via sendTripPush only when this row was written. Generic text only.
+      const { NotificationService } = await import("../services/notifications/NotificationService.js");
+      const notifSvc = new NotificationService(sc2);
+      const row = await notifSvc.create({
+        userId:     requestedUserId,
+        eventType:  "trip.join_approved",
+        sourceType: "trips",
+        sourceId:   tripId, causalEventId: tripJoinRequestEventId(requestId, "approved"), // T397: this request's answer, whoever reports it
+        // Privacy: params deliberately contain NO trip title.
+        params: { tripId },
+      });
+      if (row) await sendTripPush(sc2, { userId: requestedUserId, tokens: [(requesterRow as any)?.expo_push_token] }, {
         title: "Join request approved!",
         // Privacy: do not expose the trip name on the lock screen.
         // Full details load after the user opens the app with their session.
         body:  "Your trip access request was approved.",
         data:  { type: "trip_join_approved", tripId },
-      });
-      // In-app notification: store with generic text — no trip name in params.
-      // notifRouter.route() is intentionally NOT called here; push was already
-      // sent above via sendTripPush to avoid double-delivery.
-      const { NotificationService } = await import("../services/notifications/NotificationService.js");
-      const notifSvc = new NotificationService(sc2);
-      await notifSvc.create({
-        userId:     requestedUserId,
-        eventType:  "trip.join_approved",
-        sourceType: "trips",
-        sourceId:   tripId,
-        // Privacy: params deliberately contain NO trip title.
-        params: { tripId },
       });
     } catch { /* best-effort */ }
   })();
@@ -1224,24 +1224,24 @@ router.post("/trips/:tripId/join-requests/:requestId/decline", async (req, res) 
         sc2.from("trips").select("title").eq("id", tripId).maybeSingle(),
         sc2.from("profiles").select("expo_push_token").eq("id", declinedUserId).maybeSingle(),
       ]);
-      await sendTripPush(sc2, { userId: declinedUserId, tokens: [(requesterRow as any)?.expo_push_token] }, {
+      // In-app notification FIRST — it is the ledger entry (census-telegraph T397).
+      // notifRouter.route() is intentionally NOT called here; the push below is
+      // sent via sendTripPush only when this row was written. Generic text only.
+      const { NotificationService } = await import("../services/notifications/NotificationService.js");
+      const notifSvc = new NotificationService(sc2);
+      const row = await notifSvc.create({
+        userId:     declinedUserId,
+        eventType:  "trip.join_declined",
+        sourceType: "trips",
+        sourceId:   tripId, causalEventId: tripJoinRequestEventId(requestId, "declined"), // T397: this request's answer, whoever reports it
+        // Privacy: params deliberately contain NO trip title.
+        params: { tripId },
+      });
+      if (row) await sendTripPush(sc2, { userId: declinedUserId, tokens: [(requesterRow as any)?.expo_push_token] }, {
         title: "Join request update",
         // Privacy: do not expose the trip name on the lock screen.
         body:  "Your trip access request was not approved.",
         data:  { type: "trip_join_declined", tripId },
-      });
-      // In-app notification: store with generic text — no trip name in params.
-      // notifRouter.route() is intentionally NOT called here; push was already
-      // sent above via sendTripPush to avoid double-delivery.
-      const { NotificationService } = await import("../services/notifications/NotificationService.js");
-      const notifSvc = new NotificationService(sc2);
-      await notifSvc.create({
-        userId:     declinedUserId,
-        eventType:  "trip.join_declined",
-        sourceType: "trips",
-        sourceId:   tripId,
-        // Privacy: params deliberately contain NO trip title.
-        params: { tripId },
       });
     } catch { /* best-effort */ }
   })();

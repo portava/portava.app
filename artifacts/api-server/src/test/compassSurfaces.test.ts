@@ -774,11 +774,11 @@ describe("GET /api/compass/recommendations?surface=buddy", () => {
   });
 
   it("excludes buddies blocked by viewer", async () => {
-    const { body } = await req(server, "GET", "/api/compass/recommendations?surface=buddy", {
+    const { body } = await req(server, "GET", "/api/compass/recommendations?surface=buddy&city=Cebu", { // a city: with none the route answers [] and this test was vacuous (census-telegraph T220)
       token: "alice-tok",
     });
     const blockedBuddies = body.recommendations.filter((r: any) => r.id === BUDDY_C_ID);
-    assert.equal(blockedBuddies.length, 0, "blocked buddy must be excluded");
+    assert.equal(blockedBuddies.length, 0, "blocked buddy must be excluded"); assert.ok(body.recommendations.some((r: any) => r.id === BUDDY_A_ID), "positive control: the unblocked Cebu buddy is served");
   });
 
   it("returns empty + disabled:true when show_buddy_recommendations is false", async () => {
@@ -1142,7 +1142,7 @@ describe("GET /api/compass/recommendations?surface=traveler", () => {
       token: "alice-tok",
     });
     const blocked = body.recommendations.filter((r: any) => r.id === TRAV_C_ID);
-    assert.equal(blocked.length, 0, "blocked traveler must be excluded");
+    assert.equal(blocked.length, 0, "blocked traveler must be excluded"); assert.ok(body.recommendations.some((r: any) => r.id === TRAV_A_ID), "positive control: an unblocked traveler is served (census-telegraph T220)");
   });
 
   it("reason text does not contain private-only signals", async () => {

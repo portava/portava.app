@@ -110,3 +110,16 @@ describe('TV-7c — limited privacy information, not a published policy', () => 
     expect(router.back).not.toHaveBeenCalled();
   });
 });
+
+// 2026-10-17 (wave 4, census-trust TV-7c restatement). A mutation that rewrote the
+// erasure sentence to "Account deletion deletes Portava's verification records"
+// left every case above green: the ORDER the data flow states — the provider is
+// asked first, because the reference that lets anyone ask is deleted with the
+// row (census-trust TV-7a) — was unpinned. Appended so no line above moves.
+describe('TV-7c — the stated erasure order of the identity-check data flow', () => {
+  it('says the verification service is asked to delete its copy BEFORE Portava deletes its records, and where deletion is requested', async () => {
+    const screen = await render(<PrivacyInformationScreen />);
+    expect(screen.getByText(/asking the verification service to delete its copy before\s+deleting Portava.s verification records/)).toBeTruthy();
+    expect(screen.getByText(/Settings → Account → Delete account/)).toBeTruthy();
+  });
+});

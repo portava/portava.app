@@ -141,6 +141,9 @@ describe("readPostTripInputs — kernel-era tables only under the gate; a failed
     t.memory_items = [{ id: "i1", memory_id: "m1" }, { id: "i2", memory_id: "m1" }, { id: "i9", memory_id: "m9" }];
     t.user_stamps = [{ id: "s1", user_id: OWNER_ID, stamp_definition_id: "d1", source_type: "trips", source_id: TRIP_ID, earned_at: "2026-09-15T20:00:00.000Z", city: "Paris", country: "France", is_revoked: false }];
     t.stamp_definitions = [{ id: "d1", slug: "first_trip_completed", name: "First Trip" }];
+    // H4, wave 5 (stampPresenceView.ts): a completion stamp for this trip is shown only with the owner's
+    // check-in on it — the evidence its award now requires. HEAD read neither table here.
+    t.plan_checkins = [{ user_id: OWNER_ID, trip_id: TRIP_ID, status: "arrived", checked_in_at: "2026-09-13T08:00:00.000Z" }]; t.passport_stamps = [];
     return t;
   }
   it("reads outcomes, checkpoints with who arrived, the viewer's memories and the viewer's stamps under the gate", async () => {

@@ -79,7 +79,7 @@ import type {
   PlanStop, MapBudgetChips,
   PublicAirport,
 } from '../../services/layover.ts';
-import { fmtClock, fmtDur } from './layoverFormat.ts'; import { STOP_NOT_ON_OFFER, describeEnvelope, type EnvelopeGate } from './layoverEnvelopeFacts.ts';
+import { fmtClock, fmtDur } from './layoverFormat.ts'; import { STOP_NOT_ON_OFFER, describeEnvelope, type EnvelopeGate } from './layoverEnvelopeFacts.ts'; import type { CrewmateShare } from '../../services/layoverCrewLocationContract.ts'; // census-layover L124
 // §16 — the ONE staleness rule on this client, mirroring the server's own
 // (`LayoverDegradedService.bundleFreshness`) including the `>=` boundary and
 // the fail-closed `known: false`. A second rule here (`Date.parse(staleAfter)
@@ -133,7 +133,7 @@ interface Props {
    */
   offline?: { certifiedAt: string; staleAfter: string } | null;
   /** Injected so the stale badge is testable without a fake clock. */
-  nowMs?: number; /** census-layover L118 — the time-budget chips the server offers (`overview.mapBudgetChips`) and the session a chip simulates against. Absent: no chips, and the card is what it was. */ budgetChips?: MapBudgetChips | null; sessionId?: string | null;
+  nowMs?: number; /** census-layover L118 — the time-budget chips the server offers (`overview.mapBudgetChips`) and the session a chip simulates against. Absent: no chips, and the card is what it was. */ budgetChips?: MapBudgetChips | null; sessionId?: string | null; /** census-layover L124 — §13 "Crew member: only with explicit temporary location permission". Exactly the crewmates `GET /crew/location` published to this viewer (live, explicit, scoped shares; the server applied membership, blocks and every end). Absent: no crew element, and the card is what it was. */ crewLocations?: CrewmateShare[] | null;
 }
 
 // ── The envelope diagram's scale ─────────────────────────────────────────────
@@ -198,7 +198,7 @@ function toPlace(partial: Partial<DiscoveryPlace> & { id: string; name: string; 
 }
 
 export function LayoverMapCard({
-  airport, stops: certifiedStops, airportReturn, envelope, envelopeGate, candidateFeasibility, offline, nowMs, budgetChips, sessionId,
+  airport, stops: certifiedStops, airportReturn, envelope, envelopeGate, candidateFeasibility, offline, nowMs, budgetChips, sessionId, crewLocations,
 }: Props) {
   const hasAirportCoords =
     airport.lat != null && airport.lng != null && !(airport.lat === 0 && airport.lng === 0);
@@ -213,7 +213,7 @@ export function LayoverMapCard({
   const handleSelectPlace = (place: DiscoveryPlace) => {
     // The airport is not a place you add to a plan; it is the place you have to
     // be. Routing its tap to the generic sheet is the L123 defect.
-    if (place.id === airportPlaceId) { setAirportSheetOpen(true); return; }
+    if (place.id === airportPlaceId) { setAirportSheetOpen(true); return; } if (place.id.startsWith('crew-')) return; // L124: a crewmate is a person, not a place to add to a plan
     setSelectedPlace(place);
     setPlaceSheetVisible(true);
   };
@@ -259,8 +259,8 @@ export function LayoverMapCard({
         }));
       }
     }
-    return list;
-  }, [airport, stops, hasAirportCoords, airportPlaceId, blockedIds]);
+    for (const c of crewLocations ?? []) { const at = c.precision === 'exact' ? c.position : c.precision === 'venue' ? c.ring?.center ?? null : null; if (at) list.push(toPlace({ id: `crew-${c.userId}`, name: `${crewWho(c)} (crew)`, category: 'social', lat: at.lat, lng: at.lng, address: c.label })); } return list; // L124: exact at its point, venue at its cell centre, area never
+  }, [airport, stops, hasAirportCoords, airportPlaceId, blockedIds, crewLocations]);
 
   // The scale THIS render draws at. Derived from the proved edge so both rings
   // share one scale and their ratio is the certified one.
@@ -475,7 +475,7 @@ export function LayoverMapCard({
         </View>
       </View>
 
-      <Text style={styles.note}>Airport and any plan stops with a location.</Text>
+      <Text style={styles.note}>Airport and any plan stops with a location.</Text>{crewLocations && crewLocations.length > 0 ? (<View style={styles.crewList} testID="layover-map-crew"><Text style={styles.sheetLabel}>CREW ON THE MAP</Text>{crewLocations.map((c) => (<Text key={c.userId} testID={`layover-map-crew-${c.userId}`} style={styles.crewRow}>{crewWho(c)} · {c.label} · {c.precision === 'exact' ? 'exact' : c.precision === 'venue' ? `within ${c.ring?.radiusMeters ?? 150} m` : 'area only, no pin'} · until {fmtClock(c.endsAt, airport.timezone)}</Text>))}<Text style={styles.note}>Only crewmates who chose to share, until their share ends.</Text></View>) : null}{/* census-layover L124 */}
 
       {/* The airport sheet — the return CTA, anchored on the airport element. */}
       {airportSheetOpen ? (
@@ -563,7 +563,7 @@ const styles = StyleSheet.create({
   sheetBtnText: { ...t.bodyStrong, color: color.onInk, letterSpacing: 0.5 },
   sheetClose: { alignSelf: 'flex-start', paddingVertical: space.sm },
   sheetCloseText: { ...t.small, color: color.mute, textDecorationLine: 'underline' },
-  note:    { ...t.small, color: color.faint },
+  note:    { ...t.small, color: color.faint }, crewList: { borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, padding: space.md, gap: 4 }, crewRow: { ...t.small, color: color.ink }, /* census-layover L124 */
   envelope: { borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paper, padding: space.md, gap: 6 },
   envelopeRow: { flexDirection: 'row', alignItems: 'center', gap: space.md },
   envelopePlot: { width: ENVELOPE_PLOT_PX, height: ENVELOPE_PLOT_PX, alignItems: 'center', justifyContent: 'center' },
@@ -587,3 +587,8 @@ const styles = StyleSheet.create({
   routeReturn: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginTop: 2 },
   routeReturnText: { ...t.bodyStrong, color: color.ink, flex: 1 },
 });
+
+/** census-layover L124 — how a crewmate is named on the map: their shown name, else their handle. */
+function crewWho(c: CrewmateShare): string {
+  return c.name ?? (c.handle ? `@${c.handle}` : 'A crewmate');
+}

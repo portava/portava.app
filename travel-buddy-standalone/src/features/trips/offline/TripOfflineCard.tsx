@@ -13,7 +13,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, ActivityIndicator, StyleSheet, Pressable } from 'react-native';
 import { Download, RefreshCw, CloudOff } from 'lucide-react-native';
 
-import { color, space, radius, type as t, shadow } from '../../../theme/tokens.ts';
+import { color, space, radius, type as t, shadow } from '../../../theme/tokens.ts'; import { TripOfflineTiles, type TripTileSeams } from './TripOfflineTiles.tsx'; // census-trips TR340
 import {
   fetchOfflineBundle, storeBundle, loadStoredBundle, loadQueue, replayQueue, revalidateOperation, bundleStaleness,
   type StoredBundle, type QueuedEntry, type ReplayResult,
@@ -30,12 +30,12 @@ interface Props {
   store?: typeof storeBundle;
   queue?: typeof loadQueue;
   replay?: typeof replayQueue;
-  revalidate?: typeof revalidateOperation;
+  revalidate?: typeof revalidateOperation; /** census-trips TR340: the trip's destination, the centre of the offline map, and the tile seams. */ destination?: { lat: number | null | undefined; lng: number | null | undefined } | null; tiles?: TripTileSeams;
 }
 
 export function TripOfflineCard({
   tripId, currentTripVersion = null, now = () => Date.now(),
-  fetchBundle = fetchOfflineBundle, loadStored = loadStoredBundle, store = storeBundle, queue = loadQueue, replay = replayQueue, revalidate = revalidateOperation,
+  fetchBundle = fetchOfflineBundle, loadStored = loadStoredBundle, store = storeBundle, queue = loadQueue, replay = replayQueue, revalidate = revalidateOperation, destination = null, tiles,
 }: Props) {
   const [stored, setStored] = useState<StoredBundle | null | undefined>(undefined);
   const [pending, setPending] = useState<QueuedEntry[]>([]);
@@ -110,7 +110,7 @@ export function TripOfflineCard({
                 : `No free windows offline — ${c.certifiedContext.windowsReading}.`}
             </Text>
           ) : null}
-          {staleness?.stale ? <Text style={[s.detail, { color: color.warn }]} testID="trip-offline-stale">{staleness.detail}</Text> : null}
+          {staleness?.stale ? <Text style={[s.detail, { color: color.warn }]} testID="trip-offline-stale">{staleness.detail}</Text> : null}<TripOfflineTiles tripId={tripId} stored={stored} destination={destination} {...tiles} />{/* census-trips TR340 */}
         </View>
       </View>
 

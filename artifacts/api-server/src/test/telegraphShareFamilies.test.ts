@@ -130,13 +130,13 @@ function fixture(): Record<string, any[]> {
       { id: HL_ARCHIVED, owner_id: BOB, caption: "Filed away", location_name: null, location_city: "Hue", visibility: "public", expires_at: soon(), deleted_at: null, archived_at: "2026-05-05T00:00:00.000Z", media_url: "post-media/x/h5.jpg", media_type: "image", updated_at: "2026-05-05T00:00:00.000Z" },
     ],
     user_stamps: [
-      { id: STAMP_PUBLIC, user_id: BOB, stamp_definition_id: STAMP_DEF, title_override: null, city: "Hue", country: "VN", visibility: "public", display_on_passport: true, is_revoked: false, earned_at: "2026-04-01T00:00:00.000Z" },
+      { id: STAMP_PUBLIC, user_id: BOB, stamp_definition_id: STAMP_DEF, title_override: null, city: "Hue", country: "VN", visibility: "public", display_on_passport: true, is_revoked: false, earned_at: "2026-04-01T00:00:00.000Z", source_type: "posts", source_id: "post-hue", stamp_definitions: { slug: "city_explorer" } }, // H4 (wave 5 lane 7): a GPS-postcard presence stamp WITH its evidence, so its place may be shown
       { id: STAMP_REVOKED, user_id: BOB, stamp_definition_id: STAMP_DEF, title_override: null, city: "Hue", country: "VN", visibility: "public", display_on_passport: true, is_revoked: true, earned_at: "2026-04-02T00:00:00.000Z" },
       { id: STAMP_HIDDEN, user_id: BOB, stamp_definition_id: STAMP_DEF, title_override: null, city: "Hue", country: "VN", visibility: "public", display_on_passport: false, is_revoked: false, earned_at: "2026-04-03T00:00:00.000Z" },
       { id: STAMP_PRIVATE, user_id: BOB, stamp_definition_id: STAMP_DEF, title_override: "Private award", city: "Hue", country: "VN", visibility: "private", display_on_passport: true, is_revoked: false, earned_at: "2026-04-04T00:00:00.000Z" },
     ],
     stamp_definitions: [
-      { id: STAMP_DEF, name: "First Perfume River crossing", icon_url: "post-media/x/s.png", universal_artwork_url: null },
+      { id: STAMP_DEF, name: "First Perfume River crossing", icon_url: "post-media/x/s.png", universal_artwork_url: null }, ], passport_postcards: [ { user_id: BOB, post_id: "post-hue", stamp_eligible: true, stamp_revoked: false }, // the evidence STAMP_PUBLIC's place rests on (stampPresenceView.ts)
     ],
     neighborhood_areas: [
       { id: HOOD, name: "Old town", city_name: "Hue", country: "VN", confidence: "high", source: "osm", computed_at: "2026-03-01T00:00:00.000Z" },
@@ -667,5 +667,85 @@ describe("§5.1 — the new families answer the same contract as the old ones", 
       assert.deepEqual(r.actions, [], `${t} offered actions on an unavailable reference`);
       assert.equal(r.projection, null, `${t} carried a projection on an unavailable reference`);
     }
+  });
+});
+
+// ── census-telegraph T265 (wave 5): §20 Places "current intelligence" — Discovery's own, behind Discovery's own flags ──
+
+describe("T265 (wave 5) — the place card carries Discovery's live intelligence, exactly as Discovery would serve it", async () => {
+  const { makeFakeMapDb } = await import("./helpers/fakeMapDb.js");
+  const { invalidateLiveRankFlagCache, withDiscoveryLiveRank, RANK_CLAIM_TYPES } = await import("../lib/discoveryLiveRankRead.js");
+  const { invalidateCandidateProjectionFlagCache, whyNowOf } = await import("../lib/discoveryCandidate.js");
+  const { _clearPromotedScopeCache } = await import("../lib/liveClaimRead.js");
+  const { claimTypeLiveLabelRuling } = await import("../lib/intelContracts.js");
+  const PLACE_ID = "cc330000-0000-4000-8000-000000000001";
+  const NOW = Date.now();
+  const iso = (min: number) => new Date(NOW + min * 60_000).toISOString();
+  const GATES = ["intel_live_label_crowd", "intel_claim_projection_crowd", "intel_capture_quick_signal", "intel_limited_live"];
+  const snapshot = (level: string) => ({
+    id: `snap-${level}`, subject_id: PLACE_ID, zone_id: null, claim_type: "crowd.level", value: { level },
+    confidence: 0.9, source_count: 30, observed_at: iso(-3), expires_at: iso(45), privacy_eligible: true,
+    conflict_state: "none", source_class: "firsthand_unverified", computed_at: iso(-3),
+  });
+  function db(flags: string[], opts: { snapshots?: unknown[]; failIntel?: boolean } = {}) {
+    invalidateLiveRankFlagCache();
+    invalidateCandidateProjectionFlagCache();
+    _clearPromotedScopeCache();
+    const state: Record<string, unknown> = {
+      places: [{ id: PLACE_ID, name: "Sky36 (now)", city: "Da Nang", neighborhood: "Hai Chau", primary_category: "bar", status: "active", updated_at: "2026-10-01T00:00:00Z" }],
+      feature_flags: flags.map((flag) => ({ flag, enabled: true })),
+      intel_live_promoted_scopes: [{ scope_key: "|crowd.level" }],
+      intel_state_snapshots: opts.failIntel ? { error: { message: "intel read failed" } } : (opts.snapshots ?? []),
+    };
+    return makeFakeMapDb(state as never, { token: "t", userId: ALICE });
+  }
+  const project = async (client: unknown) => (await resolveShareProjections(client as never, ALICE, THREAD, [{ objectType: "PLACE", objectId: PLACE_ID }]))[0]!;
+  const BOTH = ["discovery_live_rank_enabled", "discovery_candidate_projection_enabled", ...GATES];
+
+  it("flags OFF (as seeded, 2850 and 2361): no live intelligence at all — the projection is the one it was", async () => {
+    const r = await project(db(GATES, { snapshots: [snapshot("busy")] }));
+    assert.equal(r.available, true);
+    assert.equal("liveIntelligence" in (r.projection ?? {}), false);
+    assert.equal(r.projection?.title, "Sky36 (now)");
+  });
+
+  it("the live rank ON but Discovery's candidate projection OFF: none either — Discovery itself serves why-now only through that projection", async () => {
+    const r = await project(db(["discovery_live_rank_enabled", ...GATES], { snapshots: [snapshot("busy")] }));
+    assert.equal("liveIntelligence" in (r.projection ?? {}), false);
+  });
+
+  it("the candidate projection ON but the live rank OFF (2850 as seeded): none — no grade ran, so there is nothing of Discovery's to copy", async () => {
+    const r = await project(db(["discovery_candidate_projection_enabled", ...GATES], { snapshots: [snapshot("busy")] }));
+    assert.equal("liveIntelligence" in (r.projection ?? {}), false);
+  });
+
+  it("both ON: the card's why-now is Discovery's own, copied — the claim's vocabulary, with how long it holds", async () => {
+    const client = db(BOTH, { snapshots: [snapshot("busy")] });
+    const r = await project(client);
+    const live = r.projection?.liveIntelligence;
+    assert.ok(live, "no live intelligence on the place card");
+    assert.deepEqual(live!.whyNow, ["crowd_busy"]);
+    assert.ok(typeof live!.whyNowValidForMs === "number" && live!.whyNowValidForMs > 0 && live!.whyNowValidForMs <= 45 * 60_000);
+    // The SAME answer Discovery's own functions give for the same place and instant.
+    const graded = await withDiscoveryLiveRank(db(BOTH, { snapshots: [snapshot("busy")] }), [{ id: PLACE_ID, canonicalPlaceId: PLACE_ID, distanceKm: null }], {});
+    assert.deepEqual(live!.whyNow, whyNowOf(PLACE_ID, { liveRankById: graded.byId }));
+    assert.equal(r.projection?.title, "Sky36 (now)", "the rest of the card is unchanged");
+  });
+
+  it("nothing observed, the gates closed, or the read failed: why-now is null — never an empty endorsement — and the card still resolves", async () => {
+    for (const [why, client] of [
+      ["no reading", db(BOTH, { snapshots: [] })],
+      ["gates closed", db(BOTH.filter((f) => f !== "intel_limited_live"), { snapshots: [snapshot("busy")] })],
+      ["read failed", db(BOTH, { failIntel: true })],
+    ] as const) {
+      const r = await project(client);
+      assert.equal(r.available, true, why);
+      assert.equal(r.projection?.liveIntelligence?.whyNow ?? null, null, why);
+      assert.equal(r.projection?.liveIntelligence?.whyNowValidForMs ?? null, null, why);
+    }
+  });
+
+  it("the grade reads no claim type the intel contracts bar from a live label", () => {
+    for (const t of RANK_CLAIM_TYPES) assert.notEqual(claimTypeLiveLabelRuling(t), "never", `${t} is ruled never-live and reaches the place card`);
   });
 });

@@ -6006,3 +6006,32 @@ Every consumer passes each projection through the §19.1 consumer rule before it
 127 + 11 + 1 + 2 = 141.
 
 - NOT-GRADED: artifacts/api-server/src/migrations/20260728_compass_autopilot.sql — the wave-3 limits cite it only to name where the exempt Autopilot store comes from; CT-01 grades that store's write path, and no row here rests on the migration.
+
+### Correction (2026-10-17, wave 5) — admin Compass dashboard: compass_abuse_flags.created_at does not exist in production
+
+*Measured on branch `claude/wave4-build-20261017` against the working tree. `head_commit` is not re-declared. The fix
+is uncommitted and not deployed, so production keeps the defect below until it ships. **NO ROW MOVES.***
+
+**What was broken, in production.** `GET /api/admin/compass/dashboard` read `compass_abuse_flags` with
+`.gte("created_at", thirtyDaysAgo)`. That table has no `created_at`: its time column is `detected_at` (the 2026-08-19
+production baseline, the 2026-09-22 production capture, and no migration adds one). PostgREST failed the read with
+42703 on every call, the dashboard read the resolved `{ data: null, error }` as "no rows", and its `abuse` block was
+`{ total: 0, bySeverity: {}, byStatus: {} }` whatever `CompassAbuseDefenseEngine` had recorded. An operator looking at
+the dashboard saw no abuse. No row grades the dashboard's abuse block (the surface table above counts
+`adminCompass.ts` as a route file and grades none of its figures), so none moves. The list route
+`GET /api/admin/compass/abuse-flags` always read `detected_at` and was not affected.
+
+**What changed, with no migration.** The dashboard filters on `detected_at`
+(`artifacts/api-server/src/routes/adminCompass.ts:138#.gte("detected_at", thirtyDaysAgo),`).
+
+**How it was found.** `artifacts/api-server/src/test/schemaColumnProductionScan.test.ts` grades every column, filter
+column, write key, table and `.rpc()` name under `src/` against the production capture; this was class A (declared by
+no SQL in the repository). The admin dashboard's existing drift guard checks only its `posts` and `events` reads.
+
+**Tests.** `artifacts/api-server/src/test/adminCompassAbuseFlagsWindow.test.ts:98#it("counts the three flags inside the window, by severity and by status"`
+(3 cases on schemaStrictSupabase, which answers 42703 for a column the live schema lacks). Red first: with
+`created_at` restored, 2 of 3 are red; with the window filter dropped, 2 of 3 are red. Both mutants were restored
+byte-identically (`cmp`).
+
+- NOT-GRADED: artifacts/api-server/src/test/adminCompassAbuseFlagsWindow.test.ts — this correction's own test; no Compass row rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/schemaColumnProductionScan.test.ts — the repository-wide scan that found the defect; no Compass row rests on it.

@@ -221,3 +221,35 @@ describe("2026-10-17 privacy gate on 3988 — emerging_place's run: age bound an
     assert.ok(r.buckets.get(`db/${P.TRAIL_MEMBER}`)?.includes("new_trail"));
   });
 });
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 2026-10-17 (wave 4) — emerging_place reads the PRODUCT's corpus, as the trend
+// API does: only place_momentum rows with source_surface = 'discovery' (3410;
+// NULL is 2892's all-surfaces function, "not the product's reading"), on both
+// the newest-run read and the run's rows. Appended at the foot.
+// ═════════════════════════════════════════════════════════════════════════════
+const otherCorpus = (placeId: string, computedAt: unknown): Row =>
+  ({ place_id: placeId, trend_state: "emerging", recent_rate: 50, computed_at: computedAt, source_surface: null });
+
+describe("2026-10-17 (wave 4) — emerging_place reads only source_surface = 'discovery'", () => {
+  it("SS5. a newer, current run over another corpus does not displace the product's run", async () => {
+    const w = world();
+    w["place_momentum"]!.push(otherCorpus(`db/${P.TRAIL_MEMBER}`, new Date(NOW - 30_000).toISOString()));
+    const r = await loadInventoryBuckets(makeFakeCandidateDb(w), INVENTORY_IDS, { nowMs: NOW });
+    assert.deepEqual(r.failedReads, []);
+    assert.ok(r.buckets.get(`db/${P.EMERGING}`)?.includes("emerging_place"), "the product run's claim stands");
+    assert.ok(!r.buckets.get(`db/${P.TRAIL_MEMBER}`)?.includes("emerging_place"), "another corpus's claim is not one");
+  });
+
+  it("SS6. a row of another corpus sharing the run's instant is not a claim; both reads name the filter", async () => {
+    const w = world();
+    w["place_momentum"]!.push(otherCorpus(`db/${P.TRAIL_MEMBER}`, w["place_momentum"]![0]!["computed_at"]));
+    const sc = makeFakeCandidateDb(w);
+    const r = await loadInventoryBuckets(sc, INVENTORY_IDS, { nowMs: NOW });
+    assert.ok(r.buckets.get(`db/${P.EMERGING}`)?.includes("emerging_place"));
+    assert.ok(!r.buckets.get(`db/${P.TRAIL_MEMBER}`)?.includes("emerging_place"));
+    const reads = sc.reads.filter((x) => x.table === "place_momentum");
+    assert.equal(reads.length, 2);
+    for (const x of reads) assert.ok(x.ops.includes("eq(source_surface)"), x.ops.join(" "));
+  });
+});

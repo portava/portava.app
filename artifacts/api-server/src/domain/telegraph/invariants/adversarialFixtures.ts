@@ -233,14 +233,23 @@ export const TELEGRAPH_ADVERSARIAL_FIXTURES: readonly AdversarialFixture[] = [
     scenario:
       "The source object behind a rendered share card is revoked while the " +
       "conversation is open",
-    status: "divergent",
+    status: "enforced",
     enforcedBy: [
       "travel-buddy-standalone/src/components/DiscoveryCardMessage.tsx",
       "travel-buddy-standalone/src/components/PostCardMessage.tsx",
       "travel-buddy-standalone/src/features/telegraph/sharing/legacyCardView.ts",
+      "travel-buddy-standalone/src/features/telegraph/sharing/useShareRevocation.ts",
+      "travel-buddy-standalone/src/features/telegraph/sharing/shareRevocationPoller.ts",
       "src/services/telegraph/shareables.ts",
     ],
     note:
+      "ENFORCED 2026-10-17 (wave 5, client lane, census T359): a MOUNTED card now subscribes to its " +
+      "thread's bounded poll (shareRevocationPoller.ts — one batched POST /threads/:id/share-projections " +
+      "per thread every 60 s ±10 %, ×2 back-off to 15 min on failure, paused in the background, stopped " +
+      "with the last card) and draws the revoked state from the next answer, without a re-read of the " +
+      "page. Proved through the real PostCardMessage on fake timers " +
+      "(travel-buddy-standalone shareRevocationPoll.component.test.tsx H1–H4). Stated limit: a revocation " +
+      "reaches an open card within one poll, not instantly. History: " +
       "DIVERGENT AGAIN since 2026-10-05 (lane T2, census-telegraph §45c, verifier finding 5): " +
       "lane T2 had moved this to enforced the same day, and that overstated it. Both legacy " +
       "cards now re-resolve their source on MOUNT (useShareRevocation → POST " +

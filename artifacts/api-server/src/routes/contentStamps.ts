@@ -21,7 +21,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError, isAcceptedTripMember } from "../lib/http.js";
-import { getServiceClient } from "../lib/supabase.js";
+import { getServiceClient } from "../lib/supabase.js"; import { isBlockedBetween } from "../lib/blockGuard.js";
 import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine.js";
 import {
   stampEntity,
@@ -77,14 +77,14 @@ async function verifyPostStampAccess(
   // 2. Block check (both directions). Skip when the viewer is the author
   //    (self-stamp is allowed; there is nothing to block against).
   if (p.author_id !== userId) {
-    const { count: blockCount, error: blockErr } = await sc
-      .from("blocks")
-      .select("id", { count: "exact", head: true })
-      .or(
-        `and(blocker_id.eq.${userId},blocked_id.eq.${p.author_id}),` +
-        `and(blocker_id.eq.${p.author_id},blocked_id.eq.${userId})`,
-      );
-    if (blockErr || (blockCount ?? 0) > 0) {
+    // census-telegraph T220: the shared two-party gate — both directions in
+    // one `.limit(1)` read. TRUE for a block, and equally for a returned
+    // error, a thrown read (which used to escape as a 500) and a non-list
+    // answer (a head count that came back null with no error used to read
+    // as "no block"). Error and block were already the same answer here, so
+    // the response below is unchanged.
+    const blocked = await isBlockedBetween(sc, userId, p.author_id);
+    if (blocked) {
       sendError(res, "blocked_user", "Cannot stamp this post");
       return false;
     }
@@ -135,14 +135,14 @@ async function verifyMediaStampAccess(
     }
 
     // Block check (both directions) — fail-closed on error.
-    const { count: blockCount, error: blockErr } = await sc
-      .from("blocks")
-      .select("blocker_id", { count: "exact", head: true })
-      .or(
-        `and(blocker_id.eq.${userId},blocked_id.eq.${authorId}),` +
-        `and(blocker_id.eq.${authorId},blocked_id.eq.${userId})`,
-      );
-    if (blockErr || (blockCount ?? 0) > 0) {
+    // census-telegraph T220: the shared two-party gate — both directions in
+    // one `.limit(1)` read. TRUE for a block, and equally for a returned
+    // error, a thrown read (which used to escape as a 500) and a non-list
+    // answer (a head count that came back null with no error used to read
+    // as "no block"). Error and block were already the same answer here, so
+    // the response below is unchanged.
+    const blocked = await isBlockedBetween(sc, userId, authorId);
+    if (blocked) {
       sendError(res, "not_found", "Media item not found");
       return false;
     }
@@ -182,14 +182,14 @@ async function verifyMediaStampAccess(
   if (gemRow && (gemRow as any).status === "active") {
     const submittedBy: string | null = (gemRow as any).submitted_by as string | null;
     if (submittedBy && submittedBy !== userId) {
-      const { count: blockCount, error: blockErr } = await sc
-        .from("blocks")
-        .select("blocker_id", { count: "exact", head: true })
-        .or(
-          `and(blocker_id.eq.${userId},blocked_id.eq.${submittedBy}),` +
-          `and(blocker_id.eq.${submittedBy},blocked_id.eq.${userId})`,
-        );
-      if (blockErr || (blockCount ?? 0) > 0) {
+      // census-telegraph T220: the shared two-party gate — both directions in
+      // one `.limit(1)` read. TRUE for a block, and equally for a returned
+      // error, a thrown read (which used to escape as a 500) and a non-list
+      // answer (a head count that came back null with no error used to read
+      // as "no block"). Error and block were already the same answer here, so
+      // the response below is unchanged.
+      const blocked = await isBlockedBetween(sc, userId, submittedBy);
+      if (blocked) {
         sendError(res, "not_found", "Media item not found");
         return false;
       }
@@ -207,14 +207,14 @@ async function noBlock(
   viewerId: string,
   ownerId: string,
 ): Promise<boolean> {
-  const { count, error } = await sc
-    .from("blocks")
-    .select("blocker_id", { count: "exact", head: true })
-    .or(
-      `and(blocker_id.eq.${viewerId},blocked_id.eq.${ownerId}),` +
-      `and(blocker_id.eq.${ownerId},blocked_id.eq.${viewerId})`,
-    );
-  return !error && (count ?? 0) === 0;
+  // census-telegraph T220: the shared two-party gate. It answers TRUE (blocked)
+  // for a block in either direction and for every failure — a returned error,
+  // a thrown read, a non-list answer — so "no block" is only ever a read that
+  // succeeded and found no row, exactly what `!error && count === 0` meant
+  // (and a head count that came back null with no error no longer reads as
+  // "no block"). Callers answer not_found on false, as before.
+  //
+  return !(await isBlockedBetween(sc, viewerId, ownerId));
 }
 
 /** gem → hidden_gems.submitted_by */

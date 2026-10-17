@@ -46,7 +46,7 @@ const BLOCKS_ERROR = { code: "57014", message: "simulated blocks read failure" }
  * Fake client for circleAccessGuard: every table answers "clean and permissive"
  * so the ONLY thing under test is what the guard does with the blocks read.
  */
-function makeCircleClient(opts: { blocksError: boolean }) {
+function makeCircleClient(opts: { blocksError: boolean; blocksRows?: Array<{ blocker_id: string; blocked_id: string }> }) {
   function chain(table: string) {
     const obj: any = {
       _single: false,
@@ -64,7 +64,7 @@ function makeCircleClient(opts: { blocksError: boolean }) {
       if (table === "blocks") {
         return opts.blocksError
           ? { data: null, error: BLOCKS_ERROR }
-          : { data: [], error: null };
+          : { data: opts.blocksRows ?? [], error: null };
       }
       if (table === "feature_flags") {
         // find_your_circle_disabled — absent row = not engaged.
@@ -129,6 +129,17 @@ describe("canBeSeenByViewersBatch — blocks read fails closed", () => {
     assert.equal(r!.allowed, true,
       `fixture must be permissive on a clean read, got ${JSON.stringify(r)}`);
   });
+
+  // census-telegraph T220 (wave 5): the batch's block read moved onto the shared
+  // reader, and NO case here had a block in it — dropping the block test from
+  // the batch survived every suite. A block in EITHER direction denies as "blocked".
+  for (const [label, row] of [["the target blocked the viewer", { blocker_id: TARGET, blocked_id: VIEWER }], ["the viewer blocked the target", { blocker_id: VIEWER, blocked_id: TARGET }]] as const) {
+    it(`denies the viewer as 'blocked' when ${label}`, async () => {
+      const sc = makeCircleClient({ blocksError: false, blocksRows: [row] });
+      const out = await canBeSeenByViewersBatch(sc as any, TARGET, [VIEWER], "trip", TRIP);
+      assert.deepEqual(out.get(VIEWER), { allowed: false, reason: "blocked" });
+    });
+  }
 });
 
 // ── circleAccessGuard — ONE viewer, MANY targets ─────────────────────────────
@@ -151,6 +162,15 @@ describe("canViewCirclePresenceBatch — blocks read fails closed", () => {
     assert.ok(r, "the target must be evaluated");
     assert.equal(r!.allowed, true, `fixture must be permissive on a clean read, got ${JSON.stringify(r)}`);
   });
+
+  // census-telegraph T220 (wave 5): as above — the plain blocked case, both ways.
+  for (const [label, row] of [["the target blocked the viewer", { blocker_id: TARGET, blocked_id: VIEWER }], ["the viewer blocked the target", { blocker_id: VIEWER, blocked_id: TARGET }]] as const) {
+    it(`denies the target as 'blocked' when ${label}`, async () => {
+      const sc = makeCircleClient({ blocksError: false, blocksRows: [row] });
+      const out = await canViewCirclePresenceBatch(sc as any, VIEWER, [TARGET], "trip", TRIP);
+      assert.deepEqual(out.get(TARGET), { allowed: false, reason: "blocked" });
+    });
+  }
 });
 
 // ── Compass push notifications ───────────────────────────────────────────────
@@ -164,15 +184,15 @@ function makeNotifClient(opts: { blocksError: boolean }) {
       in() { return obj; },
       limit() { return obj; },
       insert() { return obj; },
-      maybeSingle() { return resolve(); },
-      single() { return resolve(); },
+      maybeSingle() { return resolve(true); },
+      single() { return resolve(true); },
       then(onF: any, onR: any) { return resolve().then(onF, onR); },
     };
-    async function resolve(): Promise<any> {
+    async function resolve(single = false): Promise<any> {
       if (table === "blocks") {
         return opts.blocksError
           ? { data: null, error: BLOCKS_ERROR }
-          : { data: null, error: null };
+          : { data: single ? null : [], error: null }; // census-telegraph T220: "no block" is null to `.maybeSingle()` and an EMPTY LIST to a list read (the shared pair read ends `.limit(1)`)
       }
       return { data: null, error: null };
     }

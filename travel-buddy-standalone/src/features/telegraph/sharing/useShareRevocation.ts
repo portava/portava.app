@@ -13,13 +13,13 @@
  * the moment the network hiccups. Neither is acceptable, so it is its own
  * state and every caller must handle it.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   resolveShareProjections,
   type ResolvedShare, type SharedCardTruth,
   type ShareRef,
   type UnavailableReason,
-} from './shareApi.ts';
+} from './shareApi.ts'; import { shareRevocationPoller } from './shareRevocationPoller.ts';
 
 export type RevocationState = 'loading' | 'available' | 'unavailable' | 'unknown';
 
@@ -60,6 +60,10 @@ export function useShareRevocation(
   const objectId = ref?.objectId ?? null;
   const messageId = ref?.messageId ?? null;
   const serverKey = fromServer ? `${fromServer.state}:${fromServer.reason ?? ''}` : null;
+  // The latest poll answer, stamped with the thread read it arrived after.
+  const [polled, setPolled] = useState<{ after: string | null; value: ShareRevocation } | null>(null);
+  const serverKeyRef = useRef(serverKey);
+  serverKeyRef.current = serverKey;
 
   useEffect(() => {
     // The server already resolved this card for this viewer, in the page's one
@@ -91,7 +95,7 @@ export function useShareRevocation(
       setValue(
         first.available
           ? { state: 'available', reason: null, resolved: first }
-          : { state: 'unavailable', reason: first.reason, resolved: first },
+          : first.reason === 'unknown' ? UNKNOWN : { state: 'unavailable', reason: first.reason, resolved: first }, // an unreadable source is "cannot tell", never a revocation
       );
     })();
     return () => {
@@ -99,7 +103,23 @@ export function useShareRevocation(
     };
   }, [threadId, objectType, objectId, messageId, serverKey]);
 
-  return fromServer ?? value;
+  // WHILE MOUNTED (census T359, fixture F-12). The first answer came from the
+  // thread read (`serverCard`) or the resolve above; from then on the card hears
+  // its source through the thread's bounded poll (shareRevocationPoller.ts), so a
+  // revocation reaches an open conversation within a poll, not on the next
+  // re-read. A poll answer outranks the thread read it followed; a NEWER thread
+  // read (a changed `serverCard`) outranks every poll before it. Unsubscribed on
+  // unmount and whenever the card stops naming this source.
+  useEffect(() => {
+    if (!threadId || !objectType || !objectId) return undefined;
+    setPolled(null);
+    return shareRevocationPoller.subscribe(threadId, { objectType, objectId, messageId }, (next) => {
+      setPolled({ after: serverKeyRef.current, value: next });
+    });
+  }, [threadId, objectType, objectId, messageId]);
+
+  const heard = polled && polled.after === serverKey ? polled.value : null;
+  return heard ?? fromServer ?? value;
 }
 
 /**

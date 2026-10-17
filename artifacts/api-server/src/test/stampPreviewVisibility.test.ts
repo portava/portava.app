@@ -120,7 +120,7 @@ function makeClient(state: FakeState) {
   };
 }
 
-const stampDef = { name: "Tokyo Wanderer", stamp_type: "city", universal_artwork_url: null };
+const stampDef = { name: "Tokyo Wanderer", stamp_type: "city", universal_artwork_url: null, slug: "city_explorer" };
 
 const baseState: FakeState = {
   profiles: [
@@ -189,6 +189,13 @@ const baseState: FakeState = {
     },
   ],
 };
+
+// H4, wave 5 (stampPresenceView.ts): the preview names a stamp's place only for
+// a presence stamp whose own source's evidence holds. These are GPS-postcard
+// city stamps, so each names its post and the eligible postcard is staged. HEAD
+// selected neither the slug nor the source and read no postcard: premise-neutral.
+baseState.user_stamps = baseState.user_stamps.map((r) => ({ ...r, source_type: "posts", source_id: `post-${r.id}` }));
+baseState.passport_postcards = baseState.user_stamps.map((r) => ({ user_id: r.user_id, post_id: `post-${r.id}`, stamp_eligible: true, stamp_revoked: false }));
 
 // ── Test server ───────────────────────────────────────────────────────────────
 

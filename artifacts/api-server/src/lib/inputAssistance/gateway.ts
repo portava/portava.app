@@ -187,7 +187,7 @@ export async function resolveVenueBindings(
   for (const p of places) {
     const linkId = (p.metadata as { livingPageId?: string } | undefined)?.livingPageId;
     if (linkId && canonicalById === null) continue; // the failed-read case
-    const md = p.metadata as { lat?: number | null; lng?: number | null } | undefined;
+    const md = p.metadata as { lat?: number | null; lng?: number | null; coordsPrecision?: unknown } | undefined; const exact = md?.coordsPrecision === undefined; // §24: a position the protection pass coarsened or withheld is not the venue's (rule 1) — no coordinates, so no zone
     out.set(
       p.id,
       venueBinding(
@@ -195,8 +195,8 @@ export async function resolveVenueBindings(
           id: p.id,
           name: p.title,
           city: p.locationPreview ?? null,
-          lat: md?.lat ?? null,
-          lng: md?.lng ?? null,
+          lat: exact ? (md?.lat ?? null) : null,
+          lng: exact ? (md?.lng ?? null) : null,
         },
         linkId ? (canonicalById?.get(linkId) ?? null) : null,
       ),
@@ -616,17 +616,17 @@ export async function generateSuggestions(
       // still flow through the existing per-type search behind the privacy gate.
       const otherTypes = dispatchTypes.filter((t) => t !== 'cities'); if (policyEntityTypes.includes('neighborhood')) { const hood = await resolveNeighborhoodRows(sc, q, context, POLICY_VERSION, policy.maxSuggestions); if (hood.unreadable) noteTypeUnreadable(coverage, 'neighborhoods'); suggestions.push(...hood.rows); } // §11/§12 G66 — system neighbourhood zones
       if (otherTypes.length > 0) {
-        let other = await dispatchAndProject(sc, otherTypes, {
-          q, userId, context, policy, lat, lng, city, temporalWindow, taskConstraint, coverage, distanceOrigin, tripFitSink,
+        const placeSink: SearchResult[] = []; let other = await dispatchAndProject(sc, otherTypes, { // census G153/G192: placeSink = the canonical places the provider lane is checked against
+          q, userId, context, policy, lat, lng, city, temporalWindow, taskConstraint, coverage, distanceOrigin, tripFitSink, placeSink,
         });
         // §10 second attempt — same rule as the city path above.
         if (other.length === 0 && norm.correctedQuery) {
           const retry = await dispatchAndProject(sc, otherTypes, {
-            q: norm.correctedQuery, userId, context, policy, lat, lng, city, temporalWindow, taskConstraint, coverage, distanceOrigin, tripFitSink,
+            q: norm.correctedQuery, userId, context, policy, lat, lng, city, temporalWindow, taskConstraint, coverage, distanceOrigin, tripFitSink, placeSink,
           });
           if (retry.length > 0) { other = retry; correctionHelped = true; }
         }
-        suggestions.push(...other);
+        suggestions.push(...other); suggestions.push(...(await buildProviderSuggestions(sc, { context, policy, q, lat, lng, taskCity: taskConstraint.city, canonicalPlaces: placeSink, catalogOnly: params.catalogOnly === true, policyVersion: POLICY_VERSION, onUnreadable: (lane) => noteTypeUnreadable(coverage, lane) }))); // §34 G222 provider federation on the server (§9 step 9), checked against the canonical places by §30's ladder (G192/G153), merged neutrally (G237) — providerFederation.ts
       }
     } else {
       // ── Generic mixed-entity path (global_search, username, hashtag, …) ─────
@@ -664,17 +664,17 @@ export async function generateSuggestions(
         let geoCityResults = scope.skip('cities') ? [] : geoRes.rows.map(canonicalToCityResult); [perTypeResults, geoCityResults] = await protectGatewayCandidates(sc, perTypeResults, geoCityResults); const allCandidates = perTypeResults.flat();
         const verdict = classifyFeasibility(allCandidates, taskConstraint); for (const id of verdict.tripFitIds) tripFitSink.add(id); // §9 G53 step 4
 
-        // §17/G109 venue bindings. Only for GEO PICKER contexts: a picker is a
-        // field whose SELECTION prefills dependents, which is the premise the
-        // binding exists to serve. global_search is a navigation surface — a row
-        // there opens an entity page and fills nothing, so binding it would ship
-        // a structured value with no consumer.
-        const venueBindings = GEO_PICKER_CONTEXTS.has(context)
-          ? await resolveVenueBindings(
-              sc,
-              allCandidates.filter((r) => r.type === 'places'),
-            )
-          : new Map<string, CanonicalVenueBinding>();
+        // §17/G109 venue bindings belong to the GEO PICKERS (a field whose
+        // SELECTION prefills dependents), and a geo picker never reaches this
+        // branch: `isGeoPicker` sends it down the path above, where
+        // dispatchAndProject binds its venues. A `GEO_PICKER_CONTEXTS.has(context)`
+        // test stood here until the wave-5 fix; it was false on this branch by
+        // construction, so on the serve path no venue was ever bound (census
+        // G109, restated C → W on independent verification 2026-10-17).
+        // global_search is a navigation surface — a row there opens an entity
+        // page and fills nothing — so the map is empty on purpose and the
+        // projection call below keeps one shape on both branches.
+        const venueBindings = new Map<string, CanonicalVenueBinding>();
 
         const seenIds = new Set<string>(); let openOnMap: InputSuggestion | null = null; // §21 G134 (lead ruling PR-D2-6)
         dispatchTypes.forEach((t, idx) => {
@@ -964,7 +964,7 @@ async function dispatchAndProject(
     /** §16/§17 active-task bounds resolved once by the caller. */
     taskConstraint: TaskConstraint;
     /** census-discovery §80 — the optional coverage sink. */
-    coverage?: GatewayCoverage; /** §9 G53 — collects TripFit ids for the trust positions. */ tripFitSink?: Set<string>;
+    coverage?: GatewayCoverage; /** §9 G53 — collects TripFit ids for the trust positions. */ tripFitSink?: Set<string>; /** census G153/G192 — collects the canonical place candidates the provider lane is compared with. */ placeSink?: SearchResult[];
   },
 ): Promise<InputSuggestion[]> {
   const [blockedSet, ageRestrictedSet] = await Promise.all([
@@ -987,7 +987,7 @@ async function dispatchAndProject(
     ),
   ), []);
 
-  const verdict = classifyFeasibility(perTypeResults.flat(), p.taskConstraint); for (const id of verdict.tripFitIds) p.tripFitSink?.add(id); // §9 G53 step 4
+  const verdict = classifyFeasibility(perTypeResults.flat(), p.taskConstraint); for (const id of verdict.tripFitIds) p.tripFitSink?.add(id); for (const r of perTypeResults.flat()) if (r.type === 'places') p.placeSink?.push(r); /* §9 G53 step 4; census G153/G192 place sink */ const venueBindings = GEO_PICKER_CONTEXTS.has(p.context) ? await resolveVenueBindings(sc, perTypeResults.flat().filter((r) => r.type === 'places')) : new Map<string, CanonicalVenueBinding>(); // §17 G109: this is the picker path, so its venues are bound HERE (census G109 wave-5 fix; before it, nothing on the serve path bound one)
   const out: InputSuggestion[] = [];
   const seen = new Set<string>();
   for (const items of perTypeResults) {
@@ -998,7 +998,7 @@ async function dispatchAndProject(
         projectSearchResult(r, p.context, POLICY_VERSION, p.q, {
           temporalWindow: p.temporalWindow,
           demoted: verdict.demotedIds.has(r.id),
-          tripFit: verdict.tripFitIds.has(r.id), origin: p.distanceOrigin ?? null, // §28 G176
+          tripFit: verdict.tripFitIds.has(r.id), origin: p.distanceOrigin ?? null, venueBinding: venueBindings.get(r.id) ?? null, // §28 G176; §17 G109
         }),
       );
     }
@@ -1156,3 +1156,4 @@ export function gatewayFailureRefusal(): DiscoveryRefusal {
 
 import { serveTelegraphMeetAt } from "./telegraphActions";
 import { ZERO_STATE_LANE, PREVIOUS_QUERIES_LANE } from "./zeroStateLanes"; import { buildPreviousQueryCompletions } from "./previousQueries"; import { buildStructuredValueRows } from "./structuredValues"; import { buildTripActionRows } from "./tripActions"; import { planSearchScope } from "./searchScope"; // V-ZS: zero-state failure lanes never share a dispatched type's name
+import { buildProviderSuggestions } from "./providerFederation"; // §34 G222 (wave 4): provider federation on the server

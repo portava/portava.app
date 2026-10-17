@@ -1015,3 +1015,53 @@ test.each(missingOwnerIdentities.flatMap(identity => (['area', 'pin', 'add'] as 
     initializeMessagingOwnerObserver();
   }
 });
+
+// ── census G176 (wave-5 fix): the REAL picker's granted position reaches the route ──
+//
+// GlobalPlacePicker folds its silent nearby fix — an ALREADY-granted permission
+// and the last known position, nothing requested — into the hook's session as
+// `lat`/`lng`. The hook → requestSuggestions → buildSuggestBody chain is real
+// here; only fetch is faked. Before the fix the fix went out at device precision
+// inside `sessionContext`, where the route never reads a position, so no picker
+// ever got a distance band or the nearby order.
+// MUTATIONS (each red alone, restored): buildSuggestBody without the top-level
+// lift → test 1 red; without the 3-decimal coarsening → test 1 red; the session
+// forwarded with the pair still in it → test 1 red.
+test('G176: a granted position reaches the suggest wire as a coarse top-level pair, never in the session or a cache key', async () => {
+  jest.mocked(ExpoLocation.getForegroundPermissionsAsync).mockResolvedValueOnce({ granted: true } as ExpoLocation.LocationPermissionResponse);
+  jest.mocked(ExpoLocation.getLastKnownPositionAsync).mockResolvedValueOnce(
+    { coords: { latitude: 16.067812345, longitude: 108.223345678, accuracy: 5 }, timestamp: 1 } as ExpoLocation.LocationObject,
+  );
+  selectionTransport();
+  const write = jest.spyOn(sharedSuggestionCache, 'set');
+  await directPicker({ assistContext: 'event_location' });
+  await waitFor(() => expect(reverseCalls()).toHaveLength(1)); // the fix has landed in the picker
+  await fireEvent.changeText(screen.getByPlaceholderText('Selection lifetime query'), 'Canonical Sky36');
+  await tick();
+  const typed = locationRequests().filter(body => body.text === 'Canonical Sky36');
+  expect(typed.length).toBeGreaterThan(0);
+  for (const body of typed) {
+    expect(body.lat).toBe(16.068);
+    expect(body.lng).toBe(108.223);
+    expect(body.sessionContext?.lat).toBeUndefined();
+    expect(body.sessionContext?.lng).toBeUndefined();
+  }
+  expect(JSON.stringify(locationRequests())).not.toMatch(/16\.0678|108\.2233/);
+  await waitFor(() => expect(write).toHaveBeenCalled());
+  for (const [key] of write.mock.calls) expect(key).not.toMatch(/16\.0678|108\.2233|16\.068|108\.223/);
+});
+
+test('G176: without a granted permission the suggest wire carries no position', async () => {
+  selectionTransport();
+  await directPicker({ assistContext: 'event_location' });
+  await waitFor(() => expect(ExpoLocation.getForegroundPermissionsAsync).toHaveBeenCalled());
+  await fireEvent.changeText(screen.getByPlaceholderText('Selection lifetime query'), 'Canonical Sky36');
+  await tick();
+  const typed = locationRequests().filter(body => body.text === 'Canonical Sky36');
+  expect(typed.length).toBeGreaterThan(0);
+  for (const body of typed) {
+    expect('lat' in body).toBe(false);
+    expect('lng' in body).toBe(false);
+  }
+  expect(ExpoLocation.getLastKnownPositionAsync).not.toHaveBeenCalled();
+});

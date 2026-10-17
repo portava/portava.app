@@ -9,7 +9,7 @@ import { startSuggestionSeenCleanup } from "./lib/suggestionSeenCleanup";
 import { startWeatherCacheCleanup } from "./lib/weatherCacheCleanup";
 import { startDiscoveryCacheCleanup } from "./lib/discoveryCacheCleanup";
 import { initTelegraphBroadcast } from "./lib/telegraphBroadcast";
-import { startSafeReturnScheduler } from "./lib/safeReturnScheduler";
+import { startSafeReturnScheduler } from "./lib/safeReturnScheduler"; import { startSafetySignalRedriveScheduler } from "./lib/safetySignalRedriveScheduler.js"; // Fable pass 3 §1.1: the durable re-drive of a help request (on this line so no cited line moves)
 import { startDelayedPostPublisher } from "./lib/delayedPostPublisher";
 import { startCompassAbuseScanScheduler } from "./lib/compassAbuseScanScheduler";
 import { startCompassSenseScheduler } from "./lib/compassSenseScheduler";
@@ -116,7 +116,7 @@ app.listen(port, (err) => {
   startWeatherCacheCleanup();
   startDiscoveryCacheCleanup();
   initTelegraphBroadcast();
-  startSafeReturnScheduler();
+  startSafeReturnScheduler(); startSafetySignalRedriveScheduler(); // Telegraph §19 P0: re-attempts a help request the door could not tell, for 15 minutes (services/telegraph/safetyNotifications.ts foot)
   startTripProjectionWorkers(); // reminders, live-share expiry, retention sweep — server/trips/projectionWorkers
   startDelayedPostPublisher();
   startCompassAbuseScanScheduler();

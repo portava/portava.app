@@ -44,7 +44,7 @@ const UNDISCLOSED: ConversationFacts = { memberCount: null, isE2ee: null, degrad
 export async function readConversationFacts(
   sc: SupabaseClient,
   conversationId: string,
-  viewerId: string,
+  viewerId: string, /** Wave 5 (block parity): answer as for a stranger — the same one own-membership read, so a failure degrades it exactly as it degrades theirs, and then nothing disclosed. */ asStranger = false,
 ): Promise<ConversationFacts> {
   const { data: own, error: ownErr } = await sc
     .from("message_thread_members")
@@ -54,7 +54,7 @@ export async function readConversationFacts(
     .is("left_at", null)
     .maybeSingle();
   if (ownErr) return { memberCount: null, isE2ee: null, degraded: true };
-  if (!own) return UNDISCLOSED;
+  if (!own || asStranger) return UNDISCLOSED;
 
   let degraded = false;
 

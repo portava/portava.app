@@ -2939,7 +2939,7 @@ somebody measured it.
 > merges — which is the same fact this section's own paragraph states from the
 > other end.
 
-## `2998_story_retention.sql` — applied to `portava-ci` 2026-09-23, NOT to production
+## `2998_story_retention.sql` — applied to `portava-ci` 2026-09-23; applied to production by hand afterwards (corrected 2026-10-17, see Production)
 
 The owner-archive retention unit: `stories.deleted_at` with the trigger that
 freezes it, the `story_purge_queue` ledger, `job_health.last_success_at`, and
@@ -3004,7 +3004,7 @@ sanctioned CI project only.
 
 Production state, read 2026-09-23 00:14:40 UTC — `story_purge_queue` absent,
 `stories.deleted_at` absent, `job_health.last_success_at` absent; `stories`,
-`story_views`, `story_reactions` and `story_replies` all **0 rows**.
+`story_views`, `story_reactions` and `story_replies` all **0 rows**. **Correction (2026-10-17): this is no longer production's state.** 2998 was applied to production by hand afterwards (2026-09-25 per `artifacts/api-server/src/scripts/checkProductionDrift.ts`'s `story_purge_queue` note). Production's `schema_migration_ledger` holds a `manual` row for `2998_story_retention.sql` whose checksum is this file's sha256 (read-only, 2026-10-17), and a read-only catalog check on 2026-10-17 found `stories.deleted_at`, `story_purge_queue` and `job_health.last_success_at` all present. `production-applied-migrations.json` still has no row for it, so the column scan records the three names as a dated observation (`artifacts/api-server/src/test/fixtures/productionCatalogObservations.json`; `docs/ops/production-unapplied-schema-reads-20261017.md`).
 
 Deploying `main` ahead of this apply is safe, and the reason is narrower than
 "the job reports a failure" — it is an **order**. `enqueueDueStories` runs

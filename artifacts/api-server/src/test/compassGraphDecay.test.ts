@@ -29,7 +29,7 @@
 import { describe, it, mock, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import * as engine from "../compass/CompassGraphEngine.js";
+import * as engine from "../compass/CompassGraphEngine.js"; import { stageEarnedPresenceInPlace } from "./helpers/stampPresenceFixture.js";
 
 /* ── A store-backed PostgREST fake: honours range/limit/order, fails on demand ── */
 
@@ -91,7 +91,7 @@ class Q implements PromiseLike<Result> {
     return this;
   }
 
-  private rows(): Row[] { return (this.store[this.table] ??= []); }
+  private rows(): Row[] { if (this.table === "user_stamps" || this.table === "plan_checkins") stageEarnedPresenceInPlace(this.store as any); return (this.store[this.table] ??= []); } // H4, wave 5 (stampPresenceView.ts): a presence stamp staged as earned gets its trip and check-in; HEAD read neither
 
   private run(): Result {
     const t = this.table;
@@ -146,7 +146,7 @@ function makeDb(store: Store, opts: FakeOpts = {}): { db: SupabaseClient; log: s
 const A = "user-a";
 const B = "user-b";
 const C = "user-c";
-const PRESENCE = { evidences_presence: true };
+const PRESENCE = { evidences_presence: true, slug: "first_trip_completed" }; // H4, wave 5: a presence stamp is a registered presence slug (stampPresenceView.ts); HEAD did not select the slug
 
 function sources(): Store {
   return {

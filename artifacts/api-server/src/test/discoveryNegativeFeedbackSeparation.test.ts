@@ -99,7 +99,7 @@ describe("DV-78 — report, mute and block stay out of ranking (census-discovery
 
   it("N5. the one ranking-side read of `blocks` excludes interactions, it does not penalise", () => {
     const cas = read("services/ranking/CreatorActivityScoreService.ts");
-    assert.match(cas, /\.from\("blocks"\)/);
+    assert.match(cas, /readBlockExclusions\(this\.db as any, userId\)/); // census-telegraph T220: the read goes through the shared reader (was `.from("blocks")`)
     const uses = cas.split("\n").filter((l) => /blockedIds/.test(l) && !/^\s*(\*|\/\/)/.test(l));
     for (const l of uses) {
       // Every use is the set itself, its null check, or an EXCLUSION (`!has` keeps

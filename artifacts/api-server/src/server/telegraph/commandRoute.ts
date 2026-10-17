@@ -43,7 +43,7 @@ import { logger as rootLogger } from "../../lib/logger.js";
 import { publishToThread } from "../../lib/telegraphEvents.js"; import { guardTelegraphThreadWrite, sendThreadWriteRefusal } from "../../lib/telegraphThreadWrite.js"; import { textOfPayload } from "../../domain/telegraph/policies/groupControlsPolicy.js";
 import { messageKernelEnabled } from "../../services/telegraphMessageKernel.js";
 import { createCoordinationSession } from "../../services/telegraph/coordinationSessions.js";
-import { isEnvelopeCommand, planEnvelopeCommand, writeThreadEnvelope } from "../../services/telegraph/threadEnvelopeWrites.js";
+import { isEnvelopeCommand, planEnvelopeCommand, writeThreadEnvelope } from "../../services/telegraph/threadEnvelopeWrites.js"; import { notifyEnvelopeCommandWrite } from "../../services/telegraph/messageNotifications.js"; // wave 5 safety lane
 import { unsendBeforeSeen } from "../../services/telegraph/unsend.js";
 import {
   ISSUABLE_COMMANDS,
@@ -277,7 +277,7 @@ router.post(
         subtype: written.row.subtype,
         createdAt: written.row.created_at,
       }));
-      return;
+      notifyEnvelopeCommandWrite(sc, { threadId: conversationId, senderId: user.id, kind: envelopePlan.kind, payload: (envelopePlan.envelope as { payload?: unknown }).payload, row: written.row }, { log }); return; // wave 5 safety lane: the bus tells the people the route doors tell — NEED_HELP as SAFETY (P0), a quick state as COORDINATION (T395), SHARE_LOCATION as LOCATION — after the answer, never awaited
     }
 
     let result: TelegraphCommandResult;

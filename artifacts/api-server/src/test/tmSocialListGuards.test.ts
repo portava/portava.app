@@ -339,7 +339,7 @@ function review(id: string, reviewer: string, entityType: string, entityId: stri
   return {
     id, reviewer_id: reviewer, entity_type: entityType, entity_id: entityId, rating,
     body: `review ${id}`, tags: [], visibility: "public", state: "published", created_at: created,
-    profiles: { handle: PROFILES.find((p) => p.id === reviewer)?.handle ?? null, display_name: null, avatar_url: null, verification_level: null },
+    // census-trust wave 5: no inline `profiles` — the route reads PROFILES by id (reviews has no key to profiles)
   };
 }
 
@@ -417,7 +417,7 @@ describe("GET /users/:id/reviews — host reviews", () => {
     trips: [{ id: TRIP, owner_id: OWNER }],
     events: [{ id: EVENT, host_id: OWNER }],
     reviews: [review("u-third", THIRD, "trip", TRIP, 5, "2026-06-02T00:00:00Z"), review("u-fourth", FOURTH, "trip", TRIP, 3, "2026-06-01T00:00:00Z")],
-    event_reviews: [{ id: "e-1", event_id: EVENT, reviewer_id: THIRD, rating: 4, body: "ok", anonymous: false, created_at: "2026-06-03T00:00:00Z", profiles: { handle: "third" } }],
+    event_reviews: [{ id: "e-1", event_id: EVENT, reviewer_id: THIRD, rating: 4, body: "ok", anonymous: false, created_at: "2026-06-03T00:00:00Z" }],
   });
 
   it("HEALTHY TWIN: trip + event reviews of the host are merged", async () => {

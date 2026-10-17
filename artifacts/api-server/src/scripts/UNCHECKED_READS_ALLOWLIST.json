@@ -80,7 +80,6 @@
     "routes/reviews.ts::checkEligibility::hidden_gems.maybeSingle": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
     "routes/reviews.ts::checkEligibility::trip_members.maybeSingle": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
     "routes/reviews.ts::checkEligibility::trips.maybeSingle": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
-    "routes/reviews.ts::checkEligibility::rent_buddy_bookings.maybeSingle": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
       "routes/safeReturn.ts::post /me/safe-return/sessions/:id/confirm::feature_flags.maybeSingle": "FAIL-CLOSED: inline *_enabled capability flag reads as off and the side effect (stamp/memory/compass context) is skipped; the DB error is reported as a disabled feature",
     "routes/safeReturn.ts::post /me/safe-return/sessions/:id/confirm::feature_flags.maybeSingle#2": "FAIL-CLOSED: inline *_enabled capability flag reads as off and the side effect (stamp/memory/compass context) is skipped; the DB error is reported as a disabled feature",
     "routes/stamps.ts::use *::feature_flags.maybeSingle": "FAIL-CLOSED: stamp_system_v2_enabled unreadable -> 503 feature_not_available on every /stamps route; the DB error is reported as a disabled feature",

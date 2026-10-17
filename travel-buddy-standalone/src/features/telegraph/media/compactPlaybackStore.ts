@@ -44,7 +44,7 @@
  * thumbnail. Pure module, no React: `useCompactPlaybackSource` (the hooks'
  * side) and `CompactPlaybackHost` (the presenter) are the two React adapters.
  */
-
+import { messageTreeMediaOrNull } from './messageTreeMedia.ts'; // census T446: a session plays Portava storage or nothing
 export type PlaybackPresentation = 'expanded' | 'compact';
 
 export type PlaybackStopReason =
@@ -158,7 +158,7 @@ export function lastPlaybackStopReason(): PlaybackStopReason | null {
  * carrying this media reference.
  */
 export function openMessageVideo(req: OpenMessageVideoRequest): boolean {
-  const mediaRef = typeof req.mediaRef === 'string' ? req.mediaRef : '';
+  const mediaRef = messageTreeMediaOrNull(req.mediaRef) ?? ''; // census T446: a sender's non-storage URL never plays
   if (!mediaRef) return false;
 
   const bindings: PlaybackBinding[] = [];
@@ -182,7 +182,7 @@ export function openMessageVideo(req: OpenMessageVideoRequest): boolean {
   setSession({
     key: nextKey++,
     mediaRef,
-    posterRef: req.posterRef ?? null,
+    posterRef: messageTreeMediaOrNull(req.posterRef ?? null),
     presentation: 'expanded',
     bindings,
     senderIds: [...senders],

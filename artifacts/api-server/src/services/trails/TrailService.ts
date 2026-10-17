@@ -555,7 +555,7 @@ export interface TrailModulesResult {
    * recorded here so the next reader does not mistake this field for a
    * stronger guarantee than it is.
    */
-  momentumProvenance: DerivedStoreProvenance | null; /** §86: what serving this page owes the database (flag-on only; never serialised). */ serveEffects?: TrailServeEffects;
+  momentumProvenance: DerivedStoreProvenance | null; /** §86: what serving this page owes the database (flag-on only; never serialised). */ serveEffects?: TrailServeEffects; /** 2026-10-17 (wave 4): set ONLY when the protected-zone rule WITHHELD momentum (foot of file) — `momentumProvenance: null` is then "not computed, by rule", and trending_now is empty. Never serialised. */ momentumWithheld?: TrendProducerPrivacyBlock;
 }
 
 const DAY = 86_400_000;
@@ -757,8 +757,8 @@ export async function getTrailModules(
   // did the arithmetic. `null` means no reading entered this result — no place
   // members, or a read that FAILED — never a window that was not consulted.
   let momentum: Record<string, number> = {};
-  let momentumProvenance: DerivedStoreProvenance | null = null;
-  if (placeMembers.length > 0 && events) {
+  let momentumProvenance: DerivedStoreProvenance | null = null; let momentumWithheld: TrendProducerPrivacyBlock | null = null;
+  if (placeMembers.length > 0 && events && !(momentumWithheld = await trailMomentumWithheld(sc))) { // 2026-10-17 (wave 4): the trend API's zone rule — no momentum while any protected zone is active, an unreadable policy fails closed (foot of file)
     const placeIds = new Set(placeMembers.map((r) => r.source_id));
     const reading = computeLocalMomentum(events.rows.filter((e) => placeIds.has(e.item_id)), nowMs);
     momentum = { ...reading.values };
@@ -866,7 +866,7 @@ export async function getTrailModules(
   const picks = await trailPersonalizedPicks(sc, served, opts.viewerId ?? null, nowMs); return boundCreatorsAcrossPage(served, {  // §93 (DV-09): `02` §8 Personalized Picks on `01` §9's Trail objective — null (no module, nothing else read) unless 3500's Trail flag and 3450 are both on
     refusal: null,
     health,
-    momentumProvenance,
+    momentumProvenance, ...(momentumWithheld ? { momentumWithheld } : {}),
     modules: [
       justArrived,
       build("trending_now", "momentum", 2 * DAY, byMomentum),
@@ -948,7 +948,7 @@ export async function relatedTrails(sc: any, trailId: string): Promise<RelatedTr
 export interface TrailTrendingResult {
   refusal: TrailRefusal;
   /** Trail-level momentum in [0,1] from the SHIPPING momentum kernel, or null. */
-  momentum: number | null; /** §61.17: set ONLY when the Trail-momentum read FAILED — `momentum: null` alone also means "no members", a measured empty (DC-17). */ momentumUnread?: true; /** §86 (DV-74): a trend integrity review in force suppresses this Trail's trend. */ trendSuppressed?: true;
+  momentum: number | null; /** §61.17: set ONLY when the Trail-momentum read FAILED — `momentum: null` alone also means "no members", a measured empty (DC-17). 2026-10-17 (wave 4): also set when the protected-zone rule WITHHELD the reading (`momentumWithheld` names why), so the route serves unknown, never a measured "not trending". */ momentumUnread?: true; /** 2026-10-17 (wave 4): the zone rule's reason when no momentum was computed (foot of file). */ momentumWithheld?: TrendProducerPrivacyBlock; /** §86 (DV-74): a trend integrity review in force suppresses this Trail's trend. */ trendSuppressed?: true;
   /** Member items with momentum, strongest first. Never a raw score to a client. */
   items: Array<{ id: string; sourceType: string; sourceId: string }>; /** §86 follow-up (DV-23): §10's clause 5 on the trending list — counts per place (serialised when non-empty) and every held-back member (never serialised; GET …/more returns them). */ moreFromThisPlace?: Record<string, number>; heldBackByPlace?: Record<string, TrailModule["items"]>; heldBackUnplaced?: TrailModule["items"];
   /**
@@ -1002,7 +1002,7 @@ export async function trailTrending(
   // Trail — one kernel, two scopes, no second velocity model (DV-25). Two reads
   // because the two scopes differ; neither is cached, so neither can hand the
   // other a corpus chosen for a different member set.
-  let perItem: Record<string, number> = {};
+  const withheld = await trailMomentumWithheld(sc); if (withheld) return { refusal: null, momentum: null, items: [], momentumProvenance: null, momentumUnread: true, momentumWithheld: withheld }; let perItem: Record<string, number> = {}; // 2026-10-17 (wave 4): the zone rule, before either read (foot of file)
   let momentumProvenance: DerivedStoreProvenance | null = null;
   const itemRead = await readMemberEvents(sc, servable, nowMs, "discovery");
   if (itemRead) {
@@ -1122,7 +1122,7 @@ async function readTrailMomentum(
 ): Promise<Record<string, number> | undefined> {
   // Every surface, both served id spaces, analytics excluded in the query —
   // the same read GET …/trending folds for its boolean (`readMemberEvents`).
-  const read = await readMemberEvents(sc, members, nowMs, null);
+  if (await trailMomentumWithheld(sc)) return undefined; const read = await readMemberEvents(sc, members, nowMs, null); // 2026-10-17 (wave 4): withheld by the zone rule is "no momentum information" (unscaled), never a measured-flat Trail
   if (!read) return undefined;
   return trailMomentumFromRankEvents(read.rows, members, nowMs);
 }
@@ -2096,9 +2096,9 @@ async function trailModulesExplored(
   const measuredOf = (r: ServableMember): MeasuredExposure | null => (measured ? (measured[r.source_id] ?? { impressions: 0, positives: 0 }) : null);
 
   let momentum: Record<string, number> = {};
-  let momentumProvenance: DerivedStoreProvenance | null = null;
+  let momentumProvenance: DerivedStoreProvenance | null = null; let momentumWithheld: TrendProducerPrivacyBlock | null = null;
   const placeMembers = served.filter((r) => r.source_type === "place");
-  if (placeMembers.length > 0 && events) {
+  if (placeMembers.length > 0 && events && !(momentumWithheld = await trailMomentumWithheld(sc))) { // 2026-10-17 (wave 4): the same zone rule as the default path (foot of file)
     const placeIds = new Set(placeMembers.map((r) => r.source_id));
     const reading = computeLocalMomentum(events.rows.filter((e) => placeIds.has(e.item_id)), nowMs);
     momentum = { ...reading.values };
@@ -2148,7 +2148,7 @@ async function trailModulesExplored(
   justArrived.explorationSlots = explorationSlots;
 
   const picks = await trailPersonalizedPicks(sc, view, o.viewerId ?? null, nowMs); const result = boundCreatorsAcrossPage(served, {  // §93 (DV-09): as the default branch, over the decided states
-    refusal: null, health, momentumProvenance,
+    refusal: null, health, momentumProvenance, ...(momentumWithheld ? { momentumWithheld } : {}),
     modules: [
       justArrived,
       buildTrailModule("trending_now", "momentum", 2 * DAY, byMomentum, pageSize, null, demoted),
@@ -2541,4 +2541,27 @@ export async function readTrailFollow(
     .maybeSingle();
   if (error) return { refusal: refusalFor(error, "follow_read"), following: false };
   return { refusal: null, following: !!data };
+}
+
+// ── 2026-10-17 (wave 4): the protected-zone rule on every Trail momentum reading ──
+//
+// The trend API's rule, not a second one: lib/discoveryTrendProducerPrivacy is
+// what loadLocalMomentum (GET /discovery's momentum), the rebuild scheduler and
+// the candidate retrievals (lib/discoveryCandidates/retrievals.ts momentumZonePass)
+// apply. While ANY active protected zone exists no momentum is computed — a live
+// reading has no per-place zone filter, so an activity count over a place inside
+// a zone would publish the zone. An unreadable zone policy is never "no zones".
+//
+// Every site in this file that turns live `rank_events` into momentum asks it:
+//   trending_now (getTrailModules and trailModulesExplored)  → empty, provenance null, `momentumWithheld`
+//   GET …/trending (trailTrending)                            → no order, no boolean: `momentumUnread` + `momentumWithheld`
+//   DV-25's Trail momentum (readTrailMomentum)                → undefined, the "no information" (unscaled) case
+// §9's exposure denominators and §11's impression counts are not momentum and are
+// not gated here: they decide which member gets a bounded exploration slot and
+// never publish an activity reading.
+import { unfilteredTrendBlockReason, type TrendProducerPrivacyBlock } from "../../lib/discoveryTrendProducerPrivacy.js";
+
+/** `null` when momentum may be computed; otherwise the zone rule's reason, and nothing is computed. */
+async function trailMomentumWithheld(sc: any): Promise<TrendProducerPrivacyBlock | null> {
+  return unfilteredTrendBlockReason(sc);
 }

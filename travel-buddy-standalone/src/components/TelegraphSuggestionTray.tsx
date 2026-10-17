@@ -14,7 +14,8 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { View, Text, StyleSheet, Animated, ScrollView, Pressable } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Clock } from 'lucide-react-native';
-import { color, space, radius, type as t, icon } from '../theme/tokens.ts';
+import { space, radius, type as t, icon } from '../theme/tokens.ts';
+import { useTelegraphTheme, type TelegraphPalette } from '../features/telegraph/theme/telegraphTheme.ts';
 import { TelegraphChatCard } from './TelegraphChatCard.tsx';
 import {
   getTelegraphSuggestions,
@@ -138,6 +139,7 @@ export function TelegraphSuggestionTray({
   onCreateMeetup,
   onViewPlace,
 }: TelegraphSuggestionTrayProps) {
+  const { palette, styles } = useTelegraphTheme(makeStyles);
   const [suggestions, setSuggestions] = useState<TelegraphSuggestion[]>([]);
   const [stale, setStale] = useState(false);
   const [activeFilters, setActiveFilters] = useState<string[]>([]);
@@ -328,7 +330,7 @@ export function TelegraphSuggestionTray({
     <Animated.View style={[styles.tray, { opacity }]}>
       {stale && (
         <View style={styles.staleRow}>
-          <Clock size={icon.s14} color={color.faint} />
+          <Clock size={icon.s14} color={palette.faint} />
           <Text style={styles.staleLabel}>From earlier</Text>
         </View>
       )}
@@ -394,15 +396,16 @@ export function clearTelegraphSuggestionsCache(threadId: string): Promise<void> 
   return clearCache(threadId);
 }
 
-const styles = StyleSheet.create({
+// census T123/T124: the scheme's palette; a selected filter is ordinary emphasis (teal).
+const makeStyles = (p: TelegraphPalette) => StyleSheet.create({
   tray: {
     paddingHorizontal: space.md,
     paddingTop: space.sm,
     paddingBottom: 4,
     gap: space.sm,
     borderTopWidth: 1,
-    borderTopColor: color.signal + '22',
-    backgroundColor: color.paper,
+    borderTopColor: p.operational + '22',
+    backgroundColor: p.surface,
   },
   staleRow: {
     flexDirection: 'row',
@@ -412,7 +415,7 @@ const styles = StyleSheet.create({
   },
   staleLabel: {
     ...t.stamp,
-    color: color.faint,
+    color: p.faint,
     textTransform: 'uppercase',
   },
   filterSection: {
@@ -436,11 +439,11 @@ const styles = StyleSheet.create({
   },
   chipIdle: {
     backgroundColor: 'transparent',
-    borderColor: color.haze,
+    borderColor: p.haze,
   },
   chipActive: {
-    backgroundColor: color.signal,
-    borderColor: color.signal,
+    backgroundColor: p.operational,
+    borderColor: p.operational,
   },
   chipClear: {
     backgroundColor: 'transparent',
@@ -452,17 +455,17 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   chipTextIdle: {
-    color: color.mute,
+    color: p.mute,
   },
   chipTextActive: {
-    color: color.onInk,
+    color: p.operationalOn,
   },
   chipClearText: {
-    color: color.signal,
+    color: p.operational,
     fontWeight: '700',
   },
   countBadge: {
     ...t.stamp,
-    color: color.faint,
+    color: p.faint,
   },
 });

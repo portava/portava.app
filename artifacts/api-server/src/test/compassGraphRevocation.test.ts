@@ -30,7 +30,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import * as engine from "../compass/CompassGraphEngine.js";
+import * as engine from "../compass/CompassGraphEngine.js"; import { stageEarnedPresenceInPlace } from "./helpers/stampPresenceFixture.js";
 
 /* ── A store-backed PostgREST fake: honours range/limit/order, fails on demand ── */
 
@@ -89,7 +89,7 @@ class Q implements PromiseLike<Result> {
     return this;
   }
 
-  private rows(): Row[] { return (this.store[this.table] ??= []); }
+  private rows(): Row[] { if (this.table === "user_stamps" || this.table === "plan_checkins") stageEarnedPresenceInPlace(this.store as any); return (this.store[this.table] ??= []); } // H4, wave 5 (stampPresenceView.ts): a presence stamp staged as earned gets its trip and check-in; HEAD read neither
 
   private run(): Result {
     const t = this.table;
@@ -142,7 +142,7 @@ function makeDb(store: Store, opts: FakeOpts = {}): { db: SupabaseClient; log: s
 const A = "user-a";
 const B = "user-b";
 const C = "user-c";
-const PRESENCE = { evidences_presence: true };
+const PRESENCE = { evidences_presence: true, slug: "first_trip_completed" }; // H4, wave 5: a presence stamp is a registered presence slug (stampPresenceView.ts); HEAD did not select the slug
 
 function sources(): Store {
   return {
@@ -205,7 +205,7 @@ function hasEdge(store: Store, pred: (e: Row) => boolean): boolean {
 async function scratch(src: Store): Promise<Store> {
   const fresh: Store = {};
   // feature_flags too: §10's precision gate decides what a Memory contributes (census-compass §47).
-  for (const t of [...SOURCE_TABLES, "feature_flags"]) fresh[t] = (src[t] ?? []).map((r) => ({ ...r }));
+  for (const t of [...SOURCE_TABLES, "feature_flags", "plan_checkins", "passport_stamps", "passport_postcards"]) fresh[t] = (src[t] ?? []).map((r) => ({ ...r })); // H4, wave 5: and the occurrence evidence a visited edge needs (stampPresenceView.ts)
   await engine.rebuildIntelligenceGraph(makeDb(fresh).db);
   return fresh;
 }

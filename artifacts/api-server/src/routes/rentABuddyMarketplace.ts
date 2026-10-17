@@ -85,7 +85,7 @@ import {
   BASIS_POINTS_PER_UNIT,
   FLAT_COMMISSION_BASIS_POINTS,
   basisPointsToPercent,
-  describeFeeScheduleFailure,
+  describeFeeScheduleFailure, FEE_SCHEDULE_NOT_DEPLOYED, FEE_SCHEDULE_NOT_DEPLOYED_ADMIN, isFeeScheduleSchemaAbsent,
   platformFeeUsdFor,
   resolveFeeSchedule,
   roundUsd,
@@ -2193,10 +2193,10 @@ router.get("/rent-a-buddy/me/earnings/summary", async (req, res) => {
   }
   if (feeSchedule.status === "read_failed") {
     logger.error(
-      { userId: auth.user.id, buddyProfileId: buddyProfile.id, detail: feeSchedule.message },
+      { userId: auth.user.id, buddyProfileId: buddyProfile.id, detail: feeSchedule.message, schemaAbsent: feeSchedule.schemaAbsent === true },
       "earnings summary refused: rent_buddy_fee_rules unreadable",
-    );
-    return sendError(res, 'db_error', describeFeeScheduleFailure(feeSchedule));
+    ); // 3601 not run on this database (held for production) is a stated 503, not a 500 — lib/rentBuddyFeeSchedule.ts foot
+    return feeSchedule.schemaAbsent ? sendError(res, 'degraded_unavailable', FEE_SCHEDULE_NOT_DEPLOYED) : sendError(res, 'db_error', describeFeeScheduleFailure(feeSchedule));
   }
 
   // A partial total is worse than no total on a buddy's own money screen: the
@@ -2829,7 +2829,7 @@ router.patch("/rent-a-buddy/admin/fee-rules", async (req, res) => {
         traveler_service_fee_pct: upd.travelerServiceFeePct ?? 0,
         updated_at: new Date().toISOString(),
       }, { onConflict: "buddy_level" });
-    if (feeErr) return sendError(res, 'db_error', feeErr.message);
+    if (feeErr) return isFeeScheduleSchemaAbsent(feeErr) ? sendError(res, 'degraded_unavailable', FEE_SCHEDULE_NOT_DEPLOYED_ADMIN) : sendError(res, 'db_error', feeErr.message); // 3601 absent: nothing was written (the first row already fails)
   }
 
   const { error: auditErr } = await svc.from("rent_buddy_admin_actions").insert({

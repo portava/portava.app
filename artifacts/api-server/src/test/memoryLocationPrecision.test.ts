@@ -31,7 +31,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { _setTestClient } from "../lib/http.js";
-import memoriesRouter from "../routes/memories.js";
+import memoriesRouter from "../routes/memories.js"; import { orPredicate } from "./helpers/postgrestOrFilter.js"; // census-telegraph T220: a real `.or()` (the shared block readers narrow inside one)
 import {
   normalizeMemoryPrecision,
   normalizeMemoryPrecisionForWrite,
@@ -209,7 +209,7 @@ function makeClient(state: State) {
       upsert() { return builder; }, delete() { return builder; },
       eq(c: string, v: any) { filters.push((r) => r[c] === v); return builder; },
       neq(c: string, v: any) { filters.push((r) => r[c] !== v); return builder; },
-      in(c: string, v: any[]) { filters.push((r) => v.includes(r[c])); return builder; },
+      in(c: string, v: any[]) { filters.push((r) => v.includes(r[c])); return builder; }, or(expr: string) { filters.push(orPredicate(expr)); return builder; },
       lt() { return builder; }, gt() { return builder; }, is() { return builder; },
       not() { return builder; }, order() { return builder; }, limit() { return builder; },
       maybeSingle() { return resolve(true); },

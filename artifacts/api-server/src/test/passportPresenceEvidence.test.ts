@@ -48,9 +48,27 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildStats } from "../services/passport/PassportMapService.js";
-import { makePassportDb } from "./helpers/fakePassportDb.js";
+import { makePassportDb as makeRawPassportDb } from "./helpers/fakePassportDb.js";
+import { evidenceFor, postSourced, tripSourced } from "./helpers/stampPresenceFixture.js";
 
 const OWNER = "presence-owner-1";
+
+/**
+ * H4, wave 5 (stampPresenceView.ts): Countries/Cities also need the occurrence
+ * evidence a presence stamp's own source names. A row this suite stages as a
+ * genuinely-earned presence stamp (its embedded definition says presence) gets
+ * that evidence — a check-in on its trip, or an eligible postcard for its post.
+ * Rows staged as plans get none, as they never had any. At HEAD buildStats read
+ * neither the source columns nor the evidence tables, so this is premise-neutral
+ * there.
+ */
+function makePassportDb(tables: { user_stamps: Array<Record<string, any>> }) {
+  const earned = tables.user_stamps.filter((r) => {
+    const def = Array.isArray(r.stamp_definitions) ? r.stamp_definitions[0] : r.stamp_definitions;
+    return def?.[PRESENCE_COLUMN] === true;
+  });
+  return makeRawPassportDb({ ...tables, ...evidenceFor(earned) });
+}
 
 const MIGRATIONS_DIR = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -71,7 +89,9 @@ function userStamp(
   evidencesPresence: boolean,
   over: Record<string, any> = {},
 ) {
+  const city = (over.city as string | undefined) ?? "Da Nang";
   return {
+    ...(slug === "city_explorer" ? postSourced(OWNER, `post-${city}`) : tripSourced(OWNER, `trip-${city}`)),
     user_id: OWNER,
     country: "Vietnam",
     city: "Da Nang",
@@ -194,7 +214,7 @@ describe("buildStats — a trip you planned and never took is not a country you 
     // count for everyone, which is why both directions are asserted.
     const asArray = makePassportDb({
       user_stamps: [
-        { user_id: OWNER, country: "Japan", city: "Kyoto", visibility: "public", is_revoked: false,
+        { user_id: OWNER, country: "Japan", city: "Kyoto", visibility: "public", is_revoked: false, ...tripSourced(OWNER, "trip-Kyoto"),
           stamp_definitions: [{ category: "trip", slug: "first_trip_completed", [PRESENCE_COLUMN]: true }] },
         { user_id: OWNER, country: "Chile", city: "Valparaiso", visibility: "public", is_revoked: false,
           stamp_definitions: [{ category: "trip", slug: "first_trip_created", [PRESENCE_COLUMN]: false }] },

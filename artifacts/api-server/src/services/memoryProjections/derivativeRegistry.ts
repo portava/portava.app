@@ -41,7 +41,7 @@ import {
   scopeKeyOf,
   sourceVersionOf, recapExcludedOf,
 } from "./projectionRegistry.js";
-import type { SignificanceExplanation } from "./significance.js"; import { isTableAbsentError } from "../../lib/tableAbsence.js"; import { hiddenItemKeys } from "../memory/memoryItemVisibility.js"; import { memoriesAssertedAtPlace, placesThroughCorrections } from "../memory/memoryCorrections.js"; import { fieldServed, readCanonicalGates, occurrenceNameKeptWithRef, type CanonicalGates } from "../memory/memoryCanonicalFields.js"; import { logProjectionOperation, type ProjectionTrace } from "./projectionLog.js"; // one line: cited by line
+import type { SignificanceExplanation } from "./significance.js"; import { isTableAbsentError } from "../../lib/tableAbsence.js"; import { hiddenItemKeys } from "../memory/memoryItemVisibility.js"; import { memoriesAssertedAtPlace, placesThroughCorrections } from "../memory/memoryCorrections.js"; import { fieldServed, readCanonicalGates, occurrenceNameKeptWithRef, type CanonicalGates } from "../memory/memoryCanonicalFields.js"; import { logProjectionOperation, type ProjectionTrace } from "./projectionLog.js"; import { audienceCeilingFor, loadAudienceCeilings } from "../memory/memoryVisibilityPolicies.js"; import { CONTROL_EFFECTS } from "../highlights/highlightResurfacing.js"; // one line: cited by line
 
 export const DERIVATIVE_REGISTRY_TABLE = "memory_derivative_registry";
 
@@ -122,9 +122,9 @@ export interface ProjectionSources {
  */
 export async function readProjectionSources(
   client: ClientLike,
-  scope: ProjectionScope, opts: { includeHighlights?: boolean; placeCorrections?: boolean } = {},
+  scope: ProjectionScope, opts: { includeHighlights?: boolean; placeCorrections?: boolean; /** §23 (H203): the public index reads only public rows and columns. */ publicIndex?: boolean } = {},
 ): Promise<ProjectionResult<ProjectionSources>> {
-  const canonGates = await readCanonicalGates(client); const memRes = await readSourceMemories(client, scope.owner_id, canonGates); // H40/H71: the type / occurrence name are read only where their flag is ON
+  if (opts.publicIndex) return readPublicIndexSources(client, scope); const canonGates = await readCanonicalGates(client); const memRes = await readSourceMemories(client, scope.owner_id, canonGates); // H40/H71: the type / occurrence name are read only where their flag is ON
   if (memRes.error) {
     return {
       ok: false, reason: "source_unavailable", table: "memories",
@@ -209,7 +209,7 @@ export async function deriveProjection(
     return { ok: false, reason: "projection_not_configured", detail: def.unavailable_reason, retryable: false };
   }
 
-  const sources = await readProjectionSources(client, scope, { includeHighlights: readsHighlights(def), placeCorrections: readsPlaceCorrections(def) });
+  const sources = await readProjectionSources(client, scope, { includeHighlights: readsHighlights(def), placeCorrections: readsPlaceCorrections(def), publicIndex: def.audience === "PUBLIC" });
   if (!sources.ok) return sources; if (def.id === "TripMemoryProjection" && sources.value.memoryControls?.state === "unreadable") return { ok: false, reason: "source_unavailable", table: "memory_resurfacing_preferences", detail: "the owner's recap controls are unreadable, so no recap is derived (§AK, fail closed)", retryable: true }; if (sources.value.hiddenItems === null && (scope.viewer_id ?? null) !== scope.owner_id) return { ok: false, reason: "source_unavailable", table: "memory_items", detail: "photo audiences (3672) are unreadable, so no non-owner projection is derived (§AN, fail closed)", retryable: true };
 
   const rows = def.build({
@@ -411,7 +411,7 @@ export async function projectionStaleness(
   projectionId: ProjectionId,
   scope: ProjectionScope,
 ): Promise<ProjectionResult<StalenessVerdict>> {
-  const sources = await readProjectionSources(client, scope, { includeHighlights: readsHighlights(getProjectionDefinition(projectionId)), placeCorrections: readsPlaceCorrections(getProjectionDefinition(projectionId)) });
+  const sources = await readProjectionSources(client, scope, { includeHighlights: readsHighlights(getProjectionDefinition(projectionId)), placeCorrections: readsPlaceCorrections(getProjectionDefinition(projectionId)), publicIndex: getProjectionDefinition(projectionId)?.audience === "PUBLIC" });
   if (!sources.ok) return sources;
   const current = sourceVersionOf(sources.value.memories, sources.value.highlights, sources.value.highlight_policies, sources.value.memoryControls, sources.value.hiddenItems, sources.value.placeCorrections);
 
@@ -785,4 +785,92 @@ async function logRebuild(
     logProjectionOperation({ ...base, outcome: "refused", reason: result.reason, sourceVersion: null, engineVersion: definedEngine() });
   }
   return result;
+}
+
+// ── §23 (census H203): the public search index reads only what it publishes ──
+/**
+ * "Search/index workers consume privacy-filtered event payloads where possible
+ * rather than raw entire rows" (§23), and §28.6 "never expose private canonical
+ * Memory records to public search and rely on post-filtering".
+ *
+ * `PublicMemoryProjection` is the index the public search serves. Every other
+ * projection here is the owner's own (or a crew's) and must read the owner's
+ * rows; this one is built for an audience of everyone, so its source read is
+ * filtered IN THE DATABASE, not by the builder afterwards:
+ *
+ *   memories  only `visibility = 'public' AND state = 'published'` rows, and
+ *             only the columns the public whitelist is made of (plus the ids
+ *             and versions that make it rebuildable). No coordinate, no allow
+ *             or hide list, no trip / event / place reference, ever reaches
+ *             this process for a public build — not even to be thrown away.
+ *   controls  only for those Memories. One that carries a control suppressing
+ *             `public_projection` (KEEP_PRIVATE_FOREVER) is dropped; unreadable
+ *             controls REFUSE the build; an absent table (3671 unapplied) is
+ *             "none set".
+ *   items     only `id, memory_id, position` of those Memories — a count, never
+ *             a media URL — with the hidden photos (3672) as before.
+ *   tags      none: the public whitelist carries no people.
+ *
+ * §3.6 / §28.7 (census H33, 3997): the owner's PUBLIC location ceiling is
+ * applied here too, so the public index never carries a city the owner's
+ * publication policy withholds. The ceiling is folded into the source version
+ * BY CONTENT, so changing it makes the registration STALE and the next build
+ * applies it; with no policy (or the flag off) the version is unchanged.
+ */
+export const PUBLIC_INDEX_MEMORY_COLUMNS =
+  "id, owner_id, title, caption, visibility, state, starts_at, created_at, updated_at, location_city, location_country";
+
+async function readPublicIndexSources(client: ClientLike, scope: ProjectionScope): Promise<ProjectionResult<ProjectionSources>> {
+  const memRes = await readCompleteSource(
+    client.from("memories").select(PUBLIC_INDEX_MEMORY_COLUMNS, { count: "exact" })
+      .eq("owner_id", scope.owner_id).eq("visibility", "public").eq("state", "published"),
+    ["id"],
+  );
+  if (memRes.error) {
+    return { ok: false, reason: "source_unavailable", table: "memories", detail: `memories unreadable: ${memRes.error.message ?? "unknown error"}`, retryable: !isSchemaAbsent(memRes.error) };
+  }
+  let memories = (memRes.data ?? []).map((m: any): MemorySourceRow => ({
+    ...m, trip_id: null, event_id: null, place_id: null, ends_at: null,
+    location_lat: null, location_lng: null, canonical_location_id: null, allowed_user_ids: [], hidden_user_ids: [],
+  } as MemorySourceRow));
+
+  if (memories.length > 0) {
+    const controls = await client.from("memory_resurfacing_preferences").select("memory_id, control").in("memory_id", memories.map((m) => m.id));
+    if (controls.error && !isTableAbsentError(controls.error)) {
+      return { ok: false, reason: "source_unavailable", table: "memory_resurfacing_preferences", detail: "the owner's §11 controls are unreadable, so no public index is derived (fail closed)", retryable: true };
+    }
+    if (!controls.error && !Array.isArray(controls.data)) {
+      return { ok: false, reason: "source_unavailable", table: "memory_resurfacing_preferences", detail: "the owner's §11 controls returned no row array", retryable: true };
+    }
+    const unpublished = new Set<string>();
+    for (const r of (controls.error ? [] : controls.data) as Array<{ memory_id?: unknown; control?: unknown }>) {
+      const effect = (CONTROL_EFFECTS as Record<string, { suppresses: readonly string[] } | undefined>)[String(r?.control)];
+      if (effect?.suppresses.includes("public_projection")) unpublished.add(String(r?.memory_id));
+    }
+    memories = memories.filter((m) => !unpublished.has(m.id));
+  }
+
+  const ceilings = await loadAudienceCeilings(client, [{ owner_id: scope.owner_id }]);
+  const rung = audienceCeilingFor(ceilings, { owner_id: scope.owner_id, visibility: "public" });
+  if (rung === "hidden" || rung === "country") {
+    memories = memories.map((m) => ({ ...m, location_city: null, ...(rung === "hidden" ? { location_country: null } : {}) }));
+  }
+
+  const ids = memories.map((m) => m.id);
+  let items: MemoryItemRow[] = [];
+  if (ids.length > 0) {
+    const itemRes = await readCompleteSource(client.from("memory_items").select("id, memory_id, position", { count: "exact" }).in("memory_id", ids), ["id"]);
+    if (itemRes.error) {
+      return { ok: false, reason: "source_unavailable", table: "memory_items", detail: `memory_items unreadable: ${itemRes.error.message ?? "unknown error"}`, retryable: !isSchemaAbsent(itemRes.error) };
+    }
+    items = (itemRes.data ?? []) as MemoryItemRow[];
+  }
+  return {
+    ok: true,
+    value: {
+      memories, items, tags: [], highlights: [], highlight_policies: [],
+      hiddenItems: await readSourceHiddenItems(client, ids),
+      ...(rung === "exact" ? {} : { placeCorrections: { "public-location-ceiling": rung } }),
+    },
+  };
 }

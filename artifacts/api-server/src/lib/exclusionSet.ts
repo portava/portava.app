@@ -65,7 +65,7 @@
  *                    shape, so NEW callers use this module instead.
  */
 import type { Request, Response } from "express";
-import { sendError } from "./http.js";
+import { sendError } from "./http.js"; import { readWhole, afterKey } from "./feedReads.js"; // census-telegraph T220: the per-direction whole-list readers below read whole, by key
 
 /**
  * The result of reading an exclusion table.
@@ -81,7 +81,7 @@ export type ExclusionSet =
   | { readonly ok: false; readonly reason: string };
 
 /** Construct the unreadable result. Exported so tests and adapters can build one. */
-export function exclusionsUnavailable(reason: unknown): ExclusionSet {
+export function exclusionsUnavailable(reason: unknown): Extract<ExclusionSet, { ok: false }> {
   const r = reason as { message?: unknown; code?: unknown } | null;
   return {
     ok: false,
@@ -135,7 +135,7 @@ export function isExcluded(set: ExclusionSet, id: string | null | undefined): bo
  * The WHOLE-LIST read (no `among`) is still one range-less read, so a viewer
  * with more than `db-max-rows` block relationships still gets a prefix. That is
  * recorded in census-telegraph §94 as found-not-fixed: paging it (lib/keysetRead)
- * costs every caller a second round trip and is its own change.
+ * costs every caller a second round trip and is its own change. (The per-direction readers at the foot of this file — readBlockDirection(s) — DO read whole, by key: T220 part 2.)
  */
 const NOT_ROWS = "blocks read answered something other than a row list";
 const NO_COUNTERPARTY = "a blocks row did not name its counter-party";
@@ -327,4 +327,240 @@ export function sendExclusionsUnavailable(
     "degraded_unavailable",
     "Could not verify who is blocked. Please try again.",
   );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// DIRECTION, WHOLE, BATCH, COUNT — census-telegraph T220 part 2 (2026-10-17)
+// ════════════════════════════════════════════════════════════════════════════
+/**
+ * "No subsystem may independently rediscover a blocked relationship." The
+ * readers above collapse both directions into one set, and their whole-list
+ * path is one range-less read (§94). The private block reads left after T220
+ * part 1 each needed one of four things those readers do not give:
+ *
+ *   DIRECTION  WHICH way the row points. "You blocked them" and "they blocked
+ *              you" are different answers: the passport's `isBlocker`, the
+ *              interaction permissions' blocked / blocks_you / mutual_block and
+ *              canUnblock, the Compass profile's blockedUserIds vs
+ *              blockerUserIds — and compass `surface=passport` reads ONE
+ *              direction only.
+ *   WHOLE      a per-direction whole list that is never a prefix. A range-less
+ *              read is cut at db-max-rows (1,000 hosted) with no error, and
+ *              every block past the cut was simply not excluded.
+ *   BATCH      a pair read in the shape services/telegraph/coalescedReads.ts
+ *              coalesces (`.select().eq().eq().limit(1)`), so resolving fifty
+ *              share cards is ONE `blocks` query, not fifty `.or()` replays
+ *              (T448, "no N+1").
+ *   COUNT      the moderation dossier states how many block ROWS touch a user.
+ *
+ * The module's contract holds for every one of them: NEVER REJECTS, and every
+ * failure — a returned error, a thrown read, an answer that is not a row list,
+ * a row that does not name its counter-party, a whole read that could not be
+ * read whole, a scoped row outside its own filter, a count read with no count —
+ * is the unreadable value (`ok: false`). None has a spelling that means "no
+ * block", and every `ok: true` result carries `ids`, so `isExcluded` applies to
+ * all of them unchanged.
+ */
+
+/** The unreadable value every reader in this module answers. */
+type Unreadable = Extract<ExclusionSet, { ok: false }>;
+
+/** Which way a block row points, seen from the viewer: `outgoing` — the viewer blocked them; `incoming` — they blocked the viewer. */
+export type BlockDirection = "outgoing" | "incoming";
+
+/** The viewer's own column and the counter-party's, per direction. */
+const SIDES: Readonly<Record<BlockDirection, { readonly self: "blocker_id" | "blocked_id"; readonly other: "blocked_id" | "blocker_id" }>> = {
+  outgoing: { self: "blocker_id", other: "blocked_id" },
+  incoming: { self: "blocked_id", other: "blocker_id" },
+};
+
+const OUT_OF_SCOPE = "a blocks row outside the read's own filter";
+const SCOPED_CUT = "a scoped blocks read answered a count that does not match its rows";
+const NO_COUNT = "a blocks read answered without its count";
+
+/**
+ * ONE direction's counter-parties for `viewerId`, as an ExclusionSet:
+ * `outgoing` → everyone the viewer blocked; `incoming` → everyone who blocked
+ * the viewer. For a site that reads one direction ONLY (compass
+ * `surface=passport`) or falls back per direction (CompassTools).
+ *
+ * WHOLE LIST (no `among`): read whole, by key (lib/feedReads.ts `readWhole`).
+ * The first request is the plain read the private sites made —
+ * `select(<other>, { count: "exact" }).eq(<self>, viewer)` — so a list under
+ * the row cap costs the same one round trip; when its count says rows were
+ * cut, the read pages by the counter-party key (unique per direction, since
+ * UNIQUE(blocker_id, blocked_id)) until the count is met. A list that cannot be
+ * read whole is `ok: false`, never the prefix it got.
+ *
+ * SCOPED (`among`): one `.in()` read per BLOCK_AMONG_CHUNK candidates, which
+ * matches at most one row per candidate. Each answer is held to its own
+ * filter, the checks the memory graph made by hand: a row whose viewer column
+ * is not the viewer, or whose counter-party is not in the chunk, a count that
+ * is missing or disagrees with the rows — each is `ok: false`.
+ *
+ * NEVER REJECTS.
+ */
+export async function readBlockDirection(
+  sc: any,
+  viewerId: string,
+  direction: BlockDirection,
+  opts?: { among?: readonly string[] },
+): Promise<ExclusionSet> {
+  if (!sc || !viewerId || !SIDES[direction]) return exclusionsUnavailable("no client, viewer or direction");
+  try {
+    return await readBlockDirectionOnce(sc, viewerId, direction, opts?.among);
+  } catch (err) {
+    return exclusionsUnavailable(err);
+  }
+}
+
+async function readBlockDirectionOnce(
+  sc: any,
+  viewerId: string,
+  direction: BlockDirection,
+  among: readonly string[] | undefined,
+): Promise<ExclusionSet> {
+  // Every column in a query below is a LITERAL, per direction, so the schema scan
+  // (schemaColumnProductionScan) checks each against production; `self` / `other`
+  // only read the rows that come back.
+  const { self, other } = SIDES[direction];
+  const outgoing = direction === "outgoing";
+  if (among) {
+    if (among.length === 0) return exclusions([]);
+    const ids = new Set<string>();
+    for (let i = 0; i < among.length; i += BLOCK_AMONG_CHUNK) {
+      const chunk = among.slice(i, i + BLOCK_AMONG_CHUNK) as string[];
+      const scope = new Set(chunk);
+      const res = await (outgoing
+        ? sc.from("blocks").select("blocker_id, blocked_id", { count: "exact" }).eq("blocker_id", viewerId).in("blocked_id", chunk)
+        : sc.from("blocks").select("blocker_id, blocked_id", { count: "exact" }).eq("blocked_id", viewerId).in("blocker_id", chunk));
+      if (res?.error) return exclusionsUnavailable(res.error);
+      if (!Array.isArray(res?.data)) return exclusionsUnavailable(NOT_ROWS);
+      if (typeof res.count !== "number") return exclusionsUnavailable(NO_COUNT);
+      if (res.count !== res.data.length) return exclusionsUnavailable(SCOPED_CUT);
+      for (const r of res.data as any[]) {
+        const id = idOf(r?.[other]);
+        if (id === null) return exclusionsUnavailable(NO_COUNTERPARTY);
+        if (r?.[self] !== viewerId || !scope.has(id)) return exclusionsUnavailable(OUT_OF_SCOPE);
+        ids.add(id);
+      }
+    }
+    return { ok: true, ids };
+  }
+  const base = () => (outgoing
+    ? sc.from("blocks").select("blocked_id", { count: "exact" }).eq("blocker_id", viewerId)
+    : sc.from("blocks").select("blocker_id", { count: "exact" }).eq("blocked_id", viewerId));
+  const whole = await readWhole<Record<string, unknown>>(
+    (after, size) => afterKey((outgoing ? base().order("blocked_id", { ascending: true }) : base().order("blocker_id", { ascending: true })).limit(size), other, after),
+    (r) => String(r?.[other]),
+    { first: base },
+  );
+  if (!whole.ok) return exclusionsUnavailable(whole.error);
+  const ids = counterParties({ data: whole.value }, other);
+  if (!Array.isArray(ids)) return ids;
+  return { ok: true, ids: new Set(ids) };
+}
+
+/**
+ * Both directions for `viewerId`, KEPT APART: `outgoing` (the viewer blocked
+ * them), `incoming` (they blocked the viewer) and `ids`, their union — so the
+ * result is itself an ExclusionSet and `isExcluded(dirs, id)` reads the block
+ * either way. Each direction is read exactly as `readBlockDirection` reads it
+ * (whole and by key, or scoped by `among`); either direction failing makes the
+ * whole answer `ok: false` — half a block list is not a block list.
+ *
+ * With `among` this is also the BATCHED pair form: for one viewer and N
+ * others, `outgoing.has(o)` / `incoming.has(o)` answer each pair's direction
+ * from two reads per chunk instead of 2N.
+ *
+ * NEVER REJECTS.
+ */
+export type BlockDirections =
+  | { readonly ok: true; readonly outgoing: ReadonlySet<string>; readonly incoming: ReadonlySet<string>; readonly ids: ReadonlySet<string> }
+  | Unreadable;
+
+export async function readBlockDirections(
+  sc: any,
+  viewerId: string,
+  opts?: { among?: readonly string[] },
+): Promise<BlockDirections> {
+  if (!sc || !viewerId) return exclusionsUnavailable("no client or viewer");
+  try {
+    const [outgoing, incoming] = await Promise.all([
+      readBlockDirectionOnce(sc, viewerId, "outgoing", opts?.among),
+      readBlockDirectionOnce(sc, viewerId, "incoming", opts?.among),
+    ]);
+    if (!outgoing.ok) return outgoing;
+    if (!incoming.ok) return incoming;
+    return { ok: true, outgoing: outgoing.ids, incoming: incoming.ids, ids: new Set([...outgoing.ids, ...incoming.ids]) };
+  } catch (err) {
+    return exclusionsUnavailable(err);
+  }
+}
+
+/**
+ * One pair, per direction: `aBlockedB` (a row blocker=a, blocked=b) and
+ * `bBlockedA`; `ids` holds `b` when either is true, as `readPairExclusion`'s
+ * does. Two reads, each `.select("blocker_id").eq("blocker_id", x)
+ * .eq("blocked_id", y).limit(1)` — exactly the pair shape
+ * services/telegraph/coalescedReads.ts batches, so every pair read issued in
+ * one turn through a coalescing client becomes ONE `.in().in()` query (both
+ * directions share it). `.limit(1)`, never `.maybeSingle()`, for the reason
+ * `readPairExclusion` gives.
+ *
+ * NEVER REJECTS: a returned error, a thrown read or an answer that is not a row
+ * list, in either direction, is `ok: false`.
+ */
+export type PairDirections =
+  | { readonly ok: true; readonly aBlockedB: boolean; readonly bBlockedA: boolean; readonly ids: ReadonlySet<string> }
+  | Unreadable;
+
+export async function readPairDirections(sc: any, a: string, b: string): Promise<PairDirections> {
+  if (!sc || !a || !b) return exclusionsUnavailable("no client or user pair");
+  try {
+    const [ab, ba] = await Promise.all([blockRowExistsOnce(sc, a, b), blockRowExistsOnce(sc, b, a)]);
+    if (typeof ab !== "boolean") return ab;
+    if (typeof ba !== "boolean") return ba;
+    return { ok: true, aBlockedB: ab, bBlockedA: ba, ids: new Set(ab || ba ? [b] : []) };
+  } catch (err) {
+    return exclusionsUnavailable(err);
+  }
+}
+
+async function blockRowExistsOnce(sc: any, blocker: string, blocked: string): Promise<boolean | Unreadable> {
+  const res = await sc.from("blocks").select("blocker_id").eq("blocker_id", blocker).eq("blocked_id", blocked).limit(1);
+  if (res?.error) return exclusionsUnavailable(res.error);
+  if (!Array.isArray(res?.data)) return exclusionsUnavailable(NOT_ROWS);
+  return res.data.length > 0;
+}
+
+/**
+ * How many block ROWS touch `userId`: `outgoing` (rows they wrote), `incoming`
+ * (rows naming them) or `either` (both — a mutual block is two rows). A HEAD
+ * read with `{ count: "exact" }`, so Postgres counts and the row cap does not
+ * apply. For a record that states a count (the moderation dossier); a site that
+ * asks "is anyone blocked" wants the readers above, not a count.
+ *
+ * NEVER REJECTS: a returned error, a thrown read, or an answer whose count is
+ * not a non-negative integer is `ok: false` — never `count ?? 0`.
+ */
+export type BlockRowCount = { readonly ok: true; readonly count: number } | Unreadable;
+
+export async function countBlockRows(sc: any, userId: string, direction: BlockDirection | "either"): Promise<BlockRowCount> {
+  if (!sc || !userId || !(direction === "either" || SIDES[direction])) return exclusionsUnavailable("no client, user or direction");
+  try {
+    return await countBlockRowsOnce(sc, userId, direction);
+  } catch (err) {
+    return exclusionsUnavailable(err);
+  }
+}
+
+async function countBlockRowsOnce(sc: any, userId: string, direction: BlockDirection | "either"): Promise<BlockRowCount> {
+  const head = sc.from("blocks").select("id", { count: "exact", head: true });
+  const res = await (direction === "either"
+    ? head.or(`blocker_id.eq.${userId},blocked_id.eq.${userId}`)
+    : direction === "outgoing" ? head.eq("blocker_id", userId) : head.eq("blocked_id", userId));
+  if (res?.error) return exclusionsUnavailable(res.error);
+  if (typeof res?.count !== "number" || !Number.isSafeInteger(res.count) || res.count < 0) return exclusionsUnavailable(NO_COUNT);
+  return { ok: true, count: res.count };
 }

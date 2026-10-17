@@ -311,7 +311,7 @@ router.get("/shared-moments/:id/feed", asyncHandler(async (req, res) => {
   let exhausted = false;
   const visibleRows: any[] = [];
   while (visibleRows.length <= query.data.limit && !exhausted) {
-    let db = ctx.sc.from("shared_moment_contributions").select("id, contributor_id, post_id, media_asset_id, caption, created_at, posts(id, author_id, content, media_urls, media_thumbnail_url, visibility, status, post_status, publish_at, profiles(id, is_private))")
+    let db = ctx.sc.from("shared_moment_contributions").select("id, contributor_id, post_id, media_asset_id, caption, created_at, posts(id, author_id, content, media_urls, media_thumbnail_url, visibility, status, post_status, publish_at, profiles!author_id(id, is_private))")
       .eq("moment_id", params.data.id).eq("status", "approved").order("created_at", { ascending: false }).order("id", { ascending: false }).limit(chunkSize);
     if (sourceCursor) {
       db = db.or(`created_at.lt.${sourceCursor.createdAt},and(created_at.eq.${sourceCursor.createdAt},id.lt.${sourceCursor.id})`);

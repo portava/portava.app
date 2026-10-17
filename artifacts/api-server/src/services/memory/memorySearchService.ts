@@ -70,7 +70,7 @@ import {
   projectionStaleness,
   rebuildProjection,
 } from "../memoryProjections/derivativeRegistry.js"; import { reviveDeletionRevokedDerivative } from "../memoryProjections/narrowingReprojection.js"; // one line: cited by line
-import type { ProjectionId, ProjectionScope } from "../memoryProjections/projectionRegistry.js";
+import type { ProjectionId, ProjectionScope } from "../memoryProjections/projectionRegistry.js"; import { getProjectionDefinition } from "../memoryProjections/projectionRegistry.js"; // §28.3 (H262) guard; on this line so no cited line moves
 import { acceptedCrewOfTrip, canReadMemory } from "./memoryReadPolicy.js";
 import {
   searchMemories,
@@ -219,7 +219,7 @@ export interface ResolvedTarget {
 }
 
 export type SearchServiceFailure =
-  | "invalid_intent"
+  | "invalid_intent" | "entity_unresolved" // §28.3 (H262): a named place or person that does not resolve is answered as unknown, never searched through a substitute
   | "not_permitted"
   | "registry_unavailable"
   | "derivative_revoked"
@@ -402,7 +402,7 @@ export async function runMemorySearch(
   }
   const resolved = resolveTarget(viewerId, request.intent);
   if (!resolved.ok) return refuse("invalid_intent", resolved.detail);
-  const target = resolved.value;
+  const target = resolved.value; const unknownEntity = await refuseUnresolvedEntities(client, viewerId, request, target.projectionId); if (unknownEntity) return unknownEntity; // §28.3 (H262): before any derivative is read or ranked
 
   const now = request.now ?? new Date();
   const prepared = await ensureDerivative(client, target, now, viewerId);
@@ -624,7 +624,7 @@ export async function runCrewMemorySearch(
   if (typeof intent.tripId !== "string" || !UUID_RE.test(intent.tripId)) {
     return { ok: false, reason: "invalid_intent", detail: "tripId must be a UUID", retryable: false };
   }
-  const tripId = intent.tripId;
+  const tripId = intent.tripId; const unknownEntity = await refuseUnresolvedEntities(client, viewerId, request, "TripMemoryProjection"); if (unknownEntity) return unknownEntity; // §28.3 (H262)
 
   // The trip is SCOPE here, not a filter — `TRIP_FIELDS` has no `trip_id` at
   // all, so the engine would (correctly) refuse `trip` as an unanswerable
@@ -852,4 +852,74 @@ export function searchCapabilities(): {
     projectionsByNamespace: NAMESPACE_PROJECTIONS as unknown as Readonly<Record<string, readonly string[]>>,
     crewUnion: { partialPolicy: CREW_UNION_PARTIAL_POLICY, memberBound: CREW_UNION_MEMBER_LIMIT },
   };
+}
+
+/**
+ * §28.3 (census H262): "Never query a semantic substitute for an unknown
+ * canonical place/person and pretend it is the requested entity."
+ *
+ * THE GUARD. A search that NAMES a canonical entity — the place of a
+ * `mine_place` intent, or a person in `people` — is answered only about THAT
+ * entity. Before any derivative is read or ranked, each named entity must
+ * resolve to an identity this system holds:
+ *
+ *   person  a UUID with a `profiles` row. A name, a handle or an erased
+ *           account is not a person's id, and is never matched by likeness.
+ *   place   a catalog place (`places.id`), or a place reference the viewer's
+ *           OWN live Memories carry (`place_id` / `canonical_location_id`) —
+ *           a provider id the owner picked is that owner's real place.
+ *
+ * One that does not resolve is refused as `entity_unresolved` ("unknown"),
+ * which is a different answer from "you have no Memory there". Nothing is
+ * searched in its stead: no derivative is read, no scorer is consulted, and no
+ * similar-sounding place or person is offered as the one asked for. A read
+ * that fails is a retryable refusal, never "unknown" and never "no matches".
+ *
+ * A person filter is resolved only where the target derivative can answer it;
+ * elsewhere the engine refuses the filter itself (filter_not_supported), and
+ * this guard does not turn that refusal into a profile lookup.
+ */
+export async function refuseUnresolvedEntities(
+  client: ClientLike,
+  viewerId: string,
+  request: MemorySearchRequest,
+  projectionId: ProjectionId,
+): Promise<Extract<MemorySearchServiceResult, { ok: false }> | null> {
+  const sc = client as any;
+  const unknown = (detail: string) => ({ ok: false as const, reason: "entity_unresolved" as const, detail, retryable: false });
+  const unreadable = (detail: string) => ({ ok: false as const, reason: "derivative_unavailable" as const, detail, retryable: true });
+
+  const people = (request.people ?? []) as readonly unknown[];
+  const whitelist = new Set<string>(getProjectionDefinition(projectionId)?.field_whitelist ?? []);
+  if (people.length > 0 && (whitelist.has("people") || whitelist.has("person_id"))) {
+    if (people.some((p) => typeof p !== "string" || !UUID_RE.test(p))) {
+      return unknown("a person in this search is not a person's id; no one was searched in their place");
+    }
+    const ids = [...new Set(people as string[])];
+    const { data, error } = await sc.from("profiles").select("id").in("id", ids);
+    if (error || !Array.isArray(data)) return unreadable(`the people in this search could not be resolved: ${error?.message ?? "no row array"}`);
+    const known = new Set((data as Array<{ id?: unknown }>).map((r) => String(r?.id)));
+    if (ids.some((id) => !known.has(id))) return unknown("a person in this search is not known; no one was searched in their place");
+  }
+
+  if (request.intent?.kind === "mine_place") {
+    const placeId = (request.intent as { placeId?: unknown }).placeId;
+    if (typeof placeId !== "string" || placeId.length === 0) return null; // resolveTarget refuses it
+    const isUuid = UUID_RE.test(placeId);
+    if (isUuid) {
+      const catalog = await sc.from("places").select("id").eq("id", placeId).maybeSingle();
+      if (catalog.error) return unreadable(`the place catalog could not be read: ${catalog.error.message ?? "failed"}`);
+      if (catalog.data) return null;
+    }
+    const byPlace = await sc.from("memories").select("id").eq("owner_id", viewerId).eq("place_id", placeId).neq("state", "deleted").limit(1);
+    if (byPlace.error || !Array.isArray(byPlace.data)) return unreadable(`your places could not be read: ${byPlace.error?.message ?? "no row array"}`);
+    if (byPlace.data.length > 0) return null;
+    if (isUuid) {
+      const byCanonical = await sc.from("memories").select("id").eq("owner_id", viewerId).eq("canonical_location_id", placeId).neq("state", "deleted").limit(1);
+      if (byCanonical.error || !Array.isArray(byCanonical.data)) return unreadable(`your places could not be read: ${byCanonical.error?.message ?? "no row array"}`);
+      if (byCanonical.data.length > 0) return null;
+    }
+    return unknown("this place is not known; no similar place was searched in its stead");
+  }
+  return null;
 }

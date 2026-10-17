@@ -35,7 +35,7 @@ afterEach(() => {
 
 async function search(onSelect = jest.fn()) {
   const ui = await render(
-    <MapSearchSheet visible lat={1.3} lng={103.8} city="Singapore" onClose={jest.fn()} onSelect={onSelect} />,
+    <MapSearchSheet visible lat={1.3521234} lng={103.8198765} city="Singapore" onClose={jest.fn()} onSelect={onSelect} />,
   );
   await fireEvent.changeText(ui.getByLabelText('Search the map'), 'museum');
   await act(async () => { jest.advanceTimersByTime(300); });
@@ -72,7 +72,7 @@ it('retains the authenticated map.search request, server rows, saved-lane covera
   expect(request.headers.Authorization).toBe('Bearer dummy-map-token');
   expect(JSON.parse(request.body)).toEqual({
     context: 'global_search', fieldId: 'map.search', text: 'museum',
-    sessionContext: { surface: 'map' }, lat: 1.3, lng: 103.8, city: 'Singapore',
+    sessionContext: { surface: 'map' }, lat: 1.352, lng: 103.82, city: 'Singapore', // the device fix, at 3 decimals
   });
   expect(request.signal.aborted).toBe(false);
   expect(ui.getByText('Saved museum')).toBeTruthy();
