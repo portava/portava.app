@@ -43,7 +43,7 @@ import {
 import type {
   FreedomWindow,
   TemporalConflict,
-} from "../../domain/trips/invariants/TripFreedomEngine.js";
+} from "../../domain/temporal/TemporalFreedomEngine.js";
 
 export type SafetyRating =
   | "safe"

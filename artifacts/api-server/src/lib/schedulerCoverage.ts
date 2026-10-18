@@ -3,7 +3,7 @@
  * whether each one is still running.
  *
  * ── WHY THIS FILE EXISTS ─────────────────────────────────────────────────────
- * `index.ts` starts 65 schedulers at boot (64 until the Telegraph safety re-drive (Fable pass 3 §1.1), which reports and writes job_health; 63 until lane T-REL's message-media parts sweep, which reports; 62 until lane T-REL's Telegraph outbox drainer and 61 until H-REST's highlight expiry events, each of which reports and writes job_health; 60 until both lane R's layover audit retention sweep and lane H's Memory deletion redrive were merged, 58 until #549; each of those three reports, and the redrive also writes job_health). Every one is a `setInterval` inside
+ * `index.ts` starts 66 schedulers at boot (65 until layover lane 5's presence expiry sweep, census L196, which like the crew sweep leaves no trace; 64 until the Telegraph safety re-drive (Fable pass 3 §1.1), which reports and writes job_health; 63 until lane T-REL's message-media parts sweep, which reports; 62 until lane T-REL's Telegraph outbox drainer and 61 until H-REST's highlight expiry events, each of which reports and writes job_health; 60 until both lane R's layover audit retention sweep and lane H's Memory deletion redrive were merged, 58 until #549; each of those three reports, and the redrive also writes job_health). Every one is a `setInterval` inside
  * the process, and `.replit` sets `deploymentTarget = "autoscale"`, which
  * suspends a container after fifteen idle minutes; a suspended container's
  * event loop does not advance. On 2026-09-30 15:28 all 58 stopped together and
@@ -24,7 +24,7 @@
  *   `start`       the function `index.ts` calls. The guard asserts this set is
  *                 EXACTLY the set of `start…()` statements in `index.ts`, in
  *                 both directions, so a scheduler added without a row here
- *                 fails the build rather than quietly joining the 44.
+ *                 fails the build rather than quietly joining the 45.
  *   `reportedAs`  the job names this scheduler contributes to
  *                 `GET /healthz/schedulers`. The guard asserts each one appears
  *                 as a `job: "…"` literal in `routes/health.ts`, and that every
@@ -36,18 +36,18 @@
  *
  * A row with NEITHER field is a job whose stopping leaves no trace anywhere:
  * no row to go stale, no counter to read, nothing an operator or an alert could
- * notice. There are 44 of those, and that number is the point of this file.
+ * notice. There are 45 of those, and that number is the point of this file.
  * It was 46 until `startHealthMonitorLoop` began writing its own
  * `stamp_health_monitor` row; the monitor reported to the logger only, and logs
  * on this host are not retained anywhere queryable, so nothing outside the
  * process could establish that it had run at all.
  *
  * ── WHAT THIS FILE IS NOT ────────────────────────────────────────────────────
- * It is not a fix. Knowing that 44 jobs are unobservable does not make them
+ * It is not a fix. Knowing that 45 jobs are unobservable does not make them
  * observable, and it does nothing at all about the suspension that stops all
  * 58 — that needs either an always-on host or an external trigger per job, and
  * both are the owner's call, not a default anyone should pick in a registry.
- * Nobody has yet assessed which of the 44 are time-critical.
+ * Nobody has yet assessed which of the 45 are time-critical.
  *
  * It also does not claim 58 is the number of LOOPS. `startTripProjectionWorkers`
  * starts several workers behind one call, and this list counts the call, which
@@ -101,7 +101,7 @@ export const STARTED_SCHEDULERS: readonly SchedulerRow[] = [
   { start: "startInviteSlotReconciler", reportedAs: ["inviteSlotReconciler"] },
   { start: "startInviteSlotSweeper", reportedAs: ["inviteSlotSweeper"] },
   { start: "startLayoverCrewExpiryScheduler" }, { start: "startLayoverAuditRetentionScheduler", reportedAs: ["layoverAuditRetention", "layoverSnapshotCompaction"], persists: ["layoverSnapshotCompaction"] },
-  { start: "startLayoverExternalEventScheduler" },
+  { start: "startLayoverExternalEventScheduler" }, { start: "startLayoverPresenceExpiryScheduler" }, // census L196 presence half (3900): unobservable like the crew sweep, so 44 -> 45; line-neutral
   { start: "startLocationSnapshotPurgeScheduler" },
   { start: "startMediaDedupWorker" },
   { start: "startMediaProcessingWorker" },

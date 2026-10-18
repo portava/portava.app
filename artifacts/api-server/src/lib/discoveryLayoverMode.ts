@@ -128,7 +128,7 @@ import {
   LAYOVER_DISCOVERY_MODE_FLAG,
   certifiedActionUniverse,
   certifiedLayoverSnapshot,
-  isDegradedRefusal,
+  isDegradedRefusal, layoverRoutesFor,
   type ActionAdmission, type LayoverSnapshotResult,
 } from "../services/airport/LayoverSnapshot.js";
 
@@ -291,14 +291,14 @@ export async function discoveryLayoverGate(
     };
   }
 
-  const timing = await statedLayoverTimings(sc, snapshot.sessionId, candidates, {
+  const timing = await layoverRoutesFor(snapshot, () => statedLayoverTimings(sc, snapshot.sessionId, candidates, {
     // The snapshot's OWN centre and the record's OWN instant. A second clock
     // here would time the journey from a different moment than the window it
     // is measured against.
     centre: snapshot.envelope ? snapshot.envelope.centre : null,
     departAt: new Date(snapshot.certifiedRecord.inputs.nowMs),
     provider: opts.provider,
-  });
+  })); // F1: every leg this read asks for is charged to the traveller and their trip (a trip-less layover: the named absence, R5(a))
   if (!timing.ok) {
     return {
       ok: false,

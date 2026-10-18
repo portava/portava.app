@@ -344,7 +344,7 @@ describe("B. stop writes stop laundering an unstated leg into zero", () => {
       }],
     });
     const r = await call("POST", `/api/airport/sessions/${SESSION}/stops/from-recommendation`, {
-      recommendationId: "rec-2",
+      recommendationId: "rec-2", snapshotId: stagePairedGeneration(tables, SESSION, USER_ID),
     });
 
     assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
@@ -425,3 +425,26 @@ describe("A (continued). computePlanFit reads the landside GATE as well as the w
     assert.deepEqual(r.body.planFit.landside.closedBy, ["entry_refused"]);
   });
 });
+
+// census-layover L296 (App C5) — appended so no cited line above moves; ESM hoists the imports.
+import { recommendationPairingFor, recommendationRowKey } from "../services/airport/LayoverRecommendationService.js";
+import { snapshotIdFor } from "../services/airport/layoverLedger.js";
+
+/**
+ * A plan add must name the snapshot of the session's NEWEST generation, and that
+ * generation must have certified the card as its row stands
+ * (layoverRecommendationSnapshotPairing.test.ts). A real generation always
+ * writes this `recommendation_generated` event beside its rows; a fixture that
+ * stages rows by hand stages the event too. Returns the snapshot to name.
+ */
+function stagePairedGeneration(tables: Record<string, any[]>, sessionId: string, userId: string): string {
+  const inputHash = "sha256:" + "f".repeat(64);
+  const rows = (tables.layover_recommendations ?? []).filter((r) => r.session_id === sessionId);
+  if (!tables.layover_events) tables.layover_events = [];
+  tables.layover_events.push({
+    id: `generation-${tables.layover_events.length}`, session_id: sessionId, user_id: userId,
+    event_type: "recommendation_generated", created_at: new Date().toISOString(),
+    metadata: { inputHash, pairing: recommendationPairingFor(sessionId, inputHash, rows, rows.map(recommendationRowKey)) },
+  });
+  return snapshotIdFor(sessionId, inputHash);
+}

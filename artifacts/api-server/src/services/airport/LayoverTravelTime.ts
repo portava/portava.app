@@ -208,7 +208,7 @@ export async function landsideLeg(
       detail: `${provider.id} does not compute routes`,
     };
   }
-  const r = await estimateTravel(provider, { from, to, departAt }, departAt);
+  const unscoped = layoverRoutesRefusal(); if (unscoped !== null) return { minutes: null, source: "unmeasured", reason: from && to ? "NO_ROUTED_PROVIDER" : "NO_COORDINATES", detail: ROUTES_UNSCOPED_NO_TRIP_DETAIL }; const r = await estimateTravel(provider, { from, to, departAt }, departAt);
   if (r.kind !== "estimate") {
     return { minutes: null, source: "unmeasured", reason: r.reason, detail: r.detail ?? null };
   }
@@ -236,4 +236,114 @@ export async function landsideLeg(
     };
   }
   return { minutes: Math.ceil(minutes), source, reason: null, detail: null };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FINDING F1 — THE ROUTES BUDGET SCOPE (census-trips §86.2, lead ruling D-7).
+//
+// Appended at the TAIL so no cited line above moves; ESM hoists the imports.
+//
+// `googleRoutesCorridorProvider` charges every call to a person AND a trip, read
+// from the enclosing `withRoutesRequestBudget` scope, and refuses a call with no
+// scope as `unscoped` (googleRoutesCorridorProvider.ts:306). Until this block,
+// only routes/tripFeasibility.ts, routes/tripOffline.ts and the Trips
+// projections opened one — so the day the owner enables Routes, EVERY layover
+// leg and corridor call would still have been refused, before the spend gate,
+// for want of anybody to charge.
+//
+// `withLayoverRoutesBudget(session, fn)` is that scope for a layover read:
+//
+//   a session WITH a trip   `withRoutesRequestBudget({ userId, tripId })`. The
+//                           call is made and charged to that person and trip,
+//                           under the read's hop cap and time budget. Nested
+//                           inside another read's budget, it shares its counter.
+//   a session WITH NO trip  a NAMED absence, `routes_unscoped_no_trip`, and the
+//                           provider is never called — when Routes is LIVE here.
+//                           Whether a trip-less layover may be charged per
+//                           person only is the owner's ruling (R5(a)); until
+//                           then nothing is spent on one.
+//   Routes NOT live         (enablement or credential absent — every deployment
+//                           today) `fn` runs exactly as it did before this block:
+//                           the provider refuses on its own first gate, byte for
+//                           byte the answer it gave, so the decision-diff golden
+//                           and every leg's `detail` are unchanged.
+//
+// The named absence is honoured at the two layover choke points: `landsideLeg`
+// (every leg — recommendations and Discovery's timing) and
+// `layoverRoutesGuardedCorridor` (the §8 return corridor in
+// `certifiedActionUniverse`).
+// ═══════════════════════════════════════════════════════════════════════════
+import { AsyncLocalStorage } from "node:async_hooks";
+import { withRoutesRequestBudget } from "../../domain/trips/contracts/RoutesRequestBudget.js";
+import { credentialRefusal, enablementRefusal, refuse } from "../../lib/providers/providerRefusal.js";
+import { CREDENTIAL_ENV, ENABLEMENT_ENV } from "../../lib/providers/googleRoutesCorridorProvider.js";
+import type { RouteCorridorProvider } from "../../lib/providers/routeCorridorProvider.js";
+
+/** The named absence a trip-less layover gets while R5(a) is open. */
+export const ROUTES_UNSCOPED_NO_TRIP = "routes_unscoped_no_trip" as const;
+
+/** Operator-facing; names the ruling, never a credential. */
+export const ROUTES_UNSCOPED_NO_TRIP_DETAIL =
+  `${ROUTES_UNSCOPED_NO_TRIP}: this layover has no trip, and the owner's Routes caps charge a person AND a trip ` +
+  `(lead ruling D-7). Whether a trip-less layover may be charged per person only is the owner's ruling (R5(a)), ` +
+  `so nothing was asked of the routing provider.`;
+
+/** Who a layover read's routed calls are charged to. A `LayoverSession` satisfies it. */
+export interface LayoverRoutesSession {
+  userId: string;
+  tripId: string | null;
+}
+
+const layoverRoutesScope = new AsyncLocalStorage<{ refusal: typeof ROUTES_UNSCOPED_NO_TRIP | null }>();
+
+/** Inside a trip-less layover read with Routes live: the named absence. Otherwise null. */
+export function layoverRoutesRefusal(): typeof ROUTES_UNSCOPED_NO_TRIP | null {
+  return layoverRoutesScope.getStore()?.refusal ?? null;
+}
+
+/**
+ * Is the layover routing provider live in this deployment — BOTH of its own
+ * gates open? Asked with the provider's own gate functions and variable names,
+ * so this cannot disagree with the provider about what "enabled" means. With no
+ * `readEnv` the gate functions read the environment themselves; this module
+ * never does (layoverTravelTimeProvenanceColumn.test.ts holds that line).
+ */
+export function layoverRoutesLive(readEnv?: (name: string) => string | undefined): boolean {
+  return enablementRefusal("layover-routes", ENABLEMENT_ENV, readEnv) === null
+    && credentialRefusal("layover-routes", CREDENTIAL_ENV, readEnv) === null;
+}
+
+/**
+ * Run one layover read's routed calls inside the Routes budget scope. See the
+ * block header for the three cases. `readEnv` is injectable so a test proves the
+ * live case without mutating `process.env`.
+ */
+export function withLayoverRoutesBudget<T>(
+  session: LayoverRoutesSession,
+  fn: () => Promise<T>,
+  opts: { readEnv?: (name: string) => string | undefined } = {},
+): Promise<T> {
+  const tripId = session.tripId;
+  if (tripId) {
+    return layoverRoutesScope.run({ refusal: null }, () => withRoutesRequestBudget({ userId: session.userId, tripId }, fn));
+  }
+  if (!layoverRoutesLive(opts.readEnv)) return layoverRoutesScope.run({ refusal: null }, fn);
+  return layoverRoutesScope.run({ refusal: ROUTES_UNSCOPED_NO_TRIP }, fn);
+}
+
+/**
+ * The route-shape port, behind the same named absence. Inside a trip-less
+ * layover read with Routes live it answers `PROVIDER_NOT_ENABLED` (the
+ * corridor→travel-time adapter maps that to `NO_ROUTED_PROVIDER`, the same
+ * reason `landsideLeg` gives) WITHOUT calling `inner`; everywhere else it is
+ * `inner`, call for call.
+ */
+export function layoverRoutesGuardedCorridor(inner: RouteCorridorProvider): RouteCorridorProvider {
+  const unscoped = () => refuse(inner.id, "PROVIDER_NOT_ENABLED", ROUTES_UNSCOPED_NO_TRIP_DETAIL);
+  return {
+    id: inner.id,
+    routed: inner.routed,
+    corridor: (q) => (layoverRoutesRefusal() !== null ? Promise.resolve(unscoped()) : inner.corridor(q)),
+    bidirectional: (q) => (layoverRoutesRefusal() !== null ? Promise.resolve(unscoped()) : inner.bidirectional(q)),
+  };
 }

@@ -4183,11 +4183,11 @@ Absent."* L178 reads *"`TemporalFreedomService.calculateCommitmentEnvelope(conte
 — **N** — No `Commitment` (L57)."*
 
 **Every one of those sentences is true of `services/airport/` and false of this
-repository.** `artifacts/api-server/src/domain/trips/invariants/TripFreedomEngine.ts:102#export interface FreedomWindow`
+repository.** `artifacts/api-server/src/domain/temporal/TemporalFreedomEngine.ts:113#export interface FreedomWindow`
 is the generalised engine the layover spec §7 describes — the same
 `FreedomWindow`, the same commitment ordering, the same "a window is a LOWER
 BOUND on free time" rule, built for the Trips spec's own §7.3 and carrying no
-airport assumption anywhere. `artifacts/api-server/src/domain/trips/invariants/TripFreedomEngine.ts:145#export interface EngineCommitment`
+airport assumption anywhere. `artifacts/api-server/src/domain/temporal/TemporalFreedomEngine.ts:194#export interface EngineCommitment`
 is the commitment type. Neither was ever read by anything under
 `services/airport/`, and four census passes measured a directory rather than a
 tree.
@@ -12190,7 +12190,7 @@ Measured on branch `claude/census-regrade-20261017` (stacked on PR #762) on 2026
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| L57 `Commitment` | W | **C** | **The stated gap is closed.** §18 held L57 at W on one sentence: *"`hardConstraints` and `confidence` live on the WINDOW in this engine rather than on the commitment, and widening `EngineCommitment` is the Trips lane's decision"*. The generalised engine's commitment now carries both (`artifacts/api-server/src/domain/trips/invariants/TripFreedomEngine.ts:481#hardConstraints: readonly CommitmentHardConstraint[];`, `artifacts/api-server/src/domain/trips/invariants/TripFreedomEngine.ts:483#confidence: TravelConfidence | null;`), in a generic vocabulary that names no airport (`artifacts/api-server/src/domain/trips/invariants/TripFreedomEngine.ts:467#export const COMMITMENT_HARD_CONSTRAINT_KINDS = [`). The engine READS both. A commitment's confidence caps every window it bounds (`artifacts/api-server/src/domain/trips/invariants/TripFreedomEngine.ts:287#commitmentBoundConfidence(hop.confidence, prev, next)`, `artifacts/api-server/src/domain/trips/invariants/TripFreedomEngine.ts:344#commitmentBoundConfidence("LOW", last)`). NO_LATE_ARRIVAL keeps a lateness tolerance from ever being spent: in the window's end (`artifacts/api-server/src/domain/trips/invariants/TripFreedomEngine.ts:266#spendableToleranceMinutes(next)`), in the before-first window (`artifacts/api-server/src/domain/trips/invariants/TripFreedomEngine.ts:238#spendableToleranceMinutes(first)`) and in when the traveller is released (`artifacts/api-server/src/domain/trips/invariants/TripFreedomEngine.ts:198#spendableToleranceMinutes(c)`). Both layover commitments carry all eight of spec §7's members on every certification (`artifacts/api-server/src/services/airport/LayoverTemporalFreedom.ts:181#hardConstraints: [INBOUND_DOES_NOT_WAIT], confidence: ctx.confidence,`, `artifacts/api-server/src/services/airport/LayoverTemporalFreedom.ts:192#hardConstraints: [OUTBOUND_DOES_NOT_WAIT], confidence: ctx.confidence,`). The airport reason stays in the adapter (`artifacts/api-server/src/services/airport/LayoverTemporalFreedom.ts:323#const OUTBOUND_DOES_NOT_WAIT: CommitmentHardConstraint = {`). The window's confidence now comes from the commitments, not from the same-airport hop, which is a fact and is HIGH (`artifacts/api-server/src/services/airport/LayoverTemporalFreedom.ts:221#hops: [samePlaceHop("HIGH")],`). The commitment envelope reads the departure commitment's confidence (`artifacts/api-server/src/services/airport/LayoverTemporalFreedom.ts:282#confidence: commitmentBoundConfidence(hop.confidence, departure!),`). **No number a traveller sees moved:** the window equals `hardReturnTime` to the millisecond across the existing sweep, and the Trips decision-diff golden is byte-identical. The Trips adapter states no constraint and no confidence for its rows (`trip_commitments` stores a 0..1 number, not a band), and the engine then computes exactly as before. Tests: `artifacts/api-server/src/test/layoverTemporalFreedom.test.ts:422#census-layover L57 — the layover's commitments carry spec §7's eight members`, `artifacts/api-server/src/test/tripFreedomEngine.test.ts:269#census-layover L57 — a commitment's own hardConstraints and confidence`. |
+| L57 `Commitment` | W | **C** | **The stated gap is closed.** §18 held L57 at W on one sentence: *"`hardConstraints` and `confidence` live on the WINDOW in this engine rather than on the commitment, and widening `EngineCommitment` is the Trips lane's decision"*. The generalised engine's commitment now carries both (`artifacts/api-server/src/domain/temporal/TemporalFreedomEngine.ts:207#hardConstraints: readonly CommitmentHardConstraint[];`, `artifacts/api-server/src/domain/temporal/TemporalFreedomEngine.ts:209#confidence: TravelConfidence | null;`), in a generic vocabulary that names no airport (`artifacts/api-server/src/domain/temporal/TemporalFreedomEngine.ts:181#export const COMMITMENT_HARD_CONSTRAINT_KINDS = [`). The engine READS both. A commitment's confidence caps every window it bounds (`artifacts/api-server/src/domain/temporal/TemporalFreedomEngine.ts:360#commitmentBoundConfidence(hop.confidence, prev, next)`, `artifacts/api-server/src/domain/temporal/TemporalFreedomEngine.ts:417#commitmentBoundConfidence("LOW", last)`). NO_LATE_ARRIVAL keeps a lateness tolerance from ever being spent: in the window's end (`artifacts/api-server/src/domain/temporal/TemporalFreedomEngine.ts:339#spendableToleranceMinutes(next)`), in the before-first window (`artifacts/api-server/src/domain/temporal/TemporalFreedomEngine.ts:311#spendableToleranceMinutes(first)`) and in when the traveller is released (`artifacts/api-server/src/domain/temporal/TemporalFreedomEngine.ts:271#spendableToleranceMinutes(c)`). Both layover commitments carry all eight of spec §7's members on every certification (`artifacts/api-server/src/services/airport/LayoverTemporalFreedom.ts:181#hardConstraints: [INBOUND_DOES_NOT_WAIT], confidence: ctx.confidence,`, `artifacts/api-server/src/services/airport/LayoverTemporalFreedom.ts:192#hardConstraints: [OUTBOUND_DOES_NOT_WAIT], confidence: ctx.confidence,`). The airport reason stays in the adapter (`artifacts/api-server/src/services/airport/LayoverTemporalFreedom.ts:323#const OUTBOUND_DOES_NOT_WAIT: CommitmentHardConstraint = {`). The window's confidence now comes from the commitments, not from the same-airport hop, which is a fact and is HIGH (`artifacts/api-server/src/services/airport/LayoverTemporalFreedom.ts:221#hops: [samePlaceHop("HIGH")],`). The commitment envelope reads the departure commitment's confidence (`artifacts/api-server/src/services/airport/LayoverTemporalFreedom.ts:282#confidence: commitmentBoundConfidence(hop.confidence, departure!),`). **No number a traveller sees moved:** the window equals `hardReturnTime` to the millisecond across the existing sweep, and the Trips decision-diff golden is byte-identical. The Trips adapter states no constraint and no confidence for its rows (`trip_commitments` stores a 0..1 number, not a band), and the engine then computes exactly as before. Tests: `artifacts/api-server/src/test/layoverTemporalFreedom.test.ts:422#census-layover L57 — the layover's commitments carry spec §7's eight members`, `artifacts/api-server/src/test/tripFreedomEngine.test.ts:269#census-layover L57 — a commitment's own hardConstraints and confidence`. |
 
 ### Tests and mutation proofs, run for this section on 2026-10-17
 
@@ -12375,3 +12375,128 @@ unchanged.
 ### Correction (2026-10-17, wave 5) — the LAY-4a router regression guard gained one intended change (census-telegraph T254)
 
 The guard's INTENDED set gained `safe_return|circle.need_help_host_alert` (the attention ladder's P0 band is now routed as emergency safety). The cited title at routerRegression.test.ts:66 is kept verbatim, so the anchor holds; it now describes the layover subset of INTENDED. The guard still asserts that the changed set equals INTENDED exactly, and the golden (main's decisions) was not regenerated. No layover verdict moves: layover.return.* are not in the attention ladder and the layover branch runs first.
+
+## Wave 5, layover lanes 2–4 (2026-10-18): seven rows up, three false greens down
+
+*Branch `claude/wave4-build-20261017`; committed, undeployed. The owner made Layover the priority on 2026-10-18. Two
+triage passes read every W and N row at its current line, with the code and the production ledger. Four builder lanes
+followed; this section records lanes 2, 3 and 4. Lane 1's rows (L296, L274) are recorded separately when they land.
+Each move below was red-first and mutation-proved by its lane. The lanes' handbacks hold the full evidence.*
+
+### Lead grading ruling R22 (2026-10-18): a traveller's own report is a §15.2 input
+
+§15.2 names no input source. §11's event envelope makes `source` a field of every event, and §1 says the first scope does
+not require exact live airport coverage everywhere. So a disruption the traveller reports
+(`POST /airport/sessions/:id/disruption`, `source: "traveller"`) is a §15.2 input. A flight feed (owner rulings R6/R17)
+would ADD a source; it is not a precondition. The rows below that stood W on "no flight feed" alone are re-graded on this
+basis. Appendix B.3's "affected sessions" fan-out is not a row of this census; it is not read into L231.
+
+### Rows
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L148 | W | **C** | The state machine is now driven from the layover screen. The new card (`travel-buddy-standalone/src/components/layover/LayoverDisruptionCard.tsx`, mounted at `travel-buddy-standalone/app/layover/[id].tsx:866#<LayoverDisruptionCard sessionId={session.id}`) reports a delay, a cancellation, a rebooking offered or confirmed, or back on time. It shows only the server's state, previous state and source. The server route walks the transitions and records them on `layover_events` (applied). A reload shows this phone's copy of the server's last recorded answer, labelled as such, because no GET returns the ledger state (a gap noted for lane 1's files). R22. |
+| L149 | W | **C** | The card shows the server's recompute before and after (usable minutes, hard return, return state, delta) and `recomputedNotAppended`; the dashboard re-reads the overview after each report, so every surface uses the new certification. R22. |
+| L231 | W | **C** | A reported cancellation moves the session to CANCELLED with recoveryNeeded and offers REBOOKING / RECOVERY next. Rebooking, airline contact and airport help each read "unavailable" with the server's reason; no help is invented (L145 is N). R22. |
+| L126 | W | **C** | When the overview cannot be read and a plan is cached, the MAP card itself renders from the cache (`travel-buddy-standalone/src/components/layover/LayoverMapCard.tsx`, cached mode appended; mounted on the failed-read screen at `travel-buddy-standalone/app/layover/[id].tsx:716#<LayoverOfflinePlanCard plan={plan}`). It shows the last-certified time, the stale badge from the single staleness rule, and an OFFLINE badge, and never calls the envelope safe. |
+| L232 | W | **C** | The stated limit, "no session can form a crew", has been false since 2984 was applied (production ledger, 2026-09-16). GET /airport/sessions/:id/crew (`artifacts/api-server/src/routes/airport.ts:3327#router.get("/airport/sessions/:id/crew"`) refuses only on `airport_mode_enabled`, which is TRUE in the 2026-09-22 snapshot, and publishes the earliest member's certified return. Pinned over the router under production flags (`artifacts/api-server/src/test/layoverCensusPins.test.ts`), and in the scenario's own words across all six member orderings and the explicit-split arm (`artifacts/api-server/src/test/layoverCrewConstraints.test.ts`). |
+| L13 | W | **C** | The Temporal Freedom Engine is its own domain package (`artifacts/api-server/src/domain/temporal/TemporalFreedomEngine.ts`). Both adapters import it: Trips through `domain/trips/invariants/TripFreedomEngine.ts`, now a thin adapter, and Layover directly. It owns the window, the next commitment and the free gap. Its only import is `lib/travelEstimate`: no model, no prose. A 7.7 MB before/after snapshot of every output is byte-identical, and the Trips and Layover decision goldens are unchanged. |
+| L59 | W | **C** | The engine names no context: its reason is `TEMPORAL_CONFLICT`, its horizon is `horizonStart` / `horizonEnd`, and it has its own point type and no table. The airport reasons stay in the layover adapter. The layover wire's conflict label is now `TEMPORAL_CONFLICT` (`artifacts/api-server/src/services/airport/LayoverTemporalFreedom.ts:345#export const LAYOVER_WIRE_CONFLICT_REASON = "TEMPORAL_CONFLICT"`; type-only import at `artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:46#} from "../../domain/temporal/TemporalFreedomEngine.js";`), so a layover traveller is no longer handed a trip-shaped conflict. No client reads the field. |
+| L181 | C | **W** | FALSE GREEN. Its only production paths are GET and POST /observations, and both refuse at `artifacts/api-server/src/routes/airport.ts:2790#if (await crowdReportsClosed(sc, res)) return;` and `artifacts/api-server/src/routes/airport.ts:2830#if (await crowdReportsClosed(sc, res)) return;` unless `layover_crowd_reports_enabled` is on. 3513, which seeds it, is not in the production ledger, and the flag is absent from the 2026-09-22 snapshot. The gate landed after §41's C (154c18e0c, 2026-10-03). C on the press of 3513. |
+| L197 | C | **W** | FALSE GREEN. The table is applied (2860), but its only writer is that closed POST route. The lead's table ruling needs a product surface that populates the table. C on the press of 3513. |
+| L254 | C | **W** | FALSE GREEN. Its only path is GET /buddies behind `rent_buddy_enabled`, which is FALSE in the 2026-09-22 snapshot. C when the owner turns Rent-a-Buddy on. |
+| L15 | W | W | Reason restated. The old reason, that nothing reads `entry_requirements` or `traveler_passports`, is false: `services/airport/layoverEntryGate.ts` owns entry truth through `lib/entryRequirements`, and `passport_entry_intelligence_enabled` is TRUE in production. The plan compiler holds no entry truth (pinned in `artifacts/api-server/src/test/layoverEntryGate.test.ts`). But §3's "owns executable plans from feasible actions" is graded literally, as L14 is, and that half is not met: POST /stops accepts any stop and checks fit afterwards, and the inputs are cards, not contracts (L74, L76). |
+| L93 | W | W | Reason restated: the fan-out exists (`services/airport/LayoverExternalReplanPort.ts` groups active sessions by airport; its drain is scheduled), and 2986 indexes the airport axis. It is gated by `layover_event_ingest_enabled` (2981 unapplied) and 2986 unapplied: a press, not missing code. |
+| L36 | W | W | Reason restated: the risk bands, UNSAFE included, exist and persist (`services/layover/LayoverDecisionStore.ts`, `layover_return_plans.risk_band` from 2992). They are gated by the snapshot press (2700 / 2992), not by a missing vocabulary. |
+| L82 | W | W | Reason restated: the submission surface exists (POST /airport/sessions/:id/observations, since #589). It is fully built and blocked only by 3513 being unapplied. |
+| L14 | W | W | Reason restated: 2860 has been applied since 2026-09-16. The real gap is provenance and a TTL on the `airport_profiles` facts the engine reads (proposed migration 3874; owner ruling R4 on a TTL policy for static facts). |
+| L134 | W | W | Reason restated: crews are live in production (2984 and the crew routes). The real gap is a crew itinerary store and surface; the crew route certifies only the empty plan (`artifacts/api-server/src/routes/airport.ts:3105#const solution = certifyCrewPlan(unsplitPlan(solver.members, [])`). |
+| L135 | W | W | As L134: explicit split branches need the crew itinerary store. |
+| L58 | W | W | Reason restated: an uncertainty budget exists (`services/airport/LayoverEnvelope.ts`, ENVELOPE_UNCERTAINTY_BUDGET). riskBudget and softConstraints still have no definition (owner ruling R21). |
+| L247 | W | W | W is right. §72.5's prose sentence "L247 stays N" is the error, not the row line. |
+
+### Still open, stated
+
+- **Possibly affected, not re-graded here:** L239 ("detection has no producer") and L226 ("no delay input reaches a
+  session"). The traveller is now a disruption producer reachable from the app; both rows need re-deriving.
+- **Declared-interface C rows:** whether they survive the reachability rule applied to L181 / L197 / L254 is for the
+  independent verifier to check: L84–L89, L251, L252 and the event-replanner rows.
+- **Press order:** if production is deployed from this tree before 3513 is applied, crowd reports close in production
+  when the deploy lands.
+
+### Headline
+
+| bucket | was (wave 5, lanes 2–4) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 86 | 90 |
+| BUILT-BUT-WRONG | 158 | 154 |
+| NOT-BUILT | 52 | 52 |
+| CANNOT-VERIFY | 0 | 0 |
+| total | 296 | 296 |
+
+Seven rows up (L148, L149, L231, L126, L232, L13, L59), three false greens down (L181, L197, L254). 296 = 90 C / 154 W / 52 N / 0 X.
+
+### Wave 5, layover lane 5 (2026-10-18): seven code halves built ahead of the press — no row moves
+
+Each of these rows needs both code and the owner's production press. The code half is now built and tested in BOTH press
+states:
+- with storage and flag on (in the test double), the spec words are met;
+- with storage absent, or the flag off or unreadable, the answer is a named refusal (`storage_unavailable`,
+  `feature_disabled`, `flag_unreadable`), with no throw, no faked data and no write.
+Flags are read with the four-state `readFlagState`. The layover decision golden is byte-identical: 31 scenarios, 0 changed.
+
+| id | was | now | C on |
+| --- | --- | --- | --- |
+| L207 | W | W | the press of 2700 → 2992 → 3792 plus `layover_decision_persistence_enabled`. With persistence on, the replan's certified record goes through `persistDecision` and cites the stored snapshot id (`artifacts/api-server/src/services/airport/LayoverReplanService.ts`, appended). With the flag absent, the ledger row is byte-identical to before. |
+| L44 | W | W | the same press plus 3623 and `layover_recommendation_snapshot_enabled`, and a ruling on whether clearing a card's snapshot citation (compare-and-set, audited in the replan's ledger row) counts as "invalidate". No reader hides an uncited card yet. |
+| L196 | W | W | the press of 3900 plus `layover_presence_intents_enabled`, so the table is populated. The presence expiry sweep (`artifacts/api-server/src/lib/layoverPresenceExpiryScheduler.ts`) probes for the table, sweeps expired rows in batches, and has no flag by design, because it is retention. |
+| L175 | W | W | the press, plus a route that calls `evaluate(db, userId, sessionId)` (`artifacts/api-server/src/services/airport/LayoverFeasibilityService.ts`), e.g. in place of `/safety`'s inline certify-and-persist. |
+| L189 | W | W | the press, plus a route beside the L190 diff route and, on L190's grading precedent, a client caller. `explainSnapshot` explains a stored snapshot only after the replay reproduces its stored columns (`artifacts/api-server/src/services/layover/LayoverDecisionService.ts`, appended). |
+| L191 | W | W | the press, plus a mounted caller of `replaySessionDecisions`, which is bounded at 50 rows with truncation reported, and refuses an engine version that is not the running one. |
+| L180 | W | W | 3513 (so the observations route is open in production), plus the observations route calling `getTruthFromStore` (`artifacts/api-server/src/services/airport/LayoverAirportTruth.ts`, appended) in place of `reconcileAirportFact`. It is deliberately not wired: whether stored observations feed the safety path is owner ruling L81. A source-scan test pins that nothing calls it. |
+
+Tests: `layoverDecisionExplainReplay` (18), `layoverReplanSnapshotCitation` (15), `layoverFeasibilityServiceEvaluate` (11),
+`layoverPresenceExpirySweep` (13) and `layoverStoredTruth` (8). All are red-first; 17 mutants, all killed. The sweep is registered with the
+scheduler registry (`artifacts/api-server/src/lib/schedulerCoverage.ts`: 65 → 66 schedulers, 44 → 45 started). Each window-edit
+PATCH now reads two more `feature_flags` rows in production.
+
+Rows: none move. 296 = 90 C / 154 W / 52 N / 0 X, as the headline above.
+
+### Wave 5, layover lane 1 (2026-10-18): snapshot pairing built (unreachable in production), D-41 closed, Routes budgeted
+
+**Lead grading ruling R11 (2026-10-18):** D-41, "No Layover path through Rent-a-Buddy offers visa help", is a prohibition.
+It is met when it holds in every flag state the code can be in, proven by an acceptance test. That is census-passport P59's
+precedent. A FALSE flag that closes the whole surface does not make a prohibition unproven. It is the positive rows
+(L254) that a FALSE flag keeps from C.
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L296 | N | **W** | Built. GET /:id/recommendations always returns `snapshotId`. On the stored path that is the newest generation's snapshot, and only if that generation certified the rows as they now stand (otherwise it regenerates; an unreadable event is 503). The generation event records the pairing: the snapshot, plus a recKey → digest for each card (`artifacts/api-server/src/services/airport/LayoverRecommendationService.ts:826#stableIds: Boolean(opts.stableIds), ...ranking.event`). POST /stops/from-recommendation checks the pairing before the write (`artifacts/api-server/src/routes/airport.ts:2513#if (!await recommendationPairingOr409(sc, res, session.id`) and refuses 409 `RECOMMENDATION_EXPIRED`, "Recommendation certified under stale snapshot". An unreadable event is 503, never a pass. The per-card digest also refuses an add from an OLDER snapshot whose stable-id rows a lost generation rewrote in place. The client sends the snapshot of the card the traveller pressed, and on a 409 hides the Add buttons, shows "refreshed" and reloads the ideas once; it never retries. **Not C:** in production `layover_stable_recommendation_ids_enabled` is FALSE, so cards carry no id, "Add to plan" never renders, and no traveller reaches the guard. C when that flag is turned on; no migration is needed. |
+| L274 | N | **C** | R11. The acceptance test found a real path and it is closed. PATCH /rent-a-buddy/dashboard/offer stored categories, tagline and bio unvalidated, so a buddy declaring `visa_assistance`, or writing "guaranteed visa", was listed on the layover buddies list. The list now withholds any buddy whose category, name, tagline or bio offers visa or entry help, or trips the `VISA_HELP` scam family (`artifacts/api-server/src/routes/airport.ts:3754#rows = rows.filter((b) => !buddyOffersVisaOrEntryHelp(b));`, `artifacts/api-server/src/routes/airport.ts:5195#export function buddyOffersVisaOrEntryHelp(`). `bio` is read for the screen and never served. Pinned by `artifacts/api-server/src/test/layoverVisaBuddyWithdrawn.test.ts` (15 cases, 8 red on the old code). With `rent_buddy_enabled` FALSE in production, the list is empty for everyone today. |
+
+**The Routes budget (finding F1), no row moves.** No layover reader opened a `withRoutesRequestBudget` scope, so even
+after Routes is enabled every layover routing call would have been refused as "unscoped".
+`withLayoverRoutesBudget` (`artifacts/api-server/src/services/airport/LayoverTravelTime.ts:321#export function withLayoverRoutesBudget<T>(`)
+now wraps generation legs, the return corridor in `certifiedActionUniverse`, and Discovery's layover timing.
+- With a trip, the call is charged to the traveller and that trip.
+- With no trip, it answers the named absence `routes_unscoped_no_trip` and never calls the provider (how trip-less
+  layovers are charged is owner ruling R5(a)).
+- With Routes dark, as everywhere today, it is byte-identical; the decision golden is unchanged.
+
+This removes a blocker that kept L60, L68–L71 and L282 from ever reaching C.
+
+Three existing fixtures (`layoverAdminHideVisibility`, `layoverPlanFitUnknownLegs`, `layoverCheckpoints`) now stage the
+generation event a real generation writes, and name the snapshot. No assertion was loosened. The layover screen's failed-add
+toast no longer claims "plans may be full".
+
+### Headline
+
+| bucket | was (lanes 2–5) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 90 | 91 |
+| BUILT-BUT-WRONG | 154 | 155 |
+| NOT-BUILT | 52 | 50 |
+| CANNOT-VERIFY | 0 | 0 |
+| total | 296 | 296 |
+
+L296 N → W, L274 N → C. 296 = 91 C / 155 W / 50 N / 0 X.

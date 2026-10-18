@@ -559,3 +559,68 @@ describe("§14.1 shared rides — opt-in, and one leg at most", () => {
     }
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// census-layover L232 — §21.1 "Crew mixed departures → Shared constraint =
+// earliest or explicit split", named for the scenario so the row has its own
+// pin. This is the SOLVER half, both arms. The ROUTE half — the same scenario
+// over the real router under production's recorded flag state — is
+// src/test/layoverCensusPins.test.ts.
+
+describe("§21.1 L232 crew mixed departures → shared constraint = earliest or explicit split", () => {
+  it("EARLIEST arm: every ordering of a mixed-departure crew binds on the earliest member, and names only them", () => {
+    // Three flights at three different times. Every permutation is asked, so a
+    // fold that reads a POSITION — the founder, the newest joiner — instead of
+    // the minimum cannot pass because the fixture happened to list the earliest
+    // member there.
+    const early = member("early", 4);
+    const middle = member("middle", 6);
+    const late = member("late", 9);
+    assert.ok(
+      hardReturnOf(early) < hardReturnOf(middle) && hardReturnOf(middle) < hardReturnOf(late),
+      "control: the three certified returns really differ",
+    );
+    const orders: CrewMember[][] = [
+      [early, middle, late], [early, late, middle], [middle, early, late],
+      [middle, late, early], [late, early, middle], [late, middle, early],
+    ];
+    for (const crew of orders) {
+      const label = crew.map((m) => m.userId).join(",");
+      const r = sharedReturnBy(crew);
+      assert.equal(r.iso, new Date(hardReturnOf(early)).toISOString(), `[${label}] the shared constraint is not the earliest member's certified return`);
+      assert.deepEqual(r.bindingMemberIds, ["early"], `[${label}] the binding member is not named, or someone who does not bind is`);
+    }
+  });
+
+  it("EXPLICIT SPLIT arm: the earliest member's branch returns at the shared constraint while the later two continue to their own", () => {
+    const early = member("early", 4);
+    const middle = member("middle", 6);
+    const late = member("late", 9);
+    const members = [late, early, middle];
+    // Sized past the earliest member's window and inside the other two's.
+    const museum = [{ title: "Museum", durationMin: 120, travelMin: 30, insideAirport: false }];
+    assert.equal(
+      certifyCrewPlan(unsplitPlan(members, museum), members, { nowMs: NOW }).feasible, false,
+      "control: undivided, the earliest departure binds everyone and the museum does not fit",
+    );
+    const split = certifyCrewPlan(
+      {
+        branches: [
+          { branchId: "back-first", memberIds: ["early"], stops: [{ title: "Coffee", durationMin: 20, travelMin: 0, insideAirport: true }] },
+          { branchId: "continue", memberIds: ["middle", "late"], stops: museum },
+        ],
+      },
+      members,
+      { nowMs: NOW },
+    );
+    assert.equal(split.split, true);
+    assert.equal(split.feasible, true, `reasons: ${split.reasons.join(",")}`);
+    // The crew-wide constraint is STILL the earliest member's: a split lets a
+    // branch run past it, it does not redefine it.
+    assert.equal(split.sharedReturnBy, new Date(hardReturnOf(early)).toISOString());
+    assert.deepEqual(split.bindingMemberIds, ["early"]);
+    const cont = split.branches.find((b) => b.branchId === "continue")!;
+    assert.equal(cont.branchReturnBy, new Date(hardReturnOf(middle)).toISOString(), "the continuing branch's return is the earlier of ITS OWN members'");
+    assert.deepEqual(cont.bindingMemberIds, ["middle"]);
+  });
+});

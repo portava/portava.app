@@ -197,7 +197,7 @@ function toPlace(partial: Partial<DiscoveryPlace> & { id: string; name: string; 
   };
 }
 
-export function LayoverMapCard({
+export function LayoverMapCard(props: Props | LayoverMapCardCachedProps) { return isCachedMapProps(props) ? <LayoverMapCardCached {...props} /> : <LayoverMapCardLive {...props} />; } /* census-layover L126: the offline mode is declared at the tail */ function LayoverMapCardLive({
   airport, stops: certifiedStops, airportReturn, envelope, envelopeGate, candidateFeasibility, offline, nowMs, budgetChips, sessionId, crewLocations,
 }: Props) {
   const hasAirportCoords =
@@ -591,4 +591,135 @@ const styles = StyleSheet.create({
 /** census-layover L124 — how a crewmate is named on the map: their shown name, else their handle. */
 function crewWho(c: CrewmateShare): string {
   return c.name ?? (c.handle ? `@${c.handle}` : 'A crewmate');
+}
+
+// ── census-layover L126 — §13 "Offline state: show last-certified envelope timestamp + stale badge" ──
+// The map card's OFFLINE mode, appended at the TAIL so no cited line above moves (ESM hoists the import).
+//
+// When `GET /overview` cannot be read, the screen hands this card the plan `lib/layoverPlanCache` stored
+// on the last good read, and the card draws the MAP from it: the airport on the basemap, the certified
+// envelope's two edges to the same printed scale as the live card, the route with its return leg — and,
+// on every render, the instant it was certified and the stale badge, decided by the ONE staleness rule
+// (`bundleFreshness`) on the cache's verbatim `certifiedAt` / `staleAfter`. It is never drawn as live:
+// an OFFLINE badge heads the card whatever the age, the rings are dimmed, nothing is tappable into an
+// action that needs the network, and the envelope is never called "safe" (the landside gate it was
+// published under is not part of the cached plan, so the card cannot know it was open).
+//
+// What the cached plan does not carry, and so is not drawn: stop coordinates (no stop pins offline),
+// stop ids (no per-pin bands), the gate's status and cautions, and the confidence haircut's minutes.
+import type { CachedLayoverPlan } from '../../lib/layoverPlanCache.ts';
+
+export interface LayoverMapCardCachedProps {
+  /** The record `readCachedPlan` returned. Its instants are the server's, verbatim. */
+  cached: CachedLayoverPlan;
+  /** The last certified return time from the deadline cache (`readCachedDeadline`), when there is one. */
+  cachedReturn?: { hardReturnTime: string; hardReturnLocal: string | null } | null;
+  /** Injected so the stale badge is testable without a fake clock. */
+  nowMs: number;
+}
+
+function isCachedMapProps(p: Props | LayoverMapCardCachedProps): p is LayoverMapCardCachedProps {
+  return 'cached' in p && !!(p as LayoverMapCardCachedProps).cached;
+}
+
+function LayoverMapCardCached({ cached, cachedReturn, nowMs }: LayoverMapCardCachedProps) {
+  const a = cached.airport;
+  const lat = a.lat; const lng = a.lng;
+  const hasCoords = lat != null && lng != null && !(lat === 0 && lng === 0);
+  // §16 — asked, never derived here: the same rule, the same fail-closed `known: false`.
+  const freshness = bundleFreshness(cached, nowMs);
+  const places = hasCoords
+    ? [toPlace({ id: `airport-${a.iataCode}`, name: `${a.iataCode} — ${a.name}`, category: 'transport', lat, lng, address: a.city || null })]
+    : [];
+  const env = cached.envelope && cached.envelope.radiusMetres > 0 ? cached.envelope : null;
+  const scale = env ? envelopeMetresPerPx(env.radiusMetres) : ENVELOPE_METRES_PER_PX;
+  const outside = cached.stops.filter((s) => !s.insideAirport);
+
+  return (
+    <View style={styles.card} testID="layover-map-card-offline">
+      <View style={styles.headRow}>
+        <MapIcon size={18} color={color.ink} />
+        <Text style={styles.heading}>{a.city ? `Around ${a.city}` : `Around ${a.iataCode}`}</Text>
+      </View>
+      <View style={styles.staleBadge} testID="layover-map-offline-badge">
+        <AlertTriangle size={12} color={color.ink} />
+        <Text style={[styles.staleText, { flexShrink: 1 }]}>
+          OFFLINE — a copy saved on this phone, not a live map. Nothing on it has been re-checked since it was certified.
+        </Text>
+      </View>
+
+      {hasCoords ? (
+        <View style={styles.mapWrap}>
+          <DiscoveryMapView places={places} onSelectPlace={() => undefined} fallbackLat={lat} fallbackLng={lng} fallbackZoom={11} />
+        </View>
+      ) : (
+        <View style={styles.noMap} testID="layover-map-no-coordinates">
+          <Text style={styles.noMapText}>No coordinates were saved for {a.iataCode}, so there is no map to draw.</Text>
+        </View>
+      )}
+
+      <View style={styles.envelope} testID="layover-map-offline-envelope">
+        <Text style={styles.sheetLabel}>LAST CERTIFIED ENVELOPE — SAVED COPY</Text>
+        {env ? (
+          <>
+            <View style={styles.envelopeRow}>
+              <View style={[styles.envelopePlot, { opacity: 0.6 }]}>
+                <View testID="layover-map-offline-proved-ring" style={[styles.ringProved, { width: ringPx(env.radiusMetres, scale), height: ringPx(env.radiusMetres, scale), borderRadius: ringPx(env.radiusMetres, scale) / 2 }]} />
+                <View testID="layover-map-offline-planned-ring" style={[styles.ringPlanned, { width: ringPx(env.plannedRadiusMetres, scale), height: ringPx(env.plannedRadiusMetres, scale), borderRadius: ringPx(env.plannedRadiusMetres, scale) / 2 }]} />
+                <View style={styles.ringCentre} />
+              </View>
+              <View style={{ flex: 1, gap: 4 }}>
+                <Text style={styles.envelopeProved}>{'Proved edge '}{km(env.radiusMetres)}</Text>
+                <Text style={styles.envelopeSub}>
+                  Past it, {env.maxOneWayMinutes * 2} min there and back was already more than your {env.usableMinutes} usable minutes — at any speed.
+                </Text>
+                <Text style={styles.envelopeProved}>{'Planned inside '}{km(env.plannedRadiusMetres)}</Text>
+              </View>
+            </View>
+            <Text style={styles.envelopeSub}>
+              Diagram to scale — {km(scale * 10)} per 10 px{scale !== ENVELOPE_METRES_PER_PX ? ' (compressed to fit)' : ''}.
+            </Text>
+            <Text style={styles.envelopeCaveat} testID="layover-map-offline-not-a-clearance">
+              Not a clearance, and not a live answer: inside the rings is not a guarantee, and whether leaving the
+              airport was open is not saved on this phone.
+            </Text>
+          </>
+        ) : (
+          <Text style={styles.envelopeSub} testID="layover-map-offline-no-envelope">
+            No envelope was saved with this plan, so nothing on this map is marked reachable.
+          </Text>
+        )}
+        <Text style={styles.envelopeSub} testID="layover-map-offline-certified-at">
+          Last certified {freshness.known ? fmtClock(cached.certifiedAt, a.timezone) : 'at an instant we could not read'}
+        </Text>
+        {freshness.stale ? (
+          <View style={styles.staleBadge} testID="layover-map-offline-stale">
+            <AlertTriangle size={12} color={color.ink} />
+            <Text style={[styles.staleText, { flexShrink: 1 }]}>
+              {freshness.known
+                ? `STALE — last certified ${freshness.ageMinutes} min ago; this is the last envelope we could cut, not a live one.`
+                : 'STALE — we cannot tell how old this envelope is, so it is not a live one.'}
+            </Text>
+          </View>
+        ) : null}
+      </View>
+
+      <View style={styles.route} testID="layover-map-offline-route">
+        <Text style={styles.sheetLabel}>YOUR LAST CERTIFIED ROUTE</Text>
+        {outside.map((s, i) => (
+          <Text key={`${s.title}-${i}`} style={styles.routeLeg} testID="layover-map-offline-route-leg">
+            {i + 1}. {s.title}
+          </Text>
+        ))}
+        <View style={styles.routeReturn} testID="layover-map-offline-return-leg">
+          <Plane size={13} color={color.signalDim} />
+          <Text style={styles.routeReturnText} testID={cachedReturn ? 'layover-map-offline-return-deadline' : 'layover-map-offline-return-unsaved'}>
+            {cachedReturn
+              ? `Back at ${a.iataCode} by ${cachedReturn.hardReturnLocal ?? fmtClock(cachedReturn.hardReturnTime, a.timezone)} — last certified, not live`
+              : `Back at ${a.iataCode} — no return time was saved on this phone.`}
+          </Text>
+        </View>
+      </View>
+    </View>
+  );
 }

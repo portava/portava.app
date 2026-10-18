@@ -1034,17 +1034,17 @@ router.get("/airport/sessions/:id/recommendations", async (req, res) => {
     sendError(res, "degraded_unavailable", "Layover ideas could not be loaded. Please try again.");
     return;
   }
-  let recs = stored.recommendations;
-  if (recs.length === 0 || isSafetyEnabled) {
+  let recs = stored.recommendations; let snapshotId: string | null = null; if (recs.length > 0 && !isSafetyEnabled) { const paired = await storedRecommendationPairing(sc, session.id, stored.pairingCards); if (!paired.ok) { sendError(res, "degraded_unavailable", "Layover ideas could not be loaded. Please try again."); return; } snapshotId = paired.snapshotId; } /* census L296: the stored path serves the newest generation's snapshot, and only for rows it certified as they stand */
+  if (recs.length === 0 || isSafetyEnabled || snapshotId === null) {
     const generated = await generateRecommendations(sc, airport, session, Date.now(), { stableIds });
     if (!generated.ok) {
       sendError(res, "degraded_unavailable", "Layover ideas could not be loaded. Please try again.");
       return;
     }
-    recs = generated.recommendations;
+    recs = generated.recommendations; snapshotId = generated.snapshotId;
   }
 
-  const landside = await landsideSuppressionFor(sc, session.id, Date.now()); res.json({ recommendations: applyLandsideSuppression(recs, landside), featureEnabled: true, landsideSuppression: landsideSuppressionWire(landside) }); // census L43: after a confirmed re-entry, airport-side only
+  const landside = await landsideSuppressionFor(sc, session.id, Date.now()); res.json({ recommendations: applyLandsideSuppression(recs, landside), featureEnabled: true, snapshotId, landsideSuppression: landsideSuppressionWire(landside) }); // census L43: after a confirmed re-entry, airport-side only; census L296 (App C5): `snapshotId` is the snapshot these cards were certified under
 });
 
 // ── GET /api/airport/sessions/:id/safety ─────────────────────────────────────
@@ -2510,7 +2510,7 @@ router.post("/airport/sessions/:id/stops/from-recommendation", async (req, res) 
     sendError(res, "invalid_payload", "This idea has no duration yet, so it cannot be timed into a plan.");
     return;
   }
-
+  if (!await recommendationPairingOr409(sc, res, session.id, rec as Record<string, unknown>, req.body?.snapshotId)) return; /* census L296 (App C5): the WRITE below certifies this card into the plan, so it is the one step that needs the snapshot the card was returned with; the refusals above write nothing */
   const { error } = await sc.from("layover_plan_stops").insert({
     session_id:        session.id,
     title:             (rec as any).title,
@@ -3651,7 +3651,7 @@ router.get("/airport/sessions/:id/buddies", async (req, res) => {
       .select(
         "id, user_id, display_name, tagline, city, country, categories, " +
         "hourly_rate_usd, average_rating, review_count, verified, " +
-        "cover_photo_url, buddy_level, available_now",
+        "cover_photo_url, buddy_level, available_now, bio",
       )
       .eq("status", "active")
       .ilike("city", `%${city}%`)
@@ -3751,7 +3751,7 @@ router.get("/airport/sessions/:id/buddies", async (req, res) => {
 
     // L273 strict boundaries, then L254's requirement. Both are defined in the
     // layover domain; this handler applies them, it does not own them.
-    rows = filterLayoverCompatible(rows);
+    rows = filterLayoverCompatible(rows); rows = rows.filter((b) => !buddyOffersVisaOrEntryHelp(b)); /* lead ruling D-41 (census L274): the screen is defined at the end of this file; `bio` is read for it and never served */
     rows = applyBuddyTrustRequirement(rows, trustRequirement);
 
     const result = rows
@@ -5122,3 +5122,83 @@ router.get("/airport/sessions/:id/decisions/diff", async (req, res) => {
 
 // census-layover L118 (time-budget chips) — imported at the TAIL so no cited line above moves; ESM hoists it.
 import { mapBudgetChipsField } from "../services/airport/layoverMapBudget.js";
+
+// census-layover L296 (App C5) — imported at the TAIL so no cited line above moves; ESM hoists it.
+import {
+  checkRecommendationPairing,
+  storedRecommendationPairing,
+  RECOMMENDATION_EXPIRED_MESSAGE,
+} from "../services/airport/LayoverRecommendationService.js";
+
+/**
+ * census-layover L296 — Appendix C5, *"Never certify a recommendation against a
+ * snapshot other than the one returned with it."*
+ *
+ * `POST /stops/from-recommendation` copies a card's certified numbers into the
+ * traveller's plan, so it is a certification. It now requires the snapshot the
+ * card was returned with (`GET /:id/recommendations` → `snapshotId`) and
+ * proceeds only when that is the session's NEWEST generation and that
+ * generation certified this card exactly as the row now stands
+ * (`judgeRecommendationPairing`). Anything else — no snapshot, a superseded
+ * one, the snapshot an overview or safety answer published, a card the newest
+ * generation did not produce or has since rewritten — is 409 with Appendix A's
+ * `RECOMMENDATION_EXPIRED` and its sentence. The client refetches the cards; it
+ * must not retry the add with a different snapshot it did not see the card under.
+ *
+ * An unreadable generation event is 503 (`degraded_unavailable`, retryable):
+ * "we could not check" is never "it checks out".
+ *
+ * Returns true when the add may proceed; otherwise it has already answered.
+ */
+async function recommendationPairingOr409(
+  sc: any,
+  res: any,
+  sessionId: string,
+  rec: Record<string, unknown>,
+  named: unknown,
+): Promise<boolean> {
+  const check = await checkRecommendationPairing(sc, sessionId, rec, named);
+  if (check.ok) return true;
+  if (check.kind === "unreadable") {
+    sendError(res, "degraded_unavailable", "We could not confirm this idea is still current. Please try again.");
+    return false;
+  }
+  logger.info({ sessionId, why: check.why }, "recommendation add refused: RECOMMENDATION_EXPIRED");
+  sendError(res, "conflict", RECOMMENDATION_EXPIRED_MESSAGE, { exposeDetail: true, reason: "RECOMMENDATION_EXPIRED" });
+  return false;
+}
+
+// census-layover L274 / lead ruling D-41 — imported at the TAIL so no cited line above moves; ESM hoists it.
+import { detectTravelScamSignals } from "../domain/telegraph/policies/travelScamSignals.js";
+
+/**
+ * Lead ruling D-41 (docs/ops/lead-rulings-20261007-media.md): "Visa Buddy" is
+ * withdrawn — *"No Layover path through Rent-a-Buddy offers visa help."* — on
+ * the ground that visa help is already a scam signal (`VISA_HELP` in
+ * domain/telegraph/policies/travelScamSignals.ts).
+ *
+ * The layover People card is a path into Rent-a-Buddy: it lists profiles and a
+ * tap opens the buddy's ordinary profile. `PATCH /rent-a-buddy/dashboard/offer`
+ * writes categories, tagline and bio UNVALIDATED, and `filterLayoverCompatible`
+ * admits a profile on ANY compatible category, so a buddy declaring
+ * `["city", "visa_assistance"]` — or writing "guaranteed visa, fast-track" in
+ * their own words — was offered to a traveller in transit, the population this
+ * scam family targets. This is the screen: a profile that offers visa or entry
+ * help by a declared service, or in its display name, tagline or bio, is not on
+ * the layover list. It stays on the Rent-a-Buddy marketplace, whose own
+ * moderation is not this route's to decide. Over-withholding is the cheap
+ * error here: a buddy who mentions a visa innocently is simply not suggested
+ * between two flights.
+ */
+const BUDDY_VISA_OR_ENTRY_HELP = /\b(e-?visas?|visas?|immigration|embass(y|ies)|consulates?|entry\s+(permits?|requirements?|paperwork|help|assistance)|border\s+(help|assistance))\b/i;
+
+export function buddyOffersVisaOrEntryHelp(row: { categories?: unknown; display_name?: unknown; tagline?: unknown; bio?: unknown }): boolean {
+  const cats = Array.isArray(row.categories) ? row.categories : [];
+  if (cats.some((c) => typeof c === "string" && BUDDY_VISA_OR_ENTRY_HELP.test(c.replace(/[_-]+/g, " ")))) return true;
+  for (const text of [row.display_name, row.tagline, row.bio]) {
+    if (typeof text !== "string" || text.trim() === "") continue;
+    if (BUDDY_VISA_OR_ENTRY_HELP.test(text)) return true;
+    if (detectTravelScamSignals(text).some((s) => s.family === "VISA_HELP")) return true;
+  }
+  return false;
+}

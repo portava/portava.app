@@ -454,7 +454,7 @@ export type CertifiedRecommendation = SafeRecommendation & {
 };
 
 export type GenerateResult =
-  | { ok: true; recommendations: CertifiedRecommendation[] }
+  | { ok: true; recommendations: CertifiedRecommendation[]; /** census L296 (App C5): the snapshot every card above was certified under — `snapshotIdFor(session.id, certified.inputHash)`. An add-to-plan must name it. */ snapshotId: string }
   | { ok: false; message: string };
 
 export async function generateRecommendations(
@@ -500,7 +500,7 @@ export async function generateRecommendations(
   //    airport's data maturity as well as on the traveller's usable minutes.
   const tod = timeOfDayContext(airport, session, nowMs);
   let discoveryCandidates = session.wantsToLeave && usableMinutes >= 90 && landside.allowed && certified.verdict !== "no" && landsideStatusOf(certified) !== "closed"
-    ? await fetchDiscoveryPlaces(db, city, session.vibeChips, airportPoint(airport), new Date(nowMs), opts.travelTimeProvider)
+    ? await withLayoverRoutesBudget(session, () => fetchDiscoveryPlaces(db, city, session.vibeChips, airportPoint(airport), new Date(nowMs), opts.travelTimeProvider))
     : [];
   if (!tod.coversEvening) {
     // Daytime-only window: nightlife cards would be dishonest.
@@ -823,7 +823,7 @@ export async function generateRecommendations(
         // and deadlines written above came out of, and `inputHash` is what makes
         // a replay checkable rather than a re-derivation that happens to agree.
         ...certificationHeader(certified),
-        stableIds: Boolean(opts.stableIds), ...ranking.event, ...(stamp.snapshotId !== null ? { snapshotId: stamp.snapshotId } : stamp.reason !== "stamp_disabled" ? { snapshotStampRefused: stamp.reason } : {}), // census L64: nothing at all with the flag OFF
+        stableIds: Boolean(opts.stableIds), ...ranking.event, ...(stamp.snapshotId !== null ? { snapshotId: stamp.snapshotId } : stamp.reason !== "stamp_disabled" ? { snapshotStampRefused: stamp.reason } : {}), pairing: recommendationPairingFor(session.id, certified.inputHash, rows, keys), // census L64: nothing at all with the flag OFF; census L296: `pairing` is what POST /stops/from-recommendation checks an add against
         inputs: {
           airportId: airport.id,
           iataCode: airport.iataCode,
@@ -867,7 +867,7 @@ export async function generateRecommendations(
   //
   // On the legacy path `statusByKey` is empty, so nothing is dropped and the
   // returned set is byte-identical to what it was before this filter existed.
-  return { ok: true, recommendations: rows.flatMap((row, idx) => {
+  return { ok: true, snapshotId: snapshotIdFor(session.id, certified.inputHash), recommendations: rows.flatMap((row, idx) => {
     const status = statusByKey.get(keys[idx]);
     if (status === USER_HIDDEN_RECOMMENDATION_STATUS) return [];
     // census L122 — the pin's band, from the envelope THIS request cut. An
@@ -936,7 +936,7 @@ export const USER_HIDDEN_RECOMMENDATION_STATUS = "hidden" as const;
  * route reads by id — so an admin can still see and act on everything.
  */
 export type RecommendationsRead =
-  | { ok: true; recommendations: CertifiedRecommendation[] }
+  | { ok: true; recommendations: CertifiedRecommendation[]; /** census L296: each served row as (recKey, digest), so the stored path can ask whether the newest generation certified THESE rows. */ pairingCards: Array<[string, string]> }
   | { ok: false; message: string };
 
 export async function getRecommendations(
@@ -972,7 +972,7 @@ export async function getRecommendations(
     // window" rather than a band that would be a claim about an older one. The
     // route regenerates whenever `layover_safety_engine_enabled` is on, so the
     // banded path is the one a traveller actually gets there.
-    return { ok: true, recommendations: (data ?? []).map((row: any) => ({ ...sanitizeRecommendation({
+    return { ok: true, pairingCards: (data ?? []).map((row: any) => [recommendationRowKey(row), recommendationCardDigest(row)] as [string, string]), recommendations: (data ?? []).map((row: any) => ({ ...sanitizeRecommendation({
       id:             row.id,
       recType:        row.rec_type,
       title:          row.title,
@@ -1004,4 +1004,215 @@ export async function getRecommendations(
       row.inside_airport ? AIRSIDE_UNBANDED_REASON : STORED_UNBANDED_REASON,
     ), experience: layoverExperienceFor({ recType: row.rec_type, title: row.title, insideAirport: Boolean(row.inside_airport) }) })) }; // census L75: the same descriptor the generate path attaches
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// census-layover L296 — Appendix C5: "Never certify a recommendation against a
+// snapshot other than the one returned with it." Appendix A names the refusal:
+// RECOMMENDATION_EXPIRED, "Recommendation certified under stale snapshot".
+//
+// Appended at the TAIL so no cited line above moves; ESM hoists the imports.
+//
+// THE PAIRING. A generation certifies every card against ONE record, whose
+// identity is `snapshotIdFor(session.id, certified.inputHash)`. The response
+// carries that id (`GenerateResult.snapshotId`), and the generation's audit
+// event (`recommendation_generated`, layover_events — applied in production)
+// records `pairing`: the same id plus every card it wrote, as recKey → a digest
+// of the columns the card is certified by. `POST /stops/from-recommendation`
+// adds a card only when the request names the NEWEST generation's snapshot AND
+// that generation certified this card as the row now stands.
+//
+// WHY A DIGEST AND NOT ONLY A KEY LIST. The event insert is non-fatal (§72.5).
+// When a generation's event is lost, the newest RECORDED generation is the one
+// before it, and a key list would let a client holding that older snapshot add
+// a card the lost generation REWROTE in place (stable ids upsert on rec_key) —
+// the plan would copy numbers certified under a snapshot the client never saw.
+// The digest refuses exactly that, and still lets an unchanged card through,
+// because an unchanged card IS the card the older snapshot certified.
+//
+// FAIL-CLOSED READS. An unreadable event is `unreadable` (the route answers
+// 503); a missing or malformed pairing is "no generation recorded" (409).
+// Neither is ever a pass.
+// ═══════════════════════════════════════════════════════════════════════════
+import { createHash } from "node:crypto";
+import { snapshotIdFor } from "./layoverLedger.js";
+import { withLayoverRoutesBudget } from "./LayoverTravelTime.js";
+
+/** Appendix A's sentence for `RECOMMENDATION_EXPIRED`, verbatim. */
+export const RECOMMENDATION_EXPIRED_MESSAGE = "Recommendation certified under stale snapshot";
+
+/** What one generation certified: its snapshot, and each card it wrote as recKey → digest. */
+export interface RecommendationPairing {
+  snapshotId: string;
+  cards: Record<string, string>;
+}
+
+/**
+ * The columns a card is certified BY — its rating, its deadline and the facts
+ * the rating was computed from — and that `POST /stops/from-recommendation`
+ * copies into the plan. A change to any of them is a different card.
+ */
+const CERTIFIED_CARD_COLUMNS = [
+  "rec_type", "title", "description", "safety_rating", "travel_time_min", "activity_time_min",
+  "return_buffer_min", "hard_return_time", "warning_reason", "inside_airport", "location_label",
+  "city", "neighborhood", "place_id",
+] as const;
+const NUMERIC_CARD_COLUMNS: ReadonlySet<string> = new Set(["travel_time_min", "activity_time_min", "return_buffer_min"]);
+
+/**
+ * One value, as the generation wrote it and as PostgREST reads it back. The one
+ * representation that differs on the wire is a `timestamptz`: written as
+ * `toISOString()` ("…Z"), read back as "…+00:00". Both parse to one instant.
+ */
+function certifiedCardValue(column: string, v: unknown): string | number | boolean | null {
+  if (v === undefined || v === null) return null;
+  if (column === "hard_return_time") {
+    const ms = Date.parse(String(v));
+    return Number.isFinite(ms) ? new Date(ms).toISOString() : String(v);
+  }
+  if (column === "inside_airport") return Boolean(v);
+  if (NUMERIC_CARD_COLUMNS.has(column)) {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : String(v);
+  }
+  return String(v);
+}
+
+/** A digest of a `layover_recommendations` row's certified columns. Identity, not security. */
+export function recommendationCardDigest(row: Record<string, unknown>): string {
+  const values = CERTIFIED_CARD_COLUMNS.map((c) => certifiedCardValue(c, row[c]));
+  return createHash("sha256").update(JSON.stringify(values)).digest("hex").slice(0, 32);
+}
+
+/**
+ * A stored row's identity within its session: its `rec_key` when it has one
+ * (the stable path writes it), otherwise the same `recommendationKey` the
+ * generation derived it from (the legacy path writes no key).
+ */
+export function recommendationRowKey(row: Record<string, unknown>): string {
+  if (typeof row.rec_key === "string" && row.rec_key !== "") return row.rec_key;
+  return recommendationKey({
+    recType: String(row.rec_type ?? ""),
+    title: String(row.title ?? ""),
+    insideAirport: Boolean(row.inside_airport),
+    placeId: (row.place_id as string | null | undefined) ?? null,
+    city: (row.city as string | null | undefined) ?? null,
+  });
+}
+
+/** The pairing a generation records beside the cards it wrote. */
+export function recommendationPairingFor(
+  sessionId: string,
+  inputHash: string,
+  rows: ReadonlyArray<Record<string, unknown>>,
+  keys: ReadonlyArray<string>,
+): RecommendationPairing {
+  const cards: Record<string, string> = {};
+  rows.forEach((row, i) => { cards[keys[i]!] = recommendationCardDigest(row); });
+  return { snapshotId: snapshotIdFor(sessionId, inputHash), cards };
+}
+
+/** The `pairing` an event carries, or null when it carries none this code can read. */
+function pairingOf(metadata: unknown): RecommendationPairing | null {
+  const p = (metadata as { pairing?: unknown } | null | undefined)?.pairing as { snapshotId?: unknown; cards?: unknown } | undefined;
+  if (!p || typeof p.snapshotId !== "string" || !/^snap:[0-9a-f]{32}$/.test(p.snapshotId)) return null;
+  if (!p.cards || typeof p.cards !== "object" || Array.isArray(p.cards)) return null;
+  const cards: Record<string, string> = {};
+  for (const [k, v] of Object.entries(p.cards as Record<string, unknown>)) {
+    if (typeof v !== "string") return null;
+    cards[k] = v;
+  }
+  return { snapshotId: p.snapshotId, cards };
+}
+
+const hasCard = (p: RecommendationPairing, key: string): boolean => Object.prototype.hasOwnProperty.call(p.cards, key);
+
+export type RecommendationPairingRead =
+  | { ok: true; pairing: RecommendationPairing | null }
+  | { ok: false; message: string };
+
+/**
+ * The pairing of the session's NEWEST generation — the newest
+ * `recommendation_generated` event, never the newest overview or safety answer
+ * (those are snapshots of the session, not of the cards). `pairing: null` is an
+ * ANSWER (no generation recorded one); `ok: false` is "could not look".
+ */
+export async function newestRecommendationPairing(
+  db: SupabaseClient,
+  sessionId: string,
+): Promise<RecommendationPairingRead> {
+  try {
+    const { data, error } = await db
+      .from("layover_events")
+      .select("metadata, created_at")
+      .eq("session_id", sessionId)
+      .eq("event_type", "recommendation_generated")
+      .order("created_at", { ascending: false })
+      .limit(1);
+    if (error) {
+      logger.warn({ err: error, sessionId }, "recommendation_generated read failed — no card can be paired with a snapshot");
+      return { ok: false, message: String(error.message ?? "layover_events unreadable") };
+    }
+    const newest = Array.isArray(data) ? (data[0] as { metadata?: unknown } | undefined) : undefined;
+    return { ok: true, pairing: pairingOf(newest?.metadata) };
+  } catch (err) {
+    logger.warn({ err, sessionId }, "recommendation_generated read threw — no card can be paired with a snapshot");
+    return { ok: false, message: String((err as Error)?.message ?? err) };
+  }
+}
+
+export type RecommendationPairingCheck =
+  | { ok: true; snapshotId: string }
+  | { ok: false; kind: "expired"; why: "no_snapshot_named" | "no_generation_recorded" | "snapshot_superseded" | "card_not_certified_as_it_stands" }
+  | { ok: false; kind: "unreadable"; message: string };
+
+/** Pure: may `row`, named under `snapshotId`, be added given the newest generation's `pairing`? */
+export function judgeRecommendationPairing(
+  pairing: RecommendationPairing | null,
+  snapshotId: string,
+  row: Record<string, unknown>,
+): RecommendationPairingCheck {
+  if (pairing === null) return { ok: false, kind: "expired", why: "no_generation_recorded" };
+  if (pairing.snapshotId !== snapshotId) return { ok: false, kind: "expired", why: "snapshot_superseded" };
+  const key = recommendationRowKey(row);
+  if (!hasCard(pairing, key) || pairing.cards[key] !== recommendationCardDigest(row)) {
+    return { ok: false, kind: "expired", why: "card_not_certified_as_it_stands" };
+  }
+  return { ok: true, snapshotId };
+}
+
+/**
+ * The add's check. `named` is the request's `snapshotId`, untrusted: anything
+ * but a non-empty string is "none", and none is refused before anything is read.
+ */
+export async function checkRecommendationPairing(
+  db: SupabaseClient,
+  sessionId: string,
+  row: Record<string, unknown>,
+  named: unknown,
+): Promise<RecommendationPairingCheck> {
+  const snapshotId = typeof named === "string" && named.trim() !== "" ? named : null;
+  if (snapshotId === null) return { ok: false, kind: "expired", why: "no_snapshot_named" };
+  const read = await newestRecommendationPairing(db, sessionId);
+  if (!read.ok) return { ok: false, kind: "unreadable", message: read.message };
+  return judgeRecommendationPairing(read.pairing, snapshotId, row);
+}
+
+/**
+ * The stored path's snapshot (`GET /:id/recommendations` with the safety engine
+ * off): the newest generation's, but ONLY when that generation certified every
+ * served row exactly as it stands. Otherwise `snapshotId: null`, and the route
+ * regenerates rather than label rows with a snapshot they were not computed in.
+ */
+export async function storedRecommendationPairing(
+  db: SupabaseClient,
+  sessionId: string,
+  served: ReadonlyArray<readonly [string, string]>,
+): Promise<{ ok: true; snapshotId: string | null } | { ok: false; message: string }> {
+  const read = await newestRecommendationPairing(db, sessionId);
+  if (!read.ok) return read;
+  const p = read.pairing;
+  if (p === null || served.length === 0) return { ok: true, snapshotId: null };
+  const paired = served.every(([key, digest]) => hasCard(p, key) && p.cards[key] === digest);
+  return { ok: true, snapshotId: paired ? p.snapshotId : null };
 }

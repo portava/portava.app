@@ -414,7 +414,7 @@ export default function LayoverDashboardScreen() {
     try {
       const res = await addStopFromRecommendation(id, recId);
       if (res) { onStopsChanged(res); showToast('Added to your plan'); }
-      else showToast('Could not add — plans may be full');
+      else showToast('Could not add this idea. Check the ideas list and try again.'); // census L296: a refused add is a refreshed list, an outage or a refusal, never "plans may be full"
     } finally {
       setAddingRecId(null);
     }
@@ -685,7 +685,7 @@ export default function LayoverDashboardScreen() {
       ? describeDeadline(cachedDeadlineAsBundle(cached), cached.hardReturnTime, nowMs)
       : null;
     return (
-      <View style={styles.centerFill} testID="layover-load-error">
+      <ScrollView style={styles.failureScroll} contentContainerStyle={styles.failureContent} testID="layover-load-error">
         <Stack.Screen options={{ headerShown: false }} />
         <Text style={styles.centerTitle}>
           {gone ? 'This layover is no longer here' : "Couldn't load this layover"}
@@ -713,7 +713,7 @@ export default function LayoverDashboardScreen() {
         {/* census L151/L233 — where they were going, which airport they have to
             be back at, and how far the certified envelope reached. Captioned
             last-certified by the card itself, through the one staleness rule. */}
-        <LayoverOfflinePlanCard plan={plan} replan={replanDecision} nowMs={nowMs} />
+        <LayoverOfflinePlanCard plan={plan} replan={replanDecision} nowMs={nowMs} />{plan ? <View style={styles.offlineMap}><LayoverMapCard cached={plan} cachedReturn={cached} nowMs={nowMs} /></View> : null}{/* census-layover L126 — §13 offline state: the MAP card itself, drawn from the cached plan with its last-certified instant and stale badge */}
         {retryable && (
           <Pressable style={styles.retryBtn} onPress={() => load()} testID="layover-load-retry">
             <Text style={styles.retryBtnText}>Try again</Text>
@@ -722,7 +722,7 @@ export default function LayoverDashboardScreen() {
         <Pressable style={styles.backLink} onPress={() => router.back()}>
           <Text style={styles.backLinkText}>Go back</Text>
         </Pressable>
-      </View>
+      </ScrollView>
     );
   }
 
@@ -863,7 +863,7 @@ export default function LayoverDashboardScreen() {
           canEdit={!!canEdit}
           onChanged={() => load(true)}
           onError={showToast}
-        />
+        /><LayoverDisruptionCard sessionId={session.id} canReport={session.status === 'active' || session.status === 'returning'} timezone={airport.timezone} departureLocal={localTimes?.departureDay && localTimes?.departureLocal ? `${localTimes.departureDay} ${localTimes.departureLocal}` : null} onReported={() => load(true)} />{/* census-layover L148/L149/L231 — §15.2: the traveller reports a delay or cancellation; the card shows the server's state and recompute, and the screen re-reads */}
         <AirportEssentialsCard countryCode={airport.countryCode} countryName={airport.country !== 'Unknown' ? airport.country : undefined} />
 
         {/* §10 L82 — the traveller observation channel's submission surface.
@@ -1134,7 +1134,7 @@ const styles = StyleSheet.create({
   topTitle:  { ...t.heading, color: color.ink },
   body:      { padding: space.lg, gap: space.md },
 
-  centerFill:{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paper, padding: space.xl, gap: space.sm },
+  centerFill:{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paper, padding: space.xl, gap: space.sm }, failureScroll: { flex: 1, backgroundColor: color.paper }, failureContent: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', padding: space.xl, gap: space.sm }, offlineMap: { alignSelf: 'stretch', marginTop: space.sm }, /* census-layover L126: the failure screen scrolls, because the offline map makes it taller than a phone */
   centerTitle:{ ...t.heading, color: color.ink },
   centerText:{ ...t.small, color: color.mute, textAlign: 'center' },
   retryBtn:  { backgroundColor: color.ink, borderRadius: radius.md, paddingHorizontal: space.xl, paddingVertical: space.md, marginTop: space.md },
@@ -1181,3 +1181,5 @@ const styles = StyleSheet.create({
 // LP-2: NOT the composer. The composer reaches the photo picker and L168's guard forbids that from this surface;
 // the postcard is handed to Passport by route, with the layover id only.
 import { layoverPostcardOffered, layoverPostcardHref } from '../../src/components/layover/layoverPostcard';
+// census-layover L148/L149/L231 — §15.2 disruption reporting. Imported at the TAIL so no cited line moves; ESM hoists imports.
+import { LayoverDisruptionCard } from '../../src/components/layover/LayoverDisruptionCard';

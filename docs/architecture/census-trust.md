@@ -5793,7 +5793,7 @@ Tests:
 - HS2 now expects no state write. It had pinned the reopen this correction removes.
 - The sweeper suite's fixture answers the flag ON. It had no flag rows, so the sweeper now promoted nobody.
 
-Red-first: 36 of 74 fail on the old code (the 35 new cases and HS2). 24 mutants, all killed. 33 files: 1151 / 1151.
+Red-first: 36 of 74 fail on the old code (the 35 new cases and HS2). 24 mutants, all killed. The builder's enumerated 33-file set (its handback): 1151 / 1151; the independent verifier's 58 registered suites: 1575 / 1575.
 
 **Still open, stated:**
 - Two passes in the same instant can each offer one person for one seat. Waitlist accept's capacity check stops a double
@@ -5802,5 +5802,46 @@ Red-first: 36 of 74 fail on the old code (the 35 new cases and HS2). 24 mutants,
 - Join-request approvals and PATCH status `{going}` admit on the live count, without regard to a held or offered seat.
 - The sweeper sends an in-app notice, but no push.
 - No reconciling sweep exists for a held seat on an event that never syncs again.
+
+Rows: none move. Headline unchanged: 90 / 15 / 1 / 2 of 108.
+
+### Correction (2026-10-18, wave 5, follow-up B3) — accept re-offers read the flag; approvals respect a reserved seat; the spot-filled loop is gone
+
+*Same branch and tree. Committed on this branch; undeployed. **NO ROW MOVES.** It closes three items of follow-up B2's
+"Still open" list above.*
+
+**The spot-filled loop.** When POST /waitlist/accept found the spot already filled, it withdrew the accepter's offer and
+re-offered. The accepter keeps their queue position, so the re-offer usually went back to the same person: a new
+in-app notice and push on every tap. It now syncs instead (routes/events.ts:3339, in place), and the catch-up offers a
+seat only when one is really free. The 403 the accepter gets is unchanged and is now true: the offer is withdrawn, they
+keep their place, and nobody is re-offered. The withdraw write used to discard its error, leaving the offer standing
+under that same 403; a failed write now answers 503 (`sendSpotFilledOfferStands`, appended at :7344).
+
+**The accept route's three re-offer branches** (expired, visibility-refused, spot-filled) now go through
+`syncEventState`'s flag-aware catch-up:
+- flag unreadable: the seat is held;
+- flag off or absent: nobody is promoted;
+- flag on: the queue head is offered only when a seat is really free.
+A failed delete of a lapsed row now offers nobody. The sweeper releases that seat once; before, the route and the
+sweeper could each offer it.
+
+**Host approvals** (the two join-request approvals, :3609 and :5235, in place) treat the event as full when going ≥ max
+or the state is full or waitlist (`freeSeatHeldForQueue`, appended at :7367). A seat held for the queue, or reserved by a
+live offer, is no longer given to a host's pick: the requester joins the back of the queue, or answers
+`approved_pending_capacity` when the event's own waitlist is off. An open event with room seats them as before.
+
+Tests: `artifacts/api-server/src/test/eventsWaitlistAcceptAndHostSeat.test.ts`, 31 cases, 23 red on the old code;
+14 mutants, all killed. 93 event, waitlist and sweeper files: 2724 / 2724.
+
+**Still open, stated:**
+- **The two-passes race** has no code-only fix: a guard across two tables in the claim's own statement is beyond
+  PostgREST's filters. It needs a database function that locks the event row and counts going plus live offers before
+  claiming, which is a migration. Fix 1 bounds it: the second accepter is told the spot was filled, and nobody else is
+  offered.
+- **PATCH /attendees/:userId/status `{going}`** has no capacity check and no eligibility gate. Whether a host may seat
+  someone past capacity, or ahead of the queue, is owner question Q-B3-1. Today's behaviour is pinned as stated, not
+  endorsed.
+- On an `open` event, an expired or refused offer no longer offers the next queued person (the catch-up runs only on
+  full or waitlist).
 
 Rows: none move. Headline unchanged: 90 / 15 / 1 / 2 of 108.

@@ -38,7 +38,7 @@ import type {
   EstimateSourceClass,
 } from "./LayoverFeasibility.js";
 import { ESTIMATE_CONFIDENCES } from "./LayoverFeasibility.js";
-import type { LayoverReasonCode, LiveConditions } from "./LayoverSafetyEngine.js";
+import type { LayoverReasonCode, LiveConditions } from "./LayoverSafetyEngine.js"; import type { SupabaseClient } from "@supabase/supabase-js"; import { isMissingSchemaError } from "../../lib/capability/schemaCapability.js"; // census L180 (lane 5): the one I/O function, at the foot
 
 /**
  * Version of this module's POLICY — the weights, thresholds and tie-breaks
@@ -821,4 +821,79 @@ export function measureCalibration(
     meanAbsoluteErrorMin: n === 0 ? 0 : absolute / n,
     p90CoverageRate: n === 0 ? 0 : covered / n,
   };
+}
+
+// ── §18 `AirportTruthService.getTruth(subject, factType, atTime)` over the STORE ─
+//
+// census L180. Appended at the foot so no line above moves (this file is cited
+// by line). `getTruth` above takes its corpus as an argument and says why —
+// "there is no store to read". That stopped being true: `airport_fact_observations`
+// (2860) IS APPLIED to production. This is the spec's version: it READS the store
+// as of `atTime` and reconciles with the same §10.1 policy, untouched.
+//
+// THE ONE I/O FUNCTION IN THIS FILE. Everything above stays pure; this only
+// fetches a corpus and hands it to `reconcile`. The client is the first argument,
+// as every service on this tree takes it; the spec's three arguments follow.
+//
+// NOT WIRED INTO THE SAFETY PATH, DELIBERATELY. Nothing calls it from
+// `liveConditionsFrom` or the engine: whether screened observations may move a
+// deadline is the owner's open L81 decision, recorded at routes/airport.ts.
+// Making the store-reading truth AVAILABLE decides nothing about using it.
+//
+// HISTORICAL `atTime` IS HONOURED, NOT APPROXIMATED. The read bounds both ends —
+// observed at or before `atTime`, and not expired at `atTime` — so a question
+// about an earlier instant is not answered with readings taken after it, and the
+// bounded page (newest first) is never crowded out by later rows.
+
+/** The most rows one truth read folds; newest first, so a bounded page is the freshest. */
+export const STORED_TRUTH_READ_LIMIT = 500;
+
+export type StoredTruthRefusal =
+  /** `airport_fact_observations` is not in this database. */
+  | "storage_unavailable"
+  /** The read failed for any other reason. NEVER reported as an empty corpus. */
+  | "read_failed";
+
+export type StoredTruthRead =
+  /** `truth` is null when nothing credible survived screening — an absence, never a zero. */
+  | { ok: true; truth: TruthValue<number> | null; outcome: ReconciliationOutcome }
+  | { ok: false; reason: StoredTruthRefusal };
+
+export async function getTruthFromStore(
+  db: SupabaseClient,
+  subject: string,
+  factType: AirportFactType,
+  atTime: number,
+): Promise<StoredTruthRead> {
+  const atIso = new Date(atTime).toISOString();
+  const { data, error } = await db
+    .from("airport_fact_observations")
+    .select("id,airport_ref,fact_type,value,observer_kind,observer_id,observer_trust,source_ref,observed_at")
+    .eq("airport_ref", subject)
+    .eq("fact_type", factType)
+    .lte("observed_at", atIso)
+    .gt("expires_at", atIso)
+    .order("observed_at", { ascending: false })
+    .limit(STORED_TRUTH_READ_LIMIT);
+  if (error) return { ok: false, reason: isMissingSchemaError(error) ? "storage_unavailable" : "read_failed" };
+  if (!Array.isArray(data)) return { ok: false, reason: "read_failed" };
+
+  const corpus: AirportObservation[] = (data as Array<Record<string, unknown>>).map((r) => {
+    const trust = r.observer_trust === null || r.observer_trust === undefined ? undefined : Number(r.observer_trust);
+    return {
+      observationId: String(r.id),
+      airportRef: String(r.airport_ref),
+      factType: r.fact_type as AirportFactType,
+      // NUMERIC arrives as a string; a value that will not parse becomes NaN and
+      // `screenObservations` rejects it as `not_finite`, never coerces it to 0.
+      value: Number(r.value),
+      observerKind: r.observer_kind as ObserverKind,
+      observerId: String(r.observer_id),
+      ...(trust === undefined || !Number.isFinite(trust) ? {} : { observerTrust: trust }),
+      observedAt: String(r.observed_at),
+      sourceRef: String(r.source_ref),
+    };
+  });
+  const outcome = reconcile(corpus, { nowMs: atTime, factType, airportRef: subject });
+  return { ok: true, truth: outcome.truth, outcome };
 }

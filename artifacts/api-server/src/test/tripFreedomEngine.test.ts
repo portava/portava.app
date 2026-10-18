@@ -12,7 +12,7 @@
  * free time before the commitment it precedes.
  */
 import { describe, it } from "node:test";
-import assert from "node:assert/strict";
+import assert from "node:assert/strict"; import { readFileSync } from "node:fs";
 
 import {
   computeFreedomWindows, detectPlanOverlaps, leaveAt, orderCommitments,
@@ -317,5 +317,128 @@ describe("census-layover L57 — a commitment's own hardConstraints and confiden
     const B = c("B", { requiredArrivalAt: T("14:00"), latenessToleranceMinutes: 20 });
     const stated = run([{ ...A, hardConstraints: [], confidence: null }, { ...B, hardConstraints: [], confidence: null }], [hop(30)]);
     assert.deepEqual(stated, run([A, B], [hop(30)]));
+  });
+});
+
+// ── census-layover L13 / L59: the engine is its own package, names no context, and Trips is an ADAPTER of it ──
+//
+// L13 (§3 "Temporal Freedom Engine — owns usable time, next commitment, freedom
+// window"): the engine is a domain package of its own that BOTH adapters import,
+// not a file inside Trips' package. L59 (§7 "Keep airport-specific logic in the
+// Layover adapter, not in the generalized engine"): the engine names no context —
+// no Trips reason, no trip horizon, no Trips table, no airport. Read from the
+// files rather than asserted by comment, and the Trips adapter is then proved to
+// change nothing but the two labels Trips' wire has always carried.
+describe("census-layover L13/L59 — the generalised engine is its own package and names no context", () => {
+  const ENGINE_TS = "../domain/temporal/TemporalFreedomEngine.ts";
+  const read = (rel: string) => readFileSync(new URL(rel, import.meta.url), "utf8");
+  const importSources = (src: string) =>
+    [...src.matchAll(/\bfrom\s+"([^"]+)"|\bimport\s*\(\s*"([^"]+)"\s*\)|^\s*import\s+"([^"]+)"/gm)].map((m) => (m[1] ?? m[2] ?? m[3])!);
+  const engine = () => import("../domain/temporal/TemporalFreedomEngine.js");
+  const trips = () => import("../domain/trips/invariants/TripFreedomEngine.js");
+
+  it("L13: the engine is a package of its own under domain/temporal, and BOTH adapters import that one module", () => {
+    const src = read(ENGINE_TS);
+    assert.match(src, /export function computeFreedomWindows\(inputs: FreedomInputs\): FreedomResult/, "the window arithmetic lives in the engine package");
+    const tripsImports = importSources(read("../domain/trips/invariants/TripFreedomEngine.ts"));
+    const layoverImports = importSources(read("../services/airport/LayoverTemporalFreedom.ts"));
+    assert.ok(tripsImports.includes("../../temporal/TemporalFreedomEngine.js"), `the Trips adapter must import the engine package: ${tripsImports.join(", ")}`);
+    assert.ok(layoverImports.includes("../../domain/temporal/TemporalFreedomEngine.js"), `the Layover adapter must import the engine package directly: ${layoverImports.join(", ")}`);
+    assert.ok(!layoverImports.some((s) => s.includes("domain/trips")), "the Layover adapter reaches the engine through Trips' package");
+  });
+
+  it("L13/L59: the engine imports nothing from any context — only the shared travel-estimate vocabulary", () => {
+    assert.deepEqual(importSources(read(ENGINE_TS)), ["../../lib/travelEstimate.js"]);
+  });
+
+  it("L59: the engine names no context — no TRIP_ reason, no trip horizon, no Trips table, no airport", () => {
+    const src = read(ENGINE_TS);
+    for (const [what, re] of [
+      ["a TRIP_ identifier", /TRIP_/],
+      ["the Trips table", /trip_commitments/],
+      ["a trip horizon", /tripStart|tripEnd/],
+      ["the word trip, anywhere", /(?<![a-z])trip/i],
+      ["an airport word, anywhere", /(?<![a-z])(airport|layover|flight|aircraft|boarding)/i],
+    ] as const) {
+      const hit = src.split("\n").findIndex((l) => re.test(l));
+      assert.equal(hit, -1, `the generalised engine names ${what} at line ${hit + 1}: ${src.split("\n")[hit]?.trim()}`);
+    }
+  });
+
+  it("L59: the engine's own conflict reason is context-free, and the horizon is the caller's", async () => {
+    const e = await engine();
+    assert.equal(e.TEMPORAL_CONFLICT_REASON, "TEMPORAL_CONFLICT");
+    const A = c("A", { startsAt: T("10:00"), endsAt: T("11:00") });
+    const B = c("B", { requiredArrivalAt: T("10:30") });
+    const r = e.computeFreedomWindows({ commitments: [A, B], hops: [hop(5)], participants: [], horizonStart: T("08:00"), horizonEnd: T("20:00") });
+    assert.equal(r.conflicts[0]!.reason, "TEMPORAL_CONFLICT");
+    assert.deepEqual(r.windows.map((w) => w.position), ["before_first", "after_last"]);
+    assert.ok(r.windows.flatMap((w) => w.hardConstraints).every((h) => !/(?<![a-z])trip/i.test(h.detail)), "the engine's own wording names no trip");
+  });
+
+  it("the Trips adapter re-exports the engine's functions and vocabularies BY IDENTITY — there is no second implementation", async () => {
+    const e = await engine(); const t = await trips();
+    for (const name of ["leaveAt", "orderCommitments", "freeGapFromPlan", "spendableToleranceMinutes", "commitmentBoundConfidence", "HARD_CONSTRAINT_KINDS", "TEMPORAL_CONFLICT_KINDS", "COMMITMENT_HARD_CONSTRAINT_KINDS"] as const) {
+      assert.equal(t[name], e[name], `${name} is not the engine's`);
+    }
+    assert.notEqual(t.computeFreedomWindows, e.computeFreedomWindows, "Trips' computeFreedomWindows is the adapter (it maps the horizon and the reason)");
+  });
+
+  it("the Trips adapter changes nothing but Trips' labels: TRIP_TEMPORAL_CONFLICT on every conflict, the trip's two ends, tripStart/tripEnd as the horizon", async () => {
+    const e = await engine();
+    let s = 20261018;
+    const r = () => { s = (s * 1664525 + 1013904223) % 4294967296; return s / 4294967296; };
+    const TRIP_WORDING = new Map([
+      [e.HORIZON_START_NO_ORIGIN_DETAIL, "nothing precedes this window; where the trip begins is not a located place"],
+      [e.HORIZON_END_NO_DESTINATION_DETAIL, "nothing follows this window before the trip ends"],
+    ]);
+    let conflicts = 0; let windows = 0; let ends = 0;
+    for (let round = 0; round < 200; round += 1) {
+      const list: EngineCommitment[] = [];
+      let t = 8 * 60 + Math.floor(r() * 60);
+      for (let i = 0; i < 2 + Math.floor(r() * 4); i += 1) {
+        const at = new Date(Date.UTC(2026, 8, 13, 0, t));
+        list.push(c(`c${i}`, {
+          startsAt: at, requiredArrivalAt: r() < 0.5 ? at : null, endsAt: r() < 0.5 ? new Date(at.getTime() + Math.floor(r() * 90) * 60_000) : null,
+          place: r() < 0.8 ? { placeId: `p${i}`, point: P } : { placeId: null, point: null }, flexibility: r() < 0.5 ? "fixed" : "flexible",
+          prepMinutes: Math.floor(r() * 30), latenessToleranceMinutes: Math.floor(r() * 20),
+          hardConstraints: r() < 0.3 ? [{ kind: "NO_LATE_ARRIVAL", detail: "x" }] : [], confidence: r() < 0.3 ? "MEDIUM" : null,
+        }));
+        t += Math.floor(r() * 150) - 20;
+      }
+      const hops = Array.from({ length: list.length - 1 }, () => hop(r() < 0.8 ? Math.floor(r() * 60) : null));
+      const tripStart = r() < 0.6 ? T("06:00") : null; const tripEnd = r() < 0.6 ? T("23:00") : null;
+      const viaTrips = computeFreedomWindows({ commitments: list, hops, participants: ["u1"], tripStart, tripEnd });
+      const viaEngine = e.computeFreedomWindows({ commitments: list, hops, participants: ["u1"], horizonStart: tripStart, horizonEnd: tripEnd });
+      assert.ok(viaEngine.conflicts.every((k) => k.reason === "TEMPORAL_CONFLICT"));
+      assert.equal(
+        JSON.stringify(viaTrips.conflicts), JSON.stringify(viaEngine.conflicts.map((k) => ({ ...k, reason: "TRIP_TEMPORAL_CONFLICT" }))),
+        `round ${round}: a Trips conflict differs from the engine's by more than its reason`,
+      );
+      const relabelled = viaEngine.windows.map((w) => ({ ...w, hardConstraints: w.hardConstraints.map((h) => ({ ...h, detail: TRIP_WORDING.get(h.detail) ?? h.detail })) }));
+      assert.equal(JSON.stringify(viaTrips.windows), JSON.stringify(relabelled), `round ${round}: a Trips window differs from the engine's by more than the trip's wording`);
+      assert.deepEqual(viaTrips.unplacedCommitmentIds, viaEngine.unplacedCommitmentIds);
+      conflicts += viaTrips.conflicts.length; windows += viaTrips.windows.length;
+      ends += viaTrips.windows.filter((w) => w.position !== "between").length;
+    }
+    assert.ok(conflicts >= 40 && windows >= 200 && ends >= 60, `the sweep must exercise every mapping (${conflicts} conflicts, ${windows} windows, ${ends} horizon windows)`);
+  });
+
+  it("Trips' wire still words the trip's ends as it always has", () => {
+    const A = c("A", { requiredArrivalAt: T("10:00"), startsAt: T("10:00") });
+    const w = run([A], [], { tripStart: T("06:00"), tripEnd: T("20:00") }).windows;
+    assert.equal(w.find((x) => x.position === "before_first")!.hardConstraints.find((h) => h.kind === "NO_ORIGIN")!.detail, "nothing precedes this window; where the trip begins is not a located place");
+    assert.equal(w.find((x) => x.position === "after_last")!.hardConstraints.find((h) => h.kind === "NO_DESTINATION")!.detail, "nothing follows this window before the trip ends");
+  });
+
+  it("plan overlaps: the engine's PLAN_OVERLAP, under Trips' reason and otherwise untouched", async () => {
+    const e = await engine();
+    const items = [
+      { id: "a", dayDate: "2026-09-13", startsAt: T("10:00").toISOString(), endsAt: T("12:00").toISOString() },
+      { id: "b", dayDate: "2026-09-13", startsAt: T("11:30").toISOString(), endsAt: T("13:00").toISOString() },
+    ];
+    const engineOut = e.detectPlanOverlaps(items);
+    assert.equal(engineOut[0]!.reason, "TEMPORAL_CONFLICT");
+    assert.equal(JSON.stringify(detectPlanOverlaps(items)), JSON.stringify(engineOut.map((k) => ({ ...k, reason: "TRIP_TEMPORAL_CONFLICT" }))));
   });
 });

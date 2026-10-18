@@ -3304,11 +3304,11 @@ router.post("/events/:id/waitlist/accept", async (req, res) => {
     sendError(res, "forbidden", "No spot offer is pending for you"); return;
   }
   if (new Date(offerExpiresAt) < new Date()) {
-    // Expired — remove user from queue entirely, then promote the next person.
+    // Expired — remove user from queue entirely, then the capacity cycle releases the seat their offer reserved.
     // Nulling offer_expires_at would cause promoteNextWaitlisted to re-offer
     // this same user (it queries IS NULL), so we delete instead.
-    await sc.from("event_waitlist").delete().eq("event_id", id).eq("user_id", user.id);
-    await promoteNextWaitlisted(sc, id, req);
+    const { error: lapsedDelErr } = await sc.from("event_waitlist").delete().eq("event_id", id).eq("user_id", user.id); if (lapsedDelErr) req.log?.warn?.({ err: lapsedDelErr, eventId: id }, "waitlist accept: the lapsed offer could not be removed — nobody is offered its seat here; the sweeper removes the row and releases the seat once");
+    if (!lapsedDelErr) await syncEventState(sc, id); // wave 5 follow-up B3: was promoteNextWaitlisted, which read no flag and offered whether or not a seat was free — the sync offers the queue only with the flag ON and a seat really free; OFF reopens, UNREADABLE holds (offerFreedSeatToQueue)
     sendError(res, "forbidden", "Your spot offer has expired"); return;
   }
 
@@ -3327,16 +3327,16 @@ router.post("/events/:id/waitlist/accept", async (req, res) => {
   if (!acceptVis.ok) {
     // Remove them from the queue so the seat can go to an eligible member.
     await sc.from("event_waitlist").delete().eq("event_id", id).eq("user_id", user.id);
-    await promoteNextWaitlisted(sc, id, req);
+    await syncEventState(sc, id); // wave 5 follow-up B3: the seat their offer reserved goes through the capacity cycle, flag-aware (was promoteNextWaitlisted, which read no flag)
     sendError(res, "forbidden", acceptVis.message); return;
   }
   const accElig = await checkEventEligibility(sc, evCapCheck as any, user.id); if (!accElig.ok) { sendEligibilityRefusal(req, res, id, accElig); return; } const maxAtt = (evCapCheck as any)?.max_attendees ?? null;  // census-trust §30.6: the join gate re-runs at accept; a refusal writes nothing
   if (maxAtt != null) {
     const currentGoing = await getGoingCount(sc, id); if (currentGoing === null) { sendCapacityUnavailable(req, res, id, "waitlist:accept"); return; }  // census-trust §30.8: the row and its offer are left as they are
     if (currentGoing >= maxAtt) {
-      // Slot was taken — expire this offer and promote the next person
-      await sc.from("event_waitlist").update({ offer_expires_at: null }).eq("event_id", id).eq("user_id", user.id);
-      await promoteNextWaitlisted(sc, id, req);
+      // Slot was taken — withdraw this offer (they keep their place in the queue); no seat is free, so nobody is offered one
+      const { error: unofferErr } = await sc.from("event_waitlist").update({ offer_expires_at: null }).eq("event_id", id).eq("user_id", user.id); if (unofferErr) { sendSpotFilledOfferStands(req, res, id, unofferErr); return; }
+      await syncEventState(sc, id); // wave 5 follow-up B3: was promoteNextWaitlisted — the accepter keeps their place, so the head it found was usually the accepter: a fresh offer and notice each time, a loop. The sync offers only a seat that is really free
       sendError(res, "forbidden", "This spot was filled before you accepted. You have been returned to the waitlist queue."); return;
     }
   }
@@ -3606,7 +3606,7 @@ router.patch("/events/:id/requests/:userId", async (req, res) => {
     // Capacity check: if full, route to waitlist (when enabled) instead of going
     const maxAtt = (evFull as any).max_attendees ?? null;
     const currentGoing = maxAtt != null ? await getGoingCount(sc, id) : 0; if (currentGoing === null) { sendCapacityUnavailable(req, res, id, "requests:approve"); return; }  // census-trust §30.8
-    if (maxAtt != null && currentGoing >= maxAtt) {
+    if (maxAtt != null && (currentGoing >= maxAtt || freeSeatHeldForQueue(evFull))) { // wave 5 follow-up B3: a seat a live offer reserves, or one held for the queue, is not free to an approval (freeSeatHeldForQueue)
       if ((evFull as any).waitlist_enabled) {
         // Add to waitlist if not already there
         const seated = await addToEventWaitlist(sc, id, userId);
@@ -5232,7 +5232,7 @@ router.post("/events/:id/join-requests/:requestId/approve", async (req, res) => 
   // with waitlisting DISABLED fell through and seated an attendee past
   // max_attendees. The legacy sibling PATCH /events/:id/requests/:userId
   // already nests it this way.
-  if (maxAtt != null && currentGoing >= maxAtt) {
+  if (maxAtt != null && (currentGoing >= maxAtt || freeSeatHeldForQueue(evFull))) { // wave 5 follow-up B3: a seat a live offer reserves, or one held for the queue, is not free to an approval (freeSeatHeldForQueue)
     if ((evFull as any).waitlist_enabled) {
       const seated = await addToEventWaitlist(sc, id, targetId);
       if (!seated.ok) { sendWaitlistUnavailable(req, res, id, "join-requests:approve"); return; }
@@ -7319,4 +7319,51 @@ function freedSeatAfterPromotion(promotion: PromoteOutcome, eventId: string, req
   if (promotion.outcome !== "unreadable" && promotion.outcome !== "write_failed") return "offered";
   (req?.log ?? logger).warn({ eventId, outcome: promotion.outcome, reason: promotion.message }, "freed seat: the offer to the waitlist could not be made (a read or write failed) — the seat is HELD for the queue, not reopened to walk-ins");
   return true;
+}
+
+// ── Wave 5 follow-up B3: the accept route's re-offers go through the capacity cycle; an approval respects a held seat ──
+//
+// POST /events/:id/waitlist/accept has three branches that end an offer without seating its holder: the offer
+// LAPSED (the row is deleted), the private-event gate REFUSES the holder (deleted), or the SPOT WAS FILLED (the
+// offer is withdrawn and the holder keeps their place in the queue). Each called promoteNextWaitlisted directly,
+// which reads no flag and offers whether or not a seat is free. In the spot-filled branch that was a loop: the
+// holder kept their position, so the head it found was usually the holder — a fresh offer, a fresh in-app notice
+// and push, and a 403 telling them they had been "returned to the waitlist queue". Each branch now calls
+// syncEventState, whose catch-up (offerFreedSeatToQueue) is the one flag-aware path the doors and every other
+// seat-freeing route already use: flag UNREADABLE holds the seat, OFF/ABSENT promotes nobody (the event may
+// reopen), ON offers the queue head only when a seat is really free (going < max_attendees, state full or
+// waitlist, no live offer). A lapsed row that could not be deleted releases nothing here: the sweeper deletes
+// it and releases the seat, once (offering it here too made two offers for one seat).
+
+/**
+ * "Spot filled" at accept, and the offer could not be withdrawn. The holder is
+ * NOT told they were returned to the queue — their offer still stands (it lapses
+ * at its time and the sweeper releases it); nobody else is offered anything,
+ * since no seat is free. A retry withdraws it.
+ */
+function sendSpotFilledOfferStands(req: any, res: any, eventId: string, err: unknown): void {
+  req.log?.warn?.({ err, eventId }, "waitlist accept: the spot was filled, but the offer could not be withdrawn — it stands until it lapses; nobody else was offered");
+  sendError(res, "degraded_unavailable", "This spot was filled before you accepted, and we could not update your waitlist place just now. Please try again shortly.");
+}
+
+/**
+ * Does the event hold its free seats back from newcomers? The two join-request
+ * approvals admitted on the going-count alone, and a seat a live waitlist offer
+ * RESERVES, or one HELD for the queue (an unreadable waitlist flag, a failed
+ * offer), shows as free in that count — so a host's approval seated the
+ * requester in it, and the offer holder was then told the spot was filled.
+ *
+ * The rule is the one every other newcomer door applies (POST /rsvp, POST /join,
+ * invite accept): an event whose STATE is full or waitlist is not taking walk-in
+ * seats. syncEventState keeps the state there exactly while a seat is reserved
+ * or held (it reopens only when no offer is live, and holds on an unread flag or
+ * a failed offer). So an approval on such an event waitlists the requester
+ * behind the queue (or answers approved_pending_capacity when the event's
+ * waitlist is off), as a full event already did. An OPEN event with room still
+ * seats them. NOT changed: PATCH /events/:id/attendees/:userId/status {going},
+ * which has no capacity check at all — whether a host may seat someone past
+ * capacity or ahead of the queue is an owner decision.
+ */
+function freeSeatHeldForQueue(ev: any): boolean {
+  return ["full", "waitlist"].includes(String(ev?.state ?? ""));
 }

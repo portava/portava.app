@@ -865,3 +865,10 @@ test('wave-5 D: print the trips-card table when SHEET_CONTRAST_TABLE=1', () => {
   });
   console.log(['| pair | consumer | before | ratio | after | ratio | bar | result | moved as |', '| --- | --- | --- | --- | --- | --- | --- | --- | --- |', ...rows].join('\n'));
 });
+
+// Independent verification pass 9, C3: a ground the shared lists do not name must be one tripsGrounds() names. A misspelled ground
+// on a future pair would otherwise be measured on some default in silence.
+test('wave-5 D: an adopter ground the shared lists do not name must be one tripsGrounds() names', () => {
+  assert.throws(() => adopterGround('sheetNoSuchGround' as SheetSurface), /no ground named sheetNoSuchGround/);
+  assert.deepEqual(adopterGround('sheetPaperRaised'), ALL_SHEET_SURFACES.sheetPaperRaised);
+});

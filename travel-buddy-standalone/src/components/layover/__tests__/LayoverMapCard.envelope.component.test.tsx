@@ -481,3 +481,95 @@ describe('the envelope is called SAFE only under an OPEN gate, and is not drawn 
     expect(screen.queryByTestId('layover-map-envelope-withheld')).toBeNull();
   });
 });
+
+// ═════════════════════════════════════════════════════════════════════════════
+// census-layover L126 — the OFFLINE half: the MAP card itself, drawn from the cache
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// §13 "Offline state — Show last-certified envelope timestamp + stale badge".
+// The cases above prove the badge on a LIVE overview whose bundle has aged. The
+// census's remaining half was "no MAP is drawn offline": when `GET /overview`
+// cannot be read, the failure screen had the cached plan as text and no map.
+// These cases mount the card in its cached mode with the record
+// `lib/layoverPlanCache.readCachedPlan` returns, and assert what a traveller
+// sees: the basemap with the airport on it, the envelope drawn from the cached
+// radii, the last-certified instant, the stale badge from the ONE staleness
+// rule, and an OFFLINE badge that never lets the card read as live.
+describe('L126 offline — the map card renders from the cached plan, never as live', () => {
+  const CERTIFIED = '2026-09-14T05:00:00.000Z';
+  const STALE_AFTER = '2026-09-14T05:30:00.000Z';
+  function cachedPlan(over: Record<string, unknown> = {}) {
+    return {
+      sessionId: 'sess-1', bundleVersion: '2026.09.08-1',
+      certifiedAt: CERTIFIED, staleAfter: STALE_AFTER,
+      airport: { iataCode: 'TPE', name: 'Taiwan Taoyuan International Airport', city: 'Taoyuan', timezone: 'Asia/Taipei', lat: 25.0797, lng: 121.2342 },
+      stops: [
+        { title: 'Raohe Night Market', durationMin: 60, travelMin: 45, insideAirport: false },
+        { title: 'Lounge', durationMin: 30, travelMin: 0, insideAirport: true },
+      ],
+      envelope: { radiusMetres: 40_000, plannedRadiusMetres: 30_000, usableMinutes: 240, maxOneWayMinutes: 120 },
+      schedule: null, crewMeetingPoint: null, translationPhrases: null,
+      cachedAt: CERTIFIED,
+      ...over,
+    };
+  }
+  const RETURN = { hardReturnTime: '2026-09-14T09:30:00.000Z', hardReturnLocal: '17:30' };
+
+  it('stale cache: the map, the airport pin, the cached rings, the last-certified instant and the stale badge', async () => {
+    capturedPlaces = [];
+    await render(<LayoverMapCard cached={cachedPlan() as any} cachedReturn={RETURN} nowMs={Date.parse('2026-09-14T06:30:00.000Z')} />);
+
+    expect(screen.getByTestId('layover-map-card-offline')).toBeTruthy();
+    // A MAP is drawn, and the airport is on it. The cached stops carry no
+    // coordinates, so nothing else is pinned — and nothing is invented.
+    expect(screen.getByTestId('layover-map-view')).toBeTruthy();
+    expect(capturedPlaces.map((p) => p.id)).toEqual(['airport-TPE']);
+    // The envelope, from the CACHED radii, at the live card's fixed scale:
+    // 40 km → 80 px, 30 km → 60 px. A cache that drew both at one size fails here.
+    expect(widthOf(screen.getByTestId('layover-map-offline-proved-ring'))).toBe(80);
+    expect(widthOf(screen.getByTestId('layover-map-offline-planned-ring'))).toBe(60);
+    // §13's two offline elements.
+    expect(screen.getByTestId('layover-map-offline-certified-at')).toBeTruthy();
+    const stale = screen.getByTestId('layover-map-offline-stale');
+    expect(stale).toBeTruthy();
+    expect(screen.getByText(/STALE — last certified 90 min ago/)).toBeTruthy();
+    // Never drawn as live, and never called safe: the gate is not cached.
+    expect(screen.getByTestId('layover-map-offline-badge')).toBeTruthy();
+    expect(screen.queryByText(/SAFE ENVELOPE/)).toBeNull();
+    expect(screen.getByTestId('layover-map-offline-not-a-clearance')).toBeTruthy();
+    // The route still ends with the return leg and the last certified deadline.
+    expect(screen.getByText(/Back at TPE by 17:30 — last certified, not live/)).toBeTruthy();
+    expect(screen.getAllByTestId('layover-map-offline-route-leg').map((n) => String(n.props.children.join('')))).toEqual(['1. Raohe Night Market']);
+    // Nothing that needs the network is offered: no return-now button, no budget chips.
+    expect(screen.queryByTestId('layover-map-airport-return-btn')).toBeNull();
+    expect(screen.queryByTestId('layover-map-budget-chips')).toBeNull();
+  });
+
+  it('a cache still inside its TTL has no stale badge — and is STILL badged offline, not live', async () => {
+    await render(<LayoverMapCard cached={cachedPlan() as any} cachedReturn={RETURN} nowMs={Date.parse('2026-09-14T05:10:00.000Z')} />);
+    expect(screen.getByTestId('layover-map-offline-certified-at')).toBeTruthy();
+    expect(screen.queryByTestId('layover-map-offline-stale')).toBeNull();
+    expect(screen.getByTestId('layover-map-offline-badge')).toBeTruthy();
+    expect(screen.getByText(/OFFLINE — a copy saved on this phone, not a live map/)).toBeTruthy();
+  });
+
+  it('an UNPARSEABLE cached instant is stale, through the same fail-closed rule', async () => {
+    await render(<LayoverMapCard cached={cachedPlan({ certifiedAt: 'not-an-instant', staleAfter: 'nor-this' }) as any} nowMs={Date.parse('2026-09-14T05:10:00.000Z')} />);
+    expect(screen.getByTestId('layover-map-offline-stale')).toBeTruthy();
+    expect(screen.getByText(/at an instant we could not read/)).toBeTruthy();
+    // No deadline was cached: the return leg says so instead of printing one.
+    expect(screen.getByTestId('layover-map-offline-return-unsaved')).toBeTruthy();
+  });
+
+  it('no cached envelope draws no ring, and a cached airport with no coordinate draws no map', async () => {
+    capturedPlaces = [];
+    await render(<LayoverMapCard cached={cachedPlan({ envelope: null, airport: { iataCode: 'XXX', name: 'XXX', city: '', timezone: 'UTC', lat: null, lng: null } }) as any} nowMs={Date.parse('2026-09-14T06:30:00.000Z')} />);
+    expect(screen.queryByTestId('layover-map-offline-proved-ring')).toBeNull();
+    expect(screen.getByTestId('layover-map-offline-no-envelope')).toBeTruthy();
+    expect(screen.queryByTestId('layover-map-view')).toBeNull();
+    expect(screen.getByTestId('layover-map-no-coordinates')).toBeTruthy();
+    // The two §13 elements survive both absences.
+    expect(screen.getByTestId('layover-map-offline-certified-at')).toBeTruthy();
+    expect(screen.getByTestId('layover-map-offline-stale')).toBeTruthy();
+  });
+});

@@ -422,7 +422,7 @@ async function certifyFoundLayoverSession(
 
   return {
     ok: true,
-    snapshot: {
+    snapshot: rememberLayoverRoutesSession(session, {
       contractVersion: LAYOVER_SNAPSHOT_CONTRACT_VERSION,
       snapshotId: snapshotIdFor(session.id, record.inputHash),
       sessionId: session.id,
@@ -442,7 +442,7 @@ async function certifyFoundLayoverSession(
       landsideOpen, landsideStatus, landsideCautions: landsideStatus === "caution" ? [...(record.landsideGate.cautions ?? [])] : [],
       landsideClosedReason,
       certifiedRecord: record,
-    },
+    }),
   };
 }
 
@@ -607,7 +607,7 @@ export async function certifiedActionUniverse(
   // before a request is built, so each iteration returns without any I/O.
   // Skipped entirely when landside is closed — those candidates are refused
   // below whatever the corridor says, so asking would only spend.
-  for (const c of landsideNotForbidden(snapshot) ? landside : []) {
+  await layoverRoutesFor(snapshot, async () => { for (const c of landsideNotForbidden(snapshot) ? landside : []) {
     const point = pointOf(c);
     if (!point || !snapshot.envelope) continue;
     const outcome = await layoverReturnRisk(
@@ -618,13 +618,13 @@ export async function certifiedActionUniverse(
         returnDepartAt,
       },
       nowMs,
-      corridorProvider,
+      layoverRoutesGuardedCorridor(corridorProvider),
     );
     // A refusal is an ABSENCE, never a pass and never a block: `outcome.risk`
     // is null and the candidate is judged on the window alone, exactly as it
     // was before this call existed.
     if (outcome.risk) returnRisks.set(c.id, outcome.risk);
-  }
+  } });
   const bands = await bandCandidates(
     snapshot.envelope,
     landside.map((c) => ({ key: c.id, point: pointOf(c) })),
@@ -841,4 +841,39 @@ export function landsideContextPhrase(
       // A status this build does not know is not an open gate.
       return "closed (status unreadable)";
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FINDING F1 — the Routes budget scope for a snapshot's reads.
+//
+// Appended at the TAIL so no cited line above moves; ESM hoists the imports.
+//
+// A snapshot names its session but deliberately not who a routed call is
+// charged to: the person and the trip are not part of the certified answer, and
+// widening the published contract to carry them would put a trip id on every
+// consumer's copy. So the builder REMEMBERS them beside the object instead, and
+// `layoverRoutesFor(snapshot, fn)` runs `fn` inside that session's
+// `withLayoverRoutesBudget` scope. A snapshot this module did not build (a test
+// fixture) has no session remembered and runs exactly as before — unscoped,
+// which the provider refuses as it always has.
+// ═══════════════════════════════════════════════════════════════════════════
+import { withLayoverRoutesBudget, layoverRoutesGuardedCorridor, type LayoverRoutesSession } from "./LayoverTravelTime.js";
+
+const routesSessionOf = new WeakMap<LayoverSnapshot, LayoverRoutesSession>();
+
+/** Called where the snapshot is built: who its routed calls are charged to. */
+function rememberLayoverRoutesSession(session: LayoverSession, snapshot: LayoverSnapshot): LayoverSnapshot {
+  routesSessionOf.set(snapshot, { userId: session.userId, tripId: session.tripId ?? null });
+  return snapshot;
+}
+
+/** The person and trip a snapshot's routed calls are charged to, or null for a snapshot built elsewhere. */
+export function layoverSnapshotRoutesSession(snapshot: LayoverSnapshot): LayoverRoutesSession | null {
+  return routesSessionOf.get(snapshot) ?? null;
+}
+
+/** Run one read of this snapshot's routed calls inside its session's Routes budget scope. */
+export function layoverRoutesFor<T>(snapshot: LayoverSnapshot, fn: () => Promise<T>): Promise<T> {
+  const session = layoverSnapshotRoutesSession(snapshot);
+  return session ? withLayoverRoutesBudget(session, fn) : fn();
 }

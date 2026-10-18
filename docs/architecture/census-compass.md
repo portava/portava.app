@@ -3193,7 +3193,7 @@ from prose. `artifacts/api-server/src/test/intentModes.test.ts` 10 cases; the mo
 
 ### 26.6 CT-03 — Sense consumes the Temporal Freedom gap
 
-`artifacts/api-server/src/domain/trips/invariants/TripFreedomEngine.ts:380#export function freeGapFromPlan` is the engine's answer and
+`artifacts/api-server/src/domain/temporal/TemporalFreedomEngine.ts:452#export function freeGapFromPlan` is the engine's answer and
 `artifacts/api-server/src/compass/CompassSenseEngine.ts:483#const gap = freeGapFromPlan(` consumes it; the independent derivation is gone.
 `artifacts/api-server/src/test/tripFreedomGap.test.ts` 5 cases; M1 (items already started counted) and M2 (Sense deriving the gap
 itself again) both red. **Moves W → C.**

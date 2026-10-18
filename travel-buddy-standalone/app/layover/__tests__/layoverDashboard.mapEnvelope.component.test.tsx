@@ -204,7 +204,7 @@ const UNBANDED_REC = {
 // NOTE: intentional stub — the wire behaviour of these calls is covered by the
 // service-level tests; here the screen only needs data to render.
 jest.mock('../../../src/services/layover', () => ({
-  getLayoverOverview: jest.fn(async () => ({ ok: true, overview: (global as any).__overview })),
+  getLayoverOverview: jest.fn(async () => ((global as any).__ovRead ?? { ok: true, overview: (global as any).__overview })), // census-layover L126: `__ovRead` drives the failed-read cases at the tail
   getRecommendations: jest.fn(async () => ({ ok: true, recommendations: (global as any).__recs })),
   getLayoverBuddies: jest.fn(async () => ({ ok: true, city: 'Bangkok', buddies: [], refusal: null, safetyGate: null, trustRequirement: null, degraded: false, degradedReasons: [] })),
   getLayoverPresence: jest.fn(async () => ({ sharing: false, count: 0, travelers: [] })),
@@ -316,3 +316,91 @@ test('L118: an overview with no mapBudgetChips (the chip flag OFF) hands the map
   const props = await mountAndCapture();
   expect(props.budgetChips).toBeNull();
 });
+
+// ── census-layover L126 — the failed read: the MAP card is mounted from the cached plan ──
+// §13 "Offline state — Show last-certified envelope timestamp + stale badge". The
+// card's own suite (LayoverMapCard.envelope, "L126 offline") proves what the
+// cached mode draws; these prove the SCREEN mounts it, on the failures that mean
+// the session is fine and the read failed, from the record the cache holds —
+// and never for a layover the server says is gone.
+describe('L126 offline — when the overview cannot be read, the screen hands the map the cached plan', () => {
+  const NOW = Date.now();
+  const UNREACHABLE = { ok: false, reason: 'unreachable', message: "We couldn't reach Portava. Check your connection and try again.", retryable: true };
+  const GONE = { ok: false, reason: 'gone', message: 'It may have been removed, or it belongs to another account.', retryable: false };
+
+  // TYPED against the client contract, as `GET /overview` publishes it: a bundle 90 minutes old against a
+  // 15-minute TTL (the realistic state of any cache that is read), and the same envelope the live cases use.
+  function cachedBundle(): LayoverOfflineBundle {
+    const certification: LayoverCertification = { ...CERTIFICATION, verdict: 'tight', confidence: 'LOW', bufferPercentile: 'p90' };
+    return {
+      bundleVersion: '2026.09.08-1', sessionId: 'sess-1',
+      certifiedAt: new Date(NOW - 90 * 60_000).toISOString(), staleAfter: new Date(NOW - 75 * 60_000).toISOString(),
+      certification,
+      returnDeadline: { hardReturnTime: new Date(NOW + 2 * 3_600_000).toISOString(), hardReturnLocal: '20:40', returnState: 'NORMAL', bufferMinutes: 95, returnReminderAt: null },
+      airport: { iataCode: 'BKK', name: 'Suvarnabhumi', city: 'Bangkok', country: 'Thailand', timezone: 'Asia/Bangkok', lat: 13.68, lng: 100.74, terminalInfo: null },
+      mapGeometry: { available: false, value: null, reason: 'no_envelope_geometry' },
+      route: { available: false, value: null, reason: 'no_routing_provider' },
+      flightStatus: { available: false, value: null, reason: 'no_flight_feed' },
+      crewMeetingPoint: { available: false, value: null, reason: 'no_crew_storage' },
+      translationPhrases: { available: false, value: null, reason: 'no_phrase_catalogue' },
+      stops: [],
+    };
+  }
+  const CACHED_ENVELOPE: LayoverSafeEnvelope = { ...SAFE_ENVELOPE, basis: 'straight_line_lower_bound', certifiedOutward: true, certifiedInward: false, confidence: 'LOW' };
+
+  async function seedCache() {
+    const bundle = cachedBundle();
+    expect(await cacheCertifiedPlan('sess-1', bundle, CACHED_ENVELOPE, null)).toBe(true);
+    expect(await cacheCertifiedDeadline('sess-1', bundle)).toBe(true);
+    return bundle;
+  }
+
+  beforeEach(async () => {
+    await AsyncStorage.clear();
+  });
+  afterEach(() => { (global as any).__ovRead = undefined; });
+
+  it('UNREACHABLE with a cached plan: the map card is mounted in its cached mode, with the cached deadline', async () => {
+    const bundle = await seedCache();
+    (global as any).__ovRead = UNREACHABLE;
+    await render(<LayoverDashboardScreen />);
+    await waitFor(() => expect(screen.getByTestId('layover-load-error')).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId('layover-map-card-stub')).toBeTruthy());
+    const props = (global as any).__mapProps;
+    // The cached record, with the server's instants verbatim — the card's
+    // staleness rule reads THESE, not a renewed copy.
+    expect(props.cached.certifiedAt).toBe(bundle.certifiedAt);
+    expect(props.cached.staleAfter).toBe(bundle.staleAfter);
+    expect(props.cached.envelope.radiusMetres).toBe(37_000);
+    expect(props.cached.airport.iataCode).toBe('BKK');
+    expect(props.cachedReturn.hardReturnTime).toBe(bundle.returnDeadline.hardReturnTime);
+    expect(typeof props.nowMs).toBe('number');
+    // It is the OFFLINE mode: none of the live overview's inputs is handed down.
+    expect(props.airport).toBeUndefined();
+    expect(props.envelope).toBeUndefined();
+    // The server's refusal sentence is still the screen's headline.
+    expect(screen.getByText(UNREACHABLE.message)).toBeTruthy();
+  });
+
+  it('GONE: no map from the cache — the layover is not this traveller\'s any more', async () => {
+    await seedCache();
+    (global as any).__ovRead = GONE;
+    await render(<LayoverDashboardScreen />);
+    await waitFor(() => expect(screen.getByTestId('layover-load-error')).toBeTruthy());
+    expect(screen.queryByTestId('layover-map-card-stub')).toBeNull();
+  });
+
+  it('UNREACHABLE with nothing cached: no map, and the failure screen is what it was', async () => {
+    (global as any).__ovRead = UNREACHABLE;
+    await render(<LayoverDashboardScreen />);
+    await waitFor(() => expect(screen.getByTestId('layover-load-error')).toBeTruthy());
+    expect(screen.queryByTestId('layover-map-card-stub')).toBeNull();
+    expect(screen.getByText(UNREACHABLE.message)).toBeTruthy();
+  });
+});
+
+// Imported at the TAIL with the cases that use them; ESM hoists imports.
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { cacheCertifiedPlan } from '../../../src/lib/layoverPlanCache.ts';
+import { cacheCertifiedDeadline } from '../../../src/components/layover/layoverDeadlineCache.ts';
+import type { LayoverCertification, LayoverOfflineBundle, LayoverSafeEnvelope } from '../../../src/services/layover';

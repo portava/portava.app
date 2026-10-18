@@ -738,7 +738,7 @@ export interface LayoverRecommendation {
    * that has the candidate-feasibility contract; optional here only so an older
    * server degrades to "not measured" rather than to a crash.
    */
-  feasibility?: CandidateFeasibility; /** census L75 — the §9 ExperiencePrimitive for the card's KIND (typical, never this place's); see `LayoverExperience` at the end of this file. Absent from an older server. */ experience?: LayoverExperience;
+  feasibility?: CandidateFeasibility; /** census L75 — the §9 ExperiencePrimitive for the card's KIND (typical, never this place's); see `LayoverExperience` at the end of this file. Absent from an older server. */ experience?: LayoverExperience; /** census L296 (App C5) — the snapshot this card was returned with (`GET /:id/recommendations` → `snapshotId`); adding it to a plan names this, never a newer one. Absent from an older server. */ snapshotId?: string | null;
 }
 
 export interface LayoverSafetyResult {
@@ -1029,7 +1029,7 @@ export async function updateLayoverSession(
  * the SERVER's own sentence for it.
  */
 export type LayoverRecsResult =
-  | { ok: true; recommendations: LayoverRecommendation[]; /** census L43 — why landside ideas were withheld (re-entry), or that the check could not be made; null when neither. */ landsideSuppression: LayoverLandsideSuppression | null }
+  | { ok: true; recommendations: LayoverRecommendation[]; /** census L43 — why landside ideas were withheld (re-entry), or that the check could not be made; null when neither. */ landsideSuppression: LayoverLandsideSuppression | null; /** census L296 — the snapshot every card above was certified under; null from an older server. */ snapshotId: string | null }
   | { ok: false; message: string };
 
 /** What a failure says when the server said nothing at all (offline, unparseable). */
@@ -1069,9 +1069,9 @@ export async function getRecommendations(sessionId: string): Promise<LayoverRecs
     };
   }
   return {
-    ok: true, landsideSuppression: landsideSuppressionOf(json.landsideSuppression),
+    ok: true, landsideSuppression: landsideSuppressionOf(json.landsideSuppression), snapshotId: recommendationSnapshotOf(json.snapshotId),
     recommendations: Array.isArray(json.recommendations)
-      ? (json.recommendations as LayoverRecommendation[])
+      ? stampRecommendationSnapshot(json.recommendations as LayoverRecommendation[], recommendationSnapshotOf(json.snapshotId))
       : [],
   };
 }
@@ -1366,15 +1366,15 @@ export async function addPlanStop(sessionId: string, stop: NewStopInput): Promis
 
 export async function addStopFromRecommendation(
   sessionId: string,
-  recommendationId: string,
+  recommendationId: string, /** census L296 — the snapshot the card was returned with; omitted, the one the traveller pressed (`holdRecommendationSnapshot`). */ snapshotId?: string | null,
 ): Promise<StopsResponse | null> {
-  const res = await authedFetch(airportUrl('sessions', sessionId, 'stops', 'from-recommendation'), {
-    method: 'POST',
-    body: JSON.stringify({ recommendationId }),
-  });
-  if (!res.ok) return null;
-  return res.json();
+  const outcome = await addStopFromRecommendationOutcome(sessionId, recommendationId, snapshotId === undefined ? takeHeldRecommendationSnapshot(recommendationId) : snapshotId); /* census L296: a 409 marks the snapshot expired for LayoverRecsSection, which reloads the ideas — the add is never retried under another snapshot */
+  return outcome.ok ? outcome.stops : null;
 }
+/*
+ * census L296: the two-argument call and the `StopsResponse | null` answer are kept for app/layover/[id].tsx.
+ * `addStopFromRecommendationOutcome` (end of file) is the answer that tells "reload the ideas" from "refused".
+ */
 
 export async function updatePlanStop(
   sessionId: string,
@@ -2715,4 +2715,105 @@ export async function simulateMapBudget(sessionId: string, budgetMinutes: number
     ok: true, budgetMinutes, certifiedUsableMinutes: simRec.certifiedUsableMinutes,
     statement: simRec.statement, stops: stops as PlanStop[], planFit: json?.planFit as PlanFit,
   };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// census-layover L296 — Appendix C5 on the client: *"Never certify a
+// recommendation against a snapshot other than the one returned with it."*
+//
+// Appended at the TAIL so no cited line above moves.
+//
+// `GET /:id/recommendations` names the snapshot its cards were certified under,
+// and `getRecommendations` stamps it on every card, so the card the traveller
+// PRESSES carries the snapshot it was returned with. `LayoverRecsSection` holds
+// that snapshot at the press (`holdRecommendationSnapshot`) and the add sends it
+// — the PRESSED card's, never whichever response happened to land last.
+//
+// The server answers an add under any other snapshot with 409
+// `RECOMMENDATION_EXPIRED`. That marks the snapshot expired here; the section
+// showing it switches to its "refreshed — reload" state and reloads the ideas.
+// The add is NOT retried: retrying under the newer snapshot would certify a
+// card the traveller has not seen.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** A server `snapshotId`, or null when it sent none this code can read. */
+function recommendationSnapshotOf(v: unknown): string | null {
+  return typeof v === 'string' && /^snap:[0-9a-f]{32}$/.test(v) ? v : null;
+}
+
+const expiredRecommendationSnapshots = new Set<string>();
+const recommendationExpiryListeners = new Set<() => void>();
+function notifyRecommendationExpiry(): void {
+  for (const listener of [...recommendationExpiryListeners]) listener();
+}
+
+/**
+ * Every card carries the snapshot it was returned with. A snapshot the server
+ * serves AS CURRENT is current, so it stops being expired here.
+ */
+function stampRecommendationSnapshot(recs: LayoverRecommendation[], snapshotId: string | null): LayoverRecommendation[] {
+  if (snapshotId !== null && expiredRecommendationSnapshots.delete(snapshotId)) notifyRecommendationExpiry();
+  return recs.map((r) => ({ ...r, snapshotId }));
+}
+
+/** The snapshot of the card the traveller pressed, held from the press until its add is sent. */
+const heldRecommendationSnapshots = new Map<string, string | null>();
+
+export function holdRecommendationSnapshot(recommendationId: string, snapshotId: string | null | undefined): void {
+  heldRecommendationSnapshots.set(recommendationId, snapshotId ?? null);
+}
+
+function takeHeldRecommendationSnapshot(recommendationId: string): string | null {
+  const held = heldRecommendationSnapshots.get(recommendationId) ?? null;
+  heldRecommendationSnapshots.delete(recommendationId);
+  return held;
+}
+
+/** True once an add under `snapshotId` was refused RECOMMENDATION_EXPIRED, until the server serves it as current again. */
+export function isRecommendationSnapshotExpired(snapshotId: string | null | undefined): boolean {
+  return typeof snapshotId === 'string' && expiredRecommendationSnapshots.has(snapshotId);
+}
+
+export function subscribeRecommendationExpiry(listener: () => void): () => void {
+  recommendationExpiryListeners.add(listener);
+  return () => { recommendationExpiryListeners.delete(listener); };
+}
+
+/**
+ * An add's outcome. `expired` is the 409 `RECOMMENDATION_EXPIRED`: reload the
+ * ideas, never retry the add. `unavailable` is a 5xx or no answer (retryable);
+ * `refused` is any other refusal, in the server's own words.
+ */
+export type AddFromRecommendationOutcome =
+  | { ok: true; stops: StopsResponse }
+  | { ok: false; reason: 'expired' | 'unavailable' | 'refused'; message: string };
+
+const ADD_UNREACHABLE = 'Could not add this idea. Please try again.';
+
+export async function addStopFromRecommendationOutcome(
+  sessionId: string,
+  recommendationId: string,
+  snapshotId: string | null,
+): Promise<AddFromRecommendationOutcome> {
+  let res: Response;
+  try {
+    res = await authedFetch(airportUrl('sessions', sessionId, 'stops', 'from-recommendation'), {
+      method: 'POST',
+      body: JSON.stringify(snapshotId === null ? { recommendationId } : { recommendationId, snapshotId }),
+    });
+  } catch {
+    return { ok: false, reason: 'unavailable', message: ADD_UNREACHABLE };
+  }
+  let json: Record<string, unknown> = {};
+  try { json = await res.json(); } catch { /* the status decides */ }
+  if (res.ok) return { ok: true, stops: json as unknown as StopsResponse };
+  const message = typeof json.message === 'string' ? json.message : ADD_UNREACHABLE;
+  if (res.status === 409 && json.reason === 'RECOMMENDATION_EXPIRED') {
+    if (snapshotId !== null && !expiredRecommendationSnapshots.has(snapshotId)) {
+      expiredRecommendationSnapshots.add(snapshotId);
+      notifyRecommendationExpiry();
+    }
+    return { ok: false, reason: 'expired', message };
+  }
+  return { ok: false, reason: res.status >= 500 ? 'unavailable' : 'refused', message };
 }
