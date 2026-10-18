@@ -5879,7 +5879,7 @@ Tests:
 20 of 48 are red on the old routes, and all 24 migration cases are red with 3906 emptied. 35 mutants, all killed. The
 unapplied-schema ledger records the probe as fail-soft.
 
-**Pass 12.** The probe's verdict is process-wide, per database URL (events.ts:7505; pinned with clients built by getServiceClient()). A resolved non-envelope is a failed call: before this, it answered 500 after an RSVP was already removed (events.ts:7434; three new cases). The locked accept's `no_seat` is the answer, with no unlocked recount (mutant P5 now killed). The schema-capability memo shared the same per-request lifetime and held every probing client strongly (a leak). It is now per database URL too, with nothing holding a client (`artifacts/api-server/src/test/schemaCapabilityMemoPerUrl.test.ts`, 5 cases, 2 red on the old code).
+**Pass 12.** The probe's verdict is process-wide, per database URL (events.ts:7505; pinned with clients built by getServiceClient()). A resolved non-envelope is a failed call: before this, it answered 500 after an RSVP was already removed (events.ts:7434; six new cases: three, each for a resolved undefined and a resolved null). The locked accept's `no_seat` is the answer, with no unlocked recount (mutant P5 now killed). The schema-capability memo shared the same per-request lifetime and held every probing client strongly (a leak). It is now per database URL too, with nothing holding a client (`artifacts/api-server/src/test/schemaCapabilityMemoPerUrl.test.ts`, 5 cases, 2 red on the old code).
 
 **Still open:** the sweeper's own claim (lib/eventWaitlistSweeper.ts) does not take the lock. On the press, a promotion
 with no free seat stops offering anyone.

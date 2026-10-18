@@ -10,11 +10,11 @@
  */
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { probeSchemaReadiness, resetSchemaCapabilityMemo, ABSENT_TTL_MS, READY_TTL_MS } from "../lib/capability/schemaCapability.js";
+import { probeSchemaReadiness, resetSchemaCapabilityMemo, markSchemaMissing, ABSENT_TTL_MS, READY_TTL_MS } from "../lib/capability/schemaCapability.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-const def: any = { flag: "memo_per_url_test_enabled", requires: { tables: { some_table: { columns: [] } } } };
+const def: any = { flag: "memo_per_url_test_enabled", requires: { tables: { some_table: { columns: [] } } }, providedBy: ["some_migration.sql"], note: "" };
 
 function client(url: string | undefined, counter: { n: number }) {
   const c: any = {
@@ -70,5 +70,23 @@ describe("the schema-capability memo is per database URL", () => {
     const src = readFileSync(fileURLToPath(new URL("../lib/capability/schemaCapability.ts", import.meta.url)), "utf8");
     assert.doesNotMatch(src, /^const tracked = new Set<object>\(\);/m, "a Set of clients keeps one per probing request alive forever");
     assert.doesNotMatch(src, /\btracked\.add\(/);
+  });
+  it("the reactive feed is process-wide too: markSchemaMissing on one client refuses the NEXT request's new client without a round trip", async () => {
+    const counter = { n: 0 };
+    const t0 = 5_000_000;
+    assert.equal((await probeSchemaReadiness(client("http://db.example", counter), def, { now: t0 })).state, "ready");
+    markSchemaMissing(client("http://db.example", counter), def, { code: "PGRST204", message: "Could not find the 'x' column of 'some_table' in the schema cache" }, t0 + 1);
+    const c = await probeSchemaReadiness(client("http://db.example", counter), def, { now: t0 + 2 });
+    assert.equal(c.state, "missing");
+    assert.equal(c.cached, true, "served from the per-URL memo");
+    assert.equal(counter.n, 1, "no probe was sent: the rejected write flipped the memo for every client of this database");
+  });
+
+  it("resetSchemaCapabilityMemo forgets a per-URL verdict as well as a per-object one", async () => {
+    const counter = { n: 0 };
+    await probeSchemaReadiness(client("http://db.example", counter), def, { now: 6_000_000 });
+    resetSchemaCapabilityMemo();
+    await probeSchemaReadiness(client("http://db.example", counter), def, { now: 6_000_001 });
+    assert.equal(counter.n, 2, "after the reset the next client probes again");
   });
 });
