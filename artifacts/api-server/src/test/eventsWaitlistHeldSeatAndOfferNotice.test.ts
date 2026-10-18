@@ -231,10 +231,10 @@ describe("wave 5 follow-up B — a held seat and a told offer", () => {
     });
   }
 
-  it("HS2 CONTROL: DELETE /rsvp by someone who was NOT going frees no seat → the flag is not consulted and the state sync is as before", async () => {
+  it("HS2 (changed by B2; was a CONTROL pinning the reopen): DELETE /rsvp by someone who was NOT going → the door does not consult the flag; the event's free seats (1 of 10 going, W1/W2 queued) go to the sync's catch-up, which on an UNREADABLE flag holds them (wave 5 follow-up B2: was reopened)", async () => {
     const w = world({ flag: "unreadable", rsvps: [{ event_id: EVENT, user_id: VIEWER, status: "maybe" }] }); const r = await req("t-viewer", "DELETE", `/events/${EVENT}/rsvp`);
     assert.equal(`${r.status} ${r.text}`, '200 {"ok":true}');
-    assert.deepEqual(offeredTo(w.writes), []); assert.deepEqual(stateWrites(w.writes), ["open"], "no seat was freed on this pass, so nothing is held");
+    assert.deepEqual(offeredTo(w.writes), []); assert.deepEqual(stateWrites(w.writes), [], "free seats with a queue are held for it on an unreadable flag, never reopened to walk-ins");
     assert.ok(!said(reqLog, "warn", /events_waitlist_enabled/), "the flag was not read, so it cannot be reported unreadable");
   });
   it("HS3 CONTROL: an UNREADABLE flag on an event that is already OPEN writes nothing and holds nothing", async () => {
@@ -245,6 +245,16 @@ describe("wave 5 follow-up B — a held seat and a told offer", () => {
   it("HS4 CONTROL: an UNREADABLE flag on an UNLIMITED event (no max_attendees) writes no state", async () => {
     const w = world({ flag: "unreadable", ev: { state: "open", max_attendees: null } }); const r = await req("t-viewer", "POST", `/events/${EVENT}/leave`, {});
     assert.equal(r.status, 200, r.text); assert.deepEqual(stateWrites(w.writes), []);
+  });
+  it("HS5: UNREADABLE flag, but the event is still AT capacity after the leave (host lowered max) → the state still moves full → waitlist as before; nothing is held", async () => {
+    const W3 = "55555555-5555-4555-8555-555555555555";
+    const w = world({ flag: "unreadable", ev: { state: "full", max_attendees: 1, waitlist_enabled: true },
+      rsvps: [{ event_id: EVENT, user_id: VIEWER, status: "going" }, { event_id: EVENT, user_id: W3, status: "going" }] });
+    const r = await req("t-viewer", "DELETE", `/events/${EVENT}/rsvp`);
+    assert.equal(`${r.status} ${r.text}`, '200 {"ok":true}');
+    assert.deepEqual(offeredTo(w.writes), [], "nobody is promoted on an unknown flag");
+    assert.deepEqual(stateWrites(w.writes), ["waitlist"], "going >= max must still move full -> waitlist; the hold is only for a seat that was actually freed");
+    assert.ok(!said(modLog, "warn", /HELD/), `nothing was freed, so nothing is held: ${JSON.stringify(modLog)}`);
   });
 
   // ── 2. The promoted person is TOLD, through a row that needs no read ────────

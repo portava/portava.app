@@ -31,7 +31,7 @@
  *   absent / unreadable: no badge is computed, no identity row is read, and no
  *   `identityBadge` key is added to any response (the flag value is cached 30 s).
  */
-import { isFlagEnabled } from "../../lib/featureFlags.js";
+import { readFlagState } from "../../lib/featureFlags.js";
 import {
   FINISHED_ATTEMPT_STATUSES,
   providerModeCounts,
@@ -69,7 +69,7 @@ const FLAG_TTL_MS = 30_000;
 let flagCache: { value: boolean; at: number } | null = null;
 async function badgeFlagOn(db: any): Promise<boolean> {
   if (flagCache && Date.now() - flagCache.at < FLAG_TTL_MS) return flagCache.value;
-  const value = await isFlagEnabled(db, IDENTITY_VERIFIED_BADGE_FLAG);
+  const state = await readFlagState(db, IDENTITY_VERIFIED_BADGE_FLAG); if (state === "unknown") logger.warn({ flag: IDENTITY_VERIFIED_BADGE_FLAG }, "readVerifiedBadges: identity_verified_badge_enabled could not be read — NO badge is shown (treated as off, fail-closed; cached like any answer)"); const value = state === "on"; // wave 5 follow-up B2: was isFlagEnabled, silent on a failed read
   flagCache = { value, at: Date.now() };
   return value;
 }

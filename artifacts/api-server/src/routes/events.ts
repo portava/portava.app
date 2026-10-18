@@ -546,7 +546,7 @@ async function writeEventState(
   return { ok: true, from: decision.from, to };
 }
 
-async function syncEventState(sc: any, eventId: string, holdFreedSeat = false): Promise<void> {
+async function syncEventState(sc: any, eventId: string, holdFreedSeat: boolean | "offered" = false): Promise<void> {
   const { data: ev, error: evErr } = await sc
     .from("events")
     .select("state, max_attendees, waitlist_enabled")
@@ -558,8 +558,8 @@ async function syncEventState(sc: any, eventId: string, holdFreedSeat = false): 
   if (!maxAttendees) return; // unlimited
 
   const going = await getGoingCount(sc, eventId); if (going === null) { logger.warn({ eventId }, "event capacity sync: going count unreadable — state left as it was"); return; }  // census-trust §30.8: was 0, which reopened a full event
-  const current = String((ev as any).state ?? ""); if (holdFreedSeat && going < maxAttendees && ["full", "waitlist"].includes(current)) { logger.warn({ eventId, state: current, going, maxAttendees }, "event capacity sync: the waitlist flag could not be read on this pass — the freed seat is HELD (state left as it was, not reopened to walk-ins)"); return; } // wave 5 follow-up B: holdFreedSeat (see readWaitlistFlagForFreedSeat)
-
+  const current = String((ev as any).state ?? ""); if (holdFreedSeat === true && going < maxAttendees && ["full", "waitlist"].includes(current)) { logger.warn({ eventId, state: current, going, maxAttendees }, "event capacity sync: the freed seat is HELD on this pass — the waitlist flag could not be read, or the offer to the queue failed (state left as it was, not reopened to walk-ins)"); return; } // wave 5 follow-up B: holdFreedSeat (see readWaitlistFlagForFreedSeat, freedSeatAfterPromotion)
+  if (holdFreedSeat !== "offered" && going < maxAttendees && ["full", "waitlist"].includes(current) && (await offerFreedSeatToQueue(sc, eventId)) !== "reopen") return; // wave 5 follow-up B2: a free seat is offered to the QUEUE before the reopen below may give it to walk-ins (offerFreedSeatToQueue, end of file)
   // The capacity cycle. Reopening only happens when there is no active waitlist
   // offer — that slot is RESERVED for the offer holder, and hasActiveWaitlistOffer
   // answers `true` when it cannot read, so an outage keeps the reservation.
@@ -2612,7 +2612,7 @@ router.patch("/events/:id", async (req, res) => {
   const visGuard: HostVisibilityGuard | null = visTo !== null ? { from: (current as any).visibility, ...(stateChanges ? {} : { updatedAt: (current as any).updated_at }) } : null; const { data: updated, error } = await guardHostVisibilityWrite(sc // a visibility change is conditional on what was read: a moderator's hide (it stamps updated_at) landing since the hold read wins
     .from("events").update(patch).eq("id", id), visGuard).select("*").single();
   if (error && visGuard && (error as any).code === "PGRST116") { sendError(res, "conflict", "The event changed while this request was in flight (it may have been moderated) — reload and try again"); return; } // the guarded write matched no row: nothing written by it
-  if (error) { req.log.error({ err: error }, "update event"); sendError(res, "db_error", error.message); return; }
+  if (error) { req.log.error({ err: error }, "update event"); sendError(res, "db_error", error.message); return; } if (b.maxAttendees !== undefined) await syncEventState(sc, id); // wave 5 follow-up B2: a capacity edit runs the capacity cycle — a raised capacity is offered to the queue first (offerFreedSeatToQueue), never straight to walk-ins
   if (visGuard) { const rec = await recordHostVisibilityChange(sc, { eventId: id, actorId: user.id, from: visGuard.from, to: visTo, via: "edit" }); if (rec.error) req.log.error({ err: rec.error, eventId: id }, "host visibility change: its record (visibility_changed) could not be written — the change stands unrecorded"); } // from / to: what a later restore reads as the host's own value (wave 5)
   // Notify attendees if key details changed (fire-and-forget)
   const changed = KEY_FIELDS.some((f) => {
@@ -3007,10 +3007,10 @@ router.delete("/events/:id/rsvp", async (req, res) => {
   // first, hasActiveWaitlistOffer would still be false (no offer yet) and the
   // event would flip to 'open' — letting a walk-in RSVP steal the promoted
   // user's seat before they can accept. Sync AFTER, so the reservation holds.
-  let seatHeld = false; if ((existing as any).status === "going") {
+  let seatHeld: boolean | "offered" = false; if ((existing as any).status === "going") {
     const waitlistFlag = await readWaitlistFlagForFreedSeat(sc, id, req); seatHeld = waitlistFlag === "unknown";
     if (waitlistFlag === "on") {
-      await promoteNextWaitlisted(sc, id, req);
+      seatHeld = freedSeatAfterPromotion(await promoteNextWaitlisted(sc, id, req), id, req);
     }
   }
   await syncEventState(sc, id, seatHeld);
@@ -3137,9 +3137,9 @@ router.post("/events/:id/leave", async (req, res) => {
 
   // Promote BEFORE syncing state so the freed seat is reserved by an active
   // offer (see DELETE /rsvp) — otherwise syncEventState reopens to a walk-in.
-  let seatHeld = false; if ((existing as any).status === "going") {
+  let seatHeld: boolean | "offered" = false; if ((existing as any).status === "going") {
     const waitlistFlag = await readWaitlistFlagForFreedSeat(sc, id, req); seatHeld = waitlistFlag === "unknown";
-    if (waitlistFlag === "on") await promoteNextWaitlisted(sc, id, req);
+    if (waitlistFlag === "on") seatHeld = freedSeatAfterPromotion(await promoteNextWaitlisted(sc, id, req), id, req);
   }
   await syncEventState(sc, id, seatHeld);
 
@@ -3439,7 +3439,7 @@ router.delete("/events/:id/waitlist", async (req, res) => {
     .from("events")
     .update({ waitlist_count: ((wlRemaining as any[]) ?? []).length, updated_at: new Date().toISOString() })
     .eq("id", id);
-  res.json({ ok: true });
+  await syncEventState(sc, id); res.json({ ok: true }); // wave 5 follow-up B2: an offer holder who leaves frees the seat their offer reserved — the sync offers it to the next in the queue (offerFreedSeatToQueue)
 });
 
 // ── POST /api/events/:id/requests ─────────────────────────────────────────────
@@ -3697,7 +3697,7 @@ router.post("/events/:id/roles", async (req, res) => {
   let banWlDelErr: unknown = null; let banChatErr: unknown = null; if (role === "banned") {  // census-trust §30.7: the waitlist delete's error is bound and answered below
     await sc.from("event_rsvps").delete().eq("event_id", id).eq("user_id", targetId);
     ({ error: banWlDelErr } = await sc.from("event_waitlist").delete().eq("event_id", id).eq("user_id", targetId)); if (banWlDelErr) req.log?.error({ err: banWlDelErr, eventId: id, targetId }, "ban: waitlist row could not be removed");
-    await syncEventState(sc, id);
+    await syncEventState(sc, id, Boolean(banWlDelErr)); // wave 5 follow-up B2: their queue row survived and the ban is written only below — the sync must not offer them the seat, so it is HELD on this pass
     const going = await getGoingCount(sc, id);
     const { data: wlAfterBan, error: wlAfterBanErr } = await sc.from("event_waitlist").select("user_id").eq("event_id", id); if (wlAfterBanErr) req.log?.warn({ err: wlAfterBanErr, eventId: id }, "ban: queue recount unreadable — waitlist_count left as it was");
     await sc.from("events").update({
@@ -5123,7 +5123,7 @@ router.delete("/events/:id/attendees/:userId", async (req, res) => {
   if (!await canManageAttendance(sc, id, user.id)) {
     sendError(res, "forbidden", "Only host/moderator can remove attendees"); return;
   }
-
+  const { data: removedRsvp, error: removedRsvpErr } = await sc.from("event_rsvps").select("status").eq("event_id", id).eq("user_id", userId).maybeSingle(); if (removedRsvpErr) throw new EventAccessUnavailableError("event_rsvps", removedRsvpErr); // wave 5 follow-up B2: only a removed GOING seat promotes or holds; an unread prior status is 503, never a default
   await sc.from("event_rsvps").delete().eq("event_id", id).eq("user_id", userId);
 
   const going = await getGoingCount(sc, id);
@@ -5132,9 +5132,9 @@ router.delete("/events/:id/attendees/:userId", async (req, res) => {
 
   // Promote BEFORE syncing state so the freed seat is reserved by an active
   // offer (see DELETE /rsvp) — otherwise syncEventState reopens to a walk-in.
-  const waitlistFlag = await readWaitlistFlagForFreedSeat(sc, id, req);
-  if (waitlistFlag === "on") await promoteNextWaitlisted(sc, id, req);
-  await syncEventState(sc, id, waitlistFlag === "unknown");
+  const waitlistFlag = (removedRsvp as any)?.status === "going" ? await readWaitlistFlagForFreedSeat(sc, id, req) : null; let seatHeld: boolean | "offered" = waitlistFlag === "unknown";
+  if (waitlistFlag === "on") seatHeld = freedSeatAfterPromotion(await promoteNextWaitlisted(sc, id, req), id, req);
+  await syncEventState(sc, id, seatHeld);
 
   const { data: ev, error: attChatErr } = await sc.from("events").select("chat_thread_id").eq("id", id).maybeSingle(); if (attChatErr) req.log?.error({ err: attChatErr, eventId: id, userId }, "attendee removal: the event chat could not be read — they were not removed from it");
   if ((ev as any)?.chat_thread_id) {
@@ -7193,9 +7193,9 @@ async function viewableOrThrow(sc: any, ev: any, userId: string): Promise<boolea
  * Read through readFlagState (lib/capability/schemaCapability.ts), the tree's
  * four-valued reader that events.ts already imports; it never answers "on" on
  * a failure path. What later releases a seat held this way: the next
- * syncEventState on the event that is not itself holding (any RSVP, leave,
- * accept, approval or status change), and it releases it to OPEN — walk-ins,
- * as a clean OFF does — not to the queue. No sweep looks for a held seat.
+ * syncEventState on the event that is not itself holding: a maybe / interested / can't-go RSVP, a leave or removal, a ban or block-user, a status change, a
+ * queue leave, a waitlist accept, an approval with room or a capacity edit (a GOING RSVP, join or invite on a full or waitlist event is waitlisted before any sync).
+ * With the flag readable ON that sync offers the seat to the QUEUE first (offerFreedSeatToQueue, below), never to walk-ins; no sweep looks for a held seat.
  */
 async function readWaitlistFlagForFreedSeat(sc: any, eventId: string, req?: any): Promise<"on" | "off" | "unknown"> {
   const state = await readFlagState(sc, "events_waitlist_enabled");
@@ -7250,4 +7250,73 @@ export async function notifyWaitlistOffer(sc: any, eventId: string, userId: stri
     log.warn({ err, eventId, userId }, "waitlist offer: the in-app notification threw — the offer STANDS (the claim is the record; the event screen still shows it)");
     return false;
   }
+}
+
+// ── Wave 5 follow-up B2: a freed seat goes to the queue, never to a walk-in ahead of it, on every path ──
+
+/**
+ * syncEventState's catch-up. It runs on a pass that could reopen the event —
+ * full or waitlist, with a free seat (going < max_attendees) — and BEFORE that
+ * reopen, so it is the ONE place every caller offers a free seat to the queue:
+ * a going → maybe RSVP, PATCH attendee status, a ban, block-user, an offer
+ * holder leaving the queue (DELETE /waitlist now syncs), a capacity edit
+ * (PATCH /events/:id now syncs), a seat HELD on an earlier pass, or a seat an
+ * account deletion freed (seen by the next sync). Before this, only the three
+ * leave doors offered a freed seat; on every other path the reopen gave it to
+ * the first walk-in, ahead of everyone queued.
+ *
+ *   "reopen"   — run the capacity cycle exactly as before. The flag reads OFF
+ *                or its row is ABSENT (the waitlist is disabled: today's
+ *                behaviour, unchanged), or it reads ON and nobody can be offered
+ *                the seat (`stranded`: an empty queue, or every queued user
+ *                refused by the gate — a readable refusal, not a failure).
+ *   "reserved" — an offer holds a seat, so the reopen would not run anyway: one
+ *                was already live (hasActiveWaitlistOffer, which answers TRUE
+ *                when it cannot read), this pass made one, or a concurrent
+ *                writer claimed the same person first (`contended`). Nothing is
+ *                written.
+ *   "held"     — the flag could not be read, or the offer could not be made (a
+ *                queue / event / eligibility read or the claim write failed). The
+ *                seat stays reserved for the queue: nothing is written, warn.
+ *
+ * ONE OFFER AT A TIME, and never two for one seat: a live offer stops the
+ * catch-up, and the claim is atomic (promoteNextWaitlisted re-asserts
+ * `offer_expires_at IS NULL`). A capacity raised by N seats is therefore
+ * offered one seat at a time — the next when this offer is accepted (accept
+ * syncs) or lapses (the sweeper promotes the next). The doors make their own
+ * offer and pass `"offered"`, so their sync does not offer the same seat twice.
+ * NOT closed: two passes at the same instant can both read "no live offer" and
+ * each offer one person; only a database-side lock would stop that. The accept
+ * route's capacity check bounds it — the second to accept is told the spot was
+ * filled and returned to the queue — so a surplus offer never seats past
+ * capacity.
+ */
+async function offerFreedSeatToQueue(sc: any, eventId: string): Promise<"reopen" | "reserved" | "held"> {
+  const flag = await readFlagState(sc, "events_waitlist_enabled");
+  if (flag === "unreadable") {
+    logger.warn({ eventId, flag: "events_waitlist_enabled" }, "event capacity sync: events_waitlist_enabled could not be read — the free seat is HELD for the queue (nobody offered, not reopened to walk-ins)");
+    return "held";
+  }
+  if (flag !== "on") return "reopen";
+  if (await hasActiveWaitlistOffer(sc, eventId)) return "reserved";
+  const promotion = await promoteNextWaitlisted(sc, eventId, { log: logger });
+  if (freedSeatAfterPromotion(promotion, eventId) === true) return "held";
+  return promotion.outcome === "stranded" ? "reopen" : "reserved";
+}
+
+/**
+ * What a freed seat becomes once an offer was attempted for it: `true` (HOLD
+ * it) when the attempt FAILED — the queue, the event or a queued user's
+ * eligibility could not be read (`unreadable`), or the claim write was refused
+ * (`write_failed`) — logged at warn; otherwise `"offered"`, which tells
+ * syncEventState the seat has had its offer on this pass. A failed read or
+ * write must not become "the seat goes to the public": with the flag ON the
+ * doors used to sync after a failed promotion and reopen to walk-ins. A clean
+ * `contended` (someone else's offer holds it) or `stranded` (nobody to offer)
+ * is not a failure: the capacity cycle then decides as it always did.
+ */
+function freedSeatAfterPromotion(promotion: PromoteOutcome, eventId: string, req?: any): true | "offered" {
+  if (promotion.outcome !== "unreadable" && promotion.outcome !== "write_failed") return "offered";
+  (req?.log ?? logger).warn({ eventId, outcome: promotion.outcome, reason: promotion.message }, "freed seat: the offer to the waitlist could not be made (a read or write failed) — the seat is HELD for the queue, not reopened to walk-ins");
+  return true;
 }

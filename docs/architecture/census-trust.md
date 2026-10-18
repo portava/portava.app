@@ -5745,3 +5745,62 @@ block-user, and an offer holder leaving the queue. DELETE /attendees promotes ev
 going.
 
 Rows: none move. Headline unchanged: 90 / 15 / 1 / 2 of 108.
+
+### Correction (2026-10-18, wave 5, follow-up B2) — a freed seat goes to the queue on every path; the sweeper tells, and reads its flag
+
+*Same branch and tree. Committed on this branch; undeployed. **NO ROW MOVES.** It closes the "Still open" paragraph of
+the correction above, and Fable pass 8's C2 and C3.*
+
+**One catch-up step, before any reopen.** `syncEventState` (routes/events.ts:562, in place) now offers a free seat to
+the QUEUE before the reopen at :574-581 can give it to walk-ins. Those lines are byte-identical, and
+lib/stateMachines/registry.ts still quotes them. The step is `offerFreedSeatToQueue` (routes/events.ts:7294, appended).
+It runs only on a pass that could reopen: going < max, state full or waitlist.
+- Flag unreadable: the seat is held, logged at warn.
+- Flag off or absent: exactly as before.
+- Flag on, with a live offer: nothing is written.
+- Flag on otherwise: `promoteNextWaitlisted`. Promoted or contended counts as reserved; an empty or stranded queue
+  reopens as before; a failed read or write HOLDS the seat (`freedSeatAfterPromotion`, :7318).
+
+One offer is made at a time, never two for one seat, so a capacity raise of N is offered a seat at a time. The three
+leave doors still make their own offer and pass `"offered"`, so their sync never offers the same seat twice.
+
+Every seat-freeing path is now covered:
+- an RSVP from going to maybe;
+- PATCH attendee status;
+- the ban;
+- block-user;
+- DELETE /waitlist, which did not sync before;
+- PATCH /events/:id `maxAttendees`, which did not sync before;
+- a seat held on an earlier pass;
+- waitlist accept with several free seats;
+- account-deletion cascades, at the next sync.
+
+**DELETE /attendees** reads the removed person's prior status first. A failed read is 503 and removes nothing. It offers
+or holds a seat only for a going seat; a removed "maybe" frees none.
+
+**The sweeper** (lib/eventWaitlistSweeper.ts) reads `events_waitlist_enabled` once per pass through `readFlagState`.
+- On: promotes as before, and now tells the promoted person through `notifyWaitlistOffer`.
+- Off or absent: expires the lapsed offer and promotes nobody (`held` counted).
+- Unreadable: the same, plus `unreadable` is counted, so the pass is not clean.
+
+**The verified-badge flag** is read with `readFlagState`. An unknown answer logs a warning; the answer (no badge) is
+unchanged.
+
+Tests:
+- `artifacts/api-server/src/test/eventsWaitlistFreedSeatToQueue.test.ts`: 44 cases.
+- `artifacts/api-server/src/test/verifiedBadgeFlagUnreadableLog.test.ts`: 6 cases.
+- HS5 (Fable's C2), added to eventsWaitlistHeldSeatAndOfferNotice.test.ts; it alone kills the surviving mutant M11.
+- HS2 now expects no state write. It had pinned the reopen this correction removes.
+- The sweeper suite's fixture answers the flag ON. It had no flag rows, so the sweeper now promoted nobody.
+
+Red-first: 36 of 74 fail on the old code (the 35 new cases and HS2). 24 mutants, all killed. 33 files: 1151 / 1151.
+
+**Still open, stated:**
+- Two passes in the same instant can each offer one person for one seat. Waitlist accept's capacity check stops a double
+  seat, but its spot-filled branch then offers the next person a seat that does not exist.
+- The accept route's three re-offer branches ignore the flag.
+- Join-request approvals and PATCH status `{going}` admit on the live count, without regard to a held or offered seat.
+- The sweeper sends an in-app notice, but no push.
+- No reconciling sweep exists for a held seat on an event that never syncs again.
+
+Rows: none move. Headline unchanged: 90 / 15 / 1 / 2 of 108.

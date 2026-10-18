@@ -69,8 +69,8 @@
 
 import { getServiceClient } from "./supabase.js";
 import { logger as rootLogger } from "./logger.js";
-import { eligibleWaitlisted, WAITLIST_PROMOTE_SCAN } from "../routes/events.js";
-
+import { eligibleWaitlisted, WAITLIST_PROMOTE_SCAN, notifyWaitlistOffer } from "../routes/events.js";
+import { readFlagState } from "./capability/schemaCapability.js"; // wave 5 follow-up B2: the four-state reader the routes use for events_waitlist_enabled
 const logger = rootLogger.child({ service: "EventWaitlistSweeper" });
 
 // ── Configuration ─────────────────────────────────────────────────────────────
@@ -122,13 +122,13 @@ export interface SweepPassResult {
   /** Events whose queue could NOT be read — left for the next pass, not written off. */
   unreadable: number;
   /** Events whose DELETE or promotion UPDATE reported `.error`. */
-  failed: number;
+  failed: number; held: number; // seats this pass freed and offered to NOBODY: events_waitlist_enabled read off / absent, or could not be read (wave 5 follow-up B2)
   lastError: string | null;
 }
 
 const EMPTY: SweepPassResult = {
   skipped: true, reason: null,
-  scanned: 0, events: 0, cleared: 0, promoted: 0, stranded: 0, unreadable: 0, failed: 0,
+  scanned: 0, events: 0, cleared: 0, promoted: 0, stranded: 0, unreadable: 0, failed: 0, held: 0,
   lastError: null,
 };
 
@@ -182,7 +182,7 @@ export async function runSweep(opts?: { client?: any }): Promise<SweepPassResult
     }
 
     const out: SweepPassResult = { ...EMPTY, skipped: false, scanned: rows.length, events: byEvent.size };
-
+    const waitlistFlag = await readFlagState(sc, "events_waitlist_enabled"); if (waitlistFlag === "unreadable") logger.warn({ expired: rows.length }, "events_waitlist_enabled could not be read — lapsed offers are expired, NOBODY is promoted, the freed seats are HELD for the queue"); else if (waitlistFlag !== "on") logger.info({ flag: waitlistFlag, expired: rows.length }, "events_waitlist_enabled is off — lapsed offers are expired, nobody is promoted"); // wave 5 follow-up B2
     for (const [eventId, userIds] of byEvent) {
       try {
         // Remove expired-offer holders from the queue entirely — setting them to
@@ -220,7 +220,7 @@ export async function runSweep(opts?: { client?: any }): Promise<SweepPassResult
           continue;
         }
         logger.info({ eventId, expiredCount: freed }, "cleared expired waitlist offers");
-
+        if (waitlistFlag !== "on") { out.held += freed; if (waitlistFlag === "unreadable") { out.unreadable += 1; out.lastError = "events_waitlist_enabled unreadable"; } continue; } // wave 5 follow-up B2: time expired the offer; the flag decides whether anyone is offered the seat
         // Promote up to the number of reservations we just freed — one per
         // seat actually freed — in queue order. The window reaches past
         // `freed` so an ineligible user near the head does not strand a seat.
@@ -289,7 +289,7 @@ export async function runSweep(opts?: { client?: any }): Promise<SweepPassResult
         const promoted = Array.isArray(promotedRows) ? promotedRows.length : 0;
         out.promoted += promoted;
         if (promoted < freed && !pick.unavailable) out.stranded += freed - promoted;
-        logger.info({ eventId, promotedCount: promoted, freed }, "promoted next waitlisted users");
+        logger.info({ eventId, promotedCount: promoted, freed }, "promoted next waitlisted users"); for (const r of (promotedRows as any[]) ?? []) await notifyWaitlistOffer(sc, eventId, String(r.user_id), offerExpiresAt); // wave 5 follow-up B2: each person promoted is TOLD (the in-app row, as the route promoter does); it never throws
       } catch (evErr) {
         out.failed += 1;
         out.lastError = evErr instanceof Error ? evErr.message : String(evErr);
@@ -341,3 +341,23 @@ export function stopEventWaitlistSweeper(): void {
 export function _eventWaitlistSweeperArmed(): boolean {
   return _timer !== null;
 }
+
+// ── Wave 5 follow-up B2: the flag, and the person promoted is told ───────────
+//
+// events_waitlist_enabled, read ONCE per pass through readFlagState (the
+// four-state reader the routes use), after the expired offers are found:
+//   on                 → as before: the lapsed offers are cleared and the next
+//                        eligible users promoted; each promoted person is now
+//                        TOLD through notifyWaitlistOffer (routes/events.ts),
+//                        the durable in-app row the route promoter writes. It
+//                        never throws and never undoes the claim.
+//   off / absent       → the lapsed offers are still cleared (time decided
+//                        that), NOBODY is promoted, `held` counts the seats. A
+//                        disabled waitlist does nothing; this pass is clean.
+//   unreadable         → as off, and the pass is NOT clean: `unreadable` counts
+//                        the event, `consecutiveFailures` rises, warn. The seat
+//                        is HELD (the event's state is not touched here); the
+//                        next syncEventState that reads the flag ON offers it
+//                        to the queue (offerFreedSeatToQueue), not this sweeper:
+//                        a held seat has no offer, so no later pass sees it.
+// Before this, the sweeper promoted whatever the flag said, and told nobody.

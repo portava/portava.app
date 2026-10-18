@@ -36,6 +36,14 @@ Branch `claude/wave4-build-20261017` (PR #764, stacked on #763 and #762). Every 
 **Data and product**
 - Confirm the event restore rule in §1 (host-cancelled, moderator-hidden events: the hide is reversed, the host's cancellation kept).
 - Events: every production hide made before this branch recorded no prior visibility, so it now holds the host off and cannot be restored by any route — those events stay invite_only until someone acts. What should a moderator "release" restore to? Should a host be able to cancel an event a moderator has hidden (it then cannot be restored)? Legacy hide-content hides wrote no record, so they do not hold. The event state-machine registry does not list the moderator-only arrows (registry shape decision).
+- Events waitlist (built 2026-10-18): a freed seat now goes to the queue before walk-ins on every path. When the waitlist flag can't be read, the seat is held. Things to know or decide:
+  - `events_waitlist_enabled` is seeded FALSE in the canonical migrations, but production and beta read TRUE. The background sweep now obeys the flag: on a fresh replay (CI, local) it promotes nobody, while production and beta behave as before, plus an in-app notice.
+  - DELETE /waitlist and changing an event's capacity now re-check its full/open state. With the flag off they reopen a full event that has a free seat, and a lowered capacity closes an open one.
+  - Not yet fixed, buildable:
+    - two simultaneous passes can offer one seat to two people, and waitlist accept's "spot filled" branch then offers a seat that does not exist (a one-line fix is ready);
+    - the accept route's three re-offer paths ignore the flag;
+    - host approvals and a host setting someone to going don't check a seat held for the queue.
+  - Your call: should the sweep also push (today it sends only the in-app notice)? Should a reconciling sweep release a seat held on an event that never changes again?
 - Stamps: should an admin be able to award a presence stamp with no place and no evidence? What should repair the historical completion stamps of trips nobody took (OD-1012-STAMP-4, production data)?
 - MD385: should a Memory copied from a post be withdrawn when the post is soft-deleted or held for moderation?
 - 3999 × 3676 (both unapplied): merging two Memories that each hold a copy of the same post photo collides with 3999's one-copy index. Either de-duplicate in 3676's merge or relax the index.
@@ -53,7 +61,12 @@ Branch `claude/wave4-build-20261017` (PR #764, stacked on #763 and #762). Every 
 - The guard catches a reverted fix, but not a brand-new low-contrast line in these cards. About 70 spinners, icons and outlines are graded decor and unmeasured. Measuring them all would make it a full ratchet.
 
 **Migrations**
-- **3999 is the last number in the 3000–3999 band.** The next migration needs a band ruling. Several fixes wait on one: a unique index that closes the SOS cross-instance double-tell, an index on `place_best_of.updated_at`, the SQL layer's inline block checks (`project_user_memory`, `memory_public_feed`, the `post_media_public_select` policy), and Map M65.
+- **Correction (2026-10-18): new migrations do not need a band ruling.** Wave 5 claimed 3999 was the last usable number. In fact `check:migration-prefixes` accepts any unused number in 2100–2999 or 3000–3999, and apply order is plain filename order. Free ranges sit above almost every existing migration: 3826–3899, 3901–3929 and 3934–3969. A new migration may use one if it depends on nothing numbered above it. The fixes that waited on a number are therefore buildable:
+  - the SOS cross-instance double-tell index;
+  - the `place_best_of.updated_at` index;
+  - the SQL layer's inline block checks (`project_user_memory`, `memory_public_feed`, the `post_media_public_select` policy);
+  - Map M65.
+  Every new migration still needs your production press.
 
 ## 3. Production actions (the owner's press)
 
