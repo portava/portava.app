@@ -660,3 +660,80 @@ describe("F. structural — no host write of visibility or state skips the hold"
     assert.ok(hc.has(/action: "admin_hide", metadata: \{ reason, via: "report", report_id: req\.params\.id, \.\.\.st \}/));
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// G. Two events, one log: the hold is read from THIS event's record (pass 6, MB2)
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// readEventModerationHold is scoped to one event by ONE `.eq("event_id", …)`
+// (lib/eventModerationClaim.ts). Every case above seeds one event's rows, so a
+// mutant dropping that `.eq` survived this suite whole (MB2, independent
+// verification pass 6), while a restore of event A let event B's host un-hide B.
+// The fixture is helpers/twoEventModerationFixture.ts: A and B, same host,
+// interleaved in one log. B was removed by its own recorded remove. A was
+// restored by the newest row on the table.
+//
+// Each case is GREEN on the code as committed and RED under MB2 (the reader with
+// the `.eq` dropped). This import sits here, after the cases above, so every
+// line above keeps its number; imports are hoisted.
+import { seedTwoEventModeration, type TwoEventIds } from "./helpers/twoEventModerationFixture.js";
+
+describe("G. two events in one log — a moderation of one event never holds or releases another", () => {
+  const OTHER = "b8888888-8888-4888-8888-88888888e0a0";
+  const IDS: TwoEventIds = { a: OTHER, b: EVENT, admin: ADMIN, host: HOST };
+  const evA = (s: Seed) => s.events!.find((e) => e.id === OTHER)!;
+  const twoEvents = () => seedTwoEventModeration(world("archived", "invite_only"), IDS);
+  const moderateEvent = (id: string, action: string) => call("PATCH", `/admin/events/${id}/moderate`, { action }, "admin-token");
+  const hostPatchEvent = (id: string, body: Record<string, unknown>) => call("PATCH", `/events/${id}`, body, "host-token");
+
+  it("RED under MB2: A's restore, the newest row on the table, never releases B — B's host is still held on visibility and on state", async () => {
+    const s = twoEvents();
+    const dbl = install(s);
+    assert.deepEqual(await C.readEventModerationHold(dbl.client, EVENT), { ok: true, hold: { visibility: "admin_remove", state: "admin_remove" } }, "B is held by B's remove");
+    assert.deepEqual(await C.readEventModerationHold(dbl.client, OTHER), { ok: true, hold: { visibility: null, state: null } }, "A is released by A's restore");
+    const before = eventWrites(dbl);
+    const v = await hostPatch({ visibility: "public" });
+    assertHeld(v, "visibility");
+    assert.match(v.body.message, /A moderator removed this event \(admin_remove\)/);
+    assertHeld(await hostPatch({ state: "open" }), "state");
+    assert.equal(eventWrites(dbl), before, "the refused PATCHes wrote nothing to events");
+    // A again, through the real route: hidden (A's host held), restored (A's host released). B stays held.
+    assert.equal((await moderateEvent(OTHER, "hide")).status, 200);
+    assertHeld(await hostPatchEvent(OTHER, { visibility: "friends_only" }), "visibility");
+    assert.equal((await moderateEvent(OTHER, "restore")).status, 200);
+    assert.equal(evA(s).visibility, "public");
+    const a = await hostPatchEvent(OTHER, { visibility: "friends_only" });
+    assert.equal(a.status, 200, a.raw);
+    assertHeld(await hostPatch({ visibility: "public" }), "visibility");
+    assert.deepEqual({ state: ev(s).state, visibility: ev(s).visibility }, { state: "archived", visibility: "invite_only" }, "B is still removed");
+  });
+
+  it("RED under MB2: A's hide holds A, never B — once B is restored, B's host may change B while A stays hidden", async () => {
+    const s = twoEvents();
+    install(s);
+    const rb = await moderate("restore");
+    assert.equal(rb.status, 200, rb.raw);
+    assert.deepEqual({ state: ev(s).state, visibility: ev(s).visibility }, { state: "open", visibility: "friends_only" }, "B's restore reversed B's own remove");
+    assert.equal((await moderateEvent(OTHER, "hide")).status, 200);
+    assertHeld(await hostPatchEvent(OTHER, { visibility: "public" }), "visibility");
+    const r = await hostPatch({ visibility: "public" });
+    assert.equal(r.status, 200, r.raw);
+    assert.equal(ev(s).visibility, "public");
+    assert.equal(evA(s).visibility, "invite_only", "A's hide stands");
+    assert.deepEqual(acts(s).at(-1), { action: "visibility_changed", from: "friends_only", to: "public", via: "edit", actor: HOST });
+  });
+
+  it("RED under MB2: an approved appeal of A releases A only — B's host is still held", async () => {
+    const s = twoEvents();
+    const { client } = install(s);
+    assert.equal((await moderateEvent(OTHER, "hide")).status, 200);
+    const out = await C.reverseModeratedEventOnAppeal(client, { eventId: OTHER, hostId: HOST, actorId: ADMIN, appealId: APPEAL, note: "approved" });
+    assert.equal(out.outcome, "restored", JSON.stringify(out));
+    assert.equal(evA(s).visibility, "public");
+    const a = await hostPatchEvent(OTHER, { visibility: "friends_only" });
+    assert.equal(a.status, 200, `A's appeal released A: ${a.raw}`);
+    assertHeld(await hostPatch({ visibility: "public" }), "visibility");
+    assertHeld(await hostPatch({ state: "open" }), "state");
+    assert.deepEqual({ state: ev(s).state, visibility: ev(s).visibility }, { state: "archived", visibility: "invite_only" });
+  });
+});

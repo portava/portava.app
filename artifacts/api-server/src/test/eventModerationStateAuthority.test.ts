@@ -685,3 +685,76 @@ describe("D. an approved event appeal reverses the recorded moderation, through 
   });
 });
 
+// ══════════════════════════════════════════════════════════════════════════════
+// E. Two events, one log: a restore reverses only its own event's state record (pass 6, MB3)
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// readRecordedEventModeration is scoped to one event by ONE `.eq("event_id", …)`
+// (lib/eventModerationClaim.ts). Every case above seeds one event's rows, so a
+// mutant dropping that `.eq` survived this suite whole (MB3, independent
+// verification pass 6). The fixture is helpers/twoEventModerationFixture.ts: A
+// and B interleaved in one log. B was removed from open by its own recorded
+// remove. A was restored (archived to open) by the newest row on the table.
+//
+// Each case is GREEN on the code as committed and RED under MB3 (the reader with
+// the `.eq` dropped). This import sits here, after the cases above, so every
+// line above keeps its number; imports are hoisted.
+import { seedTwoEventModeration, twoEventRow, TWO_EVENT_STORY, type TwoEventIds } from "./helpers/twoEventModerationFixture.js";
+
+describe("E. two events in one log — a restore reverses only its own event's state record", () => {
+  const OTHER = "b8888888-8888-4888-8888-88888888b0a0";
+  const IDS: TwoEventIds = { a: OTHER, b: EVENT, admin: ADMIN, host: HOST };
+  const evA = (s: Seed) => s.events!.find((e) => e.id === OTHER)!;
+  const twoEvents = () => seedTwoEventModeration(world("archived", { visibility: "invite_only" }), IDS);
+  const moderateEvent = async (id: string, action: string) => {
+    const r = await fetch(`${base}/admin/events/${id}/moderate`, { method: "PATCH", headers: { authorization: "Bearer admin-token", "content-type": "application/json" }, body: JSON.stringify({ action }) });
+    const raw = await r.text();
+    let parsed: any; try { parsed = JSON.parse(raw); } catch { parsed = raw; }
+    return { status: r.status, body: parsed, raw };
+  };
+
+  it("RED under MB3: B's own remove decides B's restore — the newest state record on the table is A's restore, and B still goes back to open", async () => {
+    const s = twoEvents();
+    const { client } = install(s);
+    assert.deepEqual(await C.readRecordedEventModeration(client, EVENT), { ok: true, recorded: { action: "admin_remove", from_state: "open", to_state: "archived" } }, "B's record is B's remove");
+    assert.deepEqual(await C.readRecordedEventModeration(client, OTHER), { ok: true, recorded: { action: "admin_restore", from_state: "archived", to_state: "open" } }, "A's record is A's restore");
+    const r = await moderate("restore");
+    assert.equal(r.status, 200, r.raw);
+    assert.equal(ev(s).state, "open");
+    assert.deepEqual(r.body.state, { from: "archived", to: "open" });
+    assert.deepEqual(activity(s).at(-1), { action: "admin_restore", from: "archived", to: "open" });
+    assert.equal(evA(s).state, "open", "A untouched");
+  });
+
+  it("RED under MB3: a moderator's cancel of A never un-cancels B's host's OWN cancellation", async () => {
+    const s = twoEvents();
+    // B restored by a moderator, then cancelled by its own host. A host's cancel writes no moderation record.
+    s.event_activity_log!.push(twoEventRow(IDS, TWO_EVENT_STORY.length + 1, "b", "admin_restore", { from_state: "archived", to_state: "open", from_visibility: "invite_only", to_visibility: "friends_only" }));
+    Object.assign(ev(s), { state: "cancelled", visibility: "friends_only" });
+    install(s);
+    const c = await moderateEvent(OTHER, "cancel");
+    assert.equal(c.status, 200, c.raw);
+    assert.equal(evA(s).state, "cancelled");
+    const rows = s.event_activity_log!.length;
+    const r = await moderate("restore");
+    assert.equal(r.status, 409, r.raw);
+    assert.equal(r.body.error, "invalid_state_transition");
+    assert.match(r.body.message, /newest recorded moderation state change on it is admin_restore to 'open'/);
+    assert.equal(ev(s).state, "cancelled", "the host's own cancellation stands");
+    assert.equal(s.event_activity_log!.length, rows, "the refused restore wrote no row");
+    const ra = await moderateEvent(OTHER, "restore");
+    assert.equal(ra.status, 200, ra.raw);
+    assert.equal(evA(s).state, "open", "A's restore reverses A's own cancel");
+    assert.equal(ev(s).state, "cancelled");
+  });
+
+  it("RED under MB3: an approved appeal of B reverses B's own remove — never A's newer restore", async () => {
+    const s = twoEvents();
+    const { client } = install(s);
+    const r = await resolveAppeal(client, { id: APPEAL, appellant_id: HOST, target_type: "event", target_id: EVENT, resolution_note: "upheld", moderator_id: ADMIN });
+    assert.deepEqual(r, { ok: true, action: "event_restored" });
+    assert.equal(ev(s).state, "open");
+    assert.deepEqual(s.event_activity_log!.at(-1)!.metadata, { via: "appeal", appeal_id: APPEAL, reason: "upheld", from_state: "archived", to_state: "open", from_visibility: "invite_only", to_visibility: "friends_only" });
+    assert.equal(evA(s).state, "open", "A untouched");
+  });
+});

@@ -417,3 +417,86 @@ describe("C. an approved event appeal puts back the visibility a recorded hide f
     assert.equal(ev(s).visibility, "invite_only");
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// D. Two events, one log: a restore reads only its own event's record (pass 6, MB)
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// readRecordedEventVisibility is scoped to one event by ONE `.eq("event_id", …)`
+// (lib/eventModerationClaim.ts). Every case above seeds one event's rows, so a
+// mutant dropping that `.eq` survived this suite whole (MB, independent
+// verification pass 6), while it put event B back to PUBLIC on event A's hide.
+// The fixture is helpers/twoEventModerationFixture.ts: A and B interleaved in
+// one log. B was removed from friends-only by its own recorded remove. A was
+// restored to public by the newest row on the table.
+//
+// Each case is GREEN on the code as committed and RED under MB (the reader with
+// the `.eq` dropped). This import sits here, after the cases above, so every
+// line above keeps its number; imports are hoisted.
+import { seedTwoEventModeration, twoEventRow, TWO_EVENT_STORY, type TwoEventIds } from "./helpers/twoEventModerationFixture.js";
+
+describe("D. two events in one log — a restore reads only its own event's visibility record", () => {
+  const OTHER = "b8888888-8888-4888-8888-88888888c0a0";
+  const IDS: TwoEventIds = { a: OTHER, b: EVENT, admin: ADMIN, host: HOST };
+  const evA = (s: Seed) => s.events!.find((e) => e.id === OTHER)!;
+  const twoEvents = () => seedTwoEventModeration(world("archived", "invite_only"), IDS);
+  const moderateEvent = async (id: string, action: string) => {
+    const r = await fetch(`${base}/admin/events/${id}/moderate`, { method: "PATCH", headers: { authorization: "Bearer admin-token", "content-type": "application/json" }, body: JSON.stringify({ action }) });
+    const raw = await r.text();
+    let parsed: any; try { parsed = JSON.parse(raw); } catch { parsed = raw; }
+    return { status: r.status, body: parsed, raw };
+  };
+
+  it("RED under MB: B's own remove decides B — the newest row on the table is A's restore, and B still goes back to friends-only", async () => {
+    const s = twoEvents();
+    const { client } = install(s);
+    assert.deepEqual(await C.readRecordedEventVisibility(client, EVENT), { ok: true, recorded: { kind: "recorded", action: "admin_remove", from: "friends_only", to: "invite_only" } }, "B's record is B's remove");
+    assert.deepEqual(await C.readRecordedEventVisibility(client, OTHER), { ok: true, recorded: { kind: "recorded", action: "admin_restore", from: "invite_only", to: "public" } }, "A's record is A's restore");
+    const r = await moderate("restore");
+    assert.equal(r.status, 200, r.raw);
+    assert.deepEqual({ state: ev(s).state, visibility: ev(s).visibility }, { state: "open", visibility: "friends_only" });
+    assert.deepEqual(r.body.visibility, { from: "invite_only", to: "friends_only" });
+    assert.deepEqual({ state: evA(s).state, visibility: evA(s).visibility }, { state: "open", visibility: "public" }, "A untouched");
+  });
+
+  it("RED under MB: another event's NEWER recorded hide is never B's — A hidden from public, then B restored is friends-only, not public; and A's restore then reads A's own hide", async () => {
+    const s = twoEvents();
+    install(s);
+    const h = await moderateEvent(OTHER, "hide");
+    assert.equal(h.status, 200, h.raw);
+    assert.equal(evA(s).visibility, "invite_only");
+    const r = await moderate("restore");
+    assert.equal(r.status, 200, r.raw);
+    assert.equal(ev(s).visibility, "friends_only", "B must not come back PUBLIC on A's hide");
+    assert.equal(evA(s).visibility, "invite_only", "A's hide stands");
+    const ra = await moderateEvent(OTHER, "restore");
+    assert.equal(ra.status, 200, ra.raw);
+    assert.equal(evA(s).visibility, "public", "A's restore reads A's hide, not B's newer restore");
+    assert.equal(ev(s).visibility, "friends_only");
+  });
+
+  it("RED under MB: a hide of B that recorded nothing is still refused (409, nothing written) — another event's newer RECORDED hide is not what B's hide found", async () => {
+    const s = twoEvents();
+    s.event_activity_log!.push(twoEventRow(IDS, TWO_EVENT_STORY.length + 1, "b", "admin_hide", {})); // a hide of B that says nothing of what it found, as one written before the record
+    install(s);
+    assert.equal((await moderateEvent(OTHER, "hide")).status, 200);
+    const rows = s.event_activity_log!.length;
+    const r = await moderate("restore");
+    assert.equal(r.status, 409, r.raw);
+    assert.equal(r.body.error, "invalid_state_transition");
+    assert.match(r.body.message, /hidden \('invite_only'\) by an admin_hide that did not record the visibility it found.*will not widen it/);
+    assert.deepEqual({ state: ev(s).state, visibility: ev(s).visibility }, { state: "archived", visibility: "invite_only" });
+    assert.equal(s.event_activity_log!.length, rows, "no row was written");
+    assert.equal(s.moderation_actions!.length, 1, "only A's hide is audited");
+  });
+
+  it("RED under MB: an approved appeal of B puts back B's own record — A's newer hide is not B's", async () => {
+    const s = twoEvents();
+    const { client } = install(s);
+    assert.equal((await moderateEvent(OTHER, "hide")).status, 200);
+    const r = await resolveAppeal(client, { id: APPEAL, appellant_id: HOST, target_type: "event", target_id: EVENT, resolution_note: "upheld", moderator_id: ADMIN });
+    assert.deepEqual(r, { ok: true, action: "event_restored" });
+    assert.deepEqual({ state: ev(s).state, visibility: ev(s).visibility }, { state: "open", visibility: "friends_only" });
+    assert.equal(evA(s).visibility, "invite_only", "A's hide stands");
+  });
+});
