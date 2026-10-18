@@ -5825,3 +5825,342 @@ grant; until 3814 is applied to `portava-ci`, `check:authorization-contract` rep
 INSERT, UPDATE and DELETE on the four to both client roles (2490's state, never ALL or PUBLIC) and clears the ledger row.
 It refuses unless each table has RLS and its baseline policies, and unless `memory_items_public_read` still hides an
 `only_me` photo (3672) where the column exists. It re-opens every door above.
+
+## 2026-10-18 — `3901_telegraph_safety_notification_once_per_member.sql`, written and NOT applied anywhere (wave 5, migration-fixes lane)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3901_telegraph_safety_notification_once_per_member.sql` | **not applied** | **not applied** |
+
+**What it is.** census-telegraph T254 (§19 P0 safety). One partial unique index on `public.notifications`, with a
+comment: `notifications_safety_once_per_member_uniq`, UNIQUE (`user_id`, `metadata->>'causal_event_id'`) WHERE
+`source_type = 'thread_safety_alert'` AND the causal id IS NOT NULL. No table, column, row, grant, policy or flag.
+
+It closes the cross-instance double-tell. The safety layer decided "never told twice" by a read, so two API instances
+re-driving one help request inside the same ~100 ms both read "untold", both created a row, and the member was woken
+twice. With the index the second insert fails 23505 and `NotificationService.createDetailed` answers `insert_failed`.
+The code half then counts the member `already_told` once it sees the winner's row
+(`artifacts/api-server/src/services/telegraph/safetyNotifications.ts:776#async function classifyInsertFailures`).
+The code half is safe without the index: no insert conflicts, so that path is never taken.
+
+**Who it could break, re-verified.** Only a writer of a second `notifications` row with `source_type =
+'thread_safety_alert'` and the same (`user_id`, causal id). The safety layer is the only producer of that source type
+(`artifacts/api-server/src/services/telegraph/safetyNotifications.ts:97#SAFETY_NOTIFICATION_SOURCE`, written at
+`artifacts/api-server/src/services/telegraph/safetyNotifications.ts:268#sourceType: SAFETY_NOTIFICATION_SOURCE`). No other file in the API, the client trees or the chain names it, and
+no migration inserts into `notifications`. Every other producer's row falls outside the predicate, so no other insert
+can start failing. The API's other writers insert rows of other source types, delete rows (account deletion, the
+expiry purge), or set only `read_at` or `dismissed_at`; none rewrites a key column of an existing row. No client tree
+reads or writes `notifications` directly.
+
+**Precondition** refuses:
+- when `public.notifications` is missing, or lacks `user_id uuid`, `source_type text` or `metadata jsonb`;
+- while any (member, causal id) group of safety rows holds more than one row. It names one group and changes nothing:
+  it never deletes or merges;
+- when an index of that name exists with another definition.
+
+It accepts a second apply. **Postcondition** (re-runnable, after the COMMIT):
+- the index exists, valid and unique, keyed (`user_id`, causal id), with exactly that predicate;
+- no duplicate group exists;
+- the comment names T254.
+
+**Order.** 3901 is a gap number. It sorts at 3901, before 3930–3999, but portava-ci and production will apply it
+after 3999, because the applier applies pending files in filename order. The house rule for a gap number
+(`docs/ops/wave5-owner-decisions-20261018.md:67#new migrations do not need a band ruling`) is order independence: the
+file depends on nothing above it, and nothing above it alters or drops what it touches. The evidence:
+- 3901 depends only on the baseline `public.notifications`. No migration from 2093 onwards names that table in code
+  (the word appears in six of them, only in comments, flag descriptions and file paths).
+- No file sorting above 3901 (3902–3905, and 3930–3999) names `notifications`, `thread_safety_alert`,
+  `causal_event_id` or the index name in code. Checked by grep, and mechanically by the production packet's builder
+  (`prod-apply-packet-20261017/addendum-3901-3905/manifest.json` → `order.independence`).
+- Both orders were run on a PostgreSQL 18.3 replica. Applying the five after 3999 (production's order) and replaying
+  the chain with the five at their numeric position give the same catalog: 0 differences in 19,348 keys. 3901
+  changes the same 2 keys on both paths.
+
+Press it after the main packet and addendum-3996-3999; the packet's guard step enforces that order.
+
+**Table locks.** The applier wraps each file and its ledger row in one transaction, so the index cannot be built
+CONCURRENTLY (the applier refuses that form).
+- `CREATE INDEX` holds a SHARE lock on `public.notifications` from the build until the COMMIT. Reads continue. Every
+  INSERT, UPDATE and DELETE on `notifications` waits, including every new notification the API writes.
+- The build is one sequential scan of the whole table plus a sort of the matching safety rows. The wait therefore
+  grows with the table's total size, not with the number of safety rows.
+- The `$pre$` duplicate inspection is a second full scan just before the build, under ACCESS SHARE only.
+- On the replica's empty table the whole file took 9 ms. Production's row count is not known offline; the packet
+  README §6 (c) reads it, read-only, before the press. The packet sets `lock_timeout 5s`, so the file fails fast
+  instead of queueing behind a long transaction.
+
+**Proof.** `artifacts/api-server/src/test/telegraphSafetyOncePerMember.test.ts` (PGlite: the index's definition, the
+refused second row, nothing else refused, existing duplicates refused and kept) and
+`artifacts/api-server/src/test/db/telegraphSafetyOncePerMember.db.test.ts` (CI local-db). On the packet's PostgreSQL
+18.3 end-state replica, a second safety row fails 23505 naming the index; another member, another help request,
+another producer and a row with no causal id are all accepted.
+
+**Rollback:** `db/rollback/2026-10-18-3901-telegraph-safety-notification-once-per-member-rollback.sql`.
+- It drops the index and deletes 3901's ledger row. It refuses a same-named index that is not 3901's.
+- 3901 writes no row of its own; the ledger row is the applier's.
+- It re-opens the double-tell. No notification row is deleted.
+- DROP INDEX takes ACCESS EXCLUSIVE on `notifications` for the catalog change.
+- Proven: forward, rollback, then catalog and rows equal to before. Equal on a PGlite 16.4 fixture, and on the
+  PostgreSQL 18.3 replica (0 differences in 19,344 keys). A second run is a no-op, and 3901 re-applies after it.
+
+## 2026-10-18 — `3902_place_best_of_updated_at_index.sql`, written and NOT applied anywhere (wave 5, migration-fixes lane)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3902_place_best_of_updated_at_index.sql` | **not applied** | **not applied** |
+
+**What it is.** census-highlights-memories, the place-collection refresh ruling. One plain btree index, with a comment:
+`place_best_of_updated_at_place_id_idx` ON `public.place_best_of (updated_at, place_id)`. It is the stale sweep's walk
+key (`artifacts/api-server/src/lib/places/placeCollectionsWorker.ts:835#export async function runStaleSweep`, pages
+read by `artifacts/api-server/src/lib/places/placeCollectionsWorker.ts:768#async function readOverduePage`).
+- The backlog count (`updated_at < cutoff`) becomes an index range scan.
+- Each keyset page reads in index order and stops at its LIMIT, instead of sorting every overdue row.
+- The lane's PGlite plans on 20,000 rows show a Bitmap Index Scan for the count, and an Index Only Scan with no Sort
+  for the first and next pages.
+
+No table, column, row, grant, policy or flag. No result changes.
+
+**Who it could break, re-verified.** No read or write can start failing: the index is not unique.
+- `place_best_of` is written only by the collections worker's upsert, on the service client (`.from("place_best_of")`
+  in `placeCollectionsWorker.ts`). It is read by the worker and by `lib/places/placeCollections.ts`.
+- RLS is on with no policy (`rlsDispositions.ts`: DENY_ALL_BY_DESIGN), so a client role reads no row whatever its
+  grants.
+- The costs are the build's lock (below) and one more btree entry per upserted row.
+
+**Precondition** refuses when `public.place_best_of` is missing or lacks `place_id uuid` and `updated_at timestamptz`,
+and when an index of that name exists with another definition. It accepts a second apply. **Postcondition**: a valid,
+non-unique btree on exactly (`updated_at`, `place_id`) with no predicate, whose comment names `runStaleSweep`.
+
+**Order.** A gap number, under the rule in the 3901 entry above.
+- It depends only on `public.place_best_of` (baseline; 2047).
+- Of the files from 2093 onwards, only 2293 (comments) and 3504 (client privileges) name `place_best_of`. Both sort
+  below 3902, and no file above it names the table.
+- The replica's two-path run gives 0 differences. 3902 changes the same 2 keys on both paths.
+
+**Table locks.** `CREATE INDEX` holds a SHARE lock on `public.place_best_of` from the build until the COMMIT. The
+worker's upserts wait; reads continue. The build scans and sorts the whole table, one row per precomputed place, so the
+wait is proportional to the table's size. On the replica's empty table the whole file took 3 ms. The packet README
+§6 (c) reads production's count, read-only, before the press.
+
+**Proof.** `artifacts/api-server/src/test/placeBestOfUpdatedAtIndexMigration.test.ts` (PGlite EXPLAIN before and after,
+same answers). On the PostgreSQL 18.3 end-state replica, the sweep's first-page query is served by a Bitmap Index Scan
+on the new index.
+
+**Rollback:** `db/rollback/2026-10-18-3902-place-best-of-updated-at-index-rollback.sql`.
+- It drops the index and deletes 3902's ledger row. It refuses a same-named index that is not 3902's.
+- Behaviour is unchanged; the sweep scans again.
+- DROP INDEX takes ACCESS EXCLUSIVE on `place_best_of` for the catalog change.
+- Proven the same way as 3901's rollback: catalog and rows equal to before.
+
+## 2026-10-18 — `3903_project_user_memory_block_check_of_record.sql`, written and NOT applied anywhere (wave 5, migration-fixes lane)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3903_project_user_memory_block_check_of_record.sql` | **not applied** | **not applied** |
+
+**What it is.** census-telegraph T220 §15 ("No subsystem may independently 'rediscover' a blocked relationship"), from
+independent verification pass 4's boundary note. It amends `public.project_user_memory(uuid, boolean)` (2963, as
+amended by 2965) in place.
+- The social lane read `public.blocks` inline twice: once in the `memory_events` insert, once in the
+  `memory_projections` insert.
+- Both reads become `NOT authz.is_blocked(p_user_id, uf.following_id)`, the definition of record. That is the baseline
+  `public.is_blocked` (`artifacts/api-server/baseline/20260819_baseline_structure.sql:1838#CREATE FUNCTION public.is_blocked`),
+  moved to `authz` by 2182.
+- The method is 2965's. The file reads the installed text with `pg_get_functiondef`, replaces the two predicates and
+  EXECUTEs the result as CREATE OR REPLACE.
+- It refuses unless masking the old predicate out of the old text, and the new call out of the new text, leaves the
+  same text, character for character.
+
+No table, column, row, grant, policy or flag.
+
+**Who it could break, re-verified.** No caller can observe a change.
+- The function is SECURITY INVOKER and only `service_role` may EXECUTE it (2193). `service_role` already read
+  `blocks` past RLS, so both forms exclude the same follows, in both directions.
+- Its callers are `project_all_memory` (2187), which the scheduler calls
+  (`artifacts/api-server/src/lib/memoryProjectionScheduler.ts:132#project_all_memory`), and
+  `project_user_memory_with_retraction` (2190, 2195, 3314). All run as `service_role`, and no client tree names the
+  function.
+- The cost: a SECURITY DEFINER function is not inlined, so the anti-join becomes one indexed probe of `blocks` per
+  followed account, for one user per call.
+
+**Precondition** refuses when the function is absent or overloaded; when `authz.is_blocked(uuid, uuid)` is absent or
+not SECURITY DEFINER; and when `service_role` cannot reach it. The `$mig$` block refuses unless the installed text
+holds exactly 2 inline predicates and 0 calls. Re-running is a no-op that says so. **Postcondition** checks:
+- exactly 2 calls in the code (comments stripped), and no read of `blocks`;
+- the signature, the four lanes, the flag gate and 2965's `_canon_saves WHERE true` delete are kept;
+- the function is still INVOKER, and its EXECUTE is still `service_role` only.
+
+**Production.** On 2026-10-17 the packet fingerprinted production's `project_user_memory`, read-only. It equals the
+definition the repo's 2963 + 2965 produce (`1f468c6f1a63` on both), so the `$mig$` count should find 2 and 0 there.
+
+**Order.** A gap number, under the rule in the 3901 entry.
+- It depends on 2963 + 2965 and on 2182, all below it.
+- No file above 3903 names `project_user_memory`; 3314, the last file to call it, sorts below.
+- No file above it alters `blocks` or redefines `is_blocked`. 3905 calls it in a policy; the packet builder reviewed
+  that hit.
+- The replica's two-path run gives 0 differences. 3903 changes the same 2 keys on both paths.
+
+**Table locks.** None on any table: CREATE OR REPLACE FUNCTION locks only the function's catalog row. The replica
+measured no relation lock.
+
+**Proof.** `artifacts/api-server/src/test/sqlBlockChecksOfRecordMigrations.test.ts` (PGlite: the projector's events
+and projections byte-identical before and after; the definition differs in two lines). On the PostgreSQL 18.3
+end-state replica, the projector still leaves out a followed account that blocked the user.
+
+**Rollback:** `db/rollback/2026-10-18-3903-project-user-memory-block-check-of-record-rollback.sql`, the inverse
+surgery.
+- It puts 2963's inline predicate, as 2965 left it, back in place of each call, then deletes 3903's ledger row.
+- It refuses unless the installed text is 3903's: exactly 2 calls of 3903's form, no other `authz.is_blocked`, no
+  inline read.
+- It refuses unless the result differs from the installed text in those two predicates only.
+- It refuses when `service_role` cannot SELECT `blocks`.
+- If the definition already reads `blocks` inline, it changes nothing.
+- Proven: `pg_get_functiondef` byte-identical to before, on PGlite 16.4 and on the PostgreSQL 18.3 replica.
+
+## 2026-10-18 — `3904_memory_public_feed_block_check_of_record.sql`, written and NOT applied anywhere (wave 5, migration-fixes lane)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3904_memory_public_feed_block_check_of_record.sql` | **not applied** | **not applied** |
+
+**What it is.** The same T220 §15 boundary. It amends `public.memory_public_feed(uuid, integer, timestamptz)` in place,
+by 2965's method. The function is 2338's
+(`artifacts/api-server/src/migrations/2338_memory_location_precision.sql:138#CREATE FUNCTION public.memory_public_feed`).
+- Its one inline read of `blocks` becomes `AND NOT authz.is_blocked(p_viewer, m.owner_id)`.
+- Everything else is carried: the other predicates, the columns, the ORDER BY, the LIMIT clamp, STABLE, INVOKER, the
+  pinned search_path, the `service_role`-only ACL and the comment.
+
+No table, column, row, grant, policy or flag.
+
+**Who it could break, re-verified.** No caller can observe a change.
+- It is `service_role` only (2338), and it already read `blocks` past RLS.
+- Its one caller is `GET /memories`, on the service client, and only while `memory_public_feed_projection_enabled` is
+  on (`artifacts/api-server/src/routes/memories.ts:648#memory_public_feed_projection_enabled`). 2338 seeded that flag
+  FALSE.
+- The cost: one indexed probe of `blocks` per public Memory the scan reaches before the LIMIT.
+
+**Precondition** refuses when the function is absent or overloaded, and when `authz.is_blocked` is absent, not
+SECURITY DEFINER, or unreachable for `service_role`. The `$mig$` block refuses unless the installed text holds exactly
+1 inline predicate and 0 calls. Re-running is a no-op. **Postcondition** checks:
+- exactly 1 call, and no read of `blocks`;
+- 2338's state, visibility, hidden-viewer, viewer and LIMIT predicates are present;
+- the function is STABLE and INVOKER, with `search_path=public, pg_temp`;
+- EXECUTE is `service_role` only.
+
+**⚠ Production's feed is drifted from 2338.** On 2026-10-17 the packet fingerprinted production's
+`memory_public_feed`, read-only: `91b5d7c40a75`. The repo's 2338 gives `e5f33a8b55cb` (the packet's
+`verify/logs/fidelity-C-ledgered-mismatches.json`; its README §12 counts about 20 such function bodies as hand drift).
+What differs is not known offline, so the press can go two ways:
+- The `$mig$` count finds no inline predicate it recognises and refuses. Nothing is applied and nothing is recorded.
+- It amends the function, and after the COMMIT the `$post$` finds one of 2338's other fragments, or its shape, missing.
+  The migration is then applied and recorded, and the run stops on a postcondition failure.
+
+Both are visible before the press. The packet's dry run runs each `$post$` inside its rolled-back transaction, and the
+packet README §6 (d) reads the same counts and fragments read-only. Capture the definition at that point: the rollback
+restores 2338's spelling of the predicate, which may not be production's.
+
+**Order.** A gap number, under the rule in the 3901 entry.
+- It depends on 2338 and 2182, both below it.
+- No file above it names `memory_public_feed` or `blocks`. Of the files above, only 3905 names `is_blocked`, and it
+  calls it.
+- No file above it alters `public.memories`. That matters because CREATE OR REPLACE re-validates a SQL body, so a
+  dropped column would make this file refuse.
+- The replica's two-path run gives 0 differences. 3904 changes the same 2 keys on both paths.
+
+**Table locks.** ACCESS SHARE on `public.memories`, taken because the body is re-validated, and nothing stronger. No
+write waits.
+
+**Proof.** `artifacts/api-server/src/test/sqlBlockChecksOfRecordMigrations.test.ts` (PGlite: eight call shapes return
+the same rows in the same order before and after). On the PostgreSQL 18.3 end-state replica, the feed still leaves out
+the Memories of an author who blocked the viewer.
+
+**Rollback:** `db/rollback/2026-10-18-3904-memory-public-feed-block-check-of-record-rollback.sql`, the inverse surgery.
+- It restores 2338's predicate byte for byte, line breaks and alignment included.
+- It refuses as 3903's rollback does, with 1 call in place of 2.
+- Proven byte-identical to the pre-3904 definition, on PGlite 16.4 and on the PostgreSQL 18.3 replica.
+- On production it restores 2338's spelling of the predicate (see the drift note above).
+
+## 2026-10-18 — `3905_post_media_public_select_block_check_of_record.sql`, written and NOT applied anywhere (wave 5, migration-fixes lane)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3905_post_media_public_select_block_check_of_record.sql` | **not applied** | **not applied** |
+
+**What it is.** The same T220 §15 boundary, and it closes a live defect. It drops `post_media_public_select` ON
+`public.post_media` and re-creates it with one conjunct changed. 2337 last re-created the policy
+(`artifacts/api-server/src/migrations/2337_trip_crew_rls_membership_convergence.sql:662#CREATE POLICY "post_media_public_select"`).
+- 2337's inline `NOT EXISTS (SELECT 1 FROM public.blocks b WHERE …)` becomes
+  `NOT authz.is_blocked(auth.uid(), post_media.user_id)`.
+- Everything else is 2337's text verbatim: the owner arm, ready and not rejected or flagged, the post's status, public
+  or trip-crew visibility through `authz.is_trip_crew`, FOR SELECT, PERMISSIVE, TO public, no WITH CHECK.
+
+No table, column, row, grant or flag.
+
+**The defect it closes.** A person the media's owner blocked could read the owner's public post media through
+PostgREST, because the policy's block test read `blocks` under blocks' own RLS.
+- A policy's subquery runs as the querying role, through the subqueried table's RLS.
+- `blocks` admits a reader only the rows they made
+  (`artifacts/api-server/baseline/20260819_baseline_structure.sql:26259#CREATE POLICY blocks_select_own` and
+  `artifacts/api-server/baseline/20260819_baseline_structure.sql:33560#CREATE POLICY users_view_own_blocks`).
+- So 2337's "the owner blocked the viewer" direction read no row and never bit. Only the block the viewer made did.
+- `authz.is_blocked` is SECURITY DEFINER and reads `blocks` as its owner, so both directions bite. It is the house's
+  policy form for this (2401, 3502).
+- The API reads `post_media` as `service_role` and was never affected.
+
+**Who it could break, re-verified.** The one client-visible change: a signed-in person the media's owner blocked no
+longer reads that media through PostgREST.
+- No client tree reads `post_media` directly: no `.from('post_media')`, embed, RPC, REST path or realtime channel in
+  `travel-buddy-standalone`, `src`, `app`, `packages`, `posts-ui` or `lib`. The API reads it on the service client.
+- No view and no policy on another table reads `post_media`. The two SECURITY INVOKER functions that read it (3981's
+  and 3982's) are `service_role` only.
+- Every client read of `post_media` now calls `authz.is_blocked`, so `anon` and `authenticated` must keep EXECUTE on
+  it and USAGE on `authz`. The precondition and the postcondition both check this.
+- The cost: one indexed definer call per candidate row, as on messages and highlights.
+
+**Precondition** refuses:
+- when `post_media`, `posts` or `blocks` is missing;
+- when `authz.is_trip_crew(uuid)` or `authz.is_blocked(uuid, uuid)` is absent;
+- when `is_blocked` is not SECURITY DEFINER, or its owner is subject to `blocks`' RLS;
+- when a client role cannot call `is_blocked`;
+- when the policy is missing, or is not (SELECT, PERMISSIVE, TO public, no WITH CHECK).
+
+The `$mig$` block re-states 2337's and 3905's texts on the policy with ALTER POLICY, inside the transaction. It refuses
+unless the installed policy deparses as one of them, and unless the two differ in the block conjunct only.
+**Postcondition** checks the shape above; exactly one `authz.is_blocked(auth.uid(), user_id)`; no read of `blocks`;
+every other arm present; and client EXECUTE on `is_blocked`.
+
+**Production.** 2337 reached production through Supabase MCP, with no ledger row (packet README §3.3). The packet's
+fingerprints did not sample this policy, so whether production's text deparses as 2337's is not known offline. If it
+does not, the `$mig$` block refuses and nothing changes; the dry run shows that first. Production's fingerprints of
+`is_blocked` and `is_trip_crew` equal the repo's.
+
+**Order.** A gap number, under the rule in the 3901 entry.
+- It depends on `post_media`, `posts` and `blocks` (baseline), `authz.is_trip_crew` (2334) and `authz.is_blocked`
+  (2182), all below it.
+- Above it, 3981 and 3982 name `post_media`. 3981 adds FKs to it from two new tables, a trigger on it and service-role
+  reads; 3982 adds a service-role read. 3972 and 3978 call `authz.is_trip_crew` in their own policies.
+- None of them touches `post_media`'s policies, its grants or the columns this policy reads, and none redefines
+  `is_trip_crew`. The packet builder refuses any statement that would.
+- The replica's two-path run gives 0 differences. 3905 changes the same 2 keys on both paths.
+
+**Table locks.** ALTER, DROP and CREATE POLICY take ACCESS EXCLUSIVE on `public.post_media` until the COMMIT (measured
+on the replica). Every read and write of `post_media` waits for the file. It is catalog work only, with no scan: the
+whole file took 9 ms on the replica.
+
+**Proof.**
+- `artifacts/api-server/src/test/sqlBlockChecksOfRecordMigrations.test.ts`: red on 2337, fixed after; every other
+  reader and block scenario unchanged.
+- `artifacts/api-server/src/test/db/postMediaBlockCheckOfRecord.db.test.ts`: CI local-db, on the real policies and
+  column grants.
+- On the PostgreSQL 18.3 end-state replica, with production's chain grants, reading as `authenticated`: the viewer the
+  owner blocked reads 0 rows; a stranger, the owner and `anon` read theirs.
+- With 2337's policy put back inside a savepoint, the blocked viewer reads the media again: the defect, reproduced.
+
+**Rollback:** `db/rollback/2026-10-18-3905-post-media-public-select-block-check-of-record-rollback.sql`.
+- It re-creates 2337's statement verbatim and deletes 3905's ledger row.
+- It refuses unless the installed policy deparses as 3905's. If it is already 2337's, it is re-created unchanged.
+- It refuses unless the policy's shape is right.
+- It refuses unless `anon` and `authenticated` can SELECT `blocks` and reach `authz.is_trip_crew`. 2337's inline read
+  runs as the reader, so without SELECT every client read of `post_media` would fail 42501.
+- **It re-opens the defect.** Proven on PGlite 16.4, where the blocked viewer reads the media again. On the
+  PostgreSQL 18.3 replica the catalog returns exactly to its state before 3905.

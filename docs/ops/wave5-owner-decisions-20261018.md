@@ -82,6 +82,9 @@ Branch `claude/wave4-build-20261017` (PR #764, stacked on #763 and #762). Every 
   - **3903, 3904:** the memory functions use the shared block check. Their output is unchanged.
   - **Locks:** 3901 and 3902 lock their table against writes while the index builds.
   - **Order:** each is order-independent of everything numbered above it (grep evidence in the lane handback). CI's local-db and live-db jobs are their first run on a real Postgres. In-process PostgreSQL 16 (PGlite) was the proof here.
+  - **Packet:** `/Users/areyouok/portava-sandbox/prod-apply-packet-20261017/addendum-3901-3905/` (guard 300g, steps 301–305, a dry run first). The guard refuses unless the main packet and the 3996–3999 addendum are applied. Rollbacks are in `db/rollback/2026-10-18-390*-rollback.sql`; each is proven to restore the exact previous state. **3905's rollback re-opens the block hole.**
+  - **Run the dry run first.** Production's `memory_public_feed` has drifted from the repo's 2338 (packet fingerprint 91b5d7c40a75 versus e5f33a8b55cb), so 304 will refuse cleanly or fail its postcondition. Either way the feed is unaffected: it is service-role only and its flag is off. If 304 stops, run 305 alone (addendum README §6), because 3905 is the privacy fix. 3905 also refuses, changing nothing, if production's policy text is not exactly 2337's; that text was never sampled.
+  - **Locks:** 3901 holds a SHARE lock on `notifications` while its index builds, so every notification write waits. 3902 does the same on `place_best_of`. 3905 briefly locks `post_media`. README §6 (c) reads the table sizes before you choose a window.
 - **Not cleared by the press:** two reads of held 3601's column. They now return a stated 503.
 - **Deployment:** `EXPO_PUBLIC_SUPABASE_URL` and the API's `SUPABASE_URL` must name the same project, or message images are withheld (T446, fail-closed).
 - **Production defects fixed in #764 and failing today until it deploys:**
