@@ -897,7 +897,7 @@ router.post("/reviews/:id/report", asyncHandler(async (req, res) => {
       reason_code:  reason,
       notes:        notes ?? null,
       severity:     "low",
-      status:       "pending",
+      status:       "open", // the intake word (lib/moderationCounts.ts); 'pending' kept review reports out of the admin client's lists and out of dismiss
     });
 
   if (error) {

@@ -4941,3 +4941,83 @@ Rows: none move. Headline unchanged: 90 / 15 / 1 / 2 of 108.
 ### Correction (2026-10-18, wave 5) — admin user detail: openReports is never 0 from nothing
 
 GET /admin/users rendered `openReports: count ?? 0` from an inline HEAD count; it now reads `artifacts/api-server/src/lib/moderationCounts.ts:39#export async function countOpenReportsAgainst(` (`artifacts/api-server/src/routes/admin.ts:1393#countOpenReportsAgainst(sc, userId).then((r) =>`, line-neutral), so a count-less, failed or thrown answer refuses the record naming openReports, as the route already did for its other moderation facts — `artifacts/api-server/src/test/adminUserDetailOpenReports.test.ts:192#describe("the admin user detail: a count-less, failed or thrown openReports read refuses the record — never 0"` (25 cases, 8 red before, 12 mutants killed). Rows: none move. Headline unchanged: 90 / 15 / 1 / 2 of 108.
+
+### Correction (2026-10-18, wave 5) — report status: 'open' reports were invisible to the admin resolve routes
+
+*Same branch and tree. Uncommitted and undeployed. **NO ROW MOVES.***
+
+**What was broken.** `public.reports.status` is text with default `'open'` and no CHECK (production catalog, read
+2026-10-18; the table held no rows). Every intake files the default: POST /reports and the thread, message and post
+reports. Four admin reads asked only for `'pending'`: the reported-trips queue, trip report-resolve, the
+reported-events queue and the event moderate route's report close. Only POST /reviews/:id/report wrote `'pending'`, a
+word from the never-applied docs/sql/0071 design (migration 0063, which created the live table, declares open |
+reviewed | resolved | dismissed). So no report filed through /reports reached those four reads: trip report-resolve
+answered `resolvedCount: 0` for every trip, and hiding an event closed none of its reports. Around them:
+- dismiss read only `'open'`, so it refused every in_review report the admin client offers to dismiss, and every review report;
+- resolve read anything but `'resolved'`, so a dismissed report could be re-resolved;
+- the moderation-action `report_resolved` side effect and hide-content moved a report whatever its status, so a closed
+  report was re-resolved or reopened;
+- adminMedia's flag on a report wrote `'reviewed'`, which no admin screen lists, so a flagged report left every queue;
+- both legacy list routes answered `total: count ?? 0`, and the reported-events queue ignored its events-read error,
+  so a failed read became a TypeError in the filter and a bare 500.
+
+**The decision: one vocabulary, no new state.**
+`artifacts/api-server/src/lib/moderationCounts.ts:85#export const LEGACY_REPORT_STATUSES = ["open", "in_review", "resolved", "dismissed"] as const;`
+These are the four words the admin client already speaks
+(`travel-buddy-standalone/src/services/reportsAdmin.ts:46#const ALL_STATUSES = ['open', 'in_review', 'resolved', 'dismissed'] as const;`).
+`open` is what production stores by default and what every intake writes. `in_review` is what hide-content wrote and
+what the admin client lists and acts on. `'pending'` was a stray synonym of `open`: no definition of the live table
+names it, and the admin client never lists it. So reviews now file `'open'`
+(`artifacts/api-server/src/routes/reviews.ts:900#status:       "open", // the intake word`), and adminMedia's flag
+writes `'in_review'` (`artifacts/api-server/src/routes/adminMedia.ts:926#in_review"; // was "reviewed"`). An
+unresolved report is open or in_review
+(`artifacts/api-server/src/lib/moderationCounts.ts:87#export const UNRESOLVED_REPORT_STATUSES`). No alias is read for
+`'pending'` or `'reviewed'`: production held no reports row, and no migration number was available to normalise one
+on another database.
+
+**What changed, with no migration.** Every routes/admin.ts edit is line-neutral, so no citation into the file moved.
+- Every reader that means "unresolved" reads that list: the trip queue
+  (`artifacts/api-server/src/routes/admin.ts:2640#.in("status", UNRESOLVED_REPORT_STATUSES) // open or in_review (lib/moderationCounts.ts)`),
+  trip report-resolve (`artifacts/api-server/src/routes/admin.ts:2766#.in("status", UNRESOLVED_REPORT_STATUSES) // was eq 'pending'`),
+  the events queue (`artifacts/api-server/src/routes/admin.ts:2880#.in("status", UNRESOLVED_REPORT_STATUSES) // was eq 'pending'`),
+  the event moderate close (`artifacts/api-server/src/routes/admin.ts:3023#.in("status", UNRESOLVED_REPORT_STATUSES) // was eq 'pending'`),
+  the user detail's openReports (`artifacts/api-server/src/lib/moderationCounts.ts:42#.in("status", UNRESOLVED_REPORT_STATUSES)`)
+  and Telegraph's send tier (`artifacts/api-server/src/domain/telegraph/policies/sendRateLimit.ts:195#.in("status", UNRESOLVED_REPORT_STATUSES)`).
+- Every transition moves only an unresolved report, checked at the read and again at the write: resolve
+  (`artifacts/api-server/src/routes/admin.ts:2232#.in("status", UNRESOLVED_REPORT_STATUSES) // open or in_review`),
+  dismiss (`artifacts/api-server/src/routes/admin.ts:2311#.in("status", UNRESOLVED_REPORT_STATUSES) // open or in_review`),
+  hide-content (`artifacts/api-server/src/routes/admin.ts:2499#.eq("id", req.params.id).in("status", UNRESOLVED_REPORT_STATUSES).select("id");`),
+  the moderation-action side effect (`artifacts/api-server/src/routes/admin.ts:1293#.eq("id", target_ref_id).in("status", UNRESOLVED_REPORT_STATUSES)`)
+  and adminMedia (`artifacts/api-server/src/routes/adminMedia.ts:943#if (!(UNRESOLVED_REPORT_STATUSES as readonly string[]).includes(currentStatus)) {`).
+  A report closed between the read and the write is a 409, not an overwrite. hide-content answers the status the row
+  holds, and the side effect answers `already_closed`.
+- Counts are measured. trip report-resolve refuses a write that answers no rows to count
+  (`artifacts/api-server/src/routes/admin.ts:2771#resolvedCount: updated.length`). The event moderate route returns
+  `reportsResolved`, which is null when the close failed, instead of swallowing the failure. Both legacy list routes
+  refuse a page whose total is not an exact count
+  (`artifacts/api-server/src/lib/moderationCounts.ts:95#export function exactListCount(`,
+  `artifacts/api-server/src/routes/admin.ts:2141#const total = exactListCount(count, data);`,
+  `artifacts/api-server/src/routes/admin.ts:2195#const total = exactListCount(count, data);`). GET /admin/reports
+  refuses, by name, a status outside the vocabulary
+  (`artifacts/api-server/src/routes/admin.ts:2184#if (!(LEGACY_REPORT_STATUSES as readonly string[]).includes(status))`).
+- The two ignored reads now refuse: the events queue
+  (`artifacts/api-server/src/routes/admin.ts:2892#if (evErr || !Array.isArray(events))`) and, the same class, the trips
+  queue (`artifacts/api-server/src/routes/admin.ts:2657#if (tripsErr) { sendError(res, "db_error", tripsErr.message); return; }`).
+
+**Tests.** `artifacts/api-server/src/test/legacyReportStatusLifecycle.test.ts:212#describe("a trip report filed through POST /reports reaches the trip queue and trip report-resolve"`
+has 34 cases on schemaStrictSupabase. The double is given the live column defaults of `reports`, because the default
+is the defect. Red first on c9c7933db: 26 red, and the 8 controls green. 22 mutants were killed, each restored and
+checked by sha256. A source scan in the same file fails if any `reports` statement writes or filters a status outside
+the vocabulary, or filters on one literal status. Four existing suites pinned the old words and were corrected.
+adminEventModeration seeded `'pending'` reports; with `'open'` seeds, its three resolve cases are red on c9c7933db.
+mutationAffectedRows also seeded `'pending'`. adminMediaModerateAudit's fake had no `.in`. adminUserDetailOpenReports
+now pins the new filter.
+
+**Not changed, recorded.** Row 4 of docs/architecture/trust-unproduced-vocabulary.md says resolve "accepts anything not
+resolved". It now accepts only open and in_review. Hide then uphold is still legal (in_review → resolved); that is what
+§6 of the trustEmitterWiring suite pins, and it passes. That record is pinned to its commit and is not edited.
+
+- NOT-GRADED: artifacts/api-server/src/domain/telegraph/policies/sendRateLimit.ts — Telegraph's send tier, cited for the one reports read this correction changed; census-telegraph grades the send limit, and no Trust row rests on it.
+
+Rows: none move. TV-4a is graded on `moderation_reports` (§35), not on the legacy table, and no row of this census
+grades the legacy trip or event queues. Headline unchanged: 90 / 15 / 1 / 2 of 108.

@@ -32,7 +32,7 @@ import { sendError } from "../lib/http.js";
 import { requireAdmin } from "../lib/requireAdmin.js";
 import { resolveStoragePath } from "../lib/storagePath.js";
 import { resolveContentOwnerDetailed, type ContentOwnerOutcome } from "../lib/contentOwner.js";
-import { logModerationAction, auditReportAction, checkContentReportLink, reportLinkColumnId } from "../lib/moderationAudit.js";
+import { logModerationAction, auditReportAction, checkContentReportLink, reportLinkColumnId } from "../lib/moderationAudit.js"; import { UNRESOLVED_REPORT_STATUSES } from "../lib/moderationCounts.js";
 import { affectedRows } from "../lib/affectedRows.js"; import { applyCanonicalModerationDecision, type CanonicalModerationOutcome } from "../services/media/MediaModerationService.js";
 
 const router = Router();
@@ -919,11 +919,11 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
     }
 
   } else if (target === "report") {
-    // reports status: open | reviewed | resolved | dismissed
+    // reports status: the one legacy vocabulary (lib/moderationCounts.ts) — open | in_review | resolved | dismissed
     const newStatus =
       action === "approve" ? "resolved" :
       action === "reject"  ? "dismissed" :
-      "reviewed";
+      "in_review"; // was "reviewed" — a word no admin screen lists, so a flagged report vanished from every queue
 
     // Fetch first: the audit row names the reported content's OWNER (which needs
     // target_type/target_id), and a status guard needs the current status.
@@ -936,11 +936,11 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
     if (fetchErr) { sendError(res, "db_error", fetchErr.message); return; }
     if (!reportRow) { res.status(404).json({ error: "not_found", message: "Report not found" }); return; }
 
-    // Status guard: resolved/dismissed are terminal. Without this a resolved
-    // report could be flipped back to 'reviewed' (or re-resolved), rewriting a
-    // closed decision with no trace.
+    // Status guard: only an UNRESOLVED report (open / in_review) moves. Without this
+    // a resolved report could be flipped back to 'in_review' (or re-resolved),
+    // rewriting a closed decision with no trace.
     const currentStatus = (reportRow as any).status as string;
-    if (currentStatus === "resolved" || currentStatus === "dismissed") {
+    if (!(UNRESOLVED_REPORT_STATUSES as readonly string[]).includes(currentStatus)) {
       sendError(res, "conflict", `Report is already ${currentStatus}; it cannot be re-moderated`);
       return;
     }
@@ -970,12 +970,12 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
         reviewed_at:      now,
         moderation_notes: reason ?? null,
       })
-      .eq("id", id)
+      .eq("id", id).in("status", UNRESOLVED_REPORT_STATUSES) // the guard above, held at the write: a concurrent close is not overwritten
       .select("id");
 
     if (error) { sendError(res, "db_error", error.message); return; }
     if (!updated || (updated as any[]).length === 0) {
-      res.status(404).json({ error: "not_found", message: "Report not found" });
+      sendError(res, "conflict", "The report was closed or removed while this request ran; this request changed nothing on it (its audit row was already written)");
       return;
     }
   }

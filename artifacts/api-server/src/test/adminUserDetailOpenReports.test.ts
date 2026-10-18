@@ -160,7 +160,7 @@ async function detail(): Promise<{ status: number; body: any; raw: string }> {
 const COUNT_READ: Call[] = [
   ["select", ["id", { count: "exact", head: true }]],
   ["eq", ["target_id", TARGET]],
-  ["eq", ["status", "open"]],
+  ["in", ["status", ["open", "in_review"]]], // wave 5 (report status, 2026-10-18): the UNRESOLVED states, lib/moderationCounts.ts; was eq "open"
 ];
 
 const REFUSAL = "Moderation record incomplete: openReports could not be read. This is NOT a clean account -- retry before acting.";

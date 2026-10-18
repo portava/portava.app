@@ -36,7 +36,7 @@ import { executeAccountDeletion } from "../services/accountDeletion/AccountDelet
 import { runSchemaDriftCheck, getCachedSchemaDriftResult } from "../lib/schemaDriftCheck";
 import { logAdminAccess, accessReason } from "../lib/adminAudit.js";
 import { resolveStoragePath } from "../lib/storagePath.js";
-import { logModerationAction, auditReportAction, checkActionReportLink, checkContentReportLink, reportLinkColumnId } from "../lib/moderationAudit.js"; import { applyAccountRestriction, revokeAccountRestrictions, parseRestrictionEnd, recordModerationNotApplied, notAppliedAuditNote } from "../lib/accountModeration.js"; import { countOpenReportsAgainst } from "../lib/moderationCounts.js"; // same line: admin.ts is cited by line
+import { logModerationAction, auditReportAction, checkActionReportLink, checkContentReportLink, reportLinkColumnId } from "../lib/moderationAudit.js"; import { applyAccountRestriction, revokeAccountRestrictions, parseRestrictionEnd, recordModerationNotApplied, notAppliedAuditNote } from "../lib/accountModeration.js"; import { countOpenReportsAgainst, exactListCount, LEGACY_REPORT_STATUSES, UNRESOLVED_REPORT_STATUSES } from "../lib/moderationCounts.js"; // same line: admin.ts is cited by line
 import { loadCapturedReportContent, loadModerationSubjectSnapshots, resolveContentOwnerDetailed, MODERATION_REPORT_CATEGORIES, MODERATION_REPORT_STATUSES, MODERATION_REPORT_TRANSITIONS, type ModerationReportStatus } from "../lib/moderationReportSnapshots.js";
 
 import { requireAdmin } from "../lib/requireAdmin.js"; import { computeAttemptsPerVerifiedUser } from "../services/identityVerification/attemptMetrics.js"; // same line on purpose: a new import line shifts every anchored citation into this file
@@ -1290,16 +1290,16 @@ router.patch("/admin/users/:userId/moderation-action", async (req, res) => {
         moderation_notes: reason ?? null,
         updated_at:       now,
       })
-      .eq("id", target_ref_id)
+      .eq("id", target_ref_id).in("status", UNRESOLVED_REPORT_STATUSES) // only an UNRESOLVED report moves (lib/moderationCounts.ts): a closed one is never re-resolved
       .select("id");
     if (error) {
       sideEffects.reportStatus = "error";
-    } else if (!Array.isArray(resolvedRows) || resolvedRows.length === 0) {
-      req.log.error(
-        { targetRefId: target_ref_id, targetUserId: userId, adminUserId },
-        "moderation-action report_resolved matched no report — nothing was resolved",
-      );
-      sideEffects.reportStatus = "not_found";
+    } else if (!Array.isArray(resolvedRows)) {
+      sideEffects.reportStatus = "error"; // no rows came back to count: what the write did is unmeasured, never "not found"
+    } else if (resolvedRows.length === 0) {
+      const { data: closedRow, error: closedErr } = await sc.from("reports").select("status").eq("id", target_ref_id).maybeSingle(); // why nothing moved: no such report, or one already closed
+      req.log.error({ targetRefId: target_ref_id, targetUserId: userId, adminUserId, closedStatus: (closedRow as any)?.status ?? null }, "moderation-action report_resolved moved no report — nothing was resolved");
+      sideEffects.reportStatus = closedErr ? "error" : closedRow ? "already_closed" : "not_found";
     } else {
       sideEffects.reportStatus = "resolved";
     }
@@ -2138,8 +2138,8 @@ router.get("/admin/moderation/reports", async (req, res) => {
   if (category !== "all") query = query.eq("category", category);
 
   const { data, error, count } = await query;
-  if (error) { sendError(res, "db_error", error.message); return; }
-
+  if (error) { sendError(res, "db_error", error.message); return; } const total = exactListCount(count, data); // a queue whose total is unknown is refused, never `count ?? 0`
+  if (total === null) { sendError(res, "db_error", "The moderation report list answered without an exact total. A queue page with no total is not served: it would hide every report past it. Retry.", { exposeDetail: true }); return; }
   const rows: any[] = data ?? [];
   const { snapshots, failedTypes } = await loadModerationSubjectSnapshots(sc, rows); const { captures, unavailable: capturesUnavailable } = await loadCapturedReportContent(sc, rows.map((r) => String(r.id))); // Q-L23: the content as it was when reported, moderators only
 
@@ -2157,7 +2157,7 @@ router.get("/admin/moderation/reports", async (req, res) => {
   void logAdminAccess(sc, admin.userId, "profile", "list", "view", accessReason(req));
   res.json({
     reports: enriched,
-    total: count ?? 0,
+    total,
     page,
     // Named, so a client cannot read a page with failed snapshot reads as a
     // complete one.
@@ -2181,7 +2181,7 @@ router.get("/admin/reports", async (req, res) => {
   const limit  = Math.min(100, Number(req.query.limit) || 50);
   const type   = (req.query.type   as string | undefined) || null;
   const status = (req.query.status as string | undefined) || "open";
-
+  if (!(LEGACY_REPORT_STATUSES as readonly string[]).includes(status)) { sendError(res, "invalid_payload", `Unknown status '${status}'. One of: ${LEGACY_REPORT_STATUSES.join(", ")}`); return; } // a word no report carries is refused by name, never answered with an empty page
   let query = sc
     .from("reports")
     .select("id, reporter_id, target_type, target_id, reason_code, reason_detail, severity, status, created_at, reviewed_at, reviewed_by, moderation_notes", { count: "exact" })
@@ -2192,9 +2192,9 @@ router.get("/admin/reports", async (req, res) => {
   if (status) query = query.eq("status", status);
 
   const { data, error, count } = await query;
-  if (error) { sendError(res, "db_error", error.message); return; }
-  void logAdminAccess(sc, admin.userId, "profile", "list", "view", accessReason(req));
-  res.json({ reports: data ?? [], total: count ?? 0, page });
+  if (error) { sendError(res, "db_error", error.message); return; } const total = exactListCount(count, data); // never `count ?? 0`: the client paginates on it
+  if (total === null) { sendError(res, "db_error", "The report list answered without an exact total. A queue page with no total is not served: it would hide every report past it. Retry.", { exposeDetail: true }); return; } void logAdminAccess(sc, admin.userId, "profile", "list", "view", accessReason(req));
+  res.json({ reports: data, total, page });
 });
 
 const resolveReportSchema = z.object({
@@ -2229,11 +2229,11 @@ router.post("/admin/reports/:id/resolve", async (req, res) => {
     .from("reports")
     .select("id, target_type, target_id, status")
     .eq("id", req.params.id)
-    .neq("status", "resolved")
+    .in("status", UNRESOLVED_REPORT_STATUSES) // open or in_review — `neq resolved` also let a DISMISSED report be re-resolved
     .maybeSingle();
 
   if (fetchErr) { sendError(res, "db_error", fetchErr.message); return; }
-  if (!reportRow) { sendError(res, "not_found", "Report not found or already resolved"); return; }
+  if (!reportRow) { sendError(res, "not_found", "Report not found or already closed (resolved or dismissed)"); return; }
 
   // Audit first (fail-closed). This previously passed target_id straight in as
   // target_user_id, which is a FK to profiles(id) — so every report whose
@@ -2253,18 +2253,18 @@ router.post("/admin/reports/:id/resolve", async (req, res) => {
   const { data, error } = await sc
     .from("reports")
     .update({ status: "resolved", reviewed_by: adminUserId, reviewed_at: now, moderation_notes: parsed.data.notes ?? null, updated_at: now })
-    .eq("id", req.params.id)
+    .eq("id", req.params.id).in("status", UNRESOLVED_REPORT_STATUSES) // held at the write: a report closed since the read above is not overwritten
     .select("id, status, reviewed_at")
     .maybeSingle();
 
-  if (error) { sendError(res, "db_error", error.message); return; }
+  if (error) { sendError(res, "db_error", error.message); return; } if (!data) { sendError(res, "conflict", "The report was closed while this request ran; this request changed nothing on it (its audit row was already written)"); return; }
 
   // Trust: an UPHELD report against a message charges the message's SENDER
   // (the accountable user auditReportAction resolved — never the reporter,
   // never the admin, who is recorded by recordAdjudicatedTrustEvent as the
   // confirming reviewer). Keyed on the MESSAGE id, so two reports against one
   // message confirm once; the report and audit row ride in metadata. The
-  // status guard above (`neq status resolved`) already makes a replayed
+  // status guard above (unresolved only) already makes a replayed
   // resolve a 404, so this cannot fire twice for one report. Only
   // `upheld: true` reaches here — see resolveReportSchema. Fire-and-forget.
   const targetType = (reportRow as any).target_type as string;
@@ -2308,11 +2308,11 @@ router.post("/admin/reports/:id/dismiss", async (req, res) => {
     .from("reports")
     .select("id, target_type, target_id, status")
     .eq("id", req.params.id)
-    .eq("status", "open")
+    .in("status", UNRESOLVED_REPORT_STATUSES) // open or in_review — `eq open` refused every in_review report the admin client offers to dismiss
     .maybeSingle();
 
   if (fetchErr) { sendError(res, "db_error", fetchErr.message); return; }
-  if (!reportRow) { sendError(res, "not_found", "Report not found or not in open status"); return; }
+  if (!reportRow) { sendError(res, "not_found", "Report not found or already closed (resolved or dismissed)"); return; }
 
   // Audit first (fail-closed). Same FK defect as resolve: target_id was passed
   // straight in as target_user_id.
@@ -2330,11 +2330,11 @@ router.post("/admin/reports/:id/dismiss", async (req, res) => {
   const { data, error } = await sc
     .from("reports")
     .update({ status: "dismissed", reviewed_by: adminUserId, reviewed_at: now, moderation_notes: notes, updated_at: now })
-    .eq("id", req.params.id)
+    .eq("id", req.params.id).in("status", UNRESOLVED_REPORT_STATUSES) // held at the write: a report closed since the read above is not overwritten
     .select("id, status, reviewed_at")
     .maybeSingle();
 
-  if (error) { sendError(res, "db_error", error.message); return; }
+  if (error) { sendError(res, "db_error", error.message); return; } if (!data) { sendError(res, "conflict", "The report was closed while this request ran; this request changed nothing on it (its audit row was already written)"); return; }
   res.json({ report: data, audit: auditR.audit });
 });
 
@@ -2344,7 +2344,7 @@ router.post("/admin/reports/:id/dismiss", async (req, res) => {
  * Hides the content item (post, message, etc.) referenced by this report from
  * all public feeds, without necessarily resolving the report.  Works by setting
  * the target item's visibility/status to a hidden state based on target_type.
- * Also marks the report as "in_review".
+ * Also moves an UNRESOLVED report to "in_review"; a resolved or dismissed one stays closed.
  *
  * Supported target_types:
  *   post  — sets posts.post_status = 'removed'
@@ -2493,13 +2493,13 @@ router.post("/admin/reports/:id/hide-content", async (req, res) => {
     }).catch(() => {});
   }
 
-  // Move report to in_review
-  await sc.from("reports")
+  // Move the report to in_review — only an UNRESOLVED one moves (lib/moderationCounts.ts): a closed report is never reopened. `status` answers what the row holds.
+  const { data: movedRows, error: moveErr } = await sc.from("reports")
     .update({ status: "in_review", updated_at: now })
-    .eq("id", req.params.id)
-    .then(undefined, () => {});
-
-  res.json({ reportId: req.params.id, targetType: target_type, targetId: target_id, contentHidden, status: "in_review" });
+    .eq("id", req.params.id).in("status", UNRESOLVED_REPORT_STATUSES).select("id");
+  const prevStatus = String((reportRow as any).status); const closed = !(UNRESOLVED_REPORT_STATUSES as readonly string[]).includes(prevStatus); const moved = !moveErr && Array.isArray(movedRows) && movedRows.length === 1;
+  if (!moved && !closed) req.log.error({ err: moveErr ?? null, reportId: req.params.id, prevStatus }, "hide-content: the report was NOT moved to in_review — its status is unknown, not claimed");
+  res.json({ reportId: req.params.id, targetType: target_type, targetId: target_id, contentHidden, status: moved ? "in_review" : closed ? prevStatus : null });
 });
 
 // ── Admin deletion request queue ──────────────────────────────────────────────
@@ -2637,7 +2637,7 @@ router.get("/admin/trips", async (req, res) => {
     .from("reports")
     .select("id, target_id, reason_code, severity, status, created_at")
     .eq("target_type", "trip")
-    .eq("status", "pending")
+    .in("status", UNRESOLVED_REPORT_STATUSES) // open or in_review (lib/moderationCounts.ts) — 'pending' is a word no trip report carries
     .order("created_at", { ascending: false });
 
   if (error) { sendError(res, "db_error", error.message); return; }
@@ -2650,11 +2650,11 @@ router.get("/admin/trips", async (req, res) => {
   // Collect unique trip IDs from the report rows.
   const tripIds = [...new Set((reports as any[]).map((r: any) => r.target_id as string))];
 
-  const { data: trips } = await sc
+  const { data: trips, error: tripsErr } = await sc
     .from("trips")
     .select("id, title, owner_id, visibility, status, created_at")
     .in("id", tripIds);
-
+  if (tripsErr) { sendError(res, "db_error", tripsErr.message); return; } // a failed trips read is not "no reported trips": the filter below would drop every report
   const tripMap: Record<string, any> = {};
   (trips ?? []).forEach((t: any) => { tripMap[t.id] = t; });
 
@@ -2738,7 +2738,7 @@ router.post("/admin/trips/:tripId/hide", async (req, res) => {
 /**
  * POST /admin/trips/:tripId/report-resolve
  *
- * Resolves all pending reports against a trip (accepted / rejected by admin).
+ * Closes every UNRESOLVED report (open / in_review) against a trip (accepted → resolved, rejected → dismissed).
  * Body: { resolution: 'accepted' | 'rejected', reason?: string }
  */
 router.post("/admin/trips/:tripId/report-resolve", async (req, res) => {
@@ -2763,12 +2763,12 @@ router.post("/admin/trips/:tripId/report-resolve", async (req, res) => {
               updated_at: new Date().toISOString() })
     .eq("target_type", "trip")
     .eq("target_id", tripId)
-    .eq("status", "pending")
+    .in("status", UNRESOLVED_REPORT_STATUSES) // was eq 'pending', which no filed report carries: resolvedCount was 0 for every trip
     .select("id");
 
   if (error) { sendError(res, "db_error", error.message); return; }
-
-  res.json({ tripId, resolution, resolvedCount: (updated ?? []).length });
+  if (!Array.isArray(updated)) { sendError(res, "db_error", "The resolve ran but answered no rows to count; how many reports it closed is unknown. Re-read the trip's reports before retrying.", { exposeDetail: true }); return; }
+  res.json({ tripId, resolution, resolvedCount: updated.length });
 });
 
 /**
@@ -2872,12 +2872,12 @@ router.get("/admin/events", async (req, res) => {
   const featuredFilter = req.query.featured === "true" ? true : req.query.featured === "false" ? false : undefined;
 
   if (onlyReported) {
-    // Return events that have pending reports
+    // Return events that have UNRESOLVED reports (open / in_review)
     const { data: reports, error: rErr } = await sc
       .from("reports")
       .select("id, target_id, reason_code, severity, status, created_at")
       .eq("target_type", "event")
-      .eq("status", "pending")
+      .in("status", UNRESOLVED_REPORT_STATUSES) // was eq 'pending', which no filed report carries: this queue was always empty
       .order("created_at", { ascending: false })
       .limit(limit);
     if (rErr) { sendError(res, "db_error", rErr.message); return; }
@@ -2885,11 +2885,11 @@ router.get("/admin/events", async (req, res) => {
     const eventIds = [...new Set(((reports as any[]) ?? []).map((r: any) => r.target_id as string))];
     if (eventIds.length === 0) { res.json({ events: [] }); return; }
 
-    const { data: events } = await sc
+    const { data: events, error: evErr } = await sc
       .from("events")
       .select("id, title, host_id, state, visibility, city, starts_at, created_at, featured")
       .in("id", eventIds);
-
+    if (evErr || !Array.isArray(events)) { sendError(res, "db_error", evErr?.message ?? "the reported events could not be read"); return; } // was ignored: a failed read crashed the filter below into a bare 500
     const reportMap: Record<string, any[]> = {};
     for (const r of (reports as any[]) ?? []) {
       if (!reportMap[r.target_id]) reportMap[r.target_id] = [];
@@ -3014,17 +3014,17 @@ router.patch("/admin/events/:eventId/moderate", async (req, res) => {
     req.log.warn({ err: modErr, eventId, action }, "moderation_actions insert failed — event action was applied");
   }
 
-  // Resolve pending reports for hide/cancel/remove actions
-  if (["hide", "cancel", "remove"].includes(action)) {
-    await sc.from("reports")
+  // hide/cancel/remove close the event's UNRESOLVED reports (open / in_review). The event action above is already applied, so a failed close is NAMED (reportsResolved: null), never swallowed.
+  let reportsResolved: number | null | undefined; if (["hide", "cancel", "remove"].includes(action)) {
+    const { data: closedRows, error: closeErr } = await sc.from("reports")
       .update({ status: "resolved", updated_at: new Date().toISOString() })
       .eq("target_type", "event")
       .eq("target_id", eventId)
-      .eq("status", "pending")
-      .then(undefined, () => {});
+      .in("status", UNRESOLVED_REPORT_STATUSES) // was eq 'pending', which no filed report carries: hiding an event closed none of its reports
+      .select("id"); reportsResolved = !closeErr && Array.isArray(closedRows) ? closedRows.length : null;
+    if (reportsResolved === null) req.log.error({ err: closeErr ?? null, eventId, action }, "event moderated, but its reports could NOT be resolved — they stay open");
   }
-
-  res.json({ eventId, action, ok: true });
+  res.json({ eventId, action, ok: true, ...(reportsResolved !== undefined ? { reportsResolved } : {}) });
 });
 
 // ── Invite-link slot reconciliation ──────────────────────────────────────────

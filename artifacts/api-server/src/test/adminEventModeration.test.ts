@@ -5,7 +5,7 @@
  * Source:           artifacts/api-server/src/routes/admin.ts (~line 1657)
  *
  * Invariants tested:
- *  1. hide / cancel / remove  → resolve pending reports for THAT event only;
+ *  1. hide / cancel / remove  → resolve the OPEN reports for THAT event only;
  *                               reports for other events are untouched
  *  2. restore / feature / unfeature / warn_host  → do NOT resolve any reports
  *  3. Every action writes event_activity_log (fail-closed) + moderation_actions
@@ -27,9 +27,9 @@ const NON_ADMIN_ID  = "aaaaaaaa-0000-0000-0001-000000000002";
 const HOST_USER_ID  = "aaaaaaaa-0000-0000-0001-000000000003";
 const EVENT_ID_A    = "00000000-0000-0000-0001-000000000001"; // event being moderated
 const EVENT_ID_B    = "00000000-0000-0000-0001-000000000002"; // unrelated event — must stay untouched
-const REPORT_A1     = "00000000-0000-0000-0002-000000000001"; // pending report for EVENT_A
-const REPORT_A2     = "00000000-0000-0000-0002-000000000002"; // second pending report for EVENT_A
-const REPORT_B1     = "00000000-0000-0000-0002-000000000003"; // pending report for EVENT_B
+const REPORT_A1     = "00000000-0000-0000-0002-000000000001"; // open report for EVENT_A
+const REPORT_A2     = "00000000-0000-0000-0002-000000000002"; // second open report for EVENT_A
+const REPORT_B1     = "00000000-0000-0000-0002-000000000003"; // open report for EVENT_B
 
 // ── Test server (shared for all tests) ────────────────────────────────────────
 let server: http.Server;
@@ -123,9 +123,11 @@ function makeModerationClient(opts: {
       updated_at: new Date().toISOString(),
     }],
     reports: [
-      { id: REPORT_A1, target_type: "event", target_id: EVENT_ID_A, status: "pending" },
-      { id: REPORT_A2, target_type: "event", target_id: EVENT_ID_A, status: "pending" },
-      { id: REPORT_B1, target_type: "event", target_id: EVENT_ID_B, status: "pending" },
+      // 'open' is what every intake files (the column default). These were 'pending' — a word no
+      // filed report carries — so the suite pinned the route's own dead filter (wave 5, 2026-10-18).
+      { id: REPORT_A1, target_type: "event", target_id: EVENT_ID_A, status: "open" },
+      { id: REPORT_A2, target_type: "event", target_id: EVENT_ID_A, status: "open" },
+      { id: REPORT_B1, target_type: "event", target_id: EVENT_ID_B, status: "open" },
     ],
     event_activity_log: [],
     moderation_actions: [],
@@ -174,6 +176,10 @@ function makeModerationClient(opts: {
         filtered = filtered.filter((r: any) => r[col] === val);
         return b;
       },
+      in: (col: string, vals: any[]) => {
+        filtered = filtered.filter((r: any) => vals.includes(r[col]));
+        return b;
+      },
       order:   () => b,
       limit:   () => b,
       maybeSingle: () => Promise.resolve({ data: filtered[0] ?? null, error: null }),
@@ -212,7 +218,7 @@ function setClient(client: ReturnType<typeof makeModerationClient>) {
 
 describe("PATCH /admin/events/:eventId/moderate — hide/cancel/remove resolve reports", () => {
   for (const action of ["hide", "cancel", "remove"] as const) {
-    it(`'${action}': resolves pending reports for that event only; other events' reports stay pending`, async () => {
+    it(`'${action}': resolves the open reports for that event only; other events' reports stay open`, async () => {
       const captureActivity: any[] = [];
       const captureModerationActions: any[] = [];
       const client = makeModerationClient({ captureActivity, captureModerationActions });
@@ -228,6 +234,7 @@ describe("PATCH /admin/events/:eventId/moderate — hide/cancel/remove resolve r
       assert.equal(body.ok, true);
       assert.equal(body.action, action);
       assert.equal(body.eventId, EVENT_ID_A);
+      assert.equal(body.reportsResolved, 2, "the answer counts the reports it closed");
 
       // Reports for EVENT_A must be resolved
       const evAReports = client._db.reports.filter((r: any) => r.target_id === EVENT_ID_A);
@@ -239,12 +246,12 @@ describe("PATCH /admin/events/:eventId/moderate — hide/cancel/remove resolve r
         );
       }
 
-      // Report for EVENT_B must remain pending — scoping is correct
+      // Report for EVENT_B must remain open — scoping is correct
       const evBReports = client._db.reports.filter((r: any) => r.target_id === EVENT_ID_B);
       assert.equal(evBReports.length, 1, "EVENT_B must have exactly 1 seeded report");
       assert.equal(
-        evBReports[0].status, "pending",
-        `Report for EVENT_B must remain pending after '${action}' on EVENT_A`,
+        evBReports[0].status, "open",
+        `Report for EVENT_B must remain open after '${action}' on EVENT_A`,
       );
 
       // Audit: event_activity_log row written
@@ -263,7 +270,7 @@ describe("PATCH /admin/events/:eventId/moderate — hide/cancel/remove resolve r
 
 describe("PATCH /admin/events/:eventId/moderate — restore/feature/warn_host do NOT resolve reports", () => {
   for (const action of ["restore", "feature", "unfeature", "warn_host"] as const) {
-    it(`'${action}': all pending reports remain pending`, async () => {
+    it(`'${action}': all open reports remain open`, async () => {
       const captureActivity: any[] = [];
       const captureModerationActions: any[] = [];
       const client = makeModerationClient({ captureActivity, captureModerationActions });
@@ -277,11 +284,11 @@ describe("PATCH /admin/events/:eventId/moderate — restore/feature/warn_host do
 
       assert.equal(status, 200, `Expected 200 for '${action}', got ${status}: ${JSON.stringify(body)}`);
 
-      // All reports (both events) must still be pending
+      // All reports (both events) must still be open
       for (const report of client._db.reports) {
         assert.equal(
-          report.status, "pending",
-          `Report ${report.id} must remain pending after '${action}'`,
+          report.status, "open",
+          `Report ${report.id} must remain open after '${action}'`,
         );
       }
 
@@ -447,12 +454,12 @@ describe("PATCH /admin/events/:eventId/moderate — event_activity_log insert fa
       );
       assert.ok(
         evAReports.length > 0,
-        `Expected seeded pending reports for EVENT_ID_A to be present for '${action}'`,
+        `Expected seeded open reports for EVENT_ID_A to be present for '${action}'`,
       );
       for (const report of evAReports) {
         assert.equal(
-          report.status, "pending",
-          `Report ${report.id} for EVENT_ID_A must still be pending after failed event_activity_log insert for '${action}'`,
+          report.status, "open",
+          `Report ${report.id} for EVENT_ID_A must still be open after failed event_activity_log insert for '${action}'`,
         );
       }
 
@@ -467,8 +474,8 @@ describe("PATCH /admin/events/:eventId/moderate — event_activity_log insert fa
         `EVENT_B must have exactly 1 seeded report for '${action}'`,
       );
       assert.equal(
-        evBReports[0].status, "pending",
-        `Report for EVENT_B must remain pending after '${action}' targets EVENT_A (scoping check)`,
+        evBReports[0].status, "open",
+        `Report for EVENT_B must remain open after '${action}' targets EVENT_A (scoping check)`,
       );
     });
   }
@@ -511,12 +518,12 @@ describe("PATCH /admin/events/:eventId/moderate — event_activity_log insert fa
       );
       assert.ok(
         evAReports.length > 0,
-        `Expected seeded pending reports for EVENT_ID_A to be present for '${action}'`,
+        `Expected seeded open reports for EVENT_ID_A to be present for '${action}'`,
       );
       for (const report of evAReports) {
         assert.equal(
-          report.status, "pending",
-          `Report ${report.id} for EVENT_ID_A must still be pending after failed event_activity_log insert for '${action}'`,
+          report.status, "open",
+          `Report ${report.id} for EVENT_ID_A must still be open after failed event_activity_log insert for '${action}'`,
         );
       }
     });

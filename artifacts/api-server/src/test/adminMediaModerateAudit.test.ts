@@ -79,6 +79,7 @@ function makeFakeClient(tables: Record<string, FakeTable>) {
       update(d: Row) { _update = d; return obj; },
       delete() { return obj; },
       eq(c: string, v: any) { filters.push((r) => r[c] === v); return obj; },
+      in(c: string, v: any[]) { filters.push((r) => v.includes(r[c])); return obj; }, // the report write is guarded to the unresolved states (wave 5)
       order() { return obj; },
       limit() { return obj; },
       range() { return obj; },
@@ -196,7 +197,7 @@ describe("POST /admin/media/:id/moderate — audit trail", () => {
     assert.equal(audits[0].metadata.report_id, REPORT_ID);
   });
 
-  it("report status guard: a resolved report cannot be re-moderated back to reviewed", async () => {
+  it("report status guard: a resolved report cannot be re-moderated back to in_review", async () => {
     const tables = baseTables({
       reports: { rows: [{ id: REPORT_ID, target_type: "post", target_id: POST_ID, status: "resolved" }] },
       posts:   { rows: [{ id: POST_ID, author_id: AUTHOR_ID }] },
