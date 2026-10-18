@@ -21,7 +21,7 @@ import { invalidateDiscoveryCacheForEntity } from "../lib/discoveryPersistentCac
 import { evictCacheEntriesForEntity } from "./discovery.js";
 import { evictStoredPlacePhoto } from "../lib/discoveryPlacePhotoStore.js";
 
-import { requireAdmin } from "../lib/requireAdmin.js"; import { exactListCount, listTotalRefusal } from "../lib/moderationCounts.js";
+import { requireAdmin } from "../lib/requireAdmin.js"; import { exactListCount, listTotalRefusal, parseListPage, readEveryRow } from "../lib/moderationCounts.js";
 
 const router = Router();
 
@@ -45,9 +45,9 @@ router.get("/admin/place-images/queue", asyncHandler(async (req, res) => {
   if (!admin) return;
   const { sc } = admin;
 
-  const page   = Math.max(1, Number(req.query.page  ?? 1));
-  const limit  = Math.min(100, Math.max(1, Number(req.query.limit ?? 20)));
-  const offset = (page - 1) * limit;
+  // wave 5: `Number("abc")` is NaN and NaN survived Math.max, so ?page=abc served `.range(NaN, NaN)` — an empty queue page.
+  // A page or limit that is not a positive whole number is the default (the house rule); `pagination` names what was served.
+  const { page, limit, offset } = parseListPage(req.query, 20, 100);
 
   const accuracyStatus   = req.query.accuracy_status   as string | undefined;
   const imageSourceType  = req.query.image_source_type as string | undefined;
@@ -73,8 +73,8 @@ router.get("/admin/place-images/queue", asyncHandler(async (req, res) => {
     .order("created_at", { ascending: false })
     .range(offset, offset + limit - 1);
 
-  const { data: visuals, error: visErr, count } = await query;
-  if (visErr) { sendError(res, "db_error", visErr.message); return; } const total = exactListCount(count, visuals, offset); // never `count ?? 0` (wave 5)
+  const { data: visuals, error: visErr, count } = hasReportsFilter === undefined ? await query : await queuePageFilteredByReports(sc, { accuracyStatus, imageSourceType }, hasReportsFilter, offset, limit); // has_reports is applied BEFORE paging (wave 5): it filtered the page after the count, so `total` counted the unfiltered queue and pages came back short
+  if (visErr) { sendError(res, "db_error", visErr.message, { exposeDetail: (visErr as any).named === true }); return; } const total = exactListCount(count, visuals, offset); // never `count ?? 0` (wave 5)
   if (total === null) { sendError(res, "db_error", listTotalRefusal("place-image review queue"), { exposeDetail: true }); return; }
   const rows: any[] = visuals as any[];
 
@@ -94,7 +94,7 @@ router.get("/admin/place-images/queue", asyncHandler(async (req, res) => {
     }
   }
 
-  let items = rows.map((v) => {
+  const items = rows.map((v) => {
     // entity_id is the canonical place identifier when entity_type = 'place'
     const placeKey = `${v.source_url}|||${v.entity_id}`;
     return {
@@ -104,9 +104,9 @@ router.get("/admin/place-images/queue", asyncHandler(async (req, res) => {
     };
   });
 
-  // Apply has_reports filter post-join
-  if (hasReportsFilter === true)  items = items.filter((v) => v.reportCount > 0);
-  if (hasReportsFilter === false) items = items.filter((v) => v.reportCount === 0);
+  // has_reports is NOT re-applied here: the page and its `total` were chosen by it above (queuePageFilteredByReports).
+  // A report resolved between that read and the reportCount read shows as reportCount 0 on a has_reports=true page —
+  // a measured 0, and the image stays on the page it was counted on, so `total` and the pages still agree.
 
   res.json({
     items,
@@ -126,9 +126,9 @@ router.get("/admin/place-images/reports", asyncHandler(async (req, res) => {
   if (!admin) return;
   const { sc } = admin;
 
-  const page   = Math.max(1, Number(req.query.page  ?? 1));
-  const limit  = Math.min(100, Math.max(1, Number(req.query.limit ?? 20)));
-  const offset = (page - 1) * limit;
+  // wave 5: ?page=abc was NaN (NaN survived Math.max), so the list served `.range(NaN, NaN)`. Not a positive whole number = the default.
+  const { page, limit, offset } = parseListPage(req.query, 20, 100);
+  // (the house rule: admin.ts /admin/reports, the trips and events queues, the trust review queue)
   const status = (req.query.status as string) ?? "pending";
 
   let query = sc
@@ -675,5 +675,70 @@ router.post("/admin/place-images/reports/:reportId/resolve", asyncHandler(async 
 
   res.json({ ok: true, reportId, action: parsed.data.action, status: dbStatus, resolvedAt: now });
 }));
+
+/**
+ * GET /admin/place-images/queue?has_reports=true|false — the page, and the
+ * filtered queue's total, chosen BEFORE paging (wave 5, the remaining seven).
+ *
+ * The route paged the queue with an exact count and only then dropped the rows
+ * the filter excluded, so `total` counted the UNFILTERED queue, `hasMore` paged
+ * on it, and a page held anywhere from 0 to `limit` rows. A reported image on
+ * page 3 of the unfiltered order was on no has_reports=true page a moderator
+ * could reach by paging until hasMore went false.
+ *
+ * "Has a report" is the queue's own reportCount rule: a PENDING
+ * place_image_reports row on the image's (source_url, place) pair — keyed by
+ * both, so a CDN URL reused by another place never counts. The pair cannot be
+ * put to PostgREST as one filter, so: every pending report pair is read; every
+ * place visual the queue's other filters admit is read (id, pair, created_at —
+ * paged past the row cap, lib/moderationCounts.ts readEveryRow); the ones the
+ * filter keeps are ordered as the queue is (created_at, newest first), counted,
+ * and sliced; then the page's rows are read whole. Answered like a supabase-js
+ * read, `{ data, error, count }`, so the route's exactListCount check runs on
+ * it unchanged. Any read that fails, answers no list or no exact count, or a
+ * page row that vanished before it was read whole, is `error`: never a short
+ * page or an unfiltered total.
+ */
+async function queuePageFilteredByReports(
+  sc: any,
+  filters: { accuracyStatus?: string; imageSourceType?: string },
+  hasReports: boolean,
+  offset: number,
+  limit: number,
+): Promise<{ data: any[] | null; error: { message: string; named?: boolean } | null; count: number | null }> {
+  const refuse = (what: string, why: string) => ({ data: null, error: { message: `The has_reports filter could not be applied (${what}): ${why}. A page filtered after paging would miscount the queue. Retry.`, named: true }, count: null });
+  const reports = await readEveryRow((from, to) => sc
+    .from("place_image_reports")
+    .select("id, image_url, place_id", { count: "exact" })
+    .eq("status", "pending")
+    .order("id", { ascending: true })
+    .range(from, to));
+  if (reports.error || !reports.data) return refuse("pending reports", reports.error?.message ?? "no rows answered");
+  const reported = new Set(reports.data.map((r: any) => `${r.image_url}|||${r.place_id}`));
+
+  const candidates = await readEveryRow((from, to) => {
+    let q = sc
+      .from("generated_visuals")
+      .select("id, source_url, entity_id, created_at", { count: "exact" })
+      .eq("entity_type", "place")
+      .not("accuracy_status", "eq", "rejected");
+    if (filters.accuracyStatus) q = q.eq("accuracy_status", filters.accuracyStatus);
+    if (filters.imageSourceType) q = q.eq("image_source_type", filters.imageSourceType);
+    return q.order("id", { ascending: true }).range(from, to);
+  });
+  if (candidates.error || !candidates.data) return refuse("queue", candidates.error?.message ?? "no rows answered");
+
+  const kept = candidates.data
+    .filter((v: any) => (Boolean(v.source_url) && reported.has(`${v.source_url}|||${v.entity_id}`)) === hasReports)
+    .sort((a: any, b: any) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")) || String(b.id).localeCompare(String(a.id)));
+  const pageIds: string[] = kept.slice(offset, offset + limit).map((v: any) => v.id);
+  if (pageIds.length === 0) return { data: [], error: null, count: kept.length };
+
+  const page = await readEveryRow((from, to) => sc.from("generated_visuals").select("*", { count: "exact" }).in("id", pageIds).order("id", { ascending: true }).range(from, to));
+  if (page.error || !page.data) return refuse("page rows", page.error?.message ?? "no rows answered");
+  const byId = new Map(page.data.map((r: any) => [r.id, r]));
+  if (pageIds.some((id) => !byId.has(id))) return refuse("page rows", "an image on this page was removed while the page was read");
+  return { data: pageIds.map((id) => byId.get(id)), error: null, count: kept.length };
+}
 
 export default router;

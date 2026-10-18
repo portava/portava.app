@@ -8,7 +8,9 @@
  *  1. hide / cancel / remove  → resolve the OPEN reports for THAT event only;
  *                               reports for other events are untouched
  *  2. restore / feature / unfeature / warn_host  → do NOT resolve any reports
- *  3. Every action writes event_activity_log (fail-closed) + moderation_actions
+ *  3. Every action writes event_activity_log + moderation_actions, BOTH required (wave 5,
+ *     2026-10-18: claim -> audit -> undo, lib/eventModerationClaim.ts — the
+ *     moderation_actions row failed OPEN, a warn and 200, until then)
  *  4. Non-admin callers get 403; unknown action gets 400
  *
  * Run: node --import tsx/esm --test src/test/adminEventModeration.test.ts
@@ -138,6 +140,7 @@ function makeModerationClient(opts: {
     // as in db[tableName] — mutations via Object.assign() are visible in _db.
     let filtered = rows;
     let pendingUpdate: Record<string, any> | null = null;
+    let pendingDelete = false;
 
     const b: any = {
       select: () => b,
@@ -147,11 +150,14 @@ function makeModerationClient(opts: {
           // When activityInsertError is set, do NOT persist the rows and return an error
           // so the route's fail-closed guard fires and aborts without mutating the event.
           if (activityInsertError) {
-            return {
+            const failing: any = {
+              select: () => failing, // the route asks the insert for its id (wave 5)
               then: (resolve: any) =>
                 Promise.resolve({ data: null, error: { message: "event_activity_log insert failed" } }).then(resolve),
             };
+            return failing;
           }
+          for (const r of newRows) r.id ??= `activity-${(db[tableName] ?? []).length + 1}`; // a row answers its id, as the table's default would
           db[tableName] = [...(db[tableName] ?? []), ...newRows];
           captureActivity.push(...newRows);
         } else if (tableName === "moderation_actions") {
@@ -172,6 +178,8 @@ function makeModerationClient(opts: {
         return b;
       },
       update: (data: Record<string, any>) => { pendingUpdate = data; return b; },
+      delete: () => { pendingDelete = true; return b; },
+      is: (col: string, val: any) => { filtered = filtered.filter((r: any) => (val === null ? r[col] == null : r[col] === val)); return b; },
       eq: (col: string, val: any) => {
         filtered = filtered.filter((r: any) => r[col] === val);
         return b;
@@ -193,6 +201,11 @@ function makeModerationClient(opts: {
           // Apply update in-place to the actual db row objects
           for (const row of filtered) Object.assign(row, pendingUpdate);
           pendingUpdate = null;
+        }
+        if (pendingDelete) {
+          db[tableName] = (db[tableName] ?? []).filter((r: any) => !filtered.includes(r));
+          if (tableName === "event_activity_log") for (const r of filtered) { const i = captureActivity.indexOf(r); if (i >= 0) captureActivity.splice(i, 1); }
+          pendingDelete = false;
         }
         return Promise.resolve({ data: filtered, error: null }).then(resolve, reject);
       },
@@ -530,43 +543,33 @@ describe("PATCH /admin/events/:eventId/moderate — event_activity_log insert fa
   }
 });
 
-// ── Audit fail-open: moderation_actions insert failure must not surface as 500 ──
+// ── The event_<action> audit row is REQUIRED (wave 5): a failed insert undoes the action ──
+// It was fail-open: the insert failing was a warn, and the answer `200 { ok: true }` for an event hidden with
+// no row in the global moderation audit trail. Now the event is restored to what it held when read, the
+// activity row this request wrote is removed, no report is closed, and the 500 says so.
 
-describe("PATCH /admin/events/:eventId/moderate — moderation_actions insert failure is fail-open", () => {
-  it("still returns 200 with ok:true when the moderation_actions insert fails", async () => {
-    const captureActivity: any[] = [];
-    const captureModerationActions: any[] = [];
-    const client = makeModerationClient({
-      captureActivity,
-      captureModerationActions,
-      modInsertError: true,
+describe("PATCH /admin/events/:eventId/moderate — a moderation_actions insert failure undoes the action and says so", () => {
+  for (const action of ["hide", "cancel", "remove", "restore", "feature", "unfeature", "warn_host"] as const) {
+    it(`'${action}': 500 naming the audit failure; the event reads as it did, no activity row stands, no report closed`, async () => {
+      const captureActivity: any[] = [];
+      const captureModerationActions: any[] = [];
+      const client = makeModerationClient({ captureActivity, captureModerationActions, modInsertError: true });
+      setClient(client);
+      const before = { ...client._db.events[0] };
+
+      const { status, body } = await req("PATCH", `/admin/events/${EVENT_ID_A}/moderate`, { action, reason: "audit-required test" });
+
+      assert.equal(status, 500, `an action with no audit row is not a success — got ${status}: ${JSON.stringify(body)}`);
+      assert.equal(body.error, "db_error");
+      assert.match(body.message, /The moderation audit row could not be written \(moderation_actions insert failed\)/);
+      assert.match(body.message, action === "warn_host" ? /nothing was applied\. Nothing was recorded\./ : /the event was restored to what it held when read\. Nothing was recorded\./);
+      const after = client._db.events[0];
+      for (const col of ["state", "visibility", "featured"]) assert.equal(after[col], before[col], `events.${col} is restored`);
+      assert.equal(captureModerationActions.length, 1, "the event's audit row was attempted once; no report_resolved row follows a failed action");
+      assert.equal(captureModerationActions[0].action_type, `event_${action}`);
+      assert.equal(captureActivity.length, 0, "the activity row written for an action that did not stand was removed");
+      assert.equal(client._db.event_activity_log.length, 0);
+      assert.ok(client._db.reports.every((r: any) => r.status === "open"), "no report is closed by an action that was undone");
     });
-    setClient(client);
-
-    const { status, body } = await req(
-      "PATCH",
-      `/admin/events/${EVENT_ID_A}/moderate`,
-      { action: "hide", reason: "audit-fail-open test" },
-    );
-
-    assert.equal(
-      status, 200,
-      `moderation_actions insert failure must not surface as a 500 — got ${status}: ${JSON.stringify(body)}`,
-    );
-    assert.equal(body.ok, true, "response body should still have ok: true");
-    assert.equal(
-      body.error, undefined,
-      `fail-open response must not carry an error field — got: ${JSON.stringify(body.error)}`,
-    );
-    assert.equal(body.action, "hide");
-    assert.equal(body.eventId, EVENT_ID_A);
-
-    // The insert was still attempted — the route must not have skipped it.
-    assert.equal(
-      captureModerationActions.length, 2,
-      "the event row was attempted though it failed; then the first report's audit row (which failed too, so that report's claim was undone and the close stopped)",
-    );
-    assert.equal(captureModerationActions[0].action_type, "event_hide"); assert.equal(body.reportsResolved, null); assert.match(body.reportsCloseError, /restored to 'open'/); assert.ok(client._db.reports.every((r: any) => r.status === "open"), "no report reads closed without its audit row");
-    assert.equal(captureModerationActions[0].performed_by, ADMIN_USER_ID);
-  });
+  }
 });

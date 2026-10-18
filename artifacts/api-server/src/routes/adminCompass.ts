@@ -40,7 +40,7 @@ import { clearL1Cache, invalidate } from "../compass/CompassCacheEngine.js";
 import { invalidateFlagsCache } from "../compass/flags.js";
 import { runSandbox, type TestUserType } from "../compass/CompassTestingSandbox.js";
 import { SECTION_NAMES } from "../compass/CompassFeedBuilder.js";
-import { requireAdmin } from "../lib/requireAdmin.js"; import { settledRows, settledCount } from "../lib/moderationCounts.js";
+import { requireAdmin } from "../lib/requireAdmin.js"; import { settledRows, settledCount, exactListCount, readEveryRow } from "../lib/moderationCounts.js";
 
 const router = Router();
 
@@ -112,7 +112,7 @@ router.get("/admin/compass/dashboard", async (req, res) => {
   try {
     const nowMs         = Date.now();
     const thirtyDaysAgo = new Date(nowMs - 30 * 24 * 60 * 60 * 1_000).toISOString();
-    const now           = new Date(nowMs).toISOString();
+    const now           = new Date(nowMs).toISOString(); const everyRow = (build: () => any, key: string) => readEveryRow((from, to) => build().order(key, { ascending: true }).range(from, to)); // wave 5: a section whose totals or breakdowns are TALLIED reads EVERY row, paged past PostgREST's row cap on a unique key (lib/moderationCounts.ts) — an unbounded read's length was a silent undercount past the cap
 
     const [
       abuseFlagsRes,
@@ -133,19 +133,19 @@ router.get("/admin/compass/dashboard", async (req, res) => {
       upcomingEventsRes,
     ] = await Promise.allSettled([
       // Abuse flags (last 30 days), by `detected_at`: the table has no `created_at`, and filtering on it failed this read with 42703 on every call, so the dashboard showed zero flags (wave 5, 2026-10-17, test/adminCompassAbuseFlagsWindow.test.ts)
-      sc.from("compass_abuse_flags")
-        .select("severity, status")
-        .gte("detected_at", thirtyDaysAgo),
+      everyRow(() => sc.from("compass_abuse_flags")
+        .select("severity, status", { count: "exact" })
+        .gte("detected_at", thirtyDaysAgo), "id"),
 
-      // Safety filter fires (last 30 days)
-      sc.from("compass_safety_filter_logs")
-        .select("block_reason")
-        .gte("created_at", thirtyDaysAgo),
+      // Safety filter fires (last 30 days) — every row (paged), so the total and byReason are measured, not capped
+      everyRow(() => sc.from("compass_safety_filter_logs")
+        .select("block_reason", { count: "exact" })
+        .gte("created_at", thirtyDaysAgo), "id"),
 
-      // Valid (non-expired) cache entries
-      sc.from("compass_feed_cache")
+      // Valid (non-expired) cache entries — every row (paged): validEntries, byEntryType and uniqueUsers are tallied from them
+      everyRow(() => sc.from("compass_feed_cache")
         .select("entry_type, user_id", { count: "exact" })
-        .gt("expires_at", now),
+        .gt("expires_at", now), "id"),
 
       // Expired cache entries (gives us total - valid = expired)
       sc.from("compass_feed_cache")
@@ -158,10 +158,10 @@ router.get("/admin/compass/dashboard", async (req, res) => {
         .order("active_user_score", { ascending: false })
         .limit(10),
 
-      // Notification outcome breakdown (last 30 days)
-      sc.from("compass_notification_decisions")
-        .select("notification_type, outcome, suppression_reason")
-        .gte("created_at", thirtyDaysAgo),
+      // Notification outcome breakdown (last 30 days) — every row (paged)
+      everyRow(() => sc.from("compass_notification_decisions")
+        .select("notification_type, outcome, suppression_reason", { count: "exact" })
+        .gte("created_at", thirtyDaysAgo), "id"),
 
       // Current active algorithm version
       sc.from("compass_algorithm_versions")
@@ -170,16 +170,16 @@ router.get("/admin/compass/dashboard", async (req, res) => {
         .order("launched_at", { ascending: false })
         .limit(1),
 
-      // Feedback events (last 30 days) — source for click/save/join/book/hide/report rates
-      sc.from("compass_feedback_events")
-        .select("action")
-        .gte("created_at", thirtyDaysAgo),
+      // Feedback events (last 30 days) — source for click/save/join/book/hide/report rates; every row (paged)
+      everyRow(() => sc.from("compass_feedback_events")
+        .select("action", { count: "exact" })
+        .gte("created_at", thirtyDaysAgo), "id"),
 
-      // User location state — city supply/demand breakdown
-      sc.from("user_location_state")
-        .select("city, country")
-        .not("city", "is", null)
-        .limit(500),
+      // User location state — city supply/demand breakdown; every row (paged on its key, user_id)
+      everyRow(() => sc.from("user_location_state")
+        .select("city, country", { count: "exact" })
+        .not("city", "is", null), "user_id"),
+      // (it read `.limit(500)`: past 500 located users, each city's activeUsers was a tally of an arbitrary sample)
 
       // Delayed posts not yet published (pending publish).
       //
@@ -213,9 +213,9 @@ router.get("/admin/compass/dashboard", async (req, res) => {
         .order("active_user_score", { ascending: false })
         .limit(20),
 
-      // New users (low active_user_score → limited organic reach)
+      // New users (low active_user_score → limited organic reach): `count` is the exact count; `users` the first 20
       sc.from("compass_active_user_scores")
-        .select("user_id, active_user_score")
+        .select("user_id, active_user_score", { count: "exact" })
         .lte("active_user_score", 5)
         .order("active_user_score", { ascending: true })
         .limit(20),
@@ -264,7 +264,7 @@ router.get("/admin/compass/dashboard", async (req, res) => {
     // ── Cache metrics ────────────────────────────────────────────────────────
     const validCacheRows: any[] =
       rowsOf("cache.validEntries", cacheValidRes);
-    const validCacheCount   = validCacheRows.length;
+    const validCacheCount   = validCacheRows.length; // every valid row was read (everyRow), so this length IS the measured count
     const expiredCacheCount =
       countOf("cache.expiredEntries", cacheExpiredRes);
     const totalCacheCount   = validCacheCount + expiredCacheCount;
@@ -296,7 +296,7 @@ router.get("/admin/compass/dashboard", async (req, res) => {
         notifSuppressReason[r.suppression_reason]         = (notifSuppressReason[r.suppression_reason] ?? 0) + 1;
       }
     }
-    const notifTotal   = notifRows.length;
+    const notifTotal   = notifRows.length; // every row in the window (everyRow): measured, not capped
     const notifSent    = notifByOutcome["sent"]       ?? 0;
     const notifMuted   = notifByOutcome["suppressed"] ?? 0;
     const openRate     = notifTotal > 0 ? Math.round((notifSent  / notifTotal) * 1_000) / 10 : 0;
@@ -313,7 +313,7 @@ router.get("/admin/compass/dashboard", async (req, res) => {
     for (const r of feedbackRows) {
       feedbackByAction[r.action] = (feedbackByAction[r.action] ?? 0) + 1;
     }
-    const feedbackTotal       = feedbackRows.length;
+    const feedbackTotal       = feedbackRows.length; // every row in the window (everyRow): measured, not capped
     const rateOf = (action: string) =>
       feedbackTotal > 0 ? Math.round(((feedbackByAction[action] ?? 0) / feedbackTotal) * 1_000) / 10 : 0;
 
@@ -343,7 +343,7 @@ router.get("/admin/compass/dashboard", async (req, res) => {
     const overexposedUsers: any[] =
       rowsOf("overexposedUsers", boostOverexposedRes);
     const newUserRows: any[] =
-      rowsOf("newUserExposure", newUsersRes);
+      rowsOf("newUserExposure", newUsersRes); const newUserCount = exactListCount(settledCount(newUsersRes), newUserRows) ?? (unreadable.push("newUserExposure.count"), 0); // was newUserRows.length: a `.limit(20)` page's length, so the count never passed 20
 
     // ── Buddy exposure (rent_a_buddy section supply) ─────────────────────────
     const activeBuddyCount =
@@ -465,7 +465,7 @@ router.get("/admin/compass/dashboard", async (req, res) => {
         trustMultiplier: r.trust_multiplier,
       })),
       newUserExposure: {
-        count: newUserRows.length,
+        count: newUserCount,
         users: newUserRows.map((r) => ({ userId: r.user_id, score: r.active_user_score })),
       },
 
@@ -969,13 +969,13 @@ router.get("/admin/compass/safety-filters", async (req, res) => {
     const { data, error } = await query;
     if (error) { sendError(res, "db_error", error.message); return; }
     if (!Array.isArray(data)) { sendError(res, "db_error", "The safety-filter logs could not be read; an empty list would read as \"no safety-filter fires\". Retry.", { exposeDetail: true }); return; }
-    const rows: any[] = data;
+    const rows: any[] = data; // the newest `limit` logs; `total` and `byReason` are measured over EVERY matching log (wave 5) — they were this page's length and tally, so past `limit` the total stopped at `limit`
+    const every = await readEveryRow((from, to) => { let q = sc.from("compass_safety_filter_logs").select("block_reason", { count: "exact" }); if (since) q = q.gte("created_at", since); return q.order("id", { ascending: true }).range(from, to); });
+    if (every.error || !every.data) { sendError(res, "db_error", `The safety-filter totals could not be measured (${every.error?.message ?? "no rows answered"}). A page's length is not the total. Narrow with ?since= or retry.`, { exposeDetail: true }); return; }
     const byReason: Record<string, number> = {};
-    for (const r of rows) {
-      byReason[r.block_reason] = (byReason[r.block_reason] ?? 0) + 1;
-    }
+    for (const r of every.data) byReason[r.block_reason] = (byReason[r.block_reason] ?? 0) + 1;
 
-    res.json({ total: rows.length, byReason, logs: rows });
+    res.json({ total: every.data.length, byReason, logs: rows });
   } catch (err) {
     req.log.error({ err }, "admin/compass/safety-filters: query failed");
     sendError(res, "db_error", "Could not fetch safety filter logs", { exposeDetail: true });

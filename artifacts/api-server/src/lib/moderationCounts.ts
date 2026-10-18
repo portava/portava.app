@@ -150,3 +150,111 @@ export function settledCount(r: PromiseSettledResult<unknown>): number | null {
   const v = r.value as { count?: unknown; error?: unknown } | null | undefined;
   return v && !v.error && typeof v.count === "number" && Number.isSafeInteger(v.count) && v.count >= 0 ? v.count : null;
 }
+
+/**
+ * ── EVERY ROW OF A READ, PAGED PAST THE ROW CAP (wave 5, the remaining seven) ──
+ * PostgREST answers at most `max_rows` rows (Supabase: 1000) and says nothing
+ * when it stops. The Compass dashboard took totals and breakdowns from the
+ * LENGTH of unbounded reads (abuse flags, safety-filter fires, valid cache
+ * entries, notification decisions, feedback events) and from a `.limit(500)`
+ * sample (city demand), so past the cap every number was a quiet undercount;
+ * GET /admin/venues/reported listed only the newest `limit` places and kept
+ * the reported ones among them.
+ *
+ * `page(from, to)` must ask for `{ count: "exact" }`, order on a UNIQUE key (so
+ * pages neither overlap nor skip), and `.range(from, to)`. This reads page after
+ * page until it holds every row the count says exists, advancing by the rows a
+ * page actually answered — so a server cap smaller than `pageSize` is paged
+ * through as well. The answer is shaped like a supabase-js answer, so
+ * settledRows() reads it: `{ data: every row, error: null, count: rows }`.
+ *
+ * NEVER REJECTS. `{ data: null, error, count: null }` — never a shorter list —
+ * when a page answers an error or throws, answers no list or no exact count,
+ * answers a count smaller than the rows it already proved (rows were deleted
+ * mid-read, so a later page may have shifted past one), or answers an empty
+ * page short of its count. A count that GREW (rows added after the read began,
+ * which sort after it on an ascending key) is read to its end. More than
+ * `maxRows` rows is refused by name rather than truncated.
+ */
+export interface EveryRowAnswer {
+  readonly data: any[] | null;
+  readonly error: { readonly message: string } | null;
+  readonly count: number | null;
+}
+
+export async function readEveryRow(
+  page: (from: number, to: number) => PromiseLike<unknown>,
+  opts: { pageSize?: number; maxRows?: number } = {},
+): Promise<EveryRowAnswer> {
+  const pageSize = opts.pageSize ?? 1000;
+  const maxRows = opts.maxRows ?? 50_000;
+  const refuse = (why: string): EveryRowAnswer => ({ data: null, error: { message: why }, count: null });
+  const rows: any[] = [];
+  let expected: number | null = null;
+  try {
+    while (expected === null || rows.length < expected) {
+      const r = (await page(rows.length, rows.length + pageSize - 1)) as { data?: unknown; error?: unknown; count?: unknown } | null | undefined;
+      if (r?.error) return refuse(countUnavailable(r.error).reason);
+      if (!Array.isArray(r?.data)) return refuse(`a page at row ${rows.length} answered no rows to count`);
+      const c = r!.count;
+      if (typeof c !== "number" || !Number.isSafeInteger(c) || c < 0) return refuse(`a page at row ${rows.length} answered without an exact count`);
+      if (c < rows.length + r!.data.length) return refuse(`the count (${c}) fell below the ${rows.length + r!.data.length} rows already read: rows were removed while they were read`);
+      if (c > maxRows) return refuse(`${c} rows is more than the ${maxRows} this read pages through`);
+      if (r!.data.length === 0 && rows.length < c) return refuse(`a page at row ${rows.length} of ${c} answered no rows`);
+      expected = c;
+      rows.push(...r!.data);
+    }
+    return { data: rows, error: null, count: rows.length };
+  } catch (err) {
+    return refuse(countUnavailable(err).reason);
+  }
+}
+
+/**
+ * ── ?page AND ?limit (wave 5, the remaining seven) ─────────────────────────
+ * adminMedia's parsePagination and the place-image queue and reports lists read
+ * `Math.max(1, Number(query.page ?? 1))`. `?page=abc` is NaN, NaN survives
+ * Math.max, and the list served `.range(NaN, NaN)` — an empty page (or a
+ * PostgREST error) that reads as "nothing here", with `page: null`.
+ *
+ * The house rule (admin.ts /admin/reports, the trips and events queues, the
+ * trust review queue): a page or limit that is not a positive whole number is
+ * the DEFAULT, and the answer's `pagination` names the page and limit it
+ * actually served. A limit above `maxLimit` is `maxLimit`.
+ */
+export function parseListPage(
+  query: { page?: unknown; limit?: unknown } | null | undefined,
+  defaultLimit = 20,
+  maxLimit = 100,
+): { page: number; limit: number; offset: number } {
+  const whole = (v: unknown): number | null => {
+    const n = typeof v === "number" ? v : typeof v === "string" && /^\s*\d+\s*$/.test(v) ? Number(v) : NaN;
+    return Number.isSafeInteger(n) && n >= 1 && n <= 1_000_000 ? n : null;
+  };
+  const page = whole(query?.page) ?? 1;
+  const limit = Math.min(maxLimit, whole(query?.limit) ?? defaultLimit);
+  return { page, limit, offset: (page - 1) * limit };
+}
+
+/**
+ * ── A QUEUE FILTER WORD (wave 5, the remaining seven) ──────────────────────
+ * GET /admin/trust/reviews matched `?status=` and `?type=` EXACTLY and
+ * unvalidated, so a word no review carries (`?status=pending`, `?type=gaming`)
+ * answered `{ reviews: [], total: 0 }` — "the queue is empty" — instead of
+ * "that is not a status". The trust_reviews vocabularies are the columns' CHECK
+ * constraints (baseline 20260819_baseline_structure.sql trust_reviews_status_check
+ * and trust_reviews_review_type_check; no later migration alters either).
+ */
+export const TRUST_REVIEW_STATUSES = ["open", "in_progress", "resolved", "dismissed"] as const;
+export const TRUST_REVIEW_TYPES = ["event_review", "gaming_suspected", "admin_override", "appeal"] as const;
+
+/** Absent or empty is null (no filter); one word of `vocabulary` is that word; anything else is refused NAMING the parameter. */
+export function parseVocabularyFilter(
+  raw: unknown,
+  param: string,
+  vocabulary: readonly string[],
+): { readonly ok: true; readonly value: string | null } | { readonly ok: false; readonly message: string } {
+  if (raw === undefined || raw === null || raw === "") return { ok: true, value: null };
+  if (typeof raw === "string" && vocabulary.includes(raw)) return { ok: true, value: raw };
+  return { ok: false, message: `Unknown ${param} '${typeof raw === "string" ? raw : JSON.stringify(raw)}'. One of: ${vocabulary.join(", ")}` };
+}

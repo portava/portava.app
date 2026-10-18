@@ -36,7 +36,7 @@ import { executeAccountDeletion } from "../services/accountDeletion/AccountDelet
 import { runSchemaDriftCheck, getCachedSchemaDriftResult } from "../lib/schemaDriftCheck";
 import { logAdminAccess, accessReason } from "../lib/adminAudit.js";
 import { resolveStoragePath } from "../lib/storagePath.js";
-import { logModerationAction, auditReportAction, checkActionReportLink, checkContentReportLink, reportLinkColumnId } from "../lib/moderationAudit.js"; import { applyAccountRestriction, revokeAccountRestrictions, parseRestrictionEnd, recordModerationNotApplied, notAppliedAuditNote } from "../lib/accountModeration.js"; import { countOpenReportsAgainst, exactListCount, LEGACY_REPORT_STATUSES, UNRESOLVED_REPORT_STATUSES } from "../lib/moderationCounts.js"; import { moveLegacyReport, moveLegacyReports, describeLegacyBulkFailure, LEGACY_REPORT_CLOSE_READ, type LegacyReportRow } from "../lib/legacyReportClose.js"; // same line: admin.ts is cited by line
+import { logModerationAction, auditReportAction, checkActionReportLink, checkContentReportLink, reportLinkColumnId } from "../lib/moderationAudit.js"; import { applyAccountRestriction, revokeAccountRestrictions, parseRestrictionEnd, recordModerationNotApplied, notAppliedAuditNote } from "../lib/accountModeration.js"; import { countOpenReportsAgainst, exactListCount, LEGACY_REPORT_STATUSES, UNRESOLVED_REPORT_STATUSES } from "../lib/moderationCounts.js"; import { moveLegacyReport, moveLegacyReports, describeLegacyBulkFailure, LEGACY_REPORT_CLOSE_READ, type LegacyReportRow } from "../lib/legacyReportClose.js"; import { readReportedVenueQueue } from "../lib/reportedVenueQueue.js"; import { applyEventModeration, type ModeratedEventRow } from "../lib/eventModerationClaim.js"; // same line: admin.ts is cited by line
 import { loadCapturedReportContent, loadModerationSubjectSnapshots, resolveContentOwnerDetailed, MODERATION_REPORT_CATEGORIES, MODERATION_REPORT_STATUSES, MODERATION_REPORT_TRANSITIONS, type ModerationReportStatus } from "../lib/moderationReportSnapshots.js";
 
 import { requireAdmin } from "../lib/requireAdmin.js"; import { computeAttemptsPerVerifiedUser } from "../services/identityVerification/attemptMetrics.js"; // same line on purpose: a new import line shifts every anchored citation into this file
@@ -443,42 +443,42 @@ router.get("/admin/venues/reported", async (req, res) => {
   if (!admin) return;
   const { sc } = admin;
 
-  const limit = Math.min(100, Number(req.query.limit) || 50);
+  const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 50)); // Math.max (wave 5): a negative ?limit sliced from the END of the queue
 
-  const { data, error } = await sc
-    .from("discovery_places")
-    .select(
-      "id, name, place_type, category, city, neighborhood, blurb, status, submitted_by, created_at, " +
-      "discovery_place_reports(count)",
-    )
-    .gt("discovery_place_reports.count" as any, 0)
-    .order("created_at", { ascending: false })
-    .limit(limit);
+  // ── wave 5 (census-trust, the remaining seven): the queue starts from the REPORTS ──
+  // This read the newest `limit` places with a `discovery_place_reports(count)`
+  // embed and DROPPED every row whose count was not above 0, so:
+  //   - a venue whose report-count embed answered without a count read as 0
+  //     reports and VANISHED from the moderation queue;
+  //   - a reported venue older than the newest `limit` places was never in the
+  //     queue at all, however many reports it had (the limit ran first);
+  //   - `total` was the page's length.
+  // Now every report is read, paged past the row cap, and grouped by place; the
+  // reported places are read by id (lib/reportedVenueQueue.ts). A read that
+  // fails or answers no list or no exact count REFUSES the page, naming it —
+  // this route's own convention for a returned error (db_error) — never a queue
+  // a reported venue could be missing from. A reported place gone by the time
+  // it is read is KEPT, flagged venueMissing, as the trips and events queues
+  // keep a report whose parent is gone.
+  const queue = await readReportedVenueQueue(sc);
+  if (!queue.ok) { sendError(res, "db_error", queue.message, { exposeDetail: true }); return; }
 
-  if (error) { sendError(res, "db_error", error.message); return; }
-
-  // Sort by report count descending after fetch (Supabase doesn't support ordering by embedded count)
-  const venues = (data ?? [])
-    .map((row: any) => ({
-      id:           row.id,
-      name:         row.name,
-      placeType:    row.place_type,
-      category:     row.category,
-      city:         row.city,
-      neighborhood: row.neighborhood,
-      blurb:        row.blurb,
-      status:       row.status,
-      submittedBy:  row.submitted_by,
-      createdAt:    row.created_at,
-      reportCount:  Array.isArray(row.discovery_place_reports)
-        ? (row.discovery_place_reports[0]?.count ?? 0)
-        : 0,
-    }))
-    .filter((v: any) => v.reportCount > 0)
-    .sort((a: any, b: any) => b.reportCount - a.reportCount);
+  // Ordered by report count (most first), then the newest report. Each venue
+  // carries reportCount (every report row, counted), latestReason and
+  // latestReportAt — the "most recent report reason" this route's doc promised
+  // and never sent. `total` counts EVERY reported venue, not this page.
+  const venues = queue.venues.slice(0, limit);
+  const total = queue.venues.length;
+  // There is no `.filter(reportCount > 0)` any more: a venue is in this list
+  // because a report row names it, so no missing count can drop it. The page is
+  // a slice of the measured queue, so `total` and the page agree: ?limit=N lists
+  // the N most-reported venues and says how many are reported in all. Ties go to
+  // the venue reported most recently, then by id, so the order is stable. The
+  // response keeps its shape ({ venues, total }); each venue gains three fields
+  // and, for a place removed mid-read, venueMissing. No client calls this route.
 
   void logAdminAccess(sc, admin.userId, "profile", "list", "view", accessReason(req));
-  res.json({ venues, total: venues.length });
+  res.json({ venues, total });
 });
 
 /**
@@ -2982,37 +2982,37 @@ router.patch("/admin/events/:eventId/moderate", async (req, res) => {
   }
 
   const link = await checkContentReportLink(sc, (req.body as any)?.report_id, "event", eventId); if (!link.ok) { sendError(res, link.code, link.message); return; } const linkColumn = await reportLinkColumnId(sc, link.metadata); // TV-4a: the event report this answers, checked against the HOST before anything is written
-  // Write event_activity_log FIRST (before any mutation) — fail-closed: if it fails, the event is not mutated and the caller gets a clear error.
-  const { error: auditErr } = await sc.from("event_activity_log").insert({
-    event_id: eventId,
-    actor_id: admin.userId,
-    action: `admin_${action}`,
-    metadata: { reason: reason ?? null },
-  });
-  if (auditErr) {
-    req.log.error({ err: auditErr, eventId, action }, "event_activity_log insert failed — aborting moderation");
-    sendError(res, "db_error", "Failed to write audit log; no action was applied", { exposeDetail: true }); return;
-  }
-
-  // Now apply the event mutation (audit already recorded)
+  // CLAIM -> AUDIT -> UNDO (wave 5, census-trust, the remaining seven; lib/eventModerationClaim.ts, as lib/legacyReportClose.ts
+  // moves a report). This route wrote event_activity_log, then an UNGUARDED patch whose row count it never read, then the
+  // event_<action> moderation_actions row FAIL-OPEN — a warn and `200 { ok: true }` — so an event could be hidden, cancelled
+  // or removed with no row in the global audit trail while the admin was told it worked; a patch that lost a race overwrote
+  // another admin's decision; a patch that matched nothing (the event deleted) was a 200; and a patch that FAILED left an
+  // activity row for an action that never happened. Every action here is a plain column patch on `events` (state /
+  // visibility / featured; no trigger exists on the table), so each is reversible by writing back what was read:
+  //   CLAIM — the patch, guarded on each column it writes still holding the value read; zero rows = 409, NOTHING written;
+  //   AUDIT — the event_activity_log row, then the moderation_actions row; both required, neither fails open;
+  //   UNDO  — when an audit row fails: the event back to what was read (guarded on what this request wrote and its own
+  //           updated_at), and this request's activity row removed; a step that fails is NAMED ("fix by hand").
+  // warn_host writes no column: there is nothing to claim, and a failed audit row means nothing was recorded.
+  const changes: Record<string, unknown> = {}; // the columns this action writes — never updated_at, which is the claim's stamp
   if (Object.keys(patch).length > 1) {
-    const { error: updateErr } = await sc.from("events").update(patch).eq("id", eventId);
-    if (updateErr) { sendError(res, "db_error", updateErr.message); return; }
+    for (const [k, v] of Object.entries(patch)) if (k !== "updated_at") changes[k] = v;
   }
 
-  // Write moderation_actions for the global admin audit trail (also fail-closed)
-  const { error: modErr } = await sc.from("moderation_actions").insert({
-    target_user_id: (ev as any).host_id,
-    action_type:    `event_${action}`,
-    reason:         reason ?? `Admin ${action}`,
-    performed_by:   admin.userId, ...(linkColumn ? { report_id: linkColumn } : {}), // the 3705 column when present; metadata below
-    metadata:       { event_id: eventId, event_title: (ev as any).title, ...link.metadata },
+  const moveE = await applyEventModeration(sc, req, ev as ModeratedEventRow, {
+    changes,
+    now: patch.updated_at, activityAction: `admin_${action}`,
+    writeActivity: () => sc.from("event_activity_log").insert({ event_id: eventId, actor_id: admin.userId, action: `admin_${action}`, metadata: { reason: reason ?? null } }).select("id"),
+    writeAudit: () => sc.from("moderation_actions").insert({
+      target_user_id: (ev as any).host_id,
+      action_type:    `event_${action}`,
+      reason:         reason ?? `Admin ${action}`,
+      performed_by:   admin.userId, ...(linkColumn ? { report_id: linkColumn } : {}), // the 3705 column when present; metadata below
+      metadata:       { event_id: eventId, event_title: (ev as any).title, ...link.metadata },
+    }),
   });
-  if (modErr) {
-    // Fail-open: the event mutation is already applied; log the audit failure but
-    // do not surface it to the caller as a 500.
-    req.log.warn({ err: modErr, eventId, action }, "moderation_actions insert failed — event action was applied");
-  }
+  if (moveE.outcome === "conflict") { sendError(res, "conflict", moveE.message); return; } // 409: nothing was written
+  if (moveE.outcome === "failed") { req.log.error({ eventId, action, state: moveE.state }, "event moderation did not apply"); sendError(res, "db_error", moveE.message, { exposeDetail: true }); return; }
 
   // hide/cancel/remove close the event's UNRESOLVED reports (open / in_review), each CLAIMED then AUDITED with reviewed_by (lib/legacyReportClose.ts), as the report resolve routes do — it closed them with neither. The event action above is already applied, so a close that does not complete is NAMED (reportsResolved: null, reportsCloseError), never swallowed.
   let reportsResolved: number | null | undefined; let reportsCloseError: string | undefined; if (["hide", "cancel", "remove"].includes(action)) {

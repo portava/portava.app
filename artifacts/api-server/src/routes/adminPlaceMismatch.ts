@@ -107,10 +107,10 @@ router.post("/admin/place-mismatch-reports/:id/resolve", asyncHandler(async (req
   }
   const { action } = parsed.data;
 
-  // Fetch the report
+  // Fetch the report — with the resolution fields, so a claim undone below restores exactly what was read
   const { data: report, error: fetchErr } = await sc
     .from("place_mismatch_reports")
-    .select("id, post_id, status, reported_place_id")
+    .select("id, post_id, status, reported_place_id, resolved_by, resolved_action, resolved_at")
     .eq("id", reportId)
     .maybeSingle();
 
@@ -125,9 +125,25 @@ router.post("/admin/place-mismatch-reports/:id/resolve", asyncHandler(async (req
 
   const now = new Date().toISOString();
 
-  // accept: null the canonical_place_id so the post gets re-queued for resolution,
-  // then immediately kick a backfill tick so it is re-resolved without waiting for
-  // the next scheduled interval (the worker might have idled since the backlog was 0).
+  // CLAIM FIRST (wave 5), guarded on the status this request READ, as lib/legacyReportClose.ts claims a legacy
+  // report. The update was unguarded and ran LAST, after accept had already cleared the post's place: two admins
+  // resolving at once both "won", the second overwrote the first's resolved_by / resolved_action, and an accept
+  // could clear a post the report then said was rejected. Now exactly one resolve moves the row; zero rows is a
+  // 409 with NOTHING written (the post untouched), and a claim that answers no rows to count is not called success.
+  const { data: claimed, error: claimErr } = await sc
+    .from("place_mismatch_reports")
+    .update({ status: "resolved", resolved_by: userId, resolved_action: action, resolved_at: now })
+    .eq("id", reportId)
+    .eq("status", (report as any).status)
+    .select("id");
+  if (claimErr) { sendError(res, "db_error", `Failed to resolve report: ${claimErr.message}. Nothing was changed.`, { exposeDetail: true }); return; }
+  if (!Array.isArray(claimed)) { sendError(res, "db_error", "The resolve answered no rows to count; whether the report moved is unknown. Re-read it before retrying.", { exposeDetail: true }); return; }
+  if (claimed.length === 0) { res.status(409).json({ error: "already_resolved", message: "This report was resolved by someone else while this request ran. Nothing was changed." }); return; }
+
+  // accept: null the canonical_place_id so the post gets re-queued for resolution, then immediately kick a backfill
+  // tick so it is re-resolved without waiting for the next scheduled interval (the worker might have idled since the
+  // backlog was 0). If the post cannot be cleared, the claim above is UNDONE — back to what the report held when
+  // read, guarded on this request's own resolved_at — so the report never reads "accepted" over a post left as it was.
   if (action === "accept") {
     const { error: postErr } = await sc
       .from("posts")
@@ -135,28 +151,15 @@ router.post("/admin/place-mismatch-reports/:id/resolve", asyncHandler(async (req
       .eq("id", (report as any).post_id);
 
     if (postErr) {
-      sendError(res, "db_error", `Failed to clear canonical place: ${postErr.message}`);
+      const prior = { status: (report as any).status, resolved_by: (report as any).resolved_by ?? null, resolved_action: (report as any).resolved_action ?? null, resolved_at: (report as any).resolved_at ?? null };
+      const { data: undone, error: undoErr } = await sc.from("place_mismatch_reports").update(prior).eq("id", reportId).eq("status", "resolved").eq("resolved_at", now).select("id");
+      const restored = !undoErr && Array.isArray(undone) && undone.length === 1;
+      sendError(res, "db_error", `Failed to clear canonical place: ${postErr.message}. ${restored ? `The report was restored to '${prior.status}'; nothing was changed.` : `The report could NOT be restored (${undoErr?.message ?? "no row matched"}): it reads resolved (accept) over a post whose place was not cleared. Fix by hand.`}`, { exposeDetail: true });
       return;
     }
 
     // Fire-and-forget: kick the backfill so the re-queued post is resolved promptly.
     void runBackfillTick().catch(() => {});
-  }
-
-  // Mark the report resolved in both cases
-  const { error: resolveErr } = await sc
-    .from("place_mismatch_reports")
-    .update({
-      status:          "resolved",
-      resolved_by:     userId,
-      resolved_action: action,
-      resolved_at:     now,
-    })
-    .eq("id", reportId);
-
-  if (resolveErr) {
-    sendError(res, "db_error", `Failed to resolve report: ${resolveErr.message}`);
-    return;
   }
 
   res.json({ ok: true, action, reportId });

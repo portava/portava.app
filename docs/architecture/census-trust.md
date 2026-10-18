@@ -5114,3 +5114,116 @@ moderation_actions row where hide now writes one per closed report. The reports.
 Rows: none move. TV-4a is graded on `moderation_reports` (§35), and none of these surfaces acts on that table. C5 reads
 the trust review queue; it stays C, and its total is now measured as well. No row of this census grades the legacy
 report queues, the media tabs or the Compass dashboard. Headline unchanged: 90 / 15 / 1 / 2 of 108.
+
+### Correction (2026-10-18, wave 5) — admin moderation surfaces, the remaining seven
+
+*Same branch and tree. Committed on this branch; undeployed. **NO ROW MOVES.***
+
+**What was broken.** The correction above listed seven more defects of the same class and left them. Each one let an
+admin queue lose an item, report a page's length as a total, or report an action as done when it was not recorded:
+1. GET /admin/venues/reported read the newest `limit` discovery places with a `discovery_place_reports(count)` embed. It
+   then DROPPED every row whose count was not above 0. A venue whose embed answered without a count read as "0 reports"
+   and vanished from the moderation queue. A reported venue older than the newest `limit` places was never in the queue
+   at all, because the limit ran first. `total` was the page's length.
+2. adminMedia's parsePagination, and the place-image queue and reports lists, read `Math.max(1, Number(query.page ?? 1))`.
+   `?page=abc` is NaN, and NaN survives Math.max. The list served `.range(NaN, NaN)`: an empty page with `page: null`.
+   The trust review queue took `?limit=-5` as a negative page size.
+3. The place-image queue applied `has_reports` AFTER paging. `total` counted the unfiltered queue, and a filtered page
+   came back short or empty. A reported image on a later unfiltered page was on no filtered page a moderator could reach.
+4. The Compass dashboard took totals and breakdowns from the length of unbounded reads. PostgREST's row cap cuts such a
+   read with no sign, so past the cap the abuse, safety-filter, notification, feedback and cache numbers were
+   undercounts. City demand tallied a 500-row sample, and `newUserExposure.count` was a 20-row page's length.
+   GET /admin/compass/safety-filters answered `total` as its page's length.
+5. The event moderate route's `event_<action>` moderation_actions insert failed OPEN: a warning, then `200 { ok: true }`.
+   So an event could be hidden, cancelled or removed with no row in the global audit trail. Its patch was unguarded,
+   so an action that lost a race overwrote another admin's decision. Nothing read its row count, so an event deleted
+   mid-request answered 200.
+6. Place-mismatch resolve cleared the post's place first, then wrote an unguarded status update. Two resolves both
+   "won", and an accept could clear a post whose report then read rejected.
+7. GET /admin/trust/reviews matched `?status=` and `?type=` exactly, with no validation. A word no review carries
+   answered an empty queue.
+
+**The convention, per route.** Each route already refused a returned error with db_error. So a list or count it cannot
+measure is refused the same way, naming what could not be read. A filter word outside the column's vocabulary is a 400
+that names the parameter. A malformed `?page` or `?limit` takes the house default, as admin.ts /admin/reports does: a
+value that is not a positive whole number is the default, and the answer names the page it served. A reversible action
+is claimed, then audited, then undone if the audit cannot be written, in lib/legacyReportClose.ts's order.
+
+**What changed, with no migration.** Every edit to a route file is line-neutral except at a file's end:
+adminPlaceImages.ts gains a helper after its last handler, and adminPlaceMismatch.ts's last handler grows by three lines.
+No line that any citation names moved. The fixture unappliedSchemaReads.json had its admin.ts line numbers updated in
+its prose.
+- The venue queue starts from the REPORTS
+  (`artifacts/api-server/src/lib/reportedVenueQueue.ts:72#export async function readReportedVenueQueue(`). Every report
+  row is read and grouped by place, so a venue's count is its report rows
+  (`artifacts/api-server/src/lib/reportedVenueQueue.ts:87#g.reportCount++;`). A place removed mid-read is kept, flagged
+  (`artifacts/api-server/src/lib/reportedVenueQueue.ts:131#venueMissing: true as const`). A failed read refuses the page
+  (`artifacts/api-server/src/routes/admin.ts:464#if (!queue.ok)`), and `total` counts every reported venue
+  (`artifacts/api-server/src/routes/admin.ts:471#const total = queue.venues.length;`).
+- One reader pages past the row cap
+  (`artifacts/api-server/src/lib/moderationCounts.ts:185#export async function readEveryRow(`). It refuses, never
+  shortens, when the count falls mid-read
+  (`artifacts/api-server/src/lib/moderationCounts.ts:201#if (c < rows.length + r!.data.length)`).
+- `?page` and `?limit` use the house default
+  (`artifacts/api-server/src/lib/moderationCounts.ts:225#export function parseListPage(`): in adminMedia
+  (`artifacts/api-server/src/routes/adminMedia.ts:174#return parseListPage(query, 20, 100);`), in the place-image queue
+  and reports list (`artifacts/api-server/src/routes/adminPlaceImages.ts:50#parseListPage(req.query, 20, 100)`,
+  `artifacts/api-server/src/routes/adminPlaceImages.ts:130#parseListPage(req.query, 20, 100)`), and in the trust review
+  queue (`artifacts/api-server/src/routes/trust-admin.ts:120#parseListPage(req.query, 50, 100)`).
+- `has_reports` chooses the page and the total before paging
+  (`artifacts/api-server/src/routes/adminPlaceImages.ts:76#await queuePageFilteredByReports(`,
+  `artifacts/api-server/src/routes/adminPlaceImages.ts:702#async function queuePageFilteredByReports(`). It is keyed on
+  the image's (url, place) pair, as reportCount is
+  (`artifacts/api-server/src/routes/adminPlaceImages.ts:732#reported.has(`).
+- The Compass dashboard reads every row of each section it tallies
+  (`artifacts/api-server/src/routes/adminCompass.ts:115#const everyRow = (build: () => any, key: string) => readEveryRow(`).
+  `newUserExposure.count` is the exact count
+  (`artifacts/api-server/src/routes/adminCompass.ts:346#const newUserCount = exactListCount(settledCount(newUsersRes), newUserRows)`).
+  The safety-filters route measures its total and reasons over every matching log
+  (`artifacts/api-server/src/routes/adminCompass.ts:973#const every = await readEveryRow(`,
+  `artifacts/api-server/src/routes/adminCompass.ts:978#total: every.data.length`).
+- The event moderate route claims, audits, then undoes
+  (`artifacts/api-server/src/lib/eventModerationClaim.ts:90#export async function applyEventModeration(`). The claim is
+  guarded on each column it writes (`artifacts/api-server/src/lib/eventModerationClaim.ts:101#q = guard(q, c, prior[c]);`),
+  and zero rows is a conflict with nothing written
+  (`artifacts/api-server/src/lib/eventModerationClaim.ts:113#if (claimed.length === 0)`). The audit row is required
+  (`artifacts/api-server/src/lib/eventModerationClaim.ts:169#const r = await opts.writeAudit();`). The undo is guarded
+  on this request's own stamp (`artifacts/api-server/src/lib/eventModerationClaim.ts:125#.eq("updated_at", opts.now)`),
+  and it removes the activity row this request wrote
+  (`artifacts/api-server/src/lib/eventModerationClaim.ts:140#.from("event_activity_log").delete()`). The route still
+  writes both audit rows with literal bodies (`artifacts/api-server/src/routes/admin.ts:3006#writeAudit: () => sc.from("moderation_actions").insert({`).
+  It answers 409 or a named 500 (`artifacts/api-server/src/routes/admin.ts:3014#if (moveE.outcome === "conflict")`,
+  `artifacts/api-server/src/routes/admin.ts:3015#if (moveE.outcome === "failed")`).
+- Place-mismatch resolve claims the report first, guarded on the status it read
+  (`artifacts/api-server/src/routes/adminPlaceMismatch.ts:137#.eq("status", (report as any).status)`). Zero rows is a
+  409 with the post untouched (`artifacts/api-server/src/routes/adminPlaceMismatch.ts:141#if (claimed.length === 0)`).
+  A post that cannot be cleared undoes the claim, guarded on this request's stamp
+  (`artifacts/api-server/src/routes/adminPlaceMismatch.ts:155#.eq("resolved_at", now)`).
+- The trust review queue refuses an unknown status or type by name
+  (`artifacts/api-server/src/routes/trust-admin.ts:123#parseVocabularyFilter(req.query.status, "status", TRUST_REVIEW_STATUSES)`,
+  `artifacts/api-server/src/lib/moderationCounts.ts:248#export const TRUST_REVIEW_STATUSES`). The vocabularies are the
+  columns' CHECK constraints in the 2026-08-19 baseline, and no later migration alters them.
+
+**Tests.** `artifacts/api-server/src/test/adminModerationRemainingSeven.test.ts:254#describe("1. GET /admin/venues/reported`
+runs 51 cases on schemaStrictSupabase. It adds a row cap that cuts every list answer as PostgREST's max-rows does,
+while `count` stays the whole match. The suite was run red first against the 99fe25cf3 route sources, with the new lib
+code in place. 32 cases were red. Two NEW STATE cases were red too: an undo that fails, and an undo that must not
+overwrite a later write, which the old order could not reach. 10 controls and 7 units of the new readers and the new
+module were green, and every label held. 43 mutants were each applied alone, restored from a repo-relative backup and
+checked by sha256. 41 were killed (two by a test that never finished: the guards they remove are what stop a read
+from looping). The other two are equivalent: readEveryRow never answers no error with no list, so dropping that second
+check changes nothing. Three
+existing suites pinned the old shapes and were corrected. adminEventModeration pinned the fail-open as a 200. The
+postWrongPlace fake answered an awaited `.update().select()` with no rows. adminCompassAbuseFlagsWindow ran the
+dashboard on a double with no `.range`; that file is line-neutral, so its census-compass anchor holds.
+
+What this does not prove: the venue queue's old read cannot run on the double. Its `.gt("discovery_place_reports.count", 0)`
+filter is read as a column of discovery_places (42703). Whether PostgREST accepts a filter on an aggregate embed was not
+measured. So the old statement's answer is staged as PostgREST would give it under the most charitable reading. The
+double compares `null` with `eq` as equal, so the claim's `.is(col, null)` guard for a null column is not proven here.
+Nothing here ran against a live PostgREST.
+
+Rows: none move. TV-4a is graded on `moderation_reports` (§35), and none of these surfaces acts on that table. C5 reads
+the trust review queue. It stays C; its filter words are now validated as well. No row of this census grades the venue
+queue, the place-image queue, the Compass dashboard, the event moderate route's own audit row or place-mismatch resolve.
+Headline unchanged: 90 / 15 / 1 / 2 of 108.

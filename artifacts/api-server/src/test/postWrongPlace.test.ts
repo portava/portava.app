@@ -126,7 +126,7 @@ function makeFakeClient(opts: {
 
   function builder(table: string, dataset: Record<string, any>) {
     let _result: any = null;
-    let _error: any = null;
+    let _error: any = null; let _update: any = null; // wave 5: an awaited update answers the rows it UPDATED (what PostgREST answers to .update().select()), not []
     const _eqFilters: Record<string, any> = {};
 
     const b: any = {
@@ -138,7 +138,7 @@ function makeFakeClient(opts: {
       },
       update:  (data: any) => {
         capturedUpdates.push({ table, data });
-        return b;
+        _update = data; return b;
       },
       eq:      (col: string, val: any) => { _eqFilters[col] = val; return b; },
       is:      (_col: string, _val: any) => b,
@@ -155,7 +155,7 @@ function makeFakeClient(opts: {
       },
       single: () => Promise.resolve({ data: _result, error: _error }),
       then: (resolve: any) =>
-        Promise.resolve({ data: _result ? [_result] : [], error: _error, count: 0 }).then(resolve),
+        Promise.resolve({ data: _update ? ((row) => (row && Object.entries(_eqFilters).every(([k, v]) => row[k] === v) ? [{ ...row, ..._update }] : []))(dataset[_eqFilters["id"]]) : _result ? [_result] : [], error: _error, count: 0 }).then(resolve),
     };
     return b;
   }

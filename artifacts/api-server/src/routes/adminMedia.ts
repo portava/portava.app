@@ -32,7 +32,7 @@ import { sendError } from "../lib/http.js";
 import { requireAdmin } from "../lib/requireAdmin.js";
 import { resolveStoragePath } from "../lib/storagePath.js";
 import { resolveContentOwnerDetailed, type ContentOwnerOutcome } from "../lib/contentOwner.js";
-import { logModerationAction, checkContentReportLink, reportLinkColumnId } from "../lib/moderationAudit.js"; import { UNRESOLVED_REPORT_STATUSES, exactListCount, listTotalRefusal, parseLegacyReportStatusFilter } from "../lib/moderationCounts.js"; import { moveLegacyReport, LEGACY_REPORT_CLOSE_READ } from "../lib/legacyReportClose.js";
+import { logModerationAction, checkContentReportLink, reportLinkColumnId } from "../lib/moderationAudit.js"; import { UNRESOLVED_REPORT_STATUSES, exactListCount, listTotalRefusal, parseLegacyReportStatusFilter, parseListPage } from "../lib/moderationCounts.js"; import { moveLegacyReport, LEGACY_REPORT_CLOSE_READ } from "../lib/legacyReportClose.js";
 import { affectedRows } from "../lib/affectedRows.js"; import { applyCanonicalModerationDecision, type CanonicalModerationOutcome } from "../services/media/MediaModerationService.js";
 
 const router = Router();
@@ -169,9 +169,9 @@ async function fetchBounded(url: string, maxBytes: number): Promise<Buffer> {
 // ── Pagination helper ─────────────────────────────────────────────────────────
 
 function parsePagination(query: any): { page: number; limit: number; offset: number } {
-  const page  = Math.max(1, Number(query.page  ?? 1));
-  const limit = Math.min(100, Math.max(1, Number(query.limit ?? 20)));
-  return { page, limit, offset: (page - 1) * limit };
+  // wave 5: `Number("abc")` is NaN and NaN survived Math.max, so ?page=abc served `.range(NaN, NaN)` — an empty page reading as "nothing here", page: null.
+  // A page or limit that is not a positive whole number is the default (the house rule, lib/moderationCounts.ts parseListPage); `pagination` names what was served.
+  return parseListPage(query, 20, 100);
 }
 
 // ── GET /admin/media/processing-failures ─────────────────────────────────────

@@ -60,7 +60,7 @@ function world(): Seed {
 }
 
 const auth = { getUser: async (token: string) => (token === TOKEN ? { data: { user: { id: ADMIN } }, error: null } : { data: { user: null }, error: { message: "invalid" } }) };
-
+// wave 5 (2026-10-18): the dashboard now PAGES every read it tallies (`.range(from, to)` with an exact count). The double has no `.range`, so it is added here as PostgREST answers it: the page is sliced and `count` stays the whole match (Content-Range).
 let server: http.Server;
 let base: string;
 before(async () => {
@@ -80,7 +80,7 @@ after(async () => {
 
 function install(seed: Seed) {
   const strict = makeSchemaStrictClient(seed);
-  const client = { from: (t: string) => strict.from(t), auth };
+  const client = { from: (t: string) => withRange(strict.from(t)), auth }; function withRange(b: any) { let rng: [number, number] | null = null; b.range = (lo: number, hi: number) => { rng = [lo, hi]; return b; }; const t0 = b.then; b.then = (f: any, r: any) => t0((a: any) => (rng && Array.isArray(a?.data) ? { ...a, data: a.data.slice(rng[0], rng[1] + 1) } : a)).then(f, r); return b; }
   _setTestClient(client as any, true);
   _setTestServiceClient(client as any);
   return strict;
