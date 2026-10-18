@@ -7380,13 +7380,13 @@ function freeSeatHeldForQueue(ev: any): boolean {
 // promoteNextWaitlisted (the eligibility pick stays here) and POST /waitlist/accept call them when they are installed.
 //
 // INSTALLED OR NOT is established by a side-effect-free probe, never by the call that writes: each function answers
-// `no_event` for a nil event id without writing (nothing to lock), memoised per client like schemaCapability's
-// verdicts (READY_TTL_MS / ABSENT_TTL_MS):
+// `no_event` for a nil event id without writing (nothing to lock), memoised PROCESS-WIDE per database URL with
+// schemaCapability's TTLs (READY_TTL_MS / ABSENT_TTL_MS; pass 12 C2, lockedSeatMemoFor at the end of the file):
 //   ready    — the probe answered no_event: the locked call is made, and a FAILED locked call is a failure — the claim
 //              HOLDS the seat (write_failed), the accept answers 503 — never a fall-back to the unlocked statements,
 //              which could double what a call whose answer was lost had already done;
 //   missing  — PGRST202 / 42883 (3906 unapplied: production today): today's statements run, exactly as before;
-//   unknown  — any other answer, a throw, or a client without `.rpc`: today's statements run, as before the migration.
+//   unknown  — any other answer, a throw, a non-envelope, or no `.rpc`: today's statements run, as before the migration.
 //              Only a probe failed here, and a probe writes nothing, so running the unlocked path is the pre-3906
 //              behaviour, not a guess about a write.
 // A locked call that answers PGRST202 / 42883 ran nothing (the function is gone, or the schema cache is stale): the
@@ -7406,8 +7406,8 @@ function isLockedSeatFunctionAbsent(err: unknown): boolean {
 }
 
 function rememberLockedSeatVerdict(sc: any, fn: LockedSeatFunction, verdict: LockedSeatVerdict): LockedSeatVerdict {
-  let perClient = lockedSeatVerdicts.get(sc);
-  if (!perClient) { perClient = new Map(); lockedSeatVerdicts.set(sc, perClient); }
+  const perClient = lockedSeatMemoFor(sc);
+  // pass 12 C2: the verdict is kept for the database the client names, not for this client object (one request long)
   perClient.set(fn, { verdict, at: Date.now() });
   return verdict;
 }
@@ -7415,7 +7415,7 @@ function rememberLockedSeatVerdict(sc: any, fn: LockedSeatFunction, verdict: Loc
 /** Is 3906's function installed behind this client? The probe passes a nil event id: the function answers no_event and writes nothing. */
 async function lockedSeatFunctionVerdict(sc: any, fn: LockedSeatFunction): Promise<LockedSeatVerdict> {
   if (!sc || typeof sc !== "object" || typeof sc.rpc !== "function") return "unknown";
-  const memo = lockedSeatVerdicts.get(sc)?.get(fn);
+  const memo = lockedSeatMemoFor(sc).get(fn);
   if (memo && Date.now() - memo.at < (memo.verdict === "ready" ? LOCKED_SEAT_READY_TTL_MS : LOCKED_SEAT_ABSENT_TTL_MS)) return memo.verdict;
   const { data, error } = await settledLockedSeatRpc(() => fn === "claim_waitlist_seat"
     ? sc.rpc("claim_waitlist_seat", { p_event_id: LOCKED_SEAT_PROBE_ID, p_user_id: LOCKED_SEAT_PROBE_ID, p_offer_expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() })
@@ -7429,9 +7429,9 @@ async function lockedSeatFunctionVerdict(sc: any, fn: LockedSeatFunction): Promi
   return rememberLockedSeatVerdict(sc, fn, "unknown");
 }
 
-/** supabase-js RESOLVES `{ data, error }`; a client that THROWS instead (a double, a broken fetch shim) gets the same shape here, so a throw is a failed call and never an escaped exception. */
+/** supabase-js RESOLVES `{ data, error }`; a client that THROWS, or RESOLVES no envelope (a double, a broken fetch shim), gets the same shape here: a failed call, never an escaped exception (pass 12 C3). */
 async function settledLockedSeatRpc(call: () => PromiseLike<{ data: unknown; error: unknown }>): Promise<{ data: unknown; error: any }> {
-  try { return await call(); } catch (err) { return { data: null, error: err ?? new Error("rpc threw") }; }
+  try { const r: any = await call(); return r !== null && typeof r === "object" && ("data" in r || "error" in r) ? { data: r.data, error: r.error } : { data: null, error: new Error("rpc answered no { data, error } envelope") }; } catch (err) { return { data: null, error: err ?? new Error("rpc threw") }; }
 }
 
 type LockedClaim = { kind: "legacy" } | { kind: "claimed" } | { kind: "outcome"; outcome: PromoteOutcome };
@@ -7487,4 +7487,29 @@ async function acceptWaitlistSeatLocked(sc: any, eventId: string, userId: string
 function sendLockedAcceptUnconfirmed(req: any, res: any, eventId: string, err: unknown): void {
   req.log?.error?.({ err, eventId }, "waitlist accept: the locked accept failed — not confirmed either way; nothing else written");
   sendError(res, "degraded_unavailable", "We could not confirm your place just now. Please refresh the event, then try again.");
+}
+
+// ── Pass 12 C2 (independent verification, 2026-10-18): the probe's memo is process-wide ──
+//
+// It was keyed on the client object, and getServiceClient() builds a NEW client on every call (lib/supabase.ts:20, no
+// cache) and every door takes its own: in production the memo lived one request, so the probe was sent on every
+// promotion door and every accept request, not once per TTL. Every supabase-js client carries the URL it was built
+// for (`supabaseUrl`), and every client this API builds is the one service client at SUPABASE_URL (lib/supabase.ts's
+// single createClient call, pinned by handRolledAuthAccountState.test.ts), so the verdict is kept per URL for the
+// process: at most one probe per function per READY_TTL_MS / ABSENT_TTL_MS, however many requests and clients. The
+// TTLs still expire, so a press is noticed within ABSENT_TTL_MS without a restart. A client that names no URL (a test
+// double) keeps the per-object memo it always had (lockedSeatVerdicts, above).
+const lockedSeatVerdictsByUrl = new Map<string, Map<LockedSeatFunction, { verdict: LockedSeatVerdict; at: number }>>();
+
+/** The verdict memo for the database this client talks to: per URL when it names one, otherwise per client object. */
+function lockedSeatMemoFor(sc: object): Map<LockedSeatFunction, { verdict: LockedSeatVerdict; at: number }> {
+  const url = (sc as { supabaseUrl?: unknown }).supabaseUrl;
+  if (typeof url === "string" && url !== "") {
+    let byUrl = lockedSeatVerdictsByUrl.get(url);
+    if (!byUrl) { byUrl = new Map(); lockedSeatVerdictsByUrl.set(url, byUrl); }
+    return byUrl;
+  }
+  let perObject = lockedSeatVerdicts.get(sc);
+  if (!perObject) { perObject = new Map(); lockedSeatVerdicts.set(sc, perObject); }
+  return perObject;
 }

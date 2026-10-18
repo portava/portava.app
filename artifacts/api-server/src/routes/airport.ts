@@ -5310,7 +5310,7 @@ export async function overviewDisruption(sc: any, sessionId: string, userId: str
     return {
       status: "unknown",
       reason: "ledger_unreadable",
-      message: "Portava could not read its record of this flight just now, so it cannot say whether a delay or cancellation was reported.",
+      message: "Portava could not read this flight's disruption history just now, so it cannot say whether a delay or cancellation was reported.",
     };
   }
   return {

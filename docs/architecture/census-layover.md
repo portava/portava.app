@@ -12555,12 +12555,16 @@ and mutation-proved by its lane. Rule A.2 keeps every row below at W until its p
 | L257 | W | W | as L92. Every refusal on the ingest route now carries a named reason, and a rejected payload carries the validator's own detail. |
 | L207 | W | W | as recorded above, with pass 10's C10 closed: the external-event replan now cites its snapshot through the same `recordReplanDecision` the traveller's PATCH uses, inert while persistence is unpressed. |
 
-**A false "nothing reported", fixed.** `readDisruptionState` read ONE page of the newest 50 `session_updated` rows. Window
-edits write that same event type, so about 25 edits after a report pushed the report out of view, and the read said
-"nothing reported": CONNECTION, from a page boundary. It now pages back until a row carries a disruption or the history
-ends. A history longer than 2,000 rows with no disruption is stated unknown, never CONNECTION. The fix is in
-`artifacts/api-server/src/services/airport/layoverSafeReturnDisruption.ts`, in place above the cited line and with the
-helper appended. Tests: `artifacts/api-server/src/test/layoverDisruptionLedgerPaging.test.ts`, 5 cases, 3 red on the old
-code. This made L148, L149 and L231 more true; it moves no grade.
+**A false "nothing reported", fixed.** `readDisruptionState` read ONE page of the newest 50 `session_updated` rows.
+Window edits write that same event type, so about 25 edits after a report pushed the report out of view, and the read
+said "nothing reported": CONNECTION, from a page boundary. Since independent verification pass 12 (C6), it reads only
+the rows that carry a disruption, using a server-side filter (PostgREST `metadata->disruption=not.is.null`), newest
+first, in ONE read of at most 50 report rows. No number of later edits can hide a report, and there is no page boundary.
+A full page none of whose rows carries a disruption record is stated unknown, never CONNECTION (unreachable from the one
+writer). The cited line 276 is byte-identical. Tests: `artifacts/api-server/src/test/layoverDisruptionLedgerPaging.test.ts`,
+8 cases, 3 red on the old code. This made L148, L149 and L231 more true; it moves no grade.
+
+**The overview's unknown sentence** (pass 12 C5) is now the client's reviewed sentence, pinned word for word against the
+card's own fallback and checked not to be claim-shaped (`artifacts/api-server/src/test/layoverOverviewDisruptionMemory.test.ts`).
 
 Rows: none move. 296 = 81 C / 165 W / 50 N / 0 X, as the headline above.

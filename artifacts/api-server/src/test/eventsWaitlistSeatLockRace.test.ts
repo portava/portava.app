@@ -310,7 +310,7 @@ describe("B4.2 — two accepts for the last seat: one seated", () => {
     assert.deepEqual(await liveOffers(d), [], "no seat is free, so nobody is offered one");
     assert.deepEqual(await noticesTo(d), []);
     assert.equal(await stateOf(d), "waitlist");
-    assert.deepEqual(lockedCalls(d, "accept_waitlist_seat").map((c) => c.answer).sort(), ["no_seat", "seated"]);
+    assert.deepEqual(lockedCalls(d, "accept_waitlist_seat").map((c) => c.answer).sort(), ["no_seat", "seated"]); assert.equal(d.statements.filter((s) => /^SELECT .* FROM public\."event_rsvps" AS t0 WHERE "event_id" = '[^']+' AND "status" = 'going'$/.test(s)).length, 3, "three going reads: the winner's two after-steps (the event's counts, the sync) and the loser's sync — the loser's no_seat came from the lock, so today's unlocked recount (a fourth) was not sent"); // pass 12 C4
   });
 });
 
@@ -529,4 +529,139 @@ describe("B4.5 — the probe: what establishes the function, and what does not",
       assert.ok(said("warn", /the unlocked statements run, as before migration 3906/));
     });
   }
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// PASS 12 (independent verification, 2026-10-18) — C2 and C3. Appended: the lines above are counted by the census.
+//
+// C2. The probe's memo was keyed on the CLIENT OBJECT, and getServiceClient() builds a new client on every call
+// (lib/supabase.ts:20, no cache): in production the memo lived one request, so the probe was sent on every promotion
+// door and every accept, not once per TTL. The memo is now process-wide, keyed on the database the client names. These
+// cases use clients AS PRODUCTION BUILDS THEM — real supabase-js objects from getServiceClient(), each a new object —
+// with the rig's statement runner in place of their HTTP surface, one client per request.
+// C3. settledLockedSeatRpc caught a THROW but not a RESOLVED non-envelope: `.rpc` resolving undefined crashed the door
+// with a 500 after the leaver's RSVP had already been removed. A non-envelope is now a failed call, exactly as a throw.
+import { getServiceClient, isPostgrestBackedClient } from "../lib/supabase.js";
+import { READY_TTL_MS, ABSENT_TTL_MS } from "../lib/capability/schemaCapability.js";
+
+describe("pass 12 C2 — the probe's memo outlives the request: one probe per TTL, however many clients", () => {
+  const realNow = Date.now;
+  let offsetMs = 0;
+  /** Move the clock the memo reads. Each case starts hours past the last one's, so no verdict carries between cases. */
+  const clockAt = (ms: number) => { offsetMs = ms; Date.now = () => realNow.call(Date) + offsetMs; };
+  afterEach(() => { Date.now = realNow; });
+
+  /** A client exactly as getServiceClient() builds one in production (a new object per call), reading through the rig. */
+  function productionClient(d: Rig): any {
+    _setTestServiceClient(null);
+    const real: any = getServiceClient();
+    assert.ok(real && isPostgrestBackedClient(real), "built by lib/supabase.ts's createClient, as production's clients are");
+    const runner = makeClient(d.db, d);
+    real.from = runner.from; real.rpc = runner.rpc; real.auth = runner.auth;
+    return real;
+  }
+  const as = async (sc: any, method: string, path: string, who: string) => { _setTestServiceClient(sc); try { return await call(method, path, who); } finally { _setTestServiceClient(null); } };
+
+  it("PRESENT: two accepts, each through its own new client, send ONE probe; past READY_TTL_MS the next one probes again", async () => {
+    const d = current = await world({ present: true, max: 4, state: "open", going: [A1], queue: [[W1, 1, LIVE], [W2, 2, LIVE], [W3, 3, LIVE]] });
+    clockAt(10 * 60 * 60 * 1000);
+    const [c1, c2, c3] = [productionClient(d), productionClient(d), productionClient(d)];
+    assert.ok(c1 !== c2 && c2 !== c3, "getServiceClient() builds a new client on every call");
+    assert.ok(typeof c1.supabaseUrl === "string" && c1.supabaseUrl.length > 0 && c1.supabaseUrl === c2.supabaseUrl && c2.supabaseUrl === c3.supabaseUrl, "every one names the same database");
+    const r1 = await as(c1, "POST", `/events/${EV}/waitlist/accept`, "w1");
+    const r2 = await as(c2, "POST", `/events/${EV}/waitlist/accept`, "w2");
+    assert.deepEqual([r1.status, r2.status], [200, 200], `${r1.raw} ${r2.raw}`);
+    assert.equal(probes(d, "accept_waitlist_seat").length, 1, "one probe for two requests and two clients, within the TTL");
+    assert.deepEqual(lockedCalls(d, "accept_waitlist_seat").map((c) => c.answer), ["seated", "seated"], "both accepts were made under the lock");
+    clockAt(10 * 60 * 60 * 1000 + READY_TTL_MS + 1);
+    const r3 = await as(c3, "POST", `/events/${EV}/waitlist/accept`, "w3");
+    assert.equal(r3.status, 200, r3.raw);
+    assert.equal(probes(d, "accept_waitlist_seat").length, 2, "past READY_TTL_MS the verdict is re-established");
+    assert.deepEqual(await goingIds(d), [A1, W1, W2, W3].sort());
+  });
+
+  it("ABSENT, then the press: one probe for two departures through two clients; past ABSENT_TTL_MS the next one notices the press", async () => {
+    const d = current = await world({ present: false, max: 3, going: [A1, A2, W4], queue: [[W1, 1, null], [W2, 2, null], [W3, 3, null]] });
+    clockAt(20 * 60 * 60 * 1000);
+    const [c1, c2, c3] = [productionClient(d), productionClient(d), productionClient(d)];
+    assert.equal((await as(c1, "DELETE", `/events/${EV}/rsvp`, "a1")).status, 200);
+    assert.equal((await as(c2, "DELETE", `/events/${EV}/rsvp`, "a2")).status, 200);
+    await settle();
+    assert.equal(probes(d, "claim_waitlist_seat").length, 1, "one probe (42883: unapplied) for two requests and two clients");
+    assert.deepEqual(await liveOffers(d), [W1, W2], "each freed seat offered by today's statements");
+    await d.db.exec(sql3906);
+    clockAt(20 * 60 * 60 * 1000 + ABSENT_TTL_MS + 1);
+    assert.equal((await as(c3, "DELETE", `/events/${EV}/rsvp`, "w4")).status, 200);
+    await settle();
+    assert.equal(probes(d, "claim_waitlist_seat").length, 2, "past ABSENT_TTL_MS the probe is sent again");
+    assert.deepEqual(lockedCalls(d, "claim_waitlist_seat").map((c) => [c.args["p_user_id"], c.answer]), [[W3, "claimed"]], "the press was noticed: the next seat was offered under the lock");
+    assert.deepEqual(await liveOffers(d), [W1, W2, W3]);
+  });
+});
+
+describe("pass 12 C3 — a RESOLVED non-envelope is a failed call, exactly as a throw", () => {
+  /** Answer `value` (not a `{ data, error }` envelope) for the calls `which` selects; every other call reaches the database. */
+  const resolveNonEnvelope = (d: Rig, which: (fn: string, args: Record<string, unknown>) => boolean, value: unknown) => {
+    const rpc = d.client.rpc;
+    d.client.rpc = async (fn: string, args: Record<string, unknown> = {}) => (which(fn, args) ? value : rpc(fn, args));
+  };
+  for (const [label, value] of [["undefined", undefined], ["null", null]] as const) {
+    it(`UNKNOWN (a probe that RESOLVES ${label}, no envelope): today's statements run, as for the other three — not a 500 after the RSVP was removed`, async () => {
+      const d = current = await world({ present: true, going: [A1, A2], queue: [[W1, 1, null]] });
+      resolveNonEnvelope(d, (_f, a) => a["p_event_id"] === NIL, value);
+      const r = await call("DELETE", `/events/${EV}/rsvp`, "a2");
+      await settle();
+      assert.equal(r.status, 200, r.raw);
+      assert.deepEqual(await liveOffers(d), [W1]);
+      assert.equal(lockedCalls(d, "claim_waitlist_seat").length, 0);
+      assert.ok(d.statements.some((s) => /^UPDATE public\."event_waitlist" AS t0 SET "offer_expires_at" = '\d/.test(s)), "today's claim");
+      assert.ok(said("warn", /the unlocked statements run, as before migration 3906/));
+    });
+
+    it(`READY, the locked claim RESOLVES ${label}: nobody is offered, the seat is HELD, nothing unlocked is sent`, async () => {
+      const d = current = await world({ present: true, going: [A1, A2], queue: [[W1, 1, null]] });
+      resolveNonEnvelope(d, (f, a) => f === "claim_waitlist_seat" && a["p_event_id"] === EV, value);
+      const r = await call("DELETE", `/events/${EV}/rsvp`, "a2");
+      await settle();
+      assert.equal(r.status, 200, r.raw);
+      assert.equal(probes(d, "claim_waitlist_seat").length, 1, "the probe established the function");
+      assert.deepEqual(await liveOffers(d), []);
+      assert.deepEqual(await noticesTo(d), []);
+      assert.equal(await stateOf(d), "waitlist", "held: not reopened to walk-ins");
+      assert.ok(!d.statements.some((s) => /^UPDATE public\."event_waitlist" AS t0 SET "offer_expires_at" = '\d/.test(s)), "the unlocked claim was not sent");
+      assert.ok(said("warn", /the locked claim failed — seat not offered/));
+    });
+
+    it(`READY, the locked accept RESOLVES ${label}: 503 asks the person to look first; the unlocked accept is not run`, async () => {
+      const d = current = await world({ present: true, queue: [[W1, 1, LIVE]] });
+      resolveNonEnvelope(d, (f, a) => f === "accept_waitlist_seat" && a["p_event_id"] === EV, value);
+      const r = await call("POST", `/events/${EV}/waitlist/accept`, "w1");
+      await settle();
+      assert.equal(r.status, 503, r.raw);
+      assert.equal(r.body.message, "We could not confirm your place just now. Please refresh the event, then try again.");
+      assert.deepEqual(await goingIds(d), [A1]);
+      assert.deepEqual(await queue(d), [[W1, 1, "offer"]], "the offer stands");
+      assert.ok(!d.statements.some((s) => /^INSERT INTO public\."event_rsvps"/.test(s)), "the unlocked upsert was not sent");
+      assert.ok(said("error", /the locked accept failed/));
+    });
+  }
+});
+
+describe("pass 12 C4 — the locked accept's no_seat IS the answer: no unlocked recount follows it", () => {
+  const isGoingRead = (s: string) => /^SELECT .* FROM public\."event_rsvps" AS t0 WHERE "event_id" = '[^']+' AND "status" = 'going'$/.test(s);
+  it("PRESENT, one accept into a full event: the lock's no_seat is followed directly by the offer's withdrawal — no going count between", async () => {
+    // A surplus offer (as B4.2's) on a full event: max 2, going [A1, A2]. One request, so the statement order is the route's own.
+    const d = current = await world({ present: true, going: [A1, A2], queue: [[W1, 1, LIVE], [W2, 2, null]] });
+    const r = await call("POST", `/events/${EV}/waitlist/accept`, "w1");
+    await settle();
+    assert.equal(r.status, 403, r.raw);
+    assert.equal(r.body.message, SPOT_FILLED);
+    assert.deepEqual(lockedCalls(d, "accept_waitlist_seat").map((c) => c.answer), ["no_seat"]);
+    const at = d.statements.findIndex((s) => s.includes("public.accept_waitlist_seat(") && s.includes(EV));
+    const withdrawn = d.statements.findIndex((s, i) => i > at && /^UPDATE public\."event_waitlist" AS t0 SET "offer_expires_at" = NULL /.test(s) && s.includes(W1));
+    assert.ok(at >= 0 && withdrawn === at + 1, `the offer is withdrawn on the lock's answer, nothing read between:\n${d.statements.slice(at, withdrawn + 1).join("\n")}`);
+    assert.equal(d.statements.slice(0, withdrawn).filter(isGoingRead).length, 0, "no going count before the withdrawal: under 3906 the route never counts capacity itself");
+    assert.deepEqual(await queue(d), [[W1, 1, null], [W2, 2, null]], "W1 keeps their place, offer withdrawn");
+    assert.deepEqual(await goingIds(d), [A1, A2].sort());
+  });
 });

@@ -219,3 +219,26 @@ describe("L148 — `reportedBy: \"traveller\"` is true because the route is the 
     assert.match(src.slice(route, next), /source: "traveller" as const/);
   });
 });
+
+// ═══ PASS 12 C5 (independent verification, 2026-10-18) — appended: the lines above are counted ═══
+// The card shows the SERVER's sentence whenever one is sent (`said ?? default`, layoverDisruptionView.ts:175), and the
+// server always sends one. Its sentence was "could not read its record of this flight … cannot say": "record" with
+// "cannot" is exactly the pairing §30A.9's claim-shape catches (screenshotSignal.ts CAPTURE_PROTECTION_TERM /
+// COPYING_FIELD_TERM), and the guard reads client copy only — so the traveller read a sentence nobody had reviewed. The
+// server now sends the sentence the client reviewed, word for word.
+import { claimsCaptureProtection } from "../domain/telegraph/policies/screenshotSignal.js";
+
+const REVIEWED_UNREADABLE = "Portava could not read this flight's disruption history just now, so it cannot say whether a delay or cancellation was reported.";
+
+describe("pass 12 C5 — the unreadable-ledger sentence the server sends is the one the client reviewed", () => {
+  it("4b. an UNREADABLE ledger's message is the reviewed sentence, word for word, and is not claim-shaped", async () => {
+    stage({ failures: { "layover_events:select": { message: "layover_events unavailable" } } });
+    const r = await overview();
+    assert.equal(r.status, 200);
+    assert.equal(r.body.disruption.status, "unknown");
+    assert.equal(r.body.disruption.message, REVIEWED_UNREADABLE);
+    assert.equal(claimsCaptureProtection(r.body.disruption.message), false, "§30A.9: no protection word paired with a copying word");
+    const view = readFileSync(join(HERE, "..", "..", "..", "..", "travel-buddy-standalone", "src", "components", "layover", "layoverDisruptionView.ts"), "utf8");
+    assert.ok(view.split("\\'").join("'").includes(REVIEWED_UNREADABLE), "the client card's own fallback (layoverDisruptionView.ts) is the same sentence, so the two cannot drift apart");
+  });
+});
