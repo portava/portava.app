@@ -12539,3 +12539,28 @@ The event-replanner rows L90, L91, L96 and L98 ARE reachable (`handleEvent` runs
 
 Ten rows C → W under the reachability rule applied uniformly. 296 = 81 C / 165 W / 50 N / 0 X (27.4%). Of these, the press of
 3513 alone returns eight (L84–L89, L251, L252) and, with L181 and L197, ten in all.
+
+### Wave 5, layover round 2 (2026-10-18): callers for the press-ready rows, the server remembers a disruption, external events are validated and deduplicated — no row moves
+
+*Branch `claude/wave4-build-20261017`; uncommitted at this writing, committed with this section. Each change is red-first
+and mutation-proved by its lane. Rule A.2 keeps every row below at W until its press.*
+
+| id | was | now | C on |
+| --- | --- | --- | --- |
+| L148 | C | C | Unchanged grade. The phone-copy caveat is dropped: GET /airport/sessions/:id/overview now carries `disruption`, read through the same reader the disruption route uses, so a reload, or a report made on another device, shows the server's own memory. A failed read is `unknown`, never "nothing reported". The card falls back to the phone's copy only when the server's is unknown or absent, and labels it. |
+| L175 | W | W | `/safety` now certifies through `evaluate()` (`artifacts/api-server/src/services/airport/LayoverFeasibilityService.ts`), byte-identical to before in all twelve measured worlds, production's included. **Not C on the press alone:** /safety has no client caller, and §43.2 ruled that `/overview` owns the safety read. So L175 completes only when `/overview` also certifies through `evaluate`, a lead decision with costs (2–3 more reads on the dashboard's hot path, a stored answer that a stops-read 503 could leave unannounced, and the ended-session fallback). |
+| L189 | W | W | the press of 2700 → 2992 → 3792 plus `layover_decision_persistence_enabled`. GET /airport/sessions/:id/decisions/:snapshotId/explain is routed and owner-scoped, and the app calls it: `LayoverDecisionRecordCard`, which draws only when the overview says the answer was stored. Unpressed, it answers `200 { state: "unavailable", reason }` and touches no ledger table. |
+| L191 | W | W | the same press. GET /airport/sessions/:id/decisions/replay?engineVersion= is routed, and the same card calls it. |
+| L92 | W | W | the press of 2981, `layover_event_ingest_enabled` turned ON, and `LAYOVER_EVENT_PRODUCER_SECRET` provisioned. Every external event is now re-validated (`normalizeEvent` on the stored envelope; a stored key that is not the event's own stable source key is refused `dedup_key_mismatch`) and deduplicated (`dedupeEvents` now has a production caller; the first occurrence wins, and a copy reads no session) before it reaches a session (`artifacts/api-server/src/services/airport/LayoverExternalReplanPort.ts`, appended). The stable key now hashes the canonical instant, so "…Z" and "+00:00" no longer make two keys for one fact. No upstream feed produces a layover event yet. |
+| L257 | W | W | as L92. Every refusal on the ingest route now carries a named reason, and a rejected payload carries the validator's own detail. |
+| L207 | W | W | as recorded above, with pass 10's C10 closed: the external-event replan now cites its snapshot through the same `recordReplanDecision` the traveller's PATCH uses, inert while persistence is unpressed. |
+
+**A false "nothing reported", fixed.** `readDisruptionState` read ONE page of the newest 50 `session_updated` rows. Window
+edits write that same event type, so about 25 edits after a report pushed the report out of view, and the read said
+"nothing reported": CONNECTION, from a page boundary. It now pages back until a row carries a disruption or the history
+ends. A history longer than 2,000 rows with no disruption is stated unknown, never CONNECTION. The fix is in
+`artifacts/api-server/src/services/airport/layoverSafeReturnDisruption.ts`, in place above the cited line and with the
+helper appended. Tests: `artifacts/api-server/src/test/layoverDisruptionLedgerPaging.test.ts`, 5 cases, 3 red on the old
+code. This made L148, L149 and L231 more true; it moves no grade.
+
+Rows: none move. 296 = 81 C / 165 W / 50 N / 0 X, as the headline above.

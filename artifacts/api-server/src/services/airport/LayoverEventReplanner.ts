@@ -252,7 +252,7 @@ export function normalizeEvent(
     : "sha256:" + createHash("sha256")
         .update(JSON.stringify([
           eventType,
-          raw.occurredAt,
+          new Date(occurredMs).toISOString(), /* the INSTANT, not the producer's spelling of it: "…Z", "….000Z" and "+00:00" are one fact (round 2 lane B) */
           subjectRefs.map((s) => `${s.kind}:${s.ref}`),
           stableStringify(payload),
         ]))

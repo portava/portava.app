@@ -5796,8 +5796,8 @@ Tests:
 Red-first: 36 of 74 fail on the old code (the 35 new cases and HS2). 24 mutants, all killed. The builder's enumerated 33-file set (its handback): 1151 / 1151; the independent verifier's 58 registered suites: 1575 / 1575.
 
 **Still open, stated:**
-- Two passes in the same instant can each offer one person for one seat. Waitlist accept's capacity check stops a double
-  seat, but its spot-filled branch then offers the next person a seat that does not exist.
+- Two passes in the same instant can each offer one person for one seat. Waitlist accept's capacity check does NOT stop a double
+  seat (corrected 2026-10-18: two accepts in the same instant can both be seated; 3906 closes it, unapplied), and its spot-filled branch then offered the next person a seat that does not exist (closed by B3).
 - The accept route's three re-offer branches ignore the flag.
 - Join-request approvals and PATCH status `{going}` admit on the live count, without regard to a held or offered seat.
 - The sweeper sends an in-app notice, but no push.
@@ -5843,5 +5843,43 @@ Tests: `artifacts/api-server/src/test/eventsWaitlistAcceptAndHostSeat.test.ts`, 
   endorsed.
 - On an `open` event, an expired or refused offer no longer offers the next queued person (the catch-up runs only on
   full or waitlist).
+
+Rows: none move. Headline unchanged: 90 / 15 / 1 / 2 of 108.
+
+### Correction (2026-10-18, wave 5, waitlist race) — one seat, one offer, one accept, under the event row's lock (3906, unapplied)
+
+*Same branch and tree. Committed on this branch; the migration is unapplied everywhere. **NO ROW MOVES.** It closes, on
+the press, the first "Still open" bullet of both follow-up B2 and B3 for the route paths.*
+
+**The race, reproduced.** Two promotion passes in the same instant could each offer one person for one seat, and two
+accepts for the last seat could both be seated. B2's sentence that accept's capacity check stops a double seat was wrong
+under concurrency, and is corrected above. A test drives the real router on PGlite and forces the worst interleaving:
+without 3906, it gets two offers and three going in two seats.
+
+**The fix.** `artifacts/api-server/src/migrations/3906_event_waitlist_seat_under_event_lock.sql` adds two functions:
+- `claim_waitlist_seat(p_event_id, p_user_id, p_offer_expires_at)` locks the event row (`FOR NO KEY UPDATE`, which
+  serialises every update of the row but not the foreign-key lock an RSVP insert takes). It then counts going RSVPs plus
+  live offers against `max_attendees`, and only below that claims the named person's queue row.
+- `accept_waitlist_seat(p_event_id, p_user_id)` takes the same lock and seats the person only if a seat is free.
+
+Both are SECURITY INVOKER, with search_path pinned to `pg_catalog`, execute for service_role only, and they refuse to run
+outside READ COMMITTED (the house's locked-decision shape: 3415 `trail_propose`, 3977 `trail_review_decide`).
+
+`routes/events.ts` uses them only after a probe has seen them answer. A missing function (PGRST202 / 42883), or an
+unclear probe, runs today's statements unchanged. A present function whose call fails holds the seat (claim) or answers
+503 (accept), never falling back to the unlocked path, because a lost answer may already have committed. The migration
+is order-independent of the 32 files above it; the grep evidence is in the lane's handback.
+
+Tests:
+- `artifacts/api-server/src/test/eventsWaitlistSeatLockRace.test.ts` (24);
+- `artifacts/api-server/src/test/eventWaitlistSeatLockMigration.test.ts` (24);
+- `artifacts/api-server/src/test/db/eventWaitlistSeatLock.db.test.ts` (5, for CI's local-db job; its two lock-wait cases
+  need two real sessions, so CI is their first run).
+
+20 of 48 are red on the old routes, and all 24 migration cases are red with 3906 emptied. 35 mutants, all killed. The
+unapplied-schema ledger records the probe as fail-soft.
+
+**Still open:** the sweeper's own claim (lib/eventWaitlistSweeper.ts) does not take the lock. On the press, a promotion
+with no free seat stops offering anyone.
 
 Rows: none move. Headline unchanged: 90 / 15 / 1 / 2 of 108.

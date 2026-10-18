@@ -51,7 +51,7 @@ import {
   type DisruptionKind,
   type DisruptionReport,
   type RecoveryHelp,
-} from '../../services/layoverDisruption.ts';
+} from '../../services/layoverDisruption.ts'; import { chooseDisruptionView, ledgerRecordedAt, overviewDisruptionOf, serverUnknownSentence, type KnownLedgerDisruption } from './layoverDisruptionView.ts';
 
 /** §15.2's states, in a traveller's words. Anything else is shown as its own code. */
 const STATE_LABEL: Record<string, string> = {
@@ -122,15 +122,15 @@ interface Props {
   /** `YYYY-MM-DD HH:MM`, airport-local, from the server's own local times. Pre-fills the new-departure field. */
   departureLocal?: string | null;
   /** Fired after an answer that carries a transition, so the screen re-reads the overview. */
-  onReported: () => void;
+  onReported: () => void; /** census-layover L148 (round 2): the overview's `disruption` member AS SENT — the server's own memory of this flight, from any device. Preferred over this phone's copy, which is shown only when this is unknown or absent (`layoverDisruptionView.ts`). */ serverDisruption?: unknown;
 }
 
-export function LayoverDisruptionCard({ sessionId, canReport, timezone, departureLocal, onReported }: Props) {
-  const [answer, setAnswer] = useState<DisruptionAnswer | null>(null);
+export function LayoverDisruptionCard({ sessionId, canReport, timezone, departureLocal, onReported, serverDisruption }: Props) {
+  const [held, setAnswer] = useState<DisruptionAnswer | null>(null);
   /** Set when the answer on screen came from this phone's memory, not from a press. */
   const [rememberedAt, setRememberedAt] = useState<string | null>(null);
   const [notRecorded, setNotRecorded] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null); const [heldAgainst, setHeldAgainst] = useState<string | null>(null);
   const [busy, setBusy] = useState<DisruptionKind | null>(null);
   const [delayOpen, setDelayOpen] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
@@ -158,7 +158,7 @@ export function LayoverDisruptionCard({ sessionId, canReport, timezone, departur
 
   const send = useCallback(async (report: DisruptionReport) => {
     if (busy !== null) return;
-    pressed.current = true;
+    pressed.current = true; setHeldAgainst(ledgerRecordedAt(overviewDisruptionOf(serverDisruption)));
     setBusy(report.kind);
     setError(null);
     try {
@@ -187,7 +187,7 @@ export function LayoverDisruptionCard({ sessionId, canReport, timezone, departur
     } finally {
       if (mounted.current) setBusy(null);
     }
-  }, [busy, onReported, sessionId]);
+  }, [busy, onReported, sessionId, serverDisruption]);
 
   const sendMinutes = useCallback(() => {
     const raw = minutesText.trim();
@@ -208,10 +208,10 @@ export function LayoverDisruptionCard({ sessionId, canReport, timezone, departur
     void send({ kind: 'delay', newDepartureLocal: raw });
   }, [departureText, send]);
 
-  if (!canReport && !answer) return null;
+  const server = overviewDisruptionOf(serverDisruption); const view = chooseDisruptionView(server, held, held ? (rememberedAt ? 'phone' : 'press') : null, heldAgainst); const answer = view.from === 'press' || view.from === 'phone' ? view.answer : null; if (!canReport && !answer && view.from !== 'server' && !view.serverUnknown) return null;
 
-  const offered = offeredReports(answer?.state ?? null);
-  const rc = answer?.recompute ?? null;
+  const offered = offeredReports(view.from === 'server' ? view.member.state : answer?.state ?? null);
+  const rc = answer?.recompute ?? null; const recovery = answer?.recovery ?? (view.from === 'server' ? view.member.recovery : null);
 
   return (
     <View style={styles.card} testID="layover-disruption-card">
@@ -244,10 +244,10 @@ export function LayoverDisruptionCard({ sessionId, canReport, timezone, departur
               ? 'Source: your report. Portava has no flight feed.'
               : `Source: ${answer.source}.`}
           </Text>
-          {rememberedAt ? (
-            <Text style={styles.line} testID="layover-disruption-remembered">
+          {view.from === 'phone' ? (
+            <><Text style={styles.line} testID="layover-disruption-remembered">
               Your last report, saved on this phone at {fmtClock(rememberedAt, timezone)}.
-            </Text>
+            </Text>{view.serverUnknown ? <Text style={styles.line} testID="layover-disruption-server-unknown">{serverUnknownSentence(server)}</Text> : null}</>
           ) : null}
           {notRecorded ? (
             <View style={styles.caution} testID="layover-disruption-not-recorded">
@@ -255,7 +255,7 @@ export function LayoverDisruptionCard({ sessionId, canReport, timezone, departur
             </View>
           ) : null}
         </View>
-      ) : null}
+      ) : view.from === 'server' ? <ServerDisruptionStatus member={view.member} timezone={timezone} /> : view.serverUnknown ? <Text style={styles.line} testID="layover-disruption-server-unknown">{serverUnknownSentence(server)}</Text> : null}
 
       {/* L149 — the server's recompute, both sides. Nothing here subtracts. */}
       {rc ? (
@@ -286,12 +286,12 @@ export function LayoverDisruptionCard({ sessionId, canReport, timezone, departur
       ) : null}
 
       {/* L231 — the recovery posture, as the server states it. */}
-      {answer?.recovery?.recoveryNeeded ? (
+      {recovery?.recoveryNeeded ? (
         <View style={styles.status} testID="layover-disruption-recovery">
           <Text style={styles.label}>HELP WITH RECOVERY</Text>
           {HELP_ROWS.map((row) => (
             <Text key={row.key} style={styles.line} testID={`layover-disruption-help-${row.key}`}>
-              {helpSentence(row.label, answer.recovery![row.key])}
+              {helpSentence(row.label, recovery[row.key])}
             </Text>
           ))}
           <Text style={styles.line}>Rebooking happens with your airline, not in Portava.</Text>
@@ -427,3 +427,31 @@ const styles = StyleSheet.create({
   btnText:     { ...t.small, color: color.ink, fontWeight: '600' },
   btnTextPrimary: { color: color.onInk },
 });
+
+/**
+ * census-layover L148 (round 2) — the SERVER's memory of this flight, from the
+ * overview's `disruption` member. Shown on a reload (or after another device
+ * reported), in place of this phone's copy. Everything on it is the server's:
+ * the state from its ledger, the time it recorded it, who reported it.
+ * Text colours as above: `ink` / `mute` on `paper` (measured ≥ 5.27:1).
+ */
+function ServerDisruptionStatus({ member, timezone }: { member: KnownLedgerDisruption; timezone: string | null }) {
+  return (
+    <View style={styles.status} testID="layover-disruption-server-status">
+      <Text style={styles.label}>YOUR FLIGHT</Text>
+      <Text style={styles.state} testID={`layover-disruption-state-${member.state}`}>
+        {disruptionStateLabel(member.state)}
+      </Text>
+      <Text style={styles.line} testID="layover-disruption-server-recorded">
+        {member.recordedAt
+          ? `Your last report, as Portava recorded it at ${fmtClock(member.recordedAt, timezone)} — from this phone or any other.`
+          : 'Your last report, as Portava recorded it — from this phone or any other.'}
+      </Text>
+      <Text style={styles.line} testID="layover-disruption-source">
+        {member.reportedBy === 'traveller'
+          ? 'Source: your report. Portava has no flight feed.'
+          : `Source: ${member.reportedBy ?? 'not stated'}.`}
+      </Text>
+    </View>
+  );
+}

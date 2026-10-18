@@ -76,8 +76,8 @@
  *  - It passes NO live conditions. Nothing on this tree produces
  *    `LiveConditions` outside tests (census L81), so the pipeline's prior-live
  *    argument is genuinely absent rather than zero.
- *  - It does not persist a snapshot. `ReplanOutcome.snapshotPersisted` is
- *    `false` by construction; 2700 is unapplied.
+ *  - It persists and CITES a snapshot only while `layover_decision_persistence_enabled`
+ *    is ON (2700/2992/3792 unapplied: never, today) — `recordExternalReplanDecisions`, foot.
  *  - It does not notify. `shouldNotify` DECIDES and the count is reported; the
  *    delivery surface is the consumer's caller's to choose.
  */
@@ -87,13 +87,13 @@ import { airportRowToProfile, lookupByIata } from "./AirportProfileService.js";
 import type { AirportProfile } from "./AirportProfileService.js";
 import type { FeasibilityAirport } from "./LayoverFeasibility.js"; import { resolveLayoverEntry, layoverAirportCountry, type EntryEligibility } from "./layoverEntryGate.js"; import { attachConstraintContexts } from "../layover/LayoverConstraintStore.js";
 import {
-  handleEvent,
+  handleEvent, normalizeEvent, dedupeEvents,
   type HandleEventResult,
   type LayoverEventEnvelope,
   type ReplanCandidate,
   type ReplanSession,
 } from "./LayoverEventReplanner.js";
-import { candidatesFromStops } from "./LayoverReplanService.js";
+import { candidatesFromStops, recordExternalReplanDecisions, type ExternalReplanSettlement } from "./LayoverReplanService.js";
 
 const logger = rootLogger.child({ service: "LayoverExternalReplanPort" });
 
@@ -112,7 +112,7 @@ const logger = rootLogger.child({ service: "LayoverExternalReplanPort" });
  * satisfying `ReplanPort` at the wiring site and the build says so there.
  */
 export type ReplanReport =
-  | { ok: true; impacted: number; notifications: number }
+  | { ok: true; impacted: number; notifications: number; /** round 2 lane B: set only when this event was a duplicate of one already replanned (its eventId). */ duplicateOf?: string; /** Set only when persistence is ON or unreadable — absent today, so the report is unchanged. */ snapshots?: ExternalReplanSettlement[] }
   | { ok: false; reason: string };
 
 /** The one method `ReplanPort` requires, structurally. */
@@ -418,24 +418,24 @@ export function layoverExternalReplanPort(
   db: SupabaseClient,
   opts: LayoverReplanPortOptions,
 ): LayoverReplanPort {
-  const limit = opts.sessionLimit ?? DEFAULT_REPLAN_SESSION_LIMIT;
+  const limit = opts.sessionLimit ?? DEFAULT_REPLAN_SESSION_LIMIT; const admitted: LayoverEventEnvelope[] = []; /* §11.1 step 1: the events this port has let through, first occurrence wins (dedupeEvents, foot) */
   return {
     async replan(event: LayoverEventEnvelope): Promise<ReplanReport> {
-      return replanExternalEvent(db, event, { nowMs: opts.nowMs, sessionLimit: limit });
+      return replanFirstOccurrence(db, event, admitted, { nowMs: opts.nowMs, sessionLimit: limit });
     },
   };
 }
 
 /**
  * One event, replanned. Exported on its own so a route or a test can drive it
- * without a queue; the port above is a two-line adapter over it.
+ * without a queue; the port above runs §11.1 step 1's dedup first (foot), then this.
  */
 export async function replanExternalEvent(
   db: SupabaseClient,
   event: LayoverEventEnvelope,
   opts: LayoverReplanPortOptions,
 ): Promise<ReplanReport> {
-  const limit = opts.sessionLimit ?? DEFAULT_REPLAN_SESSION_LIMIT;
+  const limit = opts.sessionLimit ?? DEFAULT_REPLAN_SESSION_LIMIT; const checked = revalidateExternalEvent(event); if (!checked.ok) return checked; event = checked.event; /* §23: validated again HERE, the last door before a session, whatever wrote the row */
 
   const read = await readGroups(db, event, limit);
   if (!read.ok) return read; await attachGroupConstraints(db, read.groups); // LAY-FIX: every session certifies under its declared constraint set, as every session loader does
@@ -451,7 +451,7 @@ export async function replanExternalEvent(
   if (!stops.ok) return stops;
 
   let impacted = 0;
-  let notifications = 0;
+  let notifications = 0; const snapshots: ExternalReplanSettlement[] = [];
   for (const group of read.groups) {
     if (group.sessions.length === 0) continue;
     // census-discovery §65 — each session certifies with ITS OWNER's corridor,
@@ -472,7 +472,7 @@ export async function replanExternalEvent(
       nowMs: opts.nowMs,
     });
     impacted += result.impacted;
-    notifications += result.notifications;
+    notifications += result.notifications; const settled = await recordExternalReplanDecisions(db, result, group.owners, opts.nowMs); if (settled && !(settled.recorded === false && settled.reason === "no_snapshot_storage")) snapshots.push(settled);
   }
 
   logger.info(
@@ -483,11 +483,11 @@ export async function replanExternalEvent(
       sessionsRead: sessionIds.length,
       sessionLimitReached: read.limitReached,
       impacted,
-      notifications,
+      notifications, snapshots: snapshots.length > 0 ? snapshots : undefined,
     },
     "layover external event replanned",
   );
-  return { ok: true, impacted, notifications };
+  return snapshots.length > 0 ? { ok: true, impacted, notifications, snapshots } : { ok: true, impacted, notifications };
 }
 
 /**
@@ -526,4 +526,100 @@ async function attachGroupConstraints(db: SupabaseClient, groups: AirportGroup[]
     // `undefined` is both flags off: no key at all, exactly like a loaded session.
     if (constraints !== undefined) s.session = { ...s.session, constraints };
   }
+}
+
+// ── census L92 / L257 (layover round 2, lane B): §11.1 step 1 at the LAST door ─
+//
+// "Validate all external event payloads and deduplicate by stable source keys"
+// (§23). The ingest (`routes/layoverEvents.ts` → `ingestExternalEvent`) already
+// validates through `normalizeEvent` and lets 2860's UNIQUE index on `dedup_key`
+// refuse a second copy of a fact. Neither of those is the door a session sits
+// behind. This is: every external event reaches a session through this port, so
+// both halves of step 1 run HERE, on the envelope the consumer claimed, before
+// a single session row is read:
+//
+//   VALIDATE. `normalizeEvent` again, on the stored members. A row this code did
+//   not write — a manual INSERT, a backfill, an older build — is held to the same
+//   eleven-type vocabulary and per-type payload validators as a fresh POST. And
+//   the stable key is RE-DERIVED and must equal the stored one
+//   (`dedup_key_mismatch` otherwise): a row whose key is not its own stable
+//   source key would slip past the index that dedupes on it.
+//
+//   DEDUPLICATE. `dedupeEvents` — the replanner's own step-1 function, which until
+//   now had no caller outside tests — over the events this port has already let
+//   through. First occurrence wins; a later copy reads NO session and reports
+//   `{ ok: true, impacted: 0, notifications: 0, duplicateOf }`. A duplicate is a
+//   success that changes nothing (§24), not a failure: reporting it as one would
+//   put a stale-plan warning on an event that was replanned once, correctly.
+//
+// WHAT THE IN-MEMORY HALF COVERS, AND WHAT IT DOES NOT. The port lives for one
+// drain pass (the scheduler builds one per pass), so its memory is that pass.
+// Across passes, replicas and restarts the guarantee is the index, and the
+// mismatch refusal above is what makes the index sufficient: two rows can only
+// share a stable key if they share a stored key, which the index forbids.
+//
+// NOT GATED HERE. The port is reached only through `runLayoverExternalEventDrain`,
+// which reads `layover_event_ingest_enabled` (2981 unapplied) before anything
+// else; with it off or absent no event is read, so nothing here runs.
+
+/** Oldest first; bounded so a port someone keeps beyond one pass cannot grow without limit. */
+export const EXTERNAL_DEDUP_MEMORY = 5_000;
+
+export type ExternalEventCheck = { ok: true; event: LayoverEventEnvelope } | Refusal;
+
+/**
+ * Step 1, validate half, on an envelope that came out of the store.
+ *
+ * Judged at the envelope's OWN `receivedAt` — the instant the ingest bounded
+ * `occurredAt` by — so a stored event is not re-judged against a later clock,
+ * and this file still reads none. The result is the canonical envelope
+ * `normalizeEvent` mints, which is what every later step sees.
+ */
+export function revalidateExternalEvent(event: LayoverEventEnvelope): ExternalEventCheck {
+  const receivedAtMs = Date.parse(event.receivedAt);
+  if (!Number.isFinite(receivedAtMs)) return refuse(`event_invalid: bad_received_at: ${String(event.receivedAt)}`);
+  const n = normalizeEvent(
+    {
+      eventId: event.eventId,
+      eventType: event.eventType,
+      occurredAt: event.occurredAt,
+      source: event.source,
+      sourceEventId: event.sourceEventId,
+      subjectRefs: event.subjectRefs,
+      payload: event.payload,
+      confidence: event.confidence,
+    },
+    { receivedAtMs },
+  );
+  if (!n.ok) return refuse(`event_invalid: ${n.reason}: ${n.detail}`);
+  if (n.event.dedupKey !== event.dedupKey) {
+    return refuse(`dedup_key_mismatch: stored ${event.dedupKey} is not this event's stable source key ${n.event.dedupKey}`);
+  }
+  return { ok: true, event: n.event };
+}
+
+/** The port's `replan`: validate, then let only the first occurrence of a stable key through. */
+async function replanFirstOccurrence(
+  db: SupabaseClient,
+  event: LayoverEventEnvelope,
+  admitted: LayoverEventEnvelope[],
+  opts: LayoverReplanPortOptions,
+): Promise<ReplanReport> {
+  const checked = revalidateExternalEvent(event);
+  if (!checked.ok) {
+    logger.warn({ eventId: event.eventId, reason: checked.reason }, "external event refused at step 1 — no session read");
+    return checked;
+  }
+  const { dropped } = dedupeEvents([...admitted, checked.event]);
+  if (dropped.length > 0) {
+    const first = admitted.find((e) => e.dedupKey === checked.event.dedupKey);
+    logger.info(
+      { eventId: event.eventId, dedupKey: checked.event.dedupKey, duplicateOf: first?.eventId },
+      "duplicate external event — its first occurrence was already replanned; no session read",
+    );
+    return { ok: true, impacted: 0, notifications: 0, duplicateOf: first?.eventId ?? checked.event.dedupKey };
+  }
+  admitted.push(checked.event);
+  if (admitted.length > EXTERNAL_DEDUP_MEMORY) admitted.shift();
+  return replanExternalEvent(db, checked.event, opts);
 }

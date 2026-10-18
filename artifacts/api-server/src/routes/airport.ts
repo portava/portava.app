@@ -1086,7 +1086,7 @@ router.get("/airport/sessions/:id/safety", async (req, res) => {
   // journey in it, against the same certified deadline as everything else in
   // this response. Its bands are `adviseLeaving`'s own, so `overallRating` and
   // `advice.verdict` below cannot contradict each other.
-  const record = (await consumerLayoverRecord(sc, airport, session, Date.now())) ?? certifySessionFeasibility(airport, session, {
+  const ev = await evaluateLayoverFeasibility(sc, user.id, session.id); if (!ev.ok && ev.reason !== "session_ended") { feasibilityRefusal(res, ev.reason); return; } const record = ev.ok ? ev.record : (await consumerLayoverRecord(sc, airport, session, Date.now())) ?? certifySessionFeasibility(airport, session, {
     nowMs: Date.now(),
     entry: await sessionEntry(sc, airport, session),
   });
@@ -1095,8 +1095,8 @@ router.get("/airport/sessions/:id/safety", async (req, res) => {
   // ── §20 — RECORD WHAT THIS TRAVELLER WAS TOLD ──────────────────────────────
   // This is the one handler that publishes the session's overall certified
   // answer, so it is where the answer is written down. No second certification
-  // happens here: `persistDecision` takes the record above and stores it.
-  //
+  // happens here: census L175's `evaluate()` (LayoverFeasibilityService) certified the record above and stored it.
+  // An ENDED session is certified the same way and never stored (`evaluate` refuses it): `endedSessionPersisted`.
   // It is a SIDE EFFECT AND MUST NOT BE ABLE TO FAIL THE RESPONSE. A traveller
   // asking whether they can leave the airport must get the answer even when the
   // ledger is unwritable — the deadline is the safety-critical output and the
@@ -1106,7 +1106,7 @@ router.get("/airport/sessions/:id/safety", async (req, res) => {
   // `persisted` is deliberately three-valued on the wire. "stored", "off" and
   // "could not store" are different facts, and a client that showed the same
   // thing for all three would be making the §23.1 mistake one layer up.
-  const persisted = await persistDecision(sc, user.id, session.id, record);
+  const persisted = ev.ok ? persistedWire(ev.storage) : await endedSessionPersisted(sc); // §20: the persistDecision call is evaluate()'s now (services/airport/LayoverFeasibilityService.ts, storeEvaluation)
   const snapshotId = snapshotIdFor(session.id, record.inputHash);
 
   res.json({
@@ -1151,9 +1151,9 @@ router.get("/airport/sessions/:id/safety", async (req, res) => {
     // function of (sessionId, inputHash) and is well-defined either way, and
     // `persisted` below says whether anything can resolve it.
     snapshotId,
-    persisted: persisted.ok
-      ? { state: persisted.state, unwritten: persisted.unwritten }
-      : { state: "not_stored" as const, reason: persisted.reason },
+    persisted,
+    // ↑ census L175: the ledger outcome `evaluate()` reported, in the SAME three-valued shape as before — `{ state, unwritten }`
+    //   when stored, `{ state: "not_stored", reason }` otherwise (`persistedWire`, foot of this file).
     estimates:     record.estimates,
     // §2.1 "degrades VISIBLY" / §22 "do not imply equivalent intelligence
     // globally" — census L9 and L250. `estimates` above has carried the
@@ -2291,7 +2291,7 @@ router.get("/airport/sessions/:id/overview", async (req, res) => {
     // posture the client should take now, and a bundle that carries its own
     // certifiedAt/staleAfter/inputHash so an offline client can say how old its
     // answer is instead of presenting a stale deadline as current.
-    safeReturn: safeReturnPosture(record), crewAbortNotice: await crewAbortNoticeCapability(sc, user.id, session.id, nowMs, session.tripId ?? null), // census-layover L144: whether "tell my crew" may be OFFERED at the abort (flag + a live crew joined with this session)
+    safeReturn: safeReturnPosture(record), crewAbortNotice: await crewAbortNoticeCapability(sc, user.id, session.id, nowMs, session.tripId ?? null), disruption: await overviewDisruption(sc, session.id, user.id), // census-layover L144: whether "tell my crew" may be OFFERED at the abort (flag + a live crew joined with this session); L148 (round 2): `disruption` is the SERVER's §15.2 memory from the ledger POST /:id/disruption writes, `unknown` when unreadable (foot of this file)
     // §8 — the same outer edge, from the same certified window. The dashboard's
     // copy: a traveller who sees fewer landside cards than a city has places
     // can read the bound that removed them.
@@ -5202,3 +5202,223 @@ export function buddyOffersVisaOrEntryHelp(row: { categories?: unknown; display_
   }
   return false;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LAYOVER ROUND 2, LANE A — census-layover L175, L189, L191 and L148's reload
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Registered at the TAIL so no cited line above moves; ESM hoists the imports.
+
+import {
+  evaluate as evaluateLayoverFeasibility,
+  type EvaluationStorage,
+  type FeasibilityEvaluationRefusal,
+} from "../services/airport/LayoverFeasibilityService.js";
+import { readFlagState } from "../lib/capability/schemaCapability.js";
+import { explainSnapshot, replaySessionDecisions } from "../services/layover/LayoverDecisionService.js";
+
+// ── L175 — GET /:id/safety asks `evaluate()` ─────────────────────────────────
+//
+// `LayoverFeasibilityService.evaluate(sessionId)` is the spec's §18 entry point:
+// read the owned session, resolve its airport, certify through the house's one
+// derivation and store the certified evaluation when the ledger is switched on.
+// `/safety` used to do those steps inline; it now asks the service and publishes
+// what it answered. The handler still reads the session and airport first,
+// because its 404/503 sentences and `publishedSafeEnvelope(airport, …)` are its
+// own; a refusal `evaluate` reaches on its own second read is answered with the
+// SAME sentence the first read would have given.
+//
+// THE ONE PATH `evaluate` DOES NOT TAKE: an ENDED session. It refuses one before
+// any write ("a ledger row about a layover that is over is a row about
+// nothing"), and `/safety` has always answered one. So an ended session is
+// certified by the same one-line derivation and never stored; `persisted` says
+// why in the words it used before wherever the flag is off.
+
+/** `evaluate`'s refusals, answered exactly as `ownedSessionOr` / `airportOr503` answer them. */
+function feasibilityRefusal(res: any, reason: FeasibilityEvaluationRefusal): void {
+  if (reason === "not_found") { sendError(res, "not_found", "Session not found"); return; }
+  if (reason === "airport_unreadable") {
+    sendError(res, "degraded_unavailable", "Your airport's timings could not be loaded. Please try again.");
+    return;
+  }
+  sendError(res, "degraded_unavailable", "Your layover could not be loaded. Please try again.");
+}
+
+/** `/safety`'s three-valued `persisted` member, unchanged in shape. */
+type SafetyPersisted =
+  | { state: Extract<EvaluationStorage, { stored: true }>["state"]; unwritten: Array<"time_budget" | "return_plan"> }
+  | { state: "not_stored"; reason: string };
+
+/** `evaluate`'s ledger outcome on the wire — the same keys, in the same order, as the inline write published. */
+export function persistedWire(storage: EvaluationStorage): SafetyPersisted {
+  return storage.stored
+    ? { state: storage.state, unwritten: storage.unwritten }
+    : { state: "not_stored", reason: storage.reason };
+}
+
+/**
+ * An ENDED session is never stored. Where the ledger is off — production today —
+ * that is said exactly as before (`persistence_disabled`); an unreadable flag is
+ * `flag_unreadable`, never "off"; with the ledger on, `session_ended`.
+ */
+export async function endedSessionPersisted(sc: any): Promise<SafetyPersisted> {
+  const flag = await readFlagState(sc, "layover_decision_persistence_enabled");
+  if (flag === "unreadable") return { state: "not_stored", reason: "flag_unreadable" };
+  if (flag !== "on") return { state: "not_stored", reason: "persistence_disabled" };
+  return { state: "not_stored", reason: "session_ended" };
+}
+
+// ── L148 (round 2) — the overview publishes the SERVER's disruption memory ────
+//
+// POST /:id/disruption records every transition on `layover_events` and reads
+// it back as the prior state of the next report — but no read published it, so
+// after a reload the layover screen could only show this phone's copy of the
+// last answer it saw, and never a report made from another device. The overview
+// now carries the ledger's state through the SAME reader the route remembers
+// with (`readDisruptionState`), so the two cannot disagree.
+//
+// A FAILED READ IS `unknown`, NEVER "no disruption". `default` (nothing was ever
+// reported) and `unknown` (the ledger could not be read) are different facts;
+// collapsing the second into the first is how a cancelled flight would come back
+// on the screen as an on-time one. The overview itself still answers: the
+// disruption memory is not worth the traveller's deadline.
+
+export type OverviewDisruption =
+  | {
+      status: "known";
+      state: DisruptionState;
+      /** `ledger` = a recorded report; `default` = none was ever recorded. */
+      source: "ledger" | "default";
+      /**
+       * Who made the recorded report. The ledger's only writer is POST
+       * /:id/disruption, whose source is the traveller (pinned by
+       * src/test/layoverOverviewDisruptionMemory.test.ts) — so a recorded row is
+       * the traveller's report, from whichever device.
+       */
+      reportedBy: "traveller" | null;
+      /** The ledger row's own time. */
+      recordedAt: string | null;
+      baselineDepartureTime: string | null;
+      /** §15 L145's honest posture for that state, as POST /:id/disruption publishes it. */
+      recovery: ReturnType<typeof recoveryPosture>;
+    }
+  | { status: "unknown"; reason: "ledger_unreadable"; message: string };
+
+export async function overviewDisruption(sc: any, sessionId: string, userId: string): Promise<OverviewDisruption> {
+  const read = await readDisruptionState(sc, sessionId, userId);
+  if (!read.ok) {
+    return {
+      status: "unknown",
+      reason: "ledger_unreadable",
+      message: "Portava could not read its record of this flight just now, so it cannot say whether a delay or cancellation was reported.",
+    };
+  }
+  return {
+    status: "known",
+    state: read.state,
+    source: read.source,
+    reportedBy: read.source === "ledger" ? "traveller" : null,
+    recordedAt: read.recordedAt,
+    baselineDepartureTime: read.baselineDepartureTime,
+    recovery: recoveryPosture(read.state),
+  };
+}
+
+// ── L189 / L191 — explain one stored snapshot; replay a session's stored decisions ──
+//
+// Beside the L190 diff route, with its ownership boundary (the caller's own
+// session; another session's snapshot is 404 exactly like a missing one) and its
+// refusal to read anything while the ledger is unpressed. Production today:
+// `layover_decision_persistence_enabled` is absent and 2700/2992/3792 are
+// unapplied, so both answer a NAMED refusal and read nothing:
+//
+//   feature_disabled     the flag is off or absent          (retryable: false)
+//   flag_unreadable      the flag could not be read          (retryable: true)
+//   storage_unavailable  the flag is on, the tables are not  (retryable: false)
+//
+// as `200 { state: "unavailable", reason }` — the same "a state, not a failure"
+// shape `/safety`'s `persisted` uses. Never a throw, never a fabricated
+// explanation or an empty "nothing mismatched" replay. A read that FAILS is 503.
+
+/** The ledger's three named refusals, on the wire. `persistence_disabled` is the service's name for `feature_disabled`. */
+function ledgerUnavailable(reason: "persistence_disabled" | "flag_unreadable" | "storage_unavailable") {
+  return {
+    featureEnabled: true,
+    state: "unavailable" as const,
+    reason: reason === "persistence_disabled" ? ("feature_disabled" as const) : reason,
+    retryable: reason === "flag_unreadable",
+  };
+}
+
+const DECISION_HISTORY_UNREADABLE = "Your layover's decision history could not be read. Please try again.";
+
+router.get("/airport/sessions/:id/decisions/:snapshotId/explain", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+  if (!await isFlagEnabled(sc, "airport_mode_enabled")) { res.json({ featureEnabled: false }); return; }
+
+  const snapshotId = String(req.params.snapshotId ?? "");
+  if (!SNAPSHOT_ID_RE.test(snapshotId)) { sendError(res, "invalid_payload", "snapshotId must be a snapshot id."); return; }
+
+  const session = await ownedSessionOr(res, sc, req.params.id, auth.user.id);
+  if (!session) return;
+
+  const out = await explainSnapshot(sc, session.id, snapshotId);
+  if (out.ok) { res.json({ featureEnabled: true, state: "explained", explanation: out.explanation }); return; }
+  switch (out.reason) {
+    case "persistence_disabled":
+    case "flag_unreadable":
+    case "storage_unavailable":
+      res.json(ledgerUnavailable(out.reason));
+      return;
+    case "not_found":
+      sendError(res, "not_found", "Snapshot not found");
+      return;
+    case "replay_mismatch":
+    case "not_replayable":
+      // A stored row exists and it does not reproduce from its own inputs (or was
+      // made by other arithmetic). That is an answer about the record, not an outage.
+      res.json({ featureEnabled: true, state: "not_explained", reason: out.reason, detail: out.detail });
+      return;
+    default:
+      sendError(res, "degraded_unavailable", DECISION_HISTORY_UNREADABLE);
+  }
+});
+
+/** An engine version as `LAYOVER_ENGINE_VERSION` spells one (`2026.09.22-1`). Bounded, so nothing odd reaches a filter. */
+const ENGINE_VERSION_RE = /^[0-9A-Za-z][0-9A-Za-z._-]{0,63}$/;
+
+router.get("/airport/sessions/:id/decisions/replay", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+  if (!await isFlagEnabled(sc, "airport_mode_enabled")) { res.json({ featureEnabled: false }); return; }
+
+  const engineVersion = typeof req.query.engineVersion === "string" ? req.query.engineVersion : "";
+  if (!ENGINE_VERSION_RE.test(engineVersion)) { sendError(res, "invalid_payload", "engineVersion must name an engine version."); return; }
+
+  const session = await ownedSessionOr(res, sc, req.params.id, auth.user.id);
+  if (!session) return;
+
+  const out = await replaySessionDecisions(sc, session.id, engineVersion);
+  if (out.ok) {
+    res.json({ featureEnabled: true, state: "replayed", engineVersion: out.engineVersion, summary: out.summary, truncated: out.truncated });
+    return;
+  }
+  switch (out.reason) {
+    case "persistence_disabled":
+    case "flag_unreadable":
+    case "storage_unavailable":
+      res.json(ledgerUnavailable(out.reason));
+      return;
+    case "engine_version_not_running":
+      // This tree runs one engine; "what would another engine say" is L241's decision diff, not a replay.
+      res.json({ featureEnabled: true, state: "not_replayed", reason: out.reason, runningEngineVersion: out.runningEngineVersion });
+      return;
+    default:
+      sendError(res, "degraded_unavailable", DECISION_HISTORY_UNREADABLE);
+  }
+});

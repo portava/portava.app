@@ -854,7 +854,7 @@ export default function LayoverDashboardScreen() {
           window={win}
           airport={airport}
           airportIntelligence={overview.airportIntelligence ?? null}
-        /><LayoverConstraintsCard sessionId={session.id} canEdit={!!canEdit} refreshKey={dataEpoch} onChanged={() => load(true)} creationNotice={typeof constraintsAtStart === 'string' ? constraintsAtStart : null} />{/* §4/§5/§12.1 (census L22, L35, L49): the declared bags and connection, and the one question when the answer could change the verdict. */}
+        /><LayoverDecisionRecordCard sessionId={session.id} snapshotId={overview.snapshotId} persisted={overview.persisted} engineVersion={overview.certification?.engineVersion ?? advice.engineVersion ?? null} timezone={airport.timezone} /><LayoverConstraintsCard sessionId={session.id} canEdit={!!canEdit} refreshKey={dataEpoch} onChanged={() => load(true)} creationNotice={typeof constraintsAtStart === 'string' ? constraintsAtStart : null} />{/* §4/§5/§12.1 (census L22, L35, L49): the declared bags and connection, and the one question when the answer could change the verdict. */}
         {/* The one §11 event producer this tree has: the traveller. A flight
             time the gate agent just announced is a fact no feed here carries,
             and the server runs the whole §11.1 pipeline over it. */}
@@ -863,7 +863,7 @@ export default function LayoverDashboardScreen() {
           canEdit={!!canEdit}
           onChanged={() => load(true)}
           onError={showToast}
-        /><LayoverDisruptionCard sessionId={session.id} canReport={session.status === 'active' || session.status === 'returning'} timezone={airport.timezone} departureLocal={localTimes?.departureDay && localTimes?.departureLocal ? `${localTimes.departureDay} ${localTimes.departureLocal}` : null} onReported={() => load(true)} />{/* census-layover L148/L149/L231 — §15.2: the traveller reports a delay or cancellation; the card shows the server's state and recompute, and the screen re-reads */}
+        /><LayoverDisruptionCard sessionId={session.id} canReport={session.status === 'active' || session.status === 'returning'} timezone={airport.timezone} departureLocal={localTimes?.departureDay && localTimes?.departureLocal ? `${localTimes.departureDay} ${localTimes.departureLocal}` : null} onReported={() => load(true)} serverDisruption={overview.disruption} />{/* census-layover L148/L149/L231 — §15.2: the traveller reports a delay or cancellation; the card shows the server's state and recompute, and the screen re-reads */}
         <AirportEssentialsCard countryCode={airport.countryCode} countryName={airport.country !== 'Unknown' ? airport.country : undefined} />
 
         {/* §10 L82 — the traveller observation channel's submission surface.
@@ -1183,3 +1183,5 @@ const styles = StyleSheet.create({
 import { layoverPostcardOffered, layoverPostcardHref } from '../../src/components/layover/layoverPostcard';
 // census-layover L148/L149/L231 — §15.2 disruption reporting. Imported at the TAIL so no cited line moves; ESM hoists imports.
 import { LayoverDisruptionCard } from '../../src/components/layover/LayoverDisruptionCard';
+// census-layover L189/L191 — Portava's stored record of the answer, explained and re-checked. Imported at the TAIL so no cited line moves; ESM hoists imports.
+import { LayoverDecisionRecordCard } from '../../src/components/layover/LayoverDecisionRecordCard';

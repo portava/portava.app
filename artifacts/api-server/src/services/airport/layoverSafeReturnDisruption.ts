@@ -118,14 +118,14 @@ export async function readDisruptionState(
   sessionId: string,
   userId: string,
 ): Promise<DisruptionStateRead> {
-  const { data, error } = await db
-    .from("layover_events")
-    .select("metadata, created_at, event_type")
-    .eq("session_id", sessionId)
-    .eq("user_id", userId)
-    .eq("event_type", DISRUPTION_LEDGER_EVENT_TYPE)
-    .order("created_at", { ascending: false })
-    .limit(DISRUPTION_LEDGER_SCAN_LIMIT);
+  const { data, error, exhausted } = await readDisruptionLedgerRows(db, sessionId, userId);
+  // Round 2 (layover lane A's finding): this read was ONE page of the newest DISRUPTION_LEDGER_SCAN_LIMIT
+  // `session_updated` rows. Window edits write that same event type, so about 25 edits after a report pushed
+  // the report out of view and the read said "nothing reported": a CONNECTION from a page boundary. It now
+  // pages back (readDisruptionLedgerRows, appended) until a row carries a disruption or the history ends;
+  // a history longer than DISRUPTION_LEDGER_MAX_PAGES pages is stated unknown, never CONNECTION.
+  // Ties on created_at at a page boundary are not re-read: the ledger's timestamps are per-statement.
+  // (The scan, its order and its filters are otherwise unchanged.)
 
   if (error) {
     logger.warn(
@@ -158,7 +158,7 @@ export async function readDisruptionState(
     };
   }
 
-  return { ok: true, state: "CONNECTION", baselineDepartureTime: null, source: "default", recordedAt: null };
+  if (exhausted) { logger.warn({ sessionId, pages: DISRUPTION_LEDGER_MAX_PAGES }, "layover disruption ledger longer than the scan bound with no disruption found — refusing rather than assuming CONNECTION"); return { ok: false, message: "layover disruption history is longer than the scan bound; the state cannot be established" }; } return { ok: true, state: "CONNECTION", baselineDepartureTime: null, source: "default", recordedAt: null };
 }
 
 export type DisruptionWrite = { ok: true; entry: DisruptionLedgerEntry } | { ok: false; message: string };
@@ -284,4 +284,42 @@ export function recoveryPosture(state: DisruptionState): RecoveryPosture {
     airlineContact: { available: false, reason: "no_airline_directory" },
     airportHelp: { available: false, reason: "no_airport_help_directory" },
   };
+}
+
+// ═══ Round 2: the disruption ledger is paged, so later window edits cannot hide a report ═══
+/** Pages read before the history is stated unknown: 40 × DISRUPTION_LEDGER_SCAN_LIMIT = 2,000 `session_updated` rows. */
+export const DISRUPTION_LEDGER_MAX_PAGES = 40;
+
+/**
+ * The `session_updated` rows of one session, newest first, read page by page until a page holds a row carrying
+ * `metadata.disruption`, a page comes back short (the history has ended), or DISRUPTION_LEDGER_MAX_PAGES pages have
+ * been read (`exhausted`: the caller states the state unknown). Each further page continues strictly before the
+ * oldest row already read. A failed page is the read's error, exactly as the single read's was.
+ */
+async function readDisruptionLedgerRows(
+  db: SupabaseClient,
+  sessionId: string,
+  userId: string,
+): Promise<{ data: unknown[] | null; error: any; exhausted: boolean }> {
+  const rows: unknown[] = [];
+  let before: string | null = null;
+  for (let page = 0; page < DISRUPTION_LEDGER_MAX_PAGES; page++) {
+    let q: any = db
+      .from("layover_events")
+      .select("metadata, created_at, event_type")
+      .eq("session_id", sessionId)
+      .eq("user_id", userId)
+      .eq("event_type", DISRUPTION_LEDGER_EVENT_TYPE);
+    if (before !== null) q = q.lt("created_at", before);
+    const { data, error } = await q.order("created_at", { ascending: false }).limit(DISRUPTION_LEDGER_SCAN_LIMIT);
+    if (error) return { data: null, error, exhausted: false };
+    const got: unknown[] = Array.isArray(data) ? data : [];
+    rows.push(...got);
+    if (got.some((r: any) => r?.metadata?.disruption && typeof r.metadata.disruption === "object")) return { data: rows, error: null, exhausted: false };
+    if (got.length < DISRUPTION_LEDGER_SCAN_LIMIT) return { data: rows, error: null, exhausted: false };
+    const oldest = (got[got.length - 1] as any)?.created_at;
+    if (typeof oldest !== "string") return { data: rows, error: null, exhausted: true };
+    before = oldest;
+  }
+  return { data: rows, error: null, exhausted: true };
 }

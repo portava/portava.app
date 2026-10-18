@@ -627,8 +627,8 @@ async function promoteNextWaitlisted(sc: any, eventId: string, req?: any): Promi
   const pick = await pickEligibleWaitlisted(sc, eventId, (next as any) ?? null, req); if (pick.outcome !== "eligible") return pick;  // census-trust §30.6: the offer goes to the first ELIGIBLE user in queue order
 
   const userId = pick.userId;
-  const offerExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-  const { data: claimed, error: updErr } = await sc
+  const offerExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(); const lockedClaim = await claimWaitlistSeatLocked(sc, eventId, userId, offerExpiresAt, req); if (lockedClaim.kind === "outcome") return lockedClaim.outcome; // wave 5 follow-up B4: under 3906 the claim is made under the event lock, only while a seat is free (claimWaitlistSeatLocked, end of file); absent, the UPDATE below runs as before
+  const { data: claimed, error: updErr } = lockedClaim.kind === "claimed" ? { data: [{ user_id: userId }], error: null as any } : await sc
     .from("event_waitlist")
     .update({ offer_expires_at: offerExpiresAt })
     .eq("event_id", eventId)
@@ -3331,9 +3331,9 @@ router.post("/events/:id/waitlist/accept", async (req, res) => {
     sendError(res, "forbidden", acceptVis.message); return;
   }
   const accElig = await checkEventEligibility(sc, evCapCheck as any, user.id); if (!accElig.ok) { sendEligibilityRefusal(req, res, id, accElig); return; } const maxAtt = (evCapCheck as any)?.max_attendees ?? null;  // census-trust §30.6: the join gate re-runs at accept; a refusal writes nothing
-  if (maxAtt != null) {
-    const currentGoing = await getGoingCount(sc, id); if (currentGoing === null) { sendCapacityUnavailable(req, res, id, "waitlist:accept"); return; }  // census-trust §30.8: the row and its offer are left as they are
-    if (currentGoing >= maxAtt) {
+  const lockedAccept = await acceptWaitlistSeatLocked(sc, id, user.id, req, res); if (lockedAccept === "answered") return; if (lockedAccept === "no_seat" || (maxAtt != null && lockedAccept === "legacy")) { // wave 5 follow-up B4: under 3906 the seat is checked and taken under the event lock (acceptWaitlistSeatLocked, end of file); absent, today's count below
+    const currentGoing = lockedAccept === "no_seat" ? null : await getGoingCount(sc, id); if (currentGoing === null && lockedAccept !== "no_seat") { sendCapacityUnavailable(req, res, id, "waitlist:accept"); return; }  // census-trust §30.8: the row and its offer are left as they are
+    if (lockedAccept === "no_seat" || (currentGoing !== null && currentGoing >= maxAtt)) {
       // Slot was taken — withdraw this offer (they keep their place in the queue); no seat is free, so nobody is offered one
       const { error: unofferErr } = await sc.from("event_waitlist").update({ offer_expires_at: null }).eq("event_id", id).eq("user_id", user.id); if (unofferErr) { sendSpotFilledOfferStands(req, res, id, unofferErr); return; }
       await syncEventState(sc, id); // wave 5 follow-up B3: was promoteNextWaitlisted — the accepter keeps their place, so the head it found was usually the accepter: a fresh offer and notice each time, a loop. The sync offers only a seat that is really free
@@ -3342,13 +3342,13 @@ router.post("/events/:id/waitlist/accept", async (req, res) => {
   }
 
   // Accept: create Going RSVP and remove from waitlist
-  const { error: rsvpErr } = await sc.from("event_rsvps").upsert(
+  const { error: rsvpErr } = lockedAccept === "seated" ? { error: null as any } : await sc.from("event_rsvps").upsert(
     { event_id: id, user_id: user.id, status: "going", updated_at: new Date().toISOString() },
     { onConflict: "event_id,user_id" },
   );
   if (rsvpErr) { req.log.error({ err: rsvpErr }, "waitlist accept rsvp"); sendError(res, "db_error", rsvpErr.message); return; }
 
-  await sc.from("event_waitlist").delete().eq("event_id", id).eq("user_id", user.id);
+  if (lockedAccept !== "seated") await sc.from("event_waitlist").delete().eq("event_id", id).eq("user_id", user.id); // wave 5 follow-up B4: the locked accept deleted the queue row together with the RSVP
   await syncEventState(sc, id);
   const goingNow = await getGoingCount(sc, id);
   const { data: wlAfterAccept, error: wlAfterAcceptErr } = await sc.from("event_waitlist").select("user_id").eq("event_id", id); if (wlAfterAcceptErr) req.log?.warn({ err: wlAfterAcceptErr, eventId: id }, "waitlist accept: queue recount unreadable — waitlist_count left as it was");
@@ -7366,4 +7366,125 @@ function sendSpotFilledOfferStands(req: any, res: any, eventId: string, err: unk
  */
 function freeSeatHeldForQueue(ev: any): boolean {
   return ["full", "waitlist"].includes(String(ev?.state ?? ""));
+}
+
+// ── Wave 5 follow-up B4: the same-instant race — a seat is offered and taken only under the event's row lock (migration 3906) ──
+//
+// Two passes in the same instant (two syncs, a sync and a leave) both read "no live offer"; the first claims W1, the
+// second reads the queue head after that claim and claims W2: two offers for one seat. The claim's own UPDATE can only
+// re-assert `offer_expires_at IS NULL` (two claims of the SAME person); "only while going + live offers <
+// max_attendees" spans two tables, which no PostgREST filter can say, and nothing serialised the passes. Accepting had
+// the same shape: two holders of live offers for the last seat both counted going < max and both upserted going.
+// Migration 3906 adds public.claim_waitlist_seat and public.accept_waitlist_seat: each locks the event row, counts under
+// the lock, and writes only when a seat is free, so the second of two racing calls waits and then counts the first.
+// promoteNextWaitlisted (the eligibility pick stays here) and POST /waitlist/accept call them when they are installed.
+//
+// INSTALLED OR NOT is established by a side-effect-free probe, never by the call that writes: each function answers
+// `no_event` for a nil event id without writing (nothing to lock), memoised per client like schemaCapability's
+// verdicts (READY_TTL_MS / ABSENT_TTL_MS):
+//   ready    — the probe answered no_event: the locked call is made, and a FAILED locked call is a failure — the claim
+//              HOLDS the seat (write_failed), the accept answers 503 — never a fall-back to the unlocked statements,
+//              which could double what a call whose answer was lost had already done;
+//   missing  — PGRST202 / 42883 (3906 unapplied: production today): today's statements run, exactly as before;
+//   unknown  — any other answer, a throw, or a client without `.rpc`: today's statements run, as before the migration.
+//              Only a probe failed here, and a probe writes nothing, so running the unlocked path is the pre-3906
+//              behaviour, not a guess about a write.
+// A locked call that answers PGRST202 / 42883 ran nothing (the function is gone, or the schema cache is stale): the
+// verdict becomes `missing` and today's statements run. Still not serialised (stated): the sweeper's own claim
+// (lib/eventWaitlistSweeper.ts) and the admissions that take a seat without the queue count outside the lock.
+import { READY_TTL_MS as LOCKED_SEAT_READY_TTL_MS, ABSENT_TTL_MS as LOCKED_SEAT_ABSENT_TTL_MS } from "../lib/capability/schemaCapability.js";
+
+type LockedSeatFunction = "claim_waitlist_seat" | "accept_waitlist_seat";
+type LockedSeatVerdict = "ready" | "missing" | "unknown";
+const LOCKED_SEAT_PROBE_ID = "00000000-0000-0000-0000-000000000000";
+const lockedSeatVerdicts = new WeakMap<object, Map<LockedSeatFunction, { verdict: LockedSeatVerdict; at: number }>>();
+
+/** PostgREST's schema-cache miss for an RPC (PGRST202), or PostgreSQL's undefined_function (42883): the house's two codes. */
+function isLockedSeatFunctionAbsent(err: unknown): boolean {
+  const code = String((err as any)?.code ?? "");
+  return code === "PGRST202" || code === "42883";
+}
+
+function rememberLockedSeatVerdict(sc: any, fn: LockedSeatFunction, verdict: LockedSeatVerdict): LockedSeatVerdict {
+  let perClient = lockedSeatVerdicts.get(sc);
+  if (!perClient) { perClient = new Map(); lockedSeatVerdicts.set(sc, perClient); }
+  perClient.set(fn, { verdict, at: Date.now() });
+  return verdict;
+}
+
+/** Is 3906's function installed behind this client? The probe passes a nil event id: the function answers no_event and writes nothing. */
+async function lockedSeatFunctionVerdict(sc: any, fn: LockedSeatFunction): Promise<LockedSeatVerdict> {
+  if (!sc || typeof sc !== "object" || typeof sc.rpc !== "function") return "unknown";
+  const memo = lockedSeatVerdicts.get(sc)?.get(fn);
+  if (memo && Date.now() - memo.at < (memo.verdict === "ready" ? LOCKED_SEAT_READY_TTL_MS : LOCKED_SEAT_ABSENT_TTL_MS)) return memo.verdict;
+  const { data, error } = await settledLockedSeatRpc(() => fn === "claim_waitlist_seat"
+    ? sc.rpc("claim_waitlist_seat", { p_event_id: LOCKED_SEAT_PROBE_ID, p_user_id: LOCKED_SEAT_PROBE_ID, p_offer_expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() })
+    : sc.rpc("accept_waitlist_seat", { p_event_id: LOCKED_SEAT_PROBE_ID, p_user_id: LOCKED_SEAT_PROBE_ID }));
+  if (!error && data === "no_event") return rememberLockedSeatVerdict(sc, fn, "ready");
+  if (error && isLockedSeatFunctionAbsent(error)) {
+    logger.info({ fn }, "waitlist seat lock: the function is not installed (migration 3906 unapplied) — the unlocked statements run, as before");
+    return rememberLockedSeatVerdict(sc, fn, "missing");
+  }
+  logger.warn({ err: error ?? null, data: data ?? null, fn }, "waitlist seat lock: the probe's answer did not establish the function — the unlocked statements run, as before migration 3906");
+  return rememberLockedSeatVerdict(sc, fn, "unknown");
+}
+
+/** supabase-js RESOLVES `{ data, error }`; a client that THROWS instead (a double, a broken fetch shim) gets the same shape here, so a throw is a failed call and never an escaped exception. */
+async function settledLockedSeatRpc(call: () => PromiseLike<{ data: unknown; error: unknown }>): Promise<{ data: unknown; error: any }> {
+  try { return await call(); } catch (err) { return { data: null, error: err ?? new Error("rpc threw") }; }
+}
+
+type LockedClaim = { kind: "legacy" } | { kind: "claimed" } | { kind: "outcome"; outcome: PromoteOutcome };
+
+/**
+ * promoteNextWaitlisted's claim, under the event lock when 3906 is installed. `legacy`: run today's UPDATE (the
+ * function is not established). `claimed`: the offer is the person's — notify as before. `outcome`: return it —
+ * `contended` when the row was not claimable or no seat is free (another offer, or a seated attendee, holds it: the
+ * capacity cycle decides as it does for a lost race), `stranded` when the event is gone, `write_failed` (the seat is
+ * HELD) when the locked call failed.
+ */
+async function claimWaitlistSeatLocked(sc: any, eventId: string, userId: string, offerExpiresAt: string, req?: any): Promise<LockedClaim> {
+  if ((await lockedSeatFunctionVerdict(sc, "claim_waitlist_seat")) !== "ready") return { kind: "legacy" };
+  const log = req?.log ?? logger;
+  const { data, error } = await settledLockedSeatRpc(() => sc.rpc("claim_waitlist_seat", { p_event_id: eventId, p_user_id: userId, p_offer_expires_at: offerExpiresAt }));
+  if (error && isLockedSeatFunctionAbsent(error)) { rememberLockedSeatVerdict(sc, "claim_waitlist_seat", "missing"); log.warn?.({ eventId, userId }, "waitlist promotion: claim_waitlist_seat is gone (PGRST202/42883, nothing ran) — the unlocked claim runs"); return { kind: "legacy" }; }
+  if (error) { log.warn?.({ err: error, eventId, userId }, "waitlist promotion: the locked claim failed — seat not offered"); return { kind: "outcome", outcome: { outcome: "write_failed", message: String(error?.message ?? error) } }; }
+  if (data === "claimed") return { kind: "claimed" };
+  if (data === "contended") { log.info?.({ eventId, userId }, "waitlist promotion lost a race — no second offer issued"); return { kind: "outcome", outcome: { outcome: "contended" } }; }
+  if (data === "no_seat") { log.info?.({ eventId, userId }, "waitlist promotion: no free seat under the event lock (going + live offers >= max_attendees) — no offer issued"); return { kind: "outcome", outcome: { outcome: "contended" } }; }
+  if (data === "no_event") { log.info?.({ eventId, userId }, "waitlist promotion: the event is gone — no offer issued"); return { kind: "outcome", outcome: { outcome: "stranded" } }; }
+  log.warn?.({ eventId, userId, data: data ?? null }, "waitlist promotion: the locked claim gave an unknown answer — seat not offered");
+  return { kind: "outcome", outcome: { outcome: "write_failed", message: `claim_waitlist_seat answered ${String(data)}` } };
+}
+
+/**
+ * POST /waitlist/accept's seat, under the event lock when 3906 is installed. `legacy`: run today's count and upsert.
+ * `seated`: the going RSVP is written and the queue row deleted (together) — the route's after-steps run as before.
+ * `no_seat`: the route's own spot-filled branch runs (withdraw the offer, sync, 403). `answered`: this sent the answer —
+ * a refusal the lock found (the offer lapsed or went, the event stopped being live) or a failed call (503).
+ */
+async function acceptWaitlistSeatLocked(sc: any, eventId: string, userId: string, req: any, res: any): Promise<"legacy" | "seated" | "no_seat" | "answered"> {
+  if ((await lockedSeatFunctionVerdict(sc, "accept_waitlist_seat")) !== "ready") return "legacy";
+  const { data, error } = await settledLockedSeatRpc(() => sc.rpc("accept_waitlist_seat", { p_event_id: eventId, p_user_id: userId }));
+  if (error && isLockedSeatFunctionAbsent(error)) { rememberLockedSeatVerdict(sc, "accept_waitlist_seat", "missing"); req.log?.warn?.({ eventId }, "waitlist accept: accept_waitlist_seat is gone (PGRST202/42883, nothing ran) — the unlocked accept runs"); return "legacy"; }
+  if (error) { sendLockedAcceptUnconfirmed(req, res, eventId, error); return "answered"; }
+  switch (data) {
+    case "seated": return "seated";
+    case "no_seat": return "no_seat";
+    case "expired": sendError(res, "forbidden", "Your spot offer has expired"); return "answered";
+    case "no_offer": sendError(res, "forbidden", "No spot offer is pending for you"); return "answered";
+    case "not_queued": sendError(res, "not_found", "Not on waitlist for this event"); return "answered";
+    case "not_live": sendError(res, "forbidden", "This event is no longer accepting attendees"); return "answered";
+    case "no_event": sendError(res, "not_found", "Event not found"); return "answered";
+    default: sendLockedAcceptUnconfirmed(req, res, eventId, { message: `accept_waitlist_seat answered ${String(data)}` }); return "answered";
+  }
+}
+
+/**
+ * The locked accept failed. A database error rolled its transaction back, but an answer lost on the way back cannot
+ * say whether the seat was taken, so the person is not told "no seat was given": they are asked to look first.
+ */
+function sendLockedAcceptUnconfirmed(req: any, res: any, eventId: string, err: unknown): void {
+  req.log?.error?.({ err, eventId }, "waitlist accept: the locked accept failed — not confirmed either way; nothing else written");
+  sendError(res, "degraded_unavailable", "We could not confirm your place just now. Please refresh the event, then try again.");
 }
