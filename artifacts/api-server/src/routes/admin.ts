@@ -40,7 +40,7 @@ import { logModerationAction, auditReportAction, checkActionReportLink, checkCon
 import { loadCapturedReportContent, loadModerationSubjectSnapshots, resolveContentOwnerDetailed, MODERATION_REPORT_CATEGORIES, MODERATION_REPORT_STATUSES, MODERATION_REPORT_TRANSITIONS, type ModerationReportStatus } from "../lib/moderationReportSnapshots.js";
 
 import { requireAdmin } from "../lib/requireAdmin.js"; import { computeAttemptsPerVerifiedUser } from "../services/identityVerification/attemptMetrics.js"; // same line on purpose: a new import line shifts every anchored citation into this file
-import { listRestrictionsForAudit } from "../services/trust/TrustRestrictionService.js"; import { countBlockRows } from "../lib/exclusionSet.js"; // census-telegraph T220: same line — admin.ts is cited by line
+import { listRestrictionsForAudit } from "../services/trust/TrustRestrictionService.js"; import { countBlockRows, countMuteRows } from "../lib/exclusionSet.js"; // census-telegraph T220 (+T220c: muteCount): same line — admin.ts is cited by line
 import {
   GEO_ZONE_DB_TYPES,
   GEO_ZONE_SAFETY_RATINGS,
@@ -1490,9 +1490,9 @@ router.get("/admin/users/:userId/summary", async (req, res) => {
     countBlockRows(sc, userId, "either").then((r) => // census-telegraph T220: the shared count form (the same HEAD count) — a count-less answer is a failed read, never 0
       r.ok ? { count: r.count, error: null } : { count: null, error: { message: r.reason } },
     ),
-    sc.from("user_mutes")
-      .select("id", { count: "exact", head: true })
-      .eq("muter_id", userId),
+    countMuteRows(sc, userId).then((r) => // census-telegraph T220c: the shared count form (the same HEAD count) — a count-less answer is a failed read, never 0
+      r.ok ? { count: r.count, error: null } : { count: null, error: { message: r.reason } },
+    ),
     sc.from("user_restrictions")
       .select("id", { count: "exact", head: true })
       .eq("restrictor_id", userId),

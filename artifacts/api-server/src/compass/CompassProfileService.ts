@@ -19,7 +19,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CompassProfile } from "./types.js";
-import { getDecayedWeights } from "./CompassSearchDecayService.js"; import { readBlockDirections } from "../lib/exclusionSet.js"; // census-telegraph T220; on this line so no cited line moves
+import { getDecayedWeights } from "./CompassSearchDecayService.js"; import { readBlockDirections, readMuteExclusions } from "../lib/exclusionSet.js"; // census-telegraph T220 (+T220c: mutes); on this line so no cited line moves
 
 import { getTrustProfileResult } from "../services/trust/TrustScoreService.js";
 // census-compass CT-02 — the ONE membership seam; this file had the fourth copy.
@@ -121,9 +121,9 @@ async function buildProfile(
       .select("category_weights, ignored_item_ids, muted_hashtags")
       .eq("user_id", userId)
       .maybeSingle(),
-    db.from("user_mutes")
-      .select("muted_id")
-      .eq("muter_id", userId),
+    // census-telegraph T220c: the mute list's definition of record — whole, by key; never rejects, and
+    // every failure (a returned error, a thrown read, a non-list answer, a row naming nobody) is ok:false.
+    readMuteExclusions(db, userId),
   ]);
 
   // Destructure the other results (indices offset by 2 for ownedTrips + memberTrips)
@@ -192,18 +192,18 @@ async function buildProfile(
   const safeReturn    = safeReturnRes.status    === "fulfilled" ? ((safeReturnRes.value.data as any[]) ?? [])  : [];
   const bookings      = bookingRes.status       === "fulfilled" ? ((bookingRes.value.data as any[]) ?? [])      : [];
   const compassPrefs  = compassPrefsRes?.status === "fulfilled" ? (compassPrefsRes.value.data as any)           : null;
-  const mutedRows     = mutesRes?.status       === "fulfilled" ? ((mutesRes.value.data  as any[]) ?? [])        : [];
+  const muteSet       = mutesRes?.status       === "fulfilled" ? mutesRes.value                                : null; // T220c: never rejects — null only if it somehow did
 
-  // Fail-CLOSED on the safety-critical lists. blocksSent/blocksRecv/mutedRows
+  // Fail-CLOSED on the safety-critical lists. blockDirs and muteSet (once blocksSent/blocksRecv/mutedRows)
   // feed the feed's block/mute exclusion. supabase-js RESOLVES with
-  // { data:null, error } on a query error, so the `?? []` above silently turns a
+  // { data:null, error } on a query error, so a `?? []` on either list turned a
   // failed load into an EMPTY exclusion list — disabling block/mute filtering
   // and surfacing a blocked user's content. If any safety-list load errored,
   // refuse to build the profile rather than serve one that can leak.
   const safetyListErrored =
     !blockDirs || !blockDirs.ok || // census-telegraph T220: every block-read failure is ok:false — a returned error, a thrown read, a non-list answer, a row naming nobody
     // (both directions are one read: either one failing is `!blockDirs.ok` — half a block list is not a block list)
-    (mutesRes ? (mutesRes.status === "rejected" || (mutesRes.status === "fulfilled" && (mutesRes.value as any).error)) : false);
+    !muteSet || !muteSet.ok; // census-telegraph T220c: every mute-read failure is ok:false — a `data ?? []` here read a non-list answer as "nobody muted"
   if (safetyListErrored) {
     throw new Error("CompassProfileService: block/mute safety-list load failed — failing closed");
   }
@@ -244,7 +244,7 @@ async function buildProfile(
   // ── Block arrays for downstream exclusion ─────────────────────────────────
   const blockedUserIds: string[] = blockDirs?.ok ? [...blockDirs.outgoing] : [];
   const blockerUserIds: string[] = blockDirs?.ok ? [...blockDirs.incoming] : [];
-  const mutedUserIds:   string[] = mutedRows.map((r: any) => r.muted_id as string);
+  const mutedUserIds:   string[] = muteSet?.ok ? [...muteSet.ids] : [];
 
   return {
     userId,

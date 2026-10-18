@@ -125,7 +125,7 @@ import {
   type PassportViewerContext,
 } from "../services/passport/PassportProjectionService.js";
 import { getActiveWindows } from "../services/passport/OpenToPlansService.js";
-import { readGroupBlockExclusions, exclusionsUnavailable, type ExclusionSet, readBlockDirection } from "../lib/exclusionSet.js";
+import { readGroupBlockExclusions, exclusionsUnavailable, type ExclusionSet, readBlockDirection, readMuteExclusions } from "../lib/exclusionSet.js";
 
 import { getTrustProfileResult } from "../services/trust/TrustScoreService.js";
 // Telegraph §18.3 — the eight conversation accessors the Telegraph spec names.
@@ -702,7 +702,7 @@ async function refreshHiddenUsers(
     const [blockedRes, blockerRes, mutedRes] = await Promise.all([
       readBlockDirection(sc, userId, "outgoing"), // census-telegraph T220: each direction through the shared reader (whole, by key), so each keeps its own snapshot fallback
       readBlockDirection(sc, userId, "incoming"),
-      sc.from("user_mutes").select("muted_id").eq("muter_id", userId),
+      readMuteExclusions(sc, userId), // census-telegraph T220c: the mute list's definition of record (whole, by key) — a non-list answer or a row naming nobody is unread, never "muted nobody"
     ]);
     const blockedUnread = !blockedRes.ok; // T220: every failure — a returned error, a thrown read, a non-list answer, a row naming nobody — is unread, never "blocked nobody"
     const blockerUnread = !blockerRes.ok;
@@ -710,10 +710,10 @@ async function refreshHiddenUsers(
     const blockerUserIds = blockerRes.ok
       ? [...blockerRes.ids]
       : (profile?.blockerUserIds ?? []);
-    const mutedUserIds = mutedRes.error
+    const mutedUserIds = !mutedRes.ok // T220c: every mute-read failure — returned, thrown, a non-list answer, a row naming nobody — keeps the snapshot, as an error did
       ? (profile?.mutedUserIds ?? [])
-      : ((mutedRes.data ?? []) as any[]).map((r) => String(r.muted_id));
-    if (!profile && (blockedUnread || blockerUnread || mutedRes.error)) {
+      : [...mutedRes.ids];
+    if (!profile && (blockedUnread || blockerUnread || !mutedRes.ok)) {
       throw new Error("hidden-user lists unavailable and no snapshot to fall back to");
     }
     const base =

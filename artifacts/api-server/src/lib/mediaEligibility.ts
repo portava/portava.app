@@ -20,7 +20,7 @@
  * Fail-closed: if blocks cannot be fetched, return empty (never risk surfacing
  * content from blocked users).
  */
-import type { SupabaseClient } from "@supabase/supabase-js"; import { readWholeColumn } from "./feedReads.js"; import { readBlockDirection } from "./exclusionSet.js"; // census-media §47: gate lists read whole, by key
+import type { SupabaseClient } from "@supabase/supabase-js"; import { readWholeColumn } from "./feedReads.js"; import { readBlockDirection, readMuteExclusions } from "./exclusionSet.js"; // census-media §47: gate lists read whole, by key
 
 export type FeedType = "for_you" | "following";
 
@@ -248,9 +248,9 @@ export async function filterEligibleMediaCandidates(
   let muteSet = mutedCreatorIds ?? new Set<string>(); const softFailed: string[] = []; // census-media §47: fail-soft reads that failed, named to the caller
   if (mutedCreatorIds === null || mutedCreatorIds === undefined) {
     try {
-      const muteRead = await readWholeColumn(sc, "user_mutes", "muted_id", (q: any) => q.eq("muter_id", viewerCtx.viewerUserId));
-      const muteErr = muteRead.ok ? null : muteRead.error; // census-media §47: the WHOLE mute list, by key — never the first 1,000
-      const muteRows = muteRead.ok ? muteRead.value.map((muted_id) => ({ muted_id })) : null;
+      const muteRead = await readMuteExclusions(sc, viewerCtx.viewerUserId); // census-telegraph T220c: the mute list's definition of record — the same whole read by key, and a row naming nobody is now unread too (readWholeColumn kept it as "undefined")
+      const muteErr = muteRead.ok ? null : { message: muteRead.reason }; // census-media §47: the WHOLE mute list, by key — never the first 1,000
+      const muteRows = muteRead.ok ? [...muteRead.ids].map((muted_id) => ({ muted_id })) : null;
       if (muteErr) softFailed.push("user_mutes"); // §47: and NAMED to the caller, not only logged
       // "No mutes" and "the mute query was rejected" both leave muteSet empty,
       // and the difference is the whole gate: on a schema/query error every

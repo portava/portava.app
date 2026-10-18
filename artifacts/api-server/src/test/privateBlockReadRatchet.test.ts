@@ -38,7 +38,7 @@
  * FIRST argument is a label (`failed.push("blocks")`, `degraded.add("blocks")`,
  * the client's `thrownFailure('blocks', e)`), and so is any argument to the
  * collection/logging methods in LABEL_CALLEES. A table name held in a variable,
- * or a reader that takes the table first, is not seen; stated, not implied.
+ * or a reader that takes the table first, is not seen; stated, not implied. Nor is a read through `.rpc(...)` (e.g. is_blocked) or a database VIEW over blocks, and nothing here sees the SQL layer (functions and policies that inline `FROM public.blocks`) — independent verification, wave 5 pass 4.
  *
  * The client (travel-buddy-standalone) reads block state through the API only;
  * it is held at ZERO private reads by the same detector.
@@ -57,7 +57,7 @@ const SRC = fileURLToPath(new URL("..", import.meta.url));
 const CLIENT = fileURLToPath(new URL("../../../../travel-buddy-standalone", import.meta.url));
 
 /** The definitions of record. They ARE the block read; they are never on ALLOWED. */
-const DEFINITIONS = new Set(["lib/blockGuard.ts", "lib/blocks.ts", "lib/exclusionSet.ts"]);
+const DEFINITIONS = new Set(["lib/blockGuard.ts", "lib/blocks.ts", "lib/exclusionSet.ts"]); const DELEGATES = new Set(["lib/blocks.ts"]); // T220c: fetchBlockedSet IS readBlockExclusions' whole-list read now (lib/exclusionSet.ts), so it reads `blocks` through it
 
 /** Methods where a "blocks" argument is a label, not a table name. */
 const LABEL_CALLEES = new Set([
@@ -184,7 +184,7 @@ describe("privateBlockReadRatchet — the real tree", () => {
   const counts = scanServer();
 
   it("the subject has not vanished: every definition of record still reads `blocks`", () => {
-    for (const f of DEFINITIONS) assert.ok((counts.get(f) ?? 0) >= 1, `${f} reads no blocks — the detector or the definition moved`);
+    for (const f of DEFINITIONS) if (!DELEGATES.has(f)) assert.ok((counts.get(f) ?? 0) >= 1, `${f} reads no blocks — the detector or the definition moved`); else assert.equal(counts.get(f) ?? 0, 0, `${f} delegates to lib/exclusionSet.ts — a private read there is a second definition`);
     assert.ok(counts.size >= 3, `only ${counts.size} files read blocks`);
   });
 

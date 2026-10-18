@@ -15661,3 +15661,45 @@ Found, not fixed (recorded): the same non-list edge exists for `user_mutes` in C
 | CANNOT-VERIFY | **2** |
 
 That is **451 = 273 C / 175 W / 1 N / 2 X**: CORRECT 273 of 451 = 60.5 %. T220 moves W -> C.
+
+## Row moves — 2026-10-18 build and fix (wave 5, T220c: the three W5B2.1 leftovers)
+
+Appended by the lead.
+
+Built by the wave-5 T220c lane. APPEND-ONLY. NO ROW CHANGES BUCKET: T220 is already C (W5B2.1); this closes the three
+items W5B2.1 recorded as found, not fixed, and the whole-list half of §94.6's second bullet.
+
+- **`user_mutes` — the non-list edge, at every list read.** An answer with no error that is not a row list, or a row
+  that does not name who was muted, read as "nobody is muted" in the Compass profile, tools and fallback feed (and a
+  row naming nobody was skipped by Discovery's author policy and silently kept by media's mute gate). The mute list now
+  has a definition of record beside the block readers (`artifacts/api-server/src/lib/exclusionSet.ts:598#export async function readMuteExclusions(`),
+  whole by key and never rejecting, and each site answers its failure with the branch it already took for an error —
+  the profile refuses, the tools keep the snapshot, the fallback degrades to the safety tools naming
+  `mute_list_unavailable`, Discovery withholds authored rows, media names the gate as off. The moderation dossier's
+  `muteCount` and `GET /me/mutes` no longer render a count-less or non-list answer as zero / an empty list
+  (`artifacts/api-server/src/lib/exclusionSet.ts:628#export async function countMuteRows(`).
+- **§94 — the whole-list cut, closed for both block readers of record.** `readBlockExclusions` without `among` and
+  `fetchBlockedSet` read the viewer's block list whole, by key
+  (`artifacts/api-server/src/lib/exclusionSet.ts:222#const whole = await readWhole<any>( // census-telegraph §94 (T220c)`);
+  `fetchBlockedSet` is now that read (`artifacts/api-server/src/lib/blocks.ts:37#const read = await readBlockExclusions(sc, userId);`).
+  The first request is the old `.or()` read unchanged, so a list under the cap is one round trip and no caller can tell;
+  an answer as long as the hosted cap is read again by the primary key. Still cut: `readGroupBlockExclusions` over a
+  group's members.
+- **block-status — existence, not `maybeSingle`.** `blocks_pair_unique` allows one row per direction, so
+  `.maybeSingle()` could not see two today, but the answer leaned on it; each direction is now a `.limit(1)` existence
+  read (`artifacts/api-server/src/routes/blocks.ts:338#client.from("blocks").select("blocked_id").eq("blocker_id", user.id).eq("blocked_id", target).limit(1),`)
+  and a returned error, a thrown read (a bare 500 before) and a non-list answer are the same refusal.
+
+### Tests and mutations
+New: `blockWholeListPagingT220c` 22/22, 16 red on the code before
+(`artifacts/api-server/src/test/blockWholeListPagingT220c.test.ts:128#describe("T220c — readBlockExclusions (whole list): WHOLE, by key, never a prefix"`),
+`muteReadEdgesT220c` 78/78, 33 red before
+(`artifacts/api-server/src/test/muteReadEdgesT220c.test.ts:159#describe("T220c — CompassProfileService: a malformed mutes answer refuses the profile, as an error does"`),
+`blockStatusExistenceT220c` 16/16, 9 red before
+(`artifacts/api-server/src/test/blockStatusExistenceT220c.test.ts:85#describe("T220c — GET /users/:userId/block-status: limit-1 existence reads, one refusal for every failure"`).
+Mutants, each alone, restored byte-identically: every mute site's "answer an unreadable list as no mutes", the
+readers' skip / empty / count branches, the whole read's paging and key, block-status's catch, list check and
+directions — each red.
+Headline unchanged: **451 = 273 C / 175 W / 1 N / 2 X** (recompute against the census's latest headline before pasting).
+
+**Independent verification, pass 4 (row-text corrections to W5B2.1, no grade change).** T220 is C under its stated measurement: six private `blocks` reads, all in routes/blocks.ts, the block list's own CRUD. Two boundaries are stated so no reader assumes more: (1) the SQL layer is outside every ratchet — `project_user_memory` (2963, applied, reached through the project_all_memory rpc) and `memory_public_feed` (2338, applied) inline `NOT EXISTS (SELECT 1 FROM public.blocks ...)` instead of calling is_blocked / viewer_is_blocked, and the `post_media_public_select` policy does the same; moving them needs migrations; (2) the private-read ratchet does not see a read through `.rpc(...)` or a database view (stated in its header). No such server read exists today.

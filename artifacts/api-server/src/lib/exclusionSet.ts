@@ -132,10 +132,10 @@ export function isExcluded(set: ExclusionSet, id: string | null | undefined): bo
  *              (1000 hosted) was ONE `.in()` read, cut at the cap with no error,
  *              and every block past the cap was missed. See BLOCK_AMONG_CHUNK.
  *
- * The WHOLE-LIST read (no `among`) is still one range-less read, so a viewer
- * with more than `db-max-rows` block relationships still gets a prefix. That is
- * recorded in census-telegraph §94 as found-not-fixed: paging it (lib/keysetRead)
- * costs every caller a second round trip and is its own change. (The per-direction readers at the foot of this file — readBlockDirection(s) — DO read whole, by key: T220 part 2.)
+ * The WHOLE-LIST read (no `among`) was one range-less read too, so a viewer with
+ * more than `db-max-rows` block rows got a prefix (census-telegraph §94, found-not-
+ * fixed until T220c). It now reads WHOLE, by key (lib/feedReads.ts readWhole): the same `.or()` read first, byte for byte — one round trip under the cap —
+ * and an answer as long as a page (WHOLE_READ_PAGE_SIZE, the hosted db-max-rows) may have been cut, so it is read again by the primary key, `id`, with counts; a list that cannot be read whole is `ok: false`, never the prefix it got. lib/blocks.ts fetchBlockedSet is this read.
  */
 const NOT_ROWS = "blocks read answered something other than a row list";
 const NO_COUNTERPARTY = "a blocks row did not name its counter-party";
@@ -219,14 +219,14 @@ async function readBlockExclusionsOnce(sc: any, viewerId: string, among: readonl
     return { ok: true, ids };
   }
 
-  const res = await sc
-    .from("blocks")
-    .select("blocker_id, blocked_id")
-    .or(`blocker_id.eq.${viewerId},blocked_id.eq.${viewerId}`);
-  if (res?.error) return exclusionsUnavailable(res.error);
-  if (!Array.isArray(res?.data)) return exclusionsUnavailable(NOT_ROWS);
+  const whole = await readWhole<any>( // census-telegraph §94 (T220c): read WHOLE, by key — one range-less read was cut at db-max-rows with no error and served the prefix
+    (after, size) => afterKey(sc.from("blocks").select("id, blocker_id, blocked_id", { count: "exact" }).or(`blocker_id.eq.${viewerId},blocked_id.eq.${viewerId}`).order("id", { ascending: true }).limit(size), "id", after),
+    (r) => String(r?.id), // the primary key: unique across BOTH directions (a mutual block is two rows naming the same counter-party)
+    { first: () => sc.from("blocks").select("blocker_id, blocked_id").or(`blocker_id.eq.${viewerId},blocked_id.eq.${viewerId}`) }, // the plain read this path always made, byte for byte: a page-long answer may be cut, so it is read again by key
+  );
+  if (!whole.ok) return exclusionsUnavailable(whole.error); // a returned error, an answer that is not a row list, a read that could not be read whole
   const ids = new Set<string>();
-  for (const r of res.data as any[]) {
+  for (const r of whole.value as any[]) {
     const blocker = idOf(r?.blocker_id);
     const blocked = idOf(r?.blocked_id);
     if (blocker === null || blocked === null) return exclusionsUnavailable(NO_COUNTERPARTY);
@@ -335,7 +335,7 @@ export function sendExclusionsUnavailable(
 /**
  * "No subsystem may independently rediscover a blocked relationship." The
  * readers above collapse both directions into one set, and their whole-list
- * path is one range-less read (§94). The private block reads left after T220
+ * path was one range-less read (§94; paged since T220c). The private block reads left after T220
  * part 1 each needed one of four things those readers do not give:
  *
  *   DIRECTION  WHICH way the row points. "You blocked them" and "they blocked
@@ -563,4 +563,76 @@ async function countBlockRowsOnce(sc: any, userId: string, direction: BlockDirec
   if (res?.error) return exclusionsUnavailable(res.error);
   if (typeof res?.count !== "number" || !Number.isSafeInteger(res.count) || res.count < 0) return exclusionsUnavailable(NO_COUNT);
   return { ok: true, count: res.count };
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// MUTES — census-telegraph T220c (2026-10-17)
+// ════════════════════════════════════════════════════════════════════════════
+/**
+ * `user_mutes` is the other exclusion table this module's header names: a row
+ * (muter_id → muted_id) HIDES the muted person from the muter, and emptiness
+ * SHOWS. Its list readers had the edge T220 part 2 closed for `blocks`: each
+ * checked a RETURNED error and then wrote `data ?? []` (or skipped a row it
+ * could not read), so an answer with no error that is not a row list
+ * (`data: null`, a string, an object) — or a row that does not name who was
+ * muted — built the SAME empty mute set as a healthy "nobody is muted".
+ */
+const NO_MUTED = "a user_mutes row did not name who was muted";
+
+/**
+ * Everyone `viewerId` MUTED, as an ExclusionSet — the mute list's definition
+ * of record. Each caller answers `!ok` with the branch it already took for a
+ * returned error (a refusal, a kept snapshot, a degrade, a named soft failure);
+ * this decides only that an answer that is not an answer is not one.
+ *
+ * WHOLE, by key (lib/feedReads.ts readWhole), exactly as lib/mediaEligibility.ts
+ * already read it: the first request is the plain read the list sites made
+ * plus its exact count — `select("muted_id", { count: "exact" }).eq("muter_id",
+ * viewer)` — one round trip under the row cap; past it, pages by `muted_id`
+ * (unique per muter: UNIQUE(muter_id, muted_id)). A list that cannot be read
+ * whole is `ok: false`, never the prefix it got.
+ *
+ * NEVER REJECTS: a returned error, a thrown read, an answer that is not a row
+ * list, a row that does not name who was muted, a cut read — each `ok: false`.
+ */
+export async function readMuteExclusions(sc: any, viewerId: string): Promise<ExclusionSet> {
+  if (!sc || !viewerId) return exclusionsUnavailable("no client or viewer");
+  try {
+    const base = () => sc.from("user_mutes").select("muted_id", { count: "exact" }).eq("muter_id", viewerId);
+    const whole = await readWhole<any>(
+      (after, size) => afterKey(base().order("muted_id", { ascending: true }).limit(size), "muted_id", after),
+      (r) => String(r?.muted_id),
+      { first: base },
+    );
+    if (!whole.ok) return exclusionsUnavailable(whole.error);
+    const ids = new Set<string>();
+    for (const r of whole.value as any[]) {
+      const id = idOf(r?.muted_id);
+      if (id === null) return exclusionsUnavailable(NO_MUTED);
+      ids.add(id);
+    }
+    return { ok: true, ids };
+  } catch (err) {
+    return exclusionsUnavailable(err);
+  }
+}
+
+/**
+ * How many people `userId` has muted: a HEAD read with `{ count: "exact" }`, so
+ * Postgres counts and the row cap does not apply — for a record that states a
+ * count (the moderation dossier), as countBlockRows is for blocks.
+ *
+ * NEVER REJECTS: a returned error, a thrown read, or an answer whose count is
+ * not a non-negative integer is `ok: false` — never `count ?? 0`.
+ */
+export async function countMuteRows(sc: any, userId: string): Promise<BlockRowCount> {
+  if (!sc || !userId) return exclusionsUnavailable("no client or user");
+  try {
+    const res = await sc.from("user_mutes").select("id", { count: "exact", head: true }).eq("muter_id", userId);
+    if (res?.error) return exclusionsUnavailable(res.error);
+    if (typeof res?.count !== "number" || !Number.isSafeInteger(res.count) || res.count < 0) return exclusionsUnavailable("a user_mutes count read answered without its count");
+    return { ok: true, count: res.count };
+  } catch (err) {
+    return exclusionsUnavailable(err);
+  }
 }

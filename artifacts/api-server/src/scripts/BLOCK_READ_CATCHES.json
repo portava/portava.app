@@ -21,9 +21,9 @@
       "reads": [
         "readBlockDirections"
       ],
-      "fingerprint": "8ec236c8c4dddcf4",
+      "fingerprint": "b274f588c73bd2ce",
       "closedBy": "rethrows",
-      "why": "A REJECTED blocks read (allSettled status 'rejected') sets safetyListErrored and buildProfile throws 'block/mute safety-list load failed — failing closed'; no profile with an empty exclusion list is built. Re-judged 2026-10-17 (wave 3, CT-02): the two sibling trip reads in the same allSettled moved to Trips projections; the blocks read and its safetyListErrored → throw path are unchanged. Re-judged 2026-10-17 (wave 5, census-telegraph T220 part 2): the two private blocks reads in this allSettled are ONE readBlockDirections slot, which never rejects — every block-read failure (returned, thrown, a non-list answer, a row naming nobody) is `ok: false`, and `!blockDirs || !blockDirs.ok` throws the same \"safety-list load failed — failing closed\"; a rejection (it cannot reject) would leave blockDirs null and throw the same way. Still \"rethrows\"."
+      "why": "A REJECTED blocks read (allSettled status 'rejected') sets safetyListErrored and buildProfile throws 'block/mute safety-list load failed — failing closed'; no profile with an empty exclusion list is built. Re-judged 2026-10-17 (wave 3, CT-02): the two sibling trip reads in the same allSettled moved to Trips projections; the blocks read and its safetyListErrored → throw path are unchanged. Re-judged 2026-10-17 (wave 5, census-telegraph T220 part 2): the two private blocks reads in this allSettled are ONE readBlockDirections slot, which never rejects — every block-read failure (returned, thrown, a non-list answer, a row naming nobody) is `ok: false`, and `!blockDirs || !blockDirs.ok` throws the same \"safety-list load failed — failing closed\"; a rejection (it cannot reject) would leave blockDirs null and throw the same way. Still \"rethrows\". Re-judged 2026-10-17 (wave 5, census-telegraph T220c): the mute slot in the same allSettled is now readMuteExclusions (lib/exclusionSet.ts), which never rejects either — every mute-read failure (returned, thrown, a non-list answer, a row naming nobody, a cut read) is `ok: false`, and `!muteSet || !muteSet.ok` throws the same \"safety-list load failed — failing closed\" (`data ?? []` had read a non-list answer as \"nobody muted\"). The blocks slot is unchanged. Still \"rethrows\"."
     },
     {
       "key": "compass/CompassTools.ts::refreshHiddenUsers::catch#1",
@@ -33,7 +33,7 @@
       ],
       "fingerprint": "fba48987e9171cc7",
       "closedBy": "keeps-snapshot",
-      "why": "With a snapshot profile the catch returns it unchanged (the hidden set read at ask time, never widened); with no snapshot it rethrows and executeCompassTool's catch answers 'Tool execution failed'. Re-judged 2026-10-17 (wave 5, census-telegraph T220 part 2): the two block reads in this try are readBlockDirection (outgoing, incoming), which never reject — every block-read failure (returned, thrown, a non-list answer, a row naming nobody) is `!ok` and keeps that direction's snapshot, or with no snapshot throws before this catch; the catch (unchanged) now lands only a thrown user_mutes read, and answers it the same way."
+      "why": "With a snapshot profile the catch returns it unchanged (the hidden set read at ask time, never widened); with no snapshot it rethrows and executeCompassTool's catch answers 'Tool execution failed'. Re-judged 2026-10-17 (wave 5, census-telegraph T220 part 2): the two block reads in this try are readBlockDirection (outgoing, incoming), which never reject — every block-read failure (returned, thrown, a non-list answer, a row naming nobody) is `!ok` and keeps that direction's snapshot, or with no snapshot throws before this catch; the catch (unchanged) now lands only a thrown user_mutes read, and answers it the same way. Re-judged 2026-10-17 (wave 5, census-telegraph T220c): the user_mutes read in this try is now readMuteExclusions, which never rejects — a mute-read failure (returned, thrown, a non-list answer, a row naming nobody) is `!ok` and keeps the snapshot's mutes, or with no snapshot throws before this catch. No read in the try lands here now; the catch (unchanged) is the backstop for anything else the try throws, and answers it the same way."
     },
     {
       "key": "compass/CompassTools.ts::groupBlockUnion::catch#1",
@@ -59,11 +59,11 @@
       "key": "lib/blocks.ts::fetchBlockedSet::catch#1",
       "kind": "catch",
       "reads": [
-        "from(\"blocks\")"
+        "readBlockExclusions"
       ],
       "fingerprint": "9a64ef9f58d225a0",
       "closedBy": "answers-unreadable",
-      "why": "THE READER: a thrown read returns null, which every caller must treat as 'show nobody' (submitterIsVisible withholds every authored row). Pinned by THE READERS rule."
+      "why": "THE READER: a thrown read returns null, which every caller must treat as 'show nobody' (submitterIsVisible withholds every authored row). Pinned by THE READERS rule. Re-judged 2026-10-17 (wave 5, census-telegraph T220c, §94): the range-less read is gone — fetchBlockedSet IS readBlockExclusions' whole-list read now (whole, by key), which never rejects: every failure (returned, thrown, a non-list answer, a row naming nobody, a read that could not be read whole) is `!ok` and answers null. The catch (unchanged, still THE READERS rule) is the backstop."
     },
     {
       "key": "lib/calls/callGatewayAdapter.ts::isBlockedEither::catch#1",
@@ -204,6 +204,16 @@
       "fingerprint": "3b67dc4345bebc8d",
       "closedBy": "withholds",
       "why": "Sets rows = [] and pushes degradedReasons 'blocks_unreadable' — no buddy is served. Re-judged 2026-10-17 (wave 5, census-telegraph T220): the read in this try is now readBlockExclusions, which never rejects — every block-read failure takes the `!blocks.ok` branch (same rows = [] and 'blocks_unreadable'); this catch (unchanged) is a backstop for the rest of the block."
+    },
+    {
+      "key": "routes/blocks.ts::get /users/:userId/block-status::catch#1",
+      "kind": "catch",
+      "reads": [
+        "from(\"blocks\")"
+      ],
+      "fingerprint": "55071ccc2329bdac",
+      "closedBy": "refuses",
+      "why": "New site 2026-10-17 (wave 5, census-telegraph T220c): GET /users/:userId/block-status reads both directions as `.limit(1)` existence reads inside one try (never `.maybeSingle()`, which raised on a second row); a returned error, an answer that is not a row list and a THROWN read all land in this catch, which answers db_error \"Block status is temporarily unavailable\" — the route's own refusal, never false/false. A thrown read used to escape the handler as a bare 500."
     },
     {
       "key": "routes/compass.ts::get /compass/recommendations::catch#1",

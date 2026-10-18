@@ -167,13 +167,13 @@ router.get("/me/mutes", async (req, res) => {
     .order("created_at", { ascending: false })
     .limit(500);
 
-  if (error) {
-    req.log.error({ err: error }, "user_mutes list failed");
-    sendError(res, "db_error", error.message);
+  if (error || !Array.isArray(rows) || rows.some((r: any) => typeof r?.muted_id !== "string" || r.muted_id === "")) { // census-telegraph T220c: an answer that is not a row list, or a row naming nobody, is a failed read — `rows ?? []` answered "you muted nobody"
+    req.log.error({ err: error ?? "user_mutes answered no row list, or a row naming nobody" }, "user_mutes list failed");
+    sendError(res, "db_error", error?.message ?? "Your mute list could not be read");
     return;
   }
 
-  const ids = (rows ?? []).map((r: any) => r.muted_id as string);
+  const ids = rows.map((r: any) => r.muted_id as string);
   let profileMap: Record<string, any> = {};
   if (ids.length > 0) {
     const { data: profiles } = await sc
@@ -186,7 +186,7 @@ router.get("/me/mutes", async (req, res) => {
   const allowedNames = await nameVisibilitySet(sc, ids);
 
   res.status(200).json({
-    muted: (rows ?? []).map((r: any) => {
+    muted: rows.map((r: any) => {
       const p = profileMap[r.muted_id] ?? {};
       return {
         id:         r.muted_id as string,
