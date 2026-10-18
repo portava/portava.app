@@ -4,7 +4,7 @@ Layover is 86 C / 158 W / 52 N of 296 requirements (29.1% built and correct), th
 2026-10-18 two triage passes read every W and N row at its current census line, together with the code and the
 production ledger. Their reports are in the session scratchpad (`layover-triage-W.txt`, `layover-triage-N.txt`).
 
-**Where it stands after the lanes and the verifier (2026-10-18): 86 → 81 C (29.1% → 27.4%).** Code moved 8 rows up. Applying the census's reachability rule uniformly took 13 down. None of the 13 is broken code: each is unreachable in production until a migration you hold is applied.
+**Where it stands after the lanes and the verifier (2026-10-18): 86 → 81 C (29.1% → 27.4%).** Code moved 8 rows up. Applying the census's reachability rule uniformly took 13 down. None of the 13 is broken code. Ten are unreachable until 3513 is applied. L254 is unreachable until `rent_buddy_enabled` is turned on. L92 and L257 need 2981 applied AND `dedupeEvents` wired into the event path.
 - **Up (8):** L148, L149, L231 and L126 (disruption reporting and the offline map); L232 (crew departures); L13 and L59 (the time-window engine in its own package); L274 (no Rent-a-Buddy visa help: the test found a real path, and it is closed).
 - **Down (13 false greens):**
   - L181, L197, L84–L89, L251 and L252 sit behind the crowd-reports channel. That channel is closed until 3513 is applied.

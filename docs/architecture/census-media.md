@@ -17574,7 +17574,17 @@ byte-identical. Before writing, its precondition proves on the database itself t
 - `artifacts/api-server/src/test/sqlBlockChecksOfRecordMigrations.test.ts`;
 - `artifacts/api-server/src/test/db/postMediaBlockCheckOfRecord.db.test.ts`, which runs on CI's local-db job.
 
-**Scope.** MD9 ("blocks … resolve before client projection") grades the API's projection path, which reads blocks through
-the shared exclusion readers. The leak is a direct table read that bypasses that path. MD9 is left as graded, and the
-independent verifier is asked to rule whether its scope covers direct reads. Production carries the one-way check until the
-owner applies 3905, after the 20261017 packet and its 3996–3999 addendum.
+**RULING (independent verification pass 11): MD9 stays C.** Its words and its evidence (`routes/mediaWorld.ts:18-33`,
+`projectCandidatesProtected`) are the API's projection path, which is correct. A direct PostgREST read bypasses projection
+and is this census's separate surface (§42.6 (5); §44.7 item 1, which proposed exactly 3905's shape). No shipped screen
+reads `post_media` directly (the client's direct reads are profiles, user_follows, trip_members, trips,
+rent_buddy_packages, rent_buddy_fee_rules, event_rsvps and circles). But the table is exposed to `anon` and
+`authenticated` with SELECT and a `TO public` policy, so anyone holding the publishable key shipped in the app, or any
+user JWT, reads it today, and the owner's block does not bite. Production carries the one-way check until the owner
+applies 3905, after the 20261017 packet and its 3996–3999 addendum.
+
+A row for §44.18.6's reader table, recorded here so no line above moves:
+
+| Reader | What it serves | Honoured the block before | Now |
+| --- | --- | --- | --- |
+| Direct PostgREST reads of `post_media` | every ready, public row the policy admits, including rows whose OWNER blocked the reader (the policy's `blocks` subquery ran under `blocks`' own RLS) | no | **fixed on branch by 3905, not merged, not deployed; the viewer's own block was always honoured** |

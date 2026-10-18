@@ -5872,7 +5872,7 @@ file depends on nothing above it, and nothing above it alters or drops what it t
 - No file sorting above 3901 (3902–3905, and 3930–3999) names `notifications`, `thread_safety_alert`,
   `causal_event_id` or the index name in code. Checked by grep, and mechanically by the production packet's builder
   (`prod-apply-packet-20261017/addendum-3901-3905/manifest.json` → `order.independence`).
-- Both orders were run on a PostgreSQL 18.3 replica. Applying the five after 3999 (production's order) and replaying
+- Both orders were run on the packet's PGlite 0.5.8 replica (PostgreSQL 18.3 compiled to WASM, in-process; no server, nothing hosted). Applying the five after 3999 (production's order) and replaying
   the chain with the five at their numeric position give the same catalog: 0 differences in 19,348 keys. 3901
   changes the same 2 keys on both paths.
 
@@ -5901,7 +5901,7 @@ another producer and a row with no causal id are all accepted.
 - It re-opens the double-tell. No notification row is deleted.
 - DROP INDEX takes ACCESS EXCLUSIVE on `notifications` for the catalog change.
 - Proven: forward, rollback, then catalog and rows equal to before. Equal on a PGlite 16.4 fixture, and on the
-  PostgreSQL 18.3 replica (0 differences in 19,344 keys). A second run is a no-op, and 3901 re-applies after it.
+  PGlite 0.5.8 replica (PostgreSQL 18.3 in WASM) (0 differences in 19,344 keys). A second run is a no-op, and 3901 re-applies after it.
 
 ## 2026-10-18 — `3902_place_best_of_updated_at_index.sql`, written and NOT applied anywhere (wave 5, migration-fixes lane)
 
@@ -5943,7 +5943,7 @@ wait is proportional to the table's size. On the replica's empty table the whole
 §6 (c) reads production's count, read-only, before the press.
 
 **Proof.** `artifacts/api-server/src/test/placeBestOfUpdatedAtIndexMigration.test.ts` (PGlite EXPLAIN before and after,
-same answers). On the PostgreSQL 18.3 end-state replica, the sweep's first-page query is served by a Bitmap Index Scan
+same answers). On the PGlite 0.5.8 end-state replica (PostgreSQL 18.3 in WASM), the sweep's first-page query is served by a Bitmap Index Scan
 on the new index.
 
 **Rollback:** `db/rollback/2026-10-18-3902-place-best-of-updated-at-index-rollback.sql`.
@@ -6004,7 +6004,7 @@ definition the repo's 2963 + 2965 produce (`1f468c6f1a63` on both), so the `$mig
 measured no relation lock.
 
 **Proof.** `artifacts/api-server/src/test/sqlBlockChecksOfRecordMigrations.test.ts` (PGlite: the projector's events
-and projections byte-identical before and after; the definition differs in two lines). On the PostgreSQL 18.3
+and projections byte-identical before and after; the definition differs in two lines). On the PGlite 0.5.8 (PostgreSQL 18.3 in WASM)
 end-state replica, the projector still leaves out a followed account that blocked the user.
 
 **Rollback:** `db/rollback/2026-10-18-3903-project-user-memory-block-check-of-record-rollback.sql`, the inverse
@@ -6015,7 +6015,7 @@ surgery.
 - It refuses unless the result differs from the installed text in those two predicates only.
 - It refuses when `service_role` cannot SELECT `blocks`.
 - If the definition already reads `blocks` inline, it changes nothing.
-- Proven: `pg_get_functiondef` byte-identical to before, on PGlite 16.4 and on the PostgreSQL 18.3 replica.
+- Proven: `pg_get_functiondef` byte-identical to before, on PGlite 16.4 and on the PGlite 0.5.8 replica (PostgreSQL 18.3 in WASM).
 
 ## 2026-10-18 — `3904_memory_public_feed_block_check_of_record.sql`, written and NOT applied anywhere (wave 5, migration-fixes lane)
 
@@ -6071,13 +6071,13 @@ restores 2338's spelling of the predicate, which may not be production's.
 write waits.
 
 **Proof.** `artifacts/api-server/src/test/sqlBlockChecksOfRecordMigrations.test.ts` (PGlite: eight call shapes return
-the same rows in the same order before and after). On the PostgreSQL 18.3 end-state replica, the feed still leaves out
+the same rows in the same order before and after). On the PGlite 0.5.8 end-state replica (PostgreSQL 18.3 in WASM), the feed still leaves out
 the Memories of an author who blocked the viewer.
 
 **Rollback:** `db/rollback/2026-10-18-3904-memory-public-feed-block-check-of-record-rollback.sql`, the inverse surgery.
 - It restores 2338's predicate byte for byte, line breaks and alignment included.
 - It refuses as 3903's rollback does, with 1 call in place of 2.
-- Proven byte-identical to the pre-3904 definition, on PGlite 16.4 and on the PostgreSQL 18.3 replica.
+- Proven byte-identical to the pre-3904 definition, on PGlite 16.4 and on the PGlite 0.5.8 replica (PostgreSQL 18.3 in WASM).
 - On production it restores 2338's spelling of the predicate (see the drift note above).
 
 ## 2026-10-18 — `3905_post_media_public_select_block_check_of_record.sql`, written and NOT applied anywhere (wave 5, migration-fixes lane)
@@ -6152,7 +6152,7 @@ whole file took 9 ms on the replica.
   reader and block scenario unchanged.
 - `artifacts/api-server/src/test/db/postMediaBlockCheckOfRecord.db.test.ts`: CI local-db, on the real policies and
   column grants.
-- On the PostgreSQL 18.3 end-state replica, with production's chain grants, reading as `authenticated`: the viewer the
+- On the PGlite 0.5.8 end-state replica (PostgreSQL 18.3 in WASM), with production's chain grants, reading as `authenticated`: the viewer the
   owner blocked reads 0 rows; a stranger, the owner and `anon` read theirs.
 - With 2337's policy put back inside a savepoint, the blocked viewer reads the media again: the defect, reproduced.
 
@@ -6163,4 +6163,4 @@ whole file took 9 ms on the replica.
 - It refuses unless `anon` and `authenticated` can SELECT `blocks` and reach `authz.is_trip_crew`. 2337's inline read
   runs as the reader, so without SELECT every client read of `post_media` would fail 42501.
 - **It re-opens the defect.** Proven on PGlite 16.4, where the blocked viewer reads the media again. On the
-  PostgreSQL 18.3 replica the catalog returns exactly to its state before 3905.
+  PGlite 0.5.8 replica (PostgreSQL 18.3 in WASM) the catalog returns exactly to its state before 3905.

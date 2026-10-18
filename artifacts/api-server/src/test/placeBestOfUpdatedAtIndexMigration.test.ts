@@ -157,4 +157,16 @@ test("3902 executes on PostgreSQL (PGlite): every sweep read uses the index, non
     await assert.rejects(d.exec(sql), /PRECONDITION FAILED \(3902\): public\.place_best_of does not exist/);
     await d.close();
   });
+
+  // Independent verification pass 11, C9 (c): the $pre$'s identity check refuses a same-named UNIQUE index on the very same
+  // key. Its mutant F04 (the check without `NOT i.indisunique`) survived: the only foreign index staged above has another
+  // key order, so no case told a UNIQUE (updated_at, place_id) from this one. Under F04 the file COMMITs and only its $post$
+  // fails, AFTER the COMMIT; the refusal must come from the $pre$, before anything is built on.
+  await t.test("a same-named UNIQUE (updated_at, place_id) index is refused by the precondition, not built on (pass 11, C9c)", async () => {
+    const d = await fresh();
+    await d.exec(`CREATE UNIQUE INDEX ${INDEX} ON public.place_best_of (updated_at, place_id)`);
+    await assert.rejects(d.exec(sql), /PRECONDITION FAILED \(3902\): an index named place_best_of_updated_at_place_id_idx exists but is not this one: CREATE UNIQUE INDEX/);
+    await d.exec("ROLLBACK").catch(() => undefined); // the file's BEGIN is left open on this single session; psql would discard it at exit
+    await d.close();
+  });
 });

@@ -429,4 +429,54 @@ test("3901 executes on PostgreSQL (PGlite): the second row is refused, nothing e
     assert.notEqual(await idx(db), null);
     await db.close();
   });
+
+  // Independent verification pass 11, C9 (b): the $pre$'s duplicate inspection is scoped to the safety producer. Its mutant
+  // F02 (the inspection over every source_type) survived: no case staged ANOTHER producer's duplicates before applying.
+  await t.test("another producer's duplicates present BEFORE applying do not refuse it: 3901 applies and leaves them (pass 11, C9b)", async () => {
+    const db = await fresh();
+    await db.query(ins(BOB, "thread_message", `MESSAGE:${MSG}`));
+    await db.query(ins(BOB, "thread_message", `MESSAGE:${MSG}`));
+    await db.exec(sql);
+    assert.notEqual(await idx(db), null, "3901 applied over another producer's duplicates");
+    assert.equal(await count(db), 2, "the other producer's two rows are untouched");
+    await db.close();
+  });
+});
+
+// Independent verification pass 11, C9 (a): the read-back that turns a failed create into `already_told` must be keyed on
+// THIS message's causal id. Its mutant C01 (the read-back filtered on the member only) survived every case above, none of
+// which gives the member a row under ANOTHER help request. Here BOB holds his row for another message, and his insert for
+// this one fails for a reason that is not the index (08006): he must stay not_created, ERROR-logged and re-driven.
+describe("evidence, never assumption (pass 11, C9a): a row for ANOTHER help request is not evidence for this one", () => {
+  it("BOB holds a safety row for another message and his insert fails 08006: not_created (ERROR) and re-driven, never already_told", async () => {
+    const w = world();
+    w.notifications = [otherRow(BOB, SAFETY_ALERT_EVENT, "another-message")];
+    const base = fakeSafetyDb(w);
+    const sc = { ...base } as FakeSafetyDb;
+    let bobInserts = 0;
+    sc.from = (table: string) => {
+      const chain = base.from(table);
+      if (table !== "notifications") return chain;
+      return new Proxy(chain, { get(o: any, k) {
+        if (k !== "insert") return o[k];
+        return (r: Row) => {
+          if (r.user_id !== BOB) return o.insert(r);
+          bobInserts += 1;
+          const res = { data: null, error: { code: "08006", message: "connection failure" } };
+          const c: any = { select: () => c, single: () => Promise.resolve(res), then: (a: any, b: any) => Promise.resolve(res).then(a, b) };
+          return c;
+        };
+      } });
+    };
+    const l = logs();
+    const r = await redriveSafetySignal(sc as any, MSG, { deps: instance(sc), log: l.log });
+    assert.equal(bobInserts, 1, "anti-vacuity: BOB's create for THIS message was attempted (his other row did not count as told)");
+    assert.equal(r.status, "retry", JSON.stringify(r));
+    assert.equal(r.status === "retry" && r.stage, "deliver");
+    assert.deepEqual(sorted(r.notified), [DANA, GINA]);
+    assert.equal(rowsFor(sc, BOB).length, 0, "BOB holds nothing for this message");
+    assert.equal(rowsFor(sc, BOB, "another-message").length, 1, "his row for the other message is still there, untouched");
+    assert.ok(l.errors.some((m) => /not created/.test(m)), l.errors.join(" | "));
+    assert.ok(!l.warns.some((m) => /already told/i.test(m)), `a row for another message is not evidence: ${l.warns.join(" | ")}`);
+  });
 });
