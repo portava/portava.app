@@ -13,13 +13,13 @@
  *   - a help request unsent/deleted meanwhile, or already answered by an ALL CLEAR, sent late (and a LATER separate
  *     help request or a check-in wrongly cancelling it); a stale ALL CLEAR landing after a new help request;
  *   - attempts that are not bounded (seven re-drives, 10 s → 15 min, doubling) or that hammer every tick;
- *   - the re-drive giving up silently instead of with an ERROR, or not giving up;
+ *   - the re-drive giving up silently instead of with an ERROR, or not giving up; or "giving up" on a member the layer coalesced (section 10);
  *   - the re-drive needing anything in memory: a SECOND node process, handed only the database, must deliver.
  *
  * Run: env -i PATH="$PATH" HOME=$TMPDIR TMPDIR=$TMPDIR TZ=UTC SUPABASE_URL=http://127.0.0.1:9 \
  *        SUPABASE_SERVICE_ROLE_KEY=dummy node --import tsx/esm --test src/test/telegraphSafetySignalRedrive.test.ts
  */
-import { describe, it, beforeEach } from "node:test";
+import { describe, it, beforeEach, mock } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -626,5 +626,251 @@ describe("owner ruling 2026-10-17: a help request is not routed to a member who 
     const r = await notifyNewMessage(sc as any, { threadId: THREAD, senderId: ALICE, messageId: "t1", msgType: "text", subtype: null, nowMs: T0 }, { deps: w.deps });
     assert.ok(r.status === "notified", JSON.stringify(r));
     assert.ok(w.created.some((c) => c.userId === BOB && c.eventType === "telegraph.message"), "the ruling is about help requests only");
+  });
+});
+
+// ── 10. Fable pass 4 §2.1: a create the notification layer COALESCED ───────
+
+describe("pass 4: a create the layer COALESCED is `deduped` (counted as told) only when an EQUIVALENT is seen, else `coalesced` (re-attempted); a real failure still gives up at ERROR; P0 is never deduped", () => {
+  type TestLog = { warn(o: object, m: string): void; error?(o: object, m: string): void };
+  /** The REAL NotificationService decides what is a duplicate; createDetailed is what the producer's own default deps pass. */
+  const realDeps = (sc: FakeSafetyDb): SafetyNotifyDeps => {
+    const ns = new NotificationService(sc as any);
+    return { create: (i) => ns.create(i), createDetailed: (i) => ns.createDetailed(i), route: async () => undefined };
+  };
+  /** ONE clock: Date mocked, so the layer's window, the fake database's created_at, the message rows and the passes all
+   *  read T0-relative time and a 60 s window lapses as it would in production. Without it they are two clocks. */
+  let clockOn = false;
+  const setClock = (ms: number) => { if (clockOn) mock.timers.setTime(T0 + ms); };
+  const oneClock = async (startMs: number, body: () => Promise<void>) => {
+    mock.timers.enable({ apis: ["Date"], now: T0 + startMs });
+    clockOn = true;
+    try { await body(); } finally { clockOn = false; mock.timers.reset(); }
+  };
+  const doorAt = (sc: FakeSafetyDb, deps: SafetyNotifyDeps, messageId: string, signal: SafetySignal, ms: number, log: TestLog = quiet) => {
+    setClock(ms);
+    return notifySafetySignal(sc as any, { threadId: THREAD, senderId: ALICE, messageId, signal, nowMs: T0 + ms }, { deps, retryDelaysMs: [0, 0], log });
+  };
+  /** Every 5 s tick over 20 minutes (health included); the instants that attempted something, and [instant, told] in `told`. */
+  const wholeWindow = async (sc: FakeSafetyDb, deps: SafetyNotifyDeps, log: TestLog, told: Array<[number, number]> = []) => {
+    const attempts: number[] = [];
+    for (let ms = 0; ms <= 20 * 60_000; ms += 5_000) {
+      setClock(ms);
+      const p = await runSafetySignalRedriveTick({ client: sc, nowMs: T0 + ms, deps, log });
+      if (p.attempted > 0) { attempts.push(ms); told.push([ms, p.told]); }
+    }
+    return attempts;
+  };
+  const reasonsOf = (withheld: ReadonlyArray<{ userId: string; reason: string }>) => Object.fromEntries(withheld.map((w) => [w.userId, w.reason]));
+  const allClearsFor = (sc: FakeSafetyDb, userId: string) => sc.db.notifications!.filter((n) => n.user_id === userId && n.event_type === SAFETY_ALL_CLEAR_EVENT);
+  const heldRow = (userId: string, eventType: string, createdAt: string, causal: string) =>
+    ({ id: `held-${userId}-${causal}`, user_id: userId, category: "safe_return", event_type: eventType, source_type: "thread_safety_alert", source_id: THREAD, created_at: createdAt, metadata: { causal_event_id: causal } });
+  /** A thread whose mode h1 raised 20 minutes ago (outside the scan): MSG, an ALL CLEAR, ends it and is this producer's. */
+  const lateClear = () => fakeSafetyDb(world({ messages: [safetyRow("h1", ALICE, -20 * 60_000, "need_help"), safetyRow(MSG, ALICE, 0, "all_clear")] }));
+
+  it("one clock — the door: a second ALL CLEAR for the SAME help request (a double-tap), coalesced by the layer into the first, is `deduped` — no ERROR, settled, never re-attempted, nobody told twice", () => oneClock(-15_000, async () => {
+    const sc = fakeSafetyDb(world({ messages: [safetyRow("h1", ALICE, -15_000, "need_help"), safetyRow("tap", ALICE, -5_000, "all_clear"), safetyRow(MSG, ALICE, 0, "all_clear")] }));
+    const deps = realDeps(sc);
+    await doorAt(sc, deps, "h1", "need_help", -15_000);
+    await doorAt(sc, deps, "tap", "all_clear", -5_000);
+    for (const u of TOLD) assert.equal(allClearsFor(sc, u).length, 1, `${u} holds tap's ALL CLEAR`);
+    const d = logs();
+    const r = await doorAt(sc, deps, MSG, "all_clear", 0, d.log);
+    assert.ok(r.status === "notified", JSON.stringify(r));
+    assert.deepEqual(r.notified, [], "nobody is told a second ALL CLEAR");
+    assert.deepEqual(reasonsOf(r.withheld), { [BOB]: "deduped", [DANA]: "deduped", [GINA]: "deduped", [CARL]: "blocked", [FRAN]: "blocked" });
+    assert.deepEqual(d.errors, [], "a coalesced ALL CLEAR is not a failure");
+    assert.ok(d.warns.some((m) => /coalesced by the notification layer/.test(m)), d.warns.join(" | "));
+    const p = logs();
+    assert.deepEqual(await wholeWindow(sc, deps, p.log), [], "the door settled it: no re-drive attempt");
+    assert.deepEqual(p.errors, []);
+    assert.equal(getSafetySignalRedriveStatus().gaveUpTotal, 0);
+    for (const u of TOLD) {
+      assert.equal(rowsFor(sc, u).length, 0, `${u}: no row for MSG`);
+      assert.equal(allClearsFor(sc, u).length, 1, `${u}: one ALL CLEAR in all`);
+    }
+  }));
+
+  /** The double-tap again, but the FIRST ALL CLEAR (MSG, -10 s) was refused at the door and the second (tap, -5 s) reached
+   *  everyone. MSG is before tap, so the re-drive's own rules still find MSG open: only the layer knows it is a repeat. */
+  const tapAfterRefusedDoor = async () => {
+    const sc = fakeSafetyDb(world({ messages: [safetyRow("h1", ALICE, -15_000, "need_help"), safetyRow(MSG, ALICE, -10_000, "all_clear"), safetyRow("tap", ALICE, -5_000, "all_clear")] }));
+    const deps = realDeps(sc);
+    await doorAt(sc, deps, "h1", "need_help", -15_000);
+    sc.fail.message_thread_members = "always";
+    assert.deepEqual(await doorAt(sc, deps, MSG, "all_clear", -10_000), { status: "refused", stage: "roster" });
+    delete sc.fail.message_thread_members;
+    await doorAt(sc, deps, "tap", "all_clear", -5_000);
+    return { sc, deps };
+  };
+
+  it("one clock — the re-drive: an attempt the layer coalesces into the double-tap's other ALL CLEAR is `deduped` and settled at once: no false GAVE UP, no ERROR, no late repeat", () => oneClock(-15_000, async () => {
+    const { sc, deps } = await tapAfterRefusedDoor();
+    setClock(0);
+    const one = await redriveSafetySignal(sc as any, MSG, { deps, log: quiet });
+    assert.ok(one.status === "settled" && one.reason === "complete", JSON.stringify(one));
+    assert.deepEqual(one.notified, [], "deduped is never counted as told by the attempt");
+    assert.deepEqual(TOLD.map((u) => one.withheld.find((w) => w.userId === u)?.reason), ["deduped", "deduped", "deduped"]);
+    const l = logs();
+    assert.deepEqual(await wholeWindow(sc, deps, l.log), [0], "one attempt (MSG is 10 s old at the first tick), then settled for the whole window");
+    assert.deepEqual(l.errors, [], "no GAVE UP for a member who was correctly not told twice");
+    assert.equal(getSafetySignalRedriveStatus().gaveUpTotal, 0);
+    for (const u of TOLD) {
+      assert.equal(rowsFor(sc, u).length, 0, `${u}: no row for MSG`);
+      assert.equal(allClearsFor(sc, u).length, 1, `${u}: one ALL CLEAR for one help request`);
+    }
+  }));
+
+  it("one clock — STATED LIMIT: `deduped` lives in the in-process memo; a restart after the layer's 60 s window lapses asks the layer again, and the repeat is written ONCE (never twice)", () => oneClock(-15_000, async () => {
+    const { sc, deps } = await tapAfterRefusedDoor();
+    setClock(0);
+    assert.equal((await runSafetySignalRedrivePass({ client: sc, nowMs: T0, deps, log: quiet })).settled, 1, "deduped, settled");
+    _resetSafetyRedriveMemo(); // the restart
+    setClock(90_000);
+    const caughtUp = await runSafetySignalRedrivePass({ client: sc, nowMs: T0 + 90_000, deps, log: quiet });
+    assert.deepEqual([caughtUp.attempted, caughtUp.told], [3, 3], "one catch-up check per message in the window; tap's rows are 95 s old, so the layer no longer coalesces MSG");
+    _resetSafetyRedriveMemo(); // and again
+    setClock(240_000);
+    const again = await runSafetySignalRedrivePass({ client: sc, nowMs: T0 + 240_000, deps, log: quiet });
+    assert.deepEqual([again.attempted, again.told], [3, 0], "the causal id now holds it");
+    for (const u of TOLD) assert.equal(rowsFor(sc, u).length, 1, `${u}: once`);
+  }));
+
+  it("one clock: an ALL CLEAR coalesced into an EARLIER one that a help request has since followed is NOT equivalent — held back at WARN, written once at the first point after the layer's 60 s window; no ERROR, no GAVE UP", () => oneClock(-50_000, async () => {
+    // need_help h1 → ALL CLEAR clear-a → need_help h2 → ALL CLEAR MSG, inside 60 s. The layer's rule 4 sees only "an ALL
+    // CLEAR in this thread 40 s ago"; the member's last word from the thread is h2's "asked for help".
+    const sc = fakeSafetyDb(world({ messages: [safetyRow("h1", ALICE, -50_000, "need_help"), safetyRow("clear-a", ALICE, -40_000, "all_clear"), safetyRow("h2", ALICE, -30_000, "need_help"), safetyRow(MSG, ALICE, 0, "all_clear")] }));
+    const deps = realDeps(sc);
+    await doorAt(sc, deps, "h1", "need_help", -50_000);
+    await doorAt(sc, deps, "clear-a", "all_clear", -40_000);
+    await doorAt(sc, deps, "h2", "need_help", -30_000);
+    const d = logs();
+    const r = await doorAt(sc, deps, MSG, "all_clear", 0, d.log);
+    assert.ok(r.status === "notified" && TOLD.every((u) => reasonsOf(r.withheld)[u] === "coalesced"), JSON.stringify(r));
+    assert.deepEqual(d.errors, [], "held back by a coalescing window is not a failure");
+    assert.ok(d.warns.some((m) => /a help request reached the member since/.test(m)), d.warns.join(" | "));
+    const l = logs();
+    const told: Array<[number, number]> = [];
+    await wholeWindow(sc, deps, l.log, told);
+    assert.deepEqual(told, [[10_000, 0], [30_000, 3]], "held back at 10 s (clear-a's rows 50 s old), written at 30 s (70 s old), then settled");
+    assert.deepEqual(l.errors, [], "no GAVE UP");
+    assert.equal(getSafetySignalRedriveStatus().gaveUpTotal, 0);
+    for (const u of TOLD) {
+      assert.equal(rowsFor(sc, u).length, 1, `${u}: MSG once`);
+      assert.equal(allClearsFor(sc, u).length, 2, `${u}: clear-a and MSG, each answering its own help request`);
+    }
+  }));
+
+  it("a duplicate refusal ALONE is not evidence: an unreadable dedupe ledger is a real failure — not_created at ERROR, every point, one GAVE UP; an ALL CLEAR older than the window, or a fresh SOS, does not count", async () => {
+    const sc = lateClear();
+    const nowMs = Date.now();
+    for (const u of TOLD) sc.db.notifications!.push(heldRow(u, SAFETY_ALL_CLEAR_EVENT, new Date(nowMs - 5 * 60_000).toISOString(), "MESSAGE:clear-old"), heldRow(u, SAFETY_ALERT_EVENT, new Date(nowMs).toISOString(), "MESSAGE:h1"));
+    // The layer's own dedupe reads (each ends in .limit(1)) fail, so it answers "duplicate" (an unreadable ledger is a duplicate).
+    const realFrom = sc.from.bind(sc);
+    (sc as any).from = (t: string) => {
+      const q = realFrom(t);
+      if (t !== "notifications") return q;
+      const lim = q.limit;
+      q.limit = (k: number) => { const out = lim(k); q.then = (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) => Promise.resolve({ data: null, error: { message: "ledger unreadable" } }).then(res, rej); return out; };
+      return q;
+    };
+    const deps = realDeps(sc);
+    const d = logs();
+    const r = await doorAt(sc, deps, MSG, "all_clear", 0, d.log);
+    assert.ok(r.status === "notified" && TOLD.every((u) => r.withheld.some((w) => w.userId === u && w.reason === "not_created")), JSON.stringify(r));
+    assert.ok(d.errors.filter((m) => /not created for one member/.test(m)).length >= TOLD.length, d.errors.join(" | "));
+    const l = logs();
+    assert.deepEqual(await wholeWindow(sc, deps, l.log), [...SAFETY_REDRIVE_SCHEDULE_MS], "re-attempted at every point");
+    assert.equal(l.errors.filter((m) => /GAVE UP/.test(m)).length, 1, l.errors.join(" | "));
+    assert.equal(getSafetySignalRedriveStatus().gaveUpTotal, 1);
+    for (const u of TOLD) assert.equal(rowsFor(sc, u).length, 0, u);
+  });
+
+  it("a create that really FAILS is still retried and given up on at ERROR — an insert failure; and a duplicate whose evidence read fails is a retry, never a settle", async () => {
+    const sc = lateClear();
+    const real = realDeps(sc);
+    const deps: SafetyNotifyDeps = {
+      create: async (i) => (i.userId === BOB ? null : real.create(i)),
+      createDetailed: async (i) => (i.userId === BOB ? { row: null, refusal: "insert_failed" } : real.createDetailed!(i)),
+      route: async () => undefined,
+    };
+    const r = await doorAt(sc, deps, MSG, "all_clear", 0);
+    assert.ok(r.status === "notified" && reasonsOf(r.withheld)[BOB] === "not_created", JSON.stringify(r));
+    const l = logs();
+    assert.deepEqual(await wholeWindow(sc, deps, l.log), [...SAFETY_REDRIVE_SCHEDULE_MS]);
+    assert.equal(l.errors.filter((m) => /GAVE UP/.test(m)).length, 1, l.errors.join(" | "));
+    assert.equal(rowsFor(sc, BOB).length, 0);
+    for (const u of [DANA, GINA]) assert.equal(rowsFor(sc, u).length, 1, `${u}: told once, never again`);
+
+    const sc2 = lateClear();
+    const blind: SafetyNotifyDeps = {
+      create: async () => null,
+      createDetailed: async () => { sc2.fail.notifications = "always"; return { row: null, refusal: "duplicate" }; },
+      route: async () => undefined,
+    };
+    const outcome = await redriveSafetySignal(sc2 as any, MSG, { deps: blind, log: quiet });
+    assert.ok(outcome.status === "retry" && outcome.stage === "deliver", JSON.stringify(outcome));
+  });
+
+  it("equivalence is exact: an SOS written in the same instant as the ALL CLEAR the member holds is not 'nothing different since' — coalesced (re-attempted), never deduped", async () => {
+    const sc = lateClear();
+    const instant = new Date().toISOString();
+    for (const u of TOLD) sc.db.notifications!.push(heldRow(u, SAFETY_ALL_CLEAR_EVENT, instant, "MESSAGE:clear-x"), heldRow(u, SAFETY_ALERT_EVENT, instant, "MESSAGE:h-x"));
+    const dupes: SafetyNotifyDeps = { create: async () => null, createDetailed: async () => ({ row: null, refusal: "duplicate" }), route: async () => undefined };
+    const outcome = await redriveSafetySignal(sc as any, MSG, { deps: dupes, log: quiet });
+    assert.ok(outcome.status === "retry" && outcome.stage === "deliver", JSON.stringify(outcome));
+    const r = await doorAt(sc, dupes, MSG, "all_clear", 0);
+    assert.ok(r.status === "notified" && TOLD.every((u) => reasonsOf(r.withheld)[u] === "coalesced"), JSON.stringify(r));
+  });
+
+  it("P0 is never `deduped`: the layer never answers duplicate for telegraph.sos (every coalescing trigger present, its ledger even unreadable), and a P0 duplicate refusal is not_created — no evidence read — then GAVE UP at ERROR", async () => {
+    // (1) The layer. Bob already holds an SOS for this thread, just written, carrying this very message's causal id.
+    const sc = fakeSafetyDb(world());
+    const ns = new NotificationService(sc as any);
+    const input: CreateNotificationInput = { userId: BOB, eventType: SAFETY_ALERT_EVENT, actorId: ALICE, sourceType: "thread_safety_alert", sourceId: THREAD, params: { actor: "@alice", signal: "asked for help", threadId: THREAD }, metadata: { cause: "SAFETY", signal: "need_help" }, causalEventId: `MESSAGE:${MSG}` };
+    for (let i = 1; i <= 3; i++) {
+      const c = await ns.createDetailed(input);
+      assert.ok(c.row !== null && c.refusal === null, `create ${i}: ${JSON.stringify(c.refusal)}`);
+    }
+    sc.fail.notifications = "always";
+    const unreadable = await ns.createDetailed(input);
+    assert.ok(unreadable.row !== null && unreadable.refusal === null, "P0 reads no dedupe ledger at all");
+    assert.equal(rowsFor(sc, BOB).length, 4);
+
+    // (2) The producer. A layer that DID answer duplicate for a P0 — with Bob's row for this message present — is not_created for everyone.
+    const sc2 = fakeSafetyDb(world());
+    sc2.db.notifications!.push(heldRow(BOB, SAFETY_ALERT_EVENT, new Date().toISOString(), `MESSAGE:${MSG}`));
+    const dupes: SafetyNotifyDeps = { create: async () => null, createDetailed: async () => ({ row: null, refusal: "duplicate" }), route: async () => undefined };
+    const readsBefore = sc2.reads.notifications ?? 0;
+    const d = logs();
+    const r = await doorAt(sc2, dupes, MSG, "need_help", 0, d.log);
+    assert.ok(r.status === "notified", JSON.stringify(r));
+    assert.deepEqual(TOLD.map((u) => reasonsOf(r.withheld)[u]), ["not_created", "not_created", "not_created"]);
+    assert.equal(r.withheld.some((w) => w.reason === "deduped"), false);
+    assert.equal(sc2.reads.notifications ?? 0, readsBefore, "no evidence is read for a P0");
+    assert.ok(d.errors.filter((m) => /not created for one member/.test(m)).length >= TOLD.length, d.errors.join(" | "));
+    // Re-driven (Bob is counted by the "already told" rule — he holds MESSAGE:<id> — never by a coalescing rule), then GAVE UP.
+    const l = logs();
+    assert.deepEqual(await wholeWindow(sc2, dupes, l.log), [...SAFETY_REDRIVE_SCHEDULE_MS]);
+    assert.equal(l.errors.filter((m) => /GAVE UP/.test(m)).length, 1, l.errors.join(" | "));
+  });
+
+  it("never told twice, still: a row for the SAME message landing between the 'already told' read and the create — another instance's ALL CLEAR, or a report of it in another category (T397) — is caught by the layer's causal rule: deduped, settled", async () => {
+    const sc = lateClear();
+    const real = realDeps(sc);
+    const otherInstance = (i: CreateNotificationInput) => {
+      if (i.userId === BOB) sc.db.notifications!.push({ ...heldRow(BOB, SAFETY_ALL_CLEAR_EVENT, new Date().toISOString(), `MESSAGE:${MSG}`), id: "other-instance" });
+      if (i.userId === DANA) sc.db.notifications!.push({ ...heldRow(DANA, "telegraph.mention", new Date().toISOString(), `MESSAGE:${MSG}`), id: "other-category", category: "telegraph", source_type: "thread" });
+    };
+    const deps: SafetyNotifyDeps = {
+      create: async (i) => { otherInstance(i); return real.create(i); },
+      createDetailed: async (i) => { otherInstance(i); return real.createDetailed!(i); },
+      route: async () => undefined,
+    };
+    const outcome = await redriveSafetySignal(sc as any, MSG, { deps, log: quiet });
+    assert.ok(outcome.status === "settled" && outcome.reason === "complete", JSON.stringify(outcome));
+    assert.deepEqual(outcome.notified, [GINA]);
+    assert.deepEqual([BOB, DANA].map((u) => outcome.withheld.find((w) => w.userId === u)?.reason), ["deduped", "deduped"]);
+    for (const u of TOLD) assert.equal(rowsFor(sc, u).length, 1, `${u}: exactly one row about MSG`);
   });
 });

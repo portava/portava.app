@@ -15725,3 +15725,7 @@ New: `exclusionReadsT220d` 49/49, 31 red on the code before
 Nine mutants, each run alone and restored byte for byte, are all red. Stale above, left as written: §94.6's second bullet
 and T220c's "first request … unchanged" / "Still cut" sentences. Headline unchanged:
 **451 = 273 C / 175 W / 1 N / 2 X**.
+
+### Correction (2026-10-18, wave 5) — independent verification, pass 4: a coalesced ALL CLEAR is not a false give-up
+
+When NotificationService coalesces a door-sent or re-driven P1 ALL CLEAR, the producer reads the evidence itself — `deduped` (counted as told: no ERROR, no GAVE UP, never re-sent) only if the member holds this message's causal row or their newest safety row for the thread inside P1's 60 s window is an ALL CLEAR; `coalesced` (re-attempted at WARN, written once when the window lapses) if a help request followed it, so a second emergency's ALL CLEAR is never lost; and a bare duplicate refusal (an unreadable ledger) stays not_created and gives up at ERROR. P0 is never either (`artifacts/api-server/src/services/telegraph/safetyNotifications.ts:662#function dedupeCandidate(`, `artifacts/api-server/src/services/telegraph/safetyNotifications.ts:695#async function readEquivalentHolders(`, `artifacts/api-server/src/test/telegraphSafetySignalRedrive.test.ts:634#describe("pass 4`). Like every settle, `deduped` is remembered in memory only; after a restart past the window a repeat ALL CLEAR is written once. No row moves.

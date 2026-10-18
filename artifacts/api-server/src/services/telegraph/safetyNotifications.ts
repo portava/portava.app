@@ -76,7 +76,7 @@
  * later non-P0 report of the same message is a duplicate (T397). P0 itself is
  * never suppressed — window 0, and exempt from causal suppression by the
  * ladder's own rule — because a second SOS is a second SOS. One message reaches
- * this producer once (one door call) and each member once (a set).
+ * this producer once (one door call) and each member once (a set). A P1 the layer coalesces into an EQUIVALENT is `deduped` (file foot).
  *
  * ── WHAT A LOCK SCREEN CAN SAY ──────────────────────────────────────────────
  * "Safety alert", the sender (shown name only if they show it, else @handle,
@@ -87,8 +87,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { isExcluded, readBlockExclusions, type ExclusionSet } from "../../lib/exclusionSet.js";
 import { actorLabel } from "./coordinationNotifications.js"; import { projectSafetyMode, readSafetySignals, type SafetyInputRow } from "./safetyMode.js"; // the re-drive's "is it still open?" (file foot)
-import type { CreateNotificationInput, NotificationRow } from "../notifications/NotificationService.js";
-import { causalEventIdOf } from "../notifications/NotificationDeduplicationService.js";
+import type { CreateNotificationInput, NotificationCreateRefusal, NotificationRow } from "../notifications/NotificationService.js";
+import { causalEventIdOf } from "../notifications/NotificationDeduplicationService.js"; import { dedupeWindowFor } from "../../domain/telegraph/policies/attentionLadder.js"; // `deduped` (file foot)
 
 /** P0. The name carries `sos` on purpose: it is what NotificationRouter's Compass map reads as emergency_safety. */
 export const SAFETY_ALERT_EVENT = "telegraph.sos" as const;
@@ -121,7 +121,7 @@ export function isNeedHelpQuickState(kind: string, payload: unknown): boolean {
 }
 
 export interface SafetyNotifyDeps {
-  create(input: CreateNotificationInput): Promise<NotificationRow | null>;
+  create(input: CreateNotificationInput): Promise<NotificationRow | null>; /** Optional: `create` saying WHY nothing was written (NotificationService.createDetailed) — what lets a coalesced P1 be `deduped` (file foot). */ createDetailed?(input: CreateNotificationInput): Promise<{ row: NotificationRow | null; refusal: NotificationCreateRefusal | null }>;
   route(row: NotificationRow): Promise<void>;
 }
 
@@ -153,7 +153,7 @@ async function defaultDeps(sc: SupabaseClient): Promise<SafetyNotifyDeps> {
   const { NotificationRouter } = await import("../notifications/NotificationRouter.js");
   const ns = new NotificationService(sc);
   const nr = new NotificationRouter(sc);
-  return { create: (input) => ns.create(input), route: (row) => nr.route(row) };
+  return { create: (input) => ns.create(input), createDetailed: (input) => ns.createDetailed(input), route: (row) => nr.route(row) };
 }
 
 /** A safety failure is an ERROR, never a warning: somebody asked for help and was not relayed. */
@@ -236,7 +236,7 @@ async function tellConversation(
   // The name is decoration: a failure to read it names "Someone", it never stops the alert.
   const actor = await actorLabel(sc, senderId).catch(() => "Someone");
   const deps = opts.deps ?? (await defaultDeps(sc));
-  const told = await deliverSafetySignal(deps, { threadId, senderId, messageId, signal, eventType, actor }, deliverTo, opts.log);
+  const told = await deliverSafetySignal(deps, sc, { threadId, senderId, messageId, signal, eventType, actor }, deliverTo, opts.log);
   return { status: "notified", signal, eventType, notified: told.notified, withheld: [...withheld, ...told.withheld] };
 }
 
@@ -244,11 +244,11 @@ async function tellConversation(
  * One notification per member, each on its own: one member's failure stops nobody else. The causal event
  * (`MESSAGE:<id>`) is persisted on every row (metadata.causal_event_id) — it is what the re-drive below reads to
  * tell each member at most once. `withheld` here is `not_created` (the service declined or the insert failed) or
- * `failed` (it threw); the re-drive re-attempts both. A failed ROUTE is not withheld: the row exists, the member
+ * `failed` (it threw) or `coalesced` (the layer held back a P1 that is not equivalent), all re-attempted, or `deduped` (an equivalent is SEEN: counted as told) — file foot. A failed ROUTE is not withheld: the row exists, the member
  * is told in-app, and repeating the push is the router's push-retry job, not this producer's.
  */
 async function deliverSafetySignal(
-  deps: SafetyNotifyDeps,
+  deps: SafetyNotifyDeps, sc: SupabaseClient,
   m: { threadId: string; senderId: string; messageId: string; signal: SafetySignal; eventType: typeof SAFETY_ALERT_EVENT | typeof SAFETY_ALL_CLEAR_EVENT; actor: string },
   deliverTo: readonly string[],
   log: SafetyNotifyLog | undefined,
@@ -256,11 +256,11 @@ async function deliverSafetySignal(
   const { threadId, senderId, messageId, signal, eventType, actor } = m;
   const causalEventId = causalEventIdOf({ objectType: "MESSAGE", objectId: messageId }) ?? undefined;
   const notified: string[] = [];
-  const withheld: Array<{ userId: string; reason: string }> = [];
+  const withheld: Array<{ userId: string; reason: string }> = []; const duplicates: string[] = []; // refused as duplicates: classified after the loop (file foot)
   await Promise.all(deliverTo.map(async (userId) => {
-    let row: NotificationRow | null;
+    let row: NotificationRow | null; let refusal: NotificationCreateRefusal | null = null;
     try {
-      row = await deps.create({
+      ({ row, refusal } = await createSafetyRow(deps, {
         userId,
         eventType,
         actorId: senderId,
@@ -270,13 +270,13 @@ async function deliverSafetySignal(
         params: { actor, signal: SAFETY_SIGNAL_PHRASES[signal], threadId },
         metadata: { cause: "SAFETY", signal },
         ...(causalEventId ? { causalEventId } : {}),
-      });
+      }));
     } catch (err) {
       withheld.push({ userId, reason: "failed" });
       loud(log, { err, threadId, signal, userId }, "SAFETY notification failed for one member (the help request itself was written)");
       return;
     }
-    if (!row) {
+    if (!row && dedupeCandidate(eventType, refusal)) { duplicates.push(userId); return; } if (!row) {
       withheld.push({ userId, reason: "not_created" });
       loud(log, { threadId, signal, userId }, "SAFETY notification not created for one member (privacy guard, ledger or insert)");
       return;
@@ -288,7 +288,7 @@ async function deliverSafetySignal(
       loud(log, { err, threadId, signal, userId }, "SAFETY notification failed for one member (the help request itself was written)");
     }
   }));
-  return { notified, withheld };
+  withheld.push(...(await classifyDuplicates(sc, { threadId, messageId, signal, eventType }, duplicates, log))); return { notified, withheld };
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -401,9 +401,9 @@ export function _resetSafetyRedriveMemo(): void {
   _redrive.clear();
 }
 
-/** A door that told every member it could (blocked and, for a help request, archived ones excepted) leaves nothing for the re-drive. */
+/** A door that told every member it could (blocked, for a help request archived, and `deduped` ones excepted) leaves nothing for the re-drive. */
 function doorToldEveryone(o: SafetyNotifyOutcome): boolean {
-  return o.status === "notified" && o.withheld.every((w) => w.reason === "blocked" || w.reason === "archived");
+  return o.status === "notified" && o.withheld.every((w) => w.reason === "blocked" || w.reason === "archived" || w.reason === DEDUPED);
 }
 
 /** The signal a STORED row carries: a §6.2 SAFETY row's kind, or §9.1's NEED_HELP (coordination.ts stores the state lower-cased as the subtype). */
@@ -532,9 +532,9 @@ async function redriveOnce(sc: SupabaseClient, messageId: string, opts: { deps?:
   const actor = await actorLabel(sc, senderId).catch(() => "Someone");
   const deps = opts.deps ?? (await defaultDeps(sc));
   const eventType = signal === "all_clear" ? SAFETY_ALL_CLEAR_EVENT : SAFETY_ALERT_EVENT;
-  const out = await deliverSafetySignal(deps, { threadId, senderId, messageId, signal, eventType, actor }, untold, opts.log);
-  if (out.withheld.length > 0) return retry("deliver", out.notified);
-  return settle("complete", out.notified);
+  const out = await deliverSafetySignal(deps, sc, { threadId, senderId, messageId, signal, eventType, actor }, untold, opts.log);
+  if (out.withheld.some((w) => w.reason !== DEDUPED)) return retry("deliver", out.notified); // a `deduped` member counts as told (file foot)
+  withheld.push(...out.withheld); return settle("complete", out.notified);
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -593,4 +593,139 @@ function archivedRecipients(rows: ReadonlyArray<{ user_id?: unknown; archived_at
 
 function archivedWithheld(archived: ReadonlySet<string>): Array<{ userId: string; reason: string }> {
   return [...archived].map((userId) => ({ userId, reason: "archived" }));
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// A CREATE THE NOTIFICATION LAYER COALESCED — `deduped` (Fable pass 4 §2.1)
+// ═════════════════════════════════════════════════════════════════════════════
+/**
+ * THE DEFECT. `create` answers null both when nothing could be written and
+ * when NotificationService legitimately COALESCED the notification into one
+ * the member already holds: NotificationDeduplicationService rule 4 (a P1 ALL
+ * CLEAR inside the ladder's 60 s window of an earlier ALL CLEAR from this
+ * producer in the same thread) or rule 0b (a row carrying this message's
+ * causal id, landed by another writer between the re-drive's "already told"
+ * read and the create). Read as `not_created`, that was an ERROR at the door
+ * and a re-attempt at every point, and while the coalescing held it ended in a
+ * false "GAVE UP" ERROR for a member who was correctly not told twice.
+ *
+ * `deduped` — COUNTED AS TOLD. The layer refused the create as a DUPLICATE
+ * (refusal `duplicate`, NotificationService.createDetailed) AND this module
+ * then READ, for that member, an EQUIVALENT notification:
+ *   - a row carrying this message's causal id MESSAGE:<id>, any event, whoever
+ *     wrote it (the re-drive's own "already told" rule); or
+ *   - rule 4's identity, made exact: inside the ladder's window for this event
+ *     type (measured now, on the clock the layer used), the member's NEWEST
+ *     row from this producer for this thread is of THIS event type. It already
+ *     says what this one says: nothing different has been said since.
+ * The door settles; a re-drive attempt settles instead of retrying. A
+ * `deduped` member is never counted as `notified`.
+ *
+ * `coalesced` — RE-ATTEMPTED, at WARN. The layer coalesced it into an ALL
+ * CLEAR the member holds, but something DIFFERENT from this producer reached
+ * them after that one: a help request. That is the one realistic way rule 4
+ * swallows a door-sent ALL CLEAR (need_help, ALL CLEAR, need_help, ALL CLEAR
+ * inside 60 s): the earlier ALL CLEAR answered the earlier request, and the
+ * member's last word from this thread is "asked for help". Not equivalent —
+ * the ladder's own P1 rule is that two real changes both arrive — so it is
+ * re-attempted, and it goes, once, at the first point after the layer's 60 s
+ * window lapses (measured on one clock: written 30 s late). Were it still held
+ * back at the last point, the GAVE UP ERROR would be true: that member never
+ * learned the request was answered.
+ *
+ * A DUPLICATE REFUSAL ALONE IS NOT EVIDENCE. The layer also answers
+ * "duplicate" when its ledger cannot be read (NotificationDeduplicationService
+ * "AN UNREADABLE LEDGER IS A DUPLICATE"). With no such row seen — or when this
+ * read fails — the member stays `not_created`: ERROR, re-attempted at every
+ * point, given up on loudly. The house precedent is LayoverCrewAbortNotice's
+ * `priorNotices`.
+ *
+ * P0 IS NEVER `deduped` (nor `coalesced`), twice over. (1) The layer never
+ * answers duplicate for telegraph.sos: the ladder gives P0 window 0, which
+ * skips rule 0b and rule 4, and rules 1-3 belong to other events — it reads no
+ * ledger at all. (2) Should that ever change, `dedupeCandidate` refuses both
+ * classes for SAFETY_ALERT_EVENT outright: a P0 duplicate refusal is
+ * `not_created` (ERROR, re-driven, GAVE UP at ERROR) and no evidence is even
+ * read. A help request is never settled by a coalescing rule.
+ *
+ * STATED LIMITS. Like every settle, `deduped` lives in the in-process memo:
+ * after a restart inside the window the catch-up attempt asks the layer again,
+ * and if its window has lapsed the ALL CLEAR is written then — once (its
+ * causal id then holds it). An attempt in which one member is `deduped` and
+ * another's create failed is retried; the retry asks the layer again for
+ * both, under the same once-per-message bound.
+ */
+const DEDUPED = "deduped";
+const COALESCED = "coalesced";
+
+/** Only a non-P0 can be coalesced into what the member holds; a P0 duplicate refusal is a failure (above). */
+function dedupeCandidate(eventType: string, refusal: NotificationCreateRefusal | null): boolean {
+  return refusal === "duplicate" && eventType !== SAFETY_ALERT_EVENT;
+}
+
+/** `create`, saying why nothing was written when the deps can (NotificationService.createDetailed); a bare null otherwise. */
+async function createSafetyRow(deps: SafetyNotifyDeps, input: CreateNotificationInput): Promise<{ row: NotificationRow | null; refusal: NotificationCreateRefusal | null }> {
+  if (typeof deps.createDetailed === "function") return deps.createDetailed(input);
+  return { row: await deps.create(input), refusal: null };
+}
+
+/** Each duplicate refusal: `deduped` (an equivalent is SEEN), `coalesced` (held back, not equivalent: WARN), else `not_created` at ERROR. */
+async function classifyDuplicates(
+  sc: SupabaseClient,
+  m: { threadId: string; messageId: string; signal: SafetySignal; eventType: string },
+  candidates: readonly string[],
+  log: SafetyNotifyLog | undefined,
+): Promise<Array<{ userId: string; reason: string }>> {
+  if (candidates.length === 0) return [];
+  const held = await readEquivalentHolders(sc, m, candidates);
+  const out: Array<{ userId: string; reason: string }> = [];
+  for (const userId of candidates) {
+    const reason = held === null ? null : held.equivalent.has(userId) ? DEDUPED : held.coalesced.has(userId) ? COALESCED : null;
+    if (reason !== null) { out.push({ userId, reason }); continue; }
+    out.push({ userId, reason: "not_created" });
+    loud(log, { threadId: m.threadId, signal: m.signal, userId, refusal: "duplicate", evidence: held === null ? "unreadable" : "none" }, "SAFETY notification not created for one member: refused as a duplicate, but no notification it duplicates could be seen (the layer's ledger may be unreadable) — re-attempted");
+  }
+  const of = (r: string) => out.filter((w) => w.reason === r).map((w) => w.userId);
+  if (of(DEDUPED).length > 0) log?.warn({ threadId: m.threadId, signal: m.signal, deduped: of(DEDUPED) }, "SAFETY notification coalesced by the notification layer: the member already holds an equivalent one — counted as told, not re-attempted");
+  if (of(COALESCED).length > 0) log?.warn({ threadId: m.threadId, signal: m.signal, coalesced: of(COALESCED) }, "SAFETY notification held back by the notification layer's coalescing window, but a help request reached the member since the one it was coalesced into — re-attempted; it goes once the window lapses");
+  return out;
+}
+
+/** Who holds an EQUIVALENT of this create, and who only one it was coalesced into (above). null = it could not be read. */
+async function readEquivalentHolders(sc: SupabaseClient, m: { threadId: string; messageId: string; eventType: string }, userIds: readonly string[]): Promise<{ equivalent: Set<string>; coalesced: Set<string> } | null> {
+  const causal = causalEventIdOf({ objectType: "MESSAGE", objectId: m.messageId });
+  const windowMs = dedupeWindowFor(m.eventType);
+  const since = typeof windowMs === "number" && windowMs > 0 ? new Date(Date.now() - windowMs).toISOString() : null;
+  const equivalent = new Set<string>();
+  const coalesced = new Set<string>();
+  try {
+    for (let i = 0; i < userIds.length; i += TOLD_CHUNK) {
+      const chunk = userIds.slice(i, i + TOLD_CHUNK);
+      if (causal !== null) {
+        const { data, error } = await sc.from("notifications").select("user_id").in("user_id", chunk).eq("metadata->>causal_event_id", causal);
+        if (error || !Array.isArray(data)) return null;
+        for (const r of data as Array<{ user_id?: unknown }>) equivalent.add(String(r?.user_id ?? ""));
+      }
+      if (since === null) continue;
+      // Everything this producer told them about this thread inside the window, newest first per member.
+      const { data, error } = await sc.from("notifications").select("user_id, event_type, created_at").in("user_id", chunk).eq("source_type", SAFETY_NOTIFICATION_SOURCE).eq("source_id", m.threadId).gt("created_at", since);
+      if (error || !Array.isArray(data)) return null;
+      const newest = new Map<string, { atMs: number; same: boolean }>();
+      const hasSame = new Set<string>();
+      for (const r of data as Array<{ user_id?: unknown; event_type?: unknown; created_at?: unknown }>) {
+        const u = String(r?.user_id ?? "");
+        const same = r?.event_type === m.eventType;
+        const atMs = msOf(r?.created_at);
+        if (same) hasSame.add(u);
+        const cur = newest.get(u);
+        if (!cur || atMs > cur.atMs) newest.set(u, { atMs, same });
+        else if (atMs === cur.atMs && !same) cur.same = false; // a tie is not "nothing different since"
+      }
+      for (const u of hasSame) if (!equivalent.has(u)) (newest.get(u)?.same ? equivalent : coalesced).add(u);
+    }
+  } catch {
+    return null;
+  }
+  for (const u of equivalent) coalesced.delete(u);
+  return { equivalent, coalesced };
 }
