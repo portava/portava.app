@@ -36,7 +36,7 @@ import { executeAccountDeletion } from "../services/accountDeletion/AccountDelet
 import { runSchemaDriftCheck, getCachedSchemaDriftResult } from "../lib/schemaDriftCheck";
 import { logAdminAccess, accessReason } from "../lib/adminAudit.js";
 import { resolveStoragePath } from "../lib/storagePath.js";
-import { logModerationAction, auditReportAction, checkActionReportLink, checkContentReportLink, reportLinkColumnId } from "../lib/moderationAudit.js"; import { applyAccountRestriction, revokeAccountRestrictions, parseRestrictionEnd, recordModerationNotApplied, notAppliedAuditNote } from "../lib/accountModeration.js"; // same line: admin.ts is cited by line
+import { logModerationAction, auditReportAction, checkActionReportLink, checkContentReportLink, reportLinkColumnId } from "../lib/moderationAudit.js"; import { applyAccountRestriction, revokeAccountRestrictions, parseRestrictionEnd, recordModerationNotApplied, notAppliedAuditNote } from "../lib/accountModeration.js"; import { countOpenReportsAgainst } from "../lib/moderationCounts.js"; // same line: admin.ts is cited by line
 import { loadCapturedReportContent, loadModerationSubjectSnapshots, resolveContentOwnerDetailed, MODERATION_REPORT_CATEGORIES, MODERATION_REPORT_STATUSES, MODERATION_REPORT_TRANSITIONS, type ModerationReportStatus } from "../lib/moderationReportSnapshots.js";
 
 import { requireAdmin } from "../lib/requireAdmin.js"; import { computeAttemptsPerVerifiedUser } from "../services/identityVerification/attemptMetrics.js"; // same line on purpose: a new import line shifts every anchored citation into this file
@@ -1389,10 +1389,10 @@ router.get("/admin/users", async (req, res) => {
       .eq("user_id", userId)
       .order("created_at", { ascending: false })
       .limit(5),
-    sc.from("reports")
-      .select("id", { count: "exact", head: true })
-      .eq("target_id", userId)
-      .eq("status", "open"),
+    // census-trust (wave 5): the shared count form (the same HEAD count) — a count-less, failed or thrown answer is a failed read, never 0
+    countOpenReportsAgainst(sc, userId).then((r) =>
+      r.ok ? { count: r.count, error: null } : { count: null, error: { message: r.reason } },
+    ),
     sc.from("compass_settings")
       .select("onboarding_completed, onboarding_completed_at")
       .eq("user_id", userId)

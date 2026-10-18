@@ -4937,3 +4937,7 @@ missing column.
 - NOT-GRADED: artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts — the fee resolver, cited for the marker; no Trust row grades fees, and census-layover is the census that watches this file.
 
 Rows: none move. Headline unchanged: 90 / 15 / 1 / 2 of 108.
+
+### Correction (2026-10-18, wave 5) — admin user detail: openReports is never 0 from nothing
+
+GET /admin/users rendered `openReports: count ?? 0` from an inline HEAD count; it now reads `artifacts/api-server/src/lib/moderationCounts.ts:39#export async function countOpenReportsAgainst(` (`artifacts/api-server/src/routes/admin.ts:1393#countOpenReportsAgainst(sc, userId).then((r) =>`, line-neutral), so a count-less, failed or thrown answer refuses the record naming openReports, as the route already did for its other moderation facts — `artifacts/api-server/src/test/adminUserDetailOpenReports.test.ts:192#describe("the admin user detail: a count-less, failed or thrown openReports read refuses the record — never 0"` (25 cases, 8 red before, 12 mutants killed). Rows: none move. Headline unchanged: 90 / 15 / 1 / 2 of 108.
