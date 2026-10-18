@@ -287,7 +287,7 @@ function ReportedTab() {
 
   const load = useCallback(async (isRefresh = false) => {
     if (!isRefresh) setLoading(true);
-    const res = await getMediaReported({ limit: 50, status: 'open' });
+    const res = await getMediaReported({ limit: 50 }); // no status: the server's default is every UNRESOLVED report (open + in_review); 'open' alone hid the in_review ones
     if (res.ok) setItems(res.data.items);
     setLoading(false);
     setRefreshing(false);
@@ -356,7 +356,7 @@ function WrongPlaceTab() {
 
   const load = useCallback(async (isRefresh = false) => {
     if (!isRefresh) setLoading(true);
-    const res = await getMediaWrongPlace({ limit: 50, status: 'open' });
+    const res = await getMediaWrongPlace({ limit: 50 }); // no status: every UNRESOLVED report (open + in_review), as the Reported tab
     if (res.ok) setItems(res.data.items);
     setLoading(false);
     setRefreshing(false);

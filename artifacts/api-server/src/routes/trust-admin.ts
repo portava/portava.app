@@ -41,7 +41,7 @@ import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEng
 import { getActiveCapsResult, getCapForUser } from "../services/trust/TrustCapService.js";
 import type { RestrictionType } from "../services/trust/TrustRestrictionService.js";
 
-import { requireAdmin } from "../lib/requireAdmin.js";
+import { requireAdmin } from "../lib/requireAdmin.js"; import { exactListCount, listTotalRefusal } from "../lib/moderationCounts.js";
 import {
   getTrustMaintenanceStatus,
   MAINTENANCE_INTERVAL_MS,
@@ -138,9 +138,9 @@ router.get("/admin/trust/reviews", async (req, res) => {
   if (assignedTo) query = query.eq("assigned_to", assignedTo);
 
   const { data, error, count } = await query;
-  if (error) { sendError(res, "db_error", error.message); return; }
-  void logAdminAccess(sc, admin.userId, "profile", "list", "view", accessReason(req));
-  res.json({ reviews: data ?? [], total: count ?? 0, page });
+  if (error) { sendError(res, "db_error", error.message); return; } const total = exactListCount(count, data, (page - 1) * limit); // never `count ?? 0` (wave 5): a count-less page read as an empty review queue
+  if (total === null) { sendError(res, "db_error", listTotalRefusal("trust review queue"), { exposeDetail: true }); return; } void logAdminAccess(sc, admin.userId, "profile", "list", "view", accessReason(req));
+  res.json({ reviews: data, total, page });
 });
 
 // ── GET /admin/trust/events/pending ──────────────────────────────────────────
@@ -526,17 +526,17 @@ router.get("/admin/trust/gaming-flags", async (req, res) => {
 
   const limit = Math.min(100, Number(req.query.limit) || 50);
 
-  const { data, error } = await sc
+  const { data, error, count } = await sc
     .from("trust_reviews")
-    .select("id, user_id, review_type, status, metadata, created_at")
+    .select("id, user_id, review_type, status, metadata, created_at", { count: "exact" }) // `total` is the queue's size, measured (wave 5): it was this page's length, and 0 from a non-list answer
     .eq("review_type", "gaming_suspected")
     .in("status", ["open", "in_progress"])
     .order("created_at", { ascending: false })
     .limit(limit);
-
-  if (error) { sendError(res, "db_error", error.message); return; }
+  if (error) { sendError(res, "db_error", error.message); return; } const total = exactListCount(count, data);
+  if (total === null) { sendError(res, "db_error", listTotalRefusal("gaming-flag"), { exposeDetail: true }); return; }
   void logAdminAccess(sc, admin.userId, "profile", "list", "view", accessReason(req));
-  res.json({ flags: data ?? [], total: (data ?? []).length });
+  res.json({ flags: data, total });
 });
 
 // ── POST /admin/trust/gaming-flags/:id/mark-reviewed ────────────────────────

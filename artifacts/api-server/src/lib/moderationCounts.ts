@@ -92,7 +92,61 @@ export const UNRESOLVED_REPORT_STATUSES: readonly LegacyReportStatus[] = ["open"
  * page it came with. A queue whose total is unknown is refused rather than shown
  * as `count ?? 0`, which paginates the queue down to nothing.
  */
-export function exactListCount(count: unknown, rows: unknown): number | null {
-  if (!Array.isArray(rows) || typeof count !== "number" || !Number.isSafeInteger(count) || count < rows.length) return null;
+export function exactListCount(count: unknown, rows: unknown, offset = 0): number | null {
+  // `offset` (wave 5): a page past the first holds `offset + rows.length` rows at least; an empty page past the end proves nothing more.
+  if (!Array.isArray(rows) || typeof count !== "number" || !Number.isSafeInteger(count) || count < (rows.length > 0 ? offset + rows.length : 0)) return null;
   return count;
+}
+
+/**
+ * ── THE STATUS FILTER A LEGACY-REPORT LIST MAY BE ASKED FOR (wave 5) ──────
+ * GET /admin/media/reported and /admin/media/wrong-place took `status` raw and
+ * matched it EXACTLY, defaulting to 'open'. So an in_review report — one a
+ * moderator flagged (adminMedia) or whose content was hidden (hide-content), and
+ * still unresolved — was in no media tab, and a misspelt status answered an
+ * empty queue that read as "nothing reported".
+ *
+ * A list now asks for one of:
+ *   unresolved   open + in_review — the default, the queue a moderator works
+ *   all          no status filter
+ *   <a word>     one word of LEGACY_REPORT_STATUSES
+ * Anything else is refused by name (`ok: false`), never answered with an empty page.
+ */
+export const LEGACY_REPORT_LIST_FILTERS = ["unresolved", "all", ...LEGACY_REPORT_STATUSES] as const;
+export type LegacyReportStatusFilter =
+  | { readonly ok: true; readonly statuses: readonly LegacyReportStatus[] | null }
+  | { readonly ok: false; readonly message: string };
+
+export function parseLegacyReportStatusFilter(raw: unknown): LegacyReportStatusFilter {
+  if (raw === undefined || raw === "" || raw === "unresolved") return { ok: true, statuses: UNRESOLVED_REPORT_STATUSES };
+  if (raw === "all") return { ok: true, statuses: null };
+  if (typeof raw === "string" && (LEGACY_REPORT_STATUSES as readonly string[]).includes(raw)) return { ok: true, statuses: [raw as LegacyReportStatus] };
+  return { ok: false, message: `Unknown status '${typeof raw === "string" ? raw : JSON.stringify(raw)}'. One of: ${LEGACY_REPORT_LIST_FILTERS.join(", ")}` };
+}
+
+/** The refusal a paged admin list answers when exactListCount is null: named, never a page that reads as the whole queue. */
+export function listTotalRefusal(list: string): string {
+  return `The ${list} list answered without an exact total. A page with no total is not served: it would hide every item past it. Retry.`;
+}
+
+/**
+ * ── Promise.allSettled ELEMENTS (wave 5, the Compass admin dashboard) ──────
+ * A dashboard that reads many tables at once with Promise.allSettled folded
+ * every element with `status === "fulfilled" ? data ?? [] : []` and
+ * `count ?? 0`. So a rejected read, a read that answered an error (supabase-js
+ * RESOLVES those, so they arrive "fulfilled"), and a read that answered no list
+ * or no count all rendered as zero abuse flags, zero safety-filter fires, zero
+ * pending posts. These answer null in every one of those cases — never [] or 0
+ * — so the caller can name the section and refuse.
+ */
+export function settledRows(r: PromiseSettledResult<unknown>): any[] | null {
+  if (r.status !== "fulfilled") return null;
+  const v = r.value as { data?: unknown; error?: unknown } | null | undefined;
+  return v && !v.error && Array.isArray(v.data) ? v.data : null;
+}
+
+export function settledCount(r: PromiseSettledResult<unknown>): number | null {
+  if (r.status !== "fulfilled") return null;
+  const v = r.value as { count?: unknown; error?: unknown } | null | undefined;
+  return v && !v.error && typeof v.count === "number" && Number.isSafeInteger(v.count) && v.count >= 0 ? v.count : null;
 }

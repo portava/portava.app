@@ -237,7 +237,7 @@ describe("a trip report filed through POST /reports reaches the trip queue and t
     rowOf(seed, await file("trip", TRIP)).status = "dismissed";
     const r = await asAdmin("GET", "/admin/trips");
     assert.equal(r.status, 200, r.raw);
-    assert.deepEqual(r.body, { trips: [] });
+    assert.deepEqual(r.body, { trips: [], total: 0, page: 1 }); // wave 5: the queue pages, with its measured total
   });
 
   it("RED before: report-resolve closes the report it names and counts it — resolvedCount reflects reality", async () => {
@@ -248,7 +248,7 @@ describe("a trip report filed through POST /reports reaches the trip queue and t
     const r = await asAdmin("POST", `/admin/trips/${TRIP}/report-resolve`, { resolution: "accepted" });
     assert.equal(r.status, 200, r.raw);
     assert.deepEqual(strict.deadColumnErrors, []);
-    assert.deepEqual(r.body, { tripId: TRIP, resolution: "accepted", resolvedCount: 2 });
+    assert.deepEqual(r.body, { tripId: TRIP, resolution: "accepted", resolvedCount: 2, reports: [{ id: a, audit: "recorded" }, { id: b, audit: "recorded" }], closedConcurrently: [] }); // wave 5: each report claimed, then audited
     assert.equal(rowOf(seed, a).status, "resolved");
     assert.equal(rowOf(seed, b).status, "resolved");
   });
@@ -257,14 +257,14 @@ describe("a trip report filed through POST /reports reaches the trip queue and t
     const { seed } = install(world());
     const a = await file("trip", TRIP);
     const first = await asAdmin("POST", `/admin/trips/${TRIP}/report-resolve`, { resolution: "rejected" });
-    assert.deepEqual(first.body, { tripId: TRIP, resolution: "rejected", resolvedCount: 1 });
+    assert.deepEqual(first.body, { tripId: TRIP, resolution: "rejected", resolvedCount: 1, reports: [{ id: a, audit: "recorded" }], closedConcurrently: [] });
     assert.equal(rowOf(seed, a).status, "dismissed");
     const again = await asAdmin("POST", `/admin/trips/${TRIP}/report-resolve`, { resolution: "accepted" });
     assert.equal(again.status, 200, again.raw);
     assert.equal(again.body.resolvedCount, 0, "a measured zero: nothing unresolved was left");
     assert.equal(rowOf(seed, a).status, "dismissed", "the dismissal stands");
     const queue = await asAdmin("GET", "/admin/trips");
-    assert.deepEqual(queue.body, { trips: [] }, "and the queue is clear");
+    assert.deepEqual(queue.body, { trips: [], total: 0, page: 1 }, "and the queue is clear");
   });
 
   it("RED before: an update that answers no rows is refused — never `(updated ?? []).length` = 0", async () => {
@@ -323,7 +323,7 @@ describe("an event report filed through POST /reports reaches the events queue a
     assert.equal(rowOf(seed, a).status, "resolved");
     assert.equal(rowOf(seed, b).status, "resolved");
     const queue = await asAdmin("GET", "/admin/events?reported=true");
-    assert.deepEqual(queue.body, { events: [] });
+    assert.deepEqual(queue.body, { events: [], total: 0, page: 1 });
   });
 
   it("RED before: a dismissed event report stays dismissed when the event is later removed", async () => {
@@ -593,7 +593,7 @@ function tsFiles(dir: string): string[] {
   return out;
 }
 
-/** Each `.from("reports")` statement: from the call to the first `;` or the next `.from(` (a Promise.all list holds several). */
+/** Each `.from("reports")` statement: from the call to the first `;` or the next `.from(` (a Promise.all list holds several). LIMITS — only literal words in TS statements under api-server/src (test/ excluded) are scanned: a status held in a variable (adminMedia's `newStatus` ternary; the adminMedia flag case above pins that one), SQL (no function or trigger writes `reports` today), the client (the CONTROL below) and a statement that spans another `.from(` are not. */
 function reportStatements(src: string): string[] {
   const out: string[] = [];
   const re = /\.from\((["'`])reports\1\)/g;

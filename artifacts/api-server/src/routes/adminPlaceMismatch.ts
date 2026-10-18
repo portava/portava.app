@@ -14,7 +14,7 @@ import { z } from "zod";
 import { sendError } from "../lib/http";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { runBackfillTick } from "../lib/places/postPlaceBackfillWorker.js";
-import { requireAdmin } from "../lib/requireAdmin.js";
+import { requireAdmin } from "../lib/requireAdmin.js"; import { exactListCount, listTotalRefusal } from "../lib/moderationCounts.js";
 
 const router = Router();
 
@@ -50,24 +50,24 @@ router.get("/admin/place-mismatch-reports", asyncHandler(async (req, res) => {
 
   if (before) {
     // Cursor-based pagination: created_at of the row with id=before
-    const { data: pivot } = await sc
+    const { data: pivot, error: pivotErr } = await sc
       .from("place_mismatch_reports")
       .select("created_at")
       .eq("id", before)
       .maybeSingle();
-    if ((pivot as any)?.created_at) {
-      q = q.lt("created_at", (pivot as any).created_at);
-    }
+    if (pivotErr) { sendError(res, "db_error", `The page cursor could not be read: ${pivotErr.message}. Retry.`, { exposeDetail: true }); return; } // was ignored: a failed cursor read served page 1 again as if it were the next page
+    if (!(pivot as any)?.created_at) { sendError(res, "invalid_payload", "`before` names no report (it may have been removed). Restart from the first page."); return; }
+    q = q.lt("created_at", (pivot as any).created_at);
   }
 
   const { data, error, count } = await q;
   if (error) {
     sendError(res, "db_error", error.message);
     return;
-  }
-
+  } const total = exactListCount(count, data); // never `count ?? 0` (wave 5): a count-less answer read as "no wrong-place reports"
+  if (total === null) { sendError(res, "db_error", listTotalRefusal("place-mismatch report"), { exposeDetail: true }); return; }
   // Flatten the joined post content and place name into top-level fields
-  const reports = (data ?? []).map((row: any) => {
+  const reports = (data as any[]).map((row: any) => {
     const { posts, places, ...rest } = row;
     return {
       ...rest,
@@ -78,7 +78,7 @@ router.get("/admin/place-mismatch-reports", asyncHandler(async (req, res) => {
 
   res.json({
     reports,
-    total: count ?? 0,
+    total,
     status,
   });
 }));
@@ -114,7 +114,7 @@ router.post("/admin/place-mismatch-reports/:id/resolve", asyncHandler(async (req
     .eq("id", reportId)
     .maybeSingle();
 
-  if (fetchErr || !report) {
+  if (fetchErr) { sendError(res, "db_error", fetchErr.message); return; } if (!report) { // a failed read is not "no such report" (it answered 404)
     sendError(res, "not_found", "Report not found");
     return;
   }

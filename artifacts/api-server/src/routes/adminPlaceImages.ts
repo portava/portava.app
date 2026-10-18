@@ -21,7 +21,7 @@ import { invalidateDiscoveryCacheForEntity } from "../lib/discoveryPersistentCac
 import { evictCacheEntriesForEntity } from "./discovery.js";
 import { evictStoredPlacePhoto } from "../lib/discoveryPlacePhotoStore.js";
 
-import { requireAdmin } from "../lib/requireAdmin.js";
+import { requireAdmin } from "../lib/requireAdmin.js"; import { exactListCount, listTotalRefusal } from "../lib/moderationCounts.js";
 
 const router = Router();
 
@@ -74,21 +74,21 @@ router.get("/admin/place-images/queue", asyncHandler(async (req, res) => {
     .range(offset, offset + limit - 1);
 
   const { data: visuals, error: visErr, count } = await query;
-  if (visErr) { sendError(res, "db_error", visErr.message); return; }
-
-  const rows: any[] = visuals ?? [];
+  if (visErr) { sendError(res, "db_error", visErr.message); return; } const total = exactListCount(count, visuals, offset); // never `count ?? 0` (wave 5)
+  if (total === null) { sendError(res, "db_error", listTotalRefusal("place-image review queue"), { exposeDetail: true }); return; }
+  const rows: any[] = visuals as any[];
 
   // Fetch report counts scoped by (image_url, place_id) so counts from one
   // place never bleed into another even when the same CDN URL is reused.
   const sourceUrls = rows.map((v) => v.source_url).filter(Boolean);
   const reportCountMap = new Map<string, number>();
   if (sourceUrls.length > 0) {
-    const { data: repRows } = await sc
+    const { data: repRows, error: repCountErr } = await sc
       .from("place_image_reports")
       .select("image_url, place_id")
       .in("image_url", sourceUrls)
       .eq("status", "pending");
-    for (const r of repRows ?? []) {
+    if (repCountErr || !Array.isArray(repRows)) { sendError(res, "db_error", `The images' pending reports could not be read (reportCount): ${repCountErr?.message ?? "no rows answered"}. A reportCount of 0 would read as "nobody reported this image". Retry.`, { exposeDetail: true }); return; } for (const r of repRows) {
       const key = `${r.image_url}|||${r.place_id}`;
       reportCountMap.set(key, (reportCountMap.get(key) ?? 0) + 1);
     }
@@ -113,8 +113,8 @@ router.get("/admin/place-images/queue", asyncHandler(async (req, res) => {
     pagination: {
       page,
       limit,
-      total: count ?? 0,
-      hasMore: (count ?? 0) > offset + limit,
+      total,
+      hasMore: total > offset + limit,
     },
   });
 }));
@@ -144,19 +144,19 @@ router.get("/admin/place-images/reports", asyncHandler(async (req, res) => {
     .range(offset, offset + limit - 1);
 
   const { data: reports, error: repErr, count } = await query;
-  if (repErr) { sendError(res, "db_error", repErr.message); return; }
-
+  if (repErr) { sendError(res, "db_error", repErr.message); return; } const total = exactListCount(count, reports, offset); // never `count ?? 0` (wave 5)
+  if (total === null) { sendError(res, "db_error", listTotalRefusal("place-image report"), { exposeDetail: true }); return; }
   // Fetch prior review actions scoped by (source_url, entity_id) so we never
   // show actions from a different place that happens to share the same CDN URL.
-  const imageUrls = (reports ?? []).map((r: any) => r.image_url).filter(Boolean);
+  const imageUrls = (reports as any[]).map((r: any) => r.image_url).filter(Boolean);
   const visualMap: Record<string, any> = {};
   if (imageUrls.length > 0) {
-    const { data: vrows } = await sc
+    const { data: vrows, error: vErr } = await sc
       .from("generated_visuals")
       .select("id, source_url, entity_id, accuracy_status, image_source_type, verified_by, verified_at, canonical_place_id")
       .in("source_url", imageUrls)
       .eq("entity_type", "place");
-    for (const v of vrows ?? []) {
+    if (vErr || !Array.isArray(vrows)) { sendError(res, "db_error", `The reported images' review history could not be read (priorReviewActions): ${vErr?.message ?? "no rows answered"}. A null would read as "never reviewed". Retry.`, { exposeDetail: true }); return; } for (const v of vrows) {
       if (v.source_url && v.entity_id) {
         // Keyed by (url, entity_id) so different places never collide
         const key = `${v.source_url}|||${v.entity_id}`;
@@ -165,7 +165,7 @@ router.get("/admin/place-images/reports", asyncHandler(async (req, res) => {
     }
   }
 
-  const items = (reports ?? []).map((r: any) => {
+  const items = (reports as any[]).map((r: any) => {
     const reporter = r.reporter;
     // Privacy-safe display name per display-name privacy rule:
     // use handle (@handle) by default; display_name only if the user has opted in
@@ -193,8 +193,8 @@ router.get("/admin/place-images/reports", asyncHandler(async (req, res) => {
     pagination: {
       page,
       limit,
-      total: count ?? 0,
-      hasMore: (count ?? 0) > offset + limit,
+      total,
+      hasMore: total > offset + limit,
     },
   });
 }));
@@ -225,12 +225,12 @@ router.get("/admin/place-images/:visualId", asyncHandler(async (req, res) => {
   let placeData: any = null;
   const placeId = (visual as any).canonical_place_id ?? (visual as any).entity_id ?? null;
   if (placeId && isUuid(placeId)) {
-    const { data: place } = await sc
+    const { data: place, error: placeErr } = await sc
       .from("places")
       .select("id, name, primary_category, city, country_code, latitude, longitude")
       .eq("id", placeId)
       .maybeSingle();
-    placeData = place ?? null;
+    if (placeErr) { sendError(res, "db_error", `The image's place could not be read (place): ${placeErr.message}. A null place would read as "no such place". Retry.`, { exposeDetail: true }); return; } placeData = place ?? null;
   }
 
   // Fetch user reports scoped by both image URL and entity_id so we only
@@ -238,13 +238,13 @@ router.get("/admin/place-images/:visualId", asyncHandler(async (req, res) => {
   let userReports: any[] = [];
   const visualEntityId = (visual as any).entity_id;
   if ((visual as any).source_url && visualEntityId) {
-    const { data: repRows } = await sc
+    const { data: repRows, error: userRepErr } = await sc
       .from("place_image_reports")
       .select("*, reporter:profiles!place_image_reports_reported_by_fkey(id, handle, username)")
       .eq("image_url", (visual as any).source_url)
       .eq("place_id", visualEntityId)
       .order("created_at", { ascending: false });
-    userReports = repRows ?? [];
+    if (userRepErr || !Array.isArray(repRows)) { sendError(res, "db_error", `The image's user reports could not be read (userReports): ${userRepErr?.message ?? "no rows answered"}. An empty list would read as "nobody reported this image". Retry.`, { exposeDetail: true }); return; } userReports = repRows;
   }
 
   res.json({

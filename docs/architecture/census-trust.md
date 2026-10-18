@@ -4842,7 +4842,7 @@ Rows: none move. Headline unchanged: 90 / 15 / 1 / 2 of 108.
 
 ### Correction (2026-10-17, wave 5) — event-page reviews: the reviewer-standing rule the other review lists apply
 
-*Same branch and tree. Uncommitted and undeployed. **NO ROW MOVES.***
+*Same branch and tree. Committed on this branch; undeployed. **NO ROW MOVES.***
 
 **The divergence.** The review-list correction above (reviews reviewer embed) withholds a review whose reviewer is not
 `active`, and the host's merged list applies that rule to event reviews too. `GET /api/events/:id/reviews` applied
@@ -4904,7 +4904,7 @@ Rows: none move. Headline unchanged: 90 / 15 / 1 / 2 of 108.
 
 ### Correction (2026-10-17, wave 5) — Rent-a-Buddy earnings summary and fee editor: rent_buddy_fee_rules.platform_fee_basis_points does not exist in production
 
-*Same branch and tree. Uncommitted and undeployed. **NO ROW MOVES.***
+*Same branch and tree. Committed on this branch; undeployed. **NO ROW MOVES.***
 
 **What was broken, in production.** Migration 3601 adds `rent_buddy_fee_rules.platform_fee_basis_points`. It is held
 for production (owner hold D-OWNER1004-14), and the 2026-10-17 apply packet excludes it. The fee resolver selects only
@@ -4944,7 +4944,7 @@ GET /admin/users rendered `openReports: count ?? 0` from an inline HEAD count; i
 
 ### Correction (2026-10-18, wave 5) — report status: 'open' reports were invisible to the admin resolve routes
 
-*Same branch and tree. Uncommitted and undeployed. **NO ROW MOVES.***
+*Same branch and tree. Committed on this branch; undeployed. **NO ROW MOVES.***
 
 **What was broken.** `public.reports.status` is text with default `'open'` and no CHECK (production catalog, read
 2026-10-18; the table held no rows). Every intake files the default: POST /reports and the thread, message and post
@@ -5021,3 +5021,96 @@ resolved". It now accepts only open and in_review. Hide then uphold is still leg
 
 Rows: none move. TV-4a is graded on `moderation_reports` (§35), not on the legacy table, and no row of this census
 grades the legacy trip or event queues. Headline unchanged: 90 / 15 / 1 / 2 of 108.
+
+### Correction (2026-10-18, wave 5) — admin moderation surfaces: no zero or empty list from a failed read
+
+*Same branch and tree. Committed on this branch; undeployed. **NO ROW MOVES.***
+
+**What was broken.** The two corrections above closed the user detail's openReports and the two legacy report lists,
+and listed the rest of the class. Every route below already refused a RETURNED error. Each one still rendered a read
+it could not measure as an empty queue or a zero:
+- adminMedia's five lists, the trust review queue, the place-image queue and reports list, the place-mismatch list and
+  GET /me/reports answered `total: count ?? 0`. gaming-flags answered `total: (data ?? []).length`, the page's length;
+- adminMedia's Reported and Wrong Place tabs matched `status` exactly and defaulted to `'open'`. The admin client asked
+  for `'open'` too, so every in_review report was in no media tab. A word no report carries answered an empty tab;
+- enrichment reads were unchecked. A failed thumbnail read showed a reported post with no media. A failed pending-report
+  read showed `reportCount: 0`. A failed user-report read showed no reports. A failed place-mismatch cursor read served
+  page 1 again as the next page;
+- the Compass dashboard folded every `Promise.allSettled` element to `[]` or `0`. So a failed read showed zero abuse
+  flags and zero safety-filter fires. The abuse-flags and safety-filters routes answered `data ?? []`;
+- failedModerationReads (the user detail, the summary and the moderation-summary) refused a returned error only. So a
+  no-error answer with no list rendered a clean record. The profile read's error, and the user detail's account lookup,
+  answered 404 "User not found";
+- the reported-trips and reported-events queues DROPPED a report whose trip or event no longer exists, and the trips
+  queue read every report with no limit;
+- trip report-resolve and the event moderate route's report close wrote no audit row and no reviewed_by. The legacy
+  resolve and dismiss, and adminMedia's moderate on a report, wrote the audit row BEFORE the guarded update. So a report
+  someone closed in between answered 409 having already recorded an action that never happened;
+- POST /admin/trips/:tripId/hide discarded its update and its audit insert, and answered a failed trip read with 404.
+  The event moderate route answered a failed event read with 404.
+
+**The convention, per route.** None of these routes has an explicit "unknown" field, and each already refuses with
+db_error. So a list or count it cannot measure is refused the same way, naming what could not be read. A status outside
+the vocabulary is a 400 that names it. Nothing falls open on moderation or safety data.
+
+**What changed, with no migration.** Every edit to a route file is line-neutral, so no citation into those files moved.
+- Totals are measured: `artifacts/api-server/src/lib/moderationCounts.ts:95#export function exactListCount(count: unknown, rows: unknown, offset = 0)`
+  now checks a page past the first, and `artifacts/api-server/src/lib/moderationCounts.ts:128#export function listTotalRefusal(`
+  names the refusal. It is used by adminMedia (`artifacts/api-server/src/routes/adminMedia.ts:247#const total = exactListCount(count, data, offset);`),
+  the trust review queue (`artifacts/api-server/src/routes/trust-admin.ts:141#const total = exactListCount(count, data, (page - 1) * limit);`),
+  gaming-flags, which now counts exactly (`artifacts/api-server/src/routes/trust-admin.ts:531#.select("id, user_id, review_type, status, metadata, created_at", { count: "exact" })`),
+  place images (`artifacts/api-server/src/routes/adminPlaceImages.ts:77#const total = exactListCount(count, visuals, offset);`),
+  place mismatch (`artifacts/api-server/src/routes/adminPlaceMismatch.ts:67#const total = exactListCount(count, data);`)
+  and GET /me/reports (`artifacts/api-server/src/routes/reports.ts:289#const total = exactListCount(count, data, offset);`).
+- The media tabs read the unresolved set by default
+  (`artifacts/api-server/src/lib/moderationCounts.ts:120#export function parseLegacyReportStatusFilter(`,
+  `artifacts/api-server/src/routes/adminMedia.ts:233#const status = parseLegacyReportStatusFilter(req.query.status);`),
+  and the client tabs ask for that default (`travel-buddy-standalone/app/admin/media/index.tsx:290#const res = await getMediaReported({ limit: 50 });`).
+- Enrichment reads are checked and named: primaryMedia (`artifacts/api-server/src/routes/adminMedia.ts:260#if (mediaErr || !Array.isArray(media))`),
+  reportCount (`artifacts/api-server/src/routes/adminPlaceImages.ts:91#if (repCountErr || !Array.isArray(repRows))`),
+  userReports (`artifacts/api-server/src/routes/adminPlaceImages.ts:247#if (userRepErr || !Array.isArray(repRows))`)
+  and the mismatch cursor (`artifacts/api-server/src/routes/adminPlaceMismatch.ts:58#if (pivotErr)`), which is a 400 when
+  it names no report.
+- The Compass dashboard names every unreadable section and refuses
+  (`artifacts/api-server/src/routes/adminCompass.ts:245#const unreadable: string[] = [];`,
+  `artifacts/api-server/src/routes/adminCompass.ts:379#if (unreadable.length > 0)`;
+  `artifacts/api-server/src/lib/moderationCounts.ts:142#export function settledRows(`).
+- failedModerationReads requires a list from a list read and a count from a count read
+  (`artifacts/api-server/src/routes/admin.ts:1557#.filter(([, r]) => !r || Boolean((r as { error?: unknown }).error) ||`).
+  A failed profile read is db_error (`artifacts/api-server/src/routes/admin.ts:1501#if ((profileRes as { error?: { message?: string } | null }).error)`).
+- The queues show a report on a deleted parent, marked missing
+  (`artifacts/api-server/src/routes/admin.ts:2666#tripId: id, tripMissing: !tripMap[id],`,
+  `artifacts/api-server/src/routes/admin.ts:2904#eventMissing: !ev`). The trips queue pages like /admin/reports and states
+  its total (`artifacts/api-server/src/routes/admin.ts:2635#const page = Math.max(1, Number(req.query.page) || 1);`).
+- Every route that moves a legacy report now CLAIMS it first, then audits it, and undoes the claim if the audit fails
+  (`artifacts/api-server/src/lib/legacyReportClose.ts:90#export async function moveLegacyReport(`). The claim is
+  guarded on the status read (`artifacts/api-server/src/lib/legacyReportClose.ts:106#.eq("status", from)`). The undo is
+  guarded on this request's own stamp (`artifacts/api-server/src/lib/legacyReportClose.ts:150#.eq("reviewed_at", now)`).
+  A failed undo is named. The callers are resolve (`artifacts/api-server/src/routes/admin.ts:2250#const moveR = await moveLegacyReport(sc, req, reportRow as LegacyReportRow, {`),
+  dismiss (`artifacts/api-server/src/routes/admin.ts:2329#const moveR = await moveLegacyReport(`), adminMedia
+  (`artifacts/api-server/src/routes/adminMedia.ts:962#const moveR = await moveLegacyReport(`), trip report-resolve,
+  which now writes its `reason` (`artifacts/api-server/src/routes/admin.ts:2769#const moved = await moveLegacyReports(`),
+  and the event close (`artifacts/api-server/src/routes/admin.ts:3024#const closed = openErr`).
+- Trip hide checks its read, its write and its audit row (`artifacts/api-server/src/routes/admin.ts:2698#if (tripReadErr)`,
+  `artifacts/api-server/src/routes/admin.ts:2726#const legacyHide = kernelHidden`,
+  `artifacts/api-server/src/routes/admin.ts:2734#if (hideAuditErr)`). The audit row names the trip. The event route's
+  failed read is a 503 (`artifacts/api-server/src/routes/admin.ts:2953#if (evReadErr)`).
+
+**Tests.** `artifacts/api-server/src/test/adminListHonesty.test.ts:252#describe("adminMedia: the Reported and Wrong Place tabs list every UNRESOLVED report`
+(59 cases) and `artifacts/api-server/src/test/legacyReportClaimThenAudit.test.ts:164#describe("the single-report routes CLAIM the report first, then audit it"`
+(32 cases) run on schemaStrictSupabase. Red first on 4140b5ad8 sources: 67 red, 17 controls green, 3 NEW STATE cases
+red (the audit-and-undo-fail state the old order could not reach, now named), and 4 units of the new module green.
+52 mutants were killed, each restored and checked by sha256. Three existing suites pinned the old shapes and were
+corrected. legacyReportStatusLifecycle pinned the queues and trip report-resolve bodies. adminEventModeration counted one
+moderation_actions row where hide now writes one per closed report. The reports.test fake answered an awaited
+`.update().select()` with the rows as they were, not as updated.
+
+- NOT-GRADED: artifacts/api-server/src/routes/adminPlaceImages.ts — census-media's place-image review queue, cited for its list totals and enrichment reads; no Trust row rests on it.
+- NOT-GRADED: artifacts/api-server/src/routes/adminPlaceMismatch.ts — the wrong-place report queue, cited for its total and cursor read; no Trust row rests on it.
+- NOT-GRADED: artifacts/api-server/src/routes/adminCompass.ts — the Compass ops dashboard, cited for its abuse and safety-filter sections; no Trust row rests on it.
+- NOT-GRADED: artifacts/api-server/src/routes/reports.ts — the report intake and GET /me/reports, cited for that list's total; no Trust row rests on it.
+- NOT-GRADED: travel-buddy-standalone/app/admin/media/index.tsx — the admin media tabs, cited for the status they ask for; no Trust row rests on them.
+
+Rows: none move. TV-4a is graded on `moderation_reports` (§35), and none of these surfaces acts on that table. C5 reads
+the trust review queue; it stays C, and its total is now measured as well. No row of this census grades the legacy
+report queues, the media tabs or the Compass dashboard. Headline unchanged: 90 / 15 / 1 / 2 of 108.

@@ -190,7 +190,7 @@ function makeFakeClient(
         const row = { id: `gen-${table}-${Math.random().toString(36).slice(2)}`, status: "open", severity: "normal", ...base };
         return { data: [row], error: null, count: 1 };
       }
-      const matched = rows.filter((r) => filters.every((f) => f(r)));
+      const matched = rows.filter((r) => filters.every((f) => f(r))).map((r) => (pendingUpdate ? { ...r, ...pendingUpdate } : r)); // wave 5: an awaited `.update().select()` answers the UPDATED rows, as PostgREST does (the claim in lib/legacyReportClose.ts reads them as a list)
       return { data: matched, error: null, count: matched.length };
     }
 

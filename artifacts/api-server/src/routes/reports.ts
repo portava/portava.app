@@ -22,7 +22,7 @@ import { requireUser, sendError } from "../lib/http";
 import { isUuid } from "../lib/followDecisions";
 import { getServiceClient } from "../lib/supabase";
 import { resolveInteractionPermissions } from "../services/interactionPermissions";
-import { reportRateLimit } from "../lib/rateLimit";
+import { reportRateLimit } from "../lib/rateLimit"; import { exactListCount } from "../lib/moderationCounts";
 // ONE vocabulary. These two lists used to be private literals in this file, and
 // POST /api/media/:id/report wrote the same `reports` table from its own,
 // narrower contract — any string, no severity, no rate limit. Two writers of one
@@ -286,10 +286,10 @@ router.get("/me/reports", async (req, res) => {
     .order("created_at", { ascending: false })
     .range(offset, offset + limit - 1);
 
-  if (error) { req.log.error({ err: error }, "me/reports fetch failed"); sendError(res, "db_error", error.message); return; }
-
-  const safe = (data ?? []).map(({ reporter_id: _r, ...rest }: any) => rest);
-  res.status(200).json({ reports: safe, total: count ?? 0 });
+  if (error) { req.log.error({ err: error }, "me/reports fetch failed"); sendError(res, "db_error", error.message); return; } const total = exactListCount(count, data, offset); // never `count ?? 0` (wave 5): a count-less answer read as "you have filed no reports"
+  if (total === null) { req.log.error({ count, isList: Array.isArray(data) }, "me/reports answered without an exact total"); sendError(res, "db_error", "Your reports could not be counted right now. Please try again.", { exposeDetail: true }); return; }
+  const safe = (data as any[]).map(({ reporter_id: _r, ...rest }: any) => rest);
+  res.status(200).json({ reports: safe, total });
 });
 
 // NOTE: GET /admin/reports lives in admin.ts (mounted earlier) — the duplicate

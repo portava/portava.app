@@ -40,7 +40,7 @@ import { clearL1Cache, invalidate } from "../compass/CompassCacheEngine.js";
 import { invalidateFlagsCache } from "../compass/flags.js";
 import { runSandbox, type TestUserType } from "../compass/CompassTestingSandbox.js";
 import { SECTION_NAMES } from "../compass/CompassFeedBuilder.js";
-import { requireAdmin } from "../lib/requireAdmin.js";
+import { requireAdmin } from "../lib/requireAdmin.js"; import { settledRows, settledCount } from "../lib/moderationCounts.js";
 
 const router = Router();
 
@@ -242,10 +242,10 @@ router.get("/admin/compass/dashboard", async (req, res) => {
         .gt("starts_at", now)
         .not("state", "in", "(draft,cancelled,archived)"),
     ]);
-
+    const unreadable: string[] = []; const rowsOf = (name: string, r: PromiseSettledResult<unknown>): any[] => settledRows(r) ?? (unreadable.push(name), []); const countOf = (name: string, r: PromiseSettledResult<unknown>): number => settledCount(r) ?? (unreadable.push(name), 0); // wave 5: a rejected, failed or count-less read is NAMED and the dashboard refused below — it was `[]` / `0`, so a failed read showed zero abuse flags and zero safety-filter fires
     // ── Abuse flags ──────────────────────────────────────────────────────────
-    const abuseRows: any[] = abuseFlagsRes.status === "fulfilled"
-      ? ((abuseFlagsRes.value as any).data as any[] ?? []) : [];
+    const abuseRows: any[] =
+      rowsOf("abuse", abuseFlagsRes);
     const abuseBySeverity: Record<string, number> = {};
     const abuseByStatus:   Record<string, number> = {};
     for (const r of abuseRows) {
@@ -254,19 +254,19 @@ router.get("/admin/compass/dashboard", async (req, res) => {
     }
 
     // ── Safety filter ────────────────────────────────────────────────────────
-    const safetyRows: any[] = safetyLogRes.status === "fulfilled"
-      ? ((safetyLogRes.value as any).data as any[] ?? []) : [];
+    const safetyRows: any[] =
+      rowsOf("safetyFilterFires", safetyLogRes);
     const safetyByReason: Record<string, number> = {};
     for (const r of safetyRows) {
       safetyByReason[r.block_reason] = (safetyByReason[r.block_reason] ?? 0) + 1;
     }
 
     // ── Cache metrics ────────────────────────────────────────────────────────
-    const validCacheRows: any[] = cacheValidRes.status === "fulfilled"
-      ? ((cacheValidRes.value as any).data as any[] ?? []) : [];
+    const validCacheRows: any[] =
+      rowsOf("cache.validEntries", cacheValidRes);
     const validCacheCount   = validCacheRows.length;
-    const expiredCacheCount = cacheExpiredRes.status === "fulfilled"
-      ? ((cacheExpiredRes.value as any).count ?? 0) : 0;
+    const expiredCacheCount =
+      countOf("cache.expiredEntries", cacheExpiredRes);
     const totalCacheCount   = validCacheCount + expiredCacheCount;
     const cacheHitRate      = totalCacheCount > 0
       ? Math.round((validCacheCount / totalCacheCount) * 1_000) / 10
@@ -280,12 +280,12 @@ router.get("/admin/compass/dashboard", async (req, res) => {
     const uniqueCachedUsers = new Set(validCacheRows.map((r) => r.user_id)).size;
 
     // ── Top boosted users ────────────────────────────────────────────────────
-    const topRewardUsers: any[] = rewardRes.status === "fulfilled"
-      ? ((rewardRes.value as any).data as any[] ?? []) : [];
+    const topRewardUsers: any[] =
+      rowsOf("topBoostedUsers", rewardRes);
 
     // ── Notification outcomes ────────────────────────────────────────────────
-    const notifRows: any[] = notifRes.status === "fulfilled"
-      ? ((notifRes.value as any).data as any[] ?? []) : [];
+    const notifRows: any[] =
+      rowsOf("notifications", notifRes);
     const notifByOutcome: Record<string, number>          = {};
     const notifByType:    Record<string, number>          = {};
     const notifSuppressReason: Record<string, number>     = {};
@@ -303,12 +303,12 @@ router.get("/admin/compass/dashboard", async (req, res) => {
     const muteRate     = notifTotal > 0 ? Math.round((notifMuted / notifTotal) * 1_000) / 10 : 0;
 
     // ── Active version ───────────────────────────────────────────────────────
-    const activeVersion = versionRes.status === "fulfilled"
-      ? (((versionRes.value as any).data as any[] ?? [])[0] ?? null) : null;
+    const activeVersion =
+      rowsOf("activeVersion", versionRes)[0] ?? null; // no active version is null; an UNREADABLE one is refused below
 
     // ── Feedback action rates (click / save / join / book / hide / report) ──
-    const feedbackRows: any[] = feedbackRes.status === "fulfilled"
-      ? ((feedbackRes.value as any).data as any[] ?? []) : [];
+    const feedbackRows: any[] =
+      rowsOf("feedbackRates", feedbackRes);
     const feedbackByAction: Record<string, number> = {};
     for (const r of feedbackRows) {
       feedbackByAction[r.action] = (feedbackByAction[r.action] ?? 0) + 1;
@@ -318,8 +318,8 @@ router.get("/admin/compass/dashboard", async (req, res) => {
       feedbackTotal > 0 ? Math.round(((feedbackByAction[action] ?? 0) / feedbackTotal) * 1_000) / 10 : 0;
 
     // ── City supply / demand ─────────────────────────────────────────────────
-    const locationRows: any[] = locationRes.status === "fulfilled"
-      ? ((locationRes.value as any).data as any[] ?? []) : [];
+    const locationRows: any[] =
+      rowsOf("citySupplyDemand", locationRes);
     const cityDemand: Record<string, number> = {};
     for (const r of locationRows) {
       const key = r.city as string;
@@ -332,28 +332,28 @@ router.get("/admin/compass/dashboard", async (req, res) => {
       .map(([city, count]) => ({ city, activeUsers: count }));
 
     // ── Delayed post publish rate ────────────────────────────────────────────
-    const delayedCount = delayedPostsRes.status === "fulfilled"
-      ? ((delayedPostsRes.value as any).count ?? 0) : 0;
-    const totalPosts   = totalPostsRes.status === "fulfilled"
-      ? ((totalPostsRes.value as any).count ?? 0) : 0;
+    const delayedCount =
+      countOf("delayedPosts.pendingCount", delayedPostsRes);
+    const totalPosts   =
+      countOf("delayedPosts.totalPostsInWindow", totalPostsRes);
     const delayedPublishRate = totalPosts > 0
       ? Math.round((delayedCount / totalPosts) * 1_000) / 10 : 0;
 
     // ── Overexposed / new user exposure ─────────────────────────────────────
-    const overexposedUsers: any[] = boostOverexposedRes.status === "fulfilled"
-      ? ((boostOverexposedRes.value as any).data as any[] ?? []) : [];
-    const newUserRows: any[] = newUsersRes.status === "fulfilled"
-      ? ((newUsersRes.value as any).data as any[] ?? []) : [];
+    const overexposedUsers: any[] =
+      rowsOf("overexposedUsers", boostOverexposedRes);
+    const newUserRows: any[] =
+      rowsOf("newUserExposure", newUsersRes);
 
     // ── Buddy exposure (rent_a_buddy section supply) ─────────────────────────
-    const activeBuddyCount = buddyProfilesRes.status === "fulfilled"
-      ? ((buddyProfilesRes.value as any).count ?? 0) : 0;
+    const activeBuddyCount =
+      countOf("buddyExposure.activeBuddyCount", buddyProfilesRes);
 
     // ── Event completion ─────────────────────────────────────────────────────
-    const completedEventCount = completedEventsRes.status === "fulfilled"
-      ? ((completedEventsRes.value as any).count ?? 0) : 0;
-    const upcomingEventCount  = upcomingEventsRes.status === "fulfilled"
-      ? ((upcomingEventsRes.value as any).count ?? 0) : 0;
+    const completedEventCount =
+      countOf("eventCompletion.completedCount", completedEventsRes);
+    const upcomingEventCount  =
+      countOf("eventCompletion.upcomingCount", upcomingEventsRes);
     const totalEventsInScope  = completedEventCount + upcomingEventCount;
     const eventCompletionRatePct = totalEventsInScope > 0
       ? Math.round((completedEventCount / totalEventsInScope) * 1_000) / 10 : 0;
@@ -376,7 +376,7 @@ router.get("/admin/compass/dashboard", async (req, res) => {
       (feedbackByAction["profile_view"] ?? 0);
     const clickRatePct = feedbackTotal > 0
       ? Math.round((positiveEngagementCount / feedbackTotal) * 1_000) / 10 : 0;
-
+    if (unreadable.length > 0) { req.log.error({ unreadable }, "admin/compass/dashboard: section read failed; refusing to render zeros"); sendError(res, "db_error", `Dashboard incomplete: ${unreadable.join(", ")} could not be read. A 0 or an empty list there would be a guess, not a measurement (abuse and safety-filter fires included) -- retry.`, { exposeDetail: true }); return; }
     void logAdminAccess(sc, admin.userId, "profile", "list", "view", accessReason(req));
     res.json({
       generatedAt:    new Date(nowMs).toISOString(),
@@ -939,8 +939,8 @@ router.get("/admin/compass/abuse-flags", async (req, res) => {
     if (status)   query = query.eq("status",   status);
 
     const { data, error } = await query;
-    if (error) { sendError(res, "db_error", error.message); return; }
-    res.json({ flags: data ?? [] });
+    if (error || !Array.isArray(data)) { sendError(res, "db_error", error?.message ?? "The abuse flags could not be read; an empty list would read as \"no abuse flags\". Retry.", { exposeDetail: !error }); return; }
+    res.json({ flags: data });
   } catch (err) {
     req.log.error({ err }, "admin/compass/abuse-flags: query failed");
     sendError(res, "db_error", "Could not fetch abuse flags", { exposeDetail: true });
@@ -968,8 +968,8 @@ router.get("/admin/compass/safety-filters", async (req, res) => {
 
     const { data, error } = await query;
     if (error) { sendError(res, "db_error", error.message); return; }
-
-    const rows: any[] = data ?? [];
+    if (!Array.isArray(data)) { sendError(res, "db_error", "The safety-filter logs could not be read; an empty list would read as \"no safety-filter fires\". Retry.", { exposeDetail: true }); return; }
+    const rows: any[] = data;
     const byReason: Record<string, number> = {};
     for (const r of rows) {
       byReason[r.block_reason] = (byReason[r.block_reason] ?? 0) + 1;

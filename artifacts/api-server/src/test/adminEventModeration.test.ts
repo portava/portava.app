@@ -243,7 +243,7 @@ describe("PATCH /admin/events/:eventId/moderate — hide/cancel/remove resolve r
         assert.equal(
           r.status, "resolved",
           `Report ${r.id} for EVENT_A must be resolved after '${action}'`,
-        );
+        ); assert.equal(r.reviewed_by, ADMIN_USER_ID, "wave 5: the close names its reviewer, as the report resolve routes do");
       }
 
       // Report for EVENT_B must remain open — scoping is correct
@@ -259,9 +259,9 @@ describe("PATCH /admin/events/:eventId/moderate — hide/cancel/remove resolve r
       assert.equal(captureActivity[0].action, `admin_${action}`);
       assert.equal(captureActivity[0].event_id, EVENT_ID_A);
 
-      // Audit: moderation_actions row written
-      assert.equal(captureModerationActions.length, 1, "moderation_actions must have exactly 1 insert");
-      assert.equal(captureModerationActions[0].action_type, `event_${action}`);
+      // Audit: the event action's row, then ONE report_resolved row per report it closed (wave 5: each report claimed, then audited — it was closed with no audit row)
+      assert.deepEqual(captureModerationActions.map((m: any) => m.action_type), [`event_${action}`, "report_resolved", "report_resolved"]);
+      assert.deepEqual(captureModerationActions.slice(1).map((m: any) => [m.target_user_id, m.metadata?.report_id]), [[HOST_USER_ID, REPORT_A1], [HOST_USER_ID, REPORT_A2]], "each audit row names the host and the report it closed");
     });
   }
 });
@@ -326,8 +326,8 @@ describe("PATCH /admin/events/:eventId/moderate — audit trail is always writte
       assert.equal(captureActivity[0].event_id,  EVENT_ID_A);
       assert.equal(captureActivity[0].actor_id,  ADMIN_USER_ID);
 
-      // moderation_actions
-      assert.equal(captureModerationActions.length, 1);
+      // moderation_actions — the event action's own row (hide/cancel/remove add one report_resolved row per closed report after it)
+      assert.equal(captureModerationActions.filter((m: any) => m.action_type === `event_${action}`).length, 1);
       assert.equal(captureModerationActions[0].action_type,  `event_${action}`);
       assert.equal(captureModerationActions[0].performed_by, ADMIN_USER_ID);
       assert.equal(
@@ -563,10 +563,10 @@ describe("PATCH /admin/events/:eventId/moderate — moderation_actions insert fa
 
     // The insert was still attempted — the route must not have skipped it.
     assert.equal(
-      captureModerationActions.length, 1,
-      "the moderation_actions insert must have been attempted even though it failed",
+      captureModerationActions.length, 2,
+      "the event row was attempted though it failed; then the first report's audit row (which failed too, so that report's claim was undone and the close stopped)",
     );
-    assert.equal(captureModerationActions[0].action_type, "event_hide");
+    assert.equal(captureModerationActions[0].action_type, "event_hide"); assert.equal(body.reportsResolved, null); assert.match(body.reportsCloseError, /restored to 'open'/); assert.ok(client._db.reports.every((r: any) => r.status === "open"), "no report reads closed without its audit row");
     assert.equal(captureModerationActions[0].performed_by, ADMIN_USER_ID);
   });
 });
