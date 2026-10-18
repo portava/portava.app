@@ -161,7 +161,7 @@ export function settledCount(r: PromiseSettledResult<unknown>): number | null {
  * GET /admin/venues/reported listed only the newest `limit` places and kept
  * the reported ones among them.
  *
- * `page(from, to)` must ask for `{ count: "exact" }`, order on a UNIQUE key (so
+ * `page(from, to, count)` must pass `count` to its select (`{ count }`), order on a UNIQUE key (so
  * pages neither overlap nor skip), and `.range(from, to)`. This reads page after
  * page until it holds every row the count says exists, advancing by the rows a
  * page actually answered — so a server cap smaller than `pageSize` is paged
@@ -169,11 +169,11 @@ export function settledCount(r: PromiseSettledResult<unknown>): number | null {
  * settledRows() reads it: `{ data: every row, error: null, count: rows }`.
  *
  * NEVER REJECTS. `{ data: null, error, count: null }` — never a shorter list —
- * when a page answers an error or throws, answers no list or no exact count,
- * answers a count smaller than the rows it already proved (rows were deleted
- * mid-read, so a later page may have shifted past one), or answers an empty
- * page short of its count. A count that GREW (rows added after the read began,
- * which sort after it on an ascending key) is read to its end. More than
+ * when a page answers an error or throws, answers no list, the first page answers no exact count or a
+ * count below its own rows, or a page comes back EMPTY short of the count (rows were removed while
+ * they were read, so a later page shifted past one; or the read was cut). Rows added mid-read that a
+ * later page answers past the count are kept. COUNT ONCE (wave 5, honesty 3): `count` is "exact" on the
+ * first page and undefined on every later one; it re-ran the exact count per page. More than
  * `maxRows` rows is refused by name rather than truncated.
  */
 export interface EveryRowAnswer {
@@ -183,24 +183,24 @@ export interface EveryRowAnswer {
 }
 
 export async function readEveryRow(
-  page: (from: number, to: number) => PromiseLike<unknown>,
+  page: (from: number, to: number, count: "exact" | undefined) => PromiseLike<unknown>,
   opts: { pageSize?: number; maxRows?: number } = {},
 ): Promise<EveryRowAnswer> {
   const pageSize = opts.pageSize ?? 1000;
   const maxRows = opts.maxRows ?? 50_000;
   const refuse = (why: string): EveryRowAnswer => ({ data: null, error: { message: why }, count: null });
   const rows: any[] = [];
-  let expected: number | null = null;
+  let expected: number | null = null; // measured ONCE, by the first page, and passed through: a later page neither asks for the count nor is read for one
   try {
     while (expected === null || rows.length < expected) {
-      const r = (await page(rows.length, rows.length + pageSize - 1)) as { data?: unknown; error?: unknown; count?: unknown } | null | undefined;
+      const r = (await page(rows.length, rows.length + pageSize - 1, expected === null ? "exact" : undefined)) as { data?: unknown; error?: unknown; count?: unknown } | null | undefined;
       if (r?.error) return refuse(countUnavailable(r.error).reason);
       if (!Array.isArray(r?.data)) return refuse(`a page at row ${rows.length} answered no rows to count`);
-      const c = r!.count;
+      const c: unknown = expected === null ? r!.count : Math.max(expected, rows.length + r!.data.length); // a later page answering past the count (rows added mid-read) extends it
       if (typeof c !== "number" || !Number.isSafeInteger(c) || c < 0) return refuse(`a page at row ${rows.length} answered without an exact count`);
-      if (c < rows.length + r!.data.length) return refuse(`the count (${c}) fell below the ${rows.length + r!.data.length} rows already read: rows were removed while they were read`);
+      if (c < rows.length + r!.data.length) return refuse(`the count (${c}) is below the ${rows.length + r!.data.length} rows its own page answered`); // the first page only: a later page's c covers what it answered
       if (c > maxRows) return refuse(`${c} rows is more than the ${maxRows} this read pages through`);
-      if (r!.data.length === 0 && rows.length < c) return refuse(`a page at row ${rows.length} of ${c} answered no rows`);
+      if (r!.data.length === 0 && rows.length < c) return refuse(`a page at row ${rows.length} of ${c} answered no rows: rows were removed while they were read, or the read was cut`);
       expected = c;
       rows.push(...r!.data);
     }
@@ -258,3 +258,17 @@ export function parseVocabularyFilter(
   if (typeof raw === "string" && vocabulary.includes(raw)) return { ok: true, value: raw };
   return { ok: false, message: `Unknown ${param} '${typeof raw === "string" ? raw : JSON.stringify(raw)}'. One of: ${vocabulary.join(", ")}` };
 }
+
+/**
+ * ── THE PLACE-IMAGE REPORTS LIST'S ?status= (wave 5, honesty 3) ─────────────
+ * GET /admin/place-images/reports matched `?status=` exactly and unvalidated
+ * (`(req.query.status as string) ?? "pending"`), so a word no report carries
+ * (`?status=open`, `?status=resolved`) answered `{ items: [], total: 0 }` — "no
+ * reports" — and a repeated `?status` was passed through as an array. The
+ * vocabulary is the column's CHECK (place_image_reports_status_check: created
+ * by migration 20260810_place_image_reports.sql, carried by the 20260819
+ * baseline; no later migration alters it), plus the route's own `all` (no
+ * filter). Absent or empty is the route's default, `pending`.
+ */
+export const PLACE_IMAGE_REPORT_STATUSES = ["pending", "reviewed_accepted", "reviewed_rejected"] as const;
+export const PLACE_IMAGE_REPORT_STATUS_FILTERS: readonly string[] = [...PLACE_IMAGE_REPORT_STATUSES, "all"];

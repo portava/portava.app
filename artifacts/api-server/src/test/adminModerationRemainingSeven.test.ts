@@ -567,7 +567,7 @@ describe("4b. lib/moderationCounts.ts readEveryRow (a new reader)", () => {
     assert.deepEqual(grew.data, [1, 2, 3]);
     const fell = await readEveryRow(pages([{ data: [1, 2], error: null, count: 4 }, { data: [3], error: null, count: 2 }]).page);
     assert.equal(fell.data, null);
-    assert.match(fell.error!.message, /fell below/);
+    assert.match(fell.error!.message, /answered no rows: rows were removed while they were read/); // wave 5, honesty 3: the count is read ONCE, so a fall shows as the pages running out short of it
   });
 
   it("refuses — never a shorter list — on an error, a throw, no list, no count, an empty page short of its count, or more than maxRows", async () => {

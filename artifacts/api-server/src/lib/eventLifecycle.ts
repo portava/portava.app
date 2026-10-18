@@ -400,3 +400,115 @@ export function stopEventLifecycleScheduler(): void {
 export function _eventLifecycleSchedulerArmed(): boolean {
   return _timer !== null;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MODERATION — an admin's state changes go through the SAME authority
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// THE DEFECT (wave 5, honesty 3; census-trust)
+// --------------------------------------------
+// PATCH /admin/events/:eventId/moderate (routes/admin.ts, through
+// lib/eventModerationClaim.ts) wrote `events.state` straight into its claim,
+// and so did an approved event appeal (services/appeals/resolveAppeal.ts).
+// Neither asked this table:
+//   * `cancel` wrote `cancelled` over `completed` (an event that already
+//     happened) and over `archived` (terminal);
+//   * `restore` wrote `open` over ANY `cancelled` or `archived` event — the
+//     host's own cancellation included, and a moderator-cancelled DRAFT came
+//     back PUBLISHED, because "restore" never knew what the event had been;
+//   * the appeal wrote `open` over every state, unconditionally.
+//
+// WHAT THE MODERATOR GETS
+// -----------------------
+// `cancel` and `remove` are ordinary transitions and are put to
+// decideEventTransition unchanged: what a host may not do (cancel a completed
+// event, leave `archived`), a moderator may not do either.
+//
+// `restore` is the one thing a host may never do — leave `cancelled` or
+// `archived` — so it is a MODERATOR-ONLY arrow, and a narrow one: it is the
+// exact reverse of a moderation that is RECORDED. The moderation's
+// event_activity_log row carries `metadata.from_state` / `metadata.to_state`
+// (written in the same claim -> audit -> undo order as the change itself), and
+// the reversal is allowed only when
+//   * the event still holds the state that recorded moderation left it in
+//     (`to_state` = the current state), and that moderation is the NEWEST
+//     recorded moderation state change on the event;
+//   * the record is a cancel into `cancelled` or a remove into `archived`;
+//   * the recorded transition was itself one this table allows.
+// It then goes back to `from_state` — the state the moderation found — never
+// to a blanket `open`.
+//
+// WHY "newest record, still holding its state" is enough: from `cancelled` a
+// host can only archive, and from `archived` nothing moves, so no host path
+// leaves one of these states and comes back to it. Every moderation-side state
+// change (cancel, remove, restore, appeal restore) writes a record. So if the
+// newest record's `to_state` is the current state, nothing has moved the event
+// since; if anything had, the two would differ and the reversal is refused.
+// A host's cancellation leaves no moderation record at all and is never
+// reversed by a moderator.
+//
+// No schema change: event_activity_log.metadata is jsonb, and its
+// (event_id, created_at DESC) index serves the read.
+
+/** The states a moderation action leaves an event in, and so the only states a moderator's restore moves an event OUT of. */
+export const EVENT_MODERATION_REVERSIBLE_STATES: readonly EventState[] = Object.freeze(["cancelled", "archived"] as EventState[]);
+
+/** event_activity_log actions that may record a moderation state change (metadata.from_state / metadata.to_state). */
+export const EVENT_MODERATION_STATE_ACTIVITY: readonly string[] = Object.freeze(["admin_cancel", "admin_remove", "admin_restore"]);
+
+/** Which recorded moderation a reversal out of each reversible state undoes. */
+const EVENT_MODERATION_REVERSED_BY: Readonly<Record<string, string>> = Object.freeze({ cancelled: "admin_cancel", archived: "admin_remove" });
+
+/** The newest recorded moderation state change on an event (from its event_activity_log row). */
+export interface RecordedEventModeration {
+  action: string;
+  from_state: unknown;
+  to_state: unknown;
+}
+
+export type EventModerationReversalRefusal =
+  | "not_reversible_state"
+  | "no_recorded_moderation"
+  | "record_does_not_match"
+  | "illegal_transition";
+
+export type EventModerationReversalDecision =
+  | { allowed: true; from: EventState; to: EventState; moderatorOnly: true }
+  | { allowed: false; reason: EventModerationReversalRefusal; from: string; to: string | null; message: string };
+
+/**
+ * The states a moderator's restore may return an event to from `state`:
+ * exactly the states this table lets precede it (the reverse of every legal
+ * X -> cancelled / X -> archived). Derived, so it can never disagree with the table.
+ */
+export function eventModerationReversalTargets(state: EventState): readonly EventState[] {
+  return (EVENT_MODERATION_REVERSIBLE_STATES as readonly string[]).includes(state) ? eventStatesAllowedBefore(state) : [];
+}
+
+/**
+ * The moderator-only arrow: may a restore move this event from `current` back
+ * to the state its newest recorded moderation found? Pure, like
+ * decideEventTransition: the caller reads the record and supplies it.
+ */
+export function decideEventModerationReversal(current: unknown, recorded: RecordedEventModeration | null | undefined): EventModerationReversalDecision {
+  const cur = typeof current === "string" ? current : String(current ?? "");
+  const refuse = (reason: EventModerationReversalRefusal, to: string | null, message: string): EventModerationReversalDecision =>
+    ({ allowed: false, reason, from: cur, to, message });
+  if (!isEventState(cur) || !(EVENT_MODERATION_REVERSIBLE_STATES as readonly string[]).includes(cur)) {
+    return refuse("not_reversible_state", null, `Event is '${cur}': only a cancelled or removed (archived) event has a moderation to reverse`);
+  }
+  if (!recorded) {
+    return refuse("no_recorded_moderation", null,
+      `Event is '${cur}', and no recorded moderation put it there (its host did, or the moderation predates the record), so a restore cannot reverse it`);
+  }
+  const from = typeof recorded.from_state === "string" ? recorded.from_state : null;
+  if (recorded.action !== EVENT_MODERATION_REVERSED_BY[cur] || recorded.to_state !== cur || from === null) {
+    return refuse("record_does_not_match", from,
+      `Event is '${cur}', but the newest recorded moderation state change on it is ${recorded.action} to '${String(recorded.to_state)}': something else has moved it since, so a restore cannot reverse it`);
+  }
+  const undone = decideEventTransition(from, cur);
+  if (!undone.allowed) { // equivalently: `from` is not in eventModerationReversalTargets(cur)
+    return refuse("illegal_transition", from, `The recorded moderation ${from} -> ${cur} is not a transition the authority allows, so it is not reversed`);
+  }
+  return { allowed: true, from: cur, to: from as EventState, moderatorOnly: true };
+}

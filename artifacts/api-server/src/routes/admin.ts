@@ -36,7 +36,7 @@ import { executeAccountDeletion } from "../services/accountDeletion/AccountDelet
 import { runSchemaDriftCheck, getCachedSchemaDriftResult } from "../lib/schemaDriftCheck";
 import { logAdminAccess, accessReason } from "../lib/adminAudit.js";
 import { resolveStoragePath } from "../lib/storagePath.js";
-import { logModerationAction, auditReportAction, checkActionReportLink, checkContentReportLink, reportLinkColumnId } from "../lib/moderationAudit.js"; import { applyAccountRestriction, revokeAccountRestrictions, parseRestrictionEnd, recordModerationNotApplied, notAppliedAuditNote } from "../lib/accountModeration.js"; import { countOpenReportsAgainst, exactListCount, LEGACY_REPORT_STATUSES, UNRESOLVED_REPORT_STATUSES } from "../lib/moderationCounts.js"; import { moveLegacyReport, moveLegacyReports, describeLegacyBulkFailure, LEGACY_REPORT_CLOSE_READ, type LegacyReportRow } from "../lib/legacyReportClose.js"; import { readReportedVenueQueue } from "../lib/reportedVenueQueue.js"; import { applyEventModeration, type ModeratedEventRow } from "../lib/eventModerationClaim.js"; // same line: admin.ts is cited by line
+import { logModerationAction, auditReportAction, checkActionReportLink, checkContentReportLink, reportLinkColumnId } from "../lib/moderationAudit.js"; import { applyAccountRestriction, revokeAccountRestrictions, parseRestrictionEnd, recordModerationNotApplied, notAppliedAuditNote } from "../lib/accountModeration.js"; import { countOpenReportsAgainst, exactListCount, LEGACY_REPORT_STATUSES, UNRESOLVED_REPORT_STATUSES } from "../lib/moderationCounts.js"; import { moveLegacyReport, moveLegacyReports, describeLegacyBulkFailure, LEGACY_REPORT_CLOSE_READ, type LegacyReportRow } from "../lib/legacyReportClose.js"; import { readReportedVenueQueue } from "../lib/reportedVenueQueue.js"; import { applyEventModeration, decideModeratedEventState, type ModeratedEventRow, type EventModerationStateIntent } from "../lib/eventModerationClaim.js"; // same line: admin.ts is cited by line
 import { loadCapturedReportContent, loadModerationSubjectSnapshots, resolveContentOwnerDetailed, MODERATION_REPORT_CATEGORIES, MODERATION_REPORT_STATUSES, MODERATION_REPORT_TRANSITIONS, type ModerationReportStatus } from "../lib/moderationReportSnapshots.js";
 
 import { requireAdmin } from "../lib/requireAdmin.js"; import { computeAttemptsPerVerifiedUser } from "../services/identityVerification/attemptMetrics.js"; // same line on purpose: a new import line shifts every anchored citation into this file
@@ -2952,23 +2952,23 @@ router.patch("/admin/events/:eventId/moderate", async (req, res) => {
     .eq("id", eventId).maybeSingle();
   if (evReadErr) { sendError(res, "degraded_unavailable", "The event could not be read right now, so nothing was changed. Please try again."); return; } if (!ev) { sendError(res, "not_found", "Event not found"); return; } // a failed read answered 404 (wave 5)
 
-  const patch: Record<string, any> = { updated_at: new Date().toISOString() };
+  const patch: Record<string, any> = { updated_at: new Date().toISOString() }; let stateIntent: EventModerationStateIntent | null = null; // events.state is never patched here: the intent goes to the transition authority (wave 5, honesty 3)
 
   switch (action) {
     case "hide":
       patch.visibility = "invite_only";
       break;
     case "cancel":
-      patch.state = "cancelled";
+      stateIntent = { to: "cancelled" }; // decideEventTransition: completed / archived are refused, as for the host; already cancelled is no state change
       break;
     case "remove":
       // Soft-remove: archive the event so it disappears from all feeds
-      patch.state = "archived";
+      stateIntent = { to: "archived" };
       patch.visibility = "invite_only";
       break;
     case "restore":
       patch.visibility = "public";
-      if ((ev as any).state === "cancelled" || (ev as any).state === "archived") patch.state = "open";
+      if ((ev as any).state === "cancelled" || (ev as any).state === "archived") stateIntent = { reverse: true }; // back to what the RECORDED moderation found (decideEventModerationReversal) — it wrote "open" over the host's own cancellations too, and published a moderated draft
       break;
     case "feature":
       patch.featured = true;
@@ -2998,11 +2998,11 @@ router.patch("/admin/events/:eventId/moderate", async (req, res) => {
   if (Object.keys(patch).length > 1) {
     for (const [k, v] of Object.entries(patch)) if (k !== "updated_at") changes[k] = v;
   }
-
+  const decidedE = await decideModeratedEventState(sc, ev as ModeratedEventRow, stateIntent); if (!decidedE.ok) { sendError(res, decidedE.code, decidedE.message, { exposeDetail: true }); return; } // the authority decides events.state; a refusal writes NOTHING
   const moveE = await applyEventModeration(sc, req, ev as ModeratedEventRow, {
-    changes,
+    changes, stateDecision: decidedE.decision,
     now: patch.updated_at, activityAction: `admin_${action}`,
-    writeActivity: () => sc.from("event_activity_log").insert({ event_id: eventId, actor_id: admin.userId, action: `admin_${action}`, metadata: { reason: reason ?? null } }).select("id"),
+    writeActivity: (st) => sc.from("event_activity_log").insert({ event_id: eventId, actor_id: admin.userId, action: `admin_${action}`, metadata: { reason: reason ?? null, ...st } }).select("id"), // st: { from_state, to_state } when the state changed — the record a restore reverses
     writeAudit: () => sc.from("moderation_actions").insert({
       target_user_id: (ev as any).host_id,
       action_type:    `event_${action}`,
@@ -3011,7 +3011,7 @@ router.patch("/admin/events/:eventId/moderate", async (req, res) => {
       metadata:       { event_id: eventId, event_title: (ev as any).title, ...link.metadata },
     }),
   });
-  if (moveE.outcome === "conflict") { sendError(res, "conflict", moveE.message); return; } // 409: nothing was written
+  if (moveE.outcome === "conflict") { sendError(res, "conflict", moveE.message); return; } if (moveE.outcome === "refused") { sendError(res, "invalid_state_transition", moveE.message); return; } // 409 either way: nothing was written
   if (moveE.outcome === "failed") { req.log.error({ eventId, action, state: moveE.state }, "event moderation did not apply"); sendError(res, "db_error", moveE.message, { exposeDetail: true }); return; }
 
   // hide/cancel/remove close the event's UNRESOLVED reports (open / in_review), each CLAIMED then AUDITED with reviewed_by (lib/legacyReportClose.ts), as the report resolve routes do — it closed them with neither. The event action above is already applied, so a close that does not complete is NAMED (reportsResolved: null, reportsCloseError), never swallowed.
@@ -3024,7 +3024,7 @@ router.patch("/admin/events/:eventId/moderate", async (req, res) => {
       .order("created_at", { ascending: true }); const closed = openErr || !Array.isArray(openRows) ? null : await moveLegacyReports(sc, req, openRows as LegacyReportRow[], { to: "resolved", adminUserId: admin.userId, notes: reason ?? null, actionType: "report_resolved" }); reportsResolved = closed && !closed.failure ? closed.moved.length : null;
     if (reportsResolved === null) { reportsCloseError = closed ? describeLegacyBulkFailure(closed, "the event") : `The event's reports could not be read (${openErr?.message ?? "no rows answered"}); none was closed.`; req.log.error({ err: openErr ?? null, eventId, action, reportsCloseError }, "event moderated, but its reports were NOT all resolved"); }
   }
-  res.json({ eventId, action, ok: true, ...(reportsResolved !== undefined ? { reportsResolved } : {}), ...(reportsCloseError ? { reportsCloseError } : {}) });
+  res.json({ eventId, action, ok: true, ...(decidedE.decision ? { state: { from: decidedE.decision.from, to: decidedE.decision.to } } : {}), ...(reportsResolved !== undefined ? { reportsResolved } : {}), ...(reportsCloseError ? { reportsCloseError } : {}) });
 });
 
 // ── Invite-link slot reconciliation ──────────────────────────────────────────

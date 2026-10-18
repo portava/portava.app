@@ -70,9 +70,9 @@ const PLACE_CHUNK = 100;
 
 /** Every reported venue, most-reported first. */
 export async function readReportedVenueQueue(sc: any): Promise<ReportedVenueQueue> {
-  const reports = await readEveryRow((from, to) => sc
+  const reports = await readEveryRow((from, to, count) => sc
     .from("discovery_place_reports")
-    .select("id, place_id, reason, created_at", { count: "exact" })
+    .select("id, place_id, reason, created_at", { count })
     .order("id", { ascending: true })
     .range(from, to));
   if (reports.error || !reports.data) {
@@ -98,9 +98,9 @@ export async function readReportedVenueQueue(sc: any): Promise<ReportedVenueQueu
   for (let i = 0; i < ids.length; i += PLACE_CHUNK) {
     // Paged too: a chunk of ids under a server cap smaller than the chunk would otherwise read as "place missing".
     const chunk = ids.slice(i, i + PLACE_CHUNK);
-    const got = await readEveryRow((from, to) => sc
+    const got = await readEveryRow((from, to, count) => sc
       .from("discovery_places")
-      .select(REPORTED_VENUE_COLUMNS, { count: "exact" })
+      .select(REPORTED_VENUE_COLUMNS, { count })
       .in("id", chunk)
       .order("id", { ascending: true })
       .range(from, to));

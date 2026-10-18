@@ -37,7 +37,7 @@
  *
  * NEVER REJECTS: a thrown read or write is an outcome, like a returned error.
  */
-
+import { decideEventTransition, eventTransitionRefusalMessage, decideEventModerationReversal, EVENT_MODERATION_REVERSIBLE_STATES, EVENT_MODERATION_STATE_ACTIVITY, type EventState, type RecordedEventModeration } from "./eventLifecycle.js"; import { readEveryRow } from "./moderationCounts.js"; import { sendPushWithRetry } from "./pushWithRetry.js"; // the transition authority (wave 5, honesty 3)
 /** The columns the moderate route may patch, and so the ones its claim is guarded on. */
 export const EVENT_MODERATION_COLUMNS = ["state", "visibility", "featured"] as const;
 type ModeratedColumn = (typeof EVENT_MODERATION_COLUMNS)[number];
@@ -46,21 +46,21 @@ export interface ModeratedEventRow {
   id: string;
   state?: unknown;
   visibility?: unknown;
-  featured?: unknown;
+  featured?: unknown; title?: unknown; // title: a moderator's cancel pushes "<title> has been cancelled" to the attendees, as the host's does
 }
 
 export interface EventModerationOptions {
-  /** The columns the action writes (a subset of EVENT_MODERATION_COLUMNS); empty for warn_host. */
-  changes: Partial<Record<ModeratedColumn, unknown>>;
+  /** The columns the action writes (visibility / featured); empty for warn_host. NEVER `state`: that is `stateDecision`, and a raw one is refused. */
+  changes: Partial<Record<Exclude<ModeratedColumn, "state">, unknown>>;
   /** updated_at for the claim, and the undo's guard. One per request. */
-  now: string;
+  now: string; /** events.state, ONLY as the transition authority decided it (decideEventTransition, or decideEventModerationReversal for a restore); absent or null = state untouched. */ stateDecision?: EventStateDecided | null;
   /** The event_activity_log action word (`admin_<action>`), for the messages. */
   activityAction: string;
   /**
    * Writes the event_activity_log row and answers its id (`.insert({...}).select("id")`). The caller writes
    * both audit rows itself, with literal bodies, so the schema scans read their columns where they are sent.
    */
-  writeActivity: () => PromiseLike<{ data?: unknown; error?: unknown } | null | undefined>;
+  writeActivity: (stateChange: EventModerationStateChange) => PromiseLike<{ data?: unknown; error?: unknown } | null | undefined>;
   /** Writes the `event_<action>` moderation_actions row. */
   writeAudit: () => PromiseLike<{ error?: unknown } | null | undefined>;
 }
@@ -68,7 +68,7 @@ export interface EventModerationOptions {
 export type EventModerationOutcome =
   | { outcome: "applied"; activityId: string | null }
   /** The claim moved no row: the event changed (or was deleted) since it was read. Nothing was written. */
-  | { outcome: "conflict"; message: string }
+  | { outcome: "conflict"; message: string } | { outcome: "refused"; message: string } /* refused: a state change the transition authority did not decide — nothing written */
   /**
    * `nothing_written` — the claim failed, or (warn_host) the first audit row failed: nothing changed.
    * `unknown` — the claim threw or answered no rows to count: whether the event changed is not known.
@@ -88,7 +88,7 @@ function guard(q: any, col: string, v: unknown): any {
 }
 
 export async function applyEventModeration(sc: any, req: any, ev: ModeratedEventRow, opts: EventModerationOptions): Promise<EventModerationOutcome> {
-  const cols = (Object.keys(opts.changes) as ModeratedColumn[]).filter((c) => (EVENT_MODERATION_COLUMNS as readonly string[]).includes(c));
+  const decided = decidedChanges(opts, ev); if ("refused" in decided) return decided.refused; const changes = decided.changes; const cols = (Object.keys(changes) as ModeratedColumn[]).filter((c) => (EVENT_MODERATION_COLUMNS as readonly string[]).includes(c));
   // What the undo writes back, copied BEFORE anything is written (the caller's row object may alias a store).
   const prior: Record<string, unknown> = {};
   for (const c of cols) prior[c] = ev[c] ?? null;
@@ -97,7 +97,7 @@ export async function applyEventModeration(sc: any, req: any, ev: ModeratedEvent
   if (cols.length > 0) {
     let claimed: unknown;
     try {
-      let q = sc.from("events").update({ ...opts.changes, updated_at: opts.now }).eq("id", ev.id);
+      let q = sc.from("events").update({ ...changes, updated_at: opts.now }).eq("id", ev.id);
       for (const c of cols) q = guard(q, c, prior[c]);
       const res = await q.select("id");
       if (res?.error) {
@@ -123,14 +123,14 @@ export async function applyEventModeration(sc: any, req: any, ev: ModeratedEvent
       let undoError = "no row matched";
       try {
         let q = sc.from("events").update({ ...prior, updated_at: opts.now }).eq("id", ev.id).eq("updated_at", opts.now);
-        for (const c of cols) q = guard(q, c, opts.changes[c]);
+        for (const c of cols) q = guard(q, c, changes[c]);
         const r = await q.select("id");
         if (r?.error) undoError = messageOf(r.error);
         restored = !r?.error && Array.isArray(r?.data) && r.data.length === 1;
       } catch (err) {
         undoError = messageOf(err);
       }
-      if (!restored) left.push(`the event still reads ${cols.map((c) => `${c} = ${JSON.stringify(opts.changes[c])}`).join(", ")} (restore failed: ${undoError})`);
+      if (!restored) left.push(`the event still reads ${cols.map((c) => `${c} = ${JSON.stringify(changes[c])}`).join(", ")} (restore failed: ${undoError})`);
     }
     if (activityId !== undefined) {
       let removed = false;
@@ -159,7 +159,7 @@ export async function applyEventModeration(sc: any, req: any, ev: ModeratedEvent
   // 2. Audit: the host-visible activity row, then the global moderation_actions row.
   let activityId: string | null = null;
   try {
-    const r = await opts.writeActivity();
+    const r = await opts.writeActivity(stateChangeOf(changes, prior));
     if (r?.error) return await undo(`The event's activity log could not be written (${messageOf(r.error)})`, undefined);
     activityId = Array.isArray(r?.data) && r.data[0]?.id ? String(r.data[0].id) : null;
   } catch (err) {
@@ -171,5 +171,211 @@ export async function applyEventModeration(sc: any, req: any, ev: ModeratedEvent
   } catch (err) {
     return await undo(`The moderation audit row could not be written (${messageOf(err)})`, activityId);
   }
-  return { outcome: "applied", activityId };
+  if (changes.state === "cancelled") notifyAttendeesOfModeratedCancel(sc, req, ev); return { outcome: "applied", activityId }; // the transition's side effect, only once the change and both audit rows stand
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// events.state THROUGH THE TRANSITION AUTHORITY (wave 5, honesty 3)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// The claim above wrote whatever `changes.state` the caller put in it: the
+// moderate route's `cancel` wrote `cancelled` over a completed or archived
+// event, and its `restore` wrote `open` over every cancelled or archived event,
+// the host's own cancellations included. Now:
+//   * `changes` may not carry `state` at all — refused, nothing written;
+//   * the state is `stateDecision`, an ALLOWED decision of lib/eventLifecycle.ts
+//     (decideEventTransition for cancel / remove, decideEventModerationReversal
+//     for restore), and it must have been decided FROM the state this request
+//     read — the claim is then conditional on that state, as writeEventState's
+//     UPDATE is;
+//   * the activity row records the change (`from_state` / `to_state`), which is
+//     what a later restore reverses and nothing else;
+//   * a change to `cancelled` tells the attendees, as the host's cancel does —
+//     after the change and both audit rows stand, never before (the undo can
+//     only ever reverse a change nobody has been told about).
+// The host-cancel trust charge is NOT emitted: a moderator's cancel is not the
+// host's act (routes/events.ts emitHostCancelledTrustEvent says the same).
+
+/** An allowed decision of the transition authority. */
+export type EventStateDecided = { readonly allowed: true; readonly from: string; readonly to: string };
+
+/** What the activity row records about the state: the change, or nothing. */
+export type EventModerationStateChange = { from_state: string; to_state: string } | Record<string, never>;
+
+function decidedChanges(
+  opts: EventModerationOptions,
+  ev: ModeratedEventRow,
+): { changes: Record<string, unknown> } | { refused: EventModerationOutcome } {
+  if (Object.prototype.hasOwnProperty.call(opts.changes, "state")) {
+    return { refused: { outcome: "refused", message: "events.state is written only as the transition authority decides it (a stateDecision); a raw state patch was refused. Nothing was changed or recorded." } };
+  }
+  const d = opts.stateDecision;
+  if (d === undefined || d === null) return { changes: { ...opts.changes } };
+  if (d.allowed !== true || d.from !== String(ev.state ?? "") || typeof d.to !== "string" || d.to === d.from) {
+    return { refused: { outcome: "refused", message: `The state change ${String(d.from)} -> ${String(d.to)} was not decided from the state this request read ('${String(ev.state ?? "")}'). Nothing was changed or recorded.` } };
+  }
+  return { changes: { ...opts.changes, state: d.to } };
+}
+
+function stateChangeOf(changes: Record<string, unknown>, prior: Record<string, unknown>): EventModerationStateChange {
+  return typeof changes.state === "string" ? { from_state: String(prior.state), to_state: changes.state } : {};
+}
+
+/** What a moderation action asks of events.state; the authority answers. */
+export type EventModerationStateIntent = { to: "cancelled" | "archived" } | { reverse: true };
+
+export type EventModerationStateAnswer =
+  | { ok: true; decision: EventStateDecided | null }
+  | { ok: false; code: "invalid_state_transition" | "db_error"; message: string };
+
+/**
+ * Put a moderation action's state intent to the transition authority.
+ * `cancel` / `remove`: decideEventTransition, unchanged — an event already in
+ * the target state is NO state change (the action still applies its other
+ * columns and is audited); any other refusal is refused here, nothing written.
+ * `restore`: the newest recorded moderation is read and put to
+ * decideEventModerationReversal; anything but an allowed reversal is refused.
+ */
+export async function decideModeratedEventState(sc: any, ev: ModeratedEventRow, intent: EventModerationStateIntent | null): Promise<EventModerationStateAnswer> {
+  if (intent === null) return { ok: true, decision: null };
+  if ("to" in intent) {
+    const d = decideEventTransition(ev.state, intent.to);
+    if (d.allowed) return { ok: true, decision: d };
+    if (d.reason === "same_state") return { ok: true, decision: null };
+    return { ok: false, code: "invalid_state_transition", message: `${eventTransitionRefusalMessage(d)}: a moderator's action goes through the same transition authority as the host's. Nothing was changed or recorded.` };
+  }
+  if (!(EVENT_MODERATION_REVERSIBLE_STATES as readonly string[]).includes(String(ev.state ?? ""))) return { ok: true, decision: null };
+  const rec = await readRecordedEventModeration(sc, ev.id);
+  if (!rec.ok) return { ok: false, code: "db_error", message: `${rec.message}. Nothing was changed or recorded.` };
+  const d = decideEventModerationReversal(ev.state, rec.recorded);
+  if (d.allowed) return { ok: true, decision: d };
+  return { ok: false, code: "invalid_state_transition", message: `${d.message}. Nothing was changed or recorded.` };
+}
+
+/**
+ * The newest moderation STATE CHANGE recorded on an event: its
+ * event_activity_log rows for admin_cancel / admin_remove / admin_restore,
+ * newest first, every row read (paged past the row cap), and the first whose
+ * metadata records a change (`from_state` != `to_state`). A row that changed no
+ * state (a cancel of an already-cancelled event) is not a change and is passed
+ * over. A read that fails, or answers no list, is not "no record".
+ */
+export async function readRecordedEventModeration(sc: any, eventId: string): Promise<{ ok: true; recorded: RecordedEventModeration | null } | { ok: false; message: string }> {
+  const rows = await readEveryRow((from, to, count) => sc
+    .from("event_activity_log")
+    .select("id, action, metadata, created_at", { count })
+    .eq("event_id", eventId)
+    .in("action", EVENT_MODERATION_STATE_ACTIVITY as string[])
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .range(from, to));
+  if (rows.error || !rows.data) return { ok: false, message: `The event's moderation record could not be read (event_activity_log): ${rows.error?.message ?? "no rows answered"}` };
+  for (const r of rows.data) {
+    const m = r?.metadata;
+    if (m && typeof m === "object" && typeof m.from_state === "string" && typeof m.to_state === "string" && m.from_state !== m.to_state) {
+      return { ok: true, recorded: { action: String(r.action), from_state: m.from_state, to_state: m.to_state } };
+    }
+  }
+  return { ok: true, recorded: null };
+}
+
+const RECIPIENT_CHUNK = 100;
+
+/**
+ * The host's cancel pushes "Event cancelled" to the going / maybe attendees
+ * (routes/events.ts POST /events/:id/cancel and DELETE /events/:id); a
+ * moderator's cancel told nobody. Fire-and-forget, as the host's is: the change
+ * is already durable and audited. Every read is checked and paged past the row
+ * cap; one that fails tells nobody and is LOGGED (an outage is not "nobody was
+ * going").
+ */
+function notifyAttendeesOfModeratedCancel(sc: any, req: any, ev: ModeratedEventRow): void {
+  void (async () => {
+    try {
+      const rsvps = await readEveryRow((from, to, count) => sc
+        .from("event_rsvps")
+        .select("user_id", { count })
+        .eq("event_id", ev.id)
+        .in("status", ["going", "maybe"])
+        .order("user_id", { ascending: true })
+        .range(from, to));
+      if (rsvps.error || !rsvps.data) {
+        req?.log?.warn?.({ eventId: ev.id, err: rsvps.error }, "moderator cancel: attendee read failed — nobody was told");
+        return;
+      }
+      const ids = [...new Set(rsvps.data.map((r: any) => String(r.user_id)))];
+      const recipients: Array<{ userId: string; tokens: string[] }> = [];
+      for (let i = 0; i < ids.length; i += RECIPIENT_CHUNK) {
+        const chunk = ids.slice(i, i + RECIPIENT_CHUNK);
+        const got = await readEveryRow((from, to, count) => sc
+          .from("profiles")
+          .select("id, expo_push_token", { count })
+          .in("id", chunk)
+          .not("expo_push_token", "is", null)
+          .order("id", { ascending: true })
+          .range(from, to));
+        if (got.error || !got.data) {
+          req?.log?.warn?.({ eventId: ev.id, err: got.error }, "moderator cancel: attendee push tokens unreadable — nobody was told");
+          return;
+        }
+        for (const p of got.data) if (p?.expo_push_token) recipients.push({ userId: String(p.id), tokens: [String(p.expo_push_token)] });
+      }
+      if (recipients.length === 0) return;
+      await sendPushWithRetry(sc, recipients, {
+        title: "Event cancelled",
+        body: `"${String(ev.title ?? "An event")}" has been cancelled.`,
+        data: { eventId: ev.id, type: "event_cancelled" },
+      });
+    } catch (err) {
+      // resolves-not-throws-ok: fire-and-forget push, as the host's cancel — best-effort, logged.
+      req?.log?.warn?.({ err, eventId: ev.id }, "moderator cancel: attendee push failed");
+    }
+  })();
+}
+
+export type AppealEventReversal =
+  | { outcome: "restored"; from: string; to: string }
+  /** The event is not the appellant's, or does not exist. */
+  | { outcome: "not_found" }
+  /** The authority refused: there is no recorded moderation this appeal can reverse. A person must look. */
+  | { outcome: "refused"; message: string }
+  /** A read or write failed, or the event changed mid-request: nothing (or nothing lasting) was written; retry. */
+  | { outcome: "failed"; message: string };
+
+/**
+ * An approved appeal of a moderated event (services/appeals/resolveAppeal.ts)
+ * wrote `state: "open"` over every state — publishing a draft, reopening a
+ * completed event, un-cancelling a host's own cancellation. It now goes through
+ * the same moderator-only reversal as the moderate route's `restore`: the
+ * newest recorded moderation is reversed, to the state it found, or nothing is
+ * written. Claimed, recorded (an `admin_restore` activity row, `via: "appeal"`),
+ * and undone if that record cannot be written: an unrecorded reversal would
+ * leave the next restore deciding on a stale record.
+ */
+export async function reverseModeratedEventOnAppeal(
+  sc: any,
+  a: { eventId: string; hostId: string; actorId: string | null; appealId: string; note: string | null },
+): Promise<AppealEventReversal> {
+  let ev: ModeratedEventRow | null;
+  try {
+    const { data, error } = await sc.from("events").select("id, host_id, title, state, visibility, featured").eq("id", a.eventId).eq("host_id", a.hostId).maybeSingle();
+    if (error) return { outcome: "failed", message: `the event could not be read: ${messageOf(error)}` };
+    ev = (data as ModeratedEventRow | null) ?? null;
+  } catch (err) {
+    return { outcome: "failed", message: `the event could not be read: ${messageOf(err)}` };
+  }
+  if (!ev) return { outcome: "not_found" };
+  if (!(EVENT_MODERATION_REVERSIBLE_STATES as readonly string[]).includes(String(ev.state ?? ""))) {
+    return { outcome: "refused", message: `the event is '${String(ev.state)}': there is no moderation state change to reverse (an appeal reverses a moderator's cancel or remove; a hidden event's visibility is not restored by this path)` };
+  }
+  const answer = await decideModeratedEventState(sc, ev, { reverse: true });
+  if (!answer.ok) return answer.code === "db_error" ? { outcome: "failed", message: answer.message } : { outcome: "refused", message: answer.message };
+  const decision = answer.decision!;
+  const out = await applyEventModeration(sc, null, ev, {
+    changes: {}, stateDecision: decision, now: new Date().toISOString(), activityAction: "admin_restore",
+    writeActivity: (st) => sc.from("event_activity_log").insert({ event_id: a.eventId, actor_id: a.actorId, action: "admin_restore", metadata: { via: "appeal", appeal_id: a.appealId, reason: a.note, ...st } }).select("id"),
+    writeAudit: () => Promise.resolve({ error: null }), // the appeal row is this reversal's audit record (routes/appeals.ts commits it after this answers)
+  });
+  if (out.outcome === "applied") return { outcome: "restored", from: decision.from, to: decision.to };
+  return { outcome: "failed", message: out.message };
 }

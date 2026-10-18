@@ -21,7 +21,7 @@ import { invalidateDiscoveryCacheForEntity } from "../lib/discoveryPersistentCac
 import { evictCacheEntriesForEntity } from "./discovery.js";
 import { evictStoredPlacePhoto } from "../lib/discoveryPlacePhotoStore.js";
 
-import { requireAdmin } from "../lib/requireAdmin.js"; import { exactListCount, listTotalRefusal, parseListPage, readEveryRow } from "../lib/moderationCounts.js";
+import { requireAdmin } from "../lib/requireAdmin.js"; import { exactListCount, listTotalRefusal, parseListPage, readEveryRow, parseVocabularyFilter, PLACE_IMAGE_REPORT_STATUS_FILTERS } from "../lib/moderationCounts.js";
 
 const router = Router();
 
@@ -83,11 +83,11 @@ router.get("/admin/place-images/queue", asyncHandler(async (req, res) => {
   const sourceUrls = rows.map((v) => v.source_url).filter(Boolean);
   const reportCountMap = new Map<string, number>();
   if (sourceUrls.length > 0) {
-    const { data: repRows, error: repCountErr } = await sc
+    const { data: repRows, error: repCountErr } = await readEveryRow((from, to, count) => sc // EVERY pending report row, paged past the row cap (wave 5, honesty 3): <=100 images bounds nothing here — an image's reports are unbounded (no unique reporter/image key; POST /places/:id/image-report never dedups), so past db-max-rows (1000) reportCount was an undercount
       .from("place_image_reports")
-      .select("image_url, place_id")
+      .select("id, image_url, place_id", { count })
       .in("image_url", sourceUrls)
-      .eq("status", "pending");
+      .eq("status", "pending").order("id", { ascending: true }).range(from, to));
     if (repCountErr || !Array.isArray(repRows)) { sendError(res, "db_error", `The images' pending reports could not be read (reportCount): ${repCountErr?.message ?? "no rows answered"}. A reportCount of 0 would read as "nobody reported this image". Retry.`, { exposeDetail: true }); return; } for (const r of repRows) {
       const key = `${r.image_url}|||${r.place_id}`;
       reportCountMap.set(key, (reportCountMap.get(key) ?? 0) + 1);
@@ -129,7 +129,7 @@ router.get("/admin/place-images/reports", asyncHandler(async (req, res) => {
   // wave 5: ?page=abc was NaN (NaN survived Math.max), so the list served `.range(NaN, NaN)`. Not a positive whole number = the default.
   const { page, limit, offset } = parseListPage(req.query, 20, 100);
   // (the house rule: admin.ts /admin/reports, the trips and events queues, the trust review queue)
-  const status = (req.query.status as string) ?? "pending";
+  const statusF = parseVocabularyFilter(req.query.status, "status", PLACE_IMAGE_REPORT_STATUS_FILTERS); if (!statusF.ok) { sendError(res, "invalid_payload", statusF.message); return; } const status = statusF.value ?? "pending"; // wave 5, honesty 3: a word no report carries answered an EMPTY list; refused by name (400), as the trust review queue's
 
   let query = sc
     .from("place_image_reports")
@@ -707,19 +707,19 @@ async function queuePageFilteredByReports(
   limit: number,
 ): Promise<{ data: any[] | null; error: { message: string; named?: boolean } | null; count: number | null }> {
   const refuse = (what: string, why: string) => ({ data: null, error: { message: `The has_reports filter could not be applied (${what}): ${why}. A page filtered after paging would miscount the queue. Retry.`, named: true }, count: null });
-  const reports = await readEveryRow((from, to) => sc
+  const reports = await readEveryRow((from, to, count) => sc
     .from("place_image_reports")
-    .select("id, image_url, place_id", { count: "exact" })
+    .select("id, image_url, place_id", { count })
     .eq("status", "pending")
     .order("id", { ascending: true })
     .range(from, to));
   if (reports.error || !reports.data) return refuse("pending reports", reports.error?.message ?? "no rows answered");
   const reported = new Set(reports.data.map((r: any) => `${r.image_url}|||${r.place_id}`));
 
-  const candidates = await readEveryRow((from, to) => {
+  const candidates = await readEveryRow((from, to, count) => {
     let q = sc
       .from("generated_visuals")
-      .select("id, source_url, entity_id, created_at", { count: "exact" })
+      .select("id, source_url, entity_id, created_at", { count })
       .eq("entity_type", "place")
       .not("accuracy_status", "eq", "rejected");
     if (filters.accuracyStatus) q = q.eq("accuracy_status", filters.accuracyStatus);
@@ -734,7 +734,7 @@ async function queuePageFilteredByReports(
   const pageIds: string[] = kept.slice(offset, offset + limit).map((v: any) => v.id);
   if (pageIds.length === 0) return { data: [], error: null, count: kept.length };
 
-  const page = await readEveryRow((from, to) => sc.from("generated_visuals").select("*", { count: "exact" }).in("id", pageIds).order("id", { ascending: true }).range(from, to));
+  const page = await readEveryRow((from, to, count) => sc.from("generated_visuals").select("*", { count }).in("id", pageIds).order("id", { ascending: true }).range(from, to));
   if (page.error || !page.data) return refuse("page rows", page.error?.message ?? "no rows answered");
   const byId = new Map(page.data.map((r: any) => [r.id, r]));
   if (pageIds.some((id) => !byId.has(id))) return refuse("page rows", "an image on this page was removed while the page was read");

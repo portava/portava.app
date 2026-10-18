@@ -5163,7 +5163,7 @@ its prose.
 - One reader pages past the row cap
   (`artifacts/api-server/src/lib/moderationCounts.ts:185#export async function readEveryRow(`). It refuses, never
   shortens, when the count falls mid-read
-  (`artifacts/api-server/src/lib/moderationCounts.ts:201#if (c < rows.length + r!.data.length)`).
+  (`artifacts/api-server/src/lib/moderationCounts.ts:203#if (r!.data.length === 0 && rows.length < c)`).
 - `?page` and `?limit` use the house default
   (`artifacts/api-server/src/lib/moderationCounts.ts:225#export function parseListPage(`): in adminMedia
   (`artifacts/api-server/src/routes/adminMedia.ts:174#return parseListPage(query, 20, 100);`), in the place-image queue
@@ -5227,3 +5227,142 @@ Rows: none move. TV-4a is graded on `moderation_reports` (§35), and none of the
 the trust review queue. It stays C; its filter words are now validated as well. No row of this census grades the venue
 queue, the place-image queue, the Compass dashboard, the event moderate route's own audit row or place-mismatch resolve.
 Headline unchanged: 90 / 15 / 1 / 2 of 108.
+
+### Correction (2026-10-18, wave 5, honesty 3) — events.state: a moderator's change goes through the transition authority
+
+*Same branch and tree. Committed on this branch; undeployed. **NO ROW MOVES.***
+
+**Why it is recorded here.** No census grades the events lifecycle as rows. census-discovery says it grades none of
+routes/events.ts's routes; census-trips and census-media declare routes/events.ts graded elsewhere; census-telegraph
+watches it only for the shared-rail cancellation notice (T264), which reads `events.state` and does not write it.
+This census watches routes/events.ts, routes/admin.ts, lib/eventModerationClaim.ts and
+services/appeals/resolveAppeal.ts, and carries every earlier correction to the event moderate route. So the
+correction is here.
+
+**What was broken.** lib/eventLifecycle.ts's EVENT_STATE_TRANSITIONS is the one answer to "may this event go from A
+to B", and every host route writes through writeEventState, which asks it. Two writers did not ask:
+1. PATCH /admin/events/:eventId/moderate put `state` straight into its claim. `cancel` wrote `cancelled` over a
+   `completed` event and over an `archived` one. `restore` wrote `open` over every cancelled or archived event,
+   including the host's own cancellations, and a moderator-cancelled draft came back published.
+2. An approved event appeal wrote `state: "open"` over every state.
+
+A moderator's cancel also told no attendee; the host's cancel pushes "Event cancelled" to the going and maybe RSVPs.
+
+**What changed, with no migration.** The edits to admin.ts, eventModerationClaim.ts (top 175 lines) and
+resolveAppeal.ts are line-neutral; new code is appended at the files' ends.
+- `cancel` and `remove` are put to decideEventTransition unchanged
+  (`artifacts/api-server/src/lib/eventModerationClaim.ts:242#const d = decideEventTransition(ev.state, intent.to);`).
+  A refusal is a 409 `invalid_state_transition` with nothing written. An event already in the target state is no state
+  change; the action still applies its other columns and is audited.
+- `restore` is the one move a host may never make, so it is a moderator-only arrow in the authority
+  (`artifacts/api-server/src/lib/eventLifecycle.ts:493#export function decideEventModerationReversal(`). It reverses
+  only the newest RECORDED moderation, back to the state that moderation found
+  (`artifacts/api-server/src/lib/eventLifecycle.ts:513#return { allowed: true, from: cur, to: from as EventState, moderatorOnly: true };`),
+  and only while the event still holds the state the record left it in
+  (`artifacts/api-server/src/lib/eventLifecycle.ts:505#recorded.to_state !== cur`). Its targets are derived from
+  the table, never restated (`artifacts/api-server/src/lib/eventLifecycle.ts:484#export function eventModerationReversalTargets(`).
+  The host's table is unchanged: a host still cannot leave `cancelled` (except to archive) or `archived`.
+- Why the newest record is enough: from `cancelled` a host can only archive, and from `archived` nothing moves. So no
+  host path leaves one of these states and returns to it. Every moderation-side state change writes a record, so a
+  record whose `to_state` is the current state means nothing has moved the event since.
+- The record is the moderation's own event_activity_log row. When the state changed, its metadata carries
+  `from_state` / `to_state` (`artifacts/api-server/src/lib/eventModerationClaim.ts:162#await opts.writeActivity(stateChangeOf(changes, prior));`).
+  It is written in the claim, audit, undo order. The read pages past the row cap and passes over rows that changed
+  no state (`artifacts/api-server/src/lib/eventModerationClaim.ts:275#m.from_state !== m.to_state`). event_activity_log.metadata
+  is jsonb, and its (event_id, created_at DESC) index serves the read.
+- The claim takes `state` only as an allowed decision taken from the state this request read. A raw `state` change
+  is refused (`artifacts/api-server/src/lib/eventModerationClaim.ts:209#hasOwnProperty.call(opts.changes, "state")`),
+  as is a decision taken from another state (`artifacts/api-server/src/lib/eventModerationClaim.ts:214#d.from !== String(ev.state ?? "")`).
+  The claim stays conditional on that state, as writeEventState's UPDATE is.
+- The route hands an intent to the authority and patches no state
+  (`artifacts/api-server/src/routes/admin.ts:3001#const decidedE = await decideModeratedEventState(sc, ev as ModeratedEventRow, stateIntent);`).
+  The answer names the change (`artifacts/api-server/src/routes/admin.ts:3027#state: { from: decidedE.decision.from, to: decidedE.decision.to }`).
+- The appeal goes through the same reversal
+  (`artifacts/api-server/src/services/appeals/resolveAppeal.ts:425#const r = await reverseModeratedEventOnAppeal(sc,`).
+  With no recorded moderation to reverse, the restoration is deferred to a person
+  (`artifacts/api-server/src/services/appeals/resolveAppeal.ts:432#return deferRestoration(appeal, r.message);`).
+  The reversal is recorded as `admin_restore` with `via: "appeal"`, and it is undone if that record cannot be written.
+- A change to `cancelled` pushes "Event cancelled" to the going and maybe attendees, as the host's does, only after
+  the change and both audit rows stand (`artifacts/api-server/src/lib/eventModerationClaim.ts:174#if (changes.state === "cancelled") notifyAttendeesOfModeratedCancel(sc, req, ev);`).
+  Every read it makes is checked and paged. The host-cancel trust charge is not emitted, because a moderator's cancel
+  is not the host's act.
+
+**The one exception.** The undo writes `prior` back over the claim
+(`artifacts/api-server/src/lib/eventModerationClaim.ts:125#.eq("updated_at", opts.now)`). It is compensation, not a
+transition. It runs only when this request's own audit row failed. It is guarded on the values this request wrote and
+on its own stamp, so a later writer's change is never undone. No side effect has fired by then.
+
+**Proof.** `artifacts/api-server/src/test/eventModerationStateAuthority.test.ts:280#describe("B. structural`
+scans every `.from("events")` chain under src/ (181 chains, 33 writes). Comments and string contents are blanked
+first. The only writes that can set `state` are three listed writers that ask the authority (writeEventState, the
+start scheduler, the moderation claim), the one exception, and three patches it proves state-free. A fourth writer,
+or a state key anywhere else, fails it. No migration or baseline function UPDATEs `events.state`.
+The suite has 31 cases. On the 929b2599b sources, with the new tests in place, 24 cases were red and 7 controls were
+green. The appeal and moderation route cases run on schemaStrictSupabase
+(`artifacts/api-server/src/test/helpers/adminModerationDouble.ts:37#export function installModerationDouble(`).
+35 mutants, each applied alone, were restored from a repo-relative backup and checked by sha256. All 35 were
+killed. 33 of them are also killed with the structural cases skipped, so no guard rests only on a source-text
+assertion. Two of the 35 add a new bypass elsewhere (a state key in admin.ts's hide-content write, a spread in
+events.ts's close-rsvps write); the structural scan kills both.
+Two existing suites pinned the old behaviour and were corrected:
+- appealReversalAffectedRows seeded an event with `state: "removed"`, which is no event_state label; the raw write
+  accepted it. Its fake now answers `count` to a read.
+- adminModerationRemainingSeven's readEveryRow "fell" case now expects the count-once refusal; see the next correction.
+
+**What this does not prove or change.**
+- `restore` still sets visibility `public`, whatever the event's visibility was before the hide. A `friends_only` or
+  `circle` event comes back public. An appeal does not restore visibility at all.
+- `remove` from a live state tells nobody, as the host's archive tells nobody.
+- lib/stateMachines/registry.ts does not list the moderator-only arrows; it did not list the raw writes they replace
+  either. Its evidence rule needs the target state written literally in the writer's code, and the reversal's target
+  is computed. Registering them needs a decision on the registry's shape.
+- A moderated event from before this change has no record, so its restore is refused. Production was not measured.
+- The double sorts on one order key, so fixture ids sort as their times do. Nothing here ran against a live PostgREST.
+
+Rows: none move. No row of this census grades `events.state` transitions, the moderate route's state, or an appeal's
+event restoration (TRV2-10 is the owner's reversal-policy question about trust effects). Headline unchanged:
+90 / 15 / 1 / 2 of 108.
+
+- NOT-GRADED: artifacts/api-server/src/lib/eventLifecycle.ts — the event transition authority, cited for the moderator-only reversal this pass adds to it; no Trust row grades the events lifecycle.
+
+### Correction (2026-10-18, wave 5, honesty 3) — the place-image reports filter, the reportCount read, and a count asked once
+
+*Same branch and tree. Committed on this branch; undeployed. **NO ROW MOVES.***
+
+The "remaining seven" correction listed three more items on these lists and left them.
+1. GET /admin/place-images/reports matched `?status=` exactly and unvalidated. A word no report carries answered an
+   empty list, and a repeated `?status` reached the filter as an array. It is now validated against the column's CHECK
+   vocabulary plus the route's `all`, and anything else is a 400 naming `status`
+   (`artifacts/api-server/src/routes/adminPlaceImages.ts:132#parseVocabularyFilter(req.query.status, "status", PLACE_IMAGE_REPORT_STATUS_FILTERS)`,
+   `artifacts/api-server/src/lib/moderationCounts.ts:273#export const PLACE_IMAGE_REPORT_STATUSES`). An empty
+   `?status=` is the default, `pending`; it had matched the empty string.
+2. The place-image queue's reportCount read was not paged. The page bounds its images (at most 100), not their
+   reports. place_image_reports has no unique reporter and image key, and POST /places/:id/image-report never
+   dedups, so one image's pending reports are unbounded. Past PostgREST's db-max-rows (1000 hosted) the read was cut
+   with no sign and reportCount undercounted. It is now paged
+   (`artifacts/api-server/src/routes/adminPlaceImages.ts:86#await readEveryRow((from, to, count) => sc`).
+3. readEveryRow asked for `count=exact` on every page. The first page now asks, and the count is passed through: no
+   later page asks for it or is read for one
+   (`artifacts/api-server/src/lib/moderationCounts.ts:196#expected === null ? "exact" : undefined`). Every caller
+   passes the count to its select. The cut detection still refuses rather than shortens: a fall shows as the pages
+   running out short of the count (`artifacts/api-server/src/lib/moderationCounts.ts:203#if (r!.data.length === 0 && rows.length < c)`).
+   One case is stronger than before. A row removed behind the read position shifted a later page past a row, and the
+   old per-page count fell by exactly what that page lost, so the old read answered a set missing a live row. Rows
+   added mid-read that a later page answers are kept, as before.
+
+**Repoint.** The "remaining seven" correction cited line 201 of lib/moderationCounts.ts as where a fall mid-read
+is refused. Line 201 is now the first page's own-count check, so that citation now points at line 203, which holds
+the refusal its prose describes. Its words are unchanged.
+
+**Tests.** `artifacts/api-server/src/test/adminModerationListsCountOnce.test.ts:118#describe("2. GET /admin/place-images/reports`
+has 19 cases on the same double. On the 929b2599b sources, 13 were red and 6 controls were green. The count is
+counted per statement: the venue queue, the place-image reportCount read, each tallied Compass section and the
+safety-filter totals each ask once under a 2-row cap.
+14 mutants, each applied alone, were restored from a repo-relative backup and checked by sha256. All 14 were
+killed. One was killed by a hang: it removes the empty-page refusal, which is also what ends a read that runs
+short of its count.
+adminModerationRemainingSeven's "one that falls is refused" case pinned the per-page count's message. It now expects
+the count-once refusal, on the same line.
+
+Rows: none move. C5 reads the trust review queue and is not touched here. No row of this census grades the
+place-image lists or readEveryRow. Headline unchanged: 90 / 15 / 1 / 2 of 108.
