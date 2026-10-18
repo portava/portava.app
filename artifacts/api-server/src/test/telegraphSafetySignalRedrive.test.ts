@@ -873,4 +873,60 @@ describe("pass 4: a create the layer COALESCED is `deduped` (counted as told) on
     assert.deepEqual([BOB, DANA].map((u) => outcome.withheld.find((w) => w.userId === u)?.reason), ["deduped", "deduped"]);
     for (const u of TOLD) assert.equal(rowsFor(sc, u).length, 1, `${u}: exactly one row about MSG`);
   });
+
+  // ── Fable pass 5 MS1: the equivalence evidence is THIS thread's, inside P1's window ──
+  // readEquivalentHolders reads this producer's rows `.eq("source_id", m.threadId).gt("created_at", since)`. Nothing
+  // above held either half: the verifier's mutant MS1 (evidence from ANY thread) stayed green while a member's ALL CLEAR
+  // for ANOTHER thread settled this thread's ALL CLEAR "complete", nobody told. The layer below answers every create
+  // "duplicate" (an unreadable ledger), so the producer's own evidence read alone decides.
+  const everyCreateADuplicate: SafetyNotifyDeps = { create: async () => null, createDetailed: async () => ({ row: null, refusal: "duplicate" }), route: async () => undefined };
+
+  it("pass 5 (MS1): an ALL CLEAR the member holds from ANOTHER thread, 10 s old, is not evidence — not_created at ERROR, re-attempted, never settled; once the layer heals THIS thread's ALL CLEAR is written, once (CONTROL: held on this thread, it is the evidence)", () => oneClock(0, async () => {
+    const OTHER_THREAD = "74000000-0000-4000-8000-0000000000d2";
+    const holding = (sourceId: string) => {
+      _resetSafetyRedriveMemo();
+      const sc = lateClear();
+      for (const u of TOLD) sc.db.notifications!.push({ ...heldRow(u, SAFETY_ALL_CLEAR_EVENT, at(-10_000), "MESSAGE:clear-held"), source_id: sourceId });
+      return sc;
+    };
+    const same = holding(THREAD);
+    const c = await doorAt(same, everyCreateADuplicate, MSG, "all_clear", 0);
+    assert.ok(c.status === "notified" && TOLD.every((u) => reasonsOf(c.withheld)[u] === "deduped"), `CONTROL: ${JSON.stringify(c)}`);
+    const cr = await redriveSafetySignal(same as any, MSG, { deps: everyCreateADuplicate, log: quiet });
+    assert.ok(cr.status === "settled" && cr.reason === "complete", `CONTROL: ${JSON.stringify(cr)}`);
+
+    const sc = holding(OTHER_THREAD);
+    const d = logs();
+    const r = await doorAt(sc, everyCreateADuplicate, MSG, "all_clear", 0, d.log);
+    assert.ok(r.status === "notified", JSON.stringify(r));
+    assert.deepEqual(r.notified, []);
+    assert.deepEqual(TOLD.map((u) => reasonsOf(r.withheld)[u]), ["not_created", "not_created", "not_created"], "another thread's ALL CLEAR is not this thread's");
+    assert.ok(d.errors.filter((m) => /not created for one member/.test(m)).length >= TOLD.length, d.errors.join(" | "));
+    const again = await redriveSafetySignal(sc as any, MSG, { deps: everyCreateADuplicate, log: quiet });
+    assert.ok(again.status === "retry" && again.stage === "deliver", `never settled on another thread's evidence: ${JSON.stringify(again)}`);
+    const healed = await redriveSafetySignal(sc as any, MSG, { deps: realDeps(sc), log: quiet });
+    assert.ok(healed.status === "settled" && healed.reason === "complete", JSON.stringify(healed));
+    assert.deepEqual(sorted(healed.notified), TOLD, "the layer's own rule is per thread too: this thread's ALL CLEAR is written");
+    for (const u of TOLD) {
+      assert.equal(rowsFor(sc, u).length, 1, `${u}: this thread's ALL CLEAR, once`);
+      assert.equal(allClearsFor(sc, u).length, 2, `${u}: the other thread's and this one's`);
+    }
+  }));
+
+  it("pass 5: the evidence window is P1's 60 s, open at its edge — an ALL CLEAR held from EXACTLY 60 s ago, or 60.001 s ago, is not evidence (not_created, re-attempted); 59.999 s ago it is (deduped, settled)", () => oneClock(0, async () => {
+    const { dedupeWindowFor } = await import("../domain/telegraph/policies/attentionLadder.js");
+    assert.equal(dedupeWindowFor(SAFETY_ALL_CLEAR_EVENT), 60_000, "P1's window");
+    const heldAged = async (ageMs: number) => {
+      _resetSafetyRedriveMemo();
+      const sc = lateClear();
+      for (const u of TOLD) sc.db.notifications!.push(heldRow(u, SAFETY_ALL_CLEAR_EVENT, at(-ageMs), "MESSAGE:clear-earlier"));
+      const r = await doorAt(sc, everyCreateADuplicate, MSG, "all_clear", 0);
+      const o = await redriveSafetySignal(sc as any, MSG, { deps: everyCreateADuplicate, log: quiet });
+      return { door: TOLD.map((u) => (r.status === "notified" ? reasonsOf(r.withheld)[u] : r.status)), redrive: o.status === "settled" ? `settled:${o.reason}` : `retry:${o.stage}` };
+    };
+    const NOT_EVIDENCE = { door: ["not_created", "not_created", "not_created"], redrive: "retry:deliver" };
+    assert.deepEqual(await heldAged(59_999), { door: ["deduped", "deduped", "deduped"], redrive: "settled:complete" }, "CONTROL: inside the window it is the evidence");
+    assert.deepEqual(await heldAged(60_000), NOT_EVIDENCE, "exactly at the edge is outside (`.gt`, as the layer's own read)");
+    assert.deepEqual(await heldAged(60_001), NOT_EVIDENCE, "just past the window");
+  }));
 });

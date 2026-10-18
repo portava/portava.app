@@ -457,3 +457,233 @@ describe("T220c — GET /me/mutes: an answer that is not a row list is the route
     });
   }
 });
+
+// ── 8. the cut — Fable pass 5 MM1: past the row cap, the WHOLE list ────────
+//
+// PostgREST cuts every answer at its db-max-rows (1,000 hosted) and says
+// nothing: no error, no flag. readMuteExclusions' first request carries its
+// exact count, and an answer shorter than its count is read again by
+// `muted_id` (lib/feedReads.ts readWhole). Nothing above held that — the world
+// above serves every row — so a readMuteExclusions reverted to ONE read taken
+// whole whatever its count (the read before T220c; the verifier's mutant MM1)
+// stayed green while a viewer with 1,005 mutes was served the 1,000-row prefix
+// and every muted author past the cut. The fake below cuts and counts the way
+// blockWholeListPagingT220c.test.ts's `blocks` fake does (`{ count: "exact" }`
+// = the rows matching every filter, the key cursor included, before the cut).
+// Every case below is GREEN on the committed reader and RED under MM1.
+
+type MuteRow = { id: string; muter_id: string; muted_id: string };
+interface CutMutesOpts {
+  /** PostgREST's db-max-rows: every response is cut to this many rows, with no error. */
+  cap?: number;
+  /** Leave `count` out of every answer even when it was asked for. */
+  noCount?: boolean;
+  /** Ignore these filter methods (a server or builder that drops the key cursor). */
+  ignore?: ReadonlySet<string>;
+  /** Answer the key cursor inclusively (`gt` read as `gte`): each page starts with the row the last one ended on. */
+  inclusiveCursor?: boolean;
+  /** Override read `n` (from 0): return an Answer to replace it, or throw. */
+  answer?: (calls: Call[], n: number) => Answer | undefined;
+}
+
+const MUTE_ROW_CAP = 1_000;
+const MUTES_PAST_CAP = 1_005;
+const mutedNo = (n: number) => `f0000000-0000-4000-a000-${String(n).padStart(12, "0")}`;
+const everyMuted = () => Array.from({ length: MUTES_PAST_CAP }, (_, i) => mutedNo(i)).sort();
+
+/** VIEWER's `n` mutes, stored in key order (so the cut prefix is mutedNo(0..999)), plus a stranger's mute that is not VIEWER's. */
+function viewerMutes(n: number): MuteRow[] {
+  const rows: MuteRow[] = Array.from({ length: n }, (_, i) => ({ id: `e1000000-0000-4000-a000-${String(i).padStart(12, "0")}`, muter_id: VIEWER, muted_id: mutedNo(i) }));
+  rows.push({ id: "e1000000-0000-4000-a000-999999999999", muter_id: OTHER, muted_id: mutedNo(900_001) });
+  return rows;
+}
+
+/** A table-driven `user_mutes` that filters, orders, limits, cuts at a cap and counts the way PostgREST does. */
+function cutMutes(rows: MuteRow[], o: CutMutesOpts = {}) {
+  const reads: Call[][] = [];
+  function from(table: string) {
+    assert.equal(table, "user_mutes");
+    const calls: Call[] = [];
+    const settle = (): Answer => {
+      const n = reads.length;
+      reads.push(calls);
+      const over = o.answer?.(calls, n);
+      if (over) return over;
+      const sel = calls.find(([m]) => m === "select");
+      const opts = (sel?.[1][1] ?? {}) as { count?: string; head?: boolean };
+      let out = rows.filter((r) => calls.every(([m, a]) => {
+        if (o.ignore?.has(m)) return true;
+        const [c, v] = a as [keyof MuteRow, string];
+        if (m === "eq") return r[c] === v;
+        if (m === "gt") return o.inclusiveCursor ? r[c] >= v : r[c] > v;
+        return true;
+      }));
+      const ord = calls.find(([m]) => m === "order");
+      if (ord) { const c = ord[1][0] as keyof MuteRow; out = [...out].sort((x, y) => (x[c] < y[c] ? -1 : x[c] > y[c] ? 1 : 0)); }
+      const total = out.length;
+      const lim = calls.find(([m]) => m === "limit");
+      if (lim) out = out.slice(0, lim[1][0] as number);
+      if (o.cap !== undefined) out = out.slice(0, o.cap);
+      const count = opts.count === "exact" && !o.noCount ? total : null;
+      if (opts.head) return { data: null, error: null, count };
+      const cols = String(sel?.[1][0] ?? "*").split(",").map((s) => s.trim());
+      return { data: out.map((r) => (cols[0] === "*" ? { ...r } : Object.fromEntries(cols.map((c) => [c, r[c as keyof MuteRow]])))), error: null, count };
+    };
+    const b: any = new Proxy({}, {
+      get(_t, prop: string) {
+        if (prop === "then") return (f: any, r: any) => Promise.resolve().then(settle).then(f, r);
+        return (...args: unknown[]) => { calls.push([prop, args]); return b; };
+      },
+    });
+    return b;
+  }
+  return { from, reads };
+}
+
+/** A world above with its `user_mutes` answered by a cutting fake. */
+function withCutMutes(c: any, mutes: { from(table: string): any }) {
+  const inner = c.from;
+  c.from = (t: string) => (t === "user_mutes" ? mutes.from(t) : inner(t));
+  return c;
+}
+
+/** The read every list site made before T220c, issued raw against the fake: what MM1 takes whole. */
+async function plainMuteRead(mutes: { from(table: string): any }): Promise<any> {
+  return mutes.from("user_mutes").select("muted_id").eq("muter_id", VIEWER);
+}
+
+describe("Fable pass 5 MM1 — readMuteExclusions past the row cap: WHOLE, by key, never the prefix", () => {
+  it("1,005 mutes behind the hosted 1,000-row cap: the plain read is cut (silently); the reader pages by muted_id to all 1,005", async () => {
+    const m = cutMutes(viewerMutes(MUTES_PAST_CAP), { cap: MUTE_ROW_CAP });
+    const naive = await plainMuteRead(m);
+    assert.equal(naive.data.length, MUTE_ROW_CAP, "the fake cuts the plain read as PostgREST does");
+    assert.equal(naive.error, null, "and says nothing");
+    m.reads.length = 0;
+    const r = await readMuteExclusions(m, VIEWER);
+    assert.ok(r.ok, JSON.stringify(r).slice(0, 200));
+    assert.equal(r.ids.size, MUTES_PAST_CAP, `got ${r.ids.size} — a prefix`);
+    assert.deepEqual([...r.ids].sort(), everyMuted());
+    assert.equal(isExcluded(r, mutedNo(MUTES_PAST_CAP - 1)), true, "the last mute, past the cut, still hides");
+    assert.equal(isExcluded(r, mutedNo(900_001)), false, "a stranger's mute is not the viewer's");
+    assert.equal(m.reads.length, 3, "the counted plain read, then two keyed pages");
+    assert.deepEqual(m.reads[0], [["select", ["muted_id", { count: "exact" }]], ["eq", ["muter_id", VIEWER]]]);
+    for (const page of m.reads.slice(1)) {
+      assert.deepEqual(page[0], ["select", ["muted_id", { count: "exact" }]], "every page is counted");
+      assert.ok(page.some(([k, a]) => k === "eq" && a[0] === "muter_id" && a[1] === VIEWER), "the viewer's own mutes");
+      assert.ok(page.some(([k, a]) => k === "order" && a[0] === "muted_id"), "keyed by muted_id (UNIQUE(muter_id, muted_id))");
+    }
+    assert.ok(m.reads[2]!.some(([k, a]) => k === "gt" && a[0] === "muted_id" && a[1] === mutedNo(MUTE_ROW_CAP - 1)), "page 2 starts after page 1's last key");
+  });
+
+  it("a server cap BELOW the page size (300) is paged through, not taken as the end", async () => {
+    const m = cutMutes(viewerMutes(MUTES_PAST_CAP), { cap: 300 });
+    assert.equal((await plainMuteRead(m)).data.length, 300);
+    m.reads.length = 0;
+    const r = await readMuteExclusions(m, VIEWER);
+    assert.ok(r.ok, JSON.stringify(r).slice(0, 200));
+    assert.deepEqual([...r.ids].sort(), everyMuted(), `got ${r.ids.size}`);
+    assert.equal(m.reads.length, 5, "the plain read, then keyed pages of 300, 300, 300, 105");
+  });
+
+  it("with NO count in any answer, a page-long answer is still never taken as the whole list", async () => {
+    const r = await readMuteExclusions(cutMutes(viewerMutes(MUTES_PAST_CAP), { cap: MUTE_ROW_CAP, noCount: true }), VIEWER);
+    assert.ok(r.ok, JSON.stringify(r).slice(0, 200));
+    assert.equal(r.ids.size, MUTES_PAST_CAP, `got ${r.ids.size} — a prefix`);
+  });
+
+  it("a cut it cannot page past (the server ignores the key cursor) is ok:false — never the prefix it got; everybody is hidden", async () => {
+    const r = await readMuteExclusions(cutMutes(viewerMutes(MUTES_PAST_CAP), { cap: MUTE_ROW_CAP, ignore: new Set(["gt"]) }), VIEWER);
+    assert.equal(r.ok, false, JSON.stringify(r).slice(0, 200));
+    assert.equal(isExcluded(r, POST), true, "an unreadable mute set hides everybody");
+  });
+
+  it("a page that REPEATS a key (the cursor answered inclusively) is ok:false", async () => {
+    const r = await readMuteExclusions(cutMutes(viewerMutes(MUTES_PAST_CAP), { cap: MUTE_ROW_CAP, inclusiveCursor: true }), VIEWER);
+    assert.equal(r.ok, false, JSON.stringify(r).slice(0, 200));
+  });
+
+  it("a page that comes back EMPTY while its count says rows remain is ok:false", async () => {
+    const r = await readMuteExclusions(cutMutes(viewerMutes(MUTES_PAST_CAP), {
+      cap: MUTE_ROW_CAP,
+      answer: (_c, n) => (n === 2 ? { data: [], error: null, count: 5 } : undefined),
+    }), VIEWER);
+    assert.equal(r.ok, false, JSON.stringify(r).slice(0, 200));
+  });
+
+  for (const n of [1, 2]) {
+    it(`a returned error on keyed page ${n} is ok:false`, async () => {
+      const r = await readMuteExclusions(cutMutes(viewerMutes(MUTES_PAST_CAP), { cap: MUTE_ROW_CAP, answer: (_c, k) => (k === n ? { data: null, error: ERR } : undefined) }), VIEWER);
+      assert.equal(r.ok, false, JSON.stringify(r).slice(0, 200));
+    });
+  }
+
+  it("a thrown keyed page is ok:false (never rejects)", async () => {
+    const r = await readMuteExclusions(cutMutes(viewerMutes(MUTES_PAST_CAP), { cap: MUTE_ROW_CAP, answer: (_c, k) => { if (k === 2) throw new Error("socket hang up"); return undefined; } }), VIEWER);
+    assert.equal(r.ok, false, JSON.stringify(r).slice(0, 200));
+  });
+
+  for (const answer of NOT_A_LIST) {
+    it(`a keyed page answering ${answer} is ok:false`, async () => {
+      const r = await readMuteExclusions(cutMutes(viewerMutes(MUTES_PAST_CAP), { cap: MUTE_ROW_CAP, answer: (_c, k) => (k === 2 ? MALFORMED[answer]() : undefined) }), VIEWER);
+      assert.equal(r.ok, false, JSON.stringify(r).slice(0, 200));
+    });
+  }
+
+  it("a row on a later page that does not name who was muted is ok:false (a mute we cannot read is not dropped)", async () => {
+    const r = await readMuteExclusions(cutMutes(viewerMutes(MUTES_PAST_CAP), {
+      cap: MUTE_ROW_CAP,
+      answer: (_c, k) => (k === 2 ? { data: [{ muted_id: mutedNo(MUTE_ROW_CAP) }, {}], error: null, count: 2 } : undefined),
+    }), VIEWER);
+    assert.equal(r.ok, false, JSON.stringify(r).slice(0, 200));
+  });
+});
+
+describe("Fable pass 5 MM1 — the callers see every mute past the cut", () => {
+  const BLOCKED_TOO = "b0000000-0000-4000-a000-0000000220b2";
+  const PAST_THE_CUT = mutedNo(MUTES_PAST_CAP - 1);
+  /** feedWorld (section 3) with the post written by `author`. */
+  const feedBy = (author: string) => world({ kind: "healthy", muted: [] }, (table, calls) => {
+    if (table === "feature_flags") {
+      if (calls.some(([k]) => k === "like")) return { data: [{ flag: "COMPASS_ENABLED", enabled: true }, { flag: "COMPASS_V1_RULE_BASED_ENABLED", enabled: true }], error: null };
+      return { data: null, error: null };
+    }
+    if (table === "posts") {
+      return { data: [
+        { id: POST, author_id: author, content: "PAST-THE-CUT-POST", like_count: 99, comment_count: 1, post_status: "published", publish_eligible_at: null, visibility: "public", status: "active", created_at: "2026-09-29T00:00:00.000Z", city: "Paris" },
+      ], error: null };
+    }
+    return undefined;
+  });
+  beforeEach(() => { clearCompassProfileCache(); invalidateFlagsCache(); });
+
+  it("CompassProfileService: mutedUserIds holds all 1,005", async () => {
+    const p = await getCompassProfile(withCutMutes(world({ kind: "healthy", muted: [] }), cutMutes(viewerMutes(MUTES_PAST_CAP), { cap: MUTE_ROW_CAP })), VIEWER, true);
+    assert.equal(p.mutedUserIds.length, MUTES_PAST_CAP, `got ${p.mutedUserIds.length} — a prefix`);
+    assert.deepEqual([...p.mutedUserIds].sort(), everyMuted());
+  });
+
+  it("discoveryCacheEligibility.withMutedAuthors: the block set ∪ all 1,005 mutes", async () => {
+    const out = await withMutedAuthors(withCutMutes(world({ kind: "healthy", muted: [] }), cutMutes(viewerMutes(MUTES_PAST_CAP), { cap: MUTE_ROW_CAP })), VIEWER, new Set([BLOCKED_TOO]));
+    assert.ok(out, "readable");
+    assert.equal(out.size, MUTES_PAST_CAP + 1, `got ${out.size}`);
+    assert.ok(out.has(PAST_THE_CUT) && out.has(BLOCKED_TOO));
+  });
+
+  it("CompassFallbackFeedBuilder: a post by the author muted PAST the cut is not served (CONTROL: an unmuted author's post is)", async () => {
+    const mutes = () => cutMutes(viewerMutes(MUTES_PAST_CAP), { cap: MUTE_ROW_CAP });
+    const control = await buildFallbackFeed(withCutMutes(feedBy(OTHER), mutes()), VIEWER, null, "build_error");
+    assert.ok(JSON.stringify(control).includes("PAST-THE-CUT-POST"), `the world reaches the post: ${JSON.stringify(control).slice(0, 600)}`);
+    assert.equal(control.fallbackReason, "build_error");
+    invalidateFlagsCache();
+    const r = await buildFallbackFeed(withCutMutes(feedBy(PAST_THE_CUT), mutes()), VIEWER, null, "build_error");
+    assert.ok(!JSON.stringify(r).includes("PAST-THE-CUT-POST"), `the 1,005th muted author was served: ${JSON.stringify(r).slice(0, 600)}`);
+    assert.equal(r.fallbackReason, "build_error", "read whole, not degraded");
+  });
+
+  it("CompassFallbackFeedBuilder: a cut it cannot page past degrades to the safety tools (mute_list_unavailable) — never the prefix", async () => {
+    const r = await buildFallbackFeed(withCutMutes(feedBy(PAST_THE_CUT), cutMutes(viewerMutes(MUTES_PAST_CAP), { cap: MUTE_ROW_CAP, ignore: new Set(["gt"]) })), VIEWER, null, "build_error");
+    assert.ok(!JSON.stringify(r).includes("PAST-THE-CUT-POST"), JSON.stringify(r).slice(0, 600));
+    assert.equal(r.fallbackReason, "build_error+mute_list_unavailable");
+    assert.deepEqual(r.sections.map((s) => s.name), ["safety_tools"]);
+  });
+});
