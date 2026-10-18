@@ -5655,9 +5655,9 @@ or by an appeal.
   is a restore-semantics change: a restore of a host-cancelled, moderator-hidden event now answers 200 with the hide
   reversed and `stateKept`, where it answered 409.
 
-**What changed, with no migration.** routes/events.ts: 242 lines edited in place, line-neutral (7139 lines before;
+**What changed, with no migration.** routes/events.ts: 244 lines edited in place and 30 appended, line-neutral (7139 lines before;
 the helpers and this rule's comment appended at the foot, so no cited line moves). routes/admin.ts: two lines, line-
-neutral. lib/eventModerationClaim.ts: five lines in place and an appendix. UNCHECKED_READS_ALLOWLIST.json loses the
+neutral. lib/eventModerationClaim.ts: eight lines in place (:228 :237 :252 :338 :373 :377 :382 :389) and an appendix. UNCHECKED_READS_ALLOWLIST.json loses the
 three routes/events.ts entries (shrink-only); SILENT_SUPABASE_READS_BASELINE.json loses routes/events.ts S2 (8) and
 S4 (2), which check:silent-supabase-reads demanded. Two existing cases pinned the old answers and were updated:
 eventAgendaItems (an unread RSVP is now 503, still no items) and eventsFailClosedAuthorization (an unread blocks table
@@ -5697,3 +5697,51 @@ freed seat twice); a ban whose chat could not be read answers 503 "the ban was r
 Rows: none move. No row of this census grades these reads; §30.3 ("every getEventRole caller grants on a positive role
 only") and §30.6's `unavailable` still hold — an unread input still grants nothing. Headline unchanged: 90 / 15 / 1 / 2
 of 108.
+
+### Correction (2026-10-18, wave 5, follow-ups) — a kept state is recorded; an unreadable waitlist flag holds the seat; the promoted person is told
+
+*Same branch and tree. Committed on this branch; undeployed. **NO ROW MOVES.** It closes three items the event-reads
+correction above left open, after the independent verification pass on c37a4d7e1.*
+
+**A kept state was recorded as a full restore.** A restore that reversed a moderator's hide and kept the host's own
+state said so in the route's HTTP answer only. The `admin_restore` activity row (appeal and route), the route's
+`event_restore` moderation_actions row and the appeal itself all read as a full restore of an event still cancelled by
+its host. Now every one of those records carries `state_kept` in its jsonb metadata, written by `stateKeptRecordOf`
+(lib/eventModerationClaim.ts:697), never as `from_state` / `to_state`, so the record releases no moderator's STATE hold
+and is never what a later restore reverses. An approved appeal closes as `event_visibility_restored_state_kept`
+(services/appeals/resolveAppeal.ts:433); a full restore still closes exactly as `event_restored`. The appellant's
+notice (routes/appeals.ts:403-404) no longer says "the action has been reversed" of a cancellation that stands. It says
+the event is visible again and its status was not changed, with or without a moderator's note. Its metadata carries
+`stateKept` (:410). Tests: `artifacts/api-server/src/test/eventRestoreStateKeptRecord.test.ts`, 17 cases, 9 red on the
+old code, 8 controls; 13 mutants, all killed.
+
+**An unreadable waitlist flag gave the freed seat to a walk-in.** `isFlagEnabled` answers false on a read error, so
+DELETE /rsvp, POST /leave and DELETE /attendees skipped promotion when `events_waitlist_enabled` could not be read, and
+`syncEventState` then reopened the event to walk-ins ahead of the queue: a failed read became a write. Now the three
+doors read the flag through `readWaitlistFlagForFreedSeat` (routes/events.ts:7200, on top of the existing four-state
+`readFlagState`): on promotes, off and a missing row behave as before, and an unreadable flag promotes nobody and HOLDS
+the seat. `syncEventState` takes the hold and leaves the state as it was, logged at warn (routes/events.ts:561). The
+leave itself still succeeds.
+
+**A promoted person was told by one push.** A push that found no token, or failed to read one, left the person holding
+an offer they never learned of; it lapsed in 24 hours. Promotion now writes a durable in-app notice through the
+existing notifications path (`notifyWaitlistOffer`, routes/events.ts:7231) only after the offer is claimed. The notice
+expires with the offer and carries no event title. A failed notice never undoes or repeats the offer. The push now
+opens the event.
+
+**Silent hides log.** `nameVisibilitySet` (lib/publicIdentity.ts) and `readVerifiedBadges`
+(services/identityVerification/verifiedBadges.ts) hid a name or badge on a failed read without a word. They now log
+it; their answers are unchanged.
+
+Tests: `eventsWaitlistHeldSeatAndOfferNotice.test.ts` (23) and `identityHideFailureLogs.test.ts` (9), 13 red on the
+old code; 15 mutants, all killed. The 41 event, appeal, waitlist and identity suites: 1096 / 1096 on the integrated
+tree.
+
+**Still open, stated:** a held seat has no guaranteed release to the queue: the next ordinary state sync opens it to
+walk-ins. The sweeper's promotions (lib/eventWaitlistSweeper.ts) still tell nobody and do not read
+`events_waitlist_enabled`. With the flag ON, a promotion whose eligibility read or offer write failed still reopens the
+seat. Several routes free a seat without promoting anyone: a going → maybe change, PATCH attendee status, a ban,
+block-user, and an offer holder leaving the queue. DELETE /attendees promotes even when the removed person was not
+going.
+
+Rows: none move. Headline unchanged: 90 / 15 / 1 / 2 of 108.

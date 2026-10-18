@@ -400,14 +400,14 @@ router.patch("/appeals/:id", asyncHandler(async (req, res) => {
       body:              restorationDeferred
         ? `Your appeal was approved.${resolutionNote ? ` ${resolutionNote}` : ""} ${pendingOf(reversal)?.appellantMessage ?? RESTORATION_PENDING_SENTENCE}`
         : (resolutionNote
-            ? `Your appeal was approved. ${resolutionNote}`
-            : "Your appeal was approved and the action has been reversed."),
+            ? `Your appeal was approved. ${resolutionNote}${reversal!.action === "event_visibility_restored_state_kept" ? " Your event is visible again. Its status was not changed." : ""}`
+            : (reversal!.action === "event_visibility_restored_state_kept" ? "Your appeal was approved and your event is visible again. Its status was not changed." : "Your appeal was approved and the action has been reversed.")), // a KEPT state (wave 5): the hide was reversed, the event's own state stands, so it is not "the action has been reversed"
       action_url:        "/appeals",
       metadata: {
         appealId:       id,
         targetType:     (appeal as any).target_type,
         resolutionNote: resolutionNote ?? null,
-        reversalAction: reversal!.action,
+        reversalAction: reversal!.action, ...((reversal as any).stateKept ? { stateKept: (reversal as any).stateKept } : {}),
         // Explicit, so an audit reader never has to infer restoration from the
         // appeal reaching 'approved'.
         restored:       !restorationDeferred,

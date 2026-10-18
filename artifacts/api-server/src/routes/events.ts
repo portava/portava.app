@@ -546,7 +546,7 @@ async function writeEventState(
   return { ok: true, from: decision.from, to };
 }
 
-async function syncEventState(sc: any, eventId: string): Promise<void> {
+async function syncEventState(sc: any, eventId: string, holdFreedSeat = false): Promise<void> {
   const { data: ev, error: evErr } = await sc
     .from("events")
     .select("state, max_attendees, waitlist_enabled")
@@ -558,7 +558,7 @@ async function syncEventState(sc: any, eventId: string): Promise<void> {
   if (!maxAttendees) return; // unlimited
 
   const going = await getGoingCount(sc, eventId); if (going === null) { logger.warn({ eventId }, "event capacity sync: going count unreadable — state left as it was"); return; }  // census-trust §30.8: was 0, which reopened a full event
-  const current = String((ev as any).state ?? "");
+  const current = String((ev as any).state ?? ""); if (holdFreedSeat && going < maxAttendees && ["full", "waitlist"].includes(current)) { logger.warn({ eventId, state: current, going, maxAttendees }, "event capacity sync: the waitlist flag could not be read on this pass — the freed seat is HELD (state left as it was, not reopened to walk-ins)"); return; } // wave 5 follow-up B: holdFreedSeat (see readWaitlistFlagForFreedSeat)
 
   // The capacity cycle. Reopening only happens when there is no active waitlist
   // offer — that slot is RESERVED for the offer holder, and hasActiveWaitlistOffer
@@ -646,7 +646,7 @@ async function promoteNextWaitlisted(sc: any, eventId: string, req?: any): Promi
   }
 
   // Notify them — only now, because only now do they actually hold the offer.
-  const { data: profile, error: profileErr } = await sc
+  await notifyWaitlistOffer(sc, eventId, userId, offerExpiresAt, req); const { data: profile, error: profileErr } = await sc
     .from("profiles")
     .select("expo_push_token")
     .eq("id", userId)
@@ -655,7 +655,7 @@ async function promoteNextWaitlisted(sc: any, eventId: string, req?: any): Promi
     await sendPushWithRetry(
       sc,
       { userId, tokens: [(profile as any).expo_push_token] },
-      { title: "A spot opened up!", body: "You're next on the waitlist. You have 24 hours to accept." },
+      { title: "A spot opened up!", body: "You're next on the waitlist. You have 24 hours to accept.", data: { type: "event_waitlist_offer", eventId, actionUrl: `/event/${eventId}` } },
     );
   }
   return { outcome: "promoted", userId };
@@ -3007,13 +3007,13 @@ router.delete("/events/:id/rsvp", async (req, res) => {
   // first, hasActiveWaitlistOffer would still be false (no offer yet) and the
   // event would flip to 'open' — letting a walk-in RSVP steal the promoted
   // user's seat before they can accept. Sync AFTER, so the reservation holds.
-  if ((existing as any).status === "going") {
-    const waitlistEnabled = await isFlagEnabled(sc, "events_waitlist_enabled");
-    if (waitlistEnabled) {
+  let seatHeld = false; if ((existing as any).status === "going") {
+    const waitlistFlag = await readWaitlistFlagForFreedSeat(sc, id, req); seatHeld = waitlistFlag === "unknown";
+    if (waitlistFlag === "on") {
       await promoteNextWaitlisted(sc, id, req);
     }
   }
-  await syncEventState(sc, id);
+  await syncEventState(sc, id, seatHeld);
 
   res.json({ ok: true });
 });
@@ -3137,11 +3137,11 @@ router.post("/events/:id/leave", async (req, res) => {
 
   // Promote BEFORE syncing state so the freed seat is reserved by an active
   // offer (see DELETE /rsvp) — otherwise syncEventState reopens to a walk-in.
-  if ((existing as any).status === "going") {
-    const waitlistEnabled = await isFlagEnabled(sc, "events_waitlist_enabled");
-    if (waitlistEnabled) await promoteNextWaitlisted(sc, id, req);
+  let seatHeld = false; if ((existing as any).status === "going") {
+    const waitlistFlag = await readWaitlistFlagForFreedSeat(sc, id, req); seatHeld = waitlistFlag === "unknown";
+    if (waitlistFlag === "on") await promoteNextWaitlisted(sc, id, req);
   }
-  await syncEventState(sc, id);
+  await syncEventState(sc, id, seatHeld);
 
   await logEventActivity(sc, id, user.id, "left", {});
 
@@ -5132,9 +5132,9 @@ router.delete("/events/:id/attendees/:userId", async (req, res) => {
 
   // Promote BEFORE syncing state so the freed seat is reserved by an active
   // offer (see DELETE /rsvp) — otherwise syncEventState reopens to a walk-in.
-  const waitlistEnabled = await isFlagEnabled(sc, "events_waitlist_enabled");
-  if (waitlistEnabled) await promoteNextWaitlisted(sc, id, req);
-  await syncEventState(sc, id);
+  const waitlistFlag = await readWaitlistFlagForFreedSeat(sc, id, req);
+  if (waitlistFlag === "on") await promoteNextWaitlisted(sc, id, req);
+  await syncEventState(sc, id, waitlistFlag === "unknown");
 
   const { data: ev, error: attChatErr } = await sc.from("events").select("chat_thread_id").eq("id", id).maybeSingle(); if (attChatErr) req.log?.error({ err: attChatErr, eventId: id, userId }, "attendee removal: the event chat could not be read — they were not removed from it");
   if ((ev as any)?.chat_thread_id) {
@@ -7166,4 +7166,88 @@ async function viewableOrThrow(sc: any, ev: any, userId: string): Promise<boolea
   const access = await readEventViewAccess(sc, ev, userId);
   if (access === "unavailable") throw new EventAccessUnavailableError("event view access", "readEventViewAccess could not read its inputs");
   return access === "allowed";
+}
+
+// ── Wave 5 follow-up B: the waitlist — a failed read never gives a queued seat away; a promoted person is told ──
+
+/**
+ * The waitlist flag, read where a seat has just been freed (DELETE /rsvp, POST
+ * /leave, DELETE /attendees/:userId) — THREE answers, not two.
+ *
+ * Those doors read `events_waitlist_enabled` through `isFlagEnabled`, which
+ * answers `false` on a database error. `false` skipped the promotion (right)
+ * and then let syncEventState reopen the full/waitlist event, because no offer
+ * held the freed seat — so an unreadable flag handed the seat to the first
+ * walk-in, ahead of everyone in the queue. A failed read became a write.
+ *
+ *   "on"      → promote, as before.
+ *   "off"     → the flag row reads false OR is ABSENT: the waitlist is disabled,
+ *               nobody is promoted and the event may reopen — exactly as before.
+ *               A missing row is "disabled", not "unknown": the same reasoning
+ *               as isKillSwitchEngaged (lib/featureFlags.ts) — only a genuine
+ *               error leaves the state unestablished.
+ *   "unknown" → the read failed. Nobody is promoted, and the caller passes
+ *               `holdFreedSeat` to syncEventState so the event is NOT moved
+ *               toward open on this pass. The person leaving is not refused.
+ *
+ * Read through readFlagState (lib/capability/schemaCapability.ts), the tree's
+ * four-valued reader that events.ts already imports; it never answers "on" on
+ * a failure path. What later releases a seat held this way: the next
+ * syncEventState on the event that is not itself holding (any RSVP, leave,
+ * accept, approval or status change), and it releases it to OPEN — walk-ins,
+ * as a clean OFF does — not to the queue. No sweep looks for a held seat.
+ */
+async function readWaitlistFlagForFreedSeat(sc: any, eventId: string, req?: any): Promise<"on" | "off" | "unknown"> {
+  const state = await readFlagState(sc, "events_waitlist_enabled");
+  if (state === "unreadable") {
+    (req?.log ?? logger).warn({ eventId, flag: "events_waitlist_enabled" }, "freed seat: events_waitlist_enabled could not be read — nobody promoted, and the seat is HELD (the event is not reopened on this pass); the leave itself stands");
+    return "unknown";
+  }
+  return state === "on" ? "on" : "off";
+}
+
+/**
+ * Tell a person they hold a waitlist offer, through the durable in-app row.
+ *
+ * The offer used to reach its holder through ONE path: a read of
+ * profiles.expo_push_token and a push. An unreadable token, no token, or a
+ * failed push left them untold, and the offer lapsed to the next person 24 h
+ * later. The notifications row is the Activity Center entry and the unread
+ * badge, and its action opens the event, where the app shows the offer with
+ * Accept (waitlistState.ts `offer_pending`). It depends on no read.
+ *
+ * Mirrors the event-invite producer: NotificationService.createDetailed writes
+ * the row, NotificationRouter.route is NOT called, because the push is still
+ * sent by the caller and routing would deliver it a second time. No sourceType
+ * / sourceId: the general dedup (rule 4) would read the ledger first, and an
+ * unreadable ledger is treated as "already sent" — the row must not depend on a
+ * read. Two rows for one person can only come from two real claims, each a
+ * separate offer worth telling. Generic text, no event title (the invite rule).
+ *
+ * Called only AFTER the claim succeeded. It never throws and never touches
+ * event_waitlist: the claim is the record, and a notice that cannot be written
+ * neither undoes nor repeats the offer — it is logged at warn.
+ */
+export async function notifyWaitlistOffer(sc: any, eventId: string, userId: string, offerExpiresAt: string, req?: any): Promise<boolean> {
+  const log = req?.log ?? logger;
+  try {
+    const { NotificationService } = await import("../services/notifications/NotificationService.js");
+    const out = await new NotificationService(sc).createDetailed({
+      userId,
+      eventType: "event.waitlist_offer",
+      category: "plans",
+      priority: "important",
+      title: "A spot opened up!",
+      body: "You're next on the waitlist. You have 24 hours to accept.",
+      actionUrl: `/event/${eventId}`,
+      metadata: { eventId, offerExpiresAt },
+      expiresAt: offerExpiresAt,
+    });
+    if (out.row) return true;
+    log.warn({ eventId, userId, refusal: out.refusal }, "waitlist offer: the in-app notification was not written — the offer STANDS (the claim is the record; the event screen still shows it)");
+    return false;
+  } catch (err) {
+    log.warn({ err, eventId, userId }, "waitlist offer: the in-app notification threw — the offer STANDS (the claim is the record; the event screen still shows it)");
+    return false;
+  }
 }

@@ -383,7 +383,7 @@ export async function reverseModeratedEventOnAppeal(
   }
   const out = await applyEventModeration(sc, null, ev, {
     changes: vis.decision ? { visibility: vis.decision.to } : {}, stateDecision, now: new Date().toISOString(), activityAction: "admin_restore",
-    writeActivity: (st) => sc.from("event_activity_log").insert({ event_id: a.eventId, actor_id: a.actorId, action: "admin_restore", metadata: { via: "appeal", appeal_id: a.appealId, reason: a.note, ...st } }).select("id"),
+    writeActivity: (st) => sc.from("event_activity_log").insert({ event_id: a.eventId, actor_id: a.actorId, action: "admin_restore", metadata: { via: "appeal", appeal_id: a.appealId, reason: a.note, ...st, ...stateKeptRecordOf(stateKept) } }).select("id"), // + state_kept: a KEPT state is recorded, never as a state change (foot of this file)
     writeAudit: () => Promise.resolve({ error: null }), // the appeal row is this reversal's audit record (routes/appeals.ts commits it after this answers)
   });
   if (out.outcome === "applied") return { outcome: "restored", state: stateDecision ? { from: stateDecision.from, to: stateDecision.to } : null, visibility: vis.decision, ...(stateKept ? { stateKept } : {}) };
@@ -673,3 +673,27 @@ export function keepHostStateOnRestore(answer: EventModerationStateAnswer): Even
 // CHANGES (decideEventModerationHold), so a recorded cancel / remove still
 // holds. (4) A moderator's own recorded cancel / remove is reversed exactly as
 // before: that reversal is allowed, never kept.
+
+// ═══════════════════════════════════════════════════════════════════════════
+// A KEPT STATE IS RECORDED (wave 5, event reads, follow-up A)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// A restore that KEPT the state (above) said so in the route's HTTP answer
+// only. Its `admin_restore` activity row (appeal and route alike) and the
+// route's `event_restore` moderation_actions row recorded the visibility change
+// alone, and an approved appeal closed as plain `event_restored`
+// (services/appeals/resolveAppeal.ts): every record said "restored" of an event
+// still cancelled by its host. Now each record carries `state_kept` — the same
+// reason the answer gives — in its jsonb metadata (no schema change), and the
+// appeal closes as `event_visibility_restored_state_kept`.
+//
+// NEVER A STATE CHANGE. The record is `state_kept`, never `from_state` /
+// `to_state`: decideEventModerationHold and readRecordedEventModeration read
+// only those, and only a CHANGE (from != to). So a kept-state restore still
+// releases no moderator's STATE hold (WHY IT IS SAFE, (3), above), and is never
+// what a later restore reverses.
+
+/** The kept-state record for a restore's metadata: `{ state_kept: <reason> }`, or nothing when the state was not kept. Never from_state / to_state. */
+export function stateKeptRecordOf(kept: string | null | undefined): { state_kept?: string } {
+  return typeof kept === "string" && kept !== "" ? { state_kept: kept } : {};
+}

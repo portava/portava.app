@@ -36,7 +36,7 @@ import {
   FINISHED_ATTEMPT_STATUSES,
   providerModeCounts,
 } from "./currentVerification.js";
-
+import { logger } from "../../lib/logger.js";
 export const IDENTITY_VERIFIED_BADGE_FLAG = "identity_verified_badge_enabled";
 
 export type VerifiedBadgeTier = "id" | "id_selfie";
@@ -101,7 +101,7 @@ export async function readVerifiedBadges(
         .limit(ids.length * 20),
       db.from("profiles").select("id, verification_level").in("id", ids),
     ]);
-    if (attemptRead?.error || profileRead?.error) return out;
+    if (attemptRead?.error || profileRead?.error) { logger.warn({ err: attemptRead?.error ?? profileRead?.error, source: attemptRead?.error ? "identity_verifications" : "profiles", users: ids.length }, "readVerifiedBadges: a badge read failed — NO badge is shown for this batch (fail-closed)"); return out; }
     const latest = new Map<string, Record<string, any>>();
     for (const a of (attemptRead?.data ?? []) as Array<Record<string, any>>) {
       const uid = a["user_id"];
@@ -117,8 +117,8 @@ export async function readVerifiedBadges(
       const tier = tierOf(level.get(uid)); // criterion 3: one of IDENTITY_VERIFIED_LEVELS (a withdrawal clears it)
       if (tier) out.set(uid, { tier });
     }
-  } catch {
-    return new Map();
+  } catch (err) {
+    logger.warn({ err, users: ids.length }, "readVerifiedBadges: the badge read threw — NO badge is shown for this batch (fail-closed)"); return new Map();
   }
   return out;
 }

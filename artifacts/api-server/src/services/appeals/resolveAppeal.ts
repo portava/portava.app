@@ -23,7 +23,7 @@ export interface ReversalApplied {
   ok: true;
   action: string;
   /** Absent means "the action name is the whole truth". */
-  restored?: true; /** This appeal's restoration had already happened (a replay): nothing new was written. */ replayed?: true;
+  restored?: true; /** This appeal's restoration had already happened (a replay): nothing new was written. */ replayed?: true; /** event: the hide was reversed but the event's STATE was KEPT (action `event_visibility_restored_state_kept`), and why — as its admin_restore row records it (wave 5). */ stateKept?: string;
 }
 
 /**
@@ -430,7 +430,7 @@ export async function resolveAppeal(
       if (r.outcome === "not_found") return matchedNothing(appeal, "event restore");
       // No recorded moderation to reverse (the host cancelled it, or nothing moderated it), or a hide that never recorded the visibility it found (never guessed, never widened): a person must look.
       if (r.outcome === "refused") return deferRestoration(appeal, r.message);
-      return { ok: true, action: "event_restored" };
+      return r.stateKept ? { ok: true, action: "event_visibility_restored_state_kept", stateKept: r.stateKept } : { ok: true, action: "event_restored" }; // a KEPT state is not a full restore: the hide was reversed, the event's state was not (lib/eventModerationClaim.ts, foot; wave 5)
     }
 
     case "trip": {

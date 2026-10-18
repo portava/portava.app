@@ -16,7 +16,7 @@
  * every name is treated as hidden (empty allow-set). Opt-in default is false,
  * so this is also the correct behavior for rows that don't exist yet.
  */
-
+import { logger } from "./logger.js";
 export interface IdentityRow {
   id?: string | null;
   name?: string | null;
@@ -103,10 +103,10 @@ export async function nameVisibilitySet(sc: any, userIds: Array<string | null | 
       .select("user_id")
       .in("user_id", ids)
       .eq("show_real_name", true);
-    if (error) return new Set();
+    if (error) { logger.warn({ err: error, users: ids.length }, "nameVisibilitySet: profile_privacy_settings unreadable — every name in this batch is HIDDEN (fail-closed)"); return new Set(); }
     return new Set((((data as any[]) ?? []).map((r) => r.user_id as string)));
-  } catch {
-    return new Set();
+  } catch (err) {
+    logger.warn({ err, users: ids.length }, "nameVisibilitySet: profile_privacy_settings read threw — every name in this batch is HIDDEN (fail-closed)"); return new Set();
   }
 }
 
