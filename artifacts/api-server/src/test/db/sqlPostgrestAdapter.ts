@@ -28,7 +28,7 @@ export function wrapForJson(sql: string): string {
   const body = sql.trim().replace(/;$/, "");
   return /^(INSERT|UPDATE|DELETE)\b/i.test(body)
     ? `WITH r AS (${body}) SELECT COALESCE(json_agg(r), '[]'::json)::text AS j FROM r`
-    : `SELECT COALESCE(json_agg(t), '[]'::json)::text AS j FROM (${body}) t`;
+    : `SELECT COALESCE(json_agg(t.*), '[]'::json)::text AS j FROM (${body}) t`;
 }
 export interface SqlError { code?: string; message: string }
 

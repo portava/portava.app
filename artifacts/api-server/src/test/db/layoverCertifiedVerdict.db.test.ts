@@ -81,7 +81,7 @@ function psqlClient(): any {
           );
         }
         return run(
-          `SELECT COALESCE(json_agg(t), '[]'::json)::text FROM (SELECT ${cols} FROM public.${ident(table)}${where.length ? ` WHERE ${where.join(" AND ")}` : ""}) t;`,
+          `SELECT COALESCE(json_agg(t.*), '[]'::json)::text FROM (SELECT ${cols} FROM public.${ident(table)}${where.length ? ` WHERE ${where.join(" AND ")}` : ""}) t;`,
         );
       };
       const b: any = {

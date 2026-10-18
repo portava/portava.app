@@ -74,7 +74,7 @@ export interface CreatorPsqlClientOptions {
 function runJson(sql: string): { data: any; error: PgError | null } {
   const script =
     `\\set VERBOSITY verbose\nSET LOCAL ROLE service_role;\n` +
-    `SELECT COALESCE(json_agg(t), '[]'::json)::text FROM (${sql}) t;`;
+    `SELECT COALESCE(json_agg(t.*), '[]'::json)::text FROM (${sql}) t;`;
   const r = psql(script, { single: true });
   if (r.status !== 0) return { data: null, error: pgError(r.stderr) };
   return { data: JSON.parse(r.stdout.trim() || "[]"), error: null };

@@ -54,9 +54,9 @@ export function exec(script: string, opts: { single?: boolean } = {}): string[] 
   return r.stdout.split("\n").filter((l) => l.length > 0);
 }
 
-/** Run a SELECT and get its rows as JSON objects (the query is wrapped in json_agg). */
+/** Run a SELECT and get its rows as JSON objects (the query is wrapped in json_agg). The wrapper aggregates `t.*`, never a bare `t`: when the query has a column named t, PostgreSQL resolves a bare `t` to THAT column before the whole-row reference, so every row came back as its t value alone (census-trips TR79's CI failure; the same collapse hid columns from four more call sites in the payment and creator-ledger suites). */
 export function rows<T = Record<string, unknown>>(query: string): T[] {
-  const out = exec(`SELECT COALESCE(json_agg(t), '[]'::json)::text FROM (${query}) t;`);
+  const out = exec(`SELECT COALESCE(json_agg(t.*), '[]'::json)::text FROM (${query}) t;`);
   return JSON.parse(out.join("\n") || "[]") as T[];
 }
 

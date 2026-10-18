@@ -405,7 +405,7 @@ describe("3000 / telegraph_unsend_message_before_seen — on a real database", {
         `     AND c.relname = 'message_thread_members';\n` +
         `  INSERT INTO lock_probe VALUES ('outcome', v->>'outcome', NULL);\n` +
         `END $probe$;\n` +
-        `SELECT COALESCE(json_agg(t), '[]'::json)::text\n` +
+        `SELECT COALESCE(json_agg(t.*), '[]'::json)::text\n` +
         `  FROM (SELECT phase, mode, granted FROM lock_probe) t;`,
       { single: true },
     );
