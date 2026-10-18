@@ -187,11 +187,11 @@ export const SCREEN_CAPTURE_MENTIONS: readonly ScreenCaptureMention[] = [
 //      red until a reviewer adds it, with the reason it is informational.
 //   2. EVERYWHERE ELSE, A WIDER NET, STILL A NET. A string that pairs a
 //      protection term with a copying term (`claimsCaptureProtection`) is a
-//      claim-shaped string; every one in the client's copy and in the rendered
-//      notification templates must be on `REVIEWED_CLAIM_SHAPED_COPY`. It catches
-//      the three paraphrases above and their kin. It is lexical, and a sentence
-//      with neither kind of word ("what is shared here stays here") passes it —
-//      stated, not implied.
+//      claim-shaped string; every one in the client's copy, the rendered
+//      notification templates and the API's route messages (log calls aside)
+//      must be on `REVIEWED_CLAIM_SHAPED_COPY`. It catches the three paraphrases
+//      above and their kin. It is lexical: a sentence with neither kind of word
+//      ("what is shared here stays here") passes it — stated, not implied.
 
 /** One sentence a screenshot-signal site may show. `{name}` is the only substitution. */
 export interface ApprovedScreenCaptureCopy {
@@ -250,10 +250,10 @@ export function claimsCaptureProtection(text: string): boolean {
 }
 
 /**
- * Every claim-shaped string in the client's shipped copy and in the rendered
- * notification templates, reviewed: none is about the app stopping someone from
- * capturing a conversation. Closed both ways — a new one is red, a stale one is
- * red.
+ * Every claim-shaped string in the client's shipped copy, the rendered
+ * notification templates and the API's route messages, reviewed: none is about
+ * the app stopping someone from capturing a conversation. Closed both ways — a
+ * new one is red, a stale one is red.
  */
 export const REVIEWED_CLAIM_SHAPED_COPY: readonly { readonly text: string; readonly why: string }[] = [
   { text: "This feature is turned off. Nothing is being captured.", why: "Intelligence capture (the app's own data collection) is off — about what the app records, not about anyone copying a conversation." },
@@ -268,4 +268,23 @@ export const REVIEWED_CLAIM_SHAPED_COPY: readonly { readonly text: string; reado
   { text: "Off — your signals won't contribute, and capture stays disabled until you turn this on. On: ${offered.summary}", why: "Intelligence-prompt setting: the app's own collection stays off — not screen capture." },
   { text: "Live intel capture is currently turned off, so no prompts appear. These preferences are saved and take effect if it’s enabled.", why: "Intelligence capture switched off — the app's own collection." },
   { text: "Portava can take a coarse loudness and rhythm reading to tell whether a place is lively. It measures a level only — no audio is recorded, kept or sent — and it is off until you turn it on here, separately from the microphone used for calls and video.", why: "The microphone-permission explanation for ambient-loudness sensing: what the app itself records (nothing), not a promise about anyone copying a conversation." },
-];
+  ...reviewedRouteMessages()];
+
+/**
+ * Pass 13 (2026-10-18): the claim-shaped messages of the API's routes
+ * (src/routes; a logger call's arguments are not read, as they never reach the
+ * wire), reviewed onto `REVIEWED_CLAIM_SHAPED_COPY` above. A route's message is
+ * copy: a client card shows it verbatim. None is about capture — each pairs
+ * "record" or "snapshot" with "cannot" or "off", about Portava's OWN storage.
+ * A function, not a const, so that the list above spreads it in without moving
+ * a cited line: a function declaration is hoisted.
+ */
+function reviewedRouteMessages(): { text: string; why: string }[] {
+  return [
+    { text: "This Memory snapshot cannot be replayed safely right now.", why: "The degraded refusal of the owner's own Memory snapshot routes (MemorySnapshot.ts refuse(), behind requireUser; no shipped client calls them today): a snapshot is a stored version of the person's own Memory, and it cannot be replayed while the server is degraded. Nothing about anyone capturing a screen or a conversation." },
+    { text: "This report names no accountable user, so this queue cannot record an action on it. Nothing was changed.", why: "Admin-only, not traveller copy: the 409 of POST /admin/moderation/reports/:id/review, behind requireAdmin. 'Record' is the moderation queue recording an action against a user." },
+    { text: "${c.kind} cannot be recorded on its own: ${UNSUPPORTED_CONTRIBUTION_KINDS.media}", why: "The map contribution refusal for a bare photo, shown on the contribution sheet (map-contribution-detail): Portava will not store a photo as a claim until it names the observation it supports. 'Recorded' is the app's own storage of a report, not screen capture." },
+    { text: "${c.kind} cannot be recorded yet: ${why}", why: "The map contribution refusal for a prompt with no canonical claim type, shown on the contribution sheet: Portava cannot store that kind of report yet. About the app's own storage, not about anyone copying a screen." },
+    { text: "${TRIP_KERNEL_FLAG} is off: an outcome is recorded only through the kernel", why: "The closeout-answer refusal while trip_kernel_enabled is off, shown on the closeout card as 'Not recorded — TRIP_KERNEL_UNAVAILABLE: …': the trip outcome is not stored. 'Off' is a feature flag and 'recorded' is the app's own write, not screen capture." },
+  ];
+}

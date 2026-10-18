@@ -15755,3 +15755,24 @@ their stated measurements. These close the two boundaries their verification pas
 
 Each file is order-independent of every file numbered above it: nothing above it touches these objects (the grep evidence
 is in the lane's handback). Press order: after the 20261017 packet and its 3996–3999 addendum.
+
+### Correction (2026-10-18, wave 5) — T408's copy guard now reads the API's route messages
+
+*Branch `claude/wave4-build-20261017`. **NO ROW MOVES.** T408 stays W on its lexical hole.*
+
+The §30A.9 guard (`artifacts/api-server/src/test/telegraphScreenshotInformational.test.ts`) required every string pairing a
+protection word with a copying word to be reviewed onto REVIEWED_CLAIM_SHAPED_COPY. It read client copy and notification
+templates only, but route messages reach the client verbatim: the layover disruption card shows the server's sentence. It
+now also reads `src/routes`.
+- Logger-call arguments are dropped first (`withoutLogCalls`): 1,535 logger calls in 214 route files, every one closing,
+  none swallowing a response write.
+- Of the 8 strings the routes added, 3 were log lines, now excluded structurally. 5 are reviewed with a `why`
+  (`artifacts/api-server/src/domain/telegraph/policies/screenshotSignal.ts`, `reviewedRouteMessages`, appended): one
+  admin-only moderation 409, and four traveller-facing refusals about Portava's own storage (a Memory snapshot, two map
+  contribution kinds, the trip closeout). None is a promise that capture is stopped, and none needed rewording.
+- The reviewed list goes from twelve entries to seventeen, and the suite from 19 tests to 21.
+- 8 mutants, all killed: un-review an entry; the log exclusion disabled or overreaching; routes not scanned.
+
+**Still open:** server strings outside `src/routes` that a route forwards verbatim are not read: 62 claim-shaped, 52
+after the log drop, and none seen is a capture promise. Copy quality, not §30A.9: the closeout card shows the raw flag
+name ("trip_kernel_enabled is off: …"), and the map sheet shows a developer explanation naming `intel_evidence`.

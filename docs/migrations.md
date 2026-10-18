@@ -5865,7 +5865,7 @@ It accepts a second apply. **Postcondition** (re-runnable, after the COMMIT):
 
 **Order.** 3901 is a gap number. It sorts at 3901, before 3930–3999, but portava-ci and production will apply it
 after 3999, because the applier applies pending files in filename order. The house rule for a gap number
-(`docs/ops/wave5-owner-decisions-20261018.md:67#new migrations do not need a band ruling`) is order independence: the
+(`docs/ops/wave5-owner-decisions-20261018.md:70#new migrations do not need a band ruling`) is order independence: the
 file depends on nothing above it, and nothing above it alters or drops what it touches. The evidence:
 - 3901 depends only on the baseline `public.notifications`. No migration from 2093 onwards names that table in code
   (the word appears in six of them, only in comments, flag descriptions and file paths).
@@ -6164,3 +6164,164 @@ whole file took 9 ms on the replica.
   runs as the reader, so without SELECT every client read of `post_media` would fail 42501.
 - **It re-opens the defect.** Proven on PGlite 16.4, where the blocked viewer reads the media again. On the
   PGlite 0.5.8 replica (PostgreSQL 18.3 in WASM) the catalog returns exactly to its state before 3905.
+
+## 2026-10-18 — `3906_event_waitlist_seat_under_event_lock.sql`, written and NOT applied anywhere (wave 5, events waitlist race lane)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3906_event_waitlist_seat_under_event_lock.sql` | **not applied** | **not applied** |
+
+**What it is.** census-trust, the waitlist corrections' "Still open": two promotion passes in the same instant could
+each offer one person for one seat, and two accepts for the last seat could both be seated. Two new functions, each with
+a comment. No table, column, row, policy, grant on a table or flag.
+- `public.claim_waitlist_seat(p_event_id uuid, p_user_id uuid, p_offer_expires_at timestamptz) → text` locks the event
+  row (`FOR NO KEY UPDATE`). When `max_attendees` is set, it counts `going` RSVPs plus live offers under the lock, and
+  claims the named person's queue row only below `max_attendees`. It answers `claimed`, `no_seat`, `contended` or
+  `no_event`; only `claimed` writes.
+- `public.accept_waitlist_seat(p_event_id uuid, p_user_id uuid) → text` takes the same lock. It refuses an event that is
+  not live, a person not queued, without an offer or with a lapsed one, and a full event. Otherwise it upserts the
+  `going` RSVP and deletes the queue row, both or neither. Only `seated` writes.
+- Both are plpgsql, VOLATILE, SECURITY INVOKER, `SET search_path = pg_catalog`, EXECUTE for `service_role` only, and
+  refuse (25000) to run outside READ COMMITTED. Under a transaction snapshot the count taken after the lock could not
+  see the racer, so they refuse rather than decide without the guarantee.
+- The eligibility pick (blocks, bans, trust, age, private membership) stays in `routes/events.ts`. The functions decide
+  only whether a seat is free.
+
+The code half calls them only after a side-effect-free probe has seen them answer: the function itself, called with a
+nil event id, answers `no_event` and writes nothing
+(`artifacts/api-server/src/routes/events.ts:7416#async function lockedSeatFunctionVerdict`).
+- Missing (PGRST202 or 42883, `artifacts/api-server/src/routes/events.ts:7403#function isLockedSeatFunctionAbsent`),
+  or an unclear probe: today's statements run unchanged.
+- Present: the claim (`artifacts/api-server/src/routes/events.ts:7446#async function claimWaitlistSeatLocked`) and the
+  accept (`artifacts/api-server/src/routes/events.ts:7466#async function acceptWaitlistSeatLocked`) go through the
+  functions. A failed locked call holds the seat or answers 503, and never falls back to the unlocked statements,
+  because a lost answer may already have committed.
+- The verdict is memoised per process and per database URL
+  (`artifacts/api-server/src/routes/events.ts:7505#function lockedSeatMemoFor`), with schemaCapability's TTLs
+  (`artifacts/api-server/src/lib/capability/schemaCapability.ts:64#export const READY_TTL_MS` and
+  `artifacts/api-server/src/lib/capability/schemaCapability.ts:65#export const ABSENT_TTL_MS`).
+- **The probe's cost on production.** Until 3906 is applied, each API process sends at most one probe per function every
+  30 s; it fails PGRST202 (logged at info) and today's statements run. Within 30 s of applying it (no restart needed;
+  reload PostgREST's schema cache), the next probe answers and the locked functions are used. After that, one
+  successful probe per function per 5 min per process.
+
+**Who it could break, re-verified.** Nothing can break at the apply. What changes afterwards is the API's behaviour,
+once its probe sees the functions.
+- No function of either name exists anywhere else. Before this entry and its rollback, `git grep` found the two names
+  only in 3906, `routes/events.ts`, its three test files, the unapplied-schema ledger,
+  `checkFlagSchemaPrerequisites.ts`, the census acknowledgement file and census-trust.
+- No client can call either function: EXECUTE is revoked from PUBLIC, `anon` and `authenticated` and granted to
+  `service_role`. Supabase's default privileges would otherwise grant EXECUTE to both client roles at CREATE; the
+  replica's smoke shows they do on the chain, so the REVOKE is load-bearing.
+- The only client-tree access to these tables is one SELECT of the user's own `going` RSVPs
+  (`travel-buddy-standalone/app/profile/edit/who-can-see-me.tsx:88#.from('event_rsvps')`). It takes no row lock, and no
+  client tree calls either function.
+- At run time each locked call holds `FOR NO KEY UPDATE` on one event row until its transaction commits. That
+  serialises claims, accepts and every UPDATE or DELETE of the row: a cancel, a capacity edit, the route's own count
+  writes. It does not block the `FOR KEY SHARE` that an insert into `event_rsvps`, `event_waitlist` or another child
+  table takes for its FK, so an unrelated RSVP never waits behind a claim.
+- A cascade delete of a person's profile concurrent with that same person's accept can deadlock on the waitlist row
+  and the profile row. PostgreSQL detects it (40P01) and aborts one; the route then holds the seat or answers 503
+  (independent verification pass 12, owner note 3). Every other writer of these rows is a single statement and can
+  only wait.
+- Behaviour that changes on the press, through the API: a promotion with no free seat offers nobody; the second of two
+  accepts for the last seat answers 403 "This spot was filled…" and keeps its place in the queue; an offer that lapsed
+  between the route's check and the lock answers 403 expired.
+- Not serialised, as before: the sweeper still claims with its own unlocked UPDATE
+  (`artifacts/api-server/src/lib/eventWaitlistSweeper.ts:273#.update({ offer_expires_at: offerExpiresAt })`), and the
+  admissions that take a seat without the queue (POST /rsvp, the join-request approvals, PATCH attendee status) count
+  outside the lock.
+
+**Precondition** refuses, changing nothing:
+- when `public.events`, `public.event_rsvps` or `public.event_waitlist` is missing, or lacks a column the bodies use
+  with that type (`events.id`, `max_attendees`, `state`; `event_rsvps.event_id`, `user_id`, `status`, `updated_at`;
+  `event_waitlist.event_id`, `user_id`, `offer_expires_at`);
+- when `event_rsvps` has no unique key on exactly (`event_id`, `user_id`), which the accept's upsert needs;
+- when the labels `going`, `open`, `full` or `waitlist`, or the roles `service_role`, `anon` and `authenticated`, are
+  missing;
+- when `service_role` lacks a privilege the bodies use (SECURITY INVOKER: SELECT and UPDATE on `events`, since the row
+  lock needs UPDATE; SELECT, INSERT and UPDATE on `event_rsvps`; SELECT, UPDATE and DELETE on `event_waitlist`);
+- when a function of either name exists that 3906 did not make: another signature, or the same one without 3906's
+  comment.
+
+It accepts a second apply. **Postcondition** (after the COMMIT, assertion-only):
+- both functions exist with these signatures, return text, and are VOLATILE, SECURITY INVOKER, with
+  `search_path=pg_catalog`;
+- `anon`, `authenticated` and PUBLIC cannot EXECUTE them, and `service_role` can;
+- each body takes the event row lock, counts `going` under it and carries the isolation guard, and the claim counts
+  live offers;
+- each carries its 3906 comment;
+- both run: a nil event id answers `no_event` from each, writing nothing.
+
+**Order.** 3906 is a gap number, under the rule in the 3901 entry above (`docs/ops/wave5-owner-decisions-20261018.md`,
+the correction "new migrations do not need a band ruling"). It sorts at 3906, after 3901–3905 and before 3930–3999, so
+portava-ci and production will apply it after 3999. The applier's own ordering puts it at chain position 775 of 807;
+31 files sort above it (3974 is skipped by `ORDER_OVERRIDES.json`). The evidence:
+- 3906 depends only on baseline objects: the three tables, `event_rsvps_pkey`
+  (`artifacts/api-server/baseline/20260819_baseline_structure.sql:12816#ADD CONSTRAINT event_rsvps_pkey`), both enums,
+  the roles, and `service_role`'s grants on the three tables
+  (`artifacts/api-server/baseline/20260819_baseline_structure.sql:36100#GRANT ALL ON TABLE public.event_rsvps TO service_role`,
+  `artifacts/api-server/baseline/20260819_baseline_structure.sql:36136#GRANT ALL ON TABLE public.event_waitlist TO service_role`,
+  `artifacts/api-server/baseline/20260819_baseline_structure.sql:36145#GRANT ALL ON TABLE public.events TO service_role`).
+  It creates nothing another file names.
+- No file above 3906 names `event_rsvps`, `event_waitlist`, `public.events`, `max_attendees`, `offer_expires_at`,
+  either enum, either function or `event_rsvps_pkey`. None contains `ALL FUNCTIONS`, `DEFAULT PRIVILEGES`, `ALTER ROLE`,
+  `DROP OWNED`, `REASSIGN OWNED`, `DROP SCHEMA` or `default_transaction_isolation`. The bare word `events` above 3906
+  appears only in a comment (3930) and a message (3974). This was re-run by grep on `c7f6a34fe`; the output is
+  identical to the race lane's.
+- Twelve files above match a plain grep for a REVOKE naming `service_role`. Eight revoke from `service_role`, each only
+  on its own new objects: 3931 inside a `format()` loop over its five new tables, and 3989–3993, 3997 and 3998 on their
+  own tables, schemas, sequences and functions. The other four are a header comment (3996) and a `GRANT EXECUTE … TO
+  service_role` on their own functions whose names contain `revoke` (3983, 3986, 3987). The production packet's
+  builder checks the masked code mechanically and refuses any statement that would alter, drop or re-grant what 3906
+  reads (`prod-apply-packet-20261017/addendum-3906/manifest.json` → `order.independence`).
+- None of 3901–3905 names anything 3906 reads or creates.
+- Both orders were run on the packet's PGlite 0.5.8 replica (PostgreSQL 18.3 compiled to WASM, in-process; no server,
+  nothing hosted). Applying 3906 after 3999 (production's order) and replaying the chain with 3906 at its numeric
+  position give the same catalog: 0 differences in 19,354 keys. 3906 changes the same 6 keys on both paths.
+
+Press it after the main packet, addendum-3996-3999 and addendum-3901-3905; the packet's guard step (305g) enforces that
+order. It does not depend on 3901–3905. If one of them is held back on purpose, the guard refuses and names it, and the
+addendum README §6 gives the per-file dry run and the one-file command; the replica proves that case. After applying,
+reload PostgREST's schema cache. Until it is reloaded, the probe keeps failing PGRST202 and today's statements run.
+
+**Table locks.** None at the apply: CREATE FUNCTION, COMMENT, REVOKE and GRANT on functions lock no table, and the
+replica measured no relation lock for the body. The `$post$` runs after the COMMIT in its own short transaction. Its
+nil-id probe takes ROW SHARE on `events` and finds no row; ROW SHARE conflicts only with EXCLUSIVE and ACCESS
+EXCLUSIVE. There is no scan: the whole file took 10 ms on the replica, and no production table size matters.
+
+**Proof.**
+- `artifacts/api-server/src/test/eventWaitlistSeatLockMigration.test.ts` (24 cases on PGlite 16.4): claim and accept
+  semantics, both races in their worst order (today's statements: two offers and three going; 3906: one and one),
+  READ COMMITTED only, client roles refused, INVOKER proven, the probe writes nothing, re-apply, a load-bearing
+  `$post$` and the header rollback.
+- `artifacts/api-server/src/test/eventsWaitlistSeatLockRace.test.ts` (33 cases): the real router on PGlite with the
+  race forced, with the function absent and present.
+- `artifacts/api-server/src/test/db/eventWaitlistSeatLock.db.test.ts` (5 cases, CI local-db): its two lock-wait cases
+  need two real sessions, so CI is their first run.
+- On the packet's PGlite 0.5.8 replica, on the real chain's tables, keys, grants and default privileges, as
+  `service_role`: the probe answers `no_event` and writes nothing. With one seat free the first queued person is
+  `claimed`, and the second then gets `no_seat`. The first person's accept is `seated`, and a second live offer for the
+  last seat gets `no_seat`. `no_offer`, `not_queued`, `expired` and `not_live` write nothing. `anon` and
+  `authenticated` get 42501, REPEATABLE READ and SERIALIZABLE get 25000, and no user trigger exists on the three
+  tables. In rolled-back savepoints, today's statements in the race's order still make two offers for one seat and
+  three going in two seats: 30 of 30 checks.
+
+**Rollback:** `db/rollback/2026-10-18-3906-event-waitlist-seat-under-event-lock-rollback.sql`.
+- It drops both functions, deletes 3906's ledger row and sends `NOTIFY pgrst, 'reload schema'`, delivered at its COMMIT.
+  3906 writes no row of its own; the ledger row is the applier's.
+- It refuses, dropping nothing, unless the installed state is exactly 3906's. That rules out a foreign signature of
+  either name, one function without the other, and a definition that is not 3906's: body and comment by sha256,
+  argument names, plpgsql, VOLATILE, SECURITY INVOKER, not STRICT, `search_path=pg_catalog`. It also refuses unless
+  EXECUTE is `service_role` only and nothing depends on either function. With neither function present it changes
+  nothing, so a second run is a no-op.
+- **It re-opens the same-instant race.** No row of the three tables is touched: offers and seats taken under the lock
+  stay. `routes/events.ts` then reads the function as missing (42883, then PGRST202 once the cache reloads) and runs
+  today's statements.
+- DROP FUNCTION locks no table.
+- Proven on PGlite 16.4: forward, rollback, then catalog and rows equal to before (116 keys). The rollback's `$post$`
+  passes alone, a second run is a no-op, 3906 re-applies after it, and each of its 12 refusals fires with nothing
+  dropped and nothing notified.
+- Proven on the packet's PGlite 0.5.8 replica (PostgreSQL 18.3 compiled to WASM, in-process; no server, nothing
+  hosted): the catalog returns exactly to its state before 3906, 0 differences in 19,348 keys, and the re-apply is equal
+  to the end state.
