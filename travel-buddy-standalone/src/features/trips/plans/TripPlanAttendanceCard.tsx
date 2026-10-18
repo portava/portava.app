@@ -100,7 +100,7 @@ export function TripPlanAttendanceCard({ tripId, currentUserId, loadPlans = fetc
           <Users size={14} color={color.mute} />
           <View style={{ flex: 1 }}>
             <Text style={s.title}>Who&apos;s going</Text>
-            <Text style={[s.detail, { color: color.signal }]}>Couldn&apos;t read this trip&apos;s plans and who&apos;s going — {detail}. That isn&apos;t the same as nobody going.</Text>
+            <Text style={[s.detail, { color: color.signalStrong }]}>Couldn&apos;t read this trip&apos;s plans and who&apos;s going — {detail}. That isn&apos;t the same as nobody going.</Text>
             <Pressable onPress={readAll} style={s.button} testID="plan-attendance-reread" accessibilityRole="button" accessibilityLabel="Read who's going again">
               <Text style={s.buttonText}>Try again</Text>
             </Pressable>
@@ -158,10 +158,10 @@ export function TripPlanAttendanceCard({ tripId, currentUserId, loadPlans = fetc
                   <Text style={[s.detail, { color: color.success, marginTop: 0 }]}>{a!.target === 'leave' ? 'You left this plan' : 'Answer saved'}{res.duplicate ? ' (already was)' : ''}</Text>
                 </View>
               ) : res?.state === 'refused' ? (
-                <Text style={[s.detail, { color: color.signal }]} testID={`plan-attendance-refused-${plan.id}`}>Not changed — {res.detail}</Text>
+                <Text style={[s.detail, { color: color.signalStrong }]} testID={`plan-attendance-refused-${plan.id}`}>Not changed — {res.detail}</Text>
               ) : res?.state === 'unavailable' ? (
                 <View testID={`plan-attendance-unavailable-${plan.id}`}>
-                  <Text style={[s.detail, { color: color.signal }]}>Couldn&apos;t reach the trip — {res.detail}. Nothing was changed.</Text>
+                  <Text style={[s.detail, { color: color.signalStrong }]}>Couldn&apos;t reach the trip — {res.detail}. Nothing was changed.</Text>
                   <Pressable onPress={() => void send(plan.id, a!.current, a!.target, a!.key)} style={s.button} testID={`plan-attendance-retry-${plan.id}`} accessibilityRole="button" accessibilityLabel={`Try your answer on ${plan.title} again`}>
                     <Text style={s.buttonText}>Try again</Text>
                   </Pressable>

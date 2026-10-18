@@ -97,7 +97,7 @@ export function TripDecisionComposer({ tripId, onAdded, addTask = addDecisionTas
               </View>
               <TextInput
                 value={consequence} onChangeText={setConsequence} maxLength={ENTRY_TEXT_MAX}
-                placeholder="If nothing is decided… (optional)" placeholderTextColor={color.faint}
+                placeholder="If nothing is decided… (optional)" placeholderTextColor={color.mute}
                 style={s.input} testID="decision-consequence" accessibilityLabel="What happens if nothing is decided"
               />
             </View>
@@ -119,7 +119,7 @@ export function TripDecisionComposer({ tripId, onAdded, addTask = addDecisionTas
               </View>
               <TextInput
                 value={note} onChangeText={setNote} maxLength={ENTRY_TEXT_MAX}
-                placeholder="What would set it off? (optional)" placeholderTextColor={color.faint}
+                placeholder="What would set it off? (optional)" placeholderTextColor={color.mute}
                 style={s.input} testID="risk-note" accessibilityLabel="What would set this risk off"
               />
             </View>
@@ -143,10 +143,10 @@ export function TripDecisionComposer({ tripId, onAdded, addTask = addDecisionTas
               <Text style={[s.detail, { color: color.success, marginTop: 0 }]}>Added{res.duplicate ? ' (already was)' : ''}</Text>
             </View>
           ) : res?.state === 'refused' ? (
-            <Text style={[s.detail, { color: color.signal }]} testID="decision-compose-refused">Not added — {res.detail}</Text>
+            <Text style={[s.detail, { color: color.signalStrong }]} testID="decision-compose-refused">Not added — {res.detail}</Text>
           ) : res?.state === 'unavailable' ? (
             <View testID="decision-compose-unavailable">
-              <Text style={[s.detail, { color: color.signal }]}>Couldn&apos;t reach the trip — {res.detail}. Nothing was added.</Text>
+              <Text style={[s.detail, { color: color.signalStrong }]}>Couldn&apos;t reach the trip — {res.detail}. Nothing was added.</Text>
               <Pressable onPress={() => attempt && void send(attempt.mode, attempt.key)} style={s.button} testID="decision-compose-retry" accessibilityRole="button">
                 <Text style={s.buttonText}>Try again</Text>
               </Pressable>

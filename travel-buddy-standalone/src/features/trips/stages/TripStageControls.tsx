@@ -120,7 +120,7 @@ export function TripStageControls({ tripId, refreshKey = 0, onChanged, load = fe
           <CalendarRange size={14} color={color.mute} />
           <View style={{ flex: 1 }}>
             <Text style={s.title}>Stage dates and progress</Text>
-            <Text style={[s.detail, { color: color.signal }]}>Couldn&apos;t read this trip&apos;s stages — {read.detail}. That isn&apos;t the same as it having none.</Text>
+            <Text style={[s.detail, { color: color.signalStrong }]}>Couldn&apos;t read this trip&apos;s stages — {read.detail}. That isn&apos;t the same as it having none.</Text>
             <Pressable onPress={() => void reread(true)} style={s.button} testID="stage-controls-reread" accessibilityRole="button" accessibilityLabel="Read this trip's stages again">
               <Text style={s.buttonText}>Try again</Text>
             </Pressable>
@@ -188,7 +188,7 @@ export function TripStageControls({ tripId, refreshKey = 0, onChanged, load = fe
                 <View testID={`stage-control-form-${st.id}`}>
                   <ZonedTimeField label="Starts" zone={st.timezone} zoneNote=" (the stage's)" value={starts} onChange={setStarts} testID={`stage-control-starts-${st.id}`} />
                   <ZonedTimeField label="Ends" zone={st.timezone} zoneNote=" (the stage's)" value={ends} onChange={setEnds} testID={`stage-control-ends-${st.id}`} />
-                  {draft && draft.where === 'group' ? <Text style={[s.detail, { color: color.signal }]} testID={`stage-control-problem-${st.id}`}>{draft.problem}</Text> : null}
+                  {draft && draft.where === 'group' ? <Text style={[s.detail, { color: color.signalStrong }]} testID={`stage-control-problem-${st.id}`}>{draft.problem}</Text> : null}
                   <Pressable
                     disabled={!canSave || busy}
                     onPress={() => { if (canSave && next) void send(st, { kind: 'dates', current, next }, stageControlKey(st.id, 'dates')); }}
@@ -207,10 +207,10 @@ export function TripStageControls({ tripId, refreshKey = 0, onChanged, load = fe
                   <Text style={[s.detail, { color: color.success, marginTop: 0 }]}>{DONE_LABEL[a!.sent.kind]}{res.duplicate ? ' (already was)' : ''}</Text>
                 </View>
               ) : res?.state === 'refused' ? (
-                <Text style={[s.detail, { color: color.signal }]} testID={`stage-control-refused-${st.id}`}>Not changed — {res.detail}</Text>
+                <Text style={[s.detail, { color: color.signalStrong }]} testID={`stage-control-refused-${st.id}`}>Not changed — {res.detail}</Text>
               ) : res?.state === 'unavailable' ? (
                 <View testID={`stage-control-unavailable-${st.id}`}>
-                  <Text style={[s.detail, { color: color.signal }]}>Couldn&apos;t reach the trip — {res.detail}. Nothing was changed.</Text>
+                  <Text style={[s.detail, { color: color.signalStrong }]}>Couldn&apos;t reach the trip — {res.detail}. Nothing was changed.</Text>
                   <Pressable onPress={() => void send(st, a!.sent, a!.key)} style={s.button} testID={`stage-control-retry-${st.id}`} accessibilityRole="button" accessibilityLabel={`Try that change to stage ${stageName(st)} again`}>
                     <Text style={s.buttonText}>Try again</Text>
                   </Pressable>

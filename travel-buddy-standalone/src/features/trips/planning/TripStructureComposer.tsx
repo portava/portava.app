@@ -247,7 +247,7 @@ export function TripStructureComposer({
               <ActivityIndicator size="small" color={color.signal} style={{ alignSelf: 'flex-start', marginTop: space.xs }} testID="structure-compose-reading" accessibilityLabel="Reading this trip's stages" />
             ) : structure.state !== 'ok' ? (
               <View testID="structure-compose-read-failed">
-                <Text style={[s.detail, { color: color.signal }]}>
+                <Text style={[s.detail, { color: color.signalStrong }]}>
                   Couldn&apos;t read this trip&apos;s stages — {structure.state === 'off' ? 'not signed in' : structure.detail}
                 </Text>
                 <Pressable onPress={() => { setStructure(undefined); void readStructure(); }} style={s.button} testID="structure-compose-reread" accessibilityRole="button" accessibilityLabel="Read this trip's stages again">
@@ -272,13 +272,13 @@ export function TripStructureComposer({
                 <View testID="stage-city-chosen">
                   <Text style={s.detail}>City: {city.name}</Text>
                   {city.cityId === null ? (
-                    <Text style={[s.detail, { color: color.signal }]} testID="stage-city-unmatched">That city couldn&apos;t be matched to a known city. Choose it again.</Text>
+                    <Text style={[s.detail, { color: color.signalStrong }]} testID="stage-city-unmatched">That city couldn&apos;t be matched to a known city. Choose it again.</Text>
                   ) : null}
                   {city.timezone ? (
                     <Text style={s.detail} testID="stage-timezone">Time zone: {city.timezone}{city.timezoneFrom === 'trip' ? " (the trip's)" : city.timezoneFrom === 'device' ? " (this phone's)" : ''}</Text>
                   ) : (
                     <View testID="stage-timezone-missing">
-                      <Text style={[s.detail, { color: color.signal }]}>No time zone is known for that city.</Text>
+                      <Text style={[s.detail, { color: color.signalStrong }]}>No time zone is known for that city.</Text>
                       {phoneZone ? (
                         <Chip label={`Use this phone's: ${phoneZone}`} on={false} onPress={() => setCity({ ...city, timezone: phoneZone, timezoneFrom: 'device' })} testID="stage-timezone-device" a11y={`Use this phone's time zone, ${phoneZone}`} />
                       ) : null}
@@ -308,7 +308,7 @@ export function TripStructureComposer({
                   ))}
                 </View>
                 {fromId && toId && fromId === toId ? (
-                  <Text style={[s.detail, { color: color.signal }]} testID="leg-same-stage">A leg needs two different stages.</Text>
+                  <Text style={[s.detail, { color: color.signalStrong }]} testID="leg-same-stage">A leg needs two different stages.</Text>
                 ) : null}
                 <Text style={s.detail}>How?</Text>
                 <View style={s.buttons}>
@@ -359,7 +359,7 @@ export function TripStructureComposer({
                   ))}
                 </View>
               ) : (
-                <Text style={[s.detail, { color: color.signal }]} testID="goal-list-failed">
+                <Text style={[s.detail, { color: color.signalStrong }]} testID="goal-list-failed">
                   Couldn&apos;t read this trip&apos;s goals — {decisions.state === 'off' ? 'not signed in' : decisions.detail}
                 </Text>
               )}
@@ -402,10 +402,10 @@ export function TripStructureComposer({
               <Text style={[s.detail, { color: color.success, marginTop: 0 }]}>Added{res.duplicate ? ' (already was)' : ''}</Text>
             </View>
           ) : res?.state === 'refused' ? (
-            <Text style={[s.detail, { color: color.signal }]} testID="structure-compose-refused">Not added — {res.detail}</Text>
+            <Text style={[s.detail, { color: color.signalStrong }]} testID="structure-compose-refused">Not added — {res.detail}</Text>
           ) : res?.state === 'unavailable' ? (
             <View testID="structure-compose-unavailable">
-              <Text style={[s.detail, { color: color.signal }]}>Couldn&apos;t reach the trip — {res.detail}. Nothing was added.</Text>
+              <Text style={[s.detail, { color: color.signalStrong }]}>Couldn&apos;t reach the trip — {res.detail}. Nothing was added.</Text>
               <Pressable onPress={() => attempt && void send(attempt.sent, attempt.key)} style={s.button} testID="structure-compose-retry" accessibilityRole="button" accessibilityLabel="Try adding it again">
                 <Text style={s.buttonText}>Try again</Text>
               </Pressable>

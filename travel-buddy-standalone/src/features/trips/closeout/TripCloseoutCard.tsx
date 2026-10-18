@@ -94,7 +94,7 @@ export function TripCloseoutCard({ tripId, load = fetchTripCloseout, record = an
                 <Text style={[s.detail, { color: color.success }]}>{ANSWER_LABEL[o.answer]} — recorded{o.result.duplicate ? ' (already was)' : ''}</Text>
               </View>
             ) : (
-              <Text style={[s.detail, { color: color.signal }]} testID={`trip-closeout-not-recorded-${q.planId}`}>
+              <Text style={[s.detail, { color: color.signalStrong }]} testID={`trip-closeout-not-recorded-${q.planId}`}>
                 Not recorded — {o.result.state === 'refused' ? `${o.result.reason}: ${o.result.detail}` : o.result.detail}
               </Text>
             )}

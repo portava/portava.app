@@ -79,7 +79,7 @@ export function TripProposalComposer({ tripId, onProposed, propose = createPropo
           <Text style={s.title}>Propose a change</Text>
           <TextInput
             value={title} onChangeText={setTitle} maxLength={PROPOSAL_TITLE_MAX}
-            placeholder="What are you proposing?" placeholderTextColor={color.faint}
+            placeholder="What are you proposing?" placeholderTextColor={color.mute}
             style={s.input} testID="proposal-title" accessibilityLabel="What you are proposing"
           />
           <Text style={s.detail}>What kind of change?</Text>
@@ -92,12 +92,12 @@ export function TripProposalComposer({ tripId, onProposed, propose = createPropo
           </View>
           <TextInput
             value={rationale} onChangeText={setRationale} maxLength={PROPOSAL_TEXT_MAX}
-            placeholder="Why? (optional)" placeholderTextColor={color.faint}
+            placeholder="Why? (optional)" placeholderTextColor={color.mute}
             style={s.input} testID="proposal-rationale" accessibilityLabel="Why you are proposing it"
           />
           <TextInput
             value={impact} onChangeText={setImpact} maxLength={PROPOSAL_TEXT_MAX}
-            placeholder="What would it change? (optional)" placeholderTextColor={color.faint}
+            placeholder="What would it change? (optional)" placeholderTextColor={color.mute}
             style={s.input} testID="proposal-impact" accessibilityLabel="What it would change"
           />
           <Text style={s.detail} testID="proposal-effect-note">Accepting it records the crew&apos;s decision. It doesn&apos;t change the trip by itself.</Text>
@@ -123,10 +123,10 @@ export function TripProposalComposer({ tripId, onProposed, propose = createPropo
           <Text style={[s.detail, { color: color.success, marginTop: 0 }]}>Proposed{res.duplicate ? ' (already was)' : ''} — it&apos;s in the open votes.</Text>
         </View>
       ) : res?.state === 'refused' ? (
-        <Text style={[s.detail, { color: color.signal }]} testID="proposal-compose-refused">Not proposed — {res.detail}</Text>
+        <Text style={[s.detail, { color: color.signalStrong }]} testID="proposal-compose-refused">Not proposed — {res.detail}</Text>
       ) : res?.state === 'unavailable' ? (
         <View testID="proposal-compose-unavailable">
-          <Text style={[s.detail, { color: color.signal }]}>Couldn&apos;t reach the trip — {res.detail}. Nothing was proposed.</Text>
+          <Text style={[s.detail, { color: color.signalStrong }]}>Couldn&apos;t reach the trip — {res.detail}. Nothing was proposed.</Text>
           <Pressable onPress={() => attempt && void send(attempt.input, attempt.key)} style={s.button} testID="proposal-compose-retry" accessibilityRole="button" accessibilityLabel="Try proposing it again">
             <Text style={s.buttonText}>Try again</Text>
           </Pressable>

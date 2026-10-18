@@ -36,12 +36,12 @@ export function ZonedTimeField({ label, zone, zoneNote = '', value, onChange, te
       <View style={s.row}>
         <TextInput
           value={value.date} editable={open} onChangeText={(date) => onChange({ ...value, date, pick: null })}
-          placeholder="YYYY-MM-DD" placeholderTextColor={color.faint} maxLength={10} autoCorrect={false}
+          placeholder="YYYY-MM-DD" placeholderTextColor={color.mute} maxLength={10} autoCorrect={false}
           style={[s.input, s.date, !open && s.closed]} testID={`${testID}-date`} accessibilityLabel={`${label}: date, as year-month-day`}
         />
         <TextInput
           value={value.time} editable={open} onChangeText={(time) => onChange({ ...value, time, pick: null })}
-          placeholder="HH:MM" placeholderTextColor={color.faint} maxLength={5} autoCorrect={false}
+          placeholder="HH:MM" placeholderTextColor={color.mute} maxLength={5} autoCorrect={false}
           style={[s.input, s.time, !open && s.closed]} testID={`${testID}-time`} accessibilityLabel={`${label}: time, 24-hour`}
         />
         {value.date || value.time ? (
@@ -53,7 +53,7 @@ export function ZonedTimeField({ label, zone, zoneNote = '', value, onChange, te
       {r.kind === 'ok' ? (
         <Text style={s.detail} testID={`${testID}-reads`}>{dateWords(value.date.trim())}, {value.time.trim()} ({offsetWords(r.iso)})</Text>
       ) : problem ? (
-        <Text style={[s.detail, { color: color.signal }]} testID={`${testID}-problem`}>{problem}</Text>
+        <Text style={[s.detail, { color: color.signalStrong }]} testID={`${testID}-problem`}>{problem}</Text>
       ) : null}
       {r.kind === 'twice' ? (
         <View style={s.row}>

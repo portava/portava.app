@@ -63,7 +63,7 @@ function DensityMap({ members }: { members: CrewMemberCardType[] }) {
           </View>
         )}
         {live.length > 0 && (
-          <View style={[dm.clusterDot, { top: '35%', left: '30%', backgroundColor: color.signal }]} testID="crew-density-live">
+          <View style={[dm.clusterDot, { top: '35%', left: '30%', backgroundColor: color.signalStrong }]} testID="crew-density-live">
             <Text style={dm.clusterText}>{live.length}</Text>
           </View>
         )}
@@ -82,7 +82,7 @@ function DensityMap({ members }: { members: CrewMemberCardType[] }) {
       {/* Legend */}
       <View style={dm.legend}>
         <View style={dm.legendItem}>
-          <View style={[dm.dot, { backgroundColor: color.signal }]} />
+          <View style={[dm.dot, { backgroundColor: color.signalStrong }]} />
           <Text style={dm.legendText}>Live</Text>
         </View>
         <View style={dm.legendItem}>
@@ -307,7 +307,7 @@ const s = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: space.sm,
     borderWidth: 1.5, borderColor: color.signal, borderRadius: radius.md, paddingVertical: 10,
   },
-  shareBtnText: { ...t.small, fontWeight: '800', color: color.signal },
+  shareBtnText: { ...t.small, fontWeight: '800', color: color.signalStrong },
   listCard: {
     backgroundColor: color.paperRaised, borderRadius: radius.lg,
     borderWidth: 1, borderColor: color.haze, padding: space.md, ...shadow.card,
@@ -332,7 +332,7 @@ const vs = StyleSheet.create({
   },
   chipActive: { borderColor: color.signal, backgroundColor: '#FFF5F5' },
   chipLabel: { ...t.small, color: color.ink, fontWeight: '600', fontSize: 12 },
-  chipLabelActive: { color: color.signal, fontWeight: '800' },
+  chipLabelActive: { color: color.signalStrong, fontWeight: '800' },
   sub: { ...t.small, color: color.mute, fontSize: 11 },
 });
 

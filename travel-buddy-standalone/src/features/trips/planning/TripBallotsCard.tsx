@@ -151,10 +151,10 @@ export function TripBallotsCard({ tripId, isOwner, load = fetchTripDecisions, ca
                   </Text>
                 </View>
               ) : res?.state === 'refused' ? (
-                <Text style={[s.detail, { color: color.signal }]} testID={`ballot-refused-${p.id}`}>Not recorded — {res.detail}</Text>
+                <Text style={[s.detail, { color: color.signalStrong }]} testID={`ballot-refused-${p.id}`}>Not recorded — {res.detail}</Text>
               ) : res?.state === 'unavailable' ? (
                 <View testID={`ballot-unavailable-${p.id}`}>
-                  <Text style={[s.detail, { color: color.signal }]}>Couldn&apos;t reach the trip — {res.detail}. Nothing was counted.</Text>
+                  <Text style={[s.detail, { color: color.signalStrong }]}>Couldn&apos;t reach the trip — {res.detail}. Nothing was counted.</Text>
                   <Pressable onPress={() => void send(p, o!.intent)} style={s.button} testID={`ballot-retry-${p.id}`} accessibilityRole="button">
                     <Text style={s.buttonText}>Try again</Text>
                   </Pressable>

@@ -229,7 +229,7 @@ export function TripItineraryPaste({
               </Text>
               <TextInput
                 value={text} onChangeText={setText} multiline autoCorrect={false}
-                placeholder={'Friday:\nMadame Lan at 7pm\nSky36 at 9pm'} placeholderTextColor={color.faint}
+                placeholder={'Friday:\nMadame Lan at 7pm\nSky36 at 9pm'} placeholderTextColor={color.mute}
                 style={s.input} accessibilityLabel="Pasted itinerary" testID="itinerary-paste-input"
               />
               {phase === 'error' && error ? (

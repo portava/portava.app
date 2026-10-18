@@ -39,7 +39,7 @@ export function StageBoundsFields({ value, onChange, zone, zoneFrom }: {
       <ZonedTimeField label="Starts" zone={zone} zoneNote={note} value={value.starts} onChange={(starts) => onChange({ ...value, starts })} testID="stage-starts" />
       <ZonedTimeField label="Ends" zone={zone} zoneNote={note} value={value.ends} onChange={(ends) => onChange({ ...value, ends })} testID="stage-ends" />
       {draft.where === 'group' ? (
-        <Text style={[s.detail, { color: color.signal }]} testID="stage-bounds-problem">{draft.problem}</Text>
+        <Text style={[s.detail, { color: color.signalStrong }]} testID="stage-bounds-problem">{draft.problem}</Text>
       ) : null}
     </View>
   );
@@ -51,7 +51,7 @@ function MinutesField({ label, value, onChange, testID }: { label: string; value
   return (
     <View style={s.row}>
       <TextInput
-        value={value} onChangeText={onChange} keyboardType="number-pad" maxLength={5} placeholder="—" placeholderTextColor={color.faint}
+        value={value} onChangeText={onChange} keyboardType="number-pad" maxLength={5} placeholder="—" placeholderTextColor={color.mute}
         style={[s.input, { minWidth: 56 }]} testID={testID} accessibilityLabel={`${label}, in minutes`}
       />
       <Text style={[s.detail, { marginTop: 0 }]}>{label} (minutes)</Text>
@@ -72,7 +72,7 @@ export function CommitmentDetailsFields({ value, onChange, zone, zoneFrom, phone
       <Text style={s.detail}>Timing (optional)</Text>
       {zone === null ? (
         <View testID="commitment-zone-missing">
-          <Text style={[s.detail, { color: color.signal }]}>No time zone is known for this trip or stage, so times can&apos;t be set yet.</Text>
+          <Text style={[s.detail, { color: color.signalStrong }]}>No time zone is known for this trip or stage, so times can&apos;t be set yet.</Text>
           {phoneZone ? (
             <Pressable onPress={onUsePhoneZone} style={s.chip} testID="commitment-zone-device" accessibilityRole="button" accessibilityLabel={`Use this phone's time zone, ${phoneZone}`}>
               <Text style={s.chipText}>Use this phone&apos;s: {phoneZone}</Text>
@@ -84,7 +84,7 @@ export function CommitmentDetailsFields({ value, onChange, zone, zoneFrom, phone
       <ZonedTimeField label="Be there by" zone={zone} zoneNote={note} value={value.arriveBy} onChange={(arriveBy) => onChange({ ...value, arriveBy })} testID="commitment-arrive-by" />
       <MinutesField label="Still fine if late by" value={value.lateness} onChange={(lateness) => onChange({ ...value, lateness })} testID="commitment-lateness" />
       <MinutesField label="Time needed to get ready" value={value.prep} onChange={(prep) => onChange({ ...value, prep })} testID="commitment-prep" />
-      {draft.where === 'group' ? <Text style={[s.detail, { color: color.signal }]} testID="commitment-details-problem">{draft.problem}</Text> : null}
+      {draft.where === 'group' ? <Text style={[s.detail, { color: color.signalStrong }]} testID="commitment-details-problem">{draft.problem}</Text> : null}
       <Text style={s.detail}>How sure is it?</Text>
       <View style={s.row}>
         <Pressable onPress={() => onChange({ ...value, confidence: null })} style={[s.chip, value.confidence === null && s.chipOn]} testID="commitment-confidence-none" accessibilityRole="button" accessibilityState={{ selected: value.confidence === null }} accessibilityLabel="Not stated">

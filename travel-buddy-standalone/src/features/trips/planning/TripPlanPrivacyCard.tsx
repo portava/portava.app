@@ -72,7 +72,7 @@ export function TripPlanPrivacyCard({ tripId, currentUserId, load = readOwnPlanS
             <ActivityIndicator size="small" color={color.signal} style={{ alignSelf: 'flex-start', marginTop: space.xs }} testID="plan-privacy-reading" accessibilityLabel="Reading your plans" />
           ) : read.state !== 'ok' ? (
             <View testID="plan-privacy-read-failed">
-              <Text style={[s.detail, { color: color.signal }]}>
+              <Text style={[s.detail, { color: color.signalStrong }]}>
                 Couldn&apos;t read this trip&apos;s plan — {read.state === 'off' ? 'not signed in' : read.detail}
               </Text>
               <Pressable onPress={() => void reload()} style={s.button} testID="plan-privacy-reread" accessibilityRole="button" accessibilityLabel="Read your plans again">
@@ -114,10 +114,10 @@ export function TripPlanPrivacyCard({ tripId, currentUserId, load = readOwnPlanS
                 {res?.state === 'saved' ? (
                   <Text style={[s.detail, { color: color.success }]} testID={`plan-privacy-saved-${item.id}`}>Saved</Text>
                 ) : res?.state === 'refused' ? (
-                  <Text style={[s.detail, { color: color.signal }]} testID={`plan-privacy-refused-${item.id}`}>Not changed — {res.detail}</Text>
+                  <Text style={[s.detail, { color: color.signalStrong }]} testID={`plan-privacy-refused-${item.id}`}>Not changed — {res.detail}</Text>
                 ) : res?.state === 'unavailable' ? (
                   <View testID={`plan-privacy-unavailable-${item.id}`}>
-                    <Text style={[s.detail, { color: color.signal }]}>Couldn&apos;t reach the trip — {res.detail}. Nothing changed.</Text>
+                    <Text style={[s.detail, { color: color.signalStrong }]}>Couldn&apos;t reach the trip — {res.detail}. Nothing changed.</Text>
                     <Pressable onPress={() => change && void choose(item.id, change.scope)} style={s.button} testID={`plan-privacy-retry-${item.id}`} accessibilityRole="button" accessibilityLabel="Try saving it again">
                       <Text style={s.buttonText}>Try again</Text>
                     </Pressable>

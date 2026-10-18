@@ -46,6 +46,12 @@ Branch `claude/wave4-build-20261017` (PR #764, stacked on #763 and #762). Every 
 - Layover grading: Rule A.2 versus census-layover's WAVE-1 ruling (pending since wave 4). L294's last four reads change client-visible meaning.
 - Place living page: the refresh hook is wired to nothing. Wiring it would make a paid AI-summary call for pages nobody views.
 
+**Design (accessibility)**
+- Trips cards: 25 components now meet WCAG AA contrast with the existing strong tokens. Two kinds of colour still need a design choice:
+  - **Warning text:** `color.warn` text measures 3.08:1 on the raised card colour, in eight places across six cards. There is no AA-strength warning colour, and the contrast guard forbids adding one without a design decision.
+  - **Amber in TripPlanSection:** it uses fixed amber colours, not tokens. The amber link on pale amber is 2.07:1 (line 778), and white on amber is 2.15:1 (lines 826/828).
+- The guard catches a reverted fix, but not a brand-new low-contrast line in these cards. About 70 spinners, icons and outlines are graded decor and unmeasured. Measuring them all would make it a full ratchet.
+
 **Migrations**
 - **3999 is the last number in the 3000–3999 band.** The next migration needs a band ruling. Several fixes wait on one: a unique index that closes the SOS cross-instance double-tell, an index on `place_best_of.updated_at`, the SQL layer's inline block checks (`project_user_memory`, `memory_public_feed`, the `post_media_public_select` policy), and Map M65.
 
