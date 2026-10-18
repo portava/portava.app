@@ -6,9 +6,9 @@ Branch `claude/wave4-build-20261017` (PR #764, stacked on #763 and #762). Every 
 
 | Area | What changes | How to switch it off |
 | --- | --- | --- |
-| Telegraph T256 | **New-message notifications are unflagged.** Every person-sent message notifies the other members ("New message" plus the sender's shown name; never the body). Bursts coalesce per thread per 5 minutes. Archived conversations still notify; the `message_previews` preference is ignored, because no push carries a preview. | A capability-flag check at the top of `notifyNewMessage` (services/telegraph/messageNotifications.ts). |
-| Telegraph T395 | **Coordination notifications are unflagged** and push on merge. | A flag check at the top of `notifyCoordinationAct`. |
-| Telegraph safety | **A help request (SOS / NEED_HELP) now notifies the conversation.** It overrides mutes and MENTIONS-only, never crosses a block, and yields to quiet hours only under the recipient's own safety_override. It is re-driven for 15 minutes if the roster or blocks can't be read. Members who archived the conversation are skipped (owner ruling). | — (safety) |
+| Telegraph T256 | **New-message notifications are unflagged.** Every person-sent message notifies the other members ("New message" plus the sender's shown name; never the body). Bursts coalesce per thread per 5 minutes. Archived conversations still notify; the `message_previews` preference is ignored, because no push carries a preview. | No flag exists yet; adding a flag check at the top of `notifyNewMessage` (services/telegraph/messageNotifications.ts) would be the single switch. |
+| Telegraph T395 | **Coordination notifications are unflagged** and push on merge. | No flag exists yet; a flag check at the top of `notifyCoordinationAct` would be the switch. |
+| Telegraph safety | **A help request (SOS / NEED_HELP) now notifies the conversation.** It overrides mutes and MENTIONS-only, never crosses a block, and yields to quiet hours only under the recipient's own safety_override. It is re-driven for 15 minutes if the roster or blocks can't be read, or a create fails. Members who archived the conversation are skipped (owner ruling). An ALL CLEAR the notification layer coalesces is settled only when the member already holds an equivalent one; otherwise it is written about 60 seconds later (logged at WARN) instead of being lost. | — (safety) |
 | Telegraph T254 | `circle.need_help_host_alert` now reaches a host in quiet hours under their safety_override. | — |
 | First deploy | The re-drive's first pass may deliver help requests from the previous 15 minutes that the old code never notified. | — |
 | Stamps H4 | **Trip completion stamps now require a check-in on that trip.** A trip really taken with no check-in earns none. Readers show a stamp's place only with presence evidence. Admin and internal presence awards need evidence. | — |
@@ -16,6 +16,7 @@ Branch `claude/wave4-build-20261017` (PR #764, stacked on #763 and #762). Every 
 | Trips | A route's own 4xx is shown as a refusal with the server's words, not "couldn't reach the trip". A 429 stays "try again later". | — |
 | Place sweep | Owner ruling: oldest first, paged batches, busy places prioritised without starving quiet ones, backlog continued, capacity scales. It now reports at /healthz/schedulers. | — |
 | Inbox | Archived conversations move to an "Archived" section with Unarchive (owner ruling). | — |
+| Moderation | Reports use one vocabulary (open, in_review, resolved, dismissed), so reports filed by users now reach the trip and event queues and can be resolved. `GET /admin/reports?status=all` answers 400; the admin client never sends it. A media report that another moderator closed first answers 409 (was 404). The moderation dossier and the user detail refuse the record when a moderation count can't be counted, instead of showing 0. | — |
 
 ## 2. Rulings only the owner can give
 
@@ -23,7 +24,7 @@ Branch `claude/wave4-build-20261017` (PR #764, stacked on #763 and #762). Every 
 - When the roster or blocks table can't be read, should a help request tell nobody (current) or everyone? (Q1)
 - Should `heads_up` interrupt quiet hours as P0? (Q2) Should P0 pushes use high priority? (Q10) Today they use Expo's default, which Android Doze can delay. T254 is graded C on the existing rule and returns to W if "interruptive" means high priority.
 - Should there be a per-sender cap on safety signals that override mutes? (Q11)
-- Should the ALL CLEAR also skip archived members? Should the re-drive cover the ALL CLEAR at all? Confirm that an SOS already answered by a later ALL CLEAR is not sent late.
+- Should the ALL CLEAR also skip archived members? Should the re-drive cover the ALL CLEAR at all (today it does, and a coalesced ALL CLEAR is settled only against an equivalent one the member already holds, else written ~60 s late)? Confirm that an SOS already answered by a later ALL CLEAR is not sent late.
 - T397: six Trip pushes stay outside the notification ledger, each with a single producer. If "deduplicate by underlying causal event" means every push path goes through the ledger, T397 returns to W.
 - Signals that still tell someone they are blocked: the send refusal text ("You cannot message this user" versus "Not a member of this thread"), the messages page's shape, response timing, and the /capabilities thread-existence signal.
 - Rent-a-Buddy: calls are refused after a completion without mutual "stay connected", but messages never were. Should messages be refused too? (That would need a send check on the booking's state.)
