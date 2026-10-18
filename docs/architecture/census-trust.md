@@ -5578,3 +5578,122 @@ and checked by sha256; all 33 were killed. No existing case had to change.
 Rows: none move. No row of this census grades a host's write of a moderated column, the report's hide, or these reads;
 §30.3's "every getEventRole caller grants on a positive role only" still holds. Headline unchanged: 90 / 15 / 1 / 2 of
 108.
+
+### Correction (2026-10-18, wave 5) — event reads: a failed read is never not-found, not-allowed or a default
+
+*Same branch and tree. Committed on this branch; undeployed. **NO ROW MOVES.***
+
+**What was broken.** supabase-js resolves on a database error, so `const { data: ev } = await …maybeSingle()` and then
+`if (!ev) 404` answered "Event not found" for a read that never answered. routes/events.ts held 152 reads that bound
+`data` only (checkUncheckedSupabaseReads, judged at every tier: 149 out of its enforced scope, 3 ledgered), and eleven
+more places bound the error and then folded it into the negative answer. The correction above named 41 of them; the
+whole file is covered here. A read that failed became:
+- 404 "Event not found" on publish, postpone, complete, rsvp, join, the drafts, the share-link preview, the detail, the
+  reviews, reminders, add-to-trip, telegraph-thread and the rest (49 sites);
+- 403 on the participant gates — "you must have a Going RSVP", "only open to circle / trip members", "requires host
+  approval", "for verified users only", and a gate's own "temporarily unavailable" sent as `forbidden` (21 sites, plus
+  the folds below);
+- an event silently missing from a list: an unread friendship, block, eligibility or view-access input dropped it from
+  the feed, city, nearby, search, circles, near-trip and following lists;
+- a wrong default stated as fact: `myRsvp: null`, `isSaved: false`, `goingCount: 0`, `waitlistCount: 0`, "not checked
+  in", `event: null` on an invite;
+- a WRITE from nothing: `waitlist_count` stamped 0 over the real queue (waitlist accept, waitlist leave, the ban, block-
+  user), `avg_rating` / `review_count` rewritten from no ratings, and a first-event trust bonus (+10, deduped for ~11
+  years) awarded to a veteran host whose prior events could not be read;
+- at waitlist accept, the worst: the join gate's unread request read as "not approved", and the refusal DELETED the
+  user's queue place and offered their seat to the next person.
+
+**The rule, by class.** Every read in the file is now one of three
+(`artifacts/api-server/src/routes/events.ts:7148#Every read in this file now falls in one of three classes`):
+- (a) an authorization or existence gate — 79 sites and the folds: refused with EventAccessUnavailableError, which the
+  global handler answers 503 `degraded_unavailable`, retryable, logged at error. Never 404, never 403, never "allowed",
+  and nothing is written after it.
+- (b) data the response states as fact — 34 sites: refused the same way (23), or, for a list route's PRIMARY read, 500
+  `db_error` as that route's sibling reads already answer (11).
+- (c) best-effort side data — 39 sites (names and avatars, ranking signals, push tokens, fire-and-forget fan-out, the
+  live-count refresh, the feed's saved flag): it degrades and is LOGGED; it never widens access, never claims success, and never writes a value
+  derived from the failed read. An unread recount leaves the stored count alone; the feed serves the stored
+  `going_count`, never 0, and an unread saved state as `isSaved: null` (unknown, never false), keeping the feed (lead
+  ruling: a bookmark is side data).
+
+**The folds.**
+- isBlocked answered "blocked" when `blocks` could not be read. It now reads lib/exclusionSet's three-state pair read
+  and refuses (`artifacts/api-server/src/routes/events.ts:338#if (!pair.ok) throw new EventAccessUnavailableError("blocks", pair.reason)`).
+- checkEventEligibility (exported; mapSearch, collections, the call gateway and the sweeper ask it too) never throws.
+  Its unread staff role and unread block are now `unavailable`, and every `unavailable` refusal carries
+  `degraded_unavailable` instead of `forbidden`, so each route that sends `errorCode` answers 503
+  (`artifacts/api-server/src/routes/events.ts:687#if (staffErr) return { ok: false, errorCode: "degraded_unavailable"`).
+  Its callers outside this file still read `!ok` as "not eligible", as before.
+- The six list loops and the detail no longer drop an event, or 404, on an `unavailable` eligibility.
+- canViewEvent folds readEventViewAccess's `unavailable` into `false`. It stays exported unchanged for the other surfaces
+  that ask it; the four route sites here ask viewableOrThrow
+  (`artifacts/api-server/src/routes/events.ts:7165#async function viewableOrThrow(`).
+- isTripEventMember, isGoingAttendee and isCircleMember answered "not a member" on an unread row; each now refuses.
+- The waitlist join's own trust and age gates sent "temporarily unavailable" as 403; now 503.
+- chat/join answered 404 "Event chat not found" when it lost the thread claim and the winning thread could not be read;
+  that case is now 503.
+
+**Item 3: a host may cancel a hidden event; the restore no longer sticks on it.** Whether the hold should also stop a
+host's own cancel is an open owner ruling (docs/ops/wave5-owner-decisions-20261018.md §2), so the host keeps that power:
+a host may always stop their own event, the hide holds visibility only, and cancelling undoes no moderation (a
+moderator's cancel already holds the state; a moderator's remove leaves nothing a host can move). The defect was the
+restore. It read no recorded moderation state change on the cancelled event — the host made it — and refused WHOLE,
+so the hide it could reverse was never reversed: cancelled and hidden for good, the hold never released, by the route
+or by an appeal.
+- The rule. A restore reverses what a moderation RECORDED. A state that no recorded moderation put there (or that
+  something moved since) is the host's: it is KEPT, the answer says why (`stateKept`), and the visibility is still
+  reversed. Nothing to reverse at all is refused exactly as before, with the state's own message; an unreadable record
+  still refuses
+  (`artifacts/api-server/src/lib/eventModerationClaim.ts:252#return keepHostStateOnRestore({ ok: false, code: "invalid_state_transition"`).
+  The route and the appeal both take it.
+- Why it is safe. It never widens: the visibility part is decideRestoredEventVisibility, unchanged — back to exactly
+  what the recorded hide found (a friends-only event comes back friends-only), never past a host's later recorded
+  change, refused for a hide that recorded nothing. It never moves the state. It never releases a moderator's STATE
+  hold: its `admin_restore` row records no state change, and the hold reads only state changes, so a recorded cancel
+  or remove still holds. A moderator's own recorded cancel or remove is reversed exactly as before.
+- For the owner: (1) should the hold also stop a host's cancel of a hidden event (today: allowed)? (2) the rule above
+  is a restore-semantics change: a restore of a host-cancelled, moderator-hidden event now answers 200 with the hide
+  reversed and `stateKept`, where it answered 409.
+
+**What changed, with no migration.** routes/events.ts: 242 lines edited in place, line-neutral (7139 lines before;
+the helpers and this rule's comment appended at the foot, so no cited line moves). routes/admin.ts: two lines, line-
+neutral. lib/eventModerationClaim.ts: five lines in place and an appendix. UNCHECKED_READS_ALLOWLIST.json loses the
+three routes/events.ts entries (shrink-only); SILENT_SUPABASE_READS_BASELINE.json loses routes/events.ts S2 (8) and
+S4 (2), which check:silent-supabase-reads demanded. Two existing cases pinned the old answers and were updated:
+eventAgendaItems (an unread RSVP is now 503, still no items) and eventsFailClosedAuthorization (an unread blocks table
+is `unavailable`, still not ok).
+
+**Tests.** `artifacts/api-server/src/test/eventFailedReads.test.ts:275#describe("A. the feed, the city / nearby / search`
+is one suite of 134 cases over the real events and admin routers, the real global error handler, and the schema-strict
+double with a real `.or()`, `.range()` and read faults: at least one case per route touched (74 routes), each class's
+answer, the item-3 restore, checkEventEligibility, and four structural pins (no read in the file ignores its error at
+any tier; no route asks canViewEvent; no list loop drops an unavailable verdict; no fold is back). On the 54abd5f2e
+sources, 123 cases were red for the stated reasons and 11 controls green; the label check found 0 violations.
+118 mutants, each applied alone (backed up at its repo-relative path, restored, sha256-checked), were all killed
+by at least one behavioural case, and so were 6 more on the saved-state lines after the lead's ruling. One (the city
+list's friendship read) was first killed only by a structural pin; a case was added and it is now killed
+behaviourally.
+
+**Behaviour changes.** Every route above answers 503 `degraded_unavailable` (retryable) where it answered 404 / 403 /
+an empty or defaulted body on a failed read; the list routes' primary reads answer 500 `db_error`. The feed refuses
+when the viewer's RSVP or queue place cannot be read (it used to default them); an unreadable saved state is
+`isSaved: null` and the feed is kept. The client's feed item type admits that null, and no client screen reads the
+feed's `isSaved` — the events tab draws its bookmarks from GET /events/saved — pinned by
+`travel-buddy-standalone/src/services/__tests__/eventsFeedIsSavedUnknown.component.test.ts:38#never becomes a bookmark claim`. A removed attendee whose
+event chat could not be read answers `{ ok: true, chatRemoved: false }` (a 503 would invite a retry that offers the
+freed seat twice); a ban whose chat could not be read answers 503 "the ban was recorded". Restore: as item 3.
+
+**What this does not prove or change.**
+- Capability-flag reads (isFlagEnabled: events_enabled, events_waitlist_enabled, events_chat_enabled) still read an
+  unread flag as off; their polarity is check:flag-polarity's, not this file's. events_trust_gates_enabled is already
+  three-state.
+- lib/publicIdentity nameVisibilitySet and the verified-badge read still fall back to "no name / no badge" without a
+  log; both hide, never widen.
+- The writes these routes make without reading their result (the unchecked deletes and upserts) are
+  check:silent-supabase-writes territory and are unchanged.
+- The legacy-hide limits of the correction above stand: a hide from before the record is still refused by restore.
+- Nothing here ran against a live PostgREST.
+
+Rows: none move. No row of this census grades these reads; §30.3 ("every getEventRole caller grants on a positive role
+only") and §30.6's `unavailable` still hold — an unread input still grants nothing. Headline unchanged: 90 / 15 / 1 / 2
+of 108.

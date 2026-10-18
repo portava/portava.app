@@ -116,7 +116,7 @@ export interface EventDetail extends EventSummary {
 export interface EventListItem extends EventSummary {
   myRsvp: EventRsvpStatus | null;
   myWaitlistPosition?: number | null;
-  isSaved?: boolean;
+  isSaved?: boolean | null; // null: the server could not read the saved state (GET /events, wave 5) — UNKNOWN, never "not saved"; render no bookmark claim from it
   distanceKm?: number;
   /** Nine-category source classification for the cover image (from the accuracy pipeline). */
   coverImageSourceType?: string | null;

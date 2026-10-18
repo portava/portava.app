@@ -225,7 +225,7 @@ function stateChangeOf(changes: Record<string, unknown>, prior: Record<string, u
 export type EventModerationStateIntent = { to: "cancelled" | "archived" } | { reverse: true };
 
 export type EventModerationStateAnswer =
-  | { ok: true; decision: EventStateDecided | null }
+  | { ok: true; decision: EventStateDecided | null; kept?: string } // kept (restore only): the state is its HOST's — no recorded moderation put it there — and is left as it is, for this reason (wave 5, event reads)
   | { ok: false; code: "invalid_state_transition" | "db_error"; message: string };
 
 /**
@@ -234,7 +234,7 @@ export type EventModerationStateAnswer =
  * the target state is NO state change (the action still applies its other
  * columns and is audited); any other refusal is refused here, nothing written.
  * `restore`: the newest recorded moderation is read and put to
- * decideEventModerationReversal; anything but an allowed reversal is refused.
+ * decideEventModerationReversal; a refusal is KEPT (see the foot of this file).
  */
 export async function decideModeratedEventState(sc: any, ev: ModeratedEventRow, intent: EventModerationStateIntent | null): Promise<EventModerationStateAnswer> {
   if (intent === null) return { ok: true, decision: null };
@@ -249,7 +249,7 @@ export async function decideModeratedEventState(sc: any, ev: ModeratedEventRow, 
   if (!rec.ok) return { ok: false, code: "db_error", message: `${rec.message}. Nothing was changed or recorded.` };
   const d = decideEventModerationReversal(ev.state, rec.recorded);
   if (d.allowed) return { ok: true, decision: d };
-  return { ok: false, code: "invalid_state_transition", message: `${d.message}. Nothing was changed or recorded.` };
+  return keepHostStateOnRestore({ ok: false, code: "invalid_state_transition", message: `${d.message}. Nothing was changed or recorded.` }); // the state is its host's: KEPT; the caller still reverses a recorded hide, and refuses when there is nothing at all to reverse (wave 5, event reads)
 }
 
 /**
@@ -335,7 +335,7 @@ function notifyAttendeesOfModeratedCancel(sc: any, req: any, ev: ModeratedEventR
 
 export type AppealEventReversal =
   /** What the reversal put back: the state, the visibility, or both (each null when that column was not moderated). */
-  | { outcome: "restored"; state: { from: string; to: string } | null; visibility: { from: string; to: string } | null }
+  | { outcome: "restored"; state: { from: string; to: string } | null; visibility: { from: string; to: string } | null; stateKept?: string }
   /** The event is not the appellant's, or does not exist. */
   | { outcome: "not_found" }
   /** Nothing recorded that this appeal can reverse, or a hide whose prior visibility was never recorded. A person must look. */
@@ -370,23 +370,23 @@ export async function reverseModeratedEventOnAppeal(
     return { outcome: "failed", message: `the event could not be read: ${messageOf(err)}` };
   }
   if (!ev) return { outcome: "not_found" };
-  let stateDecision: EventStateDecided | null = null;
+  let stateDecision: EventStateDecided | null = null; let stateKept: string | null = null;
   if ((EVENT_MODERATION_REVERSIBLE_STATES as readonly string[]).includes(String(ev.state ?? ""))) {
     const answer = await decideModeratedEventState(sc, ev, { reverse: true });
     if (!answer.ok) return answer.code === "db_error" ? { outcome: "failed", message: answer.message } : { outcome: "refused", message: answer.message };
-    stateDecision = answer.decision;
+    stateDecision = answer.decision; stateKept = answer.kept ?? null;
   }
   const vis = await decideRestoredEventVisibility(sc, ev);
   if (!vis.ok) return vis.code === "db_error" ? { outcome: "failed", message: vis.message } : { outcome: "refused", message: vis.message };
   if (!stateDecision && !vis.decision) {
-    return { outcome: "refused", message: `the event is '${String(ev.state)}': there is no moderation state change to reverse, and its visibility ('${String(ev.visibility)}') holds no recorded hide to reverse (an appeal reverses a moderator's cancel, remove or hide)` };
+    return { outcome: "refused", message: stateKept ? `${stateKept} Nothing was changed or recorded.` : `the event is '${String(ev.state)}': there is no moderation state change to reverse, and its visibility ('${String(ev.visibility)}') holds no recorded hide to reverse (an appeal reverses a moderator's cancel, remove or hide)` }; // nothing to reverse at all: refused as before, with the state's own reason
   }
   const out = await applyEventModeration(sc, null, ev, {
     changes: vis.decision ? { visibility: vis.decision.to } : {}, stateDecision, now: new Date().toISOString(), activityAction: "admin_restore",
     writeActivity: (st) => sc.from("event_activity_log").insert({ event_id: a.eventId, actor_id: a.actorId, action: "admin_restore", metadata: { via: "appeal", appeal_id: a.appealId, reason: a.note, ...st } }).select("id"),
     writeAudit: () => Promise.resolve({ error: null }), // the appeal row is this reversal's audit record (routes/appeals.ts commits it after this answers)
   });
-  if (out.outcome === "applied") return { outcome: "restored", state: stateDecision ? { from: stateDecision.from, to: stateDecision.to } : null, visibility: vis.decision };
+  if (out.outcome === "applied") return { outcome: "restored", state: stateDecision ? { from: stateDecision.from, to: stateDecision.to } : null, visibility: vis.decision, ...(stateKept ? { stateKept } : {}) };
   return { outcome: "failed", message: out.message };
 }
 
@@ -638,3 +638,38 @@ export async function recordHostVisibilityChange(sc: any, a: { eventId: string; 
     return { error: err };
   }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// A RESTORE NEVER STICKS ON ITS HOST'S STATE (wave 5, event reads)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// A host may cancel an event a moderator has hidden (and archive it once
+// cancelled): the hide holds visibility only, and whether a hold should also
+// stop the host's own cancel is an open owner ruling
+// (docs/ops/wave5-owner-decisions-20261018.md §2 "Data and product"), so the
+// host keeps that power here. The restore (route and appeal alike) then read
+// no recorded moderation state change on the cancelled event — its HOST made
+// it — and REFUSED WHOLE, so the hide it could reverse was never reversed: the
+// event stayed cancelled and hidden, and no route could release the hold.
+//
+// A restore reverses what a moderation RECORDED. A state that no recorded
+// moderation put there (or that something moved since) is not the restore's to
+// reverse: it is KEPT, the answer says why (`stateKept`), and the visibility is
+// still reversed. Nothing to reverse at all is refused exactly as before (the
+// state's own message); a record that cannot be read still refuses.
+
+/** Pure: a refusal about the STATE alone becomes "keep the state" (`kept` = the reason, without "Nothing was changed"); an unreadable record stays a refusal. decideModeratedEventState answers a restore's refused reversal through it. */
+export function keepHostStateOnRestore(answer: EventModerationStateAnswer): EventModerationStateAnswer {
+  if (answer.ok || answer.code === "db_error") return answer;
+  return { ok: true, decision: null, kept: answer.message.replace(/ Nothing was changed or recorded\.$/, "") };
+}
+//
+// WHY IT IS SAFE. (1) It never widens visibility: the visibility part is still
+// decideRestoredEventVisibility, unchanged — back to exactly what the recorded
+// hide found, never past a host's later recorded change, refused for a hide
+// that recorded nothing. (2) It never moves the state: the decision is null and
+// no state is written. (3) It never releases a moderator's STATE hold: its
+// admin_restore row records no state change, and the hold reads only state
+// CHANGES (decideEventModerationHold), so a recorded cancel / remove still
+// holds. (4) A moderator's own recorded cancel / remove is reversed exactly as
+// before: that reversal is allowed, never kept.

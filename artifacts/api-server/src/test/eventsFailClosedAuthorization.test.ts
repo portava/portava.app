@@ -202,7 +202,12 @@ describe("checkEventEligibility — the block lookup", () => {
     const sc = makeClient({ event_roles: [], blocks: [] }, new Set(["blocks"]));
     const r = await checkEventEligibility(sc, EV, ME);
     assert.equal(r.ok, false);
-    assert.match((r as any).message, /cannot join/i);
+    // census-trust wave 5 (event reads): the denial says the check could not RUN
+    // (unavailable, 503 at a route) — not "Cannot join this event", a verdict
+    // about a pair whose block state was never read.
+    assert.equal((r as any).unavailable, true);
+    assert.equal((r as any).errorCode, "degraded_unavailable");
+    assert.match((r as any).message, /temporarily unavailable/i);
   });
 
   it("still denies a genuinely blocked caller", async () => {
