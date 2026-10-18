@@ -75,6 +75,13 @@ Branch `claude/wave4-build-20261017` (PR #764, stacked on #763 and #762). Every 
 
 - **Production migration packet:** `/Users/areyouok/portava-sandbox/prod-apply-packet-20261017/` (296 migrations) plus `addendum-3996-3999/`. On a replica, the result matched a fresh canonical replay with 0 catalog differences. Run the main packet first: its 3813/3814 remove client grants on memories and memory_items.
 - **What the press fixes:** of 64 production reads that fail today because their schema was never applied, the press clears 61. The table is in `docs/ops/production-unapplied-schema-reads-20261017.md`. The press also switches some paths on with no flag change: crowd live labels and the Trails surface.
+- **Five new migrations, 3901–3905 (2026-10-18), to apply AFTER the packet and its 3996–3999 addendum:**
+  - **3905 closes a live privacy hole.** Someone a person has blocked can today still read that person's public post photos through the direct API (PostgREST): `post_media_public_select` checks a block only in one direction. 3905 checks both directions.
+  - **3901:** one help-request (SOS) notification per member per event, even with two server instances.
+  - **3902:** an index for the place sweep.
+  - **3903, 3904:** the memory functions use the shared block check. Their output is unchanged.
+  - **Locks:** 3901 and 3902 lock their table against writes while the index builds.
+  - **Order:** each is order-independent of everything numbered above it (grep evidence in the lane handback). CI's local-db and live-db jobs are their first run on a real Postgres. In-process PostgreSQL 16 (PGlite) was the proof here.
 - **Not cleared by the press:** two reads of held 3601's column. They now return a stated 503.
 - **Deployment:** `EXPO_PUBLIC_SUPABASE_URL` and the API's `SUPABASE_URL` must name the same project, or message images are withheld (T446, fail-closed).
 - **Production defects fixed in #764 and failing today until it deploys:**

@@ -9624,3 +9624,12 @@ unchanged, and `runCollectionsTick` changed only in its two line-neutral claim-e
 
 - NOT-GRADED: artifacts/api-server/src/test/placeCollectionsBacklogSweep.test.ts — this correction's own suite; no H row rests on it.
 - NOT-GRADED: artifacts/api-server/src/routes/placeLiving.ts — cited only to show the assembler the worker's living-cache step cannot reach; no H row grades it here.
+
+### Correction (2026-10-18, wave 5 migration lane) — `place_best_of.updated_at` is indexed (unapplied)
+
+The place stale sweep's "Not done" note above (no index on `updated_at`) is closed on this branch by
+`artifacts/api-server/src/migrations/3902_place_best_of_updated_at_index.sql`: a btree on `(updated_at, place_id)`, the
+sweep's walk key. On in-process PostgreSQL 16.4 (PGlite) with 20k rows and a 5% backlog, the count moved from a Seq Scan
+to a Bitmap Index Scan, and the first and next pages from a Seq Scan plus Sort to an Index Only Scan with no Sort. Answers
+are identical (`artifacts/api-server/src/test/placeBestOfUpdatedAtIndexMigration.test.ts`). The index builds with the table
+locked against writes. Press order: after the 20261017 packet and its 3996–3999 addendum. No row moves.

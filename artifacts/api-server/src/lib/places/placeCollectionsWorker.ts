@@ -666,10 +666,10 @@ async function processPlace(sc: any, placeId: string, claimedQueuedAt: string): 
 // STALE_SWEEP_FOLLOW_UP_DELAY_MS later, at most STALE_SWEEP_MAX_FOLLOW_UPS times
 // between hourly runs: at most 4 runs and 2 400 refreshes an hour, never more.
 //
-// NO INDEX. place_best_of has no index on updated_at (2047 indexes
-// place_living_cache.cached_at only), so the count and each page scan a table
-// of one row per precomputed place. No migration number is available to add
-// one; the cost is stated, not hidden.
+// THE INDEX. 3902 adds a btree on place_best_of (updated_at, place_id), the
+// walk key below; until it is applied (the owner's press), the count and each
+// page scan a table of one row per precomputed place. With it, the count is a
+// bitmap index scan and the pages an index-only scan with no sort (PGlite plan).
 
 /** A place's collections are overdue this long after their last rebuild. */
 const STALE_MS = CACHE_STALE_HOURS * 60 * 60 * 1_000;

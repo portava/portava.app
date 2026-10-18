@@ -15729,3 +15729,29 @@ and T220c's "first request … unchanged" / "Still cut" sentences. Headline unch
 ### Correction (2026-10-18, wave 5) — independent verification, pass 4: a coalesced ALL CLEAR is not a false give-up
 
 When NotificationService coalesces a door-sent or re-driven P1 ALL CLEAR, the producer reads the evidence itself — `deduped` (counted as told: no ERROR, no GAVE UP, never re-sent) only if the member holds this message's causal row or their newest safety row for the thread inside P1's 60 s window is an ALL CLEAR; `coalesced` (re-attempted at WARN, written once when the window lapses) if a help request followed it, so a second emergency's ALL CLEAR is never lost; and a bare duplicate refusal (an unreadable ledger) stays not_created and gives up at ERROR. P0 is never either (`artifacts/api-server/src/services/telegraph/safetyNotifications.ts:662#function dedupeCandidate(`, `artifacts/api-server/src/services/telegraph/safetyNotifications.ts:695#async function readEquivalentHolders(`, `artifacts/api-server/src/test/telegraphSafetySignalRedrive.test.ts:634#describe("pass 4`). Like every settle, `deduped` is remembered in memory only; after a restart past the window a repeat ALL CLEAR is written once. No row moves.
+
+### Correction (2026-10-18, wave 5 migration lane) — the SQL layer's block checks and the SOS cross-instance double-tell
+
+*Branch `claude/wave4-build-20261017`; the migrations are unapplied everywhere. **NO ROW MOVES.** T220 and T254 stay C on
+their stated measurements. These close the two boundaries their verification passes stated.*
+
+- **The SQL layer's inline block checks (T220's stated boundary, pass 4).** `project_user_memory` and `memory_public_feed`
+  read `public.blocks` inline. `post_media_public_select`'s check was one-way: a person the owner blocked could still read
+  the owner's public media through PostgREST (census-media's correction of the same date). All three move onto
+  `authz.is_blocked`, and nothing else in their definitions changes:
+  - `artifacts/api-server/src/migrations/3903_project_user_memory_block_check_of_record.sql`
+  - `artifacts/api-server/src/migrations/3904_memory_public_feed_block_check_of_record.sql`
+  - `artifacts/api-server/src/migrations/3905_post_media_public_select_block_check_of_record.sql`
+
+  3903 and 3904 amend the installed text and refuse unless the old and new text match character for character outside
+  the block predicate. Their output is byte-identical, since both functions run as service_role only.
+- **The SOS cross-instance double-tell (T254's stated residual).**
+  `artifacts/api-server/src/migrations/3901_telegraph_safety_notification_once_per_member.sql` adds a partial unique index:
+  one `thread_safety_alert` row per member per causal event. A second instance's create then fails, and
+  `services/telegraph/safetyNotifications.ts` counts that member `already_told` once it reads the row back: settled, no
+  ERROR, no re-drive. Before 3901 is applied, behaviour is unchanged. Tests:
+  `artifacts/api-server/src/test/telegraphSafetyOncePerMember.test.ts` (19, 5 red on the old code) and
+  `artifacts/api-server/src/test/db/telegraphSafetyOncePerMember.db.test.ts` (CI local-db).
+
+Each file is order-independent of every file numbered above it: nothing above it touches these objects (the grep evidence
+is in the lane's handback). Press order: after the 20261017 packet and its 3996–3999 addendum.

@@ -244,7 +244,7 @@ async function tellConversation(
  * One notification per member, each on its own: one member's failure stops nobody else. The causal event
  * (`MESSAGE:<id>`) is persisted on every row (metadata.causal_event_id) — it is what the re-drive below reads to
  * tell each member at most once. `withheld` here is `not_created` (the service declined or the insert failed) or
- * `failed` (it threw) or `coalesced` (the layer held back a P1 that is not equivalent), all re-attempted, or `deduped` (an equivalent is SEEN: counted as told) — file foot. A failed ROUTE is not withheld: the row exists, the member
+ * `failed` (it threw) or `coalesced` (the layer held back a P1 that is not equivalent), all re-attempted, or `deduped` (an equivalent is SEEN: counted as told) or `already_told` (3901 refused a second row and the winner's is SEEN: counted as told) — file foot. A failed ROUTE is not withheld: the row exists, the member
  * is told in-app, and repeating the push is the router's push-retry job, not this producer's.
  */
 async function deliverSafetySignal(
@@ -256,7 +256,7 @@ async function deliverSafetySignal(
   const { threadId, senderId, messageId, signal, eventType, actor } = m;
   const causalEventId = causalEventIdOf({ objectType: "MESSAGE", objectId: messageId }) ?? undefined;
   const notified: string[] = [];
-  const withheld: Array<{ userId: string; reason: string }> = []; const duplicates: string[] = []; // refused as duplicates: classified after the loop (file foot)
+  const withheld: Array<{ userId: string; reason: string }> = []; const duplicates: string[] = []; const conflicts: string[] = []; // refused as duplicates, or an insert that failed: classified after the loop (file foot)
   await Promise.all(deliverTo.map(async (userId) => {
     let row: NotificationRow | null; let refusal: NotificationCreateRefusal | null = null;
     try {
@@ -276,7 +276,7 @@ async function deliverSafetySignal(
       loud(log, { err, threadId, signal, userId }, "SAFETY notification failed for one member (the help request itself was written)");
       return;
     }
-    if (!row && dedupeCandidate(eventType, refusal)) { duplicates.push(userId); return; } if (!row) {
+    if (!row && dedupeCandidate(eventType, refusal)) { duplicates.push(userId); return; } if (!row && refusal === "insert_failed") { conflicts.push(userId); return; } if (!row) {
       withheld.push({ userId, reason: "not_created" });
       loud(log, { threadId, signal, userId }, "SAFETY notification not created for one member (privacy guard, ledger or insert)");
       return;
@@ -288,7 +288,7 @@ async function deliverSafetySignal(
       loud(log, { err, threadId, signal, userId }, "SAFETY notification failed for one member (the help request itself was written)");
     }
   }));
-  withheld.push(...(await classifyDuplicates(sc, { threadId, messageId, signal, eventType }, duplicates, log))); return { notified, withheld };
+  withheld.push(...(await classifyDuplicates(sc, { threadId, messageId, signal, eventType }, duplicates, log))); withheld.push(...(await classifyInsertFailures(sc, { threadId, messageId, signal }, conflicts, log))); return { notified, withheld };
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -308,7 +308,7 @@ async function deliverSafetySignal(
  * this (the handback lists what was checked: push_retry_queue is keyed on an
  * EXISTING notification, the journey / stamp / place / outbox queues are each
  * one domain's, scheduler_watermarks and telegraph_outbox are not applied in
- * production, and the 3000-3999 band is exhausted). It needs none: the help
+ * production; "the 3000-3999 band is exhausted" was wrong, see 3901). It needs none: the help
  * request IS a durable row — public.messages, written in the door's own
  * transaction before any of this runs — and who has been told IS a durable
  * row too — public.notifications, each carrying metadata.causal_event_id =
@@ -357,9 +357,9 @@ async function deliverSafetySignal(
  *
  * WHAT IT DOES NOT CLOSE (stated for the owner, in the handback too):
  *   - Two instances due on the same message within the same ~100 ms can both
- *     find a member untold and both tell them. Closing that needs a unique
- *     index on (user_id, metadata->>causal_event_id) or a claim row — a
- *     migration, and none is available.
+ *     find a member untold and both create. Migration 3901's unique index on
+ *     (user_id, metadata->>causal_event_id) refuses the second row; the loser
+ *     counts the member `already_told` once it SEES the winner's row (file foot). Until 3901 applies, both rows land.
  *   - The loop is an in-process timer like every scheduler here: no process
  *     running at all (autoscale with no instance up) means no attempt until
  *     one starts; a gap past 15 minutes forfeits the remaining attempts and
@@ -403,7 +403,7 @@ export function _resetSafetyRedriveMemo(): void {
 
 /** A door that told every member it could (blocked, for a help request archived, and `deduped` ones excepted) leaves nothing for the re-drive. */
 function doorToldEveryone(o: SafetyNotifyOutcome): boolean {
-  return o.status === "notified" && o.withheld.every((w) => w.reason === "blocked" || w.reason === "archived" || w.reason === DEDUPED);
+  return o.status === "notified" && o.withheld.every((w) => w.reason === "blocked" || w.reason === "archived" || w.reason === DEDUPED || w.reason === ALREADY_TOLD);
 }
 
 /** The signal a STORED row carries: a §6.2 SAFETY row's kind, or §9.1's NEED_HELP (coordination.ts stores the state lower-cased as the subtype). */
@@ -533,7 +533,7 @@ async function redriveOnce(sc: SupabaseClient, messageId: string, opts: { deps?:
   const deps = opts.deps ?? (await defaultDeps(sc));
   const eventType = signal === "all_clear" ? SAFETY_ALL_CLEAR_EVENT : SAFETY_ALERT_EVENT;
   const out = await deliverSafetySignal(deps, sc, { threadId, senderId, messageId, signal, eventType, actor }, untold, opts.log);
-  if (out.withheld.some((w) => w.reason !== DEDUPED)) return retry("deliver", out.notified); // a `deduped` member counts as told (file foot)
+  if (out.withheld.some((w) => w.reason !== DEDUPED && w.reason !== ALREADY_TOLD)) return retry("deliver", out.notified); // a `deduped` or `already_told` member counts as told (file foot)
   withheld.push(...out.withheld); return settle("complete", out.notified);
 }
 
@@ -728,4 +728,76 @@ async function readEquivalentHolders(sc: SupabaseClient, m: { threadId: string; 
   }
   for (const u of equivalent) coalesced.delete(u);
   return { equivalent, coalesced };
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// A CREATE THE DATABASE REFUSED AS A SECOND ROW — `already_told` (migration 3901)
+// ═════════════════════════════════════════════════════════════════════════════
+/**
+ * THE DEFECT. "Never told twice" was a READ (the re-drive's step 4, the door's
+ * one call per member): two API instances re-driving the same message inside
+ * the same ~100 ms, or a slow door on one instance and the re-drive on another,
+ * both read "untold" and both created, so the member was woken twice.
+ *
+ * THE DATABASE DECIDES. 3901_telegraph_safety_notification_once_per_member.sql
+ * is a unique index on public.notifications (user_id, metadata->>
+ * causal_event_id) over this producer's rows (source_type =
+ * SAFETY_NOTIFICATION_SOURCE): the second insert fails with 23505, which
+ * NotificationService.createDetailed answers as `insert_failed`.
+ *
+ * `already_told` — COUNTED AS TOLD, never re-driven. A create answered
+ * `insert_failed` is followed by ONE read: does this member hold a row carrying
+ * this message's causal id MESSAGE:<id>, whoever wrote it (the re-drive's own
+ * "already told" rule)? SEEN, the member is `already_told`: the door settles,
+ * a re-drive attempt settles, no ERROR, no GAVE UP — logged once at WARN. A
+ * member counted so is never in `notified` (this attempt told nobody new).
+ *
+ * EVIDENCE, NEVER ASSUMPTION. An insert can fail for other reasons (a dropped
+ * connection, a constraint), so the refusal alone proves nothing. No row seen,
+ * or the read itself failing, leaves the member `not_created` exactly as
+ * before: ERROR, re-attempted at every point, given up on loudly.
+ *
+ * SAFE BEFORE 3901 APPLIES. Without the index no insert conflicts: both
+ * instances' rows land (today's double-tell, unchanged) and both see their own
+ * create succeed, so this path is never taken. An insert that fails without the
+ * index reads no row (the row was never written) and stays `not_created`.
+ *
+ * A HELP REQUEST (P0) IS NOT `deduped` HERE EITHER. This is not a coalescing
+ * rule: the row seen carries the SAME message's causal id, so the member holds
+ * this very help request — the case the re-drive's step 4 settles too.
+ *
+ * STATED LIMIT. NotificationService logs its own ERROR for the refused insert
+ * (`NotificationService.create: DB insert failed`, with the 23505) before this
+ * module classifies it; this module's WARN names it as already told.
+ */
+const ALREADY_TOLD = "already_told";
+
+/** Each create answered `insert_failed`: `already_told` when the member's row for this message is SEEN, else `not_created` at ERROR. */
+async function classifyInsertFailures(
+  sc: SupabaseClient,
+  m: { threadId: string; messageId: string; signal: SafetySignal },
+  failedCreates: readonly string[],
+  log: SafetyNotifyLog | undefined,
+): Promise<Array<{ userId: string; reason: string }>> {
+  if (failedCreates.length === 0) return [];
+  const causal = causalEventIdOf({ objectType: "MESSAGE", objectId: m.messageId });
+  let seen: Set<string> | null = causal === null ? null : new Set<string>();
+  try {
+    for (let i = 0; seen !== null && i < failedCreates.length; i += TOLD_CHUNK) {
+      const { data, error } = await sc.from("notifications").select("user_id").in("user_id", failedCreates.slice(i, i + TOLD_CHUNK)).eq("metadata->>causal_event_id", causal!);
+      if (error || !Array.isArray(data)) { seen = null; break; }
+      for (const r of data as Array<{ user_id?: unknown }>) seen.add(String(r?.user_id ?? ""));
+    }
+  } catch {
+    seen = null;
+  }
+  const out: Array<{ userId: string; reason: string }> = [];
+  for (const userId of failedCreates) {
+    if (seen !== null && seen.has(userId)) { out.push({ userId, reason: ALREADY_TOLD }); continue; }
+    out.push({ userId, reason: "not_created" });
+    loud(log, { threadId: m.threadId, signal: m.signal, userId, refusal: "insert_failed", evidence: seen === null ? "unreadable" : "none" }, "SAFETY notification not created for one member (privacy guard, ledger or insert)");
+  }
+  const told = out.filter((w) => w.reason === ALREADY_TOLD).map((w) => w.userId);
+  if (told.length > 0) log?.warn({ threadId: m.threadId, signal: m.signal, alreadyTold: told }, "SAFETY notification: the database refused a second row for this help request (3901) and the member already holds it — counted as already told, not re-attempted");
+  return out;
 }

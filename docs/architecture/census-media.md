@@ -17558,3 +17558,23 @@ was reproduced in PGlite. The fix belongs either to 3676's merge or to the index
 **No row moves.** MD385 stays W, because 3999 is applied nowhere (A.2).
 
 - NOT-GRADED: artifacts/api-server/src/migrations/3676_memory_graph_kernel.sql — the Memory merge/split kernel (census-highlights-memories), cited as the writer whose re-parenting this correction unblocks; no media row rests on it.
+
+### Correction (2026-10-18, wave 5 migration lane) — post_media_public_select's block check was one-way; 3905 re-creates it
+
+*Branch `claude/wave4-build-20261017`; the migration is unapplied everywhere. **NO ROW MOVES.***
+
+The policy's block test read `public.blocks` through `blocks`' own row-level security, which shows a reader only the
+blocks they made. So someone the media's owner had blocked could still read the owner's ready, public media through
+PostgREST. Only a block made BY the reader was enforced. In-process PostgreSQL 16.4 (PGlite) shows this under 2337's policy.
+
+`artifacts/api-server/src/migrations/3905_post_media_public_select_block_check_of_record.sql` re-creates the policy with
+`NOT authz.is_blocked(auth.uid(), post_media.user_id)`, which tests both directions. Everything else in the policy is
+byte-identical. Before writing, its precondition proves on the database itself that the installed policy is exactly 2337's
+(or already 3905's). Tests:
+- `artifacts/api-server/src/test/sqlBlockChecksOfRecordMigrations.test.ts`;
+- `artifacts/api-server/src/test/db/postMediaBlockCheckOfRecord.db.test.ts`, which runs on CI's local-db job.
+
+**Scope.** MD9 ("blocks … resolve before client projection") grades the API's projection path, which reads blocks through
+the shared exclusion readers. The leak is a direct table read that bypasses that path. MD9 is left as graded, and the
+independent verifier is asked to rule whether its scope covers direct reads. Production carries the one-way check until the
+owner applies 3905, after the 20261017 packet and its 3996–3999 addendum.
