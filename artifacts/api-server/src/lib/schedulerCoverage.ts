@@ -24,7 +24,7 @@
  *   `start`       the function `index.ts` calls. The guard asserts this set is
  *                 EXACTLY the set of `start…()` statements in `index.ts`, in
  *                 both directions, so a scheduler added without a row here
- *                 fails the build rather than quietly joining the 45.
+ *                 fails the build rather than quietly joining the 44.
  *   `reportedAs`  the job names this scheduler contributes to
  *                 `GET /healthz/schedulers`. The guard asserts each one appears
  *                 as a `job: "…"` literal in `routes/health.ts`, and that every
@@ -36,18 +36,18 @@
  *
  * A row with NEITHER field is a job whose stopping leaves no trace anywhere:
  * no row to go stale, no counter to read, nothing an operator or an alert could
- * notice. There are 45 of those, and that number is the point of this file.
+ * notice. There are 44 of those, and that number is the point of this file.
  * It was 46 until `startHealthMonitorLoop` began writing its own
  * `stamp_health_monitor` row; the monitor reported to the logger only, and logs
  * on this host are not retained anywhere queryable, so nothing outside the
  * process could establish that it had run at all.
  *
  * ── WHAT THIS FILE IS NOT ────────────────────────────────────────────────────
- * It is not a fix. Knowing that 45 jobs are unobservable does not make them
+ * It is not a fix. Knowing that 44 jobs are unobservable does not make them
  * observable, and it does nothing at all about the suspension that stops all
  * 58 — that needs either an always-on host or an external trigger per job, and
  * both are the owner's call, not a default anyone should pick in a registry.
- * Nobody has yet assessed which of the 45 are time-critical.
+ * Nobody has yet assessed which of the 44 are time-critical.
  *
  * It also does not claim 58 is the number of LOOPS. `startTripProjectionWorkers`
  * starts several workers behind one call, and this list counts the call, which
