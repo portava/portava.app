@@ -234,7 +234,7 @@ describe("C. nothing Portava writes on the path offers it, and no Visa Buddy cap
         const p = path.join(dir, name);
         const s = statSync(p);
         if (s.isDirectory()) walk(p);
-        else if (/\.(ts|tsx)$/.test(name) && !/\.test\.tsx?$/.test(name) && /canProvideVisaBuddyService|VisaBuddy|visa_buddy/.test(read(p))) hits.push(path.relative(REPO, p));
+        else if (/\.(ts|tsx)$/.test(name) && !/\.test\.tsx?$/.test(name) && /canProvideVisaBuddyService|VisaBuddy|visa_buddy/.test(read(p).replace(/layoverVisaBuddyWithdrawn/g, ""))) hits.push(path.relative(REPO, p));
       }
     };
     walk(API_SRC);

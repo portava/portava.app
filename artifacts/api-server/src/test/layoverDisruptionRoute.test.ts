@@ -380,3 +380,17 @@ describe("§15.2 — PATCH /sessions/:id no longer resets the disruption state",
     assert.equal(r.body.replan.disruptionStateUnavailableReason, "ledger_unreadable");
   });
 });
+
+// Independent verification pass 10, C3: the wire's recompute must be the recompute's OWN answer. Its mutant S24 (the route
+// publishing recomputedNotAppended:false) survived every case above, which checked only that the field is a boolean.
+describe("§15.2 — the published recompute is internally true (pass 10, C3)", () => {
+  it("usableMinutesDelta is after − before, and recomputedNotAppended is exactly 'the window did not move by the schedule delta'", async () => {
+    stage();
+    const r = await post({ kind: "delay", newDepartureTime: new Date(NOW + 10 * HOUR).toISOString() });
+    assert.equal(r.status, 200);
+    const rc = r.body.recompute;
+    assert.ok(rc, "a moved departure must publish a recompute");
+    assert.equal(rc.usableMinutesDelta, rc.after.usableMinutes - rc.before.usableMinutes);
+    assert.equal(rc.recomputedNotAppended, rc.usableMinutesDelta !== rc.scheduleDeltaMinutes);
+  });
+});

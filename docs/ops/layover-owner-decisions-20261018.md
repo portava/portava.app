@@ -4,20 +4,23 @@ Layover is 86 C / 158 W / 52 N of 296 requirements (29.1% built and correct), th
 2026-10-18 two triage passes read every W and N row at its current census line, together with the code and the
 production ledger. Their reports are in the session scratchpad (`layover-triage-W.txt`, `layover-triage-N.txt`).
 
-**What code alone moved (built 2026-10-18, five lanes): 86 → 91 C (29.1% → 30.7%).**
+**Where it stands after the lanes and the verifier (2026-10-18): 86 → 81 C (29.1% → 27.4%).** Code moved 8 rows up. Applying the census's reachability rule uniformly took 13 down. None of the 13 is broken code: each is unreachable in production until a migration you hold is applied.
 - **Up (8):** L148, L149, L231 and L126 (disruption reporting and the offline map); L232 (crew departures); L13 and L59 (the time-window engine in its own package); L274 (no Rent-a-Buddy visa help: the test found a real path, and it is closed).
-- **Down (3 false greens):** L181 and L197 sit behind a crowd-reports flag that 3513 seeds, and 3513 is unapplied. L254 sits behind Rent-a-Buddy, which is off.
+- **Down (13 false greens):**
+  - L181, L197, L84–L89, L251 and L252 sit behind the crowd-reports channel. That channel is closed until 3513 is applied.
+  - L254 sits behind Rent-a-Buddy, which is off.
+  - L92 and L257: event de-duplication is built but has no caller, and the external-event path waits on 2981.
 - **Built but held at W:** L296, recommendation snapshot pairing. It becomes C when you turn on `layover_stable_recommendation_ids_enabled`, with no migration.
-- **Press-ready code halves:** seven rows (L207, L44, L196, L175, L189, L191, L180) now carry their code half. L207, L44 and L196 become C on the press alone. The other four also need a route line.
+- **Press-ready code halves:** seven rows (L207, L44, L196, L175, L189, L191, L180) now carry their code half. L207 and L196 become C on the press alone. L44 also needs your ruling that clearing a card's snapshot citation (audited) counts as invalidating it. The other four also need a route line.
 - **Routes:** layover routing calls now open a Routes budget scope, so enabling Routes no longer refuses them all.
-- **Before deploying:** apply 3513 first, or crowd reports switch off in production when this branch deploys.
+- **Apply 3513 before the next deploy.** The crowd-report gate has been on `main` since 2026-10-03 (154c18e0c). If production has been deployed since then, the channel is already closed; if not, it closes when this branch deploys. 3513 alone returns ten of the thirteen rows above.
 
 **Most of the remainder is yours: the production press and the rulings below.**
 
 ## 1. The production press: the largest single move
 
 Every unapplied layover migration is already in `prod-apply-packet-20261017` (its 3996 is in the addendum). Applying
-them and flipping the matching flags would move about **39 W rows and 23 N rows to C**: 86 → about 148, roughly 50%.
+them and flipping the matching flags would move about **39 W rows and 23 N rows to C**, and 3513 alone also returns ten of the thirteen rows above: 81 → about 153, roughly 52%. Of the other three, L254 returns with Rent-a-Buddy, and L92/L257 need 2981 and their de-duplication wired in.
 - **Order matters.** 3792 must be applied **before** `layover_decision_persistence_enabled` is turned on. Otherwise
   every roomy layover fails to persist.
 - The families: the snapshot family (2700 → 2992 → 3623 → 3792), then the following flags:

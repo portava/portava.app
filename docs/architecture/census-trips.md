@@ -3749,7 +3749,7 @@ never FEASIBLE).
 
 **What was built.**
 
-- `domain/trips/invariants/TripFreedomEngine.ts` — PURE. §7.3's `FreedomWindow`, every
+- `domain/trips/invariants/TripFreedomEngine.ts` (since 2026-10-18 the engine is `domain/temporal/TemporalFreedomEngine.ts`; TripFreedomEngine.ts is the Trips adapter) — PURE. §7.3's `FreedomWindow`, every
   field (`:102#FreedomWindow`): `beginsAt` is when the previous
   commitment releases the traveller — its end when known, else its start, and
   never before the latest moment they were allowed to arrive at it

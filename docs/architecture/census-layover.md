@@ -9310,7 +9310,7 @@ Tests:
 ### §55.4 What the rest of this wave's scope needs
 
 - **#569 is still OPEN** (checked 2026-10-07): L124, L132–L135, L137, L139, L158, L166, L203 and L232 stay where they are.
-- **L13, L56–L59 and L178** grade the Temporal Freedom engine in `domain/trips/invariants/TripFreedomEngine.ts`. Trips owns that file. Their W reasons hold on this tree: domain ownership, the two inputs that never arrive, the trip-named engine, and no caller outside the tests.
+- **L13, L56–L59 and L178** grade the Temporal Freedom engine in `domain/trips/invariants/TripFreedomEngine.ts` (since 2026-10-18 the engine is `domain/temporal/TemporalFreedomEngine.ts`; TripFreedomEngine.ts is the Trips adapter). Trips owns that file. Their W reasons hold on this tree: domain ownership, the two inputs that never arrive, the trip-named engine, and no caller outside the tests.
 - **L163 needs a lead ruling.** `layover_events` and `layover_sessions` are in `UNCLASSIFIED_BACKLOG`, so account deletion erases no layover row. Recommendation, as the privacy-preserving default: erase the traveller's layover sessions, events, stops, recommendations, presence, checkpoints and crew memberships on account deletion, and set a retention period for `layover_events`. That is account deletion code, which is the lead's to direct.
 - **L254, L273 and L274** wait on Rent-a-Buddy (#640). **L268 and L112** wait on Compass's tool flag. **L275** waits on the Passport postcard. **L131** waits on a Telegraph crew thread.
 - **L236 and L295: a layover client-boundary suite on a real database, written and NOT yet run.** `artifacts/api-server/src/test/db/layoverClientBoundary.db.test.ts:2#census-layover L236 / L295` runs on CI's kernel-SQL harness (`scripts/local-db/up.sh`, the chain replayed onto PostgreSQL 16). Its cases:
@@ -12379,14 +12379,14 @@ The guard's INTENDED set gained `safe_return|circle.need_help_host_alert` (the a
 ## Wave 5, layover lanes 2–4 (2026-10-18): seven rows up, three false greens down
 
 *Branch `claude/wave4-build-20261017`; committed, undeployed. The owner made Layover the priority on 2026-10-18. Two
-triage passes read every W and N row at its current line, with the code and the production ledger. Four builder lanes
-followed; this section records lanes 2, 3 and 4. Lane 1's rows (L296, L274) are recorded separately when they land.
+triage passes read every W and N row at its current line, with the code and the production ledger. Five builder lanes
+followed; this section records lanes 2, 3 and 4 (lane 5 moved no row and is recorded below). Lane 1's rows (L296, L274) are recorded separately when they land.
 Each move below was red-first and mutation-proved by its lane. The lanes' handbacks hold the full evidence.*
 
 ### Lead grading ruling R22 (2026-10-18): a traveller's own report is a §15.2 input
 
-§15.2 names no input source. §11's event envelope makes `source` a field of every event, and §1 says the first scope does
-not require exact live airport coverage everywhere. So a disruption the traveller reports
+§15.2 names no input source. §11's event envelope makes `source` a field of every event, and §2 (Scope and non-goals) says the first
+scope does not require exact live airport coverage everywhere. So a disruption the traveller reports
 (`POST /airport/sessions/:id/disruption`, `source: "traveller"`) is a §15.2 input. A flight feed (owner rulings R6/R17)
 would ADD a source; it is not a precondition. The rows below that stood W on "no flight feed" alone are re-graded on this
 basis. Appendix B.3's "affected sessions" fan-out is not a row of this census; it is not read into L231.
@@ -12400,7 +12400,7 @@ basis. Appendix B.3's "affected sessions" fan-out is not a row of this census; i
 | L231 | W | **C** | A reported cancellation moves the session to CANCELLED with recoveryNeeded and offers REBOOKING / RECOVERY next. Rebooking, airline contact and airport help each read "unavailable" with the server's reason; no help is invented (L145 is N). R22. |
 | L126 | W | **C** | When the overview cannot be read and a plan is cached, the MAP card itself renders from the cache (`travel-buddy-standalone/src/components/layover/LayoverMapCard.tsx`, cached mode appended; mounted on the failed-read screen at `travel-buddy-standalone/app/layover/[id].tsx:716#<LayoverOfflinePlanCard plan={plan}`). It shows the last-certified time, the stale badge from the single staleness rule, and an OFFLINE badge, and never calls the envelope safe. |
 | L232 | W | **C** | The stated limit, "no session can form a crew", has been false since 2984 was applied (production ledger, 2026-09-16). GET /airport/sessions/:id/crew (`artifacts/api-server/src/routes/airport.ts:3327#router.get("/airport/sessions/:id/crew"`) refuses only on `airport_mode_enabled`, which is TRUE in the 2026-09-22 snapshot, and publishes the earliest member's certified return. Pinned over the router under production flags (`artifacts/api-server/src/test/layoverCensusPins.test.ts`), and in the scenario's own words across all six member orderings and the explicit-split arm (`artifacts/api-server/src/test/layoverCrewConstraints.test.ts`). |
-| L13 | W | **C** | The Temporal Freedom Engine is its own domain package (`artifacts/api-server/src/domain/temporal/TemporalFreedomEngine.ts`). Both adapters import it: Trips through `domain/trips/invariants/TripFreedomEngine.ts`, now a thin adapter, and Layover directly. It owns the window, the next commitment and the free gap. Its only import is `lib/travelEstimate`: no model, no prose. A 7.7 MB before/after snapshot of every output is byte-identical, and the Trips and Layover decision goldens are unchanged. |
+| L13 | W | **C** | The Temporal Freedom Engine is its own domain package (`artifacts/api-server/src/domain/temporal/TemporalFreedomEngine.ts`). Both adapters import it: Trips through `domain/trips/invariants/TripFreedomEngine.ts`, now a thin adapter, and Layover directly. It owns the window, the next commitment and the free gap. Its only import is `lib/travelEstimate`: no model, no prose. The move itself is byte-identical (a 7.7 MB snapshot of every output before and after the move, sha256 f39540ee…); the committed tree then renamed the layover wire's conflict label (L59, P1), so against the parent commit the same snapshot differs ONLY in that string (855 occurrences on the layover wire; the Trips sections are identical), and the Trips and Layover decision goldens are unchanged. |
 | L59 | W | **C** | The engine names no context: its reason is `TEMPORAL_CONFLICT`, its horizon is `horizonStart` / `horizonEnd`, and it has its own point type and no table. The airport reasons stay in the layover adapter. The layover wire's conflict label is now `TEMPORAL_CONFLICT` (`artifacts/api-server/src/services/airport/LayoverTemporalFreedom.ts:345#export const LAYOVER_WIRE_CONFLICT_REASON = "TEMPORAL_CONFLICT"`; type-only import at `artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:46#} from "../../domain/temporal/TemporalFreedomEngine.js";`), so a layover traveller is no longer handed a trip-shaped conflict. No client reads the field. |
 | L181 | C | **W** | FALSE GREEN. Its only production paths are GET and POST /observations, and both refuse at `artifacts/api-server/src/routes/airport.ts:2790#if (await crowdReportsClosed(sc, res)) return;` and `artifacts/api-server/src/routes/airport.ts:2830#if (await crowdReportsClosed(sc, res)) return;` unless `layover_crowd_reports_enabled` is on. 3513, which seeds it, is not in the production ledger, and the flag is absent from the 2026-09-22 snapshot. The gate landed after §41's C (154c18e0c, 2026-10-03). C on the press of 3513. |
 | L197 | C | **W** | FALSE GREEN. The table is applied (2860), but its only writer is that closed POST route. The lead's table ruling needs a product surface that populates the table. C on the press of 3513. |
@@ -12417,8 +12417,10 @@ basis. Appendix B.3's "affected sessions" fan-out is not a row of this census; i
 
 ### Still open, stated
 
-- **Possibly affected, not re-graded here:** L239 ("detection has no producer") and L226 ("no delay input reaches a
-  session"). The traveller is now a disruption producer reachable from the app; both rows need re-deriving.
+- **L239, reason only:** its stated reason (that the lifecycle test's "detection" stage, POST /:id/disruption, has no producer)
+  is now false; the row stays W, because §21.2's detection stage is connection detection (DETECTED, §3 / App B.1),
+  which has no producer (L169 N, L267 W). The reason is restated here; the grade does not move. (L226, once listed
+  here, is already C at its §11.2 move.)
 - **Declared-interface C rows:** whether they survive the reachability rule applied to L181 / L197 / L254 is for the
   independent verifier to check: L84–L89, L251, L252 and the event-replanner rows.
 - **Press order:** if production is deployed from this tree before 3513 is applied, crowd reports close in production
@@ -12447,7 +12449,7 @@ Flags are read with the four-state `readFlagState`. The layover decision golden 
 
 | id | was | now | C on |
 | --- | --- | --- | --- |
-| L207 | W | W | the press of 2700 → 2992 → 3792 plus `layover_decision_persistence_enabled`. With persistence on, the replan's certified record goes through `persistDecision` and cites the stored snapshot id (`artifacts/api-server/src/services/airport/LayoverReplanService.ts`, appended). With the flag absent, the ledger row is byte-identical to before. |
+| L207 | W | W | the press of 2700 → 2992 → 3792 plus `layover_decision_persistence_enabled`. With persistence on, the replan's certified record goes through `persistDecision` and cites the stored snapshot id (`artifacts/api-server/src/services/airport/LayoverReplanService.ts`, appended). With the flag absent, the ledger row is byte-identical to before. The external-event replan path still cites no snapshot; it is closed until 2981, so wire it before that press. |
 | L44 | W | W | the same press plus 3623 and `layover_recommendation_snapshot_enabled`, and a ruling on whether clearing a card's snapshot citation (compare-and-set, audited in the replan's ledger row) counts as "invalidate". No reader hides an uncited card yet. |
 | L196 | W | W | the press of 3900 plus `layover_presence_intents_enabled`, so the table is populated. The presence expiry sweep (`artifacts/api-server/src/lib/layoverPresenceExpiryScheduler.ts`) probes for the table, sweeps expired rows in batches, and has no flag by design, because it is retention. |
 | L175 | W | W | the press, plus a route that calls `evaluate(db, userId, sessionId)` (`artifacts/api-server/src/services/airport/LayoverFeasibilityService.ts`), e.g. in place of `/safety`'s inline certify-and-persist. |
@@ -12467,12 +12469,12 @@ Rows: none move. 296 = 90 C / 154 W / 52 N / 0 X, as the headline above.
 **Lead grading ruling R11 (2026-10-18):** D-41, "No Layover path through Rent-a-Buddy offers visa help", is a prohibition.
 It is met when it holds in every flag state the code can be in, proven by an acceptance test. That is census-passport P59's
 precedent. A FALSE flag that closes the whole surface does not make a prohibition unproven. It is the positive rows
-(L254) that a FALSE flag keeps from C.
+(L254) that a FALSE flag keeps from C. Such a C carries §1's `⌀` while the flag is FALSE, as L136 and L138 do.
 
 | id | was | now | why |
 | --- | --- | --- | --- |
 | L296 | N | **W** | Built. GET /:id/recommendations always returns `snapshotId`. On the stored path that is the newest generation's snapshot, and only if that generation certified the rows as they now stand (otherwise it regenerates; an unreadable event is 503). The generation event records the pairing: the snapshot, plus a recKey → digest for each card (`artifacts/api-server/src/services/airport/LayoverRecommendationService.ts:826#stableIds: Boolean(opts.stableIds), ...ranking.event`). POST /stops/from-recommendation checks the pairing before the write (`artifacts/api-server/src/routes/airport.ts:2513#if (!await recommendationPairingOr409(sc, res, session.id`) and refuses 409 `RECOMMENDATION_EXPIRED`, "Recommendation certified under stale snapshot". An unreadable event is 503, never a pass. The per-card digest also refuses an add from an OLDER snapshot whose stable-id rows a lost generation rewrote in place. The client sends the snapshot of the card the traveller pressed, and on a 409 hides the Add buttons, shows "refreshed" and reloads the ideas once; it never retries. **Not C:** in production `layover_stable_recommendation_ids_enabled` is FALSE, so cards carry no id, "Add to plan" never renders, and no traveller reaches the guard. C when that flag is turned on; no migration is needed. |
-| L274 | N | **C** | R11. The acceptance test found a real path and it is closed. PATCH /rent-a-buddy/dashboard/offer stored categories, tagline and bio unvalidated, so a buddy declaring `visa_assistance`, or writing "guaranteed visa", was listed on the layover buddies list. The list now withholds any buddy whose category, name, tagline or bio offers visa or entry help, or trips the `VISA_HELP` scam family (`artifacts/api-server/src/routes/airport.ts:3754#rows = rows.filter((b) => !buddyOffersVisaOrEntryHelp(b));`, `artifacts/api-server/src/routes/airport.ts:5195#export function buddyOffersVisaOrEntryHelp(`). `bio` is read for the screen and never served. Pinned by `artifacts/api-server/src/test/layoverVisaBuddyWithdrawn.test.ts` (15 cases, 8 red on the old code). With `rent_buddy_enabled` FALSE in production, the list is empty for everyone today. |
+| L274 | N | **C** | `⌀` vacuous today (§1): the screen is real and proven with rent_buddy_enabled ON, and with it FALSE in production the layover buddies list is empty for everyone, so the guarded path is empty — the L136/L138 shape. R11. The acceptance test found a real path and it is closed. PATCH /rent-a-buddy/dashboard/offer stored categories, tagline and bio unvalidated, so a buddy declaring `visa_assistance`, or writing "guaranteed visa", was listed on the layover buddies list. The list now withholds any buddy whose category, name, tagline or bio offers visa or entry help, or trips the `VISA_HELP` scam family (`artifacts/api-server/src/routes/airport.ts:3754#rows = rows.filter((b) => !buddyOffersVisaOrEntryHelp(b));`, `artifacts/api-server/src/routes/airport.ts:5195#export function buddyOffersVisaOrEntryHelp(`). `bio` is read for the screen and never served. Pinned by `artifacts/api-server/src/test/layoverVisaBuddyWithdrawn.test.ts` (15 cases, 8 red on the old code). With `rent_buddy_enabled` FALSE in production, the list is empty for everyone today. |
 
 **The Routes budget (finding F1), no row moves.** No layover reader opened a `withRoutesRequestBudget` scope, so even
 after Routes is enabled every layover routing call would have been refused as "unscoped".
@@ -12500,3 +12502,40 @@ toast no longer claims "plans may be full".
 | total | 296 | 296 |
 
 L296 N → W, L274 N → C. 296 = 91 C / 155 W / 50 N / 0 X.
+
+### Wave 5 (2026-10-18): the reachability rule applied uniformly — ten more false greens down
+
+*The independent verifier (pass 10) applied the rule that took L181, L197 and L254 down to EVERY row graded C: a row
+whose only production path is behind a FALSE flag, or one an unapplied migration seeds, is not C. Of 91 C rows, 81 hold,
+8 of them already marked `⌀`. Ten more have no production path. The rule is applied uniformly, so they come down; the
+alternative, exempting pure-rule rows graded under §1's interface convention, would have left L181 and L197 taken down by
+a rule the census applies nowhere else. Each returns to C on the press named. Production state: the 2026-09-22 snapshot
+and the applied-migrations ledger.*
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L84 | C | **W** | The truth value is set by `reconcile`. Its only production callers are GET /observations, behind `layover_crowd_reports_enabled` (absent until 3513), and the aggregate reader, behind the maturity flag (2977 unapplied). `getTruth` and `getTruthFromStore` have no caller. C on the press of 3513. |
+| L85 | C | **W** | Conflict handling inside `reconcile`: the same path and gate as L84. C on the press of 3513. |
+| L86 | C | **W** | Provenance and the conflict flag inside `reconcile` (the row already carried `⌀`): the same path and gate as L84. C on the press of 3513. |
+| L87 | C | **W** | The conservative reading inside `reconcile`: the same path and gate as L84. C on the press of 3513. |
+| L88 | C | **W** | Plausibility, corroboration and decay inside `reconcile`: the same path and gate as L84. C on the press of 3513. |
+| L89 | C | **W** | A contradiction steps confidence down inside `reconcile`: the same path and gate as L84. C on the press of 3513. |
+| L251 | C | **W** | Rate limiting and trust weighting inside the observation channel: GET and POST /observations are closed until 3513 (the crowd-reports gate). C on the press of 3513. |
+| L252 | C | **W** | Outlier rejection inside `reconcile`: the same path and gate as L84. C on the press of 3513. |
+| L92 | C | **W** | normalizeEvent runs on the traveller's PATCH, but `dedupeEvents` has NO caller in non-test source, and the external payload path is behind `layover_event_ingest_enabled` (2981 unapplied). The dedup half is built but uncalled (the L247 precedent). C when the external path is pressed AND dedup is wired into it. |
+| L257 | C | **W** | "Validate ALL EXTERNAL event payloads and dedupe by stable source keys": external payloads enter only through routes/layoverEvents.ts, behind the ingest flag (2981 unapplied), and `dedupeEvents` is uncalled. C on the same terms as L92. |
+
+The event-replanner rows L90, L91, L96 and L98 ARE reachable (`handleEvent` runs on the traveller's PATCH) and stay C.
+
+### Headline
+
+| bucket | was (lane 1) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 91 | 81 |
+| BUILT-BUT-WRONG | 155 | 165 |
+| NOT-BUILT | 50 | 50 |
+| CANNOT-VERIFY | 0 | 0 |
+| total | 296 | 296 |
+
+Ten rows C → W under the reachability rule applied uniformly. 296 = 81 C / 165 W / 50 N / 0 X (27.4%). Of these, the press of
+3513 alone returns eight (L84–L89, L251, L252) and, with L181 and L197, ten in all.
