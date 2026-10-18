@@ -199,8 +199,8 @@ export async function applyEventModeration(sc: any, req: any, ev: ModeratedEvent
 /** An allowed decision of the transition authority. */
 export type EventStateDecided = { readonly allowed: true; readonly from: string; readonly to: string };
 
-/** What the activity row records about the state: the change, or nothing. */
-export type EventModerationStateChange = { from_state: string; to_state: string } | Record<string, never>;
+/** What the activity row records: the state change (or nothing), and the visibility an action that writes it found and wrote — what a restore reverses (wave 5). */
+export type EventModerationStateChange = { from_state?: string; to_state?: string } & Partial<EventVisibilityRecord>;
 
 function decidedChanges(
   opts: EventModerationOptions,
@@ -218,7 +218,7 @@ function decidedChanges(
 }
 
 function stateChangeOf(changes: Record<string, unknown>, prior: Record<string, unknown>): EventModerationStateChange {
-  return typeof changes.state === "string" ? { from_state: String(prior.state), to_state: changes.state } : {};
+  return { ...(typeof changes.state === "string" ? { from_state: String(prior.state), to_state: changes.state } : {}), ...visibilityRecordOf(changes, prior) }; // + visibility (wave 5): restore wrote "public" over a friends-only event, because nothing said what the hide found
 }
 
 /** What a moderation action asks of events.state; the authority answers. */
@@ -334,10 +334,11 @@ function notifyAttendeesOfModeratedCancel(sc: any, req: any, ev: ModeratedEventR
 }
 
 export type AppealEventReversal =
-  | { outcome: "restored"; from: string; to: string }
+  /** What the reversal put back: the state, the visibility, or both (each null when that column was not moderated). */
+  | { outcome: "restored"; state: { from: string; to: string } | null; visibility: { from: string; to: string } | null }
   /** The event is not the appellant's, or does not exist. */
   | { outcome: "not_found" }
-  /** The authority refused: there is no recorded moderation this appeal can reverse. A person must look. */
+  /** Nothing recorded that this appeal can reverse, or a hide whose prior visibility was never recorded. A person must look. */
   | { outcome: "refused"; message: string }
   /** A read or write failed, or the event changed mid-request: nothing (or nothing lasting) was written; retry. */
   | { outcome: "failed"; message: string };
@@ -345,12 +346,16 @@ export type AppealEventReversal =
 /**
  * An approved appeal of a moderated event (services/appeals/resolveAppeal.ts)
  * wrote `state: "open"` over every state — publishing a draft, reopening a
- * completed event, un-cancelling a host's own cancellation. It now goes through
- * the same moderator-only reversal as the moderate route's `restore`: the
- * newest recorded moderation is reversed, to the state it found, or nothing is
- * written. Claimed, recorded (an `admin_restore` activity row, `via: "appeal"`),
- * and undone if that record cannot be written: an unrecorded reversal would
- * leave the next restore deciding on a stale record.
+ * completed event, un-cancelling a host's own cancellation — and never put a
+ * hidden event's visibility back at all. It now reverses exactly what the
+ * moderate route's `restore` reverses, through the same deciders: the newest
+ * recorded moderation STATE change (decideModeratedEventState), and the newest
+ * recorded hide or remove's VISIBILITY (decideRestoredEventVisibility, below).
+ * Nothing recorded to reverse, or a hide that never recorded what it found, is
+ * refused — deferred to a person — with nothing written. Claimed, recorded (an
+ * `admin_restore` activity row, `via: "appeal"`, carrying both records), and
+ * undone if that record cannot be written: an unrecorded reversal would leave
+ * the next restore deciding on a stale record.
  */
 export async function reverseModeratedEventOnAppeal(
   sc: any,
@@ -365,17 +370,156 @@ export async function reverseModeratedEventOnAppeal(
     return { outcome: "failed", message: `the event could not be read: ${messageOf(err)}` };
   }
   if (!ev) return { outcome: "not_found" };
-  if (!(EVENT_MODERATION_REVERSIBLE_STATES as readonly string[]).includes(String(ev.state ?? ""))) {
-    return { outcome: "refused", message: `the event is '${String(ev.state)}': there is no moderation state change to reverse (an appeal reverses a moderator's cancel or remove; a hidden event's visibility is not restored by this path)` };
+  let stateDecision: EventStateDecided | null = null;
+  if ((EVENT_MODERATION_REVERSIBLE_STATES as readonly string[]).includes(String(ev.state ?? ""))) {
+    const answer = await decideModeratedEventState(sc, ev, { reverse: true });
+    if (!answer.ok) return answer.code === "db_error" ? { outcome: "failed", message: answer.message } : { outcome: "refused", message: answer.message };
+    stateDecision = answer.decision;
   }
-  const answer = await decideModeratedEventState(sc, ev, { reverse: true });
-  if (!answer.ok) return answer.code === "db_error" ? { outcome: "failed", message: answer.message } : { outcome: "refused", message: answer.message };
-  const decision = answer.decision!;
+  const vis = await decideRestoredEventVisibility(sc, ev);
+  if (!vis.ok) return vis.code === "db_error" ? { outcome: "failed", message: vis.message } : { outcome: "refused", message: vis.message };
+  if (!stateDecision && !vis.decision) {
+    return { outcome: "refused", message: `the event is '${String(ev.state)}': there is no moderation state change to reverse, and its visibility ('${String(ev.visibility)}') holds no recorded hide to reverse (an appeal reverses a moderator's cancel, remove or hide)` };
+  }
   const out = await applyEventModeration(sc, null, ev, {
-    changes: {}, stateDecision: decision, now: new Date().toISOString(), activityAction: "admin_restore",
+    changes: vis.decision ? { visibility: vis.decision.to } : {}, stateDecision, now: new Date().toISOString(), activityAction: "admin_restore",
     writeActivity: (st) => sc.from("event_activity_log").insert({ event_id: a.eventId, actor_id: a.actorId, action: "admin_restore", metadata: { via: "appeal", appeal_id: a.appealId, reason: a.note, ...st } }).select("id"),
     writeAudit: () => Promise.resolve({ error: null }), // the appeal row is this reversal's audit record (routes/appeals.ts commits it after this answers)
   });
-  if (out.outcome === "applied") return { outcome: "restored", from: decision.from, to: decision.to };
+  if (out.outcome === "applied") return { outcome: "restored", state: stateDecision ? { from: stateDecision.from, to: stateDecision.to } : null, visibility: vis.decision };
   return { outcome: "failed", message: out.message };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// VISIBILITY: a restore puts back ONLY what a recorded hide found (wave 5)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// THE PRIVACY DEFECT (census-trust, wave 5). `hide` writes visibility
+// `invite_only`; `remove` writes `invite_only` and archives. `restore` wrote
+// `public` over EVERY event, whatever it had held before the hide: a
+// friends-only or circle event came back PUBLIC — to every feed, search and
+// the public-read policy. And an approved appeal never put visibility back at
+// all, so a hidden event stayed hidden.
+//
+// THE RECORD. Every action that writes visibility (hide, remove, a restore
+// that puts it back, the appeal's restore) records on its own
+// event_activity_log row the value it FOUND and the value it WROTE:
+// metadata.from_visibility / to_visibility — equal when it changed nothing —
+// beside the state record, in the same claim -> audit -> undo order
+// (stateChangeOf above). No schema change: metadata is jsonb.
+//
+// THE REVERSAL (route and appeal alike). The newest visibility moderation
+// (admin_hide / admin_remove / admin_restore; paged, newest first; a record
+// that changed nothing is passed over) decides:
+//   * a RECORDED hide or remove whose value the event still holds -> back to
+//     exactly the value it found;
+//   * nothing to reverse — no moderation ever changed the visibility, or the
+//     newest one is a restore — so the visibility is the host's own -> left as
+//     it is;
+//   * a hide or remove that did NOT record what it found (it predates the
+//     record) and whose `invite_only` the event still holds -> REFUSED,
+//     nothing written. The prior value is unknowable and any guess can only
+//     widen, so the event keeps `invite_only`: of event_visibility's labels
+//     (baseline: public | friends_only | invite_only; the API's `circle` /
+//     `trip` are not stored, census-discovery §64.10) it is the most
+//     restrictive — no feed or search reads it (they read public and
+//     friends_only) and the public-read policy admits `public` only.
+// A restore never writes a visibility that no record holds; it never writes
+// `public` from nothing.
+//
+// Only an event that reads `invite_only` — the one value hide and remove
+// write — can hold a hide to reverse; any other value is the host's own and is
+// left as it is, without a read.
+//
+// STATED LIMIT. A host may change visibility (PATCH /events/:id) and that
+// writes no record. A host who moved a hidden event away from `invite_only`
+// and back again is not seen: its restore puts back the host's own value from
+// before the hide.
+
+/** The visibility `hide` and `remove` write (routes/admin.ts). */
+export const EVENT_HIDDEN_VISIBILITY = "invite_only";
+
+/** event_activity_log actions that write events.visibility, and so record it. */
+export const EVENT_MODERATION_VISIBILITY_ACTIVITY: readonly string[] = Object.freeze(["admin_hide", "admin_remove", "admin_restore"]);
+
+/** The visibility record on a moderation's activity row: what it found, what it wrote. */
+export interface EventVisibilityRecord { from_visibility: string; to_visibility: string }
+
+/** The record, when the action writes visibility and the value it found was read; otherwise nothing (and a later restore treats the row as unrecorded). */
+function visibilityRecordOf(changes: Record<string, unknown>, prior: Record<string, unknown>): Partial<EventVisibilityRecord> {
+  return typeof changes.visibility === "string" && typeof prior.visibility === "string" ? { from_visibility: prior.visibility, to_visibility: changes.visibility } : {};
+}
+
+/** The newest visibility moderation on an event, as its activity rows hold it. */
+export type RecordedEventVisibility =
+  | { kind: "none" }
+  | { kind: "recorded"; action: string; from: string; to: string }
+  | { kind: "unrecorded"; action: string };
+
+/**
+ * The newest moderation that wrote the event's visibility: its
+ * event_activity_log rows for admin_hide / admin_remove / admin_restore,
+ * newest first, every row read (paged past the row cap). A row recording no
+ * change (found == wrote) is passed over; the first other row decides — a
+ * recorded change, or a row that records nothing (`unrecorded`). A read that
+ * fails, or answers no list, is not "no record".
+ */
+export async function readRecordedEventVisibility(sc: any, eventId: string): Promise<{ ok: true; recorded: RecordedEventVisibility } | { ok: false; message: string }> {
+  const rows = await readEveryRow((from, to, count) => sc
+    .from("event_activity_log")
+    .select("id, action, metadata, created_at", { count })
+    .eq("event_id", eventId)
+    .in("action", EVENT_MODERATION_VISIBILITY_ACTIVITY as string[])
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .range(from, to));
+  if (rows.error || !rows.data) return { ok: false, message: `The event's visibility record could not be read (event_activity_log): ${rows.error?.message ?? "no rows answered"}` };
+  for (const r of rows.data) {
+    const m = r?.metadata;
+    const held = m && typeof m === "object" && typeof m.from_visibility === "string" && m.from_visibility !== "" && typeof m.to_visibility === "string" && m.to_visibility !== "";
+    if (!held) return { ok: true, recorded: { kind: "unrecorded", action: String(r?.action) } };
+    if (m.from_visibility !== m.to_visibility) return { ok: true, recorded: { kind: "recorded", action: String(r.action), from: m.from_visibility, to: m.to_visibility } };
+  }
+  return { ok: true, recorded: { kind: "none" } };
+}
+
+export type EventVisibilityReversal =
+  | { kind: "reverse"; from: string; to: string }
+  /** Nothing a moderation left to reverse: the value is the host's own. */
+  | { kind: "keep"; why: string }
+  /** A hide or remove that never recorded what it found still holds: refuse, never guess. */
+  | { kind: "unknown"; why: string };
+
+/** May a restore move this event's visibility from `current` back to what its newest visibility moderation found? Pure. */
+export function decideEventVisibilityReversal(current: unknown, recorded: RecordedEventVisibility | null | undefined): EventVisibilityReversal {
+  const cur = typeof current === "string" ? current : String(current ?? "");
+  if (!recorded || recorded.kind === "none") return { kind: "keep", why: `no moderation changed this event's visibility ('${cur}' is its host's)` };
+  if (recorded.action === "admin_restore") return { kind: "keep", why: `the newest moderation of this event's visibility is a restore ('${cur}' is its host's since)` };
+  if (recorded.kind === "recorded") {
+    if (recorded.to === cur) return { kind: "reverse", from: cur, to: recorded.from };
+    return { kind: "keep", why: `this event's visibility changed since the ${recorded.action} (it wrote '${recorded.to}'; it reads '${cur}'), so the later value stands` };
+  }
+  if (cur === EVENT_HIDDEN_VISIBILITY) {
+    return { kind: "unknown", why: `Event is hidden ('${cur}') by an ${recorded.action} that did not record the visibility it found (it predates the record), so a restore cannot know it and will not widen it: the event keeps '${cur}', the most restrictive visibility` };
+  }
+  return { kind: "keep", why: `this event's visibility changed since the ${recorded.action} ('${cur}' is not what it wrote), so the later value stands` };
+}
+
+export type EventVisibilityAnswer =
+  | { ok: true; decision: { from: string; to: string } | null }
+  | { ok: false; code: "invalid_state_transition" | "db_error"; message: string };
+
+/**
+ * What a restore does to visibility: back to the value the newest recorded
+ * hide / remove found (`decision`), or nothing (`null`); a hide that never
+ * recorded what it found is REFUSED, nothing written (see above).
+ */
+export async function decideRestoredEventVisibility(sc: any, ev: ModeratedEventRow): Promise<EventVisibilityAnswer> {
+  if (ev.visibility !== EVENT_HIDDEN_VISIBILITY) return { ok: true, decision: null }; // not a value a hide writes: the host's own, left as it is
+  const rec = await readRecordedEventVisibility(sc, ev.id);
+  if (!rec.ok) return { ok: false, code: "db_error", message: `${rec.message}. Nothing was changed or recorded.` };
+  const d = decideEventVisibilityReversal(ev.visibility, rec.recorded);
+  if (d.kind === "reverse") return { ok: true, decision: { from: d.from, to: d.to } };
+  if (d.kind === "unknown") return { ok: false, code: "invalid_state_transition", message: `${d.why}. Nothing was changed or recorded.` };
+  return { ok: true, decision: null };
 }

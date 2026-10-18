@@ -562,7 +562,7 @@ describe("PATCH /admin/events/:eventId/moderate — a moderation_actions insert 
       assert.equal(status, 500, `an action with no audit row is not a success — got ${status}: ${JSON.stringify(body)}`);
       assert.equal(body.error, "db_error");
       assert.match(body.message, /The moderation audit row could not be written \(moderation_actions insert failed\)/);
-      assert.match(body.message, action === "warn_host" ? /nothing was applied\. Nothing was recorded\./ : /the event was restored to what it held when read\. Nothing was recorded\./);
+      assert.match(body.message, action === "warn_host" || action === "restore" ? /nothing was applied\. Nothing was recorded\./ : /the event was restored to what it held when read\. Nothing was recorded\./); // restore of this open, PUBLIC, unmoderated event changes nothing (wave 5: it wrote "public" over every event); its undo with a change is in eventModerationVisibilityRestore.test.ts
       const after = client._db.events[0];
       for (const col of ["state", "visibility", "featured"]) assert.equal(after[col], before[col], `events.${col} is restored`);
       assert.equal(captureModerationActions.length, 1, "the event's audit row was attempted once; no report_resolved row follows a failed action");

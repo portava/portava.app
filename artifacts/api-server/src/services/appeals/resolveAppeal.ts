@@ -416,19 +416,19 @@ export async function resolveAppeal(
 
     // ── Moderated event/trip restoration ────────────────────────────────────
     // When a moderator removed an event or trip, appeal approval restores it
-    // (an event: to the state its recorded moderation found, via the transition authority; a trip: see its case).
+    // (an event: to the state AND visibility its recorded moderation found, via the transition authority; a trip: see its case).
 
     case "event": {
       // Through the transition authority (lib/eventLifecycle.ts decideEventModerationReversal; wave 5, honesty 3). It wrote
       // `state: "open"` over EVERY state — publishing a draft, reopening a completed event, un-cancelling a host's own
-      // cancellation. Now the newest RECORDED moderation on the event is reversed, to the state it found, or nothing is written.
+      // cancellation; and it never put a hidden event's visibility back. Now the newest RECORDED moderation is reversed, to the state and visibility it found (wave 5), or nothing is written.
       const r = await reverseModeratedEventOnAppeal(sc, { eventId: target_id, hostId: appellant_id, actorId: appeal.moderator_id ?? null, appealId: appeal.id, note: appeal.resolution_note });
       if (r.outcome === "failed") return { ok: false, action: "noop", reason: `event restore failed: ${r.message}` };
       // The `host_id` filter is authorization, and a failed authorization here
       // matched zero rows without an error — the appeal closed reporting
       // "event_restored" for an event the appellant does not host.
       if (r.outcome === "not_found") return matchedNothing(appeal, "event restore");
-      // No recorded moderation to reverse (the host cancelled it, or it is neither cancelled nor removed): a person must look.
+      // No recorded moderation to reverse (the host cancelled it, or nothing moderated it), or a hide that never recorded the visibility it found (never guessed, never widened): a person must look.
       if (r.outcome === "refused") return deferRestoration(appeal, r.message);
       return { ok: true, action: "event_restored" };
     }

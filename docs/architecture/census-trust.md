@@ -5366,3 +5366,102 @@ the count-once refusal, on the same line.
 
 Rows: none move. C5 reads the trust review queue and is not touched here. No row of this census grades the
 place-image lists or readEveryRow. Headline unchanged: 90 / 15 / 1 / 2 of 108.
+
+### Correction (2026-10-18, wave 5) — moderator restore never widens an event's visibility
+
+*Same branch and tree. Committed on this branch; undeployed. **NO ROW MOVES.***
+
+**Why it is recorded here.** The honesty-3 correction above listed it as not changed: `restore` set visibility `public`
+whatever the event held before the hide, and an approved appeal never restored visibility at all. This census
+watches the moderate route, lib/eventModerationClaim.ts and services/appeals/resolveAppeal.ts, so the fix is here.
+The same pass fixes the host cancel push's attendee read, which that correction also listed (routes/events.ts).
+
+**What was broken (privacy).** `hide` writes visibility `invite_only`; `remove` writes `invite_only` and archives.
+`restore` wrote `public` over every event. So:
+- a `friends_only` or `circle` event, hidden and then restored, came back public, to every feed and search;
+- an event a moderator only cancelled (visibility untouched) came back public on its restore;
+- a host's own `invite_only` event came back public;
+- an approved appeal of a hidden event left it hidden, and an appeal of a removed event reopened it hidden.
+
+**What changed, with no migration.** The edits to admin.ts, eventModerationClaim.ts (above its appended code) and
+resolveAppeal.ts are line-neutral.
+- The record. Every action that writes visibility records, on its own event_activity_log row, the value it found and
+  the value it wrote: `from_visibility` / `to_visibility`, equal when nothing changed
+  (`artifacts/api-server/src/lib/eventModerationClaim.ts:450#{ from_visibility: prior.visibility, to_visibility: changes.visibility }`).
+  It goes beside the state record, in the same claim, audit, undo order
+  (`artifacts/api-server/src/lib/eventModerationClaim.ts:221#...visibilityRecordOf(changes, prior)`).
+  The column is jsonb.
+- The route's restore no longer writes a literal
+  (`artifacts/api-server/src/routes/admin.ts:2970#// visibility: back ONLY to what the recorded hide / remove found`).
+  It asks `decideRestoredEventVisibility` and writes only its decision
+  (`artifacts/api-server/src/routes/admin.ts:3002#if (decidedV?.decision) changes.visibility = decidedV.decision.to;`).
+  The answer names the change (`artifacts/api-server/src/routes/admin.ts:3027#visibility: { from: decidedV.decision.from, to: decidedV.decision.to }`).
+- The reversal. The newest visibility moderation decides, read paged and newest first; a row that changed nothing is
+  passed over (`artifacts/api-server/src/lib/eventModerationClaim.ts:481#if (m.from_visibility !== m.to_visibility)`).
+  - A recorded hide or remove whose value the event still holds goes back to exactly the value it found
+    (`artifacts/api-server/src/lib/eventModerationClaim.ts:499#if (recorded.to === cur) return { kind: "reverse", from: cur, to: recorded.from };`).
+  - Nothing to reverse (no moderation changed the visibility, or the newest one is a restore) leaves the visibility
+    as it is (`artifacts/api-server/src/lib/eventModerationClaim.ts:497#if (recorded.action === "admin_restore")`).
+  - Only an event reading `invite_only`, the one value hide and remove write, can hold a hide to reverse. Any other
+    value is the host's own and is not read (`artifacts/api-server/src/lib/eventModerationClaim.ts:518#if (ev.visibility !== EVENT_HIDDEN_VISIBILITY)`).
+- No record. A hide or remove whose row does not record what it found (it predates the record) is refused, 409
+  `invalid_state_transition`, with nothing written
+  (`artifacts/api-server/src/lib/eventModerationClaim.ts:523#if (d.kind === "unknown") return { ok: false, code: "invalid_state_transition"`).
+  The prior value cannot be known, and any guess can only widen. So the event keeps `invite_only`. Of
+  event_visibility's labels (`artifacts/api-server/baseline/20260819_baseline_structure.sql:189#CREATE TYPE public.event_visibility AS ENUM (`:
+  public, friends_only, invite_only) it is the most restrictive. No feed or search reads it (they read `public` and
+  `friends_only`), and the public-read policy admits `public` only. The API's `circle` and `trip` are not stored
+  (census-discovery §64.10).
+- The appeal reverses the same two records through the same deciders
+  (`artifacts/api-server/src/lib/eventModerationClaim.ts:379#const vis = await decideRestoredEventVisibility(sc, ev);`,
+  `artifacts/api-server/src/lib/eventModerationClaim.ts:385#changes: vis.decision ? { visibility: vis.decision.to } : {}`).
+  A hide with no record, or nothing to reverse, is deferred to a person with nothing written
+  (`artifacts/api-server/src/lib/eventModerationClaim.ts:381#if (!stateDecision && !vis.decision) {`). A read failure
+  holds the appeal (noop). The reversal row carries both records, `via: "appeal"`.
+
+**The host cancel push (routes/events.ts).** getAttendeeRecipients feeds the host's cancel push (POST /events/:id/cancel
+and DELETE /events/:id), and also the postpone, details-updated and pinned-update pushes. It read the going and maybe
+RSVPs, then their push tokens, unpaged, keeping `data` only.
+- Past db-max-rows (1000 hosted) the read was cut, and the attendees past it were never told.
+- A failed read became "nobody is going". Nobody was told, and nothing said so.
+
+Both reads now go through readEveryRow, ordered on a unique key
+(`artifacts/api-server/src/routes/events.ts:773#const rsvps = await readEveryRow((from, to, count) => sc`). The token
+read takes chunks of 100 ids. A failed read throws
+(`artifacts/api-server/src/routes/events.ts:778#if (rsvps.error || !rsvps.data) throw new Error(`)
+into the caller's own catch, which logs it at WARN with the event id. That is the house fan-out convention, the one the circle routes'
+logCircleFanoutFailure follows: a failed recipients read raises and is logged. The details-updated push's bare
+catch now logs (`artifacts/api-server/src/routes/events.ts:2635#"event-updated push notify failed"`). The host cancel's
+log was labelled "admin-cancel"; it now says what it is
+(`artifacts/api-server/src/routes/events.ts:4795#"event-cancelled push notify failed"`). The cancel itself is written and
+answered exactly as before, and the push stays fire-and-forget.
+
+**Tests.** `artifacts/api-server/src/test/eventModerationVisibilityRestore.test.ts:170#describe("B. PATCH /admin/events/:eventId/moderate — restore never widens"`
+has 23 cases on the moderation double: the decision, the route and the appeal. Friends-only and circle events,
+hidden then restored, come back friends-only and circle. An event with no record never becomes public. The appeal
+does the same.
+`artifacts/api-server/src/test/eventAttendeePushRecipients.test.ts:139#describe("A. the host's cancel push reads every going / maybe attendee, past the row cap"`
+has 12 cases over the real events router. Under a row cap every attendee is told, and each token read names at
+most 100 ids. A failed RSVP or token read is logged at WARN through all five doors, and nobody is told.
+On the 6f0eea215 sources, with the new tests in place, 30 cases were red for the stated reasons and 5 controls were
+green. 26 mutants, each applied alone, were restored from a repo-relative backup and checked by sha256; all 26 were
+killed.
+Two existing cases pinned the old behaviour and were corrected on the same line:
+- adminEventModeration's audit-failure case for `restore` now expects "nothing was applied". A restore of that
+  suite's open, public, unmoderated event changes nothing.
+- eventModerationStateAuthority's "removed completed event" case now seeds a remove that recorded its visibility.
+  One that did not is refused (above).
+
+**What this does not prove or change.**
+- A host may change visibility through PATCH /events/:id, which writes no record. A host who moved a hidden event
+  away from `invite_only` and back is not seen, and its restore puts back the host's own value from before the hide.
+  Nothing stops a host from un-hiding a moderator-hidden event that way; that is a separate gap.
+- A hide or remove from before this change has no record, so its restore is refused. Production was not measured.
+- `circle` and `trip` cannot be stored (census-discovery §64.10). The cases prove that a restore puts back whatever
+  value was recorded; they do not make those values storable.
+- countCommittedAttendees (the host-cancel trust charge) still reads RSVPs unpaged. It decides "at least one", so a
+  cut read cannot change its answer.
+- Nothing here ran against a live PostgREST.
+
+Rows: none move. No row of this census grades the moderate route's visibility, an appeal's event restoration
+(TRV2-10 is the owner's question about trust effects), or the cancel push. Headline unchanged: 90 / 15 / 1 / 2 of 108.

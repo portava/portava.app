@@ -210,7 +210,7 @@ import { readVerifiedAgeSignal } from "../lib/travelerVerification.js";
 import { tripKernelClient, executeTripCommand, TRIP_VERSION_RESPONSE_HEADER } from "../domain/trips/commands/tripKernel.js";
 import { readBlockExclusions, sendExclusionsUnavailable } from "../lib/exclusionSet.js";
 import { appStorageUrlInfo } from "../lib/mediaUrl.js"; import { postMediaModerationHold, postMediaHoldRefusal } from "../lib/media/postMediaModerationHold.js"; // census-media MD269 (a), lead ruling D-82
-import { sendPushWithRetry } from "../lib/pushWithRetry.js";
+import { sendPushWithRetry } from "../lib/pushWithRetry.js"; import { readEveryRow } from "../lib/moderationCounts.js"; const ATTENDEE_ID_CHUNK = 100; // getAttendeeRecipients pages every RSVP (wave 5); same line: events.ts is cited by line
 import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine.js";
 import {
   recordTrustEvent,
@@ -765,29 +765,29 @@ export async function checkEventEligibility(
   return { ok: true };
 }
 
-/** Get push recipients ({ userId, tokens }) for Going/Maybe RSVPs on an event */
+/** Push recipients ({ userId, tokens }) for the Going/Maybe RSVPs on an event: EVERY RSVP, paged past the row cap, and a read that fails THROWS into the caller's logged catch (wave 5) — it was cut at the cap and answered "nobody" on a failed read, silently */
 async function getAttendeeRecipients(
   sc: any,
   eventId: string,
 ): Promise<{ userId: string; tokens: (string | null | undefined)[] }[]> {
-  const { data: rsvps } = await sc
+  const rsvps = await readEveryRow((from, to, count) => sc
     .from("event_rsvps")
-    .select("user_id")
+    .select("user_id", { count })
     .eq("event_id", eventId)
-    .in("status", ["going", "maybe"]);
-
-  const ids = ((rsvps as any[]) ?? []).map((r: any) => r.user_id as string);
-  if (ids.length === 0) return [];
-
-  const { data: profiles } = await sc
-    .from("profiles")
-    .select("id, expo_push_token")
-    .in("id", ids)
-    .not("expo_push_token", "is", null);
-
-  return ((profiles as any[]) ?? [])
-    .map((p: any) => ({ userId: p.id as string, tokens: [p.expo_push_token as string] }))
-    .filter((r: any) => r.tokens[0]);
+    .in("status", ["going", "maybe"]).order("user_id", { ascending: true }).range(from, to));
+  if (rsvps.error || !rsvps.data) throw new Error(`the attendees could not be read (event_rsvps): ${rsvps.error?.message ?? "no rows answered"}; nobody was told`);
+  const ids = [...new Set(rsvps.data.map((r: any) => String(r.user_id)))];
+  const out: { userId: string; tokens: (string | null | undefined)[] }[] = [];
+  for (let i = 0; i < ids.length; i += ATTENDEE_ID_CHUNK) { // a bounded `.in()` per read keeps the request URI short; each chunk is itself paged
+    const got = await readEveryRow((from, to, count) => sc
+      .from("profiles")
+      .select("id, expo_push_token", { count })
+      .in("id", ids.slice(i, i + ATTENDEE_ID_CHUNK))
+      .not("expo_push_token", "is", null).order("id", { ascending: true }).range(from, to));
+    if (got.error || !got.data) throw new Error(`the attendees' push tokens could not be read (profiles): ${got.error?.message ?? "no rows answered"}; nobody was told`);
+    for (const p of got.data) if (p?.expo_push_token) out.push({ userId: String(p.id), tokens: [String(p.expo_push_token)] });
+  }
+  return out;
 }
 
 // ── Schemas ───────────────────────────────────────────────────────────────────
@@ -2632,7 +2632,7 @@ router.patch("/events/:id", async (req, res) => {
             data: { eventId: id, type: "event_updated" },
           });
         }
-      } catch {}
+      } catch (err) { req.log?.warn({ err, eventId: id }, "event-updated push notify failed"); } // resolves-not-throws-ok: fire-and-forget push, logged — the recipients read now throws on failure (wave 5); a bare catch made it silent
     })();
   }
 
@@ -4792,7 +4792,7 @@ router.post("/events/:id/cancel", async (req, res) => {
       }
     } catch (err) {
       // resolves-not-throws-ok: fire-and-forget push — best-effort, logged.
-      req.log?.warn({ err, eventId: id }, "admin-cancel push notify failed");
+      req.log?.warn({ err, eventId: id }, "event-cancelled push notify failed"); // the HOST's POST /events/:id/cancel; it was mislabelled "admin-cancel"
     }
   })();
 

@@ -516,7 +516,7 @@ describe("C. PATCH /admin/events/:eventId/moderate — state through the authori
 
   it("RED before: restore of a removed COMPLETED event is completed again — it was reopened as `open`", async () => {
     const s = world("archived", { visibility: "invite_only" });
-    s.event_activity_log = [record(1, "admin_remove", "completed", "archived")];
+    s.event_activity_log = [{ ...record(1, "admin_remove", "completed", "archived"), metadata: { reason: null, from_state: "completed", to_state: "archived", from_visibility: "public", to_visibility: "invite_only" } }]; // a remove records the visibility it found (wave 5); one that did not is refused (eventModerationVisibilityRestore.test.ts)
     install(s);
     const r = await moderate("restore");
     assert.equal(r.status, 200, r.raw);

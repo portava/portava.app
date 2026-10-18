@@ -36,7 +36,7 @@ import { executeAccountDeletion } from "../services/accountDeletion/AccountDelet
 import { runSchemaDriftCheck, getCachedSchemaDriftResult } from "../lib/schemaDriftCheck";
 import { logAdminAccess, accessReason } from "../lib/adminAudit.js";
 import { resolveStoragePath } from "../lib/storagePath.js";
-import { logModerationAction, auditReportAction, checkActionReportLink, checkContentReportLink, reportLinkColumnId } from "../lib/moderationAudit.js"; import { applyAccountRestriction, revokeAccountRestrictions, parseRestrictionEnd, recordModerationNotApplied, notAppliedAuditNote } from "../lib/accountModeration.js"; import { countOpenReportsAgainst, exactListCount, LEGACY_REPORT_STATUSES, UNRESOLVED_REPORT_STATUSES } from "../lib/moderationCounts.js"; import { moveLegacyReport, moveLegacyReports, describeLegacyBulkFailure, LEGACY_REPORT_CLOSE_READ, type LegacyReportRow } from "../lib/legacyReportClose.js"; import { readReportedVenueQueue } from "../lib/reportedVenueQueue.js"; import { applyEventModeration, decideModeratedEventState, type ModeratedEventRow, type EventModerationStateIntent } from "../lib/eventModerationClaim.js"; // same line: admin.ts is cited by line
+import { logModerationAction, auditReportAction, checkActionReportLink, checkContentReportLink, reportLinkColumnId } from "../lib/moderationAudit.js"; import { applyAccountRestriction, revokeAccountRestrictions, parseRestrictionEnd, recordModerationNotApplied, notAppliedAuditNote } from "../lib/accountModeration.js"; import { countOpenReportsAgainst, exactListCount, LEGACY_REPORT_STATUSES, UNRESOLVED_REPORT_STATUSES } from "../lib/moderationCounts.js"; import { moveLegacyReport, moveLegacyReports, describeLegacyBulkFailure, LEGACY_REPORT_CLOSE_READ, type LegacyReportRow } from "../lib/legacyReportClose.js"; import { readReportedVenueQueue } from "../lib/reportedVenueQueue.js"; import { applyEventModeration, decideModeratedEventState, decideRestoredEventVisibility, type ModeratedEventRow, type EventModerationStateIntent } from "../lib/eventModerationClaim.js"; // same line: admin.ts is cited by line
 import { loadCapturedReportContent, loadModerationSubjectSnapshots, resolveContentOwnerDetailed, MODERATION_REPORT_CATEGORIES, MODERATION_REPORT_STATUSES, MODERATION_REPORT_TRANSITIONS, type ModerationReportStatus } from "../lib/moderationReportSnapshots.js";
 
 import { requireAdmin } from "../lib/requireAdmin.js"; import { computeAttemptsPerVerifiedUser } from "../services/identityVerification/attemptMetrics.js"; // same line on purpose: a new import line shifts every anchored citation into this file
@@ -2967,7 +2967,7 @@ router.patch("/admin/events/:eventId/moderate", async (req, res) => {
       patch.visibility = "invite_only";
       break;
     case "restore":
-      patch.visibility = "public";
+      // visibility: back ONLY to what the recorded hide / remove found (decideRestoredEventVisibility, below) — it wrote "public" over every event, so a friends-only or circle event came back PUBLIC (wave 5)
       if ((ev as any).state === "cancelled" || (ev as any).state === "archived") stateIntent = { reverse: true }; // back to what the RECORDED moderation found (decideEventModerationReversal) — it wrote "open" over the host's own cancellations too, and published a moderated draft
       break;
     case "feature":
@@ -2999,7 +2999,7 @@ router.patch("/admin/events/:eventId/moderate", async (req, res) => {
     for (const [k, v] of Object.entries(patch)) if (k !== "updated_at") changes[k] = v;
   }
   const decidedE = await decideModeratedEventState(sc, ev as ModeratedEventRow, stateIntent); if (!decidedE.ok) { sendError(res, decidedE.code, decidedE.message, { exposeDetail: true }); return; } // the authority decides events.state; a refusal writes NOTHING
-  const moveE = await applyEventModeration(sc, req, ev as ModeratedEventRow, {
+  const decidedV = action === "restore" ? await decideRestoredEventVisibility(sc, ev as ModeratedEventRow) : null; if (decidedV && !decidedV.ok) { sendError(res, decidedV.code, decidedV.message, { exposeDetail: true }); return; } if (decidedV?.decision) changes.visibility = decidedV.decision.to; const moveE = await applyEventModeration(sc, req, ev as ModeratedEventRow, { // visibility: a restore puts back only what a recorded hide found; a hide that never recorded it is refused, never widened on a guess (wave 5)
     changes, stateDecision: decidedE.decision,
     now: patch.updated_at, activityAction: `admin_${action}`,
     writeActivity: (st) => sc.from("event_activity_log").insert({ event_id: eventId, actor_id: admin.userId, action: `admin_${action}`, metadata: { reason: reason ?? null, ...st } }).select("id"), // st: { from_state, to_state } when the state changed — the record a restore reverses
@@ -3024,7 +3024,7 @@ router.patch("/admin/events/:eventId/moderate", async (req, res) => {
       .order("created_at", { ascending: true }); const closed = openErr || !Array.isArray(openRows) ? null : await moveLegacyReports(sc, req, openRows as LegacyReportRow[], { to: "resolved", adminUserId: admin.userId, notes: reason ?? null, actionType: "report_resolved" }); reportsResolved = closed && !closed.failure ? closed.moved.length : null;
     if (reportsResolved === null) { reportsCloseError = closed ? describeLegacyBulkFailure(closed, "the event") : `The event's reports could not be read (${openErr?.message ?? "no rows answered"}); none was closed.`; req.log.error({ err: openErr ?? null, eventId, action, reportsCloseError }, "event moderated, but its reports were NOT all resolved"); }
   }
-  res.json({ eventId, action, ok: true, ...(decidedE.decision ? { state: { from: decidedE.decision.from, to: decidedE.decision.to } } : {}), ...(reportsResolved !== undefined ? { reportsResolved } : {}), ...(reportsCloseError ? { reportsCloseError } : {}) });
+  res.json({ eventId, action, ok: true, ...(decidedE.decision ? { state: { from: decidedE.decision.from, to: decidedE.decision.to } } : {}), ...(decidedV?.decision ? { visibility: { from: decidedV.decision.from, to: decidedV.decision.to } } : {}), ...(reportsResolved !== undefined ? { reportsResolved } : {}), ...(reportsCloseError ? { reportsCloseError } : {}) });
 });
 
 // ── Invite-link slot reconciliation ──────────────────────────────────────────
