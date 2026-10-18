@@ -134,8 +134,8 @@ export function isExcluded(set: ExclusionSet, id: string | null | undefined): bo
  *
  * The WHOLE-LIST read (no `among`) was one range-less read too, so a viewer with
  * more than `db-max-rows` block rows got a prefix (census-telegraph §94, found-not-
- * fixed until T220c). It now reads WHOLE, by key (lib/feedReads.ts readWhole): the same `.or()` read first, byte for byte — one round trip under the cap —
- * and an answer as long as a page (WHOLE_READ_PAGE_SIZE, the hosted db-max-rows) may have been cut, so it is read again by the primary key, `id`, with counts; a list that cannot be read whole is `ok: false`, never the prefix it got. lib/blocks.ts fetchBlockedSet is this read.
+ * fixed until T220c). It now reads WHOLE, by key (lib/feedReads.ts readWhole): the same `.or()` read first, with its exact count (T220d) — one round trip under the cap —
+ * and an answer shorter than its count was cut (by the hosted db-max-rows, or by a server set BELOW the page size), so it is read again by the primary key, `id`, with counts; a list that cannot be read whole is `ok: false`, never the prefix it got. lib/blocks.ts fetchBlockedSet is this read.
  */
 const NOT_ROWS = "blocks read answered something other than a row list";
 const NO_COUNTERPARTY = "a blocks row did not name its counter-party";
@@ -222,7 +222,7 @@ async function readBlockExclusionsOnce(sc: any, viewerId: string, among: readonl
   const whole = await readWhole<any>( // census-telegraph §94 (T220c): read WHOLE, by key — one range-less read was cut at db-max-rows with no error and served the prefix
     (after, size) => afterKey(sc.from("blocks").select("id, blocker_id, blocked_id", { count: "exact" }).or(`blocker_id.eq.${viewerId},blocked_id.eq.${viewerId}`).order("id", { ascending: true }).limit(size), "id", after),
     (r) => String(r?.id), // the primary key: unique across BOTH directions (a mutual block is two rows naming the same counter-party)
-    { first: () => sc.from("blocks").select("blocker_id, blocked_id").or(`blocker_id.eq.${viewerId},blocked_id.eq.${viewerId}`) }, // the plain read this path always made, byte for byte: a page-long answer may be cut, so it is read again by key
+    { first: () => sc.from("blocks").select("blocker_id, blocked_id", { count: "exact" }).or(`blocker_id.eq.${viewerId},blocked_id.eq.${viewerId}`) }, // the plain read this path always made, plus its exact count (T220d): an answer short of its count — a db-max-rows below the page size included — is read again by key
   );
   if (!whole.ok) return exclusionsUnavailable(whole.error); // a returned error, an answer that is not a row list, a read that could not be read whole
   const ids = new Set<string>();
@@ -274,7 +274,7 @@ export async function readPairExclusion(sc: any, a: string, b: string): Promise<
  * group rather than for one viewer: anybody a member blocked, or who blocked a
  * member, is excluded for the whole group.
  *
- * NEVER REJECTS: every failure — returned, thrown, malformed — is `ok: false`.
+ * NEVER REJECTS: every failure — returned, thrown, malformed, a side that cannot be read whole (T220d) — is `ok: false`.
  */
 export async function readGroupBlockExclusions(
   sc: any,
@@ -283,9 +283,9 @@ export async function readGroupBlockExclusions(
   if (!sc) return exclusionsUnavailable("no client");
   if (memberIds.length === 0) return exclusions([]);
   try {
-    const [asBlocker, asBlocked] = await Promise.all([
-      sc.from("blocks").select("blocker_id, blocked_id").in("blocker_id", memberIds as string[]),
-      sc.from("blocks").select("blocker_id, blocked_id").in("blocked_id", memberIds as string[]),
+    const [asBlocker, asBlocked] = await Promise.all([ // census-telegraph §94 (T220d): each side WHOLE, by the primary key (readGroupSideOnce) — one unpaged `.in()` read was cut at db-max-rows with no error and served the prefix
+      readGroupSideOnce(() => sc.from("blocks").select("id, blocker_id, blocked_id", { count: "exact" }).in("blocker_id", memberIds as string[])),
+      readGroupSideOnce(() => sc.from("blocks").select("id, blocker_id, blocked_id", { count: "exact" }).in("blocked_id", memberIds as string[])),
     ]);
     const outIds = counterParties(asBlocker, "blocked_id");
     if (!Array.isArray(outIds)) return outIds;
@@ -631,6 +631,67 @@ export async function countMuteRows(sc: any, userId: string): Promise<BlockRowCo
     const res = await sc.from("user_mutes").select("id", { count: "exact", head: true }).eq("muter_id", userId);
     if (res?.error) return exclusionsUnavailable(res.error);
     if (typeof res?.count !== "number" || !Number.isSafeInteger(res.count) || res.count < 0) return exclusionsUnavailable("a user_mutes count read answered without its count");
+    return { ok: true, count: res.count };
+  } catch (err) {
+    return exclusionsUnavailable(err);
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// GROUP SIDES — census-telegraph §94 (T220d, 2026-10-18)
+// ════════════════════════════════════════════════════════════════════════════
+/**
+ * One side of readGroupBlockExclusions — every row a member wrote, or every
+ * row naming a member — read WHOLE, by the primary key. Each side was one
+ * unpaged `.in()` read over the members, which PostgREST cuts at db-max-rows
+ * (1,000 hosted) with no error: a large group, or one member blocked by many,
+ * got a prefix, and every block past the cut was not excluded for the group.
+ *
+ * `base` is the side's read with `{ count: "exact" }`. The first request is that
+ * read as it is, so a side whose answer is whole by its count is one round
+ * trip. An answer short of its count (the hosted cap, or a server set BELOW the
+ * page size) is read again by `id`: unique across both directions and across
+ * members, which the counter-party column is not (two members may block the
+ * same person). A cut it cannot page past, a page that repeats a key, an empty
+ * page while rows remain, or an answer that is not a row list is the side's
+ * failure — never the rows gathered so far.
+ *
+ * Answers the `{ data } | { error }` shape `counterParties` reads, so its checks
+ * (an error, a non-list, a row not naming its counter-party) hold over the WHOLE
+ * side unchanged. A thrown read rejects; readGroupBlockExclusions' catch
+ * answers it.
+ */
+async function readGroupSideOnce(base: () => any): Promise<{ data: unknown[] } | { error: unknown }> {
+  const whole = await readWhole<any>(
+    (after, size) => afterKey(base().order("id", { ascending: true }).limit(size), "id", after),
+    (r) => String(r?.id),
+    { first: base },
+  );
+  return whole.ok ? { data: whole.value } : { error: whole.error };
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// RESTRICTIONS — census-telegraph T220d (2026-10-18)
+// ════════════════════════════════════════════════════════════════════════════
+/**
+ * How many people `userId` has restricted (the `user_restrictions` rows they
+ * wrote, restrictor_id = userId): a HEAD read with `{ count: "exact" }`, so
+ * Postgres counts and the row cap does not apply — for the moderation
+ * dossier's `restrictCount`, as countMuteRows is for `muteCount`.
+ *
+ * The dossier read it inline and rendered `count ?? 0`, so an answer with no
+ * error and no count showed a moderator "restricts nobody" for a read that
+ * measured nothing, and a thrown read took the whole dossier down with it.
+ *
+ * NEVER REJECTS: a returned error, a thrown read, or an answer whose count is
+ * not a non-negative integer is `ok: false` — never `count ?? 0`.
+ */
+export async function countRestrictRows(sc: any, userId: string): Promise<BlockRowCount> {
+  if (!sc || !userId) return exclusionsUnavailable("no client or user");
+  try {
+    const res = await sc.from("user_restrictions").select("id", { count: "exact", head: true }).eq("restrictor_id", userId);
+    if (res?.error) return exclusionsUnavailable(res.error);
+    if (typeof res?.count !== "number" || !Number.isSafeInteger(res.count) || res.count < 0) return exclusionsUnavailable("a user_restrictions count read answered without its count");
     return { ok: true, count: res.count };
   } catch (err) {
     return exclusionsUnavailable(err);

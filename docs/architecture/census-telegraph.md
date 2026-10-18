@@ -15703,3 +15703,25 @@ directions — each red.
 Headline unchanged: **451 = 273 C / 175 W / 1 N / 2 X** (recompute against the census's latest headline before pasting).
 
 **Independent verification, pass 4 (row-text corrections to W5B2.1, no grade change).** T220 is C under its stated measurement: six private `blocks` reads, all in routes/blocks.ts, the block list's own CRUD. Two boundaries are stated so no reader assumes more: (1) the SQL layer is outside every ratchet — `project_user_memory` (2963, applied, reached through the project_all_memory rpc) and `memory_public_feed` (2338, applied) inline `NOT EXISTS (SELECT 1 FROM public.blocks ...)` instead of calling is_blocked / viewer_is_blocked, and the `post_media_public_select` policy does the same; moving them needs migrations; (2) the private-read ratchet does not see a read through `.rpc(...)` or a database view (stated in its header). No such server read exists today.
+
+## Row moves — 2026-10-18 build and fix (wave 5, T220d: the three T220c leftovers)
+
+Built by the wave-5 T220d lane; appended by the lead. APPEND-ONLY. NO ROW CHANGES: T220 is already C. This closes what T220c left. **The group
+block list is read whole.** `readGroupBlockExclusions` was two unpaged `.in()` reads over a group's members, cut at
+db-max-rows with no error. Each side is now read by the primary key, with counts
+(`artifacts/api-server/src/lib/exclusionSet.ts:286#const [asBlocker, asBlocked] = await Promise.all([ // census-telegraph §94 (T220d)`,
+`artifacts/api-server/src/lib/exclusionSet.ts:664#async function readGroupSideOnce(`), and a side it cannot read whole is
+`ok: false`. This closes the last reader named in §94.6's second bullet. **The whole-list first request is counted.**
+`readBlockExclusions` without `among` (and so `fetchBlockedSet`) now sends `{ count: "exact" }` on its first request
+(`artifacts/api-server/src/lib/exclusionSet.ts:225#{ first: () => sc.from("blocks").select("blocker_id, blocked_id", { count: "exact" })`),
+so a db-max-rows below 1,000 can no longer pass a cut first page off as the whole list. The three suite fakes that read any
+count as a HEAD read (hashtags, tagging, messagingSwallowedReadHonesty) now answer rows and count, as PostgREST does. Each
+was green before and after on the earlier code. **restrictCount is never 0 from nothing.** The moderation dossier read
+`user_restrictions` inline and rendered `count ?? 0`. It now uses
+`artifacts/api-server/src/lib/exclusionSet.ts:689#export async function countRestrictRows(`. A count-less, failed or thrown
+answer refuses the record and names restrictCount, as blockCount and muteCount do. A thrown read was a bare 500 before.
+New: `exclusionReadsT220d` 49/49, 31 red on the code before
+(`artifacts/api-server/src/test/exclusionReadsT220d.test.ts:161#describe("T220d — readGroupBlockExclusions: each side WHOLE, by the primary key, never a prefix"`).
+Nine mutants, each run alone and restored byte for byte, are all red. Stale above, left as written: §94.6's second bullet
+and T220c's "first request … unchanged" / "Still cut" sentences. Headline unchanged:
+**451 = 273 C / 175 W / 1 N / 2 X**.

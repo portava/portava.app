@@ -117,7 +117,7 @@ function makeClient() {
       select(cols?: string, opts?: any) {
         self._selected = true;
         if (typeof cols === "string") self._cols = cols;
-        if (opts?.count) self._count = true;
+        if (opts?.count) self._count = true; if (opts?.head) self._head = true; // T220d: `head: true` is the count only; a count alone is the rows AND the count (PostgREST)
         return self;
       },
       insert() { self._op = "insert"; return self; },
@@ -142,7 +142,7 @@ function makeClient() {
         return Promise.resolve(self._resolve()).then(res, rej);
       },
       _rows(rows: any[]) {
-        if (self._count) return { data: null, count: rows.length, error: null };
+        if (self._count && self._head) return { data: null, count: rows.length, error: null };
         if (self._single) return { data: rows[0] ?? null, error: null };
         return { data: rows, count: rows.length, error: null };
       },

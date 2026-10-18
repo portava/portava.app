@@ -11,9 +11,9 @@
  * was not excluded — on every surface that consults these two (search, maps,
  * feeds, discovery, Compass, airport, follows, rent-a-buddy, trails, …).
  *
- * The first request is still that read, byte for byte, so no caller (and no
- * caller's fake) can tell the difference under the cap. An answer as long as a
- * page — WHOLE_READ_PAGE_SIZE, the hosted cap — may have been cut, so the list
+ * The first request is still that read (plus its exact count since T220d), so
+ * no caller can tell the difference under the cap. An answer shorter than its
+ * count — or, with no count, as long as a page — may have been cut, so the list
  * is read again by the primary key, `id`, with `{ count: "exact" }` on every
  * page. The fake below cuts every response at a server row cap the way
  * db-max-rows does, and answers `{ count: "exact" }` the way PostgREST does (the
@@ -126,14 +126,14 @@ const MALFORMED: Array<[string, Answer]> = [
 ];
 
 describe("T220c — readBlockExclusions (whole list): WHOLE, by key, never a prefix", () => {
-  it("GREEN before and after: under the cap it is ONE request — byte for byte the `.or()` read it always made", async () => {
+  it("CONTROL: under the cap it is ONE request — the `.or()` read it always made, plus its exact count (T220d; byte for byte before)", async () => {
     const { client, reads } = fake(touching(7));
     const r = await readBlockExclusions(client, V);
     assert.ok(r.ok, JSON.stringify(r));
     assert.deepEqual([...r.ids].sort(), counterpartiesOf(7));
     assert.equal(reads.length, 1);
     assert.deepEqual(reads[0], [
-      ["select", ["blocker_id, blocked_id"]],
+      ["select", ["blocker_id, blocked_id", { count: "exact" }]],
       ["or", [`blocker_id.eq.${V},blocked_id.eq.${V}`]],
     ]);
   });
@@ -216,14 +216,14 @@ describe("T220c — readBlockExclusions (whole list): WHOLE, by key, never a pre
 });
 
 describe("T220c — fetchBlockedSet: the same whole read, in its Set | null shape", () => {
-  it("GREEN before and after: under the cap — one request, byte for byte; a Set of every counter-party (both directions), never the caller", async () => {
+  it("CONTROL: under the cap — one request, the plain read plus its exact count (T220d); a Set of every counter-party (both directions), never the caller", async () => {
     const { client, reads } = fake(touching(7));
     const s = await fetchBlockedSet(client, V);
     assert.ok(s instanceof Set);
     assert.deepEqual([...s].sort(), counterpartiesOf(7));
     assert.ok(!s.has(V));
     assert.equal(reads.length, 1);
-    assert.deepEqual(reads[0], [["select", ["blocker_id, blocked_id"]], ["or", [`blocker_id.eq.${V},blocked_id.eq.${V}`]]]);
+    assert.deepEqual(reads[0], [["select", ["blocker_id, blocked_id", { count: "exact" }]], ["or", [`blocker_id.eq.${V},blocked_id.eq.${V}`]]]);
   });
 
   it("GREEN before and after: nobody blocked is a readable EMPTY Set, not null", async () => {
