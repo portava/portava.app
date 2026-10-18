@@ -431,16 +431,16 @@ export async function reverseModeratedEventOnAppeal(
 // write — can hold a hide to reverse; any other value is the host's own and is
 // left as it is, without a read.
 //
-// STATED LIMIT. A host may change visibility (PATCH /events/:id) and that
-// writes no record. A host who moved a hidden event away from `invite_only`
-// and back again is not seen: its restore puts back the host's own value from
-// before the hide.
+// THE HOST (closed below, "THE HOLD"). A host could change visibility (PATCH
+// /events/:id) with no record, and so un-hide a hidden event. Now a hide holds
+// the host off until it is restored, and a host's own change is recorded
+// (`visibility_changed`): the reader below reads it as the host's value since.
 
 /** The visibility `hide` and `remove` write (routes/admin.ts). */
 export const EVENT_HIDDEN_VISIBILITY = "invite_only";
 
 /** event_activity_log actions that write events.visibility, and so record it. */
-export const EVENT_MODERATION_VISIBILITY_ACTIVITY: readonly string[] = Object.freeze(["admin_hide", "admin_remove", "admin_restore"]);
+export const EVENT_MODERATION_VISIBILITY_ACTIVITY: readonly string[] = Object.freeze(["admin_hide", "admin_remove", "admin_restore"]); /** A host's own visibility change (routes/events.ts), recorded from / to — never a moderation, never a release of one (wave 5). */ export const EVENT_HOST_VISIBILITY_ACTIVITY = "visibility_changed";
 
 /** The visibility record on a moderation's activity row: what it found, what it wrote. */
 export interface EventVisibilityRecord { from_visibility: string; to_visibility: string }
@@ -457,9 +457,9 @@ export type RecordedEventVisibility =
   | { kind: "unrecorded"; action: string };
 
 /**
- * The newest moderation that wrote the event's visibility: its
- * event_activity_log rows for admin_hide / admin_remove / admin_restore,
- * newest first, every row read (paged past the row cap). A row recording no
+ * The newest moderation (or recorded host change) that wrote the event's
+ * visibility: event_activity_log rows for admin_hide / admin_remove /
+ * admin_restore / visibility_changed, newest first, every row read (paged past the row cap). A row recording no
  * change (found == wrote) is passed over; the first other row decides — a
  * recorded change, or a row that records nothing (`unrecorded`). A read that
  * fails, or answers no list, is not "no record".
@@ -469,7 +469,7 @@ export async function readRecordedEventVisibility(sc: any, eventId: string): Pro
     .from("event_activity_log")
     .select("id, action, metadata, created_at", { count })
     .eq("event_id", eventId)
-    .in("action", EVENT_MODERATION_VISIBILITY_ACTIVITY as string[])
+    .in("action", [...EVENT_MODERATION_VISIBILITY_ACTIVITY, EVENT_HOST_VISIBILITY_ACTIVITY]) // + the host's own recorded changes (wave 5)
     .order("created_at", { ascending: false })
     .order("id", { ascending: false })
     .range(from, to));
@@ -493,7 +493,7 @@ export type EventVisibilityReversal =
 /** May a restore move this event's visibility from `current` back to what its newest visibility moderation found? Pure. */
 export function decideEventVisibilityReversal(current: unknown, recorded: RecordedEventVisibility | null | undefined): EventVisibilityReversal {
   const cur = typeof current === "string" ? current : String(current ?? "");
-  if (!recorded || recorded.kind === "none") return { kind: "keep", why: `no moderation changed this event's visibility ('${cur}' is its host's)` };
+  if (!recorded || recorded.kind === "none") return { kind: "keep", why: `no moderation changed this event's visibility ('${cur}' is its host's)` }; if (recorded.action === EVENT_HOST_VISIBILITY_ACTIVITY) return { kind: "keep", why: `the newest change of this event's visibility is its host's own ('${cur}' is its host's since)` }; // never reversed: a restore puts back only what a MODERATION found (wave 5)
   if (recorded.action === "admin_restore") return { kind: "keep", why: `the newest moderation of this event's visibility is a restore ('${cur}' is its host's since)` };
   if (recorded.kind === "recorded") {
     if (recorded.to === cur) return { kind: "reverse", from: cur, to: recorded.from };
@@ -522,4 +522,119 @@ export async function decideRestoredEventVisibility(sc: any, ev: ModeratedEventR
   if (d.kind === "reverse") return { ok: true, decision: { from: d.from, to: d.to } };
   if (d.kind === "unknown") return { ok: false, code: "invalid_state_transition", message: `${d.why}. Nothing was changed or recorded.` };
   return { ok: true, decision: null };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// THE HOLD: a host cannot undo a moderator's hide (wave 5)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// THE SAFETY DEFECT (census-trust, wave 5). `hide` and `remove` write
+// `invite_only`, and the host wrote any other visibility straight back through
+// PATCH /events/:id (or POST /events/:id/link-circle): no guard, no record. A
+// moderator's hide lasted until the host undid it, and a removed (archived)
+// event could be widened. And from `cancelled` the transition authority lets a
+// host archive, which made a moderator's cancel irreversible: the restore and
+// the appeal refuse a record the event no longer holds.
+//
+// THE RULE. While a moderation of a column still holds, its host may not write
+// that column; a moderator's restore or an approved appeal (each an
+// `admin_restore` row) releases it. "Holds" is read from the moderation record
+// — the event_activity_log rows the restore itself reads — never from a column
+// the host can write:
+//   * VISIBILITY: the newest admin_hide / admin_remove / admin_restore row. A
+//     hide or remove holds; a restore releases. A hide that changed nothing
+//     (the host had already chosen invite_only) still HOLDS — passed over, as
+//     the restore's reader passes it, the host could widen the event the moment
+//     after a moderator hid it — and so does a hide that recorded nothing (it
+//     predates the record). A host's own `visibility_changed` row is not read:
+//     a host never releases a hold.
+//   * STATE: the newest recorded moderation state CHANGE — exactly
+//     readRecordedEventModeration's answer, the record the restore reverses. A
+//     cancel or remove holds; a restore releases. A cancel that changed nothing
+//     (the host had cancelled first) put nothing there to hold or reverse.
+//     Only a `cancelled` or `archived` event can be under one (the host cannot
+//     leave either but to archive a cancelled one, which is what this holds),
+//     so a host write from any other state reads nothing.
+// A record that cannot be read REFUSES the write (503): unread is not "free".
+//
+// THE HOST'S OWN CHANGE, on an event nothing holds, is written conditionally on
+// the visibility the host read (guardHostVisibilityWrite), so a hide landing
+// between the hold read and the write wins, and recorded
+// (recordHostVisibilityChange: `visibility_changed`, from / to).
+
+/** Which moderation still holds each column a moderation sets (its action), or null. */
+export interface EventModerationHold { visibility: string | null; state: string | null }
+
+/** The moderation actions the hold reads: the visibility ones and the state ones. Never the host's own. */
+export const EVENT_MODERATION_HOLD_ACTIVITY: readonly string[] = Object.freeze([...new Set([...EVENT_MODERATION_VISIBILITY_ACTIVITY, ...EVENT_MODERATION_STATE_ACTIVITY])]);
+
+/** Pure: the holds, from an event's moderation rows NEWEST FIRST (see THE RULE above). */
+export function decideEventModerationHold(rows: ReadonlyArray<{ action?: unknown; metadata?: unknown } | null | undefined>): EventModerationHold {
+  let visibility: string | null | undefined;
+  let state: string | null | undefined;
+  for (const r of rows) {
+    const action = String(r?.action ?? "");
+    if (visibility === undefined && EVENT_MODERATION_VISIBILITY_ACTIVITY.includes(action)) visibility = action === "admin_restore" ? null : action;
+    const m = r?.metadata as { from_state?: unknown; to_state?: unknown } | null | undefined;
+    const changedState = !!m && typeof m === "object" && typeof m.from_state === "string" && typeof m.to_state === "string" && m.from_state !== m.to_state;
+    if (state === undefined && EVENT_MODERATION_STATE_ACTIVITY.includes(action) && changedState) state = action === "admin_restore" ? null : action;
+    if (visibility !== undefined && state !== undefined) break;
+  }
+  return { visibility: visibility ?? null, state: state ?? null };
+}
+
+/** The holds on an event: its moderation rows, newest first, every row read (paged past the row cap). A read that fails is not "no hold". */
+export async function readEventModerationHold(sc: any, eventId: string): Promise<{ ok: true; hold: EventModerationHold } | { ok: false; message: string }> {
+  const rows = await readEveryRow((from, to, count) => sc
+    .from("event_activity_log")
+    .select("id, action, metadata, created_at", { count })
+    .eq("event_id", eventId)
+    .in("action", EVENT_MODERATION_HOLD_ACTIVITY as string[])
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .range(from, to));
+  if (rows.error || !rows.data) return { ok: false, message: `The event's moderation record could not be read (event_activity_log): ${rows.error?.message ?? "no rows answered"}` };
+  return { ok: true, hold: decideEventModerationHold(rows.data) };
+}
+
+export type HostEventWriteAnswer = { ok: true } | { ok: false; code: "event_under_moderation" | "degraded_unavailable"; message: string };
+
+const HELD_AS: Readonly<Record<string, string>> = Object.freeze({ admin_hide: "hid", admin_remove: "removed", admin_cancel: "cancelled" });
+
+/**
+ * May the host write these columns of this event? `visibility`: the write
+ * changes it. `stateFrom`: the state a write would move the event OUT of, or
+ * null when the write leaves state alone. Refused (409 event_under_moderation)
+ * while a moderation of either still holds; refused (503) when the record
+ * cannot be read. Nothing is written here, and nothing need be undone.
+ */
+export async function refuseHostWriteUnderModeration(sc: any, eventId: string, write: { visibility: boolean; stateFrom: unknown }): Promise<HostEventWriteAnswer> {
+  const state = write.stateFrom !== null && write.stateFrom !== undefined && (EVENT_MODERATION_REVERSIBLE_STATES as readonly string[]).includes(String(write.stateFrom));
+  if (!write.visibility && !state) return { ok: true };
+  const read = await readEventModerationHold(sc, eventId);
+  if (!read.ok) return { ok: false, code: "degraded_unavailable", message: `${read.message}, so nothing was changed. Please try again.` };
+  const held = write.visibility && read.hold.visibility ? { column: "visibility", by: read.hold.visibility } : state && read.hold.state ? { column: "state", by: read.hold.state } : null;
+  if (!held) return { ok: true };
+  return { ok: false, code: "event_under_moderation", message: `A moderator ${HELD_AS[held.by] ?? "moderated"} this event (${held.by}), so its ${held.column} cannot be changed until a moderator restores it or an appeal is approved. Nothing was changed.` };
+}
+
+/** What a host's visibility write is conditional on: the visibility it read, and (when given) the updated_at it read. */
+export type HostVisibilityGuard = { from: unknown; updatedAt?: unknown };
+
+/** Make a host's events UPDATE conditional on what it read (null: unconditional, as before). Zero rows = someone moved first. */
+export function guardHostVisibilityWrite<Q>(q: Q, g: HostVisibilityGuard | null): Q {
+  if (!g) return q;
+  let out = guard(q, "visibility", g.from);
+  if (g.updatedAt !== undefined) out = guard(out, "updated_at", g.updatedAt);
+  return out as Q;
+}
+
+/** Record a host's own visibility change on its activity row: from / to. Never throws: the error is answered for the caller to log. */
+export async function recordHostVisibilityChange(sc: any, a: { eventId: string; actorId: string; from: unknown; to: unknown; via: string }): Promise<{ error: unknown }> {
+  try {
+    const r = await sc.from("event_activity_log").insert({ event_id: a.eventId, actor_id: a.actorId, action: EVENT_HOST_VISIBILITY_ACTIVITY, metadata: { from_visibility: String(a.from ?? ""), to_visibility: String(a.to ?? ""), via: a.via } });
+    return { error: r?.error ?? null };
+  } catch (err) {
+    return { error: err };
+  }
 }

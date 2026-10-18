@@ -186,7 +186,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError, type ApiErrorCode } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js"; import { findVisibleSourcedPlanItem } from "../server/trips/privateAnchorShares.js"; // census-trips §87.3 (D-65)
-import { logger } from "../lib/logger.js"; import { readEventViewAccess } from "../lib/eventViewAccess.js";
+import { logger } from "../lib/logger.js"; import { readEventViewAccess, EventAccessUnavailableError } from "../lib/eventViewAccess.js"; import { refuseHostWriteUnderModeration, guardHostVisibilityWrite, recordHostVisibilityChange, type HostVisibilityGuard } from "../lib/eventModerationClaim.js"; // the moderation hold (wave 5)
 import { detectAndStoreLanguage, invalidateContentTranslations } from "../services/contentTranslation.js";
 import { nameVisibilitySet, sanitizeIdentity } from "../lib/publicIdentity.js";
 import { isFlagEnabled, isKillSwitchEngaged } from "../lib/featureFlags.js"; import { readFlagState } from "../lib/capability/schemaCapability.js";  // census-trust §30: eventTrustGatesRun
@@ -249,15 +249,15 @@ async function getEventRole(
   eventId: string,
   userId: string,
 ): Promise<"host" | "co_host" | "moderator" | "banned" | null> {
-  const { data: ev } = await sc.from("events").select("host_id").eq("id", eventId).maybeSingle();
+  const { data: ev, error: evErr } = await sc.from("events").select("host_id").eq("id", eventId).maybeSingle(); if (evErr) throw new EventAccessUnavailableError("events", evErr); // a failed read was "no role": 403 (wave 5) — now 503
   if (!ev) return null;
   if ((ev as any).host_id === userId) return "host";
-  const { data: r } = await sc
+  const { data: r, error: rErr } = await sc
     .from("event_roles")
     .select("role")
     .eq("event_id", eventId)
     .eq("user_id", userId)
-    .maybeSingle();
+    .maybeSingle(); if (rErr) throw new EventAccessUnavailableError("event_roles", rErr); // a co-host's failed role read was "no role" (wave 5)
   return (r as any)?.role ?? null;
 }
 
@@ -2552,9 +2552,9 @@ router.patch("/events/:id", async (req, res) => {
   }
 
   // Fetch current event to detect key-detail changes for notifications
-  const { data: current } = await sc.from("events").select("*").eq("id", id).maybeSingle();
+  const { data: current, error: currentErr } = await sc.from("events").select("*").eq("id", id).maybeSingle(); if (currentErr) { sendError(res, "degraded_unavailable", "The event could not be read right now, so nothing was changed. Please try again."); return; } // a failed read answered 404 (wave 5)
   if (!current) { sendError(res, "not_found", "Event not found"); return; }
-  if (refuseTicketUrlOnUpdate(res, b, current)) return; // REV-020: before the state write, so a refusal changes nothing (helper at the end of this file)
+  if (refuseTicketUrlOnUpdate(res, b, current)) return; const visTo = b.visibility !== undefined && b.visibility !== (current as any).visibility ? b.visibility : null; const stateChanges = b.state !== undefined && b.state !== (current as any).state; const held = await refuseHostWriteUnderModeration(sc, id, { visibility: visTo !== null, stateFrom: stateChanges ? (current as any).state : null }); if (!held.ok) { sendError(res, held.code, held.message); return; } // REV-020: before the state write, so a refusal changes nothing (helper at the end of this file); so is the moderation hold (wave 5: a host un-hid a moderator-hidden event here)
   // ── the state transition, through the one authority ───────────────────────
   // `started` is refused here by NAME rather than by the table: the table says
   // open|full|waitlist -> started is a structurally legal pair, but WHO may
@@ -2609,11 +2609,11 @@ router.patch("/events/:id", async (req, res) => {
   if (b.country            !== undefined) patch.country             = b.country;
   if (b.showHeaderPublicly !== undefined) patch.show_header_publicly = b.showHeaderPublicly;
 
-  const { data: updated, error } = await sc
-    .from("events").update(patch).eq("id", id).select("*").single();
-
+  const visGuard: HostVisibilityGuard | null = visTo !== null ? { from: (current as any).visibility, ...(stateChanges ? {} : { updatedAt: (current as any).updated_at }) } : null; const { data: updated, error } = await guardHostVisibilityWrite(sc // a visibility change is conditional on what was read: a moderator's hide (it stamps updated_at) landing since the hold read wins
+    .from("events").update(patch).eq("id", id), visGuard).select("*").single();
+  if (error && visGuard && (error as any).code === "PGRST116") { sendError(res, "conflict", "The event changed while this request was in flight (it may have been moderated) — reload and try again"); return; } // the guarded write matched no row: nothing written by it
   if (error) { req.log.error({ err: error }, "update event"); sendError(res, "db_error", error.message); return; }
-
+  if (visGuard) { const rec = await recordHostVisibilityChange(sc, { eventId: id, actorId: user.id, from: visGuard.from, to: visTo, via: "edit" }); if (rec.error) req.log.error({ err: rec.error, eventId: id }, "host visibility change: its record (visibility_changed) could not be written — the change stands unrecorded"); } // from / to: what a later restore reads as the host's own value (wave 5)
   // Notify attendees if key details changed (fire-and-forget)
   const changed = KEY_FIELDS.some((f) => {
     const snakeToCamel = f.replace(/_([a-z])/g, (_, c) => c.toUpperCase()) as string;
@@ -2727,7 +2727,7 @@ router.delete("/events/:id", async (req, res) => {
   const role = await getEventRole(sc, id, user.id);
   if (role !== "host") { sendError(res, "forbidden", "Only the host can cancel an event"); return; }
 
-  const { data: ev } = await sc.from("events").select("title, state, starts_at").eq("id", id).maybeSingle();
+  const { data: ev, error: evErr } = await sc.from("events").select("title, state, starts_at").eq("id", id).maybeSingle(); if (evErr) { sendError(res, "degraded_unavailable", "The event could not be read right now, so nothing was changed. Please try again."); return; } // a failed read answered 404 (wave 5)
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
   // Captured BEFORE the transition: the trust rule is about the state the host
   // walked away from, not the one the update leaves behind.
@@ -4760,7 +4760,7 @@ router.post("/events/:id/cancel", async (req, res) => {
   const role = await getEventRole(sc, id, user.id);
   if (role !== "host") { sendError(res, "forbidden", "Only the host can cancel this event"); return; }
 
-  const { data: ev } = await sc.from("events").select("title, state, starts_at").eq("id", id).maybeSingle();
+  const { data: ev, error: evErr } = await sc.from("events").select("title, state, starts_at").eq("id", id).maybeSingle(); if (evErr) { sendError(res, "degraded_unavailable", "The event could not be read right now, so nothing was changed. Please try again."); return; } // a failed read answered 404 (wave 5)
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
 
   if ((ev as any).state === "cancelled") { res.json({ ok: true }); return; }
@@ -5011,9 +5011,9 @@ router.post("/events/:id/archive", async (req, res) => {
   // This route read no state at all and discarded the UPDATE's `.error`, so a
   // refused write answered {ok:true} and an already-archived / cancelled /
   // completed event was re-archived silently.
-  const { data: archEv } = await sc.from("events").select("state").eq("id", id).maybeSingle();
+  const { data: archEv, error: archErr } = await sc.from("events").select("state").eq("id", id).maybeSingle(); if (archErr) { sendError(res, "degraded_unavailable", "The event could not be read right now, so nothing was changed. Please try again."); return; } // a failed read answered 404 (wave 5)
   if (!archEv) { sendError(res, "not_found", "Event not found"); return; }
-  if ((archEv as any).state === "archived") { res.json({ ok: true }); return; }
+  if ((archEv as any).state === "archived") { res.json({ ok: true }); return; } const archHold = await refuseHostWriteUnderModeration(sc, id, { visibility: false, stateFrom: (archEv as any).state }); if (!archHold.ok) { sendError(res, archHold.code, archHold.message); return; } // a moderator's cancel holds until restored: archiving it made the cancel irreversible (wave 5)
   const archiveWrite = await writeEventState(sc, id, (archEv as any).state, "archived");
   if (!archiveWrite.ok) { sendError(res, archiveWrite.code, archiveWrite.message); return; }
   await logEventActivity(sc, id, user.id, "archived", {});
@@ -6524,10 +6524,10 @@ router.post("/events/:id/link-circle", async (req, res) => {
 
   const patch: Record<string, any> = { circle_id: circleId, updated_at: new Date().toISOString() };
   if (setCircleVisibility) patch.visibility = "circle";
-
-  const { error: patchErr } = await sc.from("events").update(patch).eq("id", id);
-  if (patchErr) { sendError(res, "db_error", patchErr.message); return; }
-
+  let lcGuard: HostVisibilityGuard | null = null; if (setCircleVisibility) { const { data: lcEv, error: lcErr } = await sc.from("events").select("visibility, updated_at").eq("id", id).maybeSingle(); if (lcErr) { sendError(res, "degraded_unavailable", "The event could not be read right now, so nothing was changed. Please try again."); return; } if (!lcEv) { sendError(res, "not_found", "Event not found"); return; } if ((lcEv as any).visibility !== "circle") { const held = await refuseHostWriteUnderModeration(sc, id, { visibility: true, stateFrom: null }); if (!held.ok) { sendError(res, held.code, held.message); return; } lcGuard = { from: (lcEv as any).visibility, updatedAt: (lcEv as any).updated_at }; } } // the moderation hold, as PATCH (wave 5)
+  const { data: linked, error: patchErr } = await guardHostVisibilityWrite(sc.from("events").update(patch).eq("id", id), lcGuard).select("id");
+  if (patchErr) { sendError(res, "db_error", patchErr.message); return; } if (lcGuard && (!Array.isArray(linked) || linked.length === 0)) { sendError(res, "conflict", "The event changed while this request was in flight (it may have been moderated) — reload and try again"); return; }
+  if (lcGuard) { const rec = await recordHostVisibilityChange(sc, { eventId: id, actorId: user.id, from: lcGuard.from, to: "circle", via: "link-circle" }); if (rec.error) req.log.error({ err: rec.error, eventId: id }, "host visibility change: its record (visibility_changed) could not be written — the change stands unrecorded"); }
   await logEventActivity(sc, id, user.id, "circle_linked", { circleId });
 
   res.json({ ok: true, circleId });

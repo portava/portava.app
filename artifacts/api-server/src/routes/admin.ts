@@ -2449,12 +2449,12 @@ router.post("/admin/reports/:id/hide-content", async (req, res) => {
     // the gated path would have rejected.
     contentHidden = Array.isArray(hideRes.data) && hideRes.data.length > 0;
   } else if (target_type === "event") {
-    const { data: hiddenEvents, error } = await sc.from("events")
-      .update({ visibility: "invite_only", updated_at: now })
-      .eq("id", target_id)
-      .select("id");
-    if (error) { sendError(res, "db_error", error.message); return; }
-    contentHidden = Array.isArray(hiddenEvents) && hiddenEvents.length > 0;
+    // census-trust (wave 5): this hide was a raw UNRECORDED update (no event_activity_log row), so nothing could tell it held — the host's PATCH un-hid it, and no restore could reverse it. It is now the moderate route's hide: claimed, recorded (admin_hide, from / to visibility, via: report), undone if that record cannot be written.
+    const { data: hEv, error: hReadErr } = await sc.from("events").select("id, host_id, title, state, visibility, featured").eq("id", target_id).maybeSingle(); if (hReadErr) { sendError(res, "degraded_unavailable", "The event could not be read right now, so it was not hidden. Please try again."); return; }
+    const hid = !hEv ? null : await applyEventModeration(sc, req, hEv as ModeratedEventRow, { changes: { visibility: "invite_only" }, now, activityAction: "admin_hide",
+      writeActivity: (st) => sc.from("event_activity_log").insert({ event_id: target_id, actor_id: adminUserId, action: "admin_hide", metadata: { reason, via: "report", report_id: req.params.id, ...st } }).select("id"), writeAudit: () => Promise.resolve({ error: null }) }); // the moderation_actions row (content_removed) is auditReportAction's, written above
+    if (hid && hid.outcome === "conflict") { sendError(res, "conflict", hid.message); return; } if (hid && hid.outcome !== "applied") { sendError(res, "db_error", hid.message, { exposeDetail: true }); return; }
+    contentHidden = hid !== null; // no row (the event is gone) hid nothing, as the affected-row count said
   }
 
   if (!contentHidden && ["post", "trip", "event"].includes(target_type)) {

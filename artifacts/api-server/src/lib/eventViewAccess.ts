@@ -59,3 +59,25 @@ export async function readEventViewAccess(client: SupabaseClient, event: EventAc
     return "unavailable";
   }
 }
+
+/**
+ * An event-access input (the event row, or the caller's event_roles row) could
+ * not be read (wave 5). routes/events.ts getEventRole answers a bare role or
+ * null and DISCARDED both reads' errors, so a failed read was "no role": a host
+ * was told 403 "only the host can…" by a query that never answered. It has no
+ * room for a third state across its ~45 callers, so it THROWS this — the
+ * TripAccessUnavailableError device (lib/http.ts): the global error handler
+ * (lib/errorEnvelope.ts) reads `status` / `code`, so an uncaught one is 503
+ * `degraded_unavailable`, retryable, and Express 5 forwards a rejected async
+ * handler there with no try/catch in the route.
+ */
+export class EventAccessUnavailableError extends Error {
+  readonly input: string;
+  readonly status: number = 503;
+  readonly code = "degraded_unavailable";
+  constructor(input: string, error: unknown) {
+    super(`event access input ${input} unavailable — refusing to answer: ${String((error as { message?: unknown; code?: unknown } | null)?.message ?? (error as { code?: unknown } | null)?.code ?? error)}`);
+    this.name = "EventAccessUnavailableError";
+    this.input = input;
+  }
+}

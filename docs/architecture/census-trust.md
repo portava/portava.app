@@ -5465,3 +5465,116 @@ Two existing cases pinned the old behaviour and were corrected on the same line:
 
 Rows: none move. No row of this census grades the moderate route's visibility, an appeal's event restoration
 (TRV2-10 is the owner's question about trust effects), or the cancel push. Headline unchanged: 90 / 15 / 1 / 2 of 108.
+
+### Correction (2026-10-18, wave 5) — a host cannot undo a moderator's hide
+
+*Same branch and tree. Committed on this branch; undeployed. **NO ROW MOVES.***
+
+**Why it is recorded here.** The correction above listed it as not changed: a host could change an event's visibility
+through PATCH /events/:id with no guard and no record, so a moderator's hide lasted only until the host undid it. This
+census watches the moderate route and lib/eventModerationClaim.ts, so the fix is here. The same pass fixes the event
+reads that answered "not found" or "not allowed" when they failed (the two host cancel routes and getEventRole), which
+that correction also listed.
+
+**What was broken (safety).**
+- `hide` writes visibility `invite_only`; `remove` also archives. The host's PATCH /events/:id wrote any other
+  visibility straight back, and recorded nothing. POST /events/:id/link-circle did the same with `setCircleVisibility`.
+  A removed (archived) event could be widened the same way.
+- A report's hide-content hid an event with a raw update that wrote no event_activity_log row. Nothing could tell
+  that the hide held, and no restore could reverse it.
+- From `cancelled` the transition authority lets a host archive. Archiving a moderator-cancelled event made the cancel
+  irreversible: the restore and the appeal refuse a record the event no longer holds.
+- getEventRole discarded both of its reads' errors, so a failed read was "no role": a 403. DELETE /events/:id and
+  POST /events/:id/cancel discarded the event read's error, so a failed read was a 404. PATCH's own event read and the
+  archive route's read did the same.
+
+**What changed, with no migration.** The edits to routes/events.ts (7139 lines before and after) and routes/admin.ts
+(3747 before and after) are line-neutral. lib/eventModerationClaim.ts and lib/eventViewAccess.ts are appended to; their
+cited lines are unchanged. lib/http.ts adds one code on its existing lines.
+- The hold. While the newest moderation of a column still holds, the host may not write that column: 409
+  `event_under_moderation`, with nothing written
+  (`artifacts/api-server/src/lib/eventModerationClaim.ts:611#export async function refuseHostWriteUnderModeration(`).
+  A moderator's restore or an approved appeal (each writes an `admin_restore` row) releases it. Whether a moderation
+  holds is read from the moderation record, never from a column the host can write. The read is paged and newest first
+  (`artifacts/api-server/src/lib/eventModerationClaim.ts:587#export async function readEventModerationHold(`).
+  - Visibility: the newest admin_hide, admin_remove or admin_restore row decides
+    (`artifacts/api-server/src/lib/eventModerationClaim.ts:577#visibility = action === "admin_restore" ? null : action;`).
+    A hide that changed nothing (the host had already chosen `invite_only`) still holds; passed over, as the restore's
+    reader passes it, it would let the host widen the event the moment after it was hidden. A hide that recorded
+    nothing (it predates the record) holds too. The host's own rows are not read.
+  - State: the newest recorded moderation state change decides, which is the record the restore reverses
+    (`artifacts/api-server/src/lib/eventModerationClaim.ts:580#state = action === "admin_restore" ? null : action;`).
+    A cancel or remove holds. Only a cancelled or archived event can be under one, so a write from any other state
+    reads nothing (`artifacts/api-server/src/lib/eventModerationClaim.ts:612#const state = write.stateFrom !== null`).
+  - A record that cannot be read refuses the write, 503
+    (`artifacts/api-server/src/lib/eventModerationClaim.ts:615#if (!read.ok) return { ok: false, code: "degraded_unavailable"`).
+- Where it is asked. Every host write of a moderated column asks first:
+  - PATCH /events/:id, before its state write and before any other write
+    (`artifacts/api-server/src/routes/events.ts:2557#const held = await refuseHostWriteUnderModeration(sc, id,`);
+  - POST /events/:id/link-circle with `setCircleVisibility`
+    (`artifacts/api-server/src/routes/events.ts:6527#refuseHostWriteUnderModeration(sc, id, { visibility: true, stateFrom: null })`);
+  - POST /events/:id/archive (`artifacts/api-server/src/routes/events.ts:5016#archHold = await refuseHostWriteUnderModeration(`).
+  Every other host write to `events` sets counters, RSVP closure, the chat thread or a cover image, none of them a
+  column a moderation sets. Every writeEventState call that can leave `cancelled` is PATCH or archive; syncEventState
+  starts only from open, full or waitlist. The new suite's structural section pins both lists.
+- The host's own change. On an event that nothing holds, the visibility write is conditional on the visibility the
+  host read. Unless the same request wrote state, it is also conditional on the `updated_at` read, which a moderator's
+  claim stamps. A hide that lands between the hold read and the write therefore wins, and the host gets 409 `conflict`
+  (`artifacts/api-server/src/routes/events.ts:2614#visGuard && (error as any).code === "PGRST116"`).
+  The change is recorded: a `visibility_changed` row with from and to
+  (`artifacts/api-server/src/routes/events.ts:2616#recordHostVisibilityChange(sc, { eventId: id, actorId: user.id`).
+  The restore's reader reads that row as the host's own value since, and never reverses past it
+  (`artifacts/api-server/src/lib/eventModerationClaim.ts:496#if (recorded.action === EVENT_HOST_VISIBILITY_ACTIVITY)`).
+  This closes the case the correction above stated: a host who moved a hidden event away from `invite_only` and back.
+- The report's hide. hide-content's event branch is now the moderate route's hide. It is claimed, recorded
+  (`admin_hide`, from and to, `via: "report"`), and undone if the record cannot be written
+  (`artifacts/api-server/src/routes/admin.ts:2454#applyEventModeration(sc, req, hEv as ModeratedEventRow`).
+- Failed reads. getEventRole now throws EventAccessUnavailableError. The global error handler answers it 503
+  `degraded_unavailable`, the device TripAccessUnavailableError uses
+  (`artifacts/api-server/src/routes/events.ts:252#throw new EventAccessUnavailableError("events", evErr)`,
+  `artifacts/api-server/src/routes/events.ts:260#throw new EventAccessUnavailableError("event_roles", rErr)`).
+  The two cancel routes, PATCH and archive answer a failed event read with 503 `degraded_unavailable`, nothing written
+  (`artifacts/api-server/src/routes/events.ts:2730#evErr } = await sc.from("events").select("title, state, starts_at")`,
+  `artifacts/api-server/src/routes/events.ts:4763#evErr } = await sc.from("events").select("title, state, starts_at")`). An event that is
+  not there answers as before. UNCHECKED_READS_ALLOWLIST.json loses getEventRole's two entries, which are fixed.
+
+**Tests.** `artifacts/api-server/src/test/eventHostModerationHold.test.ts:195#describe("B. PATCH /events/:id — a moderator's hide holds the host off"`
+is one suite of 42 cases over the real admin and events routers, the real global error handler, and the moderation
+double:
+- A: the hold, pure;
+- B and B2: PATCH and archive, including a hide that changed nothing, an unrecorded hide, a remove, a cancel, a
+  release by restore and by an approved appeal, an unreadable record, two races, and a read past the row cap;
+- C: link-circle; D: hide-content; E: the failed reads;
+- F: the structural lists.
+On the cf5a3c6cd sources, with the new suite in place, 33 cases were red for the stated reasons and 9 controls were
+green; the label check found 0 violations. 33 mutants, each applied alone, were restored from a repo-relative backup
+and checked by sha256; all 33 were killed. No existing case had to change.
+
+**Behaviour changes.**
+- PATCH /events/:id (visibility or state), POST /events/:id/link-circle (`setCircleVisibility`) and POST
+  /events/:id/archive answer 409 `event_under_moderation` while a moderation of that column holds. A new error code,
+  409, in lib/http.ts.
+- A host's own visibility change writes a `visibility_changed` activity row. One that loses a race is 409 `conflict`.
+- hide-content on an event writes an `admin_hide` row. When that row cannot be written, the hide is undone and the
+  answer is 500 `db_error`; it used to stand unrecorded. A failed event read there is 503.
+- A failed getEventRole read is 503 on every route that uses it (about 45); it was a 403.
+
+**What this does not prove or change.**
+- Every hide or remove from before the visibility record (cf5a3c6cd), which is every one in production today, holds the
+  host off, and its restore is refused (the correction above). Such an event stays `invite_only` until a person acts:
+  no route releases it. Production was not measured.
+- A hide-content on an event from before this change wrote no row, so it does not hold, and the host can still widen it.
+- A PATCH that changes state and visibility together is conditional on the visibility read but not on `updated_at`,
+  because its own state write stamps that. A hide that changed nothing, landing in that instant, is not seen. When that
+  write loses its race, the state change already stands.
+- A host may still cancel or archive a hidden event; the hide holds visibility only. A restore of a host-cancelled event
+  is refused whole, so that event's hide cannot then be restored by the route either. It stays cancelled and hidden.
+- When the host's `visibility_changed` row cannot be written, the failure is logged and the change stands unrecorded.
+  No decision rests on that row: the hold reads moderation rows only, and every hide records what it found.
+- 41 other event-row reads in routes/events.ts still discard their error, among them publish, postpone and complete.
+- `circle` and `trip` cannot be stored (census-discovery §64.10), so link-circle's visibility write still fails there.
+- Nothing here ran against a live PostgREST.
+
+Rows: none move. No row of this census grades a host's write of a moderated column, the report's hide, or these reads;
+§30.3's "every getEventRole caller grants on a positive role only" still holds. Headline unchanged: 90 / 15 / 1 / 2 of
+108.
