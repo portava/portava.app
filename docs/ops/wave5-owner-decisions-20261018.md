@@ -17,6 +17,8 @@ Branch `claude/wave4-build-20261017` (PR #764, stacked on #763 and #762). Every 
 | Place sweep | Owner ruling: oldest first, paged batches, busy places prioritised without starving quiet ones, backlog continued, capacity scales. It now reports at /healthz/schedulers. | — |
 | Inbox | Archived conversations move to an "Archived" section with Unarchive (owner ruling). | — |
 | Moderation | Reports use one vocabulary (open, in_review, resolved, dismissed), so reports filed by users now reach the trip and event queues and can be resolved. `GET /admin/reports?status=all` answers 400; the admin client never sends it. A media report that another moderator closed first answers 409 (was 404). The moderation dossier and the user detail refuse the record when a moderation count can't be counted, instead of showing 0. | — |
+| Event moderation | Event state changes only through the lifecycle authority. A moderator cancel of a completed or archived event is a 409, and a moderator cancel now notifies going/maybe attendees. Restore returns exactly to the recorded prior state and visibility (never public from nothing); a legacy hide with no record is refused (409) or, for an appeal, deferred to a person. While a moderation holds, the host's visibility, link-circle and archive writes answer 409 `event_under_moderation`. A failed event read is 503 where it was 404/403. Note: a "hide" (invite_only) still serves the event to invitees and to anyone holding a share link; "remove" is the strong action. | — |
+| Admin screens | Moderation screens refuse with the name of what could not be read instead of showing 0 or an empty list; report close claims, then audits, then undoes on an audit failure (409 on a race); the reported-venue queue cannot drop a venue; the Compass dashboard refuses a section it cannot count whole. | — |
 
 ## 2. Rulings only the owner can give
 
@@ -30,6 +32,7 @@ Branch `claude/wave4-build-20261017` (PR #764, stacked on #763 and #762). Every 
 - Rent-a-Buddy: calls are refused after a completion without mutual "stay connected", but messages never were. Should messages be refused too? (That would need a send check on the booking's state.)
 
 **Data and product**
+- Events: every production hide made before this branch recorded no prior visibility, so it now holds the host off and cannot be restored by any route — those events stay invite_only until someone acts. What should a moderator "release" restore to? Should a host be able to cancel an event a moderator has hidden (it then cannot be restored)? Legacy hide-content hides wrote no record, so they do not hold. The event state-machine registry does not list the moderator-only arrows (registry shape decision).
 - Stamps: should an admin be able to award a presence stamp with no place and no evidence? What should repair the historical completion stamps of trips nobody took (OD-1012-STAMP-4, production data)?
 - MD385: should a Memory copied from a post be withdrawn when the post is soft-deleted or held for moderation?
 - 3999 × 3676 (both unapplied): merging two Memories that each hold a copy of the same post photo collides with 3999's one-copy index. Either de-duplicate in 3676's merge or relax the index.
