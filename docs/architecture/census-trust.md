@@ -5881,7 +5881,55 @@ unapplied-schema ledger records the probe as fail-soft.
 
 **Pass 12.** The probe's verdict is process-wide, per database URL (events.ts:7505; pinned with clients built by getServiceClient()). A resolved non-envelope is a failed call: before this, it answered 500 after an RSVP was already removed (events.ts:7434; six new cases: three, each for a resolved undefined and a resolved null). The locked accept's `no_seat` is the answer, with no unlocked recount (mutant P5 now killed). The schema-capability memo shared the same per-request lifetime and held every probing client strongly (a leak). It is now per database URL too, with nothing holding a client (`artifacts/api-server/src/test/schemaCapabilityMemoPerUrl.test.ts`, 5 cases, 2 red on the old code).
 
-**Still open:** the sweeper's own claim (lib/eventWaitlistSweeper.ts) does not take the lock. On the press, a promotion
-with no free seat stops offering anyone.
+**On the press,** a promotion with no free seat stops offering anyone. The sweeper's own claim now takes the same lock
+(closed on the press; correction below).
+
+Rows: none move. Headline unchanged: 90 / 15 / 1 / 2 of 108.
+
+### Correction (2026-10-18, wave 5, sweeper lock) — the sweeper's claim takes the same lock (3906, unapplied)
+
+*Same branch and tree. Committed on this branch; the migration is unapplied everywhere. **NO ROW MOVES.** It closes, on
+the press, the sweeper half of the waitlist race above.*
+
+**The defect, wider than stated.** The sweeper offered a lapsed offer's seat with its own unlocked UPDATE, which counts
+nothing. A route's catch-up treats a lapsed offer as no offer. So a route that had already offered the seat to the queue
+head was followed by a sweeper pass that deleted the lapsed row and offered the same seat to the next person. That needs
+no concurrency: one after the other gives two offers for one seat too. The tests reproduce it through the real router
+and the real sweeper on PGlite, in sequence and in two forced interleavings. Each gives two offers without the lock. With
+3906 present but today's sweeper, each still gives two: the route's lock cannot see an unlocked claim.
+
+**The fix.** When 3906 is established, the sweeper claims each pick through `claim_waitlist_seat`, one person per call,
+in queue order (`artifacts/api-server/src/lib/eventWaitlistSweeper.ts:389#async function promoteUnderEventLock(`, through
+`artifacts/api-server/src/routes/events.ts:7537#export async function claimWaitlistSeatForSweeper(`). It uses the routes' own probe and process-wide memo: a route's verdict serves the sweeper, and the
+other way round. Each answer:
+- claimed: the person is offered and told (in-app, as before).
+- no free seat, or the row was not claimable: nothing is written. This counts as `contended` (neither stranded nor a
+  failure), and the next pick is tried.
+- the event is gone: stranded.
+- a failed call (an error, a lost answer, a throw, a non-envelope): the seat is HELD, and `failed` and `held` count it.
+  Nobody further is offered, and the unlocked UPDATE never runs after it.
+- a call answering PGRST202 / 42883 ran nothing: that pick and the rest use today's UPDATE.
+The flag still decides first:
+- off or absent: the offer is expired and nobody is promoted;
+- unreadable: the same, and the pass is counted.
+With the function absent (production today), the sweeper's statements are byte-identical to before (statement trace
+over six scenes). The probe is the only addition: at most once per process per 30 s, shared with the routes.
+
+Tests:
+- `artifacts/api-server/src/test/eventsWaitlistSeatLockRace.test.ts`: 58 (25 new, from :703);
+- `artifacts/api-server/src/test/eventWaitlistSweeper.test.ts`: 18 (2 new, :444).
+23 of the 27 new cases are red on the old sweeper (19 on behaviour alone). The 4 that pass are the three anti-vacuity
+cases and one control. 17 mutants, all killed. 66 event, waitlist, scheduler and ledger files: 2051 / 2051 before,
+2078 / 2078 after.
+
+**Still open:**
+- Admissions that take a seat without the queue count outside the lock (Q-B3-1).
+- A seat a failed sweeper claim holds waits for that event's next sync; no reconciling sweep exists (as stated in B2).
+- The sweeper's notice is in-app only, with no push (unchanged).
+
+Rows: none move. Headline unchanged: 90 / 15 / 1 / 2 of 108.
+
+3906's own header (lines 70–74) still says the sweeper claims unlocked. It is left as it is, because editing the migration
+would change the checksum the production addendum records for its copy.
 
 Rows: none move. Headline unchanged: 90 / 15 / 1 / 2 of 108.

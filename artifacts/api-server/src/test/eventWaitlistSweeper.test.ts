@@ -423,3 +423,42 @@ describe("the expired-offer read fails", () => {
     assert.equal(getSweepStatus().consecutiveFailures, 0, "a clean pass must clear the counter");
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SWEEPER LOCK LANE (2026-10-18). Appended: the lines above are cited by line.
+//
+// The sweeper now claims through claim_waitlist_seat (migration 3906, unapplied) once the routes' probe has seen the
+// function answer (claimWaitlistSeatForSweeper, routes/events.ts). This file's fake has no `.rpc`, so every case above
+// runs today's statements with nothing probed. Here the fake gets an `.rpc` that answers as production does today
+// (PGRST202) and as a lost probe does (no code): the pass is the ordinary case's — the same writes, the same rows, the
+// same counts — and the only rpc sent is the probe (a nil event id), once. The locked path itself is driven on
+// PostgreSQL in eventsWaitlistSeatLockRace.test.ts ("sweeper lock lane").
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe("sweeper lock lane — a client WITH rpc, the function absent or not established: today's sweep, exactly", () => {
+  const answers = [
+    ["PGRST202 (3906 unapplied: production today)", { data: null, error: { code: "PGRST202", message: "Could not find the function public.claim_waitlist_seat" } }],
+    ["a code-less error (the probe's answer was lost)", { data: null, error: { message: "TypeError: fetch failed" } }],
+  ] as const;
+  for (const [label, answer] of answers) {
+    it(`${label}: one probe, then the ordinary case's writes, rows and counts`, async () => {
+      const rows = [seat("e1", "expired", 1, PAST), seat("e1", "next", 2, null), seat("e1", "after", 3, null)];
+      const c: any = makeClient(rows);
+      const rpcs: Array<[string, Record<string, unknown>]> = [];
+      c.rpc = async (fn: string, args: Record<string, unknown>) => { rpcs.push([fn, args]); return answer; };
+      const r = await runSweep({ client: c });
+      assert.deepEqual(
+        { scanned: r.scanned, events: r.events, cleared: r.cleared, promoted: r.promoted, stranded: r.stranded, unreadable: r.unreadable, failed: r.failed, held: r.held },
+        { scanned: 1, events: 1, cleared: 1, promoted: 1, stranded: 0, unreadable: 0, failed: 0, held: 0 },
+      );
+      assert.deepEqual({ delete: c._counts.delete, update: c._counts.update }, { delete: 1, update: 1 }, "today's DELETE and today's one promotion UPDATE");
+      assert.equal(rows.find((x) => x.user_id === "expired"), undefined);
+      assert.ok(rows.find((x) => x.user_id === "next")!.offer_expires_at, "the next in queue holds the offer");
+      assert.equal(rows.find((x) => x.user_id === "after")!.offer_expires_at, null);
+      assert.deepEqual(rpcs.map(([fn, a]) => [fn, a["p_event_id"], a["p_user_id"]]),
+        [["claim_waitlist_seat", "00000000-0000-0000-0000-000000000000", "00000000-0000-0000-0000-000000000000"]],
+        "the probe, and nothing else: no locked claim was attempted");
+      assert.equal(getSweepStatus().consecutiveFailures, 0);
+    });
+  }
+});

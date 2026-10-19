@@ -69,7 +69,7 @@
 
 import { getServiceClient } from "./supabase.js";
 import { logger as rootLogger } from "./logger.js";
-import { eligibleWaitlisted, WAITLIST_PROMOTE_SCAN, notifyWaitlistOffer } from "../routes/events.js";
+import { eligibleWaitlisted, WAITLIST_PROMOTE_SCAN, notifyWaitlistOffer, claimWaitlistSeatForSweeper } from "../routes/events.js";
 import { readFlagState } from "./capability/schemaCapability.js"; // wave 5 follow-up B2: the four-state reader the routes use for events_waitlist_enabled
 const logger = rootLogger.child({ service: "EventWaitlistSweeper" });
 
@@ -121,14 +121,14 @@ export interface SweepPassResult {
   stranded: number;
   /** Events whose queue could NOT be read — left for the next pass, not written off. */
   unreadable: number;
-  /** Events whose DELETE or promotion UPDATE reported `.error`. */
-  failed: number; held: number; // seats this pass freed and offered to NOBODY: events_waitlist_enabled read off / absent, or could not be read (wave 5 follow-up B2)
+  /** Events whose DELETE or promotion UPDATE reported `.error`, or whose locked claim (claim_waitlist_seat, 3906) failed. */
+  failed: number; held: number; contended: number; // held: seats this pass freed and offered to NOBODY — events_waitlist_enabled read off / absent, or could not be read (wave 5 follow-up B2), or a locked claim failed (sweeper lock lane); contended: seats the event lock found taken by another writer's offer or seat (sweeper lock lane)
   lastError: string | null;
 }
 
 const EMPTY: SweepPassResult = {
   skipped: true, reason: null,
-  scanned: 0, events: 0, cleared: 0, promoted: 0, stranded: 0, unreadable: 0, failed: 0, held: 0,
+  scanned: 0, events: 0, cleared: 0, promoted: 0, stranded: 0, unreadable: 0, failed: 0, held: 0, contended: 0,
   lastError: null,
 };
 
@@ -267,12 +267,12 @@ export async function runSweep(opts?: { client?: any }): Promise<SweepPassResult
           continue;
         }
 
-        const offerExpiresAt = new Date(nowMs + OFFER_WINDOW_MS).toISOString();
+        const offerExpiresAt = new Date(nowMs + OFFER_WINDOW_MS).toISOString(); const lock = await promoteUnderEventLock(sc, out, eventId, promoteIds, freed, pick.unavailable, offerExpiresAt); if (lock.unlocked.length === 0) continue; // sweeper lock lane: under 3906 each pick is claimed under the event lock (promoteUnderEventLock, end of file); not established, lock.unlocked IS promoteIds and the UPDATE below runs exactly as before
         const { data: promotedRows, error: updErr } = await sc
           .from("event_waitlist")
           .update({ offer_expires_at: offerExpiresAt })
           .eq("event_id", eventId)
-          .in("user_id", promoteIds)
+          .in("user_id", lock.unlocked)
           // Re-asserted so a user promoted by a concurrent pass between the read
           // above and this write is not handed a second, later-expiring offer.
           .is("offer_expires_at", null)
@@ -288,7 +288,7 @@ export async function runSweep(opts?: { client?: any }): Promise<SweepPassResult
         }
         const promoted = Array.isArray(promotedRows) ? promotedRows.length : 0;
         out.promoted += promoted;
-        if (promoted < freed && !pick.unavailable) out.stranded += freed - promoted;
+        if (promoted < freed - lock.settled && !pick.unavailable) out.stranded += freed - lock.settled - promoted;
         logger.info({ eventId, promotedCount: promoted, freed }, "promoted next waitlisted users"); for (const r of (promotedRows as any[]) ?? []) await notifyWaitlistOffer(sc, eventId, String(r.user_id), offerExpiresAt); // wave 5 follow-up B2: each person promoted is TOLD (the in-app row, as the route promoter does); it never throws
       } catch (evErr) {
         out.failed += 1;
@@ -361,3 +361,58 @@ export function _eventWaitlistSweeperArmed(): boolean {
 //                        to the queue (offerFreedSeatToQueue), not this sweeper:
 //                        a held seat has no offer, so no later pass sees it.
 // Before this, the sweeper promoted whatever the flag said, and told nobody.
+
+// ── Sweeper lock lane (2026-10-18): the sweeper's claim takes 3906's event lock ───
+//
+// The promotion above was one unlocked UPDATE over the picks (`.in("user_id", promoteIds).is("offer_expires_at", null)`).
+// It counts nothing. A route's catch-up treats a LAPSED offer as no offer, so when a route had already offered the lapsed
+// offer's seat to the queue head, this pass deleted the lapsed row, read the queue (now headed by the next person) and
+// offered the same seat again: two offers for one seat, in the same instant or minutes apart. promoteUnderEventLock
+// claims each pick, in queue order, through claimWaitlistSeatForSweeper (routes/events.ts): the routes' own probe, their
+// process-wide memo (a route's verdict is the sweeper's, and the other way round), and claim_waitlist_seat (migration
+// 3906), which locks the event row and claims only while going + live offers < max_attendees.
+//   not established (missing, unknown, no `.rpc`): `unlocked` IS promoteIds and the UPDATE above runs exactly as before —
+//                 the same statement and the same counts. The probe is the only addition: at most once per
+//                 ABSENT_TTL_MS per process, shared with the routes, and it writes nothing;
+//   claimed     → promoted, and the person is TOLD (notifyWaitlistOffer), as the unlocked path tells them;
+//   taken       → `contended`: the lock found no free seat, or the row not claimable — another writer's offer or seat
+//                 holds it. Not stranded, not a failure. The next pick is still tried: the lock decides whether a seat
+//                 is free;
+//   no_event    → the event is gone: this pick and the rest are `stranded`;
+//   failed      → the seat is HELD: `failed` counts the event (consecutiveFailures rises), `held` the seats this pick and
+//                 the picks after it would have had, lastError says why. Nobody further is offered, and the unlocked
+//                 UPDATE is NEVER run after it: a lost answer may already have committed the offer. As for a seat held
+//                 under an unreadable flag, the next syncEventState that reads the flag ON offers it to the queue;
+//   vanished    → a locked call that answers PGRST202 / 42883 ran nothing (the routes' rule): this pick and the rest go
+//                 through the UPDATE above, and `settled` tells its stranded arithmetic what the lock already decided.
+// Seats with no eligible pick are stranded as before (not when the eligibility read failed: that event is `unreadable`).
+async function promoteUnderEventLock(sc: any, out: SweepPassResult, eventId: string, promoteIds: string[], freed: number, pickUnavailable: boolean, offerExpiresAt: string): Promise<{ unlocked: string[]; settled: number }> {
+  const claimed: string[] = [];
+  let taken = 0;
+  let unlocked: string[] = [];
+  for (let i = 0; i < promoteIds.length; i++) {
+    const userId = promoteIds[i]!;
+    const claim = await claimWaitlistSeatForSweeper(sc, eventId, userId, offerExpiresAt, logger);
+    if (claim.kind === "unlocked") {
+      if (i === 0) return { unlocked: promoteIds, settled: 0 };
+      unlocked = promoteIds.slice(i);
+      break;
+    }
+    if (claim.kind === "claimed") { claimed.push(userId); continue; }
+    if (claim.kind === "taken") { taken += 1; continue; }
+    if (claim.kind === "no_event") {
+      out.stranded += promoteIds.length - i;
+      logger.info({ eventId, freed }, "the event is gone under the lock — nobody promoted");
+      break;
+    }
+    out.failed += 1; out.held += promoteIds.length - i; out.lastError = claim.message;
+    logger.error({ eventId, userId, freed, held: promoteIds.length - i, err: claim.message },
+      "locked promotion claim failed — the seats are HELD: nobody further offered, the unlocked claim NOT run");
+    break;
+  }
+  out.promoted += claimed.length; out.contended += taken;
+  if (unlocked.length === 0 && !pickUnavailable) out.stranded += freed - promoteIds.length;
+  logger.info({ eventId, promotedCount: claimed.length, contended: taken, freed }, "promoted next waitlisted users under the event lock");
+  for (const userId of claimed) await notifyWaitlistOffer(sc, eventId, userId, offerExpiresAt);
+  return { unlocked, settled: claimed.length + taken };
+}

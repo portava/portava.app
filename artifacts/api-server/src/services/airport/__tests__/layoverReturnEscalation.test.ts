@@ -80,7 +80,7 @@ describe("the priority is the app's own, measured through the pipeline that uses
   const prefs = {
     userId: "u", pushEnabled: true, emailEnabled: false, inAppEnabled: true,
     smsEnabled: false, safetyOverride: true,
-    quietHoursEnabled: true, quietStart: "00:00", quietEnd: "23:59", quietTimezone: null,
+    quietHoursEnabled: true, quietStart: "00:00", quietEnd: "00:00", quietTimezone: null,
   } as any;
 
   /**

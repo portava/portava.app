@@ -7285,11 +7285,11 @@ export async function notifyWaitlistOffer(sc: any, eventId: string, userId: stri
  * offered one seat at a time — the next when this offer is accepted (accept
  * syncs) or lapses (the sweeper promotes the next). The doors make their own
  * offer and pass `"offered"`, so their sync does not offer the same seat twice.
- * NOT closed: two passes at the same instant can both read "no live offer" and
- * each offer one person; only a database-side lock would stop that. The accept
- * route's capacity check bounds it — the second to accept is told the spot was
- * filled and returned to the queue — so a surplus offer never seats past
- * capacity.
+ * Closed on the press of 3906: two passes at the same instant can both read
+ * "no live offer" and each offer one person. claim_waitlist_seat counts going
+ * plus live offers under the event row's lock, for the routes, the catch-up and
+ * the sweeper alike. Until 3906 is applied the window remains, and an unlocked
+ * accept can seat past capacity (census-trust's waitlist-race correction).
  */
 async function offerFreedSeatToQueue(sc: any, eventId: string): Promise<"reopen" | "reserved" | "held"> {
   const flag = await readFlagState(sc, "events_waitlist_enabled");
@@ -7390,8 +7390,8 @@ function freeSeatHeldForQueue(ev: any): boolean {
 //              Only a probe failed here, and a probe writes nothing, so running the unlocked path is the pre-3906
 //              behaviour, not a guess about a write.
 // A locked call that answers PGRST202 / 42883 ran nothing (the function is gone, or the schema cache is stale): the
-// verdict becomes `missing` and today's statements run. Still not serialised (stated): the sweeper's own claim
-// (lib/eventWaitlistSweeper.ts) and the admissions that take a seat without the queue count outside the lock.
+// verdict becomes `missing` and today's statements run. Still not serialised (stated): the admissions that take a seat
+// without the queue count outside the lock. The sweeper's claim takes it (claimWaitlistSeatForSweeper, end of file).
 import { READY_TTL_MS as LOCKED_SEAT_READY_TTL_MS, ABSENT_TTL_MS as LOCKED_SEAT_ABSENT_TTL_MS } from "../lib/capability/schemaCapability.js";
 
 type LockedSeatFunction = "claim_waitlist_seat" | "accept_waitlist_seat";
@@ -7512,4 +7512,34 @@ function lockedSeatMemoFor(sc: object): Map<LockedSeatFunction, { verdict: Locke
   let perObject = lockedSeatVerdicts.get(sc);
   if (!perObject) { perObject = new Map(); lockedSeatVerdicts.set(sc, perObject); }
   return perObject;
+}
+
+// ── Sweeper lock lane (2026-10-18): the sweeper's claim takes 3906's event lock, through the routes' own probe and memo ──
+//
+// lib/eventWaitlistSweeper.ts offered a lapsed offer's seat with its own unlocked UPDATE (`.in("user_id", promoteIds)
+// .is("offer_expires_at", null)`). It counts nothing, and a route's catch-up treats a lapsed offer as no offer, so a
+// route that had already offered that seat to the queue head was followed by a sweeper pass that offered it again:
+// two offers for one seat, in the same instant or minutes apart. The sweeper now claims each pick here, one person
+// per call, through claimWaitlistSeatLocked: the SAME probe (lockedSeatFunctionVerdict), the SAME process-wide memo
+// (lockedSeatMemoFor: a route's verdict is the sweeper's, and the other way round) and the SAME failure rules.
+//   unlocked — the function is not established (missing, unknown, or no `.rpc`), or this call answered PGRST202 / 42883
+//              (nothing ran; the verdict is now missing): the sweeper runs today's unlocked UPDATE for this person;
+//   claimed  — the offer is theirs, made under the lock: they are told, as the unlocked path tells them;
+//   taken    — no free seat under the lock (going + live offers >= max_attendees: another writer's offer or seat holds
+//              it), or the row was not claimable (offered already, or gone): nothing was written;
+//   no_event — the event is gone: nothing was written;
+//   failed   — the locked call failed (an error, a lost answer, a throw, a non-envelope, an unknown answer): the seat
+//              is HELD. The sweeper offers nobody further and never runs the unlocked UPDATE after it, which could
+//              repeat what a call whose answer was lost had already committed.
+export type SweeperSeatClaim = { kind: "unlocked" } | { kind: "claimed" } | { kind: "taken" } | { kind: "no_event" } | { kind: "failed"; message: string };
+
+/** The sweeper's claim of ONE pick, under the event lock when 3906 is established: claimWaitlistSeatLocked's verdicts, named for the sweeper. */
+export async function claimWaitlistSeatForSweeper(sc: any, eventId: string, userId: string, offerExpiresAt: string, log?: any): Promise<SweeperSeatClaim> {
+  const r = await claimWaitlistSeatLocked(sc, eventId, userId, offerExpiresAt, log ? { log } : undefined);
+  if (r.kind === "legacy") return { kind: "unlocked" };
+  if (r.kind === "claimed") return { kind: "claimed" };
+  const o = r.outcome;
+  if (o.outcome === "contended") return { kind: "taken" };
+  if (o.outcome === "stranded") return { kind: "no_event" };
+  return { kind: "failed", message: o.outcome === "write_failed" || o.outcome === "unreadable" ? o.message : `claim_waitlist_seat outcome ${o.outcome}` };
 }

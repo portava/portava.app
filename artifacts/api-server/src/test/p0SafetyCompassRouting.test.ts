@@ -38,7 +38,7 @@ import { _setTestFetch } from "../lib/push.js";
 import { TEMPLATES } from "../services/notifications/NotificationTemplateService.js";
 import type { NotificationRow } from "../services/notifications/NotificationService.js";
 import { NotificationRouter } from "../services/notifications/NotificationRouter.js";
-import { runRouterMatrix, type Decision } from "../services/notifications/__tests__/routerDecisionMatrix.js";
+import { runRouterMatrix, quietWindowAroundNow, type Decision } from "../services/notifications/__tests__/routerDecisionMatrix.js";
 import { bandFor } from "../domain/telegraph/policies/attentionLadder.js";
 
 const CIRCLE_ALERT = "circle.need_help_host_alert";
@@ -136,7 +136,7 @@ function gateRecordingDb() {
     feature_flags: [{ flag: "push_notifications_enabled", enabled: true }, { flag: "notifications_enabled", enabled: true }],
     notification_preferences: [{
       user_id: USER, push_enabled: true, email_enabled: false, in_app_enabled: true, digests_enabled: false,
-      safety_override: true, quiet_hours_enabled: true, quiet_start: "00:00", quiet_end: "23:59", timezone: "UTC",
+      safety_override: true, quiet_hours_enabled: true, quiet_start: quietWindowAroundNow().start, quiet_end: quietWindowAroundNow().end, timezone: "UTC",
       message_previews: true, location_previews: false,
     }],
     notification_devices: [{ user_id: USER, push_token: "ExponentPushToken[a]" }],

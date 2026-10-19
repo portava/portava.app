@@ -171,7 +171,7 @@ describe("GET /api/intel/opportunities", () => {
   it("ON: the viewer's own attention context reaches the kernel — quiet hours are read, an unreadable preference is null", async () => {
     const quiet = await get(
       world([ON], {
-        notification_preferences: [{ user_id: VIEWER, push_enabled: true, quiet_hours_enabled: true, quiet_start: "00:00", quiet_end: "23:59", timezone: "UTC" }],
+        notification_preferences: [{ user_id: VIEWER, push_enabled: true, quiet_hours_enabled: true, quiet_start: "00:00", quiet_end: "00:00", timezone: "UTC" }],
         notifications: [{ id: "n1", user_id: VIEWER, created_at: iso(-10) }],
       }),
       `subjectIds=${PLACE_ID}`,

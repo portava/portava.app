@@ -57,7 +57,7 @@ function fakeDb(s: Scenario) {
     feature_flags: [{ flag: "push_notifications_enabled", enabled: true }, { flag: "notifications_enabled", enabled: true }],
     notification_preferences: [{
       user_id: USER, push_enabled: s.pushEnabled, email_enabled: false, in_app_enabled: true, digests_enabled: false,
-      safety_override: s.safetyOverride, quiet_hours_enabled: s.quiet, quiet_start: "00:00", quiet_end: "23:59", timezone: "UTC",
+      safety_override: s.safetyOverride, quiet_hours_enabled: s.quiet, quiet_start: quietWindowAroundNow().start, quiet_end: quietWindowAroundNow().end, timezone: "UTC",
       message_previews: true, location_previews: false,
     }],
     notification_devices: [
@@ -155,4 +155,17 @@ export function digestByType(decisions: Decision[]): Record<string, string> {
   const out: Record<string, string> = {};
   for (const t of [...groups.keys()].sort()) out[t] = createHash("sha256").update(JSON.stringify(groups.get(t))).digest("hex").slice(0, 16);
   return out;
+}
+
+/**
+ * A quiet window that is IN EFFECT NOW, at any hour: two hours either side of the current UTC minute. An "all day"
+ * fixture ("00:00"–"23:59") left the last minute of every day outside the window (the end bound is exclusive), and
+ * "00:00"–"00:00" is all day to NotificationPreferenceService but no window at all to the Compass gate. So a fixed
+ * window made the quiet-hours cases fail between 23:59 and 00:00 UTC, or under one gate. This one holds under both.
+ */
+export function quietWindowAroundNow(): { start: string; end: string } {
+  const now = new Date();
+  const m = now.getUTCHours() * 60 + now.getUTCMinutes();
+  const hhmm = (x: number) => { const v = ((x % 1440) + 1440) % 1440; return `${String(Math.floor(v / 60)).padStart(2, "0")}:${String(v % 60).padStart(2, "0")}`; };
+  return { start: hhmm(m - 120), end: hhmm(m + 120) };
 }

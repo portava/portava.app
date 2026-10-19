@@ -665,3 +665,348 @@ describe("pass 12 C4 — the locked accept's no_seat IS the answer: no unlocked 
     assert.deepEqual(await goingIds(d), [A1, A2].sort());
   });
 });
+
+// ═════════════════════════════════════════════════════════════════════════════
+// SWEEPER LOCK LANE (2026-10-18) — the sweeper's claim takes 3906's lock. Appended: the lines above are counted by the census.
+//
+// lib/eventWaitlistSweeper.ts offered a lapsed offer's seat with its own unlocked UPDATE, which counts nothing. A route's
+// catch-up treats a LAPSED offer as no offer, so a route that offered that seat to the queue head (W1) was followed by a
+// sweeper pass that deleted the lapsed row, read the queue (now headed by W2) and offered the same seat again: two offers
+// for one seat, whether the two ran in the same instant or minutes apart. Under 3906 the sweeper claims each pick through
+// claim_waitlist_seat, with the routes' own probe and memo (claimWaitlistSeatForSweeper, routes/events.ts, end of file).
+// The sweeper is run here against the same PGlite tables as the routes; its expired-offer read's
+// `.not("offer_expires_at", "is", null)` is rendered `IS DISTINCT FROM NULL` (the same predicate), which the adapter has.
+import { runSweep, _resetStatus as _resetSweeperStatus } from "../lib/eventWaitlistSweeper.js";
+
+const LAPSED = "2000-01-01T00:00:00.000Z";
+/** Let the rig's client serve the sweeper too: `.not(col, "is", null)` as `IS DISTINCT FROM NULL`. The same object, so the routes' per-client memo is the sweeper's. */
+function sweepable<T extends { client: any }>(d: T): T {
+  const from0 = d.client.from;
+  const withNot = (b: any): any => new Proxy(b, { get(t, p) {
+    if (p === "not") return (c: string, op: string, v: unknown) => { assert.ok(op === "is" && v === null, `not(${c}, ${op}, ${String(v)}) is not modelled`); return withNot(t.neq(c, null)); };
+    const v = t[p];
+    if (typeof v !== "function") return v;
+    if (p === "then") return v.bind(t);
+    return (...a: unknown[]) => { const r = v.apply(t, a); return r && typeof r === "object" && typeof r.eq === "function" ? withNot(r) : r; };
+  } });
+  d.client.from = (t: string) => withNot(from0(t));
+  return d;
+}
+const sweepWith = async (sc: any) => { _resetSweeperStatus(); return runSweep({ client: sc }); };
+/** The sweeper's own unlocked claim: one UPDATE over its picks (`"user_id" IN (…)`); the route's names one person (`=`). */
+const sweeperUnlockedClaims = (d: Rig) => d.statements.filter((s) => /^UPDATE public\."event_waitlist" AS t0 SET "offer_expires_at" = '\d.* AND "user_id" IN \(/.test(s));
+/** The sweeper's queue read: limit freed + WAITLIST_PROMOTE_SCAN (>= 26); the route's head read is LIMIT 1, its scan LIMIT 25. */
+const isSweeperQueueRead = (s: string) => { const m = /FROM public\."event_waitlist" AS t0 WHERE "event_id" = '[^']+' AND "offer_expires_at" IS NULL ORDER BY "position" ASC LIMIT (\d+)$/.exec(s); return m !== null && Number(m[1]) > 25; };
+const claimsBy = (d: Rig) => lockedCalls(d, "claim_waitlist_seat").map((c) => [c.args["p_user_id"], c.answer]);
+const counts = (r: any) => ({ cleared: r.cleared, promoted: r.promoted, contended: r.contended, stranded: r.stranded, held: r.held, failed: r.failed, unreadable: r.unreadable });
+
+describe("sweeper lock lane — a route's offer and the sweeper's, for the same lapsed seat: one offer", () => {
+  // max 2, going [A1]: one seat, held by W4's offer, which has LAPSED. W1, W2 queued; W3 queued and leaves (DELETE /waitlist
+  // syncs, and the sync's catch-up offers the seat: W4's lapsed offer is not live). The sweeper then expires W4.
+  const scene = (present: boolean): WorldOpts => ({ present, queue: [[W4, 1, LAPSED], [W1, 2, null], [W2, 3, null], [W3, 4, null]] });
+
+  it("ABSENT (today), one after the other: the route offers W1, then the sweeper offers W2 — TWO offers for one seat (anti-vacuity)", async () => {
+    const d = current = sweepable(await world(scene(false)));
+    assert.equal((await call("DELETE", `/events/${EV}/waitlist`, "w3")).status, 200);
+    await settle();
+    assert.deepEqual(await liveOffers(d), [W1], "the route's catch-up offered the lapsed offer's seat");
+    const pass = await sweepWith(d.client);
+    assert.deepEqual(await liveOffers(d), [W1, W2], "two offers for one seat");
+    assert.deepEqual(await noticesTo(d), [W1, W2].sort());
+    assert.equal(sweeperUnlockedClaims(d).length, 1, "the sweeper's own unlocked UPDATE made the second");
+    assert.equal(pass.promoted, 1);
+  });
+
+  it("PRESENT, one after the other: the sweeper's claim counts W1's offer under the event lock and is refused — ONE offer", async () => {
+    const d = current = sweepable(await world(scene(true)));
+    assert.equal((await call("DELETE", `/events/${EV}/waitlist`, "w3")).status, 200);
+    await settle();
+    const pass = await sweepWith(d.client);
+    assert.deepEqual(await liveOffers(d), [W1], "one offer for one seat");
+    assert.deepEqual(await noticesTo(d), [W1], "only the holder is told");
+    assert.deepEqual(claimsBy(d), [[W1, "claimed"], [W2, "no_seat"]], "the route's claim, then the sweeper's, both under the lock");
+    assert.deepEqual(sweeperUnlockedClaims(d), [], "the sweeper's unlocked UPDATE was not sent");
+    assert.deepEqual(counts(pass), { cleared: 1, promoted: 0, contended: 1, stranded: 0, held: 0, failed: 0, unreadable: 0 }, "the seat is someone else's offer: neither stranded nor a failure");
+    assert.equal(probes(d, "claim_waitlist_seat").length, 1, "the route's probe answered for the sweeper too (the same memo)");
+  });
+
+  // The produced race: the sweeper's queue read waits until the route's claim has run (the order the unlocked claim loses).
+  const sweeperReadsAfterRouteClaim = (d: Rig) => {
+    let claims = 0, produced = false;
+    d.gate.before = async (s) => { if (isSweeperQueueRead(s)) { await waitFor(() => claims >= 1, "the route claimed before the sweeper read the queue"); produced = true; } };
+    d.gate.after = (s) => { if (isClaim(s)) claims++; };
+    return { produced: () => produced };
+  };
+  it("ABSENT, in the same instant: the sweeper reads the queue after the route's claim — TWO offers (anti-vacuity: the harness produces the race)", async () => {
+    const d = current = sweepable(await world(scene(false)));
+    const gate = sweeperReadsAfterRouteClaim(d);
+    const [r, pass] = await Promise.all([call("DELETE", `/events/${EV}/waitlist`, "w3"), sweepWith(d.client)]);
+    await settle();
+    assert.equal(r.status, 200, r.raw);
+    assert.ok(gate.produced(), "the interleaving was produced");
+    assert.deepEqual(await liveOffers(d), [W1, W2], "two offers for one seat");
+    assert.equal(pass.promoted, 1);
+  });
+
+  it("PRESENT, in the same instant: the same race makes ONE offer — the sweeper's locked claim counts the route's", async () => {
+    const d = current = sweepable(await world(scene(true)));
+    const gate = sweeperReadsAfterRouteClaim(d);
+    const [r, pass] = await Promise.all([call("DELETE", `/events/${EV}/waitlist`, "w3"), sweepWith(d.client)]);
+    await settle();
+    assert.equal(r.status, 200, r.raw);
+    assert.ok(gate.produced(), "the interleaving was produced");
+    assert.deepEqual(await liveOffers(d), [W1], "one offer for one seat");
+    assert.deepEqual(await noticesTo(d), [W1]);
+    assert.deepEqual(claimsBy(d), [[W1, "claimed"], [W2, "no_seat"]]);
+    assert.deepEqual(sweeperUnlockedClaims(d), []);
+    assert.deepEqual(counts(pass), { cleared: 1, promoted: 0, contended: 1, stranded: 0, held: 0, failed: 0, unreadable: 0 });
+    assert.equal(await stateOf(d), "waitlist", "the seat stays reserved for the offer holder");
+    assert.deepEqual(errors(), []);
+  });
+
+  // The other order: the route read "no live offer" first, the SWEEPER claims, then the route reads the head and claims.
+  const routeHeadAfterSweeperClaim = (d: Rig) => {
+    let checks = 0, sweeperClaims = 0, produced = false;
+    d.gate.before = async (s) => {
+      if (isSweeperQueueRead(s)) await waitFor(() => checks >= 1, "the route read 'no live offer' before the sweeper read the queue");
+      if (isHeadRead(s)) { await waitFor(() => sweeperClaims >= 1, "the sweeper claimed before the route read the queue head"); produced = true; }
+    };
+    d.gate.after = (s) => { if (isLiveCheck(s)) checks++; if (isClaim(s)) sweeperClaims++; };
+    return { produced: () => produced && checks >= 1 };
+  };
+  it("ABSENT, the other order: the sweeper claims W1, the route (which read no live offer) then claims W2 — TWO offers (anti-vacuity)", async () => {
+    const d = current = sweepable(await world(scene(false)));
+    const gate = routeHeadAfterSweeperClaim(d);
+    const [r] = await Promise.all([call("DELETE", `/events/${EV}/waitlist`, "w3"), sweepWith(d.client)]);
+    await settle();
+    assert.equal(r.status, 200, r.raw);
+    assert.ok(gate.produced(), "the interleaving was produced");
+    assert.deepEqual(await liveOffers(d), [W1, W2]);
+  });
+  it("PRESENT, the other order: the sweeper's claim is made under the lock and the route's is refused — ONE offer", async () => {
+    const d = current = sweepable(await world(scene(true)));
+    const gate = routeHeadAfterSweeperClaim(d);
+    const [r, pass] = await Promise.all([call("DELETE", `/events/${EV}/waitlist`, "w3"), sweepWith(d.client)]);
+    await settle();
+    assert.equal(r.status, 200, r.raw);
+    assert.ok(gate.produced(), "the interleaving was produced");
+    assert.deepEqual(await liveOffers(d), [W1]);
+    assert.deepEqual(await noticesTo(d), [W1], "the sweeper's holder is told");
+    assert.deepEqual(claimsBy(d), [[W1, "claimed"], [W2, "no_seat"]], "the sweeper's claim, then the route's, both under the lock");
+    assert.deepEqual(sweeperUnlockedClaims(d), []);
+    assert.equal(pass.promoted, 1);
+  });
+
+  it("PRESENT, a door then the sweeper (DELETE /rsvp's own promotion, then a lapse): one offer, and the door's probe served the sweeper", async () => {
+    // max 2, going [A1, A2]. A2 leaves: the door offers the freed seat to the head (W1; W4's lapsed offer is skipped by the head read).
+    const d = current = sweepable(await world({ present: true, going: [A1, A2], queue: [[W4, 1, LAPSED], [W1, 2, null], [W2, 3, null]] }));
+    assert.equal((await call("DELETE", `/events/${EV}/rsvp`, "a2")).status, 200);
+    await settle();
+    const pass = await sweepWith(d.client);
+    assert.deepEqual(await liveOffers(d), [W1]);
+    assert.deepEqual(claimsBy(d), [[W1, "claimed"], [W2, "no_seat"]]);
+    assert.equal(probes(d, "claim_waitlist_seat").length, 1, "ONE probe: the sweeper read the verdict the door's probe left in the shared memo");
+    assert.equal(pass.contended, 1);
+  });
+});
+
+describe("sweeper lock lane — PRESENT, the sweeper's own claim under the lock", () => {
+  const isSweeperLockedClaim = (s: string, who: string) => s.includes("public.claim_waitlist_seat(") && s.includes(EV) && s.includes(who);
+
+  it("CONTROL: a lapsed offer with the seat free — the next person is offered under the lock and TOLD; the unlocked UPDATE is not sent", async () => {
+    const d = current = sweepable(await world({ present: true, queue: [[W4, 1, LAPSED], [W1, 2, null], [W2, 3, null]] }));
+    const before = Date.now();
+    const pass = await sweepWith(d.client);
+    assert.deepEqual(counts(pass), { cleared: 1, promoted: 1, contended: 0, stranded: 0, held: 0, failed: 0, unreadable: 0 });
+    assert.deepEqual(await queue(d), [[W1, 2, "offer"], [W2, 3, null]], "W4's lapsed row is gone; W1 holds the offer; W2 waits");
+    assert.deepEqual(claimsBy(d), [[W1, "claimed"]]);
+    assert.deepEqual(sweeperUnlockedClaims(d), []);
+    assert.deepEqual(await noticesTo(d), [W1], "the person offered is told, as the unlocked path tells them");
+    const exp = (await q1(d, `SELECT offer_expires_at FROM public.event_waitlist WHERE user_id = '${W1}'`))[0].offer_expires_at;
+    const ms = new Date(exp).getTime() - before;
+    assert.ok(ms > 24 * 3600_000 - 60_000 && ms < 24 * 3600_000 + 60_000, `the offer window is ${ms} ms, not 24 h`);
+  });
+
+  it("CONTROL: two lapsed offers, two free seats — both are offered under the lock, in queue order, and both are told", async () => {
+    const d = current = sweepable(await world({ present: true, max: 3, queue: [[W4, 1, LAPSED], [A2, 2, LAPSED], [W1, 3, null], [W2, 4, null], [W3, 5, null]] }));
+    const pass = await sweepWith(d.client);
+    assert.deepEqual(counts(pass), { cleared: 2, promoted: 2, contended: 0, stranded: 0, held: 0, failed: 0, unreadable: 0 });
+    assert.deepEqual(claimsBy(d), [[W1, "claimed"], [W2, "claimed"]]);
+    assert.deepEqual(await liveOffers(d), [W1, W2]);
+    assert.deepEqual(await noticesTo(d), [W1, W2].sort());
+    assert.deepEqual(sweeperUnlockedClaims(d), []);
+  });
+
+  it("a pick a route offered meanwhile is 'taken' — the sweeper goes on to the next pick, and the lock gives it the second free seat", async () => {
+    const d = current = sweepable(await world({ present: true, max: 3, queue: [[W4, 1, LAPSED], [A2, 2, LAPSED], [W1, 3, null], [W2, 4, null], [W3, 5, null]] }));
+    let fired = false;
+    d.gate.before = async (s) => { if (!fired && isSweeperLockedClaim(s, W1)) { fired = true; assert.equal((await call("DELETE", `/events/${EV}/waitlist`, "w3")).status, 200); } };
+    const pass = await sweepWith(d.client);
+    await settle();
+    assert.ok(fired, "a route offered W1 between the sweeper's pick and its claim");
+    assert.deepEqual(claimsBy(d), [[W1, "claimed"], [W1, "contended"], [W2, "claimed"]], "the route's claim of W1, the sweeper's (refused), the sweeper's of W2");
+    assert.deepEqual(await liveOffers(d), [W1, W2], "two free seats, two offers");
+    assert.deepEqual(counts(pass), { cleared: 2, promoted: 1, contended: 1, stranded: 0, held: 0, failed: 0, unreadable: 0 });
+  });
+
+  it("the event is gone between the pick and the locked claim: no_event — nothing written, the seat stranded, not a failure", async () => {
+    const d = current = sweepable(await world({ present: true, queue: [[W4, 1, LAPSED], [W1, 2, null]] }));
+    d.gate.before = async (s) => { if (isSweeperLockedClaim(s, W1)) { d.gate.before = null; await d.db.exec(`DELETE FROM public.events WHERE id = '${EV}'`); } };
+    const pass = await sweepWith(d.client);
+    assert.deepEqual(claimsBy(d), [[W1, "no_event"]]);
+    assert.deepEqual(counts(pass), { cleared: 1, promoted: 0, contended: 0, stranded: 1, held: 0, failed: 0, unreadable: 0 });
+    assert.deepEqual(await noticesTo(d), []);
+    assert.deepEqual(sweeperUnlockedClaims(d), []);
+  });
+
+  for (const flag of ["off", "absent", "unreadable"] as const) {
+    it(`the flag still decides first: ${flag.toUpperCase()} → the lapsed offer is expired, nobody is promoted, no probe or locked call is sent`, async () => {
+      const d = current = sweepable(await world({ present: true, queue: [[W4, 1, LAPSED], [W1, 2, null]] }));
+      if (flag === "off") await d.db.exec(`UPDATE public.feature_flags SET enabled = false WHERE flag = 'events_waitlist_enabled'`);
+      if (flag === "absent") await d.db.exec(`DELETE FROM public.feature_flags WHERE flag = 'events_waitlist_enabled'`);
+      if (flag === "unreadable") d.gate.before = async (s) => { if (/"feature_flags"/.test(s) && s.includes("events_waitlist_enabled")) throw Object.assign(new Error("canceling statement due to statement timeout"), { code: "57014" }); };
+      const pass = await sweepWith(d.client);
+      assert.deepEqual(counts(pass), { cleared: 1, promoted: 0, contended: 0, stranded: 0, held: 1, failed: 0, unreadable: flag === "unreadable" ? 1 : 0 });
+      assert.deepEqual(await queue(d), [[W1, 2, null]], "expired; nobody offered");
+      assert.deepEqual(d.rpcs, [], "no probe, no locked call");
+    });
+  }
+});
+
+describe("sweeper lock lane — PRESENT, a failed locked claim HOLDS the seat and is counted; never the unlocked claim after it", () => {
+  const isSweeperClaim = (f: string, a: Record<string, unknown>) => f === "claim_waitlist_seat" && a["p_event_id"] === EV;
+  const twoSeats = (): WorldOpts => ({ present: true, max: 3, queue: [[W4, 1, LAPSED], [A2, 2, LAPSED], [W1, 3, null], [W2, 4, null], [W3, 5, null]] });
+
+  it("the locked claim fails (57014): nobody is offered — not this pick, not the next — both seats HELD, failed 1, the unlocked UPDATE not sent", async () => {
+    const d = current = sweepable(await world(twoSeats()));
+    d.fault.rpc = (f, a) => (isSweeperClaim(f, a) ? { data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } } : undefined);
+    const pass = await sweepWith(d.client);
+    assert.deepEqual(counts(pass), { cleared: 2, promoted: 0, contended: 0, stranded: 0, held: 2, failed: 1, unreadable: 0 });
+    assert.match(String(pass.lastError), /statement timeout/);
+    assert.deepEqual(lockedCalls(d, "claim_waitlist_seat").length, 1, "the pass stopped at the failure: W2 was not tried");
+    assert.deepEqual(await liveOffers(d), []);
+    assert.deepEqual(await noticesTo(d), []);
+    assert.deepEqual(sweeperUnlockedClaims(d), [], "never the unlocked claim after a failed locked one");
+    assert.equal(await stateOf(d), "waitlist", "the event is not touched: the seats stay held for the queue");
+    assert.ok(!d.statements.some((s) => /^UPDATE public\."events"/.test(s)));
+  });
+
+  it("the locked claim's answer is LOST after it committed (no code): the committed offer stands, nothing is sent on top, the seat is counted held", async () => {
+    const d = current = sweepable(await world({ present: true, queue: [[W4, 1, LAPSED], [W1, 2, null], [W2, 3, null]] }));
+    d.fault.rpc = async (f, a) => {
+      if (!isSweeperClaim(f, a)) return undefined;
+      assert.equal((await d.db.query(`SELECT public.claim_waitlist_seat('${EV}', '${W1}', ${lit(String(a["p_offer_expires_at"]))}) AS a`)).rows[0].a, "claimed"); // it ran and committed; only the answer was lost
+      return { data: null, error: { message: "TypeError: fetch failed", code: "" } };
+    };
+    const pass = await sweepWith(d.client);
+    assert.deepEqual(counts(pass), { cleared: 1, promoted: 0, contended: 0, stranded: 0, held: 1, failed: 1, unreadable: 0 });
+    assert.deepEqual(await liveOffers(d), [W1], "exactly the committed offer — no second one for W2");
+    assert.deepEqual(sweeperUnlockedClaims(d), []);
+    assert.deepEqual(await noticesTo(d), [], "not confirmed, so not told (the event screen shows the offer)");
+  });
+
+  for (const [label, value] of [["undefined", undefined], ["null", null]] as const) {
+    it(`the locked claim RESOLVES ${label} (no envelope): a failed call — held and counted, the unlocked UPDATE not sent`, async () => {
+      const d = current = sweepable(await world({ present: true, queue: [[W4, 1, LAPSED], [W1, 2, null]] }));
+      const rpc = d.client.rpc;
+      d.client.rpc = async (fn: string, args: Record<string, unknown> = {}) => (isSweeperClaim(fn, args) ? value : rpc(fn, args));
+      const pass = await sweepWith(d.client);
+      assert.deepEqual(counts(pass), { cleared: 1, promoted: 0, contended: 0, stranded: 0, held: 1, failed: 1, unreadable: 0 });
+      assert.deepEqual(await liveOffers(d), []);
+      assert.deepEqual(sweeperUnlockedClaims(d), []);
+    });
+  }
+
+  it("the function vanished after the probe (PGRST202 on the real call: nothing ran): today's UPDATE offers the seat, and the verdict is now 'missing'", async () => {
+    const d = current = sweepable(await world({ present: true, queue: [[W4, 1, LAPSED], [W1, 2, null], [W2, 3, null]] }));
+    d.fault.rpc = (f, a) => (isSweeperClaim(f, a) ? { data: null, error: { code: "PGRST202", message: "Could not find the function public.claim_waitlist_seat" } } : undefined);
+    const pass = await sweepWith(d.client);
+    assert.deepEqual(counts(pass), { cleared: 1, promoted: 1, contended: 0, stranded: 0, held: 0, failed: 0, unreadable: 0 });
+    assert.deepEqual(await liveOffers(d), [W1]);
+    assert.equal(sweeperUnlockedClaims(d).length, 1, "today's UPDATE");
+    assert.deepEqual(await noticesTo(d), [W1]);
+    d.rpcs.length = 0;
+    await d.db.exec(`UPDATE public.event_waitlist SET offer_expires_at = '${LAPSED}' WHERE user_id = '${W1}'`);
+    await sweepWith(d.client);
+    assert.deepEqual(d.rpcs.map((c) => c.fn), [], "within ABSENT_TTL_MS: no probe, no locked call");
+    assert.deepEqual(await liveOffers(d), [W2]);
+  });
+
+  it("it vanished between two picks: the first offer was made under the lock, the second by today's UPDATE — both told, nothing stranded", async () => {
+    const d = current = sweepable(await world(twoSeats()));
+    d.fault.rpc = (f, a) => (isSweeperClaim(f, a) && a["p_user_id"] === W2 ? { data: null, error: { code: "42883", message: "function public.claim_waitlist_seat does not exist" } } : undefined);
+    const pass = await sweepWith(d.client);
+    assert.deepEqual(claimsBy(d), [[W1, "claimed"], [W2, { code: "42883", message: "function public.claim_waitlist_seat does not exist" }]]);
+    assert.equal(sweeperUnlockedClaims(d).length, 1);
+    assert.match(sweeperUnlockedClaims(d)[0]!, new RegExp(`"user_id" IN \\('${W2}'\\)`), "today's UPDATE for the rest only");
+    assert.deepEqual(await liveOffers(d), [W1, W2]);
+    assert.deepEqual(await noticesTo(d), [W1, W2].sort());
+    assert.deepEqual(counts(pass), { cleared: 2, promoted: 2, contended: 0, stranded: 0, held: 0, failed: 0, unreadable: 0 });
+  });
+});
+
+describe("sweeper lock lane — the probe and memo are the routes': ABSENT runs today's statements", () => {
+  it("ABSENT: one probe (42883), then exactly today's unlocked UPDATE; a second pass within ABSENT_TTL_MS sends no probe", async () => {
+    const d = current = sweepable(await world({ present: false, queue: [[W4, 1, LAPSED], [W1, 2, null], [W2, 3, null]] }));
+    const pass = await sweepWith(d.client);
+    assert.deepEqual(counts(pass), { cleared: 1, promoted: 1, contended: 0, stranded: 0, held: 0, failed: 0, unreadable: 0 });
+    assert.equal(probes(d, "claim_waitlist_seat").length, 1);
+    assert.equal((probes(d, "claim_waitlist_seat")[0]!.answer as any)?.code, "42883");
+    assert.deepEqual(lockedCalls(d, "claim_waitlist_seat"), []);
+    assert.equal(sweeperUnlockedClaims(d).length, 1);
+    assert.deepEqual(await liveOffers(d), [W1]);
+    assert.deepEqual(await noticesTo(d), [W1]);
+    await d.db.exec(`UPDATE public.event_waitlist SET offer_expires_at = '${LAPSED}' WHERE user_id = '${W1}'`);
+    await sweepWith(d.client);
+    assert.equal(probes(d, "claim_waitlist_seat").length, 1, "the 'missing' verdict is memoised");
+    assert.deepEqual(await liveOffers(d), [W2]);
+  });
+
+  it("UNKNOWN (the probe throws): today's unlocked UPDATE, as on the routes — only a probe failed, and a probe writes nothing", async () => {
+    const d = current = sweepable(await world({ present: true, queue: [[W4, 1, LAPSED], [W1, 2, null]] }));
+    d.fault.rpc = (_f, a) => (a["p_event_id"] === NIL ? new Error("socket hang up") : undefined);
+    const pass = await sweepWith(d.client);
+    assert.equal(pass.promoted, 1);
+    assert.deepEqual(lockedCalls(d, "claim_waitlist_seat"), []);
+    assert.equal(sweeperUnlockedClaims(d).length, 1);
+    assert.ok(said("warn", /the unlocked statements run, as before migration 3906/));
+  });
+
+  it("a client with no rpc surface (a double): today's statements, nothing probed", async () => {
+    const d = current = sweepable(await world({ present: true, queue: [[W4, 1, LAPSED], [W1, 2, null]] }));
+    delete (d.client as any).rpc;
+    const pass = await sweepWith(d.client);
+    assert.equal(pass.promoted, 1);
+    assert.equal(sweeperUnlockedClaims(d).length, 1);
+    assert.deepEqual(d.rpcs, []);
+  });
+
+  it("PRODUCTION-SHAPED: a route request and a sweeper pass, each through its own getServiceClient() client, send ONE probe between them", async () => {
+    const realNow = Date.now;
+    Date.now = () => realNow.call(Date) + 30 * 60 * 60 * 1000; // past every verdict an earlier case left for this URL
+    try {
+      const d = current = await world({ present: true, going: [A1, A2], queue: [[W4, 1, LAPSED], [W1, 2, null], [W2, 3, null]] });
+      const built = () => { _setTestServiceClient(null); const real: any = getServiceClient(); assert.ok(real && isPostgrestBackedClient(real)); const runner = makeClient(d.db, d); real.from = runner.from; real.rpc = runner.rpc; real.auth = runner.auth; return sweepable({ client: real }).client; };
+      const [c1, c2] = [built(), built()];
+      assert.ok(c1 !== c2 && typeof c1.supabaseUrl === "string" && c1.supabaseUrl === c2.supabaseUrl, "two clients, one database");
+      _setTestServiceClient(c1);
+      try { assert.equal((await call("DELETE", `/events/${EV}/rsvp`, "a2")).status, 200); } finally { _setTestServiceClient(null); }
+      await settle();
+      const pass = await sweepWith(c2);
+      assert.equal(probes(d, "claim_waitlist_seat").length, 1, "the sweeper used the route's verdict, kept per database URL");
+      assert.deepEqual(claimsBy(d), [[W1, "claimed"], [W2, "no_seat"]]);
+      assert.deepEqual(await liveOffers(d), [W1]);
+      assert.equal(pass.contended, 1);
+    } finally { Date.now = realNow; }
+  });
+});
+
+describe("sweeper lock lane — PRESENT, seats with no one to offer them to", () => {
+  it("two seats freed, one person queued: that person is offered under the lock; the other seat is stranded (the queue is empty), not held", async () => {
+    const d = current = sweepable(await world({ present: true, max: 3, queue: [[W4, 1, LAPSED], [A2, 2, LAPSED], [W1, 3, null]] }));
+    const pass = await sweepWith(d.client);
+    assert.deepEqual(claimsBy(d), [[W1, "claimed"]]);
+    assert.deepEqual(counts(pass), { cleared: 2, promoted: 1, contended: 0, stranded: 1, held: 0, failed: 0, unreadable: 0 });
+    assert.deepEqual(await liveOffers(d), [W1]);
+  });
+});

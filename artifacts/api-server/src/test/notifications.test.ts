@@ -448,7 +448,7 @@ describe("NotificationPreferenceService — quiet hours", () => {
       safetyOverride: true,
       quietHoursEnabled: true,
       quietStart: "00:00", // start at midnight
-      quietEnd:   "23:59", // end just before midnight — basically always quiet
+      quietEnd:   "00:00", // start == end: the whole day (the end bound is exclusive, so "23:59" left the last minute of every day un-quiet)
       messagePreviews: true,
       locationPreviews: false,
     };
@@ -468,7 +468,7 @@ describe("NotificationPreferenceService — quiet hours", () => {
       safetyOverride: true,
       quietHoursEnabled: true,
       quietStart: "00:00",
-      quietEnd:   "23:59",
+      quietEnd:   "00:00",
       messagePreviews: true,
       locationPreviews: false,
     };
