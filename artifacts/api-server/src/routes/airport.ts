@@ -1590,7 +1590,7 @@ router.post("/airport/sessions/:id/disruption", async (req, res) => {
     certification: certificationHeader(record),
   });
 
-  const disruption = {
+  const flightSegment = await recordTravellerDisruption(sc, { sessionId: session.id, userId: user.id, kind: body.kind, newDepartureIso, nowMs, recompute: recompute ? { returnStateChanged: recompute.returnStateChanged, usableMinutesDelta: recompute.usableMinutesDelta } : null }); const disruption = { // 3827 / census L11 L33: the report recorded on its Trips flight, and the §5 state (undefined while layover_flight_connections_enabled is off)
     source: "traveller" as const,
     previousState: prior.state,
     previousStateSource: prior.source,
@@ -1623,7 +1623,7 @@ router.post("/airport/sessions/:id/disruption", async (req, res) => {
       : null,
     recovery: recoveryPosture(state),
     safeReturn: safeReturnPosture(record),
-    certification: certificationHeader(record),
+    certification: certificationHeader(record), ...(flightSegment ? { flightSegment } : {}),
   };
 
   if (!written.ok) {
@@ -5021,7 +5021,7 @@ async function lifecycleForWrite(
     logger.info({ sessionId, operation: op, event: v.event, transition: v.transition }, "layover_lifecycle_shadow: write made with no graph edge");
   }
   if (!await isFlagEnabled(sc, "layover_lifecycle_machine_enabled")) return {};
-  return { lifecycle: { operation: v.operation, event: v.event, transition: v.transition, divergent: v.divergent } };
+  await storeLifecycleForOperation(sc, sessionId, op); return { lifecycle: { operation: v.operation, event: v.event, transition: v.transition, divergent: v.divergent } }; // census L33 (3827): a checkpoint's §5 transition, stored on the graph's word (needs layover_flight_connections_enabled too)
 }
 
 /**
@@ -5055,7 +5055,7 @@ async function overviewLifecycle(
   if (evaluation.divergence.length > 0) {
     logger.info({ sessionId, divergence: evaluation.divergence, state: evaluation.state, projectedState, guardFailures: evaluation.guardFailures }, "layover_lifecycle_shadow: overview");
   }
-  return on ? { lifecycle: { ...evaluation, checkpointRead } } : {};
+  if (on) await storeProjectedLifecycle(sc, sessionId, evaluation.state); return on ? { lifecycle: { ...evaluation, checkpointRead } } : {}; // census L33 (3827): the placement stored, unless an observation holds the state
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -5486,6 +5486,15 @@ function compassToolRecommendation(r: { id?: string; title: string; recType: str
 function compassToolStop(s: any): ToolStop {
   return { id: String(s.id), title: String(s.title ?? ""), durationMin: s.durationMin ?? null, travelMin: s.travelMin ?? null, insideAirport: s.insideAirport === true };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FLIGHT CONNECTIONS — census-layover L11 / L33 (3826, 3827; lane B1-F)
+// ─────────────────────────────────────────────────────────────────────────────
+// At the TAIL so no cited line above moves; three one-line call sites above
+// (the disruption route, lifecycleForWrite, overviewLifecycle). Each is a no-op
+// while `layover_flight_connections_enabled` is off.
+import { recordTravellerDisruption } from "../services/airport/LayoverFlightStatus.js";
+import { storeLifecycleForOperation, storeProjectedLifecycle } from "../services/airport/LayoverSessionService.js";
 
 // census L44, lane B1-P (2026-10-18) — imported at the TAIL so no cited line above moves; ESM hoists it. One
 // one-line call site: the end of POST /airport/sessions/:id/disruption.

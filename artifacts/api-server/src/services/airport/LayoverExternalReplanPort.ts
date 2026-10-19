@@ -175,7 +175,7 @@ function sessionAirportIdentity(row: Record<string, any>): string | null {
  */
 function toReplanSession(row: Record<string, any>, airportRef: string): ReplanSession {
   return {
-    status: String(row.status ?? ""),
+    status: String(row.status ?? ""), ...flightRefsOf(row), // 3827 / census L259: the session's Trips flight segments, for the flight axis; {} for an unlinked row
     airportRef,
     session: {
       id: String(row.id),
@@ -322,7 +322,7 @@ async function readGroups(
     }
   }
 
-  return { ok: true, groups: [...groups.values()], limitReached };
+  const flight = await addFlightSubjectGroups(db, event, limit, groups, claimed); if (!flight.ok) return flight; if (flight.limitReached) limitReached = true; /* §24 L259: the flight axis (3827), foot of this file */ return { ok: true, groups: [...groups.values()], limitReached };
 }
 
 /**
@@ -622,4 +622,64 @@ async function replanFirstOccurrence(
   admitted.push(checked.event);
   if (admitted.length > EXTERNAL_DEDUP_MEMORY) admitted.shift();
   return replanExternalEvent(db, checked.event, opts);
+}
+
+// ── §24 "index active sessions by airport/route/flight subjects": the FLIGHT axis ──
+// census-layover L259, 3827 (lane B1-F). Appended at the tail; two one-line call
+// sites above (toReplanSession, readGroups).
+
+import { readFlagState } from "../../lib/featureFlags.js";
+import { readActiveSessionRowsByFlightSubjects } from "./LayoverSessionService.js";
+
+/** The row's Trips flight segments as the pipeline reads them; `{}` when it is linked to none (or predates 3827). */
+function flightRefsOf(row: Record<string, any>): { arrivalFlightRef?: string | null; departureFlightRef?: string | null } {
+  const arr = typeof row.arrival_segment_id === "string" ? row.arrival_segment_id : null;
+  const dep = typeof row.departure_segment_id === "string" ? row.departure_segment_id : null;
+  return arr === null && dep === null ? {} : { arrivalFlightRef: arr, departureFlightRef: dep };
+}
+
+/**
+ * A `flight` subject (a Trips flight segment id) → every ACTIVE session linked
+ * to it, grouped by the airport each will be certified against — the same
+ * grouping the session-subject read uses. The ROLE test (arrival vs departure)
+ * is the pure pipeline's (`flightSubjectMatches`); this over-reads both sides,
+ * for the reason `readGroups` gives about window tests.
+ *
+ * `layover_flight_connections_enabled` OFF / absent: the axis does not exist —
+ * 3827's columns may not either — and a flight subject finds nobody, exactly as
+ * before. The flag UNREADABLE is a refusal (a stranded event), never "nobody".
+ */
+async function addFlightSubjectGroups(
+  db: SupabaseClient,
+  event: LayoverEventEnvelope,
+  limit: number,
+  groups: Map<string, AirportGroup>,
+  claimed: Set<string>,
+): Promise<{ ok: true; limitReached: boolean } | Refusal> {
+  const flightRefs = [...new Set(event.subjectRefs.filter((s) => s.kind === "flight").map((s) => s.ref))];
+  if (flightRefs.length === 0) return { ok: true, limitReached: false };
+  const state = await readFlagState(db, "layover_flight_connections_enabled");
+  if (state === "unknown") return refuse("feature_flags unreadable: the flight axis cannot be read");
+  if (state !== "on") return { ok: true, limitReached: false };
+  const read = await readActiveSessionRowsByFlightSubjects(db, flightRefs, limit);
+  if (!read.ok) return refuse(read.message);
+  for (const row of read.rows) {
+    const id = String(row.id);
+    if (claimed.has(id)) continue;
+    const own = sessionAirportIdentity(row);
+    if (own === null) {
+      logger.warn({ sessionId: id, eventId: event.eventId }, "replan port: flight-linked session has no airport identity — skipped");
+      continue;
+    }
+    let group = groups.get(own);
+    if (!group) {
+      const resolved = await resolveAirport(db, own);
+      if (!resolved.ok) return resolved;
+      group = { airportRef: own, airport: resolved.airport, entryCountry: resolved.entryCountry, owners: {}, sessions: [] };
+      groups.set(own, group);
+    }
+    claimed.add(id);
+    group.sessions.push(toReplanSession(row, group.airportRef)); group.owners[id] = String(row.user_id ?? "");
+  }
+  return { ok: true, limitReached: read.limitReached };
 }

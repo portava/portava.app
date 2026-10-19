@@ -14,7 +14,7 @@ import tripDecisionsRouter from "./tripDecisions";
 import tripStructureRouter from "./tripStructure";
 import tripMapProjectionRouter from "../server/trips/readRoutes/tripMapProjection";
 import tripProjectionsRouter from "../server/trips/readRoutes/tripProjections";
-import tripCommandsRouter from "../server/trips/commandRoute";
+import tripCommandsRouter from "../server/trips/commandRoute"; import tripFlightSegmentsRouter from "../server/trips/flightSegmentRoute"; // eslint-disable-line -- same line: this file's lines are cited (3826, census-layover L11)
 import postsRouter from "./posts";
 import followsRouter from "./follows";
 import friendsRouter from "./friends";
@@ -71,7 +71,7 @@ import phoneVerificationRouter from "./phoneVerification";
 import passportStampsRouter from "./passportStamps";
 import hiddenGemsRouter from "./hiddenGems";
 import notificationsRouter from "./notifications";
-import airportRouter from "./airport";import layoverEventsRouter from "./layoverEvents";import layoverConstraintsRouter from "./layoverConstraints";import layoverSimulateRouter from "./layoverSimulate"; // eslint-disable-line -- same-line to keep this file line-count-stable; 27 doc citations anchor on line numbers here
+import airportRouter from "./airport";import layoverEventsRouter from "./layoverEvents";import layoverConstraintsRouter from "./layoverConstraints";import layoverSimulateRouter from "./layoverSimulate"; import layoverConnectionsRouter from "./layoverConnections"; // eslint-disable-line -- same-line to keep this file line-count-stable; 27 doc citations anchor on line numbers here
 import featureFlagsRouter from "./featureFlags";
 import tagsRouter from "./tags";
 import hashtagsRouter from "./hashtags";
@@ -177,7 +177,7 @@ router.use(tripDecisionsRouter);
 router.use(tripStructureRouter);
 router.use(tripMapProjectionRouter);
 router.use(tripProjectionsRouter);
-router.use(tripCommandsRouter);
+router.use(tripCommandsRouter); router.use(tripFlightSegmentsRouter); // 3826: Trips flight segments (census-layover L11)
 router.use(postsRouter);
 router.use(profileRouter);
 router.use(followsRouter);
@@ -237,7 +237,7 @@ router.use(trustAdminRouter);
 router.use(phoneVerificationRouter);
 router.use(hiddenGemsRouter);
 router.use(notificationsRouter);
-router.use(airportRouter); router.use(layoverEventsRouter); router.use(layoverConstraintsRouter); router.use(layoverSimulateRouter); // §11 producer ingest, separate router — see routes/layoverEvents.ts
+router.use(airportRouter); router.use(layoverEventsRouter); router.use(layoverConstraintsRouter); router.use(layoverSimulateRouter); router.use(layoverConnectionsRouter); // §11 producer ingest, separate router — see routes/layoverEvents.ts
 router.use(featureFlagsRouter);
 router.use(tagsRouter);
 router.use(hashtagsRouter);

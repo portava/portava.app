@@ -12708,3 +12708,37 @@ verifier's mutants survived the suites. These are fixed and tested before the pr
 FALSE. Census-compass records the same findings and moves CL-04, the §25 row L268 also grades, to W.
 
 Rows: none move. 296 = 81 C / 165 W / 50 N / 0 X, as the headline above.
+
+### Layover 165 program, lane B1-F (2026-10-18): flight segments, connection detection and the stored session state — no row moves
+
+*Branch `claude/wave4-build-20261017`; uncommitted at this writing, committed with this section. Owner decision
+2026-10-18 (flight data): verified itinerary information plus approved flight-data integrations; unknown flight
+information stays explicitly unknown. Rule A.2 keeps every row at W until 3826, 3827 and 3828 are pressed and the flags
+are turned on.*
+
+Trips now owns the flight segment: `artifacts/api-server/src/migrations/3826_trip_kernel_flight_segments.sql` adds
+thirteen nullable flight columns to `trip_transport_segments`, written only by the trip kernel (ADD_TRANSPORT_SEGMENT,
+and a new RECORD_FLIGHT_STATUS that binds the update's source to the actor and refuses an observation older than the one
+held). The traveller enters flights in each airport's local time (`artifacts/api-server/src/server/trips/flightSegmentRoute.ts`);
+a flight nobody has observed is `unknown`, never on time. Connections are detected from the traveller's own flights
+(`artifacts/api-server/src/services/airport/LayoverConnectionDetection.ts`), shown on the trip screen with their risk and
+state, and passed into session creation, where the server re-detects the pair rather than trusting the client's.
+`artifacts/api-server/src/migrations/3827_layover_sessions_flight_connection.sql` links a session to both segments and
+stores its §4.1 state (17 values, TEXT + CHECK; every graph write is compare-and-swap);
+`artifacts/api-server/src/migrations/3828_layover_sessions_active_snapshot.sql` adds the active snapshot pointer, which
+only moves to a higher snapshot version, and the confidence band. A client role writing any of these columns is refused
+(42501). A flight update, from the traveller or from an approved feed behind
+`artifacts/api-server/src/services/airport/LayoverFlightStatus.ts` (none is bound), recalculates every linked session
+and runs the existing replan. Tests: 17 database cases on the full migrated chain, 25 unit, 4 route and 12 client; 31
+mutants killed; applied last, the three files leave a catalog identical to applying them at their numbers.
+
+| id | was | now | C on |
+| --- | --- | --- | --- |
+| L11 | W | W | 3826 then 3827 pressed, and `trip_flight_segments_enabled` and `layover_flight_connections_enabled` ON. Automatic updates also need a licensed per-flight status feed (`FLIGHT_STATUS_FEED_URL`, `FLIGHT_STATUS_FEED_API_KEY`); the traveller's path works without one. A terminal change is recorded and shown but feeds no engine term yet. |
+| L21 | W | W | 3827 and 3828 pressed (3828 after 2700, 2992 and 3623). The spec's `started_at` is `created_at` and `airport_place_id` is `airport_id` (0127). |
+| L33 | W | W | 3827 pressed and the flags above ON; storing the placement and checkpoints also needs `layover_lifecycle_machine_enabled`. ABANDONED has no writer: §5 draws no edge to it. |
+| L239 | W | W | the same press: one session walks detection → start → evaluation → plan → execution → return → completion over the real router on the migrated chain (`artifacts/api-server/src/test/db/layoverFlightConnections.db.test.ts`). |
+| L259 | W | W | the flight-subject axis is built (3827's indexes, matching by role); the ROUTE axis is not, because a session has no route column. It stays W for that half. |
+| L267 | W | W | as L11. |
+
+Rows: none move. 296 = 81 C / 165 W / 50 N / 0 X, as the headline above.

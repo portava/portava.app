@@ -234,7 +234,7 @@ export type TripTransportCommandType =
   | "ADD_TRANSPORT_SEGMENT"
   | "UPDATE_TRANSPORT_SEGMENT"
   | "SET_TRANSPORT_STATE"
-  | "REMOVE_TRANSPORT_SEGMENT";
+  | "REMOVE_TRANSPORT_SEGMENT" | "RECORD_FLIGHT_STATUS"; // 3826 (Layover §3, census-layover L11): a flight's estimates/terminals/gates/status, with its source. Capability engine: a crew traveller, or the system actor for an approved feed.
 
 /**
  * §17.2 disruptions and the §4.2 derived events (2785). DECLARE/RESOLVE are
@@ -312,7 +312,7 @@ export function tripCommandFamily(type: TripCommandType): TripCommandFamily {
       return "subgroup";
     case "CREATE_MEETING_CHECKPOINT": case "SET_MEETING_ARRIVAL": case "CLOSE_MEETING_CHECKPOINT":
       return "meeting";
-    case "ADD_TRANSPORT_SEGMENT": case "UPDATE_TRANSPORT_SEGMENT": case "SET_TRANSPORT_STATE": case "REMOVE_TRANSPORT_SEGMENT":
+    case "ADD_TRANSPORT_SEGMENT": case "UPDATE_TRANSPORT_SEGMENT": case "SET_TRANSPORT_STATE": case "REMOVE_TRANSPORT_SEGMENT": case "RECORD_FLIGHT_STATUS":
       return "transport";
     case "DECLARE_DISRUPTION": case "RESOLVE_DISRUPTION":
     case "MARK_COMMITMENT_AT_RISK": case "CLEAR_COMMITMENT_RISK": case "OPEN_FREE_WINDOW":
@@ -449,7 +449,7 @@ export type TripKernelReason =
   | "TRIP_MEETING_INVALID_TRANSITION"
   // 2782 transport segments.
   | "TRIP_TRANSPORT_NOT_FOUND"
-  | "TRIP_TRANSPORT_INVALID_TRANSITION"
+  | "TRIP_TRANSPORT_INVALID_TRANSITION" | "TRIP_FLIGHT_STATUS_STALE" // 3826: an observation older than the one the flight segment holds
   // 2783: a personal goal is its owner's.
   | "TRIP_AUTH_NOT_CREATOR"
   // 2785 disruptions (Appendix B TRIP_DISRUPTION_* family).

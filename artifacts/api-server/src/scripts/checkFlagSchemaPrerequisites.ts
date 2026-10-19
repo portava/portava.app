@@ -481,7 +481,21 @@ export const KNOWN: Record<string, Known> = {
     note:
       "Reader: lib/pushDeviceCapability.timeSensitiveCapableTokens; writer: lib/pushDeviceCapability.recordPushDeviceCapability (push-token registration). " + "3771_notification_devices_ios_time_sensitive_capable.sql is IN THE TREE, NOT APPLIED (census-layover §66, OD-1012-LAY-4a). Classified `unguarded` because no lib/capability probe stands before the name; the protection is an error fallback the scan does not model. READER: called only for an actionable layover return warning while the server setting PUSH_IOS_TIME_SENSITIVE_ENTITLED is exactly \"true\" (default off, not enabled anywhere); ANY error or throw answers \"no capable device\" and the push goes at the ordinary iOS level. WRITER: any error is logged and the registration still succeeds. So with 3771 absent production behaves exactly as today. STRIKE THIS ENTRY when 3771 is applied and recorded in the migration ledger — the ratchet will report it STALE first." + " Also (2026-10-18): accept_waitlist_seat() / claim_waitlist_seat(), migration 3906, in the tree, NOT applied. routes/events.ts reaches them through the waitlist promotion, which sends a push; it calls them only after a probe has seen them answer and otherwise runs today's statements (fail-soft; the unapplied-schema ledger records it). The 3906 pair reaches zero on the press of 3906; 3771's column reaches zero on the press of 3771.",
   },
-};
+  // ── Added 2026-10-18: 3826/3827 (Layover flight connections, L165 lane B1-F) are in the tree, not in production ──
+  airport_mode_enabled: {
+    classification: "unguarded",
+    objects: [
+      "layover_sessions.arrival_segment_id", "layover_sessions.connection_type", "layover_sessions.departure_segment_id",
+      "layover_sessions.detected_source", "layover_sessions.expires_at", "layover_sessions.state",
+      "trip_transport_segments.arrival_airport_iata", "trip_transport_segments.arrival_gate", "trip_transport_segments.arrival_terminal",
+      "trip_transport_segments.carrier_code", "trip_transport_segments.departure_airport_iata", "trip_transport_segments.departure_gate",
+      "trip_transport_segments.departure_terminal", "trip_transport_segments.estimated_arrival_at", "trip_transport_segments.estimated_departure_at",
+      "trip_transport_segments.flight_number", "trip_transport_segments.flight_status", "trip_transport_segments.flight_status_observed_at",
+      "trip_transport_segments.flight_status_source",
+    ],
+    note:
+      "routes/layoverConnections.ts: every handler is gated by connectionsOpen(), which reads airport_mode_enabled AND layover_flight_connections_enabled; this scan is not AND-sensitive, so the handlers' closures (detectFromTrip -> readTripFlightSegments / readLiveConnectionSessions, startConnectionSession, the status route's readFlightSegmentsByIds) are charged to airport_mode_enabled as well as to layover_flight_connections_enabled. layover_flight_connections_enabled has NO ROW in production: 3827_layover_sessions_flight_connection.sql seeds it FALSE, adds the six layover_sessions columns, and its $pre$ refuses unless 3826_trip_kernel_flight_segments.sql (the thirteen trip_transport_segments columns) is installed. So every handler answers feature_disabled before any named read, and the routes/airport.ts call sites (recordTravellerDisruption, storeLifecycleForOperation, storeProjectedLifecycle) read layover_flight_connections_enabled themselves and return before naming a column. The manual session path (POST /airport/sessions) names none of them: connectionInsertColumns(undefined) adds no column. Classified `unguarded` because no lib/capability probe stands before the names; the protection is the flag gate the scan does not model (the discovery_serve_log_enabled precedent). STRIKE THIS ENTRY when 3826 and 3827 are applied and recorded in the migration ledger — the ratchet will report it STALE first.",
+  },};
 
 // ── Declared-by-a-migration ──────────────────────────────────────────────────
 

@@ -385,7 +385,7 @@ export async function openPressedLayoverDb(opts: { without?: readonly string[] }
         const body = statements.slice(0, -1).map((s) => `${s};`).join("\n");
         return call(`\\o /dev/null\n${prelude(role, claims)}\n${body}\n\\o\n${statements[statements.length - 1]};`);
       },
-      async query(sql) { return JSON.parse(call(`SELECT COALESCE(json_agg(_t.*), '[]'::json)::text FROM (${sql}) _t;`) || "[]") as Row[]; },
+      async query(sql) { return JSON.parse(call(`WITH _t AS (${sql.trim().replace(/;$/, "")}) SELECT COALESCE(json_agg(_t.*), '[]'::json)::text FROM _t;`) || "[]") as Row[]; },
       async exec(sql) { call(sql); },
       async close() { /* the harness database outlives the suite */ },
     };

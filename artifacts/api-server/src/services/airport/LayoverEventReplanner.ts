@@ -336,13 +336,13 @@ export interface ReplanSession {
   /** IATA or profile ref, matched against an `airport` subjectRef. */
   airportRef: string;
   /** Only `active` sessions are impacted. A closed session is not replanned. */
-  status: string;
+  status: string; /** §24 / census L259 (3827): the Trips flight segments the session arrives and departs on, matched against a `flight` subjectRef by role. Absent = not linked. */ arrivalFlightRef?: string | null; departureFlightRef?: string | null;
 }
 
 export interface ImpactedSession {
   session: ReplanSession;
   /** Which rule matched: a direct subject reference, or the airport fanout. */
-  via: "session_subject" | "airport_subject";
+  via: "session_subject" | "airport_subject" | "flight_subject";
 }
 
 /**
@@ -370,7 +370,7 @@ export function impactedSessions(
 
   for (const s of sessions) {
     if (s.status !== "active") continue;
-    if (sessionRefs.has(s.session.id)) { out.push({ session: s, via: "session_subject" }); continue; }
+    if (sessionRefs.has(s.session.id)) { out.push({ session: s, via: "session_subject" }); continue; } if (flightSubjectMatches(event, s)) { out.push({ session: s, via: "flight_subject" }); continue; } // §24 L259: the flight axis, by the segment's ROLE in the connection
     if (!airportRefs.has(s.airportRef)) continue;
     const arrivalMs = Date.parse(s.session.arrivalTime);
     const cutoffMs = Date.parse(s.session.boardingTime ?? s.session.departureTime);
@@ -1025,4 +1025,40 @@ function requiredActionNotify(d: ActionUniverseDiff): NotifyDecision | null {
   return change.escalated
     ? { notify: true, priority: "high", reason: `the required return action changed: ${change.from} -> ${change.to}`, returnAction: change }
     : { notify: true, priority: "normal", reason: `the required return action eased: ${change.from} -> ${change.to}`, returnAction: change };
+}
+
+// ── §24 "Replan fanout: index active sessions by airport/route/flight subjects" ──
+// census-layover L259, 3827. Appended at the tail: this file's lines are cited.
+
+/**
+ * Does a `flight` subject of this event name one of the session's flights IN
+ * THE ROLE THE EVENT IS ABOUT? A `{ kind: "flight", ref }` is a Trips flight
+ * segment id (trip_transport_segments.id, 3826). A connection has two flights
+ * and they mean different things:
+ *
+ *   flight.arrival_delayed    moves the ARRIVAL: only the flight the traveller
+ *                             arrives on. The onward flight landing late at its
+ *                             destination says nothing about this layover.
+ *   flight.departure_delayed  move the DEPARTURE / the gate: only the flight the
+ *   flight.gate_changed       traveller departs on.
+ *   flight.cancelled          either: a cancelled inbound never brings the
+ *                             traveller; a cancelled onward strands them.
+ *
+ * Every other event type is not about a flight, and a flight subject on one
+ * impacts nothing — the airport and session axes above keep their own rules.
+ * No window test: the subject IS the traveller's own flight, so "did this
+ * happen during this layover" is answered by the link itself.
+ */
+export function flightSubjectMatches(event: LayoverEventEnvelope, s: ReplanSession): boolean {
+  const refs = new Set(event.subjectRefs.filter((r) => r.kind === "flight").map((r) => r.ref));
+  if (refs.size === 0) return false;
+  const arr = s.arrivalFlightRef ?? null;
+  const dep = s.departureFlightRef ?? null;
+  switch (event.eventType) {
+    case "flight.arrival_delayed": return arr !== null && refs.has(arr);
+    case "flight.departure_delayed":
+    case "flight.gate_changed": return dep !== null && refs.has(dep);
+    case "flight.cancelled": return (arr !== null && refs.has(arr)) || (dep !== null && refs.has(dep));
+    default: return false;
+  }
 }

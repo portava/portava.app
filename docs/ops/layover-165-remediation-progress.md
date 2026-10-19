@@ -22,7 +22,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 | Batch | Rows | OPEN | IN PROGRESS | BUILT | VERIFIED | VERIFIED PASS | BLOCKED-EXTERNAL |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | B1-C assistant | 14 | 0 | 0 | 14 | 0 | 0 | 0 |
-| B1-F flight data | 6 | 0 | 6 | 0 | 0 | 0 | 0 |
+| B1-F flight data | 6 | 0 | 1 | 5 | 0 | 0 | 0 |
 | B1-P pressed-state verification | 58 | 2 | 0 | 54 | 0 | 0 | 2 |
 | B1-R1 routing (server) | 12 | 0 | 3 | 9 | 0 | 0 | 0 |
 | B2-BUDDY Rent-a-Buddy specialist/Safe Return | 2 | 2 | 0 | 0 | 0 | 0 | 0 |
@@ -33,7 +33,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 | B2-PLATFORM metrics/audit/real-schema/typed reads | 9 | 9 | 0 | 0 | 0 | 0 | 0 |
 | B2-RECS recommendations/snapshots/contracts | 14 | 14 | 0 | 0 | 0 | 0 | 0 |
 | B3-ENGINE lifecycle/timing/engine refactor/phrases | 8 | 8 | 0 | 0 | 0 | 0 | 0 |
-| **Total** | **165** | **44** | **42** | **77** | **0** | **0** | **2** |
+| **Total** | **165** | **44** | **37** | **82** | **0** | **0** | **2** |
 
 ## Checkpoint (resumable; updated after every batch)
 
@@ -131,10 +131,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** Trips segment model (other lane) + L21 migration
 - **Census lines read:** 409
 - **Batch:** B1-F flight data
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-F)
+- **Required correction:** Trips owns flight segments (3826 + kernel ADD/RECORD_FLIGHT_STATUS); traveller entry in local time; approved-feed port (none bound); updates recalc sessions + replan
+- **Migration:** 3826, 3827, 3828 (+ rollbacks; 21/21 proofs; order-independent, 0/24,989 keys differ) · **Tests:** layoverFlightConnections (unit 25), layoverFlightConnectionsRoutes (4), db/layoverFlightConnections.db.test.ts (17, full chain), client 12; 31 mutants killed · **Production dependency:** press 3826 then 3827; 3828 after 2700/2992/3623; trip_flight_segments_enabled + layover_flight_connections_enabled ON
+- **Evidence:** lane B1-F handback §1; census-layover section 'lane B1-F'
+- **Status:** BUILT (lane B1-F; independent verification pending; W until the press). Automatic updates need a licensed per-flight status feed (BLOCKED-EXTERNAL half); terminal change not yet an engine term
 
 ### L12 — Layover Session owns lifecycle, constraints, snapshots and state; must not own a generic city content catalog
 - **Original requirement:** Layover Session owns lifecycle, constraints, snapshots and state; must not own a generic city content catalog (the census body row quotes the spec; the full wording is at the row's census line).
@@ -209,10 +209,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** new 3870 (layover_sessions spec columns), LayoverSessionService.ts
 - **Census lines read:** 424, 9328 (§55.4)
 - **Batch:** B1-F flight data
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-F)
+- **Required correction:** layover_sessions: segment links, state, connection_type, detected_source, expires_at (3827); active_snapshot_id + confidence_band (3828); server-only writes
+- **Migration:** 3826, 3827, 3828 (+ rollbacks; 21/21 proofs; order-independent, 0/24,989 keys differ) · **Tests:** layoverFlightConnections (unit 25), layoverFlightConnectionsRoutes (4), db/layoverFlightConnections.db.test.ts (17, full chain), client 12; 31 mutants killed · **Production dependency:** press 3826 then 3827; 3828 after 2700/2992/3623; trip_flight_segments_enabled + layover_flight_connections_enabled ON
+- **Evidence:** lane B1-F handback §1; census-layover section 'lane B1-F'
+- **Status:** BUILT (lane B1-F; independent verification pending; W until the press)
 
 ### L26 — layover_recommendations (snapshot_id, candidate_type, status, plan_json, utility_score, risk_band, confidence, expires_at)
 - **Original requirement:** layover_recommendations (snapshot_id, candidate_type, status, plan_json, utility_score, risk_band, confidence, expires_at) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -248,10 +248,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** new 3870, LayoverLifecycle.ts writer, 3632 + layover_lifecycle_machine_enabled
 - **Census lines read:** 3910, 9328
 - **Batch:** B1-F flight data
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-F)
+- **Required correction:** 17-state TEXT+CHECK column, CAS graph writes, stored placement + flight updates
+- **Migration:** 3826, 3827, 3828 (+ rollbacks; 21/21 proofs; order-independent, 0/24,989 keys differ) · **Tests:** layoverFlightConnections (unit 25), layoverFlightConnectionsRoutes (4), db/layoverFlightConnections.db.test.ts (17, full chain), client 12; 31 mutants killed · **Production dependency:** press 3826 then 3827; 3828 after 2700/2992/3623; trip_flight_segments_enabled + layover_flight_connections_enabled ON
+- **Evidence:** lane B1-F handback §1; census-layover section 'lane B1-F'
+- **Status:** BUILT (lane B1-F; independent verification pending; W until the press). ABANDONED has no writer (no §5 edge)
 
 ### L35 — BaggageMode = CHECKED_THROUGH \
 - **Original requirement:** BaggageMode = CHECKED_THROUGH \ (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1821,10 +1821,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** flight-data / detection decision
 - **Census lines read:** 7752
 - **Batch:** B1-F flight data
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-F)
+- **Required correction:** Detection has a producer; one session walks detection→completion on the real router over the migrated chain
+- **Migration:** 3826, 3827, 3828 (+ rollbacks; 21/21 proofs; order-independent, 0/24,989 keys differ) · **Tests:** layoverFlightConnections (unit 25), layoverFlightConnectionsRoutes (4), db/layoverFlightConnections.db.test.ts (17, full chain), client 12; 31 mutants killed · **Production dependency:** press 3826 then 3827; 3828 after 2700/2992/3623; trip_flight_segments_enabled + layover_flight_connections_enabled ON
+- **Evidence:** lane B1-F handback §1; census-layover section 'lane B1-F'
+- **Status:** BUILT (lane B1-F; independent verification pending; W until the press)
 
 ### L240 — Deterministic replay tests for recorded sessions
 - **Original requirement:** Deterministic replay tests for recorded sessions (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1977,10 +1977,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** flight-data decision, then migration
 - **Census lines read:** 7892
 - **Batch:** B1-F flight data
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-F)
+- **Required correction:** Flight-subject fan-out axis built (indexes, role-aware match)
+- **Migration:** 3826, 3827, 3828 (+ rollbacks; 21/21 proofs; order-independent, 0/24,989 keys differ) · **Tests:** layoverFlightConnections (unit 25), layoverFlightConnectionsRoutes (4), db/layoverFlightConnections.db.test.ts (17, full chain), client 12; 31 mutants killed · **Production dependency:** press 3826 then 3827; 3828 after 2700/2992/3623; trip_flight_segments_enabled + layover_flight_connections_enabled ON
+- **Evidence:** lane B1-F handback §1; census-layover section 'lane B1-F'
+- **Status:** IN PROGRESS (flight axis built by B1-F; route axis not built: no route column — queued)
 
 ### L260 — Candidate explosion — pre-filter by envelope/time/category before expensive ranking
 - **Original requirement:** Candidate explosion — pre-filter by envelope/time/category before expensive ranking (the census body row quotes the spec; the full wording is at the row's census line).
@@ -2029,10 +2029,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** Trips segment/detection decision
 - **Census lines read:** 853, 8523
 - **Batch:** B1-F flight data
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-F)
+- **Required correction:** Trips detects connections, shows the Layover card, passes both segments into session creation (server re-detects)
+- **Migration:** 3826, 3827, 3828 (+ rollbacks; 21/21 proofs; order-independent, 0/24,989 keys differ) · **Tests:** layoverFlightConnections (unit 25), layoverFlightConnectionsRoutes (4), db/layoverFlightConnections.db.test.ts (17, full chain), client 12; 31 mutants killed · **Production dependency:** press 3826 then 3827; 3828 after 2700/2992/3623; trip_flight_segments_enabled + layover_flight_connections_enabled ON
+- **Evidence:** lane B1-F handback §1; census-layover section 'lane B1-F'
+- **Status:** BUILT (lane B1-F; independent verification pending; W until the press)
 
 ### L268 — Compass — tool access to certified context; proactive OpportunityEvents; explanation/clarification
 - **Original requirement:** Compass — tool access to certified context; proactive OpportunityEvents; explanation/clarification (the census body row quotes the spec; the full wording is at the row's census line).

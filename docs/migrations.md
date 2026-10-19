@@ -7020,3 +7020,28 @@ verifier also proved 3846 and its rollback independently on PGlite (forward, ide
 rollback, and every refusal, including the refusal over audit history). The flag must stay FALSE until the assistant's
 flag-ON defects found by that verification are fixed (census-compass, "Correction (2026-10-18, independent verification of
 the Layover 165 assistant)").
+
+## 2026-10-18 — `3826_trip_kernel_flight_segments.sql`, `3827_layover_sessions_flight_connection.sql`, `3828_layover_sessions_active_snapshot.sql`, written and NOT applied anywhere (Layover 165 program, lane B1-F)
+
+- **3826** adds thirteen nullable flight columns (with ten CHECKs) to `trip_transport_segments` and extends the trip
+  kernel: ADD_TRANSPORT_SEGMENT stores the itinerary and stamps a flight `unknown`; RECORD_FLIGHT_STATUS (capability
+  `engine`) records a status, binds its source to the actor's role and refuses a stale observation. Seeds
+  `trip_flight_segments_enabled` FALSE.
+- **3827** links `layover_sessions` to its arrival and departure segments (ON DELETE SET NULL) and adds `state` (the
+  seventeen §4.1 values, TEXT + CHECK), `connection_type`, `detected_source` and `expires_at`, with partial indexes for
+  the flight fan-out. A BEFORE trigger derives the state on insert and from terminal statuses; a client role writing any
+  of these columns is refused 42501. Its `$pre$` refuses without 3826. Seeds `layover_flight_connections_enabled` FALSE.
+- **3828** adds `active_snapshot_id` (FK to `layover_certified_computations.snapshot_id`) and `confidence_band`, written
+  by one AFTER INSERT trigger on `layover_certified_computations` that moves the pointer only to a higher snapshot
+  version. No flag. Needs 2700, 2992 and 3623 first.
+- **Gap numbers.** Applied at their numbers on a fresh replay and after 3999 on portava-ci and production. The lane
+  replayed the chain both ways: 0 of 24,989 catalog and row keys differ, and the kernel function's md5 is the same. Nothing
+  numbered 3829–3999 alters these tables or adds a trigger to them.
+- **Rollbacks:** `db/rollback/2026-10-18-3826-trip-kernel-flight-segments-rollback.sql`,
+  `db/rollback/2026-10-18-3827-layover-sessions-flight-connection-rollback.sql`,
+  `db/rollback/2026-10-18-3828-layover-sessions-active-snapshot-rollback.sql`, in reverse order. 21 of 21 proofs on
+  PGlite: each restores catalog and rows exactly, a second run changes nothing, each forward re-applies, and every
+  refusal fires (a linked session, a stored state, a pointer, recorded flight facts, a flag that is TRUE or has audit
+  history — a flag row is never deleted while its history exists).
+- **Press.** 3826, then 3827; 3828 after 2700, 2992 and 3623. Then `trip_flight_segments_enabled` and
+  `layover_flight_connections_enabled` ON.

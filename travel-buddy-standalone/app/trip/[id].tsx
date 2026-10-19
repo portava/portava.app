@@ -9,7 +9,7 @@ import { PortavaShareIcon } from '../../src/components/icons/PortavaShareIcon';
 import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 import { useScreenTiming } from '../../src/hooks/useScreenTiming';
 import { useNextBestAction } from '../../src/hooks/useNextBestAction';
-import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
+import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet'; import { TripLayoverConnectionsCard } from '../../src/features/trips/layover/TripLayoverConnectionsCard.tsx'; // census-layover L267 / L11: the trip's flights, its connections and their layover status
 import type { ReadinessRead, ReadinessSummary } from '../../src/services/tripIntel';
 import {
   TripHero, TodayNextUp, SavedIdeas, TripSavedPlacesSection,
@@ -735,7 +735,7 @@ function TripDetailScreen() {
           </Pressable>
         )}
 
-        {/* Layover Mode entry — shown between TripCircle and CompassTripBrief */}
+        {/* Layover Mode entry — shown between TripCircle and CompassTripBrief */}{live && trip.id ? <TripLayoverConnectionsCard tripId={trip.id} /> : null}
         <Pressable style={styles.layoverBanner} onPress={() => setLayoverOpen(true)}>
           <View style={styles.layoverBannerIcon}>
             <Plane size={18} color="#1565C0" />
