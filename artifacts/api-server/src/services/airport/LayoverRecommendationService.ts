@@ -427,7 +427,7 @@ export interface GenerateRecommendationsOptions {
    * path runs unchanged and — as before — the returned cards carry no id.
    */
   stableIds?: boolean;
-  travelTimeProvider?: TravelTimeProvider; // TESTS ONLY. Production gets LAYOVER_TRAVEL_TIME_PROVIDER.
+  travelTimeProvider?: TravelTimeProvider; /** TESTS ONLY (lane B1-R1). Production routes the pre-filtered candidates through LAYOVER_RETURN_CORRIDOR_PROVIDER (Google Routes, behind its gates). */ corridorProvider?: RouteCorridorProvider; // TESTS ONLY. Production reads places with LAYOVER_DEFERRED_LEG_PROVIDER and routes them after the pre-filter.
 }
 
 /**
@@ -450,11 +450,11 @@ export interface GenerateRecommendationsOptions {
  */
 export type CertifiedRecommendation = SafeRecommendation & {
   /** census L122 — the band the map pin renders. Never absent. */
-  feasibility: CandidateFeasibility; /** census L75 — spec §9 ExperiencePrimitive for the card's type: TYPICAL values, never this place's, never read by the safety math. Never absent. */ experience: LayoverExperience;
+  feasibility: CandidateFeasibility; /** census L75 — spec §9 ExperiencePrimitive for the card's type: TYPICAL values, never this place's, never read by the safety math. Never absent. */ experience: LayoverExperience; /** lane B1-R1 — §8 with routed terms: the two legs at their own instants, the conservative return, the robustness signals, the band, and the return contract WITH its route (L221). Null for an airside card or one nobody routed. */ routing?: RoutedCardContract | null;
 };
 
 export type GenerateResult =
-  | { ok: true; recommendations: CertifiedRecommendation[]; /** census L296 (App C5): the snapshot every card above was certified under — `snapshotIdFor(session.id, certified.inputHash)`. An add-to-plan must name it. */ snapshotId: string }
+  | { ok: true; recommendations: CertifiedRecommendation[]; /** census L296 (App C5): the snapshot every card above was certified under — `snapshotIdFor(session.id, certified.inputHash)`. An add-to-plan must name it. */ snapshotId: string; /** lane B1-R1 — §8's routed union (L66) and its isochrone (L61), cut under the same snapshot; null when nothing landside was evaluated. */ routedEnvelope?: RoutedSafeEnvelope | null }
   | { ok: false; message: string };
 
 export async function generateRecommendations(
@@ -500,7 +500,7 @@ export async function generateRecommendations(
   //    airport's data maturity as well as on the traveller's usable minutes.
   const tod = timeOfDayContext(airport, session, nowMs);
   let discoveryCandidates = session.wantsToLeave && usableMinutes >= 90 && landside.allowed && certified.verdict !== "no" && landsideStatusOf(certified) !== "closed"
-    ? await withLayoverRoutesBudget(session, () => fetchDiscoveryPlaces(db, city, session.vibeChips, airportPoint(airport), new Date(nowMs), opts.travelTimeProvider))
+    ? await withLayoverRoutesBudget(session, () => fetchDiscoveryPlaces(db, city, session.vibeChips, airportPoint(airport), new Date(nowMs), opts.travelTimeProvider ?? LAYOVER_DEFERRED_LEG_PROVIDER)) // L260: read WITHOUT routing; the survivors of the cheap filters are routed below
     : [];
   if (!tod.coversEvening) {
     // Daytime-only window: nightlife cards would be dishonest.
@@ -585,7 +585,7 @@ export async function generateRecommendations(
     if (v?.band !== "BLOCKED") return true;
     blocked.push({ key: recommendationKey(c), verdict: v });
     return false;
-  });
+  }); const routed = await applyRoutedRecommendationPass({ db, session, record: certified, airport: airportPoint(airport), outerBound: envelope, bands, candidates: reachableDiscovery, keyOf: (c) => recommendationKey(c), landsideAllowed: landsideStatusOf(certified) !== "closed", corridorProvider: opts.corridorProvider }); // lane B1-R1: §8 with ROUTED terms — the survivors of the cheap filters (L260) are routed both ways at their own instants (L60), judged by the formula (L65) with the §8.1 signals (L68–L71, L282); the terms are written onto each candidate for `assess`, and the routed band replaces the straight-line one on its pin (a routed BLOCKED stays visible, rated, with its reason)
   if (blocked.length > 0) {
     logger.info(
       {
@@ -867,7 +867,7 @@ export async function generateRecommendations(
   //
   // On the legacy path `statusByKey` is empty, so nothing is dropped and the
   // returned set is byte-identical to what it was before this filter existed.
-  return { ok: true, snapshotId: snapshotIdFor(session.id, certified.inputHash), recommendations: rows.flatMap((row, idx) => {
+  return { ok: true, snapshotId: snapshotIdFor(session.id, certified.inputHash), routedEnvelope: routed.envelope, recommendations: rows.flatMap((row, idx) => {
     const status = statusByKey.get(keys[idx]);
     if (status === USER_HIDDEN_RECOMMENDATION_STATUS) return [];
     // census L122 — the pin's band, from the envelope THIS request cut. An
@@ -900,7 +900,7 @@ export async function generateRecommendations(
       sortOrder:       row.sort_order,
       placeId:         row.place_id ?? null,
       planItemId:      null,
-    }), feasibility, experience: layoverExperienceFor({ recType: row.rec_type, title: row.title, insideAirport: Boolean(row.inside_airport) }) }]; // census L75: from the served row alone, after it was rated — getRecommendations gives the same card the same descriptor
+    }), feasibility, experience: layoverExperienceFor({ recType: row.rec_type, title: row.title, insideAirport: Boolean(row.inside_airport) }), routing: row.inside_airport ? null : routedCardContract(routed.byKey.get(keys[idx])) }]; // census L75: from the served row alone, after it was rated — getRecommendations gives the same card the same descriptor
   }) };
 }
 
@@ -1036,7 +1036,7 @@ export async function getRecommendations(
 // ═══════════════════════════════════════════════════════════════════════════
 import { createHash } from "node:crypto";
 import { snapshotIdFor } from "./layoverLedger.js";
-import { withLayoverRoutesBudget } from "./LayoverTravelTime.js";
+import { withLayoverRoutesBudget, LAYOVER_DEFERRED_LEG_PROVIDER } from "./LayoverTravelTime.js"; import { applyRoutedRecommendationPass, routedCardContract, type RoutedCardContract } from "./LayoverRoutedFeasibility.js"; import type { RoutedSafeEnvelope } from "./LayoverEnvelope.js"; import type { RouteCorridorProvider } from "../../lib/providers/routeCorridorProvider.js"; // lane B1-R1 imports on this one line, so no line below moves
 
 /** Appendix A's sentence for `RECOMMENDATION_EXPIRED`, verbatim. */
 export const RECOMMENDATION_EXPIRED_MESSAGE = "Recommendation certified under stale snapshot";

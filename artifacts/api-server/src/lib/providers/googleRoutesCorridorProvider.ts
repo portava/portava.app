@@ -111,7 +111,7 @@ export const ENABLEMENT_ENV = "LAYOVER_ROUTED_CORRIDOR_ENABLED";
  *   routes.duration / distanceMeters            the corridor's own numbers
  *   legs.steps.travelMode / staticDuration      per-leg shape (L70, L71)
  *   legs.steps.transitDetails.stopCount         interruptibility (L70)
- *   legs.steps.transitDetails.stopDetails       transfer points (L68, L71)
+ *   legs.steps.transitDetails.stopDetails       transfer points (L68, L71); legs.steps.navigationInstruction.maneuver: a FERRY / FERRY_TRAIN step is a non-interruptible leg (L70); fallbackInfo: a TRAFFIC_UNAWARE fallback is not a forecast (L60). Neither is a Pro/Enterprise trigger (SKU page, read 2026-10-18), so the SKU is unchanged.
  */
 const FIELD_MASK = [
   "routes.duration",
@@ -122,7 +122,7 @@ const FIELD_MASK = [
   "routes.legs.steps.distanceMeters",
   "routes.legs.steps.transitDetails.stopCount",
   "routes.legs.steps.transitDetails.stopDetails.arrivalStop.name",
-  "routes.legs.steps.transitDetails.stopDetails.departureStop.name",
+  "routes.legs.steps.transitDetails.stopDetails.departureStop.name", "routes.legs.steps.navigationInstruction.maneuver", "fallbackInfo",
 ].join(",");
 
 const REQUEST_TIMEOUT_MS = 6_000;
@@ -199,7 +199,7 @@ function stepToLeg(step: any): RouteLeg | null {
   const distance = typeof step?.distanceMeters === "number" ? step.distanceMeters : null;
 
   const interruptibility =
-    mode === "transit" ? transitInterruptibility(transit?.stopCount) : interruptibilityFromMode(mode);
+    mode === "transit" ? transitInterruptibility(transit?.stopCount) : isFerryStep(step) ? "committed" : interruptibilityFromMode(mode); // L70: a car ferry inside a DRIVE route cannot be left part-way
 
   // A NAME, not a position. See RouteLeg.transferPointId for why this must
   // never become a coordinate.
@@ -223,7 +223,7 @@ function routeToOption(route: any): RouteOption | null {
   for (const leg of Array.isArray(route?.legs) ? route.legs : []) {
     for (const s of Array.isArray(leg?.steps) ? leg.steps : []) steps.push(s);
   }
-  const legs = steps.map(stepToLeg).filter((l): l is RouteLeg => l !== null);
+  const legs = conveyanceLegs(steps, stepToLeg); // one leg per CONVEYANCE, not per turn instruction — see conveyanceLegs at the foot
 
   return {
     legs,
@@ -248,13 +248,13 @@ export interface GoogleRoutesCorridorOptions {
    * gate the Trips seams use (domain/trips/contracts/RoutesSpendGate.ts, 3971 +
    * 3973). Default: that gate, on the service client.
    */
-  spendGate?: RoutesSpendGate;
+  spendGate?: RoutesSpendGate; /** Owner decision R5 (2026-10-18): a LAYOVER read (its budget names a layover session) is charged through the layover gate — per session and per person, sharing only the day's quota and budget with Trips. Default: services/airport/layoverRoutesSpendGate.ts on the service client. */ layoverSpendGate?: LayoverRoutesSpendGate; /** The memo of identical corridors (R5(b)): ON for the production singleton below; a provider built elsewhere (a test, a one-off) asks per call unless it opts in. */ memo?: boolean;
   /**
    * Who the call is charged to. Default: the read's own scope
    * (withRoutesRequestBudget). No user AND trip → no call: the owner's caps are
    * per person and per trip, and an uncharged call is an uncapped one.
    */
-  spendScope?: () => { userId: string | null; tripId: string | null } | null;
+  spendScope?: () => { userId: string | null; tripId: string | null; layoverSessionId?: string | null } | null;
 }
 
 /** The Trips gate, built once on first use (no client is read at import). */
@@ -267,15 +267,15 @@ function tripSpendGate(): RoutesSpendGate {
 export function createGoogleRoutesCorridorProvider(
   opts: GoogleRoutesCorridorOptions = {},
 ): RouteCorridorProvider {
-  const doFetch = opts.fetchImpl ?? globalThis.fetch;
+  const doFetch = opts.fetchImpl ?? globalThis.fetch; const providerOpts = opts; // read inside `corridorUncached`, which picks the gate a scope is charged through
   const now = opts.now ?? (() => new Date());
   const readEnv = opts.readEnv ?? ((name: string) => process.env[name]);
   const spendScope = opts.spendScope ?? (() => {
     const b = currentRoutesRequestBudget();
-    return b ? { userId: b.userId, tripId: b.tripId } : null;
+    return b ? { userId: b.userId, tripId: b.tripId, layoverSessionId: b.layoverSessionId ?? null } : null;
   });
 
-  async function corridor(q: CorridorQuery): Promise<CorridorResult> {
+  async function corridorUncached(q: CorridorQuery): Promise<CorridorResult> {
     const bad = corridorQueryRefusal(PROVIDER_ID, q);
     if (bad) return bad;
 
@@ -298,14 +298,14 @@ export function createGoogleRoutesCorridorProvider(
     // one unit of the shared daily quota, budget, person share and trip share,
     // taken atomically by 3973's function. Anything but "granted" is no call.
     const budget = currentRoutesRequestBudget();
-    if (budget && budget.counter.attempts >= budget.maxCalls) {
-      return refuse(PROVIDER_ID, "PROVIDER_REJECTED", "the Routes API calls this read may make are spent (request_hop_cap)");
+    if (budget && (budget.counter.attempts >= budget.maxCalls || routesReadTimeSpent(budget, now))) {
+      return refuse(PROVIDER_ID, "PROVIDER_REJECTED", budget.counter.attempts >= budget.maxCalls ? "the Routes API calls this read may make are spent (request_hop_cap)" : "the Routes API time this read may spend is spent (request_time_budget)");
     }
     const scope = spendScope();
-    if (!scope?.userId || !scope?.tripId) {
+    if (!scope?.userId || (!scope?.tripId && !scope?.layoverSessionId)) {
       return refuse(PROVIDER_ID, "PROVIDER_REJECTED", "no person and trip to charge this Routes API call to; the owner's caps are per person and per trip (unscoped)");
     }
-    if (budget) budget.counter.attempts += 1;
+    if (budget) budget.counter.attempts += 1; const opts = spendGateOptionsFor(providerOpts, scope); // R5: a layover scope is charged through the layover gate (session + person + the shared day); every other scope exactly as before
     const verdict = await (opts.spendGate ?? tripSpendGate()).decide({ userId: scope.userId, tripId: scope.tripId });
     if (verdict !== "granted") {
       return refuse(PROVIDER_ID, "PROVIDER_REJECTED", `the Routes API spend gate answered ${verdict}; nothing was asked of Google`);
@@ -345,10 +345,10 @@ export function createGoogleRoutesCorridorProvider(
           "X-Goog-FieldMask": FIELD_MASK,
         },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        signal: AbortSignal.timeout(routesRequestTimeoutMs(currentRoutesRequestBudget(), now, REQUEST_TIMEOUT_MS)),
       });
     } catch (e) {
-      return refuse(
+      markRoutesReadTimedOut(e, currentRoutesRequestBudget(), now); return refuse(
         PROVIDER_ID,
         "PROVIDER_UNAVAILABLE",
         e instanceof Error ? `${e.name}: ${e.message}` : "fetch failed",
@@ -404,7 +404,7 @@ export function createGoogleRoutesCorridorProvider(
     const expiresAt = new Date(now().getTime() + CORRIDOR_TTL_MS).toISOString();
     const sourceRefs = [
       "lib/providers/googleRoutesCorridorProvider.ts#createGoogleRoutesCorridorProvider",
-      `google:routes.v2:${mode}`,
+      `google:routes.v2:${mode}`, ...fallbackRefs(parsed),
     ];
 
     const spreadMinutes = routes[routes.length - 1]!.totalMinutes - routes[0]!.totalMinutes;
@@ -446,12 +446,12 @@ export function createGoogleRoutesCorridorProvider(
       expiresAt,
       // DRIVE is traffic-aware for the instant asked; TRANSIT is a published
       // schedule, which is an aggregate over the past, not a measurement of now.
-      sourceClass: mode === "DRIVE" ? "LIVE" : "HISTORICAL",
-      confidence: "MEDIUM",
+      sourceClass: mode === "DRIVE" && !trafficUnawareFallback(parsed) ? "LIVE" : "HISTORICAL", // a FALLBACK_TRAFFIC_UNAWARE answer to a TRAFFIC_AWARE request is free-flow, not a forecast (L60)
+      confidence: mode === "DRIVE" && trafficUnawareFallback(parsed) ? "LOW" : "MEDIUM",
       sourceRefs,
     });
   }
-
+  const corridor = opts.memo === true ? memoisedCorridor(corridorUncached, now, undefined, () => enablementRefusal(PROVIDER_ID, ENABLEMENT_ENV, readEnv) ?? credentialRefusal(PROVIDER_ID, CREDENTIAL_ENV, readEnv)) : corridorUncached; // identical legs inside one 5-minute bucket are asked of Google ONCE (owner decision R5(b)); see memoisedCorridor at the foot
   return {
     id: PROVIDER_ID,
     routed: true,
@@ -466,4 +466,205 @@ export function createGoogleRoutesCorridorProvider(
 
 /** Convenience singleton. Refuses on every call until BOTH gates are satisfied. */
 export const googleRoutesCorridorProvider: RouteCorridorProvider =
-  createGoogleRoutesCorridorProvider();
+  createGoogleRoutesCorridorProvider({ memo: true }); // R5(b): every layover read shares one memo of identical legs
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LAYOVER 165, lane B1-R1 (owner decision 2026-10-18: Google Routes is approved
+// for Layover). Appended at the TAIL so every cited line above keeps its
+// number; ESM hoists the imports.
+//
+//   conveyanceLegs        one RouteLeg per CONVEYANCE. Google answers a DRIVE
+//                         route as a turn-by-turn list of steps, every one of
+//                         them `travelMode: DRIVE`. Read one leg per step,
+//                         `transferCountOf` counted a 15-turn taxi ride as 14
+//                         changes of vehicle, `assessReturnRisk` called EVERY
+//                         real drive corridor "requires multiple transfers",
+//                         and every candidate would have been refused on a
+//                         fabricated L71 signal. Consecutive WALK steps are one
+//                         walk and consecutive DRIVE steps one drive; every
+//                         TRANSIT step is its own vehicle. Seconds are summed
+//                         BEFORE rounding, so a merged leg is not ceiled once
+//                         per turn.
+//   spendGateOptionsFor   R5(a)/(b): a layover scope is charged through the
+//                         layover gate, never a trip's D-7 share.
+//   memoisedCorridor      R5(b): identical legs (same endpoints to ~11 m, same
+//                         mode, same 5-minute departure bucket, same
+//                         alternatives flag) are asked ONCE — concurrent asks
+//                         share one request, and an answer is reused until its
+//                         own `expiresAt`. A memo hit spends nothing and is not
+//                         counted against the read's cap. Only ANSWERS are kept;
+//                         a refusal is never replayed.
+//   the time budget       a layover read routes up to 12 legs; the corridor
+//                         call now honours the read's time budget the way the
+//                         Trips seam does (GatedRoutedTravelTimeProvider), and a
+//                         request never waits past what the read has left.
+//   fallbackInfo          Google may answer a TRAFFIC_AWARE request from its
+//                         TRAFFIC_UNAWARE fallback (`SERVER_ERROR`,
+//                         `LATENCY_EXCEEDED`). That duration is free-flow and is
+//                         NOT a forecast for the return instant, so the corridor
+//                         is HISTORICAL / LOW and names the fallback in its
+//                         sourceRefs; the layover evaluator refuses to certify
+//                         a return on it (it may still refuse a candidate).
+// ═══════════════════════════════════════════════════════════════════════════
+import type { RoutesRequestBudget } from "../../domain/trips/contracts/RoutesRequestBudget.js";
+import { corridorCacheKey } from "./routeCorridorProvider.js";
+import { layoverRoutesSpendGate, type LayoverRoutesSpendGate } from "../../services/airport/layoverRoutesSpendGate.js";
+
+/** Google's maneuvers for boarding a ferry. A ferry cannot be left part-way (L70). */
+const FERRY_MANEUVERS = new Set(["FERRY", "FERRY_TRAIN"]);
+
+export function isFerryStep(step: any): boolean {
+  return FERRY_MANEUVERS.has(String(step?.navigationInstruction?.maneuver ?? "").toUpperCase());
+}
+
+/**
+ * One RouteLeg per conveyance (see the block header). `single` is the per-step
+ * reader above, used unchanged for TRANSIT steps (each is its own vehicle with
+ * its own stop count and transfer point).
+ */
+export function conveyanceLegs(steps: readonly any[], single: (step: any) => RouteLeg | null): RouteLeg[] {
+  const out: RouteLeg[] = [];
+  type Run = { mode: TravelMode; seconds: number; distance: number | null; committed: boolean; unknown: boolean };
+  let run = null as Run | null;
+  const flush = () => {
+    if (!run) return;
+    out.push({
+      mode: run.mode,
+      minutes: Math.ceil(run.seconds / 60),
+      distanceMeters: run.distance,
+      interruptibility: run.committed ? "committed" : run.unknown ? "unknown" : interruptibilityFromMode(run.mode),
+      transferPointId: null,
+    });
+    run = null;
+  };
+  for (const step of steps) {
+    const seconds = parseDurationSeconds(step?.staticDuration);
+    if (seconds === null) continue;
+    const mode = localMode(step?.travelMode);
+    if (mode === "transit" || mode === "unknown") {
+      flush();
+      const leg = single(step);
+      if (leg) out.push(leg);
+      continue;
+    }
+    const distance = typeof step?.distanceMeters === "number" ? step.distanceMeters : null;
+    if (run && run.mode === mode) {
+      run.seconds += seconds;
+      run.distance = run.distance === null || distance === null ? null : run.distance + distance;
+      run.committed ||= isFerryStep(step);
+    } else {
+      flush();
+      run = { mode, seconds, distance, committed: isFerryStep(step), unknown: false };
+    }
+  }
+  flush();
+  return out;
+}
+
+/** The scope a call is charged to, as the provider reads it. */
+interface ChargeScope { userId: string | null; tripId: string | null; layoverSessionId?: string | null }
+
+/**
+ * The spend options for THIS scope. A layover scope gets a gate whose `decide`
+ * charges the layover session and person (the trip, if any, is ignored: R5(b));
+ * any other scope gets the provider's own options, untouched.
+ */
+export function spendGateOptionsFor(
+  providerOpts: GoogleRoutesCorridorOptions,
+  scope: ChargeScope,
+): { spendGate?: { decide(s: { userId: string | null; tripId: string | null }): Promise<string> } } {
+  if (!scope.layoverSessionId) return providerOpts;
+  const layoverSessionId = scope.layoverSessionId;
+  const gate = providerOpts.layoverSpendGate ?? layoverRoutesSpendGate();
+  return {
+    spendGate: {
+      async decide(s) {
+        const verdict = await gate.decide({ userId: s.userId, layoverSessionId });
+        return verdict === "granted" ? "granted" : `layover ${verdict}`;
+      },
+    },
+  };
+}
+
+/** Has this read spent its wall-clock budget for routed calls? */
+export function routesReadTimeSpent(budget: RoutesRequestBudget, _now?: () => Date): boolean {
+  if (budget.counter.timedOut === true) return true;
+  // The BUDGET's clock (Date.now, as `withRoutesRequestBudget` stamps `startedAt`), never the provider's
+  // injectable `now`, which dates the corridor's own observedAt/expiresAt and may be a fixed test instant.
+  return Date.now() - budget.counter.startedAt >= budget.budgetMs;
+}
+
+/** How long ONE request may wait: the adapter's own timeout, never past what the read has left. */
+export function routesRequestTimeoutMs(budget: RoutesRequestBudget | undefined, now: () => Date, ceiling: number): number {
+  if (!budget) return ceiling;
+  const left = budget.budgetMs - (Date.now() - budget.counter.startedAt); void now; // the budget's clock (see routesReadTimeSpent)
+  return Math.max(1, Math.min(ceiling, left));
+}
+
+/** A request abandoned because the read's time ran out spends the rest of the read's time too. */
+export function markRoutesReadTimedOut(e: unknown, budget: RoutesRequestBudget | undefined, now: () => Date): void {
+  if (!budget || !(e instanceof Error) || e.name !== "TimeoutError") return;
+  void now; if (Date.now() - budget.counter.startedAt >= budget.budgetMs - 5) budget.counter.timedOut = true;
+}
+
+/** Google answered from its TRAFFIC_UNAWARE fallback: the durations are free-flow, not a forecast. */
+export function trafficUnawareFallback(parsed: unknown): boolean {
+  const mode = (parsed as { fallbackInfo?: { routingMode?: unknown } })?.fallbackInfo?.routingMode;
+  return String(mode ?? "") === "FALLBACK_TRAFFIC_UNAWARE";
+}
+
+/** The fallback, named in the corridor's own provenance. Empty when Google used the mode asked for. */
+export function fallbackRefs(parsed: unknown): string[] {
+  const f = (parsed as { fallbackInfo?: { routingMode?: unknown; reason?: unknown } })?.fallbackInfo;
+  if (!f || typeof f !== "object") return [];
+  return [`google:routes.v2:fallback:${String(f.routingMode ?? "unspecified")}:${String(f.reason ?? "unspecified")}`];
+}
+
+/** The memo's bound. A layover read asks at most 12 legs; 2,000 is many airports' worth of five minutes. */
+export const CORRIDOR_MEMO_MAX = 2_000;
+
+/**
+ * Identical corridors asked once (R5(b)). Per PROVIDER INSTANCE — the
+ * production singleton shares it across every request; a test's private
+ * provider has its own — and in memory only: nothing is written anywhere, and
+ * an entry dies at the corridor's own `expiresAt` (five minutes).
+ */
+export function memoisedCorridor(
+  inner: (q: CorridorQuery) => Promise<CorridorResult>,
+  now: () => Date,
+  max?: number,
+  /** The provider's own configuration gates, asked BEFORE the memo: a deployment that turned Routes off is not served an answer it remembers. */
+  preflight?: () => ProviderRefusal | null,
+): (q: CorridorQuery) => Promise<CorridorResult> {
+  const answers = new Map<string, { result: CorridorResult; expiresMs: number }>();
+  const inFlight = new Map<string, Promise<CorridorResult>>();
+  return async (q: CorridorQuery): Promise<CorridorResult> => {
+    // The key names the mode GOOGLE is asked for: an unspecified mode is asked as DRIVE (googleMode), so it
+    // shares the DRIVE entry rather than paying twice for the same request.
+    const closed = preflight?.() ?? null;
+    if (closed) return closed;
+    const base = corridorCacheKey({ ...q, mode: localMode(googleMode(q.mode)) });
+    if (base === null) return inner(q);
+    const key = `${base}:${q.wantAlternatives === false ? "single" : "alternatives"}`;
+    const hit = answers.get(key);
+    if (hit && hit.expiresMs > now().getTime()) return hit.result;
+    if (hit) answers.delete(key);
+    const pending = inFlight.get(key);
+    if (pending) return pending;
+    const p = inner(q).then((result) => {
+      if (result.ok) {
+        const expiresMs = Date.parse(result.value.expiresAt);
+        if (Number.isFinite(expiresMs) && expiresMs > now().getTime()) {
+          if (answers.size >= (max ?? CORRIDOR_MEMO_MAX)) { // read lazily: the singleton above is built at import, before this module's tail constants exist
+            const oldest = answers.keys().next().value;
+            if (oldest !== undefined) answers.delete(oldest);
+          }
+          answers.set(key, { result, expiresMs });
+        }
+      }
+      return result;
+    }).finally(() => { inFlight.delete(key); });
+    inFlight.set(key, p);
+    return p;
+  };
+}

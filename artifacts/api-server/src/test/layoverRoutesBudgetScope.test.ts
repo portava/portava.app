@@ -9,14 +9,15 @@
  * readers that use this provider must open a withRoutesRequestBudget scope".
  *
  * WHAT IS PINNED
- *   1. With a trip, each layover path that can reach the provider makes the
- *      call and charges it to the traveller and THEIR trip — proved with the
+ *   1. Each layover path that can reach the provider makes the call and
+ *      charges it to the traveller and THEIR LAYOVER SESSION — proved with the
  *      REAL corridor provider (fetch and spend gate injected, nothing reaches
  *      the network): recommendation generation's legs, Discovery's layover
  *      timing, and `certifiedActionUniverse`'s return corridor.
- *   2. With no trip and Routes live, the answer is the NAMED absence
- *      `routes_unscoped_no_trip` and the provider is never called (R5(a) is the
- *      owner's: how a trip-less layover is charged).
+ *   2. OWNER DECISION R5 (2026-10-18, lane B1-R1) superseded the trip-less
+ *      absence: a layover read — with or without a trip — is charged to its
+ *      layover SESSION and the person (never the trip's D-7 share), and only a
+ *      read that names no session is the NAMED absence `routes_unscoped_no_session`.
  *   3. With Routes not live — every deployment today — the wrap changes
  *      nothing: the same answer, byte for byte, as an unwrapped call.
  *
@@ -57,14 +58,14 @@ const PLACE_POINT = { lat: 25.08, lng: 121.235 };
 
 /** The F1 exports, looked up at run time so this file LOADS on a tree without them and fails per case. */
 function f1(): {
-  withLayoverRoutesBudget: (s: { userId: string; tripId: string | null }, fn: () => Promise<any>, o?: { readEnv?: (n: string) => string | undefined }) => Promise<any>;
+  withLayoverRoutesBudget: (s: { userId: string; tripId: string | null; id?: string | null }, fn: () => Promise<any>, o?: { readEnv?: (n: string) => string | undefined }) => Promise<any>;
   layoverRoutesGuardedCorridor: (p: RouteCorridorProvider) => RouteCorridorProvider;
-  ROUTES_UNSCOPED_NO_TRIP: string;
+  ROUTES_UNSCOPED_NO_SESSION: string;
 } {
   const m = TravelTime as Record<string, any>;
   assert.equal(typeof m.withLayoverRoutesBudget, "function", "LayoverTravelTime exports no withLayoverRoutesBudget");
   assert.equal(typeof m.layoverRoutesGuardedCorridor, "function", "LayoverTravelTime exports no layoverRoutesGuardedCorridor");
-  assert.equal(m.ROUTES_UNSCOPED_NO_TRIP, "routes_unscoped_no_trip");
+  assert.equal(m.ROUTES_UNSCOPED_NO_SESSION, "routes_unscoped_no_session");
   return m as any;
 }
 
@@ -76,7 +77,7 @@ function liveGoogle() {
   const spend = { calls: [] as unknown[], async decide(s: unknown) { spend.calls.push(s); return "granted" as const; } };
   const fetches = { n: 0 };
   const fetchImpl = (async () => { fetches.n += 1; return { ok: true, status: 200, json: async () => BODY } as unknown as Response; }) as unknown as typeof fetch;
-  const corridor = createGoogleRoutesCorridorProvider({ fetchImpl, readEnv: LIVE, spendGate: spend });
+  const corridor = createGoogleRoutesCorridorProvider({ fetchImpl, readEnv: LIVE, spendGate: spend, layoverSpendGate: spend as any });
   return { corridor, travel: corridorTravelTimeProvider(corridor), spend, fetches };
 }
 
@@ -107,7 +108,7 @@ function corridorDouble(): RouteCorridorProvider & { calls: number; budgets: unk
     async bidirectional() {
       d.calls += 1;
       const b = currentRoutesRequestBudget();
-      d.budgets.push(b ? { userId: b.userId, tripId: b.tripId } : null);
+      d.budgets.push(b ? { userId: b.userId, tripId: b.tripId, layoverSessionId: b.layoverSessionId ?? null } : null);
       return refuse("corridor-double", "PROVIDER_UNAVAILABLE", "double");
     },
   };
@@ -185,87 +186,85 @@ const CANDIDATES = [{ id: "cand-1", lat: PLACE_POINT.lat, lng: PLACE_POINT.lng }
 
 // ── 1. WITH A TRIP: the call is made, and charged to the traveller and the trip ──
 
-describe("1. a layover read WITH a trip charges its routed calls to the traveller and the trip", () => {
+const SESSION_CHARGE = { userId: USER, layoverSessionId: "session-1" };
+
+describe("1. a layover read WITH a trip charges its routed calls to the traveller and the layover SESSION (R5), never the trip", () => {
   it("1a. recommendation generation (LayoverRecommendationService → landsideLeg): one charge per place, measured legs", async () => {
     const g = liveGoogle();
     const r = await generateRecommendations(makeLayoverDb(recTables()), AIRPORT, session({ tripId: TRIP }), Date.now(), { travelTimeProvider: g.travel });
     assert.ok(r.ok);
-    assert.deepEqual(g.spend.calls, PLACES.map(() => ({ userId: USER, tripId: TRIP })), "each place's leg must be charged to this traveller and this trip");
+    assert.deepEqual(g.spend.calls, PLACES.map(() => SESSION_CHARGE), "each place's leg must be charged to this traveller and this layover session");
     assert.equal(g.fetches.n, PLACES.length, "the routed call was made");
     const landside = r.recommendations.filter((c) => !c.insideAirport && c.placeId);
     assert.ok(landside.length > 0 && landside.every((c) => c.travelTimeSource === "measured" && c.travelTimeMin === 20),
       JSON.stringify(landside.map((c) => [c.title, c.travelTimeMin, c.travelTimeSource])));
   });
 
-  it("1b. the return corridor in certifiedActionUniverse: both directions charged to the trip", async () => {
+  it("1b. the return corridor in certifiedActionUniverse: both directions charged to the session", async () => {
     const g = liveGoogle();
     const snap = await liveSnapshot(TRIP);
     await certifiedActionUniverse(snap, CANDIDATES, undefined, g.corridor);
-    assert.deepEqual(g.spend.calls, [{ userId: USER, tripId: TRIP }, { userId: USER, tripId: TRIP }], "outbound and return, each charged to the trip");
+    assert.deepEqual(g.spend.calls, [SESSION_CHARGE, SESSION_CHARGE], "outbound and return, each charged to the session");
     assert.equal(g.fetches.n, 2);
   });
 
-  it("1c. Discovery's layover timing (discoveryLayoverMode → statedLayoverTimings → landsideLeg): charged to the trip", async () => {
+  it("1c. Discovery's layover timing (discoveryLayoverMode → statedLayoverTimings → landsideLeg): charged to the session", async () => {
     const g = liveGoogle();
     const gate = await discoveryLayoverGate(makeLayoverDb(snapshotTables(TRIP)), USER, CANDIDATES, "GET /test", { provider: g.travel });
     assert.ok(gate.ok && gate.active, `positive control: layover mode applies (${JSON.stringify(gate).slice(0, 200)})`);
     assert.ok(g.spend.calls.length >= 1, "the timing leg was never charged — it ran outside any Routes budget");
-    for (const c of g.spend.calls) assert.deepEqual(c, { userId: USER, tripId: TRIP });
+    for (const c of g.spend.calls) assert.deepEqual(c, SESSION_CHARGE);
   });
 
   it("1d. nested inside an enclosing read's budget, the layover scope shares its counter", async () => {
     const { withLayoverRoutesBudget } = f1();
     await withRoutesRequestBudget({ userId: USER, tripId: TRIP }, async () => {
       const outer = currentRoutesRequestBudget();
-      await withLayoverRoutesBudget({ userId: USER, tripId: TRIP }, async () => {
+      await withLayoverRoutesBudget({ id: "session-1", userId: USER, tripId: TRIP }, async () => {
         assert.equal(currentRoutesRequestBudget()?.counter, outer?.counter, "one read, one budget");
+        assert.equal(currentRoutesRequestBudget()?.layoverSessionId, "session-1", "charged to its own session");
       });
     });
   });
 });
 
-// ── 2. WITH NO TRIP and Routes live: the named absence, and no call ─────────────
+// ── 2. R5(a): a trip-less layover is charged to its SESSION; no session → the named absence ──
 
-describe("2. a trip-less layover read answers routes_unscoped_no_trip and never calls the provider", () => {
-  it("2a. landsideLeg inside the scope: the named absence, zero calls; a missing coordinate keeps its own reason", async () => {
+describe("2. a trip-less layover is charged to its session; a read that names no session is routes_unscoped_no_session", () => {
+  it("2a. landsideLeg in a read that names no session: the named absence, zero calls; a missing coordinate keeps its own reason", async () => {
     const { withLayoverRoutesBudget } = f1();
     const d = routedDouble();
     const leg = await withLayoverRoutesBudget({ userId: USER, tripId: null }, () => landsideLeg(AIRPORT_POINT, PLACE_POINT, new Date(), d), { readEnv: LIVE });
-    assert.equal(d.calls, 0, "the provider was called for a layover nobody can be charged for");
+    assert.equal(d.calls, 0, "the provider was called for a read nobody can be charged for");
     assert.equal(leg.minutes, null);
     assert.equal(leg.source, "unmeasured");
     assert.equal(leg.reason, "NO_ROUTED_PROVIDER");
-    assert.match(String(leg.detail), /^routes_unscoped_no_trip/);
+    assert.match(String(leg.detail), /^routes_unscoped_no_session/);
     const noPoint = await withLayoverRoutesBudget({ userId: USER, tripId: null }, () => landsideLeg(AIRPORT_POINT, null, new Date(), d), { readEnv: LIVE });
     assert.equal(noPoint.reason, "NO_COORDINATES");
     assert.equal(d.calls, 0);
   });
 
-  it("2b. recommendation generation: the routed provider is never asked, and no landside card claims a measured leg", async () => {
-    await withLiveRoutesEnv(async () => {
-      const d = routedDouble();
-      const r = await generateRecommendations(makeLayoverDb(recTables()), AIRPORT, session({ tripId: null }), Date.now(), { travelTimeProvider: d });
-      assert.ok(r.ok);
-      assert.equal(d.calls, 0, "generation asked the routed provider for a trip-less layover");
-      const landside = r.recommendations.filter((c) => !c.insideAirport && c.placeId);
-      assert.ok(landside.length > 0, "positive control: landside cards were generated");
-      for (const c of landside) {
-        assert.equal(c.travelTimeMin, null);
-        assert.equal(c.travelTimeSource, "unmeasured");
-      }
-    });
+  it("2b. recommendation generation for a trip-less layover: each place's leg is charged to the traveller and the session", async () => {
+    const g = liveGoogle();
+    const r = await generateRecommendations(makeLayoverDb(recTables()), AIRPORT, session({ tripId: null }), Date.now(), { travelTimeProvider: g.travel });
+    assert.ok(r.ok);
+    assert.deepEqual(g.spend.calls, PLACES.map(() => SESSION_CHARGE));
+    const landside = r.recommendations.filter((c) => !c.insideAirport && c.placeId);
+    assert.ok(landside.length > 0 && landside.every((c) => c.travelTimeSource === "measured"));
   });
 
-  it("2c. the return corridor in certifiedActionUniverse is never asked", async () => {
+  it("2c. the return corridor in certifiedActionUniverse is asked for a trip-less layover, inside its session's budget", async () => {
     const snap = await liveSnapshot(null);
     await withLiveRoutesEnv(async () => {
       const d = corridorDouble();
       await certifiedActionUniverse(snap, CANDIDATES, undefined, d);
-      assert.equal(d.calls, 0, "the corridor was asked for a trip-less layover");
+      assert.equal(d.calls, 1);
+      assert.deepEqual(d.budgets, [{ userId: USER, tripId: null, layoverSessionId: "session-1" }]);
     });
   });
 
-  it("2d. the guarded corridor names the absence in the port's own refusal shape, without calling inner", async () => {
+  it("2d. the guarded corridor names the absence for a no-session read in the port's own refusal shape, without calling inner", async () => {
     const { withLayoverRoutesBudget, layoverRoutesGuardedCorridor } = f1();
     const d = corridorDouble();
     const r = await withLayoverRoutesBudget({ userId: USER, tripId: null }, () => layoverRoutesGuardedCorridor(d).bidirectional({
@@ -275,7 +274,7 @@ describe("2. a trip-less layover read answers routes_unscoped_no_trip and never 
     assert.equal(r.ok, false);
     if (!r.ok) {
       assert.equal(r.reason, "PROVIDER_NOT_ENABLED");
-      assert.match(r.detail, /^routes_unscoped_no_trip/);
+      assert.match(r.detail, /^routes_unscoped_no_session/);
     }
   });
 });

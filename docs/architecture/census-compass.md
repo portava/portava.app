@@ -6087,3 +6087,53 @@ layover.
 | CANNOT-VERIFY | 2 | **2** |
 
 126 + 12 + 1 + 2 = 141.
+
+### Correction (2026-10-18, independent verification of the Layover 165 assistant) — CL-04 C → W; two overstatements withdrawn
+
+*Measured at `f87a92e3f` by an independent verifier (Fable), with adversarial inputs of its own; recorded on branch
+`claude/wave4-build-20261017`. `head_commit` is not re-declared.*
+
+**CL-04 was C on a clause no live layover reaches.** §27.3 graded CL-04 ("§25 Compass row: tool access to certified
+context, proactive OpportunityEvents, explanation/clarification") C with all four clauses passing. Its "tool access to
+certified context" clause rested on the GENERAL chat's `get_layover_snapshot` tool. On any live layover the general chat
+answers certified-only and uses no tool (L-CL02a/c,
+`artifacts/api-server/src/routes/compass.ts:1540#if (liveLayover !== null) {`), and the layover door's tools exist only
+behind `layover_compass_assistant_enabled` (FALSE, 3846 unapplied). Census-layover grades the same §25 obligation, L268, W
+for exactly this reason. One obligation cannot be C here and W there.
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| CL-04 | C | **W** | tool access to certified context is unreachable on any live layover: the general chat answers certified-only there, and the layover door's tools are behind a FALSE flag (3846 unapplied). C on the same press as L268: 3846 applied and the flag ON. |
+
+**Withdrawn: "unchanged" for the flag-OFF door.** The correction above says that with the flag OFF, absent or unreadable
+the door is "the certified-only door, unchanged". Measured against the commit before it, the certified TEXT is identical
+and no model is called, but each question now makes one more `feature_flags` read (6 → 7), the response body carries two
+more fields (`planComparison`, `assistant`), and the question's event row carries three more keys. Nothing a traveller is
+told changes.
+
+**CL-02 stays C, because production runs the certified-only door, but the flag-ON evidence has holes.** The verifier ran
+29 adversarial model outputs of its own; 22 were blocked (times written as words or in other formats, fullwidth digits,
+look-alike letters, negation, a coordinate echoed from a tool, a smuggled comparison). Seven were not:
+- on a layover whose corridor is refused, a landside card whose title is made only of allowed words was named and endorsed
+  by the model ("… is the best pick for you."), and a comparison note published it beside the refusal;
+- a control character from the model counted as a masked certified name and reached the traveller;
+- reassurance built only from allowed words passed ("You have much more than you think, so enjoy the food.").
+Four of the verifier's own mutants of the admission rules and of the opportunities read's owner scope survived the
+suites. **The flag must not be turned ON until these are fixed and tested**; the fix is scheduled in the Layover 165
+program (docs/ops/layover-165-remediation-progress.md).
+
+Annotation notes, no grade moves: CL-06's citation of `nextClarifyingQuestion` is marked "removed by #656" but the
+function still exists; CL-07's cited `enforceCompassEnvelope` line is now an airport fixture, and the new contract tests
+are not yet cited for it.
+
+### Headline
+
+| figure | after 2026-10-18 | after the independent verification |
+|---|---:|---:|
+| Denominator | 141 | **141** |
+| BUILT-AND-CORRECT | 126 | **125** |
+| BUILT-BUT-WRONG | 12 | **13** |
+| NOT-BUILT | 1 | **1** |
+| CANNOT-VERIFY | 2 | **2** |
+
+125 + 13 + 1 + 2 = 141.

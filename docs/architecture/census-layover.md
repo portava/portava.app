@@ -12618,3 +12618,93 @@ No assertion of the six older compass suites changed; their L-CL02d tests now ru
 all killed. No real model was called by any test.
 
 Rows: none move. 296 = 81 C / 165 W / 50 N / 0 X, as the headline above.
+
+### Layover 165 program, lanes B1-R1 and B1-P (2026-10-18): Google Routes built end to end; the 58 press rows driven through the real router on the real chain — no row moves
+
+*Branch `claude/wave4-build-20261017`; uncommitted at this writing, committed with this section. Rule A.2 keeps every row
+below at W until its press: nothing here is applied to production, and every new path is behind a flag seeded FALSE.*
+
+**Routing (lane B1-R1; the owner approved Google Routes for Layover on 2026-10-18).** GET
+/airport/sessions/:id/recommendations and the Discovery universe now route both legs of every candidate that survives a
+pre-filter (envelope proof, stated time, the caller's category rule, at most six candidates), before any ranking:
+the way out at the window start, the way back at the candidate's own arrival plus its dwell, traffic-aware for driving.
+§8's formula is applied with routed terms (`artifacts/api-server/src/services/airport/LayoverRoutedFeasibility.ts:412#if (arrivalMs + (stated ?? 0) * 60_000 + conservative.minutes * 60_000 > hardReturnMs) {`),
+the conservative return is held back by confidence and by margins for a fragile corridor, a non-interruptible leg and
+each transfer (each only ever contracts the verdict), and RETURN_ROUTE_UNRELIABLE is produced from the real routed
+corridor. Every layover call is charged to a layover-session scope (36 per session, 60 per person per UTC day, 12 per
+read, inside the shared $10 / 500-call day ceiling) by `artifacts/api-server/src/services/airport/layoverRoutesSpendGate.ts`
+over `artifacts/api-server/src/migrations/3856_layover_routes_session_budget.sql` (flag `layover_routed_corridor_enabled`,
+seeded FALSE: the kill switch). A real adapter defect was fixed on the way: Google returns a drive turn by turn, so a
+four-turn taxi ride had counted as three transfers and every drive corridor would have been flagged unreliable; steps
+now merge into one leg per conveyance. Tests: five new suites, 90 cases, against fixtures in Google's documented
+computeRoutes shape; 3971 and 3856 run as written in PGlite; 44 mutants killed; both decision goldens unchanged. No
+real Google call was made.
+
+| id | was | now | C on |
+| --- | --- | --- | --- |
+| L60 | W | W | the Routes press: Routes API enabled on the key's project, `LAYOVER_ROUTED_CORRIDOR_ENABLED` and the `ROUTES_API_DAILY_*` settings, 3971 then 3856 (and 2745 so routed rows persist), `layover_routed_corridor_enabled` ON. |
+| L61 | W | W | as L60. Stated limit: the isochrone is sampled at the routed candidates (at most six per read); a sector with no routed point is unmeasured, never filled in. |
+| L63 | W | W | as L60. The edge that BLOCKS now contracts with confidence as well as with return risk. |
+| L65 | W | W | as L60, AND a minimum-experience source (curated dwell, 3465/3466 + `layover_place_dwell_enabled`). Without one a routed card says nobody has said how long the visit takes, and certifies nothing. |
+| L66 | W | W | as L60 (the routed union, certified inward; L61's sampling limit applies). |
+| L68 | W | W | as L60. |
+| L69 | W | W | as L60. |
+| L70 | W | W | the transport half is built (a ferry or a committed transit leg is non-interruptible and never SAFE); the ACTIVITY half is not: an experience's interruptibility is a typical-per-type descriptor the safety math deliberately does not read. It stays W after the press. |
+| L71 | W | W | the mechanism is built (5 minutes per transfer, confidence LOW at two or more), but production asks walking and driving routes only, which have no transfers. It stays W until transit routes are requested. |
+| L221 | W | W | as L60 for the recommendation contract (every routed landside card carries its return route, and leaveBy is never after hardReturnBy). The abort contract's route (POST /return-now) is still null. |
+| L260 | W | W | as L60. Discovery's timing read now defers routing to the pre-filtered universe as well (`artifacts/api-server/src/lib/discoveryLayoverMode.ts`). |
+| L282 | W | W | as L60. |
+
+**Pressed-state verification (lane B1-P).** A harness replays the real migration chain the production packet applies
+(PGlite here; CI's local-db PostgreSQL through `LOCAL_DB_URL`) and drives the layover routers through the real
+supabase-js client over SQL: `artifacts/api-server/src/test/db/pressedLayoverDb.ts`,
+`artifacts/api-server/src/test/db/postgrestSqlBridge.ts`, `artifacts/api-server/src/test/db/pressedLayoverApp.ts`.
+Eleven suites, 111 cases, cover the 58 press rows (3513 crowd reports; the snapshot family 2700 → 2992 → 3623 → 3792;
+constraints, lifecycle, checkpoints and outcomes; stable ids; presence; external events; crew location; abort;
+erasure; the write boundary; rollout). Pressed: 111 / 111. Flags off: 59 / 110, every failure a flag-gated case.
+Migrations absent: 43 / 111. The ordering constraint is measured: turning persistence on without 3792 makes the
+overview's write fail (23514) for uncurated international corridors. Fifty rows work pressed and are red unpressed;
+they wait only on the owner's press.
+
+Two pressed-path defects, invisible to the hand-made doubles, were fixed (both inert while unpressed):
+- the external-event fan-out put an airport's IATA code into a uuid `airport_id` list, so on the real schema every
+  airport event failed with 22P02 after it was claimed (L92, L93, L257);
+- a reported disruption never stored its snapshot and never invalidated stale cards (L44). It now settles through
+  `settleDisruptionRecompute`, appended to `artifacts/api-server/src/services/airport/LayoverReplanService.ts`.
+
+| id | was | now | C on |
+| --- | --- | --- | --- |
+| L44 | W | W | the snapshot press (2700 → 2992 → 3623 → 3792, then `layover_decision_persistence_enabled` and `layover_recommendation_snapshot_enabled`), AND the owner's reading of "invalidate": the stale card's snapshot citation is cleared and the card kept. |
+| L92 | W | W | 2981 + `layover_event_ingest_enabled` + `LAYOVER_EVENT_PRODUCER_SECRET` + a real producer (none exists). |
+| L93 | W | W | as L92. |
+| L257 | W | W | as L92. |
+| L31 | W | W | as L92: the technical work is complete; the producer feed and its secret are external. |
+| L41 | W | W | the server half is proven (time-sensitive delivery only to a device that reported the entitlement). Apple's Time Sensitive capability, a signed device build and `PUSH_IOS_TIME_SENSITIVE_ENTITLED` are external. |
+| L6 | W | W | NOT met even pressed: each surface still certifies its own instant and none reads a stored snapshot. Needs one canonical snapshot that every surface reads (the owner's "one canonical, versioned decision snapshot"). |
+| L20 | W | W | NOT met even pressed: the child snapshot rows refuse UPDATE, but the parent `layover_certified_computations` row has no UPDATE trigger. Needs one migration. |
+
+The other fifty rows of the family (L1, L4, L5, L12, L35–L37, L40, L82, L84–L89, L117, L122, L125, L127, L128, L137,
+L147, L163, L172, L174, L181, L187, L189, L191, L194–L200, L206, L207, L233, L238, L240–L242, L251, L252, L254, L263,
+L269, L276, L296) keep their recorded reasons: each is now proven on the real chain through the real router and waits
+only on its press (the per-row press is in `docs/ops/layover-165-remediation-progress.md`). L254 (Rent-a-Buddy) was
+proven in the test database only and is not to be activated. Stated plainly: the psql engine has not yet run against a
+real PostgreSQL; CI's local-db job will be its first run.
+
+Rows: none move. 296 = 81 C / 165 W / 50 N / 0 X, as the headline above.
+
+### Independent verification of lane B1-C (2026-10-18): accepted as built pending the press, with fixes required before the flag goes ON — no row moves
+
+An independent verifier (Fable) re-checked the assistant at `f87a92e3f`. All fourteen rows (L100, L102–L113, L268) are
+accepted as built pending the press. No tool writes; no tool could be made to return another traveller's data; every
+failure mode is bounded. Two statements above are corrected:
+- "Flag OFF, absent or unreadable: the door is byte-identical to the certified-only door" is withdrawn. The certified
+  text is identical and no model is called, but each question makes one more `feature_flags` read, the body carries
+  `planComparison` and `assistant`, and the question's event row carries three more keys.
+- The real-schema test this section mentions is in the working tree, not in that commit; it lands with the shared
+  harness.
+With the flag ON, three adversarial outputs reached the traveller (a refused layover's landside card named and endorsed
+in allowed words; a control character passed as a masked name; reassurance in allowed words), and four of the
+verifier's mutants survived the suites. These are fixed and tested before the press; until then the flag must stay
+FALSE. Census-compass records the same findings and moves CL-04, the §25 row L268 also grades, to W.
+
+Rows: none move. 296 = 81 C / 165 W / 50 N / 0 X, as the headline above.

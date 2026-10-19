@@ -297,8 +297,8 @@ export async function discoveryLayoverGate(
     // is measured against.
     centre: snapshot.envelope ? snapshot.envelope.centre : null,
     departAt: new Date(snapshot.certifiedRecord.inputs.nowMs),
-    provider: opts.provider,
-  })); // F1: every leg this read asks for is charged to the traveller and their trip (a trip-less layover: the named absence, R5(a))
+    provider: opts.provider ?? LAYOVER_DEFERRED_LEG_PROVIDER,
+  })); // R5: every leg this read asks for is charged to the layover session and the person; routing waits for the universe's pre-filter (L260)
   if (!timing.ok) {
     return {
       ok: false,
@@ -390,3 +390,7 @@ export function serveUnderLayoverGate<T extends { id: string }>(
   if (!gate.ok || !gate.active) return items;
   return items.filter((i) => gate.admittedIds.has(i.id));
 }
+
+// Layover 165 (L260): the timing read defers routing to the pre-filtered universe. Imported at the TAIL so no cited
+// line above moves; ESM hoists it.
+import { LAYOVER_DEFERRED_LEG_PROVIDER } from "../services/airport/LayoverTravelTime.js";

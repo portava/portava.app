@@ -85,7 +85,7 @@ export interface ReturnCorridorOutcome {
   /** The refusal's own reason, for an operator to branch on. */
   reason: ProviderRefusalReason | "NO_ROUTES" | null;
   /** One operator-facing line. Never shown to a traveller, never a key value. */
-  detail: string | null;
+  detail: string | null; /** lane B1-R1 (L60/L65): BOTH measured legs — each at its own instant, its traffic-aware figure, its free-flow bound, and whether it is a forecast — whenever both directions answered and were judged. Absent otherwise. */ legs?: RoutedLegs | null;
 }
 
 export interface LayoverReturnCorridorQuery {
@@ -184,5 +184,107 @@ export async function layoverReturnRisk(
       detail: `${provider.id}: the return corridor carried no routes, so there is nothing to judge`,
     };
   }
-  return { risk: assessment, reason: null, detail: null };
+  return { risk: assessment, reason: null, detail: null, legs: routedLegsOf(result.value, q) };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LAYOVER 165, lane B1-R1 — the two legs as NUMBERS, not only as a risk.
+//
+// Appended at the TAIL so every cited line above keeps its number.
+//
+// `layoverReturnRisk` already asked both directions at their own instants and
+// judged the way back (L68–L71, L282). What it threw away was the time each leg
+// takes — and §8's feasibility formula needs exactly those two terms:
+// `outbound_arrival + minimum_experience_duration + conservative_return_duration
+// <= hard_return_by`. `routedLegsOf` reads them off the SAME corridors the risk
+// was judged on, so the term and the judgement cannot come from two answers.
+//
+// `forecast` is the line between a measurement for the return INSTANT and a
+// figure that merely exists. A DRIVE corridor is a forecast only when Google
+// answered it traffic-aware (`sourceClass: "LIVE"`); a TRAFFIC_UNAWARE fallback
+// is free-flow, and free-flow is never presented as the traffic at 18:40. A
+// walk takes what it takes at any hour, and a transit corridor is the timetable
+// FOR the instant asked, so both are forecasts of their own kind.
+// ═══════════════════════════════════════════════════════════════════════════
+import type { RouteCorridor, RouteOption, TravelMode, BidirectionalCorridor } from "../../lib/providers/routeCorridorProvider.js";
+import { corridorConfidence, routeInterruptibility } from "../../lib/providers/routeCorridorProvider.js";
+import type { TravelConfidence } from "../../lib/travelEstimate.js";
+
+/** One measured direction. */
+export interface RoutedLeg {
+  /** The instant this leg was asked FOR (ISO). */
+  departAt: string;
+  /** The best route's own duration — traffic-aware for a DRIVE forecast — never below its free-flow bound. */
+  minutes: number;
+  /** The best route's free-flow figure (sum of its legs' static durations), or null when it reported no leg. */
+  freeFlowMinutes: number | null;
+  /** TRUE when `minutes` is a statement about `departAt` (see the block header). */
+  forecast: boolean;
+  confidence: TravelConfidence;
+  /** Routes offered, and how many of them fail independently (L68). */
+  offeredRoutes: number;
+  independentRoutes: number;
+  /** The best route: its changes of conveyance (L71) and whether it can be left part-way (L70). */
+  transferCount: number;
+  interruptibility: string;
+  /** The best route's conveyances, in order: what a traveller follows back. */
+  conveyances: Array<{ mode: TravelMode; minutes: number; interruptibility: string; endsAt: string | null }>;
+}
+
+export interface RoutedLegs {
+  /** The mode that was ASKED for (the evaluator picks walk or drive per candidate). */
+  mode: TravelMode | "unspecified";
+  outbound: RoutedLeg;
+  returnLeg: RoutedLeg;
+  /** When the earlier of the two answers stops being a statement about now. */
+  expiresAt: string;
+  sourceRefs: string[];
+}
+
+function freeFlowOf(route: RouteOption): number | null {
+  if (route.legs.length === 0) return null;
+  let total = 0;
+  for (const l of route.legs) {
+    if (!Number.isFinite(l.minutes) || l.minutes < 0) return null;
+    total += l.minutes;
+  }
+  return total;
+}
+
+function isForecast(c: RouteCorridor, asked: TravelMode | undefined): boolean {
+  if (c.sourceRefs.some((r) => r.includes(":fallback:FALLBACK_TRAFFIC_UNAWARE"))) return false;
+  const mode = asked ?? "drive";
+  if (mode === "drive" || mode === "unknown") return c.sourceClass === "LIVE";
+  return true;
+}
+
+/** One direction as a measured leg (exported so the evaluator reads an outbound it asked for on its own the same way). */
+export function routedLegOf(c: RouteCorridor, asked: TravelMode | undefined): RoutedLeg {
+  const best = c.routes[0]!;
+  const freeFlow = freeFlowOf(best);
+  return {
+    departAt: c.departAt,
+    minutes: Math.max(best.totalMinutes, freeFlow ?? 0),
+    freeFlowMinutes: freeFlow,
+    forecast: isForecast(c, asked),
+    confidence: corridorConfidence(c),
+    offeredRoutes: c.routes.length,
+    independentRoutes: c.independentRouteCount,
+    transferCount: best.transferCount,
+    interruptibility: routeInterruptibility(best.legs),
+    conveyances: best.legs.map((l) => ({ mode: l.mode, minutes: l.minutes, interruptibility: l.interruptibility, endsAt: l.transferPointId })),
+  };
+}
+
+/** Both legs, read off the corridors the risk was judged on. Null when either direction carried no route. */
+export function routedLegsOf(c: BidirectionalCorridor, q: Pick<LayoverReturnCorridorQuery, "mode">): RoutedLegs | null {
+  if (c.outbound.routes.length === 0 || c.returnLeg.routes.length === 0) return null;
+  const expiries = [Date.parse(c.outbound.expiresAt), Date.parse(c.returnLeg.expiresAt)].filter(Number.isFinite);
+  return {
+    mode: q.mode ?? "unspecified",
+    outbound: routedLegOf(c.outbound, q.mode),
+    returnLeg: routedLegOf(c.returnLeg, q.mode),
+    expiresAt: new Date(expiries.length === 2 ? Math.min(...expiries) : 0).toISOString(),
+    sourceRefs: [...new Set([...c.outbound.sourceRefs, ...c.returnLeg.sourceRefs])],
+  };
 }

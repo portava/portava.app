@@ -493,3 +493,190 @@ export async function bandCandidates<K>(
   candidates.forEach((c, i) => out.set(c.key, verdicts[i]!));
   return out;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// §8 WITH ROUTED TIMES — the union, and the isochrone it draws (LAYOVER 165,
+// lane B1-R1; owner decision 2026-10-18: Google Routes is approved).
+//
+// Appended at the TAIL so every cited line above keeps its number.
+//
+// The disc above is the OUTER bound: outside it nothing fits at any speed. It
+// stays, as the pre-filter and as the drawing's outer ring. What it could never
+// be is the envelope itself — `certifiedInward: false` said so. With routed
+// times there is something to certify INWARD:
+//
+//   SafeEnvelope = union(points satisfying the feasibility constraint)
+//
+// `RoutedSafeEnvelope.members` IS that union, over the points that were routed:
+// each member was asked of the router in BOTH directions, at its own instants,
+// and satisfies `outbound_arrival + dwell + conservative_return <= hard_return_by`
+// (dwell = the place's own stated minimum, or `dwellFloorMinutes` for a point
+// that states none). So `certifiedInward: true` is a claim about every listed
+// point, and nothing else: a place that was not routed is not in the union and
+// is not claimed to be outside it (`certifiedOutward: false` — only the outer
+// disc proves exclusion).
+//
+// THE ISOCHRONE, NOT A RADIUS (L61). The routed reach is different in every
+// direction — a river, a motorway, the hour's traffic — so the drawing is a
+// polygon by SECTOR: in each of eight 45° sectors, the farthest member is a
+// vertex and its distance is that sector's reach. A sector no routed point fell
+// in is `measured: false` with a null reach — unmeasured, never zero and never
+// borrowed from the disc. Only the vertices are measured; the polygon's
+// interior between them is drawn, not certified (`polygonInteriorCertified:
+// false`), and the map must say so.
+//
+// IT CONTRACTS (L63). Membership is computed with the conservative return,
+// which grows as confidence drops (`ENVELOPE_UNCERTAINTY_BUDGET` × the return)
+// and as return risk rises (the §8.1 margins, a slower forecast). Both only
+// ever remove members, so every sector's reach is non-increasing in both —
+// swept in layoverRoutedEnvelope.test.ts.
+// ═══════════════════════════════════════════════════════════════════════════
+import type { LayoverFeasibilityRecord } from "./LayoverFeasibility.js";
+
+export const ROUTED_ENVELOPE_SECTORS = 8;
+
+export interface RoutedEnvelopeMember {
+  key: string;
+  point: GeoPoint;
+  band: "SAFE" | "TIGHT";
+  distanceMetres: number;
+  bearingDeg: number;
+  slackMinutes: number | null;
+  mode: string | null;
+  outboundMinutes: number | null;
+  conservativeReturnMinutes: number | null;
+}
+
+export interface RoutedEnvelopeExcluded {
+  key: string;
+  point: GeoPoint;
+  band: EnvelopeBand;
+  reason: string | null;
+}
+
+export interface RoutedEnvelopeSector {
+  index: number;
+  fromDeg: number;
+  toDeg: number;
+  /** The farthest routed member in this sector, metres from the centre. Null = no routed point here (unmeasured, NOT zero). */
+  reachMetres: number | null;
+  vertexKey: string | null;
+  measured: boolean;
+}
+
+export interface RoutedSafeEnvelope {
+  centre: GeoPoint;
+  basis: "routed_union";
+  /** TRUE: every member was routed both ways and satisfies the constraint. */
+  certifiedInward: true;
+  /** FALSE: a point not listed is not proved outside; only `outerBound` proves exclusion. */
+  certifiedOutward: false;
+  /** The straight-line disc — the certified OUTER bound — or null with none. */
+  outerBound: SafeEnvelope | null;
+  windowStartsAt: string;
+  hardReturnBy: string;
+  usableMinutes: number;
+  /** The dwell a point that states none is measured with. */
+  dwellFloorMinutes: number;
+  /** The record's §6.2 band the envelope was cut under (each member's own is on its candidate). */
+  confidence: LayoverFeasibilityRecord["confidence"];
+  /** §8's union. */
+  members: RoutedEnvelopeMember[];
+  /** Routed (or proved) and NOT in the union, with why. */
+  excluded: RoutedEnvelopeExcluded[];
+  sectors: RoutedEnvelopeSector[];
+  /** The isochrone: one vertex per measured sector, by bearing. Empty when nothing was routed in. */
+  polygon: GeoPoint[];
+  /** FALSE always: only the vertices were measured. */
+  polygonInteriorCertified: false;
+  /** When the earliest routed answer behind a member stops being a statement about now. Null with no member. */
+  expiresAt: string | null;
+}
+
+export interface RoutedEnvelopePoint {
+  key: string;
+  point: GeoPoint;
+  /** Feasible with its own dwell or the floor (the evaluator's `inEnvelope`). */
+  member: boolean;
+  band: EnvelopeBand;
+  slackMinutes: number | null;
+  mode: string | null;
+  outboundMinutes: number | null;
+  conservativeReturnMinutes: number | null;
+  reason: string | null;
+  expiresAt: string | null;
+}
+
+/** Initial great-circle bearing from `a` to `b`, degrees in [0, 360). */
+export function bearingDegrees(a: GeoPoint, b: GeoPoint): number {
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const y = Math.sin(toRad(b.lng - a.lng)) * Math.cos(toRad(b.lat));
+  const x = Math.cos(toRad(a.lat)) * Math.sin(toRad(b.lat)) - Math.sin(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.cos(toRad(b.lng - a.lng));
+  const deg = (Math.atan2(y, x) * 180) / Math.PI;
+  return (deg + 360) % 360;
+}
+
+/** Build §8's routed union and its isochrone from evaluated points. Pure. */
+export function routedSafeEnvelope(args: {
+  centre: GeoPoint;
+  record: Pick<LayoverFeasibilityRecord, "inputs" | "envelope" | "deadline" | "confidence">;
+  outerBound: SafeEnvelope | null;
+  dwellFloorMinutes: number;
+  points: ReadonlyArray<RoutedEnvelopePoint>;
+}): RoutedSafeEnvelope {
+  const { centre, record } = args;
+  const windowStartMs = Math.max(record.inputs.nowMs, record.envelope.earliestOutTime.getTime());
+  const members: RoutedEnvelopeMember[] = [];
+  const excluded: RoutedEnvelopeExcluded[] = [];
+  let expiresMs: number | null = null;
+  for (const p of args.points) {
+    if (p.member && (p.band === "SAFE" || p.band === "TIGHT" || p.band === "UNCERTIFIED")) {
+      members.push({
+        key: p.key,
+        point: p.point,
+        // A member whose candidate is UNCERTIFIED (no stated dwell) is in the union at the floor dwell; it is
+        // drawn as TIGHT — it fits, and nobody has certified a visit there.
+        band: p.band === "SAFE" ? "SAFE" : "TIGHT",
+        distanceMetres: Math.round(haversineMeters(centre, p.point)),
+        bearingDeg: Math.round(bearingDegrees(centre, p.point) * 10) / 10,
+        slackMinutes: p.slackMinutes,
+        mode: p.mode,
+        outboundMinutes: p.outboundMinutes,
+        conservativeReturnMinutes: p.conservativeReturnMinutes,
+      });
+      const e = p.expiresAt ? Date.parse(p.expiresAt) : NaN;
+      if (Number.isFinite(e)) expiresMs = expiresMs === null ? e : Math.min(expiresMs, e);
+    } else if (p.band === "BLOCKED" || p.member === false) {
+      excluded.push({ key: p.key, point: p.point, band: p.band, reason: p.reason });
+    }
+  }
+  const width = 360 / ROUTED_ENVELOPE_SECTORS;
+  const sectors: RoutedEnvelopeSector[] = [];
+  const polygon: GeoPoint[] = [];
+  for (let i = 0; i < ROUTED_ENVELOPE_SECTORS; i++) {
+    const inSector = members.filter((m) => Math.min(ROUTED_ENVELOPE_SECTORS - 1, Math.floor(m.bearingDeg / width)) === i);
+    const far = inSector.reduce<RoutedEnvelopeMember | null>((best, m) => (best === null || m.distanceMetres > best.distanceMetres ? m : best), null);
+    sectors.push({ index: i, fromDeg: i * width, toDeg: (i + 1) * width, reachMetres: far ? far.distanceMetres : null, vertexKey: far ? far.key : null, measured: far !== null });
+    if (far) polygon.push(far.point);
+  }
+  members.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  excluded.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  return {
+    centre,
+    basis: "routed_union",
+    certifiedInward: true,
+    certifiedOutward: false,
+    outerBound: args.outerBound,
+    windowStartsAt: new Date(windowStartMs).toISOString(),
+    hardReturnBy: record.deadline.hardReturnTime.toISOString(),
+    usableMinutes: record.envelope.usableMinutes,
+    dwellFloorMinutes: args.dwellFloorMinutes,
+    confidence: record.confidence,
+    members,
+    excluded,
+    sectors,
+    polygon,
+    polygonInteriorCertified: false,
+    expiresAt: expiresMs === null ? null : new Date(expiresMs).toISOString(),
+  };
+}

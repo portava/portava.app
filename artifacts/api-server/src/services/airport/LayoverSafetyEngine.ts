@@ -344,7 +344,7 @@ export interface ActivityCandidate {
   insideAirport: boolean;
   verified?: boolean;
   /** Provenance of `travelTimeMin`. Absent = not measured (see travelTimeSourceFor). */
-  travelTimeSource?: TravelTimeSource;
+  travelTimeSource?: TravelTimeSource; /** §6 "return transport (future conditions, not symmetric)": the way BACK, measured separately at its own instant (lane B1-R1: §8's routed conservative_return_duration). Absent, null, 0 or not finite → the outbound is charged twice, exactly as before. */ returnTravelTimeMin?: number | null;
 }
 
 export interface SafetyAssessment {
@@ -762,9 +762,9 @@ export function assess(
   const statedActivity = statedDwellMin({ durationMin: candidate.activityTimeMin });
   const lowerBound     = statedTravel === null || statedActivity === null;
 
-  // Round trip. Airside is 0 by construction; landside is twice the OUTBOUND
-  // leg, and only when that leg was stated.
-  const tripTimeMin    = candidate.insideAirport ? 0 : (statedTravel ?? 0) * 2;
+  // Round trip. Airside is 0 by construction; landside is the OUTBOUND leg plus the way BACK — measured at its
+  // own instant when stated (L60/L65), otherwise the outbound again — and only when the outbound was stated.
+  const tripTimeMin    = candidate.insideAirport ? 0 : (statedTravel ?? 0) + statedReturnLegMin(candidate, statedTravel);
 
   // Only the stated terms are counted, so this is a lower bound whenever
   // `lowerBound` is true. Nothing is substituted for what is missing.
@@ -956,8 +956,8 @@ export function rankActivities<T extends ActivityCandidate>(
       // null, and a NaN comparator silently leaves the array in whatever order
       // the engine's sort happened to produce. Unstated legs sort last, which
       // is the same direction every other decision here fails.
-      const at = a.assessment.statedTravelMin ?? Number.POSITIVE_INFINITY;
-      const bt = b.assessment.statedTravelMin ?? Number.POSITIVE_INFINITY;
+      const at = a.assessment.statedTravelMin === null ? Number.POSITIVE_INFINITY : a.assessment.statedTravelMin + statedReturnLegMin(a, a.assessment.statedTravelMin); // the ROUND trip: a way back that needs a larger allowance (L68–L71) ranks lower
+      const bt = b.assessment.statedTravelMin === null ? Number.POSITIVE_INFINITY : b.assessment.statedTravelMin + statedReturnLegMin(b, b.assessment.statedTravelMin);
       if (at === bt) return 0;
       return at < bt ? -1 : 1;
     });
@@ -1567,4 +1567,33 @@ export const NIGHT_BAND_END_HOUR = 6;
 
 export function isNightBandHour(hour: number): boolean {
   return hour >= NIGHT_BAND_START_HOUR || hour < NIGHT_BAND_END_HOUR;
+}
+
+// ── The way back, as STATED (LAYOVER 165, lane B1-R1) ────────────────────────
+//
+// Appended at the foot so every line the censuses cite above keeps its number.
+
+/**
+ * The minutes `assess` charges for the way BACK.
+ *
+ * §6 lists "return transport (future conditions, not symmetric)" as its own
+ * term, and §8's formula needs it as `conservative_return_duration`. With a
+ * routed provider the recommendation path measures it at its own instant and
+ * states it as `returnTravelTimeMin`; this reads it. With none stated — every
+ * caller before lane B1-R1, and every candidate the router did not answer for —
+ * the outbound is charged again, which is exactly `statedTravel * 2`, so no
+ * existing rating moves.
+ *
+ * A landside 0, a negative or a non-finite figure is NOT a statement (L47's
+ * rule for a landside leg): the fallback is charged, never a free ride home.
+ * With no stated outbound there is no landside journey in the arithmetic at all
+ * (the lower bound), and this answers 0 as `(statedTravel ?? 0) * 2` did.
+ */
+export function statedReturnLegMin(
+  c: Pick<ActivityCandidate, "insideAirport" | "returnTravelTimeMin">,
+  statedTravel: number | null,
+): number {
+  if (c.insideAirport || statedTravel === null) return statedTravel ?? 0;
+  const back = c.returnTravelTimeMin;
+  return typeof back === "number" && Number.isFinite(back) && back > 0 ? back : statedTravel;
 }

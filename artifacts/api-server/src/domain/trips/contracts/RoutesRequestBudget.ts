@@ -53,7 +53,7 @@ interface Counter {
 
 export interface RoutesRequestBudget {
   userId: string | null;
-  tripId: string | null;
+  tripId: string | null; /** Layover reads only (owner decision R5(a), 2026-10-18): the layover session this read's routed calls are charged to INSTEAD of a trip. Absent on every Trips budget, whose behaviour is unchanged. */ layoverSessionId?: string | null;
   readonly counter: Counter;
   readonly maxCalls: number;
   readonly budgetMs: number;
@@ -72,13 +72,13 @@ export function currentRoutesRequestBudget(): RoutesRequestBudget | undefined {
  * charged to its own trip.
  */
 export function withRoutesRequestBudget<T>(
-  scope: { userId?: string | null; tripId?: string | null },
+  scope: { userId?: string | null; tripId?: string | null; /** Layover reads only — see `RoutesRequestBudget.layoverSessionId`. */ layoverSessionId?: string | null },
   fn: () => Promise<T>,
   limits: { maxCalls?: number; budgetMs?: number; now?: () => number } = {},
 ): Promise<T> {
   const cur = store.getStore();
   if (cur) {
-    const tripId = scope.tripId ?? null;
+    const tripId = scope.tripId ?? null; if (scope.layoverSessionId && cur.layoverSessionId !== scope.layoverSessionId) return store.run({ ...cur, layoverSessionId: scope.layoverSessionId, userId: cur.userId ?? scope.userId ?? null }, fn); // a layover read nested in another read shares its counter and is charged to its own session
     if (tripId !== null && cur.tripId !== null && tripId !== cur.tripId) {
       return store.run({ ...cur, tripId, userId: cur.userId ?? scope.userId ?? null }, fn);
     }
@@ -89,7 +89,7 @@ export function withRoutesRequestBudget<T>(
   const now = limits.now ?? Date.now;
   return store.run({
     userId: scope.userId ?? null,
-    tripId: scope.tripId ?? null,
+    tripId: scope.tripId ?? null, ...(scope.layoverSessionId ? { layoverSessionId: scope.layoverSessionId } : {}), // a Trips budget carries no such key at all, byte for byte as before
     counter: { attempts: 0, startedAt: now() },
     maxCalls: limits.maxCalls ?? ROUTES_MAX_CALLS_PER_REQUEST,
     budgetMs: limits.budgetMs ?? ROUTES_REQUEST_TIME_BUDGET_MS,

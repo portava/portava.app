@@ -137,7 +137,7 @@ import type { ReconciliationOutcome } from "../services/airport/LayoverAirportTr
 // piece of envelope GEOMETRY this tree can certify, and because it is what
 // `generateRecommendations` blocks landside cards on — a traveller who loses a
 // card to it should be able to read the bound that removed it.
-import { safeEnvelope } from "../services/airport/LayoverEnvelope.js";
+import { safeEnvelope, type RoutedSafeEnvelope } from "../services/airport/LayoverEnvelope.js";
 // §24 L265 / §11.1 L99 — whether the reminder a traveller already asked for is
 // still pointing at the deadline it was scheduled against. Decided in the §15
 // ladder's own module, never here: "how loud" and "is this still worth saying"
@@ -1034,17 +1034,17 @@ router.get("/airport/sessions/:id/recommendations", async (req, res) => {
     sendError(res, "degraded_unavailable", "Layover ideas could not be loaded. Please try again.");
     return;
   }
-  let recs = stored.recommendations; let snapshotId: string | null = null; if (recs.length > 0 && !isSafetyEnabled) { const paired = await storedRecommendationPairing(sc, session.id, stored.pairingCards); if (!paired.ok) { sendError(res, "degraded_unavailable", "Layover ideas could not be loaded. Please try again."); return; } snapshotId = paired.snapshotId; } /* census L296: the stored path serves the newest generation's snapshot, and only for rows it certified as they stand */
+  let recs = stored.recommendations; let snapshotId: string | null = null; if (recs.length > 0 && !isSafetyEnabled) { const paired = await storedRecommendationPairing(sc, session.id, stored.pairingCards); if (!paired.ok) { sendError(res, "degraded_unavailable", "Layover ideas could not be loaded. Please try again."); return; } snapshotId = paired.snapshotId; } /* census L296: the stored path serves the newest generation's snapshot, and only for rows it certified as they stand */ let routedEnvelope: RoutedSafeEnvelope | null = null; /* lane B1-R1: only a generation routes; a stored set carries no routed geometry */
   if (recs.length === 0 || isSafetyEnabled || snapshotId === null) {
     const generated = await generateRecommendations(sc, airport, session, Date.now(), { stableIds });
     if (!generated.ok) {
       sendError(res, "degraded_unavailable", "Layover ideas could not be loaded. Please try again.");
       return;
     }
-    recs = generated.recommendations; snapshotId = generated.snapshotId;
+    recs = generated.recommendations; snapshotId = generated.snapshotId; routedEnvelope = generated.routedEnvelope ?? null; // lane B1-R1: §8's routed union, cut under the same snapshot
   }
 
-  const landside = await landsideSuppressionFor(sc, session.id, Date.now()); res.json({ recommendations: applyLandsideSuppression(recs, landside), featureEnabled: true, snapshotId, landsideSuppression: landsideSuppressionWire(landside) }); // census L43: after a confirmed re-entry, airport-side only; census L296 (App C5): `snapshotId` is the snapshot these cards were certified under
+  const landside = await landsideSuppressionFor(sc, session.id, Date.now()); res.json({ recommendations: applyLandsideSuppression(recs, landside), featureEnabled: true, snapshotId, landsideSuppression: landsideSuppressionWire(landside), routedEnvelope: landside.state === "suppressed" ? null : routedEnvelope }); // census L43: after a confirmed re-entry, airport-side only; census L296 (App C5): `snapshotId` is the snapshot these cards were certified under
 });
 
 // ── GET /api/airport/sessions/:id/safety ─────────────────────────────────────
@@ -1640,7 +1640,7 @@ router.post("/airport/sessions/:id/disruption", async (req, res) => {
     return;
   }
 
-  res.json({ ok: true, ...payload });
+  const replanSnapshot = recompute ? await settleDisruptionRecompute(sc, user.id, session.id, record) : null; res.json({ ok: true, ...payload, ...(replanSnapshot ? { replanSnapshot } : {}) }); // census L44 (B1-P): a reported schedule change stores its re-certified snapshot and invalidates cards certified under the superseded one, as the PATCH and external-event replans do; both flags dark (production today) => null and no key (LayoverReplanService.ts foot)
 });
 
 // ── POST /api/airport/sessions/:id/return-deadline ───────────────────────────
@@ -5486,3 +5486,7 @@ function compassToolRecommendation(r: { id?: string; title: string; recType: str
 function compassToolStop(s: any): ToolStop {
   return { id: String(s.id), title: String(s.title ?? ""), durationMin: s.durationMin ?? null, travelMin: s.travelMin ?? null, insideAirport: s.insideAirport === true };
 }
+
+// census L44, lane B1-P (2026-10-18) — imported at the TAIL so no cited line above moves; ESM hoists it. One
+// one-line call site: the end of POST /airport/sessions/:id/disruption.
+import { settleDisruptionRecompute } from "../services/airport/LayoverReplanService.js";

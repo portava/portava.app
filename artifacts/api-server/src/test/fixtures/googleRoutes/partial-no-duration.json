@@ -1,0 +1,21 @@
+{
+  "routes": [
+    {
+      "distanceMeters": 14200,
+      "legs": [
+        {
+          "steps": [
+            {
+              "travelMode": "DRIVE",
+              "distanceMeters": 600
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "duration": "soon",
+      "legs": []
+    }
+  ]
+}

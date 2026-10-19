@@ -516,7 +516,7 @@ export interface CertifiedActionUniverse {
   /** Sorted. Ids a surface must NOT show: a proof, or a closed universe. */
   refusedIds: string[];
   /** Sorted. Neither admitted nor refused — nobody measured them. */
-  unmeasuredIds: string[];
+  unmeasuredIds: string[]; /** lane B1-R1 — §8's routed union (L66) over the candidates this universe routed, with its isochrone (L61); null with no airport coordinate. */ routedEnvelope?: RoutedSafeEnvelope | null; /** Each routed or routing-pre-filtered landside candidate's routed verdict (L60/L65/L68–L71/L260/L282). */ routed?: RoutedCandidate[];
 }
 
 /** The consumer's candidate, in the replanner's own vocabulary. */
@@ -525,10 +525,10 @@ function replanCandidate(c: ActionUniverseCandidate): ReplanCandidate {
   return {
     id: c.id,
     // Inside the terminal a 0 is a FACT; outside it, an absent leg is `null`.
-    travelTimeMin: insideAirport ? (c.travelTimeMin ?? 0) : (c.travelTimeMin ?? null),
+    travelTimeMin: insideAirport ? (c.travelTimeMin ?? 0) : (c.travelTimeMin ?? routedTermsFor(c)?.outboundMinutes ?? null), // L65: the routed outbound when the caller stated none
     // Carried rather than defaulted: `candidateFits` owns the symmetric
     // fallback, and a `?? c.travelTimeMin` here would be a second copy of it.
-    returnTravelTimeMin: c.returnTravelTimeMin ?? null,
+    returnTravelTimeMin: c.returnTravelTimeMin ?? routedTermsFor(c)?.conservativeReturnMinutes ?? null, // L65: §8's conservative_return_duration, routed at its own instant
     activityTimeMin: c.activityTimeMin ?? null,
     insideAirport,
   };
@@ -607,15 +607,15 @@ export async function certifiedActionUniverse(
   // before a request is built, so each iteration returns without any I/O.
   // Skipped entirely when landside is closed — those candidates are refused
   // below whatever the corridor says, so asking would only spend.
-  await layoverRoutesFor(snapshot, async () => { for (const c of landsideNotForbidden(snapshot) ? landside : []) {
+  const preBands = await bandCandidates(snapshot.envelope, landside.map((c) => ({ key: c.id, point: pointOf(c) })), departAt, provider); const plan = universeRoutingPlan({ record, centre: snapshot.envelope ? snapshot.envelope.centre : null, outerBound: snapshot.envelope, landside, pointOf, preBands }); for (const c of landside) routedPlanOfCandidate.set(c, plan); await layoverRoutesFor(snapshot, async () => { for (const c of landsideNotForbidden(snapshot) ? plan.toRoute : []) { /* L260: the straight-line proof and the stated terms pre-filter BEFORE anything is routed, and at most candidatesPerRead are routed */
     const point = pointOf(c);
     if (!point || !snapshot.envelope) continue;
     const outcome = await layoverReturnRisk(
       {
         airport: snapshot.envelope.centre,
         candidate: point,
-        outboundDepartAt: departAt,
-        returnDepartAt,
+        outboundDepartAt: plan.outboundDepartAt, mode: plan.modeOf(c), // L60: out at the window's start, walk or drive by distance
+        returnDepartAt: plan.returnInstantFor(c, returnDepartAt), // L60/L72: back at THIS candidate's own arrival + dwell, not one instant for all
       },
       nowMs,
       layoverRoutesGuardedCorridor(corridorProvider),
@@ -623,14 +623,14 @@ export async function certifiedActionUniverse(
     // A refusal is an ABSENCE, never a pass and never a block: `outcome.risk`
     // is null and the candidate is judged on the window alone, exactly as it
     // was before this call existed.
-    if (outcome.risk) returnRisks.set(c.id, outcome.risk);
+    if (outcome.risk) returnRisks.set(c.id, outcome.risk); plan.record(c, outcome); // L65: the routed terms, judged by §8's formula
   } });
-  const bands = await bandCandidates(
-    snapshot.envelope,
-    landside.map((c) => ({ key: c.id, point: pointOf(c) })),
-    departAt,
-    provider,
-  );
+  const bands = plan.routedBands(preBands); // the routed verdict in place of the straight-line one wherever a candidate was routed
+  // The straight-line banding that stood here is `preBands` above. It now runs FIRST, as the
+  // envelope pre-filter (L260), with the same envelope, departure instant and provider, so a
+  // candidate it PROVED unreachable is BLOCKED exactly as before and is never routed; a
+  // candidate that was routed carries its routed band (SAFE / TIGHT / BLOCKED / UNCERTIFIED).
+  //
 
   const actions: CertifiedAction[] = candidates.map((c) => {
     const insideAirport = c.insideAirport === true;
@@ -717,7 +717,7 @@ export async function certifiedActionUniverse(
     actions,
     admittedIds: idsIn("ADMITTED"),
     refusedIds: idsIn(["BLOCKED", "CLOSED"]),
-    unmeasuredIds: idsIn("UNMEASURED"),
+    unmeasuredIds: idsIn("UNMEASURED"), routedEnvelope: plan.envelope(), routed: plan.results(),
   };
 }
 
@@ -863,7 +863,7 @@ const routesSessionOf = new WeakMap<LayoverSnapshot, LayoverRoutesSession>();
 
 /** Called where the snapshot is built: who its routed calls are charged to. */
 function rememberLayoverRoutesSession(session: LayoverSession, snapshot: LayoverSnapshot): LayoverSnapshot {
-  routesSessionOf.set(snapshot, { userId: session.userId, tripId: session.tripId ?? null });
+  routesSessionOf.set(snapshot, { userId: session.userId, tripId: session.tripId ?? null, id: session.id }); // R5(a): charged to the SESSION and the person
   return snapshot;
 }
 
@@ -876,4 +876,31 @@ export function layoverSnapshotRoutesSession(snapshot: LayoverSnapshot): Layover
 export function layoverRoutesFor<T>(snapshot: LayoverSnapshot, fn: () => Promise<T>): Promise<T> {
   const session = layoverSnapshotRoutesSession(snapshot);
   return session ? withLayoverRoutesBudget(session, fn) : fn();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LAYOVER 165, lane B1-R1 — the universe reads ROUTED terms.
+//
+// Appended at the TAIL so every cited line above keeps its number.
+//
+// `certifiedActionUniverse` asks the return corridor per landside candidate
+// (census §39). With Google Routes approved, what that loop now does with the
+// answer is §8's formula rather than only a risk flag: `universeRoutingPlan`
+// (LayoverRoutedFeasibility.ts) pre-filters (L260), picks the mode and the two
+// instants (L60), judges each answer (L65, L68–L71, L282) and builds the routed
+// union (L66) — and `replanCandidate` reads the routed outbound and the
+// CONSERVATIVE return as the candidate's terms when the caller stated none, so
+// `candidateFits` evaluates `outbound + dwell + conservative_return <= window`.
+//
+// Keyed by the caller's candidate OBJECTS (the ones `replanCandidate` is
+// mapped over), so one universe's routed terms never reach another caller's.
+// ═══════════════════════════════════════════════════════════════════════════
+import { universeRoutingPlan, type RoutedCandidate, type RoutedFeasibilityTerms, type UniverseRoutingPlan } from "./LayoverRoutedFeasibility.js";
+import type { RoutedSafeEnvelope } from "./LayoverEnvelope.js";
+
+const routedPlanOfCandidate = new WeakMap<ActionUniverseCandidate, UniverseRoutingPlan<ActionUniverseCandidate>>();
+
+/** The routed terms for one of the caller's candidates, when its universe routed it and both legs were forecasts. */
+function routedTermsFor(c: ActionUniverseCandidate): RoutedFeasibilityTerms | null {
+  return routedPlanOfCandidate.get(c)?.termsOf(c) ?? null;
 }

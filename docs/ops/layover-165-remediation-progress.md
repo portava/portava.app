@@ -23,17 +23,17 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | B1-C assistant | 14 | 0 | 0 | 14 | 0 | 0 | 0 |
 | B1-F flight data | 6 | 0 | 6 | 0 | 0 | 0 | 0 |
-| B1-P pressed-state verification | 58 | 0 | 58 | 0 | 0 | 0 | 0 |
-| B1-R1 routing (server) | 12 | 0 | 12 | 0 | 0 | 0 | 0 |
-| B2-J migrations | 7 | 7 | 0 | 0 | 0 | 0 | 0 |
-| B2-L curation/maturity/entry | 15 | 15 | 0 | 0 | 0 | 0 | 0 |
-| B2-L live intelligence | 10 | 0 | 10 | 0 | 0 | 0 | 0 |
-| B2-M metrics | 5 | 5 | 0 | 0 | 0 | 0 | 0 |
-| B2-R2 routing (map/client) | 9 | 9 | 0 | 0 | 0 | 0 | 0 |
-| B2-X product decisions | 12 | 12 | 0 | 0 | 0 | 0 | 0 |
-| B3-D deferred | 3 | 3 | 0 | 0 | 0 | 0 | 0 |
-| B3-K code+press | 14 | 14 | 0 | 0 | 0 | 0 | 0 |
-| **Total** | **165** | **65** | **86** | **14** | **0** | **0** | **0** |
+| B1-P pressed-state verification | 58 | 2 | 0 | 54 | 0 | 0 | 2 |
+| B1-R1 routing (server) | 12 | 0 | 3 | 9 | 0 | 0 | 0 |
+| B2-BUDDY Rent-a-Buddy specialist/Safe Return | 2 | 2 | 0 | 0 | 0 | 0 | 0 |
+| B2-CREW crew/consent/sensing/rides | 8 | 0 | 8 | 0 | 0 | 0 | 0 |
+| B2-CURATE curation/maturity/entry | 15 | 0 | 15 | 0 | 0 | 0 | 0 |
+| B2-LIVE live intelligence | 10 | 0 | 10 | 0 | 0 | 0 | 0 |
+| B2-MAP map and client | 9 | 9 | 0 | 0 | 0 | 0 | 0 |
+| B2-PLATFORM metrics/audit/real-schema/typed reads | 9 | 9 | 0 | 0 | 0 | 0 | 0 |
+| B2-RECS recommendations/snapshots/contracts | 14 | 14 | 0 | 0 | 0 | 0 | 0 |
+| B3-ENGINE lifecycle/timing/engine refactor/phrases | 8 | 8 | 0 | 0 | 0 | 0 | 0 |
+| **Total** | **165** | **44** | **42** | **77** | **0** | **0** | **2** |
 
 ## Checkpoint (resumable; updated after every batch)
 
@@ -79,10 +79,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** 2700,2992,3623,3792 + layover_decision_persistence_enabled
 - **Census lines read:** 3916 (§13.1 grp c), 1357
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) snap:67 · **Production dependency:** owner press: P1
+- **Evidence:** lane B1-P handback §2: the overview stores ONE canonical certified computation for what it told the traveller; stored row = published answer
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L4 — Unknown critical facts reduce confidence and may fail closed for landside recommendations
 - **Original requirement:** Unknown critical facts reduce confidence and may fail closed for landside recommendations (the census body row quotes the spec; the full wording is at the row's census line).
@@ -92,10 +92,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** 2992,3640 + layover_constraints_enabled
 - **Census lines read:** 3439, 8148 (§45.4), 1359
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) cl:87 · **Production dependency:** owner press: 2700→2992 + 3640 (201) → layover_constraints_enabled ON
+- **Evidence:** lane B1-P handback §2: an unknown critical fact (undeclared airport change) closes landside, confidence INSUFFICIENT, one question; declaring lifts it
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L5 — Every consequential recommendation is versioned, explainable and replayable
 - **Original requirement:** Every consequential recommendation is versioned, explainable and replayable (the census body row quotes the spec; the full wording is at the row's census line).
@@ -105,10 +105,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** 2700,2992,3623,3792 + layover_decision_persistence_enabled
 - **Census lines read:** 3916, 1360
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) snap:67, :137, :148 · **Production dependency:** owner press: P1
+- **Evidence:** lane B1-P handback §2: versioned (engine, feasibility version, input hash, per-session snapshot_version), explainable (explain), replayable (replay)
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L6 — All surfaces consume the same certified LayoverSnapshot/RecommendationContract; no duplicate time-budget logic
 - **Original requirement:** All surfaces consume the same certified LayoverSnapshot/RecommendationContract; no duplicate time-budget logic (the census body row quotes the spec; the full wording is at the row's census line).
@@ -118,10 +118,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** 2700,2992,3623,3792 + layover_decision_persistence_enabled
 - **Census lines read:** 3916, 1361
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) — · **Production dependency:** owner press: —
+- **Evidence:** lane B1-P handback §2: NOT MET pressed: each surface still certifies its own instant; no surface consumes a shared stored snapshot (see §5)
+- **Status:** OPEN (not met pressed; queued to lane B2-RECS: one canonical stored snapshot every surface reads)
 
 ### L11 — Trips owns flight segments / itinerary relationships / trip context; must not own layover safety calculations
 - **Original requirement:** Trips owns flight segments / itinerary relationships / trip context; must not own layover safety calculations (the census body row quotes the spec; the full wording is at the row's census line).
@@ -144,10 +144,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** 2700,2992,3623,3792,3640,3632 + persistence, constraints, lifecycle flags
 - **Census lines read:** 410
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) cl:101 (+snap:67) · **Production dependency:** owner press: P1 + P2 + P3
+- **Evidence:** lane B1-P handback §2: the session owns lifecycle (3632), constraints (2992+3640) and snapshots (2700/2992/3623) at once
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L14 — Airport Intelligence owns airport operational facts + provenance + TTL; must not own user social identity
 - **Original requirement:** Airport Intelligence owns airport operational facts + provenance + TTL; must not own user social identity (the census body row quotes the spec; the full wording is at the row's census line).
@@ -156,11 +156,11 @@ above in every freed builder slot.
 - **Root cause / class:** Needs new schema (a migration), then the press (triage class BUILDABLE-WITH-MIGRATION→W)
 - **Files / gating artifact (triage):** new 3874 (airport_profiles source/observed_at/expires_at), routes/airport.ts admin profile writer, AirportProfileService.ts
 - **Census lines read:** 412
-- **Batch:** B2-L curation/maturity/entry
+- **Batch:** B2-CURATE curation/maturity/entry
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B2-CURATE)
 
 ### L15 — Experience Compiler owns executable plans from feasible actions; must not own visa/entry legal truth
 - **Original requirement:** Experience Compiler owns executable plans from feasible actions; must not own visa/entry legal truth (the census body row quotes the spec; the full wording is at the row's census line).
@@ -169,7 +169,7 @@ above in every freed builder slot.
 - **Root cause / class:** Buildable by code alone (not built, see reasons) (triage class BUILDABLE-NOW)
 - **Files / gating artifact (triage):** census re-derivation (lead), test/layoverEntryGate.test.ts or test/layoverPlanFitUnknownLegs.test.ts (add a boundary case)
 - **Census lines read:** 413
-- **Batch:** B3-D deferred
+- **Batch:** B3-ENGINE lifecycle/timing/engine refactor/phrases
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -182,7 +182,7 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** routing provider + flag layover_stable_recommendation_ids_enabled
 - **Census lines read:** 415
-- **Batch:** B2-R2 routing (map/client)
+- **Batch:** B2-MAP map and client
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -196,10 +196,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** 2700,2992,3623,3792 + persistence flag
 - **Census lines read:** 423
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) snap:67, :105, :123, :163 · **Production dependency:** owner press: P1 + the new trigger
+- **Evidence:** lane B1-P handback §2: normalised typed tables; the CHILD snapshot rows refuse UPDATE (2992 triggers), clients cannot write; versioned (3623). NOT MET: the PARENT computation (2700's row, the decision itself) has no UPDATE trigger — a service-role UPDATE succeeds (snap:163 does it) and only replay notices. By 2992's own h
+- **Status:** OPEN (not met pressed; queued to lane B2-RECS: BEFORE UPDATE refusal trigger on layover_certified_computations)
 
 ### L21 — layover_sessions (id, user_id, trip_id, airport_place_id, arrival/departure_segment_id, state, connection_type, detected_source, started_at, expires_at, active_snapshot_id, confidence_band)
 - **Original requirement:** layover_sessions (id, user_id, trip_id, airport_place_id, arrival/departure_segment_id, state, connection_type, detected_source, started_at, expires_at, active_snapshot_id, confidence_band) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -221,7 +221,7 @@ above in every freed builder slot.
 - **Root cause / class:** Needs new schema (a migration), then the press (triage class BUILDABLE-WITH-MIGRATION→W)
 - **Files / gating artifact (triage):** new 3871, LayoverRecommendationService.ts
 - **Census lines read:** 429, 9328
-- **Batch:** B2-J migrations
+- **Batch:** B2-RECS recommendations/snapshots/contracts
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -235,10 +235,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** 2981 + layover_event_ingest_enabled (+ producer secret)
 - **Census lines read:** 434, 7632 (§40.4)
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) ext:73 · **Production dependency:** owner press: P7
+- **Evidence:** lane B1-P handback §2: the six members on layover_external_events, written by the producer route
+- **Status:** BLOCKED-EXTERNAL (producer feed + LAYOVER_EVENT_PRODUCER_SECRET; technical work complete)
 
 ### L33 — LayoverState — 17 members from DETECTED to EXPIRED
 - **Original requirement:** LayoverState — 17 members from DETECTED to EXPIRED (the census body row quotes the spec; the full wording is at the row's census line).
@@ -261,10 +261,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** 2992,3640 + layover_constraints_enabled
 - **Census lines read:** 443, 12151 (§80)
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) cl:60 · **Production dependency:** owner press: same as L4
+- **Evidence:** lane B1-P handback §2: BaggageMode incl. UNKNOWN is a stored, versioned member; the CHECK refuses others
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L36 — RiskBand = LOW \
 - **Original requirement:** RiskBand = LOW \ (the census body row quotes the spec; the full wording is at the row's census line).
@@ -274,10 +274,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** 2992,3792 + layover_decision_persistence_enabled
 - **Census lines read:** 444, 9328
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) snap:67, :123 · **Production dependency:** owner press: P1
+- **Evidence:** lane B1-P handback §2: risk band persisted on layover_return_plans in the spec vocabulary (LOW/MODERATE/HIGH/UNSAFE); the CHECK refuses others
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L37 — ConfidenceBand = HIGH \
 - **Original requirement:** ConfidenceBand = HIGH \ (the census body row quotes the spec; the full wording is at the row's census line).
@@ -287,10 +287,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** 2700,2992,3792 + persistence flag
 - **Census lines read:** 1362, 4921 (§19.6)
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) snap:67 · **Production dependency:** owner press: P1
+- **Evidence:** lane B1-P handback §2: the confidence band is a stored decision column equal to the published certification (3828, lane B1-F, also copies it to layover_sessions.confidence_band)
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L38 — RecommendationStatus = ELIGIBLE \
 - **Original requirement:** RecommendationStatus = ELIGIBLE \ (the census body row quotes the spec; the full wording is at the row's census line).
@@ -299,7 +299,7 @@ above in every freed builder slot.
 - **Root cause / class:** Needs new schema (a migration), then the press (triage class BUILDABLE-WITH-MIGRATION→W)
 - **Files / gating artifact (triage):** new 3871, LayoverRecommendationService.ts
 - **Census lines read:** 446, 9328
-- **Batch:** B2-J migrations
+- **Batch:** B2-RECS recommendations/snapshots/contracts
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -312,7 +312,7 @@ above in every freed builder slot.
 - **Root cause / class:** Needs both code and the press (code half not yet built) (triage class MIXED)
 - **Files / gating artifact (triage):** LayoverLifecycle.ts, routes/airport.ts; 3632 + layover_lifecycle_machine_enabled
 - **Census lines read:** 9738
-- **Batch:** B3-K code+press
+- **Batch:** B3-ENGINE lifecycle/timing/engine refactor/phrases
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -326,10 +326,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** 2992 + persistence flag, 3632 + layover_lifecycle_machine_enabled
 - **Census lines read:** 9739
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) cl:101 · **Production dependency:** owner press: P1 (persistence) + 3640/constraints flag + 3632 (199)/layover_lifecycle_machine_enabled — all three flags proved necessary
+- **Evidence:** lane B1-P handback §2: EVALUATING → LANDSIDE_AVAILABLE only when the guard holds; its intents CREATE_SNAPSHOT/SAFE_ENVELOPE/CANDIDATE_SET each verified real (stored snapshot, envelope, cards)
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L41 — EXECUTING → RETURN_SOON: threshold reached or risk worsened; side effects = high-priority notification, de-emphasise discovery
 - **Original requirement:** EXECUTING → RETURN_SOON: threshold reached or risk worsened; side effects = high-priority notification, de-emphasise discovery (the census body row quotes the spec; the full wording is at the row's census line).
@@ -339,10 +339,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** owner Apple action + env PUSH_IOS_TIME_SENSITIVE_ENTITLED
 - **Census lines read:** 3102, 10195 (§66.4), 10463
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) roll:129 · **Production dependency:** owner press: 3771 (248) + PUSH_IOS_TIME_SENSITIVE_ENTITLED=true per environment + APPLE: Time Sensitive Notifications capability on the App ID, signed build + device verification (LAY-4a)
+- **Evidence:** lane B1-P handback §2: server half: RETURN_SOON sends the actionable warning at FCM-high/APNs-10 on the layover_return channel, and time-sensitive ONLY to the device that reported the entitlement (an older build stays ordinary)
+- **Status:** BLOCKED-EXTERNAL (Apple Time Sensitive capability, signed device build, PUSH_IOS_TIME_SENSITIVE_ENTITLED; technical work complete)
 
 ### L44 — * → DISRUPTED: material disruption; side effects = invalidate stale recommendations, replan, preserve audit trail
 - **Original requirement:** * → DISRUPTED: material disruption; side effects = invalidate stale recommendations, replan, preserve audit trail (the census body row quotes the spec; the full wording is at the row's census line).
@@ -352,10 +352,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** LayoverReplanService.ts/LayoverEventReplanner.ts; 3623 + layover_recommendation_snapshot_enabled
 - **Census lines read:** 2283
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Reported disruption now stores its snapshot and invalidates stale cards (settleDisruptionRecompute, LayoverReplanService.ts).
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) snap:202, :233 · **Production dependency:** owner press: P1 incl. layover_recommendation_snapshot_enabled; + OWNER RULING that clearing a card's citation counts as "invalidate"
+- **Evidence:** lane B1-P handback §2: DISRUPTED → invalidate stale recommendations (citation cleared, card kept), replan, audit trail — via the window edit (snap:202) and, after D2, via the reported disruption (snap:233)
+- **Status:** BUILT (pressed-path defect fixed by B1-P; independent verification pending; awaits the press)
 
 ### L46 — The subtraction ladder: scheduled − deplane − immigration/customs − baggage − exit friction − outbound − return (future conditions, not symmetric) − security/re-entry − terminal transfer − boarding buffer − contingency = usable
 - **Original requirement:** The subtraction ladder: scheduled − deplane − immigration/customs − baggage − exit friction − outbound − return (future conditions, not symmetric) − security/re-entry − terminal transfer − boarding buffer − contingency = usable (the census body row quotes the spec; the full wording is at the row's census line).
@@ -364,7 +364,7 @@ above in every freed builder slot.
 - **Root cause / class:** Needs both code and the press (code half not yet built) (triage class MIXED)
 - **Files / gating artifact (triage):** LayoverSafetyEngine.ts; routing provider
 - **Census lines read:** 464, 11609 (§75.7)
-- **Batch:** B3-K code+press
+- **Batch:** B3-ENGINE lifecycle/timing/engine refactor/phrases
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -377,11 +377,11 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** ruling + 3640 flip
 - **Census lines read:** 8114, 9749
-- **Batch:** B2-L curation/maturity/entry
+- **Batch:** B2-CURATE curation/maturity/entry
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B2-CURATE)
 
 ### L50 — risk_band == UNSAFE ⇒ recommendation.status = BLOCKED
 - **Original requirement:** risk_band == UNSAFE ⇒ recommendation.status = BLOCKED (the census body row quotes the spec; the full wording is at the row's census line).
@@ -390,7 +390,7 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** ruling L50-a
 - **Census lines read:** 4424, 1279
-- **Batch:** B2-X product decisions
+- **Batch:** B2-RECS recommendations/snapshots/contracts
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -403,7 +403,7 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** live-signal producer decision
 - **Census lines read:** 1901
-- **Batch:** B2-L live intelligence
+- **Batch:** B2-LIVE live intelligence
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -416,7 +416,7 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** live-signal producer decision
 - **Census lines read:** 1901
-- **Batch:** B2-L live intelligence
+- **Batch:** B2-LIVE live intelligence
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -429,7 +429,7 @@ above in every freed builder slot.
 - **Root cause / class:** Needs both code and the press (code half not yet built) (triage class MIXED)
 - **Files / gating artifact (triage):** LayoverTemporalFreedom.ts; live-signal ruling
 - **Census lines read:** 4419
-- **Batch:** B3-K code+press
+- **Batch:** B3-ENGINE lifecycle/timing/engine refactor/phrases
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -442,7 +442,7 @@ above in every freed builder slot.
 - **Root cause / class:** Needs both code and the press (code half not yet built) (triage class MIXED)
 - **Files / gating artifact (triage):** LayoverTemporalFreedom.ts, engine; ruling on riskBudget/softConstraints
 - **Census lines read:** 491, 4529 (§18.8)
-- **Batch:** B3-K code+press
+- **Batch:** B3-ENGINE lifecycle/timing/engine refactor/phrases
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -456,10 +456,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** routing provider + flag
 - **Census lines read:** 7443, 7483 (§39)
 - **Batch:** B1-R1 routing (server)
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-R1)
+- **Required correction:** Google Routes wired on GET /recommendations and the Discovery universe with §8 routed terms (LayoverRoutedFeasibility.ts).
+- **Migration:** 3856_layover_routes_session_budget.sql (+3971, 2745 in the press) · **Tests:** layoverRoutedFeasibility / layoverRoutedRecommendationsRoute / layoverRoutedUniverse / layoverRoutedProviderContract / layoverRoutesSessionBudget (90 cases, 44 mutants) · **Production dependency:** Routes API enabled; LAYOVER_ROUTED_CORRIDOR_ENABLED + ROUTES_API_DAILY_*; 3971, 3856, 2745; layover_routed_corridor_enabled ON
+- **Evidence:** lane B1-R1 handback §2; census-layover section "lanes B1-R1 and B1-P"
+- **Status:** BUILT (lane B1-R1; independent verification pending; W until the Routes press)
 
 ### L61 — Time-based isochrone/envelope geometry, not a fixed radius
 - **Original requirement:** Time-based isochrone/envelope geometry, not a fixed radius (the census body row quotes the spec; the full wording is at the row's census line).
@@ -469,10 +469,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** routing provider
 - **Census lines read:** 4425
 - **Batch:** B1-R1 routing (server)
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-R1)
+- **Required correction:** Google Routes wired on GET /recommendations and the Discovery universe with §8 routed terms (LayoverRoutedFeasibility.ts).
+- **Migration:** 3856_layover_routes_session_budget.sql (+3971, 2745 in the press) · **Tests:** layoverRoutedFeasibility / layoverRoutedRecommendationsRoute / layoverRoutedUniverse / layoverRoutedProviderContract / layoverRoutesSessionBudget (90 cases, 44 mutants) · **Production dependency:** Routes API enabled; LAYOVER_ROUTED_CORRIDOR_ENABLED + ROUTES_API_DAILY_*; 3971, 3856, 2745; layover_routed_corridor_enabled ON
+- **Evidence:** lane B1-R1 handback §2; census-layover section "lanes B1-R1 and B1-P"
+- **Status:** BUILT (lane B1-R1; independent verification pending; W until the Routes press)
 
 ### L63 — Envelope edges contract as confidence drops or return risk rises
 - **Original requirement:** Envelope edges contract as confidence drops or return risk rises (the census body row quotes the spec; the full wording is at the row's census line).
@@ -482,10 +482,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** ruling or routing provider
 - **Census lines read:** 4426, 4917 (§19.6)
 - **Batch:** B1-R1 routing (server)
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-R1)
+- **Required correction:** Google Routes wired on GET /recommendations and the Discovery universe with §8 routed terms (LayoverRoutedFeasibility.ts).
+- **Migration:** 3856_layover_routes_session_budget.sql (+3971, 2745 in the press) · **Tests:** layoverRoutedFeasibility / layoverRoutedRecommendationsRoute / layoverRoutedUniverse / layoverRoutedProviderContract / layoverRoutesSessionBudget (90 cases, 44 mutants) · **Production dependency:** Routes API enabled; LAYOVER_ROUTED_CORRIDOR_ENABLED + ROUTES_API_DAILY_*; 3971, 3856, 2745; layover_routed_corridor_enabled ON
+- **Evidence:** lane B1-R1 handback §2; census-layover section "lanes B1-R1 and B1-P"
+- **Status:** BUILT (lane B1-R1; independent verification pending; W until the Routes press)
 
 ### L65 — candidate_feasible iff outbound_arrival + minimum_experience_duration + conservative_return_duration <= hard_return_by
 - **Original requirement:** candidate_feasible iff outbound_arrival + minimum_experience_duration + conservative_return_duration <= hard_return_by (the census body row quotes the spec; the full wording is at the row's census line).
@@ -495,10 +495,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** routing provider
 - **Census lines read:** 3438
 - **Batch:** B1-R1 routing (server)
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-R1)
+- **Required correction:** Google Routes wired on GET /recommendations and the Discovery universe with §8 routed terms (LayoverRoutedFeasibility.ts).
+- **Migration:** 3856_layover_routes_session_budget.sql (+3971, 2745 in the press) · **Tests:** layoverRoutedFeasibility / layoverRoutedRecommendationsRoute / layoverRoutedUniverse / layoverRoutedProviderContract / layoverRoutesSessionBudget (90 cases, 44 mutants) · **Production dependency:** Routes API enabled; LAYOVER_ROUTED_CORRIDOR_ENABLED + ROUTES_API_DAILY_*; 3971, 3856, 2745; layover_routed_corridor_enabled ON; plus a minimum-experience (dwell) source
+- **Evidence:** lane B1-R1 handback §2; census-layover section "lanes B1-R1 and B1-P"
+- **Status:** BUILT (lane B1-R1; independent verification pending; W until the Routes press)
 
 ### L66 — SafeEnvelope = union(points satisfying the feasibility constraint)
 - **Original requirement:** SafeEnvelope = union(points satisfying the feasibility constraint) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -508,10 +508,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** routing provider
 - **Census lines read:** 4427
 - **Batch:** B1-R1 routing (server)
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-R1)
+- **Required correction:** Google Routes wired on GET /recommendations and the Discovery universe with §8 routed terms (LayoverRoutedFeasibility.ts).
+- **Migration:** 3856_layover_routes_session_budget.sql (+3971, 2745 in the press) · **Tests:** layoverRoutedFeasibility / layoverRoutedRecommendationsRoute / layoverRoutedUniverse / layoverRoutedProviderContract / layoverRoutesSessionBudget (90 cases, 44 mutants) · **Production dependency:** Routes API enabled; LAYOVER_ROUTED_CORRIDOR_ENABLED + ROUTES_API_DAILY_*; 3971, 3856, 2745; layover_routed_corridor_enabled ON
+- **Evidence:** lane B1-R1 handback §2; census-layover section "lanes B1-R1 and B1-P"
+- **Status:** BUILT (lane B1-R1; independent verification pending; W until the Routes press)
 
 ### L67 — Map bands SAFE / TIGHT / BLOCKED
 - **Original requirement:** Map bands SAFE / TIGHT / BLOCKED (the census body row quotes the spec; the full wording is at the row's census line).
@@ -520,7 +520,7 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** routing provider + 3633 + layover_map_bands_enabled
 - **Census lines read:** 9787
-- **Batch:** B2-R2 routing (map/client)
+- **Batch:** B2-MAP map and client
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -534,10 +534,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** routing provider
 - **Census lines read:** 7444, 7483
 - **Batch:** B1-R1 routing (server)
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-R1)
+- **Required correction:** Google Routes wired on GET /recommendations and the Discovery universe with §8 routed terms (LayoverRoutedFeasibility.ts).
+- **Migration:** 3856_layover_routes_session_budget.sql (+3971, 2745 in the press) · **Tests:** layoverRoutedFeasibility / layoverRoutedRecommendationsRoute / layoverRoutedUniverse / layoverRoutedProviderContract / layoverRoutesSessionBudget (90 cases, 44 mutants) · **Production dependency:** Routes API enabled; LAYOVER_ROUTED_CORRIDOR_ENABLED + ROUTES_API_DAILY_*; 3971, 3856, 2745; layover_routed_corridor_enabled ON
+- **Evidence:** lane B1-R1 handback §2; census-layover section "lanes B1-R1 and B1-P"
+- **Status:** BUILT (lane B1-R1; independent verification pending; W until the Routes press)
 
 ### L69 — Single fragile corridor → increase risk penalty
 - **Original requirement:** Single fragile corridor → increase risk penalty (the census body row quotes the spec; the full wording is at the row's census line).
@@ -547,10 +547,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** routing provider
 - **Census lines read:** 7445, 7483
 - **Batch:** B1-R1 routing (server)
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-R1)
+- **Required correction:** Google Routes wired on GET /recommendations and the Discovery universe with §8 routed terms (LayoverRoutedFeasibility.ts).
+- **Migration:** 3856_layover_routes_session_budget.sql (+3971, 2745 in the press) · **Tests:** layoverRoutedFeasibility / layoverRoutedRecommendationsRoute / layoverRoutedUniverse / layoverRoutedProviderContract / layoverRoutesSessionBudget (90 cases, 44 mutants) · **Production dependency:** Routes API enabled; LAYOVER_ROUTED_CORRIDOR_ENABLED + ROUTES_API_DAILY_*; 3971, 3856, 2745; layover_routed_corridor_enabled ON
+- **Evidence:** lane B1-R1 handback §2; census-layover section "lanes B1-R1 and B1-P"
+- **Status:** BUILT (lane B1-R1; independent verification pending; W until the Routes press)
 
 ### L70 — Non-interruptible transport/activity → increase risk penalty
 - **Original requirement:** Non-interruptible transport/activity → increase risk penalty (the census body row quotes the spec; the full wording is at the row's census line).
@@ -560,10 +560,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** routing provider
 - **Census lines read:** 7446, 10721
 - **Batch:** B1-R1 routing (server)
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-R1)
+- **Required correction:** Google Routes wired on GET /recommendations and the Discovery universe with §8 routed terms (LayoverRoutedFeasibility.ts).
+- **Migration:** 3856_layover_routes_session_budget.sql (+3971, 2745 in the press) · **Tests:** layoverRoutedFeasibility / layoverRoutedRecommendationsRoute / layoverRoutedUniverse / layoverRoutedProviderContract / layoverRoutesSessionBudget (90 cases, 44 mutants) · **Production dependency:** Routes API enabled; LAYOVER_ROUTED_CORRIDOR_ENABLED + ROUTES_API_DAILY_*; 3971, 3856, 2745; layover_routed_corridor_enabled ON
+- **Evidence:** lane B1-R1 handback §2; census-layover section "lanes B1-R1 and B1-P"
+- **Status:** IN PROGRESS (transport half built by B1-R1; activity interruptibility not done: needs per-place data, queued to lane B2-CURATE follow-up)
 
 ### L71 — Transfer count → increase plan complexity/uncertainty
 - **Original requirement:** Transfer count → increase plan complexity/uncertainty (the census body row quotes the spec; the full wording is at the row's census line).
@@ -573,10 +573,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** routing provider
 - **Census lines read:** 7447, 7483
 - **Batch:** B1-R1 routing (server)
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-R1)
+- **Required correction:** Google Routes wired on GET /recommendations and the Discovery universe with §8 routed terms (LayoverRoutedFeasibility.ts).
+- **Migration:** 3856_layover_routes_session_budget.sql (+3971, 2745 in the press) · **Tests:** layoverRoutedFeasibility / layoverRoutedRecommendationsRoute / layoverRoutedUniverse / layoverRoutedProviderContract / layoverRoutesSessionBudget (90 cases, 44 mutants) · **Production dependency:** Routes API enabled; LAYOVER_ROUTED_CORRIDOR_ENABLED + ROUTES_API_DAILY_*; 3971, 3856, 2745; layover_routed_corridor_enabled ON
+- **Evidence:** lane B1-R1 handback §2; census-layover section "lanes B1-R1 and B1-P"
+- **Status:** IN PROGRESS (mechanism built by B1-R1; production requests walk/drive only, so transit routing must be requested: queued)
 
 ### L73 — Offline risk → require cached route + deadline before departure where possible
 - **Original requirement:** Offline risk → require cached route + deadline before departure where possible (the census body row quotes the spec; the full wording is at the row's census line).
@@ -585,7 +585,7 @@ above in every freed builder slot.
 - **Root cause / class:** Needs both code and the press (code half not yet built) (triage class MIXED)
 - **Files / gating artifact (triage):** app/layover/[id].tsx, layoverPlanCache.ts; routing provider
 - **Census lines read:** 8647
-- **Batch:** B3-K code+press
+- **Batch:** B3-ENGINE lifecycle/timing/engine refactor/phrases
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -598,7 +598,7 @@ above in every freed builder slot.
 - **Root cause / class:** Needs both code and the press (code half not yet built) (triage class MIXED)
 - **Files / gating artifact (triage):** LayoverRecommendationService.ts, LayoverPrivacyGuard.ts; routing provider
 - **Census lines read:** 522, 12146 (§80)
-- **Batch:** B3-K code+press
+- **Batch:** B2-RECS recommendations/snapshots/contracts
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -611,7 +611,7 @@ above in every freed builder slot.
 - **Root cause / class:** Needs both code and the press (code half not yet built) (triage class MIXED)
 - **Files / gating artifact (triage):** LayoverPrivacyGuard.ts (SafeRecommendation), LayoverRecommendationService.ts; routing + 3623
 - **Census lines read:** 524, 10937 (§72.5)
-- **Batch:** B3-K code+press
+- **Batch:** B2-RECS recommendations/snapshots/contracts
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -624,11 +624,11 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** ruling + 3640 flip
 - **Census lines read:** 2670
-- **Batch:** B2-L curation/maturity/entry
+- **Batch:** B2-CURATE curation/maturity/entry
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B2-CURATE)
 
 ### L78 — Optimise preference_fit + local_uniqueness + opportunity_scarcity + social_value + experience_density + memory_value − monetary_cost − energy_cost − uncertainty − stress − return_risk
 - **Original requirement:** Optimise preference_fit + local_uniqueness + opportunity_scarcity + social_value + experience_density + memory_value − monetary_cost − energy_cost − uncertainty − stress − return_risk (the census body row quotes the spec; the full wording is at the row's census line).
@@ -637,7 +637,7 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** OQ-6, OQ-L78-1 + 3784 + layover_ranking_mode
 - **Census lines read:** 12030
-- **Batch:** B2-X product decisions
+- **Batch:** B2-RECS recommendations/snapshots/contracts
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -650,11 +650,11 @@ above in every freed builder slot.
 - **Root cause / class:** Needs both code and the press (code half not yet built) (triage class MIXED)
 - **Files / gating artifact (triage):** LayoverAirportTruth.ts, AirportProfileService.ts; airport data source
 - **Census lines read:** 1898
-- **Batch:** B2-L curation/maturity/entry
+- **Batch:** B2-CURATE curation/maturity/entry
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B2-CURATE)
 
 ### L80 — Operational semi-live — security layout, lounge hours, transport schedules; hours/days
 - **Original requirement:** Operational semi-live — security layout, lounge hours, transport schedules; hours/days (the census body row quotes the spec; the full wording is at the row's census line).
@@ -663,11 +663,11 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** data-source decision
 - **Census lines read:** 1831
-- **Batch:** B2-L curation/maturity/entry
+- **Batch:** B2-CURATE curation/maturity/entry
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B2-CURATE)
 
 ### L81 — Fast live — security wait, immigration wait, taxi queue, disruption; minutes
 - **Original requirement:** Fast live — security wait, immigration wait, taxi queue, disruption; minutes (the census body row quotes the spec; the full wording is at the row's census line).
@@ -676,7 +676,7 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** live-signal producer decision
 - **Census lines read:** 1832
-- **Batch:** B2-L live intelligence
+- **Batch:** B2-LIVE live intelligence
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -690,10 +690,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** 3513 + layover_crowd_reports_enabled (§53.2 also names 2981)
 - **Census lines read:** 1833, 8961 (§53.2), 12155
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) crowd:84, :105 · **Production dependency:** owner press: 3513
+- **Evidence:** lane B1-P handback §2: a traveller's report is screened and stored, confidence-weighted (community 0.3 → LOW; one observer below the floor → no truth)
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L83 — Historical model — time-of-day distributions, recalibrated
 - **Original requirement:** Historical model — time-of-day distributions, recalibrated (the census body row quotes the spec; the full wording is at the row's census line).
@@ -702,11 +702,11 @@ above in every freed builder slot.
 - **Root cause / class:** Needs both code and the press (code half not yet built) (triage class MIXED)
 - **Files / gating artifact (triage):** LayoverAirportTruth.ts; 3513, 2992
 - **Census lines read:** 1834
-- **Batch:** B2-L curation/maturity/entry
+- **Batch:** B2-CURATE curation/maturity/entry
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B2-CURATE)
 
 ### L84 — TruthValue<T> { value, confidence, conflict, sourceClass, sourceRefs[], observedAt, expiresAt, fallbackLevel }
 - **Original requirement:** TruthValue<T> { value, confidence, conflict, sourceClass, sourceRefs[], observedAt, expiresAt, fallbackLevel } (the census body row quotes the spec; the full wording is at the row's census line).
@@ -716,10 +716,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** see the census section of 2026-10-18
 - **Census lines read:** census-layover foot sections, 2026-10-18
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) crowd:105 · **Production dependency:** owner press: 3513
+- **Evidence:** lane B1-P handback §2: TruthValue carries value, confidence, conflict, sourceClass, sourceRefs[], observedAt, expiresAt, fallbackLevel (all eight asserted)
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L85 — Never silently merge contradictory gate/terminal/queue facts
 - **Original requirement:** Never silently merge contradictory gate/terminal/queue facts (the census body row quotes the spec; the full wording is at the row's census line).
@@ -729,10 +729,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** see the census section of 2026-10-18
 - **Census lines read:** census-layover foot sections, 2026-10-18
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) crowd:125 · **Production dependency:** owner press: 3513
+- **Evidence:** lane B1-P handback §2: a 15 vs 55 contradiction is flagged (conflict, conflictBetween), never averaged (value 55 not 35), both sources kept
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L86 — Preserve source provenance and a conflict flag
 - **Original requirement:** Preserve source provenance and a conflict flag (the census body row quotes the spec; the full wording is at the row's census line).
@@ -742,10 +742,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** see the census section of 2026-10-18
 - **Census lines read:** census-layover foot sections, 2026-10-18
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) crowd:105, :125 · **Production dependency:** owner press: 3513
+- **Evidence:** lane B1-P handback §2: sourceRefs of every accepted reading + the conflict flag on the wire
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L87 — For safety calculations, prefer conservative values when credible sources disagree
 - **Original requirement:** For safety calculations, prefer conservative values when credible sources disagree (the census body row quotes the spec; the full wording is at the row's census line).
@@ -755,10 +755,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** see the census section of 2026-10-18
 - **Census lines read:** census-layover foot sections, 2026-10-18
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) crowd:105, :125 · **Production dependency:** owner press: 3513
+- **Evidence:** lane B1-P handback §2: the conservative (largest) delay wins when credible sources disagree
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L88 — Community observations require plausibility checks, corroboration and decay
 - **Original requirement:** Community observations require plausibility checks, corroboration and decay (the census body row quotes the spec; the full wording is at the row's census line).
@@ -768,10 +768,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** see the census section of 2026-10-18
 - **Census lines read:** census-layover foot sections, 2026-10-18
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) crowd:84, :105, :155, :175 · **Production dependency:** owner press: 3513
+- **Evidence:** lane B1-P handback §2: plausibility (900/-5 rejected), corroboration (1 observer → no truth, 2 → truth), decay (official 30 min old → LOW; past TTL → absent)
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L89 — Official data is not automatically truth when fresh contradictory evidence exists; contradiction increases uncertainty
 - **Original requirement:** Official data is not automatically truth when fresh contradictory evidence exists; contradiction increases uncertainty (the census body row quotes the spec; the full wording is at the row's census line).
@@ -781,10 +781,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** see the census section of 2026-10-18
 - **Census lines read:** census-layover foot sections, 2026-10-18
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) crowd:139, :125 · **Production dependency:** owner press: 3513
+- **Evidence:** lane B1-P handback §2: an official 10 is not truth against fresh corroborated 45s: 45 chosen, confidence HIGH → MEDIUM
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L92 — Normalise and deduplicate the external/internal event
 - **Original requirement:** Normalise and deduplicate the external/internal event (the census body row quotes the spec; the full wording is at the row's census line).
@@ -794,10 +794,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** see the census section of 2026-10-18
 - **Census lines read:** census-layover foot sections, 2026-10-18
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** External-event fan-out no longer puts an IATA code into a uuid airport_id list (22P02 on the real schema).
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) ext:89, :127 · **Production dependency:** owner press: P7
+- **Evidence:** lane B1-P handback §2: normalise + dedupe (source key; content key, "Z" = "+00:00"); first occurrence wins at the drain
+- **Status:** BUILT (pressed-path defect fixed by B1-P; independent verification pending; awaits the press)
 
 ### L93 — Identify impacted active sessions
 - **Original requirement:** Identify impacted active sessions (the census body row quotes the spec; the full wording is at the row's census line).
@@ -807,10 +807,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** 2981 + layover_event_ingest_enabled, 2986
 - **Census lines read:** 2284
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** External-event fan-out no longer puts an IATA code into a uuid airport_id list (22P02 on the real schema).
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) ext:127 · **Production dependency:** owner press: P7
+- **Evidence:** lane B1-P handback §2: impacted ACTIVE sessions at the event's airport identified and replanned, others untouched
+- **Status:** BUILT (pressed-path defect fixed by B1-P; independent verification pending; awaits the press)
 
 ### L94 — Recompute only the affected constraint nodes
 - **Original requirement:** Recompute only the affected constraint nodes (the census body row quotes the spec; the full wording is at the row's census line).
@@ -819,7 +819,7 @@ above in every freed builder slot.
 - **Root cause / class:** Buildable by code alone (not built, see reasons) (triage class BUILDABLE-NOW)
 - **Files / gating artifact (triage):** LayoverEventReplanner.ts, LayoverFeasibility.ts, LayoverSafetyEngine.ts
 - **Census lines read:** 2285
-- **Batch:** B3-D deferred
+- **Batch:** B3-ENGINE lifecycle/timing/engine refactor/phrases
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -832,7 +832,7 @@ above in every freed builder slot.
 - **Root cause / class:** Needs both code and the press (code half not yet built) (triage class MIXED)
 - **Files / gating artifact (triage):** LayoverRecommendationService.ts; 3623 + flags
 - **Census lines read:** 2286
-- **Batch:** B3-K code+press
+- **Batch:** B2-RECS recommendations/snapshots/contracts
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -848,8 +848,8 @@ above in every freed builder slot.
 - **Batch:** B1-C assistant
 - **Required correction:** Model orchestrates the twelve §12 tools on POST /airport/sessions/:id/compass (LayoverCompassAssistant.ts answerLayoverQuestionWithAssistant), compares plans from the certified record, asks §12.1's clarifying question (now plan-aware), explains; CL-02 held by four fail-closed layers.
 - **Migration:** 3846_layover_compass_assistant_flag.sql (flag seeded FALSE; rollback db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql, proven on PGlite) · **Tests:** layoverCompassAssistant.test.ts 356/356; layoverCompassToolLoop.test.ts 51/51 (10 flag-ON); six older compass suites unchanged; real-schema src/test/db/layoverCompassAssistant.db.test.ts 6/6 pressed, flag-off/absent arms red (lands with the shared harness); 23 mutants killed · **Production dependency:** owner press: apply 3846, turn layover_compass_assistant_enabled ON; AI_INTEGRATIONS_OPENAI_BASE_URL / _API_KEY (already used by Compass)
-- **Evidence:** lane B1-C handback scratchpad/l165-b1-c-handback.txt §1; census-layover section 'Layover 165 program, lane B1-C (2026-10-18)'; commit pending
-- **Status:** BUILT (independent verification pending; W until the press)
+- **Evidence:** lane B1-C handback; commit f87a92e3f; Fable verdict scratchpad/fable-b1c/verdict.txt (29 adversarial outputs, 22 blocked; builder mutants red; 4 verifier mutants survived)
+- **Status:** BUILT (independent verification ACCEPT-WITH-NOTES: accepted pending press; flag-ON fixes required first — CL-02 holes D3.1 refused-corridor card endorsed, D3.2 control char, D3.3 allowed-word reassurance; tests for mutants X1–X4)
 
 ### L102 — Tool getLayoverContext(sessionId)
 - **Original requirement:** Tool getLayoverContext(sessionId) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -861,8 +861,8 @@ above in every freed builder slot.
 - **Batch:** B1-C assistant
 - **Required correction:** Tool rebuilt in LayoverCompassAssistant.ts; reads only the certified record or owner-scoped route reads, scrubbed of coordinates and identities.
 - **Migration:** 3846_layover_compass_assistant_flag.sql (flag seeded FALSE; rollback db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql, proven on PGlite) · **Tests:** layoverCompassAssistant.test.ts 356/356; layoverCompassToolLoop.test.ts 51/51 (10 flag-ON); six older compass suites unchanged; real-schema src/test/db/layoverCompassAssistant.db.test.ts 6/6 pressed, flag-off/absent arms red (lands with the shared harness); 23 mutants killed · **Production dependency:** owner press: apply 3846, turn layover_compass_assistant_enabled ON; AI_INTEGRATIONS_OPENAI_BASE_URL / _API_KEY (already used by Compass)
-- **Evidence:** lane B1-C handback scratchpad/l165-b1-c-handback.txt §1; census-layover section 'Layover 165 program, lane B1-C (2026-10-18)'; commit pending
-- **Status:** BUILT (independent verification pending; W until the press)
+- **Evidence:** lane B1-C handback; commit f87a92e3f; Fable verdict scratchpad/fable-b1c/verdict.txt (29 adversarial outputs, 22 blocked; builder mutants red; 4 verifier mutants survived)
+- **Status:** BUILT (independent verification ACCEPT-WITH-NOTES: accepted pending press; flag-ON fixes required first — CL-02 holes D3.1 refused-corridor card endorsed, D3.2 control char, D3.3 allowed-word reassurance; tests for mutants X1–X4)
 
 ### L103 — getConnectionState(sessionId)
 - **Original requirement:** getConnectionState(sessionId) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -874,8 +874,8 @@ above in every freed builder slot.
 - **Batch:** B1-C assistant
 - **Required correction:** Tool rebuilt in LayoverCompassAssistant.ts; reads only the certified record or owner-scoped route reads, scrubbed of coordinates and identities.
 - **Migration:** 3846_layover_compass_assistant_flag.sql (flag seeded FALSE; rollback db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql, proven on PGlite) · **Tests:** layoverCompassAssistant.test.ts 356/356; layoverCompassToolLoop.test.ts 51/51 (10 flag-ON); six older compass suites unchanged; real-schema src/test/db/layoverCompassAssistant.db.test.ts 6/6 pressed, flag-off/absent arms red (lands with the shared harness); 23 mutants killed · **Production dependency:** owner press: apply 3846, turn layover_compass_assistant_enabled ON; AI_INTEGRATIONS_OPENAI_BASE_URL / _API_KEY (already used by Compass)
-- **Evidence:** lane B1-C handback scratchpad/l165-b1-c-handback.txt §1; census-layover section 'Layover 165 program, lane B1-C (2026-10-18)'; commit pending
-- **Status:** BUILT (independent verification pending; W until the press)
+- **Evidence:** lane B1-C handback; commit f87a92e3f; Fable verdict scratchpad/fable-b1c/verdict.txt (29 adversarial outputs, 22 blocked; builder mutants red; 4 verifier mutants survived)
+- **Status:** BUILT (independent verification ACCEPT-WITH-NOTES: accepted pending press; flag-ON fixes required first — CL-02 holes D3.1 refused-corridor card endorsed, D3.2 control char, D3.3 allowed-word reassurance; tests for mutants X1–X4)
 
 ### L104 — getTimeWallet(sessionId)
 - **Original requirement:** getTimeWallet(sessionId) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -887,8 +887,8 @@ above in every freed builder slot.
 - **Batch:** B1-C assistant
 - **Required correction:** Tool rebuilt in LayoverCompassAssistant.ts; reads only the certified record or owner-scoped route reads, scrubbed of coordinates and identities.
 - **Migration:** 3846_layover_compass_assistant_flag.sql (flag seeded FALSE; rollback db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql, proven on PGlite) · **Tests:** layoverCompassAssistant.test.ts 356/356; layoverCompassToolLoop.test.ts 51/51 (10 flag-ON); six older compass suites unchanged; real-schema src/test/db/layoverCompassAssistant.db.test.ts 6/6 pressed, flag-off/absent arms red (lands with the shared harness); 23 mutants killed · **Production dependency:** owner press: apply 3846, turn layover_compass_assistant_enabled ON; AI_INTEGRATIONS_OPENAI_BASE_URL / _API_KEY (already used by Compass)
-- **Evidence:** lane B1-C handback scratchpad/l165-b1-c-handback.txt §1; census-layover section 'Layover 165 program, lane B1-C (2026-10-18)'; commit pending
-- **Status:** BUILT (independent verification pending; W until the press)
+- **Evidence:** lane B1-C handback; commit f87a92e3f; Fable verdict scratchpad/fable-b1c/verdict.txt (29 adversarial outputs, 22 blocked; builder mutants red; 4 verifier mutants survived)
+- **Status:** BUILT (independent verification ACCEPT-WITH-NOTES: accepted pending press; flag-ON fixes required first — CL-02 holes D3.1 refused-corridor card endorsed, D3.2 control char, D3.3 allowed-word reassurance; tests for mutants X1–X4)
 
 ### L105 — getSafeEnvelope(sessionId)
 - **Original requirement:** getSafeEnvelope(sessionId) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -900,8 +900,8 @@ above in every freed builder slot.
 - **Batch:** B1-C assistant
 - **Required correction:** Tool rebuilt in LayoverCompassAssistant.ts; reads only the certified record or owner-scoped route reads, scrubbed of coordinates and identities.
 - **Migration:** 3846_layover_compass_assistant_flag.sql (flag seeded FALSE; rollback db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql, proven on PGlite) · **Tests:** layoverCompassAssistant.test.ts 356/356; layoverCompassToolLoop.test.ts 51/51 (10 flag-ON); six older compass suites unchanged; real-schema src/test/db/layoverCompassAssistant.db.test.ts 6/6 pressed, flag-off/absent arms red (lands with the shared harness); 23 mutants killed · **Production dependency:** owner press: apply 3846, turn layover_compass_assistant_enabled ON; AI_INTEGRATIONS_OPENAI_BASE_URL / _API_KEY (already used by Compass)
-- **Evidence:** lane B1-C handback scratchpad/l165-b1-c-handback.txt §1; census-layover section 'Layover 165 program, lane B1-C (2026-10-18)'; commit pending
-- **Status:** BUILT (independent verification pending; W until the press)
+- **Evidence:** lane B1-C handback; commit f87a92e3f; Fable verdict scratchpad/fable-b1c/verdict.txt (29 adversarial outputs, 22 blocked; builder mutants red; 4 verifier mutants survived)
+- **Status:** BUILT (independent verification ACCEPT-WITH-NOTES: accepted pending press; flag-ON fixes required first — CL-02 holes D3.1 refused-corridor card endorsed, D3.2 control char, D3.3 allowed-word reassurance; tests for mutants X1–X4)
 
 ### L106 — getReachableExperiences(sessionId) (≡ §18 getCandidates… counted here as the tool; the service method is L182)
 - **Original requirement:** getReachableExperiences(sessionId) (≡ §18 getCandidates… counted here as the tool; the service method is L182) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -913,8 +913,8 @@ above in every freed builder slot.
 - **Batch:** B1-C assistant
 - **Required correction:** Tool rebuilt in LayoverCompassAssistant.ts; reads only the certified record or owner-scoped route reads, scrubbed of coordinates and identities.
 - **Migration:** 3846_layover_compass_assistant_flag.sql (flag seeded FALSE; rollback db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql, proven on PGlite) · **Tests:** layoverCompassAssistant.test.ts 356/356; layoverCompassToolLoop.test.ts 51/51 (10 flag-ON); six older compass suites unchanged; real-schema src/test/db/layoverCompassAssistant.db.test.ts 6/6 pressed, flag-off/absent arms red (lands with the shared harness); 23 mutants killed · **Production dependency:** owner press: apply 3846, turn layover_compass_assistant_enabled ON; AI_INTEGRATIONS_OPENAI_BASE_URL / _API_KEY (already used by Compass)
-- **Evidence:** lane B1-C handback scratchpad/l165-b1-c-handback.txt §1; census-layover section 'Layover 165 program, lane B1-C (2026-10-18)'; commit pending
-- **Status:** BUILT (independent verification pending; W until the press)
+- **Evidence:** lane B1-C handback; commit f87a92e3f; Fable verdict scratchpad/fable-b1c/verdict.txt (29 adversarial outputs, 22 blocked; builder mutants red; 4 verifier mutants survived)
+- **Status:** BUILT (independent verification ACCEPT-WITH-NOTES: accepted pending press; flag-ON fixes required first — CL-02 holes D3.1 refused-corridor card endorsed, D3.2 control char, D3.3 allowed-word reassurance; tests for mutants X1–X4)
 
 ### L107 — simulatePlan(sessionId, candidateSet)
 - **Original requirement:** simulatePlan(sessionId, candidateSet) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -926,8 +926,8 @@ above in every freed builder slot.
 - **Batch:** B1-C assistant
 - **Required correction:** Tool rebuilt in LayoverCompassAssistant.ts; reads only the certified record or owner-scoped route reads, scrubbed of coordinates and identities.
 - **Migration:** 3846_layover_compass_assistant_flag.sql (flag seeded FALSE; rollback db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql, proven on PGlite) · **Tests:** layoverCompassAssistant.test.ts 356/356; layoverCompassToolLoop.test.ts 51/51 (10 flag-ON); six older compass suites unchanged; real-schema src/test/db/layoverCompassAssistant.db.test.ts 6/6 pressed, flag-off/absent arms red (lands with the shared harness); 23 mutants killed · **Production dependency:** owner press: apply 3846, turn layover_compass_assistant_enabled ON; AI_INTEGRATIONS_OPENAI_BASE_URL / _API_KEY (already used by Compass)
-- **Evidence:** lane B1-C handback scratchpad/l165-b1-c-handback.txt §1; census-layover section 'Layover 165 program, lane B1-C (2026-10-18)'; commit pending
-- **Status:** BUILT (independent verification pending; W until the press)
+- **Evidence:** lane B1-C handback; commit f87a92e3f; Fable verdict scratchpad/fable-b1c/verdict.txt (29 adversarial outputs, 22 blocked; builder mutants red; 4 verifier mutants survived)
+- **Status:** BUILT (independent verification ACCEPT-WITH-NOTES: accepted pending press; flag-ON fixes required first — CL-02 holes D3.1 refused-corridor card endorsed, D3.2 control char, D3.3 allowed-word reassurance; tests for mutants X1–X4)
 
 ### L108 — getReturnContract(sessionId)
 - **Original requirement:** getReturnContract(sessionId) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -939,8 +939,8 @@ above in every freed builder slot.
 - **Batch:** B1-C assistant
 - **Required correction:** Tool rebuilt in LayoverCompassAssistant.ts; reads only the certified record or owner-scoped route reads, scrubbed of coordinates and identities.
 - **Migration:** 3846_layover_compass_assistant_flag.sql (flag seeded FALSE; rollback db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql, proven on PGlite) · **Tests:** layoverCompassAssistant.test.ts 356/356; layoverCompassToolLoop.test.ts 51/51 (10 flag-ON); six older compass suites unchanged; real-schema src/test/db/layoverCompassAssistant.db.test.ts 6/6 pressed, flag-off/absent arms red (lands with the shared harness); 23 mutants killed · **Production dependency:** owner press: apply 3846, turn layover_compass_assistant_enabled ON; AI_INTEGRATIONS_OPENAI_BASE_URL / _API_KEY (already used by Compass)
-- **Evidence:** lane B1-C handback scratchpad/l165-b1-c-handback.txt §1; census-layover section 'Layover 165 program, lane B1-C (2026-10-18)'; commit pending
-- **Status:** BUILT (independent verification pending; W until the press)
+- **Evidence:** lane B1-C handback; commit f87a92e3f; Fable verdict scratchpad/fable-b1c/verdict.txt (29 adversarial outputs, 22 blocked; builder mutants red; 4 verifier mutants survived)
+- **Status:** BUILT (independent verification ACCEPT-WITH-NOTES: accepted pending press; flag-ON fixes required first — CL-02 holes D3.1 refused-corridor card endorsed, D3.2 control char, D3.3 allowed-word reassurance; tests for mutants X1–X4)
 
 ### L109 — getAirportState(sessionId)
 - **Original requirement:** getAirportState(sessionId) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -952,8 +952,8 @@ above in every freed builder slot.
 - **Batch:** B1-C assistant
 - **Required correction:** Tool rebuilt in LayoverCompassAssistant.ts; reads only the certified record or owner-scoped route reads, scrubbed of coordinates and identities.
 - **Migration:** 3846_layover_compass_assistant_flag.sql (flag seeded FALSE; rollback db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql, proven on PGlite) · **Tests:** layoverCompassAssistant.test.ts 356/356; layoverCompassToolLoop.test.ts 51/51 (10 flag-ON); six older compass suites unchanged; real-schema src/test/db/layoverCompassAssistant.db.test.ts 6/6 pressed, flag-off/absent arms red (lands with the shared harness); 23 mutants killed · **Production dependency:** owner press: apply 3846, turn layover_compass_assistant_enabled ON; AI_INTEGRATIONS_OPENAI_BASE_URL / _API_KEY (already used by Compass)
-- **Evidence:** lane B1-C handback scratchpad/l165-b1-c-handback.txt §1; census-layover section 'Layover 165 program, lane B1-C (2026-10-18)'; commit pending
-- **Status:** BUILT (independent verification pending; W until the press)
+- **Evidence:** lane B1-C handback; commit f87a92e3f; Fable verdict scratchpad/fable-b1c/verdict.txt (29 adversarial outputs, 22 blocked; builder mutants red; 4 verifier mutants survived)
+- **Status:** BUILT (independent verification ACCEPT-WITH-NOTES: accepted pending press; flag-ON fixes required first — CL-02 holes D3.1 refused-corridor card endorsed, D3.2 control char, D3.3 allowed-word reassurance; tests for mutants X1–X4)
 
 ### L110 — getCrewCandidates(sessionId)
 - **Original requirement:** getCrewCandidates(sessionId) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -965,8 +965,8 @@ above in every freed builder slot.
 - **Batch:** B1-C assistant
 - **Required correction:** Tool rebuilt in LayoverCompassAssistant.ts; reads only the certified record or owner-scoped route reads, scrubbed of coordinates and identities.
 - **Migration:** 3846_layover_compass_assistant_flag.sql (flag seeded FALSE; rollback db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql, proven on PGlite) · **Tests:** layoverCompassAssistant.test.ts 356/356; layoverCompassToolLoop.test.ts 51/51 (10 flag-ON); six older compass suites unchanged; real-schema src/test/db/layoverCompassAssistant.db.test.ts 6/6 pressed, flag-off/absent arms red (lands with the shared harness); 23 mutants killed · **Production dependency:** owner press: apply 3846, turn layover_compass_assistant_enabled ON; AI_INTEGRATIONS_OPENAI_BASE_URL / _API_KEY (already used by Compass)
-- **Evidence:** lane B1-C handback scratchpad/l165-b1-c-handback.txt §1; census-layover section 'Layover 165 program, lane B1-C (2026-10-18)'; commit pending
-- **Status:** BUILT (independent verification pending; W until the press)
+- **Evidence:** lane B1-C handback; commit f87a92e3f; Fable verdict scratchpad/fable-b1c/verdict.txt (29 adversarial outputs, 22 blocked; builder mutants red; 4 verifier mutants survived)
+- **Status:** BUILT (independent verification ACCEPT-WITH-NOTES: accepted pending press; flag-ON fixes required first — CL-02 holes D3.1 refused-corridor card endorsed, D3.2 control char, D3.3 allowed-word reassurance; tests for mutants X1–X4)
 
 ### L111 — requestConstraintClarification(sessionId, field)
 - **Original requirement:** requestConstraintClarification(sessionId, field) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -978,8 +978,8 @@ above in every freed builder slot.
 - **Batch:** B1-C assistant
 - **Required correction:** Tool rebuilt in LayoverCompassAssistant.ts; reads only the certified record or owner-scoped route reads, scrubbed of coordinates and identities.
 - **Migration:** 3846_layover_compass_assistant_flag.sql (flag seeded FALSE; rollback db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql, proven on PGlite) · **Tests:** layoverCompassAssistant.test.ts 356/356; layoverCompassToolLoop.test.ts 51/51 (10 flag-ON); six older compass suites unchanged; real-schema src/test/db/layoverCompassAssistant.db.test.ts 6/6 pressed, flag-off/absent arms red (lands with the shared harness); 23 mutants killed · **Production dependency:** owner press: apply 3846, turn layover_compass_assistant_enabled ON; AI_INTEGRATIONS_OPENAI_BASE_URL / _API_KEY (already used by Compass)
-- **Evidence:** lane B1-C handback scratchpad/l165-b1-c-handback.txt §1; census-layover section 'Layover 165 program, lane B1-C (2026-10-18)'; commit pending
-- **Status:** BUILT (independent verification pending; W until the press)
+- **Evidence:** lane B1-C handback; commit f87a92e3f; Fable verdict scratchpad/fable-b1c/verdict.txt (29 adversarial outputs, 22 blocked; builder mutants red; 4 verifier mutants survived)
+- **Status:** BUILT (independent verification ACCEPT-WITH-NOTES: accepted pending press; flag-ON fixes required first — CL-02 holes D3.1 refused-corridor card endorsed, D3.2 control char, D3.3 allowed-word reassurance; tests for mutants X1–X4)
 
 ### L112 — replan(sessionId, trigger)
 - **Original requirement:** replan(sessionId, trigger) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -991,8 +991,8 @@ above in every freed builder slot.
 - **Batch:** B1-C assistant
 - **Required correction:** Tool built; replan PREVIEWS and never persists (owner question Q1: applying a replan from Compass needs its own ruling).
 - **Migration:** 3846_layover_compass_assistant_flag.sql (flag seeded FALSE; rollback db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql, proven on PGlite) · **Tests:** layoverCompassAssistant.test.ts 356/356; layoverCompassToolLoop.test.ts 51/51 (10 flag-ON); six older compass suites unchanged; real-schema src/test/db/layoverCompassAssistant.db.test.ts 6/6 pressed, flag-off/absent arms red (lands with the shared harness); 23 mutants killed · **Production dependency:** owner press: apply 3846, turn layover_compass_assistant_enabled ON; AI_INTEGRATIONS_OPENAI_BASE_URL / _API_KEY (already used by Compass)
-- **Evidence:** lane B1-C handback scratchpad/l165-b1-c-handback.txt §1; census-layover section 'Layover 165 program, lane B1-C (2026-10-18)'; commit pending
-- **Status:** BUILT (independent verification pending; W until the press)
+- **Evidence:** lane B1-C handback; commit f87a92e3f; Fable verdict scratchpad/fable-b1c/verdict.txt (29 adversarial outputs, 22 blocked; builder mutants red; 4 verifier mutants survived)
+- **Status:** BUILT (independent verification ACCEPT-WITH-NOTES: accepted pending press; flag-ON fixes required first — CL-02 holes D3.1 refused-corridor card endorsed, D3.2 control char, D3.3 allowed-word reassurance; tests for mutants X1–X4)
 
 ### L113 — explainDecision(snapshotId \
 - **Original requirement:** explainDecision(snapshotId \ (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1004,8 +1004,8 @@ above in every freed builder slot.
 - **Batch:** B1-C assistant
 - **Required correction:** Tool rebuilt in LayoverCompassAssistant.ts; reads only the certified record or owner-scoped route reads, scrubbed of coordinates and identities.
 - **Migration:** 3846_layover_compass_assistant_flag.sql (flag seeded FALSE; rollback db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql, proven on PGlite) · **Tests:** layoverCompassAssistant.test.ts 356/356; layoverCompassToolLoop.test.ts 51/51 (10 flag-ON); six older compass suites unchanged; real-schema src/test/db/layoverCompassAssistant.db.test.ts 6/6 pressed, flag-off/absent arms red (lands with the shared harness); 23 mutants killed · **Production dependency:** owner press: apply 3846, turn layover_compass_assistant_enabled ON; AI_INTEGRATIONS_OPENAI_BASE_URL / _API_KEY (already used by Compass)
-- **Evidence:** lane B1-C handback scratchpad/l165-b1-c-handback.txt §1; census-layover section 'Layover 165 program, lane B1-C (2026-10-18)'; commit pending
-- **Status:** BUILT (independent verification pending; W until the press)
+- **Evidence:** lane B1-C handback; commit f87a92e3f; Fable verdict scratchpad/fable-b1c/verdict.txt (29 adversarial outputs, 22 blocked; builder mutants red; 4 verifier mutants survived)
+- **Status:** BUILT (independent verification ACCEPT-WITH-NOTES: accepted pending press; flag-ON fixes required first — CL-02 holes D3.1 refused-corridor card endorsed, D3.2 control char, D3.3 allowed-word reassurance; tests for mutants X1–X4)
 
 ### L115 — Map consumes the active snapshot and envelope geometry; does not recalculate feasibility
 - **Original requirement:** Map consumes the active snapshot and envelope geometry; does not recalculate feasibility (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1014,7 +1014,7 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** routing provider + 2700 press
 - **Census lines read:** 3099, 11815
-- **Batch:** B2-R2 routing (map/client)
+- **Batch:** B2-MAP map and client
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -1027,7 +1027,7 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** routing provider
 - **Census lines read:** 7754, 9795
-- **Batch:** B2-R2 routing (map/client)
+- **Batch:** B2-MAP map and client
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -1041,10 +1041,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** flag layover_stable_recommendation_ids_enabled
 - **Census lines read:** 7755, 11819
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) ids:61, :73 · **Production dependency:** owner press: P4
+- **Evidence:** lane B1-P handback §2: every card carries its id + feasibility, so the screen's join (app/layover/[id].tsx:397) bands EVERY pin; a place outside the envelope is not offered
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L118 — Changing time-budget chips triggers simulation/replanning, not local visual filtering alone
 - **Original requirement:** Changing time-budget chips triggers simulation/replanning, not local visual filtering alone (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1053,7 +1053,7 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** routing provider + 3785,3633 + flags
 - **Census lines read:** 11809
-- **Batch:** B2-R2 routing (map/client)
+- **Batch:** B2-MAP map and client
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -1066,7 +1066,7 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** routing provider
 - **Census lines read:** 7756
-- **Batch:** B2-R2 routing (map/client)
+- **Batch:** B2-MAP map and client
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -1079,11 +1079,11 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** airport data source
 - **Census lines read:** 3101, 9395 (§55.9)
-- **Batch:** B2-L curation/maturity/entry
+- **Batch:** B2-CURATE curation/maturity/entry
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B2-CURATE)
 
 ### L121 — Map element Safe envelope — dynamic isochrone/polygon that contracts as conditions worsen
 - **Original requirement:** Map element Safe envelope — dynamic isochrone/polygon that contracts as conditions worsen (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1092,7 +1092,7 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** routing provider
 - **Census lines read:** 7757, 11816
-- **Batch:** B2-R2 routing (map/client)
+- **Batch:** B2-MAP map and client
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -1106,10 +1106,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** flag layover_stable_recommendation_ids_enabled
 - **Census lines read:** 7758
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) ids:61 · **Production dependency:** owner press: P4
+- **Evidence:** lane B1-P handback §2: the pin carries the contract's feasibility state
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L125 — Map element Blocked area — explain the reason, never imply safe fit
 - **Original requirement:** Map element Blocked area — explain the reason, never imply safe fit (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1119,10 +1119,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** flag layover_stable_recommendation_ids_enabled
 - **Census lines read:** 7759
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) ids:73 · **Production dependency:** owner press: P4
+- **Evidence:** lane B1-P handback §2: no banded pin implies a fit it was not certified for; BLOCKED explains itself (UNCERTIFIED carries no reason by LayoverEnvelope's own contract); the blocked-area rendering is pinned client-side (travel-buddy-standalone LayoverMapCard.envelope.component.test.tsx:239). With routing dark the out-of-rea
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L127 — Aggregate presence is the default; identity and precise location are progressively disclosed only with consent
 - **Original requirement:** Aggregate presence is the default; identity and precise location are progressively disclosed only with consent (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1132,10 +1132,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** 2740 + layover_presence_ladder_enabled
 - **Census lines read:** 1424, 9542
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) pres:64, :83 · **Production dependency:** owner press: 2740 (056) → layover_presence_ladder_enabled
+- **Evidence:** lane B1-P handback §2: aggregate is the default (L0, nobody named); consent both sides (a non-sharer sees nothing; the gate counts only publishable travellers). Identity disclosure under consent (L2 mutual) is L130's model, not exercised
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L128 — L0 aggregate only — "14 travelers connecting here"
 - **Original requirement:** L0 aggregate only — "14 travelers connecting here" (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1145,10 +1145,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** 2740 + layover_presence_ladder_enabled
 - **Census lines read:** 1423
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) pres:64, :75 · **Production dependency:** owner press: as L127
+- **Evidence:** lane B1-P handback §2: "6 travellers connecting here"; below k (5) withheld, never a small number
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L130 — L2 mutual discovery — profiles visible under policy
 - **Original requirement:** L2 mutual discovery — profiles visible under policy (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1157,11 +1157,11 @@ above in every freed builder slot.
 - **Root cause / class:** Needs a schema decision from you first (triage class NEEDS-MIGRATION)
 - **Files / gating artifact (triage):** new table (design ruling first)
 - **Census lines read:** 1424, 623
-- **Batch:** B2-J migrations
+- **Batch:** B2-CREW crew/consent/sensing/rides
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B2-CREW)
 
 ### L134 — Explicit split plans (A leaves at T1, B/C continue to T2)
 - **Original requirement:** Explicit split plans (A leaves at T1, B/C continue to T2) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1170,11 +1170,11 @@ above in every freed builder slot.
 - **Root cause / class:** Needs new schema (a migration), then the press (triage class BUILDABLE-WITH-MIGRATION→W)
 - **Files / gating artifact (triage):** new 3872 (layover_crew_plans/branches, FK 2984), routes/airport.ts crew routes, LayoverCrewStore.ts, client crew section
 - **Census lines read:** 1381, 10299 (§68)
-- **Batch:** B2-J migrations
+- **Batch:** B2-CREW crew/consent/sensing/rides
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B2-CREW)
 
 ### L135 — Crew plan certified against every member branch
 - **Original requirement:** Crew plan certified against every member branch (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1183,11 +1183,11 @@ above in every freed builder slot.
 - **Root cause / class:** Needs new schema (a migration), then the press (triage class BUILDABLE-WITH-MIGRATION→W)
 - **Files / gating artifact (triage):** new 3872 + same files as L134
 - **Census lines read:** 1382, 10299
-- **Batch:** B2-J migrations
+- **Batch:** B2-CREW crew/consent/sensing/rides
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B2-CREW)
 
 ### L137 — Crew location sharing expires on dissolution, re-entry, boarding, session expiry or revocation
 - **Original requirement:** Crew location sharing expires on dissolution, re-entry, boarding, session expiry or revocation (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1197,10 +1197,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** 3996 + layover_crew_location_enabled
 - **Census lines read:** 1384, 12220
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) crewloc:73-123 · **Production dependency:** owner press: 3996 (addendum step 297) → layover_crew_location_enabled; RE-ENTRY also needs 2700→2992 + persistence flag (crewloc-off-persist.log: K3 red alone)
+- **Evidence:** lane B1-P handback §2: crew location ends on revocation, dissolution (member-left trigger), re-entry, boarding (capped), session end, TTL
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L139 — Shared rides require opt-in and must avoid revealing the full itinerary to unrelated users
 - **Original requirement:** Shared rides require opt-in and must avoid revealing the full itinerary to unrelated users (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1209,11 +1209,11 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** product ruling
 - **Census lines read:** 1386
-- **Batch:** B2-X product decisions
+- **Batch:** B2-CREW crew/consent/sensing/rides
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B2-CREW)
 
 ### L143 — …terminal/gate context is pinned
 - **Original requirement:** …terminal/gate context is pinned (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1222,11 +1222,11 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** airport data source
 - **Census lines read:** 1388
-- **Batch:** B2-L curation/maturity/entry
+- **Batch:** B2-CURATE curation/maturity/entry
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B2-CURATE)
 
 ### L144 — …crew/buddy is notified if policy + settings allow
 - **Original requirement:** …crew/buddy is notified if policy + settings allow (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1235,11 +1235,11 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** OQ-3 + 3786 flip
 - **Census lines read:** 11353
-- **Batch:** B2-X product decisions
+- **Batch:** B2-CREW crew/consent/sensing/rides
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B2-CREW)
 
 ### L147 — The abort action cancels optional itinerary state, marks the session RETURNING, surfaces the fastest certified route, notifies crew/buddy flows, preserves the offline route/deadline, and records the transition in the decision ledger
 - **Original requirement:** The abort action cancels optional itinerary state, marks the session RETURNING, surfaces the fastest certified route, notifies crew/buddy flows, preserves the offline route/deadline, and records the transition in the decision ledger (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1249,10 +1249,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** flag layover_safe_return_status_enabled; 2700/2992 + persistence; 3786
 - **Census lines read:** 1601
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) abort:63-85 · **Production dependency:** owner press: flip layover_safe_return_status_enabled (2741 applied) + 3786 (255) → layover_crew_abort_notify_enabled AFTER ruling R9/OQ-3
+- **Evidence:** lane B1-P handback §2: abort: RETURNING in the table, landside stops cancelled (airside kept), crewmate notified, return contract + ledger row with certification, offline bundle survives
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L151 — Map — cache airport + selected route/area
 - **Original requirement:** Map — cache airport + selected route/area (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1261,7 +1261,7 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** routing provider
 - **Census lines read:** 7761
-- **Batch:** B2-R2 routing (map/client)
+- **Batch:** B2-MAP map and client
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -1274,11 +1274,11 @@ above in every freed builder slot.
 - **Root cause / class:** Needs both code and the press (code half not yet built) (triage class MIXED)
 - **Files / gating artifact (triage):** layoverPlanCache.ts; 3996 + layover_crew_location_enabled
 - **Census lines read:** 8508
-- **Batch:** B3-K code+press
+- **Batch:** B2-CREW crew/consent/sensing/rides
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B2-CREW)
 
 ### L155 — Translation — cache context phrases required by the active plan
 - **Original requirement:** Translation — cache context phrases required by the active plan (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1287,7 +1287,7 @@ above in every freed builder slot.
 - **Root cause / class:** Buildable by code alone (not built, see reasons) (triage class BUILDABLE-NOW)
 - **Files / gating artifact (triage):** services/airport/layoverPhrases.ts, services/airport/LayoverDegradedService.ts, client LayoverOfflinePlanCard.tsx, layoverReturnFacts.ts
 - **Census lines read:** 9336
-- **Batch:** B3-D deferred
+- **Batch:** B3-ENGINE lifecycle/timing/engine refactor/phrases
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -1300,11 +1300,11 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** L164 ruling
 - **Census lines read:** 1394, 10540
-- **Batch:** B2-X product decisions
+- **Batch:** B2-CREW crew/consent/sensing/rides
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B2-CREW)
 
 ### L163 — Decision ledger — retained per safety/diagnostic policy; minimise direct personal data
 - **Original requirement:** Decision ledger — retained per safety/diagnostic policy; minimise direct personal data (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1314,10 +1314,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** 3621, 3622 (+ layover_events_post_session_pseudonymisation_enabled)
 - **Census lines read:** 1405, 9478
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) eras:49-96 · **Production dependency:** owner press: 3621 (195) → 3622 (196) → layover_events_post_session_pseudonymisation_enabled
+- **Evidence:** lane B1-P handback §2: the REAL executeAccountDeletion keeps the ledger only pseudonymised (no user, no session, one pseudonym, emptied metadata, ≤12 months); the CHECK refuses half-states; post-session pass after 30 days; retention sweep
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L172 — LayoverSessionService.updateConstraint(sessionId, patch)
 - **Original requirement:** LayoverSessionService.updateConstraint(sessionId, patch) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1327,10 +1327,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** 2992,3640 + layover_constraints_enabled
 - **Census lines read:** 2288, 12151
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) cl:60 · **Production dependency:** owner press: as L4
+- **Evidence:** lane B1-P handback §2: updateConstraint appends a version; a repeat appends nothing; the store refuses UPDATE
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L174 — LayoverSessionService.close(sessionId, outcome)
 - **Original requirement:** LayoverSessionService.close(sessionId, outcome) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1340,10 +1340,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** 2992 + layover_decision_persistence_enabled
 - **Census lines read:** 3908, 8656
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) cl:145 · **Production dependency:** owner press: 2700→2992 + persistence flag
+- **Evidence:** lane B1-P handback §2: close(sessionId, outcome) stores the outcome in layover_outcomes
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L175 — LayoverFeasibilityService.evaluate(sessionId)
 - **Original requirement:** LayoverFeasibilityService.evaluate(sessionId) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1352,7 +1352,7 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class MIXED)
 - **Files / gating artifact (triage):** new LayoverFeasibilityService entry; 2700/2992/3792 + persistence
 - **Census lines read:** 711
-- **Batch:** B2-X product decisions
+- **Batch:** B2-RECS recommendations/snapshots/contracts
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -1365,7 +1365,7 @@ above in every freed builder slot.
 - **Root cause / class:** Needs both code and the press (code half not yet built) (triage class MIXED)
 - **Files / gating artifact (triage):** LayoverRecommendationService.ts; 3623 + flags
 - **Census lines read:** 1395
-- **Batch:** B3-K code+press
+- **Batch:** B2-RECS recommendations/snapshots/contracts
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -1378,7 +1378,7 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** ruling (lead)
 - **Census lines read:** 4423, 5742 (§23.3)
-- **Batch:** B2-X product decisions
+- **Batch:** B2-RECS recommendations/snapshots/contracts
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -1391,7 +1391,7 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class MIXED)
 - **Files / gating artifact (triage):** LayoverAirportTruth.ts, LayoverObservationService.ts; 3513
 - **Census lines read:** 1839
-- **Batch:** B2-L live intelligence
+- **Batch:** B2-LIVE live intelligence
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -1405,10 +1405,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** see the census section of 2026-10-18
 - **Census lines read:** census-layover foot sections, 2026-10-18
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) crowd:84, :105 · **Production dependency:** owner press: 3513
+- **Evidence:** lane B1-P handback §2: reconcile(observations) over the STORED corpus, published by GET and POST /observations
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L182 — LayoverExperienceService.getCandidates(sessionId)
 - **Original requirement:** LayoverExperienceService.getCandidates(sessionId) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1417,7 +1417,7 @@ above in every freed builder slot.
 - **Root cause / class:** Needs both code and the press (code half not yet built) (triage class MIXED)
 - **Files / gating artifact (triage):** LayoverRecommendationService.ts; routing
 - **Census lines read:** 3918
-- **Batch:** B3-K code+press
+- **Batch:** B2-RECS recommendations/snapshots/contracts
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -1430,7 +1430,7 @@ above in every freed builder slot.
 - **Root cause / class:** Needs both code and the press (code half not yet built) (triage class MIXED)
 - **Files / gating artifact (triage):** routes/airport.ts stops, LayoverPlanFit.ts; routing
 - **Census lines read:** 3918, 719
-- **Batch:** B3-K code+press
+- **Batch:** B2-RECS recommendations/snapshots/contracts
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -1444,10 +1444,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** 3900 + layover_presence_intents_enabled, 2740 + ladder flag
 - **Census lines read:** 723, 9542
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) pres:92 · **Production dependency:** owner press: 3900 (269) → layover_presence_intents_enabled (+ ladder for counts)
+- **Evidence:** lane B1-P handback §2: updatePresence: intents stored in layover_presence (one row per session), read back, precise location never stored, out-of-window refused
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L189 — LayoverDecisionService.explain(snapshotId)
 - **Original requirement:** LayoverDecisionService.explain(snapshotId) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1457,10 +1457,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** services/layover/LayoverDecisionService.ts; 2700/2992/3792 + persistence
 - **Census lines read:** 725
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) snap:137, :163 · **Production dependency:** owner press: P1
+- **Evidence:** lane B1-P handback §2: explain(snapshotId): the stored snapshot explained only after its stored inputs replay to its stored columns; a tampered row is "not_explained replay_mismatch"
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L191 — LayoverDecisionService.replay(sessionId, engineVersion)
 - **Original requirement:** LayoverDecisionService.replay(sessionId, engineVersion) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1470,10 +1470,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** services/layover/LayoverDecisionService.ts; 2700/2992/3792 + persistence
 - **Census lines read:** 3916, 10940 (§72.5)
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) snap:148 · **Production dependency:** owner press: P1
+- **Evidence:** lane B1-P handback §2: replay(sessionId, engineVersion): every recorded decision replays (read = replayed = matched, 0 mismatched); a non-running engine is refused
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L192 — 1. Create enum types and the core layover_sessions table with RLS
 - **Original requirement:** 1. Create enum types and the core layover_sessions table with RLS (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1482,7 +1482,7 @@ above in every freed builder slot.
 - **Root cause / class:** Needs a schema decision from you first (triage class NEEDS-MIGRATION)
 - **Files / gating artifact (triage):** schema decision
 - **Census lines read:** 733
-- **Batch:** B2-J migrations
+- **Batch:** B2-RECS recommendations/snapshots/contracts
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -1496,10 +1496,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** 2992 (+ checkpoint gate)
 - **Census lines read:** 1900, 7635 (§40.4)
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) cl:126 · **Production dependency:** owner press: 2700→2992 + persistence flag (the checkpoint writer is behind it)
+- **Evidence:** lane B1-P handback §2: checkpoints stored with their dedup key; a retried tap is one row; the unique index refuses a duplicate (23505)
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L195 — 4. Create recommendations + outcome tables
 - **Original requirement:** 4. Create recommendations + outcome tables (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1509,10 +1509,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** 2992 + layover_decision_persistence_enabled
 - **Census lines read:** 736, 8656
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) cl:145 · **Production dependency:** owner press: as L174
+- **Evidence:** lane B1-P handback §2: the outcomes table populated by the close
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L196 — 5. Create presence/crew tables with restrictive policies and expiration jobs
 - **Original requirement:** 5. Create presence/crew tables with restrictive policies and expiration jobs (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1522,10 +1522,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** new lib/layoverPresenceExpiryScheduler.ts, index.ts; 3900 + flags
 - **Census lines read:** 7076
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) pres:114, :175 (absent arm) · **Production dependency:** owner press: 3900 (+ intents flag so it is populated)
+- **Evidence:** lane B1-P handback §2: restrictive table (no client privilege at all), expired rows swept, live rows kept; without 3900 the sweep refuses
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L197 — 6. Create airport intelligence observation/truth tables if the existing intelligence schema cannot represent the required TTL/provenance cleanly
 - **Original requirement:** 6. Create airport intelligence observation/truth tables if the existing intelligence schema cannot represent the required TTL/provenance cleanly (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1535,10 +1535,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** see the census section of 2026-10-18
 - **Census lines read:** census-layover foot sections, 2026-10-18
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) crowd:84 · **Production dependency:** owner press: 3513
+- **Evidence:** lane B1-P handback §2: the observation table is populated by the product surface (de-identified handle, channel source_ref, class TTL)
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L198 — 7. Indexes for active-session lookup, session event ordering, unexpired presence, snapshot versioning and impacted-session event fanout
 - **Original requirement:** 7. Indexes for active-session lookup, session event ordering, unexpired presence, snapshot versioning and impacted-session event fanout (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1548,10 +1548,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** 2986, 3623, 3900
 - **Census lines read:** 1900, 7643
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) pres:127 · **Production dependency:** owner press: 2986 (087), 3623 (197), 3900 (269); 0127's two
+- **Evidence:** lane B1-P handback §2: all five index families on the chain AND chosen by the planner for the reads the code issues
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L199 — 8. Migration postconditions and authorization-contract tests for every client-writable table
 - **Original requirement:** 8. Migration postconditions and authorization-contract tests for every client-writable table (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1561,10 +1561,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** 3620
 - **Census lines read:** 3441, 9189
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) wb:95, :107 · **Production dependency:** owner press: 3620 (194) — owner decision L199-b. No flag
+- **Evidence:** lane B1-P handback §2: the authorization contract on the chain for all four tables + 3620's own $post$ re-run
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L200 — Users may read/write their own session inputs within allowed fields
 - **Original requirement:** Users may read/write their own session inputs within allowed fields (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1574,10 +1574,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** 3620
 - **Census lines read:** 746, 9189
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) wb:50, :62, :75, :85 · **Production dependency:** owner press: 3620
+- **Evidence:** lane B1-P handback §2: the traveller's PostgREST client cannot write status/reminder/sharing/stops/events/delete; the route accepts inputs, ignores non-inputs; reads owner-scoped
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L202 — Presence is readable only according to visibility scope and safety policy
 - **Original requirement:** Presence is readable only according to visibility scope and safety policy (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1586,11 +1586,11 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** ruling (revisit L205)
 - **Census lines read:** 748, 9328
-- **Batch:** B2-X product decisions
+- **Batch:** B2-CREW crew/consent/sensing/rides
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B2-CREW)
 
 ### L204 — Aggregated airport intelligence must not leak raw user identifiers
 - **Original requirement:** Aggregated airport intelligence must not leak raw user identifiers (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1599,11 +1599,11 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** L243 ruling + 2977
 - **Census lines read:** 7763, 7782
-- **Batch:** B2-L curation/maturity/entry
+- **Batch:** B2-CURATE curation/maturity/entry
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B2-CURATE)
 
 ### L205 — Service-role processing should be narrow and auditable
 - **Original requirement:** Service-role processing should be narrow and auditable (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1612,7 +1612,7 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** ruling (revisit)
 - **Census lines read:** 751, 9480
-- **Batch:** B2-X product decisions
+- **Batch:** B2-PLATFORM metrics/audit/real-schema/typed reads
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -1626,10 +1626,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** 2700,2992,3792 + persistence flag
 - **Census lines read:** 7979
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) snap:105 · **Production dependency:** owner press: P1
+- **Evidence:** lane B1-P handback §2: a window edit creates a new snapshot (new input hash, snapshot_version n+1); the replan's ledger row cites it
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L207 — DecisionRecord { sessionId, snapshotId, engineVersion, inputHash, inputFacts[], sourceRefs[], rulesApplied[], result, reasonCodes[], computedAt }
 - **Original requirement:** DecisionRecord { sessionId, snapshotId, engineVersion, inputHash, inputFacts[], sourceRefs[], rulesApplied[], result, reasonCodes[], computedAt } (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1639,10 +1639,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** LayoverReplanService.ts; 2700/2992/3792 + persistence
 - **Census lines read:** 7980, 2282
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) snap:67, :105, :137, :202 · **Production dependency:** owner press: P1
+- **Evidence:** lane B1-P handback §2: DecisionRecord's ten members on the row / on explain; the replan cites the stored snapshot
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L208 — Metric layover_sessions_detected
 - **Original requirement:** Metric layover_sessions_detected (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1651,7 +1651,7 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** OQ-8
 - **Census lines read:** 759, 12158
-- **Batch:** B2-M metrics
+- **Batch:** B2-PLATFORM metrics/audit/real-schema/typed reads
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -1664,7 +1664,7 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** OQ-8 (+ code in layoverObservability.ts)
 - **Census lines read:** 2287
-- **Batch:** B2-M metrics
+- **Batch:** B2-PLATFORM metrics/audit/real-schema/typed reads
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -1677,7 +1677,7 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** OQ-8 + 2992 press
 - **Census lines read:** 3909
-- **Batch:** B2-M metrics
+- **Batch:** B2-PLATFORM metrics/audit/real-schema/typed reads
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -1690,7 +1690,7 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** OQ-8 + 2700/2992 press
 - **Census lines read:** 9788
-- **Batch:** B2-M metrics
+- **Batch:** B2-PLATFORM metrics/audit/real-schema/typed reads
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -1703,7 +1703,7 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** OQ-8 + 3623 press
 - **Census lines read:** 10917
-- **Batch:** B2-M metrics
+- **Batch:** B2-PLATFORM metrics/audit/real-schema/typed reads
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -1716,11 +1716,11 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** airport data source
 - **Census lines read:** 9025
-- **Batch:** B2-L curation/maturity/entry
+- **Batch:** B2-CURATE curation/maturity/entry
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B2-CURATE)
 
 ### L221 — 6h visa-free → landside + return contract
 - **Original requirement:** 6h visa-free → landside + return contract (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1730,10 +1730,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** routing provider
 - **Census lines read:** 7753
 - **Batch:** B1-R1 routing (server)
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-R1)
+- **Required correction:** Google Routes wired on GET /recommendations and the Discovery universe with §8 routed terms (LayoverRoutedFeasibility.ts).
+- **Migration:** 3856_layover_routes_session_budget.sql (+3971, 2745 in the press) · **Tests:** layoverRoutedFeasibility / layoverRoutedRecommendationsRoute / layoverRoutedUniverse / layoverRoutedProviderContract / layoverRoutesSessionBudget (90 cases, 44 mutants) · **Production dependency:** Routes API enabled; LAYOVER_ROUTED_CORRIDOR_ENABLED + ROUTES_API_DAILY_*; 3971, 3856, 2745; layover_routed_corridor_enabled ON
+- **Evidence:** lane B1-R1 handback §2; census-layover section "lanes B1-R1 and B1-P"
+- **Status:** IN PROGRESS (recommendation return contract with route built by B1-R1; abort contract route queued to lane B2-BUDDY)
 
 ### L223 — Overnight → overnight state / expanded options
 - **Original requirement:** Overnight → overnight state / expanded options (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1742,11 +1742,11 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** data-source decision
 - **Census lines read:** 784, 9403 (§55.9)
-- **Batch:** B2-L curation/maturity/entry
+- **Batch:** B2-CURATE curation/maturity/entry
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B2-CURATE)
 
 ### L227 — Security spike → envelope contracts monotonically
 - **Original requirement:** Security spike → envelope contracts monotonically (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1755,7 +1755,7 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** live-signal producer decision
 - **Census lines read:** 1843
-- **Batch:** B2-L live intelligence
+- **Batch:** B2-LIVE live intelligence
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -1768,7 +1768,7 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** live-signal producer decision
 - **Census lines read:** 1844
-- **Batch:** B2-L live intelligence
+- **Batch:** B2-LIVE live intelligence
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -1782,10 +1782,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** 2700 (+2992/3792 + persistence)
 - **Census lines read:** 7762
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) snap:254 · **Production dependency:** owner press: P1
+- **Evidence:** lane B1-P handback §2: the plan the phone caches offline is a stored, replayable snapshot (its input hash names a stored computation with a stored return plan) and carries its own staleness
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L236 — Database tests against a real CI schema for column names, enum literals, RLS and migration postconditions
 - **Original requirement:** Database tests against a real CI schema for column names, enum literals, RLS and migration postconditions (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1794,7 +1794,7 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** lead U-1 ruling + CI evidence
 - **Census lines read:** 12318
-- **Batch:** B2-X product decisions
+- **Batch:** B2-PLATFORM metrics/audit/real-schema/typed reads
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -1808,10 +1808,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** 2700,2992,3792 + persistence
 - **Census lines read:** 3916, 7657
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) snap:202 (+:233) · **Production dependency:** owner press: P1 incl. recommendation snapshot flag
+- **Evidence:** lane B1-P handback §2: event → replan → snapshot → invalidation → notification, end to end on the real tables
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L239 — E2E tests for detection → evaluation → plan → execution → return → completion
 - **Original requirement:** E2E tests for detection → evaluation → plan → execution → return → completion (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1834,10 +1834,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** 2700,2992,3792 + persistence
 - **Census lines read:** 3916, 1402
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) snap:148, :163 · **Production dependency:** owner press: P1
+- **Evidence:** lane B1-P handback §2: deterministic replay of recorded sessions; falsifiable (a tampered row counts as a mismatch)
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L241 — Decision-diff CI comparing old/new engine behaviour over historical/synthetic corpora
 - **Original requirement:** Decision-diff CI comparing old/new engine behaviour over historical/synthetic corpora (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1847,10 +1847,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** 2700,2992,3792 + persistence
 - **Census lines read:** 8645
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) snap:174, :181 · **Production dependency:** owner press: P1
+- **Evidence:** lane B1-P handback §2: historical decision diff: two stored decisions diffed (snap:174); the admin metrics replay EVERY stored decision in the window under the running engine and count a behaviour change (snap:181)
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L242 — Shadow mode in real environments before high-confidence rollout
 - **Original requirement:** Shadow mode in real environments before high-confidence rollout (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1860,10 +1860,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** 3784 + layover_ranking_mode=shadow (cohort)
 - **Census lines read:** 12029
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) roll:84 · **Production dependency:** owner press: 3784 (253) → layover_ranking_mode enabled=true, metadata {"mode":"shadow","cohort":{"kind":"users","userIds":[…]}} (OQ-L242-1 / OQ-7: who)
+- **Evidence:** lane B1-P handback §2: shadow for a tester cohort: compared and counted in the generation event; nothing it produced is served; others not shadowed
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L243 — L0 Generic — static airport + conservative generic timing; airport-side guidance only by default
 - **Original requirement:** L0 Generic — static airport + conservative generic timing; airport-side guidance only by default (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1872,11 +1872,11 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** L243 owner decision
 - **Census lines read:** 5730, 5758
-- **Batch:** B2-L curation/maturity/entry
+- **Batch:** B2-CURATE curation/maturity/entry
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B2-CURATE)
 
 ### L246 — L3 Portava observed — recent Portava operational observations available
 - **Original requirement:** L3 Portava observed — recent Portava operational observations available (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1885,11 +1885,11 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** L243 ruling + 2977; live producer
 - **Census lines read:** 7764
-- **Batch:** B2-L curation/maturity/entry
+- **Batch:** B2-CURATE curation/maturity/entry
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B2-CURATE)
 
 ### L247 — L4 Calibrated — prediction errors measured, model calibrated by airport/time band
 - **Original requirement:** L4 Calibrated — prediction errors measured, model calibrated by airport/time band (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1898,11 +1898,11 @@ above in every freed builder slot.
 - **Root cause / class:** Needs both code and the press (code half not yet built) (triage class MIXED)
 - **Files / gating artifact (triage):** LayoverAirportTruth.ts; 2992, 3513
 - **Census lines read:** 1845, 10943
-- **Batch:** B2-L curation/maturity/entry
+- **Batch:** B2-CURATE curation/maturity/entry
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B2-CURATE)
 
 ### L249 — Enable features per airport maturity
 - **Original requirement:** Enable features per airport maturity (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1911,11 +1911,11 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** L243 ruling + 2977
 - **Census lines read:** 7765
-- **Batch:** B2-L curation/maturity/entry
+- **Batch:** B2-CURATE curation/maturity/entry
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B2-CURATE)
 
 ### L251 — Rate-limit and trust-weight community operational observations
 - **Original requirement:** Rate-limit and trust-weight community operational observations (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1925,10 +1925,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** see the census section of 2026-10-18
 - **Census lines read:** census-layover foot sections, 2026-10-18
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) crowd:105, :139, :166 · **Production dependency:** owner press: 3513
+- **Evidence:** lane B1-P handback §2: rate limit (4th report in 15 min → 429, not stored) and trust weighting (community LOW, official HIGH)
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L252 — Outlier detection for implausible queue/transport claims
 - **Original requirement:** Outlier detection for implausible queue/transport claims (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1938,10 +1938,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** see the census section of 2026-10-18
 - **Census lines read:** census-layover foot sections, 2026-10-18
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) crowd:175 · **Production dependency:** owner press: 3513
+- **Evidence:** lane B1-P handback §2: outliers rejected before any write
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L254 — Verified/trusted requirements for high-risk Buddy/marketplace interactions
 - **Original requirement:** Verified/trusted requirements for high-risk Buddy/marketplace interactions (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1951,10 +1951,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** see the census section of 2026-10-18
 - **Census lines read:** census-layover foot sections, 2026-10-18
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) roll:103 · **Production dependency:** owner press: the owner's Rent-a-Buddy activation (never by this program)
+- **Evidence:** lane B1-P handback §2: a high-risk (night) layover lists only verified, non-new buddies; a daytime one the rest too. rent_buddy_enabled ON IN THE TEST DATABASE ONLY
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L257 — Validate all external event payloads and deduplicate by stable source keys
 - **Original requirement:** Validate all external event payloads and deduplicate by stable source keys (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1964,10 +1964,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** see the census section of 2026-10-18
 - **Census lines read:** census-layover foot sections, 2026-10-18
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** External-event fan-out no longer puts an IATA code into a uuid airport_id list (22P02 on the real schema).
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) ext:89, :110, :127 · **Production dependency:** owner press: P7
+- **Evidence:** lane B1-P handback §2: every payload validated (5 named refusals, nothing stored); stable source keys; tampered row refused at the last door
+- **Status:** BUILT (pressed-path defect fixed by B1-P; independent verification pending; awaits the press)
 
 ### L259 — Replan fanout — index active sessions by airport/route/flight subjects; recompute impacted sessions only
 - **Original requirement:** Replan fanout — index active sessions by airport/route/flight subjects; recompute impacted sessions only (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1990,10 +1990,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** routing provider + 3784
 - **Census lines read:** 3918, 6072
 - **Batch:** B1-R1 routing (server)
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-R1)
+- **Required correction:** Google Routes wired on GET /recommendations and the Discovery universe with §8 routed terms (LayoverRoutedFeasibility.ts).
+- **Migration:** 3856_layover_routes_session_budget.sql (+3971, 2745 in the press) · **Tests:** layoverRoutedFeasibility / layoverRoutedRecommendationsRoute / layoverRoutedUniverse / layoverRoutedProviderContract / layoverRoutesSessionBudget (90 cases, 44 mutants) · **Production dependency:** Routes API enabled; LAYOVER_ROUTED_CORRIDOR_ENABLED + ROUTES_API_DAILY_*; 3971, 3856, 2745; layover_routed_corridor_enabled ON
+- **Evidence:** lane B1-R1 handback §2; census-layover section "lanes B1-R1 and B1-P"
+- **Status:** BUILT (lane B1-R1; independent verification pending; W until the Routes press)
 
 ### L263 — Duplicate events — unique dedup key / source event id
 - **Original requirement:** Duplicate events — unique dedup key / source event id (the census body row quotes the spec; the full wording is at the row's census line).
@@ -2003,10 +2003,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** 2981 + layover_event_ingest_enabled
 - **Census lines read:** 3916, 7639
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) ext:89 · **Production dependency:** owner press: P7
+- **Evidence:** lane B1-P handback §2: the unique dedup key refuses a duplicate in the table itself
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L264 — Race conditions — version/compare-and-swap the active snapshot; reject stale writes
 - **Original requirement:** Race conditions — version/compare-and-swap the active snapshot; reject stale writes (the census body row quotes the spec; the full wording is at the row's census line).
@@ -2015,7 +2015,7 @@ above in every freed builder slot.
 - **Root cause / class:** Needs new schema (a migration), then the press (triage class BUILDABLE-WITH-MIGRATION→W)
 - **Files / gating artifact (triage):** new 3873, LayoverDecisionStore.ts persistDecision
 - **Census lines read:** 845
-- **Batch:** B2-J migrations
+- **Batch:** B2-RECS recommendations/snapshots/contracts
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -2044,8 +2044,8 @@ above in every freed builder slot.
 - **Batch:** B1-C assistant
 - **Required correction:** Tool access, proactive operational events and explanation/clarification on the layover door.
 - **Migration:** 3846_layover_compass_assistant_flag.sql (flag seeded FALSE; rollback db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql, proven on PGlite) · **Tests:** layoverCompassAssistant.test.ts 356/356; layoverCompassToolLoop.test.ts 51/51 (10 flag-ON); six older compass suites unchanged; real-schema src/test/db/layoverCompassAssistant.db.test.ts 6/6 pressed, flag-off/absent arms red (lands with the shared harness); 23 mutants killed · **Production dependency:** owner press: apply 3846, turn layover_compass_assistant_enabled ON; AI_INTEGRATIONS_OPENAI_BASE_URL / _API_KEY (already used by Compass)
-- **Evidence:** lane B1-C handback scratchpad/l165-b1-c-handback.txt §1; census-layover section 'Layover 165 program, lane B1-C (2026-10-18)'; commit pending
-- **Status:** BUILT (independent verification pending; W until the press)
+- **Evidence:** lane B1-C handback; commit f87a92e3f; Fable verdict scratchpad/fable-b1c/verdict.txt (29 adversarial outputs, 22 blocked; builder mutants red; 4 verifier mutants survived)
+- **Status:** BUILT (independent verification ACCEPT-WITH-NOTES: accepted pending press; flag-ON fixes required first — CL-02 holes D3.1 refused-corridor card endorsed, D3.2 control char, D3.3 allowed-word reassurance; tests for mutants X1–X4)
 
 ### L269 — Discovery — only show experiences from the certified action universe in Layover mode
 - **Original requirement:** Discovery — only show experiences from the certified action universe in Layover mode (the census body row quotes the spec; the full wording is at the row's census line).
@@ -2055,10 +2055,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** flip layover_discovery_mode_enabled
 - **Census lines read:** 3918, 7188 (§35)
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) roll:66, :185 · **Production dependency:** owner press: flip layover_discovery_mode_enabled (2971 applied) after deployment verification. Proven at lib/discoveryLayoverMode.ts's gate (called by routes/discovery.ts GET /discovery and /discovery/community), not by driving GET /discovery
+- **Evidence:** lane B1-P handback §2: in a live layover Discovery's gate admits only the certified universe; unmeasured places withheld with their reason; unreadable flag refuses
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L270 — Map — safe envelope, plan route, return state, airport digital-twin layers
 - **Original requirement:** Map — safe envelope, plan route, return state, airport digital-twin layers (the census body row quotes the spec; the full wording is at the row's census line).
@@ -2067,7 +2067,7 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** routing + airport data
 - **Census lines read:** 856
-- **Batch:** B2-R2 routing (map/client)
+- **Batch:** B2-MAP map and client
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -2080,7 +2080,7 @@ above in every freed builder slot.
 - **Root cause / class:** Needs both code and the press (code half not yet built) (triage class MIXED)
 - **Files / gating artifact (triage):** services/safeReturn/*, routes/airport.ts; flag + product ruling
 - **Census lines read:** 858, 10196
-- **Batch:** B3-K code+press
+- **Batch:** B2-BUDDY Rent-a-Buddy specialist/Safe Return
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -2093,7 +2093,7 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** Rent-a-Buddy ruling
 - **Census lines read:** 5727, 10093
-- **Batch:** B2-X product decisions
+- **Batch:** B2-BUDDY Rent-a-Buddy specialist/Safe Return
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -2107,10 +2107,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** 2851 + layover_live_intersection_enabled; 3513
 - **Census lines read:** 7249, 12155
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) crowd:196, roll:149 · **Production dependency:** owner press: 3513 (publish) + 2851 (step 070) → layover_live_intersection_enabled ON (consume); the Live gates it reads behind (intel_live_label_crowd, intel_claim_projection_crowd, intel_capture_quick_signal, intel_limited_live) are TRUE in production already
+- **Evidence:** lane B1-P handback §2: publish limb: what is published carries no user id or handle; clients read handles only, cannot write; 2860's CHECK refuses a profile id (crowd:196). consume limb: a promoted live unsafe-density reading at a place drops its card; a place with no reading is untouched (roll:149)
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
 ### L281 — SECURITY_WAIT_HIGH
 - **Original requirement:** SECURITY_WAIT_HIGH (the census body row quotes the spec; the full wording is at the row's census line).
@@ -2119,7 +2119,7 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** live-signal producer decision
 - **Census lines read:** 2289
-- **Batch:** B2-L live intelligence
+- **Batch:** B2-LIVE live intelligence
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -2133,10 +2133,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** routing provider
 - **Census lines read:** 7448, 7483
 - **Batch:** B1-R1 routing (server)
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-R1)
+- **Required correction:** Google Routes wired on GET /recommendations and the Discovery universe with §8 routed terms (LayoverRoutedFeasibility.ts).
+- **Migration:** 3856_layover_routes_session_budget.sql (+3971, 2745 in the press) · **Tests:** layoverRoutedFeasibility / layoverRoutedRecommendationsRoute / layoverRoutedUniverse / layoverRoutedProviderContract / layoverRoutesSessionBudget (90 cases, 44 mutants) · **Production dependency:** Routes API enabled; LAYOVER_ROUTED_CORRIDOR_ENABLED + ROUTES_API_DAILY_*; 3971, 3856, 2745; layover_routed_corridor_enabled ON
+- **Evidence:** lane B1-R1 handback §2; census-layover section "lanes B1-R1 and B1-P"
+- **Status:** BUILT (lane B1-R1; independent verification pending; W until the Routes press)
 
 ### L285 — DATA_STALE
 - **Original requirement:** DATA_STALE (the census body row quotes the spec; the full wording is at the row's census line).
@@ -2145,7 +2145,7 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** live-signal producer decision
 - **Census lines read:** 2289
-- **Batch:** B2-L live intelligence
+- **Batch:** B2-LIVE live intelligence
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -2158,7 +2158,7 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** live-signal producer decision
 - **Census lines read:** 2289
-- **Batch:** B2-L live intelligence
+- **Batch:** B2-LIVE live intelligence
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -2171,7 +2171,7 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** live-signal producer decision
 - **Census lines read:** 2289
-- **Batch:** B2-L live intelligence
+- **Batch:** B2-LIVE live intelligence
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -2184,7 +2184,7 @@ above in every freed builder slot.
 - **Root cause / class:** Needs both code and the press (code half not yet built) (triage class MIXED)
 - **Files / gating artifact (triage):** LayoverPrivacyGuard.ts, routes/airport.ts, layoverMaturityGate.ts; owner ruling
 - **Census lines read:** 12317
-- **Batch:** B3-K code+press
+- **Batch:** B2-PLATFORM metrics/audit/real-schema/typed reads
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -2197,7 +2197,7 @@ above in every freed builder slot.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
 - **Files / gating artifact (triage):** lead U-1 ruling
 - **Census lines read:** 12316, 12370
-- **Batch:** B2-X product decisions
+- **Batch:** B2-PLATFORM metrics/audit/real-schema/typed reads
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
@@ -2211,8 +2211,8 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** see the census section of 2026-10-18
 - **Census lines read:** census-layover foot sections, 2026-10-18
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B1-P)
+- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
+- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) ids:94 · **Production dependency:** owner press: P4
+- **Evidence:** lane B1-P handback §2: Add to plan certified against the card's own snapshot; stale → 409 RECOMMENDATION_EXPIRED, nothing written
+- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 

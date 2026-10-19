@@ -1,0 +1,90 @@
+{
+  "routes": [
+    {
+      "distanceMeters": 14700,
+      "duration": "2700s",
+      "staticDuration": "1920s",
+      "legs": [
+        {
+          "steps": [
+            {
+              "distanceMeters": 2100,
+              "staticDuration": "240s",
+              "travelMode": "DRIVE",
+              "navigationInstruction": {
+                "maneuver": "DEPART"
+              }
+            },
+            {
+              "distanceMeters": 3800,
+              "staticDuration": "900s",
+              "travelMode": "DRIVE",
+              "navigationInstruction": {
+                "maneuver": "FERRY"
+              }
+            },
+            {
+              "distanceMeters": 7900,
+              "staticDuration": "600s",
+              "travelMode": "DRIVE",
+              "navigationInstruction": {
+                "maneuver": "MERGE"
+              }
+            },
+            {
+              "distanceMeters": 900,
+              "staticDuration": "180s",
+              "travelMode": "DRIVE",
+              "navigationInstruction": {
+                "maneuver": "TURN_LEFT"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "distanceMeters": 20500,
+      "duration": "3300s",
+      "staticDuration": "2100s",
+      "legs": [
+        {
+          "steps": [
+            {
+              "distanceMeters": 2500,
+              "staticDuration": "300s",
+              "travelMode": "DRIVE",
+              "navigationInstruction": {
+                "maneuver": "DEPART"
+              }
+            },
+            {
+              "distanceMeters": 11000,
+              "staticDuration": "900s",
+              "travelMode": "DRIVE",
+              "navigationInstruction": {
+                "maneuver": "RAMP_RIGHT"
+              }
+            },
+            {
+              "distanceMeters": 6000,
+              "staticDuration": "700s",
+              "travelMode": "DRIVE",
+              "navigationInstruction": {
+                "maneuver": "MERGE"
+              }
+            },
+            {
+              "distanceMeters": 1000,
+              "staticDuration": "200s",
+              "travelMode": "DRIVE",
+              "navigationInstruction": {
+                "maneuver": "STRAIGHT"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -274,7 +274,7 @@ async function readGroups(
   for (const ref of airportRefs) {
     const resolved = await resolveAirport(db, ref);
     if (!resolved.ok) return resolved;
-    const identities = [...new Set([ref, resolved.airport.id].filter((x): x is string => Boolean(x)))];
+    const identities = [...new Set([/^[A-Za-z]{3}$/.test(ref) ? null : ref, resolved.airport.id].filter((x): x is string => Boolean(x)))]; // B1-P: an IATA ref is never an `airport_id` (a uuid column: on the real schema it made the whole IN-list 22P02 and every airport event failed after claim); it is matched through manual_iata below
     const read = await readActiveSessionsAt(db, identities, ref, limit);
     if (!read.ok) return read;
     if (read.limitReached) limitReached = true;

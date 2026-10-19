@@ -391,6 +391,12 @@ describe('"measured" has no producer on this tree', () => {
   // change these expectations. That is why the provider is a module constant
   // and not an environment lookup — see LayoverTravelTime.ts.
   const PRODUCER = "LayoverTravelTime.ts";
+  // LAYOVER 165, lane B1-R1 (owner decision 2026-10-18: Google Routes approved). The recommendation path's routed
+  // pass writes the routed outbound onto a candidate with its provenance — the SECOND sanctioned producer, and the
+  // obligation above is discharged for it: `travelTimeProvenanceColumn("measured")` puts `travel_time_source` on the
+  // row (2745) and `persistedTravelTimeSource` reads it back (layoverRoutedRecommendationsRoute.test.ts R4 pins the
+  // persisted row).
+  const ROUTED_PASS = "LayoverRoutedFeasibility.ts";
 
   it("the literal appears only in the engine's declaration, its own comparison, and the ONE port adapter", () => {
     const engine = "LayoverSafetyEngine.ts";
@@ -403,6 +409,8 @@ describe('"measured" has no producer on this tree', () => {
       const hits = (code.match(/"measured"/g) ?? []).length;
       if (f.endsWith(engine)) {
         assert.equal(hits, 2, `${engine}: expected the TRAVEL_TIME_SOURCES entry and adviseLeaving's comparison, found ${hits}`);
+      } else if (f.endsWith(ROUTED_PASS)) {
+        assert.equal(hits, 1, `${ROUTED_PASS}: expected exactly the one assignment of a routed candidate's provenance, found ${hits}`);
       } else if (f.endsWith(PRODUCER)) {
         assert.equal(hits, 1, `${PRODUCER}: expected exactly the one assignment behind the routed branch, found ${hits}`);
       } else {

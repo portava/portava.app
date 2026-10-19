@@ -6986,3 +6986,37 @@ L268), under the owner's directive of 2026-10-18. Flag only: no table, column, f
 - **Press.** Apply 3846 (portava-ci, then production), then turn the flag ON. The assistant uses the AI integration
   Compass already uses (`AI_INTEGRATIONS_OPENAI_BASE_URL`, `AI_INTEGRATIONS_OPENAI_API_KEY`); without it every
   assisted answer falls back to the certified answer and names the reason.
+
+## 2026-10-18 — `3856_layover_routes_session_budget.sql`, written and NOT applied anywhere (Layover 165 program, lane B1-R1)
+
+The owner approved Google Routes for Layover on 2026-10-18 (decision R5: a layover's routed calls are charged to a
+layover-session scope with its own caps). One transaction, additive:
+- the flag `layover_routed_corridor_enabled`, seeded FALSE: the kill switch for every layover Routes call;
+- `public.routes_api_layover_session_usage` (calls one layover session has taken; cap 36) and
+  `public.routes_api_layover_user_daily_usage` (calls one person's layover sessions have taken per UTC day; cap 60):
+  RLS on, no policy, no client privilege, service_role SELECT only;
+- `public.routes_api_try_spend_layover(...)`, SECURITY DEFINER with a pinned search_path, EXECUTE for service_role
+  only. It locks day → session → user (Trips' 3973 takes day → trip → user, so every spender serialises on the day row
+  and no lock cycle exists) and increments all three counters or none. The day row is 3971's: one daily ceiling for the
+  Cloud bill. It refuses a session that is not the caller's.
+
+- **Gap number.** Applied at 3856 on a fresh replay and after 3999 on portava-ci and production. It depends at CREATE
+  time only on auth.users, layover_sessions (0127) and feature_flags (0118). Its one reference to a later file (3971's
+  routes_api_daily_usage) is inside the function body and guarded: until that table exists the function answers
+  'unavailable' and spends nothing. Nothing above 3856 touches what it creates (the header records the grep).
+- **Rollback:** `db/rollback/2026-10-18-3856-layover-routes-session-budget-rollback.sql`, proven by the lane on the
+  production-shaped replica (PostgreSQL 18.3): forward, rollback restores catalog and rows, a second rollback changes
+  nothing, the forward re-applies, and all seven refusals fire.
+- **Press.** Enable the Routes API on the project that owns `GOOGLE_MAPS_API_KEY`; set
+  `LAYOVER_ROUTED_CORRIDOR_ENABLED=true`, `ROUTES_API_DAILY_QUOTA` (≤ 500), `ROUTES_API_DAILY_BUDGET_USD` (≤ 10) and
+  `ROUTES_API_COST_PER_CALL_USD=0.01`; apply 3971 (if not yet), then 3856, and 2745 so routed rows persist; then turn
+  `layover_routed_corridor_enabled` ON.
+
+**Correction to the 3846 entry above (2026-10-18, independent verification).** "With the flag OFF, absent or unreadable,
+POST /airport/sessions/:id/compass answers exactly as the certified-only door does today" overstates it. The certified
+text is identical and no model is called, but each question makes one more `feature_flags` read, the response body
+carries two more fields (`planComparison`, `assistant`), and the question's event row carries three more keys. The
+verifier also proved 3846 and its rollback independently on PGlite (forward, idempotent re-apply, rollback, a no-op second
+rollback, and every refusal, including the refusal over audit history). The flag must stay FALSE until the assistant's
+flag-ON defects found by that verification are fixed (census-compass, "Correction (2026-10-18, independent verification of
+the Layover 165 assistant)").

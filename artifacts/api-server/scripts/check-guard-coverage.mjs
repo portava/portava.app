@@ -951,6 +951,7 @@ const EXEMPT = [
       'EXEMPTION MEANS UNGUARDED, NOT SAFE — if the injected fetch is ever removed, or the URL ever comes ' +
       'from the environment, the exemption is void and this file must import the guard.',
   },
+  { file: 'src/test/db/postgrestSqlBridge.ts', reason: 'THE LAYOVER PRESSED-STATE BRIDGE (Layover 165 lane B1-P). It builds the REAL @supabase/supabase-js client on purpose, so the layover routes run against a database built from the real migration chain (src/test/db/pressedLayoverDb.ts: a PGlite replay, or LOCAL_DB_URL on CI\'s local-db job) with the requests production sends. It CANNOT DIAL SUPABASE: createClient is given an injected fetch that turns each PostgREST request into SQL on that local engine, and that fetch is the only transport the client has; the URL is a literal ".invalid" host built in pressedLayoverDb.ts, never read from the environment. It names no Supabase credential variable. It is a helper, not an entry point: it runs only when a src/test/db/layoverPressed*.db.test.ts suite imports it, and those suites skip without a database. EXEMPTION MEANS UNGUARDED, NOT SAFE — if the injected fetch is ever removed, or the URL ever comes from the environment, the exemption is void and this file must import the guard.' },
   {
     file: 'src/test/db/trailPostgrestBridge.ts',
     reason:

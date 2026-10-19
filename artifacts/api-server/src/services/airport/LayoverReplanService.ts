@@ -913,3 +913,65 @@ function externalInputFacts(outcome: ReplanOutcome): LayoverDecisionRecord["inpu
   }
   return facts;
 }
+
+// ── census L44, lane B1-P (2026-10-18) — the traveller-REPORTED disruption settles its snapshot too ─
+//
+// Appended at the foot so no line above moves (this file is cited by line).
+// §5's `* → DISRUPTED` has three inputs on this tree: the window edit (PATCH
+// /airport/sessions/:id, `replanAfterSessionEdit` → `recordReplanDecision`), the
+// external event (`recordExternalReplanDecisions`), and the traveller's own
+// report (POST /airport/sessions/:id/disruption, R22). The first two store the
+// re-certified record and invalidate the cards certified under the superseded
+// snapshot; the third re-certified (`recomputeForDisruption`) and stopped there,
+// so a pressed database kept every card citing the snapshot the disruption had
+// just superseded (measured on the real chain, test/db/layoverPressedSnapshot S11).
+//
+// This runs the SAME two steps — `storeReplanSnapshot` (persistDecision behind
+// `layover_decision_persistence_enabled`) and `applyReplanInvalidation` (the
+// compare-and-set citation clear behind `layover_recommendation_snapshot_enabled`)
+// — on the disruption's re-certified record, and records what it did in the
+// ledger. It invalidates on STALE CERTIFICATION only: the disruption route
+// computes no per-stop fit, so `noLongerFeasible` is empty here.
+//
+// OFF or ABSENT on both flags (production today): the two flag rows are read and
+// nothing else — no write, no ledger row, `null` returned, and the route adds no
+// key, so its response is byte-identical to before.
+
+export interface DisruptionSnapshotSettlement {
+  snapshotPersisted: boolean;
+  snapshotId?: string;
+  snapshotUnavailableReason?: ReplanSnapshotUnavailableReason;
+  invalidationApplied?: ReplanInvalidationApplied;
+}
+
+export async function settleDisruptionRecompute(
+  db: SupabaseClient,
+  userId: string,
+  sessionId: string,
+  record: LayoverFeasibilityRecord,
+): Promise<DisruptionSnapshotSettlement | null> {
+  const [persistence, stamping] = await Promise.all([
+    readFlagState(db, "layover_decision_persistence_enabled"),
+    readFlagState(db, "layover_recommendation_snapshot_enabled"),
+  ]);
+  const dark = (s: string) => s === "off" || s === "absent";
+  if (dark(persistence) && dark(stamping)) return null;
+
+  const publication = { snapshotPersisted: false, invalidation: { noLongerFeasible: [] } } as unknown as ReplanPublication;
+  const decision = { sessionId, inputHash: record.inputHash, snapshotId: null } as unknown as LayoverDecisionRecord;
+  REPLAN_CERTIFIED_RECORDS.set(decision, record);
+  await settleReplanSnapshot(db, userId, publication, decision);
+
+  const settlement: DisruptionSnapshotSettlement = {
+    snapshotPersisted: publication.snapshotPersisted,
+    ...(publication.snapshotId ? { snapshotId: publication.snapshotId } : {}),
+    ...(publication.snapshotUnavailableReason ? { snapshotUnavailableReason: publication.snapshotUnavailableReason } : {}),
+    ...(publication.invalidationApplied ? { invalidationApplied: publication.invalidationApplied } : {}),
+  };
+  try {
+    await emitLayoverEvent(db, sessionId, userId, "session_updated", { disruptionSnapshot: settlement });
+  } catch (err) {
+    logger.warn({ err, sessionId }, "disruption snapshot settlement: ledger write failed (non-fatal)");
+  }
+  return settlement;
+}

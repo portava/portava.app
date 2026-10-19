@@ -1,0 +1,39 @@
+{
+  "routes": [
+    {
+      "distanceMeters": 670,
+      "duration": "540s",
+      "staticDuration": "540s",
+      "legs": [
+        {
+          "steps": [
+            {
+              "distanceMeters": 150,
+              "staticDuration": "120s",
+              "travelMode": "WALK",
+              "navigationInstruction": {
+                "maneuver": "DEPART"
+              }
+            },
+            {
+              "distanceMeters": 380,
+              "staticDuration": "300s",
+              "travelMode": "WALK",
+              "navigationInstruction": {
+                "maneuver": "TURN_LEFT"
+              }
+            },
+            {
+              "distanceMeters": 140,
+              "staticDuration": "120s",
+              "travelMode": "WALK",
+              "navigationInstruction": {
+                "maneuver": "TURN_RIGHT"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
