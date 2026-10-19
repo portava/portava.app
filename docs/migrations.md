@@ -6968,3 +6968,21 @@ now names the ROW EXCLUSIVE lock the flag row's DELETE takes on `public.feature_
 3996's own header still names the old path
 (`artifacts/api-server/src/migrations/3996_layover_crew_location_grants.sql:81#-- Rollback:`). 3996 is checksummed into
 the ledger and the sealed packet, so its header is not edited. The sealed packet's README names the old path too.
+
+## 2026-10-18 — `3846_layover_compass_assistant_flag.sql`, written and NOT applied anywhere (Layover 165 program, lane B1-C)
+
+Seeds `layover_compass_assistant_enabled` FALSE: the §12 Layover Compass assistant (census-layover L100, L102–L113,
+L268), under the owner's directive of 2026-10-18. Flag only: no table, column, function or policy.
+
+- **Gap number.** It applies at 3846 on a fresh replay (local-db, beta) and after 3999 on portava-ci and production.
+  It is order-independent: it depends on nothing numbered above it, and nothing above it alters `feature_flags`' shape
+  or this flag (the file's header records the grep).
+- **Seed.** `INSERT … ON CONFLICT DO NOTHING`, FALSE. With the flag OFF, absent or unreadable, POST
+  /airport/sessions/:id/compass answers exactly as the certified-only door does today.
+- **Rollback:** `db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql`. It refuses while the flag
+  is TRUE and while `feature_flag_audit_log` holds history for it (0118's cascade would erase that history), then
+  deletes the flag row and 3846's ledger row. Proven by the lane on PGlite: forward, rollback, a second rollback and
+  a re-apply each leave the expected state, and every refusal fires.
+- **Press.** Apply 3846 (portava-ci, then production), then turn the flag ON. The assistant uses the AI integration
+  Compass already uses (`AI_INTEGRATIONS_OPENAI_BASE_URL`, `AI_INTEGRATIONS_OPENAI_API_KEY`); without it every
+  assisted answer falls back to the certified answer and names the reason.

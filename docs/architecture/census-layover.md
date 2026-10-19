@@ -12568,3 +12568,53 @@ writer). The cited line 276 is byte-identical. Tests: `artifacts/api-server/src/
 card's own fallback and checked not to be claim-shaped (`artifacts/api-server/src/test/layoverOverviewDisruptionMemory.test.ts`).
 
 Rows: none move. 296 = 81 C / 165 W / 50 N / 0 X, as the headline above.
+
+### Layover 165 program, lane B1-C (2026-10-18): the §12 assistant built behind a FALSE flag — no row moves
+
+*Branch `claude/wave4-build-20261017`; uncommitted at this writing, committed with this section. The owner's directive of
+2026-10-18 puts the AI layover assistant in scope "with model integration and approved tool execution" and supersedes
+lead rulings L-CL02a/c/d on the layover door. Census-compass CL-02 ("hard safety cannot be overridden by Compass prose")
+still binds and is held below. Rule A.2 keeps every row at W until its press.*
+
+What was built: the model and all twelve §12 tools run on the live door POST /airport/sessions/:id/compass
+(`artifacts/api-server/src/services/airport/LayoverCompassAssistant.ts:1306#export async function answerLayoverQuestionWithAssistant(`),
+reached through one in-place `.then` on the certified core's call
+(`artifacts/api-server/src/routes/airport.ts:1221#}).then((base) => layoverCompassDoorAnswer(`). It is gated by
+`layover_compass_assistant_enabled`, seeded FALSE by `artifacts/api-server/src/migrations/3846_layover_compass_assistant_flag.sql`
+(unapplied everywhere). Flag OFF, absent or unreadable: the door is byte-identical to the certified-only door. Flag ON,
+CL-02 is held by four layers, each failing closed: the certified text always leads
+(`artifacts/api-server/src/services/airport/LayoverCompassAssistant.ts:1429#const parts = [base.answer];`); the tools read only
+the certified record or owner-scoped route reads, scrubbed of coordinates and identities, and `replan` only previews;
+one hit of the hardened envelope detector withdraws ALL model prose
+(`artifacts/api-server/src/services/airport/LayoverCompassAssistant.ts:1388#if (!detected.ok) {`); and a closed-vocabulary gate
+admits a model sentence only if every word is on a reviewed list
+(`artifacts/api-server/src/services/airport/LayoverCompassAssistant.ts:1132#export function admitModelSentence(`). Any model
+failure, timeout, rate limit or certification mismatch returns the certified answer with the reason named.
+
+| id | was | now | C on |
+| --- | --- | --- | --- |
+| L100 | W | W | the press: 3846 applied and `layover_compass_assistant_enabled` ON, with the AI integration the Compass chat already uses (`AI_INTEGRATIONS_OPENAI_BASE_URL`, `AI_INTEGRATIONS_OPENAI_API_KEY`). Built: the model orchestrates the tools, compares plans from the certified record and explains (`artifacts/api-server/src/services/airport/__tests__/layoverCompassAssistant.test.ts:548#describe("L100`). The previous reason ("removed from the layover door by L-CL02d") is superseded. |
+| L102 | W | W | as L100 (tool `getLayoverContext`). |
+| L103 | W | W | as L100. |
+| L104 | W | W | as L100. |
+| L105 | W | W | as L100. |
+| L106 | W | W | as L100. |
+| L107 | W | W | as L100. |
+| L108 | W | W | as L100. |
+| L109 | W | W | as L100. |
+| L110 | W | W | as L100. |
+| L111 | W | W | as L100. |
+| L112 | W | W | as L100. `replan` previews and never persists; the persisted replan stays the traveller's report on the disruption card (owner question Q1 in `docs/ops/layover-owner-decisions-20261018.md`). |
+| L113 | W | W | as L100. |
+| L268 | W | W | as L100 (tool access, proactive operational events, explanation and clarification). |
+
+Every one of the twelve tools is exercised on every certified state with every argument shape, and none emits a deadline
+or window the certified record does not hold
+(`artifacts/api-server/src/services/airport/__tests__/layoverCompassAssistant.test.ts:273#describe("§12 certified-only source`).
+Route tests with the flag ON:
+`artifacts/api-server/src/services/airport/__tests__/layoverCompassToolLoop.test.ts:354#it("the twelve §12 declarations travel on the request`.
+No assertion of the six older compass suites changed; their L-CL02d tests now run, and still pass, with the flag absent
+(the seed). A real-schema test on the full migrated chain is written and lands with the shared harness. Mutants: 23,
+all killed. No real model was called by any test.
+
+Rows: none move. 296 = 81 C / 165 W / 50 N / 0 X, as the headline above.

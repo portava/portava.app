@@ -1199,15 +1199,15 @@ router.post("/airport/sessions/:id/compass", async (req, res) => {
   const airport = await airportOr503(sc, res, session);
   if (!airport) return;
 
-  // ── LEAD RULING L-CL02d (2026-10-09): certified-only by construction ─────
+  // ── §12 on this door: owner decision 2026-10-18 (supersedes L-CL02a/c/d) ──
   //
-  // This door answers every question with the certified text + deterministic
-  // airport facts (`answerLayoverQuestion`). No model and no tool runs here, so
-  // nothing reads the recommendations, the plan stops, the crews or the
-  // checkpoints that the deleted tool loop used to be handed — least data
-  // touched (L-CL02b). The only reads are the ones the CERTIFICATION needs: the
-  // traveller's corridor (census-discovery §65) and, when its flag is on, the
-  // certified snapshot (census-discovery §81).
+  // The certified core answers FIRST, on every question: certified text +
+  // deterministic airport facts (`answerLayoverQuestion`). Behind
+  // `layover_compass_assistant_enabled` (seeded FALSE; foot of this file) the
+  // model may then add wording and comparisons, with the twelve §12 tools, held
+  // to the certified record (LayoverCompassAssistant). OFF, nothing else is read
+  // — least data touched (L-CL02b). Read here for the CERTIFICATION: the
+  // traveller's corridor (census-discovery §65) and the snapshot (§81).
   const nowMs = Date.now();
   const compassEntry = await sessionEntry(sc, airport, session); // census-discovery §65
   const snapshot = await consumerLayoverSnapshot(sc, airport, session, nowMs); // census-discovery §81: null (flag off) keeps the legacy certification below
@@ -1218,14 +1218,14 @@ router.post("/airport/sessions/:id/compass", async (req, res) => {
     question: parsed.data.question,
     session, snapshot, nowMs: certifiedAtMs,
     airport, entry: compassEntry, // census-discovery §65: the answer certifies with the snapshot's entry input
-  });
+  }).then((base) => layoverCompassDoorAnswer(sc, user.id, base, { question: parsed.data.question, session, snapshot, nowMs: certifiedAtMs, airport, entry: compassEntry })); // §12 assistant (foot of this file): flag OFF → `base`, unchanged
 
   await emitLayoverEvent(sc, session.id, user.id, "compass_question_asked", {
     involvesLeaving: answer.involvesLeaving,
-    // What the traveller was shown — always certified_only, no model (L-CL02d) —
-    // and whether they asked during a live layover (L-CL02c: status-live OR
-    // clock-live, fail closed).
-    answerMode: answer.modelProse.mode, modelConsulted: answer.modelConsulted,
+    // What the traveller was shown (certified_only, or "confined" model prose
+    // behind the certified text with the assistant flag ON), the assistant's
+    // status, and whether they asked during a live layover (L-CL02c, fail closed).
+    answerMode: answer.modelProse.mode, modelConsulted: answer.modelConsulted, assistant: answer.assistant.status, assistantFallback: answer.assistant.fallbackReason, toolsConsulted: answer.toolsConsulted,
     liveLayover: layoverSessionIsLiveAt(session, certifiedAtMs),
   });
 
@@ -5422,3 +5422,67 @@ router.get("/airport/sessions/:id/decisions/replay", async (req, res) => {
       sendError(res, "degraded_unavailable", DECISION_HISTORY_UNREADABLE);
   }
 });
+
+// ── §12 Compass on the layover door: the assistant (owner decision 2026-10-18) ──
+//
+// Appended at the foot so no cited line above moves; the compass handler
+// reaches it through one in-place `.then` on its `answerLayoverQuestion` call,
+// so the certified core is computed on EVERY answer, flag or no flag.
+//
+// `layover_compass_assistant_enabled` (seeded FALSE by 3846) OFF, absent or
+// unreadable (`isFlagEnabled` fails closed): the certified answer exactly as
+// before, and none of the reads below runs. ON: the reads the twelve §12 tools
+// need, each LAZY (run only when a tool, the comparison or §12.1's top-plan test
+// asks) and each carrying its OUTCOME — a failed read is a named reason, never
+// an empty list. Every read is the session owner's: the session was proven
+// owned by `ownedSessionOr`, and the crew read is the crew card's own.
+import { answerLayoverQuestionWithAssistant, assistantOff, readLayoverOpportunities, type CompassAssistantAnswer, type ToolRecommendation, type ToolStop } from "../services/airport/LayoverCompassAssistant.js";
+import type { CompassLayoverAnswer } from "../services/airport/LayoverCompassService.js";
+import type { LayoverSnapshot } from "../services/airport/LayoverSnapshot.js";
+import { compassCrewCandidates as crewCandidatesForCompass } from "../services/layover/LayoverCrewVisibility.js";
+
+export async function layoverCompassDoorAnswer(
+  sc: any,
+  userId: string,
+  base: CompassLayoverAnswer,
+  input: { question: string; session: LayoverSession; snapshot: LayoverSnapshot | null; nowMs: number; airport: AirportProfile; entry: EntryEligibility | null },
+): Promise<CompassAssistantAnswer> {
+  if (!await isFlagEnabled(sc, "layover_compass_assistant_enabled")) return assistantOff(base);
+  const { session, airport, nowMs, entry } = input;
+  return answerLayoverQuestionWithAssistant(sc, {
+    ...input, userId, base,
+    sources: {
+      recommendations: async () => {
+        const read = await getRecommendations(sc, session.id);
+        if (!read.ok) return { ok: false, reason: "layover_recommendations_unreadable" };
+        // census L43: after a confirmed re-entry, the same airport-side list the card shows.
+        const shown = applyLandsideSuppression(read.recommendations, await landsideSuppressionFor(sc, session.id, nowMs));
+        return { ok: true, value: shown.filter((r) => typeof r.id === "string" && r.id.length > 0).map(compassToolRecommendation) };
+      },
+      stops: async () => {
+        const read = await loadStops(sc, session.id);
+        return read.ok ? { ok: true, value: read.stops.map(compassToolStop) } : { ok: false, reason: "layover_plan_stops_unreadable" };
+      },
+      // §48 / §14.1: block-cleared, behind the crew card's meet gate, refusing when unreadable.
+      crew: async () => crewCandidatesForCompass(sc, userId, crewCityFor(airport, session), new Date(nowMs).toISOString(), crewMeetGateFor(sc, userId, airport, session, nowMs, entry)),
+      disruption: async () => {
+        const d = await overviewDisruption(sc, session.id, userId);
+        return d.status === "known" ? { ok: true, value: { ...d } } : { ok: false, reason: d.reason };
+      },
+      opportunities: async () => readLayoverOpportunities(sc, userId, session.id),
+    },
+  });
+}
+
+/** A persisted card as the tools see it: no coordinates, no place id, no plan-item id. */
+function compassToolRecommendation(r: { id?: string; title: string; recType: string; insideAirport: boolean; activityTimeMin: number | null; travelTimeMin: number | null; safetyLabel?: string | null; warningReason: string | null }): ToolRecommendation {
+  return {
+    id: String(r.id), title: r.title, recType: r.recType ?? null, insideAirport: r.insideAirport === true,
+    activityTimeMin: r.activityTimeMin, travelTimeMin: r.travelTimeMin, safetyLabel: r.safetyLabel ?? null, warningReason: r.warningReason ?? null,
+  };
+}
+
+/** A stored stop as the tools see it. `stopRowToJson` writes 0 for "nobody said"; it stays 0 and the plan-fit classifier reads it as unstated. */
+function compassToolStop(s: any): ToolStop {
+  return { id: String(s.id), title: String(s.title ?? ""), durationMin: s.durationMin ?? null, travelMin: s.travelMin ?? null, insideAirport: s.insideAirport === true };
+}

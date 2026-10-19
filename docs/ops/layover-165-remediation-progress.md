@@ -21,19 +21,53 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 
 | Batch | Rows | OPEN | IN PROGRESS | BUILT | VERIFIED | VERIFIED PASS | BLOCKED-EXTERNAL |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| B1-C assistant | 14 | 14 | 0 | 0 | 0 | 0 | 0 |
-| B1-F flight data | 6 | 6 | 0 | 0 | 0 | 0 | 0 |
-| B1-P pressed-state verification | 58 | 58 | 0 | 0 | 0 | 0 | 0 |
-| B1-R1 routing (server) | 12 | 12 | 0 | 0 | 0 | 0 | 0 |
+| B1-C assistant | 14 | 0 | 0 | 14 | 0 | 0 | 0 |
+| B1-F flight data | 6 | 0 | 6 | 0 | 0 | 0 | 0 |
+| B1-P pressed-state verification | 58 | 0 | 58 | 0 | 0 | 0 | 0 |
+| B1-R1 routing (server) | 12 | 0 | 12 | 0 | 0 | 0 | 0 |
 | B2-J migrations | 7 | 7 | 0 | 0 | 0 | 0 | 0 |
 | B2-L curation/maturity/entry | 15 | 15 | 0 | 0 | 0 | 0 | 0 |
-| B2-L live intelligence | 10 | 10 | 0 | 0 | 0 | 0 | 0 |
+| B2-L live intelligence | 10 | 0 | 10 | 0 | 0 | 0 | 0 |
 | B2-M metrics | 5 | 5 | 0 | 0 | 0 | 0 | 0 |
 | B2-R2 routing (map/client) | 9 | 9 | 0 | 0 | 0 | 0 | 0 |
 | B2-X product decisions | 12 | 12 | 0 | 0 | 0 | 0 | 0 |
 | B3-D deferred | 3 | 3 | 0 | 0 | 0 | 0 | 0 |
 | B3-K code+press | 14 | 14 | 0 | 0 | 0 | 0 | 0 |
-| **Total** | **165** | **165** | 0 | 0 | 0 | 0 | 0 |
+| **Total** | **165** | **65** | **86** | **14** | **0** | **0** | **0** |
+
+## Checkpoint (resumable; updated after every batch)
+
+*Last updated 2026-10-18, after lane B1-C was integrated.*
+
+**Branch** `claude/wave4-build-20261017` (worktree `/Users/areyouok/portava-sandbox/wt-claude-wave4-20261017`, PR #764,
+stacked on #763 and #762; nothing merged or deployed).
+
+**Lanes** (builders on Opus, independent verification on Fable; at most four builders and one verifier at a time):
+
+| lane | rows | state |
+| --- | --- | --- |
+| B1-C assistant | L100, L102–L113, L268 | BUILT; committed with this update; independent verification next |
+| B1-R1 routing (server) | L60, L61, L63, L65, L66, L68–L71, L221, L260, L282 | building (migration range 3856–3865) |
+| B1-F flight data | L11, L21, L33, L239, L259, L267 | building (3826–3835) |
+| B1-P pressed-state verification | the 58 press rows | building: real-schema harness (full chain on PGlite, real supabase-js through a PostgREST bridge); 3513 family 15/15 pressed |
+| B2-LIVE live intelligence | L54, L55, L81, L180, L227, L228, L281, L285–L287 | building (3885–3889) |
+| B2-CURATE curation, maturity, entry | L14, L48, L77, L79, L80, L83, L120, L143, L204, L220, L223, L243, L246, L247, L249 | brief written; next free slot (3874, 3880–3884) |
+| B2-CREW crew, consent, sensing, shared rides | L130, L134, L135, L139, L144, L154, L157, L202 | brief written (3872, 3875–3879) |
+| B2-PLATFORM metrics, service-role audit, real-schema tests, typed reads | L205, L208, L212, L214–L216, L236, L294, L295 | brief written (3890–3892) |
+| B2-BUDDY Rent-a-Buddy specialist, Safe Return | L272, L273 | brief written (3893–3895) |
+| B2-RECS recommendations, snapshots, contracts | L26, L38, L50, L74, L76, L78, L97, L175, L176, L178, L182, L183, L192, L264 | after B1-R1 and B1-F land (3871, 3873, 3896–3899) |
+| B2-MAP map and client | L17, L67, L115, L116, L118, L119, L121, L151, L270 | after B1-R1 lands |
+| B3-ENGINE lifecycle, timing, engine refactor, phrases | L15, L39, L46, L56, L58, L73, L94, L155 | last: it refactors the safety derivation others read |
+
+**Commits for this program so far:** `55fc99e9f` (3996's rollback replaced; this tracker), `a882730cc` (that rollback
+keeps every later vocabulary value), then lane B1-C.
+
+**Open owner questions raised by lanes:** Q1 (Compass `replan` previews only; applying it needs a ruling); Q2
+(/compass/ask stays certified-only on a live layover).
+
+**Next steps, exactly:** integrate each lane's handback as it lands (register tests, census section + acknowledgements,
+clean-checkout gate + full suite, commit, Fable verification, update this file); start the next lane from the table
+above in every freed builder slot.
 
 ## Rows
 
@@ -48,7 +82,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L4 — Unknown critical facts reduce confidence and may fail closed for landside recommendations
 - **Original requirement:** Unknown critical facts reduce confidence and may fail closed for landside recommendations (the census body row quotes the spec; the full wording is at the row's census line).
@@ -61,7 +95,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L5 — Every consequential recommendation is versioned, explainable and replayable
 - **Original requirement:** Every consequential recommendation is versioned, explainable and replayable (the census body row quotes the spec; the full wording is at the row's census line).
@@ -74,7 +108,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L6 — All surfaces consume the same certified LayoverSnapshot/RecommendationContract; no duplicate time-budget logic
 - **Original requirement:** All surfaces consume the same certified LayoverSnapshot/RecommendationContract; no duplicate time-budget logic (the census body row quotes the spec; the full wording is at the row's census line).
@@ -87,7 +121,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L11 — Trips owns flight segments / itinerary relationships / trip context; must not own layover safety calculations
 - **Original requirement:** Trips owns flight segments / itinerary relationships / trip context; must not own layover safety calculations (the census body row quotes the spec; the full wording is at the row's census line).
@@ -100,7 +134,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-F)
 
 ### L12 — Layover Session owns lifecycle, constraints, snapshots and state; must not own a generic city content catalog
 - **Original requirement:** Layover Session owns lifecycle, constraints, snapshots and state; must not own a generic city content catalog (the census body row quotes the spec; the full wording is at the row's census line).
@@ -113,7 +147,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L14 — Airport Intelligence owns airport operational facts + provenance + TTL; must not own user social identity
 - **Original requirement:** Airport Intelligence owns airport operational facts + provenance + TTL; must not own user social identity (the census body row quotes the spec; the full wording is at the row's census line).
@@ -165,7 +199,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L21 — layover_sessions (id, user_id, trip_id, airport_place_id, arrival/departure_segment_id, state, connection_type, detected_source, started_at, expires_at, active_snapshot_id, confidence_band)
 - **Original requirement:** layover_sessions (id, user_id, trip_id, airport_place_id, arrival/departure_segment_id, state, connection_type, detected_source, started_at, expires_at, active_snapshot_id, confidence_band) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -178,7 +212,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-F)
 
 ### L26 — layover_recommendations (snapshot_id, candidate_type, status, plan_json, utility_score, risk_band, confidence, expires_at)
 - **Original requirement:** layover_recommendations (snapshot_id, candidate_type, status, plan_json, utility_score, risk_band, confidence, expires_at) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -204,7 +238,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L33 — LayoverState — 17 members from DETECTED to EXPIRED
 - **Original requirement:** LayoverState — 17 members from DETECTED to EXPIRED (the census body row quotes the spec; the full wording is at the row's census line).
@@ -217,7 +251,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-F)
 
 ### L35 — BaggageMode = CHECKED_THROUGH \
 - **Original requirement:** BaggageMode = CHECKED_THROUGH \ (the census body row quotes the spec; the full wording is at the row's census line).
@@ -230,7 +264,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L36 — RiskBand = LOW \
 - **Original requirement:** RiskBand = LOW \ (the census body row quotes the spec; the full wording is at the row's census line).
@@ -243,7 +277,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L37 — ConfidenceBand = HIGH \
 - **Original requirement:** ConfidenceBand = HIGH \ (the census body row quotes the spec; the full wording is at the row's census line).
@@ -256,7 +290,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L38 — RecommendationStatus = ELIGIBLE \
 - **Original requirement:** RecommendationStatus = ELIGIBLE \ (the census body row quotes the spec; the full wording is at the row's census line).
@@ -295,7 +329,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L41 — EXECUTING → RETURN_SOON: threshold reached or risk worsened; side effects = high-priority notification, de-emphasise discovery
 - **Original requirement:** EXECUTING → RETURN_SOON: threshold reached or risk worsened; side effects = high-priority notification, de-emphasise discovery (the census body row quotes the spec; the full wording is at the row's census line).
@@ -308,7 +342,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L44 — * → DISRUPTED: material disruption; side effects = invalidate stale recommendations, replan, preserve audit trail
 - **Original requirement:** * → DISRUPTED: material disruption; side effects = invalidate stale recommendations, replan, preserve audit trail (the census body row quotes the spec; the full wording is at the row's census line).
@@ -321,7 +355,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L46 — The subtraction ladder: scheduled − deplane − immigration/customs − baggage − exit friction − outbound − return (future conditions, not symmetric) − security/re-entry − terminal transfer − boarding buffer − contingency = usable
 - **Original requirement:** The subtraction ladder: scheduled − deplane − immigration/customs − baggage − exit friction − outbound − return (future conditions, not symmetric) − security/re-entry − terminal transfer − boarding buffer − contingency = usable (the census body row quotes the spec; the full wording is at the row's census line).
@@ -373,7 +407,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B2-LIVE)
 
 ### L55 — Safety-critical calculations use a configurable conservative percentile by data maturity/consequence; do not collapse to a single average
 - **Original requirement:** Safety-critical calculations use a configurable conservative percentile by data maturity/consequence; do not collapse to a single average (the census body row quotes the spec; the full wording is at the row's census line).
@@ -386,7 +420,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B2-LIVE)
 
 ### L56 — A generalised engine answering "what can this user do before they must be somewhere else"
 - **Original requirement:** A generalised engine answering "what can this user do before they must be somewhere else" (the census body row quotes the spec; the full wording is at the row's census line).
@@ -425,7 +459,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-R1)
 
 ### L61 — Time-based isochrone/envelope geometry, not a fixed radius
 - **Original requirement:** Time-based isochrone/envelope geometry, not a fixed radius (the census body row quotes the spec; the full wording is at the row's census line).
@@ -438,7 +472,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-R1)
 
 ### L63 — Envelope edges contract as confidence drops or return risk rises
 - **Original requirement:** Envelope edges contract as confidence drops or return risk rises (the census body row quotes the spec; the full wording is at the row's census line).
@@ -451,7 +485,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-R1)
 
 ### L65 — candidate_feasible iff outbound_arrival + minimum_experience_duration + conservative_return_duration <= hard_return_by
 - **Original requirement:** candidate_feasible iff outbound_arrival + minimum_experience_duration + conservative_return_duration <= hard_return_by (the census body row quotes the spec; the full wording is at the row's census line).
@@ -464,7 +498,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-R1)
 
 ### L66 — SafeEnvelope = union(points satisfying the feasibility constraint)
 - **Original requirement:** SafeEnvelope = union(points satisfying the feasibility constraint) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -477,7 +511,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-R1)
 
 ### L67 — Map bands SAFE / TIGHT / BLOCKED
 - **Original requirement:** Map bands SAFE / TIGHT / BLOCKED (the census body row quotes the spec; the full wording is at the row's census line).
@@ -503,7 +537,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-R1)
 
 ### L69 — Single fragile corridor → increase risk penalty
 - **Original requirement:** Single fragile corridor → increase risk penalty (the census body row quotes the spec; the full wording is at the row's census line).
@@ -516,7 +550,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-R1)
 
 ### L70 — Non-interruptible transport/activity → increase risk penalty
 - **Original requirement:** Non-interruptible transport/activity → increase risk penalty (the census body row quotes the spec; the full wording is at the row's census line).
@@ -529,7 +563,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-R1)
 
 ### L71 — Transfer count → increase plan complexity/uncertainty
 - **Original requirement:** Transfer count → increase plan complexity/uncertainty (the census body row quotes the spec; the full wording is at the row's census line).
@@ -542,7 +576,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-R1)
 
 ### L73 — Offline risk → require cached route + deadline before departure where possible
 - **Original requirement:** Offline risk → require cached route + deadline before departure where possible (the census body row quotes the spec; the full wording is at the row's census line).
@@ -646,7 +680,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B2-LIVE)
 
 ### L82 — Traveler observation — checkpoint timing, queue report, closure; confidence-weighted
 - **Original requirement:** Traveler observation — checkpoint timing, queue report, closure; confidence-weighted (the census body row quotes the spec; the full wording is at the row's census line).
@@ -659,7 +693,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L83 — Historical model — time-of-day distributions, recalibrated
 - **Original requirement:** Historical model — time-of-day distributions, recalibrated (the census body row quotes the spec; the full wording is at the row's census line).
@@ -685,7 +719,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L85 — Never silently merge contradictory gate/terminal/queue facts
 - **Original requirement:** Never silently merge contradictory gate/terminal/queue facts (the census body row quotes the spec; the full wording is at the row's census line).
@@ -698,7 +732,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L86 — Preserve source provenance and a conflict flag
 - **Original requirement:** Preserve source provenance and a conflict flag (the census body row quotes the spec; the full wording is at the row's census line).
@@ -711,7 +745,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L87 — For safety calculations, prefer conservative values when credible sources disagree
 - **Original requirement:** For safety calculations, prefer conservative values when credible sources disagree (the census body row quotes the spec; the full wording is at the row's census line).
@@ -724,7 +758,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L88 — Community observations require plausibility checks, corroboration and decay
 - **Original requirement:** Community observations require plausibility checks, corroboration and decay (the census body row quotes the spec; the full wording is at the row's census line).
@@ -737,7 +771,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L89 — Official data is not automatically truth when fresh contradictory evidence exists; contradiction increases uncertainty
 - **Original requirement:** Official data is not automatically truth when fresh contradictory evidence exists; contradiction increases uncertainty (the census body row quotes the spec; the full wording is at the row's census line).
@@ -750,7 +784,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L92 — Normalise and deduplicate the external/internal event
 - **Original requirement:** Normalise and deduplicate the external/internal event (the census body row quotes the spec; the full wording is at the row's census line).
@@ -763,7 +797,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L93 — Identify impacted active sessions
 - **Original requirement:** Identify impacted active sessions (the census body row quotes the spec; the full wording is at the row's census line).
@@ -776,7 +810,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L94 — Recompute only the affected constraint nodes
 - **Original requirement:** Recompute only the affected constraint nodes (the census body row quotes the spec; the full wording is at the row's census line).
@@ -812,10 +846,10 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Files / gating artifact (triage):** L-CL02d
 - **Census lines read:** 9665
 - **Batch:** B1-C assistant
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Required correction:** Model orchestrates the twelve §12 tools on POST /airport/sessions/:id/compass (LayoverCompassAssistant.ts answerLayoverQuestionWithAssistant), compares plans from the certified record, asks §12.1's clarifying question (now plan-aware), explains; CL-02 held by four fail-closed layers.
+- **Migration:** 3846_layover_compass_assistant_flag.sql (flag seeded FALSE; rollback db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql, proven on PGlite) · **Tests:** layoverCompassAssistant.test.ts 356/356; layoverCompassToolLoop.test.ts 51/51 (10 flag-ON); six older compass suites unchanged; real-schema src/test/db/layoverCompassAssistant.db.test.ts 6/6 pressed, flag-off/absent arms red (lands with the shared harness); 23 mutants killed · **Production dependency:** owner press: apply 3846, turn layover_compass_assistant_enabled ON; AI_INTEGRATIONS_OPENAI_BASE_URL / _API_KEY (already used by Compass)
+- **Evidence:** lane B1-C handback scratchpad/l165-b1-c-handback.txt §1; census-layover section 'Layover 165 program, lane B1-C (2026-10-18)'; commit pending
+- **Status:** BUILT (independent verification pending; W until the press)
 
 ### L102 — Tool getLayoverContext(sessionId)
 - **Original requirement:** Tool getLayoverContext(sessionId) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -825,10 +859,10 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Files / gating artifact (triage):** L-CL02d
 - **Census lines read:** 9666
 - **Batch:** B1-C assistant
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Required correction:** Tool rebuilt in LayoverCompassAssistant.ts; reads only the certified record or owner-scoped route reads, scrubbed of coordinates and identities.
+- **Migration:** 3846_layover_compass_assistant_flag.sql (flag seeded FALSE; rollback db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql, proven on PGlite) · **Tests:** layoverCompassAssistant.test.ts 356/356; layoverCompassToolLoop.test.ts 51/51 (10 flag-ON); six older compass suites unchanged; real-schema src/test/db/layoverCompassAssistant.db.test.ts 6/6 pressed, flag-off/absent arms red (lands with the shared harness); 23 mutants killed · **Production dependency:** owner press: apply 3846, turn layover_compass_assistant_enabled ON; AI_INTEGRATIONS_OPENAI_BASE_URL / _API_KEY (already used by Compass)
+- **Evidence:** lane B1-C handback scratchpad/l165-b1-c-handback.txt §1; census-layover section 'Layover 165 program, lane B1-C (2026-10-18)'; commit pending
+- **Status:** BUILT (independent verification pending; W until the press)
 
 ### L103 — getConnectionState(sessionId)
 - **Original requirement:** getConnectionState(sessionId) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -838,10 +872,10 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Files / gating artifact (triage):** L-CL02d
 - **Census lines read:** 9667
 - **Batch:** B1-C assistant
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Required correction:** Tool rebuilt in LayoverCompassAssistant.ts; reads only the certified record or owner-scoped route reads, scrubbed of coordinates and identities.
+- **Migration:** 3846_layover_compass_assistant_flag.sql (flag seeded FALSE; rollback db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql, proven on PGlite) · **Tests:** layoverCompassAssistant.test.ts 356/356; layoverCompassToolLoop.test.ts 51/51 (10 flag-ON); six older compass suites unchanged; real-schema src/test/db/layoverCompassAssistant.db.test.ts 6/6 pressed, flag-off/absent arms red (lands with the shared harness); 23 mutants killed · **Production dependency:** owner press: apply 3846, turn layover_compass_assistant_enabled ON; AI_INTEGRATIONS_OPENAI_BASE_URL / _API_KEY (already used by Compass)
+- **Evidence:** lane B1-C handback scratchpad/l165-b1-c-handback.txt §1; census-layover section 'Layover 165 program, lane B1-C (2026-10-18)'; commit pending
+- **Status:** BUILT (independent verification pending; W until the press)
 
 ### L104 — getTimeWallet(sessionId)
 - **Original requirement:** getTimeWallet(sessionId) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -851,10 +885,10 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Files / gating artifact (triage):** L-CL02d
 - **Census lines read:** 9668
 - **Batch:** B1-C assistant
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Required correction:** Tool rebuilt in LayoverCompassAssistant.ts; reads only the certified record or owner-scoped route reads, scrubbed of coordinates and identities.
+- **Migration:** 3846_layover_compass_assistant_flag.sql (flag seeded FALSE; rollback db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql, proven on PGlite) · **Tests:** layoverCompassAssistant.test.ts 356/356; layoverCompassToolLoop.test.ts 51/51 (10 flag-ON); six older compass suites unchanged; real-schema src/test/db/layoverCompassAssistant.db.test.ts 6/6 pressed, flag-off/absent arms red (lands with the shared harness); 23 mutants killed · **Production dependency:** owner press: apply 3846, turn layover_compass_assistant_enabled ON; AI_INTEGRATIONS_OPENAI_BASE_URL / _API_KEY (already used by Compass)
+- **Evidence:** lane B1-C handback scratchpad/l165-b1-c-handback.txt §1; census-layover section 'Layover 165 program, lane B1-C (2026-10-18)'; commit pending
+- **Status:** BUILT (independent verification pending; W until the press)
 
 ### L105 — getSafeEnvelope(sessionId)
 - **Original requirement:** getSafeEnvelope(sessionId) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -864,10 +898,10 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Files / gating artifact (triage):** L-CL02d
 - **Census lines read:** 9669
 - **Batch:** B1-C assistant
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Required correction:** Tool rebuilt in LayoverCompassAssistant.ts; reads only the certified record or owner-scoped route reads, scrubbed of coordinates and identities.
+- **Migration:** 3846_layover_compass_assistant_flag.sql (flag seeded FALSE; rollback db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql, proven on PGlite) · **Tests:** layoverCompassAssistant.test.ts 356/356; layoverCompassToolLoop.test.ts 51/51 (10 flag-ON); six older compass suites unchanged; real-schema src/test/db/layoverCompassAssistant.db.test.ts 6/6 pressed, flag-off/absent arms red (lands with the shared harness); 23 mutants killed · **Production dependency:** owner press: apply 3846, turn layover_compass_assistant_enabled ON; AI_INTEGRATIONS_OPENAI_BASE_URL / _API_KEY (already used by Compass)
+- **Evidence:** lane B1-C handback scratchpad/l165-b1-c-handback.txt §1; census-layover section 'Layover 165 program, lane B1-C (2026-10-18)'; commit pending
+- **Status:** BUILT (independent verification pending; W until the press)
 
 ### L106 — getReachableExperiences(sessionId) (≡ §18 getCandidates… counted here as the tool; the service method is L182)
 - **Original requirement:** getReachableExperiences(sessionId) (≡ §18 getCandidates… counted here as the tool; the service method is L182) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -877,10 +911,10 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Files / gating artifact (triage):** L-CL02d
 - **Census lines read:** 9670
 - **Batch:** B1-C assistant
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Required correction:** Tool rebuilt in LayoverCompassAssistant.ts; reads only the certified record or owner-scoped route reads, scrubbed of coordinates and identities.
+- **Migration:** 3846_layover_compass_assistant_flag.sql (flag seeded FALSE; rollback db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql, proven on PGlite) · **Tests:** layoverCompassAssistant.test.ts 356/356; layoverCompassToolLoop.test.ts 51/51 (10 flag-ON); six older compass suites unchanged; real-schema src/test/db/layoverCompassAssistant.db.test.ts 6/6 pressed, flag-off/absent arms red (lands with the shared harness); 23 mutants killed · **Production dependency:** owner press: apply 3846, turn layover_compass_assistant_enabled ON; AI_INTEGRATIONS_OPENAI_BASE_URL / _API_KEY (already used by Compass)
+- **Evidence:** lane B1-C handback scratchpad/l165-b1-c-handback.txt §1; census-layover section 'Layover 165 program, lane B1-C (2026-10-18)'; commit pending
+- **Status:** BUILT (independent verification pending; W until the press)
 
 ### L107 — simulatePlan(sessionId, candidateSet)
 - **Original requirement:** simulatePlan(sessionId, candidateSet) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -890,10 +924,10 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Files / gating artifact (triage):** L-CL02d
 - **Census lines read:** 9671
 - **Batch:** B1-C assistant
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Required correction:** Tool rebuilt in LayoverCompassAssistant.ts; reads only the certified record or owner-scoped route reads, scrubbed of coordinates and identities.
+- **Migration:** 3846_layover_compass_assistant_flag.sql (flag seeded FALSE; rollback db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql, proven on PGlite) · **Tests:** layoverCompassAssistant.test.ts 356/356; layoverCompassToolLoop.test.ts 51/51 (10 flag-ON); six older compass suites unchanged; real-schema src/test/db/layoverCompassAssistant.db.test.ts 6/6 pressed, flag-off/absent arms red (lands with the shared harness); 23 mutants killed · **Production dependency:** owner press: apply 3846, turn layover_compass_assistant_enabled ON; AI_INTEGRATIONS_OPENAI_BASE_URL / _API_KEY (already used by Compass)
+- **Evidence:** lane B1-C handback scratchpad/l165-b1-c-handback.txt §1; census-layover section 'Layover 165 program, lane B1-C (2026-10-18)'; commit pending
+- **Status:** BUILT (independent verification pending; W until the press)
 
 ### L108 — getReturnContract(sessionId)
 - **Original requirement:** getReturnContract(sessionId) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -903,10 +937,10 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Files / gating artifact (triage):** L-CL02d
 - **Census lines read:** 9672
 - **Batch:** B1-C assistant
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Required correction:** Tool rebuilt in LayoverCompassAssistant.ts; reads only the certified record or owner-scoped route reads, scrubbed of coordinates and identities.
+- **Migration:** 3846_layover_compass_assistant_flag.sql (flag seeded FALSE; rollback db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql, proven on PGlite) · **Tests:** layoverCompassAssistant.test.ts 356/356; layoverCompassToolLoop.test.ts 51/51 (10 flag-ON); six older compass suites unchanged; real-schema src/test/db/layoverCompassAssistant.db.test.ts 6/6 pressed, flag-off/absent arms red (lands with the shared harness); 23 mutants killed · **Production dependency:** owner press: apply 3846, turn layover_compass_assistant_enabled ON; AI_INTEGRATIONS_OPENAI_BASE_URL / _API_KEY (already used by Compass)
+- **Evidence:** lane B1-C handback scratchpad/l165-b1-c-handback.txt §1; census-layover section 'Layover 165 program, lane B1-C (2026-10-18)'; commit pending
+- **Status:** BUILT (independent verification pending; W until the press)
 
 ### L109 — getAirportState(sessionId)
 - **Original requirement:** getAirportState(sessionId) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -916,10 +950,10 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Files / gating artifact (triage):** L-CL02d
 - **Census lines read:** 9673
 - **Batch:** B1-C assistant
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Required correction:** Tool rebuilt in LayoverCompassAssistant.ts; reads only the certified record or owner-scoped route reads, scrubbed of coordinates and identities.
+- **Migration:** 3846_layover_compass_assistant_flag.sql (flag seeded FALSE; rollback db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql, proven on PGlite) · **Tests:** layoverCompassAssistant.test.ts 356/356; layoverCompassToolLoop.test.ts 51/51 (10 flag-ON); six older compass suites unchanged; real-schema src/test/db/layoverCompassAssistant.db.test.ts 6/6 pressed, flag-off/absent arms red (lands with the shared harness); 23 mutants killed · **Production dependency:** owner press: apply 3846, turn layover_compass_assistant_enabled ON; AI_INTEGRATIONS_OPENAI_BASE_URL / _API_KEY (already used by Compass)
+- **Evidence:** lane B1-C handback scratchpad/l165-b1-c-handback.txt §1; census-layover section 'Layover 165 program, lane B1-C (2026-10-18)'; commit pending
+- **Status:** BUILT (independent verification pending; W until the press)
 
 ### L110 — getCrewCandidates(sessionId)
 - **Original requirement:** getCrewCandidates(sessionId) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -929,10 +963,10 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Files / gating artifact (triage):** L-CL02d
 - **Census lines read:** 9674
 - **Batch:** B1-C assistant
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Required correction:** Tool rebuilt in LayoverCompassAssistant.ts; reads only the certified record or owner-scoped route reads, scrubbed of coordinates and identities.
+- **Migration:** 3846_layover_compass_assistant_flag.sql (flag seeded FALSE; rollback db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql, proven on PGlite) · **Tests:** layoverCompassAssistant.test.ts 356/356; layoverCompassToolLoop.test.ts 51/51 (10 flag-ON); six older compass suites unchanged; real-schema src/test/db/layoverCompassAssistant.db.test.ts 6/6 pressed, flag-off/absent arms red (lands with the shared harness); 23 mutants killed · **Production dependency:** owner press: apply 3846, turn layover_compass_assistant_enabled ON; AI_INTEGRATIONS_OPENAI_BASE_URL / _API_KEY (already used by Compass)
+- **Evidence:** lane B1-C handback scratchpad/l165-b1-c-handback.txt §1; census-layover section 'Layover 165 program, lane B1-C (2026-10-18)'; commit pending
+- **Status:** BUILT (independent verification pending; W until the press)
 
 ### L111 — requestConstraintClarification(sessionId, field)
 - **Original requirement:** requestConstraintClarification(sessionId, field) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -942,10 +976,10 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Files / gating artifact (triage):** L-CL02d
 - **Census lines read:** 9675
 - **Batch:** B1-C assistant
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Required correction:** Tool rebuilt in LayoverCompassAssistant.ts; reads only the certified record or owner-scoped route reads, scrubbed of coordinates and identities.
+- **Migration:** 3846_layover_compass_assistant_flag.sql (flag seeded FALSE; rollback db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql, proven on PGlite) · **Tests:** layoverCompassAssistant.test.ts 356/356; layoverCompassToolLoop.test.ts 51/51 (10 flag-ON); six older compass suites unchanged; real-schema src/test/db/layoverCompassAssistant.db.test.ts 6/6 pressed, flag-off/absent arms red (lands with the shared harness); 23 mutants killed · **Production dependency:** owner press: apply 3846, turn layover_compass_assistant_enabled ON; AI_INTEGRATIONS_OPENAI_BASE_URL / _API_KEY (already used by Compass)
+- **Evidence:** lane B1-C handback scratchpad/l165-b1-c-handback.txt §1; census-layover section 'Layover 165 program, lane B1-C (2026-10-18)'; commit pending
+- **Status:** BUILT (independent verification pending; W until the press)
 
 ### L112 — replan(sessionId, trigger)
 - **Original requirement:** replan(sessionId, trigger) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -955,10 +989,10 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Files / gating artifact (triage):** L-CL02d
 - **Census lines read:** 3917, 9679 (§56.3)
 - **Batch:** B1-C assistant
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Required correction:** Tool built; replan PREVIEWS and never persists (owner question Q1: applying a replan from Compass needs its own ruling).
+- **Migration:** 3846_layover_compass_assistant_flag.sql (flag seeded FALSE; rollback db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql, proven on PGlite) · **Tests:** layoverCompassAssistant.test.ts 356/356; layoverCompassToolLoop.test.ts 51/51 (10 flag-ON); six older compass suites unchanged; real-schema src/test/db/layoverCompassAssistant.db.test.ts 6/6 pressed, flag-off/absent arms red (lands with the shared harness); 23 mutants killed · **Production dependency:** owner press: apply 3846, turn layover_compass_assistant_enabled ON; AI_INTEGRATIONS_OPENAI_BASE_URL / _API_KEY (already used by Compass)
+- **Evidence:** lane B1-C handback scratchpad/l165-b1-c-handback.txt §1; census-layover section 'Layover 165 program, lane B1-C (2026-10-18)'; commit pending
+- **Status:** BUILT (independent verification pending; W until the press)
 
 ### L113 — explainDecision(snapshotId \
 - **Original requirement:** explainDecision(snapshotId \ (the census body row quotes the spec; the full wording is at the row's census line).
@@ -968,10 +1002,10 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Files / gating artifact (triage):** L-CL02d
 - **Census lines read:** 9676
 - **Batch:** B1-C assistant
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Required correction:** Tool rebuilt in LayoverCompassAssistant.ts; reads only the certified record or owner-scoped route reads, scrubbed of coordinates and identities.
+- **Migration:** 3846_layover_compass_assistant_flag.sql (flag seeded FALSE; rollback db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql, proven on PGlite) · **Tests:** layoverCompassAssistant.test.ts 356/356; layoverCompassToolLoop.test.ts 51/51 (10 flag-ON); six older compass suites unchanged; real-schema src/test/db/layoverCompassAssistant.db.test.ts 6/6 pressed, flag-off/absent arms red (lands with the shared harness); 23 mutants killed · **Production dependency:** owner press: apply 3846, turn layover_compass_assistant_enabled ON; AI_INTEGRATIONS_OPENAI_BASE_URL / _API_KEY (already used by Compass)
+- **Evidence:** lane B1-C handback scratchpad/l165-b1-c-handback.txt §1; census-layover section 'Layover 165 program, lane B1-C (2026-10-18)'; commit pending
+- **Status:** BUILT (independent verification pending; W until the press)
 
 ### L115 — Map consumes the active snapshot and envelope geometry; does not recalculate feasibility
 - **Original requirement:** Map consumes the active snapshot and envelope geometry; does not recalculate feasibility (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1010,7 +1044,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L118 — Changing time-budget chips triggers simulation/replanning, not local visual filtering alone
 - **Original requirement:** Changing time-budget chips triggers simulation/replanning, not local visual filtering alone (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1075,7 +1109,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L125 — Map element Blocked area — explain the reason, never imply safe fit
 - **Original requirement:** Map element Blocked area — explain the reason, never imply safe fit (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1088,7 +1122,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L127 — Aggregate presence is the default; identity and precise location are progressively disclosed only with consent
 - **Original requirement:** Aggregate presence is the default; identity and precise location are progressively disclosed only with consent (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1101,7 +1135,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L128 — L0 aggregate only — "14 travelers connecting here"
 - **Original requirement:** L0 aggregate only — "14 travelers connecting here" (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1114,7 +1148,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L130 — L2 mutual discovery — profiles visible under policy
 - **Original requirement:** L2 mutual discovery — profiles visible under policy (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1166,7 +1200,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L139 — Shared rides require opt-in and must avoid revealing the full itinerary to unrelated users
 - **Original requirement:** Shared rides require opt-in and must avoid revealing the full itinerary to unrelated users (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1218,7 +1252,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L151 — Map — cache airport + selected route/area
 - **Original requirement:** Map — cache airport + selected route/area (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1283,7 +1317,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L172 — LayoverSessionService.updateConstraint(sessionId, patch)
 - **Original requirement:** LayoverSessionService.updateConstraint(sessionId, patch) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1296,7 +1330,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L174 — LayoverSessionService.close(sessionId, outcome)
 - **Original requirement:** LayoverSessionService.close(sessionId, outcome) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1309,7 +1343,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L175 — LayoverFeasibilityService.evaluate(sessionId)
 - **Original requirement:** LayoverFeasibilityService.evaluate(sessionId) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1361,7 +1395,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B2-LIVE)
 
 ### L181 — AirportTruthService.reconcile(observations)
 - **Original requirement:** AirportTruthService.reconcile(observations) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1374,7 +1408,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L182 — LayoverExperienceService.getCandidates(sessionId)
 - **Original requirement:** LayoverExperienceService.getCandidates(sessionId) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1413,7 +1447,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L189 — LayoverDecisionService.explain(snapshotId)
 - **Original requirement:** LayoverDecisionService.explain(snapshotId) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1426,7 +1460,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L191 — LayoverDecisionService.replay(sessionId, engineVersion)
 - **Original requirement:** LayoverDecisionService.replay(sessionId, engineVersion) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1439,7 +1473,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L192 — 1. Create enum types and the core layover_sessions table with RLS
 - **Original requirement:** 1. Create enum types and the core layover_sessions table with RLS (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1465,7 +1499,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L195 — 4. Create recommendations + outcome tables
 - **Original requirement:** 4. Create recommendations + outcome tables (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1478,7 +1512,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L196 — 5. Create presence/crew tables with restrictive policies and expiration jobs
 - **Original requirement:** 5. Create presence/crew tables with restrictive policies and expiration jobs (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1491,7 +1525,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L197 — 6. Create airport intelligence observation/truth tables if the existing intelligence schema cannot represent the required TTL/provenance cleanly
 - **Original requirement:** 6. Create airport intelligence observation/truth tables if the existing intelligence schema cannot represent the required TTL/provenance cleanly (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1504,7 +1538,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L198 — 7. Indexes for active-session lookup, session event ordering, unexpired presence, snapshot versioning and impacted-session event fanout
 - **Original requirement:** 7. Indexes for active-session lookup, session event ordering, unexpired presence, snapshot versioning and impacted-session event fanout (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1517,7 +1551,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L199 — 8. Migration postconditions and authorization-contract tests for every client-writable table
 - **Original requirement:** 8. Migration postconditions and authorization-contract tests for every client-writable table (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1530,7 +1564,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L200 — Users may read/write their own session inputs within allowed fields
 - **Original requirement:** Users may read/write their own session inputs within allowed fields (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1543,7 +1577,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L202 — Presence is readable only according to visibility scope and safety policy
 - **Original requirement:** Presence is readable only according to visibility scope and safety policy (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1595,7 +1629,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L207 — DecisionRecord { sessionId, snapshotId, engineVersion, inputHash, inputFacts[], sourceRefs[], rulesApplied[], result, reasonCodes[], computedAt }
 - **Original requirement:** DecisionRecord { sessionId, snapshotId, engineVersion, inputHash, inputFacts[], sourceRefs[], rulesApplied[], result, reasonCodes[], computedAt } (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1608,7 +1642,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L208 — Metric layover_sessions_detected
 - **Original requirement:** Metric layover_sessions_detected (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1699,7 +1733,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-R1)
 
 ### L223 — Overnight → overnight state / expanded options
 - **Original requirement:** Overnight → overnight state / expanded options (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1725,7 +1759,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B2-LIVE)
 
 ### L228 — Traffic spike → return deadline moves earlier
 - **Original requirement:** Traffic spike → return deadline moves earlier (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1738,7 +1772,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B2-LIVE)
 
 ### L233 — Offline after leaving → cached return plan remains visible with a stale indicator
 - **Original requirement:** Offline after leaving → cached return plan remains visible with a stale indicator (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1751,7 +1785,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L236 — Database tests against a real CI schema for column names, enum literals, RLS and migration postconditions
 - **Original requirement:** Database tests against a real CI schema for column names, enum literals, RLS and migration postconditions (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1777,7 +1811,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L239 — E2E tests for detection → evaluation → plan → execution → return → completion
 - **Original requirement:** E2E tests for detection → evaluation → plan → execution → return → completion (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1790,7 +1824,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-F)
 
 ### L240 — Deterministic replay tests for recorded sessions
 - **Original requirement:** Deterministic replay tests for recorded sessions (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1803,7 +1837,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L241 — Decision-diff CI comparing old/new engine behaviour over historical/synthetic corpora
 - **Original requirement:** Decision-diff CI comparing old/new engine behaviour over historical/synthetic corpora (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1816,7 +1850,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L242 — Shadow mode in real environments before high-confidence rollout
 - **Original requirement:** Shadow mode in real environments before high-confidence rollout (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1829,7 +1863,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L243 — L0 Generic — static airport + conservative generic timing; airport-side guidance only by default
 - **Original requirement:** L0 Generic — static airport + conservative generic timing; airport-side guidance only by default (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1894,7 +1928,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L252 — Outlier detection for implausible queue/transport claims
 - **Original requirement:** Outlier detection for implausible queue/transport claims (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1907,7 +1941,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L254 — Verified/trusted requirements for high-risk Buddy/marketplace interactions
 - **Original requirement:** Verified/trusted requirements for high-risk Buddy/marketplace interactions (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1920,7 +1954,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L257 — Validate all external event payloads and deduplicate by stable source keys
 - **Original requirement:** Validate all external event payloads and deduplicate by stable source keys (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1933,7 +1967,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L259 — Replan fanout — index active sessions by airport/route/flight subjects; recompute impacted sessions only
 - **Original requirement:** Replan fanout — index active sessions by airport/route/flight subjects; recompute impacted sessions only (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1946,7 +1980,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-F)
 
 ### L260 — Candidate explosion — pre-filter by envelope/time/category before expensive ranking
 - **Original requirement:** Candidate explosion — pre-filter by envelope/time/category before expensive ranking (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1959,7 +1993,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-R1)
 
 ### L263 — Duplicate events — unique dedup key / source event id
 - **Original requirement:** Duplicate events — unique dedup key / source event id (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1972,7 +2006,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L264 — Race conditions — version/compare-and-swap the active snapshot; reject stale writes
 - **Original requirement:** Race conditions — version/compare-and-swap the active snapshot; reject stale writes (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1998,7 +2032,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-F)
 
 ### L268 — Compass — tool access to certified context; proactive OpportunityEvents; explanation/clarification
 - **Original requirement:** Compass — tool access to certified context; proactive OpportunityEvents; explanation/clarification (the census body row quotes the spec; the full wording is at the row's census line).
@@ -2008,10 +2042,10 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Files / gating artifact (triage):** L-CL02d
 - **Census lines read:** 854
 - **Batch:** B1-C assistant
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Required correction:** Tool access, proactive operational events and explanation/clarification on the layover door.
+- **Migration:** 3846_layover_compass_assistant_flag.sql (flag seeded FALSE; rollback db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql, proven on PGlite) · **Tests:** layoverCompassAssistant.test.ts 356/356; layoverCompassToolLoop.test.ts 51/51 (10 flag-ON); six older compass suites unchanged; real-schema src/test/db/layoverCompassAssistant.db.test.ts 6/6 pressed, flag-off/absent arms red (lands with the shared harness); 23 mutants killed · **Production dependency:** owner press: apply 3846, turn layover_compass_assistant_enabled ON; AI_INTEGRATIONS_OPENAI_BASE_URL / _API_KEY (already used by Compass)
+- **Evidence:** lane B1-C handback scratchpad/l165-b1-c-handback.txt §1; census-layover section 'Layover 165 program, lane B1-C (2026-10-18)'; commit pending
+- **Status:** BUILT (independent verification pending; W until the press)
 
 ### L269 — Discovery — only show experiences from the certified action universe in Layover mode
 - **Original requirement:** Discovery — only show experiences from the certified action universe in Layover mode (the census body row quotes the spec; the full wording is at the row's census line).
@@ -2024,7 +2058,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L270 — Map — safe envelope, plan route, return state, airport digital-twin layers
 - **Original requirement:** Map — safe envelope, plan route, return state, airport digital-twin layers (the census body row quotes the spec; the full wording is at the row's census line).
@@ -2076,7 +2110,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 
 ### L281 — SECURITY_WAIT_HIGH
 - **Original requirement:** SECURITY_WAIT_HIGH (the census body row quotes the spec; the full wording is at the row's census line).
@@ -2089,7 +2123,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B2-LIVE)
 
 ### L282 — RETURN_ROUTE_UNRELIABLE
 - **Original requirement:** RETURN_ROUTE_UNRELIABLE (the census body row quotes the spec; the full wording is at the row's census line).
@@ -2102,7 +2136,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-R1)
 
 ### L285 — DATA_STALE
 - **Original requirement:** DATA_STALE (the census body row quotes the spec; the full wording is at the row's census line).
@@ -2115,7 +2149,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B2-LIVE)
 
 ### L286 — SOURCE_CONFLICT
 - **Original requirement:** SOURCE_CONFLICT (the census body row quotes the spec; the full wording is at the row's census line).
@@ -2128,7 +2162,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B2-LIVE)
 
 ### L287 — TRAFFIC_DEGRADED
 - **Original requirement:** TRAFFIC_DEGRADED (the census body row quotes the spec; the full wording is at the row's census line).
@@ -2141,7 +2175,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B2-LIVE)
 
 ### L294 — C2. Never swallow a schema/data error into plausible empty operational state without structured logging and degraded confidence
 - **Original requirement:** C2. Never swallow a schema/data error into plausible empty operational state without structured logging and degraded confidence (the census body row quotes the spec; the full wording is at the row's census line).
@@ -2180,5 +2214,5 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** OPEN
+- **Status:** IN PROGRESS (lane B1-P)
 

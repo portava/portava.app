@@ -6035,3 +6035,55 @@ byte-identically (`cmp`).
 
 - NOT-GRADED: artifacts/api-server/src/test/adminCompassAbuseFlagsWindow.test.ts — this correction's own test; no Compass row rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/schemaColumnProductionScan.test.ts — the repository-wide scan that found the defect; no Compass row rests on it.
+
+### Correction (2026-10-18, Layover 165 program) — CL-05 was C on code #656 removed; the twelve tools are rebuilt behind a FALSE flag
+
+*Measured on branch `claude/wave4-build-20261017`; uncommitted at this writing, committed with this section.
+`head_commit` is not re-declared.*
+
+**A false green.** §24.3 graded CL-05 ("§12 Twelve layover tools") C because the twelve tools were offered, chosen and
+run. #656 (lead ruling L-CL02d, certified-only by construction) then removed them from the layover door, and no later
+section regraded the row: at this branch's last commit no source file under `artifacts/api-server/src` declares
+`getLayoverContext`. CL-05 has been C on code that no longer existed.
+
+**What changed.** The owner's directive of 2026-10-18 puts the AI layover assistant in scope with the model and approved
+tool execution, and supersedes L-CL02a/c/d on the layover door. The twelve tools are rebuilt in
+`artifacts/api-server/src/services/airport/LayoverCompassAssistant.ts:1306#export async function answerLayoverQuestionWithAssistant(`
+and run on POST /airport/sessions/:id/compass, behind `layover_compass_assistant_enabled`, seeded FALSE by
+`artifacts/api-server/src/migrations/3846_layover_compass_assistant_flag.sql` and applied nowhere. Under the flag rule
+(a row whose only production path is behind a FALSE flag or an unapplied migration is not C) CL-05 is W until that press.
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| CL-05 | C | **W** | the twelve tools exist again and are offered, chosen and run (`artifacts/api-server/src/services/airport/__tests__/layoverCompassToolLoop.test.ts:354#it("the twelve §12 declarations travel on the request`), but only behind `layover_compass_assistant_enabled` (FALSE, 3846 unapplied). C on the press: 3846 applied and the flag ON. |
+
+**CL-02 stays C, with new evidence for the layover door.** Flag OFF, absent or unreadable (the seed): the door is the
+certified-only door, unchanged. Flag ON, four layers each fail closed: the certified text always leads
+(`artifacts/api-server/src/services/airport/LayoverCompassAssistant.ts:1429#const parts = [base.answer];`); one hit of the
+hardened envelope detector, which catches all eight §54.2 widenings, withdraws ALL model prose
+(`artifacts/api-server/src/services/airport/LayoverCompassAssistant.ts:1388#if (!detected.ok) {`, over
+`artifacts/api-server/src/services/airport/LayoverCompassAssistant.ts:952#export function enforceCompassEnvelope(`); a
+closed-vocabulary gate admits a model sentence only if every word is on a reviewed list
+(`artifacts/api-server/src/services/airport/LayoverCompassAssistant.ts:1132#export function admitModelSentence(`); and the
+response carries none of the withheld words
+(`artifacts/api-server/src/services/airport/LayoverCompassAssistant.ts:1453#export function withheld(`). Tests: 31
+adversarial texts, §54.2's eight across six certified states
+(`artifacts/api-server/src/services/airport/__tests__/layoverCompassAssistant.test.ts:527#describe("CL-02 through the assisted answer`),
+and two route cases
+(`artifacts/api-server/src/services/airport/__tests__/layoverCompassToolLoop.test.ts:407#it("CL-02: on a not-yes layover`,
+`artifacts/api-server/src/services/airport/__tests__/layoverCompassToolLoop.test.ts:420#it("CL-02: on the explicit yes`).
+Residuals, stated: the detector is lexical (it decides only whether ALL prose is dropped; the allowlist gate is what
+admits, and an unknown word is withheld); /compass/ask, the general chat, is unchanged and stays certified-only on a live
+layover.
+
+### Headline
+
+| figure | after wave 3 | after 2026-10-18 |
+|---|---:|---:|
+| Denominator | 141 | **141** |
+| BUILT-AND-CORRECT | 127 | **126** |
+| BUILT-BUT-WRONG | 11 | **12** |
+| NOT-BUILT | 1 | **1** |
+| CANNOT-VERIFY | 2 | **2** |
+
+126 + 12 + 1 + 2 = 141.

@@ -1508,6 +1508,13 @@
       ]
     },
     {
+      "flag": "layover_compass_assistant_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3846_layover_compass_assistant_flag.sql:49, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
+      "evidence": []
+    },
+    {
       "flag": "layover_compass_enabled",
       "kind": "CAPABILITY",
       "enabled": true,

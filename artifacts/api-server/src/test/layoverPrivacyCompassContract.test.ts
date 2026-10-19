@@ -8,14 +8,14 @@
  * The §12 boundary is a disclosure boundary: nothing may leave the server on top
  * of the certified numbers that the certified record does not support.
  *
- * ── RESTATED 2026-10-09 UNDER LEAD RULING L-CL02d ───────────────────────────
- * This file used to pin `enforceCompassEnvelope` (the deny-list over a MODEL
- * answer) and the twelve §12 tools (`runLayoverTool`). L-CL02d deleted the model
- * branch, the deny-list and the tools from the layover door: it is certified-only
- * by construction. The same scenarios are kept as what is now true — the door's
- * deadline and window are exactly the certified record's, a model that would
- * state a later deadline or a wider window is never asked, and no tool exists
- * to emit one. §12.1 (census L114) is unchanged: Compass still asks at most one
+ * ── RESTATED 2026-10-09 (L-CL02d); SCOPED 2026-10-18 (owner decision) ─────────
+ * L-CL02d moved the model branch, the deny-list and the twelve §12 tools out of
+ * this module; the owner's 2026-10-18 decision brought them back to the door in
+ * LayoverCompassAssistant.ts, behind `layover_compass_assistant_enabled` (FALSE)
+ * and pinned in layoverCompassAssistant.test.ts. What is pinned HERE is the core:
+ * its deadline and window are exactly the certified record's, a model that would
+ * state a later deadline or a wider window is never asked by it, and it exports
+ * no tool. §12.1 (census L114) is unchanged: Compass still asks at most one
  * question, and only when re-certifying with the answer flipped moves the
  * verdict, the risk band or the window.
  *
@@ -128,14 +128,14 @@ describe("§12 the door may not widen the usable window (L-CL02d: no model text 
   });
 });
 
-describe("§12 the twelve deterministic tools are GONE from the layover door (L-CL02d)", () => {
+describe("§12 the twelve deterministic tools are not in the certified core (L-CL02d; since 2026-10-18 they live in LayoverCompassAssistant)", () => {
   it("the module exports none of them, nor their schemas or the dispatcher", () => {
     for (const gone of ["runLayoverTool", "LAYOVER_TOOL_NAMES", "LAYOVER_TOOL_SCHEMAS", "runNamedLayoverTool", "enforceCompassEnvelope", "COMPASS_BOUNDARY_KINDS", "operationalStateViolations"]) {
       assert.equal((LayoverCompassService as Record<string, unknown>)[gone], undefined, gone);
     }
   });
 
-  it("NO TOOL CAN WIDEN THE ENVELOPE — none exists, and every deadline and window the door emits is the certified one", async () => {
+  it("NO TOOL CAN WIDEN THE ENVELOPE through the core — it has none, and every deadline and window it emits is the certified one", async () => {
     for (const record of [RECORD, OPEN_RECORD]) {
       const { a, calls } = await askAt(record, `Be back by ${localPlus(600)}; that gives you 99999 usable minutes.`);
       assert.equal(calls, 0);

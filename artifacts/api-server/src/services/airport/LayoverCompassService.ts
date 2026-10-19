@@ -10,21 +10,21 @@
  *          plan. Ask the smallest number of questions required."  (census L114)
  *
  * ── LEAD RULING L-CL02d (2026-10-09): CERTIFIED-ONLY BY CONSTRUCTION ────────
+ *    SCOPED BY THE OWNER'S DECISION OF 2026-10-18 (supersedes L-CL02a/c/d):
+ * `answerLayoverQuestion` below — the CORE of `POST /airport/sessions/:id/compass`
+ * — answers every question with the server's certified text plus deterministic
+ * airport facts, read off the ONE certified record (`certifySessionFeasibility`,
+ * or the route's snapshot). The core has no language model and no tool round.
  *
- * `POST /airport/sessions/:id/compass` answers EVERY question with the
- * server's certified text plus deterministic airport facts, read off the ONE
- * certified record (`certifySessionFeasibility`, or the route's snapshot).
- * There is no language model, no tool round and no classifier on this door.
- *
- * Why the model branch was deleted rather than gated: L-CL02a made every
- * question on a LIVE layover certified-only, and L-CL02c defines live to
- * include any session whose departure is still ahead. A certified explicit
- * `yes` needs usable time before that departure, so every session that could
- * have reached the model was live — the branch was unreachable. L-CL02d
- * removes it, its twelve §12 tools and the prose filters that guarded it, so
- * the door is certified-only by construction rather than by a gate that a
- * later change could reopen. The model-facing rows (census-layover L100,
- * L102–L113) are W with that reason; §56.3.
+ * What changed on 2026-10-18: the assistant rows are in scope again. With
+ * `layover_compass_assistant_enabled` ON (seeded FALSE, 3846) the route hands
+ * this answer to LayoverCompassAssistant.ts, which lets the model add taste-led
+ * wording and comparisons of certified plans AFTER this text, with the twelve
+ * §12 tools, and withdraws any model prose that widens the envelope, deadline,
+ * entry status, operational state or risk band (census-compass CL-02). OFF,
+ * absent or unreadable, the door is exactly what L-CL02d left. This file stays
+ * the certified core either way: every safety fact is server text (this answer,
+ * and the assistant's server-rendered plan fits), never model prose. L100–L113: the assistant.
  *
  * What stays, unchanged: the certified text and its "explicit yes" predicate,
  * the deterministic airport facts, the `involvesLeaving` label, §12.1's
@@ -46,7 +46,7 @@ import {
   type FeasibilitySession,
   type LayoverFeasibilityRecord,
 } from "./LayoverFeasibility.js";
-import { landsideStatusOf, type LandsideCaution } from "./LayoverConstraints.js";
+import { certifiedPlanFit, landsideStatusOf, type LandsideCaution } from "./LayoverConstraints.js"; import type { PlanFitStop } from "./LayoverPlanFit.js";
 import { formatLocalTime } from "./AirportTime.js";
 import { sanitizeCompassAnswer } from "./LayoverPrivacyGuard.js";
 
@@ -317,7 +317,7 @@ export interface ClarifyingQuestion {
     verdictChanges: boolean;
     riskBandChanges: boolean;
     returnStateChanges: boolean;
-    usableMinutesDelta: number;
+    usableMinutesDelta: number; /** §12.1 "the top plan": the first candidate plan that fits is a different one. Present only when plans were given (LayoverCompassAssistant). */ topPlanChanges?: boolean;
   };
   /** Ranking score; higher is more worth asking. */
   valueOfInformation: number;
@@ -368,26 +368,26 @@ function riskBand(record: LayoverFeasibilityRecord): SafetyRating {
 export function valueOfInformation(
   airport: FeasibilityAirport,
   session: FeasibilitySession,
-  nowMs: number, /** The corridor the base record was certified with; each flip is certified with the SAME one (census-discovery §65). */ entry?: EntryEligibility | null,
+  nowMs: number, /** The corridor the base record was certified with; each flip is certified with the SAME one (census-discovery §65). */ entry?: EntryEligibility | null, /** §12.1 "the top plan": candidate plans in rank order (the assistant's); omitted = not measured, exactly as before. */ plans?: ReadonlyArray<readonly PlanFitStop[]>,
 ): ClarifyingQuestion[] {
-  const base = certifySessionFeasibility(airport, session, { nowMs, entry });
+  const base = certifySessionFeasibility(airport, session, { nowMs, entry }); const topOf = (r: LayoverFeasibilityRecord) => (plans ?? []).findIndex((stops) => certifiedPlanFit(r, stops).fitsWindow); const baseTop = topOf(base);
   const out: ClarifyingQuestion[] = [];
   for (const field of CLARIFIABLE_FIELDS) {
     const alt = certifySessionFeasibility(airport, flip(session, field), { nowMs, entry });
     const verdictChanges = alt.verdict !== base.verdict;
     const riskBandChanges = riskBand(alt) !== riskBand(base);
     const returnStateChanges = alt.envelope.returnState !== base.envelope.returnState;
-    const usableMinutesDelta = alt.envelope.usableMinutes - base.envelope.usableMinutes;
+    const usableMinutesDelta = alt.envelope.usableMinutes - base.envelope.usableMinutes; const topPlanChanges = plans !== undefined && topOf(alt) !== baseTop; // the same flip, the same records: is the first plan that fits a different one?
     const score =
       (verdictChanges ? 100 : 0) +
       (riskBandChanges ? 100 : 0) +
-      (returnStateChanges ? 50 : 0) +
+      (returnStateChanges ? 50 : 0) + (topPlanChanges ? 100 : 0) +
       Math.min(40, Math.abs(usableMinutesDelta));
     if (score === 0) continue;
     out.push({
       field,
       question: CLARIFYING_QUESTION_TEXT[field],
-      impact: { verdictChanges, riskBandChanges, returnStateChanges, usableMinutesDelta },
+      impact: { verdictChanges, riskBandChanges, returnStateChanges, usableMinutesDelta, ...(plans !== undefined ? { topPlanChanges } : {}) },
       valueOfInformation: score,
     });
   }
