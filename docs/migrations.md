@@ -6452,11 +6452,11 @@ value.
 - Not verified offline (addendum §A.9): PostgreSQL 17 against 18 (production is 17.6); PGlite runs as superuser; no
   production data; and the production dry run itself.
 
-**Rollback:** `db/rollback/2026-10-17-3996-layover-crew-location-grants-rollback.sql`, named in the file's header.
+**Rollback:** `db/rollback/2026-10-18-3996-layover-crew-location-grants-rollback.sql`. It replaced the 2026-10-17 file that the file's header names; see "3996's rollback replaced (2026-10-18)".
 - It refuses while the flag is TRUE
-  (`db/rollback/2026-10-17-3996-layover-crew-location-grants-rollback.sql:26#ROLLBACK REFUSED (3996): layover_crew_location_enabled is TRUE`).
+  (`db/rollback/2026-10-18-3996-layover-crew-location-grants-rollback.sql:135#ROLLBACK REFUSED (3996): layover_crew_location_enabled is TRUE`).
 - It also refuses while any `layover_events` row carries either new event type
-  (`db/rollback/2026-10-17-3996-layover-crew-location-grants-rollback.sql:29#layover_events carries crew_location_* rows`).
+  (`db/rollback/2026-10-18-3996-layover-crew-location-grants-rollback.sql:357#layover_events carries % crew_location_* row(s)`).
   Narrowing the CHECK under them would fail, and deleting audit rows is not a rollback's call. Once the feature has been
   used, those rows block the rollback until they are gone.
 - Otherwise it drops the two triggers on the crew tables, both tables and the four functions. It narrows the
@@ -6468,10 +6468,8 @@ value.
   ACCESS EXCLUSIVE on `layover_crew_members`, `layover_crews`, `layover_sessions` and `layover_events` until its COMMIT.
   Unlike the forward file, it blocks their reads too. DROP TRIGGER alone takes that lock (`layover_crews`), and so does
   dropping a foreign key to a table (`layover_sessions`). The CHECK rebuild re-validates every `layover_events` row.
-- Neither the packet (addendum §A.9) nor any repo test exercised it. On the same stand-in fixture it ran to completion,
-  removing both tables, the four functions and their triggers, the flag row and the ledger row. The CHECK came back to
-  the original set of values, spelled in sorted order. 2985's technique already sorts them, so production's text should
-  return to `2e76e4b50971`. That was not checked.
+- Neither the packet (addendum §A.9) nor any repo test exercised the 2026-10-17 file. Its replacement was proven on the
+  packet's replica and on PostgreSQL 16.4 (see "3996's rollback replaced (2026-10-18)"); the CHECK returns byte for byte.
 
 ## 2026-10-17 — `3997_memory_visibility_policies_and_shared_experiences.sql`, written and NOT applied anywhere (wave 4, Highlights/Memories H33 and H53)
 
@@ -6814,7 +6812,7 @@ scratchpad, not in the repo.
 | `db/rollback/2026-10-18-3997-memory-visibility-policies-and-shared-experiences-rollback.sql` | `public.memories` and `auth.users`, so Memory reads and Supabase Auth's reads and writes of a user row wait | Refuses while any of its three tables holds a row |
 | `db/rollback/2026-10-18-3998-telegraph-conversation-snapshots-rollback.sql` | `public.messages` and `public.message_threads` | Refuses while `conversation_snapshots` holds a checkpoint. The rows are derived from `messages`; the header gives the one `DELETE` that clears them |
 | `db/rollback/2026-10-18-3999-memory-items-source-post-rollback.sql` | `public.memory_items` and `public.posts` | Refuses while any `memory_items.source_post_id` is set. The check reads a 3999 partial index, not the table |
-| `db/rollback/2026-10-17-3996-layover-crew-location-grants-rollback.sql` (existing) | `layover_crew_members`, `layover_crews`, `layover_sessions` and `layover_events` | Drops populated tables; its header says so (`db/rollback/2026-10-17-3996-layover-crew-location-grants-rollback.sql:16#DATA LOSS, stated:`) |
+| `db/rollback/2026-10-18-3996-layover-crew-location-grants-rollback.sql` (replaced the 2026-10-17 file) | `layover_events`, `layover_crews`, `layover_crew_members` and `layover_sessions` | Refuses over the flag's audit history and over crew_location_* events; drops its own share and control rows by design, with a NOTICE (`db/rollback/2026-10-18-3996-layover-crew-location-grants-rollback.sql:52#IT DROPS THE ROWS OF ITS OWN TWO TABLES, BY DESIGN`) |
 
 Each also takes ACCESS EXCLUSIVE on the tables it drops (3999 drops none). Each strong lock is inherent to an exact undo: DROP TRIGGER,
 DROP INDEX and DROP COLUMN lock their own table, and removing a foreign key's RI triggers locks the referenced table.
@@ -6869,12 +6867,97 @@ So deleting a flag row silently erases who changed it and when. The new files re
   CHECK, restored byte for byte because 2985 left it sorted.
 - A second run is a no-op with no strong lock, the forward re-applies, and both of its refusals fire.
 - **Defect: unstated data loss.** Its flag delete
-  (`db/rollback/2026-10-17-3996-layover-crew-location-grants-rollback.sql:64#DELETE FROM public.feature_flags`)
+  (line 64 of the removed 2026-10-17 file, `DELETE FROM public.feature_flags WHERE flag = 'layover_crew_location_enabled' AND enabled = FALSE;`)
   cascades to the flag's audit history. On the replica, 2 audit rows became 0, with no refusal.
 - It also drops a populated grant and control without refusing
-  (`db/rollback/2026-10-17-3996-layover-crew-location-grants-rollback.sql:35#DROP TABLE IF EXISTS public.layover_crew_location_grants;`).
+  (line 35 of the removed 2026-10-17 file, `DROP TABLE IF EXISTS public.layover_crew_location_grants;`).
   Its header states this loss, and the rows last at most 4 hours.
 - **Not fixed here.** A fix is a separate file. `rehearse-pending-apply.ts` runs a rollback only when exactly one file
   matches its number
   (`artifacts/api-server/scripts/local-db/rehearse-pending-apply.ts:588#const rb = available.filter(`), so the
-  fix should replace the 2026-10-17 file rather than sit beside it.
+  fix should replace the 2026-10-17 file rather than sit beside it. Fixed by the replacement; see "3996's rollback
+  replaced (2026-10-18)".
+
+## 3996's rollback replaced (2026-10-18)
+
+`db/rollback/2026-10-18-3996-layover-crew-location-grants-rollback.sql` replaces the 2026-10-17 file, which is deleted in
+the same change. It was not applied to portava-ci or production. Everything below was proven on PGlite only.
+
+**Why it replaces the file instead of sitting beside it.** `rehearse-pending-apply.ts` runs a rollback only when
+exactly one `db/rollback/` file matches the number
+(`artifacts/api-server/scripts/local-db/rehearse-pending-apply.ts:588#const rb = available.filter(`). The new file is
+dated the day it was written, the `db/rollback/` convention.
+
+**What the removed file got wrong** (the defect recorded in "Rollback files for 3996–3999" above):
+- Its flag delete cascaded to the flag's audit history, with no refusal. On the replica, 2 audit rows became 0.
+- It checked no installed state beyond the flag and the event rows.
+- It set no `lock_timeout` and sent no `NOTIFY pgrst`.
+- Its `$post$` asserted neither the ledger row's removal nor the narrowed vocabulary.
+
+**What the new file does.** It follows the house shape of 3997–3999. It refuses, changing nothing:
+- while the flag is TRUE;
+- NEW: while `feature_flag_audit_log` holds a row for the flag
+  (`db/rollback/2026-10-18-3996-layover-crew-location-grants-rollback.sql:175#public.feature_flag_audit_log holds % row(s)`);
+- while `layover_events` holds a `crew_location_*` row. This is checked twice: once before any strong lock, and again
+  under the table's lock as the narrowed CHECK's own validation
+  (`db/rollback/2026-10-18-3996-layover-crew-location-grants-rollback.sql:402#a crew_location_* row was written to layover_events while this file ran`);
+- on a partial state, or when the event_type CHECK is not the validated `layover_events_event_type_check`;
+- when any of its 54 canonical rows differs, or when an object 3996 did not make depends on its objects.
+
+Otherwise it does the following:
+- drops both tables, the two triggers on the crew tables and the four functions;
+- narrows the vocabulary back;
+- deletes the flag row and the ledger row;
+- sends `NOTIFY pgrst`.
+
+A `$post$` follows the COMMIT. It also asserts the ledger row's removal and the narrowed vocabulary.
+
+**The data decision: shares and controls are dropped by design, and a NOTICE says how many**
+(`db/rollback/2026-10-18-3996-layover-crew-location-grants-rollback.sql:386#dropping % crew location share(s)`). The file
+does not refuse over them. Its header gives the reasons:
+- Every row is built to be deleted. A share is bounded to 4 hours and to its crew; a control lives for one
+  membership. The member leaving, the crew disbanding or expiring, the control going off, the route's purge and the
+  owner's stop each delete them, and neither table holds history.
+- The file runs only with the flag FALSE, and then nothing reads or writes either table.
+- The drop goes the private way: no share means not sharing, and no control means precise sharing is off, 3996's
+  default.
+- The record that shares happened is the `layover_events` rows. The file refuses over them and never deletes them.
+
+**Locks.** Measured on both engines; the table sets are identical. Each is held until the COMMIT.
+- ACCESS EXCLUSIVE on `layover_events`, `layover_crews`, `layover_crew_members` and `layover_sessions`, so reads of
+  those four are blocked. Also ACCESS EXCLUSIVE on its own two tables.
+- There is one scan: validating the narrowed CHECK over `layover_events`. It runs before the crew tables and
+  `layover_sessions` are locked.
+- `lock_timeout = 5s`
+  (`db/rollback/2026-10-18-3996-layover-crew-location-grants-rollback.sql:104#SET LOCAL lock_timeout = '5s';`).
+- A second run locks only `feature_flags` and the ledger.
+- The whole file took 51 ms on the replica (172 ms on a cold first run).
+
+**Proof.** The harness is in the lane's scratchpad, not in the repo.
+- **PGlite 0.5.8 (PostgreSQL 18.3), the packet's replica.** Each file runs at its chain position through the real-run
+  step.
+  - Forward then rollback equals before: 0 differences in 24,997 keys.
+  - The `$post$` passes on its own, and a second run equals before.
+  - The forward re-applies to the same state, and the 3999 → 3996 unwind holds.
+  - 41 of 41 refusals fire with their message and change nothing.
+- **The same replica, on committed rows.**
+  - With 2 audit rows, a share and a control in place, the file refuses, and all of those rows remain.
+  - For contrast, the removed file was run over the same state in a rolled-back transaction. It left 0 audit rows.
+  - After the audit rows are deleted deliberately, the file drops the share and the control, says so, and equals the
+    state before 3996.
+- **The 3906 end state.** The rollback's delta is the exact inverse of 3996's forward: 75 keys.
+- **PGlite 0.2.17 (PostgreSQL 16.4).**
+  - The 54 canonical rows are byte-identical to 18.3.
+  - The round trip, the second run, the re-apply and the unwind hold (293 keys).
+  - 41 of 41 refusals fire, and the three data paths hold on committed rows.
+- PostgreSQL 17 (production) was not run.
+
+**Superseded above (append-only, so not edited).** These passages now describe the removed file, and their
+citations of the 2026-10-17 path no longer resolve:
+- the "**Rollback:**" paragraph of 3996's section (lines 6455–6474);
+- the 3996 row of the table in "Rollback files for 3996–3999" (line 6817), and that section's "3996's existing
+  rollback" paragraph (lines 6867–6880).
+
+3996's own header still names the old path
+(`artifacts/api-server/src/migrations/3996_layover_crew_location_grants.sql:81#-- Rollback:`). 3996 is checksummed into
+the ledger and the sealed packet, so its header is not edited. The sealed packet's README names the old path too.
