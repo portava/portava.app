@@ -97,8 +97,8 @@
 -- On a timeout or a deadlock the transaction aborts, nothing has changed, and the file can be re-run. A deadlock is
 -- possible if an account erasure or a layover session delete runs at the same moment. Also: ROW SHARE on
 -- public.feature_flags (the flag row is locked FOR UPDATE so it cannot be turned on mid-rollback), and ROW EXCLUSIVE on
--- public.feature_flag_audit_log (the cascade path; it deletes no row there, as checked) and on
--- schema_migration_ledger. Run it in its own session: psql -X -v ON_ERROR_STOP=1 -f <this file>.
+-- public.feature_flags (the flag row's DELETE), on public.feature_flag_audit_log (the cascade path; it deletes no row
+-- there, as checked) and on schema_migration_ledger. Run it in its own session: psql -X -v ON_ERROR_STOP=1 -f <this file>.
 
 BEGIN;
 SET LOCAL lock_timeout = '5s';
@@ -392,14 +392,16 @@ BEGIN
    WHERE k.conrelid = 'public.layover_events'::regclass AND k.contype = 'c'
      AND pg_get_constraintdef(k.oid) LIKE '%event_type%' AND pg_get_constraintdef(k.oid) LIKE '%session_created%';
   SELECT string_agg(quote_literal(v), ', ' ORDER BY v) INTO v_vals
-    FROM (SELECT DISTINCT (regexp_matches(v_def, '''([a-z_]+)''', 'g'))[1] AS v) s
+    -- Every quoted literal in the definition, whatever its characters ('' is an escaped quote inside one), so a value a
+    -- later file added is kept even if it is not spelled [a-z_]+.
+    FROM (SELECT DISTINCT replace((regexp_matches(v_def, '''((?:[^'']|'''')*)''', 'g'))[1], '''''', '''') AS v) s
    WHERE v NOT IN ('crew_location_shared', 'crew_location_stopped');
   EXECUTE format('ALTER TABLE public.layover_events DROP CONSTRAINT %I', v_conname);
   BEGIN
     -- Validating the narrowed CHECK reads every layover_events row under this lock: the re-check of $pre$'s refusal.
     EXECUTE format('ALTER TABLE public.layover_events ADD CONSTRAINT layover_events_event_type_check CHECK (event_type IN (%s))', v_vals);
   EXCEPTION WHEN check_violation THEN
-    RAISE EXCEPTION 'ROLLBACK REFUSED (3996): a crew_location_* row was written to layover_events while this file ran; the vocabulary cannot be narrowed under it (see the header). Nothing was changed.';
+    RAISE EXCEPTION 'ROLLBACK REFUSED (3996): a layover_events row does not fit the narrowed vocabulary (a crew_location_* row written while this file ran, or a value no CHECK literal names); it cannot be narrowed under it (see the header). Nothing was changed.';
   END;
 
   DROP TRIGGER layover_crew_location_crew_disbanded ON public.layover_crews;

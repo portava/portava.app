@@ -6952,11 +6952,18 @@ does not refuse over them. Its header gives the reasons:
   - 41 of 41 refusals fire, and the three data paths hold on committed rows.
 - PostgreSQL 17 (production) was not run.
 
-**Superseded above (append-only, so not edited).** These passages now describe the removed file, and their
-citations of the 2026-10-17 path no longer resolve:
-- the "**Rollback:**" paragraph of 3996's section (lines 6455–6474);
-- the 3996 row of the table in "Rollback files for 3996–3999" (line 6817), and that section's "3996's existing
-  rollback" paragraph (lines 6867–6880).
+**Repointed above.** The passages that described the removed file were edited in place when this section was
+committed: the "**Rollback:**" paragraph of 3996's section, the 3996 row of the table in "Rollback files for
+3996–3999", and that section's "3996's existing rollback" paragraph now name the 2026-10-18 file or quote the removed
+one by line.
+
+**Verified independently (2026-10-18).** A second reviewer re-ran the PostgreSQL 18.3 and 16.4 proofs and 11 cases
+of its own, and found one latent defect: the vocabulary rebuild read the CHECK's values with `[a-z_]+`, so a value a
+later file added with a digit or capital would have been dropped silently, against this file's own header. Every
+value on the chain today matches `[a-z_]+`, so nothing was reachable. Fixed: the rebuild now reads every quoted
+literal (`db/rollback/2026-10-18-3996-layover-crew-location-grants-rollback.sql:397#regexp_matches(v_def, '''((?:[^'']|'''')*)'''`),
+and the refusal's message no longer blames a concurrent write for a value no literal names. The header's lock list
+now names the ROW EXCLUSIVE lock the flag row's DELETE takes on `public.feature_flags`.
 
 3996's own header still names the old path
 (`artifacts/api-server/src/migrations/3996_layover_crew_location_grants.sql:81#-- Rollback:`). 3996 is checksummed into
