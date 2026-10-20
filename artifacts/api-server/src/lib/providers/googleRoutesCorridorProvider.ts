@@ -104,8 +104,8 @@ export const ENABLEMENT_ENV = "LAYOVER_ROUTED_CORRIDOR_ENABLED";
 
 /**
  * Routes API bills partly on the field mask, so only the fields actually read
- * below are requested. Asking for the route body would pay for a polyline
- * nothing here draws.
+ * below are requested. The BASIC GeoJSON polyline is read for L270's Google-map-only route display (never persisted:
+ * providerMapGeometry.ts); traffic-on-polyline and toll fields are Enterprise triggers and are never asked for.
  *
  * Every entry earns its place against a census row:
  *   routes.duration / distanceMeters            the corridor's own numbers
