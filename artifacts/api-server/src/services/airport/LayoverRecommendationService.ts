@@ -464,7 +464,7 @@ export async function generateRecommendations(
   nowMs = Date.now(),
   opts: GenerateRecommendationsOptions = {},
 ): Promise<GenerateResult> {
-  const city = airport.city ?? session.manualCity ?? "Unknown"; const routePublication=await routeSubjectPublicationGate(db,opts.stableIds===true); if(!routePublication.ok)return{ok:false,message:routePublication.reason};
+  const city = airport.city ?? session.manualCity ?? "Unknown"; const routePublication=await routeSubjectPublicationGate(db,opts.stableIds===true); if(!routePublication.ok){logger.warn({reason:routePublication.reason,sessionId:session.id},"route monitoring state unknown — refusing to publish recommendations");return{ok:false,message:"This plan's route monitoring could not be confirmed. Please try again."};}
 
   // The certified feasibility for this session at this instant. Every card
   // below is rated against THIS record's deadline — previously each candidate
