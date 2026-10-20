@@ -47,7 +47,7 @@ import { startLocationSnapshotPurgeScheduler } from "./lib/locationSnapshotPurge
 import { startIntelRetentionScheduler } from "./lib/intelRetentionScheduler.js";
 import { startSensingRetentionScheduler } from "./lib/sensingRetentionScheduler.js";
 import { startSensingPublicationScheduler } from "./lib/sensingPublicationScheduler.js";
-import { startLayoverCrewExpiryScheduler } from "./lib/layoverCrewExpiryScheduler.js"; import { startLayoverExternalEventScheduler } from "./lib/layoverExternalEventScheduler.js"; import { startLayoverAuditRetentionScheduler } from "./lib/layoverAuditRetentionScheduler.js"; import { startLayoverPresenceExpiryScheduler } from "./lib/layoverPresenceExpiryScheduler.js"; // OD-MAP-4 on layover_events (census-layover L163); census L196 presence half (3900)
+import { startLayoverCrewExpiryScheduler } from "./lib/layoverCrewExpiryScheduler.js"; import { startLayoverExternalEventScheduler } from "./lib/layoverExternalEventScheduler.js"; import { startLayoverAuditRetentionScheduler } from "./lib/layoverAuditRetentionScheduler.js"; import { startLayoverPresenceExpiryScheduler } from "./lib/layoverPresenceExpiryScheduler.js"; import { startLayoverMetricsScheduler } from "./lib/layoverMetricsScheduler.js"; // OD-MAP-4 on layover_events (census-layover L163); census L196 presence half (3900); census-layover L208-L217 operational metrics (on this line so index.ts keeps its length)
 import { startIntelProjectionScheduler } from "./lib/intelProjectionScheduler.js";
 import { startTelegraphLifecycleScheduler } from "./server/telegraph/lifecycleScheduler.js";
 import { startIntelPromotionScheduler } from "./lib/intelPromotionScheduler.js";
@@ -440,5 +440,3 @@ app.listen(port, (err) => {
     logger.warn({ err: startupErr }, "startup: could not query push retry queue health");
   });
 });
-
-import { startLayoverMetricsScheduler } from "./lib/layoverMetricsScheduler.js";
