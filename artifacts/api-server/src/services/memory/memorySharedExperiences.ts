@@ -110,7 +110,7 @@ export async function withdrawInvitation(
   if (!UUID_RE.test(input.memoryId) || !UUID_RE.test(input.inviteeId)) return fail("invalid", "ids must be UUIDs");
   // NO flag gate, on purpose (H53): taking back a question is a way OUT, and no
   // switch may strand it. Only the host's own pending row matches the filter.
-  const { data, error } = await sc.from(SHARED_INVITATIONS_TABLE).delete()
+  const { data, error } = await sc.from("memory_shared_experience_invitations").delete()
     .eq("host_memory_id", input.memoryId).eq("host_id", input.hostId)
     .eq("invitee_id", input.inviteeId).eq("status", "pending")
     .select("id");
@@ -131,7 +131,7 @@ export async function respondToInvitation(
     const g = await gate(sc); if (!g.ok) return g;
     // A block that arrived after the invitation stops the acceptance: the
     // host's invitation is not a way past it, in either direction.
-    const inv = await sc.from(SHARED_INVITATIONS_TABLE).select("host_id")
+    const inv = await sc.from("memory_shared_experience_invitations").select("host_id")
       .eq("id", input.invitationId).eq("invitee_id", input.inviteeId).maybeSingle();
     if (inv.error) return fail("unavailable", `invitation: ${inv.error.message ?? "failed"}`);
     if (!inv.data) return fail("not_found", "no pending invitation of yours with that id");
@@ -215,7 +215,7 @@ export async function readSharedExperienceForMemory(
 
   // Which host Memory is this about?
   let hostMemoryId = input.memoryId;
-  const linked = await sc.from(SHARED_INVITATIONS_TABLE).select("host_memory_id")
+  const linked = await sc.from("memory_shared_experience_invitations").select("host_memory_id")
     .eq("participant_memory_id", input.memoryId).eq("status", "accepted").maybeSingle();
   if (linked.error) return fail("unavailable", `invitations: ${linked.error.message ?? "failed"}`);
   if (linked.data?.host_memory_id) hostMemoryId = String(linked.data.host_memory_id);
@@ -225,12 +225,12 @@ export async function readSharedExperienceForMemory(
   if (!host.data || host.data.state === "deleted" || host.data.state === "removed") return { ok: true, value: null };
   const hostId = String(host.data.owner_id);
 
-  const exp = await sc.from(SHARED_EXPERIENCES_TABLE).select("id, host_id, host_memory_id")
+  const exp = await sc.from("memory_shared_experiences").select("id, host_id, host_memory_id")
     .eq("host_memory_id", hostMemoryId).maybeSingle();
   if (exp.error) return fail("unavailable", `experiences: ${exp.error.message ?? "failed"}`);
   const experienceId: string | null = exp.data?.id ? String(exp.data.id) : null;
 
-  const invs = await sc.from(SHARED_INVITATIONS_TABLE)
+  const invs = await sc.from("memory_shared_experience_invitations")
     .select("id, invitee_id, status, participant_memory_id, experience_id")
     .eq("host_memory_id", hostMemoryId);
   if (invs.error || !Array.isArray(invs.data)) return fail("unavailable", `invitations: ${invs.error?.message ?? "no row array"}`);
@@ -309,7 +309,7 @@ export interface InvitationView {
 export async function listMyInvitations(sc: any, viewerId: string): Promise<SharedResult<InvitationView[]>> {
   const g = await gate(sc);
   if (!g.ok) return g;
-  const invs = await sc.from(SHARED_INVITATIONS_TABLE).select("id, host_id, host_memory_id, created_at")
+  const invs = await sc.from("memory_shared_experience_invitations").select("id, host_id, host_memory_id, created_at")
     .eq("invitee_id", viewerId).eq("status", "pending");
   if (invs.error || !Array.isArray(invs.data)) return fail("unavailable", `invitations: ${invs.error?.message ?? "no row array"}`);
   const rows = invs.data as any[];
@@ -369,7 +369,7 @@ export interface SharedExits {
 export async function listMyExits(sc: any, viewerId: string): Promise<SharedResult<SharedExits>> {
   const out: SharedExits = { memberships: [], invitations: [], hosting: [] };
   if (!UUID_RE.test(viewerId)) return fail("invalid", "viewer id must be a UUID");
-  const mine = await sc.from(SHARED_INVITATIONS_TABLE).select("id, status, experience_id, participant_memory_id")
+  const mine = await sc.from("memory_shared_experience_invitations").select("id, status, experience_id, participant_memory_id")
     .eq("invitee_id", viewerId).in("status", ["pending", "accepted"]);
   if (mine.error) {
     if (isTableAbsentError(mine.error)) return { ok: true, value: out };
@@ -383,8 +383,8 @@ export async function listMyExits(sc: any, viewerId: string): Promise<SharedResu
     }
   }
   const [hostedExp, hostedInv] = await Promise.all([
-    sc.from(SHARED_EXPERIENCES_TABLE).select("host_memory_id").eq("host_id", viewerId),
-    sc.from(SHARED_INVITATIONS_TABLE).select("host_memory_id").eq("host_id", viewerId).eq("status", "pending"),
+    sc.from("memory_shared_experiences").select("host_memory_id").eq("host_id", viewerId),
+    sc.from("memory_shared_experience_invitations").select("host_memory_id").eq("host_id", viewerId).eq("status", "pending"),
   ]);
   for (const [name, r] of [[SHARED_EXPERIENCES_TABLE, hostedExp], [SHARED_INVITATIONS_TABLE, hostedInv]] as const) {
     if (r.error || !Array.isArray(r.data)) return fail("unavailable", `${name}: ${r.error?.message ?? "no row array"}`);

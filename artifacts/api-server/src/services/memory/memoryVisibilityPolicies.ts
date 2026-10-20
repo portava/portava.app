@@ -109,7 +109,7 @@ export async function loadAudienceCeilings(
   if (owners.length === 0) return { state: "on", byOwner };
   try {
     const { data, error } = await sc
-      .from(MEMORY_VISIBILITY_POLICIES_TABLE)
+      .from("memory_visibility_policies")
       .select("owner_id, audience, location_precision")
       .in("owner_id", owners);
     if (error || !Array.isArray(data)) return { state: "unreadable" };
@@ -167,7 +167,7 @@ export async function readOwnerPolicy(
   if (gate === "off") return { ok: false, reason: "disabled", detail: "memory_visibility_policies_enabled is off" };
   if (gate === "unreadable") return { ok: false, reason: "unavailable", detail: "the flag could not be read" };
   const { data, error } = await sc
-    .from(MEMORY_VISIBILITY_POLICIES_TABLE)
+    .from("memory_visibility_policies")
     .select("audience, location_precision")
     .eq("owner_id", ownerId);
   if (error || !Array.isArray(data)) {
@@ -199,7 +199,7 @@ export async function setOwnerPolicy(
   if (gate === "off") return { ok: false, reason: "disabled", detail: "memory_visibility_policies_enabled is off" };
   if (gate === "unreadable") return { ok: false, reason: "unavailable", detail: "the flag could not be read" };
   const { data, error } = await sc
-    .from(MEMORY_VISIBILITY_POLICIES_TABLE)
+    .from("memory_visibility_policies")
     .upsert({ owner_id: ownerId, audience, location_precision: precision, updated_at: now.toISOString() }, { onConflict: "owner_id,audience" })
     .select("owner_id, audience, location_precision");
   const written = Array.isArray(data) ? data.find((r: any) => r?.owner_id === ownerId && r?.audience === audience) : null;
@@ -220,7 +220,7 @@ export async function clearOwnerPolicy(
   if (gate === "off") return { ok: false, reason: "disabled", detail: "memory_visibility_policies_enabled is off" };
   if (gate === "unreadable") return { ok: false, reason: "unavailable", detail: "the flag could not be read" };
   const { data, error } = await sc
-    .from(MEMORY_VISIBILITY_POLICIES_TABLE)
+    .from("memory_visibility_policies")
     .delete()
     .eq("owner_id", ownerId)
     .eq("audience", audience)

@@ -667,7 +667,7 @@ export async function refreshFlightStatusFromFeed(db: SupabaseClient, feed: Flig
   if (!feed.live) return { ...report, ok: false, refusals: [{ segmentId: "", reason: "PROVIDER_UNBOUND" }] };
   const ids = new Set<string>();
   for (const col of ["arrival_segment_id", "departure_segment_id"] as const) {
-    const { data, error } = await db.from("layover_sessions").select(col === "arrival_segment_id" ? "arrival_segment_id" : "departure_segment_id").eq("status", "active").not(col === "arrival_segment_id" ? "arrival_segment_id" : "departure_segment_id", "is", null).limit(opts.limit ?? 200);
+    const { data, error } = await db.from("layover_sessions").select("arrival_segment_id, departure_segment_id").eq("status", "active").not(col === "arrival_segment_id" ? "arrival_segment_id" : "departure_segment_id", "is", null).limit(opts.limit ?? 200);
     if (error) {
       logger.warn({ err: error.message, col }, "flight-status refresh: linked sessions unreadable — nothing asked of the feed");
       return { ...report, ok: false, refusals: [{ segmentId: "", reason: "sessions_unreadable" }] };
