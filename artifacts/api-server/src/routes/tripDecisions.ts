@@ -132,7 +132,7 @@ router.get("/trips/:tripId/decisions", asyncHandler(async (req, res) => {
   }
 
   const goalRows = goalsVisibleTo(await readAll("trip_goals", sc.from("trip_goals") // 2783: a personal goal is its owner's alone (census-trips TR139)
-    .select("id, type, priority, status, evidence_json, weight, " + TRIP_GOAL_VISIBILITY_COLUMNS).eq("trip_id", tripId)), user.id);
+    .select("id, type, priority, status, evidence_json, weight, scope, owner_user_id" satisfies `${string}, ${typeof TRIP_GOAL_VISIBILITY_COLUMNS}`).eq("trip_id", tripId)), user.id); // a literal, so check:write-path-columns can resolve it (it follows no import); the satisfies fails typecheck if the visibility columns change
   const taskRows = await readAll("trip_decision_tasks", sc.from("trip_decision_tasks")
     .select("id, type, deadline_at, consequence, assigned_user_id, status").eq("trip_id", tripId));
   let riskRows: any[] = [];
