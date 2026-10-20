@@ -537,14 +537,14 @@ export { OBSERVATION_RATE_LIMIT };
 /** The reporter's coarse standing in [0,1], or null when unscored / unreadable. */
 export async function reporterTrustStanding(db: SupabaseClient, userId: string): Promise<number | null> {
   try {
-    const { data, error } = await db.from("trust_profiles").select("overall_score").eq("user_id", userId).maybeSingle();
-    if (error) {
-      logger.warn({ err: (error as { message?: string }).message }, "reporter trust standing unreadable — stored as NULL (the kind floor)");
+    const read = await getTrustProfileResult(db, userId); // the Trust seam (services/trust owns trust_profiles; check:trust-table-ownership)
+    if (read.state === "unavailable") {
+      logger.warn({ err: read.reason }, "reporter trust standing unreadable — stored as NULL (the kind floor)");
       return null;
     }
-    const raw = (data as { overall_score?: unknown } | null)?.overall_score;
-    if (raw === null || raw === undefined) return null;
-    const score = Number(raw);
+    if (read.state === "absent") return null;
+    const score = read.profile.overall_score; // shapeProfile: NULL or unparseable → null, numeric(5,2) strings → numbers
+    if (score === null) return null;
     if (!Number.isFinite(score)) return null;
     return Math.round(Math.min(100, Math.max(0, score)) / 10) / 10;
   } catch (err) {
@@ -564,3 +564,5 @@ export function observationAirportRefOf(airport: { iataCode?: string | null; id?
   if (airport.id) return airport.id;
   return null;
 }
+
+import { getTrustProfileResult } from "../trust/TrustScoreService.js"; // reporterTrustStanding reads Trust through its seam; appended so no cited line above moves
