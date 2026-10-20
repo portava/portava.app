@@ -30,7 +30,7 @@ export async function activeLayoverRouteSessions(db: SupabaseClient, refs: reado
     if (flag !== "on") return { ok: false, reason: flag === "off" ? "route_subjects_disabled" : "route_subject_flags_unreadable" };
     const max = Math.min(200, Math.max(1, Math.floor(limit)));
     const { data, error } = await db.rpc("layover_active_sessions_by_routes", { p_refs: [...refs], p_now: new Date(nowMs).toISOString(), p_limit: max });
-    if (error || !Array.isArray(data)) return { ok: false, reason: "route_subject_sessions_unreadable" };
+    if (error || !Array.isArray(data)) { logger.warn({ err: error, resultKind: Array.isArray(data) ? "array" : typeof data, refs: refs.length }, "Layover route dependency lookup unreadable"); return { ok: false, reason: "route_subject_sessions_unreadable" }; }
     // Refuse before replanning any session. The queue retains its claimed-failure outcome for recovery.
     if (data.length > max) return { ok: false, reason: "route_subject_session_limit" };
     const rows: Array<{ session: Record<string, unknown>; routeRefs: string[] }> = [];

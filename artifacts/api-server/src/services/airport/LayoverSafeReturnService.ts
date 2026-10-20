@@ -616,13 +616,13 @@ import { toPublicSession as publicReturnProduct } from "../safeReturn/SafeReturn
 type ReturnProductRefusal = { ok: false; status: 403 | 404 | 409 | 503; reason: string };
 export interface LayoverSafeReturnLink { layover_session_id: string; safe_return_session_id: string; user_id: string; certified_deadline: string; return_started_at: string | null }
 async function layoverProductGate(db:SupabaseClient):Promise<"on"|"off"|"unavailable"> {
-  try {const {data,error}=await db.from("feature_flags").select("enabled").eq("flag","layover_safe_return_product_enabled").maybeSingle();return error?"unavailable":data?.enabled===true?"on":"off";} catch {return "unavailable";}
+  try {const {data,error}=await db.from("feature_flags").select("enabled").eq("flag","layover_safe_return_product_enabled").maybeSingle();if(error){logger.warn({err:error},"layover Safe Return product flag unreadable — gate unavailable");return "unavailable";}return data?.enabled===true?"on":"off";} catch (err) {logger.warn({err},"layover Safe Return product flag read threw — gate unavailable");return "unavailable";}
 }
 export async function readLayoverSafeReturnLink(db: SupabaseClient, userId: string, safeReturnId: string): Promise<{ ok: true; link: LayoverSafeReturnLink | null } | ReturnProductRefusal> {
   const gate=await layoverProductGate(db); if(gate==="unavailable")return {ok:false,status:503,reason:"layover_safe_return_unavailable"}; if(gate==="off")return {ok:true,link:null};
   try {
     const { data, error } = await db.from("layover_safe_return_links").select("layover_session_id,safe_return_session_id,user_id,certified_deadline,return_started_at").eq("safe_return_session_id",safeReturnId).eq("user_id",userId).maybeSingle();
-    if (error) return { ok:false,status:503,reason:"layover_safe_return_unavailable" };
+    if (error) { logger.warn({err:error,safeReturnId},"layover Safe Return link unreadable — refusing"); return { ok:false,status:503,reason:"layover_safe_return_unavailable" }; }
     return { ok:true,link:data as LayoverSafeReturnLink | null };
   } catch { return { ok:false,status:503,reason:"layover_safe_return_unavailable" }; }
 }
@@ -647,7 +647,7 @@ export async function prepareLayoverSafeReturn(db: SupabaseClient, userId: strin
 export async function bindLayoverSafeReturn(db: SupabaseClient, input: { userId:string; safeReturnId:string; context:Extract<Awaited<ReturnType<typeof prepareLayoverSafeReturn>>,{ok:true}> }): Promise<{ok:true} | ReturnProductRefusal> {
   try {
     const {error,data}=await db.from("layover_safe_return_links").insert({layover_session_id:input.context.session.id,safe_return_session_id:input.safeReturnId,user_id:input.userId,certified_deadline:input.context.deadline,certification:certificationHeader(input.context.record)}).select("layover_session_id");
-    if (error || !data?.length) return {ok:false,status:error?.code==="23505"?409:503,reason:"layover_safe_return_not_bound"};
+    if (error || !data?.length) { logger.warn({err:error,rowsReturned:data?.length??0,sessionId:input.context.session.id,safeReturnId:input.safeReturnId},"layover Safe Return link not bound"); return {ok:false,status:error?.code==="23505"?409:503,reason:"layover_safe_return_not_bound"}; }
     return {ok:true};
   } catch { return {ok:false,status:503,reason:"layover_safe_return_not_bound"}; }
 }
@@ -680,7 +680,7 @@ export async function closeLayoverSafeReturnAtAirport(db:SupabaseClient,userId:s
   const gate=await layoverProductGate(db); if(gate==="unavailable")return {ok:false,reason:"layover_safe_return_gate_unavailable"}; if(gate==="off")return {ok:true,closed:false};
   try {
     const {data,error}=await db.from("layover_safe_return_links").select("safe_return_session_id").eq("layover_session_id",sessionId).eq("user_id",userId).maybeSingle();
-    if (error) return {ok:false,reason:"safe_return_close_unavailable"};
+    if (error) { logger.warn({err:error,sessionId},"layover Safe Return link unreadable at airport re-entry — close unavailable"); return {ok:false,reason:"safe_return_close_unavailable"}; }
     if (!data) return {ok:true,closed:false};
     const guard=await guardLayoverSafeReturnMutation(db,userId,data.safe_return_session_id,"confirm");
     if (!guard.ok) return {ok:false,reason:guard.reason};
@@ -694,7 +694,7 @@ export async function layoverSafeReturnProductState(db:SupabaseClient,userId:str
   const sync=await syncLayoverSafeReturnDeadline(db,sessionId,context.record);
   if (!sync.ok) return {available:false,reason:sync.reason,certifiedDeadline:null,session:null};
   const {data,error}=await db.from("layover_safe_return_links").select("safe_return_session_id,certified_deadline").eq("layover_session_id",sessionId).eq("user_id",userId).maybeSingle();
-  if (error) return {available:false,reason:"layover_safe_return_unavailable",certifiedDeadline:null,session:null};
+  if (error) { logger.warn({err:error,sessionId},"layover Safe Return link unreadable — product state unavailable"); return {available:false,reason:"layover_safe_return_unavailable",certifiedDeadline:null,session:null}; }
   if (!data) return {available:true,reason:null,certifiedDeadline:context.deadline,session:null};
   const linked=await readReturnProduct(db,data.safe_return_session_id,userId);
   if (!linked.ok || !linked.value) return {available:false,reason:"layover_safe_return_unavailable",certifiedDeadline:null,session:null};

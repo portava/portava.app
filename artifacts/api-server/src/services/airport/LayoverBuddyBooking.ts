@@ -11,7 +11,7 @@ import {certifySessionFeasibility,certificationHeader,type LayoverFeasibilityRec
 import {resolveLayoverEntry,layoverAirportCountry} from './layoverEntryGate.js';
 import {resolveLayoverLiveConditions} from './layoverLiveSignals.js';
 import {layoverBuddyDecision,isLayoverCompatibleBuddy} from './LayoverBuddyGate.js';
-import {isValidTimezone,wallTimeToUtc,localDayString,localHourMinute} from './AirportTime.js';
+import {isValidTimezone,wallTimeToUtc,localDayString,localHourMinute} from './AirportTime.js'; import {logger as rootLogger} from '../../lib/logger.js'; const logger=rootLogger.child({service:'LayoverBuddyBooking'});
 
 export const LAYOVER_SPECIALIST_FLAG='layover_buddy_specialist_enabled';
 type Refusal={ok:false;status:400|403|404|409|503;reason:string};
@@ -78,10 +78,10 @@ export async function prepareLayoverBuddyBooking(db:SupabaseClient,input:{userId
 async function specialistAvailable(db:SupabaseClient,buddyId:string,timezone:string,start:Date,ends:number,ignoreBookingId?:string):Promise<{ok:true}|Refusal>{
  const day=localDayString(timezone,start);if(localDayString(timezone,new Date(ends-1))!==day)return refuse(409,'layover_buddy_availability_unconfirmed');
  const {data,error}=await db.from('rent_buddy_availability').select('is_available,time_slots').eq('buddy_id',buddyId).eq('date',day).maybeSingle();
- if(error)return refuse(503,'layover_buddy_availability_unavailable');if(!data?.is_available||!Array.isArray(data.time_slots))return refuse(409,'layover_buddy_availability_unconfirmed');
+ if(error){logger.warn({err:error,buddyId,day},'layover specialist availability unreadable');return refuse(503,'layover_buddy_availability_unavailable');}if(!data?.is_available||!Array.isArray(data.time_slots))return refuse(409,'layover_buddy_availability_unconfirmed');
  for(let instant=start.getTime();instant<ends;instant+=60000){const h=localHourMinute(timezone,new Date(instant)).hour;const slot=h>=6&&h<12?'morning':h>=12&&h<18?'afternoon':h>=18&&h<22?'evening':h>=22||h<2?'latenight':null;if(!slot||!data.time_slots.includes(slot))return refuse(409,'layover_buddy_availability_unconfirmed');}
  let occupiedQuery=db.from('rent_buddy_bookings').select('start_time,duration_h').eq('buddy_id',buddyId).eq('booking_date',day).in('status',['pending','requested','confirmed','scheduled','in_progress']);if(ignoreBookingId)occupiedQuery=occupiedQuery.neq('id',ignoreBookingId);const {data:bookings,error:busyError}=await occupiedQuery;
- if(busyError)return refuse(503,'layover_buddy_availability_unavailable');
+ if(busyError){logger.warn({err:busyError,buddyId,day},'layover specialist bookings unreadable');return refuse(503,'layover_buddy_availability_unavailable');}
  for(const row of bookings??[]){const occupied=bookingInstant(timezone,day,row.start_time);if(!occupied)return refuse(409,'layover_buddy_availability_unconfirmed');if(start.getTime()<occupied.getTime()+Number(row.duration_h)*3600000&&ends>occupied.getTime())return refuse(409,'layover_buddy_already_booked');}
  return {ok:true};
 }
