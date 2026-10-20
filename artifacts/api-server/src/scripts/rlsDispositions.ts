@@ -116,6 +116,17 @@ export const FOLLOW_UPS: ReadonlyArray<{ table: string; note: string }> = [
  * enforced by review.
  */
 export const POST_BASELINE_RLS_DISPOSITIONS: Record<string, RlsDisposition & { migration: string }> = {
+ "layover_route_dispatches": { class: "DENY_ALL_BY_DESIGN", policyCount: 0, migration: "3908_layover_route_fanout.sql", reason: "Private shared event scan state; RLS enabled with no policies or client grants. Service SELECT only; guarded SECURITY DEFINER claim/settle RPCs maintain state. Personal session cursor is SET NULL on erasure; source-event deletion cascades." },
+ "layover_route_work": { class: "DENY_ALL_BY_DESIGN", policyCount: 0, migration: "3908_layover_route_fanout.sql", reason: "Private owned event/session lease checkpoints; RLS enabled with no policies or client grants. Service SELECT only; guarded RPCs require canonical rollout and current owner/revision/lease. Session/profile/event deletion cascades." },
+ "layover_route_subjects": { class: "DENY_ALL_BY_DESIGN", policyCount: 0, migration: "3895_layover_route_subject_index.sql", reason: "Private opaque route watches. No client grants/policies; service SELECT and lookup RPC only. Fixed-search-path source triggers atomically bind owned recommendations/stops; no direct mutation RPC. Profile/session/rec/stop deletion cascades; snapshot provenance survives compaction." },
+ "layover_objective_intents": {"class": "DENY_ALL_BY_DESIGN", "policyCount": 0, "migration": "3899_layover_objective_evidence.sql", "reason": "RLS without policies; PUBLIC/anon/authenticated privileges revoked. Authenticated owner checked in route/service and DB owner trigger; service-role CRUD only. Private intent erased with session/profile."},
+ "layover_objective_facts": {"class": "DENY_ALL_BY_DESIGN", "policyCount": 0, "migration": "3899_layover_objective_evidence.sql", "reason": "RLS without policies; PUBLIC/anon/authenticated privileges revoked. Admin-only immutable source publish and irreversible retract, service-role reads; no direct client access. Curator anonymized on profile erasure."},
+
+ "layover_buddy_booking_links": { class: "RLS_REQUIRED", policyCount: 1, migration: "3894_layover_buddy_booking_links.sql", reason: "Service-role-only owner/session/booking binding. Direct client grants and RPC execution revoked; immutable identity and only-tightening bounds; deferred booking constraint refuses unbound or over-deadline specialist writes." },
+ "layover_experience_plans": {"class": "DENY_ALL_BY_DESIGN", "policyCount": 0, "migration": "3898_layover_experience_plan_versions.sql", "reason": "RLS with no policies, all PUBLIC/anon/authenticated privileges revoked. Service-only RPC locks authenticated-owned session and current stops, checks exact snapshot/revision/lifecycle/contract, appends immutable outcome and atomically advances session state. No client contract input; profile/session erasure cascades."},
+ "layover_compass_actions": {"class": "DENY_ALL_BY_DESIGN", "policyCount": 0, "migration": "3897_layover_compass_replan_actions.sql", "reason": "Owner-bound explicit Compass approvals and durable outcomes. RLS enabled, no policies; PUBLIC/anon/authenticated privileges revoked. Only service role can claim/complete; owner, session revision and snapshot are checked by the claim RPC. Terminal outcomes and approval scope are immutable; erasure cascades with session/profile."},
+  "layover_safe_return_links": { class: "RLS_REQUIRED", policyCount: 1, migration: "3893_layover_safe_return_links.sql", reason: "Service-role-only certified Layover-to-Safe Return binding; client privileges revoked; database guards ownership, immutable identity, actual starts and bounded deadlines." },
+  "layover_service_write_audit": { class: "RLS_REQUIRED", policyCount: 1, migration: "3890_layover_service_write_audit.sql", reason: "Atomic trigger-only service-write evidence. Clients have no privileges; service role SELECT only. Explicit expiry RPC deletes only expired records; account tombstoning scrubs actor/session identifiers." }, "layover_crew_plans": { class: "RLS_REQUIRED", policyCount: 1, migration: "3872_layover_crew_plans.sql", reason: "Service-role-only immutable crew-plan proposals. PUBLIC/anon/authenticated have no privileges; the sole policy is TO service_role. Routes enforce owned live session, crew membership and safety certification." }, "layover_crew_plan_branches": { class: "RLS_REQUIRED", policyCount: 1, migration: "3872_layover_crew_plans.sql", reason: "Service-role-only crew branch membership, times and stops. PUBLIC/anon/authenticated have no privileges; the sole policy is TO service_role. Rows are immutable and written atomically by layover_propose_crew_plan with membership and ownership guards." }, "layover_discovery_consents": { class: "RLS_REQUIRED", policyCount: 1, migration: "3875_layover_discovery_consents.sql", reason: "Service-role-only per-session pair consent. PUBLIC/anon/authenticated have no privileges; the sole policy is TO service_role. Routes authorize requester/target; schema guards ownership, expiry, blocks and immutable pair identity." }, "layover_recommendation_supersessions": { class: "DENY_ALL_BY_DESIGN", policyCount: 0, migration: "3871_layover_recommendation_status_and_supersession.sql", reason: "Immutable recommendation decision history. RLS enabled with no policies; PUBLIC/anon/authenticated have no privileges. Service role has SELECT/INSERT/DELETE, UPDATE is refused by a trigger, and account erasure cascades through the owning session. Recommendation and snapshot references deliberately survive regeneration and compaction." },
   "intel_state_snapshot_versions": {
     class: "DENY_ALL_BY_DESIGN",
     policyCount: 0,
@@ -124,6 +135,24 @@ export const POST_BASELINE_RLS_DISPOSITIONS: Record<string, RlsDisposition & { m
       "I1 append-only projection history. RLS enabled, zero policies: service_role (bypasses RLS) holds INSERT+SELECT only; " +
       "anon and authenticated hold nothing (REVOKE ALL, no grant). Readers reach live state through intel_state_snapshots " +
       "via the server projection, never this table. UPDATE/DELETE refused by trigger AND by grant.",
+  },
+  "airport_curated_facts": {
+    class: "DENY_ALL_BY_DESIGN",
+    policyCount: 0,
+    migration: "3874_airport_curation_provenance_ttl.sql",
+    reason:
+      "Layover 165 B2-CURATE: curated airport facts and their history. RLS enabled, zero policies: service_role (bypasses RLS) holds SELECT+INSERT+UPDATE " +
+      "only (no DELETE/TRUNCATE: history is kept), anon/authenticated hold nothing. Written only through the admin curation routes; content immutable and " +
+      "transitions guarded by trigger airport_curated_facts_guard; travellers read published facts only through the airport_profiles projection.",
+  },
+  "airport_time_band_calibrations": {
+    class: "DENY_ALL_BY_DESIGN",
+    policyCount: 0,
+    migration: "3880_airport_time_band_calibration.sql",
+    reason:
+      "Layover 165 B2-CURATE: recalibrated time-of-day bands (counts and percentiles, no identifiers). RLS enabled, zero policies: service_role holds " +
+      "SELECT+INSERT+UPDATE (no DELETE), usable only through airport_calibration_apply() (trigger airport_time_band_calibrations_guard); anon/authenticated " +
+      "hold nothing. The engine reads the airport_profiles projection, never this table.",
   },
 };
 

@@ -1,5 +1,5 @@
 /**
- * The consume half of §11: claim pending external events and replan them.
+ * The consume half of §11: durable leased route work plus the legacy event port.
  *
  * Spec §11.1 steps 2-8 are the replan itself and live in
  * `services/airport/LayoverEventReplanner.ts`. This file is the LOOP around
@@ -23,7 +23,7 @@
  * testable against a port that does nothing, which is the only way to test a
  * concurrency property at all.
  *
- * ── CLAIM BEFORE REPLAN, AND WHAT THAT COSTS ─────────────────────────────────
+ * ── LEGACY NON-ROUTE CLAIM BEFORE REPLAN, AND WHAT THAT COSTS ────────────────
  * `claimExternalEvent` stamps `processed_at` with a conditional UPDATE, so two
  * workers reading the same pending page cannot both own the same event. The
  * stamp happens BEFORE the replan, deliberately:
@@ -75,6 +75,7 @@ export type ReplanReport =
  */
 export interface ReplanPort {
   replan(event: LayoverEventEnvelope): Promise<ReplanReport>;
+  drainRoutes?(limit:number):Promise<RouteFanoutReport>;
 }
 
 export interface DrainedEvent {
@@ -109,6 +110,8 @@ export interface DrainReport {
    * that reports nothing at all.
    */
   readFailed: string | null;
+  routeFanout?:RouteFanoutReport;
+  routeRefused?:Array<{eventId:string;reason:string}>;
 }
 
 /**
@@ -134,6 +137,7 @@ export async function drainPendingExternalEvents(
     readFailed: null,
   };
 
+  if(port.drainRoutes){report.routeFanout=await port.drainRoutes(opts.limit);report.drained.push(...report.routeFanout.completed);}
   const pending = await readPendingExternalEvents(db, opts.limit);
   if (!pending.ok) {
     report.readFailed = pending.message;
@@ -142,6 +146,12 @@ export async function drainPendingExternalEvents(
   report.unreadable = pending.unreadable;
 
   for (const event of pending.events) {
+    if(event.subjectRefs.some(s=>s.kind==='route')){
+      // Route work never takes the legacy claim-before-replan path. Mixed unions
+      // remain unclaimed until a complete union processor is implemented.
+      const reason=event.eventType!=='mobility.route_degraded'||event.subjectRefs.some(s=>s.kind!=='route')?'route_subject_union_unsupported':event.subjectRefs.some(s=>!validLayoverRouteSubject(s.ref))?'route_subject_invalid':report.routeFanout?.enabled?'route_fanout_pending':'route_fanout_unavailable';
+      (report.routeRefused??=[]).push({eventId:event.eventId,reason});continue;
+    }
     const claim = await claimExternalEvent(db, event.eventId, opts.nowMs);
     if (!claim.ok) {
       // The claim itself errored, so we do NOT know whether the stamp landed.
@@ -185,6 +195,7 @@ export async function drainPendingExternalEvents(
 
   return report;
 }
+import type {RouteFanoutReport} from '../airport/LayoverRouteFanout.js';
 
 export type ReleaseResult =
   | { ok: true; released: boolean }
@@ -232,3 +243,5 @@ export async function releaseExternalEventClaim(
   );
   return { ok: true, released };
 }
+
+import {validLayoverRouteSubject} from '../../lib/layoverRouteSubjectRef.js';

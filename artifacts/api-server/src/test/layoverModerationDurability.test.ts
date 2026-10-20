@@ -44,7 +44,7 @@ import { fileURLToPath } from "node:url";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import airportRouter from "../routes/airport.js";
-import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js";
+import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js"; import { withConfirmedCorridor } from "./helpers/confirmedCorridor.js";
 import {
   generateRecommendations,
   recommendationKey,
@@ -481,7 +481,7 @@ function stage(stableIds: boolean) {
     layover_plan_stops: [],
     trip_plan_items: [],
   };
-  _setTestClient(makeLayoverDb(t, { users: { [TOKEN]: USER_ID } }), true);
+  _setTestClient(makeLayoverDb(withConfirmedCorridor(t, { userIds: [USER_ID], destination: "TW" }), { users: { [TOKEN]: USER_ID } }), true);
   return t;
 }
 

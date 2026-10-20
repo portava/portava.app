@@ -64,7 +64,7 @@ import { invalidateServeLogFlagCache } from "../lib/discoveryServeLog.js";
 import { invalidateFlagsCache } from "../compass/flags.js";
 import { invalidateDiscoveryEngineModeCache } from "../lib/discoveryEngineMode.js";
 import { LAYOVER_DISCOVERY_MODE_FLAG } from "../services/airport/LayoverSnapshot.js";
-import { airportRow, sessionRow } from "./helpers/fakeLayoverDb.js";
+import { airportRow, sessionRow } from "./helpers/fakeLayoverDb.js"; import { withConfirmedCorridor } from "./helpers/confirmedCorridor.js"; // LAYOVER 165 B2-CURATE: an unconfirmed border fails closed since 2026-10-18; these worlds state a confirmed one
 
 // ── No network. Nothing in this suite geocodes, but a stray call must fail
 // loudly rather than reach the internet from a unit test.
@@ -227,13 +227,13 @@ function layoverWorld(over: {
   stops?: any[];
   places?: any[];
 } = {}) {
-  return {
+  return withConfirmedCorridor({
     feature_flags: [SERVE_LOG_ON, ...(over.flags ?? FLAG_ON)],
     discovery_places: over.places ?? PLACES,
     layover_sessions: [liveSession()],
     airport_profiles: [airportRow()],
     layover_plan_stops: over.stops ?? [stopRow("fits", 20, 60), stopRow("overlong", 240, 720)],
-  };
+  } as Record<string, any[]>, { userIds: [VIEWER_ID], destination: "TW" });
 }
 
 let server: http.Server;
@@ -318,7 +318,7 @@ function assertServePath(body: any, expected: string): void {
 
 /** The layover world GET /discovery runs in, with a stop for the db place only. */
 function discoveryWorld(over: { flags?: Array<Record<string, unknown>>; stops?: any[] } = {}) {
-  return {
+  return withConfirmedCorridor({
     feature_flags: [SERVE_LOG_ON, ...(over.flags ?? FLAG_ON)],
     layover_sessions: [liveSession()],
     airport_profiles: [airportRow()],
@@ -327,7 +327,7 @@ function discoveryWorld(over: { flags?: Array<Record<string, unknown>>; stops?: 
     // not. A test that stated `db/<uuid>` here would pass against a route that
     // never mapped anything.
     layover_plan_stops: over.stops ?? [stopRow(DB_UUID_FITS, 20, 60)],
-  };
+  } as Record<string, any[]>, { userIds: [VIEWER_ID], destination: "TW" });
 }
 
 const COMMUNITY = `/api/discovery/community?city=${encodeURIComponent(CITY)}`;
@@ -510,7 +510,7 @@ describe("A14 — in Layover mode, ONLY the certified action universe is shown",
     assert.equal(r.body.layover?.active, true);
     assert.equal(r.body.layover?.sessionId, SESSION_ID);
     assert.match(String(r.body.layover?.snapshotId ?? ""), /.+/);
-    assert.equal(r.body.layover?.landsideStatus, "caution"); assert.equal(r.body.layover?.landsideOpen, false); // LAY-FIX follow-up: this world has no confirmed border. Landside cards are still ADMITTED (the list above), and the summary now says that is a caution — `landsideOpen` is true only for an OPEN gate.
+    assert.equal(r.body.layover?.landsideStatus, "open"); assert.equal(r.body.layover?.landsideOpen, true); // LAYOVER 165 B2-CURATE: an unconfirmed border now CLOSES landside (owner decision 2026-10-18), so this world states a confirmed one (withConfirmedCorridor) and the gate is OPEN. (Was: "caution" with no confirmed border.)
   });
 
   it("names WHY each withheld place was withheld, in three distinguishable states", async () => {
@@ -687,7 +687,7 @@ describe("A14 — GET /discovery is gated on all four serve paths", () => {
   it("Compass fresh rank and cache-B hit: gated on both", async () => {
     const rows = { ...discoveryWorld(), };
     (rows as any).feature_flags = [
-      SERVE_LOG_ON, ...FLAG_ON, { flag: "COMPASS_V1_RULE_BASED_ENABLED", enabled: true },
+      SERVE_LOG_ON, ...FLAG_ON, { flag: "COMPASS_V1_RULE_BASED_ENABLED", enabled: true }, { flag: "passport_entry_intelligence_enabled", enabled: true }, // the confirmed corridor's flag (withConfirmedCorridor), kept when the flags are replaced
     ];
     setClient({ rows });
     _setTestDbPlacesOverride(async () => [

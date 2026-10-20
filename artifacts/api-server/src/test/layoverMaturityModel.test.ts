@@ -114,7 +114,7 @@ describe("§22 L243–L248 — the six rungs, named as the spec names them", () 
   it("POSITIVE CONTROL: every level declared UNREACHABLE names what is missing, and no signal set reaches it", () => {
     const reached = new Set(Object.values(SIGNAL_SETS).map((s) => airportMaturity(s).level));
     const unreachable = AIRPORT_MATURITY_LEVELS.filter((l) => !MATURITY_LEVEL_REACHABILITY[l].reachable);
-    assert.ok(unreachable.length > 0, "a ladder where every rung is reachable is not describing this tree");
+    assert.equal(unreachable.length, 0, "curation, screened live evidence, observation counts and persisted calibration now have production producers");
     for (const level of unreachable) {
       const why = MATURITY_LEVEL_REACHABILITY[level].blockedBy;
       assert.ok(why && why.length > 20, `${level} is unreachable for reason "${why}"`);

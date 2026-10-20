@@ -141,7 +141,7 @@ const contactSchema = z.object({
 });
 
 const createSessionSchema = z.object({
-  planItemId:           z.string().uuid().optional().nullable(),
+  planItemId:           z.string().uuid().optional().nullable(), layoverSessionId: z.string().uuid().optional(),
   tripId:               z.string().uuid().optional().nullable(),
   // §17.4 (2794): attach to a subgroup execution context (needs tripId; the caller must be a current member).
   subgroupId:           z.string().uuid().optional().nullable(),
@@ -367,7 +367,7 @@ router.post("/me/safe-return/sessions", async (req, res) => {
     return;
   }
 
-  const created = await createSession(db, { userId: user.id, ...parsed.data });
+  const layover = parsed.data.layoverSessionId ? await prepareLayoverSafeReturn(db,user.id,parsed.data.layoverSessionId) : null; if (layover && !layover.ok) { res.status(layover.status).json({error:layover.reason}); return; } const created = await createSession(db, { userId: user.id, ...parsed.data, ...(layover?.ok ? {certifiedDeadline:layover.deadline} : {}) });
   if (!created) {
     // Could be a true DB error, or the partial unique index fired for a concurrent
     // request that slipped past the pre-check above.  Re-check so we can return a
@@ -381,7 +381,7 @@ router.post("/me/safe-return/sessions", async (req, res) => {
     return;
   }
 
-  const session = created.session;
+  const session = created.session; if (layover?.ok) { const bound=await bindLayoverSafeReturn(db,{userId:user.id,safeReturnId:session.id,context:layover}); if (!bound.ok) { const cancelled=await cancelSession(db,session.id,user.id); res.status(bound.status).json({error:bound.reason,pendingCleanupRequired:cancelled.outcome!=="ok"}); return; } }
 
   // Evict Compass profile cache — safeReturnActive signal changes immediately.
   invalidateCompassProfile(user.id);
@@ -465,7 +465,7 @@ router.post("/me/safe-return/sessions/:id/start", async (req, res) => {
     if (flag === "off") { sendError(res, "feature_disabled"); return; }
   }
 
-  const started = await startSession(db, req.params.id, user.id);
+  const startGuard=await guardLayoverSafeReturnMutation(db,user.id,req.params.id,"start"); if (!startGuard.ok) {res.status(startGuard.status).json({error:startGuard.reason});return;} const started = await startSession(db, req.params.id, user.id);
   if (started.outcome === "unavailable") {
     req.log.error({ reason: started.reason, sessionId: req.params.id }, "safe-return start: update failed");
     sendError(res, "degraded_unavailable", "We could not start your Safe Return timer. Please try again.");
@@ -532,7 +532,7 @@ router.post("/me/safe-return/sessions/:id/extend", async (req, res) => {
     return;
   }
 
-  const extended = await extendTimer(db, req.params.id, user.id, parsed.data.minutes);
+  const extendGuard=await guardLayoverSafeReturnMutation(db,user.id,req.params.id,"extend"); if (!extendGuard.ok) {res.status(extendGuard.status).json({error:extendGuard.reason});return;} const extended = await extendTimer(db, req.params.id, user.id, parsed.data.minutes);
   if (extended.outcome === "unavailable") {
     // A 404 here would tell someone whose timer is about to expire that their
     // session does not exist. It does; the write failed and a retry may work.
@@ -562,7 +562,7 @@ router.post("/me/safe-return/sessions/:id/confirm", async (req, res) => {
     if (flag === "off") { sendError(res, "feature_disabled"); return; }
   }
 
-  const confirmed = await confirmSafe(db, req.params.id, user.id);
+  const confirmGuard=await guardLayoverSafeReturnMutation(db,user.id,req.params.id,"confirm"); if (!confirmGuard.ok) {res.status(confirmGuard.status).json({error:confirmGuard.reason});return;} const confirmed = await confirmSafe(db, req.params.id, user.id);
   if (confirmed.outcome === "unavailable") {
     // "Already closed" would tell someone who just got home that they are done.
     // They are not: the session is still active and will alert their contacts.
@@ -1244,3 +1244,4 @@ async function noticeLiveShareRecipient(
 }
 
 import { planItemAccessFor, withholdPrivatePlanItems } from "../services/safeReturn/safeReturnPlanItemAccess.js";
+import { prepareLayoverSafeReturn, bindLayoverSafeReturn, guardLayoverSafeReturnMutation } from "../services/airport/LayoverSafeReturnService.js";

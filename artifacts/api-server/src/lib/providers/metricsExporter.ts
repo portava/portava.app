@@ -93,6 +93,8 @@ export interface ExportOptions {
    * not. Defaults to nothing so the renderer stays pure about its input.
    */
   prefix?: string;
+  /** Rolling-window counts can decrease; expose them as gauges. */
+  windowed?: boolean;
   /** Labels applied to every series, e.g. the deployment. Values are escaped. */
   labels?: Record<string, string>;
 }
@@ -201,7 +203,7 @@ export function renderPrometheusText(
       `${m.kind === "rate" ? "Rate" : "Count"} for ${m.name}.`,
       // A rate is a gauge: it goes down as well as up, and declaring it a
       // counter would make every rate() query over it nonsense.
-      m.kind === "rate" ? "gauge" : "counter",
+      opts.windowed || m.kind === "rate" ? "gauge" : "counter",
     );
 
     // The denominator travels with the rate. 1.0 over one sample and 1.0 over
@@ -290,6 +292,8 @@ export function createPushgatewaySink(
     readEnv?: (n: string) => string | undefined;
     job?: string;
     timeoutMs?: number;
+    /** Replace the whole job so unavailable metrics cannot leave stale values. */
+    replace?: boolean;
   } = {},
 ): MetricsSink {
   const doFetch = opts.fetchImpl ?? globalThis.fetch;
@@ -324,7 +328,7 @@ export function createPushgatewaySink(
       let res: Response;
       try {
         res = await doFetch(`${base}/metrics/job/${encodeURIComponent(job)}`, {
-          method: "POST",
+          method: opts.replace ? "PUT" : "POST",
           headers: { "Content-Type": "text/plain; version=0.0.4" },
           body: rendered.text,
           signal: AbortSignal.timeout(timeout),

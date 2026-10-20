@@ -1282,6 +1282,9 @@ const UNRESOLVABLE = [
 // ─────────────────────────────────────────────────────────────────────────────
 const V = 'verified by hand at c89f09a77';
 const DIRECT_READS = [
+  { file: 'services/airport/LayoverRecommendationService.ts', flag: 'layover_live_intersection_enabled', reason: 'readLiveIntersectionFlag returns LayoverRead<boolean>. Database error or throw logs the reason and returns degraded(false, live_flag_unreadable); the recommendation read preserves explicit liveDisclosure and applies the typed conservative fallback. Missing/FALSE is a deliberate disabled read. layoverLiveRead tests pin error, throw, disabled and enabled paths.' },
+  { file: 'lib/layoverServiceAudit.ts', flag: 'layover_service_write_audit_enabled', reason: '3890 schema sentinel selects flag, never enabled. A present migration marker runs bounded expiry even after auditing is disabled; only null means absent. Read error, throw, malformed marker or failed/invalid RPC result reports failed and increments the existing retention job failure state. Atomic audit tests A7 prove disabled-flag expiry on the migrated database.' },
+  { file: 'services/airport/LayoverSafeReturnService.ts', flag: 'layover_safe_return_product_enabled', reason: 'layoverProductGate returns typed on/off/unavailable. Error or throw is unavailable: linked-product reads refuse503, canonical deadline sync reports gate_unavailable, checkpoint closure reports failure rather than claiming closed. Only a missing or explicitly false flag is off. DB product lifecycle tests cover the gate.' },
   // ── The capability contract's own four-state flag read ───────────────────
   {
     file: 'lib/capability/schemaCapability.ts',

@@ -41,7 +41,7 @@ interface Props {
   buddies: LayoverBuddiesAnswer | null; // the WHOLE /buddies answer, null before the first read (census §48)
   canEdit: boolean;
   onToggleShare: (enabled: boolean) => void;
-  onOpenBuddy: (buddy: LayoverBuddy) => void; /** census L129 — the server's `share.intentsEnabled`; absent = the surface does not exist here. */ intentsEnabled?: boolean; sessionId?: string | null;
+  onOpenBuddy: (buddy: LayoverBuddy, context: { layoverSessionId: string; bookingStartsAt: string; bookingEndsBy: string; timezone: string }) => void; /** census L129 — the server's `share.intentsEnabled`; absent = the surface does not exist here. */ intentsEnabled?: boolean; sessionId?: string | null;
 }
 
 function initials(name: string | null, handle: string | null): string {
@@ -102,7 +102,7 @@ export function LayoverPeopleSection({
         <View style={{ flex: 1 }}>
           <Text style={styles.shareTitle}>Show me to other layover travelers</Text>
           <Text style={styles.shareDesc}>
-            City-level only — never your exact location. You see others only while you're sharing too.
+            City-level only — never your exact location. You are counted with other travellers here; nobody sees your profile, and you see nobody's, unless you BOTH agree (Travellers you agreed to see).
           </Text>
         </View>
         <Switch
@@ -164,18 +164,18 @@ export function LayoverPeopleSection({
       {intentsEnabled && shareEnabled && sessionId ? <LayoverPresenceIntents sessionId={sessionId} canEdit={canEdit} /> : null}{/* census L129 — §14 L1, counts only */}{/* Rent-a-Buddy: the list, or the server's reason there is none (§48). */}<BuddiesNotice answer={buddies} />
       {buddies?.ok && buddies.buddies.length > 0 && (
         <>
-          <Text style={styles.buddyHead}>Local buddies for a few hours</Text>
-          <Text style={styles.buddySub}>Booked through the regular Rent-a-Buddy flow</Text>
+          <Text style={styles.buddyHead}>Layover specialists</Text>
+          <Text style={styles.buddySub}>Your booking must finish before your certified return deadline. The chosen slot is checked at checkout.</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.buddyRow}>
             {buddies.buddies.map((b) => (
-              <Pressable key={b.id} style={styles.buddyCard} onPress={() => onOpenBuddy(b)}>
+              <Pressable key={b.id} style={styles.buddyCard} accessibilityRole="button" accessibilityLabel={`Book ${primaryIdentityText(b)} for this layover`} disabled={!sessionId || !buddies.safetyGate?.passed || !buddies.safetyGate?.bookingStartsAt || !buddies.safetyGate?.bookingEndsBy || !buddies.safetyGate?.timezone} onPress={() => { const gate = buddies.safetyGate; if (sessionId && gate?.passed && gate.bookingStartsAt && gate.bookingEndsBy && gate.timezone) onOpenBuddy(b, { layoverSessionId: sessionId, bookingStartsAt: gate.bookingStartsAt, bookingEndsBy: gate.bookingEndsBy, timezone: gate.timezone }); }}>
                 {b.coverPhotoUrl
                   ? <CachedImage source={{ uri: b.coverPhotoUrl }} style={styles.buddyPhoto} />
                   : <View style={[styles.buddyPhoto, styles.buddyPhotoFallback]}>
                       <Text style={styles.buddyPhotoInitials}>{initials(b.displayName, null)}</Text>
                     </View>}
                 {b.availableDuringLayover === true && (
-                  <View style={styles.availTag}><Text style={styles.availTagText}>free during your layover</Text></View>
+                  <View style={styles.availTag}><Text style={styles.availTagText}>available that day</Text></View>
                 )}
                 <View style={styles.buddyBody}>
                   <View style={styles.buddyNameRow}>
@@ -266,7 +266,7 @@ function BuddiesNotice({ answer }: { answer: LayoverBuddiesAnswer | null }) {
 }
 
 /**
- * What qualifies a list that WAS served. A "free during your layover" badge is
+ * What qualifies a list that WAS served. An "available that day" badge is
  * drawn only for a measured `true` (above); `null` is "not checked", and this
  * says so instead of letting it read as `false` (census §23.8). A tight window
  * or night layover served only verified, non-new profiles (`trustRequirement`,

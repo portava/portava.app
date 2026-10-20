@@ -58,11 +58,11 @@ const logger = rootLogger.child({ scheduler: "layoverExternalEvent" });
 const STARTUP_DELAY_MS = 90_000;
 
 /**
- * Two minutes. An external event moves a SAFETY input — a delay shortens a
+ * Normal polling is two minutes. An external event moves a safety input — a delay shortens a
  * usable window, a queue reading moves a return deadline — so the interval is
- * the upper bound on how stale a traveller's plan can be after the world
- * changes. Shorter costs a query against a partial index; longer is a traveller
- * walking back to an airport on arithmetic that stopped being true.
+ * polling cadence, not a freshness guarantee: queued pages, retries or outages
+ * can take longer. Durable route backlogs retry after thirty seconds; other work
+ * uses the normal interval, and failed legacy claims remain explicit recovery items.
  */
 const DRAIN_INTERVAL_MS = 120_000;
 
@@ -80,6 +80,7 @@ export interface LayoverDrainOutcome {
   failedAfterClaim: number;
   unreadable: number;
   skipped: boolean;
+  routeBacklog?:boolean; routeRetrying?:number; routeFailed?:number; routeRefused?:number;
   /**
    * WHY this pass did nothing.
    *
@@ -99,7 +100,7 @@ export interface LayoverDrainOutcome {
  * for every feasibility recomputation in the pass. Two reads could stamp an
  * event at one instant and certify a deadline against another.
  */
-export async function runLayoverExternalEventDrain(
+async function runLayoverExternalEventDrainImpl(
   opts: { client?: any; nowMs: number; limit?: number } = { nowMs: Date.now() },
 ): Promise<LayoverDrainOutcome> {
   const empty = { drained: 0, claimedByAnother: 0, failedAfterClaim: 0, unreadable: 0 };
@@ -107,7 +108,7 @@ export async function runLayoverExternalEventDrain(
   // NOT `opts.client ?? getServiceClient()` — `??` does not short-circuit on an
   // explicit null, so a unit test passing `client: null` would open a socket.
   // lib/intelRetentionScheduler records that exact defect.
-  const db = "client" in opts && opts.client !== undefined ? opts.client : getServiceClient();
+  const db = auditedLayoverClient("client" in opts && opts.client !== undefined ? opts.client : getServiceClient());
   if (!db) return { ...empty, skipped: true, reason: "no_client" };
 
   if (!(await isFlagEnabled(db, "layover_event_ingest_enabled"))) {
@@ -120,6 +121,7 @@ export async function runLayoverExternalEventDrain(
     { limit: opts.limit ?? DRAIN_LIMIT, nowMs: opts.nowMs },
   );
 
+  if(report.routeFanout?.failed||report.routeFanout?.retrying||report.routeRefused?.some(x=>x.reason!=='route_fanout_pending'))logger.warn({routeFanout:report.routeFanout,routeRefused:report.routeRefused},'Route fanout has retained pending work or explicitly refused envelopes');
   if (report.readFailed !== null) {
     logger.warn({ err: report.readFailed }, "pending external event read failed — this pass does not know whether there was work");
     return { ...empty, skipped: true, reason: "read_failed" };
@@ -145,6 +147,7 @@ export async function runLayoverExternalEventDrain(
   }
 
   return {
+    ...(report.routeFanout?.enabled||report.routeFanout?.failed?{routeBacklog:report.routeFanout.hasMore,routeRetrying:report.routeFanout.retrying,routeFailed:report.routeFanout.failed,routeRefused:report.routeRefused?.filter(x=>x.reason!=='route_fanout_pending').length??0}:{}),
     drained: report.drained.length,
     claimedByAnother: report.claimedByAnother,
     failedAfterClaim: report.failedAfterClaim.length,
@@ -166,8 +169,8 @@ export function startLayoverExternalEventScheduler(): void {
     "LayoverExternalEventScheduler scheduled (a no-op on every database where the ingest gate is closed)",
   );
   const generation = ++_generation; _timer = setTimeout(function tick() {
-    void runLayoverExternalEventDrain({ nowMs: Date.now() }).finally(() => {
-      if (_timer !== null && generation === _generation) { _timer = setTimeout(tick, DRAIN_INTERVAL_MS); _timer.unref?.(); } // a stop() during the run must not re-arm
+    let nextDelay=DRAIN_INTERVAL_MS;void runLayoverExternalEventDrain({ nowMs: Date.now() }).then(result=>{if(result.routeBacklog)nextDelay=30_000;}).finally(() => {
+      if (_timer !== null && generation === _generation) { _timer = setTimeout(tick, nextDelay); _timer.unref?.(); } // a stop() during the run must not re-arm
     });
   }, STARTUP_DELAY_MS); _timer.unref?.(); // never keep a process alive for a scheduler: the server does that
 }
@@ -178,3 +181,6 @@ export function stopLayoverExternalEventScheduler(): void {
     _timer = null;
   }
 }
+
+import { auditedLayoverClient, withLayoverSystemAudit } from './layoverServiceAudit.js';
+export function runLayoverExternalEventDrain(...args: Parameters<typeof runLayoverExternalEventDrainImpl>): ReturnType<typeof runLayoverExternalEventDrainImpl> { return withLayoverSystemAudit('layover:external-events', () => runLayoverExternalEventDrainImpl(...args)); }

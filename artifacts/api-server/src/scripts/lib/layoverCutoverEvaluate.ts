@@ -80,7 +80,7 @@ export const RESIDUAL_PREDICATE = [
  * 5: the point of the rule is that nobody gets to decide "order does not matter"
  * silently.
  */
-const CO_TOUCHER_CLASSIFICATION_DEFAULT: Record<string, string> = {
+const CO_TOUCHER_CLASSIFICATION_DEFAULT: Record<string, string> = { "3871_layover_recommendation_status_and_supersession": "ORDER-INSENSITIVE. Adds nullable defaultless classification columns and CHECKs, a separate immutable history table and a FALSE flag; writes no recommendation row and neither reads nor changes rec_key or any 2411 derivation input. Existing rows retain NULL in every added field and satisfy the CHECKs in either order. 2411 changes rec_key only; 3871 requires the column from 2410, not its 2411 backfill.",
   // WAS EMPTY, AND THE EMPTINESS WAS A RESULT RATHER THAN AN OMISSION.
   //
   // This map held one entry — 2335_layover_recommendation_write_boundary,

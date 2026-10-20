@@ -25,7 +25,7 @@ const app: Express = express();
 
 // ── Security headers ──────────────────────────────────────────────────────────
 // Helmet must be the very first middleware so headers are set on every response.
-app.use(helmet());
+app.use(helmet()); app.use(layoverServiceAuditContext);
 
 // ── CORS allowlist ────────────────────────────────────────────────────────────
 // Reads from ALLOWED_ORIGINS (comma-separated).  Requests with no Origin header
@@ -247,3 +247,5 @@ export default app;
 // the identity webhook, BEFORE the global JSON parser, because the provider's
 // signature is over the RAW bytes (services/payments/paymentWebhookSignature.ts).
 import { paymentWebhookRawParser, paymentWebhookHandler } from "./routes/rentABuddyPayments.js";
+
+import { layoverServiceAuditContext } from './lib/layoverServiceAudit.js';

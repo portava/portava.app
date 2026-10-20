@@ -66,6 +66,14 @@ jest.mock('../../services/safeReturn', () => ({
 const mockGetSessionContacts = getSessionContacts as jest.Mock;
 const mockStartLiveShare = startLiveShare as jest.Mock;
 
+it('a layover deadline cannot be extended and confirmation uses the airport checkpoint action', async () => {
+  const arrived = jest.fn(async () => ({ ok: true }));
+  await act(async () => { render(<ActiveSafeReturnCard session={activeSession() as never} deadlineLocked onConfirmArrival={arrived} />); });
+  expect(screen.queryByText('+15 min')).toBeNull();
+  await act(async () => { fireEvent.press(screen.getByText("I'm back at the airport")); });
+  expect(arrived).toHaveBeenCalledTimes(1);
+});
+
 function activeSession() {
   return {
     id: 'sess-1',

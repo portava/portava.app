@@ -78,7 +78,7 @@ before(async () => {
   const express = (await import("express")).default;
   const { _setTestClient } = await import("../lib/http.js");
   const airportRouter = (await import("../routes/airport.js")).default;
-  const { makeLayoverDb, airportRow, sessionRow } = await import("./helpers/fakeLayoverDb.js");
+  const { makeLayoverDb, airportRow, sessionRow } = await import("./helpers/fakeLayoverDb.js"); const { withConfirmedCorridor } = await import("./helpers/confirmedCorridor.js");
 
   const app = express();
   app.use(express.json());
@@ -99,7 +99,7 @@ before(async () => {
     layover_events: [], layover_plan_stops: [], trip_plan_items: [],
     layover_recommendations: [], discovery_places: [],
   };
-  _setTestClient(makeLayoverDb(tables, { users: { "env-token": "user-1" } }), true);
+  _setTestClient(makeLayoverDb(withConfirmedCorridor(tables, { userIds: ["user-1"], destination: "TW" }), { users: { "env-token": "user-1" } }), true);
 });
 
 after(async () => {

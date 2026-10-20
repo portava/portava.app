@@ -53,14 +53,14 @@ import { snapshotIdFor } from "../layoverLedger.js";
 import { safeEnvelope } from "../LayoverEnvelope.js";
 import { safeReturnPosture } from "../LayoverSafeReturnService.js";
 import { LAYOVER_ENGINE_VERSION } from "../LayoverSafetyEngine.js";
-import { makeLayoverDb, airportRow, sessionRow } from "../../../test/helpers/fakeLayoverDb.js";
+import { makeLayoverDb, airportRow, sessionRow } from "../../../test/helpers/fakeLayoverDb.js"; import { withConfirmedCorridor } from "../../../test/helpers/confirmedCorridor.js";
 
 const NOW = Date.parse("2026-09-15T08:00:00.000Z");
 const USER = "user-1";
 
 /** A generous international layover at a CURATED airport. */
 function tables(over: { session?: Record<string, any>; airport?: Record<string, any> } = {}) {
-  return {
+  return withConfirmedCorridor({
     layover_sessions: [
       sessionRow({
         id: "session-1",
@@ -74,7 +74,7 @@ function tables(over: { session?: Record<string, any>; airport?: Record<string, 
       }),
     ],
     airport_profiles: [airportRow({ ...(over.airport ?? {}) })],
-  };
+  }, { userIds: [USER], destination: "TW" });
 }
 
 async function snapshotOr(db: any, opts: Record<string, unknown> = {}) {

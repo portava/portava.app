@@ -1405,7 +1405,7 @@ export async function executeAccountDeletion(
     must(res, "delete layover_crew_members");
     return undefined;
   });
-  const layoverSessionsOk = layoverCrewOk && await step(steps, "delete_layover_sessions", async () => {
+  const layoverSourcesOk = layoverCrewOk && await step(steps, "anonymise_layover_objective_sources", () => anonymiseLayoverObjectiveSources(sc, userId)); const layoverSessionsOk = layoverSourcesOk && await step(steps, "delete_layover_sessions", async () => {
     must(await sc.from("layover_sessions").delete().eq("user_id", userId), "delete layover_sessions");
   });
   if (!layoverSessionsOk) {
@@ -1580,3 +1580,13 @@ export async function executeAccountDeletion(
 
 // census-map §45: the one module that writes an evidence reference is the one that opens it.
 import { collectOwnEvidenceObjectKeys } from "../../lib/intelEvidenceCapture.js";
+
+/** Tombstone deletion does not fire3899's profile FK. Keep the public source
+ * claim, erase only this curator, and leave failures retryable before finalization.
+ * A genuinely absent3899 table has no identifiers to erase; other faults refuse. */
+export async function anonymiseLayoverObjectiveSources(sc: any, userId: string): Promise<void> {
+  const result = await sc.from("layover_objective_facts").update({ stated_by: null }).eq("stated_by", userId);
+  const code = String(result?.error?.code ?? ""), message = String(result?.error?.message ?? "");
+  if ((code === "42P01" || code === "PGRST205") && /\blayover_objective_facts\b/.test(message)) return;
+  must(result, "anonymise layover objective curator");
+}

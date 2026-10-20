@@ -328,8 +328,8 @@ export async function readTripGhostMode(
 export async function evaluateSharingGate(
   db: SupabaseClient,
   ctx: { userId: string; tripId?: string | null },
-): Promise<SharingGateResult> {
-  const [prefs, ghost] = await Promise.all([
+): Promise<LayoverRead<Omit<SharingGateResult, "degraded">>> {
+  try { const [prefs, ghost] = await Promise.all([
     loadPreferences(db, ctx.userId),
     readTripGhostMode(db, ctx.tripId ?? null, ctx.userId),
   ]);
@@ -347,14 +347,14 @@ export async function evaluateSharingGate(
   if (prefs.degraded) reasons.push("preferences_unreadable");
   if (ghost.kind === "degraded") reasons.push("ghost_mode_unreadable");
 
-  return {
-    allowed,
+  const result = {
+    allowed: allowed && !prefs.degraded && ghost.kind === "read",
     reasons,
-    degraded: prefs.degraded || readDisclosure(ghost).degraded,
+    // Read confidence is carried by the discriminated union, never beside an apparent measured value.
     locationMode: prefs.locationMode,
     sharingPaused: prefs.sharingPaused,
     ghostMode,
-  };
+  }; const degraded = prefs.degraded || ghost.kind === "degraded"; if (degraded) { const failures = reasons.filter((r) => r === "preferences_unreadable" || r === "ghost_mode_unreadable") as [SharingDenialReason, ...SharingDenialReason[]]; privacyLogger.warn({ userId: ctx.userId, tripId: ctx.tripId ?? null, operation: "evaluateSharingGate", reasons: failures }, "sharing gate inputs unreadable; sharing refused"); return readDegraded(result, failures); } return readValue(result); } catch (err) { privacyLogger.warn({ err, userId: ctx.userId, operation: "evaluateSharingGate", reason: "sharing_gate_read_threw" }, "sharing gate read threw; sharing refused"); return readDegraded({ allowed: false, reasons: ["preferences_unreadable", "ghost_mode_unreadable"], locationMode: "off", sharingPaused: true, ghostMode: true }, ["sharing_gate_read_threw"]); }
 }
 
 /**
@@ -548,4 +548,12 @@ export function disclosePresence(input: {
     degraded,
     degradedReasons,
   };
+}
+
+/** Translate a typed sharing read for the existing wire/policy contract; degraded data is always closed. */
+export function discloseSharingGate(read: LayoverRead<Omit<SharingGateResult, "degraded">>): SharingGateResult {
+  return matchRead<Omit<SharingGateResult, "degraded">, SharingGateResult>(read, {
+    read: (value) => ({ ...value, degraded: false }),
+    degraded: (fallback) => ({ ...fallback, allowed: false, degraded: true }),
+  });
 }

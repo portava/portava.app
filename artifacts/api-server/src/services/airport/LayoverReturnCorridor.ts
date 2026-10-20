@@ -208,10 +208,10 @@ export async function layoverReturnRisk(
 // ═══════════════════════════════════════════════════════════════════════════
 import type { RouteCorridor, RouteOption, TravelMode, BidirectionalCorridor } from "../../lib/providers/routeCorridorProvider.js";
 import { corridorConfidence, routeInterruptibility } from "../../lib/providers/routeCorridorProvider.js";
-import type { TravelConfidence } from "../../lib/travelEstimate.js";
+import type { TravelConfidence } from "../../lib/travelEstimate.js"; import { layoverRouteSubjectRef } from "../../lib/layoverRouteSubjectRef.js";
 
 /** One measured direction. */
-export interface RoutedLeg {
+export interface RoutedLeg { geometry?: import('../../lib/providers/providerMapGeometry.js').ProviderRouteGeometry | null;
   /** The instant this leg was asked FOR (ISO). */
   departAt: string;
   /** The best route's own duration — traffic-aware for a DRIVE forecast — never below its free-flow bound. */
@@ -228,7 +228,7 @@ export interface RoutedLeg {
   transferCount: number;
   interruptibility: string;
   /** The best route's conveyances, in order: what a traveller follows back. */
-  conveyances: Array<{ mode: TravelMode; minutes: number; interruptibility: string; endsAt: string | null }>;
+  conveyances: Array<{ mode: TravelMode; minutes: number; interruptibility: string; endsAt: string | null }>; routeSubjectRef?: string | null; /** L259: opaque directional dependency from this measured corridor. */
 }
 
 export interface RoutedLegs {
@@ -263,8 +263,8 @@ export function routedLegOf(c: RouteCorridor, asked: TravelMode | undefined): Ro
   const best = c.routes[0]!;
   const freeFlow = freeFlowOf(best);
   return {
-    departAt: c.departAt,
-    minutes: Math.max(best.totalMinutes, freeFlow ?? 0),
+    departAt: c.departAt, routeSubjectRef: layoverRouteSubjectRef(c.from, c.to, asked),
+    minutes: Math.max(best.totalMinutes, freeFlow ?? 0), ...(best.geometry ? { geometry: best.geometry } : {}),
     freeFlowMinutes: freeFlow,
     forecast: isForecast(c, asked),
     confidence: corridorConfidence(c),

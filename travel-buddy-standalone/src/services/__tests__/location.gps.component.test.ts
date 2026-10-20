@@ -528,3 +528,16 @@ describe('gem submit wiring — GPS coordinates flow from handleCapture to submi
     expect(payload.longitude).not.toBeNull();
   });
 });
+
+it('preserves Expo measurement time on both fresh and cached fixes; cached position is never stamped as current', async () => {
+  mockRequestPerms.mockResolvedValue({ status: 'granted' });
+  mockGetCurrentPosition.mockResolvedValue(LIVE_POS);
+  expect((await getCurrentGps()).observedAtMs).toBe(LIVE_POS.timestamp);
+  const stale = { ...CACHED_POS, timestamp: Date.now() - 4 * 60_000 };
+  mockGetCurrentPosition.mockRejectedValue(new Error('fixture no fix'));
+  mockGetLastKnown.mockResolvedValue(stale);
+  const cached = await getCurrentGps();
+  expect(cached.cached).toBe(true);
+  expect(cached.observedAtMs).toBe(stale.timestamp);
+  expect(cached.observedAtMs).toBeLessThan(Date.now() - 120_000);
+});

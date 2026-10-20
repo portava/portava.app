@@ -174,3 +174,34 @@ export async function resolveLayoverEntry(
     ? { state: "permitted", corridor, status }
     : { state: "refused", corridor, status };
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// §6.1 `if entry_permission_state != CONFIRMED_ALLOWED: forbid_landside_recommendations()`
+// and §9.1 "HARD GATE: eligibility + entry + time + safety" — DECIDED.
+// (census-layover L48, L77; LAYOVER 165, lane B2-CURATE, 2026-10-18)
+//
+// Until today the forbid half was the owner's open question, carried by the
+// flag `layover_entry_forbid_landside_enabled` (3640, seeded FALSE): OFF left an
+// unconfirmed border OPEN with a caution. The owner decided on 2026-10-18:
+// "Unknown or conflicting critical safety information must fail closed." An
+// unconfirmed entry corridor IS unknown critical safety information — spec §21.1
+// states the expected invariant in as many words: "Unknown entry permission →
+// No landside recommendation". So the policy is ON in every flag state:
+//
+//   readConstraintFlags (LayoverConstraintStore) still READS the flag — so an
+//   unreadable feature_flags still closes the gate as `constraints_unreadable`,
+//   and check:flag-polarity still sees its reader — but an absent or FALSE row
+//   no longer relaxes the policy. Every session a loader returns carries
+//   `entryForbidsLandside: true`; `gateLandside` closes `entry_unconfirmed` on
+//   any corridor that is not CONFIRMED_ALLOWED; the certified verdict is `no`;
+//   and every surface that reads the record (recommendations, the dashboard,
+//   Compass, the map, the plan add) reads that closure.
+//
+// The press is the DEPLOY of this code: no migration and no flag flip is needed,
+// and none can undo it. 3640 is NOT edited (it is in the sealed packet); its
+// flag row stays, read and inert, and its description is superseded by this
+// note. The consequence, stated for the owner: `entry_requirements` holds no
+// curated corridor, so EVERY traveller's landside is closed until an admin
+// curates their corridor through POST /admin/entry-requirements (official source
+// required) — which is exactly the fail-closed behaviour the decision asks for.
+export const ENTRY_POLICY_FAIL_CLOSED = true as const;

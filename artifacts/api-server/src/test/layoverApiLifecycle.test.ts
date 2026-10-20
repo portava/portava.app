@@ -47,7 +47,7 @@ import http from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import airportRouter from "../routes/airport.js";
-import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js";
+import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js"; import { withConfirmedCorridor } from "./helpers/confirmedCorridor.js";
 
 const TOKEN = "lifecycle-token";
 const USER = "lifecycle-user";
@@ -81,7 +81,7 @@ function stage(over: Record<string, unknown> = {}) {
     layover_events: [],
     trip_plan_items: [], trips: [], trip_members: [],
   };
-  _setTestClient(makeLayoverDb(tables, { users: { [TOKEN]: USER } }) as any, true);
+  _setTestClient(makeLayoverDb(withConfirmedCorridor(tables, { userIds: [USER], destination: "TW" }), { users: { [TOKEN]: USER } }) as any, true);
   return tables;
 }
 
@@ -164,7 +164,7 @@ describe("census L239 — one layover walks detection → … → completion ove
     assert.equal(planned.status, 200, "plan stage");
     assert.equal(planned.body.stops.length, 1);
     assert.ok(planned.body.planFit, "the plan is certified against the window"); assert.equal(planned.body.planFit.clockFit, "fits"); // the CLOCK says it fits — which is all this stage ever established
-    assert.equal(planned.body.planFit.fit, "unconfirmed"); assert.deepEqual(planned.body.planFit.landside.cautions, ["entry_unconfirmed"]); // LAY-FIX (was `fit === "fits"`): this world has no curated entry corridor, so the verdict is `entry_unverified`, and a plan through the city is no longer a green `fits` — planFit reads the landside gate as well as the window. Same line: line 260 of this file is cited.
+    assert.equal(planned.body.planFit.fit, "fits"); assert.deepEqual(planned.body.planFit.landside.cautions, []); // The fixture confirms entry; unknown entry now closes landside in every flag state.
     const stopId = planned.body.stops[0].id;
 
     // ── 4. EXECUTION ────────────────────────────────────────────────────────

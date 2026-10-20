@@ -112,11 +112,15 @@ describe("deletion coverage — the guard bites", () => {
     //     its erasure fate is its report's, which is the open D-38b / D-39, so a
     //     decided bucket overstated it. Back to 7 on that branch; with layover_events
     //     (above, from main) the merged count is 8, re-derived from the merged list.
-    assert.equal(RETAINED_WITH_REASON.length, 8,
+    //   * migration 3874's airport_curated_facts (Layover 165 lane B2-CURATE, 2026-10-18; 8 -> 9): a
+    //     curated AIRPORT fact whose only person-shaped columns are the staff curators who proposed,
+    //     validated and published it — the audit trail the owner's "a human curator validates" asks for.
+    //     PROPOSED by the lane; the lead confirms it or moves it (see the entry's reason).
+    assert.equal(RETAINED_WITH_REASON.length, 9,
       "once retentions are decided, update this expectation deliberately");
     assert.deepEqual(
       RETAINED_WITH_REASON.map((r) => r.table).sort(),
-      ["creator_rule_versions", "intel_state_snapshot_versions", "layover_events", "payment_webhook_events",
+      ["airport_curated_facts", "creator_rule_versions", "intel_state_snapshot_versions", "layover_events", "payment_webhook_events",
        "rent_buddy_booking_payments", "rent_buddy_monthly_payouts", "rent_buddy_payment_recipients", "rent_buddy_payment_refunds"],
     );
     // Asserted for EVERY entry, not just the first: indexing by [0] let a second

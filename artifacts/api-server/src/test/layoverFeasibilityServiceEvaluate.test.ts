@@ -17,7 +17,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js";
+import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js"; import { attachConstraintContext } from "../services/layover/LayoverConstraintStore.js";
 import { evaluate } from "../services/airport/LayoverFeasibilityService.js";
 import { snapshotIdFor } from "../services/airport/layoverLedger.js";
 import { certifySessionFeasibility } from "../services/airport/LayoverFeasibility.js";
@@ -68,7 +68,7 @@ describe("L175 — evaluate(sessionId) with the ledger ON: a certified, STORED e
     const out = await evaluate(makeLayoverDb(t) as any, "user-1", "session-1", { nowMs: NOW });
     assert.ok(out.ok);
     if (!out.ok) return;
-    const direct = certifySessionFeasibility(airportRowToProfile(airportRow()), out.record.inputs.session as any, { nowMs: NOW, entry: out.record.inputs.entry ?? null });
+    const direct = certifySessionFeasibility(airportRowToProfile(airportRow()), await attachConstraintContext(makeLayoverDb(t) as any, out.record.inputs.session as any), { nowMs: NOW, entry: out.record.inputs.entry ?? null });
     assert.equal(out.record.inputHash, direct.inputHash);
     assert.equal(out.record.deadline.hardReturnTime.toISOString(), direct.deadline.hardReturnTime.toISOString());
   });

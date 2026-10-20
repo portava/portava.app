@@ -336,13 +336,13 @@ export interface ReplanSession {
   /** IATA or profile ref, matched against an `airport` subjectRef. */
   airportRef: string;
   /** Only `active` sessions are impacted. A closed session is not replanned. */
-  status: string; /** §24 / census L259 (3827): the Trips flight segments the session arrives and departs on, matched against a `flight` subjectRef by role. Absent = not linked. */ arrivalFlightRef?: string | null; departureFlightRef?: string | null;
+  status: string; /** §24 / census L259 (3827): the Trips flight segments the session arrives and departs on, matched against a `flight` subjectRef by role. Absent = not linked. */ arrivalFlightRef?: string | null; departureFlightRef?: string | null; routeRefs?: readonly string[];
 }
 
 export interface ImpactedSession {
   session: ReplanSession;
   /** Which rule matched: a direct subject reference, or the airport fanout. */
-  via: "session_subject" | "airport_subject" | "flight_subject";
+  via: "session_subject" | "airport_subject" | "flight_subject" | "route_subject";
 }
 
 /**
@@ -369,8 +369,8 @@ export function impactedSessions(
   const out: ImpactedSession[] = [];
 
   for (const s of sessions) {
-    if (s.status !== "active") continue;
-    if (sessionRefs.has(s.session.id)) { out.push({ session: s, via: "session_subject" }); continue; } if (flightSubjectMatches(event, s)) { out.push({ session: s, via: "flight_subject" }); continue; } // §24 L259: the flight axis, by the segment's ROLE in the connection
+    if (s.status !== "active" && !(s.status === "returning" && routeSubjectMatches(event,s))) continue;
+    if (sessionRefs.has(s.session.id)) { out.push({ session: s, via: "session_subject" }); continue; } if (flightSubjectMatches(event, s)) { out.push({ session: s, via: "flight_subject" }); continue; } if (routeSubjectMatches(event, s)) { out.push({ session: s, via: "route_subject" }); continue; } // §24 L259: role-specific flights and current measured directional corridors.
     if (!airportRefs.has(s.airportRef)) continue;
     const arrivalMs = Date.parse(s.session.arrivalTime);
     const cutoffMs = Date.parse(s.session.boardingTime ?? s.session.departureTime);
@@ -932,10 +932,10 @@ export function handleEvent(
       liveConditions: priorLive, entry: ctx.entries?.[id] ?? null,
     });
     const applied = applyEventToInputs(event, session.session, priorLive);
-    const after = certifySessionFeasibility(ctx.airport, applied.session, {
+    const after = recomputeFeasibility(before, feasibilityInputs(ctx.airport, applied.session, {
       nowMs: ctx.nowMs,
       liveConditions: applied.live, entry: ctx.entries?.[id] ?? null,
-    });
+    }));
 
     const candidates = ctx.candidates[id] ?? [];
     // Step 5.
@@ -1061,4 +1061,14 @@ export function flightSubjectMatches(event: LayoverEventEnvelope, s: ReplanSessi
     case "flight.cancelled": return (arr !== null && refs.has(arr)) || (dep !== null && refs.has(dep));
     default: return false;
   }
+}
+
+import { feasibilityInputs, recomputeFeasibility } from "./LayoverFeasibility.js";
+
+/** A mobility event affects only current measured route dependencies, before the flight cutoff. */
+export function routeSubjectMatches(event: LayoverEventEnvelope, session: ReplanSession): boolean {
+  if (event.eventType !== "mobility.route_degraded" || !session.routeRefs?.length) return false;
+  const occurred = Date.parse(event.occurredAt), cutoff = Date.parse(session.session.boardingTime ?? session.session.departureTime);
+  return Number.isFinite(occurred) && Number.isFinite(cutoff) && occurred <= cutoff
+    && event.subjectRefs.some(s => s.kind === "route" && session.routeRefs!.includes(s.ref));
 }

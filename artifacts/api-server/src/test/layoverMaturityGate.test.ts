@@ -45,13 +45,17 @@ import assert from "node:assert/strict";
 import { makeLayoverDb } from "./helpers/fakeLayoverDb.js";
 import {
   LAYOVER_MATURITY_GATE_FLAG,
-  landsideMaturityDecision,
+  landsideMaturityDecision as readMaturityDecision,
   maturitySignalsFor,
 } from "../services/airport/layoverMaturityGate.js";
 import { airportMaturity, featureAllowedAt } from "../services/airport/layoverMaturity.js";
 import { MIN_DISTINCT_OBSERVERS_PER_BAND } from "../services/layover/LayoverObservationAggregate.js";
 import { travellerObserverHandle } from "../services/layover/LayoverObservationService.js";
 import type { AirportProfile } from "../services/airport/AirportProfileService.js";
+import { assembleLiveConditions, evaluateLiveTerm } from "../services/airport/layoverLiveSignals.js";
+import type { AirportObservation } from "../services/airport/LayoverAirportTruth.js";
+import { hasFreshAuthoritativeLiveEvidence } from "../services/airport/layoverLiveMaturity.js";
+import { certifySessionFeasibility } from "../services/airport/LayoverFeasibility.js";
 
 const NOW = Date.parse("2026-09-13T02:00:00.000Z");
 const MIN = 60_000;
@@ -66,6 +70,13 @@ const AIRPORT: AirportProfile = {
 };
 
 const airport = (over: Partial<AirportProfile> = {}): AirportProfile => ({ ...AIRPORT, ...over });
+
+async function landsideMaturityDecision(...args: Parameters<typeof readMaturityDecision>) {
+  const result = await readMaturityDecision(...args);
+  assert.equal(result.kind, "read", "a successful read must not be a substitute");
+  assert.ok(result.kind === "read");
+  return result.value;
+}
 
 let seq = 0;
 function observationRows(distinctObservers: number, perObserver = 2) {
@@ -217,10 +228,14 @@ describe("L246 — the observation signal, and what an outage may NOT do", () =>
 
   it("an unreadable corpus cannot PROMOTE a rung — it counts as zero and says so", async () => {
     const { client } = db({ on: true, failObservations: true });
-    const d = await landsideMaturityDecision(client, airport({ verified: true, terminalInfo: { t: 1 } }), NOW, {
+    const result = await readMaturityDecision(client, airport({ verified: true, terminalInfo: { t: 1 } }), NOW, {
       routedTransportModelAvailable: true,
       hasExternalLiveFeed: true,
     });
+    assert.ok(result.kind === "degraded");
+    assert.deepEqual(result.reasons, ["maturity_observations_read_failed"]);
+    assert.ok(!("value" in result), "an unreadable count is not measured data");
+    const d = result.fallback;
     assert.equal(d.signalsReadable, false);
     assert.equal(d.observationCount, 0);
     // With a live feed asserted, the ladder would reach L3 on 20 observations.
@@ -245,5 +260,50 @@ describe("maturitySignalsFor — the signals are FACTS ABOUT DATA", () => {
   it("a null profile id is 'no airport row', which is the fallback profile", () => {
     assert.equal(maturitySignalsFor(airport({ id: null }), { observationCount: 0 }).hasAirportRow, false);
     assert.equal(maturitySignalsFor(airport(), { observationCount: 0 }).hasAirportRow, true);
+  });
+});
+
+describe("curated maturity consumes certified authoritative live evidence", () => {
+  const fact = (factId: string) => ({ factId, expiresAt: new Date(NOW + 86_400_000).toISOString() });
+  const mapped = airport({ curation: { timing: fact("timing"), topology: fact("topology"), transport: fact("transport"), topologyVersion: 1, calibration: { version: 1, expiresAt: new Date(NOW + 86_400_000).toISOString() } } });
+  const official = (over: Partial<AirportObservation> = {}): AirportObservation => ({ observationId: `official-observation-${++seq}`, airportRef: "TPE", factType: "security_wait_minutes", value: 20, observerKind: "official", observerId: "official:tpe", sourceRef: "official:test", observedAt: new Date(NOW - MIN).toISOString(), ...over });
+  const live = (corpus: AirportObservation[]) => assembleLiveConditions({ nowMs: NOW, terms: { securityWait: evaluateLiveTerm(corpus, "securityWait", { nowMs: NOW, airportRef: "TPE" }) } });
+
+  it("fresh official evidence survives certification and reaches L2, then L4 with observations and calibration", async () => {
+    const conditions = live([official()]);
+    assert.ok(hasFreshAuthoritativeLiveEvidence(conditions, NOW));
+    const record = certifySessionFeasibility(mapped, { id: "maturity-session", arrivalTime: new Date(NOW - MIN).toISOString(), departureTime: new Date(NOW + 9 * 3_600_000).toISOString(), boardingTime: null, flightType: "international", immigrationRequired: true, checkedBags: false, wantsToLeave: true }, { nowMs: NOW, liveConditions: conditions });
+    assert.deepEqual(record.inputs.liveConditions?.authoritativeEvidence, conditions?.authoritativeEvidence);
+    const thin = await landsideMaturityDecision(db().client, mapped, NOW, { liveConditions: record.inputs.liveConditions });
+    assert.equal(thin.level, "L2_EXTERNAL_LIVE");
+    const enough = await landsideMaturityDecision(db({ rows: observationRows(10, 2) }).client, mapped, NOW, { liveConditions: record.inputs.liveConditions });
+    assert.equal(enough.level, "L4_CALIBRATED");
+    const expired = await landsideMaturityDecision(db().client, mapped, NOW + 21 * MIN, { liveConditions: record.inputs.liveConditions });
+    assert.equal(expired.level, "L1_MAPPED", "a cached feed marker expires at consumption time");
+  });
+
+  it("crowd-only, conflicting, stale, rejected and absent readings never prove external maturity", async () => {
+    const cases = [
+      live([official({ observerKind: "community", observerId: "tv1-a", value: 60 }), official({ observerKind: "community", observerId: "tv1-b", value: 60 })]),
+      live([official(), official({ observerId: "licensed:other", observerKind: "operator_feed", value: 120 })]),
+      live([official({ observedAt: new Date(NOW - 30 * MIN).toISOString() })]),
+      live([official({ value: -20 })]),
+      live([official({ observerTrust: 0 })]),
+      null,
+    ];
+    for (const conditions of cases) {
+      assert.equal(hasFreshAuthoritativeLiveEvidence(conditions, NOW), false, JSON.stringify(conditions));
+      const decision = await landsideMaturityDecision(db({ rows: observationRows(10, 2) }).client, mapped, NOW, { liveConditions: conditions });
+      assert.equal(decision.level, "L1_MAPPED", JSON.stringify(conditions));
+    }
+  });
+
+  it("an aggregate exception exposes a named degraded result, never a measured zero", async () => {
+    const client = { from(table: string) { if (table === "airport_fact_observations") throw new Error("test read failed"); return db().client.from(table); } };
+    const result = await readMaturityDecision(client as never, mapped, NOW);
+    assert.ok(result.kind === "degraded");
+    assert.deepEqual(result.reasons, ["maturity_observations_read_threw"]);
+    assert.equal(result.fallback.level, "L1_MAPPED");
+    assert.equal("value" in result, false);
   });
 });

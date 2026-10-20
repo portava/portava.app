@@ -213,7 +213,7 @@ describe("inputHash is an identity for the computation, not a decoration", () =>
       // ADDED with the entry gate: a NAMED input that the shuffle skipped would
       // make this assertion pass for the wrong reason — a missing key, not a
       // reordered one.
-      entry: base.entry,
+      entry: base.entry, freedomPolicy: base.freedomPolicy,
       liveConditions: base.liveConditions,
       landsideProbe: base.landsideProbe,
       bufferPercentile: base.bufferPercentile,

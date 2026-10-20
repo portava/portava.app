@@ -26,8 +26,8 @@
  * saying what the surface must do. It changes no existing field.
  *
  * ── WHAT IS HONESTLY UNAVAILABLE, AND SAYS SO ───────────────────────────────
- * There is no routing provider on this tree, so "fastest certified route"
- * cannot be produced and `returnContract.route` is `null` with a named reason
+ * The routed port supplies a measured way back only with a fresh explicit origin.
+ * Missing provider or current-origin evidence leaves `returnContract.route` null with a named reason
  * rather than a plausible-looking line — spec §2.1, "missing live intelligence
  * degrades VISIBLY; never fabricate freshness." A crew is told only behind a flag
  * AND the traveller's own per-abort choice (census L144, LayoverCrewAbortNotice.ts);
@@ -160,11 +160,11 @@ export interface ReturnContract {
     terminalInfo: unknown | null;
   };
   /**
-   * NULL on this tree, always. No routing provider exists, and a route is the
-   * one thing on this response a traveller would follow with their feet.
+   * A measured return from an explicitly supplied current origin; absent until
+   * the origin and provider answer pass the return-route checks below.
    */
-  route: null;
-  routeUnavailableReason: "no_routing_provider";
+  route: AbortReturnRoute | null;
+  routeUnavailableReason: string | null;
   certification: ReturnType<typeof certificationHeader>;
 }
 
@@ -177,7 +177,7 @@ export function buildReturnContract(
     hardReturnTime: record.deadline.hardReturnTime.toISOString(),
     returnState: record.envelope.returnState,
     minutesToHardReturn: Math.round(
-      (record.deadline.hardReturnTime.getTime() - record.inputs.nowMs) / 60_000,
+      (record.deadline.hardReturnTime.getTime() - certifiedPlanningInstant(record)) / 60_000,
     ),
     bufferMinutes: record.deadline.breakdown.totalBuffer,
     breakdown: record.deadline.breakdown,
@@ -193,7 +193,7 @@ export function buildReturnContract(
       terminalInfo: (airport as any).terminalInfo ?? null,
     },
     route: null,
-    routeUnavailableReason: "no_routing_provider",
+    routeUnavailableReason: "origin_unavailable",
     certification: certificationHeader(record),
   };
 }
@@ -212,7 +212,7 @@ export type AbortEffect =
   | "status_write_failed"
   | "ledger_recorded"
   | "ledger_write_failed"
-  | "crew_notify_unavailable" | /** census-layover L144: at least one crewmate now holds the "heading back" notice (LayoverCrewAbortNotice.ts) */ "crew_notified";
+  | "buddy_notify_unavailable" | "buddy_notified" | "crew_notify_unavailable" | /** census-layover L144: at least one crewmate now holds the "heading back" notice (LayoverCrewAbortNotice.ts) */ "crew_notified";
 
 export interface AbortResult {
   ok: boolean;
@@ -226,7 +226,7 @@ export interface AbortResult {
   /** Every effect that ran, successful or not. Failures are NOT swallowed. */
   effects: AbortEffect[];
   /** census-layover L144 (§74): how many crewmates hold the "heading back" notice — a COUNT, never a person (crewmates' ids are not published; census §48 `bindingMemberHidden`). 0 with a reason unless the flag is on AND the traveller asked on THIS abort. */
-  crewNotifiedCount: number;
+  crewNotifiedCount: number; buddyNotifiedCount: number; buddyNotifyUnavailableReason: BuddyAbortNoticeReason | null;
   crewNotifyUnavailableReason: CrewAbortNoticeReason | null;
   statusApplied: boolean;
 }
@@ -278,8 +278,8 @@ async function markReturning(
   db: SupabaseClient,
   sessionId: string,
   userId: string,
-): Promise<{ applied: boolean; failed: boolean }> {
-  const { data, error } = await db
+): Promise<{ ok: true; applied: boolean } | { ok: false; reason: "status_write_failed" }> {
+  try { const { data, error } = await db
     .from("layover_sessions")
     .update({ status: "returning", updated_at: new Date().toISOString() })
     .eq("id", sessionId)
@@ -287,13 +287,13 @@ async function markReturning(
     .eq("status", "active")
     .select("id");
   if (error) {
-    logger.error({ err: error, sessionId }, "abort: could not mark session returning");
-    return { applied: false, failed: true };
+    logger.error({ err: error, sessionId, operation: "markReturning", reason: "status_write_failed" }, "abort: could not mark session returning");
+    return { ok: false, reason: "status_write_failed" };
   }
   // A write with `.select()` that matched nothing is not a failure — the
   // session may already have left `active` — but it is not an application
   // either, and saying so is the difference between the two.
-  return { applied: ((data ?? []) as any[]).length > 0, failed: false };
+  return { ok: true, applied: ((data ?? []) as any[]).length > 0 }; } catch (err) { logger.error({ err, sessionId, operation: "markReturning", reason: "status_write_failed" }, "abort: returning status write threw"); return { ok: false, reason: "status_write_failed" }; }
 }
 
 /**
@@ -315,7 +315,7 @@ export async function abortToAirport(
     record: LayoverFeasibilityRecord;
     userId: string;
     nowMs: number;
-    statusEnabled: boolean; /** census-layover L144: the traveller's per-abort choice and the flag, read by the route (`crewAbortNoticeRequest`). Omitted = nobody is told. */ crewNotice?: CrewAbortNoticeRequest; /** Tests only: the crew notice's bound (default CREW_ABORT_NOTICE_DEADLINE_MS). */ crewNoticeDeadlineMs?: number;
+    statusEnabled: boolean; /** census-layover L144: the traveller's per-abort choice and the flag, read by the route (`crewAbortNoticeRequest`). Omitted = nobody is told. */ crewNotice?: CrewAbortNoticeRequest; /** Tests only: the crew notice's bound (default CREW_ABORT_NOTICE_DEADLINE_MS). */ crewNoticeDeadlineMs?: number; buddyNotice?: BuddyAbortNoticeRequest; buddyNoticeDeadlineMs?: number; origin?: unknown;
   },
 ): Promise<AbortResult> {
   const effects: AbortEffect[] = [];
@@ -330,9 +330,9 @@ export async function abortToAirport(
   let statusFailed = false;
   if (input.statusEnabled) {
     const marked = await markReturning(db, session.id, userId);
-    statusApplied = marked.applied;
-    statusFailed = marked.failed;
-    if (marked.failed) effects.push("status_write_failed");
+    statusApplied = marked.ok && marked.applied;
+    statusFailed = !marked.ok;
+    if (!marked.ok) effects.push(marked.reason);
     else if (marked.applied) effects.push("status_marked_returning");
     // Flag ON and nothing matched means the session had already left `active`.
     // Reporting that as `status_unchanged_flag_off` would name the wrong cause.
@@ -341,7 +341,7 @@ export async function abortToAirport(
     effects.push("status_unchanged_flag_off");
   }
 
-  const contract = buildReturnContract(airport, record);
+  const contract = await buildRoutedReturnContract(airport, record, session, input.origin);
   const posture = safeReturnPosture(record);
 
   // §15.1 "records the transition in the decision ledger". This is the one
@@ -369,7 +369,7 @@ export async function abortToAirport(
     effects.push("ledger_recorded");
   }
   // census-layover L144 — AFTER the ledger, outside `ok`, and BOUNDED: telling the crew never fails or holds the abort, and a failed abort is still a traveller heading back.
-  const crew = await tellCrewOfAbortWithin(db, { userId, sessionId: session.id, nowMs, request: input.crewNotice ?? CREW_ABORT_NOTICE_OFF, tripId: session.tripId }, input.crewNoticeDeadlineMs); effects.push(crew.notifiedCount > 0 ? "crew_notified" : "crew_notify_unavailable");
+  const [crew,buddy] = await Promise.all([tellCrewOfAbortWithin(db, { userId, sessionId: session.id, nowMs, request: input.crewNotice ?? CREW_ABORT_NOTICE_OFF, tripId: session.tripId }, input.crewNoticeDeadlineMs),tellBuddyOfAbortWithin(db,{userId,sessionId:session.id,nowMs,request:input.buddyNotice??BUDDY_ABORT_NOTICE_OFF},input.buddyNoticeDeadlineMs)]); effects.push(crew.notifiedCount > 0 ? "crew_notified" : "crew_notify_unavailable"); if(input.buddyNotice?.requested)effects.push(buddy.notifiedCount>0?"buddy_notified":"buddy_notify_unavailable");
 
   return {
     ok: cancelled.ok && !statusFailed && !ledgerError,
@@ -379,7 +379,7 @@ export async function abortToAirport(
     posture,
     cancelledStopIds: cancelled.ids,
     effects,
-    crewNotifiedCount: crew.notifiedCount,
+    crewNotifiedCount: crew.notifiedCount, buddyNotifiedCount: buddy.notifiedCount, buddyNotifyUnavailableReason: buddy.reason,
     crewNotifyUnavailableReason: crew.reason, // §74 — was the hard-coded "crew_notify_not_enabled" (§48), which is now the flag-OFF answer of tellCrewOfAbort
     statusApplied,
   };
@@ -513,7 +513,7 @@ export function recomputeForDisruption(
     departureTime: input.newDepartureTime,
     boardingTime: input.newBoardingTime === undefined ? session.boardingTime : input.newBoardingTime,
   };
-  const after = certifySessionFeasibility(airport, newSession, { nowMs: input.nowMs, entry: input.entry });
+  const after = certifySessionFeasibility(airport, newSession, { nowMs: input.nowMs, entry: input.entry, liveConditions: before.inputs.liveConditions }); // lane B2-LIVE: the counterfactual holds the WORLD fixed — the live conditions `before` was certified under — so the diff is the disruption's, not the live term's disappearance
 
   const scheduleDeltaMinutes = Math.round(
     (new Date(input.newDepartureTime).getTime() - new Date(session.departureTime).getTime()) / 60_000,
@@ -531,3 +531,176 @@ export function recomputeForDisruption(
     returnStateChanged: before.envelope.returnState !== after.envelope.returnState,
   };
 }
+
+// L221/L147: one-way return routing. Precise origin is request-only: never placed in the ledger, session or response.
+import { withLayoverRoutesBudget, layoverRoutesGuardedCorridor, airportPoint } from "./LayoverTravelTime.js";
+import { LAYOVER_RETURN_CORRIDOR_PROVIDER, routedLegOf, type RoutedLegs, type RoutedLeg } from "./LayoverReturnCorridor.js";
+import { conservativeReturnMinutes, robustnessOf } from "./LayoverRoutedFeasibility.js";
+import { worstTravelConfidence, type TravelConfidence } from "../../lib/travelEstimate.js";
+import type { CorridorResult } from "../../lib/providers/routeCorridorProvider.js";
+
+export interface AbortReturnRoute {
+  mode: "walk" | "drive";
+  departAt: string;
+  minutes: number;
+  conservativeMinutes: number;
+  hardReturnBy: string;
+  leaveBy: string;
+  expectedAirportReturnAt: string;
+  canMeetDeadline: boolean;
+  confidence: TravelConfidence;
+  expiresAt: string;
+  independentRoutes: number;
+  conveyances: RoutedLeg["conveyances"];
+}
+
+/** Client location is a claimed origin, not proof of presence. Validate freshness/accuracy/range before spending. */
+function currentReturnOrigin(value: unknown, nowMs: number): { lat: number; lng: number; mode: "walk" | "drive" } | null {
+  if (!value || typeof value !== "object") return null;
+  const v = value as Record<string, unknown>;
+  if (typeof v.lat !== "number" || !Number.isFinite(v.lat) || Math.abs(v.lat) > 90 || typeof v.lng !== "number" || !Number.isFinite(v.lng) || Math.abs(v.lng) > 180) return null;
+  if (typeof v.accuracyMeters !== "number" || !Number.isFinite(v.accuracyMeters) || v.accuracyMeters < 0 || v.accuracyMeters > 1000) return null;
+  const observed = typeof v.observedAt === "string" ? Date.parse(v.observedAt) : NaN;
+  if (!Number.isFinite(observed) || observed > nowMs + 30_000 || nowMs - observed > 120_000 || (v.mode !== "walk" && v.mode !== "drive")) return null;
+  return { lat: v.lat, lng: v.lng, mode: v.mode };
+}
+
+export async function buildRoutedReturnContract(airport: AirportProfile, record: LayoverFeasibilityRecord, session: LayoverSession, originValue: unknown): Promise<ReturnContract> {
+  const base = buildReturnContract(airport, record);
+  const absent = (reason: string): ReturnContract => ({ ...base, route: null, routeUnavailableReason: reason });
+  const nowMs = certifiedPlanningInstant(record);
+  const origin = currentReturnOrigin(originValue, nowMs);
+  if (!origin) return absent("origin_unavailable");
+  const destination = airportPoint(airport);
+  if (!destination) return absent("airport_position_unavailable");
+  const provider = layoverRoutesGuardedCorridor(LAYOVER_RETURN_CORRIDOR_PROVIDER);
+  if (!provider.routed) return absent("PROVIDER_UNBOUND");
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const result = await withLayoverRoutesBudget(session, () => Promise.race<CorridorResult>([
+      provider.corridor({ from: { lat: origin.lat, lng: origin.lng }, to: destination, mode: origin.mode, departAt: new Date(nowMs), wantAlternatives: true, cachePolicy:'no_store' }),
+      new Promise<CorridorResult>((resolve) => { timer = setTimeout(() => resolve({ ok: false, provider: provider.id, reason: "PROVIDER_UNAVAILABLE", detail: "return-route deadline exceeded", envVar: null }), 3500); }),
+    ]));
+    if (!result.ok) return absent(result.reason);
+    const c = result.value;
+    if (!Number.isFinite(Date.parse(c.expiresAt)) || Date.parse(c.expiresAt) <= nowMs) return absent("route_stale");
+    if (Date.parse(c.departAt) !== nowMs || c.from.lat !== origin.lat || c.from.lng !== origin.lng || c.to.lat !== destination.lat || c.to.lng !== destination.lng || !c.routes.length) return absent("PROVIDER_MALFORMED");
+    if (c.routes.some((r) => !Number.isFinite(r.totalMinutes) || r.totalMinutes < 0 || !r.legs.length || r.legs.some((l) => !Number.isFinite(l.minutes) || l.minutes < 0))) return absent("PROVIDER_MALFORMED");
+    // Fastest returned option in the traveller's chosen mode. No route from another mode, or an outbound leg, is invented.
+    const leg = routedLegOf({ ...c, routes: [...c.routes].sort((a,b) => a.totalMinutes - b.totalMinutes) }, origin.mode);
+    if (!leg.forecast) return absent("return_forecast_unavailable");
+    // robustnessOf reads returnLeg only; this one-way query intentionally carries no outbound measurement.
+    const robustness = robustnessOf({ returnLeg: leg } as RoutedLegs);
+    const rawConfidence = String(record.confidence).toUpperCase();
+    const recordConfidence: TravelConfidence = rawConfidence === "HIGH" || rawConfidence === "MEDIUM" || rawConfidence === "LOW" ? rawConfidence : "INSUFFICIENT";
+    let confidence = worstTravelConfidence(recordConfidence, leg.confidence);
+    if (leg.transferCount >= 2) confidence = worstTravelConfidence(confidence, "LOW");
+    const conservative = conservativeReturnMinutes(leg.minutes, confidence, robustness);
+    if (!conservative) return absent("confidence_insufficient");
+    const arrivalMs = nowMs + conservative.minutes * 60_000;
+    return { ...base, routeUnavailableReason: null, route: { mode: origin.mode, departAt: c.departAt, minutes: leg.minutes, conservativeMinutes: conservative.minutes, hardReturnBy: base.hardReturnTime, leaveBy: new Date(record.deadline.hardReturnTime.getTime() - conservative.minutes * 60_000).toISOString(), expectedAirportReturnAt: new Date(arrivalMs).toISOString(), canMeetDeadline: arrivalMs <= record.deadline.hardReturnTime.getTime(), confidence, expiresAt: c.expiresAt, independentRoutes: leg.independentRoutes, conveyances: leg.conveyances } };
+  } catch (err) {
+    // Provider shape/transport failures never prevent clearing the optional plan and recording the abort.
+    logger.warn({err:{code:"PROVIDER_UNAVAILABLE",kind:typeof err},provider:provider.id},"return route provider unavailable"); return absent("PROVIDER_UNAVAILABLE");
+  } finally { if (timer) clearTimeout(timer); }
+}
+
+// L272: reuse the Safe Return product. Only the server supplies its deadline; setup still owns contact consent.
+import { isFlagEnabled as safeReturnFlag } from "../../lib/featureFlags.js";
+import { getSession as readOwnedLayover, LAYOVER_LIVE_SESSION_STATUSES } from "./LayoverSessionService.js";
+import { consumerLayoverRecord, resolveSessionAirport } from "./LayoverSnapshot.js";
+import { resolveLayoverEntry, layoverAirportCountry } from "./layoverEntryGate.js";
+import { readTravellerCheckpoints, airportPresenceFrom } from "../layover/LayoverCheckpointStore.js";
+import { confirmSafe as confirmReturnProduct, getSessionById as readReturnProduct } from "../safeReturn/SafeReturnService.js";
+import { toPublicSession as publicReturnProduct } from "../safeReturn/SafeReturnPrivacyGuard.js";
+type ReturnProductRefusal = { ok: false; status: 403 | 404 | 409 | 503; reason: string };
+export interface LayoverSafeReturnLink { layover_session_id: string; safe_return_session_id: string; user_id: string; certified_deadline: string; return_started_at: string | null }
+async function layoverProductGate(db:SupabaseClient):Promise<"on"|"off"|"unavailable"> {
+  try {const {data,error}=await db.from("feature_flags").select("enabled").eq("flag","layover_safe_return_product_enabled").maybeSingle();return error?"unavailable":data?.enabled===true?"on":"off";} catch {return "unavailable";}
+}
+export async function readLayoverSafeReturnLink(db: SupabaseClient, userId: string, safeReturnId: string): Promise<{ ok: true; link: LayoverSafeReturnLink | null } | ReturnProductRefusal> {
+  const gate=await layoverProductGate(db); if(gate==="unavailable")return {ok:false,status:503,reason:"layover_safe_return_unavailable"}; if(gate==="off")return {ok:true,link:null};
+  try {
+    const { data, error } = await db.from("layover_safe_return_links").select("layover_session_id,safe_return_session_id,user_id,certified_deadline,return_started_at").eq("safe_return_session_id",safeReturnId).eq("user_id",userId).maybeSingle();
+    if (error) return { ok:false,status:503,reason:"layover_safe_return_unavailable" };
+    return { ok:true,link:data as LayoverSafeReturnLink | null };
+  } catch { return { ok:false,status:503,reason:"layover_safe_return_unavailable" }; }
+}
+export async function prepareLayoverSafeReturn(db: SupabaseClient, userId: string, sessionId: string): Promise<{ ok:true; session:LayoverSession; record:LayoverFeasibilityRecord; deadline:string } | ReturnProductRefusal> {
+  if (!await safeReturnFlag(db,"layover_safe_return_product_enabled") || !await safeReturnFlag(db,"layover_safe_return_status_enabled") || !await safeReturnFlag(db,"safe_return_enabled")) return {ok:false,status:403,reason:"layover_safe_return_disabled"};
+  try {
+    const owned = await readOwnedLayover(db,sessionId,userId);
+    if (!owned.ok) return {ok:false,status:503,reason:"layover_unavailable"};
+    const session = owned.session;
+    if (!session) return {ok:false,status:404,reason:"layover_not_found"};
+    if (!(LAYOVER_LIVE_SESSION_STATUSES as readonly string[]).includes(session.status)) return {ok:false,status:409,reason:"layover_ended"};
+    const nowMs=Date.now(), presence=await readTravellerCheckpoints(db,sessionId,nowMs);
+    if (!presence.ok) return {ok:false,status:503,reason:"airport_presence_unavailable"};
+    if (airportPresenceFrom(presence.checkpoints)!=="landside") return {ok:false,status:409,reason:"report_landside_exit_first"};
+    const resolved=await resolveSessionAirport(db,session);
+    if (!resolved.ok) return {ok:false,status:503,reason:"airport_unavailable"};
+    const airport=resolved.airport;
+    const record=await consumerLayoverRecord(db,airport,session,nowMs) ?? certifySessionFeasibility(airport,session,{nowMs,entry:await resolveLayoverEntry(db,userId,layoverAirportCountry(airport)),liveConditions:await resolveLayoverLiveConditions(db,airport,session,nowMs)});
+    return {ok:true,session,record,deadline:record.deadline.hardReturnTime.toISOString()};
+  } catch (err) { logger.warn({err,sessionId},"layover Safe Return certification unavailable"); return {ok:false,status:503,reason:"layover_certification_unavailable"}; }
+}
+export async function bindLayoverSafeReturn(db: SupabaseClient, input: { userId:string; safeReturnId:string; context:Extract<Awaited<ReturnType<typeof prepareLayoverSafeReturn>>,{ok:true}> }): Promise<{ok:true} | ReturnProductRefusal> {
+  try {
+    const {error,data}=await db.from("layover_safe_return_links").insert({layover_session_id:input.context.session.id,safe_return_session_id:input.safeReturnId,user_id:input.userId,certified_deadline:input.context.deadline,certification:certificationHeader(input.context.record)}).select("layover_session_id");
+    if (error || !data?.length) return {ok:false,status:error?.code==="23505"?409:503,reason:"layover_safe_return_not_bound"};
+    return {ok:true};
+  } catch { return {ok:false,status:503,reason:"layover_safe_return_not_bound"}; }
+}
+/** A new certificate may tighten an existing timer, never grant extra time. The DB trigger makes the two writes atomic. */
+export async function syncLayoverSafeReturnDeadline(db: SupabaseClient, sessionId: string, record: LayoverFeasibilityRecord): Promise<{ok:true} | {ok:false;reason:string}> {
+  const gate=await layoverProductGate(db); if(gate==="unavailable")return {ok:false,reason:"layover_safe_return_gate_unavailable"}; if(gate==="off")return {ok:true};
+  try {
+    const deadline=record.deadline.hardReturnTime.toISOString();
+    const {error}=await db.from("layover_safe_return_links").update({certified_deadline:deadline,certification:certificationHeader(record)}).eq("layover_session_id",sessionId).gt("certified_deadline",deadline);
+    if (error) { logger.error({err:error,sessionId},"bound Safe Return deadline could not tighten"); return {ok:false,reason:"layover_safe_return_sync_failed"}; }
+    return {ok:true};
+  } catch (err) { logger.error({err,sessionId},"bound Safe Return deadline sync threw"); return {ok:false,reason:"layover_safe_return_sync_failed"}; }
+}
+export async function guardLayoverSafeReturnMutation(db: SupabaseClient, userId:string, safeReturnId:string, action:"start"|"extend"|"confirm"): Promise<{ok:true} | ReturnProductRefusal> {
+  const bound=await readLayoverSafeReturnLink(db,userId,safeReturnId);
+  if (!bound.ok || !bound.link) return bound.ok ? {ok:true} : bound;
+  if (action==="extend") return {ok:false,status:403,reason:"layover_deadline_cannot_extend"};
+  if (action==="confirm") {
+    const checkpoints=await readTravellerCheckpoints(db,bound.link.layover_session_id,Date.now());
+    if (!checkpoints.ok) return {ok:false,status:503,reason:"airport_presence_unavailable"};
+    return airportPresenceFrom(checkpoints.checkpoints)==="airside" ? {ok:true} : {ok:false,status:403,reason:"record_airport_arrival_on_layover"};
+  }
+  const context=await prepareLayoverSafeReturn(db,userId,bound.link.layover_session_id);
+  if (!context.ok) return context;
+  const sync=await syncLayoverSafeReturnDeadline(db,context.session.id,context.record);
+  return sync.ok ? {ok:true} : {ok:false,status:503,reason:sync.reason};
+}
+/** Called only AFTER the traveller's AIRPORT_REENTRY checkpoint is persisted. No location or contact inference. */
+export async function closeLayoverSafeReturnAtAirport(db:SupabaseClient,userId:string,sessionId:string): Promise<{ok:true;closed:boolean} | {ok:false;reason:string}> {
+  const gate=await layoverProductGate(db); if(gate==="unavailable")return {ok:false,reason:"layover_safe_return_gate_unavailable"}; if(gate==="off")return {ok:true,closed:false};
+  try {
+    const {data,error}=await db.from("layover_safe_return_links").select("safe_return_session_id").eq("layover_session_id",sessionId).eq("user_id",userId).maybeSingle();
+    if (error) return {ok:false,reason:"safe_return_close_unavailable"};
+    if (!data) return {ok:true,closed:false};
+    const guard=await guardLayoverSafeReturnMutation(db,userId,data.safe_return_session_id,"confirm");
+    if (!guard.ok) return {ok:false,reason:guard.reason};
+    const result=await confirmReturnProduct(db,data.safe_return_session_id,userId);
+    if(result.outcome==="unavailable")return {ok:false,reason:"safe_return_close_unavailable"}; if(result.outcome==="ok")return {ok:true,closed:true}; const existing=await readReturnProduct(db,data.safe_return_session_id,userId);return existing.ok && existing.value && ["safe","cancelled"].includes(existing.value.status) ? {ok:true,closed:true} : {ok:false,reason:"safe_return_close_unavailable"};
+  } catch { return {ok:false,reason:"safe_return_close_unavailable"}; }
+}
+export async function layoverSafeReturnProductState(db:SupabaseClient,userId:string,sessionId:string) {
+  const context=await prepareLayoverSafeReturn(db,userId,sessionId);
+  if (!context.ok) return {available:false,reason:context.reason,certifiedDeadline:null,session:null};
+  const sync=await syncLayoverSafeReturnDeadline(db,sessionId,context.record);
+  if (!sync.ok) return {available:false,reason:sync.reason,certifiedDeadline:null,session:null};
+  const {data,error}=await db.from("layover_safe_return_links").select("safe_return_session_id,certified_deadline").eq("layover_session_id",sessionId).eq("user_id",userId).maybeSingle();
+  if (error) return {available:false,reason:"layover_safe_return_unavailable",certifiedDeadline:null,session:null};
+  if (!data) return {available:true,reason:null,certifiedDeadline:context.deadline,session:null};
+  const linked=await readReturnProduct(db,data.safe_return_session_id,userId);
+  if (!linked.ok || !linked.value) return {available:false,reason:"layover_safe_return_unavailable",certifiedDeadline:null,session:null};
+  return {available:true,reason:null,certifiedDeadline:data.certified_deadline,session:publicReturnProduct(linked.value)};
+}
+
+import { tellBuddyOfAbortWithin, BUDDY_ABORT_NOTICE_OFF, type BuddyAbortNoticeRequest, type BuddyAbortNoticeReason } from '../layover/LayoverBuddyAbortNotice.js';
+import { certifiedPlanningInstant } from '../layover/layoverCanonicalValidity.js';
+import { resolveLayoverLiveConditions } from './layoverLiveSignals.js';

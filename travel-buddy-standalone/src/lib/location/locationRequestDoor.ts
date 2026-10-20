@@ -34,12 +34,12 @@ import type { GpsResult } from '../../services/location.ts';
 /**
  * Why a location fix is being requested. `map_context` is L164's "map
  * context": the user asked to place something (a stop, a search, a pin) where
- * they are. Live return assistance is not built; when it is, it is added here
- * and to the guard's caller list in the same change.
+ * they are. `live_return_assistance` is L157's sampler, which the traveller
+ * turns on with a press; its card is on the guard's caller list too.
  */
-export type LocationRequestPurpose = 'map_context';
+export type LocationRequestPurpose = 'map_context' | 'live_return_assistance'; /* census L157 (LAYOVER 165, lane B2-CREW): L164's 'live return assistance', built — the traveller turns it on with a press */
 
-export const LOCATION_REQUEST_PURPOSES: readonly LocationRequestPurpose[] = ['map_context'];
+export const LOCATION_REQUEST_PURPOSES: readonly LocationRequestPurpose[] = ['map_context', 'live_return_assistance'];
 
 /** A location request a person started by pressing a labelled control. */
 export interface UserLocationRequest {
@@ -78,3 +78,13 @@ export async function requestLocationForUserAction(request: UserLocationRequest)
   if (!isUserLocationRequest(request)) return { ...NO_USER_ACTION_RESULT };
   return getCurrentGps();
 }
+
+/**
+ * The request the "Turn on live return assistance" control makes (census L157, LAYOVER 165 lane B2-CREW): L164's
+ * "request when enabling live return assistance". The one prompt; every later fix is taken WITHOUT asking, by
+ * `layoverLiveReturnSampler`, and only while the permission this granted still stands.
+ */
+export const USER_PRESS_LIVE_RETURN: UserLocationRequest = Object.freeze({
+  trigger: 'user_press',
+  purpose: 'live_return_assistance',
+});

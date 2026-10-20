@@ -10,7 +10,8 @@
  *   psql   — LOCAL_DB_URL is set: CI's api-server-local-db job, whose database
  *            scripts/local-db/up.sh built from the same baseline and chain on
  *            PostgreSQL 16 + PostGIS. Flags a case changes are restored on
- *            close(); the users it seeded are deleted (best effort).
+ *            close(). Each handle now owns an isolated replayed clone, including
+ *            migration-absent variants and persistent BEGIN/ROLLBACK across calls.
  *   pglite — LAYOVER_PGLITE_ROOT names a node_modules/@electric-sql directory
  *            holding `pglite` and `pglite-postgis` (the baseline needs PostGIS
  *            at CREATE TABLE time; the API's own @electric-sql/pglite@0.2.17
@@ -34,15 +35,14 @@
  * A file that fails fails the build (no tolerated list): 0 of the remaining
  * files may fail, so the database is the whole chain or nothing.
  *
- * VARIANTS (pglite only): `without: ["3513", …]` replays the chain WITHOUT
+ * VARIANTS (both isolated engines): `without: ["3513", …]` replays the chain WITHOUT
  * those files — the migration-absent arm a pressed-state proof needs. A later
  * file that depends on an excluded one is excluded too and reported in
  * `variantExcluded`.
  *
- * Nothing here dials a network: the bridge's fetch is the client's only
+ * PostgreSQL uses only a validated loopback throwaway server. API transport: the bridge's fetch is the client's only
  * transport and its URL is a `.invalid` host. No hosted database is touched.
  */
-import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -179,16 +179,71 @@ const errText = (e: any) => `${e?.code ? e.code + ": " : ""}${String(e?.message 
 
 export interface ReplayReport { engine: string; key: string; applied: number; excluded: string[]; variantExcluded: string[]; standIn: string; seconds: number }
 
-async function replayInto(dir: string, without: readonly string[]): Promise<ReplayReport> {
+interface ReplayDatabase { exec(sql: string): Promise<unknown>; query(sql: string): Promise<{rows: Row[]}>; close(): Promise<void> }
+/** Explicit causal edges, verified against the named migration preconditions.
+ * Old READY reports identified 2700->3792/3828 and 3620->3621->3622; the
+ * current chain also consumes those objects in the newer canonical features.
+ * This is an exclusion plan, never permission to tolerate an arbitrary error. */
+const ABSENT_DEPENDENCIES:Readonly<Record<string,readonly string[]>>={
+  '2992':['2700'], // completes the certified table
+  '3623':['2700','2992'], // snapshot identity FK + version
+  '3621':['3620'], // access-restricted ledger postcondition
+  '3622':['3621'], // identity-or-pseudonym constraint
+  '3792':['2700'], // verdict CHECK
+  '3827':['3826','2741'], // flight columns + returning status
+  '3828':['2700','2992','3623'], // active snapshot FK + version
+  '3871':['2410','3623'], // rec_key and snapshot_id columns
+  '3872':['2984'], // crew membership composite FK
+  '3873':['2700','2992','3623','3828'], // canonical CAS preconditions
+  '3880':['3874'], '3881':['3874'], // curated projection schema
+  '3893':['2741'], // returning vocabulary
+  '3895':['2700','3623','3828','3871'], // certified route-watch preconditions
+  '3896':['2700','2992'], // immutable certified table + snapshot identity
+  '3897':['3828'], // active snapshot column
+  '3898':['3827','3828'], // lifecycle state + active snapshot columns
+  '3907':['3899'], // objective fact kind CHECK
+  '3908':['2860','2992','3623','3828','3871','3873','3895'], // declared durable fanout schema/watch prerequisites
+  '3996':['2984'], // crew membership composite FK
+};
+export function pressedMigrationOmissions(order:readonly string[],without:readonly string[]):Map<string,readonly string[]> {
+  const byNumber=new Map(order.map(file=>[file.split('_')[0]!,file]));
+  const omitted=new Map<string,readonly string[]>();
+  for(const number of without){
+    const file=byNumber.get(number);
+    if(!/^\d{4}$/.test(number)||!file||file<'2093')throw new Error(`Unsupported absent migration: ${number}`);
+    omitted.set(file,[]);
+  }
+  let changed=true;
+  while(changed){changed=false;for(const [number,requires] of Object.entries(ABSENT_DEPENDENCIES)){
+    const file=byNumber.get(number);if(!file||omitted.has(file))continue;
+    const missing=requires.map(n=>byNumber.get(n)).filter((f):f is string=>Boolean(f&&omitted.has(f)));
+    if(missing.length){omitted.set(file,missing);changed=true;}
+  }}
+  return omitted;
+}
+export async function executePressedMigrationChain(db:Pick<ReplayDatabase,'exec'|'close'>,order:readonly string[],without:readonly string[],skip:ReadonlySet<string>,readSql:(file:string)=>string):Promise<{applied:number;excluded:string[];variantExcluded:string[]}> {
+  const omitted=pressedMigrationOmissions(order,without),excluded:string[]=[],variantExcluded:string[]=[];let applied=0;
+  const reset=async()=>{try{await db.exec('ROLLBACK');}catch{/* no transaction */}await db.exec('RESET ALL; RESET ROLE;');};
+  for(const file of order){
+    if(skip.has(file)){excluded.push(file);continue;}
+    const missing=omitted.get(file);
+    if(missing){if(missing.length)variantExcluded.push(`${file} (dependency omitted: ${missing.join(', ')})`);else excluded.push(file);continue;}
+    try{await db.exec(readSql(file));applied++;}
+    catch(error){await reset();await db.close();throw new Error(`pressedLayoverDb: chain replay failed at ${file}: ${errText(error)}`);}
+    await reset();
+  }
+  return {applied,excluded,variantExcluded};
+}
+async function replayInto(dir: string, without: readonly string[], external?: { db: ReplayDatabase; version: string; major: number }): Promise<ReplayReport> {
   const t0 = Date.now();
-  const { PGlite, extensions, version } = await pgliteModules();
   const { A, B } = await scripts();
-  const db = new PGlite(dir, { extensions });
-  await db.waitReady;
+  let db: ReplayDatabase; let version: string;
+  if (external) { db = external.db; version = external.version; }
+  else { const modules = await pgliteModules(); const instance = new modules.PGlite(dir, {extensions: modules.extensions}); await instance.waitReady; db = instance; version = modules.version; }
   const reset = async () => { try { await db.exec("ROLLBACK"); } catch { /* none open */ } await db.exec("RESET ALL; RESET ROLE;"); };
   await db.exec(SHIM);
   const model = B.loadBaselineModel();
-  const executed = model.statements.filter((s: any) => s.decision.action === "execute");
+  const executed = model.statements.filter((s: any) => s.decision.action === "execute" && !(external && external.major < 17 && /^GRANT\b[\s\S]*\bMAINTAIN\b/i.test(s.code.trim()))); // The same four PG17-only GRANT statements omitted by local-db/up.sh on PG16.
   await db.exec(B.buildCreateExtensionsSql());
   await db.exec(B.buildRunFunctionSql());
   for (const b of B.planBatches(executed, B.BATCH_SIZE)) await db.exec(B.buildBatchQuery(b.map((s: any) => s.code)).sql);
@@ -203,36 +258,22 @@ async function replayInto(dir: string, without: readonly string[]): Promise<Repl
     }
   }
   const order = (await chainOrder()).filter((f) => f >= "2093");
-  const skip = new Set<string>([...PACKET_EXCLUDED, STAND_IN]);
-  const wanted = (f: string) => !without.some((n) => f.startsWith(`${n}_`));
-  let applied = 0;
-  const excluded: string[] = [];
-  const variantExcluded: string[] = [];
-  for (const f of order) {
-    if (skip.has(f)) { excluded.push(f); continue; }
-    if (!wanted(f)) { excluded.push(f); continue; }
-    try {
-      await db.exec(readFileSync(join(MIGRATIONS, f), "utf8"));
-      applied++;
-    } catch (e) {
-      await reset();
-      if (without.length === 0) { await db.close(); throw new Error(`pressedLayoverDb: chain replay failed at ${f}: ${errText(e)}`); }
-      variantExcluded.push(`${f} (${errText(e)})`); // depends on an excluded file
-    }
-    await reset();
-  }
+  const skip = new Set<string>([...PACKET_EXCLUDED, STAND_IN, ...(external && external.major < 17 ? ["2490_destructive_privilege_boundary.sql"] : [])]); // PG16 lacks MAINTAIN; existing local-db KNOWN_UNREPLAYABLE records this exact exception.
+  const {applied,excluded,variantExcluded}=await executePressedMigrationChain(db,order,without,skip,f=>readFileSync(join(MIGRATIONS,f),'utf8'));
   // 3982's stand-in: the ledger row the main packet records, nothing else (no pgvector here)
   const ledger = (await db.query(`SELECT to_regclass('public.schema_migration_ledger') IS NOT NULL AS ok`)).rows[0] as { ok: boolean };
   if (ledger.ok) await db.exec(`INSERT INTO public.schema_migration_ledger (filename, checksum, applied_by, notes) VALUES (${lit(STAND_IN)}, ${lit(sha(readFileSync(join(MIGRATIONS, STAND_IN))))}, 'manual', 'HARNESS-ONLY STAND-IN: 3982 needs pgvector, which PGlite lacks') ON CONFLICT (filename) DO NOTHING`);
-  await db.exec("ALTER DATABASE postgres SET timezone TO 'UTC'");
+  if (!external) await db.exec("ALTER DATABASE postgres SET timezone TO 'UTC'");
   await db.close();
   return { engine: version, key: "", applied, excluded, variantExcluded, standIn: STAND_IN, seconds: Math.round((Date.now() - t0) / 1000) };
 }
 
 function cacheKey(engine: string, without: readonly string[], order: string[]): string {
   const h = createHash("sha256");
-  h.update(`v1|${engine}|without=${[...without].sort().join(",")}|`);
+  h.update(`v2|${engine}|without=${[...without].sort().join(",")}|`);
   h.update(SHIM);
+  h.update(readFileSync(fileURLToPath(import.meta.url)));
+  h.update(readFileSync(join(HERE, "pressedPostgres.ts")));
   h.update(readFileSync(BASELINE));
   h.update(readFileSync(join(MIGRATIONS, "ORDER_OVERRIDES.json")));
   for (const f of order) { h.update(f); h.update(readFileSync(join(MIGRATIONS, f))); }
@@ -291,20 +332,6 @@ function pruneCache(keep: string): void {
   } catch { /* pruning is housekeeping; a failure here must not fail a suite */ }
 }
 
-// ── the psql engine (CI's local-db job) ───────────────────────────────────────
-
-interface PsqlRan { ok: boolean; stdout: string; code: string; message: string; detail: string }
-function psqlRun(script: string): PsqlRan {
-  const r = spawnSync("psql", ["-X", "-q", "-1", "-v", "ON_ERROR_STOP=1", "-At", LOCAL_DB_URL], {
-    input: `\\set VERBOSITY verbose\n${script}\n`, encoding: "utf8", timeout: 120_000, maxBuffer: 256 * 1024 * 1024, // the catalog read alone is several MB on the full chain; spawnSync's 1 MB default would truncate it
-  });
-  if (r.status === 0) return { ok: true, stdout: (r.stdout ?? "").replace(/\n$/, ""), code: "", message: "", detail: "" };
-  const stderr = r.stderr ?? "";
-  const m = /ERROR:\s+([0-9A-Z]{5}):\s+(.*)/.exec(stderr);
-  const d = /DETAIL:\s+(.*)/.exec(stderr);
-  return { ok: false, stdout: "", code: m?.[1] ?? "XX000", message: m?.[2]?.trim() ?? stderr.trim(), detail: d?.[1]?.trim() ?? "" };
-}
-
 // ── the handle a suite gets ────────────────────────────────────────────────────
 
 export interface PressedUser { id: string; token: string; handle: string }
@@ -359,8 +386,11 @@ export async function openPressedLayoverDb(opts: { without?: readonly string[] }
     const db = new PGlite(join(work, "pgdata"), { extensions });
     await db.waitReady;
     await db.exec("SET TIME ZONE 'UTC'");
+    let tail:Promise<unknown>=Promise.resolve();
+    const serial=<T>(work:()=>Promise<T>):Promise<T>=>{const next=tail.then(work,work);tail=next.catch(()=>{});return next;};
     engine = {
-      async request(statements, role, claims) {
+      request: (statements, role, claims) => serial(async()=>{
+        if(db.isInTransaction())throw new Error('Pressed request refused inside an explicit transaction; COMMIT or ROLLBACK it first');
         return db.transaction(async (tx: any) => {
           await tx.exec(prelude(role, claims));
           let last: any = null;
@@ -369,26 +399,19 @@ export async function openPressedLayoverDb(opts: { without?: readonly string[] }
           const v = row ? Object.values(row)[0] : null;
           return typeof v === "string" ? v : JSON.stringify(v ?? null);
         });
-      },
-      async query(sql) { return (await db.query(sql)).rows as Row[]; },
-      async exec(sql) { await db.exec(sql); },
-      async close() { await db.close(); rmSync(work, { recursive: true, force: true }); },
+      }),
+      query: (sql) => serial(async()=> (await db.query(sql)).rows as Row[]),
+      exec: (sql) => serial(async()=>{await db.exec(sql);}),
+      close: () => serial(async()=>{await db.close();rmSync(work,{recursive:true,force:true});}),
     };
   } else {
-    const call = (script: string) => {
-      const r = psqlRun(script);
-      if (!r.ok) throw Object.assign(new Error(r.message), { code: r.code, detail: r.detail });
-      return r.stdout;
-    };
-    engine = {
-      async request(statements, role, claims) {
-        const body = statements.slice(0, -1).map((s) => `${s};`).join("\n");
-        return call(`\\o /dev/null\n${prelude(role, claims)}\n${body}\n\\o\n${statements[statements.length - 1]};`);
-      },
-      async query(sql) { return JSON.parse(call(`WITH _t AS (${sql.trim().replace(/;$/, "")}) SELECT COALESCE(json_agg(_t.*), '[]'::json)::text FROM _t;`) || "[]") as Row[]; },
-      async exec(sql) { call(sql); },
-      async close() { /* the harness database outlives the suite */ },
-    };
+    const { openIsolatedPressedPostgres } = await import("./pressedPostgres.js");
+    const isolated = await openIsolatedPressedPostgres({
+      url: LOCAL_DB_URL, without, prelude,
+      key: async (version) => cacheKey(version, without, await chainOrder()),
+      replay: (db, version, major) => replayInto("", without, {db, version, major}),
+    });
+    engine = isolated.engine; report = isolated.report;
   }
 
   const url = `http://pressed-layover-${process.pid}-${++instanceSeq}.invalid`;
@@ -464,17 +487,6 @@ export async function openPressedLayoverDb(opts: { without?: readonly string[] }
       return Boolean(r[0]?.["ok"]);
     },
     async close() {
-      if (PRESSED_BACKEND === "psql") {
-        for (const [flag, prev] of flagsTouched) {
-          try {
-            if (prev === "absent") await engine.exec(`DELETE FROM public.feature_flags WHERE flag = ${lit(flag)}`);
-            else await engine.exec(`UPDATE public.feature_flags SET enabled = ${prev.enabled}, metadata = ${prev.metadata === null ? "NULL" : `${dollar(JSON.stringify(prev.metadata))}::jsonb`} WHERE flag = ${lit(flag)}`);
-          } catch { /* best effort; the harness database is throwaway */ }
-        }
-        for (const id of seeded) {
-          try { await engine.exec(`DELETE FROM public.profiles WHERE id = ${lit(id)}; DELETE FROM auth.users WHERE id = ${lit(id)};`); } catch { /* an append-only ledger may keep a row; throwaway */ }
-        }
-      }
       await engine.close();
     },
   };
@@ -501,7 +513,7 @@ export interface Press { migrations: readonly string[]; flags: Readonly<Record<s
 
 /** Open the database for a press under the current arm. */
 export async function openForPress(press: Press, arm: PressArm = PRESS_ARM): Promise<PressedDb> {
-  if (arm === "absent" && PRESSED_BACKEND !== "pglite") throw new Error("the migration-absent arm needs the pglite backend");
+  // Both backends build isolated chain variants; neither silently ignores omissions.
   return openPressedLayoverDb({ without: arm === "absent" ? press.migrations : [] });
 }
 

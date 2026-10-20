@@ -52,10 +52,9 @@ export const READ_CONFIDENCE_FLAGS: ReadonlySet<string> = new Set([
 
 /** file (relative to src) # function, with what is left to do. */
 const NOT_YET_MIGRATED: ReadonlyMap<string, string> = new Map([
-  ["services/airport/LayoverRecommendationService.ts#readLayoverLive", "byKey beside readable"],
-  ["services/airport/LayoverPrivacyGuard.ts#evaluateSharingGate", "SharingGateResult: allowed beside degraded; read by disclosePresence and the crew abort notice"],
-  ["services/airport/LayoverSafeReturnService.ts#markReturning", "a WRITE: applied beside failed"],
-  ["services/airport/layoverMaturityGate.ts#landsideMaturityDecision", "a decision whose observation signals may be unreadable (signalsReadable)"],
+  // readLayoverLive now requires an explicit read/degraded branch, including marked upstream failures.
+  // evaluateSharingGate requires callers to disclose its read/degraded branch; no direct allowed boolean exists.
+  // markReturning now returns an explicit success/failure union; write exceptions preserve the abort ledger.
 ]);
 
 function scopedFiles(): string[] {

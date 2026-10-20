@@ -263,8 +263,8 @@ export function discloseIntentCounts(raw: PresenceIntentCounts, k: number = PRES
 }
 
 export type ViewerRostersRead =
-  | { ok: true; nonEmpty: boolean; rosters: Array<"layover_crew" | "trip_crew" | "buddies"> }
-  | { ok: false; reason: "crew_unreadable" | "trip_crew_unreadable" | "buddies_unreadable" };
+  | { ok: true; nonEmpty: boolean; rosters: Array<"layover_crew" | "trip_crew" | "buddies" | "mutual_discovery"> }
+  | { ok: false; reason: "crew_unreadable" | "trip_crew_unreadable" | "buddies_unreadable" | "mutual_consents_unreadable" };
 
 /**
  * D-PRESENCE-K-3 rule 3: are any of the viewer's rosters for this city
@@ -285,7 +285,7 @@ export async function viewerRosters(
   nowIso: string,
   city: string | null,
 ): Promise<ViewerRostersRead> {
-  const rosters: Array<"layover_crew" | "trip_crew" | "buddies"> = [];
+  const rosters: Array<"layover_crew" | "trip_crew" | "buddies" | "mutual_discovery"> = []; const mutual = await hasMutualDiscoveryRoster(db, viewerId, nowIso); if (!mutual.ok) return { ok: false, reason: "mutual_consents_unreadable" }; if (mutual.nonEmpty) rosters.push("mutual_discovery"); /* census L130 (LAYOVER 165, lane B2-CREW): an L2 mutual-consent roster names people too, so K-3 rule 3 withholds every count beside it */
   const mine = await activeCrewForUser(db, viewerId, nowIso);
   if (!mine.ok) return { ok: false, reason: "crew_unreadable" };
   if (mine.value) {
@@ -464,3 +464,4 @@ export async function cityPopulationSnapshot(
   });
   return r.ok ? { ok: true, presence: r.value.presence, intents: r.value.intents, asOf: r.asOf } : r;
 }
+import { hasMutualDiscoveryRoster } from "./LayoverDiscoveryConsent.js"; // census L130 (LAYOVER 165, lane B2-CREW): appended at the tail so no cited line above moves; ESM hoists it

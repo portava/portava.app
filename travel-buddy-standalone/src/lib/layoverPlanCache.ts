@@ -111,13 +111,13 @@ export interface CachedPlanSchedule {
   boardingTime: string | null;
 }
 
-export interface CachedLayoverPlan {
+export interface CachedLayoverPlan { abortReturnRoute?: AbortReturnRoute | null; routedMap?: RoutedMapData | null;
   sessionId: string;
   /** The server's own bundle-shape version, carried so support can read it. */
   bundleVersion: string;
   certifiedAt: string;
   staleAfter: string;
-  airport: {
+  airport: { topologyGeometry?: import('./layoverAirportGeometry.ts').AirportTopologyGeometry | null;
     iataCode: string;
     name: string;
     city: string;
@@ -193,7 +193,7 @@ function normalisePhrases(raw: unknown): OfflineCapability<LayoverPhraseSet> | n
     if (!r || !isNonEmptyString(r.key) || !isNonEmptyString(r.english) || !isNonEmptyString(r.local)) return { available: false, value: null, reason };
     phrases.push({ key: r.key, english: r.english, local: r.local });
   }
-  return { available: true, value: { language: v.language, languageName: v.languageName, phrases }, reason: null };
+  return { available: true, value: { language: v.language, languageName: v.languageName, phrases, ...normalisePhraseOptions(v) }, reason: null };
 }
 
 function normaliseStops(raw: unknown): CachedPlanStop[] {
@@ -235,7 +235,7 @@ export async function cacheCertifiedPlan(
   sessionId: string,
   bundle: LayoverOfflineBundle | null | undefined,
   envelope: LayoverSafeEnvelope | null | undefined,
-  schedule?: CachedPlanSchedule | null,
+  schedule?: CachedPlanSchedule | null, routedMap?: RoutedMapData | null,
 ): Promise<boolean> {
   if (!bundle) return false;
   if (!isNonEmptyString(bundle.certifiedAt) || !isNonEmptyString(bundle.staleAfter)) return false;
@@ -255,7 +255,7 @@ export async function cacheCertifiedPlan(
       city: isNonEmptyString(airport.city) ? airport.city : '',
       timezone: isNonEmptyString(airport.timezone) ? airport.timezone : 'UTC',
       lat: typeof airport.lat === 'number' ? airport.lat : null,
-      lng: typeof airport.lng === 'number' ? airport.lng : null,
+      lng: typeof airport.lng === 'number' ? airport.lng : null, topologyGeometry: airportTopologyOf(airport.topologyGeometry),
     },
     stops: normaliseStops(bundle.stops),
     envelope: envelope
@@ -276,7 +276,7 @@ export async function cacheCertifiedPlan(
         : null,
     crewMeetingPoint: normaliseCrewPoint(bundle.crewMeetingPoint),
     translationPhrases: normalisePhrases(bundle.translationPhrases),
-    cachedAt: new Date().toISOString(),
+    cachedAt: new Date().toISOString(), routedMap: routedMapForStorage(routedMap === undefined ? (await readCachedPlan(sessionId))?.routedMap : routedMap), abortReturnRoute: await readCachedAbortReturnRoute(sessionId),
   };
 
   try {
@@ -336,7 +336,7 @@ export async function readCachedPlan(sessionId: string): Promise<CachedLayoverPl
       city: isNonEmptyString(airport.city) ? airport.city : '',
       timezone: isNonEmptyString(airport.timezone) ? airport.timezone : 'UTC',
       lat: typeof airport.lat === 'number' ? airport.lat : null,
-      lng: typeof airport.lng === 'number' ? airport.lng : null,
+      lng: typeof airport.lng === 'number' ? airport.lng : null, topologyGeometry: airportTopologyOf(airport.topologyGeometry),
     },
     stops: normaliseStops(rec.stops),
     envelope: env
@@ -357,6 +357,164 @@ export async function readCachedPlan(sessionId: string): Promise<CachedLayoverPl
         : null,
     crewMeetingPoint: normaliseCrewPoint(rec.crewMeetingPoint),
     translationPhrases: normalisePhrases(rec.translationPhrases),
-    cachedAt: isNonEmptyString(rec.cachedAt) ? rec.cachedAt : rec.certifiedAt,
+    cachedAt: isNonEmptyString(rec.cachedAt) ? rec.cachedAt : rec.certifiedAt, abortReturnRoute: await readCachedAbortReturnRoute(sessionId), routedMap: routedMapForStorage(rec.routedMap),
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §16 L154 — "Crew: cache meeting point; optional peer proximity if enabled"
+// (LAYOVER 165, lane B2-CREW; appended so no cited line above moves)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The meeting point is cached with the plan (`crewMeetingPoint`, above). The PEER PROXIMITY half exists only when crew
+// location sharing is on (3996 + `layover_crew_location_enabled`) and a crewmate is sharing: `GET /crew/location`
+// then carries each live share with its proximity BUCKET and its server-cut end (`endsAt`: the share's own expiry, cut
+// at the sharer's boarding and at the crew's end). This caches exactly that, and nothing more:
+//
+//   * a LABEL and a BUCKET per share — never a coordinate, never a ring: an exact or venue position is not written to
+//     the device, so a lost phone holds no crewmate's position;
+//   * each share's `endsAt`, VERBATIM — and the read drops every share whose end has passed, so an expired grant
+//     VANISHES OFFLINE TOO (§14.1 "crew location sharing expires…"; §17 "session scoped; expire automatically");
+//   * a server answer that the traveller is in no crew, or that the feature is off, CLEARS the cache: the server has
+//     said there is nothing to keep.
+// A failed read writes nothing and clears nothing: it is not an answer.
+import type { CrewLocationRead, CrewProximity } from '../services/layoverCrewLocationContract.ts';
+
+export const CACHED_CREW_PROXIMITY_VERSION = 1;
+const CREW_PROXIMITY_PREFIX = 'layover.crewProximity.v1';
+export function cachedCrewProximityKey(sessionId: string): string {
+  return `${CREW_PROXIMITY_PREFIX}:${sessionId}`;
+}
+
+export interface CachedCrewShare {
+  userId: string;
+  /** Who, as the server named them (null when it withheld the name). */
+  name: string | null;
+  handle: string | null;
+  label: string;
+  proximity: CrewProximity | null;
+  /** The server's end of this share. Past it, the share does not exist — online or off. */
+  endsAt: string;
+}
+
+export interface CachedCrewProximity {
+  sessionId: string;
+  crewId: string;
+  /** DEVICE instant of the write: "as of", never a freshness extension. */
+  cachedAt: string;
+  crewmates: CachedCrewShare[];
+}
+
+const PROXIMITIES: readonly CrewProximity[] = ['together', 'close', 'same_area', 'far'];
+
+/** Write what a successful crew-location read says. Returns whether storage changed. Never throws. */
+export async function cacheCrewProximity(sessionId: string, read: CrewLocationRead, nowMs: number = Date.now()): Promise<boolean> {
+  if (!read.ok) return false;
+  try {
+    if (!read.available || !read.inCrew) {
+      await AsyncStorage.removeItem(cachedCrewProximityKey(sessionId));
+      return true;
+    }
+    const crewmates: CachedCrewShare[] = read.crewmates
+      .filter((c) => Number.isFinite(Date.parse(c.endsAt)) && Date.parse(c.endsAt) > nowMs)
+      .map((c) => ({ userId: c.userId, name: c.name, handle: c.handle, label: c.label, proximity: c.proximity, endsAt: c.endsAt }));
+    const record: CachedCrewProximity & { v: number } = {
+      v: CACHED_CREW_PROXIMITY_VERSION, sessionId, crewId: read.crewId, cachedAt: new Date(nowMs).toISOString(), crewmates,
+    };
+    await AsyncStorage.setItem(cachedCrewProximityKey(sessionId), JSON.stringify(record));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The cached crew proximity for this session with every EXPIRED share removed at `nowMs`; `null` when nothing is
+ * cached or the record cannot be read whole. An empty `crewmates` is a real answer: every share has ended.
+ */
+export async function readCachedCrewProximity(sessionId: string, nowMs: number = Date.now()): Promise<CachedCrewProximity | null> {
+  let raw: string | null;
+  try { raw = await AsyncStorage.getItem(cachedCrewProximityKey(sessionId)); } catch { return null; }
+  if (!raw) return null;
+  let rec: Record<string, unknown>;
+  try { const p = JSON.parse(raw); if (!p || typeof p !== 'object') return null; rec = p as Record<string, unknown>; } catch { return null; }
+  if (rec.v !== CACHED_CREW_PROXIMITY_VERSION || rec.sessionId !== sessionId || !isNonEmptyString(rec.crewId) || !Array.isArray(rec.crewmates)) return null;
+  const crewmates: CachedCrewShare[] = [];
+  for (const c of rec.crewmates as unknown[]) {
+    const s = c as Record<string, unknown> | null;
+    if (!s || !isNonEmptyString(s.userId) || !isNonEmptyString(s.label) || !isNonEmptyString(s.endsAt)) continue;
+    const end = Date.parse(s.endsAt);
+    if (!Number.isFinite(end) || end <= nowMs) continue; // EXPIRED: gone offline as online
+    crewmates.push({
+      userId: s.userId, label: s.label, endsAt: s.endsAt,
+      name: isNonEmptyString(s.name) ? s.name : null,
+      handle: isNonEmptyString(s.handle) ? s.handle : null,
+      proximity: PROXIMITIES.includes(s.proximity as CrewProximity) ? (s.proximity as CrewProximity) : null,
+    });
+  }
+  return { sessionId, crewId: rec.crewId, cachedAt: isNonEmptyString(rec.cachedAt) ? rec.cachedAt : '', crewmates };
+}
+
+import type { AbortReturnRoute } from '../services/layover.ts';
+
+/** The measured itinerary, with its original expiry. No position or device-generated travel time is stored. */
+export function normaliseAbortReturnRoute(raw: unknown): AbortReturnRoute | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0;
+  const instant = (v: unknown): v is string => typeof v === 'string' && Number.isFinite(Date.parse(v));
+  if ((r.mode !== 'walk' && r.mode !== 'drive') || !finite(r.minutes) || !finite(r.conservativeMinutes) || r.conservativeMinutes < r.minutes
+    || !finite(r.independentRoutes) || !Number.isInteger(r.independentRoutes) || typeof r.canMeetDeadline !== 'boolean'
+    || !instant(r.departAt) || !instant(r.hardReturnBy) || !instant(r.leaveBy) || !instant(r.expectedAirportReturnAt) || !instant(r.expiresAt)
+    || !['HIGH', 'MEDIUM', 'LOW', 'INSUFFICIENT'].includes(String(r.confidence)) || !Array.isArray(r.conveyances)) return null;
+  const conveyances: AbortReturnRoute['conveyances'] = [];
+  for (const value of r.conveyances) {
+    if (!value || typeof value !== 'object') return null;
+    const leg = value as Record<string, unknown>;
+    if (typeof leg.mode !== 'string' || !finite(leg.minutes) || typeof leg.interruptibility !== 'string'
+      || (leg.endsAt !== null && typeof leg.endsAt !== 'string')) return null;
+    conveyances.push({ mode: leg.mode, minutes: leg.minutes, interruptibility: leg.interruptibility, endsAt: leg.endsAt as string | null });
+  }
+  return { mode: r.mode, minutes: r.minutes, conservativeMinutes: r.conservativeMinutes, departAt: r.departAt,
+    hardReturnBy: r.hardReturnBy, leaveBy: r.leaveBy, expectedAirportReturnAt: r.expectedAirportReturnAt,
+    canMeetDeadline: r.canMeetDeadline, confidence: r.confidence as AbortReturnRoute['confidence'],
+    expiresAt: r.expiresAt, independentRoutes: r.independentRoutes, conveyances };
+}
+
+export async function cacheAbortReturnRoute(sessionId: string, route: AbortReturnRoute | null): Promise<boolean> {
+  try {
+    await AsyncStorage.setItem(`layover.return-route.v1.${sessionId}`, JSON.stringify({ sessionId, route: normaliseAbortReturnRoute(route) }));
+    return true;
+  } catch { return false; }
+}
+
+import { routedMapForStorage, type RoutedMapData } from './layoverRoutedMap.ts'; import { airportTopologyOf } from './layoverAirportGeometry.ts';
+/** Also survives an abort without a selected plan; no airport/stop metadata is invented to make a plan record. */
+export async function readCachedAbortReturnRoute(sessionId: string): Promise<AbortReturnRoute | null> {
+  try {
+    const bytes = await AsyncStorage.getItem(`layover.return-route.v1.${sessionId}`);
+    if (!bytes) return null;
+    const value: unknown = JSON.parse(bytes);
+    if (!value || typeof value !== 'object' || (value as Record<string, unknown>).sessionId !== sessionId) return null;
+    return normaliseAbortReturnRoute((value as Record<string, unknown>).route);
+  } catch { return null; }
+}
+
+function normalisePhraseOptions(v: Record<string, unknown>): Pick<LayoverPhraseSet, 'languageOptions' | 'reviewStatus'> {
+  const languageOptions: NonNullable<LayoverPhraseSet['languageOptions']> = [];
+  if (!Array.isArray(v.languageOptions) || v.languageOptions.length > 14) return {};
+  const phrases = (raw: unknown): LayoverPhraseSet['phrases'] | null => {
+    if (!Array.isArray(raw) || raw.length === 0 || raw.length > 10) return null;
+    const out: LayoverPhraseSet['phrases'] = [];
+    for (const p of raw) { if (!p || !isNonEmptyString(p.key) || !isNonEmptyString(p.local) || !isNonEmptyString(p.english)) return null; out.push({ key: p.key, local: p.local, english: p.english }); }
+    return out;
+  };
+  for (const o of v.languageOptions) {
+    if (!o || !isNonEmptyString(o.language) || !isNonEmptyString(o.languageName) || !Array.isArray(o.stops) || o.stops.length > 6) return {};
+    const main = phrases(o.phrases); if (!main) return {};
+    const stops: NonNullable<LayoverPhraseSet['languageOptions']>[number]['stops'] = [];
+    for (const s of o.stops) { const p = phrases(s?.phrases); if (!isNonEmptyString(s?.stopTitle) || !p) return {}; stops.push({ stopTitle: s.stopTitle, phrases: p }); }
+    languageOptions.push({ language: o.language, languageName: o.languageName, phrases: main, stops });
+  }
+  return { languageOptions, reviewStatus: 'native_review_pending' };
 }

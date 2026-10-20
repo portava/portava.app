@@ -33,7 +33,7 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, dirname, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js";
+import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js"; import { withConfirmedCorridor } from "./helpers/confirmedCorridor.js";
 import { generateRecommendations, getRecommendations } from "../services/airport/LayoverRecommendationService.js";
 import * as Primitive from "../services/airport/layoverExperiencePrimitive.js";
 import {
@@ -164,7 +164,7 @@ describe("A. GET /airport/sessions/:id/recommendations — every card carries th
       layover_recommendations: [],
       discovery_places: PLACES.map((p) => ({ ...p })),
     };
-    _setTestClient(makeLayoverDb(routeTables, { users: { "env-token": "user-1" } }), true);
+    _setTestClient(makeLayoverDb(withConfirmedCorridor(routeTables, { userIds: ["user-1"], destination: "TW" }), { users: { "env-token": "user-1" } }), true);
   });
 
   after(async () => {

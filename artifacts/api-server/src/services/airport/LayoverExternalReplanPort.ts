@@ -118,6 +118,7 @@ export type ReplanReport =
 /** The one method `ReplanPort` requires, structurally. */
 export interface LayoverReplanPort {
   replan(event: LayoverEventEnvelope): Promise<ReplanReport>;
+  drainRoutes(limit:number): Promise<RouteFanoutReport>;
 }
 
 export interface LayoverReplanPortOptions {
@@ -148,7 +149,7 @@ function feasibilityAirport(p: AirportProfile): FeasibilityAirport {
     internationalBufferMin: p.internationalBufferMin,
     immigrationExtraMin: p.immigrationExtraMin,
     checkedBagsExtraMin: p.checkedBagsExtraMin,
-    trafficExtraMin: p.trafficExtraMin,
+    trafficExtraMin: p.trafficExtraMin, ...(p.curation ? { curation: p.curation } : {}), ...(p.calibratedCheckpointExtra ? { calibratedCheckpointExtra: p.calibratedCheckpointExtra } : {}), // LAYOVER 165 B2-CURATE: the curated maturity and the recalibrated bands certify here exactly as on every other door
   };
 }
 
@@ -262,7 +263,7 @@ async function readActiveSessionsAt(
 async function readGroups(
   db: SupabaseClient,
   event: LayoverEventEnvelope,
-  limit: number,
+  limit: number, nowMs: number,
 ): Promise<{ ok: true; groups: AirportGroup[]; limitReached: boolean } | Refusal> {
   const airportRefs = [...new Set(event.subjectRefs.filter((s) => s.kind === "airport").map((s) => s.ref))];
   const sessionRefs = [...new Set(event.subjectRefs.filter((s) => s.kind === "session").map((s) => s.ref))];
@@ -322,7 +323,7 @@ async function readGroups(
     }
   }
 
-  const flight = await addFlightSubjectGroups(db, event, limit, groups, claimed); if (!flight.ok) return flight; if (flight.limitReached) limitReached = true; /* §24 L259: the flight axis (3827), foot of this file */ return { ok: true, groups: [...groups.values()], limitReached };
+  const flight = await addFlightSubjectGroups(db, event, limit, groups, claimed); if (!flight.ok) return flight; if (flight.limitReached) limitReached = true; const route = await addRouteSubjectGroups(db, event, limit, nowMs, groups, claimed); if (!route.ok) return route; /* §24 L259: indexed flight and route axes. */ return { ok: true, groups: [...groups.values()], limitReached };
 }
 
 /**
@@ -420,6 +421,7 @@ export function layoverExternalReplanPort(
 ): LayoverReplanPort {
   const limit = opts.sessionLimit ?? DEFAULT_REPLAN_SESSION_LIMIT; const admitted: LayoverEventEnvelope[] = []; /* §11.1 step 1: the events this port has let through, first occurrence wins (dedupeEvents, foot) */
   return {
+    drainRoutes: (batchLimit:number) => drainDurableRouteWork(db,Math.min(limit,batchLimit),prepareDurableRouteWork),
     async replan(event: LayoverEventEnvelope): Promise<ReplanReport> {
       return replanFirstOccurrence(db, event, admitted, { nowMs: opts.nowMs, sessionLimit: limit });
     },
@@ -437,7 +439,7 @@ export async function replanExternalEvent(
 ): Promise<ReplanReport> {
   const limit = opts.sessionLimit ?? DEFAULT_REPLAN_SESSION_LIMIT; const checked = revalidateExternalEvent(event); if (!checked.ok) return checked; event = checked.event; /* §23: validated again HERE, the last door before a session, whatever wrote the row */
 
-  const read = await readGroups(db, event, limit);
+  const read = await readGroups(db, event, limit, opts.nowMs);
   if (!read.ok) return read; await attachGroupConstraints(db, read.groups); // LAY-FIX: every session certifies under its declared constraint set, as every session loader does
 
   const sessionIds = read.groups.flatMap((g) => g.sessions.map((s) => s.session.id));
@@ -630,6 +632,7 @@ async function replanFirstOccurrence(
 
 import { readFlagState } from "../../lib/featureFlags.js";
 import { readActiveSessionRowsByFlightSubjects } from "./LayoverSessionService.js";
+import { activeLayoverRouteSessions } from "./LayoverRouteSubjects.js";
 
 /** The row's Trips flight segments as the pipeline reads them; `{}` when it is linked to none (or predates 3827). */
 function flightRefsOf(row: Record<string, any>): { arrivalFlightRef?: string | null; departureFlightRef?: string | null } {
@@ -683,3 +686,54 @@ async function addFlightSubjectGroups(
   }
   return { ok: true, limitReached: read.limitReached };
 }
+
+/** L259: lookup through3895's indexed, current snapshot bindings; errors strand the event. */
+async function addRouteSubjectGroups(db: SupabaseClient, event: LayoverEventEnvelope, limit: number, nowMs: number, groups: Map<string, AirportGroup>, claimed: Set<string>): Promise<{ ok: true } | Refusal> {
+  const refs = [...new Set(event.subjectRefs.filter(s => s.kind === "route").map(s => s.ref))];
+  if (!refs.length || event.eventType !== "mobility.route_degraded") return { ok: true };
+  const read = await activeLayoverRouteSessions(db, refs, nowMs, limit);
+  if (!read.ok) return read;
+  for (const { session: row, routeRefs } of read.rows) {
+    const id = String(row.id);
+    if (claimed.has(id)) {
+      for (const group of groups.values()) { const s = group.sessions.find(s => s.session.id === id); if (s) s.routeRefs = routeRefs; }
+      continue;
+    }
+    const own = sessionAirportIdentity(row);
+    if (own === null) return refuse("route-linked session airport identity missing");
+    let group = groups.get(own);
+    if (!group) {
+      const resolved = await resolveAirport(db, own); if (!resolved.ok) return resolved;
+      group = { airportRef: own, airport: resolved.airport, entryCountry: resolved.entryCountry, owners: {}, sessions: [] }; groups.set(own, group);
+    }
+    claimed.add(id); group.sessions.push({ ...toReplanSession(row, group.airportRef), routeRefs }); group.owners[id] = String(row.user_id ?? "");
+  }
+  return { ok: true };
+}
+
+/** 3908: prepare exactly one leased route task, without persistence or delivery.
+ * Its serialized session revision is checked again by the atomic settlement RPC. */
+export async function prepareDurableRouteWork(db:SupabaseClient,event:LayoverEventEnvelope,row:Record<string,any>,routeRefs:string[],nowMs:number):Promise<{ok:true;payload:Record<string,unknown>;notifications:number}|Refusal>{
+ const checked=revalidateExternalEvent(event);if(!checked.ok)return checked;event=checked.event;
+ if(event.eventType!=='mobility.route_degraded'||event.subjectRefs.some(s=>s.kind!=='route'))return refuse('route_subject_union_unsupported');
+ const identity=sessionAirportIdentity(row);if(!identity)return refuse('route_airport_unavailable');
+ let iata=identity;
+ if(!/^[A-Za-z]{3}$/.test(identity)){const raw=await db.from('airport_profiles').select('iata_code').eq('id',identity).maybeSingle();if(raw.error||!raw.data)return refuse('route_airport_unavailable');iata=raw.data.iata_code;}
+ const loaded=await lookupByIata(db,iata);if(loaded.kind==='degraded'||!loaded.value.airport)return refuse('route_airport_unavailable');
+ const profile=loaded.value.airport,session=toReplanSession(row,identity);session.routeRefs=routeRefs;
+ const storedSession=await attachFlightTerminalContext(db,layoverSessionFromStoredRow(row));session.session={...session.session,comfortLevel:storedSession.comfortLevel,vibeChips:storedSession.vibeChips,...('arrivalTerminalId' in storedSession?{arrivalTerminalId:storedSession.arrivalTerminalId,departureTerminalId:storedSession.departureTerminalId}:{})};
+ const group:AirportGroup={airportRef:identity,airport:feasibilityAirport(profile),entryCountry:layoverAirportCountry(profile),sessions:[session],owners:{[row.id]:row.user_id}};
+ await attachGroupConstraints(db,[group]);
+ const stops=await readCandidates(db,[row.id],201);if(!stops.ok)return stops;
+ // A whole session plan, not an arbitrary prefix, must be considered.
+ if((stops.candidates[row.id]?.length??0)>200)return refuse('route_plan_limit');
+ const entry=await resolveLayoverEntry(db,row.user_id,group.entryCountry);
+ const live=await resolveLayoverLiveConditions(db,profile,storedSession,nowMs);
+ const result=handleEvent(event,{airport:group.airport,sessions:group.sessions,candidates:stops.candidates,entries:{[row.id]:entry},liveConditions:{[row.id]:live},nowMs});
+ const payload=prepareDurableExternalSettlement(result,row.user_id,nowMs);if(!payload)return refuse('route_recompute_unavailable');
+ return {ok:true,payload,notifications:result.notifications};
+}
+import {prepareDurableExternalSettlement} from './LayoverReplanService.js';
+import {resolveLayoverLiveConditions} from './layoverLiveSignals.js';
+import {layoverSessionFromStoredRow,attachFlightTerminalContext} from './LayoverSessionService.js';
+import {drainDurableRouteWork,type RouteFanoutReport} from './LayoverRouteFanout.js';

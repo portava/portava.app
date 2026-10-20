@@ -145,7 +145,7 @@ function PolicyAccordion() {
 export default function RentABuddyCheckout() {
   const insets = useSafeAreaInsets();
   const { inset: barInset, onBarLayout } = useStickyBarInset();
-  const params = useLocalSearchParams<{ buddyId?: string; packageId?: string }>();
+  const params = useLocalSearchParams<{ buddyId?: string; packageId?: string; layoverSessionId?: string; bookingStartsAt?: string; bookingEndsBy?: string; timezone?: string }>();
   const buddyId = params.buddyId ?? '';
 
   const [buddy, setBuddy] = useState<BuddyProfile | null>(null);
@@ -155,7 +155,7 @@ export default function RentABuddyCheckout() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const [category, setCategory] = useState<BuddyCategory>('city');
+  const [category, setCategory] = useState<BuddyCategory>(params.layoverSessionId ? 'layover' : 'city');
   const [date, setDate] = useState('');
   const [time, setTime] = useState('');
   const [duration, setDuration] = useState(2 * 3600);
@@ -238,7 +238,7 @@ export default function RentABuddyCheckout() {
     setSubmitting(true); setActionableRefusal(null);
     const res = await createBooking({
       buddyId: buddy.id,
-      packageId: selectedPackage?.id,
+      packageId: params.layoverSessionId ? undefined : selectedPackage?.id, layoverSessionId: params.layoverSessionId,
       bookingDate: date,
       startTime: time || undefined,
       durationH,
@@ -246,7 +246,7 @@ export default function RentABuddyCheckout() {
       city: buddy.city,
       countryCode: (buddy as any).country_code ?? (buddy as any).country ?? undefined,
       meetupLocation: location || undefined,
-      category,
+      category: params.layoverSessionId ? 'layover' : category,
       notes: notes || undefined,
       acceptSafety,
     });
@@ -281,7 +281,7 @@ export default function RentABuddyCheckout() {
 
   const handleBook = async () => {
     if (!buddy || !policyAccepted || submitting || unavailableReason || ineligibleReason) return;
-    if (!date.trim()) { Alert.alert('Missing date', 'Please select a booking date.'); return; }
+    if (!date.trim()) { Alert.alert('Missing date', 'Please select a booking date.'); return; } if (params.layoverSessionId && !time) { Alert.alert('Missing start time', 'Choose a start time in the airport’s local time.'); return; }
     if (blockedDates.includes(date)) {
       Alert.alert('Date unavailable', 'This Buddy is not available on that date. Please pick another date.');
       return;
@@ -375,7 +375,7 @@ export default function RentABuddyCheckout() {
         </View>
 
         {/* Package selector */}
-        {packages.length > 0 && (
+        {!params.layoverSessionId && packages.length > 0 && (
           <Section title="Package">
             <View style={styles.pkgList}>
               <Pressable
@@ -400,7 +400,7 @@ export default function RentABuddyCheckout() {
         )}
 
         {/* Category */}
-        {!selectedPackage && (
+        {!params.layoverSessionId && !selectedPackage && (
           <Section title="Type of experience">
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: space.sm, paddingVertical: space.xs }}>
               {CATEGORIES.map(c => (
@@ -416,7 +416,7 @@ export default function RentABuddyCheckout() {
           </Section>
         )}
 
-        {/* Date & Time */}
+        {params.layoverSessionId ? <Section title="Layover specialist"><Text testID="layover-booking-window">{layoverBookingWindowCopy(params.bookingStartsAt, params.bookingEndsBy, params.timezone)} Your chosen slot will be checked again before booking. Choose a public meeting place.</Text></Section> : null}
         <Section title="Date & time">
           <View style={styles.row}>
             <View style={[styles.inputWrap, { flex: 1 }]}>
@@ -432,7 +432,7 @@ export default function RentABuddyCheckout() {
               </Pressable>
             </View>
             <View style={[styles.inputWrap, { flex: 1 }]}>
-              <Text style={styles.inputLabel}>Start time (optional)</Text>
+              <Text style={styles.inputLabel}>{params.layoverSessionId ? `Start time (${params.timezone ?? 'airport local time'})` : 'Start time (optional)'}</Text>
               <Pressable
                 style={[styles.input, styles.inputTrigger]}
                 onPress={() => setShowTimePicker(true)}
@@ -816,3 +816,7 @@ const pol = StyleSheet.create({
   title: { ...t.bodyStrong, color: color.ink, flex: 1 },
   body: { ...t.body, color: color.mute, marginTop: space.sm, lineHeight: 20 },
 });
+
+function layoverBookingWindowCopy(startsAt?:string,endsBy?:string,timezone?:string):string {
+ try { if(!startsAt||!endsBy||!timezone)return 'Return to your layover to refresh the certified booking window.';const options:Intl.DateTimeFormatOptions={timeZone:timezone,month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'};return `Airport local time (${timezone}): start after ${new Date(startsAt).toLocaleString(undefined,options)} and finish before ${new Date(endsBy).toLocaleString(undefined,options)}.`; } catch { return 'Return to your layover to refresh the certified booking window.'; }
+}

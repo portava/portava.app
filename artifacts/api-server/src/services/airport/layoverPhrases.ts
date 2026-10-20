@@ -22,10 +22,10 @@
  *   - a country whose language is not in the catalogue (or an airport with no
  *     country code) gets `language_not_in_catalogue` — never English dressed as
  *     a translation, never a machine guess;
- *   - countries with more than one everyday language (BE, CH, CA, IN, ...) and
- *     English-speaking countries are deliberately absent;
- *   - phrases are keyed to the RETURN, not to each stop's category: a stop's
- *     category does not reach the bundle.
+ *   - multilingual countries expose the catalogue's available language choices;
+ *     languages absent from the catalogue remain absent, never guessed;
+ *   - named landside stops add localized transport/location phrases; category
+ *     claims and translated proper names are not invented. Native review is pending.
  *
  * Pure: no I/O, decidable from its arguments.
  */
@@ -47,7 +47,7 @@ export interface LayoverPhrase {
   local: string;
 }
 
-export interface LayoverPhraseSet {
+export interface LayoverPhraseSet { languageOptions?: LayoverPhraseLanguageOption[]; reviewStatus?: 'native_review_pending';
   /** BCP-47 tag of `local`. */
   language: string;
   /** The language's English name, for the card's heading. */
@@ -202,8 +202,8 @@ const CATALOGUE: Record<string, { languageName: string; t: Template }> = {
 };
 
 /**
- * ISO 3166-1 alpha-2 → the catalogue language a taxi driver there reads. Only
- * countries with ONE everyday language that is in the catalogue.
+ * ISO 3166-1 alpha-2 → an available catalogue language, never an assertion
+ * about a particular person's language. Multilingual choices are separate.
  */
 export const COUNTRY_LANGUAGE: Readonly<Record<string, string>> = {
   JP: "ja", TH: "th", VN: "vi", KR: "ko", CN: "zh-Hans", TW: "zh-Hant",
@@ -224,18 +224,18 @@ export function layoverPhrasesFor(input: {
   airportName: string;
   iataCode: string;
   wantsToLeave: boolean;
-  stops: ReadonlyArray<{ insideAirport: boolean }>;
+  stops: ReadonlyArray<{ insideAirport: boolean; title?: string }>;
 }): { ok: true; value: LayoverPhraseSet } | { ok: false; reason: LayoverPhrasesUnavailable } {
   const leaves = input.wantsToLeave || input.stops.some((s) => s.insideAirport !== true);
   if (!leaves) return { ok: false, reason: "plan_stays_airside" };
   const code = typeof input.countryCode === "string" ? input.countryCode.trim().toUpperCase() : "";
-  const language = COUNTRY_LANGUAGE[code];
-  const entry = language ? CATALOGUE[language] : undefined;
+  const language = COUNTRY_LANGUAGE[code] ?? MULTILINGUAL_PHRASE_OPTIONS[code]?.[0];
+  const entry = language === 'en' ? { languageName: 'English', t: ENGLISH } : language ? CATALOGUE[language] : undefined;
   if (!language || !entry) return { ok: false, reason: "language_not_in_catalogue" };
   return {
     ok: true,
     value: {
-      language,
+      language, ...phraseLanguageOptions(code, input),
       languageName: entry.languageName,
       phrases: LAYOVER_PHRASE_KEYS.map((key) => ({
         key,
@@ -248,3 +248,22 @@ export function layoverPhrasesFor(input: {
 
 /** The catalogue's languages, for tests and the census. */
 export const LAYOVER_PHRASE_LANGUAGES: readonly string[] = Object.keys(CATALOGUE);
+
+import { MULTILINGUAL_PHRASE_OPTIONS, PHRASE_REVIEW_STATUS, stopContextPhrases } from './layoverPhraseLocales.js';
+export interface LayoverPhraseLanguageOption {
+  language: string; languageName: string; phrases: LayoverPhrase[];
+  stops: Array<{ stopTitle: string; phrases: Array<{ key: string; english: string; local: string }> }>;
+}
+function phraseLanguageOptions(code: string, input: { airportName: string; iataCode: string; stops: ReadonlyArray<{ insideAirport: boolean; title?: string }> }) {
+  const languages = MULTILINGUAL_PHRASE_OPTIONS[code] ?? (COUNTRY_LANGUAGE[code] ? [COUNTRY_LANGUAGE[code]!] : []);
+  const titles = [...new Set(input.stops.filter(s => !s.insideAirport).map(s => (s.title ?? '').replace(/[\u0000-\u001f\u007f]/g, '').trim()).filter(s => s.length > 0 && s.length <= 200))].slice(0, 6);
+  const languageOptions: LayoverPhraseLanguageOption[] = [];
+  for (const language of languages) {
+    const entry = language === 'en' ? { languageName: 'English', t: ENGLISH } : CATALOGUE[language];
+    if (!entry) continue;
+    languageOptions.push({ language, languageName: entry.languageName,
+      phrases: LAYOVER_PHRASE_KEYS.map(key => ({ key, english: fill(ENGLISH[key], input.airportName, input.iataCode), local: fill(entry.t[key], input.airportName, input.iataCode) })),
+      stops: titles.map(stopTitle => ({ stopTitle, phrases: stopContextPhrases(language, stopTitle) })) });
+  }
+  return { languageOptions, reviewStatus: PHRASE_REVIEW_STATUS };
+}

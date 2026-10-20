@@ -16,7 +16,7 @@ import { Stamp } from '../../../src/components/ui';
 import { color, space, radius, type as t, shadow, avatar } from '../../../src/theme/tokens';
 import * as rentABuddy from '../../../src/services/rentABuddy';
 import type { BuddyDashboardSummary, BuddyBooking, ChecklistItem } from '../../../src/services/rentABuddy';
-import { bookingErrorCopy } from '../../../src/services/rentABuddyBookingErrors';
+import { bookingErrorCopy } from '../../../src/services/rentABuddyBookingErrors'; import { LayoverSpecialistDeclaration } from '../../../src/components/layover/LayoverSpecialistDeclaration';
 
 function StatusBanner({ status }: { status: string }) {
   if (status === 'active') return null;
@@ -256,7 +256,7 @@ export default function BuddyDashboard() {
         </View>
       </View>
 
-      <StatusBanner status={status} />
+      <StatusBanner status={status} />{summary?.profile ? <LayoverSpecialistDeclaration categories={summary.profile.categories ?? []} onSaved={() => { void load(true); }} /> : null}
 
       {/* Stats */}
       <View style={s.statsRow}>

@@ -244,7 +244,7 @@ describe("L144 fail-closed defaults: the flag, and the traveller's own per-abort
   });
 
   it("FLAG ON + NOT asked: nobody is told, and the reason says the traveller did not ask", async () => {
-    const { tables, db } = stage({ failures: { "layover_crew_members:select": { message: "must not be read" } } });
+    const { tables, db } = stage(); /* LAYOVER 165 B2-CREW (census L144, owner rule 2026-10-18): an unticked abort may still be authorized — a live crew location share, or an emergency contact of an active Safe Return session — so the crew IS read now; with neither basis nobody is told, and the reason is still not_requested */
     const r = await abort(db, { requested: false, enabled: true });
     assert.equal(r.crewNotifiedCount, 0);
     assert.equal(r.crewNotifyUnavailableReason, "not_requested");

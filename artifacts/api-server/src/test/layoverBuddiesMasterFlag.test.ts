@@ -21,7 +21,7 @@ import http from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import airportRouter from "../routes/airport.js";
-import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js";
+import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js"; import { withConfirmedCorridor } from "./helpers/confirmedCorridor.js";
 
 let server: http.Server;
 let base: string;
@@ -70,7 +70,7 @@ function stage(opts: { rentBuddyEnabled: boolean; blocks?: any[]; blocksFail?: b
     rent_buddy_availability: [],
     blocks: opts.blocks ?? [],
   };
-  const db = makeLayoverDb(tables, {
+  const db = makeLayoverDb(withConfirmedCorridor(tables, { userIds: [USER_ID], destination: "TW" }), {
     users: { [TOKEN]: USER_ID },
     failures: opts.blocksFail ? { "blocks:select": { message: "relation unavailable" } } : {},
   });

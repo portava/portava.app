@@ -1,0 +1,12 @@
+{
+  "contract": "portava.layover.live-feed.v1",
+  "airport": "SIN",
+  "authority": "licensed",
+  "generatedAt": "2030-06-14T20:58:00.000Z",
+  "readings": [
+    { "id": "sec-t1", "fact": "security_wait", "minutes": 20, "level": null, "checkpoint": "T1 departure security", "observedAt": "2030-06-14T20:57:00.000Z" },
+    { "id": "sec-t3", "fact": "security_wait", "minutes": 35, "level": null, "checkpoint": "T3 departure security", "observedAt": "2030-06-14T20:57:00.000Z" },
+    { "id": "imm-all", "fact": "immigration_wait", "minutes": 25, "level": null, "checkpoint": null, "observedAt": "2030-06-14T20:56:00.000Z" },
+    { "id": "dis-1", "fact": "disruption", "minutes": null, "level": 1, "checkpoint": null, "observedAt": "2030-06-14T20:50:00.000Z" }
+  ]
+}

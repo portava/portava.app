@@ -20,7 +20,7 @@ import { MapPin } from 'lucide-react-native';
 import type { DiscoveryPlace } from '../../services/discovery.ts';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 
-export interface DiscoveryMapViewProps {
+export interface DiscoveryMapViewProps { children?: React.ReactNode;
   places: DiscoveryPlace[];
   onSelectPlace: (place: DiscoveryPlace) => void;
 }

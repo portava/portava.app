@@ -39,7 +39,7 @@ let base: string;
 const TOKEN = "lane5-token";
 const USER_ID = "user-1";
 const PERSIST = "layover_decision_persistence_enabled";
-const STAMP = "layover_recommendation_snapshot_enabled";
+const STAMP = "layover_recommendation_snapshot_enabled"; const STATUS = "layover_recommendation_status_enabled";
 
 function req(method: string, path: string, body?: any): Promise<{ status: number; body: any }> {
   return new Promise((resolve, reject) => {
@@ -72,7 +72,7 @@ function stopRow(over: Record<string, any> = {}): Record<string, any> {
 }
 
 function recRow(id: string, snapshot_id: string | null, session_id = "session-1"): Record<string, any> {
-  return { id, session_id, rec_type: "food", title: id, status: "active", snapshot_id };
+  return { id, session_id, rec_type: "food", title: id, status: "active", snapshot_id, superseded_at: null };
 }
 
 function stage(
@@ -240,10 +240,10 @@ async function fittingStopMinutes(): Promise<number> {
 }
 
 describe("L44 — a replan invalidates stale and no-longer-feasible cards server-side (3623 + flags ON)", () => {
-  it("every card citing another snapshot, and the card behind a stop that no longer fits, loses its citation; the audit row says which", async () => {
+  it("every card citing another snapshot, and the card behind a stop that no longer fits, keeps its citation and is marked SUPERSEDED; the audit row says which", async () => {
     const duration = await fittingStopMinutes();
     const t = stage(
-      [{ flag: PERSIST, enabled: true }, { flag: STAMP, enabled: true }],
+      [{ flag: PERSIST, enabled: true }, { flag: STAMP, enabled: true }, { flag: STATUS, enabled: true }],
       {
         stops: [stopRow({ travel_min: 10, duration_min: duration, recommendation_id: "rec-planned" })],
         recs: [
@@ -260,8 +260,8 @@ describe("L44 — a replan invalidates stale and no-longer-feasible cards server
     assert.deepEqual(r.body.replan.invalidation.noLongerFeasible, ["stop-1"]);
 
     const byId = Object.fromEntries(t.layover_recommendations.map((x) => [x.id, x]));
-    assert.equal(byId["rec-planned"].snapshot_id, null, "the card behind the lost stop is invalidated");
-    assert.equal(byId["rec-other"].snapshot_id, null, "a card certified under the old snapshot is stale");
+    assert.equal(byId["rec-planned"].snapshot_id, "snap:old", "the old decision citation is retained"); assert.equal(byId["rec-planned"].recommendation_status, "SUPERSEDED");
+    assert.equal(byId["rec-other"].snapshot_id, "snap:old", "the old decision citation is retained"); assert.equal(byId["rec-other"].recommendation_status, "SUPERSEDED");
     assert.equal(byId["rec-uncited"].snapshot_id, null, "an uncited card stays uncited");
     assert.equal(byId["rec-elsewhere"].snapshot_id, "snap:old", "another session's card is untouched");
     assert.equal(t.layover_recommendations.length, 4, "invalidated, NOT deleted (L97)");
@@ -273,7 +273,7 @@ describe("L44 — a replan invalidates stale and no-longer-feasible cards server
     assert.deepEqual(decision.replan.invalidationApplied, applied, "the audit row records what was applied");
     assert.equal(applied.applied, true);
     assert.equal(applied.currentSnapshotId, decision.decision.snapshotId, "stale relative to the snapshot THIS replan stored");
-    const uncited = Object.fromEntries(applied.uncited.map((u: any) => [u.recommendationId, u]));
+    const uncited = Object.fromEntries(applied.superseded.map((u: any) => [u.recommendationId, u]));
     assert.deepEqual(Object.keys(uncited).sort(), ["rec-other", "rec-planned"]);
     assert.deepEqual(uncited["rec-planned"].why, ["stale_certification", "no_longer_feasible"]);
     assert.deepEqual(uncited["rec-other"].why, ["stale_certification"]);
@@ -284,20 +284,20 @@ describe("L44 — a replan invalidates stale and no-longer-feasible cards server
     const r = replanned();
     const current = snapshotIdFor("session-1", r.decision.inputHash);
     const t: Record<string, any[]> = {
-      feature_flags: [{ flag: STAMP, enabled: true }],
+      feature_flags: [{ flag: STAMP, enabled: true }, { flag: STATUS, enabled: true }, { flag: PERSIST, enabled: true }],
       layover_events: [],
       layover_plan_stops: [],
       layover_recommendations: [recRow("rec-current", current), recRow("rec-stale", "snap:old")],
     };
     await recordReplanDecision(makeLayoverDb(t) as any, USER_ID, r.publication, r.decision);
     assert.equal(t.layover_recommendations[0].snapshot_id, current);
-    assert.equal(t.layover_recommendations[1].snapshot_id, null);
+    assert.equal(t.layover_recommendations[1].snapshot_id, "snap:old"); assert.equal(t.layover_recommendations[1].recommendation_status, "SUPERSEDED");
   });
 
-  it("each clear is a compare-and-set: a card re-certified between the read and the write keeps its new citation", async () => {
+  it("each supersession mark is a compare-and-set: a card re-certified between the read and the write keeps its new citation", async () => {
     const r = replanned();
     const t: Record<string, any[]> = {
-      feature_flags: [{ flag: STAMP, enabled: true }],
+      feature_flags: [{ flag: STAMP, enabled: true }, { flag: STATUS, enabled: true }, { flag: PERSIST, enabled: true }],
       layover_events: [],
       layover_plan_stops: [],
       layover_recommendations: [recRow("rec-a", "snap:old"), recRow("rec-b", "snap:old")],
@@ -315,7 +315,7 @@ describe("L44 — a replan invalidates stale and no-longer-feasible cards server
       },
     };
     await recordReplanDecision(racing as any, USER_ID, r.publication, r.decision);
-    assert.equal(t.layover_recommendations[0].snapshot_id, null);
+    assert.equal(t.layover_recommendations[0].snapshot_id, "snap:old"); assert.equal(t.layover_recommendations[0].recommendation_status, "SUPERSEDED");
     assert.equal(t.layover_recommendations[1].snapshot_id, "snap:recertified");
   });
 });
@@ -345,7 +345,7 @@ describe("L44 — without the press nothing is invalidated, and every refusal is
 
   it("3623's column absent (flag seeded by hand without the migration): storage_unavailable, nothing written", async () => {
     const r = replanned();
-    const t: Record<string, any[]> = { feature_flags: [{ flag: STAMP, enabled: true }], layover_events: [], layover_recommendations: [recRow("rec-a", "snap:old")] };
+    const t: Record<string, any[]> = { feature_flags: [{ flag: STAMP, enabled: true }, { flag: STATUS, enabled: true }, { flag: PERSIST, enabled: true }], layover_events: [], layover_recommendations: [recRow("rec-a", "snap:old")] };
     await recordReplanDecision(
       makeLayoverDb(t, { failures: { "layover_recommendations:select": { code: "42703", message: "column layover_recommendations.snapshot_id does not exist" } } }) as any,
       USER_ID, r.publication, r.decision,
@@ -354,21 +354,21 @@ describe("L44 — without the press nothing is invalidated, and every refusal is
     assert.equal(t.layover_recommendations[0].snapshot_id, "snap:old");
   });
 
-  it("the clear is refused: write_failed, and what was cleared before the refusal is named, never hidden", async () => {
+  it("the mark is refused: write_failed names preserved history whose card remains unmarked", async () => {
     const r = replanned();
-    const t: Record<string, any[]> = { feature_flags: [{ flag: STAMP, enabled: true }], layover_events: [], layover_recommendations: [recRow("rec-a", "snap:old")] };
+    const t: Record<string, any[]> = { feature_flags: [{ flag: STAMP, enabled: true }, { flag: STATUS, enabled: true }, { flag: PERSIST, enabled: true }], layover_events: [], layover_recommendations: [recRow("rec-a", "snap:old")] };
     await recordReplanDecision(
       makeLayoverDb(t, { failures: { "layover_recommendations:update": { message: "permission denied" } } }) as any,
       USER_ID, r.publication, r.decision,
     );
-    assert.deepEqual(t.layover_events[0].metadata.replan.invalidationApplied, { applied: false, reason: "write_failed", uncitedBeforeFailure: [] });
+    assert.deepEqual(t.layover_events[0].metadata.replan.invalidationApplied, { applied: false, reason: "write_failed", historyRecordedButUnmarked: ["rec-a"] });
     assert.equal(t.layover_recommendations[0].snapshot_id, "snap:old");
   });
 
   it("the plan stops cannot be read: read_failed, nothing written", async () => {
     const r = replanned();
     r.publication.invalidation.noLongerFeasible = ["stop-1"];
-    const t: Record<string, any[]> = { feature_flags: [{ flag: STAMP, enabled: true }], layover_events: [], layover_recommendations: [recRow("rec-a", "snap:old")] };
+    const t: Record<string, any[]> = { feature_flags: [{ flag: STAMP, enabled: true }, { flag: STATUS, enabled: true }, { flag: PERSIST, enabled: true }], layover_events: [], layover_recommendations: [recRow("rec-a", "snap:old")] };
     await recordReplanDecision(
       makeLayoverDb(t, { failures: { "layover_plan_stops:select": { message: "down" } } }) as any,
       USER_ID, r.publication, r.decision,

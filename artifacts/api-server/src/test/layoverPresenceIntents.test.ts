@@ -817,7 +817,7 @@ describe("D-PRESENCE-K-4 — every presence COUNT door obeys K-3 (V-R5 F2)", () 
     }
   });
 
-  it("ladder OFF: the L2 roster is served as before, and NO count beside it on either door; the population is never read", async () => {
+  it("ladder OFF: the L2 roster names ONLY mutually-consented travellers (census L130 — none here), and NO count beside it on either door; the population is never read", async () => {
     const t = stage({ ladder: false });
     t.profiles = [{ id: A, handle: "a", name: "A", avatar_url: null }, { id: B, handle: "b", name: "B", avatar_url: null }];
     const db = makeLayoverDb(t, { users: { [TOKEN]: VIEWER } });
@@ -832,7 +832,7 @@ describe("D-PRESENCE-K-4 — every presence COUNT door obeys K-3 (V-R5 F2)", () 
     const r = await req("GET", PRESENCE);
     assert.equal(r.status, 200, r.raw);
     assert.equal(r.body.level, "L2_DISCOVERY");
-    assert.deepEqual(r.body.travelers.map((x: any) => x.id).sort(), [A, B], "the shipped L2 roster is unchanged");
+    assert.deepEqual(r.body.travelers, [], "census L130 (LAYOVER 165 B2-CREW): the global-toggle roster is gone — without a mutual per-pair consent (3875; its flag is off here) nobody is named, though A and B share the city");
     assert.strictEqual(r.body.count, null);
     assert.equal(r.body.countWithheld, "roster_visible");
     const o = await req("GET", OVERVIEW);
@@ -870,12 +870,12 @@ describe("D-PRESENCE-K-4 — every presence COUNT door obeys K-3 (V-R5 F2)", () 
     assert.ok(p2.body.degradedReasons.includes("sharing_preferences_unreadable"), p2.raw);
   });
 
-  it("INVENTORY: every presence count door in routes/airport.ts goes through the K-3 doors; `cityPresence` feeds only the L2 roster", () => {
+  it("INVENTORY: every presence count door in routes/airport.ts goes through the K-3 doors; `cityPresence` feeds no door any more (census L130: the L2 roster is the per-pair consent roster)", () => {
     const src = readFileSync(new URL("../routes/airport.ts", import.meta.url), "utf8");
     const calls = (name: string) => src.split("\n").filter((l) => l.includes(`${name}(`) && !l.includes(`function ${name}(`));
     const cp = calls("cityPresence").filter((l) => !/^\s*(\/\/|\*)/.test(l));
-    assert.equal(cp.length, 1, `cityPresence is called from: ${cp.join(" | ")}`);
-    assert.match(cp[0]!, /ladderEnabled \? null : await cityPresence\(/, "its one call is the L2 roster, read only with the ladder off");
+    assert.equal(cp.length, 0, `cityPresence is called from: ${cp.join(" | ")}`);
+    assert.match(src, /const roster = await mutualPresenceRoster\(sc, user\.id, session, ladderEnabled\);/, "census L130 (LAYOVER 165 B2-CREW): the L2 roster is the per-pair consent roster (mutualPresenceRoster), never the global-toggle city list");
     const pc = calls("presenceCountForViewer").filter((l) => !/^\s*(\/\/|\*)/.test(l));
     assert.equal(pc.length, 2, "GET /:id/presence and the overview");
     assert.equal((src.match(/othersInCity:/g) ?? []).length, 1);

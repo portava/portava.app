@@ -34,7 +34,7 @@ import http from "node:http";
 import express from "express";
 import { _setTestClient } from "../../../lib/http.js";
 import airportRouter from "../../../routes/airport.js";
-import { makeLayoverDb, airportRow, sessionRow } from "../../../test/helpers/fakeLayoverDb.js";
+import { makeLayoverDb, airportRow, sessionRow } from "../../../test/helpers/fakeLayoverDb.js"; import { withConfirmedCorridor } from "../../../test/helpers/confirmedCorridor.js";
 import { LAYOVER_COMPATIBLE_BUDDY_CATEGORIES, landsideWindowTouchesNight } from "../LayoverBuddyGate.js";
 
 let server: http.Server;
@@ -66,7 +66,7 @@ const buddy = (over: Record<string, any> = {}) => ({
   tagline: null,
   city: "Taoyuan",
   country: "Taiwan",
-  categories: ["city"],
+  categories: ["layover"],
   hourly_rate_usd: 30,
   average_rating: 4.8,
   review_count: 40,
@@ -107,7 +107,7 @@ function stage(opts: { hoursToDeparture: number; buddies: any[]; sessionOver?: R
     rent_buddy_availability: [],
     blocks: [],
   };
-  _setTestClient(makeLayoverDb(tables, { users: { [TOKEN]: USER_ID } }), true);
+  _setTestClient(makeLayoverDb(withConfirmedSpecialists(tables, { userIds: [USER_ID], destination: "TW" }), { users: { [TOKEN]: USER_ID } }), true);
   return tables;
 }
 
@@ -177,7 +177,7 @@ describe("L273 — layover buddies are offered only AFTER the safety/time gate",
 describe("L273 — strict boundaries over the category vocabulary that actually exists", () => {
   it("a profile that positively declares an unrelated service is excluded", async () => {
     stage({ hoursToDeparture: 12, buddies: [
-      buddy({ id: "b-city", user_id: "u-city", categories: ["city"] }),
+      buddy({ id: "b-city", user_id: "u-city", categories: ["layover"] }),
       buddy({ id: "b-night", user_id: "u-night", categories: ["nightlife", "packages"] }),
     ] });
     const r = await req(URL_);
@@ -186,17 +186,17 @@ describe("L273 — strict boundaries over the category vocabulary that actually 
     assert.ok(!ids.includes("b-night"), "a nightlife/packages-only profile is not a layover service");
   });
 
-  it("a profile that declares NO categories is kept, and honestly marked not-a-specialist", async () => {
+  it("a profile that declares NO categories is excluded from specialist offers", async () => {
     stage({ hoursToDeparture: 12, buddies: [buddy({ id: "b-blank", user_id: "u-blank", categories: [] })] });
     const r = await req(URL_);
-    assert.equal(r.body.buddies.length, 1, "an absent declaration is an unknown, not a disqualification");
-    assert.equal(r.body.buddies[0].layoverCompatible, false);
+    assert.equal(r.body.buddies.length, 0, "an absent declaration cannot certify a specialist");
+    assert.deepEqual(r.body.buddies, []);
   });
 
   it("the compatible set is declared, non-empty, and drawn from the real vocabulary", () => {
     assert.ok(LAYOVER_COMPATIBLE_BUDDY_CATEGORIES.length > 0);
     for (const c of LAYOVER_COMPATIBLE_BUDDY_CATEGORIES) {
-      assert.ok(["city", "language", "arrival", "shopping", "content"].includes(c),
+      assert.ok(["layover"].includes(c),
         `${c} is not a category rent_buddy_profiles actually carries`);
     }
   });
@@ -238,7 +238,7 @@ describe("L254 — a high-risk layover requires a verified, non-new buddy", () =
       rent_buddy_availability: [],
       blocks: [],
     };
-    _setTestClient(makeLayoverDb(tables, { users: { [TOKEN]: USER_ID } }), true);
+    _setTestClient(makeLayoverDb(withConfirmedSpecialists(tables, { userIds: [USER_ID], destination: "TW" }), { users: { [TOKEN]: USER_ID } }), true);
   }
 
   it("an unverified buddy is withheld on a tight window, and the requirement is named", async () => {
@@ -401,7 +401,7 @@ describe("L254 night arm — through the route, on a pinned clock", () => {
 describe("L294 — an unreadable rent_buddy_profiles is not 'nobody is here'", () => {
   it("a failed read refuses instead of serving an empty, ok:true list", async () => {
     const now = Date.now();
-    _setTestClient(makeLayoverDb({
+    _setTestClient(makeLayoverDb(withConfirmedSpecialists({
       feature_flags: [
         { flag: "airport_mode_enabled", enabled: true },
         { flag: "rent_buddy_enabled", enabled: true },
@@ -414,7 +414,7 @@ describe("L294 — an unreadable rent_buddy_profiles is not 'nobody is here'", (
         flight_type: "international", immigration_required: true, wants_to_leave: true,
       })],
       layover_events: [], rent_buddy_profiles: [], rent_buddy_availability: [], blocks: [],
-    }, {
+    }, { userIds: [USER_ID], destination: "TW" }), {
       users: { [TOKEN]: USER_ID },
       failures: { "rent_buddy_profiles:select": { message: "relation unavailable" } },
     }), true);
@@ -452,7 +452,7 @@ describe("L294 — an unreadable rent_buddy_profiles is not 'nobody is here'", (
 describe("L294 — the /buddies reads that answer anyway say that they are degraded", () => {
   function stageWithFailures(buddies: any[], failures: Record<string, { message: string }>) {
     const now = Date.now();
-    _setTestClient(makeLayoverDb({
+    _setTestClient(makeLayoverDb(withConfirmedSpecialists({
       feature_flags: [
         { flag: "airport_mode_enabled", enabled: true },
         { flag: "rent_buddy_enabled", enabled: true },
@@ -471,7 +471,7 @@ describe("L294 — the /buddies reads that answer anyway say that they are degra
       rent_buddy_profiles: buddies,
       rent_buddy_availability: [],
       blocks: [],
-    }, { users: { [TOKEN]: USER_ID }, failures }), true);
+    }, { userIds: [USER_ID], destination: "TW" }), { users: { [TOKEN]: USER_ID }, failures }), true);
   }
 
   it("an unreadable block list is NOT the same answer as a city with nobody in it", async () => {
@@ -531,3 +531,13 @@ describe("L294 — the /buddies reads that answer anyway say that they are degra
       "the control that stops `null` from becoming the answer for everyone");
   });
 });
+
+/** Explicit current identity and payout fixtures; the legacy verified boolean still independently tests the extra high-risk rule. */
+function withConfirmedSpecialists(tables:Record<string,any[]>,options:Parameters<typeof withConfirmedCorridor>[1]) {
+ const enriched=withConfirmedCorridor(tables,options);enriched.feature_flags.push({flag:'layover_buddy_specialist_enabled',enabled:true});
+ const buddies=tables.rent_buddy_profiles??[];
+ enriched.profiles=[...(enriched.profiles??[]),...buddies.map(b=>({id:b.user_id,verification_level:'id_verified'}))];
+ enriched.identity_verifications=buddies.map(b=>({id:`id-${b.user_id}`,user_id:b.user_id,provider:'stripe',provider_mode:'live',status:'verified',is_over_18:true,verified_at:new Date().toISOString(),created_at:new Date().toISOString()}));
+ enriched.payment_parties=buddies.map(b=>({id:`party-${b.user_id}`,profile_id:b.user_id,kind:'user'}));
+ enriched.rent_buddy_payment_recipients=buddies.map(b=>({party_id:`party-${b.user_id}`,provider:'stripe',recipient_ref:'fixture',country:'TW',settlement_currency:'TWD',onboarding:'verified',charges_enabled:true,payouts_enabled:true,livemode:false}));return enriched;
+}

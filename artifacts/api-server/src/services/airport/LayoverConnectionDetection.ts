@@ -53,7 +53,7 @@ import { lookupByIata, upsertAirportProfile, type AirportProfile } from "./Airpo
 import { computeReturnDeadline, type EngineAirport, type LiveConditions } from "./LayoverSafetyEngine.js";
 import { baggageChargesBags } from "./LayoverConstraints.js";
 import {
-  createSessionWrite, readLiveConnectionSessions, readLiveSessionForConnection,
+  createSessionWrite, readLiveConnectionSessions, readLiveSessionForConnection, normalizeFlightTerminalId,
   type LayoverConnectionType, type LayoverSession, type SessionConnection,
 } from "./LayoverSessionService.js";
 
@@ -96,8 +96,8 @@ export function connectionTypeOf(a: Pick<FlightSegment, "bookingRef">, d: Pick<F
 }
 
 function terminalChangeOf(a: FlightSegment, d: FlightSegment): boolean | null {
-  const x = a.arrivalTerminal?.trim().toUpperCase() ?? "";
-  const y = d.departureTerminal?.trim().toUpperCase() ?? "";
+  const x = normalizeFlightTerminalId(a.arrivalTerminal);
+  const y = normalizeFlightTerminalId(d.departureTerminal);
   if (!x || !y) return null;
   return x !== y;
 }

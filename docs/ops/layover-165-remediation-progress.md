@@ -22,52 +22,49 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 | Batch | Rows | OPEN | IN PROGRESS | BUILT | VERIFIED | VERIFIED PASS | BLOCKED-EXTERNAL |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | B1-C assistant | 14 | 0 | 0 | 14 | 0 | 0 | 0 |
-| B1-F flight data | 6 | 0 | 1 | 5 | 0 | 0 | 0 |
-| B1-P pressed-state verification | 58 | 2 | 0 | 54 | 0 | 0 | 2 |
-| B1-R1 routing (server) | 12 | 0 | 3 | 9 | 0 | 0 | 0 |
-| B2-BUDDY Rent-a-Buddy specialist/Safe Return | 2 | 2 | 0 | 0 | 0 | 0 | 0 |
-| B2-CREW crew/consent/sensing/rides | 8 | 0 | 8 | 0 | 0 | 0 | 0 |
-| B2-CURATE curation/maturity/entry | 15 | 0 | 15 | 0 | 0 | 0 | 0 |
-| B2-LIVE live intelligence | 10 | 0 | 10 | 0 | 0 | 0 | 0 |
-| B2-MAP map and client | 9 | 9 | 0 | 0 | 0 | 0 | 0 |
-| B2-PLATFORM metrics/audit/real-schema/typed reads | 9 | 9 | 0 | 0 | 0 | 0 | 0 |
-| B2-RECS recommendations/snapshots/contracts | 14 | 14 | 0 | 0 | 0 | 0 | 0 |
-| B3-ENGINE lifecycle/timing/engine refactor/phrases | 8 | 8 | 0 | 0 | 0 | 0 | 0 |
-| **Total** | **165** | **44** | **37** | **82** | **0** | **0** | **2** |
+| B1-F flight data | 6 | 0 | 0 | 6 | 0 | 0 | 0 |
+| B1-P pressed-state verification | 58 | 0 | 0 | 56 | 0 | 0 | 2 |
+| B1-R1 routing (server) | 12 | 0 | 1 | 10 | 0 | 0 | 1 |
+| B2-BUDDY Rent-a-Buddy specialist/Safe Return | 2 | 0 | 0 | 2 | 0 | 0 | 0 |
+| B2-CREW crew/consent/sensing/rides | 8 | 0 | 0 | 7 | 0 | 0 | 1 |
+| B2-CURATE curation/maturity/entry | 15 | 0 | 0 | 9 | 0 | 0 | 6 |
+| B2-LIVE live intelligence | 10 | 0 | 0 | 9 | 0 | 0 | 1 |
+| B2-MAP map and client | 9 | 0 | 1 | 2 | 0 | 0 | 6 |
+| B2-PLATFORM metrics/audit/real-schema/typed reads | 9 | 0 | 2 | 7 | 0 | 0 | 0 |
+| B2-RECS recommendations/snapshots/contracts | 14 | 0 | 0 | 14 | 0 | 0 | 0 |
+| B3-ENGINE lifecycle/timing/engine refactor/phrases | 8 | 0 | 1 | 6 | 0 | 0 | 1 |
+| **Total** | **165** | **0** | **5** | **142** | **0** | **0** | **18** |
 
 ## Checkpoint (resumable; updated after every batch)
 
-*Last updated 2026-10-18, after lane B1-C was integrated.*
+**Resumed October 20 (Claude):** current-position typing and client test, plan-bound between-stop geometry, registered 3895/3908 rollbacks and the client `check:all` failures are repaired; L56 and L259 moved to BUILT. Evidence and two owner decisions (Routes reserve for previews, map for executing plans) are in [the ledger](layover-165-final-verification.md).
 
-**Branch** `claude/wave4-build-20261017` (worktree `/Users/areyouok/portava-sandbox/wt-claude-wave4-20261017`, PR #764,
-stacked on #763 and #762; nothing merged or deployed).
+**Handoff requested October20:** implementation stopped at the owner's request. Read [the Claude handoff](layover-165-claude-handoff-20261020.md) first for the latest failures, uncommitted state and resume order; the earlier checkpoint below is historical.
 
-**Lanes** (builders on Opus, independent verification on Fable; at most four builders and one verifier at a time):
+Last updated 2026-10-19 during the Codex continuation of Claude's usage-limited session. The owner reattached the full directive and explicitly requested parallel agents. The baseline and tracker each contain exactly 165 unique row sections; no acceptance criterion has been reduced.
 
-| lane | rows | state |
+**Branch:** `claude/wave4-build-20261017`, worktree `/Users/areyouok/portava-sandbox/wt-claude-wave4-20261017`, [PR #764](https://github.com/portava/portava.app/pull/764), stacked on #763 and #762. No merge, deployment, production migration or production flag change has been performed in this continuation.
+
+**Committed:** assistant `f87a92e3f`; routing and pressed-state harness `2a59ad5f7`; flight and validation repairs `2a99ebc365ba8445c3b929380e021afde6a3ac53` (39 files, pushed to the existing PR branch). The isolated flight tree remains `/Users/areyouok/portava-sandbox/lead-clean-suite`; ongoing batches are unstaged in the shared worktree.
+
+**Active work:**
+
+| Owner | Batch | Current work |
 | --- | --- | --- |
-| B1-C assistant | L100, L102–L113, L268 | BUILT; committed with this update; independent verification next |
-| B1-R1 routing (server) | L60, L61, L63, L65, L66, L68–L71, L221, L260, L282 | building (migration range 3856–3865) |
-| B1-F flight data | L11, L21, L33, L239, L259, L267 | building (3826–3835) |
-| B1-P pressed-state verification | the 58 press rows | building: real-schema harness (full chain on PGlite, real supabase-js through a PostgREST bridge); 3513 family 15/15 pressed |
-| B2-LIVE live intelligence | L54, L55, L81, L180, L227, L228, L281, L285–L287 | building (3885–3889) |
-| B2-CURATE curation, maturity, entry | L14, L48, L77, L79, L80, L83, L120, L143, L204, L220, L223, L243, L246, L247, L249 | brief written; next free slot (3874, 3880–3884) |
-| B2-CREW crew, consent, sensing, shared rides | L130, L134, L135, L139, L144, L154, L157, L202 | brief written (3872, 3875–3879) |
-| B2-PLATFORM metrics, service-role audit, real-schema tests, typed reads | L205, L208, L212, L214–L216, L236, L294, L295 | brief written (3890–3892) |
-| B2-BUDDY Rent-a-Buddy specialist, Safe Return | L272, L273 | brief written (3893–3895) |
-| B2-RECS recommendations, snapshots, contracts | L26, L38, L50, L74, L76, L78, L97, L175, L176, L178, L182, L183, L192, L264 | after B1-R1 and B1-F land (3871, 3873, 3896–3899) |
-| B2-MAP map and client | L17, L67, L115, L116, L118, L119, L121, L151, L270 | after B1-R1 lands |
-| B3-ENGINE lifecycle, timing, engine refactor, phrases | L15, L39, L46, L56, L58, L73, L94, L155 | last: it refactors the safety derivation others read |
+| Lead | Integration and verification | Update evidence, register schema protections, regenerate inventories, repair guard failures and run combined checks. |
+| Curation agent | MAP, then ENGINE follow-on | Continuous WALK isochrones, permitted map geometry and validated airport layout; then per-stage timing, traveller origin and activity interruptibility. |
+| Snapshot agent | Independent verification | Canonical/RLS and service-audit review delivered; repairing and proving PostgreSQL/PGlite isolation, transactions and absent-migration replay. |
+| Crew agent | L259 durable route events | L273, L144 and atomic3895 route watches delivered. Building bounded leased fanout with atomic publication and recovery in3908. |
 
-**Commits for this program so far:** `55fc99e9f` (3996's rollback replaced; this tracker), `a882730cc` (that rollback
-keeps every later vocabulary value), then lane B1-C.
+**Evidence from this continuation:** flight passed all 33 repository gates after fixes; focused flight/rollout 37/37 and beta scripts 379/379. The fresh broad isolated API run recorded pretest 2763 passed/2 expected skips and main 41079 passed/2 failed; both failures were static schema blind-spot checks subsequently fixed and rerun green (37/37). This is NOT recorded as an all-green final full suite. The final aggregate suite remains required. All logs are under `/private/tmp/codex-layover-resume-20261019/`.
 
-**Open owner questions raised by lanes:** Q1 (Compass `replan` previews only; applying it needs a ruling); Q2
-(/compass/ask stays certified-only on a live layover).
+**Integrated repairs awaiting commit:** assistant safety holes and six regression mutants; shared live Compass certification (red 40-minute deadline difference, then 10/10 migrated tests); all four remaining typed-reader conversions; curation schema readiness (missing-table W15 refuses, restores and recovers, 17/17 migrated workflow tests). Curation, crew and canonical snapshot handbacks include rollback and targeted evidence; their independent acceptance review is still pending.
 
-**Next steps, exactly:** integrate each lane's handback as it lands (register tests, census section + acknowledgements,
-clean-checkout gate + full suite, commit, Fable verification, update this file); start the next lane from the table
-above in every freed builder slot.
+**Next batches:** objective producers, continuous WALK coverage and airport-layout pipeline are delivered with named external/geometry gaps. Continue sourced timing (3881), activity commitments (3907), traveller origin, Buddy abort authorization and durable route fanout. Independent review found and fixed audit retention backlog reporting and rollback permission drift. Route review exposed partial publication and lost watches after snapshot changes; these are being corrected, not marked complete. Regenerate inventories, finish census evidence, run all gates and final full suite/CI without raising guard ceilings.
+
+**External boundaries:** production remains the owner's press. Licensed live-flight/airport feeds, Google Routes deployment credentials, Apple Time Sensitive entitlement/device evidence, and native-speaker validation must be evidenced before affected rows are VERIFIED PASS. Do not turn on flags to manufacture completion. Explicit Compass recheck now executes through a version-bound server action; migration 3897 and client/database/rollback evidence are delivered. General model-authored schedule editing is not claimed.
+
+**Recovery:** original lane briefs, progress, handbacks and proofs are under `/private/tmp/claude-501/-Users-areyouok/e549004b-da6f-4ba8-b5b4-1f48a2f1f7e9/scratchpad/`. Initial staged and unstaged changes were backed up in the continuation evidence directory. Do not reset the shared worktree or stage other lanes wholesale.
 
 ## Rows
 
@@ -118,10 +115,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** 2700,2992,3623,3792 + layover_decision_persistence_enabled
 - **Census lines read:** 3916, 1361
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
-- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) — · **Production dependency:** owner press: —
-- **Evidence:** lane B1-P handback §2: NOT MET pressed: each surface still certifies its own instant; no surface consumes a shared stored snapshot (see §5)
-- **Status:** OPEN (not met pressed; queued to lane B2-RECS: one canonical stored snapshot every surface reads)
+- **Required correction:** All public Layover surfaces use the stored canonical snapshot; production Discovery/Gems admission helpers preserve the same safety boundary.
+- **Migration:** existing canonical chain; no new migration for this proof · **Tests:** layoverSurfaceConsistency.db.test.ts: 6/6 migrated HTTP/helper cases; curation and matrix neighbors 15/15; old blocked-card filter mutant killed · **Production dependency:** owner migration/flag press; final aggregate and independent acceptance pending
+- **Evidence:** Continuation logs surface-consistency-expanded.log, surface-consistency-final.log and surface-mutant.log. Overview/safety/map/Compass/recommendations/experiences share the stored identity across later requests; changed departure creates a new identity and stale calls refuse. Foreign session calls refuse. Mutant killed with shared source hashes unchanged.
+- **Status:** BUILT (cross-surface migrated evidence delivered; independent verification and production activation pending)
 
 ### L11 — Trips owns flight segments / itinerary relationships / trip context; must not own layover safety calculations
 - **Original requirement:** Trips owns flight segments / itinerary relationships / trip context; must not own layover safety calculations (the census body row quotes the spec; the full wording is at the row's census line).
@@ -133,8 +130,8 @@ above in every freed builder slot.
 - **Batch:** B1-F flight data
 - **Required correction:** Trips owns flight segments (3826 + kernel ADD/RECORD_FLIGHT_STATUS); traveller entry in local time; approved-feed port (none bound); updates recalc sessions + replan
 - **Migration:** 3826, 3827, 3828 (+ rollbacks; 21/21 proofs; order-independent, 0/24,989 keys differ) · **Tests:** layoverFlightConnections (unit 25), layoverFlightConnectionsRoutes (4), db/layoverFlightConnections.db.test.ts (17, full chain), client 12; 31 mutants killed · **Production dependency:** press 3826 then 3827; 3828 after 2700/2992/3623; trip_flight_segments_enabled + layover_flight_connections_enabled ON
-- **Evidence:** lane B1-F handback §1; census-layover section 'lane B1-F'
-- **Status:** BUILT (lane B1-F; independent verification pending; W until the press). Automatic updates need a licensed per-flight status feed (BLOCKED-EXTERNAL half); terminal change not yet an engine term
+- **Evidence:** Original B1-F proof plus scratchpad/l165-flight-terminal-handback.txt: real owned linked flight terminals now enter every session loader and canonical hash. Initial/idempotent creation, foreign ownership, ignored forged fields, unreadable/null observations, FALSE/absent zero source reads and terminal-only recertification pass PGlite2/2 and PostgreSQL17 terminal+harness5/5. Scoped timing closes after a mismatch; prior immutable decision remains.
+- **Status:** BUILT (owned Trips flight/terminal context and canonical invalidation tested; licensed automatic feed, final verification and owner press pending)
 
 ### L12 — Layover Session owns lifecycle, constraints, snapshots and state; must not own a generic city content catalog
 - **Original requirement:** Layover Session owns lifecycle, constraints, snapshots and state; must not own a generic city content catalog (the census body row quotes the spec; the full wording is at the row's census line).
@@ -157,10 +154,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** new 3874 (airport_profiles source/observed_at/expires_at), routes/airport.ts admin profile writer, AirportProfileService.ts
 - **Census lines read:** 412
 - **Batch:** B2-CURATE curation/maturity/entry
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B2-CURATE)
+- **Required correction:** Validated provenance, expiry and conflict-aware curation; confirmed entry facts; live evidence and time-band calibration feed actual maturity admission. Missing schema explicitly refuses feature queries.
+- **Migration:** 3874 + 3880 and existing prerequisite chain · **Tests:** curation agent handback; 74 focused and 15 migrated workflow/rollback tests; root readiness boundary 5 unit tests and workflow W15 (16/16 total) · **Production dependency:** owner press, validated airport facts and existing live-provider dependencies
+- **Evidence:** scratchpad/l165-b2-curate-handback.txt; curation readiness logs in /private/tmp/codex-layover-resume-20261019/; three isolated curation mutants killed. Real route reaches L4 only with qualifying official, crowd and calibrated evidence.
+- **Status:** BUILT (curation implementation and migrated tests; independent acceptance verification and production press pending)
 
 ### L15 — Experience Compiler owns executable plans from feasible actions; must not own visa/entry legal truth
 - **Original requirement:** Experience Compiler owns executable plans from feasible actions; must not own visa/entry legal truth (the census body row quotes the spec; the full wording is at the row's census line).
@@ -170,10 +167,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** census re-derivation (lead), test/layoverEntryGate.test.ts or test/layoverPlanFitUnknownLegs.test.ts (add a boundary case)
 - **Census lines read:** 413
 - **Batch:** B3-ENGINE lifecycle/timing/engine refactor/phrases
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Required correction:** Experience Compiler owns selected/executing/refused immutable versions, locks the owned session and current snapshot/revision/stops, and starts only the exact reviewed executable contract after local cache readback.
+- **Migration:** 3898 layover_experience_plan_versions; FALSE layover_experience_execution_enabled and existing canonical/lifecycle prerequisites · **Tests:** 38 API and migrated lifecycle tests,14 outdoor cases,8 client transport/storage cases; strengthened3898/3899 both-order whole-catalog/all-row rollback proofs16/16 · **Production dependency:** owner migration/flag press; final aggregate and independent verification
+- **Evidence:** scratchpad/l165-l15-handback.txt and l165-l78-handback.txt. No fabricated AIRPORT_EXITED checkpoint; changed ownership/revision/snapshot, failed storage and stale plans refuse. Post-start cache failure reports the completed server transition and retry honestly. Offline-bypass mutant killed. Empty ACL and full function-attribute drift now refuse rollback; exact repeat/reapply restored the catalog and all public/auth non-ledger rows.
+- **Status:** BUILT (executable lifecycle, client path and hardened rollback tests delivered; final aggregate and production press pending)
 
 ### L17 — Map visualises the certified envelope / recommendations / routes; must not own independent feasibility logic
 - **Original requirement:** Map visualises the certified envelope / recommendations / routes; must not own independent feasibility logic (the census body row quotes the spec; the full wording is at the row's census line).
@@ -184,9 +181,9 @@ above in every freed builder slot.
 - **Census lines read:** 415
 - **Batch:** B2-MAP map and client
 - **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Migration:** Existing 3971/3856/2745 routing + applicable 3785/3633/canonical chain · **Tests:** actual adapter fixtures and mounted components, no paid provider calls · **Production dependency:** GOOGLE_MAPS_API_KEY, Routes API enablement, bounded route settings/flags and signed-device verification
+- **Evidence:** scratchpad/l165-b2-map-handback.txt: 79 API tests plus 3 real Google adapter fixture tests, 107 client tests, 130 dashboard tests and focused cache/refresh/native tests. Eleven client and four API mutants killed; redundant/masked survivors disclosed. The finite sampled polygon is not a certified continuous interior (L61 remains open).
+- **Status:** BLOCKED-EXTERNAL (implemented and locally tested; exact Google Routes deployment/credentials, migration and flag press plus applicable native-device evidence pending)
 
 ### L20 — Normalised operational tables + immutable/versioned snapshots; no single JSON blob as source of truth; JSON only for provenance/reason detail
 - **Original requirement:** Normalised operational tables + immutable/versioned snapshots; no single JSON blob as source of truth; JSON only for provenance/reason detail (the census body row quotes the spec; the full wording is at the row's census line).
@@ -196,10 +193,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** 2700,2992,3623,3792 + persistence flag
 - **Census lines read:** 423
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
-- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) snap:67, :105, :123, :163 · **Production dependency:** owner press: P1 + the new trigger
-- **Evidence:** lane B1-P handback §2: normalised typed tables; the CHILD snapshot rows refuse UPDATE (2992 triggers), clients cannot write; versioned (3623). NOT MET: the PARENT computation (2700's row, the decision itself) has no UPDATE trigger — a service-role UPDATE succeeds (snap:163 does it) and only replay notices. By 2992's own h
-- **Status:** OPEN (not met pressed; queued to lane B2-RECS: BEFORE UPDATE refusal trigger on layover_certified_computations)
+- **Required correction:** Canonical persisted snapshot selection, guarded compare-and-swap publication, immutable decision history and recommendation supersession are connected; failed history refuses regeneration and stale candidates cannot overwrite a newer version.
+- **Migration:** 3871 + 3873 + 3896 and existing 2700/2992/3623/3828 dependencies · **Tests:** 196 targeted tests; 8 canonical migrated tests; rollback catalog/row round trips, repeat/reapply and refusal cases; pressed-final 17/17 · **Production dependency:** owner migration/flag press
+- **Evidence:** scratchpad/l165-b2-recsa-handback.txt. PGlite interleaving proved; real two-connection PostgreSQL contention branch awaits CI evidence. Full surface identifier matrix and independent mutants remain open.
+- **Status:** BUILT (canonical snapshot and history batch; independent verification and production press pending)
 
 ### L21 — layover_sessions (id, user_id, trip_id, airport_place_id, arrival/departure_segment_id, state, connection_type, detected_source, started_at, expires_at, active_snapshot_id, confidence_band)
 - **Original requirement:** layover_sessions (id, user_id, trip_id, airport_place_id, arrival/departure_segment_id, state, connection_type, detected_source, started_at, expires_at, active_snapshot_id, confidence_band) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -222,10 +219,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** new 3871, LayoverRecommendationService.ts
 - **Census lines read:** 429, 9328
 - **Batch:** B2-RECS recommendations/snapshots/contracts
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Required correction:** Canonical persisted snapshot selection, guarded compare-and-swap publication, immutable decision history and recommendation supersession are connected; failed history refuses regeneration and stale candidates cannot overwrite a newer version.
+- **Migration:** 3871 + 3873 + 3896 and existing 2700/2992/3623/3828 dependencies · **Tests:** 196 targeted tests; 8 canonical migrated tests; rollback catalog/row round trips, repeat/reapply and refusal cases; pressed-final 17/17 · **Production dependency:** owner migration/flag press
+- **Evidence:** scratchpad/l165-b2-recsa-handback.txt. PGlite interleaving proved; real two-connection PostgreSQL contention branch awaits CI evidence. Full surface identifier matrix and independent mutants remain open.
+- **Status:** BUILT (canonical snapshot and history batch; independent verification and production press pending)
 
 ### L31 — layover_events (occurred_at, source, source_event_id, payload_json, dedup_key, processed_at)
 - **Original requirement:** layover_events (occurred_at, source, source_event_id, payload_json, dedup_key, processed_at) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -253,8 +250,8 @@ above in every freed builder slot.
 - **Evidence:** lane B1-F handback §1; census-layover section 'lane B1-F'
 - **Status:** BUILT (lane B1-F; independent verification pending; W until the press). ABANDONED has no writer (no §5 edge)
 
-### L35 — BaggageMode = CHECKED_THROUGH \
-- **Original requirement:** BaggageMode = CHECKED_THROUGH \ (the census body row quotes the spec; the full wording is at the row's census line).
+### L35 — BaggageMode = CHECKED_THROUGH | COLLECT_RECHECK | CARRY_ON_ONLY | UNKNOWN
+- **Original requirement:** BaggageMode = CHECKED_THROUGH | COLLECT_RECHECK | CARRY_ON_ONLY | UNKNOWN (verbatim from the original specification).
 - **Acceptance criteria:** the requirement's spec words, met on a production-reachable path, with a falsifying test (the rule above).
 - **Why it fails today:** BaggageMode with UNKNOWN is layover_constraints.baggage_mode (2992), behind 3640's gate.
 - **Root cause / class:** Code is ready; it waits on your production press (migrations and flags) (triage class NEEDS-PRESS)
@@ -266,8 +263,8 @@ above in every freed builder slot.
 - **Evidence:** lane B1-P handback §2: BaggageMode incl. UNKNOWN is a stored, versioned member; the CHECK refuses others
 - **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
-### L36 — RiskBand = LOW \
-- **Original requirement:** RiskBand = LOW \ (the census body row quotes the spec; the full wording is at the row's census line).
+### L36 — RiskBand = LOW | MODERATE | HIGH | UNSAFE
+- **Original requirement:** RiskBand = LOW | MODERATE | HIGH | UNSAFE (verbatim from the original specification).
 - **Acceptance criteria:** the requirement's spec words, met on a production-reachable path, with a falsifying test (the rule above).
 - **Why it fails today:** Census reason stale: RISK_BANDS/riskBandFor exist (services/layover/LayoverDecisionStore.ts:155,198) and persist to layover_return_plans.risk_band (2992); unapplied, persistence flag absent.
 - **Root cause / class:** Code is ready; it waits on your production press (migrations and flags) (triage class NEEDS-PRESS)
@@ -279,8 +276,8 @@ above in every freed builder slot.
 - **Evidence:** lane B1-P handback §2: risk band persisted on layover_return_plans in the spec vocabulary (LOW/MODERATE/HIGH/UNSAFE); the CHECK refuses others
 - **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
-### L37 — ConfidenceBand = HIGH \
-- **Original requirement:** ConfidenceBand = HIGH \ (the census body row quotes the spec; the full wording is at the row's census line).
+### L37 — ConfidenceBand = HIGH | MEDIUM | LOW | INSUFFICIENT
+- **Original requirement:** ConfidenceBand = HIGH | MEDIUM | LOW | INSUFFICIENT (verbatim from the original specification).
 - **Acceptance criteria:** the requirement's spec words, met on a production-reachable path, with a falsifying test (the rule above).
 - **Why it fails today:** ConfidenceBand is computed, published, and consumed by the envelope's planning edge (§19.6); the missing half is a stored decision that turns on it (2700/2992 confidence columns).
 - **Root cause / class:** Code is ready; it waits on your production press (migrations and flags) (triage class NEEDS-PRESS)
@@ -292,18 +289,18 @@ above in every freed builder slot.
 - **Evidence:** lane B1-P handback §2: the confidence band is a stored decision column equal to the published certification (3828, lane B1-F, also copies it to layover_sessions.confidence_band)
 - **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
-### L38 — RecommendationStatus = ELIGIBLE \
-- **Original requirement:** RecommendationStatus = ELIGIBLE \ (the census body row quotes the spec; the full wording is at the row's census line).
+### L38 — RecommendationStatus = ELIGIBLE | TIGHT | BLOCKED | STALE | EXPIRED
+- **Original requirement:** RecommendationStatus = ELIGIBLE | TIGHT | BLOCKED | STALE | EXPIRED (verbatim from the original specification).
 - **Acceptance criteria:** the requirement's spec words, met on a production-reachable path, with a falsifying test (the rule above).
 - **Why it fails today:** layover_recommendations.status is a moderation vocabulary; no ELIGIBLE/TIGHT/BLOCKED/STALE/EXPIRED column anywhere. Proposed 3871 (with L26). STALE needs 3623+persistence; C after that press.
 - **Root cause / class:** Needs new schema (a migration), then the press (triage class BUILDABLE-WITH-MIGRATION→W)
 - **Files / gating artifact (triage):** new 3871, LayoverRecommendationService.ts
 - **Census lines read:** 446, 9328
 - **Batch:** B2-RECS recommendations/snapshots/contracts
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Required correction:** Canonical persisted snapshot selection, guarded compare-and-swap publication, immutable decision history and recommendation supersession are connected; failed history refuses regeneration and stale candidates cannot overwrite a newer version.
+- **Migration:** 3871 + 3873 + 3896 and existing 2700/2992/3623/3828 dependencies · **Tests:** 196 targeted tests; 8 canonical migrated tests; rollback catalog/row round trips, repeat/reapply and refusal cases; pressed-final 17/17 · **Production dependency:** owner migration/flag press
+- **Evidence:** scratchpad/l165-b2-recsa-handback.txt. PGlite interleaving proved; real two-connection PostgreSQL contention branch awaits CI evidence. Full surface identifier matrix and independent mutants remain open.
+- **Status:** BUILT (canonical snapshot and history batch; independent verification and production press pending)
 
 ### L39 — The declared state graph (DETECTED → … → COMPLETED, plus DISRUPTED/CANCELLED/EXPIRED)
 - **Original requirement:** The declared state graph (DETECTED → … → COMPLETED, plus DISRUPTED/CANCELLED/EXPIRED) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -313,10 +310,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** LayoverLifecycle.ts, routes/airport.ts; 3632 + layover_lifecycle_machine_enabled
 - **Census lines read:** 9738
 - **Batch:** B3-ENGINE lifecycle/timing/engine refactor/phrases
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Required correction:** Unlinked traveller cancellation produces DEPARTURE_CANCELLED; owner flight-close records BOARDING_STARTED with source=traveller before closure; foreign close is refused.
+- **Migration:** existing 3632 and 3827 lifecycle/flight gates; no new schema · **Tests:** ENGINE lifecycle/replay/freedom and migrated tests 44/44, including two actual database cases; source regression first failed then passed · **Production dependency:** owner lifecycle press; licensed feed remains necessary for automatic observed flight status
+- **Evidence:** scratchpad/l165-b3-engine-handback.txt; lifecycle-db-red.log and lifecycle-db-green.log. Traveller confirmation is never presented as provider-observed departure.
+- **Status:** BUILT (traveller lifecycle gaps repaired with migrated proof; independent verification and production press pending; automatic observations require approved feed)
 
 ### L40 — EVALUATING → LANDSIDE_AVAILABLE: guard = entry allowed + no critical unknowns + usable ≥ floor + return contract satisfiable; side effects = create snapshot + safe envelope + candidate set
 - **Original requirement:** EVALUATING → LANDSIDE_AVAILABLE: guard = entry allowed + no critical unknowns + usable ≥ floor + return contract satisfiable; side effects = create snapshot + safe envelope + candidate set (the census body row quotes the spec; the full wording is at the row's census line).
@@ -352,10 +349,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** LayoverReplanService.ts/LayoverEventReplanner.ts; 3623 + layover_recommendation_snapshot_enabled
 - **Census lines read:** 2283
 - **Batch:** B1-P pressed-state verification
-- **Required correction:** Reported disruption now stores its snapshot and invalidates stale cards (settleDisruptionRecompute, LayoverReplanService.ts).
-- **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) snap:202, :233 · **Production dependency:** owner press: P1 incl. layover_recommendation_snapshot_enabled; + OWNER RULING that clearing a card's citation counts as "invalidate"
-- **Evidence:** lane B1-P handback §2: DISRUPTED → invalidate stale recommendations (citation cleared, card kept), replan, audit trail — via the window edit (snap:202) and, after D2, via the reported disruption (snap:233)
-- **Status:** BUILT (pressed-path defect fixed by B1-P; independent verification pending; awaits the press)
+- **Required correction:** Canonical persisted snapshot selection, guarded compare-and-swap publication, immutable decision history and recommendation supersession are connected; failed history refuses regeneration and stale candidates cannot overwrite a newer version.
+- **Migration:** 3871 + 3873 + 3896 and existing 2700/2992/3623/3828 dependencies · **Tests:** 196 targeted tests; 8 canonical migrated tests; rollback catalog/row round trips, repeat/reapply and refusal cases; pressed-final 17/17 · **Production dependency:** owner migration/flag press
+- **Evidence:** scratchpad/l165-b2-recsa-handback.txt. PGlite interleaving proved; real two-connection PostgreSQL contention branch awaits CI evidence. Full surface identifier matrix and independent mutants remain open.
+- **Status:** BUILT (canonical snapshot and history batch; independent verification and production press pending)
 
 ### L46 — The subtraction ladder: scheduled − deplane − immigration/customs − baggage − exit friction − outbound − return (future conditions, not symmetric) − security/re-entry − terminal transfer − boarding buffer − contingency = usable
 - **Original requirement:** The subtraction ladder: scheduled − deplane − immigration/customs − baggage − exit friction − outbound − return (future conditions, not symmetric) − security/re-entry − terminal transfer − boarding buffer − contingency = usable (the census body row quotes the spec; the full wording is at the row's census line).
@@ -365,10 +362,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** LayoverSafetyEngine.ts; routing provider
 - **Census lines read:** 464, 11609 (§75.7)
 - **Batch:** B3-ENGINE lifecycle/timing/engine refactor/phrases
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Required correction:** Implement the complete eleven-term subtraction ladder using legitimate per-stage sources and conservative estimates, without inventing distributions or double charging.
+- **Migration:** 3881 sourced airport timing projection with service-only publication guard; existing3874 curation and canonical chain · **Tests:** focused API75/75, terminal/source/replay10/10, migrated timing/objective/execution neighbors21/21 plus both complete rollback cases2/2, client4/4 and10 isolated mutants · **Production dependency:** genuine reviewed airport/place/mode samples, owner press and final integrated verification
+- **Evidence:** scratchpad/l165-timing-evidence-handback.txt. Eleven named stages carry actual observations, nearest-rank percentiles, source references, confidence and TTL. Joint percentiles use paired complete journey samples excluding dwell, not sums of marginal percentiles. Missing/stale/inapplicable terminal evidence refuses; measured values only tighten existing conservative allowances. Reviewed31-scenario golden changes contain identity/version fields only. No real airport sample population was invented.
+- **Status:** BUILT (sourced stage and joint-journey timing reaches routing and execution; reviewed real data, final verification and production press pending)
 
 ### L48 — if entry_permission_state != CONFIRMED_ALLOWED: forbid_landside_recommendations()
 - **Original requirement:** if entry_permission_state != CONFIRMED_ALLOWED: forbid_landside_recommendations() (the census body row quotes the spec; the full wording is at the row's census line).
@@ -378,10 +375,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** ruling + 3640 flip
 - **Census lines read:** 8114, 9749
 - **Batch:** B2-CURATE curation/maturity/entry
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B2-CURATE)
+- **Required correction:** Validated provenance, expiry and conflict-aware curation; confirmed entry facts; live evidence and time-band calibration feed actual maturity admission. Missing schema explicitly refuses feature queries.
+- **Migration:** 3874 + 3880 and existing prerequisite chain · **Tests:** curation agent handback; 74 focused and 15 migrated workflow/rollback tests; root readiness boundary 5 unit tests and workflow W15 (16/16 total) · **Production dependency:** owner press, validated airport facts and existing live-provider dependencies
+- **Evidence:** scratchpad/l165-b2-curate-handback.txt; curation readiness logs in /private/tmp/codex-layover-resume-20261019/; three isolated curation mutants killed. Real route reaches L4 only with qualifying official, crowd and calibrated evidence.
+- **Status:** BUILT (curation implementation and migrated tests; independent acceptance verification and production press pending)
 
 ### L50 — risk_band == UNSAFE ⇒ recommendation.status = BLOCKED
 - **Original requirement:** risk_band == UNSAFE ⇒ recommendation.status = BLOCKED (the census body row quotes the spec; the full wording is at the row's census line).
@@ -391,10 +388,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** ruling L50-a
 - **Census lines read:** 4424, 1279
 - **Batch:** B2-RECS recommendations/snapshots/contracts
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Required correction:** Retain public unsafe landside recommendations as BLOCKED/unavailable with their reason, while every add/compile path refuses them; moderation and restricted-content filters still apply.
+- **Migration:** existing 3871 status and canonical chain · **Tests:** layoverSurfaceConsistency.db.test.ts: 6/6; adjacent 15/15; old drop-all-landside behavior reproduced then killed as a mutant · **Production dependency:** owner migration/flag press
+- **Evidence:** The actual HTTP route serves blocked airside and landside cards, preserving identity and explanation. Unsafe cards cannot be added or compiled. Production discovery/gems helper admission remains closed. Local migrated tests and in-memory mutation are logged under surface-consistency-* and surface-mutant.log.
+- **Status:** BUILT (visible unavailable cards and refusal paths tested on migrated schema; independent verification and press pending)
 
 ### L54 — Estimate { valueMinutes, p50/p75/p90, confidence, sourceClass, observedAt, expiresAt, fallbackLevel, sourceRefs[] }
 - **Original requirement:** Estimate { valueMinutes, p50/p75/p90, confidence, sourceClass, observedAt, expiresAt, fallbackLevel, sourceRefs[] } (the census body row quotes the spec; the full wording is at the row's census line).
@@ -404,10 +401,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** live-signal producer decision
 - **Census lines read:** 1901
 - **Batch:** B2-LIVE live intelligence
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B2-LIVE)
+- **Required correction:** Carry genuine per-stage estimate values, distributions, confidence, provenance, observation/expiry and fallback levels throughout the journey.
+- **Migration:** 3881 sourced airport timing projection with service-only publication guard; existing3874 curation and canonical chain · **Tests:** focused API75/75, terminal/source/replay10/10, migrated timing/objective/execution neighbors21/21 plus both complete rollback cases2/2, client4/4 and10 isolated mutants · **Production dependency:** genuine reviewed airport/place/mode samples, owner press and final integrated verification
+- **Evidence:** scratchpad/l165-timing-evidence-handback.txt. Eleven named stages carry actual observations, nearest-rank percentiles, source references, confidence and TTL. Joint percentiles use paired complete journey samples excluding dwell, not sums of marginal percentiles. Missing/stale/inapplicable terminal evidence refuses; measured values only tighten existing conservative allowances. Reviewed31-scenario golden changes contain identity/version fields only. No real airport sample population was invented.
+- **Status:** BUILT (sourced stage and joint-journey timing reaches routing and execution; reviewed real data, final verification and production press pending)
 
 ### L55 — Safety-critical calculations use a configurable conservative percentile by data maturity/consequence; do not collapse to a single average
 - **Original requirement:** Safety-critical calculations use a configurable conservative percentile by data maturity/consequence; do not collapse to a single average (the census body row quotes the spec; the full wording is at the row's census line).
@@ -417,10 +414,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** live-signal producer decision
 - **Census lines read:** 1901
 - **Batch:** B2-LIVE live intelligence
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B2-LIVE)
+- **Required correction:** Apply configurable conservative percentiles to genuine stage distributions by maturity and consequence while preserving explicit absence.
+- **Migration:** 3881 sourced airport timing projection with service-only publication guard; existing3874 curation and canonical chain · **Tests:** focused API75/75, terminal/source/replay10/10, migrated timing/objective/execution neighbors21/21 plus both complete rollback cases2/2, client4/4 and10 isolated mutants · **Production dependency:** genuine reviewed airport/place/mode samples, owner press and final integrated verification
+- **Evidence:** scratchpad/l165-timing-evidence-handback.txt. Eleven named stages carry actual observations, nearest-rank percentiles, source references, confidence and TTL. Joint percentiles use paired complete journey samples excluding dwell, not sums of marginal percentiles. Missing/stale/inapplicable terminal evidence refuses; measured values only tighten existing conservative allowances. Reviewed31-scenario golden changes contain identity/version fields only. No real airport sample population was invented.
+- **Status:** BUILT (sourced stage and joint-journey timing reaches routing and execution; reviewed real data, final verification and production press pending)
 
 ### L56 — A generalised engine answering "what can this user do before they must be somewhere else"
 - **Original requirement:** A generalised engine answering "what can this user do before they must be somewhere else" (the census body row quotes the spec; the full wording is at the row's census line).
@@ -430,10 +427,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** LayoverTemporalFreedom.ts; live-signal ruling
 - **Census lines read:** 4419
 - **Batch:** B3-ENGINE lifecycle/timing/engine refactor/phrases
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Required correction:** Use a consented measured traveller origin for current-position route/context evaluation; preserve unknown positions and conservative world-condition timing.
+- **Migration:** none (the measured origin is request-local and never persisted) · **Tests:** ENGINE31 and dropped-origin mutant (airport origin); current-position unit 5/5, migrated DB 3/3, client 5/5, 7 mutants killed, late-fix client mutant killed · **Production dependency:** native-device location verification; the world-condition live feed stays blocked under L81
+- **Evidence:** Validated airport coordinate replaces always-null generic origin for planning. `POST /api/airport/sessions/:id/current-position-check` takes one explicit foreground fix (≤2 min old, ≤1,000 m accuracy), binds it to owner/session/snapshot/request in a request-local WeakMap, routes current-origin outbound, current return and future return with no-store provider calls, and evaluates the Temporal Freedom Engine from that origin. It only preserves or tightens canonical constraints, risk, reasons and activity commitments; stored confidence outside HIGH/MEDIUM/LOW is the weakest grade and refuses. Raw GPS, geometry and coordinate-derived identity are never persisted. This is a temporary preview: saved experiences still start at the airport.
+- **Status:** BUILT (traveller current-position preview delivered; native-device evidence and the L81 world-condition feed remain external)
 
 ### L58 — FreedomWindow { beginsAt, endsAt, origin, requiredDestination, usableMinutes, hardConstraints, softConstraints, riskBudget, uncertaintyBudget, confidence }
 - **Original requirement:** FreedomWindow { beginsAt, endsAt, origin, requiredDestination, usableMinutes, hardConstraints, softConstraints, riskBudget, uncertaintyBudget, confidence } (the census body row quotes the spec; the full wording is at the row's census line).
@@ -443,10 +440,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** LayoverTemporalFreedom.ts, engine; ruling on riskBudget/softConstraints
 - **Census lines read:** 491, 4529 (§18.8)
 - **Batch:** B3-ENGINE lifecycle/timing/engine refactor/phrases
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Required correction:** Project usableMinutes, soft preferences, zero permitted lateness, no unsafe actions and named uncertainty reserve into FreedomWindow; policy only narrows an already computed window.
+- **Migration:** no new schema; feasibility shape 2026.10.19-1 names policy replay input · **Tests:** ENGINE31 timing/policy/incremental; lifecycle/replay44; ignored-uncertainty mutant killed; reviewed golden31 has only inputHash/snapshotId changes · **Production dependency:** owner existing canonical/lifecycle press and independent verification
+- **Evidence:** scratchpad/l165-b3-engine-handback.txt. Two independent golden runs identical; no verdict, deadline or rule changes. Old input shape explicitly refuses RECORD_SHAPE_CHANGED.
+- **Status:** BUILT (complete policy projection and replay evidence delivered; independent verification and press pending)
 
 ### L60 — Bidirectional reachability: airport→candidate and candidate→airport under future return-time conditions
 - **Original requirement:** Bidirectional reachability: airport→candidate and candidate→airport under future return-time conditions (the census body row quotes the spec; the full wording is at the row's census line).
@@ -469,10 +466,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** routing provider
 - **Census lines read:** 4425
 - **Batch:** B1-R1 routing (server)
-- **Required correction:** Google Routes wired on GET /recommendations and the Discovery universe with §8 routed terms (LayoverRoutedFeasibility.ts).
-- **Migration:** 3856_layover_routes_session_budget.sql (+3971, 2745 in the press) · **Tests:** layoverRoutedFeasibility / layoverRoutedRecommendationsRoute / layoverRoutedUniverse / layoverRoutedProviderContract / layoverRoutesSessionBudget (90 cases, 44 mutants) · **Production dependency:** Routes API enabled; LAYOVER_ROUTED_CORRIDOR_ENABLED + ROUTES_API_DAILY_*; 3971, 3856, 2745; layover_routed_corridor_enabled ON
-- **Evidence:** lane B1-R1 handback §2; census-layover section "lanes B1-R1 and B1-P"
-- **Status:** BUILT (lane B1-R1; independent verification pending; W until the Routes press)
+- **Required correction:** Generate continuous time-budget WALK coverage from actual outward/return network polygons, preserving holes/islands and canonical allocation; disclose unsupported future DRIVE.
+- **Migration:** Existing routed capability; separate Isochrones API enablement, key and spend gates · **Tests:** 102 focused API plus12 follow-on; real-adapter10+2 request allocation;9 isolated map mutants · **Production dependency:** owner activation and original row-specific external evidence
+- **Evidence:** l165-map-geometry-handback.txt. Official Google Isochrones FROM/TO contours intersected under one journey budget, no sampled hull; WALK implemented. Google preview eligibility/key/native build remain external; future DRIVE unsupported by provider contract.
+- **Status:** IN PROGRESS (continuous WALK implementation tested; future DRIVE coverage unsupported and external provider validation pending)
 
 ### L63 — Envelope edges contract as confidence drops or return risk rises
 - **Original requirement:** Envelope edges contract as confidence drops or return risk rises (the census body row quotes the spec; the full wording is at the row's census line).
@@ -522,9 +519,9 @@ above in every freed builder slot.
 - **Census lines read:** 9787
 - **Batch:** B2-MAP map and client
 - **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Migration:** Existing 3971/3856/2745 routing + applicable 3785/3633/canonical chain · **Tests:** actual adapter fixtures and mounted components, no paid provider calls · **Production dependency:** GOOGLE_MAPS_API_KEY, Routes API enablement, bounded route settings/flags and signed-device verification
+- **Evidence:** scratchpad/l165-b2-map-handback.txt: 79 API tests plus 3 real Google adapter fixture tests, 107 client tests, 130 dashboard tests and focused cache/refresh/native tests. Eleven client and four API mutants killed; redundant/masked survivors disclosed. The finite sampled polygon is not a certified continuous interior (L61 remains open).
+- **Status:** BLOCKED-EXTERNAL (implemented and locally tested; exact Google Routes deployment/credentials, migration and flag press plus applicable native-device evidence pending)
 
 ### L68 — Multiple independent return routes → increase robustness / candidate preference
 - **Original requirement:** Multiple independent return routes → increase robustness / candidate preference (the census body row quotes the spec; the full wording is at the row's census line).
@@ -560,10 +557,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** routing provider
 - **Census lines read:** 7446, 10721
 - **Batch:** B1-R1 routing (server)
-- **Required correction:** Google Routes wired on GET /recommendations and the Discovery universe with §8 routed terms (LayoverRoutedFeasibility.ts).
-- **Migration:** 3856_layover_routes_session_budget.sql (+3971, 2745 in the press) · **Tests:** layoverRoutedFeasibility / layoverRoutedRecommendationsRoute / layoverRoutedUniverse / layoverRoutedProviderContract / layoverRoutesSessionBudget (90 cases, 44 mutants) · **Production dependency:** Routes API enabled; LAYOVER_ROUTED_CORRIDOR_ENABLED + ROUTES_API_DAILY_*; 3971, 3856, 2745; layover_routed_corridor_enabled ON
-- **Evidence:** lane B1-R1 handback §2; census-layover section "lanes B1-R1 and B1-P"
-- **Status:** IN PROGRESS (transport half built by B1-R1; activity interruptibility not done: needs per-place data, queued to lane B2-CURATE follow-up)
+- **Required correction:** Increase risk for sourced non-interruptible transport and activity; implement the missing per-place activity source without guessing from categories.
+- **Migration:** 3907 extends3899 with activity_commitment and FALSE layover_activity_commitment_enabled; predecessor rollback restores exact kind CHECK · **Tests:** timing/objective/execution21/21, both migration rollback cases2/2, focused75/75, client4/4 and activity safety mutants · **Production dependency:** verified per-place activity evidence and owner press
+- **Evidence:** scratchpad/l165-timing-evidence-handback.txt. Sourced interruptibility, minimum commitment and exit delay now affect candidate dwell, risk and the executable plan. Compilation reads sources again so retraction cannot survive in stored cards. Unknown/stale/conflicting/unreadable ON evidence refuses; OFF preserves prior behavior. No category or transport value substitutes for activity facts.
+- **Status:** BUILT (transport and sourced activity commitment integrated and locally tested; source population, final verification and production press pending)
 
 ### L71 — Transfer count → increase plan complexity/uncertainty
 - **Original requirement:** Transfer count → increase plan complexity/uncertainty (the census body row quotes the spec; the full wording is at the row's census line).
@@ -574,9 +571,9 @@ above in every freed builder slot.
 - **Census lines read:** 7447, 7483
 - **Batch:** B1-R1 routing (server)
 - **Required correction:** Google Routes wired on GET /recommendations and the Discovery universe with §8 routed terms (LayoverRoutedFeasibility.ts).
-- **Migration:** 3856_layover_routes_session_budget.sql (+3971, 2745 in the press) · **Tests:** layoverRoutedFeasibility / layoverRoutedRecommendationsRoute / layoverRoutedUniverse / layoverRoutedProviderContract / layoverRoutesSessionBudget (90 cases, 44 mutants) · **Production dependency:** Routes API enabled; LAYOVER_ROUTED_CORRIDOR_ENABLED + ROUTES_API_DAILY_*; 3971, 3856, 2745; layover_routed_corridor_enabled ON
-- **Evidence:** lane B1-R1 handback §2; census-layover section "lanes B1-R1 and B1-P"
-- **Status:** IN PROGRESS (mechanism built by B1-R1; production requests walk/drive only, so transit routing must be requested: queued)
+- **Migration:** Existing 3971/3856/2745 routing + applicable 3785/3633/canonical chain · **Tests:** actual adapter fixtures and mounted components, no paid provider calls · **Production dependency:** GOOGLE_MAPS_API_KEY, Routes API enablement, bounded route settings/flags and signed-device verification
+- **Evidence:** scratchpad/l165-b2-map-handback.txt: 79 API tests plus 3 real Google adapter fixture tests, 107 client tests, 130 dashboard tests and focused cache/refresh/native tests. Eleven client and four API mutants killed; redundant/masked survivors disclosed. The finite sampled polygon is not a certified continuous interior (L61 remains open).
+- **Status:** BLOCKED-EXTERNAL (implemented and locally tested; exact Google Routes deployment/credentials, migration and flag press plus applicable native-device evidence pending)
 
 ### L73 — Offline risk → require cached route + deadline before departure where possible
 - **Original requirement:** Offline risk → require cached route + deadline before departure where possible (the census body row quotes the spec; the full wording is at the row's census line).
@@ -586,10 +583,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** app/layover/[id].tsx, layoverPlanCache.ts; routing provider
 - **Census lines read:** 8647
 - **Batch:** B3-ENGINE lifecycle/timing/engine refactor/phrases
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Required correction:** Cache and read back the exact reviewed ordered experience/return contract before Start; complete permitted offline route geometry without retaining provider-restricted data.
+- **Migration:** 3898 executable lifecycle and existing cached bundle · **Tests:** ENGINE client20 plus L15 client8; write/readback/expiry mutants killed; account-boundary10 · **Production dependency:** permitted offline route geometry and device validation
+- **Evidence:** Missing/stale/contradictory forecast, failed write or mismatched readback refuses Start. Saved bundle contains ordered hops, deadline, abort thresholds and expiry. Street navigation geometry remains absent; cached display states its limits. Already-left checkpoint remains reportable.
+- **Status:** IN PROGRESS (offline contract readiness implemented; full offline navigation requirement remains open)
 
 ### L74 — The planner generates executable experiences, not place cards; a recommendation is a contract carrying time, return, risk and failure information
 - **Original requirement:** The planner generates executable experiences, not place cards; a recommendation is a contract carrying time, return, risk and failure information (the census body row quotes the spec; the full wording is at the row's census line).
@@ -600,9 +597,9 @@ above in every freed builder slot.
 - **Census lines read:** 522, 12146 (§80)
 - **Batch:** B2-RECS recommendations/snapshots/contracts
 - **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Migration:** Existing canonical/routing chain; no new RECS-B migration · **Tests:** full migrated schema and actual owner HTTP endpoints · **Production dependency:** canonical/routing flags, approved provider and mature airport evidence
+- **Evidence:** scratchpad/l165-b2-recsb-handback.txt: 195 adjacent tests; final executable and real-schema API tests 17/17. Actual future arbitrary-origin hops, canonical ownership, in-flight block refusal and second GET at +100ms are exercised. No real provider or production activation claim.
+- **Status:** BUILT (executable contracts and ordered experience compilation pass local migrated-schema tests; independent acceptance and production press pending)
 
 ### L76 — LayoverRecommendationContract { snapshotId, departBy, estimatedArrival, minExperienceMinutes, idealExperienceMinutes, leaveActivityBy, expectedAirportReturn, hardReturnBy, returnBufferMinutes, riskBand, confidence, fallbackPlan, abortThreshold, failureModes[], reasonCodes[] }
 - **Original requirement:** LayoverRecommendationContract { snapshotId, departBy, estimatedArrival, minExperienceMinutes, idealExperienceMinutes, leaveActivityBy, expectedAirportReturn, hardReturnBy, returnBufferMinutes, riskBand, confidence, fallbackPlan, abortThreshold, failureModes[], reasonCodes[] } (the census body row quotes the spec; the full wording is at the row's census line).
@@ -613,9 +610,9 @@ above in every freed builder slot.
 - **Census lines read:** 524, 10937 (§72.5)
 - **Batch:** B2-RECS recommendations/snapshots/contracts
 - **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Migration:** Existing canonical/routing chain; no new RECS-B migration · **Tests:** full migrated schema and actual owner HTTP endpoints · **Production dependency:** canonical/routing flags, approved provider and mature airport evidence
+- **Evidence:** scratchpad/l165-b2-recsb-handback.txt: 195 adjacent tests; final executable and real-schema API tests 17/17. Actual future arbitrary-origin hops, canonical ownership, in-flight block refusal and second GET at +100ms are exercised. No real provider or production activation claim.
+- **Status:** BUILT (executable contracts and ordered experience compilation pass local migrated-schema tests; independent acceptance and production press pending)
 
 ### L77 — HARD GATE: eligibility + entry + time + safety, before any optimisation
 - **Original requirement:** HARD GATE: eligibility + entry + time + safety, before any optimisation (the census body row quotes the spec; the full wording is at the row's census line).
@@ -625,10 +622,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** ruling + 3640 flip
 - **Census lines read:** 2670
 - **Batch:** B2-CURATE curation/maturity/entry
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B2-CURATE)
+- **Required correction:** Validated provenance, expiry and conflict-aware curation; confirmed entry facts; live evidence and time-band calibration feed actual maturity admission. Missing schema explicitly refuses feature queries.
+- **Migration:** 3874 + 3880 and existing prerequisite chain · **Tests:** curation agent handback; 74 focused and 15 migrated workflow/rollback tests; root readiness boundary 5 unit tests and workflow W15 (16/16 total) · **Production dependency:** owner press, validated airport facts and existing live-provider dependencies
+- **Evidence:** scratchpad/l165-b2-curate-handback.txt; curation readiness logs in /private/tmp/codex-layover-resume-20261019/; three isolated curation mutants killed. Real route reaches L4 only with qualifying official, crowd and calibrated evidence.
+- **Status:** BUILT (curation implementation and migrated tests; independent acceptance verification and production press pending)
 
 ### L78 — Optimise preference_fit + local_uniqueness + opportunity_scarcity + social_value + experience_density + memory_value − monetary_cost − energy_cost − uncertainty − stress − return_risk
 - **Original requirement:** Optimise preference_fit + local_uniqueness + opportunity_scarcity + social_value + experience_density + memory_value − monetary_cost − energy_cost − uncertainty − stress − return_risk (the census body row quotes the spec; the full wording is at the row's census line).
@@ -638,10 +635,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** OQ-6, OQ-L78-1 + 3784 + layover_ranking_mode
 - **Census lines read:** 12030
 - **Batch:** B2-RECS recommendations/snapshots/contracts
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Required correction:** All eleven objective terms have real input paths; authorized source facts and explicit private traveller preferences supply the five formerly hard-UNKNOWN terms. No unsourced price, presence, private memories, sponsorship or revenue enters ranking.
+- **Migration:** 3899; FALSE layover_objective_evidence_enabled · **Tests:** 55/55 server,5/5 client,16/16 final experience/objective rollback proofs; curator-erasure15 unit+2 migrated cases · **Production dependency:** owner activation and original row-specific external evidence
+- **Evidence:** l165-l78-handback.txt. Actual admin/owner writers feed the real migrated generator; incomplete, expired, conflicting or mismatched cost evidence remains UNKNOWN. Source erasure nulls only the departing curator before profile tombstoning, with permission errors retryable.
+- **Status:** BUILT (sourced producers, UI, migrated ranking and rollback evidence; independent acceptance and production activation pending)
 
 ### L79 — Static topology — terminal, gate, checkpoint, walking link; weeks/months, invalidated on authoritative change
 - **Original requirement:** Static topology — terminal, gate, checkpoint, walking link; weeks/months, invalidated on authoritative change (the census body row quotes the spec; the full wording is at the row's census line).
@@ -651,10 +648,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** LayoverAirportTruth.ts, AirportProfileService.ts; airport data source
 - **Census lines read:** 1898
 - **Batch:** B2-CURATE curation/maturity/entry
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B2-CURATE)
+- **Required correction:** Publish evidence-backed airport curation only after actual source review; do not fabricate transit, terminal, visa or overnight facts to fill the launch packet.
+- **Migration:** 3874 + 3880 where applicable · **Tests:** validation, publication, expiry and rollback workflow exercised on the migrated schema · **Production dependency:** reviewed source facts and authorized publication for launch airports
+- **Evidence:** scratchpad/l165-b2-curate-handback.txt and docs/ops/airport-curation/. FLL/DAD packets remain empty or unreachable; HND/NRT facts remain incomplete. Workflow is built; human review is not claimed.
+- **Status:** BLOCKED-EXTERNAL (actual reviewed airport facts and publication; no substitute facts or reviewer evidence invented)
 
 ### L80 — Operational semi-live — security layout, lounge hours, transport schedules; hours/days
 - **Original requirement:** Operational semi-live — security layout, lounge hours, transport schedules; hours/days (the census body row quotes the spec; the full wording is at the row's census line).
@@ -664,10 +661,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** data-source decision
 - **Census lines read:** 1831
 - **Batch:** B2-CURATE curation/maturity/entry
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B2-CURATE)
+- **Required correction:** Publish evidence-backed airport curation only after actual source review; do not fabricate transit, terminal, visa or overnight facts to fill the launch packet.
+- **Migration:** 3874 + 3880 where applicable · **Tests:** validation, publication, expiry and rollback workflow exercised on the migrated schema · **Production dependency:** reviewed source facts and authorized publication for launch airports
+- **Evidence:** scratchpad/l165-b2-curate-handback.txt and docs/ops/airport-curation/. FLL/DAD packets remain empty or unreachable; HND/NRT facts remain incomplete. Workflow is built; human review is not claimed.
+- **Status:** BLOCKED-EXTERNAL (actual reviewed airport facts and publication; no substitute facts or reviewer evidence invented)
 
 ### L81 — Fast live — security wait, immigration wait, taxi queue, disruption; minutes
 - **Original requirement:** Fast live — security wait, immigration wait, taxi queue, disruption; minutes (the census body row quotes the spec; the full wording is at the row's census line).
@@ -680,7 +677,7 @@ above in every freed builder slot.
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
 - **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B2-LIVE)
+- **Status:** BLOCKED-EXTERNAL (licensed official/operator live feed endpoint and credentials; crowd evidence alone does not satisfy the whole fast-live requirement)
 
 ### L82 — Traveler observation — checkpoint timing, queue report, closure; confidence-weighted
 - **Original requirement:** Traveler observation — checkpoint timing, queue report, closure; confidence-weighted (the census body row quotes the spec; the full wording is at the row's census line).
@@ -703,10 +700,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** LayoverAirportTruth.ts; 3513, 2992
 - **Census lines read:** 1834
 - **Batch:** B2-CURATE curation/maturity/entry
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B2-CURATE)
+- **Required correction:** Validated provenance, expiry and conflict-aware curation; confirmed entry facts; live evidence and time-band calibration feed actual maturity admission. Missing schema explicitly refuses feature queries.
+- **Migration:** 3874 + 3880 and existing prerequisite chain · **Tests:** curation agent handback; 74 focused and 15 migrated workflow/rollback tests; root readiness boundary 5 unit tests and workflow W15 (16/16 total) · **Production dependency:** owner press, validated airport facts and existing live-provider dependencies
+- **Evidence:** scratchpad/l165-b2-curate-handback.txt; curation readiness logs in /private/tmp/codex-layover-resume-20261019/; three isolated curation mutants killed. Real route reaches L4 only with qualifying official, crowd and calibrated evidence.
+- **Status:** BUILT (curation implementation and migrated tests; independent acceptance verification and production press pending)
 
 ### L84 — TruthValue<T> { value, confidence, conflict, sourceClass, sourceRefs[], observedAt, expiresAt, fallbackLevel }
 - **Original requirement:** TruthValue<T> { value, confidence, conflict, sourceClass, sourceRefs[], observedAt, expiresAt, fallbackLevel } (the census body row quotes the spec; the full wording is at the row's census line).
@@ -820,10 +817,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** LayoverEventReplanner.ts, LayoverFeasibility.ts, LayoverSafetyEngine.ts
 - **Census lines read:** 2285
 - **Batch:** B3-ENGINE lifecycle/timing/engine refactor/phrases
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Required correction:** Reuse unchanged private dependency nodes and recompute only affected constraint derivations; persisted/copied/publicly mutated records cannot supply private cached values.
+- **Migration:** no schema; named feasibility shape version updated · **Tests:** 90 incremental/event/live/monotonicity;31 timing; seven API mutants including ignored keys, disabled reuse and public-cache poison killed · **Production dependency:** independent acceptance and owner existing rollout press
+- **Evidence:** Request-local DAG retains actual buffer/deadline/exit/envelope/assessment/entry/estimate values with full structural dependency keys. Queue/schedule/baggage/entry/clock incremental outputs equal complete recertification; trace discloses node names only.
+- **Status:** BUILT (incremental derivation and poison resistance tested; independent verification and press pending)
 
 ### L97 — Invalidate recommendations whose snapshot is stale or no longer feasible
 - **Original requirement:** Invalidate recommendations whose snapshot is stale or no longer feasible (the census body row quotes the spec; the full wording is at the row's census line).
@@ -833,10 +830,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** LayoverRecommendationService.ts; 3623 + flags
 - **Census lines read:** 2286
 - **Batch:** B2-RECS recommendations/snapshots/contracts
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Required correction:** Canonical persisted snapshot selection, guarded compare-and-swap publication, immutable decision history and recommendation supersession are connected; failed history refuses regeneration and stale candidates cannot overwrite a newer version.
+- **Migration:** 3871 + 3873 + 3896 and existing 2700/2992/3623/3828 dependencies · **Tests:** 196 targeted tests; 8 canonical migrated tests; rollback catalog/row round trips, repeat/reapply and refusal cases; pressed-final 17/17 · **Production dependency:** owner migration/flag press
+- **Evidence:** scratchpad/l165-b2-recsa-handback.txt. PGlite interleaving proved; real two-connection PostgreSQL contention branch awaits CI evidence. Full surface identifier matrix and independent mutants remain open.
+- **Status:** BUILT (canonical snapshot and history batch; independent verification and production press pending)
 
 ### L100 — Compass is an orchestrator and explainer: asks the minimum useful clarifying question, compares certified plans, personalises wording, invokes deterministic tools
 - **Original requirement:** Compass is an orchestrator and explainer: asks the minimum useful clarifying question, compares certified plans, personalises wording, invokes deterministic tools (the census body row quotes the spec; the full wording is at the row's census line).
@@ -848,8 +845,8 @@ above in every freed builder slot.
 - **Batch:** B1-C assistant
 - **Required correction:** Model orchestrates the twelve §12 tools on POST /airport/sessions/:id/compass (LayoverCompassAssistant.ts answerLayoverQuestionWithAssistant), compares plans from the certified record, asks §12.1's clarifying question (now plan-aware), explains; CL-02 held by four fail-closed layers.
 - **Migration:** 3846_layover_compass_assistant_flag.sql (flag seeded FALSE; rollback db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql, proven on PGlite) · **Tests:** layoverCompassAssistant.test.ts 356/356; layoverCompassToolLoop.test.ts 51/51 (10 flag-ON); six older compass suites unchanged; real-schema src/test/db/layoverCompassAssistant.db.test.ts 6/6 pressed, flag-off/absent arms red (lands with the shared harness); 23 mutants killed · **Production dependency:** owner press: apply 3846, turn layover_compass_assistant_enabled ON; AI_INTEGRATIONS_OPENAI_BASE_URL / _API_KEY (already used by Compass)
-- **Evidence:** lane B1-C handback; commit f87a92e3f; Fable verdict scratchpad/fable-b1c/verdict.txt (29 adversarial outputs, 22 blocked; builder mutants red; 4 verifier mutants survived)
-- **Status:** BUILT (independent verification ACCEPT-WITH-NOTES: accepted pending press; flag-ON fixes required first — CL-02 holes D3.1 refused-corridor card endorsed, D3.2 control char, D3.3 allowed-word reassurance; tests for mutants X1–X4)
+- **Evidence:** Original B1-C handback/commit f87a92e3f plus root assistant-safety-handback.txt: six isolated regression mutants killed; 370 assistant tests pass including live-record continuity. Earlier verifier holes were repaired; independent rerun still pending.
+- **Status:** BUILT (assistant safety repairs tested; independent re-verification and production press pending)
 
 ### L102 — Tool getLayoverContext(sessionId)
 - **Original requirement:** Tool getLayoverContext(sessionId) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -861,8 +858,8 @@ above in every freed builder slot.
 - **Batch:** B1-C assistant
 - **Required correction:** Tool rebuilt in LayoverCompassAssistant.ts; reads only the certified record or owner-scoped route reads, scrubbed of coordinates and identities.
 - **Migration:** 3846_layover_compass_assistant_flag.sql (flag seeded FALSE; rollback db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql, proven on PGlite) · **Tests:** layoverCompassAssistant.test.ts 356/356; layoverCompassToolLoop.test.ts 51/51 (10 flag-ON); six older compass suites unchanged; real-schema src/test/db/layoverCompassAssistant.db.test.ts 6/6 pressed, flag-off/absent arms red (lands with the shared harness); 23 mutants killed · **Production dependency:** owner press: apply 3846, turn layover_compass_assistant_enabled ON; AI_INTEGRATIONS_OPENAI_BASE_URL / _API_KEY (already used by Compass)
-- **Evidence:** lane B1-C handback; commit f87a92e3f; Fable verdict scratchpad/fable-b1c/verdict.txt (29 adversarial outputs, 22 blocked; builder mutants red; 4 verifier mutants survived)
-- **Status:** BUILT (independent verification ACCEPT-WITH-NOTES: accepted pending press; flag-ON fixes required first — CL-02 holes D3.1 refused-corridor card endorsed, D3.2 control char, D3.3 allowed-word reassurance; tests for mutants X1–X4)
+- **Evidence:** Original B1-C handback/commit f87a92e3f plus root assistant-safety-handback.txt: six isolated regression mutants killed; 370 assistant tests pass including live-record continuity. Earlier verifier holes were repaired; independent rerun still pending.
+- **Status:** BUILT (assistant safety repairs tested; independent re-verification and production press pending)
 
 ### L103 — getConnectionState(sessionId)
 - **Original requirement:** getConnectionState(sessionId) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -874,8 +871,8 @@ above in every freed builder slot.
 - **Batch:** B1-C assistant
 - **Required correction:** Tool rebuilt in LayoverCompassAssistant.ts; reads only the certified record or owner-scoped route reads, scrubbed of coordinates and identities.
 - **Migration:** 3846_layover_compass_assistant_flag.sql (flag seeded FALSE; rollback db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql, proven on PGlite) · **Tests:** layoverCompassAssistant.test.ts 356/356; layoverCompassToolLoop.test.ts 51/51 (10 flag-ON); six older compass suites unchanged; real-schema src/test/db/layoverCompassAssistant.db.test.ts 6/6 pressed, flag-off/absent arms red (lands with the shared harness); 23 mutants killed · **Production dependency:** owner press: apply 3846, turn layover_compass_assistant_enabled ON; AI_INTEGRATIONS_OPENAI_BASE_URL / _API_KEY (already used by Compass)
-- **Evidence:** lane B1-C handback; commit f87a92e3f; Fable verdict scratchpad/fable-b1c/verdict.txt (29 adversarial outputs, 22 blocked; builder mutants red; 4 verifier mutants survived)
-- **Status:** BUILT (independent verification ACCEPT-WITH-NOTES: accepted pending press; flag-ON fixes required first — CL-02 holes D3.1 refused-corridor card endorsed, D3.2 control char, D3.3 allowed-word reassurance; tests for mutants X1–X4)
+- **Evidence:** Original B1-C handback/commit f87a92e3f plus root assistant-safety-handback.txt: six isolated regression mutants killed; 370 assistant tests pass including live-record continuity. Earlier verifier holes were repaired; independent rerun still pending.
+- **Status:** BUILT (assistant safety repairs tested; independent re-verification and production press pending)
 
 ### L104 — getTimeWallet(sessionId)
 - **Original requirement:** getTimeWallet(sessionId) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -887,8 +884,8 @@ above in every freed builder slot.
 - **Batch:** B1-C assistant
 - **Required correction:** Tool rebuilt in LayoverCompassAssistant.ts; reads only the certified record or owner-scoped route reads, scrubbed of coordinates and identities.
 - **Migration:** 3846_layover_compass_assistant_flag.sql (flag seeded FALSE; rollback db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql, proven on PGlite) · **Tests:** layoverCompassAssistant.test.ts 356/356; layoverCompassToolLoop.test.ts 51/51 (10 flag-ON); six older compass suites unchanged; real-schema src/test/db/layoverCompassAssistant.db.test.ts 6/6 pressed, flag-off/absent arms red (lands with the shared harness); 23 mutants killed · **Production dependency:** owner press: apply 3846, turn layover_compass_assistant_enabled ON; AI_INTEGRATIONS_OPENAI_BASE_URL / _API_KEY (already used by Compass)
-- **Evidence:** lane B1-C handback; commit f87a92e3f; Fable verdict scratchpad/fable-b1c/verdict.txt (29 adversarial outputs, 22 blocked; builder mutants red; 4 verifier mutants survived)
-- **Status:** BUILT (independent verification ACCEPT-WITH-NOTES: accepted pending press; flag-ON fixes required first — CL-02 holes D3.1 refused-corridor card endorsed, D3.2 control char, D3.3 allowed-word reassurance; tests for mutants X1–X4)
+- **Evidence:** Original B1-C handback/commit f87a92e3f plus root assistant-safety-handback.txt: six isolated regression mutants killed; 370 assistant tests pass including live-record continuity. Earlier verifier holes were repaired; independent rerun still pending.
+- **Status:** BUILT (assistant safety repairs tested; independent re-verification and production press pending)
 
 ### L105 — getSafeEnvelope(sessionId)
 - **Original requirement:** getSafeEnvelope(sessionId) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -900,8 +897,8 @@ above in every freed builder slot.
 - **Batch:** B1-C assistant
 - **Required correction:** Tool rebuilt in LayoverCompassAssistant.ts; reads only the certified record or owner-scoped route reads, scrubbed of coordinates and identities.
 - **Migration:** 3846_layover_compass_assistant_flag.sql (flag seeded FALSE; rollback db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql, proven on PGlite) · **Tests:** layoverCompassAssistant.test.ts 356/356; layoverCompassToolLoop.test.ts 51/51 (10 flag-ON); six older compass suites unchanged; real-schema src/test/db/layoverCompassAssistant.db.test.ts 6/6 pressed, flag-off/absent arms red (lands with the shared harness); 23 mutants killed · **Production dependency:** owner press: apply 3846, turn layover_compass_assistant_enabled ON; AI_INTEGRATIONS_OPENAI_BASE_URL / _API_KEY (already used by Compass)
-- **Evidence:** lane B1-C handback; commit f87a92e3f; Fable verdict scratchpad/fable-b1c/verdict.txt (29 adversarial outputs, 22 blocked; builder mutants red; 4 verifier mutants survived)
-- **Status:** BUILT (independent verification ACCEPT-WITH-NOTES: accepted pending press; flag-ON fixes required first — CL-02 holes D3.1 refused-corridor card endorsed, D3.2 control char, D3.3 allowed-word reassurance; tests for mutants X1–X4)
+- **Evidence:** Original B1-C handback/commit f87a92e3f plus root assistant-safety-handback.txt: six isolated regression mutants killed; 370 assistant tests pass including live-record continuity. Earlier verifier holes were repaired; independent rerun still pending.
+- **Status:** BUILT (assistant safety repairs tested; independent re-verification and production press pending)
 
 ### L106 — getReachableExperiences(sessionId) (≡ §18 getCandidates… counted here as the tool; the service method is L182)
 - **Original requirement:** getReachableExperiences(sessionId) (≡ §18 getCandidates… counted here as the tool; the service method is L182) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -913,8 +910,8 @@ above in every freed builder slot.
 - **Batch:** B1-C assistant
 - **Required correction:** Tool rebuilt in LayoverCompassAssistant.ts; reads only the certified record or owner-scoped route reads, scrubbed of coordinates and identities.
 - **Migration:** 3846_layover_compass_assistant_flag.sql (flag seeded FALSE; rollback db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql, proven on PGlite) · **Tests:** layoverCompassAssistant.test.ts 356/356; layoverCompassToolLoop.test.ts 51/51 (10 flag-ON); six older compass suites unchanged; real-schema src/test/db/layoverCompassAssistant.db.test.ts 6/6 pressed, flag-off/absent arms red (lands with the shared harness); 23 mutants killed · **Production dependency:** owner press: apply 3846, turn layover_compass_assistant_enabled ON; AI_INTEGRATIONS_OPENAI_BASE_URL / _API_KEY (already used by Compass)
-- **Evidence:** lane B1-C handback; commit f87a92e3f; Fable verdict scratchpad/fable-b1c/verdict.txt (29 adversarial outputs, 22 blocked; builder mutants red; 4 verifier mutants survived)
-- **Status:** BUILT (independent verification ACCEPT-WITH-NOTES: accepted pending press; flag-ON fixes required first — CL-02 holes D3.1 refused-corridor card endorsed, D3.2 control char, D3.3 allowed-word reassurance; tests for mutants X1–X4)
+- **Evidence:** Original B1-C handback/commit f87a92e3f plus root assistant-safety-handback.txt: six isolated regression mutants killed; 370 assistant tests pass including live-record continuity. Earlier verifier holes were repaired; independent rerun still pending.
+- **Status:** BUILT (assistant safety repairs tested; independent re-verification and production press pending)
 
 ### L107 — simulatePlan(sessionId, candidateSet)
 - **Original requirement:** simulatePlan(sessionId, candidateSet) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -926,8 +923,8 @@ above in every freed builder slot.
 - **Batch:** B1-C assistant
 - **Required correction:** Tool rebuilt in LayoverCompassAssistant.ts; reads only the certified record or owner-scoped route reads, scrubbed of coordinates and identities.
 - **Migration:** 3846_layover_compass_assistant_flag.sql (flag seeded FALSE; rollback db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql, proven on PGlite) · **Tests:** layoverCompassAssistant.test.ts 356/356; layoverCompassToolLoop.test.ts 51/51 (10 flag-ON); six older compass suites unchanged; real-schema src/test/db/layoverCompassAssistant.db.test.ts 6/6 pressed, flag-off/absent arms red (lands with the shared harness); 23 mutants killed · **Production dependency:** owner press: apply 3846, turn layover_compass_assistant_enabled ON; AI_INTEGRATIONS_OPENAI_BASE_URL / _API_KEY (already used by Compass)
-- **Evidence:** lane B1-C handback; commit f87a92e3f; Fable verdict scratchpad/fable-b1c/verdict.txt (29 adversarial outputs, 22 blocked; builder mutants red; 4 verifier mutants survived)
-- **Status:** BUILT (independent verification ACCEPT-WITH-NOTES: accepted pending press; flag-ON fixes required first — CL-02 holes D3.1 refused-corridor card endorsed, D3.2 control char, D3.3 allowed-word reassurance; tests for mutants X1–X4)
+- **Evidence:** Original B1-C handback/commit f87a92e3f plus root assistant-safety-handback.txt: six isolated regression mutants killed; 370 assistant tests pass including live-record continuity. Earlier verifier holes were repaired; independent rerun still pending.
+- **Status:** BUILT (assistant safety repairs tested; independent re-verification and production press pending)
 
 ### L108 — getReturnContract(sessionId)
 - **Original requirement:** getReturnContract(sessionId) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -939,8 +936,8 @@ above in every freed builder slot.
 - **Batch:** B1-C assistant
 - **Required correction:** Tool rebuilt in LayoverCompassAssistant.ts; reads only the certified record or owner-scoped route reads, scrubbed of coordinates and identities.
 - **Migration:** 3846_layover_compass_assistant_flag.sql (flag seeded FALSE; rollback db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql, proven on PGlite) · **Tests:** layoverCompassAssistant.test.ts 356/356; layoverCompassToolLoop.test.ts 51/51 (10 flag-ON); six older compass suites unchanged; real-schema src/test/db/layoverCompassAssistant.db.test.ts 6/6 pressed, flag-off/absent arms red (lands with the shared harness); 23 mutants killed · **Production dependency:** owner press: apply 3846, turn layover_compass_assistant_enabled ON; AI_INTEGRATIONS_OPENAI_BASE_URL / _API_KEY (already used by Compass)
-- **Evidence:** lane B1-C handback; commit f87a92e3f; Fable verdict scratchpad/fable-b1c/verdict.txt (29 adversarial outputs, 22 blocked; builder mutants red; 4 verifier mutants survived)
-- **Status:** BUILT (independent verification ACCEPT-WITH-NOTES: accepted pending press; flag-ON fixes required first — CL-02 holes D3.1 refused-corridor card endorsed, D3.2 control char, D3.3 allowed-word reassurance; tests for mutants X1–X4)
+- **Evidence:** Original B1-C handback/commit f87a92e3f plus root assistant-safety-handback.txt: six isolated regression mutants killed; 370 assistant tests pass including live-record continuity. Earlier verifier holes were repaired; independent rerun still pending.
+- **Status:** BUILT (assistant safety repairs tested; independent re-verification and production press pending)
 
 ### L109 — getAirportState(sessionId)
 - **Original requirement:** getAirportState(sessionId) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -952,8 +949,8 @@ above in every freed builder slot.
 - **Batch:** B1-C assistant
 - **Required correction:** Tool rebuilt in LayoverCompassAssistant.ts; reads only the certified record or owner-scoped route reads, scrubbed of coordinates and identities.
 - **Migration:** 3846_layover_compass_assistant_flag.sql (flag seeded FALSE; rollback db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql, proven on PGlite) · **Tests:** layoverCompassAssistant.test.ts 356/356; layoverCompassToolLoop.test.ts 51/51 (10 flag-ON); six older compass suites unchanged; real-schema src/test/db/layoverCompassAssistant.db.test.ts 6/6 pressed, flag-off/absent arms red (lands with the shared harness); 23 mutants killed · **Production dependency:** owner press: apply 3846, turn layover_compass_assistant_enabled ON; AI_INTEGRATIONS_OPENAI_BASE_URL / _API_KEY (already used by Compass)
-- **Evidence:** lane B1-C handback; commit f87a92e3f; Fable verdict scratchpad/fable-b1c/verdict.txt (29 adversarial outputs, 22 blocked; builder mutants red; 4 verifier mutants survived)
-- **Status:** BUILT (independent verification ACCEPT-WITH-NOTES: accepted pending press; flag-ON fixes required first — CL-02 holes D3.1 refused-corridor card endorsed, D3.2 control char, D3.3 allowed-word reassurance; tests for mutants X1–X4)
+- **Evidence:** Original B1-C handback/commit f87a92e3f plus root assistant-safety-handback.txt: six isolated regression mutants killed; 370 assistant tests pass including live-record continuity. Earlier verifier holes were repaired; independent rerun still pending.
+- **Status:** BUILT (assistant safety repairs tested; independent re-verification and production press pending)
 
 ### L110 — getCrewCandidates(sessionId)
 - **Original requirement:** getCrewCandidates(sessionId) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -965,8 +962,8 @@ above in every freed builder slot.
 - **Batch:** B1-C assistant
 - **Required correction:** Tool rebuilt in LayoverCompassAssistant.ts; reads only the certified record or owner-scoped route reads, scrubbed of coordinates and identities.
 - **Migration:** 3846_layover_compass_assistant_flag.sql (flag seeded FALSE; rollback db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql, proven on PGlite) · **Tests:** layoverCompassAssistant.test.ts 356/356; layoverCompassToolLoop.test.ts 51/51 (10 flag-ON); six older compass suites unchanged; real-schema src/test/db/layoverCompassAssistant.db.test.ts 6/6 pressed, flag-off/absent arms red (lands with the shared harness); 23 mutants killed · **Production dependency:** owner press: apply 3846, turn layover_compass_assistant_enabled ON; AI_INTEGRATIONS_OPENAI_BASE_URL / _API_KEY (already used by Compass)
-- **Evidence:** lane B1-C handback; commit f87a92e3f; Fable verdict scratchpad/fable-b1c/verdict.txt (29 adversarial outputs, 22 blocked; builder mutants red; 4 verifier mutants survived)
-- **Status:** BUILT (independent verification ACCEPT-WITH-NOTES: accepted pending press; flag-ON fixes required first — CL-02 holes D3.1 refused-corridor card endorsed, D3.2 control char, D3.3 allowed-word reassurance; tests for mutants X1–X4)
+- **Evidence:** Original B1-C handback/commit f87a92e3f plus root assistant-safety-handback.txt: six isolated regression mutants killed; 370 assistant tests pass including live-record continuity. Earlier verifier holes were repaired; independent rerun still pending.
+- **Status:** BUILT (assistant safety repairs tested; independent re-verification and production press pending)
 
 ### L111 — requestConstraintClarification(sessionId, field)
 - **Original requirement:** requestConstraintClarification(sessionId, field) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -978,8 +975,8 @@ above in every freed builder slot.
 - **Batch:** B1-C assistant
 - **Required correction:** Tool rebuilt in LayoverCompassAssistant.ts; reads only the certified record or owner-scoped route reads, scrubbed of coordinates and identities.
 - **Migration:** 3846_layover_compass_assistant_flag.sql (flag seeded FALSE; rollback db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql, proven on PGlite) · **Tests:** layoverCompassAssistant.test.ts 356/356; layoverCompassToolLoop.test.ts 51/51 (10 flag-ON); six older compass suites unchanged; real-schema src/test/db/layoverCompassAssistant.db.test.ts 6/6 pressed, flag-off/absent arms red (lands with the shared harness); 23 mutants killed · **Production dependency:** owner press: apply 3846, turn layover_compass_assistant_enabled ON; AI_INTEGRATIONS_OPENAI_BASE_URL / _API_KEY (already used by Compass)
-- **Evidence:** lane B1-C handback; commit f87a92e3f; Fable verdict scratchpad/fable-b1c/verdict.txt (29 adversarial outputs, 22 blocked; builder mutants red; 4 verifier mutants survived)
-- **Status:** BUILT (independent verification ACCEPT-WITH-NOTES: accepted pending press; flag-ON fixes required first — CL-02 holes D3.1 refused-corridor card endorsed, D3.2 control char, D3.3 allowed-word reassurance; tests for mutants X1–X4)
+- **Evidence:** Original B1-C handback/commit f87a92e3f plus root assistant-safety-handback.txt: six isolated regression mutants killed; 370 assistant tests pass including live-record continuity. Earlier verifier holes were repaired; independent rerun still pending.
+- **Status:** BUILT (assistant safety repairs tested; independent re-verification and production press pending)
 
 ### L112 — replan(sessionId, trigger)
 - **Original requirement:** replan(sessionId, trigger) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -989,13 +986,13 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** L-CL02d
 - **Census lines read:** 3917, 9679 (§56.3)
 - **Batch:** B1-C assistant
-- **Required correction:** Tool built; replan PREVIEWS and never persists (owner question Q1: applying a replan from Compass needs its own ruling).
-- **Migration:** 3846_layover_compass_assistant_flag.sql (flag seeded FALSE; rollback db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql, proven on PGlite) · **Tests:** layoverCompassAssistant.test.ts 356/356; layoverCompassToolLoop.test.ts 51/51 (10 flag-ON); six older compass suites unchanged; real-schema src/test/db/layoverCompassAssistant.db.test.ts 6/6 pressed, flag-off/absent arms red (lands with the shared harness); 23 mutants killed · **Production dependency:** owner press: apply 3846, turn layover_compass_assistant_enabled ON; AI_INTEGRATIONS_OPENAI_BASE_URL / _API_KEY (already used by Compass)
-- **Evidence:** lane B1-C handback; commit f87a92e3f; Fable verdict scratchpad/fable-b1c/verdict.txt (29 adversarial outputs, 22 blocked; builder mutants red; 4 verifier mutants survived)
-- **Status:** BUILT (independent verification ACCEPT-WITH-NOTES: accepted pending press; flag-ON fixes required first — CL-02 holes D3.1 refused-corridor card endorsed, D3.2 control char, D3.3 allowed-word reassurance; tests for mutants X1–X4)
+- **Required correction:** Explicit UI action rechecks the saved current facts through canonical evaluation, supersession and regeneration. Owner, snapshot, session revision, expiry and atomic claim prevent stale or duplicate execution; immutable durable outcomes distinguish partial failure from success.
+- **Migration:** 3897 FALSE rollout + rollback · **Tests:** 12 migrated action/rollback tests and 11 client tests; API types at 860/113 baseline · **Production dependency:** canonical/assistant/action rollout
+- **Evidence:** scratchpad/l165-l112-handback.txt; this is an executed recheck with the saved details, not a model-authored schedule edit. No preview-only completion claim.
+- **Status:** BUILT (explicit authorized recheck execution, database and client evidence; independent acceptance and production press pending)
 
-### L113 — explainDecision(snapshotId \
-- **Original requirement:** explainDecision(snapshotId \ (the census body row quotes the spec; the full wording is at the row's census line).
+### L113 — explainDecision(snapshotId | recommendationId)
+- **Original requirement:** explainDecision(snapshotId | recommendationId) (verbatim from the original specification).
 - **Acceptance criteria:** the requirement's spec words, met on a production-reachable path, with a falsifying test (the rule above).
 - **Why it fails today:** Tool removed by L-CL02d.
 - **Root cause / class:** Waits on a decision from you (triage class NEEDS-RULING)
@@ -1004,8 +1001,8 @@ above in every freed builder slot.
 - **Batch:** B1-C assistant
 - **Required correction:** Tool rebuilt in LayoverCompassAssistant.ts; reads only the certified record or owner-scoped route reads, scrubbed of coordinates and identities.
 - **Migration:** 3846_layover_compass_assistant_flag.sql (flag seeded FALSE; rollback db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql, proven on PGlite) · **Tests:** layoverCompassAssistant.test.ts 356/356; layoverCompassToolLoop.test.ts 51/51 (10 flag-ON); six older compass suites unchanged; real-schema src/test/db/layoverCompassAssistant.db.test.ts 6/6 pressed, flag-off/absent arms red (lands with the shared harness); 23 mutants killed · **Production dependency:** owner press: apply 3846, turn layover_compass_assistant_enabled ON; AI_INTEGRATIONS_OPENAI_BASE_URL / _API_KEY (already used by Compass)
-- **Evidence:** lane B1-C handback; commit f87a92e3f; Fable verdict scratchpad/fable-b1c/verdict.txt (29 adversarial outputs, 22 blocked; builder mutants red; 4 verifier mutants survived)
-- **Status:** BUILT (independent verification ACCEPT-WITH-NOTES: accepted pending press; flag-ON fixes required first — CL-02 holes D3.1 refused-corridor card endorsed, D3.2 control char, D3.3 allowed-word reassurance; tests for mutants X1–X4)
+- **Evidence:** Original B1-C handback/commit f87a92e3f plus root assistant-safety-handback.txt: six isolated regression mutants killed; 370 assistant tests pass including live-record continuity. Earlier verifier holes were repaired; independent rerun still pending.
+- **Status:** BUILT (assistant safety repairs tested; independent re-verification and production press pending)
 
 ### L115 — Map consumes the active snapshot and envelope geometry; does not recalculate feasibility
 - **Original requirement:** Map consumes the active snapshot and envelope geometry; does not recalculate feasibility (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1016,9 +1013,9 @@ above in every freed builder slot.
 - **Census lines read:** 3099, 11815
 - **Batch:** B2-MAP map and client
 - **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Migration:** Existing 3971/3856/2745 routing + applicable 3785/3633/canonical chain · **Tests:** actual adapter fixtures and mounted components, no paid provider calls · **Production dependency:** GOOGLE_MAPS_API_KEY, Routes API enablement, bounded route settings/flags and signed-device verification
+- **Evidence:** scratchpad/l165-b2-map-handback.txt: 79 API tests plus 3 real Google adapter fixture tests, 107 client tests, 130 dashboard tests and focused cache/refresh/native tests. Eleven client and four API mutants killed; redundant/masked survivors disclosed. The finite sampled polygon is not a certified continuous interior (L61 remains open).
+- **Status:** BLOCKED-EXTERNAL (implemented and locally tested; exact Google Routes deployment/credentials, migration and flag press plus applicable native-device evidence pending)
 
 ### L116 — Show safe/tight/blocked geography from certified envelope versions
 - **Original requirement:** Show safe/tight/blocked geography from certified envelope versions (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1030,8 +1027,8 @@ above in every freed builder slot.
 - **Batch:** B2-MAP map and client
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Evidence:** scratchpad/l165-b2-map-handback.txt. Actual server coordinates and bands, exact snapshot/expiry, dashed unfilled sampled boundary, explicit unknown sectors, cached selected/abort return contracts without expiry renewal. Native integration and regression mutants pass locally; continuous isochrone is not claimed.
+- **Status:** BUILT (server-owned geographic display and persistent cache tested; independent acceptance and applicable production/device evidence pending)
 
 ### L117 — Pins outside the certified action universe are hidden or visibly blocked
 - **Original requirement:** Pins outside the certified action universe are hidden or visibly blocked (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1055,9 +1052,9 @@ above in every freed builder slot.
 - **Census lines read:** 11809
 - **Batch:** B2-MAP map and client
 - **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Migration:** Existing 3971/3856/2745 routing + applicable 3785/3633/canonical chain · **Tests:** actual adapter fixtures and mounted components, no paid provider calls · **Production dependency:** GOOGLE_MAPS_API_KEY, Routes API enablement, bounded route settings/flags and signed-device verification
+- **Evidence:** scratchpad/l165-b2-map-handback.txt: 79 API tests plus 3 real Google adapter fixture tests, 107 client tests, 130 dashboard tests and focused cache/refresh/native tests. Eleven client and four API mutants killed; redundant/masked survivors disclosed. The finite sampled polygon is not a certified continuous interior (L61 remains open).
+- **Status:** BLOCKED-EXTERNAL (implemented and locally tested; exact Google Routes deployment/credentials, migration and flag press plus applicable native-device evidence pending)
 
 ### L119 — The primary route always includes the return leg and the return deadline
 - **Original requirement:** The primary route always includes the return leg and the return deadline (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1068,9 +1065,9 @@ above in every freed builder slot.
 - **Census lines read:** 7756
 - **Batch:** B2-MAP map and client
 - **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Migration:** Existing 3971/3856/2745 routing + applicable 3785/3633/canonical chain · **Tests:** actual adapter fixtures and mounted components, no paid provider calls · **Production dependency:** GOOGLE_MAPS_API_KEY, Routes API enablement, bounded route settings/flags and signed-device verification
+- **Evidence:** scratchpad/l165-b2-map-handback.txt: 79 API tests plus 3 real Google adapter fixture tests, 107 client tests, 130 dashboard tests and focused cache/refresh/native tests. Eleven client and four API mutants killed; redundant/masked survivors disclosed. The finite sampled polygon is not a certified continuous interior (L61 remains open).
+- **Status:** BLOCKED-EXTERNAL (implemented and locally tested; exact Google Routes deployment/credentials, migration and flag press plus applicable native-device evidence pending)
 
 ### L120 — When RETURN_NOW is active, suppress exploration-first affordances and prioritise airport route/gate
 - **Original requirement:** When RETURN_NOW is active, suppress exploration-first affordances and prioritise airport route/gate (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1080,10 +1077,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** airport data source
 - **Census lines read:** 3101, 9395 (§55.9)
 - **Batch:** B2-CURATE curation/maturity/entry
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B2-CURATE)
+- **Required correction:** Publish evidence-backed airport curation only after actual source review; do not fabricate transit, terminal, visa or overnight facts to fill the launch packet.
+- **Migration:** 3874 + 3880 where applicable · **Tests:** validation, publication, expiry and rollback workflow exercised on the migrated schema · **Production dependency:** reviewed source facts and authorized publication for launch airports
+- **Evidence:** scratchpad/l165-b2-curate-handback.txt and docs/ops/airport-curation/. FLL/DAD packets remain empty or unreachable; HND/NRT facts remain incomplete. Workflow is built; human review is not claimed.
+- **Status:** BLOCKED-EXTERNAL (actual reviewed airport facts and publication; no substitute facts or reviewer evidence invented)
 
 ### L121 — Map element Safe envelope — dynamic isochrone/polygon that contracts as conditions worsen
 - **Original requirement:** Map element Safe envelope — dynamic isochrone/polygon that contracts as conditions worsen (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1094,9 +1091,9 @@ above in every freed builder slot.
 - **Census lines read:** 7757, 11816
 - **Batch:** B2-MAP map and client
 - **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Migration:** Existing 3971/3856/2745 routing + applicable 3785/3633/canonical chain · **Tests:** actual adapter fixtures and mounted components, no paid provider calls · **Production dependency:** GOOGLE_MAPS_API_KEY, Routes API enablement, bounded route settings/flags and signed-device verification
+- **Evidence:** scratchpad/l165-b2-map-handback.txt: 79 API tests plus 3 real Google adapter fixture tests, 107 client tests, 130 dashboard tests and focused cache/refresh/native tests. Eleven client and four API mutants killed; redundant/masked survivors disclosed. The finite sampled polygon is not a certified continuous interior (L61 remains open).
+- **Status:** BLOCKED-EXTERNAL (implemented and locally tested; exact Google Routes deployment/credentials, migration and flag press plus applicable native-device evidence pending)
 
 ### L122 — Map element Candidate pin — carries feasibility state from the recommendation contract
 - **Original requirement:** Map element Candidate pin — carries feasibility state from the recommendation contract (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1158,10 +1155,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** new table (design ruling first)
 - **Census lines read:** 1424, 623
 - **Batch:** B2-CREW crew/consent/sensing/rides
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B2-CREW)
+- **Required correction:** Mutual consent and visibility, certified split plans, scoped presence, expiring offline proximity, adaptive sensing and standing abort authorization are enforced on reachable paths. Crew certification consumes the same live conditions.
+- **Migration:** 3872 + 3875 plus existing crew/consent chain · **Tests:** 55/55 migrated crew tests; 32 client suites/237 tests plus 48 cadence tests; isolated N1–N6 mutants killed · **Production dependency:** owner press and signed-device battery/location validation where applicable
+- **Evidence:** scratchpad/l165-b2-crew-handback.txt; P10 proves an official live queue shifts all crew/solo return deadlines by the same 40 minutes and invalidates an older split. Battery package matches Expo 54; device behavior remains unclaimed.
+- **Status:** BUILT (crew code and schema/client tests; independent verification and applicable device/production evidence pending)
 
 ### L134 — Explicit split plans (A leaves at T1, B/C continue to T2)
 - **Original requirement:** Explicit split plans (A leaves at T1, B/C continue to T2) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1171,10 +1168,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** new 3872 (layover_crew_plans/branches, FK 2984), routes/airport.ts crew routes, LayoverCrewStore.ts, client crew section
 - **Census lines read:** 1381, 10299 (§68)
 - **Batch:** B2-CREW crew/consent/sensing/rides
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B2-CREW)
+- **Required correction:** Mutual consent and visibility, certified split plans, scoped presence, expiring offline proximity, adaptive sensing and standing abort authorization are enforced on reachable paths. Crew certification consumes the same live conditions.
+- **Migration:** 3872 + 3875 plus existing crew/consent chain · **Tests:** 55/55 migrated crew tests; 32 client suites/237 tests plus 48 cadence tests; isolated N1–N6 mutants killed · **Production dependency:** owner press and signed-device battery/location validation where applicable
+- **Evidence:** scratchpad/l165-b2-crew-handback.txt; P10 proves an official live queue shifts all crew/solo return deadlines by the same 40 minutes and invalidates an older split. Battery package matches Expo 54; device behavior remains unclaimed.
+- **Status:** BUILT (crew code and schema/client tests; independent verification and applicable device/production evidence pending)
 
 ### L135 — Crew plan certified against every member branch
 - **Original requirement:** Crew plan certified against every member branch (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1184,10 +1181,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** new 3872 + same files as L134
 - **Census lines read:** 1382, 10299
 - **Batch:** B2-CREW crew/consent/sensing/rides
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B2-CREW)
+- **Required correction:** Mutual consent and visibility, certified split plans, scoped presence, expiring offline proximity, adaptive sensing and standing abort authorization are enforced on reachable paths. Crew certification consumes the same live conditions.
+- **Migration:** 3872 + 3875 plus existing crew/consent chain · **Tests:** 55/55 migrated crew tests; 32 client suites/237 tests plus 48 cadence tests; isolated N1–N6 mutants killed · **Production dependency:** owner press and signed-device battery/location validation where applicable
+- **Evidence:** scratchpad/l165-b2-crew-handback.txt; P10 proves an official live queue shifts all crew/solo return deadlines by the same 40 minutes and invalidates an older split. Battery package matches Expo 54; device behavior remains unclaimed.
+- **Status:** BUILT (crew code and schema/client tests; independent verification and applicable device/production evidence pending)
 
 ### L137 — Crew location sharing expires on dissolution, re-entry, boarding, session expiry or revocation
 - **Original requirement:** Crew location sharing expires on dissolution, re-entry, boarding, session expiry or revocation (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1212,8 +1209,8 @@ above in every freed builder slot.
 - **Batch:** B2-CREW crew/consent/sensing/rides
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B2-CREW)
+- **Evidence:** Crew handback implements an honest unavailable shared-ride contract without exposing itineraries. A real shared-ride product/provider contract is absent.
+- **Status:** BLOCKED-EXTERNAL (actual shared-ride provider/product contract; unavailable is not a completed opt-in ride)
 
 ### L143 — …terminal/gate context is pinned
 - **Original requirement:** …terminal/gate context is pinned (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1223,10 +1220,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** airport data source
 - **Census lines read:** 1388
 - **Batch:** B2-CURATE curation/maturity/entry
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B2-CURATE)
+- **Required correction:** Publish evidence-backed airport curation only after actual source review; do not fabricate transit, terminal, visa or overnight facts to fill the launch packet.
+- **Migration:** 3874 + 3880 where applicable · **Tests:** validation, publication, expiry and rollback workflow exercised on the migrated schema · **Production dependency:** reviewed source facts and authorized publication for launch airports
+- **Evidence:** scratchpad/l165-b2-curate-handback.txt and docs/ops/airport-curation/. FLL/DAD packets remain empty or unreachable; HND/NRT facts remain incomplete. Workflow is built; human review is not claimed.
+- **Status:** BLOCKED-EXTERNAL (actual reviewed airport facts and publication; no substitute facts or reviewer evidence invented)
 
 ### L144 — …crew/buddy is notified if policy + settings allow
 - **Original requirement:** …crew/buddy is notified if policy + settings allow (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1236,10 +1233,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** OQ-3 + 3786 flip
 - **Census lines read:** 11353
 - **Batch:** B2-CREW crew/consent/sensing/rides
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B2-CREW)
+- **Required correction:** Require a separate explicit choice for crew and booked Buddy abort notices. Resolve only current owned accepted bookings, check both-direction blocks and current sharing, and deduplicate atomically without disclosing identity, location or timing.
+- **Migration:** Existing3894 booking linkage and existing crew/specialist/Rent-a-Buddy flags; no new migration · **Tests:** 12 migrated specialist/notice cases,37 client cases,111 neighbors,7 isolated mutants killed; API/client production types clean and test baselines unchanged · **Production dependency:** owner activation, actual device delivery and applicable verified identity/payment configuration
+- **Evidence:** scratchpad/l165-b2-buddy-abort-handback.txt. Unticked tellBuddy choice is bound to this abort; five concurrent retries create one generic in-app notice. Wrong ownership/status, blocks, privacy failures, unreadable prerequisites, collision and late cancellation refuse. Notice failure leaves the return contract usable and reports an unconfirmed result honestly.
+- **Status:** BUILT (crew and booked Buddy authorization, delivery and client paths tested locally; final aggregate and production verification pending)
 
 ### L147 — The abort action cancels optional itinerary state, marks the session RETURNING, surfaces the fastest certified route, notifies crew/buddy flows, preserves the offline route/deadline, and records the transition in the decision ledger
 - **Original requirement:** The abort action cancels optional itinerary state, marks the session RETURNING, surfaces the fastest certified route, notifies crew/buddy flows, preserves the offline route/deadline, and records the transition in the decision ledger (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1264,8 +1261,8 @@ above in every freed builder slot.
 - **Batch:** B2-MAP map and client
 - **Required correction:** _to be filled by the lane_
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Evidence:** scratchpad/l165-b2-map-handback.txt. Actual server coordinates and bands, exact snapshot/expiry, dashed unfilled sampled boundary, explicit unknown sectors, cached selected/abort return contracts without expiry renewal. Native integration and regression mutants pass locally; continuous isochrone is not claimed.
+- **Status:** BUILT (server-owned geographic display and persistent cache tested; independent acceptance and applicable production/device evidence pending)
 
 ### L154 — Crew — cache meeting point; optional peer proximity
 - **Original requirement:** Crew — cache meeting point; optional peer proximity (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1275,10 +1272,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** layoverPlanCache.ts; 3996 + layover_crew_location_enabled
 - **Census lines read:** 8508
 - **Batch:** B2-CREW crew/consent/sensing/rides
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B2-CREW)
+- **Required correction:** Mutual consent and visibility, certified split plans, scoped presence, expiring offline proximity, adaptive sensing and standing abort authorization are enforced on reachable paths. Crew certification consumes the same live conditions.
+- **Migration:** 3872 + 3875 plus existing crew/consent chain · **Tests:** 55/55 migrated crew tests; 32 client suites/237 tests plus 48 cadence tests; isolated N1–N6 mutants killed · **Production dependency:** owner press and signed-device battery/location validation where applicable
+- **Evidence:** scratchpad/l165-b2-crew-handback.txt; P10 proves an official live queue shifts all crew/solo return deadlines by the same 40 minutes and invalidates an older split. Battery package matches Expo 54; device behavior remains unclaimed.
+- **Status:** BUILT (crew code and schema/client tests; independent verification and applicable device/production evidence pending)
 
 ### L155 — Translation — cache context phrases required by the active plan
 - **Original requirement:** Translation — cache context phrases required by the active plan (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1288,10 +1285,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** services/airport/layoverPhrases.ts, services/airport/LayoverDegradedService.ts, client LayoverOfflinePlanCard.tsx, layoverReturnFacts.ts
 - **Census lines read:** 9336
 - **Batch:** B3-ENGINE lifecycle/timing/engine refactor/phrases
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Required correction:** Provide localized per-stop destination and help phrases with explicit language choice, preserve proper names, and cache them with the active plan; obtain qualified review.
+- **Migration:** none · **Tests:** 49 API phrase/degraded/timing/policy tests;20 client cache/language tests; stop-context and language-selector mutants killed · **Production dependency:** qualified native-language reviewers for14 supported locales including English
+- **Evidence:** Review packet scratchpad/l165-b3-engine/review/native-language-review.json contains every template and sample context, with reviewer=null. Multilingual countries offer choices and unavailable languages remain unavailable. No qualified review was available or claimed.
+- **Status:** BLOCKED-EXTERNAL (localization and cache/UI tests delivered; actual qualified language review remains required)
 
 ### L157 — Adaptive sensing: low frequency when safe/stationary, moderate near decision boundaries, navigation-appropriate during RETURNING; avoid continuous GPS
 - **Original requirement:** Adaptive sensing: low frequency when safe/stationary, moderate near decision boundaries, navigation-appropriate during RETURNING; avoid continuous GPS (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1301,10 +1298,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** L164 ruling
 - **Census lines read:** 1394, 10540
 - **Batch:** B2-CREW crew/consent/sensing/rides
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B2-CREW)
+- **Required correction:** Mutual consent and visibility, certified split plans, scoped presence, expiring offline proximity, adaptive sensing and standing abort authorization are enforced on reachable paths. Crew certification consumes the same live conditions.
+- **Migration:** 3872 + 3875 plus existing crew/consent chain · **Tests:** 55/55 migrated crew tests; 32 client suites/237 tests plus 48 cadence tests; isolated N1–N6 mutants killed · **Production dependency:** owner press and signed-device battery/location validation where applicable
+- **Evidence:** scratchpad/l165-b2-crew-handback.txt; P10 proves an official live queue shifts all crew/solo return deadlines by the same 40 minutes and invalidates an older split. Battery package matches Expo 54; device behavior remains unclaimed.
+- **Status:** BUILT (crew code and schema/client tests; independent verification and applicable device/production evidence pending)
 
 ### L163 — Decision ledger — retained per safety/diagnostic policy; minimise direct personal data
 - **Original requirement:** Decision ledger — retained per safety/diagnostic policy; minimise direct personal data (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1353,10 +1350,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** new LayoverFeasibilityService entry; 2700/2992/3792 + persistence
 - **Census lines read:** 711
 - **Batch:** B2-RECS recommendations/snapshots/contracts
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Required correction:** The dashboard main route must call the shared evaluation service and reuse its persisted canonical identity across later safety/dashboard reads.
+- **Migration:** 3873/3896 plus existing canonical chain · **Tests:** Independent dashboard/vocabulary5/5; bypass-evaluate isolated router mutant killed; canonical rollback8/8 plus14 existing tests · **Production dependency:** owner activation and original row-specific external evidence
+- **Evidence:** l165-canonical-verification-handback.txt. Actual migrated HTTP stores exactly one row matching snapshotId/inputHash; later reads reuse it and foreign owner refuses. Mutant emits200 but no stored row and fails the same invariant.
+- **Status:** BUILT (independent local shared-evaluation proof passed; real PostgreSQL CI and production activation pending)
 
 ### L176 — LayoverFeasibilityService.certifyRecommendation(sessionId, candidatePlan)
 - **Original requirement:** LayoverFeasibilityService.certifyRecommendation(sessionId, candidatePlan) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1367,9 +1364,9 @@ above in every freed builder slot.
 - **Census lines read:** 1395
 - **Batch:** B2-RECS recommendations/snapshots/contracts
 - **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Migration:** Existing canonical/routing chain; no new RECS-B migration · **Tests:** full migrated schema and actual owner HTTP endpoints · **Production dependency:** canonical/routing flags, approved provider and mature airport evidence
+- **Evidence:** scratchpad/l165-b2-recsb-handback.txt: 195 adjacent tests; final executable and real-schema API tests 17/17. Actual future arbitrary-origin hops, canonical ownership, in-flight block refusal and second GET at +100ms are exercised. No real provider or production activation claim.
+- **Status:** BUILT (executable contracts and ordered experience compilation pass local migrated-schema tests; independent acceptance and production press pending)
 
 ### L178 — TemporalFreedomService.calculateCommitmentEnvelope(context)
 - **Original requirement:** TemporalFreedomService.calculateCommitmentEnvelope(context) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1380,9 +1377,9 @@ above in every freed builder slot.
 - **Census lines read:** 4423, 5742 (§23.3)
 - **Batch:** B2-RECS recommendations/snapshots/contracts
 - **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Migration:** Existing canonical/routing chain; no new RECS-B migration · **Tests:** full migrated schema and actual owner HTTP endpoints · **Production dependency:** canonical/routing flags, approved provider and mature airport evidence
+- **Evidence:** scratchpad/l165-b2-recsb-handback.txt: 195 adjacent tests; final executable and real-schema API tests 17/17. Actual future arbitrary-origin hops, canonical ownership, in-flight block refusal and second GET at +100ms are exercised. No real provider or production activation claim.
+- **Status:** BUILT (executable contracts and ordered experience compilation pass local migrated-schema tests; independent acceptance and production press pending)
 
 ### L180 — AirportTruthService.getTruth(subject, factType, atTime)
 - **Original requirement:** AirportTruthService.getTruth(subject, factType, atTime) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1392,10 +1389,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** LayoverAirportTruth.ts, LayoverObservationService.ts; 3513
 - **Census lines read:** 1839
 - **Batch:** B2-LIVE live intelligence
-- **Required correction:** _to be filled by the lane_
+- **Required correction:** Screened live signals, freshness/conflict handling and traffic estimation feed certified decisions. Compass and crew now retain the same live certification; stale or conflicting evidence cannot silently improve confidence.
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B2-LIVE)
+- **Evidence:** Saved B2-LIVE handback plus root live-compass-red/green logs (10/10 migrated tests) and crew P10. E9 failed with a 40-minute unsafe deadline difference before the fix; shared certified records and clarification counterfactuals now preserve live conditions.
+- **Status:** BUILT (live processing and continuity tests; independent verification and required live feed/production evidence pending)
 
 ### L181 — AirportTruthService.reconcile(observations)
 - **Original requirement:** AirportTruthService.reconcile(observations) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1419,9 +1416,9 @@ above in every freed builder slot.
 - **Census lines read:** 3918
 - **Batch:** B2-RECS recommendations/snapshots/contracts
 - **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Migration:** Existing canonical/routing chain; no new RECS-B migration · **Tests:** full migrated schema and actual owner HTTP endpoints · **Production dependency:** canonical/routing flags, approved provider and mature airport evidence
+- **Evidence:** scratchpad/l165-b2-recsb-handback.txt: 195 adjacent tests; final executable and real-schema API tests 17/17. Actual future arbitrary-origin hops, canonical ownership, in-flight block refusal and second GET at +100ms are exercised. No real provider or production activation claim.
+- **Status:** BUILT (executable contracts and ordered experience compilation pass local migrated-schema tests; independent acceptance and production press pending)
 
 ### L183 — LayoverExperienceService.compile(sessionId, candidateIds)
 - **Original requirement:** LayoverExperienceService.compile(sessionId, candidateIds) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1432,9 +1429,9 @@ above in every freed builder slot.
 - **Census lines read:** 3918, 719
 - **Batch:** B2-RECS recommendations/snapshots/contracts
 - **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Migration:** Existing canonical/routing chain; no new RECS-B migration · **Tests:** full migrated schema and actual owner HTTP endpoints · **Production dependency:** canonical/routing flags, approved provider and mature airport evidence
+- **Evidence:** scratchpad/l165-b2-recsb-handback.txt: 195 adjacent tests; final executable and real-schema API tests 17/17. Actual future arbitrary-origin hops, canonical ownership, in-flight block refusal and second GET at +100ms are exercised. No real provider or production activation claim.
+- **Status:** BUILT (executable contracts and ordered experience compilation pass local migrated-schema tests; independent acceptance and production press pending)
 
 ### L187 — LayoverCrewService.updatePresence(sessionId, input)
 - **Original requirement:** LayoverCrewService.updatePresence(sessionId, input) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1483,10 +1480,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** schema decision
 - **Census lines read:** 733
 - **Batch:** B2-RECS recommendations/snapshots/contracts
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Required correction:** Use TEXT with complete CHECK vocabularies and RLS, per the owner directive; reject invalid values and unauthorized reads/writes on the real schema.
+- **Migration:** Existing core/session migrations including3827; no new enum type · **Tests:** Independent dashboard/vocabulary5/5; dropped-CHECK and opened-policy mutants killed/restored · **Production dependency:** owner activation and original row-specific external evidence
+- **Evidence:** l165-canonical-verification-handback.txt. All seven vocabulary columns and17 lifecycle states checked; actual invalid inserts refused, own read succeeds, foreign read is empty and protected-state client writes refuse.
+- **Status:** BUILT (independent migrated vocabulary/RLS proof passed; final PostgreSQL CI and production verification pending)
 
 ### L194 — 3. Create events + checkpoints with dedup indexes
 - **Original requirement:** 3. Create events + checkpoints with dedup indexes (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1587,10 +1584,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** ruling (revisit L205)
 - **Census lines read:** 748, 9328
 - **Batch:** B2-CREW crew/consent/sensing/rides
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B2-CREW)
+- **Required correction:** Mutual consent and visibility, certified split plans, scoped presence, expiring offline proximity, adaptive sensing and standing abort authorization are enforced on reachable paths. Crew certification consumes the same live conditions.
+- **Migration:** 3872 + 3875 plus existing crew/consent chain · **Tests:** 55/55 migrated crew tests; 32 client suites/237 tests plus 48 cadence tests; isolated N1–N6 mutants killed · **Production dependency:** owner press and signed-device battery/location validation where applicable
+- **Evidence:** scratchpad/l165-b2-crew-handback.txt; P10 proves an official live queue shifts all crew/solo return deadlines by the same 40 minutes and invalidates an older split. Battery package matches Expo 54; device behavior remains unclaimed.
+- **Status:** BUILT (crew code and schema/client tests; independent verification and applicable device/production evidence pending)
 
 ### L204 — Aggregated airport intelligence must not leak raw user identifiers
 - **Original requirement:** Aggregated airport intelligence must not leak raw user identifiers (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1600,10 +1597,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** L243 ruling + 2977
 - **Census lines read:** 7763, 7782
 - **Batch:** B2-CURATE curation/maturity/entry
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B2-CURATE)
+- **Required correction:** Validated provenance, expiry and conflict-aware curation; confirmed entry facts; live evidence and time-band calibration feed actual maturity admission. Missing schema explicitly refuses feature queries.
+- **Migration:** 3874 + 3880 and existing prerequisite chain · **Tests:** curation agent handback; 74 focused and 15 migrated workflow/rollback tests; root readiness boundary 5 unit tests and workflow W15 (16/16 total) · **Production dependency:** owner press, validated airport facts and existing live-provider dependencies
+- **Evidence:** scratchpad/l165-b2-curate-handback.txt; curation readiness logs in /private/tmp/codex-layover-resume-20261019/; three isolated curation mutants killed. Real route reaches L4 only with qualifying official, crowd and calibrated evidence.
+- **Status:** BUILT (curation implementation and migrated tests; independent acceptance verification and production press pending)
 
 ### L205 — Service-role processing should be narrow and auditable
 - **Original requirement:** Service-role processing should be narrow and auditable (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1613,10 +1610,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** ruling (revisit)
 - **Census lines read:** 751, 9480
 - **Batch:** B2-PLATFORM metrics/audit/real-schema/typed reads
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Required correction:** Verified HTTP identity or explicit system identity accompanies protected service writes. Migration 3890 installs atomic minimal service audit triggers on all present layover tables when activated, refuses unscoped writes, scrubs deleted accounts, and expires records after 30 days.
+- **Migration:** 3890 FALSE audit rollout with guarded activation after all tables exist, plus refusing rollback · **Tests:** independent audit boundary/retention36/36 including7 new actual database cases; rollback/full catalog9/9;23 forged foreign HTTP probes and removed-filter mutant · **Production dependency:** owner press and final PostgreSQL/CI verification
+- **Evidence:** scratchpad/l165-l205-independent-handback.txt. Reusing a previously awaited service builder outside its actor context reproduced an unauthorized write; headers now overwrite/clear on every await. Foreign requests have zero effects, concurrent actors retain separate identity, trigger activation is atomic, and actual account erasure scrubs actor/session identifiers while preserving unrelated audit records. Audit activation covers tables present at activation and must run after schema completion.
+- **Status:** BUILT (independent service-boundary, actor-scope and deletion proofs passed; final PostgreSQL/CI and production activation pending)
 
 ### L206 — Every material recomputation creates a deterministic snapshot and decision record
 - **Original requirement:** Every material recomputation creates a deterministic snapshot and decision record (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1652,10 +1649,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** OQ-8
 - **Census lines read:** 759, 12158
 - **Batch:** B2-PLATFORM metrics/audit/real-schema/typed reads
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Required correction:** Use distinct eligible sessions for replan rates, actual return-start and airport-arrival evidence, stale provenance and contract-violation counts. Unknown/truncated sources remain unproducible; bounded periodic collection exports replacing window gauges and sends deduplicated zero-target alerts with visible scheduler health.
+- **Migration:** Existing 2992 and 3893 measured schema readiness · **Tests:** 7/7 migrated metrics, 9 value/monitoring tests, 39 window-read checks and scheduler integration tests · **Production dependency:** deployed scheduler plus configured Sentry and/or Pushgateway destination
+- **Evidence:** /private/tmp/codex-layover-resume-20261019/metrics-db-final.log and platform-inventory-health-final.log. Actual route/return/reentry/replan rows and contract violations exercised. External delivery remains not_configured/log_only where credentials are absent.
+- **Status:** BUILT (operational metrics, protected export, scheduler and alerts pass local tests; independent and deployment verification pending)
 
 ### L212 — Metric replan_rate
 - **Original requirement:** Metric replan_rate (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1665,10 +1662,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** OQ-8 (+ code in layoverObservability.ts)
 - **Census lines read:** 2287
 - **Batch:** B2-PLATFORM metrics/audit/real-schema/typed reads
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Required correction:** Use distinct eligible sessions for replan rates, actual return-start and airport-arrival evidence, stale provenance and contract-violation counts. Unknown/truncated sources remain unproducible; bounded periodic collection exports replacing window gauges and sends deduplicated zero-target alerts with visible scheduler health.
+- **Migration:** Existing 2992 and 3893 measured schema readiness · **Tests:** 7/7 migrated metrics, 9 value/monitoring tests, 39 window-read checks and scheduler integration tests · **Production dependency:** deployed scheduler plus configured Sentry and/or Pushgateway destination
+- **Evidence:** /private/tmp/codex-layover-resume-20261019/metrics-db-final.log and platform-inventory-health-final.log. Actual route/return/reentry/replan rows and contract violations exercised. External delivery remains not_configured/log_only where credentials are absent.
+- **Status:** BUILT (operational metrics, protected export, scheduler and alerts pass local tests; independent and deployment verification pending)
 
 ### L214 — Metric safe_return_completion_rate
 - **Original requirement:** Metric safe_return_completion_rate (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1678,10 +1675,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** OQ-8 + 2992 press
 - **Census lines read:** 3909
 - **Batch:** B2-PLATFORM metrics/audit/real-schema/typed reads
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Required correction:** Use distinct eligible sessions for replan rates, actual return-start and airport-arrival evidence, stale provenance and contract-violation counts. Unknown/truncated sources remain unproducible; bounded periodic collection exports replacing window gauges and sends deduplicated zero-target alerts with visible scheduler health.
+- **Migration:** Existing 2992 and 3893 measured schema readiness · **Tests:** 7/7 migrated metrics, 9 value/monitoring tests, 39 window-read checks and scheduler integration tests · **Production dependency:** deployed scheduler plus configured Sentry and/or Pushgateway destination
+- **Evidence:** /private/tmp/codex-layover-resume-20261019/metrics-db-final.log and platform-inventory-health-final.log. Actual route/return/reentry/replan rows and contract violations exercised. External delivery remains not_configured/log_only where credentials are absent.
+- **Status:** BUILT (operational metrics, protected export, scheduler and alerts pass local tests; independent and deployment verification pending)
 
 ### L215 — Metric stale_fallback_rate
 - **Original requirement:** Metric stale_fallback_rate (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1691,10 +1688,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** OQ-8 + 2700/2992 press
 - **Census lines read:** 9788
 - **Batch:** B2-PLATFORM metrics/audit/real-schema/typed reads
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Required correction:** Use distinct eligible sessions for replan rates, actual return-start and airport-arrival evidence, stale provenance and contract-violation counts. Unknown/truncated sources remain unproducible; bounded periodic collection exports replacing window gauges and sends deduplicated zero-target alerts with visible scheduler health.
+- **Migration:** Existing 2992 and 3893 measured schema readiness · **Tests:** 7/7 migrated metrics, 9 value/monitoring tests, 39 window-read checks and scheduler integration tests · **Production dependency:** deployed scheduler plus configured Sentry and/or Pushgateway destination
+- **Evidence:** /private/tmp/codex-layover-resume-20261019/metrics-db-final.log and platform-inventory-health-final.log. Actual route/return/reentry/replan rows and contract violations exercised. External delivery remains not_configured/log_only where credentials are absent.
+- **Status:** BUILT (operational metrics, protected export, scheduler and alerts pass local tests; independent and deployment verification pending)
 
 ### L216 — Metric recommendation_contract_violation, target 0
 - **Original requirement:** Metric recommendation_contract_violation, target 0 (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1704,10 +1701,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** OQ-8 + 3623 press
 - **Census lines read:** 10917
 - **Batch:** B2-PLATFORM metrics/audit/real-schema/typed reads
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Required correction:** Use distinct eligible sessions for replan rates, actual return-start and airport-arrival evidence, stale provenance and contract-violation counts. Unknown/truncated sources remain unproducible; bounded periodic collection exports replacing window gauges and sends deduplicated zero-target alerts with visible scheduler health.
+- **Migration:** Existing 2992 and 3893 measured schema readiness · **Tests:** 7/7 migrated metrics, 9 value/monitoring tests, 39 window-read checks and scheduler integration tests · **Production dependency:** deployed scheduler plus configured Sentry and/or Pushgateway destination
+- **Evidence:** /private/tmp/codex-layover-resume-20261019/metrics-db-final.log and platform-inventory-health-final.log. Actual route/return/reentry/replan rows and contract violations exercised. External delivery remains not_configured/log_only where credentials are absent.
+- **Status:** BUILT (operational metrics, protected export, scheduler and alerts pass local tests; independent and deployment verification pending)
 
 ### L220 — 4h international, visa allowed → potential landside depending on airport model
 - **Original requirement:** 4h international, visa allowed → potential landside depending on airport model (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1717,10 +1714,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** airport data source
 - **Census lines read:** 9025
 - **Batch:** B2-CURATE curation/maturity/entry
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B2-CURATE)
+- **Required correction:** Publish evidence-backed airport curation only after actual source review; do not fabricate transit, terminal, visa or overnight facts to fill the launch packet.
+- **Migration:** 3874 + 3880 where applicable · **Tests:** validation, publication, expiry and rollback workflow exercised on the migrated schema · **Production dependency:** reviewed source facts and authorized publication for launch airports
+- **Evidence:** scratchpad/l165-b2-curate-handback.txt and docs/ops/airport-curation/. FLL/DAD packets remain empty or unreachable; HND/NRT facts remain incomplete. Workflow is built; human review is not claimed.
+- **Status:** BLOCKED-EXTERNAL (actual reviewed airport facts and publication; no substitute facts or reviewer evidence invented)
 
 ### L221 — 6h visa-free → landside + return contract
 - **Original requirement:** 6h visa-free → landside + return contract (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1731,9 +1728,9 @@ above in every freed builder slot.
 - **Census lines read:** 7753
 - **Batch:** B1-R1 routing (server)
 - **Required correction:** Google Routes wired on GET /recommendations and the Discovery universe with §8 routed terms (LayoverRoutedFeasibility.ts).
-- **Migration:** 3856_layover_routes_session_budget.sql (+3971, 2745 in the press) · **Tests:** layoverRoutedFeasibility / layoverRoutedRecommendationsRoute / layoverRoutedUniverse / layoverRoutedProviderContract / layoverRoutesSessionBudget (90 cases, 44 mutants) · **Production dependency:** Routes API enabled; LAYOVER_ROUTED_CORRIDOR_ENABLED + ROUTES_API_DAILY_*; 3971, 3856, 2745; layover_routed_corridor_enabled ON
-- **Evidence:** lane B1-R1 handback §2; census-layover section "lanes B1-R1 and B1-P"
-- **Status:** IN PROGRESS (recommendation return contract with route built by B1-R1; abort contract route queued to lane B2-BUDDY)
+- **Migration:** 3893 FALSE product rollout and rollback · **Tests:** 16 migrated product/abort tests, 64 client tests, 207 adjacent tests, 15 isolated mutants killed; rollback in two orders · **Production dependency:** owner press, live Routes for measured abort routes and existing explicit contact-consent flow
+- **Evidence:** scratchpad/l165-b2-buddy-handback.txt: actual fresh origin, fixed canonical deadline, explicit consent, pending-to-active return start, no generic extend/confirm bypass, airport-reentry close, scheduler due-claim and deadline tightening. Missing provider/expiry stays unavailable without preventing abort.
+- **Status:** BUILT (routed abort and certified linked Safe Return implemented; independent acceptance and provider/production evidence pending)
 
 ### L223 — Overnight → overnight state / expanded options
 - **Original requirement:** Overnight → overnight state / expanded options (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1743,10 +1740,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** data-source decision
 - **Census lines read:** 784, 9403 (§55.9)
 - **Batch:** B2-CURATE curation/maturity/entry
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B2-CURATE)
+- **Required correction:** Publish evidence-backed airport curation only after actual source review; do not fabricate transit, terminal, visa or overnight facts to fill the launch packet.
+- **Migration:** 3874 + 3880 where applicable · **Tests:** validation, publication, expiry and rollback workflow exercised on the migrated schema · **Production dependency:** reviewed source facts and authorized publication for launch airports
+- **Evidence:** scratchpad/l165-b2-curate-handback.txt and docs/ops/airport-curation/. FLL/DAD packets remain empty or unreachable; HND/NRT facts remain incomplete. Workflow is built; human review is not claimed.
+- **Status:** BLOCKED-EXTERNAL (actual reviewed airport facts and publication; no substitute facts or reviewer evidence invented)
 
 ### L227 — Security spike → envelope contracts monotonically
 - **Original requirement:** Security spike → envelope contracts monotonically (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1756,10 +1753,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** live-signal producer decision
 - **Census lines read:** 1843
 - **Batch:** B2-LIVE live intelligence
-- **Required correction:** _to be filled by the lane_
+- **Required correction:** Screened live signals, freshness/conflict handling and traffic estimation feed certified decisions. Compass and crew now retain the same live certification; stale or conflicting evidence cannot silently improve confidence.
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B2-LIVE)
+- **Evidence:** Saved B2-LIVE handback plus root live-compass-red/green logs (10/10 migrated tests) and crew P10. E9 failed with a 40-minute unsafe deadline difference before the fix; shared certified records and clarification counterfactuals now preserve live conditions.
+- **Status:** BUILT (live processing and continuity tests; independent verification and required live feed/production evidence pending)
 
 ### L228 — Traffic spike → return deadline moves earlier
 - **Original requirement:** Traffic spike → return deadline moves earlier (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1769,10 +1766,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** live-signal producer decision
 - **Census lines read:** 1844
 - **Batch:** B2-LIVE live intelligence
-- **Required correction:** _to be filled by the lane_
+- **Required correction:** Screened live signals, freshness/conflict handling and traffic estimation feed certified decisions. Compass and crew now retain the same live certification; stale or conflicting evidence cannot silently improve confidence.
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B2-LIVE)
+- **Evidence:** Saved B2-LIVE handback plus root live-compass-red/green logs (10/10 migrated tests) and crew P10. E9 failed with a 40-minute unsafe deadline difference before the fix; shared certified records and clarification counterfactuals now preserve live conditions.
+- **Status:** BUILT (live processing and continuity tests; independent verification and required live feed/production evidence pending)
 
 ### L233 — Offline after leaving → cached return plan remains visible with a stale indicator
 - **Original requirement:** Offline after leaving → cached return plan remains visible with a stale indicator (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1795,10 +1792,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** lead U-1 ruling + CI evidence
 - **Census lines read:** 12318
 - **Batch:** B2-PLATFORM metrics/audit/real-schema/typed reads
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Required correction:** Generate query/select/literal/route inventories from production source. Against the full migrated schema, execute every resolved select variant, validate write-column shapes, catalog literals and RLS; refuse stale inventories, unresolved queries and missing initial authorization.
+- **Migration:** Complete local migration chain through 3999 · **Tests:** 5/5 actual schema/select/write-shape/literal/RLS tests, 2/2 inventory controls, 87 unauthorized endpoint checks · **Production dependency:** green real PostgreSQL CI and independent full-path acceptance
+- **Evidence:** /private/tmp/codex-layover-resume-20261019/query-schema-final.log, query-inventory-guard.log, service-auth-routes-final.log. Runtime payloads, every RPC execution and every ownership path are not inferred from catalog checks. PGlite is actual schema evidence, not claimed as a green production/CI run.
+- **Status:** IN PROGRESS (local schema/query evidence complete at recorded stage; real PostgreSQL CI and full-path independent verification pending)
 
 ### L238 — Integration tests for event → replan → snapshot → invalidation → notification
 - **Original requirement:** Integration tests for event → replan → snapshot → invalidation → notification (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1873,10 +1870,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** L243 owner decision
 - **Census lines read:** 5730, 5758
 - **Batch:** B2-CURATE curation/maturity/entry
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B2-CURATE)
+- **Required correction:** Validated provenance, expiry and conflict-aware curation; confirmed entry facts; live evidence and time-band calibration feed actual maturity admission. Missing schema explicitly refuses feature queries.
+- **Migration:** 3874 + 3880 and existing prerequisite chain · **Tests:** curation agent handback; 74 focused and 15 migrated workflow/rollback tests; root readiness boundary 5 unit tests and workflow W15 (16/16 total) · **Production dependency:** owner press, validated airport facts and existing live-provider dependencies
+- **Evidence:** scratchpad/l165-b2-curate-handback.txt; curation readiness logs in /private/tmp/codex-layover-resume-20261019/; three isolated curation mutants killed. Real route reaches L4 only with qualifying official, crowd and calibrated evidence.
+- **Status:** BUILT (curation implementation and migrated tests; independent acceptance verification and production press pending)
 
 ### L246 — L3 Portava observed — recent Portava operational observations available
 - **Original requirement:** L3 Portava observed — recent Portava operational observations available (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1886,10 +1883,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** L243 ruling + 2977; live producer
 - **Census lines read:** 7764
 - **Batch:** B2-CURATE curation/maturity/entry
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B2-CURATE)
+- **Required correction:** Validated provenance, expiry and conflict-aware curation; confirmed entry facts; live evidence and time-band calibration feed actual maturity admission. Missing schema explicitly refuses feature queries.
+- **Migration:** 3874 + 3880 and existing prerequisite chain · **Tests:** curation agent handback; 74 focused and 15 migrated workflow/rollback tests; root readiness boundary 5 unit tests and workflow W15 (16/16 total) · **Production dependency:** owner press, validated airport facts and existing live-provider dependencies
+- **Evidence:** scratchpad/l165-b2-curate-handback.txt; curation readiness logs in /private/tmp/codex-layover-resume-20261019/; three isolated curation mutants killed. Real route reaches L4 only with qualifying official, crowd and calibrated evidence.
+- **Status:** BUILT (curation implementation and migrated tests; independent acceptance verification and production press pending)
 
 ### L247 — L4 Calibrated — prediction errors measured, model calibrated by airport/time band
 - **Original requirement:** L4 Calibrated — prediction errors measured, model calibrated by airport/time band (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1899,10 +1896,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** LayoverAirportTruth.ts; 2992, 3513
 - **Census lines read:** 1845, 10943
 - **Batch:** B2-CURATE curation/maturity/entry
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B2-CURATE)
+- **Required correction:** Validated provenance, expiry and conflict-aware curation; confirmed entry facts; live evidence and time-band calibration feed actual maturity admission. Missing schema explicitly refuses feature queries.
+- **Migration:** 3874 + 3880 and existing prerequisite chain · **Tests:** curation agent handback; 74 focused and 15 migrated workflow/rollback tests; root readiness boundary 5 unit tests and workflow W15 (16/16 total) · **Production dependency:** owner press, validated airport facts and existing live-provider dependencies
+- **Evidence:** scratchpad/l165-b2-curate-handback.txt; curation readiness logs in /private/tmp/codex-layover-resume-20261019/; three isolated curation mutants killed. Real route reaches L4 only with qualifying official, crowd and calibrated evidence.
+- **Status:** BUILT (curation implementation and migrated tests; independent acceptance verification and production press pending)
 
 ### L249 — Enable features per airport maturity
 - **Original requirement:** Enable features per airport maturity (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1912,10 +1909,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** L243 ruling + 2977
 - **Census lines read:** 7765
 - **Batch:** B2-CURATE curation/maturity/entry
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B2-CURATE)
+- **Required correction:** Validated provenance, expiry and conflict-aware curation; confirmed entry facts; live evidence and time-band calibration feed actual maturity admission. Missing schema explicitly refuses feature queries.
+- **Migration:** 3874 + 3880 and existing prerequisite chain · **Tests:** curation agent handback; 74 focused and 15 migrated workflow/rollback tests; root readiness boundary 5 unit tests and workflow W15 (16/16 total) · **Production dependency:** owner press, validated airport facts and existing live-provider dependencies
+- **Evidence:** scratchpad/l165-b2-curate-handback.txt; curation readiness logs in /private/tmp/codex-layover-resume-20261019/; three isolated curation mutants killed. Real route reaches L4 only with qualifying official, crowd and calibrated evidence.
+- **Status:** BUILT (curation implementation and migrated tests; independent acceptance verification and production press pending)
 
 ### L251 — Rate-limit and trust-weight community operational observations
 - **Original requirement:** Rate-limit and trust-weight community operational observations (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1977,10 +1974,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** flight-data decision, then migration
 - **Census lines read:** 7892
 - **Batch:** B1-F flight data
-- **Required correction:** Flight-subject fan-out axis built (indexes, role-aware match)
-- **Migration:** 3826, 3827, 3828 (+ rollbacks; 21/21 proofs; order-independent, 0/24,989 keys differ) · **Tests:** layoverFlightConnections (unit 25), layoverFlightConnectionsRoutes (4), db/layoverFlightConnections.db.test.ts (17, full chain), client 12; 31 mutants killed · **Production dependency:** press 3826 then 3827; 3828 after 2700/2992/3623; trip_flight_segments_enabled + layover_flight_connections_enabled ON
-- **Evidence:** lane B1-F handback §1; census-layover section 'lane B1-F'
-- **Status:** IN PROGRESS (flight axis built by B1-F; route axis not built: no route column — queued)
+- **Required correction:** Maintain atomic opaque route watches alongside recommendation and stop writes; index airport, route and flight subjects and recompute affected active/returning sessions. Complete durable high-fanout continuation.
+- **Migration:** 3895 FALSE layover_route_subjects_enabled; stable private LAYOVER_ROUTE_SUBJECT_HMAC_SECRET; 3908 FALSE layover_route_fanout_enabled (requires seven existing route/canonical flags), private RLS tables layover_route_dispatches/layover_route_work, guarded definer RPC writes · **Tests:** 10/10 unit+migrated, 92/92 neighbors, 7 mutants (3895); route fanout 24/24 on PostgreSQL 17, 10 mutants killed with source bytes restored; registered full-catalog rollbacks for 3895 and 3908 in both installation orders 4/4 (`layoverRouteMigrations.db.test.ts`) · **Production dependency:** owner activation and original row-specific external evidence
+- **Evidence:** l165-b2-route-handback.txt. Watches survive snapshot changes, source recommendation deletion and compaction; failed watch write rolls back its recommendation. 3908 replaces the >200-match refusal with durable fanout: at most 200 preparations per tick, keyset paging, leased work with retry/backoff and expired-lease recovery, owner/session/watch revision checks and explicit obsolete reasons. Canonical computation, children, supersession, event ledger and work checkpoint commit atomically; a source event settles only after a complete scan. Mixed route/non-route envelopes stay refused and unclaimed. `completed.notifications` counts notification decisions, not deliveries.
+- **Status:** BUILT (atomic route dependency, durable bounded fanout and retry proved on PostgreSQL 17; production activation pending)
 
 ### L260 — Candidate explosion — pre-filter by envelope/time/category before expensive ranking
 - **Original requirement:** Candidate explosion — pre-filter by envelope/time/category before expensive ranking (the census body row quotes the spec; the full wording is at the row's census line).
@@ -2016,10 +2013,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** new 3873, LayoverDecisionStore.ts persistDecision
 - **Census lines read:** 845
 - **Batch:** B2-RECS recommendations/snapshots/contracts
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Required correction:** Canonical persisted snapshot selection, guarded compare-and-swap publication, immutable decision history and recommendation supersession are connected; failed history refuses regeneration and stale candidates cannot overwrite a newer version.
+- **Migration:** 3871 + 3873 + 3896 and existing 2700/2992/3623/3828 dependencies · **Tests:** 196 targeted tests; 8 canonical migrated tests; rollback catalog/row round trips, repeat/reapply and refusal cases; pressed-final 17/17 · **Production dependency:** owner migration/flag press
+- **Evidence:** scratchpad/l165-b2-recsa-handback.txt. PGlite interleaving proved; real two-connection PostgreSQL contention branch awaits CI evidence. Full surface identifier matrix and independent mutants remain open.
+- **Status:** BUILT (canonical snapshot and history batch; independent verification and production press pending)
 
 ### L267 — Trips — detect connection; show Layover card/status; pass flight segments into session creation
 - **Original requirement:** Trips — detect connection; show Layover card/status; pass flight segments into session creation (the census body row quotes the spec; the full wording is at the row's census line).
@@ -2031,7 +2028,7 @@ above in every freed builder slot.
 - **Batch:** B1-F flight data
 - **Required correction:** Trips detects connections, shows the Layover card, passes both segments into session creation (server re-detects)
 - **Migration:** 3826, 3827, 3828 (+ rollbacks; 21/21 proofs; order-independent, 0/24,989 keys differ) · **Tests:** layoverFlightConnections (unit 25), layoverFlightConnectionsRoutes (4), db/layoverFlightConnections.db.test.ts (17, full chain), client 12; 31 mutants killed · **Production dependency:** press 3826 then 3827; 3828 after 2700/2992/3623; trip_flight_segments_enabled + layover_flight_connections_enabled ON
-- **Evidence:** lane B1-F handback §1; census-layover section 'lane B1-F'
+- **Evidence:** Original B1-F connection/card proof plus scratchpad/l165-flight-terminal-handback.txt: initial and idempotent connection responses project only owned current linked flight observations; terminal-only updates recertify the session and invalidate inapplicable timing. PGlite2/2 and PostgreSQL17 terminal+harness5/5 pass; no licensed status feed or deployment claimed.
 - **Status:** BUILT (lane B1-F; independent verification pending; W until the press)
 
 ### L268 — Compass — tool access to certified context; proactive OpportunityEvents; explanation/clarification
@@ -2044,8 +2041,8 @@ above in every freed builder slot.
 - **Batch:** B1-C assistant
 - **Required correction:** Tool access, proactive operational events and explanation/clarification on the layover door.
 - **Migration:** 3846_layover_compass_assistant_flag.sql (flag seeded FALSE; rollback db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql, proven on PGlite) · **Tests:** layoverCompassAssistant.test.ts 356/356; layoverCompassToolLoop.test.ts 51/51 (10 flag-ON); six older compass suites unchanged; real-schema src/test/db/layoverCompassAssistant.db.test.ts 6/6 pressed, flag-off/absent arms red (lands with the shared harness); 23 mutants killed · **Production dependency:** owner press: apply 3846, turn layover_compass_assistant_enabled ON; AI_INTEGRATIONS_OPENAI_BASE_URL / _API_KEY (already used by Compass)
-- **Evidence:** lane B1-C handback; commit f87a92e3f; Fable verdict scratchpad/fable-b1c/verdict.txt (29 adversarial outputs, 22 blocked; builder mutants red; 4 verifier mutants survived)
-- **Status:** BUILT (independent verification ACCEPT-WITH-NOTES: accepted pending press; flag-ON fixes required first — CL-02 holes D3.1 refused-corridor card endorsed, D3.2 control char, D3.3 allowed-word reassurance; tests for mutants X1–X4)
+- **Evidence:** Original B1-C handback/commit f87a92e3f plus root assistant-safety-handback.txt: six isolated regression mutants killed; 370 assistant tests pass including live-record continuity. Earlier verifier holes were repaired; independent rerun still pending.
+- **Status:** BUILT (assistant safety repairs tested; independent re-verification and production press pending)
 
 ### L269 — Discovery — only show experiences from the certified action universe in Layover mode
 - **Original requirement:** Discovery — only show experiences from the certified action universe in Layover mode (the census body row quotes the spec; the full wording is at the row's census line).
@@ -2068,10 +2065,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** routing + airport data
 - **Census lines read:** 856
 - **Batch:** B2-MAP map and client
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Required correction:** Render measured Google route/envelope geometry and independent sourced airport terminal/gate/checkpoint layouts with expiry and selection; complete missing between-stop and indoor navigation paths.
+- **Migration:** Existing airport curation projection; provider SDK keys and rebuilt native app · **Tests:** Curation18/18 migrated; geometry persistence1/1; client20 plus10 cache/map;9 mutants · **Production dependency:** owner activation and original row-specific external evidence
+- **Evidence:** l165-map-geometry-handback.txt. Layout producer validates sourced coordinates and paths; fresh Google geometry uses Google maps and is stripped from persistent stores. Between-stop geometry: `GET .../experiences/plan/map` returns owner-only, no-store Google geometry for every ordered hop and the final return of the exact selected plan version. Compile writes a SHA-256 `routeInputHash` over ordered candidate keys, positions, dwell and activity commitment; geometry refuses a plan without it (`plan_review_required`) and a moved place before or after routing (`candidate_changed`). Migrated DB 7/7, client 5/5, 6 binding mutants plus a card fall-through mutant killed; activity commitment source refs are sorted so the hash is row-order independent. Real-airport source coordinates and the full indoor twin remain absent.
+- **Status:** IN PROGRESS (route, between-stop and sourced airport-layout paths built; full indoor twin and device evidence remain open)
 
 ### L272 — Safe Return — reuse escalation/return UX; Layover provides certified deadlines and state
 - **Original requirement:** Safe Return — reuse escalation/return UX; Layover provides certified deadlines and state (the census body row quotes the spec; the full wording is at the row's census line).
@@ -2082,9 +2079,9 @@ above in every freed builder slot.
 - **Census lines read:** 858, 10196
 - **Batch:** B2-BUDDY Rent-a-Buddy specialist/Safe Return
 - **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Migration:** 3893 FALSE product rollout and rollback · **Tests:** 16 migrated product/abort tests, 64 client tests, 207 adjacent tests, 15 isolated mutants killed; rollback in two orders · **Production dependency:** owner press, live Routes for measured abort routes and existing explicit contact-consent flow
+- **Evidence:** scratchpad/l165-b2-buddy-handback.txt: actual fresh origin, fixed canonical deadline, explicit consent, pending-to-active return start, no generic extend/confirm bypass, airport-reentry close, scheduler due-claim and deadline tightening. Missing provider/expiry stays unavailable without preventing abort.
+- **Status:** BUILT (routed abort and certified linked Safe Return implemented; independent acceptance and provider/production evidence pending)
 
 ### L273 — Rent a Buddy — layover-specialist services after the safety/time gate; strict boundaries
 - **Original requirement:** Rent a Buddy — layover-specialist services after the safety/time gate; strict boundaries (the census body row quotes the spec; the full wording is at the row's census line).
@@ -2094,10 +2091,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** Rent-a-Buddy ruling
 - **Census lines read:** 5727, 10093
 - **Batch:** B2-BUDDY Rent-a-Buddy specialist/Safe Return
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Required correction:** Require verified identity, trust, payment readiness, availability and a canonical safety/time contract before a private booking-bound specialist offer can be created, accepted or started.
+- **Migration:** 3894; FALSE layover_buddy_specialist_enabled and existing identity/payment/safety gates · **Tests:** 58/58 server incl actual migrated cases,30/30 client,9 mutants;3893/3894/3895 full-catalog rollback6/6 in both orders · **Production dependency:** owner activation and original row-specific external evidence
+- **Evidence:** l165-b2-buddy-specialist-audit-handback.txt. Atomic create and accept/start recertification, opposite-party shortening and public meeting-place boundary. Missing provider_mode and unreadable payment recipient refuse. No production verification or payment activation claimed.
+- **Status:** BUILT (specialist product path and migrated boundaries tested; real verification/payment configuration and production acceptance pending)
 
 ### L276 — Live Intelligence — consume crowd/queue/mobility signals; publish de-identified airport observations
 - **Original requirement:** Live Intelligence — consume crowd/queue/mobility signals; publish de-identified airport observations (the census body row quotes the spec; the full wording is at the row's census line).
@@ -2120,10 +2117,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** live-signal producer decision
 - **Census lines read:** 2289
 - **Batch:** B2-LIVE live intelligence
-- **Required correction:** _to be filled by the lane_
+- **Required correction:** Screened live signals, freshness/conflict handling and traffic estimation feed certified decisions. Compass and crew now retain the same live certification; stale or conflicting evidence cannot silently improve confidence.
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B2-LIVE)
+- **Evidence:** Saved B2-LIVE handback plus root live-compass-red/green logs (10/10 migrated tests) and crew P10. E9 failed with a 40-minute unsafe deadline difference before the fix; shared certified records and clarification counterfactuals now preserve live conditions.
+- **Status:** BUILT (live processing and continuity tests; independent verification and required live feed/production evidence pending)
 
 ### L282 — RETURN_ROUTE_UNRELIABLE
 - **Original requirement:** RETURN_ROUTE_UNRELIABLE (the census body row quotes the spec; the full wording is at the row's census line).
@@ -2146,10 +2143,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** live-signal producer decision
 - **Census lines read:** 2289
 - **Batch:** B2-LIVE live intelligence
-- **Required correction:** _to be filled by the lane_
+- **Required correction:** Screened live signals, freshness/conflict handling and traffic estimation feed certified decisions. Compass and crew now retain the same live certification; stale or conflicting evidence cannot silently improve confidence.
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B2-LIVE)
+- **Evidence:** Saved B2-LIVE handback plus root live-compass-red/green logs (10/10 migrated tests) and crew P10. E9 failed with a 40-minute unsafe deadline difference before the fix; shared certified records and clarification counterfactuals now preserve live conditions.
+- **Status:** BUILT (live processing and continuity tests; independent verification and required live feed/production evidence pending)
 
 ### L286 — SOURCE_CONFLICT
 - **Original requirement:** SOURCE_CONFLICT (the census body row quotes the spec; the full wording is at the row's census line).
@@ -2159,10 +2156,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** live-signal producer decision
 - **Census lines read:** 2289
 - **Batch:** B2-LIVE live intelligence
-- **Required correction:** _to be filled by the lane_
+- **Required correction:** Screened live signals, freshness/conflict handling and traffic estimation feed certified decisions. Compass and crew now retain the same live certification; stale or conflicting evidence cannot silently improve confidence.
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B2-LIVE)
+- **Evidence:** Saved B2-LIVE handback plus root live-compass-red/green logs (10/10 migrated tests) and crew P10. E9 failed with a 40-minute unsafe deadline difference before the fix; shared certified records and clarification counterfactuals now preserve live conditions.
+- **Status:** BUILT (live processing and continuity tests; independent verification and required live feed/production evidence pending)
 
 ### L287 — TRAFFIC_DEGRADED
 - **Original requirement:** TRAFFIC_DEGRADED (the census body row quotes the spec; the full wording is at the row's census line).
@@ -2172,10 +2169,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** live-signal producer decision
 - **Census lines read:** 2289
 - **Batch:** B2-LIVE live intelligence
-- **Required correction:** _to be filled by the lane_
+- **Required correction:** Screened live signals, freshness/conflict handling and traffic estimation feed certified decisions. Compass and crew now retain the same live certification; stale or conflicting evidence cannot silently improve confidence.
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** IN PROGRESS (lane B2-LIVE)
+- **Evidence:** Saved B2-LIVE handback plus root live-compass-red/green logs (10/10 migrated tests) and crew P10. E9 failed with a 40-minute unsafe deadline difference before the fix; shared certified records and clarification counterfactuals now preserve live conditions.
+- **Status:** BUILT (live processing and continuity tests; independent verification and required live feed/production evidence pending)
 
 ### L294 — C2. Never swallow a schema/data error into plausible empty operational state without structured logging and degraded confidence
 - **Original requirement:** C2. Never swallow a schema/data error into plausible empty operational state without structured logging and degraded confidence (the census body row quotes the spec; the full wording is at the row's census line).
@@ -2185,10 +2182,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** LayoverPrivacyGuard.ts, routes/airport.ts, layoverMaturityGate.ts; owner ruling
 - **Census lines read:** 12317
 - **Batch:** B2-PLATFORM metrics/audit/real-schema/typed reads
-- **Required correction:** _to be filled by the lane_
+- **Required correction:** Convert all four remaining readers to typed outcomes: markReturning, readLayoverLive, evaluateSharingGate and landsideMaturityDecision. Callers explicitly retain degraded/refused results and structured failure logs.
 - **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Evidence:** Latest combined read/guard/metric checks 59/59; no reader exemption remains. Mark-returning throws, sharing failures, typed live disclosure and maturity failures retain named degraded/refused outcomes with structured logs.
+- **Status:** BUILT (all four legacy readers converted, no reader exemptions; final independent acceptance and production press pending)
 
 ### L295 — C3. Never let a test fixture assert impossible production joins; live-schema/literal checks must cover safety-critical query paths
 - **Original requirement:** C3. Never let a test fixture assert impossible production joins; live-schema/literal checks must cover safety-critical query paths (the census body row quotes the spec; the full wording is at the row's census line).
@@ -2198,10 +2195,10 @@ above in every freed builder slot.
 - **Files / gating artifact (triage):** lead U-1 ruling
 - **Census lines read:** 12316, 12370
 - **Batch:** B2-PLATFORM metrics/audit/real-schema/typed reads
-- **Required correction:** _to be filled by the lane_
-- **Migration:** _to be filled_ · **Tests:** _to be filled_ · **Production dependency:** _to be filled_
-- **Evidence:** _none yet_
-- **Status:** OPEN
+- **Required correction:** Generate query/select/literal/route inventories from production source. Against the full migrated schema, execute every resolved select variant, validate write-column shapes, catalog literals and RLS; refuse stale inventories, unresolved queries and missing initial authorization.
+- **Migration:** Complete local migration chain through 3999 · **Tests:** 5/5 actual schema/select/write-shape/literal/RLS tests, 2/2 inventory controls, 87 unauthorized endpoint checks · **Production dependency:** green real PostgreSQL CI and independent full-path acceptance
+- **Evidence:** /private/tmp/codex-layover-resume-20261019/query-schema-final.log, query-inventory-guard.log, service-auth-routes-final.log. Runtime payloads, every RPC execution and every ownership path are not inferred from catalog checks. PGlite is actual schema evidence, not claimed as a green production/CI run.
+- **Status:** IN PROGRESS (local schema/query evidence complete at recorded stage; real PostgreSQL CI and full-path independent verification pending)
 
 ### L296 — C5. Never certify a recommendation against a snapshot other than the one returned with it
 - **Original requirement:** C5. Never certify a recommendation against a snapshot other than the one returned with it (the census body row quotes the spec; the full wording is at the row's census line).

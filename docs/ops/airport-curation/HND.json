@@ -1,0 +1,134 @@
+{
+  "packetVersion": 1,
+  "iata": "HND",
+  "airportName": "Haneda Airport",
+  "state": "proposed_unvalidated",
+  "preparedBy": "machine-prepared by lane B2-CURATE research agent; NOT validated by a human curator",
+  "preparedAt": "2026-10-19T02:09:46Z",
+  "facts": [
+    {
+      "kind": "terminal_topology",
+      "value": {
+        "terminals": [
+          { "id": "T1", "name": "Terminal 1" },
+          { "id": "T2", "name": "Terminal 2" },
+          { "id": "T3", "name": "Terminal 3" }
+        ],
+        "walkingLinks": [
+          { "fromTerminalId": "T1", "toTerminalId": "T2", "mode": "shuttle" },
+          { "fromTerminalId": "T1", "toTerminalId": "T3", "mode": "shuttle" },
+          { "fromTerminalId": "T2", "toTerminalId": "T1", "mode": "shuttle" },
+          { "fromTerminalId": "T2", "toTerminalId": "T3", "mode": "shuttle" },
+          { "fromTerminalId": "T3", "toTerminalId": "T1", "mode": "shuttle" },
+          { "fromTerminalId": "T3", "toTerminalId": "T2", "mode": "shuttle" },
+          { "fromTerminalId": "T1", "toTerminalId": "T3", "mode": "train" },
+          { "fromTerminalId": "T3", "toTerminalId": "T1", "mode": "train" },
+          { "fromTerminalId": "T2", "toTerminalId": "T3", "mode": "train" },
+          { "fromTerminalId": "T3", "toTerminalId": "T2", "mode": "train" }
+        ]
+      },
+      "source": {
+        "kind": "official_airport",
+        "url": "https://tokyo-haneda.com/en/access/travel_between_terminals/index.html",
+        "retrievedAt": "2026-10-19T02:03:45Z",
+        "title": "Going Between Terminals | Access | Haneda Airport Passenger Terminal"
+      },
+      "evidence": "Free Shuttle Bus routes T1→T2, T1→T3, T2→T1→T3, T3→T1→T2; Keikyu/Monorail T1–T3, T2–T3",
+      "notes": "No travel minutes are stated for any link, so minutes are omitted. Shuttle links T2→T3 and T3→T2 run via T1 (routes T2→T1→T3 and T3→T1→T2). Train links are the Keikyu Line / Tokyo Monorail; transfer passengers can get Free Transit Boarding Tickets at information counters (T1 B1F, T2 B1F, T3 2F) on showing passport and boarding pass. Shuttle stops: T1 Bus Stop 8, T2 Bus Stop 9, T3 Bus Stop 0 (1F). The T1-T2 underground walkway is stated to be out of service due to construction (MSW), so no walk link is recorded. The page does not say which terminal is domestic or international, so 'serves' is omitted."
+    },
+    {
+      "kind": "ground_transport",
+      "value": {
+        "modes": [
+          { "mode": "rail", "name": "Keikyu Line / Tokyo Monorail (line not attributed by source)", "toCity": "Shinagawa Station", "journeyMinutes": { "min": 15, "max": 15 }, "terminalIds": ["T1", "T2", "T3"] },
+          { "mode": "rail", "name": "Keikyu Line / Tokyo Monorail (line not attributed by source)", "toCity": "Hamamatsucho Station", "journeyMinutes": { "min": 20, "max": 20 }, "terminalIds": ["T1", "T2", "T3"] },
+          { "mode": "rail", "name": "Keikyu Line / Tokyo Monorail (line not attributed by source)", "toCity": "Tokyo Station", "journeyMinutes": { "min": 30, "max": 30 }, "terminalIds": ["T1", "T2", "T3"] },
+          { "mode": "rail", "name": "Keikyu Line / Tokyo Monorail (line not attributed by source)", "toCity": "Yokohama Station", "journeyMinutes": { "min": 30, "max": 30 }, "terminalIds": ["T1", "T2", "T3"] },
+          { "mode": "rail", "name": "Keikyu Line / Tokyo Monorail (line not attributed by source)", "toCity": "Ueno Station", "journeyMinutes": { "min": 40, "max": 40 }, "terminalIds": ["T1", "T2", "T3"] },
+          { "mode": "rail", "name": "Keikyu Line / Tokyo Monorail (line not attributed by source)", "toCity": "Asakusa Station", "journeyMinutes": { "min": 40, "max": 40 }, "terminalIds": ["T1", "T2", "T3"] },
+          { "mode": "rail", "name": "Keikyu Line / Tokyo Monorail (line not attributed by source)", "toCity": "Shibuya Station", "journeyMinutes": { "min": 45, "max": 45 }, "terminalIds": ["T1", "T2", "T3"] },
+          { "mode": "rail", "name": "Keikyu Line / Tokyo Monorail (line not attributed by source)", "toCity": "Shinjuku Station", "journeyMinutes": { "min": 50, "max": 50 }, "terminalIds": ["T1", "T2", "T3"] },
+          { "mode": "rail", "name": "Keikyu Line / Tokyo Monorail (line not attributed by source)", "toCity": "Maihama Station (Tokyo Disney Resort)", "journeyMinutes": { "min": 50, "max": 50 }, "terminalIds": ["T1", "T2", "T3"] },
+          { "mode": "rail", "name": "Keikyu Line / Tokyo Monorail (line not attributed by source)", "toCity": "Narita Airport Station", "journeyMinutes": { "min": 105, "max": 105 }, "terminalIds": ["T1", "T2", "T3"] }
+        ]
+      },
+      "source": {
+        "kind": "official_airport",
+        "url": "https://tokyo-haneda.com/en/access/train/index.html",
+        "retrievedAt": "2026-10-19T02:03:45Z",
+        "title": "Train & Monorail | Access | Haneda Airport Passenger Terminal"
+      },
+      "evidence": "Estimated travel times from Haneda Airport to listed stations, 'about' N minutes",
+      "notes": "All times are the page's 'about' estimates. The page lists the Keikyu Line and Tokyo Monorail but does NOT say which line serves which destination, nor whether a change of train is needed; the curator should split these per line from the operators' own sites. Platforms: Keikyu and Monorail at B1F in T1 and T2; in T3 Keikyu gates on 2F arrival lobby, Monorail gates on 2F arrival and 3F departure lobbies. No first/last trains or frequency stated (page refers to the operators' sites)."
+    },
+    {
+      "kind": "transport_schedules",
+      "value": {
+        "services": [
+          { "mode": "shuttle", "name": "Free Shuttle Bus T1→T2", "firstDeparture": "04:55", "lastDeparture": "01:23" },
+          { "mode": "shuttle", "name": "Free Shuttle Bus T1→T3", "firstDeparture": "05:04", "lastDeparture": "01:32" },
+          { "mode": "shuttle", "name": "Free Shuttle Bus T2→T1→T3", "firstDeparture": "05:00", "lastDeparture": "01:28" },
+          { "mode": "shuttle", "name": "Free Shuttle Bus T3→T1→T2", "firstDeparture": "04:47", "lastDeparture": "01:15" }
+        ]
+      },
+      "source": {
+        "kind": "official_airport",
+        "url": "https://tokyo-haneda.com/en/access/travel_between_terminals/index.html",
+        "retrievedAt": "2026-10-19T02:03:45Z",
+        "title": "Going Between Terminals | Access | Haneda Airport Passenger Terminal"
+      },
+      "evidence": "Each route: 'First departure at ... last departure at ...'",
+      "notes": "These are INTER-TERMINAL shuttles, not services to the city. Last departures are after midnight (next calendar day). The page states intervals of 4 minutes from 5:00am to 8:00pm and 8 minutes from 8:00pm to 12:00am; frequencyMinutes is omitted because it varies and no interval is stated for 00:00 to the last departure. No journey times stated. No city-bound rail first/last trains were sourced."
+    },
+    {
+      "kind": "lounge_hours",
+      "value": {
+        "lounges": [
+          { "name": "POWER LOUNGE SOUTH", "terminalId": "T1", "hours": { "open": "06:00", "close": "21:00" } },
+          { "name": "POWER LOUNGE NORTH", "terminalId": "T1", "hours": { "open": "06:00", "close": "20:30" } },
+          { "name": "FOREST LOUNGE", "terminalId": "T1", "hours": { "open": "06:00", "close": "19:00" } },
+          { "name": "POWER LOUNGE CENTRAL", "terminalId": "T1", "hours": { "open": "06:00", "close": "20:00" } },
+          { "name": "Lounge Us", "terminalId": "T2", "hours": { "open": "06:00", "close": "21:30" } },
+          { "name": "POWER LOUNGE NORTH", "terminalId": "T2", "hours": { "open": "06:00", "close": "21:30" } },
+          { "name": "POWER LOUNGE CENTRAL", "terminalId": "T2", "hours": { "open": "06:00", "close": "20:00" } },
+          { "name": "POWER LOUNGE PREMIUM", "terminalId": "T2", "hours": { "open": "06:30", "close": "01:30" } },
+          { "name": "TIAT LOUNGE", "terminalId": "T3", "hours": "24h" },
+          { "name": "SKY LOUNGE", "terminalId": "T3", "hours": "24h" },
+          { "name": "SKY LOUNGE SOUTH", "terminalId": "T3", "hours": "24h" },
+          { "name": "The Centurion Lounge (AMEX)", "terminalId": "T3", "hours": { "open": "08:00", "close": "22:00" } }
+        ]
+      },
+      "source": {
+        "kind": "official_airport",
+        "url": "https://tokyo-haneda.com/en/service/facilities/lounge.html",
+        "retrievedAt": "2026-10-19T02:04:05Z",
+        "title": "Card Lounge | List of Services | Service Guide | Haneda Airport Passenger Terminal"
+      },
+      "evidence": "Per-lounge location line and 'Opening Hours' line on the card lounge list",
+      "notes": "Card (credit-card) lounges only; airline lounges are not on this page. 'side' is omitted because the page gives floor/area, not airside/landside. Locations as printed: T1 POWER LOUNGE SOUTH 2F Domestic Departure Gate Area (South); T1 POWER LOUNGE NORTH 2F Domestic Departure Gate Area (North); FOREST LOUNGE 2F Domestic Departure Gate Area (North Satellite), in front of Gate 26; T1 POWER LOUNGE CENTRAL 1F Domestic Arrival Lobby; Lounge Us 4F Domestic Departure Gate Area (North); T2 POWER LOUNGE NORTH 3F Domestic Departure Gate Area (North); T2 POWER LOUNGE CENTRAL 3F Domestic Departure Lobby; POWER LOUNGE PREMIUM 3F International Departure Gate Area; TIAT LOUNGE and SKY LOUNGE 4F International Departure Gate Area; SKY LOUNGE SOUTH 3F International Departure Gate Area; Centurion 4F International Departure Gate Area. POWER LOUNGE PREMIUM hours are printed '6:30-25:30', i.e. closes 01:30 next day. T2 'Airport Lounge (South)' is marked closed and excluded."
+    },
+    {
+      "kind": "entry_restrictions",
+      "value": {
+        "landsideExitForTransit": "requires_entry",
+        "transitSummary": "International-to-international transfer: follow 'International Transit' signs; T2 and T3 are linked by a shuttle bus with guides to the transit security checkpoint. Passengers 'entering the country once' follow the international arrival steps, then go to departures."
+      },
+      "source": {
+        "kind": "official_airport",
+        "url": "https://tokyo-haneda.com/en/flight/transit/int_int.html",
+        "retrievedAt": "2026-10-19T02:04:30Z",
+        "title": "International to International | Use Connecting Flights | Flights | Haneda Airport Passenger Terminal"
+      },
+      "evidence": "Section 'For those entering the country once': review international arrival steps",
+      "notes": "UNCERTAIN: the page does not explicitly use the words immigration, landing examination or landside. 'requires_entry' is read from its framing that leaving the transit flow means 'entering the country once' and following the international arrival procedure. The heading carries an eligibility parenthetical that was not captured; curator must read it. No minimum connection time stated."
+    }
+  ],
+  "unreachable": [],
+  "gaps": [
+    "security_layout: no official page with checkpoint names/hours was fetched (security pages not reached within the per-airport URL budget)",
+    "overnight_lodging: the home page footer links to The Royal Park HOTEL, First Cabin and TIAT SKY HALL on third-party domains, but no airport page fetched states their kind, terminal, side or hours",
+    "transport_schedules (city rail): the airport train page refers to the Keikyu and Tokyo Monorail sites for timetables; those operator sites were not fetched",
+    "terminal_topology.serves: the between-terminals page does not label terminals domestic/international",
+    "lounge_hours (airline lounges): only card lounges are listed on the fetched page"
+  ]
+}

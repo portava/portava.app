@@ -38,7 +38,7 @@ import { getServiceClient } from "./supabase.js";
 import { runLayoverPostSessionPseudonymisation, type LayoverPostSessionResult } from "./layoverEventPseudonymisation.js"; import { runSnapshotCompactionSweep, type CompactionSweepResult } from "../services/layover/LayoverDecisionService.js"; // census L261 phase (3624, seeded FALSE)
 
 
-/** Hourly. The ceiling is in months; an hour of lag cannot breach it materially. */
+/** Hourly when caught up; overdue evidence or a failed pass retries promptly. */
 export const LAYOVER_AUDIT_RETENTION_INTERVAL_MS = 60 * 60_000;
 export const LAYOVER_AUDIT_RETENTION_BATCH_SIZE = 500;
 const STARTUP_DELAY_MS = 90_000;
@@ -46,7 +46,7 @@ const STARTUP_DELAY_MS = 90_000;
 export type LayoverAuditRetentionOutcome = "swept" | "idle" | "refused" | "failed";
 export interface LayoverAuditRetentionResult {
   outcome: LayoverAuditRetentionOutcome;
-  reason: "no_client" | "schema_absent" | "probe_failed" | "read_failed" | "delete_failed" | null;
+  reason: "no_client" | "schema_absent" | "probe_failed" | "read_failed" | "delete_failed" | "service_audit_failed" | "retention_backlog" | null;
   deleted: number;
   complete: boolean;
 }
@@ -70,10 +70,10 @@ async function auditColumnsProbe(db: any): Promise<"present" | "absent" | "error
 }
 
 /** One sweep, deterministic in its instant: `opts.now` IS the cutoff. */
-export async function runLayoverAuditRetentionSweep(
+async function runLayoverAuditRetentionSweepImpl(
   opts: { client?: any; now: Date; batchSize?: number },
 ): Promise<LayoverAuditRetentionResult> {
-  const db = "client" in opts && opts.client !== undefined ? opts.client : getServiceClient();
+  const db = auditedLayoverClient("client" in opts && opts.client !== undefined ? opts.client : getServiceClient());
   if (!db) return { outcome: "refused", reason: "no_client", deleted: 0, complete: false };
   const probe = await auditColumnsProbe(db);
   if (probe === "absent") return { outcome: "refused", reason: "schema_absent", deleted: 0, complete: false };
@@ -129,11 +129,11 @@ export interface LayoverAuditRetentionStatus {
   lastReason: LayoverAuditRetentionResult["reason"];
   lastDeleted: number;
   /** PR-R-L163a's phase on the last tick: null before the first tick, or when there was no client to run it with. */
-  lastPostSession: LayoverPostSessionResult | null;
+  lastPostSession: LayoverPostSessionResult | null; lastServiceAudit: Awaited<ReturnType<typeof expireLayoverServiceAudit>> | null;
 }
 
 const _status: LayoverAuditRetentionStatus = {
-  lastAttemptAt: null, lastSuccessAt: null, consecutiveFailures: 0, lastOutcome: null, lastReason: null, lastDeleted: 0, lastPostSession: null,
+  lastAttemptAt: null, lastSuccessAt: null, consecutiveFailures: 0, lastOutcome: null, lastReason: null, lastDeleted: 0, lastPostSession: null, lastServiceAudit: null,
 };
 
 /** Snapshot for /healthz/schedulers. */
@@ -143,18 +143,18 @@ export function getLayoverAuditRetentionStatus(): Readonly<LayoverAuditRetention
 
 /** Test seam: reset module state between cases. */
 export function _resetLayoverAuditRetentionStatus(): void {
-  Object.assign(_status, { lastAttemptAt: null, lastSuccessAt: null, consecutiveFailures: 0, lastOutcome: null, lastReason: null, lastDeleted: 0, lastPostSession: null });
+  Object.assign(_status, { lastAttemptAt: null, lastSuccessAt: null, consecutiveFailures: 0, lastOutcome: null, lastReason: null, lastDeleted: 0, lastPostSession: null, lastServiceAudit: null });
 }
 
 /** One tick: reads the clock once, never rejects, keeps a failure count. */
-export async function runLayoverAuditRetentionTick(
+async function runLayoverAuditRetentionTickImpl(
   opts: { client?: any; now?: Date; batchSize?: number } = {},
 ): Promise<LayoverAuditRetentionResult> {
   const now = opts.now ?? new Date();
   _status.lastAttemptAt = now.toISOString();
   // Phase 1 (PR-R-L163a): flag-gated post-session pseudonymisation. Throw-safe,
   // so it can never keep the delete sweep below from running.
-  const db = "client" in opts && opts.client !== undefined ? opts.client : getServiceClient();
+  const db = auditedLayoverClient("client" in opts && opts.client !== undefined ? opts.client : getServiceClient());
   let post: LayoverPostSessionResult | null = null;
   if (db) {
     try {
@@ -165,10 +165,10 @@ export async function runLayoverAuditRetentionTick(
     }
   }
   _status.lastPostSession = post; await runLayoverSnapshotCompactionPhase(db, now); // census L261: flag-gated (layover_snapshot_compaction_enabled, 3624, seeded FALSE), never throws, logs its own result and never changes this sweep's outcome
-  const postFailed = post?.outcome === "failed";
+  const serviceAudit = await expireLayoverServiceAudit(db,now); _status.lastServiceAudit=serviceAudit; const postFailed = post?.outcome === "failed" || serviceAudit.outcome === "failed";
   let result: LayoverAuditRetentionResult;
   try {
-    result = await runLayoverAuditRetentionSweep({ ...opts, now });
+    result = await runLayoverAuditRetentionSweep({ ...opts, now }); if(serviceAudit.outcome==='failed' && result.outcome!=='failed' && result.reason!=='no_client')result={...result,outcome:'failed',reason:'service_audit_failed',complete:false}; else if((serviceAudit.outcome==='expired'&&!serviceAudit.complete)||((result.outcome==='swept'||result.outcome==='idle')&&!result.complete))result={...result,outcome:'failed',reason:'retention_backlog',complete:false};
   } catch (err) {
     _status.consecutiveFailures += 1;
     _status.lastOutcome = "failed";
@@ -201,7 +201,7 @@ export function startLayoverAuditRetentionScheduler(): void {
   );
   const generation = ++_generation; _timer = setTimeout(function tick() {
     void runLayoverAuditRetentionTick().finally(() => {
-      if (_timer !== null && generation === _generation) { _timer = setTimeout(tick, LAYOVER_AUDIT_RETENTION_INTERVAL_MS); _timer.unref?.(); }
+      if (_timer !== null && generation === _generation) { _timer = setTimeout(tick, _status.consecutiveFailures>0 ? LAYOVER_AUDIT_RETENTION_RETRY_MS : LAYOVER_AUDIT_RETENTION_INTERVAL_MS); _timer.unref?.(); }
     });
   }, STARTUP_DELAY_MS);
   _timer.unref?.();
@@ -265,7 +265,7 @@ export function snapshotCompactionHealthDetail(s: Readonly<LayoverSnapshotCompac
 }
 
 /** One compaction phase. Never throws. */
-export async function runLayoverSnapshotCompactionPhase(db: any, now: Date): Promise<Readonly<LayoverSnapshotCompactionStatus>> {
+async function runLayoverSnapshotCompactionPhaseImpl(db: any, now: Date): Promise<Readonly<LayoverSnapshotCompactionStatus>> {
   const attemptAt = now.toISOString();
   _compactionStatus.lastAttemptAt = attemptAt;
   if (!db) {
@@ -297,3 +297,9 @@ export async function runLayoverSnapshotCompactionPhase(db: any, now: Date): Pro
   }
   return getLayoverSnapshotCompactionStatus();
 }
+
+import { auditedLayoverClient, withLayoverSystemAudit, expireLayoverServiceAudit } from './layoverServiceAudit.js';
+export function runLayoverAuditRetentionSweep(...args: Parameters<typeof runLayoverAuditRetentionSweepImpl>): ReturnType<typeof runLayoverAuditRetentionSweepImpl> { return withLayoverSystemAudit('layover:audit-retention', () => runLayoverAuditRetentionSweepImpl(...args)); }
+export function runLayoverAuditRetentionTick(...args: Parameters<typeof runLayoverAuditRetentionTickImpl>): ReturnType<typeof runLayoverAuditRetentionTickImpl> { return withLayoverSystemAudit('layover:audit-retention', () => runLayoverAuditRetentionTickImpl(...args)); }
+export function runLayoverSnapshotCompactionPhase(db: any, now: Date): ReturnType<typeof runLayoverSnapshotCompactionPhaseImpl> { return withLayoverSystemAudit('layover:snapshot-compaction', () => runLayoverSnapshotCompactionPhaseImpl(auditedLayoverClient(db), now)); }
+export const LAYOVER_AUDIT_RETENTION_RETRY_MS=30_000;

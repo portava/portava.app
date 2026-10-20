@@ -5,7 +5,7 @@
  * (active → completed / cancelled / expired) and emits layover_events rows.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { logger as rootLogger } from "../../lib/logger.js"; import type { SessionConstraintContext } from "./LayoverConstraints.js"; import { attachConstraintContext, attachConstraintContexts } from "../layover/LayoverConstraintStore.js"; // same line: this file's lines are citation-anchored
+import { logger as rootLogger } from "../../lib/logger.js"; import type { SessionConstraintContext } from "./LayoverConstraints.js"; import { attachConstraintContext as attachStoredConstraintContext, attachConstraintContexts as attachStoredConstraintContexts } from "../layover/LayoverConstraintStore.js"; // same line: this file's lines are citation-anchored
 
 const logger = rootLogger.child({ service: "LayoverSessionService" });
 
@@ -124,7 +124,7 @@ export interface LayoverSession {
   returnReminderAt: string | null;
   status: "active" | "returning" | "completed" | "cancelled" | "expired";
   createdAt: string;
-  updatedAt: string; /** §4 the declared constraint set and the entry policy, ATTACHED BY THE LOADERS BELOW — absent when both flags are off, so a session serialises exactly as it did. Every certification reads it off the session; see LayoverConstraints.ts. */ constraints?: SessionConstraintContext;
+  updatedAt: string; /** §4 the declared constraint set and the entry policy, ATTACHED BY THE LOADERS BELOW — absent when both flags are off, so a session serialises exactly as it did. Every certification reads it off the session; see LayoverConstraints.ts. */ constraints?: SessionConstraintContext; /** Current linked flight observations; never writable session fields. */ arrivalTerminalId?: string | null; departureTerminalId?: string | null;
 }
 
 /**
@@ -143,7 +143,7 @@ function rowToSession(row: any): LayoverSession {
   const arrival  = new Date(row.arrival_time).getTime();
   const depart   = new Date(row.departure_time).getTime();
   const computed = Math.max(0, Math.round((depart - arrival) / 60000));
-  return {
+  const session: LayoverSession = {
     id:                 row.id,
     userId:             row.user_id,
     airportId:          row.airport_id ?? null,
@@ -169,7 +169,7 @@ function rowToSession(row: any): LayoverSession {
     status:             row.status ?? "active",
     createdAt:          row.created_at,
     updatedAt:          row.updated_at,
-  };
+  }; sessionFlightLinks.set(session, { arrival: row.arrival_segment_id, departure: row.departure_segment_id }); return session;
 }
 
 async function emitEvent(
@@ -224,7 +224,7 @@ export async function createSessionWrite(
     return { ok: false, message: String(error.message ?? "layover_sessions unwritable") };
   }
   if (!data) return { ok: true, session: null };
-  const session = rowToSession(data);
+  const session = await attachFlightTerminalContext(db, rowToSession(data));
   await emitEvent(db, session.id, input.userId, "session_created", {
     flightType: session.flightType,
     layoverMinutes: session.layoverMinutes,
@@ -862,7 +862,7 @@ export async function readLiveSessionForConnection(
     logger.warn({ err: error, userId }, "layover connection session read failed");
     return { ok: false, message: String(error.message ?? "layover_sessions unreadable") };
   }
-  return { ok: true, session: data ? rowToSession(data) : null };
+  return { ok: true, session: data ? await attachFlightTerminalContext(db, rowToSession(data)) : null };
 }
 
 export type StateWrite =
@@ -941,7 +941,7 @@ export const PROJECTION_HELD_STATES: readonly LayoverState[] = ["RETURNING", "CA
 export async function recordProjectedSessionState(db: SupabaseClient, sessionId: string, projected: LayoverState): Promise<StateWrite> {
   const read = await readStoredState(db, sessionId);
   if (!read.ok) return read;
-  if (read.state !== null && PROJECTION_HELD_STATES.includes(read.state)) {
+  if (read.state !== null && (PROJECTION_HELD_STATES.includes(read.state) || read.state === "EXECUTING" && ["DETECTED", "NEEDS_INFO", "EVALUATING", "AIRPORT_ONLY", "LANDSIDE_AVAILABLE", "PLAN_SELECTED"].includes(projected))) {
     return { ok: true, written: false, from: read.state, to: null, refusal: "held_by_observation" };
   }
   if (read.state === projected) return { ok: true, written: false, from: read.state, to: projected, refusal: "already_there" };
@@ -976,7 +976,7 @@ export async function syncConnectionSessionTimes(
     return { ok: false, message: String(error.message ?? "layover_sessions unwritable") };
   }
   if (!data) return { ok: true, session: null };
-  const session = rowToSession(data);
+  const session = await attachFlightTerminalContext(db, rowToSession(data));
   await emitEvent(db, session.id, session.userId, "session_updated", metadata);
   return { ok: true, session };
 }
@@ -1008,4 +1008,35 @@ export async function storeLifecycleForOperation(db: SupabaseClient, sessionId: 
 export async function storeProjectedLifecycle(db: SupabaseClient, sessionId: string, state: LayoverState): Promise<StateWrite | null> {
   if (!await isFlagEnabled(db, "layover_flight_connections_enabled")) return null;
   return recordProjectedSessionState(db, sessionId, state);
+}
+
+/** Internal worker projection of a database row whose ownership/revision was leased by 3908. */
+export { rowToSession as layoverSessionFromStoredRow };
+
+// Terminal observations belong to the Trips segments. Keep linkage private and
+// project it at read time so a changed or withdrawn observation cannot leave a
+// stale session column behind. No client session patch can populate these IDs.
+import { readFlightSegmentsByIds } from "../../domain/trips/services/TripFlightSegments.js";
+import { normalizeTimingTerminalId } from "./layoverTimingEvidence.js";
+const sessionFlightLinks = new WeakMap<LayoverSession, { arrival: unknown; departure: unknown }>();
+export function normalizeFlightTerminalId(value: unknown): string | null {
+  return normalizeTimingTerminalId(value);
+}
+export async function attachFlightTerminalContext(db: SupabaseClient, session: LayoverSession): Promise<LayoverSession> {
+  const links = sessionFlightLinks.get(session);
+  if (!links || !session.tripId || !(typeof links.arrival === "string" || typeof links.departure === "string")) return session;
+  if (!await isFlagEnabled(db, "layover_flight_connections_enabled")) return session;
+  const ids = [links.arrival, links.departure].filter((id): id is string => typeof id === "string" && id.length > 0);
+  const read = await readFlightSegmentsByIds(db, ids);
+  if (!read.ok) logger.warn({ sessionId: session.id, tripId: session.tripId, reason: read.message }, "linked flight terminals unreadable; terminal context remains unknown");
+  const segments = read.ok ? read.segments.filter(segment => segment.tripId === session.tripId && segment.createdBy === session.userId) : [];
+  const arrival = segments.find(segment => segment.id === links.arrival);
+  const departure = segments.find(segment => segment.id === links.departure);
+  return { ...session, arrivalTerminalId: normalizeFlightTerminalId(arrival?.arrivalTerminal), departureTerminalId: normalizeFlightTerminalId(departure?.departureTerminal) };
+}
+async function attachConstraintContext(db: SupabaseClient, session: LayoverSession): Promise<LayoverSession> {
+  return attachStoredConstraintContext(db, await attachFlightTerminalContext(db, session));
+}
+async function attachConstraintContexts(db: SupabaseClient, sessions: LayoverSession[]): Promise<LayoverSession[]> {
+  return attachStoredConstraintContexts(db, await Promise.all(sessions.map(session => attachFlightTerminalContext(db, session))));
 }

@@ -19,7 +19,7 @@ export interface GpsResult {
   lng: number | null;
   accuracyMeters: number | null;
   /** true when the fix came from getLastKnownPositionAsync (cached), false for a fresh fix */
-  cached?: boolean;
+  cached?: boolean; /** OS measurement time, retained even for a last-known fallback; never stamped as a fresh observation. */ observedAtMs?: number;
   error?: string;
 }
 
@@ -63,7 +63,7 @@ export async function getCurrentGps(): Promise<GpsResult> {
         lat: pos.coords.latitude,
         lng: pos.coords.longitude,
         accuracyMeters: pos.coords.accuracy ?? null,
-        cached: false,
+        cached: false, observedAtMs: pos.timestamp,
       };
     } catch {
       // Live fix timed out or failed — fall back to the last known position.
@@ -81,7 +81,7 @@ export async function getCurrentGps(): Promise<GpsResult> {
           lat: last.coords.latitude,
           lng: last.coords.longitude,
           accuracyMeters: last.coords.accuracy ?? null,
-          cached: true,
+          cached: true, observedAtMs: last.timestamp,
         };
       }
     } catch {

@@ -246,3 +246,13 @@ test('L155: a phrase missing its English is not shown with a sentence missing â€
   assert.equal(rec?.translationPhrases?.value, null);
 });
 
+import type { LayoverPhraseSet } from '../../services/layover.ts';
+test('L155: multilingual return and per-stop contexts survive the real device cache', async () => {
+  const phrase = { key: 'where_is_stop', english: 'Where is Garden?', local: 'OÃ¹ se trouve Garden ?' };
+  const set: LayoverPhraseSet = { language: 'fr', languageName: 'French', phrases: [phrase], reviewStatus: 'native_review_pending',
+    languageOptions: [{ language: 'fr', languageName: 'French', phrases: [phrase], stops: [{ stopTitle: 'Garden', phrases: [phrase] }] },
+      { language: 'en', languageName: 'English', phrases: [{ ...phrase, local: phrase.english }], stops: [] }] };
+  assert.equal(await cacheCertifiedPlan('sess-1', bundle({ translationPhrases: { available: true, value: set, reason: null } }), ENVELOPE, SCHEDULE), true);
+  assert.deepEqual((await readCachedPlan('sess-1'))?.translationPhrases?.value, set);
+});
+

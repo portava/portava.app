@@ -88,7 +88,7 @@ const CLOSURE_COPY: Record<LandsideClosure, string> = {
   airport_change: 'Your next flight leaves from a different airport.',
   constraints_unreadable: 'We could not read your bag and connection details just now. Try again shortly before deciding to leave.',
   airport_change_unknown: 'We need to know whether your next flight leaves from this airport or a different one.',
-  recheck_unknown: 'We need to know whether your flights are on one ticket or booked separately.',
+  recheck_unknown: 'We need to know whether your flights are on one ticket or booked separately.', airport_maturity_limited: "We don't have checked information about this airport's terminals, transport and timings yet, so we only suggest things to do inside the airport.",
 };
 
 /** One sentence per closure, in the server's order. An untaught closure is shown as its own code. */

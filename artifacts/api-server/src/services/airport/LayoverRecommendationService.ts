@@ -51,7 +51,7 @@ import { localHour } from "./AirportTime.js"; import { layoverExperienceFor, typ
 // the Live gates in lib/liveClaimRead: with either closed this reads nothing
 // and every card is generated exactly as it was before.
 import { isFlagEnabled } from "../../lib/featureFlags.js"; import { landsideMaturityDecision } from "./layoverMaturityGate.js"; // §22 L249 — one line, because every anchored citation below is line-pinned
-import { liveLabelsServable, readLiveClaimEnvelopes, type LiveClaimEnvelope } from "../../lib/liveClaimRead.js";
+import { liveLabelsServable, readLiveClaimEnvelopes, liveClaimReadFailed, type LiveClaimEnvelope } from "../../lib/liveClaimRead.js";
 import {
   compareByLive,
   intentFromVibeChips,
@@ -86,18 +86,18 @@ const LIVE_INTERSECTION_OFF: LayoverLiveOutcome = {
  * error leaves every card untouched — this pass may shorten a traveller's
  * options but must never be able to empty them by failing.
  */
-async function readLayoverLive(
+export async function readLayoverLive(
   db: SupabaseClient,
-  session: LayoverSession,
+  session: Pick<LayoverSession, "id" | "vibeChips">,
   candidates: ReadonlyArray<{ key: string; subjectId: string | null; travelTimeMin: number | null; activityTimeMin: number | null }>,
   nowMs: number,
-): Promise<LayoverLiveOutcome> {
-  let on = false;
-  try { on = await isFlagEnabled(db as any, LAYOVER_LIVE_INTERSECTION_FLAG); } catch { on = false; }
-  if (!on) return LIVE_INTERSECTION_OFF;
+): Promise<LayoverRead<LayoverLiveOutcome>> {
+  const flag = await readLiveIntersectionFlag(db, session.id);
+  if (flag.kind === "degraded") return readDegraded(LIVE_INTERSECTION_OFF, flag.reasons);
+  if (!flag.value) return readValue(LIVE_INTERSECTION_OFF);
   try {
-    let readable = false;
-    try { readable = await liveLabelsServable(db as any); } catch { readable = false; }
+    let readable = false; const reasons: string[] = [];
+    try { readable = await liveLabelsServable(db); } catch (err) { logger.warn({ err, sessionId: session.id }, "layover live gates read failed"); }
     const now = new Date(nowMs);
     const graded: LayoverLiveCandidate[] = [];
     for (const c of candidates) {
@@ -106,20 +106,20 @@ async function readLayoverLive(
       if (rowReadable && c.subjectId) {
         try {
           envelopes = await readLiveClaimEnvelopes(db as any, c.subjectId, { claimTypes: LAYOVER_LIVE_CLAIM_TYPES, now });
-        } catch { envelopes = []; rowReadable = false; }
+          if (liveClaimReadFailed(envelopes)) { rowReadable = false; reasons.push("live_claim_read_failed"); logger.warn({ sessionId: session.id, reason: "live_claim_read_failed" }, "layover live claims unavailable"); } } catch (err) { envelopes = []; rowReadable = false; reasons.push("live_claim_read_failed"); logger.warn({ err, sessionId: session.id }, "layover live claims read failed"); }
       }
       graded.push({ ...c, envelopes, readable: rowReadable });
     }
     const outcome = intersectLayoverLive(graded, { nowMs, intent: intentFromVibeChips(session.vibeChips) });
-    return {
+    const value: LayoverLiveOutcome = {
       applied: true, readable,
       byKey: outcome.byKey,
       dropped: outcome.dropped.length,
       frictionAdjusted: outcome.frictionAdjusted,
-    };
+    }; return !readable ? readDegraded(value, ["live_gates_closed_or_unreadable"]) : reasons.length ? readDegraded(value, ["live_claim_read_failed"]) : readValue(value);
   } catch (err) {
     logger.warn({ err, sessionId: session.id }, "layover live intersection failed — cards generated without it");
-    return LIVE_INTERSECTION_OFF;
+    return readDegraded(LIVE_INTERSECTION_OFF, ["live_intersection_failed"]);
   }
 }
 
@@ -448,13 +448,13 @@ export interface GenerateRecommendationsOptions {
  * from the envelope this request cut, and is coordinate-free by construction —
  * see `layoverRankingFeasibility`.
  */
-export type CertifiedRecommendation = SafeRecommendation & {
-  /** census L122 — the band the map pin renders. Never absent. */
+export type CertifiedRecommendation = SafeRecommendation & Partial<import("../layover/LayoverRecommendationStatus.js").ServedRecommendationStatus> & {
+  contract?: import("./LayoverRecommendationContract.js").LayoverRecommendationContract | null; /** §9 persisted executable contract when classification is enabled. */
   feasibility: CandidateFeasibility; /** census L75 — spec §9 ExperiencePrimitive for the card's type: TYPICAL values, never this place's, never read by the safety math. Never absent. */ experience: LayoverExperience; /** lane B1-R1 — §8 with routed terms: the two legs at their own instants, the conservative return, the robustness signals, the band, and the return contract WITH its route (L221). Null for an airside card or one nobody routed. */ routing?: RoutedCardContract | null;
 };
 
 export type GenerateResult =
-  | { ok: true; recommendations: CertifiedRecommendation[]; /** census L296 (App C5): the snapshot every card above was certified under — `snapshotIdFor(session.id, certified.inputHash)`. An add-to-plan must name it. */ snapshotId: string; /** lane B1-R1 — §8's routed union (L66) and its isochrone (L61), cut under the same snapshot; null when nothing landside was evaluated. */ routedEnvelope?: RoutedSafeEnvelope | null }
+  | { ok: true; recommendations: CertifiedRecommendation[]; liveDisclosure?: ReturnType<typeof readDisclosure>; /** census L296 (App C5): the snapshot every card above was certified under — `snapshotIdFor(session.id, certified.inputHash)`. An add-to-plan must name it. */ snapshotId: string; /** lane B1-R1 — §8's routed union (L66) and its isochrone (L61), cut under the same snapshot; null when nothing landside was evaluated. */ routedEnvelope?: RoutedSafeEnvelope | null }
   | { ok: false; message: string };
 
 export async function generateRecommendations(
@@ -464,7 +464,7 @@ export async function generateRecommendations(
   nowMs = Date.now(),
   opts: GenerateRecommendationsOptions = {},
 ): Promise<GenerateResult> {
-  const city = airport.city ?? session.manualCity ?? "Unknown";
+  const city = airport.city ?? session.manualCity ?? "Unknown"; const routePublication=await routeSubjectPublicationGate(db,opts.stableIds===true); if(!routePublication.ok)return{ok:false,message:routePublication.reason};
 
   // The certified feasibility for this session at this instant. Every card
   // below is rated against THIS record's deadline — previously each candidate
@@ -488,13 +488,13 @@ export async function generateRecommendations(
   //
   // ── §22 L249 — AND THE AIRPORT'S OWN DATA MATURITY ───────────────────────
   // `landsideMaturityDecision` is the first consumer `featureAllowedAt` has
-  // ever had. Behind `layover_maturity_gate_enabled` (2977, seeded FALSE): OFF
-  // it allows, reads nothing, and both gates below are the gates they were. ON
-  // it refuses an L0_GENERIC airport a landside card — L243, an OWNER decision.
-  const usableMinutes = certified.envelope.usableMinutes;
-  const landside = await landsideMaturityDecision(db, airport, nowMs);
+  // ever had. Curated profiles enforce L1 in every flag state after 3874.
+  // The upper rungs consume this record's screened official/live evidence;
+  // missing, expired or conflicting evidence never advances the ladder.
+  const usableMinutes = certified.envelope.usableMinutes; const retainBlocked = await recommendationStatusEnabled(db);
+  const maturityRead = await landsideMaturityDecision(db, airport, nowMs, { liveConditions: certified.inputs.liveConditions }); const landside = matchRead(maturityRead, { read: (value) => value, degraded: (fallback, reasons) => { logger.warn({ airportId: airport.id, sessionId: session.id, reasons }, "recommendations use conservative maturity fallback"); return fallback; } });
   // 1. Inside-airport suggestions (always generated)
-  const insideCandidates = insideAirportCandidates(session);
+  const insideCandidates = [...insideAirportCandidates(session), ...(await curatedOvernightCandidates(db, airport, certified.envelope.overnight === true, nowMs))]; // §21.1 L223 (LAYOVER 165 B2-CURATE): an OVERNIGHT window gets the airport's published, unexpired airside lodging and lounges — none when nothing is curated
   // 2. Discovery places near airport city — filtered and ranked for the time
   //    of day the traveler will actually be out there, and gated on the
   //    airport's data maturity as well as on the traveller's usable minutes.
@@ -584,7 +584,7 @@ export async function generateRecommendations(
     const v = bands.get(recommendationKey(c));
     if (v?.band !== "BLOCKED") return true;
     blocked.push({ key: recommendationKey(c), verdict: v });
-    return false;
+    return retainBlocked;
   }); const routed = await applyRoutedRecommendationPass({ db, session, record: certified, airport: airportPoint(airport), outerBound: envelope, bands, candidates: reachableDiscovery, keyOf: (c) => recommendationKey(c), landsideAllowed: landsideStatusOf(certified) !== "closed", corridorProvider: opts.corridorProvider }); // lane B1-R1: §8 with ROUTED terms — the survivors of the cheap filters (L260) are routed both ways at their own instants (L60), judged by the formula (L65) with the §8.1 signals (L68–L71, L282); the terms are written onto each candidate for `assess`, and the routed band replaces the straight-line one on its pin (a routed BLOCKED stays visible, rated, with its reason)
   if (blocked.length > 0) {
     logger.info(
@@ -612,7 +612,7 @@ export async function generateRecommendations(
   // whether the card still fits the certified deadline. Flag off, gates
   // closed, no reading, or any error: `byKey` is empty and every branch below
   // falls through to the numbers the card already had.
-  const live = await readLayoverLive(
+  const liveRead = await readLayoverLive(
     db, session,
     allCandidates.map((c) => ({
       key: recommendationKey(c),
@@ -621,11 +621,11 @@ export async function generateRecommendations(
       activityTimeMin: c.activityTimeMin,
     })),
     nowMs,
-  );
+  ); const live = matchRead(liveRead, { read: (value) => value, degraded: (fallback, reasons) => { logger.warn({ sessionId: session.id, reasons }, "recommendations use degraded live evidence"); return fallback; } });
   const assessable = live.applied
     ? [...allCandidates]
         // A Live-qualified unsafe density or refused walk-in is not a card.
-        .filter((c) => !live.byKey.get(recommendationKey(c))?.drop)
+        .filter((c) => retainBlocked || !live.byKey.get(recommendationKey(c))?.drop)
         // Stable: `compareByLive` answers 0 for every pair without readings, so
         // the existing time-of-day order survives untouched where the world is
         // silent.
@@ -663,7 +663,7 @@ export async function generateRecommendations(
       ? { ...candidate, activityTimeMin: verdict.adjustedActivityMin }
       : candidate;
   });
-  const ranked = rankActivities(airport, session, frictionAdjusted, nowMs, certified); const stamp = await recommendationSnapshotStamp(db, session.userId, session.id, certified); // census L64: store THIS record and cite it on every row below; OFF (the seed) / any refusal → `column` is `{}` and rows are byte-identical
+  if (frictionAdjusted.some(c => travelTimeProvenanceColumn(travelTimeSourceFor(c)).travel_time_source !== undefined) && !(await canPersistTravelProvenance(db))) return { ok: false, message: "Travel-time provenance is unavailable; recommendations could not be refreshed." }; const ranked = rankActivities(airport, session, frictionAdjusted, nowMs, certified); const stamp = await recommendationStamp(db, session, certified); // 2745 readiness precedes supersession and recommendation writes. Census L64/B2-RECS-A: one stored citation and immutable supersession history.
 
   // Assess each through safety engine
   const rows: any[] = [];
@@ -673,7 +673,7 @@ export async function generateRecommendations(
   // `travel_time_source` for exactly the figures they cannot.
   const sources: TravelTimeSource[] = [];
   let sortOrder = 0;
-  const ranking = await applyLayoverRankingMode(db, session, ranked, { keyOf: recommendationKey, live: live.byKey }); // census L78/L242: `layover_ranking_mode` legacy (the seed) or ANY failure → `ranking.served` IS `ranked`; shadow → compared and counted, `ranked` served; on → re-ordered within each safety rating only
+  const objectiveEvidence = await loadObjectiveEvidence(db, session, airport.id, ranked, recommendationKey, nowMs); const ranking = await applyLayoverRankingMode(db, session, ranked, { keyOf: recommendationKey, live: live.byKey, preferences: session.vibeChips, evidence: objectiveEvidence, routing: new Map([...routed.byKey].map(([key, value]) => [key, routedCardContract(value)])) }); // census L78/L242: evidence fills only named objective terms; safety ratings and eligible universe are unchanged
   for (const candidate of ranking.served) {
     const key = recommendationKey(candidate);
     const activityTimeMin = candidate.activityTimeMin;
@@ -710,7 +710,7 @@ export async function generateRecommendations(
       neighborhood:     (candidate as any).neighborhood ?? null,
       sort_order:       sortOrder++,
       place_id:         (candidate as any).placeId ?? null,
-      ...travelTimeProvenanceColumn(source), ...stamp.column, // `{}` unless the row cannot say it itself; census L64: `{ snapshot_id }` only when the computation is stored
+      ...travelTimeProvenanceColumn(source), ...stamp.column, ...stamp.spec({ card: candidate, assessment: a, key, mapBand: bands.get(key)?.band ?? null, live: live.byKey, liveBlocked: live.byKey.get(key)?.drop === true, preferences: session.vibeChips, objectiveEvidence: objectiveEvidence.get(key), routing: candidate.insideAirport ? undefined : routedCardContract(routed.byKey.get(key)) }), // `{}` unless the row cannot say it itself; census L64: `{ snapshot_id }` only when the computation is stored; lane B2-RECS-A: the 3871 columns, `{}` with the status flag OFF
     };
     rows.push(row);
   }
@@ -741,7 +741,7 @@ export async function generateRecommendations(
         .upsert(keyed, { onConflict: "session_id,rec_key" })
         .select("id, rec_key");
       if (upError) {
-        logger.warn({ err: upError, sessionId: session.id }, "recommendation upsert failed (non-fatal)");
+        logger.warn({ err: upError, sessionId: session.id }, "recommendation upsert failed"); if(routePublication.required)return{ok:false,message:"This plan and its route monitoring could not be saved. Please try again."};
       } else {
         for (const w of (written ?? []) as any[]) {
           if (w?.id && w?.rec_key) idByKey.set(w.rec_key, w.id);
@@ -784,7 +784,7 @@ export async function generateRecommendations(
           .delete()
           .eq("session_id", session.id)
           .in("id", stale);
-        if (delError) logger.warn({ err: delError, sessionId: session.id }, "stale recommendation delete failed (non-fatal)");
+        if (delError) { logger.warn({ err: delError, sessionId: session.id }, "stale recommendation delete failed"); if(routePublication.required)return{ok:false,message:"Outdated plan routes could not be retired. Please try again."}; }
       }
     }
   } else {
@@ -846,18 +846,18 @@ export async function generateRecommendations(
         // flag's value at the time they read the event.
         maturity: {
           level: landside.level,
-          gateEnforced: landside.flagOn,
+          gateEnforced: Boolean(airport.curation) || landside.flagOn, flagOn: landside.flagOn,
           landsideAllowed: landside.allowed,
           cappedBy: landside.cappedBy,
           observationCount: landside.observationCount,
-          observationsReadable: landside.signalsReadable,
+          observationsReadable: landside.signalsReadable, ...readDisclosure(maturityRead),
         },
       },
     });
     if (evtError) logger.warn({ err: evtError, sessionId: session.id }, "recommendation_generated event failed (non-fatal)");
   }
 
-  // Return privacy-safe view.
+  // L259:3895's triggers publish each persisted recommendation and its route watches atomically; copied stop watches survive regeneration.
   //
   // A card whose stored row is admin-hidden is dropped here, so regeneration
   // cannot smuggle a moderated card back onto the traveller's dashboard. The
@@ -867,7 +867,7 @@ export async function generateRecommendations(
   //
   // On the legacy path `statusByKey` is empty, so nothing is dropped and the
   // returned set is byte-identical to what it was before this filter existed.
-  return { ok: true, snapshotId: snapshotIdFor(session.id, certified.inputHash), routedEnvelope: routed.envelope, recommendations: rows.flatMap((row, idx) => {
+  return { ok: true, snapshotId: snapshotIdFor(session.id, certified.inputHash), liveDisclosure: readDisclosure(liveRead), routedEnvelope: routed.envelope, recommendations: rows.flatMap((row, idx) => {
     const status = statusByKey.get(keys[idx]);
     if (status === USER_HIDDEN_RECOMMENDATION_STATUS) return [];
     // census L122 — the pin's band, from the envelope THIS request cut. An
@@ -900,7 +900,7 @@ export async function generateRecommendations(
       sortOrder:       row.sort_order,
       placeId:         row.place_id ?? null,
       planItemId:      null,
-    }), feasibility, experience: layoverExperienceFor({ recType: row.rec_type, title: row.title, insideAirport: Boolean(row.inside_airport) }), routing: row.inside_airport ? null : routedCardContract(routed.byKey.get(keys[idx])) }]; // census L75: from the served row alone, after it was rated — getRecommendations gives the same card the same descriptor
+    }), feasibility, experience: layoverExperienceFor({ recType: row.rec_type, title: row.title, insideAirport: Boolean(row.inside_airport) }), routing: row.inside_airport ? null : routedCardContract(routed.byKey.get(keys[idx])), ...stamp.served(row) }]; // census L75: from the served row alone, after it was rated — getRecommendations gives the same card the same descriptor; lane B2-RECS-A (L50): `status` / `available` / `statusReason` — a BLOCKED card is served, visibly unavailable, with its reason
   }) };
 }
 
@@ -972,7 +972,7 @@ export async function getRecommendations(
     // window" rather than a band that would be a claim about an older one. The
     // route regenerates whenever `layover_safety_engine_enabled` is on, so the
     // banded path is the one a traveller actually gets there.
-    return { ok: true, pairingCards: (data ?? []).map((row: any) => [recommendationRowKey(row), recommendationCardDigest(row)] as [string, string]), recommendations: (data ?? []).map((row: any) => ({ ...sanitizeRecommendation({
+    const servedOf = await storedStatusProjector(db, sessionId, (data ?? []) as Array<Record<string, unknown>>); return { ok: true, pairingCards: (data ?? []).map((row: any) => [recommendationRowKey(row), recommendationCardDigest(row)] as [string, string]), recommendations: (data ?? []).map((row: any) => ({ ...sanitizeRecommendation({
       id:             row.id,
       recType:        row.rec_type,
       title:          row.title,
@@ -1002,7 +1002,7 @@ export async function getRecommendations(
       planItemId:     row.plan_item_id,
     }), feasibility: unbandedCandidateFeasibility(
       row.inside_airport ? AIRSIDE_UNBANDED_REASON : STORED_UNBANDED_REASON,
-    ), experience: layoverExperienceFor({ recType: row.rec_type, title: row.title, insideAirport: Boolean(row.inside_airport) }) })) }; // census L75: the same descriptor the generate path attaches
+    ), experience: layoverExperienceFor({ recType: row.rec_type, title: row.title, insideAirport: Boolean(row.inside_airport) }), ...servedOf(row) })) }; // census L75: the same descriptor the generate path attaches; lane B2-RECS-A (L38/L50/L97): a stored card's status as served now (SUPERSEDED / EXPIRED / STALE projected), nothing for an unclassified card
   }
 }
 
@@ -1037,6 +1037,7 @@ export async function getRecommendations(
 import { createHash } from "node:crypto";
 import { snapshotIdFor } from "./layoverLedger.js";
 import { withLayoverRoutesBudget, LAYOVER_DEFERRED_LEG_PROVIDER } from "./LayoverTravelTime.js"; import { applyRoutedRecommendationPass, routedCardContract, type RoutedCardContract } from "./LayoverRoutedFeasibility.js"; import type { RoutedSafeEnvelope } from "./LayoverEnvelope.js"; import type { RouteCorridorProvider } from "../../lib/providers/routeCorridorProvider.js"; // lane B1-R1 imports on this one line, so no line below moves
+import { routeSubjectPublicationGate } from "./LayoverRouteSubjects.js";
 
 /** Appendix A's sentence for `RECOMMENDATION_EXPIRED`, verbatim. */
 export const RECOMMENDATION_EXPIRED_MESSAGE = "Recommendation certified under stale snapshot";
@@ -1215,4 +1216,31 @@ export async function storedRecommendationPairing(
   if (p === null || served.length === 0) return { ok: true, snapshotId: null };
   const paired = served.every(([key, digest]) => hasCard(p, key) && p.cards[key] === digest);
   return { ok: true, snapshotId: paired ? p.snapshotId : null };
+}
+
+// LAYOVER 165 lane B2-CURATE (L223) — imported at the TAIL so no cited line above moves; ESM hoists it. One call site:
+// the inside-airport candidates of `generateRecommendations`.
+import { curatedOvernightCandidates } from "./airportCuration.js";
+
+// LAYOVER 165 lane B2-RECS-A (census L26/L38/L44/L50/L97) — imported at the TAIL so no cited line above moves; ESM
+// hoists it. Three one-line call sites: the generation's stamp (`recommendationStamp`, which also supersedes the
+// session's stale cards before they are rewritten), each written row's 3871 columns (`stamp.spec`), and the served
+// status of a generated card (`stamp.served`) and of a stored one (`storedStatusProjector` in getRecommendations).
+// With layover_recommendation_status_enabled OFF every one of them is `{}` and reads nothing beyond the flag.
+import { recommendationStamp, storedStatusProjector, recommendationStatusEnabled } from "../layover/LayoverRecommendationStatus.js";
+
+import { matchRead, readDisclosure, readValue, readDegraded, type LayoverRead } from "../layover/layoverRead.js";
+import { canPersistTravelProvenance } from "./LayoverTravelProvenanceSchema.js";
+import { loadObjectiveEvidence } from "./LayoverObjectiveEvidenceStore.js";
+
+/** Keep an unreadable rollout flag distinct from a deliberate disabled value. */
+async function readLiveIntersectionFlag(db: SupabaseClient, sessionId: string): Promise<LayoverRead<boolean>> {
+  try {
+    const { data, error } = await db.from("feature_flags").select("enabled").eq("flag", LAYOVER_LIVE_INTERSECTION_FLAG).maybeSingle();
+    if (error) { logger.warn({ err: error, sessionId }, "layover live flag read failed"); return readDegraded(false, ["live_flag_unreadable"]); }
+    return readValue(data?.enabled === true);
+  } catch (err) {
+    logger.warn({ err, sessionId }, "layover live flag read threw");
+    return readDegraded(false, ["live_flag_unreadable"]);
+  }
 }

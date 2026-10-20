@@ -91,7 +91,7 @@ export function LayoverCrewLocationCard({ sessionId, timezone, refreshKey = 0, o
     const r = await getCrewLocation(sessionId);
     if (mine !== ticket.current) return;
     setRead(r); if (r.ok) setCrewKnown(r.available && r.inCrew); // a failed read keeps what the server last said
-    onReadRef.current?.(r);
+    onReadRef.current?.(r); void cacheCrewProximity(sessionId, r); /* census L154 (LAYOVER 165, lane B2-CREW): label + bucket + end only; a failed read writes nothing */
   }, [sessionId]);
   useEffect(() => { void refresh(); }, [refresh, refreshKey]);
 
@@ -122,10 +122,10 @@ export function LayoverCrewLocationCard({ sessionId, timezone, refreshKey = 0, o
   }, [refresh]);
 
   if (read === null) return null;
-  if (!read.ok) { if (!crewKnown) return null; // a failed read is not the server saying the feature is on or that this traveller is in a crew: draw nothing, as for feature off; once it has said so, the quiet line below
+  if (!read.ok) { if (!crewKnown) return <LayoverCrewProximityOffline sessionId={sessionId} timezone={timezone} onlyLiveShares />; // a failed read is not the server saying the feature is on or that this traveller is in a crew: draw nothing, as for feature off; once it has said so, the quiet line below
     return (
       <View style={styles.block}>
-        <Text style={styles.note} testID="layover-crew-location-unavailable">Crew locations are unavailable right now.</Text>
+        <Text style={styles.note} testID="layover-crew-location-unavailable">Crew locations are unavailable right now.</Text><LayoverCrewProximityOffline sessionId={sessionId} timezone={timezone} />
       </View>
     );
   }
@@ -327,3 +327,45 @@ const styles = StyleSheet.create({
 });
 
 export default LayoverCrewLocationCard;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §16 L154 — the crew's proximity OFFLINE (LAYOVER 165, lane B2-CREW; appended so no cited line above moves)
+// ─────────────────────────────────────────────────────────────────────────────
+// Drawn only when the live read FAILED: what the last answered read said about each crewmate's share — a label and a
+// proximity bucket, never a position — for as long as that share's own end has not passed. An expired share is not
+// drawn (readCachedCrewProximity drops it), and the "as of" instant is always shown: this is a memory, not a reading.
+import { cacheCrewProximity, readCachedCrewProximity, type CachedCrewProximity } from '../../lib/layoverPlanCache.ts';
+
+export function LayoverCrewProximityOffline({ sessionId, timezone, now = Date.now, onlyLiveShares = false }: { sessionId: string; timezone: string | null; now?: () => number; /** Cold start with no answered read yet: draw only a memory that still holds a running share, never an empty one. */ onlyLiveShares?: boolean }) {
+  const [cached, setCached] = useState<CachedCrewProximity | null>(null);
+  useEffect(() => {
+    let live = true;
+    void readCachedCrewProximity(sessionId, now()).then((c) => { if (live) setCached(c); });
+    return () => { live = false; };
+  }, [sessionId, now]); useCrewProximityExpiry(cached, setCached, now);
+  if (!cached || cached.sessionId !== sessionId || (onlyLiveShares && cached.crewmates.length === 0)) return null;
+  return (
+    <View style={styles.block} testID="layover-crew-proximity-offline">
+      <Text style={styles.note}>Offline — as of {fmtClock(cached.cachedAt, timezone)}. Only shares that have not ended are shown.</Text>
+      {cached.crewmates.length === 0 ? (
+        <Text style={styles.note} testID="layover-crew-proximity-offline-none">No crewmate share is still running.</Text>
+      ) : cached.crewmates.map((c) => (
+        <Text key={c.userId} style={styles.body} testID={`layover-crew-proximity-offline-${c.userId}`}>
+          {c.name ?? (c.handle ? `@${c.handle}` : 'A crewmate')}: {c.label}{c.proximity ? ` · ${PROXIMITY_TEXT[c.proximity]}` : ''} · until {fmtClock(c.endsAt, timezone)}
+        </Text>
+      ))}
+    </View>
+  );
+}
+
+/** Remove each cached share at its own expiry even when the offline card stays open. */
+function useCrewProximityExpiry(cached: CachedCrewProximity | null, setCached: React.Dispatch<React.SetStateAction<CachedCrewProximity | null>>, now: () => number) {
+  useEffect(() => {
+    if (!cached || cached.crewmates.length === 0) return;
+    const nextExpiry = Math.min(...cached.crewmates.map((c) => Date.parse(c.endsAt)));
+    const timer = setTimeout(() => {
+      setCached((current) => current ? { ...current, crewmates: current.crewmates.filter((c) => Date.parse(c.endsAt) > now()) } : null);
+    }, Math.max(0, Math.min(2_147_483_647, nextExpiry - now())));
+    return () => clearTimeout(timer);
+  }, [cached, now, setCached]);
+}

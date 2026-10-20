@@ -45,7 +45,7 @@ import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import airportRouter from "../routes/airport.js";
 import * as AirportRoutes from "../routes/airport.js";
-import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js";
+import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js"; import { withConfirmedCorridor } from "./helpers/confirmedCorridor.js";
 import { LAYOVER_COMPATIBLE_BUDDY_CATEGORIES } from "../services/airport/LayoverBuddyGate.js";
 import { detectTravelScamSignals } from "../domain/telegraph/policies/travelScamSignals.js";
 
@@ -112,7 +112,7 @@ function stage(rows: unknown[]) {
     rent_buddy_availability: [],
     blocks: [],
   };
-  _setTestClient(projecting(makeLayoverDb(tables, { users: { [TOKEN]: USER } }), "rent_buddy_profiles"), true);
+  _setTestClient(projecting(makeLayoverDb(withConfirmedCorridor(tables, { userIds: [USER], destination: "TW" }), { users: { [TOKEN]: USER } }), "rent_buddy_profiles"), true);
 }
 
 /**

@@ -52,7 +52,7 @@ import { invalidateFlagsCache } from "../compass/flags.js";
 import { invalidateDiscoveryEngineModeCache } from "../lib/discoveryEngineMode.js";
 import { LAYOVER_DISCOVERY_MODE_FLAG, certifiedLayoverSnapshot } from "../services/airport/LayoverSnapshot.js";
 import { CERTIFIED_MINUTES_SOURCE, LAYOVER_WINDOW_UNREADABLE_MESSAGE } from "../lib/discoveryLayoverGems.js";
-import { airportRow, sessionRow } from "./helpers/fakeLayoverDb.js";
+import { airportRow, sessionRow } from "./helpers/fakeLayoverDb.js"; import { withConfirmedCorridor } from "./helpers/confirmedCorridor.js"; // LAYOVER 165 B2-CURATE: an unconfirmed border fails closed since 2026-10-18; these worlds state a confirmed one
 
 // No network: nothing here should leave the process.
 const _originalFetch = globalThis.fetch;
@@ -178,7 +178,7 @@ function buildClient() {
 const client = buildClient();
 
 function gemsWorld(over: { modeOn?: boolean; session?: any | null; stops?: any[]; gems?: any[] } = {}): World {
-  return {
+  return withConfirmedCorridor({
     feature_flags: [
       { flag: "hidden_gems_enabled", enabled: true },
       { flag: "hidden_gems_layover_enabled", enabled: true },
@@ -188,7 +188,7 @@ function gemsWorld(over: { modeOn?: boolean; session?: any | null; stops?: any[]
     layover_sessions: over.session === null ? [] : [over.session ?? sessionFor(9)],
     airport_profiles: [airportRow()],
     layover_plan_stops: over.stops ?? [],
-  };
+  } as Record<string, any[]>, { userIds: [A_ID, B_ID], destination: "TW" }) as World;
 }
 
 /** The window the Layover domain certifies for A right now, read through the same door the route uses. */
@@ -269,6 +269,19 @@ describe("§56 A13/A14 — GET /hidden-gems/layover-safe reads the CERTIFIED win
     assert.ok(Math.abs(r.body.availableMinutes - certified) <= 1, `echoed ${r.body.availableMinutes}, certified ${certified}`);
     assert.equal(r.body.minutesSource, CERTIFIED_MINUTES_SOURCE);
     assert.match(String(r.body.snapshotId ?? ""), /.+/, "a certified serve names the snapshot it was certified against");
+  });
+
+  it("LAYOVER 165 L48/L77 — Layover mode OFF, an UNCONFIRMED border: no gem is served, and the closure is named", async () => {
+    world = gemsWorld();
+    world.entry_requirements = []; // the traveller's corridor is not curated: unknown entry permission
+    const r = await get(`${SAFE}?city=${CITY}`);
+    assert.equal(r.status, 200);
+    assert.deepEqual(gemIds(r.body), [], "a landside gem was served to a traveller whose entry is unconfirmed — the route went around the gate");
+    assert.ok((r.body.landsideClosedBy ?? []).includes("entry_unconfirmed"), JSON.stringify(r.body));
+    world = gemsWorld();
+    const control = await get(`${SAFE}?city=${CITY}`);
+    assert.deepEqual(gemIds(control.body), [G_QUICK], "CONTROL: the confirmed corridor serves the gem");
+    assert.equal(control.body.landsideClosedBy, undefined);
   });
 
   it("in a live layover, the query figure cannot NARROW it either, and is not required", async () => {
@@ -494,13 +507,13 @@ const itemIds = (body: any) => ((body?.items ?? []) as any[]).map((i) => i.id).s
 
 describe("§56 A14 — GET /discovery/community: revocation and cross-viewer", () => {
   function communityWorld(): World {
-    return {
+    return withConfirmedCorridor({
       feature_flags: [{ flag: LAYOVER_DISCOVERY_MODE_FLAG, enabled: true }],
       discovery_places: [placeRow(P_FITS), placeRow(P_OTHER)],
       layover_sessions: [sessionFor(9)],
       airport_profiles: [airportRow()],
       layover_plan_stops: [stopRow(P_FITS, 20, 60)],
-    };
+    } as Record<string, any[]>, { userIds: [A_ID, B_ID], destination: "TW" }) as World;
   }
 
   it("the admitted place is withheld on the NEXT request once the window no longer fits it", async () => {

@@ -154,7 +154,7 @@ function safetyHandlerSource(): string {
 describe("L175 — GET /:id/safety is evaluate()'s route caller", () => {
   it("1. the handler asks evaluate() for the session it serves, and writes nothing inline", () => {
     const body = safetyHandlerSource();
-    assert.match(body, /evaluateLayoverFeasibility\(sc, user\.id, session\.id\)/);
+    assert.match(body, /evaluateLayoverFeasibility\(sc, user\.id, session\.id, \{ loaded: \{ session, airport \} \}\)/);
     assert.doesNotMatch(body, /persistDecision\(/, "the §20 write belongs to evaluate(), not to the handler");
   });
 
@@ -219,7 +219,7 @@ describe("L175 — an ENDED session: answered as before, never stored", () => {
 
 describe("L175 — a refusal evaluate() reaches is answered in the handler's own words, never certified around", () => {
   it("8. its session read fails → 503, the same sentence as the handler's own failed read", async () => {
-    stage({ failNth: { table: "layover_sessions", n: 2 } });
+    stage({ failNth: { table: "layover_sessions", n: 1 } });
     const r = await get("/api/airport/sessions/session-1/safety");
     assert.equal(r.status, 503);
     assert.equal(r.body.error, "degraded_unavailable");
@@ -227,15 +227,15 @@ describe("L175 — a refusal evaluate() reaches is answered in the handler's own
     assert.equal(r.body.hardReturnTime, undefined);
   });
 
-  it("9. its session read finds no row (deleted between the two reads) → 404 `Session not found`", async () => {
-    stage({ failNth: { table: "layover_sessions", n: 2, empty: true } });
+  it("9. the shared session read finds no row → 404 `Session not found`", async () => {
+    stage({ failNth: { table: "layover_sessions", n: 1, empty: true } });
     const r = await get("/api/airport/sessions/session-1/safety");
     assert.equal(r.status, 404);
     assert.equal(r.body.message, "Session not found");
   });
 
   it("10. its airport read fails → 503, the airport sentence — never a certification against default buffers", async () => {
-    stage({ failNth: { table: "airport_profiles", n: 2 } });
+    stage({ failNth: { table: "airport_profiles", n: 1 } });
     const r = await get("/api/airport/sessions/session-1/safety");
     assert.equal(r.status, 503);
     assert.equal(r.body.message, "Your airport's timings could not be loaded. Please try again.");

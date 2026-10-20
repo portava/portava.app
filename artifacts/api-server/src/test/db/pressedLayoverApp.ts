@@ -19,7 +19,7 @@ export interface PressedApp {
   close(): Promise<void>;
 }
 
-export async function startPressedLayoverApp(db: PressedDb): Promise<PressedApp> {
+export async function startPressedLayoverApp(db: PressedDb, opts: { extraRouters?: express.IRouter[] } = {}): Promise<PressedApp> {
   process.env["SESSION_SECRET"] ??= "pressed-layover-session-secret";
   const [airport, events, constraints, simulate, crewLocation, adminMetrics] = await Promise.all([
     import("../../routes/airport.js"), import("../../routes/layoverEvents.js"), import("../../routes/layoverConstraints.js"),
@@ -27,10 +27,11 @@ export async function startPressedLayoverApp(db: PressedDb): Promise<PressedApp>
   ]);
   resetSchemaCapabilityMemo();
   _setTestClient(db.client, true);
-  const app = express();
+  const app = express(); app.use(layoverServiceAuditContext);
   app.use(express.json({ limit: "256kb" }));
   app.use((r: any, _res: any, next: any) => { r.log = { error() {}, info() {}, warn() {}, debug() {} }; next(); });
   for (const m of [airport, events, constraints, simulate, crewLocation, adminMetrics]) app.use("/api", (m as any).default);
+  for (const router of opts.extraRouters??[]) app.use('/api',router);
   const server = await new Promise<http.Server>((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
   const base = `http://127.0.0.1:${(server.address() as any).port}`;
   const call = (method: string, path: string, user: PressedUser | null, body?: unknown, headers: Record<string, string> = {}): Promise<Reply> =>
@@ -108,3 +109,5 @@ export async function seedConfirmedCorridor(db: PressedDb, userId: string, passp
         WHERE NOT EXISTS (SELECT 1 FROM public.entry_requirements WHERE passport_country = '${passport}' AND destination_country = '${destination}');`,
   );
 }
+
+import { layoverServiceAuditContext } from '../../lib/layoverServiceAudit.js';

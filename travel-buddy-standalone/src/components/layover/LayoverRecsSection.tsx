@@ -6,8 +6,8 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
 import { Compass, Plus, Check } from 'lucide-react-native';
 import { color, space, radius, type as t, avatar } from '../../theme/tokens.ts';
-import { fmtDur, REC_EMOJI, safetyColors } from './layoverFormat.ts';
-import type { LayoverLandsideSuppression, LayoverRecommendation } from '../../services/layover.ts'; import { typicalExperienceLine, typicalExperienceA11y } from './layoverExperienceFacts.ts'; // census L75 — one line: :41-92 are cited by line
+import { fmtDur, REC_EMOJI, safetyColors } from './layoverFormat.ts'; import { routingTermsExist } from '../../lib/layoverRoutedMap.ts';
+import type { LayoverLandsideSuppression, LayoverRecommendation } from '../../services/layover.ts'; import { typicalExperienceLine, typicalExperienceA11y } from './layoverExperienceFacts.ts'; import { LayoverActivityTimingNote } from './LayoverTimingEvidenceCard.tsx'; // census L75 — one line: :41-92 are cited by line
 
 interface Props {
   recs: LayoverRecommendation[];
@@ -125,7 +125,7 @@ export function LayoverRecsSection({
                     on a row that otherwise says "15m away" reads as "no travel
                     needed". The absence is now stated in words. */}
                 {!rec.insideAirport && (
-                  rec.travelTimeMin !== null && rec.travelTimeMin > 0
+                  rec.routing !== undefined ? <Text style={styles.metaStamp}>{routingTermsExist(rec.routing) ? `${rec.routing!.outboundMinutes}m away` : 'Travel time could not be measured right now'}</Text> : rec.travelTimeMin !== null && rec.travelTimeMin > 0
                     ? <Text style={styles.metaStamp}>{rec.travelTimeMin}m away</Text>
                     : <Text style={styles.metaStamp}>travel time not measured</Text>
                 )}
@@ -140,9 +140,9 @@ export function LayoverRecsSection({
                   {typical}
                 </Text>
               ) : null}
-              {rec.warningReason ? <Text style={styles.warning}>{rec.warningReason}</Text> : null}
+              <LayoverActivityTimingNote routing={rec.routing} />{rec.routing?.band === 'BLOCKED' ? <Text style={styles.warning}>Unavailable — {rec.routing.reason ?? rec.warningReason ?? 'This route does not fit the return deadline.'}</Text> : rec.warningReason ? <Text style={styles.warning}>{rec.warningReason}</Text> : null}
             </View>
-            {canPlan && recId && rec.safetyRating !== 'not_recommended' && !pairing.expired && (
+            {canPlan && recId && rec.safetyRating !== 'not_recommended' && rec.routing?.band !== 'BLOCKED' && !pairing.expired && (
               added ? (
                 <View style={styles.addedBadge}><Check size={15} color={color.success} /></View>
               ) : (

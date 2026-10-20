@@ -10,8 +10,8 @@
  *   - `atTime` is honoured at both ends (nothing observed after it, nothing
  *     expired at it), so a historical question is not answered from the future;
  *   - absent storage and failed reads are named refusals, never an empty truth;
- *   - it writes nothing, and it is NOT wired into the safety path (the owner's
- *     L81 decision): no service or route file names it.
+ *   - it writes nothing; and (owner decision 2026-10-18, L81 decided — lane B2-LIVE) the store is VALIDATED
+ *     before it reaches the safety path: getTruth/getTruthFromStore and the live producer share ONE window.
  *
  * Run: node --import tsx/esm --test src/test/layoverStoredTruth.test.ts
  */
@@ -128,8 +128,8 @@ describe("L180 — refusals are named, never an empty truth", () => {
   });
 });
 
-describe("L180 — available, and NOT wired into the safety path (owner decision L81)", () => {
-  it("no service or route file calls getTruthFromStore — it decides nothing about using observations", () => {
+describe("L180 — the stored truth and the SAFETY path read ONE validated window (owner decision 2026-10-18: L81 decided)", () => {
+  it("getTruthFromStore folds through reconcileValidated, and the only service reading the store for a safety number validates it first", () => {
     const src = fileURLToPath(new URL("..", import.meta.url));
     const files: string[] = [];
     const walk = (dir: string) => {
@@ -142,7 +142,7 @@ describe("L180 — available, and NOT wired into the safety path (owner decision
     for (const d of ["services", "routes", "lib", "domain", "server"]) {
       try { walk(join(src, d)); } catch { /* a directory this tree does not have */ }
     }
-    const callers = files.filter((f) => !f.endsWith("LayoverAirportTruth.ts") && readFileSync(f, "utf8").includes("getTruthFromStore"));
-    assert.deepEqual(callers, []);
+    const readers = files.filter((f) => !f.endsWith("LayoverAirportTruth.ts") && /readStoredObservations\(|getTruthFromStore\(/.test(readFileSync(f, "utf8"))).map((f) => f.slice(src.length).split("\\").join("/"));
+    assert.deepEqual(readers, ["services/airport/layoverLiveSignals.ts"]); assert.match(readFileSync(join(src, "services/airport/layoverLiveSignals.ts"), "utf8"), /validateObservationWindow\(corpus/); assert.match(readFileSync(join(src, "services/airport/LayoverAirportTruth.ts"), "utf8"), /const outcome = reconcileValidated\(corpus, \{ nowMs: atTime/);
   });
 });

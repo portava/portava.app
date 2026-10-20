@@ -107,7 +107,7 @@ export interface AirportReturnAnchor {
   onReturnNow: () => void;
 }
 
-interface Props {
+interface Props { routedMap?: RoutedMapData | null; currentSnapshotId?: string | null;
   airport: PublicAirport;
   stops: PlanStop[];
   /** Absent only where no return has been certified yet. */
@@ -198,7 +198,7 @@ function toPlace(partial: Partial<DiscoveryPlace> & { id: string; name: string; 
 }
 
 export function LayoverMapCard(props: Props | LayoverMapCardCachedProps) { return isCachedMapProps(props) ? <LayoverMapCardCached {...props} /> : <LayoverMapCardLive {...props} />; } /* census-layover L126: the offline mode is declared at the tail */ function LayoverMapCardLive({
-  airport, stops: certifiedStops, airportReturn, envelope, envelopeGate, candidateFeasibility, offline, nowMs, budgetChips, sessionId, crewLocations,
+  airport, stops: certifiedStops, airportReturn, envelope, envelopeGate, candidateFeasibility, offline, nowMs, budgetChips, sessionId, crewLocations, routedMap, currentSnapshotId,
 }: Props) {
   const hasAirportCoords =
     airport.lat != null && airport.lng != null && !(airport.lat === 0 && airport.lng === 0);
@@ -222,11 +222,11 @@ export function LayoverMapCard(props: Props | LayoverMapCardCachedProps) { retur
   // route strip cannot disagree about which stop is which. `blocked` is the
   // band the server proved; everything else stands.
   const banded = useMemo(
-    () => stops.map((s) => ({ stop: s, feasibility: pinFeasibility(s, candidateFeasibility) })),
-    [stops, candidateFeasibility],
+    () => stops.map((s) => ({ stop: s, feasibility: routedMap !== undefined && routedMapState(routedMap, currentSnapshotId, nowMs ?? Date.now()) !== 'current' ? null : pinFeasibility(s, candidateFeasibility), routing: budgetSim.activeBudget === null && routedMapState(routedMap, currentSnapshotId, nowMs ?? Date.now()) === 'current' ? routedMap?.cards.find(c => c.id === s.recommendationId)?.routing : null })),
+    [stops, candidateFeasibility, routedMap, budgetSim.activeBudget, currentSnapshotId, nowMs],
   );
   const blockedStops = useMemo(
-    () => banded.filter((b) => b.feasibility?.band === 'BLOCKED' || b.stop.mapBand?.band === 'BLOCKED'), // census L67: the server's §13 map band can block too
+    () => banded.filter((b) => b.routing?.band === 'BLOCKED' || b.feasibility?.band === 'BLOCKED' || b.stop.mapBand?.band === 'BLOCKED'), // census L67: the server's §13 map band can block too
     [banded],
   );
   const blockedIds = useMemo(
@@ -294,7 +294,7 @@ export function LayoverMapCard(props: Props | LayoverMapCardCachedProps) { retur
             fallbackLat={airport.lat}
             fallbackLng={airport.lng}
             fallbackZoom={11}
-          />
+          ><LayoverRoutedMapLayer data={routedMap} currentSnapshotId={currentSnapshotId} nowMs={nowMs ?? Date.now()} budgetActive={budgetSim.activeBudget !== null} /></DiscoveryMapView>
         </View>
       ) : (
         <View style={styles.noMap} testID="layover-map-no-coordinates">
@@ -305,7 +305,7 @@ export function LayoverMapCard(props: Props | LayoverMapCardCachedProps) { retur
         </View>
       )}
 
-      {/* The airport element. ALWAYS rendered — with a map it is also a pin, and
+      <LayoverGoogleRouteMap data={routedMap} currentSnapshotId={currentSnapshotId} selectedIds={stops.flatMap(s => s.recommendationId ? [s.recommendationId] : [])} airport={airport} nowMs={nowMs ?? Date.now()} budgetActive={budgetSim.activeBudget !== null} /><LayoverAirportLayout geometry={airport.topologyGeometry} nowMs={nowMs ?? Date.now()} />{/* The airport element. ALWAYS rendered — with a map it is also a pin, and
           without one this row is the whole of it. Either way it is the tap
           target the return CTA is anchored on. */}
       <Pressable
@@ -332,7 +332,7 @@ export function LayoverMapCard(props: Props | LayoverMapCardCachedProps) { retur
       {/* ── §13 SAFE ENVELOPE (L121, L116) ───────────────────────────────
           Two edges, drawn to a printed scale. The server certified both; this
           card only sizes them. */}
-      {envelope && env.draw ? (
+      {routedMap !== undefined ? <LayoverRoutedMapPanel data={routedMap} currentSnapshotId={currentSnapshotId} selectedRecommendationIds={stops.flatMap(s => s.recommendationId ? [s.recommendationId] : [])} timezone={airport.timezone} nowMs={nowMs ?? Date.now()} budgetActive={budgetSim.activeBudget !== null} /> : envelope && env.draw ? (
         <View style={styles.envelope} testID="layover-map-safe-envelope">
           <Text style={styles.sheetLabel} testID={`layover-map-envelope-label-${env.tone}`}>{env.label}</Text>{env.note ? <Text style={styles.envelopeCaveat} testID="layover-map-envelope-not-a-clearance">{env.note}{env.reasons.map((r) => ` ${r.sentence.charAt(0).toUpperCase()}${r.sentence.slice(1)}.`).join('')}</Text> : null}
           <View style={styles.envelopeRow}>
@@ -418,8 +418,8 @@ export function LayoverMapCard(props: Props | LayoverMapCardCachedProps) { retur
       {/* ── §13 CANDIDATE PIN BANDS (L122) and BLOCKED AREAS (L117, L125) ── */}
       {banded.length > 0 ? (
         <View style={styles.bands}>
-          {banded.map(({ stop: st, feasibility }) => {
-            const isBlocked = feasibility?.band === 'BLOCKED' || st.mapBand?.band === 'BLOCKED'; const mb = st.mapBand?.band ? st.mapBand : null; // census L67: the server's band, when it sent one, is what the row says
+          {banded.map(({ stop: st, feasibility, routing }) => {
+            const isBlocked = routing?.band === 'BLOCKED' || feasibility?.band === 'BLOCKED' || st.mapBand?.band === 'BLOCKED'; const mb = routing ? { band: routing.band, reason: routing.reason ?? (routing.absence ? 'Route could not be measured right now.' : '') } : (routedMap === undefined || budgetSim.activeBudget !== null) && st.mapBand?.band ? st.mapBand : null; // census L67: the routed server contract supplies the band without requiring legacy 3633
             return (
               <View
                 key={st.id}
@@ -607,7 +607,7 @@ function crewWho(c: CrewmateShare): string {
 //
 // What the cached plan does not carry, and so is not drawn: stop coordinates (no stop pins offline),
 // stop ids (no per-pin bands), the gate's status and cautions, and the confidence haircut's minutes.
-import type { CachedLayoverPlan } from '../../lib/layoverPlanCache.ts';
+import type { CachedLayoverPlan } from '../../lib/layoverPlanCache.ts'; import { LayoverRoutedMapPanel } from './LayoverRoutedMapPanel.tsx'; import { routedMapState, type RoutedMapData } from '../../lib/layoverRoutedMap.ts'; import { LayoverRoutedMapLayer } from './LayoverRoutedMapLayer.tsx'; import { LayoverAirportLayout } from './LayoverAirportLayout.tsx'; import { LayoverGoogleRouteMap } from './LayoverGoogleRouteMap';
 
 export interface LayoverMapCardCachedProps {
   /** The record `readCachedPlan` returned. Its instants are the server's, verbatim. */
@@ -650,7 +650,7 @@ function LayoverMapCardCached({ cached, cachedReturn, nowMs }: LayoverMapCardCac
 
       {hasCoords ? (
         <View style={styles.mapWrap}>
-          <DiscoveryMapView places={places} onSelectPlace={() => undefined} fallbackLat={lat} fallbackLng={lng} fallbackZoom={11} />
+          <DiscoveryMapView places={places} onSelectPlace={() => undefined} fallbackLat={lat} fallbackLng={lng} fallbackZoom={11}><LayoverRoutedMapLayer data={cached.routedMap} nowMs={nowMs} /></DiscoveryMapView>
         </View>
       ) : (
         <View style={styles.noMap} testID="layover-map-no-coordinates">
@@ -658,9 +658,9 @@ function LayoverMapCardCached({ cached, cachedReturn, nowMs }: LayoverMapCardCac
         </View>
       )}
 
-      <View style={styles.envelope} testID="layover-map-offline-envelope">
+      <LayoverAirportLayout geometry={a.topologyGeometry} nowMs={nowMs} offline /><View style={styles.envelope} testID="layover-map-offline-envelope">
         <Text style={styles.sheetLabel}>LAST CERTIFIED ENVELOPE — SAVED COPY</Text>
-        {env ? (
+        {cached.routedMap || cached.abortReturnRoute ? <LayoverRoutedMapPanel data={cached.routedMap ?? null} selectedRecommendationIds={cached.routedMap?.cards.map(c => c.id)} timezone={a.timezone} nowMs={nowMs} offline abortRoute={cached.abortReturnRoute} /> : env ? (
           <>
             <View style={styles.envelopeRow}>
               <View style={[styles.envelopePlot, { opacity: 0.6 }]}>

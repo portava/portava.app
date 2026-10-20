@@ -116,7 +116,7 @@ export const ENABLEMENT_ENV = "LAYOVER_ROUTED_CORRIDOR_ENABLED";
 const FIELD_MASK = [
   "routes.duration",
   "routes.staticDuration",
-  "routes.distanceMeters",
+  "routes.distanceMeters", "routes.polyline.geoJsonLinestring",
   "routes.legs.steps.travelMode",
   "routes.legs.steps.staticDuration",
   "routes.legs.steps.distanceMeters",
@@ -232,7 +232,7 @@ function routeToOption(route: any): RouteOption | null {
     // and summing free-flow steps would quietly discard the traffic the request
     // paid for.
     totalMinutes: Math.ceil(totalSeconds / 60),
-    transferCount: transferCountOf(legs),
+    transferCount: transferCountOf(legs), ...(googleRouteGeometry(route?.polyline?.geoJsonLinestring) ? { geometry: googleRouteGeometry(route?.polyline?.geoJsonLinestring) } : {}),
   };
 }
 
@@ -322,7 +322,7 @@ export function createGoogleRoutesCorridorProvider(
     const body = {
       origin: { location: { latLng: { latitude: q.from!.lat, longitude: q.from!.lng } } },
       destination: { location: { latLng: { latitude: q.to!.lat, longitude: q.to!.lng } } },
-      travelMode: mode,
+      travelMode: mode, polylineEncoding: "GEO_JSON_LINESTRING", polylineQuality: "HIGH_QUALITY",
       // L68's input. Without this the API returns one route and every corridor
       // would read as a single fragile corridor (L69) — a fabricated risk
       // signal, which is worse than no signal.
@@ -637,16 +637,16 @@ export function memoisedCorridor(
   preflight?: () => ProviderRefusal | null,
 ): (q: CorridorQuery) => Promise<CorridorResult> {
   const answers = new Map<string, { result: CorridorResult; expiresMs: number }>();
-  const inFlight = new Map<string, Promise<CorridorResult>>();
+  const inFlight = new Map<string, Promise<CorridorResult>>(); const requestAnswers = new WeakMap<RoutesRequestBudget, Map<string, CorridorResult>>();
   return async (q: CorridorQuery): Promise<CorridorResult> => {
     // The key names the mode GOOGLE is asked for: an unspecified mode is asked as DRIVE (googleMode), so it
     // shares the DRIVE entry rather than paying twice for the same request.
     const closed = preflight?.() ?? null;
-    if (closed) return closed;
+    if (closed) return closed; if (q.cachePolicy === 'no_store') return inner(q);
     const base = corridorCacheKey({ ...q, mode: localMode(googleMode(q.mode)) });
     if (base === null) return inner(q);
     const key = `${base}:${q.wantAlternatives === false ? "single" : "alternatives"}`;
-    const hit = answers.get(key);
+    const scope = currentRoutesRequestBudget(); const requestHit = scope ? requestAnswers.get(scope)?.get(key) : undefined; if (requestHit?.ok && Date.parse(requestHit.value.expiresAt) > now().getTime()) return requestHit; const hit = answers.get(key);
     if (hit && hit.expiresMs > now().getTime()) return hit.result;
     if (hit) answers.delete(key);
     const pending = inFlight.get(key);
@@ -659,7 +659,7 @@ export function memoisedCorridor(
             const oldest = answers.keys().next().value;
             if (oldest !== undefined) answers.delete(oldest);
           }
-          answers.set(key, { result, expiresMs });
+          answers.set(key, { result: withoutProviderMapContent(result), expiresMs }); if (scope) { let transient = requestAnswers.get(scope); if (!transient) { transient = new Map(); requestAnswers.set(scope, transient); } transient.set(key, result); }
         }
       }
       return result;
@@ -668,3 +668,5 @@ export function memoisedCorridor(
     return p;
   };
 }
+
+import { googleRouteGeometry, withoutProviderMapContent } from './providerMapGeometry.js';

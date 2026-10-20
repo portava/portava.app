@@ -1768,7 +1768,7 @@ export async function enforceBookingCreationGates(opts: {
   meetupType?: string | null;
   applyKillSwitch?: boolean;
   applyRollout?: boolean;
-  applyLimits?: boolean;
+  applyLimits?: boolean; layoverContext?: LayoverBuddyBookingContext | null;
 }): Promise<boolean> {
   const {
     sc: serviceClient, res, userId, buddyProfile,
@@ -1777,7 +1777,7 @@ export async function enforceBookingCreationGates(opts: {
     applyKillSwitch = false, applyRollout = false, applyLimits = false,
   } = opts;
 
-  // ── Kill switches (only where the caller has not already checked them) ──────
+  if (category === 'layover' && !opts.layoverContext) { res.status(409).json({ error: 'layover_checkout_required', message: 'Choose a specialist from your active layover to check the current return deadline.' }); return false; }
   if (applyKillSwitch) {
     if (await isKillSwitchEngaged(serviceClient, 'disable_rent_buddy_booking')
         || await isKillSwitchEngaged(serviceClient, 'disable_rab_bookings')) {
@@ -2104,7 +2104,7 @@ router.post("/rent-a-buddy/bookings", async (req, res) => {
   // value (never the client body) both drives the gate and is snapshotted onto
   // the booking below so later buddy-location edits can't change the rules that
   // applied at creation time.
-  const serviceCountry = deriveServiceCountry(buddyProfile); if (!await requireBookingKyc(serviceClient, res, serviceCountry)) return; // P-1: identity coverage for THIS booking's service country; none/unreadable → refused
+  const serviceCountry = deriveServiceCountry(buddyProfile); if (!await requireBookingKyc(serviceClient, res, serviceCountry)) return; let layoverContext: LayoverBuddyBookingContext | null = null; if (category === 'layover' || req.body?.layoverSessionId) { if (category !== 'layover') return res.status(400).json({ error: 'layover_specialist_required' }); if (typeof meetupLocation !== 'string' || !meetupLocation.trim() || isPrivateLocation(meetupLocation) || /\b(private|apartment|bedroom|home|residence)\b/i.test(meetupLocation)) return res.status(400).json({ error: 'layover_public_meetup_required' }); const prepared = await prepareLayoverBuddyBooking(serviceClient, { userId: user.id, sessionId: req.body?.layoverSessionId, buddy: buddyProfile, bookingDate, startTime, durationH }); if (!prepared.ok) return res.status(prepared.status).json({ error: prepared.reason }); layoverContext = prepared; }
 
   // Launch controls (age/DOB/ID/phone), blocks, self-booking, nightlife
   // category-approval + admin-approval + public-meetup, and high-risk two-sided
@@ -2113,7 +2113,7 @@ router.post("/rent-a-buddy/bookings", async (req, res) => {
   // re-applied here (applyKillSwitch/applyRollout/applyLimits = false).
   if (!await enforceBookingCreationGates({
     sc: serviceClient, res, userId: user.id, buddyProfile,
-    city, countryCode: serviceCountry, category, meetupLocation, paymentMode, groupSize,
+    city, countryCode: serviceCountry, category, meetupLocation, paymentMode, groupSize, layoverContext,
   })) return;
 
   // New Buddy restrictions
@@ -2212,9 +2212,9 @@ router.post("/rent-a-buddy/bookings", async (req, res) => {
     }
   }
 
-  const { data: booking, error } = await serviceClient
-    .from("rent_buddy_bookings")
-    .insert({
+  const bookingPayload = {
+    // Layover context and booking commit together; the database refuses unbound specialist writes.
+    // Every existing payment, trust and rollout check above still runs before this write.
       buddy_id: buddyId,
       traveler_id: user.id,
       package_id: packageId ?? null,
@@ -2226,7 +2226,7 @@ router.post("/rent-a-buddy/bookings", async (req, res) => {
       city,
       country_code: serviceCountry,
       category,
-      notes: notes ?? null,
+      notes: layoverContext ? `Public meeting place: ${meetupLocation}\n${typeof notes === 'string' ? notes : ''}` : notes ?? null,
       payment_mode: paymentMode,
       total_usd: totalUsd,
       deposit_usd: depositUsd,
@@ -2237,9 +2237,9 @@ router.post("/rent-a-buddy/bookings", async (req, res) => {
       safety_status: "normal",
       route_plan: [],
       updated_at: new Date(nowMs).toISOString(),
-    })
-    .select()
-    .maybeSingle();
+    };
+  const { data: booking, error } = layoverContext ? await createLayoverBuddyBooking(serviceClient, layoverContext, bookingPayload) : await serviceClient.from("rent_buddy_bookings").insert(bookingPayload).select().maybeSingle();
+  // The private binding is never included in the booking wire response.
 
   if (error) return sendError(res, "db_error", error.message);
 
@@ -2520,7 +2520,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/accept", async (req, res) => {
     });
   }
 
-  if (!await requireBookingKyc(serviceClient, res, (booking as any).country_code ?? null)) return; if (!await requireVerifiedBookingParties(serviceClient, res, { travelerId: (booking as any).traveler_id, buddyUserId: auth.user.id })) return; // verifier F7: CONFIRMING re-checks identity readiness and both people, as creating did (either may have lapsed since the request). Then conflict detection: overlapping scheduled/in_progress bookings for this buddy
+  if (!await requireBookingKyc(serviceClient, res, (booking as any).country_code ?? null)) return; if (!await requireVerifiedBookingParties(serviceClient, res, { travelerId: (booking as any).traveler_id, buddyUserId: auth.user.id })) return; if ((booking as any).category === 'layover') { const checked = await revalidateLayoverBuddyBooking(serviceClient, booking); if (!checked.ok) return res.status(checked.status).json({ error: checked.reason }); } // Acceptance must still fit the current certified layover.
   const { data: existingBookings } = await serviceClient
     .from("rent_buddy_bookings")
     .select("id, booking_date, start_time, duration_h")
@@ -2830,7 +2830,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/start", async (req, res) => {
     });
   }
 
-  const now = new Date().toISOString();
+  const now = new Date().toISOString(); if ((booking as any).category === 'layover') { const checked = await revalidateLayoverBuddyBooking(serviceClient, booking); if (!checked.ok) return res.status(checked.status).json({ error: checked.reason }); }
   // Compare-and-set. Same rule as /cancel and /complete: the required source
   // status rides in the SAME statement as the write, and `.select("id")` makes
   // it RETURNING so a zero-row match is visible. Checking the status in JS and
@@ -4557,7 +4557,7 @@ router.post("/rent-a-buddy/apply", async (req, res) => {
     city, country, categories = [], languages = [], motivation, socialLinks = {},
     displayName, bio, hourlyRateUsd, availability, zones, photos,
   } = req.body ?? {};
-  if (!city) return res.status(400).json({ error: "invalid_payload", message: "city required." });
+  if (!city) return res.status(400).json({ error: "invalid_payload", message: "city required." }); if(!await requireLayoverSpecialistDeclaration(serviceClient,res,auth.user.id,categories))return;
 
   if (motivation) {
     const matches = await scanForPolicyViolations({
@@ -4962,7 +4962,7 @@ router.patch("/rent-a-buddy/dashboard/offer", async (req, res) => {
   if (body.tagline !== undefined)       patch.tagline        = body.tagline;
   if (body.bio !== undefined)           patch.bio            = body.bio;
   if (body.languages !== undefined)     patch.languages      = body.languages;
-  if (body.categories !== undefined)    patch.categories     = body.categories;
+  if (body.categories !== undefined) {if(!await requireLayoverSpecialistDeclaration(serviceClient,res,auth.user.id,body.categories))return;patch.categories=body.categories;}
   if (body.hourlyRateUsd !== undefined) patch.hourly_rate_usd = body.hourlyRateUsd;
 
   await serviceClient.from("rent_buddy_profiles").update(patch).eq("user_id", auth.user.id);
@@ -5379,7 +5379,7 @@ router.patch("/rent-a-buddy/admin/applications/:appId", async (req, res) => {
   // Training must be completed before a buddy can be approved.
   // Source of truth: rent_buddy_training_checklist (where training route writes),
   // keyed by application_id so no profile needs to exist yet.
-  if (status === "approved") {
+  if (status === "approved") {if(!await requireLayoverSpecialistDeclaration(serviceClient,res,(app as any).user_id,Array.isArray(approvedCategories)&&approvedCategories.length?approvedCategories:(app as any).categories))return;
     const { count: trainedCount } = await serviceClient
       .from("rent_buddy_training_checklist")
       .select("id", { count: "exact" })
@@ -5487,7 +5487,7 @@ router.post("/rent-a-buddy/admin/buddies/:buddyId/reactivate", async (req, res) 
   if (!admin) return;
   const { sc: serviceClient, userId } = admin;
   const { buddyId } = req.params;
-  const { data: buddy } = await serviceClient.from("rent_buddy_profiles").select("id").eq("id", buddyId).maybeSingle();
+  const { data: buddy } = await serviceClient.from("rent_buddy_profiles").select("id,user_id").eq("id", buddyId).maybeSingle();
   if (!buddy) return res.status(404).json({ error: "not_found" });
   await serviceClient.from("rent_buddy_profiles").update({ admin_status: "active", status: "active", updated_at: new Date().toISOString() }).eq("id", buddyId);
   await serviceClient.from("rent_buddy_admin_actions").insert({ admin_id: userId, target_type: "buddy", target_id: buddyId, action: "reactivated", notes: null });
@@ -5541,7 +5541,7 @@ router.patch("/rent-a-buddy/admin/buddies/:buddyId/categories", async (req, res)
   if (!Array.isArray(categories)) return res.status(400).json({ error: "invalid_payload" });
   const { data: buddy } = await serviceClient.from("rent_buddy_profiles").select("id").eq("id", buddyId).maybeSingle();
   if (!buddy) return res.status(404).json({ error: "not_found" });
-  await serviceClient.from("rent_buddy_profiles").update({ categories, updated_at: new Date().toISOString() }).eq("id", buddyId);
+  if(!await requireLayoverSpecialistDeclaration(serviceClient,res,buddy.user_id,categories))return;await serviceClient.from("rent_buddy_profiles").update({ categories, updated_at: new Date().toISOString() }).eq("id", buddyId);
   await serviceClient.from("rent_buddy_admin_actions").insert({ admin_id: userId, target_type: "buddy", target_id: buddyId, action: "categories_updated", notes: JSON.stringify(categories) });
   return res.json({ ok: true });
 });
@@ -7914,7 +7914,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/change-request", async (req, res)
 
   const { data: booking } = await serviceClient
     .from("rent_buddy_bookings")
-    .select("traveler_id, buddy_id, status, booking_date, start_time, duration_h, package_id, total_usd")
+    .select("id, traveler_id, buddy_id, status, category, booking_date, start_time, duration_h, package_id, total_usd")
     .eq("id", bookingId)
     .maybeSingle();
   if (!booking) return res.status(404).json({ error: "not_found" });
@@ -7933,7 +7933,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/change-request", async (req, res)
     });
   }
 
-  // A proposed date change must not land on the buddy's blocked/vacation dates
+  if ((booking as any).category === 'layover') { const checked = await revalidateLayoverBuddyBooking(serviceClient, booking, { field: changeField, value: proposedValue }); if (!checked.ok) return res.status(checked.status).json({ error: checked.reason }); }
   if (changeField === "date") {
     const proposedDate = (proposedValue as any)?.date;
     if (typeof proposedDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(proposedDate)) {
@@ -8028,7 +8028,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/respond-change-request", async (r
 
   const { data: booking } = await serviceClient
     .from("rent_buddy_bookings")
-    .select("traveler_id, buddy_id, status")
+    .select("id, traveler_id, buddy_id, status, category, booking_date, start_time, duration_h")
     .eq("id", bookingId)
     .maybeSingle();
   if (!booking) return res.status(404).json({ error: "not_found" });
@@ -8050,7 +8050,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/respond-change-request", async (r
     return res.status(403).json({ error: "forbidden", message: "You cannot respond to your own change request." });
   }
 
-  const newStatus = decision === "accept" ? "approved" : "declined";
+  const newStatus = decision === "accept" ? "approved" : "declined"; const layoverChange = decision === 'accept' && (booking as any).category === 'layover';
   const now = new Date().toISOString();
 
   // Re-check blocked dates at accept time — the buddy may have blocked the
@@ -8063,13 +8063,13 @@ router.post("/rent-a-buddy/bookings/:bookingId/respond-change-request", async (r
     }
   }
 
-  await serviceClient
+  if (layoverChange) { const applied = await acceptLayoverBuddyChange(serviceClient, booking, changeReq, auth.user.id, responseNote); if (!applied.ok) return res.status(applied.status).json({ error: applied.reason }); } else await serviceClient
     .from("buddy_booking_change_requests")
     .update({ status: newStatus, responded_by: auth.user.id, response_note: responseNote ?? null, responded_at: now })
     .eq("id", changeRequestId);
 
   // If accepted, apply the proposed change to the booking
-  if (decision === "accept") {
+  if (decision === "accept" && !layoverChange) {
     const field: string = (changeReq as any).change_field;
     const proposed: Record<string, unknown> = (changeReq as any).proposed_value ?? {};
 
@@ -8373,3 +8373,4 @@ export function toPartySupportReport(r: any) {
   };
 }
 import { readVerifiedBadges, identityBadgeField } from "../services/identityVerification/verifiedBadges.js"; // census-trust TV-2c
+import {requireLayoverSpecialistDeclaration,prepareLayoverBuddyBooking,createLayoverBuddyBooking,revalidateLayoverBuddyBooking,acceptLayoverBuddyChange,type LayoverBuddyBookingContext} from '../services/airport/LayoverBuddyBooking.js';

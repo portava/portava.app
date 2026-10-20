@@ -102,12 +102,12 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [deletionScheduledAt, setDeletionScheduledAt] = useState<string | null>(null);
 
   useEffect(() => {
-    let active = true;
-    getSessionUserId().then((uid) => { if (active) { setDiscoveryViewerFromSession(uid); setUserId(uid); setLoading(false); } });
+    let active = true; let lastUid: string | null | undefined; let authEpoch = 0;
+    getSessionUserId().then((uid) => { if (active && authEpoch === 0) { lastUid = uid; setDiscoveryViewerFromSession(uid); setUserId(uid); setLoading(false); } });
     // The Discovery device caches follow the auth event itself, BEFORE any screen
     // re-renders: a synchronous cache read at mount must never paint the previous
     // account's page (services/discoveryViewerScope.ts).
-    let lastUid: string | null | undefined; const unsub = onAuthChange((uid) => { if (lastUid !== undefined && uid !== lastUid) clearThreadCursors(); lastUid = uid; setDiscoveryViewerFromSession(uid); if (active) setUserId(uid); }); // §73 (V-TM B-F5): an external sign-out or account switch clears the conversation cursors too, not only signOut()
+    const unsub = onAuthChange((uid) => { const epoch = ++authEpoch; const changed = lastUid !== undefined && uid !== lastUid; if (changed) clearThreadCursors(); lastUid = uid; setDiscoveryViewerFromSession(uid); const publish = () => { if (active && epoch === authEpoch) { setUserId(uid); setLoading(false); } }; if (changed) void clearLayoverOfflineStorage().then(publish); else publish(); }); // Account switches clear device-only Layover data before the next account's screens mount; stale auth promises cannot overwrite a newer event.
     return () => { active = false; unsub(); };
   }, []);
 
@@ -310,7 +310,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     // unavailable) — getStorage() in compass.ts does the same.
     try {
       const AS = require('@react-native-async-storage/async-storage').default;
-      await Promise.allSettled(PRIVATE_ASYNC_KEYS.map((k) => AS.removeItem(k)));
+      await Promise.allSettled([clearLayoverOfflineStorage(), ...PRIVATE_ASYNC_KEYS.map((k) => AS.removeItem(k))]);
     } catch {
       // Non-fatal — native module absent (e.g. web / test environment).
     }
@@ -367,3 +367,5 @@ export function useSession(): SessionContextValue {
   }
   return ctx;
 }
+
+import { clearLayoverOfflineStorage } from '../lib/layoverOfflineStorage.ts';

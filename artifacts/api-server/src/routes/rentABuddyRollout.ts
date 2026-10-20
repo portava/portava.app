@@ -38,7 +38,7 @@ export type AccessDecision =
   | { allowed: true }
   | { allowed: false; code: string; message: string; httpStatus: number };
 
-const MVP_ALLOWED_CATEGORIES = new Set(["city", "language", "arrival", "shopping", "content"]);
+const MVP_ALLOWED_CATEGORIES = new Set(["city", "language", "arrival", "shopping", "content", "layover"]);
 
 // All city rollout statuses handled by checkRentBuddyAccess.
 // Used for a fail-closed guard: any DB enum value added in the future but
