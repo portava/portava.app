@@ -137,7 +137,7 @@ $reassert$;`;
  * engine-command and branch counts (verifier V-714 F4: "touches the object" is
  * not "re-asserts the count"). This pins every count those statements pinned,
  * at its CHAIN-END value, including 3826's RECORD_FLIGHT_STATUS engine command
- * and branch (the continuation of 2786's four commands and72 branches). A transform that legitimately moves one of these
+ * and branch (the continuation of 2786's four commands and 72 branches). A transform that legitimately moves one of these
  * counts must update this block in the same change: the amendments db test
  * runs it at the chain end on every PR.
  */
@@ -180,7 +180,7 @@ const KERNEL_COUNTS_WHY =
   "point in the chain (\"expected 3 stage-family assignments\", \"the 2 pre-existing trip-level range checks\", " +
   "\"N command branches after this no-branch migration\"). The named transform added to that count on purpose; " +
   "its own postcondition (amended here in turn where a still later transform moved its counts) asserts the kernel " +
-  "it installed, with3826 adding the flight-status engine command; KERNEL_COUNTS_REASSERT re-pins every dropped count at its chain-end value.";
+  "it installed, with 3826 adding the flight-status engine command; KERNEL_COUNTS_REASSERT re-pins every dropped count at its chain-end value.";
 
 export const POSTCONDITION_AMENDMENTS: readonly PostconditionAmendment[] = [
   {
