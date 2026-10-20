@@ -129,7 +129,7 @@ describe("certify:migrations stage 4 — every declared amendment, at the chain 
     const text = a.reassert!;
     const variants: string[] = [];
     for (const m of text.matchAll(/'([a-z_]+):(\d+)'/g)) variants.push(text.replace(m[0], `'${m[1]}:${Number(m[2]) + 1}'`));
-    for (const n of ["3", "4", "72"]) {
+    for (const n of ["3", "5", "73"]) {
       const needle = `IF n <> ${n} THEN`;
       assert.equal(text.split(needle).length, 2, `exactly one "${needle}"`);
       variants.push(text.replace(needle, `IF n <> ${Number(n) + 1} THEN`));
