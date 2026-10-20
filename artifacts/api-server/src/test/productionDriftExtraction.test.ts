@@ -313,3 +313,24 @@ describe("an unmerged-pr classification expires when the PR lands", () => {
     assert.deepEqual(undeclared, [], `ratcheted but declared by no migration: ${undeclared.join(", ")}`);
   });
 });
+
+// check:production-drift runs in exactly one CI job, `api-server · check:all`, which
+// needs Supabase credentials and the shared live-DB slot. When that job is red for
+// another reason, this file-vs-file comparison -- it opens no socket and reads no
+// credential -- is masked with it. PR #762 added 25 tables, recorded none of them,
+// and the only report of it sat behind its own migrations' expected live-DB red
+// (run 39024052320). Running the real entry point here puts the same verdict in the
+// credential-free node:test tier. Delete any one of the PR #762 entries from
+// KNOWN_PRODUCTION_GAPS and this goes red naming that table.
+describe("check:production-drift at HEAD (credential-free)", () => {
+  it("the script itself exits 0: every declared table is in production or on the ratchet", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const run = spawnSync(process.execPath, ["--import", "tsx/esm", "src/scripts/checkProductionDrift.ts"], {
+      cwd: new URL("../../", import.meta.url),
+      encoding: "utf8",
+      env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "" },
+    });
+    assert.equal(run.status, 0, run.stdout + run.stderr);
+    assert.match(run.stdout, /✓ No unrecorded production drift\. [1-9][0-9]* table\(s\) on the ratchet/);
+  });
+});
