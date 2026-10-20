@@ -71,6 +71,22 @@ export interface LiveSchema {
   /** Function names present in BOTH schemas, where a name-keyed answer cannot
    *  say which one satisfied a claim. Reported, not assumed away. */
   collidingFunctionNames: Set<string>;
+  /**
+   * Functions in every OTHER non-system schema, keyed "schema.function".
+   *
+   * 3990, 3991 and 3993 are the first migrations to create functions outside
+   * public and authz: service-only internals in memory_snapshot_private,
+   * memory_video_segments_private and memory_resurfacing_policy_private, kept
+   * off PostgREST on purpose. The extractor kept only the bare name, so those
+   * claims were looked up in public/authz and read as MISSING on a database
+   * that had every one of them (live-DB run 39458226185: 10 functions across 3
+   * files, all present on portava-ci). A claim that names such a schema is now
+   * keyed with it and resolved HERE, and only here: a public or authz function
+   * of the same name does not satisfy it.
+   */
+  qualifiedFunctions: Set<string>;
+  /** EXECUTE grants on those functions, "schema.function.grantee". */
+  qualifiedRoutineGrants: Set<string>;
 }
 
 export interface Claim {
@@ -92,6 +108,18 @@ export interface Claim {
   label: string;
 }
 
+/**
+ * The key a function claim is filed under: "schema.function" for a schema other
+ * than public/authz, else the bare name those two have always been keyed by
+ * (so every existing key, allowlist entry and conditional claim is unchanged).
+ * See LiveSchema.qualifiedFunctions.
+ */
+export function functionClaimKey(schema: string | undefined, fn: string): string {
+  const s = (schema ?? "").replace(/"/g, "").toLowerCase();
+  const f = fn.toLowerCase();
+  return s && s !== "public" && s !== "authz" ? `${s}.${f}` : f;
+}
+
 export function isMissing(claim: Claim, live: LiveSchema): boolean {
   const key = claim.key.slice(claim.kind.length + 1);
   switch (claim.kind) {
@@ -108,6 +136,9 @@ export function isMissing(claim: Claim, live: LiveSchema): boolean {
       return !live.columns.has(key);
     }
     case "function":
+      // "schema.function": a function in another schema, resolved only there.
+      // See LiveSchema.qualifiedFunctions.
+      if (key.includes(".")) return !live.qualifiedFunctions.has(key);
       // Resolved in EITHER schema. See LiveSchema.authzFunctions for why the
       // two sets are kept apart, and `authzOnly` in main() for how an
       // authz-only resolution is reported rather than passed in silence.
@@ -139,7 +170,14 @@ export function isMissing(claim: Claim, live: LiveSchema): boolean {
       return !live.tableGrants.has(key);
     }
     case "grantfn": {
-      const [fn] = key.split(".");
+      const parts = key.split(".");
+      if (parts.length === 3) {
+        // "schema.function.grantee" — the same rule as the function claim:
+        // absent function → its own finding; present → its own catalogue.
+        if (!live.qualifiedFunctions.has(`${parts[0]}.${parts[1]}`)) return false;
+        return !live.qualifiedRoutineGrants.has(key);
+      }
+      const [fn] = parts;
       // A grant on a function that does not exist is not a MISSING GRANT; the
       // missing FUNCTION is the finding, and it is reported by its own claim.
       if (!live.functions.has(fn) && !live.authzFunctions.has(fn)) return false;
