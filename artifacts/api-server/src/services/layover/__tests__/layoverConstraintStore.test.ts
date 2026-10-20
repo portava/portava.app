@@ -558,11 +558,19 @@ describe("BLOCKER 3 — a failed FLAG read closes the gate; it is not read as 'o
   });
 
   it("the consumers close on it: no landside recommendation, and the snapshot closes", async () => {
-    const { db } = world({ failures: FLAGS_DOWN, entryPermitted: true });
-    const recs = await generateRecommendations(db, AIRPORT, await owned(db), NOW);
+    // ONLY the two constraint flags are unreadable. Since ee52da82 (L259) a GLOBAL flag-store outage also
+    // leaves route-monitoring state unknown, and the generator then refuses to publish anything at all
+    // (layoverRankingObjective.test.ts, "a global flag-store outage …"), which would never reach this
+    // property. Failing just these two reads keeps the entry corridor and every other flag readable, so the
+    // closure below is BLOCKER 3's and nothing else's: the world is the CONTROL's below, which IS offered a city.
+    const { db } = world({ storage: false, entryPolicy: false, entryPermitted: true });
+    const failing = new Set<string>([LAYOVER_CONSTRAINT_FLAGS.storage, LAYOVER_CONSTRAINT_FLAGS.entryForbidsLandside]);
+    const flagsDown = constraintFlagsUnreadable(db, failing);
+    assert.deepEqual(await readConstraintFlags(flagsDown as never), { readable: false }, "fixture: the constraint flags are unreadable");
+    const recs = await generateRecommendations(flagsDown as never, AIRPORT, await owned(flagsDown), NOW);
     assert.ok(recs.ok);
     assert.equal(recs.recommendations.filter((x: any) => !x.insideAirport).length, 0);
-    const snap = await certifiedLayoverSnapshot(db, USER, { sessionId: SESSION, nowMs: NOW });
+    const snap = await certifiedLayoverSnapshot(flagsDown as never, USER, { sessionId: SESSION, nowMs: NOW });
     assert.ok(snap.ok);
     assert.equal(snap.snapshot.landsideOpen, false);
   });
@@ -872,3 +880,31 @@ describe("FOLLOW-UP 2 — `landsideOpen` is true ONLY for an open gate, and the 
 import { readFileSync, readdirSync } from "node:fs";
 import { certifiedActionUniverse, landsideContextPhrase, landsideNotForbidden } from "../../airport/LayoverSnapshot.js";
 import { toolGetLayoverSnapshot } from "../../../compass/CompassTools.js";
+
+/**
+ * A client whose `feature_flags` reads fail for the NAMED flags only (resolved `{ data: null, error }`, as
+ * supabase-js does), and answer normally for every other flag. Every flag read here filters `eq("flag", …)`
+ * (or `in("flag", […])`), so the filter is what decides.
+ */
+function constraintFlagsUnreadable(db: any, failing: ReadonlySet<string>): any {
+  return {
+    ...db,
+    from(table: string) {
+      const builder = db.from(table);
+      if (table !== "feature_flags") return builder;
+      let hit = false;
+      const down = { data: null, error: { message: "connection reset by peer" } };
+      const proxy: any = new Proxy(builder, {
+        get(target, prop) {
+          if (prop === "eq") return (col: string, v: unknown) => { if (col === "flag" && failing.has(String(v))) hit = true; target.eq(col, v); return proxy; };
+          if (prop === "in") return (col: string, vs: unknown[]) => { if (col === "flag" && vs.some((v) => failing.has(String(v)))) hit = true; target.in(col, vs); return proxy; };
+          if (prop === "maybeSingle" || prop === "single") return () => (hit ? Promise.resolve(down) : target[prop]());
+          if (prop === "then") return (onF: any, onR: any) => (hit ? Promise.resolve(down) : target).then(onF, onR);
+          const v = target[prop];
+          return typeof v === "function" ? (...a: unknown[]) => { const out = v.apply(target, a); return out === target ? proxy : out; } : v;
+        },
+      });
+      return proxy;
+    },
+  };
+}
