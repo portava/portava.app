@@ -26,7 +26,7 @@ import { readFileSync, readdirSync } from "node:fs";
 // credential, no guard front door and no env at all. See the header of
 // schemaClaimResolution.ts for why it was extracted — check:guard-coverage
 // caught the earlier version of this file naming credential env vars.
-import { isMissing, type LiveSchema } from "../scripts/lib/schemaClaimResolution.js";
+import { functionClaimKey, isMissing, type LiveSchema } from "../scripts/lib/schemaClaimResolution.js";
 
 /** A LiveSchema with nothing in it but the function sets under test. */
 function schema(pub: string[], authz: string[], extra: Partial<LiveSchema> = {}): LiveSchema {
@@ -45,6 +45,8 @@ function schema(pub: string[], authz: string[], extra: Partial<LiveSchema> = {})
     routineGrants: new Set(),
     authzRoutineGrants: new Set(),
     collidingFunctionNames: new Set(),
+    qualifiedFunctions: new Set(),
+    qualifiedRoutineGrants: new Set(),
     ...extra,
   };
 }
@@ -407,5 +409,77 @@ describe("audit:schema ALLOWLIST — policies superseded in the baseline are ear
     // And no whole-file skip: the other claims of 0067/0068/0103 stay audited.
     const skips = a.slice(a.indexOf("const SKIP_FILES = new Set(["), a.indexOf("]);", a.indexOf("const SKIP_FILES = new Set([")));
     for (const o of OLD) assert.ok(!skips.includes(`"${o.file}"`), `${o.file} must not be skipped whole`);
+  });
+});
+
+/**
+ * A function in ANOTHER schema is resolved in that schema, and only there.
+ *
+ * 3990, 3991 and 3993 are the first migrations to create functions outside
+ * public and authz. The claim kept only the bare name, so live-DB run
+ * 39458226185 reported all ten as missing from a database that had every one
+ * (memory_snapshot_private ×6, memory_video_segments_private ×3,
+ * memory_resurfacing_policy_private ×1). The false-positive cases must go green
+ * and the mutation must stay red: a public or authz function of the same bare
+ * name must NOT satisfy a claim on the private one.
+ */
+describe("audit:schema — a function in another schema resolves in THAT schema", () => {
+  const PRIVATE = [
+    "memory_snapshot_private.enabled", "memory_snapshot_private.capture_provenance",
+    "memory_snapshot_private.canonical_json", "memory_snapshot_private.refuse_update",
+    "memory_snapshot_private.prepare", "memory_snapshot_private.revoke_sources",
+    "memory_video_segments_private.erase_with_source", "memory_video_segments_private.as_json",
+    "memory_video_segments_private.execute", "memory_resurfacing_policy_private.lock_owner",
+  ];
+  const grantClaim = (key: string) =>
+    ({ kind: "grantfn", key: `grantfn:${key}`, label: `grant execute on ${key}` }) as any;
+
+  it("keys another schema's function with its schema; public, authz and unqualified stay bare", () => {
+    assert.equal(functionClaimKey("memory_snapshot_private", "enabled"), "memory_snapshot_private.enabled");
+    assert.equal(functionClaimKey('"Memory_Snapshot_Private"', "Enabled"), "memory_snapshot_private.enabled");
+    for (const s of ["public", "PUBLIC", "authz", undefined, ""]) {
+      assert.equal(functionClaimKey(s, "trip_kernel_execute"), "trip_kernel_execute", `schema ${s} keeps the bare key`);
+    }
+  });
+
+  it("THE DEFECT: the ten private functions are NOT missing when live in their schemas", () => {
+    const live = schema([], [], { qualifiedFunctions: new Set(PRIVATE) });
+    for (const fn of PRIVATE) assert.equal(isMissing(fnClaim(fn), live), false, `${fn} exists`);
+  });
+
+  it("THE MUTATION: absent from its own schema it is MISSING, whatever public or authz holds", () => {
+    const live = schema(["enabled", "execute", "prepare"], ["lock_owner"], {
+      qualifiedFunctions: new Set(["memory_video_segments_private.as_json"]),
+    });
+    for (const fn of ["memory_snapshot_private.enabled", "memory_video_segments_private.execute",
+      "memory_snapshot_private.prepare", "memory_resurfacing_policy_private.lock_owner"]) {
+      assert.equal(isMissing(fnClaim(fn), live), true, `${fn} must not be satisfied by a bare-name twin`);
+    }
+  });
+
+  it("a grant on a private function is checked against THAT schema's grants", () => {
+    const key = "memory_resurfacing_policy_private.lock_owner.service_role";
+    const fnLive = { qualifiedFunctions: new Set(["memory_resurfacing_policy_private.lock_owner"]) };
+    assert.equal(isMissing(grantClaim(key), schema([], [], { ...fnLive, qualifiedRoutineGrants: new Set([key]) })), false);
+    assert.equal(isMissing(grantClaim(key), schema([], [], fnLive)), true, "an absent grant is reported");
+    assert.equal(
+      isMissing(grantClaim(key), schema([], [], { ...fnLive, routineGrants: new Set(["lock_owner.service_role"]) })),
+      true,
+      "a public grant on a same-named function does not satisfy it",
+    );
+    assert.equal(isMissing(grantClaim(key), schema([], [])), false, "an absent function is its own finding, not the grant's");
+  });
+
+  it("the migrations still create these functions in these schemas", () => {
+    const sql = (f: string) => readFileSync(new URL(`../migrations/${f}`, import.meta.url), "utf8");
+    const created = (text: string, schemaName: string) =>
+      [...text.matchAll(new RegExp(String.raw`create\s+(?:or\s+replace\s+)?function\s+${schemaName}\.([a-z_0-9]+)`, "gi"))]
+        .map((m) => `${schemaName}.${m[1].toLowerCase()}`);
+    const found = new Set([
+      ...created(sql("3990_memory_snapshots.sql"), "memory_snapshot_private"),
+      ...created(sql("3991_memory_video_segments.sql"), "memory_video_segments_private"),
+      ...created(sql("3993_owner_resurfacing_policy.sql"), "memory_resurfacing_policy_private"),
+    ]);
+    assert.deepEqual([...found].sort(), [...PRIVATE].sort());
   });
 });

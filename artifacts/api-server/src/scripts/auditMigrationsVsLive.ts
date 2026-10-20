@@ -68,7 +68,7 @@ import { join, dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { FROZEN_LEGACY_FILES, findRogueFrozenFiles } from "./frozenLegacyFiles.js";
 import { FROZEN_ROOT_FILES } from "./frozenRootFiles.js";
-import { isMissing, type Claim, type LiveSchema } from "./lib/schemaClaimResolution.js";
+import { functionClaimKey, isMissing, type Claim, type LiveSchema } from "./lib/schemaClaimResolution.js";
 import { sensingPostureOnDisk } from "./lib/sensingPostureOnDisk.js";
 import { partitionClaims, staleEntries } from "./lib/conditionalClaims.js";
 
@@ -613,7 +613,7 @@ export async function liveQuery<T = Record<string, unknown>>(
 
 
 export async function fetchLiveSchema(): Promise<LiveSchema> {
-  const [rels, cols, fns, idxs, pols, enums, trgs, rls, tgrants, rgrants] =
+  const [rels, cols, fns, idxs, pols, enums, trgs, rls, tgrants, rgrants, qfns, qrgrants] =
     await Promise.all([
     liveQuery<{ name: string }>(
       `select c.relname as name from pg_class c
@@ -683,6 +683,21 @@ export async function fetchLiveSchema(): Promise<LiveSchema> {
        from information_schema.role_routine_grants
        where routine_schema in ('public', 'authz') and privilege_type = 'EXECUTE'`,
     ),
+    // Every OTHER non-system schema, schema-qualified: what a claim on
+    // `memory_snapshot_private.enabled()` resolves against. See
+    // LiveSchema.qualifiedFunctions.
+    liveQuery<{ name: string; s: string }>(
+      `select p.proname as name, n.nspname as s from pg_proc p
+       join pg_namespace n on n.oid = p.pronamespace
+       where n.nspname not in ('public', 'authz', 'information_schema')
+         and left(n.nspname, 3) <> 'pg_'`,
+    ),
+    liveQuery<{ r: string; g: string; s: string }>(
+      `select routine_name as r, grantee as g, routine_schema as s
+       from information_schema.role_routine_grants
+       where routine_schema not in ('public', 'authz', 'information_schema')
+         and left(routine_schema, 3) <> 'pg_' and privilege_type = 'EXECUTE'`,
+    ),
   ]);
 
   // Everything is lower-cased for comparison: unquoted SQL identifiers fold to
@@ -707,6 +722,8 @@ export async function fetchLiveSchema(): Promise<LiveSchema> {
       [...new Set(fns.filter((r) => r.s === "public").map((r) => lc(r.name)))]
         .filter((n) => fns.some((r) => r.s === "authz" && lc(r.name) === n)),
     ),
+    qualifiedFunctions: new Set(qfns.map((r) => lc(`${r.s}.${r.name}`))),
+    qualifiedRoutineGrants: new Set(qrgrants.map((r) => lc(`${r.s}.${r.r}.${r.g}`))),
   };
 }
 
@@ -718,6 +735,14 @@ const qualIdent = String.raw`(?:(?:"[^"]+"|[A-Za-z_][A-Za-z0-9_]*)\.)?${ident}`;
 
 function name(m: RegExpMatchArray, i = 1): string {
   return (m[i] ?? m[i + 1] ?? "").toLowerCase();
+}
+
+// qualIdent with the schema CAPTURED (group 1; the name is groups 2/3), for the
+// function claims that must keep it — see LiveSchema.qualifiedFunctions.
+const schemaQualIdent = String.raw`(?:("[^"]+"|[A-Za-z_][A-Za-z0-9_]*)\.)?${ident}`;
+
+function fnKey(m: RegExpMatchArray): string {
+  return functionClaimKey(m[1], name(m, 2));
 }
 
 function stripSql(sql: string): string {
@@ -882,10 +907,10 @@ export function parseMigration(sql: string): Claim[] {
   // CREATE [OR REPLACE] FUNCTION <name>
   scan(
     new RegExp(
-      String.raw`create\s+(?:or\s+replace\s+)?function\s+${qualIdent}`,
+      String.raw`create\s+(?:or\s+replace\s+)?function\s+${schemaQualIdent}`,
       "gi",
     ),
-    (m) => add("function", name(m), `function ${name(m)}`),
+    (m) => add("function", fnKey(m), `function ${fnKey(m)}`),
   );
 
   // CREATE [UNIQUE] INDEX [CONCURRENTLY] [IF NOT EXISTS] <name>
@@ -995,12 +1020,12 @@ export function parseMigration(sql: string): Claim[] {
   // claim; that is a known imprecision, stated rather than hidden.
   scan(
     new RegExp(
-      String.raw`grant\s+execute\s+on\s+function\s+${qualIdent}\s*\([^)]*\)\s*to\s+([a-z_][a-z0-9_]*)`,
+      String.raw`grant\s+execute\s+on\s+function\s+${schemaQualIdent}\s*\([^)]*\)\s*to\s+([a-z_][a-z0-9_]*)`,
       "gi",
     ),
     (m) => {
-      const fn = name(m, 1);
-      const grantee = m[3].toLowerCase();
+      const fn = fnKey(m);
+      const grantee = m[4].toLowerCase();
       add("grantfn", `${fn}.${grantee}`, `grant execute on ${fn}() to ${grantee}`);
     },
   );
