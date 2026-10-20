@@ -247,11 +247,7 @@ describe("C1 — every production certification is the snapshot's, a legacy arm,
     "services/airport/LayoverSafeReturnService.ts · recomputeForDisruption · const after =", // the session with its NEW departure
     "services/airport/LayoverEventReplanner.ts · handleEvent · const before =",          // under the session's PRIOR live conditions
     "services/airport/LayoverEventReplanner.ts · handleEvent · const after =",           // under the event's live conditions; since ee52da82 (L94) spelled recomputeFeasibility(before, …), which the scan below reads too
-    "routes/airport.ts · certifyCrewMemberRecord · return",                              // OTHER travellers' sessions
-    // ee52da82 (flight connections): the session under its PRIOR terminal context, the window the terminal
-    // change is compared against. The current session's record is the snapshot's (certifiedRecordFor); this one
-    // is certified directly so an obsolete canonical row is never published after the observation committed.
-    "services/airport/LayoverFlightStatus.ts · recalcSession · if (airport) out.before = windowOf(tc && before.tripId === session.tripId && before.createdBy === session.userId ?",
+    "routes/airport.ts · certifyCrewMemberRecord · return", /* OTHER travellers' sessions */ "services/airport/LayoverFlightStatus.ts · recalcSession · if (airport) out.before = windowOf(tc && before.tripId === session.tripId && before.createdBy === session.userId ?", // ee52da82 (flight connections): the session under its PRIOR terminal context, the window a terminal change is compared against; the current session's record is the snapshot's (certifiedRecordFor), this one is certified directly so no obsolete canonical row is published after the observation committed
   ]);
 
   it("no consumer certifies inline without first asking the snapshot", () => {
