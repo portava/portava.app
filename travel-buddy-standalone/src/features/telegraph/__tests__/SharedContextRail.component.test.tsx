@@ -18,6 +18,15 @@
  */
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
+import { supabase } from '../../../lib/supabase.ts';
+import { _setTestAccountId } from '../../../services/accountId.ts';
+
+jest.mock('../../../context/SessionContext.tsx', () => ({
+  ...jest.requireActual('../../../context/SessionContext.tsx'), useSession: () => ({ userId: 'viewer' }),
+}));
+jest.mock('../../../services/auth.ts', () => ({
+  ...jest.requireActual('../../../services/auth.ts'), onAuthChange: () => () => {},
+}));
 
 // NOTE: intentional stub — the real api module imports lib/supabase, which
 // builds a client at import time and fails outside an Expo runtime. Only the
@@ -75,9 +84,12 @@ function response(over: Partial<SharedContextResponse> = {}): SharedContextRespo
 }
 
 beforeEach(() => {
+  _setTestAccountId('viewer');
   mockedFetch.mockReset();
   mockedReduceMotion.mockReturnValue(false);
 });
+
+afterAll(async () => { _setTestAccountId(undefined); await supabase.auth.stopAutoRefresh(); });
 
 describe('SharedContextRail', () => {
   it('§11.2 row 1: an active plan renders the expanded NOW card at the top', async () => {

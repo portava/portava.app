@@ -2,6 +2,7 @@
  * Memories service — wraps /api/memories endpoints.
  */
 import { freshToken as freshApiToken } from './apiToken.ts'; import type { MemoryType } from '../features/memories/canonical/memoryCanonical.ts'; // H40/H71; on this line so no cited line moves
+import { assertMemoryOwnerRequest, assertMemoryOwnerResponse, memoryOwnerHeaders, type MemoryOwnerRequest } from './memoryOwnerRequest.ts';
 
 function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
@@ -415,15 +416,23 @@ export async function createMemory(
 
 export async function getMemory(
   id: string,
+  request?: MemoryOwnerRequest,
 ): Promise<{ ok: true; memory: Memory } | { ok: false; message: string }> {
   try {
-    const headers = await authHeader();
-    const res = await fetch(`${apiBase()}/api/memories/${id}`, { headers });
+    const headers = request ? await memoryOwnerHeaders(id, request) : await authHeader();
+    if (request) assertMemoryOwnerRequest(id, request);
+    const res = await fetch(`${apiBase()}/api/memories/${id}`, { headers, ...(request ? { signal: request.signal, cache: 'no-store' as const } : {}) });
+    if (request) assertMemoryOwnerRequest(id, request);
     if (!res.ok) {
       const j = await res.json().catch(() => ({}));
+      if (request) assertMemoryOwnerRequest(id, request);
       return { ok: false, message: j.message ?? `HTTP ${res.status}` };
     }
     const json = await res.json();
+    if (request) {
+      assertMemoryOwnerRequest(id, request);
+      assertMemoryOwnerResponse(json?.memory, request);
+    }
     return { ok: true, memory: json.memory };
   } catch (e: any) {
     return { ok: false, message: e?.message ?? 'Network error' };
@@ -627,6 +636,8 @@ export async function deleteMemoryItem(
 export interface UpdateMemoryInput {
   title?: string | null;
   caption?: string | null;
+  startsAt?: string | null;
+  endsAt?: string | null;
   visibility?: MemoryVisibility;
   placeId?: string | null;
   locationCity?: string | null;
@@ -642,6 +653,7 @@ export interface UpdateMemoryInput {
 export async function updateMemory(
   id: string,
   input: UpdateMemoryInput,
+  request?: MemoryOwnerRequest,
 ): Promise<MemoryWriteResult<{ memory: Memory }>> {
   // The operation id is NOT part of the patch. Splitting it out here also keeps
   // it out of the fingerprint, so passing an explicit id and omitting one
@@ -650,17 +662,21 @@ export async function updateMemory(
   const operationId = operationIdFor(explicitId, 'PATCH_MEMORY', id, patch);
   try {
     const headers = {
-      ...(await authHeader()),
+      ...(request ? await memoryOwnerHeaders(id, request) : await authHeader()),
       'Content-Type': 'application/json',
       [IDEMPOTENCY_KEY_HEADER]: operationId,
     };
+    if (request) assertMemoryOwnerRequest(id, request);
     const res = await fetch(`${apiBase()}/api/memories/${id}`, {
       method: 'PATCH',
       headers,
       body: JSON.stringify(patch),
+      ...(request ? { signal: request.signal } : {}),
     });
+    if (request) assertMemoryOwnerRequest(id, request);
     if (!res.ok) {
       const j = await res.json().catch(() => ({}));
+      if (request) assertMemoryOwnerRequest(id, request);
       return {
         ok: false,
         message: j.message ?? `HTTP ${res.status}`,
@@ -669,6 +685,10 @@ export async function updateMemory(
       };
     }
     const json = await res.json();
+    if (request) {
+      assertMemoryOwnerRequest(id, request);
+      assertMemoryOwnerResponse(json?.memory, request);
+    }
     return { ok: true, memory: json.memory, operationId };
   } catch (e: any) {
     return { ok: false, message: e?.message ?? 'Network error', kind: thrownKind(e), operationId };

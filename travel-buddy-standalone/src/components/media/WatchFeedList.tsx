@@ -64,6 +64,7 @@ const VIEWABILITY_CONFIG = {
 interface CellWrapperProps {
   item: MediaFeedItem;
   isActive: boolean;
+  playbackEligible: boolean;
   isMuted: boolean;
   currentUserId?: string;
   onComment: (id: string) => void;
@@ -79,6 +80,7 @@ interface CellWrapperProps {
 const CellWrapper = React.memo(function CellWrapper({
   item,
   isActive,
+  playbackEligible,
   isMuted,
   currentUserId,
   onComment,
@@ -363,6 +365,7 @@ const CellWrapper = React.memo(function CellWrapper({
         videoUrl={item.videoUrl}
         posterUrl={item.posterUrl}
         isActive={effectiveActive}
+        playbackEligible={playbackEligible}
         isMuted={isMuted}
         onProgress={handleProgress}
         onVideoRef={handleVideoRef}
@@ -551,6 +554,7 @@ export function WatchFeedList({
       <CellWrapper
         item={item}
         isActive={index === activeIndex}
+        playbackEligible={playback.playbackEligible}
         isMuted={isMuted}
         currentUserId={currentUserId}
         onComment={onComment}
@@ -563,7 +567,7 @@ export function WatchFeedList({
       />
     ),
     [activeIndex, isMuted, currentUserId, onComment, onSave, onMore,
-      playback.registerRef, playback.unregisterRef, savedSet,
+      playback.registerRef, playback.unregisterRef, playback.playbackEligible, savedSet,
       showSwipeHint, tapToPlay],
   );
 

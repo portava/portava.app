@@ -1,5 +1,4 @@
 {
-  "compass/CompassCacheEngine.ts": 2,
   "compass/CompassFeedbackEngine.ts": 2,
   "compass/CompassGraphEngine.ts": 1,
   "compass/CompassLiveEngine.ts": 1,
@@ -9,7 +8,7 @@
   "routes/circle.ts": 1,
   "routes/dailyBrief.ts": 1,
   "routes/events.ts": 1,
-  "routes/messaging.ts": 2,
+  "routes/messaging.ts": 1,
   "routes/postcards.ts": 1,
   "routes/rentABuddyMarketplace.ts": 2,
   "services/passport/PassportStampService.ts": 1,

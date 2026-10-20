@@ -5,6 +5,8 @@
  */
 import { supabase } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
+import { z } from 'zod';
+import { captureMessagingOwnerRequest, messagingOwnerToken, type MessagingOwnerRequest } from './messagingOwnerRequest.ts';
 
 const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 
@@ -214,4 +216,121 @@ export async function reviewModerationReport(
     throw new ModerationReviewError((body as any)?.message ?? `Review failed: ${res.status}`, res.status);
   }
   return res.json();
+}
+
+const removalId = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i).transform(value => value.toLowerCase());
+const removalToken = z.string().regex(/^[0-9a-f]{64}$/);
+const removalContextSchema = z.object({
+  contractVersion: z.literal(1), reviewId: removalId, reportId: removalId, reportStatus: z.enum(['open', 'reviewing']),
+  reviewToken: removalToken, reportToken: removalToken,
+  review: z.object({ rating: z.number().int().min(1).max(5), body: z.string().nullable(), state: z.enum(['published', 'hidden']),
+    entityType: z.enum(['trip', 'rent_buddy_booking', 'place']), entityId: removalId }),
+});
+const removalIntentSchema = z.object({
+  operationId: removalId, reviewId: removalId, reportId: removalId, reviewToken: removalToken, reportToken: removalToken,
+  reason: z.string().trim().refine(value => Array.from(value).length > 0 && Array.from(value).length <= 1000),
+}).strict();
+const removalReceiptSchema = z.object({
+  ok: z.literal(true), contractVersion: z.literal(1), operationId: removalId, reviewId: removalId, reportId: removalId,
+  auditId: removalId, stateAtCommit: z.literal('removed'), replayed: z.boolean(),
+  committedAt: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/).refine(value => Number.isFinite(Date.parse(value))),
+});
+
+export type ReportedReviewRemovalContext = z.infer<typeof removalContextSchema>;
+export type ReportedReviewRemovalIntent = Readonly<z.infer<typeof removalIntentSchema>>;
+export function newReportedReviewOperationId(): string {
+  const crypto = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+  if (crypto?.randomUUID) return crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, character => {
+    const random = Math.floor(Math.random() * 16);
+    return (character === 'x' ? random : (random & 3) | 8).toString(16);
+  });
+}
+
+export interface ReportedReviewRequest {
+  readonly owner: MessagingOwnerRequest;
+  readonly reviewId: string;
+  readonly reportId: string;
+  readonly signal: AbortSignal;
+  readonly isCurrent: () => boolean;
+}
+
+export class ReportedReviewRemovalError extends Error {
+  constructor(readonly status: number) {
+    super(status === 409 ? 'The review or report changed. Reload its context before confirming a new removal.'
+      : status === 400 ? 'A reason of 1–1000 characters and a valid confirmation are required.'
+      : status === 401 || status === 403 ? 'The current account cannot remove this review.'
+      : status === 404 ? 'This review or report is no longer available.'
+      : 'Audited removal is unavailable. A sent request may have committed; retry the same operation to recover its result.');
+    this.name = 'ReportedReviewRemovalError';
+  }
+}
+
+function assertRemovalCurrent(request: ReportedReviewRequest): void {
+  if (request.signal.aborted || !request.isCurrent() || !request.owner.isCurrent()) throw new ReportedReviewRemovalError(401);
+}
+
+async function removalFetch(request: ReportedReviewRequest, suffix: string, init: RequestInit = {}): Promise<unknown> {
+  assertRemovalCurrent(request);
+  const tokenOwner = captureMessagingOwnerRequest();
+  if (!tokenOwner || tokenOwner.ownerId !== request.owner.ownerId || tokenOwner.sessionId !== request.owner.sessionId) {
+    tokenOwner?.invalidate();
+    throw new ReportedReviewRemovalError(503);
+  }
+  const controller = new AbortController();
+  let abort!: () => void;
+  const interrupted = new Promise<never>((_resolve, reject) => {
+    abort = () => {
+      controller.abort();
+      reject(new ReportedReviewRemovalError(503));
+    };
+  });
+  const assertActive = () => {
+    assertRemovalCurrent(request);
+    if (controller.signal.aborted) throw new ReportedReviewRemovalError(503);
+  };
+  request.signal.addEventListener('abort', abort);
+  const timer = setTimeout(abort, 7000);
+  try {
+    const token = await Promise.race([messagingOwnerToken(tokenOwner), interrupted]);
+    assertActive();
+    if (!token) throw new ReportedReviewRemovalError(503);
+    const response = await Promise.race([fetch(`${apiBase()}/api/reviews/${request.reviewId}/${suffix}`, {
+      ...init, signal: controller.signal,
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...((init.headers as Record<string, string>) ?? {}) },
+    }), interrupted]);
+    assertActive();
+    if (!response.ok) throw new ReportedReviewRemovalError(response.status);
+    const data: unknown = await Promise.race([response.json(), interrupted]);
+    assertActive();
+    return data;
+  } catch (error) {
+    if (error instanceof ReportedReviewRemovalError) throw error;
+    throw new ReportedReviewRemovalError(503);
+  } finally {
+    tokenOwner.invalidate();
+    clearTimeout(timer);
+    request.signal.removeEventListener('abort', abort);
+  }
+}
+
+export async function fetchReportedReviewRemovalContext(request: ReportedReviewRequest): Promise<ReportedReviewRemovalContext> {
+  if (!removalId.safeParse(request.reviewId).success || !removalId.safeParse(request.reportId).success) throw new ReportedReviewRemovalError(400);
+  const result = removalContextSchema.safeParse(await removalFetch(request, `reported-removal-context?report_id=${request.reportId}`));
+  if (!result.success || result.data.reviewId !== request.reviewId || result.data.reportId !== request.reportId) throw new ReportedReviewRemovalError(503);
+  return result.data;
+}
+
+export async function removeReportedReview(request: ReportedReviewRequest, intent: ReportedReviewRemovalIntent) {
+  const input = removalIntentSchema.safeParse(intent);
+  if (!input.success || input.data.reviewId !== request.reviewId || input.data.reportId !== request.reportId) throw new ReportedReviewRemovalError(400);
+  const result = removalReceiptSchema.safeParse(await removalFetch(request, 'reported-removal', {
+    method: 'POST', headers: { 'Idempotency-Key': input.data.operationId },
+    body: JSON.stringify({ report_id: input.data.reportId, reason: input.data.reason,
+      expected_review_token: input.data.reviewToken, expected_report_token: input.data.reportToken }),
+  }));
+  if (!result.success || result.data.reviewId !== intent.reviewId || result.data.reportId !== intent.reportId || result.data.operationId !== intent.operationId) {
+    throw new ReportedReviewRemovalError(503);
+  }
+  return result.data;
 }

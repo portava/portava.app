@@ -427,6 +427,7 @@ function CommentItem({
     entityType: 'comment',
     entityId: comment.id,
     originalLanguage: comment.originalLanguage,
+    sourceRevision: JSON.stringify([comment.updatedAt, comment.body]),
   });
 
   function handleLongPress() {

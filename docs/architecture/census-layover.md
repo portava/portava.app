@@ -577,7 +577,7 @@ Rows marked **[463]** change verdict under PR #463 — see §5.
 | --- | --- | --- | --- |
 | L100 | Compass is an orchestrator and explainer: asks the minimum useful clarifying question, compares certified plans, personalises wording, invokes deterministic tools | W | It explains and personalises — one chat completion over a structured deterministic context (`LayoverCompassService.ts:57-97`), with a deterministic fallback answer when the model fails (`:101-112`). It asks no clarifying question, compares no plans, and invokes no tool: the call has no tool schema (`:92-99`). |
 | L101 | Compass **cannot invent or widen** the certified safe envelope, return deadline, visa/entry status, operational state or risk band | W | The structured fields are safe by construction (L16). The prose is not: the only enforcement is prompt text (`:71-79`) plus a coordinate regex (`LayoverPrivacyGuard.ts:100-106`). Visa/entry is not a field at all on main, so a model assertion about it is unconstrained by anything. And the whole endpoint is unreachable from the app (headline defect 4), so the contract governs a surface no user can reach. |
-| L102 | Tool `getLayoverContext(sessionId)` | N | No layover tool exists. `compass/CompassTools.ts:79-223` declares eleven tools (`get_user_profile`, `get_current_trip`, `search_places`, `search_events`, `get_place_details`, `get_circle_activity`, `check_trip_conflicts`, `add_to_trip`, `get_whos_around`, `get_travel_compatibility`, `get_group_recommendation`) — none layover. |
+| L102 | Tool `getLayoverContext(sessionId)` | N | No layover tool exists. `compass/CompassTools.ts:82-226` declares eleven tools (`get_user_profile`, `get_current_trip`, `search_places`, `search_events`, `get_place_details`, `get_circle_activity`, `check_trip_conflicts`, `add_to_trip`, `get_whos_around`, `get_travel_compatibility`, `get_group_recommendation`) — none layover. |
 | L103 | `getConnectionState(sessionId)` | N | " |
 | L104 | `getTimeWallet(sessionId)` | N | " |
 | L105 | `getSafeEnvelope(sessionId)` | N | " |
@@ -1078,7 +1078,7 @@ already made; the one visible-behaviour repair is behind a flag seeded FALSE.
 | --- | --- | --- | --- |
 | L53 | W | **C** | `9c26efba`: `computeReturnDeadline` (`LayoverSafetyEngine.ts:213`) is the single anchor; 1-Lipschitz ramp; 1,520,640-case sweep in `test/layoverDeadlineMonotonicity.test.ts`. Also closes headline defect 2 (one buffer per response). Not spec-attributable (cites the census, not the spec). |
 | L201 | ? | **C** (tree) | `2335_layover_recommendation_write_boundary.sql`: `layover_recs_owner` FOR SELECT, `authenticated` = SELECT only, measured on CI (`pg_policies`, `role_table_grants`, `column_privileges` INSERT/UPDATE = 0). **Production still open.** |
-| L199 | N | W | 2410 carries four postconditions (`2410_layover_recommendation_identity.sql:82-103`); `security/authorization-contract.json:205` now pins `layover_recommendations` (grants, no client-writable columns, one SELECT policy). `layover_sessions` / `layover_plan_stops` remain uncontracted — the contract's invariant 1 requires SELECT-only client grants and those tables are owner-writable by design. 0127 still has no postconditions. |
+| L199 | N | W | 2410 carries four postconditions (`2410_layover_recommendation_identity.sql:82-103`); `security/authorization-contract.json:211` now pins `layover_recommendations` (grants, no client-writable columns, one SELECT policy). `layover_sessions` / `layover_plan_stops` remain uncontracted — the contract's invariant 1 requires SELECT-only client grants and those tables are owner-writable by design. 0127 still has no postconditions. |
 | L41 | N | W | `computeReturnState` (`LayoverSafetyEngine.ts:383`) derives RETURN_SOON at `hardReturn − 30 min` (`RETURN_SOON_LEAD_MIN`, `:84`), wired into every window (`:463`) and serialised to the client by `serializeWindow`. No notification fires and discovery is not de-emphasised — those effects are client/Safe Return work. |
 | L42 | N | W | RETURN_NOW at `hardReturn`; CONNECTION_AT_RISK once the traffic + time-of-day cushion is consumed (`:382-392`). No CTA switches. |
 | L140 | N | **C** | The ladder NORMAL → RETURN_SOON → RETURN_NOW → CONNECTION_AT_RISK exists as a deterministic, certified derivation with two proved properties — monotone in time and in the cutoff — over 3 timezones incl. two DST falls-back (`test/layoverReturnState.test.ts`, 20k+ and 10k+ point sweeps). L141–L145 (what happens AT the state) stay N. Spec-attributable. |
@@ -5984,7 +5984,7 @@ the exact opposite of 'not symmetric'."* What the census had NOT recorded is
 where that doubling is now reached from. It is no longer only the safety
 engine's per-card rating: since the Layover snapshot contract was published,
 it is the gate another architecture calls on six serve paths
-(`artifacts/api-server/src/routes/discovery.ts:4006#layoverGatedPlaces`).
+(`artifacts/api-server/src/routes/discovery.ts:4008#layoverGatedPlaces`).
 
 **The geometry half of this tree had already stopped assuming symmetry.**
 `bandCandidate` asks the port for the ride back TWICE — once at the departure
@@ -8621,9 +8621,9 @@ touched, no migration was added or applied, and nothing was written to or read f
    names the five §21.1 rows it cannot represent rather than faking them. `check:layover-decision-diff`
    compares the tree with a recorded golden
    (`artifacts/api-server/src/scripts/checkLayoverDecisionDiff.ts:64#const report = compareToGolden(`) and is
-   wired into `check:all` (`artifacts/api-server/scripts/run-all-checks.sh:265#check:layover-decision-diff`).
+   wired into `check:all` (`artifacts/api-server/scripts/run-all-checks.sh:266#check:layover-decision-diff`).
    Deadlines that moved LATER are printed first — the direction that strands a traveller.
-3. **A Memory of the layover** (L275). `artifacts/api-server/src/routes/memories.ts:3608#router.post("/memories/from-layover/:sessionId"`
+3. **A Memory of the layover** (L275). `artifacts/api-server/src/routes/memories.ts:3686#router.post("/memories/from-layover/:sessionId"`
    turns a COMPLETED layover, on the traveller's request from the end sheet
    (`travel-buddy-standalone/src/components/layover/LayoverEndSheet.tsx:79#layover-end-memory-election`),
    into one private, unpublished Memory carrying city, country and the layover window — never a
@@ -9353,10 +9353,10 @@ Tests:
 
 **L163, built under the lead's ruling adopting OD-MAP-4** (`docs/ops/owner-decisions-20261004.md`, OD-MAP-4: a pseudonymised, access-restricted audit record kept for up to 12 months, then deleted).
 
-Account deletion now runs a FATAL layover block (`artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1410#const layoverEventsOk = await step(steps, "pseudonymise_layover_events"`). It does three things, in this order:
+Account deletion now runs a FATAL layover block (`artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1386#const layoverEventsOk = await step(steps, "pseudonymise_layover_events"`). It does three things, in this order:
 1. **Pseudonymises the events.** Each loses its user and session, gets one random pseudonym for this deletion, has its metadata emptied, and gets a `retain_until` 365 days out.
 2. **Deletes the traveller's crew memberships.**
-3. **Deletes the sessions** (`artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1432#const layoverSessionsOk`). Every other layover table goes with them through the session cascade.
+3. **Deletes the sessions** (`artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1408#const layoverSessionsOk`). Every other layover table goes with them through the session cascade.
 
 Migration 3621 makes that representable: a nullable user and session, the session FK set to SET NULL, and the `layover_events_identity_or_pseudonym` CHECK (`artifacts/api-server/src/migrations/3621_layover_erasure_audit_pseudonym.sql:87#layover_events_identity_or_pseudonym CHECK`). That CHECK refuses a pseudonym next to a user id, and any retention past 12 months. `artifacts/api-server/src/lib/layoverAuditRetentionScheduler.ts:73#export async function runLayoverAuditRetentionSweep(` deletes each row at `retain_until`. The dispositions manifest records `layover_events` as RETAINED_WITH_REASON (`artifacts/api-server/src/lib/deletionDispositions.ts:302#table: "layover_events",`) and the rest as erased.
 
@@ -9690,13 +9690,13 @@ The headline is unchanged from §56.2: **C=76 W=157 N=63 X=0** over 296.
 
 §56 and §56.3 held L3 and L101 at `W` for one reason: the other Compass door, `/compass/ask`, was on #643 and not on main. Both doors are now on main and certified-only on a live layover, by construction:
 - **This census's door** (`POST /airport/sessions/:id/compass`, lead ruling L-CL02d): no model client, no tool round, no prose filter; every question on every session is answered with certified text plus deterministic airport facts (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:12#LEAD RULING L-CL02d (2026-10-09): CERTIFIED-ONLY BY CONSTRUCTION`). Pinned structurally (`artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts:222#structurally (L-CL02d)`) and for every status and clock (`artifacts/api-server/src/services/airport/__tests__/layoverCompassToolLoop.test.ts:171#L-CL02d — the layover door asks no model and runs no tool`).
-- **The general chat** (`/compass/ask`, lead rulings L-CL02a + L-CL02c): on a live layover — status-live OR departure still ahead OR departure unreadable — every question, the explicit yes included, gets the certified text and the facts with no model and no classifier call (`artifacts/api-server/src/routes/compass.ts:1537#if (liveLayover !== null) {`; pinned at `artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:395#it("JSON and SSE: every question gets certifiedLayoverAnswerWithFacts` and `artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:709#describe("L-CL02c`). Both doors read liveness from the one helper (`artifacts/api-server/src/services/airport/LayoverSessionService.ts:74#export function layoverSessionIsLiveAt(`).
+- **The general chat** (`/compass/ask`, lead rulings L-CL02a + L-CL02c): on a live layover — status-live OR departure still ahead OR departure unreadable — every question, the explicit yes included, gets the certified text and the facts with no model and no classifier call (`artifacts/api-server/src/routes/compass.ts:1540#if (liveLayover !== null) {`; pinned at `artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:395#it("JSON and SSE: every question gets certifiedLayoverAnswerWithFacts` and `artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:709#describe("L-CL02c`). Both doors read liveness from the one helper (`artifacts/api-server/src/services/airport/LayoverSessionService.ts:74#export function layoverSessionIsLiveAt(`).
 
 §50.1's own condition for L101 ("an answer composed from certified fields with model text confined to non-safety content") is exceeded: there is no model text on a live layover at all. The residual, stated in census-compass §57.1: when the session STORE cannot be read, `/compass/ask` lets an allowlisted one-clause airside question reach the model (a vocabulary door, English-only); that is not a live layover the door knows about.
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| L3 | W | C | No Compass prose exists beside the deterministic fields on a live layover, on either door: the layover door by L-CL02d (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:12#LEAD RULING L-CL02d (2026-10-09): CERTIFIED-ONLY BY CONSTRUCTION`), `/compass/ask` by L-CL02a + L-CL02c (`artifacts/api-server/src/routes/compass.ts:1537#if (liveLayover !== null) {`). Cannot be overridden by construction, not by a check. |
+| L3 | W | C | No Compass prose exists beside the deterministic fields on a live layover, on either door: the layover door by L-CL02d (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:12#LEAD RULING L-CL02d (2026-10-09): CERTIFIED-ONLY BY CONSTRUCTION`), `/compass/ask` by L-CL02a + L-CL02c (`artifacts/api-server/src/routes/compass.ts:1540#if (liveLayover !== null) {`). Cannot be overridden by construction, not by a check. |
 | L101 | W | C | Compass cannot invent or widen the envelope, deadline, entry status, operational state or risk band because it says nothing but the certified text and the facts on a live layover, on both doors (same two citations; pinned at `artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts:222#structurally (L-CL02d)` and `artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:395#it("JSON and SSE: every question gets certifiedLayoverAnswerWithFacts`). |
 
 ### §57.1 Headline
@@ -9776,7 +9776,7 @@ Published on every stop of the overview and the stop routes (`artifacts/api-serv
 
 ### §59.2 L210 / L211 / L213 / L215 — §20's metrics over persisted data
 
-`computeLayoverMetrics` had definitions and no caller. `artifacts/api-server/src/routes/adminLayoverMetrics.ts:53#router.get("/admin/layover/metrics"` (admin-only) is the caller: counters from `layover_events` over a 1–90 day window, and the four rates from `layover_certified_computations` through `artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:699#export async function decisionsInWindow(`, read only while `layover_decision_persistence_enabled` is ON. Off, every rate is UNPRODUCIBLE with that reason — never 0 (`artifacts/api-server/src/test/adminLayoverMetrics.test.ts:102#persistence OFF`); on, the rates come from the rows the production writer stored (`artifacts/api-server/src/test/adminLayoverMetrics.test.ts:116#persistence ON`). An unreadable source is a 503; truncation is reported; aggregates only.
+`computeLayoverMetrics` had definitions and no caller. `artifacts/api-server/src/routes/adminLayoverMetrics.ts:55#router.get("/admin/layover/metrics"` (admin-only) is the caller: counters from `layover_events` over a 1–90 day window, and the four rates from `layover_certified_computations` through `artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:699#export async function decisionsInWindow(`, read only while `layover_decision_persistence_enabled` is ON. Off, every rate is UNPRODUCIBLE with that reason — never 0 (`artifacts/api-server/src/test/adminLayoverMetrics.test.ts:102#persistence OFF`); on, the rates come from the rows the production writer stored (`artifacts/api-server/src/test/adminLayoverMetrics.test.ts:116#persistence ON`). An unreadable source is a 503; truncation is reported; aggregates only.
 
 L215's other half — *"the fallback ladder emits nothing when it fires"* — is closed: every static-dataset and generic-profile fallback writes one structured `layover_stale_fallback` line and bumps a counter by rung, site and reason (`artifacts/api-server/src/services/airport/AirportProfileService.ts:465#function emitStaleFallback(`), `no_airport_row` kept apart from `airport_profiles_unreadable` and the typed search kept apart from a session's airport; the admin route reports it (`artifacts/api-server/src/test/adminLayoverMetrics.test.ts:155#L215 — the fallback ladder emits when it fires`). There is still no exporter in this repository: the log line is the emission. Mutants A1–A7 killed.
 
@@ -9827,7 +9827,7 @@ between those rows and storage in production is the 2700 → 2992 press, which i
   (`artifacts/api-server/src/migrations/3623_layover_snapshot_version_and_recommendation_snapshot.sql:106#BEFORE INSERT ON public.layover_certified_computations`),
   unique per session; rows written before 3623 stay NULL rather than being numbered after the fact. Determinism is pinned:
   `artifacts/api-server/src/test/layoverSnapshotPersistence.test.ts:94#the same inputs give the same input_hash and the same snapshot id`.
-- **L64 — every recommendation cites its snapshot.** `artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:769#export async function recommendationSnapshotStamp(`
+- **L64 — every recommendation cites its snapshot.** `artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:768#export async function recommendationSnapshotStamp(`
   stores the one record the request rated the cards against (through `persistDecision`, so it is the same §20 write `/overview`
   makes) and returns `{ snapshot_id }` only when the parent row exists; any refusal returns `{}`. It is spread into every row at
   `artifacts/api-server/src/services/airport/LayoverRecommendationService.ts:713#...stamp.column`. 3623 adds the column with an FK
@@ -10496,7 +10496,7 @@ Lead ruling L164 (2026-10-07): *"stays N — the import-graph guard's exceptions
   - The full context and every other screen are unchanged.
   - Three plain types moved, line for line, into `src/hooks/activeLocation.types.ts` (`travel-buddy-standalone/src/hooks/activeLocation.types.ts:22#export type LocationSource =`). The hook re-exports them, so the read-only module names them without importing the hook. The line numbers cited below them in `useActiveLocation.ts` do not move.
 - **One door.** `src/lib/location/locationRequestDoor.ts` takes a request that must name a press and a known purpose. Today that purpose is `map_context` only. Anything else is refused before the OS is touched, with the result shape a denied permission gets (`travel-buddy-standalone/src/lib/location/locationRequestDoor.ts:78#if (!isUserLocationRequest(request)) return { ...NO_USER_ACTION_RESULT };`). An accepted request is exactly `getCurrentGps()`.
-  - The picker's row asks through the door (`travel-buddy-standalone/src/components/selectors/GlobalPlacePicker.tsx:316#const gps = await requestLocationForUserAction(USER_PRESS_MAP_CONTEXT);`). The edit is line-neutral and changes nothing a user can see.
+  - The picker's row asks through the door (`travel-buddy-standalone/src/components/selectors/GlobalPlacePicker.tsx:407#const gps = await requestLocationForUserAction(USER_PRESS_MAP_CONTEXT);`). The edit is line-neutral and changes nothing a user can see.
 - **The guard is the whole graph, with no file excepted by name** (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:402#test('L164: every location request the layover surface reaches goes through ONE door`).
   - The rules now also cover: dynamic `expo-location` loads; the sensing, heading, background and geofencing calls; the map SDK's own location surfaces (`UserLocation`, `NativeUserLocation`, `useCurrentPosition`, `LocationManager`, `trackUserLocation`, `showsUserLocation` …); platform geolocation; the app's request functions; and `followDeviceFix` (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:237#const LOCATION_REQUEST_RULES`).
   - Four location-capable files remain on the graph. Each is pinned, exactly both ways, to the rules it matches and to a condition checked mechanically (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:254#const LOCATION_DOORS`, `travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:296#function locationDoorFindings(`):
@@ -10526,7 +10526,7 @@ Lead ruling L164 (2026-10-07): *"stays N — the import-graph guard's exceptions
   - a listed file no longer reached.
 - **jest, 22 new cases:**
   - the door refuses nine malformed requests without touching the OS, and passes a press through unchanged (`travel-buddy-standalone/src/lib/location/__tests__/locationRequestDoor.component.test.ts:73#2. %s is refused without asking the OS`);
-  - opening the picker asks nothing, and its press opens the door once with `{ trigger: 'user_press', purpose: 'map_context' }` (`travel-buddy-standalone/src/components/selectors/__tests__/GlobalPlacePicker.locationDoor.component.test.tsx:111#2. pressing "Use my current location" opens the door once`);
+  - opening the picker asks nothing, and its press opens the door once with `{ trigger: 'user_press', purpose: 'map_context' }` (`travel-buddy-standalone/src/components/selectors/__tests__/GlobalPlacePicker.locationDoor.component.test.tsx:113#2. pressing "Use my current location" opens the door once`);
   - both hooks read the same object, and the read-only value contains no function (`travel-buddy-standalone/src/context/__tests__/LocationContext.readOnly.component.test.tsx:89#1. both hooks return the SAME resolved-location object`, `travel-buddy-standalone/src/context/__tests__/LocationContext.readOnly.component.test.tsx:107#3. the read-only value is data`).
 - **Neighbours.** The nine `PlaceDetailSheet` suites now mock the read-only module. Every suite that mocks `LocationContext` or renders the sheet, the picker or the map is green: 138 jest suites and 189 node cases.
 - **Mutants: 39 of 39 killed.**
@@ -10805,7 +10805,7 @@ That event lives in `layover_events`, which is 0127's table and exists on every 
 
 **The windowed metric.**
 - `GET /api/admin/layover/metrics` reads the window's `recommendation_generated` events
-  (`artifacts/api-server/src/routes/adminLayoverMetrics.ts:87#.eq("event_type", "recommendation_generated")`) and folds
+  (`artifacts/api-server/src/routes/adminLayoverMetrics.ts:89#.eq("event_type", "recommendation_generated")`) and folds
   their tallies (`artifacts/api-server/src/services/airport/layoverContractMonitor.ts:314#export function recommendationContractWindow(`).
 - The value is the number of cards with at least one violation, over the cards checked
   (`artifacts/api-server/src/services/airport/layoverObservability.ts:313#function contractViolation(`).
@@ -10829,10 +10829,10 @@ That event lives in `layover_events`, which is 0127's table and exists on every 
   - `estimates`, `input_facts` and `source_refs` are provenance detail, not the decision.
 - The version check runs first, as in `replayDecision`. A row from other arithmetic or another record shape is REFUSED:
   it leaves the denominator and is never counted as a mismatch.
-- The reader `artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:805#export async function storedComputationsInWindow(`
+- The reader `artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:804#export async function storedComputationsInWindow(`
   returns the columns as written, unreplayed, and refuses on a failed read.
 - The route replays the window's stored rows only while `layover_decision_persistence_enabled` is ON
-  (`artifacts/api-server/src/routes/adminLayoverMetrics.ts:126#replay = replayStoredComputations(stored.value.rows);`).
+  (`artifacts/api-server/src/routes/adminLayoverMetrics.ts:130#replay = replayStoredComputations(stored.value.rows);`).
   OFF, the metric says no replay pass ran.
 - The replay leaves the route as aggregates: counts, refusals by reason, and mismatches by column. No session id or
   snapshot id leaves it.
@@ -11934,7 +11934,7 @@ return_risk"*. The body grades both N.
 - A throw serves legacy and writes `failed`, never a clean tally.
 
 **The divergence report.** `GET /api/admin/layover/metrics` folds the same generation events L216 already reads, with no
-new read (`artifacts/api-server/src/routes/adminLayoverMetrics.ts:134#const ranking = layoverRankingWindow(`). It reports:
+new read (`artifacts/api-server/src/routes/adminLayoverMetrics.ts:138#const ranking = layoverRankingWindow(`). It reports:
 - generations by mode;
 - how many diverged, and how many cards moved;
 - per-term KNOWN coverage;
@@ -12079,3 +12079,56 @@ Two rows move (L242 N → W, L78 N → W).
 | total | 296 | 296 |
 
 **C=85 W=159 N=52 X=0** over 296 (`check:census-integrity`, restated on merging `main` `d075efd8b`; this section was §79 on its branch and is §77 on main).
+
+## §78 — 2026-10-16: bounded counted-window evidence. NO ROW MOVES
+
+The local metrics/window-read corrections were inspected for citation and
+claim compatibility, not as a full census or deployment acceptance. The six
+moved citations still identify the same route, snapshot stamp, generation
+filter, stored-row reader, replay and ranking fold. All grades, totals and
+`head_commit` stay unchanged; prior schema/flag statements are historical
+evidence, not newly queried production facts.
+
+The event and stored-computation windows now request exact counts, validate
+the returned list/count/selected-field shape and disclose truncation even when
+a server cap returns fewer rows than the requested local limit. An unreadable
+window is refused, not reported as empty or complete
+(`artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:824#export function countedLayoverWindow(`).
+The subsequent review correction also refuses null, primitive and array
+generation metadata rather than treating them as clean legacy generations
+(`artifacts/api-server/src/routes/adminLayoverMetrics.ts:95#if (!generationWindow || generationWindow.rows.some((row) => row.metadata === null`).
+An object without the newer tally remains a legitimate legacy control.
+
+Parent reports independent follow-up acceptance with 60 new/admin tests passing
+and 100 passing across its Trips/Layover integration after that metadata correction;
+this metadata pass did not independently execute that suite. Count-aware
+partial windows are still partial, and separate reads are not a transactionally
+consistent snapshot. Exact-count query cost, real PostgREST behavior and
+existing persistence/rollout obligations are not established by these local
+fixtures. Admin authorization, aggregate-only output and persistence-OFF
+behavior remain the existing contracts, not newly granted capabilities.
+
+No production or database operation, flag change or row promotion. The prior
+local API build fingerprint predates the final metadata guard and must not be
+used as proof of this source version. Parent reports a replacement local build
+with twelve output files hash-verified; this metadata pass did not repeat that
+artifact verification. The parent owns its fingerprint and final build evidence.
+
+## §79 — 2026-10-16: constraints-card operation ownership. NO ROW MOVES
+
+Each session now owns a distinct mounted constraints card
+(`travel-buddy-standalone/src/components/layover/LayoverConstraintsCard.tsx:111#return <SessionConstraintsCard key={props.sessionId}`).
+Mount and edit-scope fences reject obsolete reads, gestures and write completions.
+A synchronous pending-declaration guard prevents two taps from starting two
+writes before a render. A later applied read is not replaced by an earlier
+write response; an accepted, still-owned write retains its parent notification.
+Unknown/unreadable state remains distinct from an empty declaration. Existing
+legacy responses, read-only behavior and server-certified constraint rules remain.
+
+Independent review accepted the two-file change with 31 author cases, existing
+card/dashboard neighbors and nine additional probes; further review controls
+exercise the same bounded contract. Parent's combined Sensing/Layover run passes
+113 tests in five suites with open-handle detection. These counts overlap and
+are not unique requirements. This is client operation ownership, not cancellation
+of a write already accepted by the server, an atomic read/write snapshot or a
+new Layover policy. No row, schema, flag, production state or `head_commit` moves.

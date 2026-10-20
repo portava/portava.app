@@ -290,7 +290,11 @@ function makeClient() {
           const blocker = this._eq("blocker_id");
           const blocked = this._eq("blocked_id");
           const hit = state.blocks.find((b) => b.blocker_id === blocker && b.blocked_id === blocked);
-          return { data: hit ? { id: "block-1" } : null, error: null };
+          // A clean read is a LIST: blockGuard.isBlockedBetween (.or + .limit(1),
+          // no maybeSingle) now fails closed on non-list data, so `null` here
+          // would read as "blocked" on every booking path.
+          if (this._maybeSingle) return { data: hit ? { id: "block-1" } : null, error: null };
+          return { data: hit ? [{ blocker_id: hit.blocker_id }] : [], error: null };
         }
 
         if (t === "rent_buddy_offers") {

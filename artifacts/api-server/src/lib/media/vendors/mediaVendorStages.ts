@@ -56,6 +56,7 @@ import { selectMediaVisionProvider, type MediaVisionProvider } from "./mediaVisi
 import { selectMediaTranscoder, submitForTranscode, type MediaTranscoder } from "./mediaTranscoder.js";
 import { captionTrackFor, captionTrackPathFor, selectMediaCaptionSource, type MediaCaptionSource } from "./mediaCaptionSource.js";
 import type { MediaModerationClassifier } from "./mediaModerationClassifier.js";
+import { enqueueConfiguredImageVariants } from "../imageVariants/bridge.js";
 
 export const MEDIA_VISION_STAGE_FLAG = "media_vision_provider_enabled";
 export const MEDIA_MODERATION_STAGE_FLAG = "media_moderation_classifier_enabled";
@@ -138,8 +139,11 @@ export async function runMediaVendorIngest(
       isMediaTranscodeStageEnabled(sc),
       isMediaCaptionsStageEnabled(sc),
     ]);
+    let derivativeVersion = typeof subject.sourceVersion === "number" && Number.isSafeInteger(subject.sourceVersion) && subject.sourceVersion > 0 && subject.sourceVersion <= 2147483647
+      ? subject.sourceVersion : null;
 
     if (moderationOn) {
+      derivativeVersion = null;
       // HOLD FIRST, then decide. With the stage on at upload, the canonical row
       // is BORN `limited` (canonicalModerationAtBirth, census-media §37.8), so
       // this write claims a version-bound hold. It also matters when the stage was switched on
@@ -170,18 +174,27 @@ export async function runMediaVendorIngest(
           decision: decision.decision,
           hold,
         });
+        if (recorded === "applied" && decision.decision === "approve") derivativeVersion = hold.version + 1;
       }
       report.moderation = { state: "ran", result: { decision, recorded } };
+    }
+
+    if (subject.mediaType === "image" && derivativeVersion !== null) {
+      try { await enqueueConfiguredImageVariants(sc, { ...subject, sourceVersion: derivativeVersion }); }
+      catch { logger.warn({ code: "image_variants_enqueue_unavailable" }, "Optional image preparation unavailable"); }
     }
 
     if (visionOn) {
       const v = adapters.vision;
       const answer: VendorAnswer<{ accepted: boolean }> = !subject.assetId
         ? refused("invalid_answer", "no canonical asset id to index under")
+        : derivativeVersion === null
+          ? refused("unsupported", "this upload does not own an approved source generation")
         : !v.capabilities.ingest
           ? refused(v.name === "none" ? "not_configured" : "unsupported", `${v.name} does not ingest`)
           : await callVendor(() => v.ingest({
               assetId: subject.assetId as string,
+              sourceVersion: derivativeVersion,
               mediaType: subject.mediaType,
               bucket: subject.bucket,
               path: subject.path,
@@ -198,9 +211,12 @@ export async function runMediaVendorIngest(
     if (transcodeOn && subject.mediaType === "video") {
       report.transcode = {
         state: "ran",
-        result: subject.assetId
+        result: derivativeVersion === null
+          ? refused("unsupported", "this upload does not own an approved source generation")
+          : subject.assetId
           ? await submitForTranscode(adapters.transcoder, {
               assetId: subject.assetId,
+              sourceVersion: derivativeVersion,
               bucket: subject.bucket,
               path: subject.path,
               durationMs: subject.durationMs,
@@ -212,7 +228,9 @@ export async function runMediaVendorIngest(
     if (captionsOn && subject.mediaType === "video") {
       report.captions = {
         state: "ran",
-        result: await captionStage(sc as StorageLike, adapters.captions, subject)
+        result: derivativeVersion === null
+          ? refused("unsupported", "this upload does not own an approved source generation")
+          : await captionStage(sc as StorageLike, adapters.captions, { ...subject, sourceVersion: derivativeVersion })
           .catch(() => refused("error", "the caption stage failed")),
       };
     }
@@ -241,6 +259,7 @@ async function captionStage(
   if (!subject.assetId) return refused("invalid_answer", "no canonical asset id to caption under");
   const track = await captionTrackFor(source, {
     assetId: subject.assetId,
+    sourceVersion: subject.sourceVersion,
     bucket: subject.bucket,
     path: subject.path,
     durationMs: subject.durationMs,

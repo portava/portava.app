@@ -975,7 +975,7 @@ export async function searchMediaVisual(
   if (base.media.length === 0) {
     return { ...base, criteriaUsed: [...base.criteriaUsed, ...criteria], visual: answered };
   }
-  const scene = await sceneCandidatesFor(provider, base.media.map((m) => ({ mediaId: m.id, storageKey: m.url || null })));
+  const scene = await sceneCandidatesFor(provider, base.media.map((m) => ({ mediaId: m.id, storageKey: m.url || null })), viewer.viewerId);
   if (!scene.ok) return refuse(stateForRefusal(scene.reason), provider.name);
   const social = new Set(scene.value.candidates.filter(candidateLooksSocial).map((c) => c.mediaId));
   const kept = base.media.filter((m) => social.has(m.id));
@@ -1016,7 +1016,7 @@ async function searchLookingLike(
   if (!seedItem) return refuse("seed_not_visible", provider.name);
 
   // 2. The index proposes.
-  const similar = await similarMediaFor(provider, { mediaId: seedItem.id, storageKey: seedItem.url || null }, VISUAL_SIMILAR_LIMIT);
+  const similar = await similarMediaFor(provider, { mediaId: seedItem.id, storageKey: seedItem.url || null }, VISUAL_SIMILAR_LIMIT, viewer.viewerId);
   if (!similar.ok) return refuse(stateForRefusal(similar.reason), provider.name);
   const answered: MediaSearchVisualReport = { criteria, state: "answered", provider: provider.name };
   const criteriaUsed = [...declaredCriteria({ ...query, mediaId: null }), ...criteria];
@@ -1057,7 +1057,7 @@ async function searchLookingLike(
     .sort((a, b) => (rank.get(a.id.toLowerCase()) ?? Infinity) - (rank.get(b.id.toLowerCase()) ?? Infinity));
   // Both criteria at once ("places that look like this AND look social"): narrow here too, never drop one.
   if (criteria.includes("looksSocial") && matched.length > 0) {
-    const scene = await sceneCandidatesFor(provider, matched.map((m) => ({ mediaId: m.id, storageKey: m.url || null })));
+    const scene = await sceneCandidatesFor(provider, matched.map((m) => ({ mediaId: m.id, storageKey: m.url || null })), viewer.viewerId);
     if (!scene.ok) return refuse(stateForRefusal(scene.reason), provider.name);
     const social = new Set(scene.value.candidates.filter(candidateLooksSocial).map((c) => c.mediaId));
     matched = matched.filter((m) => social.has(m.id));

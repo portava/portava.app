@@ -53,7 +53,7 @@ import {
 } from "../compass/flags.js";
 import { runSafetyFilter } from "../compass/CompassSafetyFilter.js";
 import { runPipeline } from "../compass/CompassPipeline.js";
-import { buildFrontLoadPayload } from "../compass/CompassFrontLoadEngine.js";
+import { buildFrontLoadPayload } from "../compass/CompassFrontLoadEngine.js"; import { captureCacheBuild } from "../compass/CompassCacheEngine.js";
 import type { CompassItem, CompassProfile, CompassContext } from "../compass/types.js";
 
 const USER   = "aaaaaaaa-0000-4000-a000-000000000001";
@@ -278,7 +278,7 @@ describe("the three COMPASS_% loaders agree on what 'unreadable' means", () => {
     // CompassFrontLoadEngine: the tier-0 preload item carries the same map.
     const payload = await buildFrontLoadPayload(
       client({ flags: LIVE_ROWS, fail: true }),
-      USER,
+      USER, captureCacheBuild(USER),
       VIEWER,
       { networkHint: "offline" },
     );
@@ -308,7 +308,7 @@ describe("the three COMPASS_% loaders agree on what 'unreadable' means", () => {
     assert.equal(summary.blockedCount, 0, "a readable flag table must not block the item");
 
     const payload = await buildFrontLoadPayload(
-      client({ flags: LIVE_ROWS }), USER, VIEWER, { networkHint: "offline" },
+      client({ flags: LIVE_ROWS }), USER, captureCacheBuild(USER), VIEWER, { networkHint: "offline" },
     );
     const flagItem = payload.tier0.find((i) => i.type === "feature_flags");
     assert.deepEqual(flagItem!.data, {

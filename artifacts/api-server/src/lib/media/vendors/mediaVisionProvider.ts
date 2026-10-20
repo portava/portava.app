@@ -57,6 +57,10 @@ import {
   type VendorAnswer,
   type VendorSelection,
 } from "./vendorCommon.js";
+import { getServiceClient } from "../../supabase.js";
+import { createImageUnderstandingProvider } from "./imageUnderstandingProvider.js";
+import { createLocalVisualIndexProvider } from "../visualIndex/localVisualIndexProvider.js";
+import { composeSelfHostedVision } from "./selfHostedVision.js";
 
 /** §38 "looks social": the crowd/activity vocabulary a scene signal may use. Closed. */
 export const CROWD_LEVELS = ["empty", "quiet", "busy", "social"] as const;
@@ -94,6 +98,7 @@ export interface VisualSimilarity {
 
 export interface VisionIngestSubject {
   assetId: string;
+  sourceVersion?: number | null;
   mediaType: "image" | "video";
   bucket: string;
   path: string;
@@ -108,8 +113,8 @@ export interface MediaVisionProvider {
     similarMedia: boolean;
     ingest: boolean;
   };
-  sceneSignals(input: { items: VisualMediaRef[] }): Promise<VendorAnswer<VisualSceneSignal[]>>;
-  similarMedia(input: { seed: VisualMediaRef; limit: number }): Promise<VendorAnswer<VisualSimilarity[]>>;
+  sceneSignals(input: { items: VisualMediaRef[]; viewerId?: string }): Promise<VendorAnswer<VisualSceneSignal[]>>;
+  similarMedia(input: { seed: VisualMediaRef; limit: number; viewerId?: string }): Promise<VendorAnswer<VisualSimilarity[]>>;
   ingest(input: VisionIngestSubject): Promise<VendorAnswer<{ accepted: boolean }>>;
 }
 
@@ -122,8 +127,20 @@ export const REFUSING_VISION_PROVIDER: MediaVisionProvider = Object.freeze({
   async ingest() { return refused<{ accepted: boolean }>("not_configured", "no vision provider is configured"); },
 });
 
-/** Adapters written so far. EMPTY: no vendor has been chosen. Add `name: () => adapter` once one is. */
-export const IMPLEMENTED_VISION_PROVIDERS: Readonly<Record<string, () => MediaVisionProvider>> = Object.freeze({});
+export const IMPLEMENTED_VISION_PROVIDERS: Readonly<Record<string, (env?: NodeJS.ProcessEnv) => MediaVisionProvider>> = Object.freeze({
+  self_hosted_siglip(env = process.env) {
+    const sc = getServiceClient();
+    return sc ? createImageUnderstandingProvider({ sc, env }) : REFUSING_VISION_PROVIDER;
+  },
+  local_clip(env = process.env) {
+    const sc = getServiceClient();
+    return sc ? createLocalVisualIndexProvider({ sc, env }) : REFUSING_VISION_PROVIDER;
+  },
+  self_hosted_media(env = process.env) {
+    const sc = getServiceClient();
+    return sc ? composeSelfHostedVision(createImageUnderstandingProvider({ sc, env }), createLocalVisualIndexProvider({ sc, env })) : REFUSING_VISION_PROVIDER;
+  },
+});
 
 let _override: MediaVisionProvider | null = null;
 
@@ -134,7 +151,8 @@ export function _setMediaVisionProviderForTest(p: MediaVisionProvider | null): v
 
 export function selectMediaVisionProvider(env: NodeJS.ProcessEnv = process.env): VendorSelection<MediaVisionProvider> {
   if (_override) return { adapter: _override, configured: _override.name, configuredButUnknown: false };
-  return selectVendor(env.MEDIA_VISION_PROVIDER, IMPLEMENTED_VISION_PROVIDERS, REFUSING_VISION_PROVIDER);
+  return selectVendor(env.MEDIA_VISION_PROVIDER,
+    Object.fromEntries(Object.entries(IMPLEMENTED_VISION_PROVIDERS).map(([name, factory]) => [name, () => factory(env)])), REFUSING_VISION_PROVIDER);
 }
 
 export function getMediaVisionProvider(): MediaVisionProvider {
@@ -244,6 +262,7 @@ export function validateSimilarMedia(
 export async function sceneCandidatesFor(
   provider: MediaVisionProvider,
   items: VisualMediaRef[],
+  viewerId?: string,
 ): Promise<VendorAnswer<{ candidates: VisualEvidenceCandidate[]; dropped: number }>> {
   if (items.length === 0) return { ok: true, value: { candidates: [], dropped: 0 } };
   if (!provider.capabilities.sceneSignals) {
@@ -252,7 +271,7 @@ export async function sceneCandidatesFor(
       : refused("unsupported", `${provider.name} does not produce scene signals`);
   }
   const askedFor = new Set(items.map((item) => item.mediaId));
-  const answer = await callVendor(() => provider.sceneSignals({ items: items.map((item) => ({ ...item })) }));
+  const answer = await callVendor(() => provider.sceneSignals({ items: items.map((item) => ({ ...item })), ...(viewerId === undefined ? {} : { viewerId }) }));
   if (!answer.ok) return answer;
   if (!Array.isArray(answer.value)) return refused("invalid_answer", "the provider did not return scene signals");
   return { ok: true, value: deriveVisualEvidenceCandidates(provider.name, answer.value, askedFor) };
@@ -263,6 +282,7 @@ export async function similarMediaFor(
   provider: MediaVisionProvider,
   seed: VisualMediaRef,
   limit: number,
+  viewerId?: string,
 ): Promise<VendorAnswer<{ ids: string[]; dropped: number }>> {
   if (!provider.capabilities.similarMedia) {
     return provider.name === REFUSING_VISION_PROVIDER.name
@@ -270,7 +290,7 @@ export async function similarMediaFor(
       : refused("unsupported", `${provider.name} has no visual index`);
   }
   const seedMediaId = seed.mediaId;
-  const answer = await callVendor(() => provider.similarMedia({ seed: { ...seed }, limit }));
+  const answer = await callVendor(() => provider.similarMedia({ seed: { ...seed }, limit, ...(viewerId === undefined ? {} : { viewerId }) }));
   if (!answer.ok) return answer;
   if (!Array.isArray(answer.value)) return refused("invalid_answer", "the provider did not return similar media");
   return { ok: true, value: validateSimilarMedia(answer.value, seedMediaId, limit) };

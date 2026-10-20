@@ -87,7 +87,7 @@ import {
   type NetworkHint,
   type BatteryHint,
 } from "../compass/CompassFrontLoadEngine.js";
-import { getCachedFeed, setCachedFeed } from "../compass/CompassCacheEngine.js";
+import { captureCacheBuild, getCachedFeed, setCachedFeed } from "../compass/CompassCacheEngine.js";
 import {
   resolveExplanation,
   isSensitiveKey,
@@ -533,6 +533,7 @@ router.get("/compass/feed", async (req, res) => {
   const { cursor } = parsed.data;
 
   try {
+    const cacheBuild = captureCacheBuild(user.id);
     const tzOffset  = tzOffsetForRequest(req);
     const localHour = await localHourForRequest(sc, user.id, req);
     const cacheKey  = feedCacheKey("feed", cursor, tzOffset, localHour);
@@ -608,7 +609,7 @@ router.get("/compass/feed", async (req, res) => {
     }
 
     // Write-through: cache the result (fire-and-forget — never blocks response)
-    void setCachedFeed(sc, user.id, cacheKey, "feed", enrichedFeed);
+    void setCachedFeed(sc, user.id, cacheBuild, cacheKey, "feed", enrichedFeed);
     res.json(enrichedFeed);
   } catch (err) {
     req.log.error({ err }, "compass/feed: build failed, using fallback");
@@ -663,6 +664,7 @@ router.get("/compass/feed/section/:section", async (req, res) => {
   const { cursor } = parsed.data;
 
   try {
+    const cacheBuild = captureCacheBuild(user.id);
     const sectionTzOffset  = tzOffsetForRequest(req);
     const sectionLocalHour = await localHourForRequest(sc, user.id, req);
     const cacheKey = feedCacheKey(`section:${sectionParam}`, cursor, sectionTzOffset, sectionLocalHour);
@@ -762,7 +764,7 @@ router.get("/compass/feed/section/:section", async (req, res) => {
     };
 
     // Write-through: cache the result (fire-and-forget)
-    void setCachedFeed(sc, user.id, cacheKey, "section", response);
+    void setCachedFeed(sc, user.id, cacheBuild, cacheKey, "section", response);
     res.json(response);
   } catch (err) {
     // On unhandled error, return section-schema fields + safe fallback content.
@@ -831,8 +833,9 @@ router.get("/compass/frontload", async (req, res) => {
   }
 
   try {
+    const cacheBuild = captureCacheBuild(user.id);
     const profile = await getCompassProfile(sc, user.id);
-    const payload = await buildFrontLoadPayload(sc, user.id, profile, {
+    const payload = await buildFrontLoadPayload(sc, user.id, cacheBuild, profile, {
       networkHint: parsed.data.network as NetworkHint | undefined,
       batteryHint: parsed.data.battery as BatteryHint | undefined,
     });

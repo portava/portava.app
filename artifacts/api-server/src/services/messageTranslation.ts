@@ -21,12 +21,16 @@ import {
   TRANSLATION_TIMEOUT_MS,
   languageDisplayName,
   validateTranslation,
+  translatePreservingEntities,
 } from '../lib/translation';
 import { publishToUsers } from '../lib/telegraphEvents';
+import { isBlockedBetween } from '../lib/blockGuard.js';
+import { messageKernelEnabled, applyLifecycleExclusion } from './telegraphMessageKernel.js';
 // The envelope version literal only — NOT the kind registry. See
 // `isStructuredEnvelopeBody` for why the guard is invariant-based rather than
 // kind-based.
 import { KIND_ENVELOPE_VERSION } from './telegraph/messageKinds.js';
+import { historyBoundEnabled, visibleFromOf, withinWindow } from './groupChatHistoryBound.js';
 
 // ── Types shared with routes ───────────────────────────────────────────────────
 
@@ -172,18 +176,26 @@ async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
+class TranslationSourceUnavailable extends Error {
+  constructor() { super('translation_source_unavailable'); }
+}
+
 async function detectWithRetry(
   text: string,
   maxRetries: number,
+  beforeDispatch: () => Promise<boolean>,
 ): Promise<string> {
   const provider = getTranslationProvider();
   let lastErr: unknown;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (!await beforeDispatch()) throw new TranslationSourceUnavailable();
     try {
       const result = await withTimeout(provider.detectLanguage(text), TRANSLATION_TIMEOUT_MS);
+      if (!await beforeDispatch()) throw new TranslationSourceUnavailable();
       return result.language;
-    } catch (e) {
-      lastErr = e;
+    } catch (error) {
+      if (error instanceof TranslationSourceUnavailable) throw error;
+      lastErr = error;
     }
   }
   throw lastErr;
@@ -194,12 +206,14 @@ async function translateWithRetry(
   source: string,
   target: string,
   maxRetries: number,
+  beforeRetry?: () => Promise<boolean>,
 ): Promise<TranslateTextResult> {
   const prov = getTranslationProvider();
   let lastErr: unknown;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (attempt > 0 && beforeRetry && !await beforeRetry()) throw new Error('retranslate_source_unavailable');
     try {
-      return await withTimeout(prov.translateText(text, source, target), TRANSLATION_TIMEOUT_MS);
+      return await withTimeout(translatePreservingEntities(prov, text, source, target, beforeRetry), TRANSLATION_TIMEOUT_MS);
     } catch (e) {
       lastErr = e;
     }
@@ -321,279 +335,266 @@ export async function translateMessageForThread(
   }
 
   try {
-    // 1. Get all thread members (other than the sender).
-    //
-    // census T344/T363. Dropped, this read ENDED the pipeline in silence: an
-    // unreadable `message_thread_members` resolved as `data: null`, `?? []` made
-    // it "this thread has nobody else in it", and the early return below fired.
-    // No translation row was written for anybody and nothing anywhere recorded
-    // that a thread had gone untranslated — the outcome is byte-identical to a
-    // thread the sender is alone in.
-    //
-    // There is no honest row to write instead: without the roster there are no
-    // recipient ids to key one by. What the failure is owed is a LOUD, and the
-    // pipeline's own contract ("never throws") means that loud is a log at
-    // error level, the level its outer catch already uses.
-    const { data: members, error: membersErr } = await sc
-      .from('message_thread_members')
-      .select('user_id')
-      .eq('thread_id', threadId)
-      .neq('user_id', senderId);
+    let expectedSource = await readTranslationSource(sc, messageId);
+    if (!expectedSource || expectedSource.threadId !== threadId || expectedSource.senderId !== senderId
+      || expectedSource.body !== body || typeof expectedSource.createdAt !== 'string'
+      || (expectedSource.editedAt !== null && typeof expectedSource.editedAt !== 'string')) return;
 
-    if (membersErr) {
-      logger?.error(
-        { messageId, threadId, err: membersErr.message },
-        'thread roster unreadable — no recipient can be translated for, and this is not a solo thread',
-      );
+    const { data: members, error: membersError } = await sc.from('message_thread_members')
+      .select('user_id').eq('thread_id', threadId).neq('user_id', senderId);
+    if (membersError || !Array.isArray(members)
+      || members.some(member => !member || typeof member.user_id !== 'string' || !member.user_id)) {
+      logger?.error({ messageId, threadId, err: 'translation_roster_unreadable' },
+        'thread roster unreadable — no recipient can be translated for, and this is not a solo thread');
       return;
     }
 
-    const recipientIds: string[] = (members ?? []).map((m: any) => m.user_id);
-    if (recipientIds.length === 0) return;
-
-    // 2. Detect source language (provider, with fallback to sender preference).
-    //
-    // The message is translated and stamped with an `original_language` in
-    // every branch — what differs is only the CLAIM about where that language
-    // came from, which is the whole point of `language_detection_source`.
-    //
-    // THE ARMS BELOW USED TO BE TWO, AND ONE OF THOSE TWO WAS UNREACHABLE.
-    // The fallback read `senderPreferredLanguage ?? 'en'` and then
-    // `senderPreferredLanguage ? 'sender_preference' : 'default'`, and every
-    // caller pre-coalesced its profile read to `'en'`, so the ternary was
-    // handed a truthy string no matter what had happened upstream: 'default'
-    // could only fire on a stored EMPTY-STRING preference, which no writer in
-    // this tree produces. The effect was that a `profiles` outage minted a row
-    // asserting the sender had chosen English. Now the caller passes null plus
-    // a flag, so all three arms are reachable and each says a true thing.
-    let sourceLanguage: string;
-    let detectionSource: LanguageDetectionSource;
-    try {
-      sourceLanguage = await detectWithRetry(body, 1);
-      detectionSource = 'provider';
-    } catch {
-      if (senderPreferredLanguage) {
-        sourceLanguage = senderPreferredLanguage;
-        detectionSource = 'sender_preference';
-      } else if (senderPreferenceUnreadable) {
-        // No language, and we do not even know whether one exists.
-        sourceLanguage = DEFAULT_SOURCE_LANGUAGE;
-        detectionSource = 'sender_preference_unreadable';
-        logger?.warn(
-          { messageId, senderId },
-          'sender language preference unreadable — stamping a placeholder language, not a stated one',
-        );
-      } else {
-        // A successful read that found no preference. This is the honest
-        // 'default': we looked, and the sender has stated nothing.
-        sourceLanguage = DEFAULT_SOURCE_LANGUAGE;
-        detectionSource = 'default';
-      }
-    }
-
-    // Update the message with detected language.
-    await sc
-      .from('messages')
-      .update({ original_language: sourceLanguage, language_detection_source: detectionSource })
-      .eq('id', messageId);
-
-    // 3. Fetch recipient language preferences.
-    // preferred_language (user-chosen in Settings) takes priority over
-    // preferred_message_language (legacy auto-translate field).
-    //
-    // ── THE OTHER END OF THE SAME DEFECT §16 FIXED FOR THE SENDER ────────────
-    // census T344/T363, named by census-telegraph §16.4 as the consequence that
-    // lane found inside its own file and did not fix. With the error dropped,
-    // an unreadable `profiles` gave EVERY recipient the map's default —
-    // `preferredLanguage: 'en'`, `autoTranslate: true` — and §16.4 read that as
-    // a degradation rather than a false claim. Executing it shows it is a false
-    // claim: when the source language is also 'en', which is the common case,
-    // the same-language arm below writes `status: 'skipped'` with
-    // `target_language: 'en'` for each recipient, and that row asserts, durably
-    // and queryably, that this recipient reads English and needed nothing. Not
-    // one byte about that recipient was read.
-    const { data: profiles, error: profilesErr } = await sc
-      .from('profiles')
-      .select('id, preferred_language, preferred_message_language, auto_translate_messages')
-      .in('id', recipientIds);
-
-    if (profilesErr) {
-      logger?.warn(
-        { messageId, threadId, recipients: recipientIds.length, err: profilesErr.message },
-        'recipient language preferences unreadable — recording failed translations, not skipped ones',
-      );
-    }
-
-    const profileMap: Record<string, { preferredLanguage: string; autoTranslate: boolean }> = {};
-    for (const p of profiles ?? []) {
-      const explicitLang = (p as any).preferred_language as string | null;
-      const legacyLang = (p as any).preferred_message_language as string | null;
-      profileMap[(p as any).id] = {
-        preferredLanguage: explicitLang ?? legacyLang ?? 'en',
-        autoTranslate: (p as any).auto_translate_messages ?? true,
+    const recipients: Array<{
+      recipientId: string;
+      preference: RecipientTranslationPreference;
+      isCurrent: () => Promise<boolean>;
+    }> = [];
+    for (const recipientId of new Set(members.map(member => member.user_id as string))) {
+      const initial = await readTranslationRecipient(sc, recipientId, messageId);
+      if (!initial || !sameTranslationSource(initial.source, expectedSource) || initial.preference.state === 'missing') continue;
+      const preference = initial.preference;
+      let retired = false;
+      const isCurrent = async (): Promise<boolean> => {
+        if (retired) return false;
+        try {
+          const current = await readTranslationRecipient(sc, recipientId, messageId);
+          retired = !current || !sameTranslationSource(current.source, expectedSource!)
+            || !sameTranslationPreference(current.preference, preference);
+        } catch {
+          retired = true;
+        }
+        return !retired;
       };
+      recipients.push({ recipientId, preference, isCurrent });
     }
+    if (recipients.length === 0) return;
 
-    // 4. Process each recipient.
-    for (const recipientId of recipientIds) {
-      // The read FAILED, so nothing is known about this recipient's language or
-      // their auto-translate setting. `failed` is §18's own word for "we did not
-      // translate this", it is what `buildDisplayFields` already renders as the
-      // untouched original with no banner — so what the reader SEES is unchanged
-      // — and `error_message` carries which failure it was. `target_language`
-      // is NOT NULL and no preference was read, so it takes `und`, the code this
-      // tree already writes for an undetermined language in the same situation
-      // (`routes/messaging.ts`, the per-viewer translation read).
-      if (profilesErr) {
-        await upsertTranslation(sc, {
-          messageId,
-          recipientId,
-          sourceLanguage,
-          targetLanguage: UNKNOWN_LANGUAGE,
-          translatedBody: null,
-          provider: null,
-          providerVersion: null,
-          // Nothing was translated, so there is nothing to be confident about.
-          // A confidence on a non-translation would be a reading of a text that
-          // was never produced.
-          confidence: null,
-          status: 'failed',
-          errorMessage: 'recipient_preferences_unreadable',
-        }, logger);
+    const anyCurrent = async (enabledOnly: boolean): Promise<boolean> => {
+      for (const recipient of recipients) {
+        if ((!enabledOnly || recipient.preference.state === 'enabled') && await recipient.isCurrent()) return true;
+      }
+      return false;
+    };
+    let sourceLanguage = senderPreferredLanguage || DEFAULT_SOURCE_LANGUAGE;
+    let detectionSource: LanguageDetectionSource = senderPreferredLanguage ? 'sender_preference'
+      : senderPreferenceUnreadable ? 'sender_preference_unreadable' : 'default';
+    if (recipients.some(recipient => recipient.preference.state === 'enabled')) {
+      try {
+        sourceLanguage = await detectWithRetry(body, 1, () => anyCurrent(true));
+        detectionSource = 'provider';
+      } catch (error) {
+        if (error instanceof TranslationSourceUnavailable) return;
+        if (!await anyCurrent(true)) return;
+      }
+    } else if (expectedSource.originalLanguage && expectedSource.detectionSource) {
+      sourceLanguage = expectedSource.originalLanguage;
+      detectionSource = expectedSource.detectionSource;
+    }
+    if (!await anyCurrent(false)) return;
+
+    const stampedSource = Object.freeze({ ...expectedSource, originalLanguage: sourceLanguage, detectionSource });
+    let stamp = applyLifecycleExclusion(sc.from('messages')
+      .update({ original_language: sourceLanguage, language_detection_source: detectionSource })
+      .eq('id', messageId).eq('thread_id', expectedSource.threadId).eq('sender_id', expectedSource.senderId)
+      .eq('body', expectedSource.body).eq('created_at', expectedSource.createdAt)
+      .is('deleted_at', null).is('ciphertext', null), expectedSource.kernel);
+    stamp = expectedSource.editedAt === null ? stamp.is('edited_at', null) : stamp.eq('edited_at', expectedSource.editedAt);
+    stamp = expectedSource.originalLanguage === null ? stamp.is('original_language', null)
+      : stamp.eq('original_language', expectedSource.originalLanguage);
+    stamp = expectedSource.detectionSource === null ? stamp.is('language_detection_source', null)
+      : stamp.eq('language_detection_source', expectedSource.detectionSource);
+    const { data: stamped, error: stampError } = await stamp
+      .select('id, thread_id, sender_id, body, created_at, edited_at, original_language, language_detection_source').maybeSingle();
+    if (stampError || !stamped || stamped.id !== messageId || stamped.thread_id !== stampedSource.threadId
+      || stamped.sender_id !== stampedSource.senderId || stamped.body !== stampedSource.body
+      || stamped.created_at !== stampedSource.createdAt || stamped.edited_at !== stampedSource.editedAt
+      || stamped.original_language !== sourceLanguage || stamped.language_detection_source !== detectionSource) {
+      logger?.warn({ messageId, err: 'translation_stamp_unavailable' }, 'translation_stamp_withheld');
+      return;
+    }
+    expectedSource = stampedSource;
+
+    for (const { recipientId, preference, isCurrent } of recipients) {
+      if (!await isCurrent()) continue;
+      const targetLanguage = preference.state === 'enabled' || preference.state === 'disabled'
+        ? preference.targetLanguage : UNKNOWN_LANGUAGE;
+      const write = (row: Parameters<typeof upsertTranslation>[1]) => upsertTranslation(sc, row, logger, isCurrent);
+      const base = {
+        messageId, recipientId, sourceLanguage, targetLanguage,
+        translatedBody: null, provider: null, providerVersion: null, confidence: null,
+      };
+      if (preference.state === 'unreadable') {
+        await write({ ...base, status: 'failed', errorMessage: 'recipient_preferences_unreadable' });
         continue;
       }
-
-      const prefs = profileMap[recipientId] ?? { preferredLanguage: 'en', autoTranslate: true };
-      const targetLanguage = prefs.preferredLanguage;
-
-      // a. Skip if auto-translate disabled.
-      if (!prefs.autoTranslate) {
-        await upsertTranslation(sc, {
-          messageId,
-          recipientId,
-          sourceLanguage,
-          targetLanguage,
-          translatedBody: null,
-          provider: null,
-          providerVersion: null,
-          confidence: null,
-          status: 'skipped',
-          errorMessage: 'auto_translate_disabled',
-        }, logger);
+      if (preference.state === 'disabled') {
+        await write({ ...base, status: 'skipped', errorMessage: 'auto_translate_disabled' });
         continue;
       }
-
-      // b. Skip if same language.
       if (sourceLanguage === targetLanguage) {
-        await upsertTranslation(sc, {
-          messageId,
-          recipientId,
+        await write({
+          ...base,
           sourceLanguage: detectionSource === 'provider' ? sourceLanguage : UNKNOWN_LANGUAGE,
-          targetLanguage,
-          translatedBody: null,
-          provider: null,
-          providerVersion: null,
-          confidence: null,
           status: detectionSource === 'provider' ? 'skipped' : 'failed',
           errorMessage: detectionSource === 'provider' ? null : 'source_language_unverified',
-        }, logger);
+        });
         continue;
       }
-
-      // c. Translate.
       try {
-        const result = await translateWithRetry(body, sourceLanguage, targetLanguage, 1);
-
-        // Validate the translation before storing it.
+        const result = await translateWithRetry(body, sourceLanguage, targetLanguage, 1, isCurrent);
+        if (!await isCurrent()) continue;
         const validation = validateTranslation(body, result.translatedText, targetLanguage);
         if (!validation.valid) {
-          await upsertTranslation(sc, {
-            messageId,
-            recipientId,
-            sourceLanguage,
-            targetLanguage,
-            translatedBody: null,
-            provider: result.provider,
-            providerVersion: result.providerVersion,
-            confidence: null,
-            status: 'failed',
-            errorMessage: `validation_${validation.reason ?? 'unknown'}`,
-          }, logger);
-          logger?.warn(
-            {
-              messageId,
-              recipientId,
-              source: sourceLanguage,
-              target: targetLanguage,
-              provider: result.provider,
-              reason: validation.reason,
-            },
-            'translation_validation_failed',
-          );
+          await write({ ...base, provider: result.provider, providerVersion: result.providerVersion,
+            status: 'failed', errorMessage: `validation_${validation.reason ?? 'unknown'}` });
+          logger?.warn({ messageId, recipientId, source: sourceLanguage, target: targetLanguage,
+            provider: result.provider, reason: validation.reason }, 'translation_validation_failed');
           continue;
         }
-
-        await upsertTranslation(sc, {
-          messageId,
-          recipientId,
-          sourceLanguage,
-          targetLanguage,
-          translatedBody: result.translatedText,
-          provider: result.provider,
-          providerVersion: result.providerVersion,
-          confidence: null,
-          status: 'translated',
-          errorMessage: null,
-        }, logger);
-        logger?.info(
-          {
-            messageId,
-            recipientId,
-            source: sourceLanguage,
-            target: targetLanguage,
-            provider: result.provider,
-            providerVersion: result.providerVersion,
-            confidence: null,
-          },
-          'translation_ok',
-        );
-        // Realtime: the translated text can now swap in live for this recipient.
+        const outcome = await write({ ...base, translatedBody: result.translatedText, provider: result.provider,
+          providerVersion: result.providerVersion, status: 'translated', errorMessage: null });
+        if (outcome !== 'written' || !await isCurrent()) continue;
+        logger?.info({ messageId, recipientId, source: sourceLanguage, target: targetLanguage,
+          provider: result.provider, providerVersion: result.providerVersion, confidence: null }, 'translation_ok');
         publishToUsers([recipientId], {
-          type: 'message.translated',
-          threadId,
-          payload: { messageId, status: 'translated' },
+          type: 'message.translated', threadId, payload: { messageId, status: 'translated' },
         });
-      } catch (e: unknown) {
-        const errCode =
-          e instanceof Error ? (e.message.length < 80 ? e.message : 'translation_error') : 'unknown';
-        await upsertTranslation(sc, {
-          messageId,
-          recipientId,
-          sourceLanguage,
-          targetLanguage,
-          translatedBody: null,
-          provider: null,
-          providerVersion: null,
-          confidence: null,
-          status: 'failed',
-          errorMessage: errCode,
-        }, logger);
-        logger?.warn(
-          { messageId, recipientId, source: sourceLanguage, target: targetLanguage, err: errCode },
-          'translation_failed',
-        );
+      } catch (error: unknown) {
+        const errCode = error instanceof Error ? (error.message.length < 80 ? error.message : 'translation_error') : 'unknown';
+        await write({ ...base, status: 'failed', errorMessage: errCode });
+        logger?.warn({ messageId, recipientId, source: sourceLanguage, target: targetLanguage, err: errCode }, 'translation_failed');
       }
     }
-  } catch (e: unknown) {
-    // Outer catch — pipeline error must not surface to caller.
-    const code = e instanceof Error ? e.message : 'pipeline_error';
-    logger?.error({ messageId, err: code }, 'translation_pipeline_error');
+  } catch (error: unknown) {
+    logger?.error({ messageId, err: error instanceof Error ? error.message : 'pipeline_error' }, 'translation_pipeline_error');
   }
 }
 
 // ── Retranslate on language-preference change ─────────────────────────────────
 
 const RETRANSLATE_BATCH_LIMIT = 200;
+
+interface RetranslationSource {
+  readonly threadId: string;
+  readonly senderId: string;
+  readonly body: string;
+  readonly createdAt: string | null | undefined;
+  readonly editedAt: string | null;
+  readonly originalLanguage: string | null;
+  readonly detectionSource: LanguageDetectionSource | null;
+  readonly kernel: boolean;
+}
+
+type RecipientTranslationPreference =
+  | { readonly state: 'enabled' | 'disabled'; readonly targetLanguage: string }
+  | { readonly state: 'unreadable' | 'missing' };
+
+function sameTranslationSource(current: RetranslationSource, expected: RetranslationSource): boolean {
+  return current.threadId === expected.threadId && current.senderId === expected.senderId
+    && current.body === expected.body && current.createdAt === expected.createdAt && current.editedAt === expected.editedAt
+    && current.originalLanguage === expected.originalLanguage && current.detectionSource === expected.detectionSource;
+}
+
+function sameTranslationPreference(current: RecipientTranslationPreference, expected: RecipientTranslationPreference): boolean {
+  return current.state === expected.state && (!('targetLanguage' in expected)
+    || ('targetLanguage' in current && current.targetLanguage === expected.targetLanguage));
+}
+
+async function readTranslationSource(sc: SupabaseClient, messageId: string): Promise<RetranslationSource | null> {
+  const kernel = await messageKernelEnabled(sc);
+  const { data: rawMessage, error } = await applyLifecycleExclusion(sc.from('messages')
+    .select(kernel
+      ? 'id, thread_id, sender_id, body, created_at, edited_at, deleted_at, ciphertext, original_language, language_detection_source, unsent_at'
+      : 'id, thread_id, sender_id, body, created_at, edited_at, deleted_at, ciphertext, original_language, language_detection_source')
+    .eq('id', messageId).is('deleted_at', null), kernel).maybeSingle();
+  if (error) throw new Error('retranslate_messages_fetch_failed');
+  const message = rawMessage as unknown as {
+    id: string; thread_id: string; sender_id: string | null; body: string | null;
+    created_at?: string | null; edited_at?: string | null; deleted_at: string | null;
+    ciphertext: string | null; unsent_at?: string | null;
+    original_language?: string | null; language_detection_source?: string | null;
+  } | null;
+  if (!message || message.id !== messageId || typeof message.thread_id !== 'string' || !message.thread_id
+    || message.deleted_at !== null || message.ciphertext != null
+    || (kernel && (!('unsent_at' in message) || message.unsent_at !== null))
+    || typeof message.sender_id !== 'string' || !message.sender_id
+    || typeof message.body !== 'string' || !message.body || isStructuredEnvelopeBody(message.body)
+    || (message.created_at != null && typeof message.created_at !== 'string')
+    || (message.edited_at != null && typeof message.edited_at !== 'string')
+    || (message.original_language != null && typeof message.original_language !== 'string')
+    || (message.language_detection_source != null && typeof message.language_detection_source !== 'string')) return null;
+  return Object.freeze({
+    threadId: message.thread_id,
+    senderId: message.sender_id,
+    body: message.body,
+    createdAt: message.created_at,
+    editedAt: message.edited_at ?? null,
+    originalLanguage: message.original_language ?? null,
+    detectionSource: (message.language_detection_source ?? null) as LanguageDetectionSource | null,
+    kernel,
+  });
+}
+
+async function readTranslationRecipient(
+  sc: SupabaseClient,
+  userId: string,
+  messageId: string,
+): Promise<{ source: RetranslationSource; preference: RecipientTranslationPreference } | null> {
+  const source = await readTranslationSource(sc, messageId);
+  if (!source) return null;
+  const boundOn = await historyBoundEnabled(sc);
+  const membershipQuery = boundOn
+    ? sc.from('message_thread_members').select('thread_id, user_id, left_at, visible_from_at')
+    : sc.from('message_thread_members').select('thread_id, user_id, left_at');
+  const { data: membership, error: membershipError } = await membershipQuery
+    .eq('thread_id', source.threadId).eq('user_id', userId).maybeSingle();
+  if (membershipError) throw new Error('retranslate_membership_fetch_failed');
+  if (!membership || membership.thread_id !== source.threadId || membership.user_id !== userId
+    || membership.left_at !== null) return null;
+  const visibleFrom = 'visible_from_at' in membership ? membership.visible_from_at : undefined;
+  if (boundOn && visibleFrom !== null && (typeof visibleFrom !== 'string' || !visibleFrom)) return null;
+  if (!withinWindow(source.createdAt, visibleFromOf({
+    visible_from_at: typeof visibleFrom === 'string' ? visibleFrom : null,
+  }, boundOn), { senderId: source.senderId, viewerId: userId })) return null;
+
+  const { data: thread, error: threadError } = await sc.from('message_threads')
+    .select('id, is_e2ee').eq('id', source.threadId).maybeSingle();
+  if (threadError) throw new Error('retranslate_thread_fetch_failed');
+  if (!thread || thread.id !== source.threadId || thread.is_e2ee !== false) return null;
+  if (await isBlockedBetween(sc, userId, source.senderId)) return null;
+
+  let preference: RecipientTranslationPreference;
+  try {
+    const { data, error } = await sc.from('profiles')
+      .select('id, preferred_language, preferred_message_language, auto_translate_messages')
+      .eq('id', userId).maybeSingle();
+    const target = data?.preferred_language ?? data?.preferred_message_language;
+    if (error) preference = { state: 'unreadable' };
+    else if (data === null) preference = { state: 'missing' };
+    else if (data?.id !== userId || typeof data.auto_translate_messages !== 'boolean'
+      || typeof target !== 'string' || !target.trim()) preference = { state: 'unreadable' };
+    else preference = { state: data.auto_translate_messages ? 'enabled' : 'disabled', targetLanguage: target };
+  } catch {
+    preference = { state: 'unreadable' };
+  }
+  return { source, preference: Object.freeze(preference) };
+}
+
+async function readRetranslationSource(
+  sc: SupabaseClient,
+  userId: string,
+  messageId: string,
+  targetLanguage: string,
+): Promise<RetranslationSource | null> {
+  const current = await readTranslationRecipient(sc, userId, messageId);
+  return current?.preference.state === 'enabled' && current.preference.targetLanguage === targetLanguage
+    ? current.source : null;
+}
 
 /**
  * retranslateForUser — fire-and-forget sweep triggered when a user changes
@@ -628,29 +629,6 @@ export async function retranslateForUser(
 
     const messageIds = rows.map((r: any) => r.message_id as string);
 
-    // Fetch message bodies for these rows.
-    const { data: messages, error: msgErr } = await sc
-      .from('messages')
-      .select('id, body, original_language, language_detection_source')
-      .in('id', messageIds);
-
-    if (msgErr) {
-      logger?.warn({ err: msgErr.message, userId }, 'retranslate_messages_fetch_failed');
-      return;
-    }
-
-    const msgMap: Record<
-      string,
-      { body: string; originalLanguage: string | null; detectionSource: LanguageDetectionSource | null }
-    > = {};
-    for (const m of messages ?? []) {
-      msgMap[(m as any).id] = {
-        body: (m as any).body as string,
-        originalLanguage: (m as any).original_language as string | null,
-        detectionSource: ((m as any).language_detection_source ?? null) as LanguageDetectionSource | null,
-      };
-    }
-
     // Build a source-language map from the translation rows for fallback.
     const srcMap: Record<string, string> = {};
     for (const r of rows) {
@@ -658,14 +636,24 @@ export async function retranslateForUser(
     }
 
     for (const messageId of messageIds) {
-      const msg = msgMap[messageId];
-      if (!msg || !msg.body) continue;
+      const msg = await readRetranslationSource(sc, userId, messageId, newTargetLanguage);
+      if (!msg) continue;
+
+      const sourceStillAuthorized = async (): Promise<boolean> => {
+        const current = await readRetranslationSource(sc, userId, messageId, newTargetLanguage);
+        return current !== null && current.threadId === msg.threadId && current.senderId === msg.senderId
+          && current.body === msg.body && current.createdAt === msg.createdAt && current.editedAt === msg.editedAt
+          && current.originalLanguage === msg.originalLanguage && current.detectionSource === msg.detectionSource;
+      };
+      const writeIfAuthorized = async (row: Parameters<typeof upsertTranslation>[1]): Promise<void> => {
+        await upsertTranslation(sc, row, logger, sourceStillAuthorized);
+      };
 
       const sourceLanguage = msg.originalLanguage ?? srcMap[messageId] ?? 'en';
 
       // Same language as target — mark skipped.
       if (sourceLanguage === newTargetLanguage) {
-        await upsertTranslation(sc, {
+        await writeIfAuthorized({
           messageId,
           recipientId: userId,
           sourceLanguage: msg.detectionSource === 'provider' ? sourceLanguage : UNKNOWN_LANGUAGE,
@@ -676,15 +664,15 @@ export async function retranslateForUser(
           confidence: null,
           status: msg.detectionSource === 'provider' ? 'skipped' : 'failed',
           errorMessage: msg.detectionSource === 'provider' ? null : 'source_language_unverified',
-        }, logger);
+        });
         continue;
       }
 
       try {
-        const result = await translateWithRetry(msg.body, sourceLanguage, newTargetLanguage, 1);
+        const result = await translateWithRetry(msg.body, sourceLanguage, newTargetLanguage, 1, sourceStillAuthorized);
         const validation = validateTranslation(msg.body, result.translatedText, newTargetLanguage);
         if (!validation.valid) {
-          await upsertTranslation(sc, {
+          await writeIfAuthorized({
             messageId,
             recipientId: userId,
             sourceLanguage,
@@ -695,10 +683,10 @@ export async function retranslateForUser(
             confidence: null,
             status: 'failed',
             errorMessage: `validation_${validation.reason ?? 'unknown'}`,
-          }, logger);
+          });
           continue;
         }
-        await upsertTranslation(sc, {
+        await writeIfAuthorized({
           messageId,
           recipientId: userId,
           sourceLanguage,
@@ -709,10 +697,10 @@ export async function retranslateForUser(
           confidence: null,
           status: 'translated',
           errorMessage: null,
-        }, logger);
+        });
       } catch (e: unknown) {
         const errCode = e instanceof Error ? (e.message.length < 80 ? e.message : 'translation_error') : 'unknown';
-        await upsertTranslation(sc, {
+        await writeIfAuthorized({
           messageId,
           recipientId: userId,
           sourceLanguage,
@@ -723,7 +711,7 @@ export async function retranslateForUser(
           confidence: null,
           status: 'failed',
           errorMessage: errCode,
-        }, logger);
+        });
         logger?.warn({ messageId, userId, target: newTargetLanguage, err: errCode }, 'retranslate_item_failed');
       }
     }
@@ -1016,7 +1004,8 @@ async function upsertTranslation(
     errorMessage: string | null;
   },
   logger?: Logger,
-): Promise<void> {
+  beforeWrite?: () => Promise<boolean>,
+): Promise<'written' | 'withheld' | 'failed'> {
   const now = new Date().toISOString();
 
   // Two literal payloads at two `.upsert(` calls, chosen by the flag — the same
@@ -1047,6 +1036,7 @@ async function upsertTranslation(
     updated_at: now,
   };
 
+  if (beforeWrite && await beforeWrite() !== true) return 'withheld';
   const { error } = confidenceColumnsAbsent
     ? await sc
         .from('message_translations')
@@ -1054,7 +1044,7 @@ async function upsertTranslation(
     : await sc
         .from('message_translations')
         .upsert(withConfidence, { onConflict: 'message_id,recipient_id' });
-  if (!error) return;
+  if (!error) return 'written';
 
   if (!confidenceColumnsAbsent && isMissingTranslationConfidenceColumn(error)) {
     // 2991 is not applied here. Store the row WITHOUT the two new columns
@@ -1067,21 +1057,23 @@ async function upsertTranslation(
       { messageId: row.messageId, recipientId: row.recipientId, err: (error as { code?: string }).code },
       CONFIDENCE_MIGRATION_PENDING_MESSAGE,
     );
+    if (beforeWrite && await beforeWrite() !== true) return 'withheld';
     const retry = await sc
       .from('message_translations')
       .upsert(withoutConfidence, { onConflict: 'message_id,recipient_id' });
-    if (!retry.error) return;
+    if (!retry.error) return 'written';
     logger?.error(
       { messageId: row.messageId, recipientId: row.recipientId, status: row.status, err: (retry.error as { code?: string }).code },
       'translation_upsert_failed',
     );
-    return;
+    return 'failed';
   }
 
   logger?.error(
     { messageId: row.messageId, recipientId: row.recipientId, status: row.status, err: (error as { code?: string }).code },
     'translation_upsert_failed',
   );
+  return 'failed';
 }
 
 /** Test-only: forget what this process learned about 2991. */

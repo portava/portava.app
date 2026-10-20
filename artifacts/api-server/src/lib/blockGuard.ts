@@ -17,9 +17,9 @@
  *     most.
  *
  * This helper fails CLOSED: it returns true (treat as blocked) if a block exists
- * in EITHER direction OR if the query errors, and uses `.limit(1)` so the mutual
- * case never raises. A block guard denying on an unreadable blocks table is the
- * safe default; a transient error briefly over-denying an invite/presence is far
+ * in EITHER direction OR if the query errors or answers with anything but a list,
+ * and uses `.limit(1)` so the mutual case never raises. Denying on an unreadable
+ * blocks table is the safe default; a transient error briefly over-denying an invite/presence is far
  * better than leaking to a blocked user.
  */
 import { recordTelegraphMetric } from "../domain/telegraph/services/telegraphObservability.js";
@@ -37,7 +37,7 @@ export async function isBlockedBetween(
       `and(blocker_id.eq.${userA},blocked_id.eq.${userB}),and(blocker_id.eq.${userB},blocked_id.eq.${userA})`,
     )
     .limit(1);
-  if (error) {
+  if (error || !Array.isArray(data)) {
     // Telegraph §28 "blocked direct deliveries = 0" / §30A.17 block-enforcement
     // SLO. This branch is the one worth counting: the guard denied WITHOUT
     // KNOWING, which is the rate at which block enforcement is running blind.

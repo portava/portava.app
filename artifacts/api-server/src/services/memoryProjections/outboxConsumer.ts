@@ -78,10 +78,12 @@
 
 import {
   HIGHLIGHT_DOMAIN_EVENT_TYPES, MEMORY_DOMAIN_EVENT_TYPES,
+  MEMORY_EVENT_TABLE,
   isMemoryEventType,
   type MemoryEventType,
 } from "../../lib/memoryOutbox.js";
 import { rebuildProjection } from "./derivativeRegistry.js";
+import { invalidate as invalidateCompassCache } from "../../compass/CompassCacheEngine.js";
 import type { ProjectionId, ProjectionScope } from "./projectionRegistry.js";
 import {
   buildProjectionLagSample,
@@ -153,6 +155,7 @@ export interface ClaimedOutboxRow {
    */
   memory_id: string | null;
   highlight_id?: string | null;
+  policy_owner_id?: string | null;
   type: string;
   created_at: string;
   attempts: number;
@@ -446,7 +449,16 @@ export async function drainMemoryOutbox(
     const subject = eventSubjectOf(row.type);
 
     let outcome: EventOutcome;
-    if (!projections || subject === null) {
+    if (subject === "owner_policy") {
+      const delivered = await deliverResurfacingPolicy(sc, row, now);
+      outcome = { id: row.id, eventId: row.event_id, eventType: row.type, memoryId: null, ...delivered };
+      if (delivered.failed > 0) {
+        failed += 1;
+        await failOutboxRow(sc, row.id, delivered.failureClass ?? "policy_delivery_failed");
+      } else {
+        ackable.push(row.id);
+      }
+    } else if (!projections || subject === null) {
       // An event type nobody subscribes to — any name a future spec adds to
       // §17's vocabulary before a projection does. Not retryable: the next
       // attempt reaches the same conclusion. Acked with the class recorded, so
@@ -631,11 +643,39 @@ export const HIGHLIGHT_EVENT_PROJECTIONS: Readonly<
  * lib/memoryCommandBus.ts routes commands through COMMAND_SUBJECT instead of
  * matching on `*_HIGHLIGHT`.
  */
-export function eventSubjectOf(type: string): "memory" | "highlight" | null {
+export function eventSubjectOf(type: string): "memory" | "highlight" | "owner_policy" | null {
   if (!isMemoryEventType(type)) return null;
+  if (type === "resurfacing.policy_changed") return "owner_policy";
   if ((EVENT_PROJECTIONS as Record<string, unknown>)[type] !== undefined) return "memory";
   if ((HIGHLIGHT_EVENT_PROJECTIONS as Record<string, unknown>)[type] !== undefined) return "highlight";
   return null;
+}
+
+async function deliverResurfacingPolicy(sc: any, row: ClaimedOutboxRow, now: Date) {
+  const failure = (failureClass: string) => ({ rebuilt: 0, skipped: 0, failed: 1, failureClass });
+  const complete = { rebuilt: 0, skipped: 0, failed: 0, failureClass: null };
+  if (!row.policy_owner_id || row.memory_id != null || row.highlight_id != null) return failure("policy_subject_invalid");
+  try {
+    const event = await sc.from(MEMORY_EVENT_TABLE).select("policy_owner_id, type, payload_json")
+      .eq("event_id", row.event_id).maybeSingle();
+    if (event.error || !event.data) return failure("policy_event_unavailable");
+    const payload = event.data.payload_json;
+    const target = payload?.target;
+    if (event.data.policy_owner_id !== row.policy_owner_id || event.data.type !== row.type
+      || !target || !["memory", "highlight", "person", "trip"].includes(target.kind)
+      || typeof target.id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(target.id)
+      || typeof payload.on !== "boolean") return failure("policy_event_invalid");
+    await invalidateCompassCache(sc, row.policy_owner_id, "resurfacing_policy_changed");
+    const eviction = await sc.from("compass_feed_cache").delete().eq("user_id", row.policy_owner_id);
+    if (eviction.error) return failure("policy_cache_unavailable");
+    if (target.kind === "person" || target.kind === "trip") return complete;
+    const scope = target.kind === "memory" ? await readProjectionScope(sc, target.id) : await readHighlightProjectionScope(sc, target.id);
+    if (!scope.ok) return scope.reason === "memory_absent" || scope.reason === "highlight_absent" ? complete : failure(scope.reason);
+    if (scope.scope.owner_id !== row.policy_owner_id) return failure("policy_target_owner_mismatch");
+    return rebuildForEvent(sc, row, scope.scope, now, target.kind === "memory" ? ALL_SURFACES : ["ProfileHighlightProjection"]);
+  } catch {
+    return failure("policy_delivery_threw");
+  }
 }
 
 export type HighlightScopeResult =

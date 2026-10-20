@@ -209,6 +209,19 @@ describe("F. withDiscoveryCandidates — inert until seeded ON", () => {
     await withDiscoveryCandidates(sc, places, ctx());
     assert.deepEqual(reads, [DISCOVERY_CANDIDATE_PROJECTION_FLAG]);
   });
+
+  for (const state of ["off", "absent", "unreadable", "missing_client"] as const) {
+    it(`does not reuse another client's enabled projection gate when this client is ${state}`, async () => {
+      const enabled = flagClient({ [DISCOVERY_CANDIDATE_PROJECTION_FLAG]: true });
+      const disabled = flagClient(
+        state === "absent" ? {} : { [DISCOVERY_CANDIDATE_PROJECTION_FLAG]: false },
+        { error: state === "unreadable" },
+      );
+      assert.ok((await withDiscoveryCandidates(enabled.sc, places, ctx()))[0].candidate);
+      assert.equal(await withDiscoveryCandidates(state === "missing_client" ? null : disabled.sc, places, ctx()), places);
+      if (state !== "missing_client") assert.deepEqual(disabled.reads, [DISCOVERY_CANDIDATE_PROJECTION_FLAG]);
+    });
+  }
 });
 
 describe("G. the Map-facing reader", () => {

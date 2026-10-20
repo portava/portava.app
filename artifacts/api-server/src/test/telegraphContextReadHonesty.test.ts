@@ -92,7 +92,7 @@ const PROVIDER_DOWN = {
     throw new Error("detector_down");
   },
   async translateText(text: string, _source: string, target: string) {
-    return { translatedText: `[${target}] ${text} and then some more words.`, provider: "stub" };
+    return { translatedText: `[${target}] ${text} and then some more words.`, provider: "stub", providerVersion: "stub-1" };
   },
 };
 
@@ -423,6 +423,7 @@ describe("GET /threads/:id/messages — an unreadable quote is not an absent quo
 describe("translateMessageForThread — an unreadable recipient profile is not an English one", () => {
   it("CONTROL: a readable recipient preference still drives a real translation", async () => {
     const c = use(seed());
+    Object.assign(c._store.messages[0], { sender_id: ALICE, ciphertext: null, language_detection_source: null });
     await translateMessageForThread(c as any, {
       messageId: M_QUOTED,
       body: "the ferry leaves at eight.",
@@ -440,6 +441,7 @@ describe("translateMessageForThread — an unreadable recipient profile is not a
     // `profiles` is read for the recipients only; the sender-preference read is
     // not made here because the caller supplies it.
     const c = use(seed(), { errors: { profiles: PROFILES_DOWN } });
+    Object.assign(c._store.messages[0], { sender_id: ALICE, ciphertext: null, language_detection_source: null });
     await translateMessageForThread(c as any, {
       messageId: M_QUOTED,
       body: "the ferry leaves at eight.",
@@ -469,6 +471,7 @@ describe("translateMessageForThread — an unreadable recipient profile is not a
 
   it("an unreadable thread roster does not make a whole thread silently untranslated", async () => {
     const c = use(seed(), { errors: { message_thread_members: MEMBERS_DOWN } });
+    Object.assign(c._store.messages[0], { sender_id: ALICE, ciphertext: null, language_detection_source: null });
     let warned = 0;
     await translateMessageForThread(c as any, {
       messageId: M_QUOTED,

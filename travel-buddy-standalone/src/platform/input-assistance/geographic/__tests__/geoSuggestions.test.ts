@@ -36,6 +36,84 @@ function place(over: Partial<Place> = {}): Place {
   } as Place;
 }
 
+const venueId = '11111111-1111-4111-8111-111111111111';
+const cityId = '22222222-2222-4222-8222-222222222222';
+const venueValue = {
+  entityType: 'venue', venueId, venue: 'Sky36', cityId, city: 'Da Nang',
+  country: 'Vietnam', countryCode: 'VN', lat: 16.07, lng: 108.22, timezone: 'Asia/Ho_Chi_Minh',
+};
+function venue(over: Partial<InputSuggestion> = {}): InputSuggestion {
+  return sug({ context: 'event_location', label: 'Sky36', subtitle: 'Da Nang',
+    entityType: 'place', entityId: venueId,
+    action: { type: 'open_entity', entityType: 'place', entityId: venueId },
+    structuredValue: venueValue, ...over });
+}
+
+test('canonical venue binding preserves venue identity and the six dependent fields', () => {
+  assert.deepEqual(suggestionToPlace(venue()), {
+    id: `gw-${venueId}`, type: 'place', name: 'Sky36', displayName: 'Sky36, Da Nang',
+    canonicalId: venueId, source: 'canonical', city: 'Da Nang', country: 'Vietnam',
+    countryCode: 'VN', lat: 16.07, lng: 108.22, timezone: 'Asia/Ho_Chi_Minh',
+    district: null, region: null, confidence: undefined,
+  });
+});
+
+test('canonical venue binding preserves genuine zero coordinates', () => {
+  const result = suggestionToPlace(venue({ structuredValue: { ...venueValue, lat: 0, lng: 0 } }));
+  assert.equal(result?.lat, 0);
+  assert.equal(result?.lng, 0);
+});
+
+test('canonical venue binding does not invent optional facts from subtitle or city identity', () => {
+  const result = suggestionToPlace(venue({ structuredValue: { entityType: 'venue', venueId, venue: 'Sky36', cityId } }));
+  assert.ok(result);
+  for (const field of ['city', 'country', 'countryCode', 'lat', 'lng', 'timezone'] as const) {
+    assert.equal(result[field], null);
+  }
+  assert.equal(result.canonicalId, venueId);
+});
+
+const mismatches: [string, Partial<InputSuggestion>][] = [
+  ['source', { source: 'provider' }],
+  ['binding source', { structuredValue: { ...venueValue, source: 'provider' } }],
+  ['target type', { entityType: 'city' }],
+  ['target identity', { entityId: cityId }],
+  ['absent identity', { entityId: undefined }],
+  ['binding identity', { structuredValue: { ...venueValue, venueId: '' } }],
+  ['binding name', { structuredValue: { ...venueValue, venue: '' } }],
+  ['label', { label: 'Another venue' }],
+  ['action identity', { action: { type: 'open_entity', entityType: 'place', entityId: cityId } }],
+  ['action type', { action: { type: 'replace_text', value: 'Sky36' } } as never],
+  ['validation', { type: 'validation' }],
+  ['completion', { type: 'completion' }],
+  ['action', { type: 'action' }],
+  ['approximate precision', { locationPrecision: 'approximate' }],
+  ['hidden precision', { locationPrecision: 'hidden' }],
+  ['embedded Place bypass', { source: 'provider', structuredValue: { ...venueValue, ...place() } }],
+  ['string latitude', { structuredValue: { ...venueValue, lat: '0' } }],
+  ['out of range longitude', { structuredValue: { ...venueValue, lng: 181 } }],
+  ['nonfinite latitude', { structuredValue: { ...venueValue, lat: NaN } }],
+  ['half coordinates', { structuredValue: { ...venueValue, lng: null } }],
+  ['nontext country', { structuredValue: { ...venueValue, country: 5 } }],
+];
+for (const [name, mismatch] of mismatches) {
+  test(`canonical venue binding refuses ${name} without label-only fallback`, () => {
+    assert.equal(suggestionToPlace(venue(mismatch)), null);
+  });
+}
+
+test('non-place rows and approximate areas never become label-only Places', () => {
+  for (const type of ['validation', 'completion', 'correction', 'structured_value', 'action'] as const) {
+    assert.equal(suggestionToPlace(sug({ type, label: 'Not a venue', entityType: 'place' })), null);
+  }
+  assert.equal(suggestionToPlace(sug({ structuredValue: { kind: 'approximate_area', city: 'Da Nang' } })), null);
+  assert.equal(suggestionToPlace(sug({ entityType: 'place', locationPrecision: 'approximate' })), null);
+});
+
+test('canonical disambiguated venues and absent optional action retain the existing entity identity', () => {
+  assert.equal(suggestionToPlace(venue({ type: 'disambiguation', action: undefined }))?.canonicalId, venueId);
+});
+
 test('suggestionToPlace: entity suggestion → Place carrying the canonical id', () => {
   const p = suggestionToPlace(sug({ label: 'Da Nang', subtitle: 'Vietnam', entityType: 'city', entityId: 'city_da_nang' }));
   assert.ok(p);

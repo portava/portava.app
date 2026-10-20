@@ -36,9 +36,14 @@ import { useSmartVideoFit } from '../../hooks/useSmartVideoFit.ts';
 import { VideoBlurBackdrop } from './VideoBlurBackdrop.tsx';
 import { useHydratedMedia } from '../../services/mediaUrl.ts';
 import { DisplayMediaImage } from './DisplayMediaImage.tsx';
+import { MediaCaptionControls } from '../media/MediaCaptionControls.tsx';
+import { useFeatureFlags } from '../../context/FeatureFlagsContext.tsx';
+import { useAdaptivePlayback } from '../../hooks/useAdaptivePlayback.ts';
+import { MediaDubbingSession, useMediaDubbingSession } from '../media/MediaDubbingSession.tsx';
 
 export interface SharedVideoPlayerProps {
   uri: string;
+  captionSource?: string;
   poster?: string;
   /** Start playing immediately. Default: false */
   autoplay?: boolean;
@@ -51,6 +56,7 @@ export interface SharedVideoPlayerProps {
 
 export function SharedVideoPlayer({
   uri,
+  captionSource,
   poster,
   autoplay = false,
   muted: mutedProp = true,
@@ -59,9 +65,17 @@ export function SharedVideoPlayer({
   style,
 }: SharedVideoPlayerProps) {
   const videoRef = useRef<Video>(null);
+  const [controller, setController] = useState<Video | null>(null);
+  const captureVideo = useCallback((video: Video | null) => { videoRef.current = video; setController(video); }, []);
   const [isPlaying, setIsPlaying] = useState(autoplay);
+  const [intent, setIntent] = useState({ uri, autoplay, requested: autoplay });
+  const playIntent = intent.uri === uri && intent.autoplay === autoplay ? intent.requested : autoplay;
+  const currentSource = useRef(uri);
+  currentSource.current = uri;
   const [isMuted, setIsMuted] = useState(mutedProp);
   const [hasError, setHasError] = useState(false);
+  const [captionStatus, setCaptionStatus] = useState<{ source: string; status: AVPlaybackStatus } | null>(null);
+  const captionsEnabled = useFeatureFlags().isEnabled('media_captions_enabled');
   const [containerSize, setContainerSize] = useState({ w: 0, h: 0 });
 
   // Private-bucket references resolve to signed URLs here. Until the resolve
@@ -70,11 +84,14 @@ export function SharedVideoPlayer({
   const { resolved: hydrated } = useHydratedMedia([uri, poster ?? null]);
   const hydratedUri = hydrated[uri];
   const playbackUri = typeof hydratedUri === 'string' ? hydratedUri : uri;
+  const playback = useAdaptivePlayback(captionSource ?? uri, playbackUri);
   const posterUri = poster
     ? (typeof hydrated[poster] === 'string' ? (hydrated[poster] as string) : poster)
     : undefined;
   // Server said no: unreadable, same user-visible outcome as a decode failure.
   const unresolvable = hydratedUri === null;
+  const dubbing = useMediaDubbingSession({ source: captionSource ?? uri, active: !hasError && !unresolvable,
+    controller, controlSource: { shouldPlay: playIntent, isMuted, volume: 1, rate: 1 } });
   const { resizeMode, needsLetterbox, onReadyForDisplay } = useSmartVideoFit(
     containerSize.w,
     containerSize.h,
@@ -82,35 +99,47 @@ export function SharedVideoPlayer({
 
   const handlePlaybackStatus = useCallback(
     (status: AVPlaybackStatus) => {
+      if (currentSource.current !== uri) return;
+      dubbing.playback.onSourceStatus(status);
+      if (captionsEnabled) setCaptionStatus({ source: uri, status });
       if (!status.isLoaded) {
         if ((status as any).error) {
+          if (playback.rejectAdaptive()) return;
           setHasError(true);
         }
         return;
       }
       setIsPlaying(status.isPlaying);
       if (status.didJustFinish && !loop) {
+        setIntent({ uri, autoplay, requested: false });
         onEnd?.();
       }
     },
-    [loop, onEnd],
+    [loop, onEnd, captionsEnabled, uri, autoplay, playback.rejectAdaptive, dubbing.playback.onSourceStatus],
   );
 
   const togglePlay = useCallback(async () => {
     if (!videoRef.current) return;
-    if (isPlaying) {
-      await videoRef.current.pauseAsync();
-    } else {
-      await videoRef.current.playAsync();
+    const requested = !(playIntent || isPlaying);
+    setIntent({ uri, autoplay, requested });
+    if (!requested) setIsPlaying(false);
+    try {
+      if (requested) await videoRef.current.playAsync();
+      else await videoRef.current.pauseAsync();
+    } catch {
+      if (currentSource.current === uri) {
+        setIntent({ uri, autoplay, requested: false });
+        setIsPlaying(false);
+      }
     }
-  }, [isPlaying]);
+  }, [isPlaying, playIntent, uri, autoplay]);
 
   const toggleMute = useCallback(async () => {
     if (!videoRef.current) return;
     const next = !isMuted;
     setIsMuted(next);
-    await videoRef.current.setStatusAsync({ isMuted: next });
-  }, [isMuted]);
+    await videoRef.current.setStatusAsync({ isMuted: next || dubbing.playback.muteOriginal });
+  }, [isMuted, dubbing.playback.muteOriginal]);
 
   if (hasError || unresolvable) {
     return (
@@ -129,16 +158,17 @@ export function SharedVideoPlayer({
     >
       {needsLetterbox ? <VideoBlurBackdrop uri={posterUri} /> : null}
       <Video
-        ref={videoRef}
-        source={{ uri: playbackUri }}
+        ref={captureVideo}
+        source={playback.source}
         style={StyleSheet.absoluteFill}
         resizeMode={resizeMode}
-        shouldPlay={autoplay}
+        shouldPlay={playIntent}
         isLooping={loop}
-        isMuted={isMuted}
+        isMuted={isMuted || dubbing.playback.muteOriginal}
         useNativeControls={false}
         onPlaybackStatusUpdate={handlePlaybackStatus}
         onReadyForDisplay={onReadyForDisplay}
+        progressUpdateIntervalMillis={captionsEnabled || dubbing.enabled ? 100 : 500}
       />
 
       {/* Poster shown while paused and poster uri is provided. DisplayMediaImage
@@ -184,6 +214,8 @@ export function SharedVideoPlayer({
           <Volume2 size={18} color="#fff" />
         )}
       </Pressable>
+      <MediaCaptionControls source={captionSource ?? uri} status={captionStatus?.source === uri ? captionStatus.status : null} onSourceChanged={dubbing.invalidate} />
+      <MediaDubbingSession session={dubbing} />
     </View>
   );
 }

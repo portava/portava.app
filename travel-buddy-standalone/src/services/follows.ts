@@ -3,6 +3,8 @@
  */
 import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
+import { isCurrentDiscoveryScope, viewerKeyForToken } from './discoveryViewerScope.ts';
+import type { DiscoveryScope } from './discoveryViewerScope.ts';
 
 function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
@@ -165,10 +167,21 @@ export interface TravelerSearchResult {
   identityBadge?: { tier: 'id' | 'id_selfie' } | null;
 }
 
-export async function searchUsers(query: string, limit = 20): Promise<FollowResult<TravelerSearchResult[]>> {
+export interface SearchUsersRequest {
+  signal: AbortSignal;
+  isCurrent: () => boolean;
+  scope: DiscoveryScope;
+}
+
+export async function searchUsers(query: string, limit = 20, request?: SearchUsersRequest): Promise<FollowResult<TravelerSearchResult[]>> {
+  const isCurrent = () => !request || (!request.signal.aborted && request.isCurrent() && isCurrentDiscoveryScope(request.scope));
+  const stale: FollowResult<TravelerSearchResult[]> = { ok: false, data: null, errorKind: 'stale_request' };
+  if (!isCurrent()) return stale;
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
   const token = await freshToken();
+  if (!isCurrent()) return stale;
   if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+  if (request && request.scope.viewer !== viewerKeyForToken(token)) return stale;
 
   const q = encodeURIComponent(query.trim());
   if (!q) return { ok: true, data: [] };
@@ -176,15 +189,19 @@ export async function searchUsers(query: string, limit = 20): Promise<FollowResu
   try {
     const res = await fetch(
       `${apiBase()}/api/users/search?q=${q}&limit=${limit}`,
-      { headers: { Authorization: `Bearer ${token}` } },
+      { headers: { Authorization: `Bearer ${token}` }, ...(request ? { signal: request.signal } : {}) },
     );
+    if (!isCurrent()) return stale;
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
+      if (!isCurrent()) return stale;
       return { ok: false, data: null, errorKind: (body as any)?.error ?? 'db_error', message: (body as any)?.message };
     }
     const body = await res.json();
+    if (!isCurrent()) return stale;
     if ((body as any)?.refusal) return { ok: false, data: null, errorKind: (body as any).refusal.class ?? 'refused', message: (body as any).refusal.code }; if (!Array.isArray((body as any)?.users)) return { ok: false, data: null, errorKind: 'malformed_response' }; return { ok: true, data: body.users }; // census-discovery §106 (tm-people): a refusal (the search stop) or a body with no list is a failed read, never "nobody matched"
   } catch (e) {
+    if (!isCurrent()) return stale;
     if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
     return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
   }

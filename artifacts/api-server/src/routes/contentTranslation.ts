@@ -11,12 +11,15 @@
  * its primary read route — private/blocked/member-only content is rejected.
  */
 import { Router } from 'express';
+import { createHash } from 'node:crypto';
 import { requireUser, sendError, isAcceptedTripMember } from '../lib/http.js';
 import { getServiceClient } from '../lib/supabase.js';
 import { isBlockedBetween } from '../lib/blockGuard.js';
 import { asyncHandler } from '../lib/asyncHandler.js';
+import { createAuthorizedTranslationService } from '../services/platformTranslation.js';
+import { languageDisplayName, TRANSLATION_ENABLED } from '../lib/translation.js';
+import { decidePostReadable } from '../lib/postVisibility.js';
 import {
-  translateContentFields,
   type ContentEntityType,
   type TranslatedFields,
 } from '../services/contentTranslation.js';
@@ -83,7 +86,7 @@ async function authorizePost(
   }
 
   // followers_only: must follow the author
-  if (visibility === 'followers') {
+  if (visibility === 'followers' || visibility === 'followers_only') {
     if ((post as any).author_id !== viewerId) {
       const { count: followCount } = await sc
         .from('user_follows')
@@ -94,6 +97,7 @@ async function authorizePost(
     }
   }
 
+  if (!decidePostReadable(post as any, viewerId, visibility === 'trip_only', visibility === 'followers' || visibility === 'followers_only').readable) return null;
   return post as any;
 }
 
@@ -108,11 +112,12 @@ async function authorizeComment(
 ) {
   const { data: comment } = await sc
     .from('posts_comments')
-    .select('id, post_id, body, original_language')
+    .select('id, post_id, user_id, body, original_language')
     .eq('id', commentId)
     .is('deleted_at', null)
     .maybeSingle();
   if (!comment) return null;
+  if (!(comment as any).user_id || await isBlockedBetween(sc, viewerId, (comment as any).user_id)) return null;
 
   // Delegate post-level authorization
   const post = await authorizePost(sc, (comment as any).post_id, viewerId);
@@ -240,6 +245,7 @@ async function authorizeTrip(
     .eq('id', tripId)
     .maybeSingle();
   if (!trip) return null;
+  if (!(trip as any).owner_id || await isBlockedBetween(sc, viewerId, (trip as any).owner_id)) return null;
 
   const visibility = (trip as any).visibility as string;
   if (visibility === 'public') return trip as any;
@@ -343,6 +349,29 @@ async function fetchAuthorizedEntityContent(
 
 // ── Route ─────────────────────────────────────────────────────────────────────
 
+const platformTranslation = createAuthorizedTranslationService({
+  enabled: () => TRANSLATION_ENABLED,
+  async loadAuthorizedSubject(request) {
+    const sc = getServiceClient();
+    if (!sc) return null;
+    const [entityType, entityId] = request.subjectId.split(':');
+    if (!VALID_ENTITY_TYPES.has(entityType) || !isValidUuid(entityId ?? '')) return null;
+    const content = await fetchAuthorizedEntityContent(sc, entityType as ContentEntityType, entityId, request.viewerId);
+    if (!content) return null;
+    const { data: preferences, error } = await sc.from('profiles').select('preferred_language')
+      .eq('id', request.viewerId).maybeSingle();
+    if (error || !preferences) return null;
+    const target = (preferences as { preferred_language?: string }).preferred_language;
+    return {
+      revision: createHash('sha256').update(JSON.stringify(content)).digest('hex'),
+      protection: 'server-readable',
+      sourceLanguage: content.sourceLanguage ?? '',
+      fields: content.fields as Record<string, string>,
+      preferences: { enabled: Boolean(target), targetLanguage: target },
+    };
+  },
+});
+
 /**
  * GET /api/content/:entityType/:entityId/translation?lang=<iso>
  *
@@ -360,6 +389,7 @@ router.get('/content/:entityType/:entityId/translation', asyncHandler(async (req
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
+  res.setHeader('Cache-Control', 'private, no-store');
 
   const { entityType, entityId } = req.params;
   const targetLang = typeof req.query.lang === 'string' ? req.query.lang.trim().toLowerCase() : '';
@@ -374,7 +404,7 @@ router.get('/content/:entityType/:entityId/translation', asyncHandler(async (req
     return;
   }
 
-  if (!targetLang || targetLang.length < 2 || targetLang.length > 8) {
+  if (!/^[a-z]{2,3}(?:-[a-z0-9]{2,8})*$/i.test(targetLang)) {
     sendError(res, 'invalid_payload', 'lang query param is required (ISO 639-1 code, e.g. "es")');
     return;
   }
@@ -417,17 +447,22 @@ router.get('/content/:entityType/:entityId/translation', asyncHandler(async (req
     return;
   }
 
-  const result = await translateContentFields(sc, {
-    entityType: entityType as ContentEntityType,
-    entityId,
-    fields: nonEmptyFields,
-    sourceLanguage,
+  const result = await platformTranslation.translate({
+    viewerId: user.id,
+    subjectId: `${entityType}:${entityId}`,
     targetLanguage: targetLang,
-    logger: req.log,
   });
 
-  if (result.status === 'failed') {
+  if (result.status === 'denied') {
+    sendError(res, 'not_found', 'Entity not found');
+    return;
+  }
+  if (result.status === 'unavailable') {
     res.json({ ok: false, status: 'failed', error: 'translation_failed' });
+    return;
+  }
+  if (result.status === 'skipped') {
+    res.json({ ok: true, skipped: true, status: 'skipped', translatedFields: {} });
     return;
   }
 
@@ -436,8 +471,10 @@ router.get('/content/:entityType/:entityId/translation', asyncHandler(async (req
     status: result.status,
     sourceLanguage: result.sourceLanguage,
     targetLanguage: result.targetLanguage,
-    translatedFields: result.translatedFields,
-    translationLabel: result.translationLabel,
+    translatedFields: result.fields,
+    translationLabel: `Translated from ${languageDisplayName(result.sourceLanguage)}`,
+    provider: result.provider,
+    providerVersion: result.providerVersion,
   });
 }));
 

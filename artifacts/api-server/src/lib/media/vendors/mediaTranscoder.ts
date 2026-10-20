@@ -50,9 +50,12 @@ import {
   type VendorAnswer,
   type VendorSelection,
 } from "./vendorCommon.js";
+import { getServiceClient } from "../../supabase.js";
+import { createConfiguredAdaptiveRuntime } from "../adaptive/runtime.js";
 
 export interface TranscodeSubject {
   assetId: string;
+  sourceVersion?: number | null;
   bucket: string;
   path: string;
   durationMs: number | null;
@@ -85,8 +88,12 @@ export const REFUSING_TRANSCODER: MediaTranscoder = Object.freeze({
   async ladder() { return refused<RenditionLadder>("not_configured", "no transcoder is configured"); },
 });
 
-/** Adapters written so far. EMPTY: no vendor has been chosen. */
-export const IMPLEMENTED_TRANSCODERS: Readonly<Record<string, () => MediaTranscoder>> = Object.freeze({});
+export const IMPLEMENTED_TRANSCODERS: Readonly<Record<string, (env?: NodeJS.ProcessEnv) => MediaTranscoder>> = Object.freeze({
+  self_hosted_ffmpeg(env = process.env) {
+    const client = getServiceClient();
+    return client ? createConfiguredAdaptiveRuntime(client, env)?.adapter ?? REFUSING_TRANSCODER : REFUSING_TRANSCODER;
+  },
+});
 
 let _override: MediaTranscoder | null = null;
 
@@ -96,7 +103,8 @@ export function _setMediaTranscoderForTest(t: MediaTranscoder | null): void {
 
 export function selectMediaTranscoder(env: NodeJS.ProcessEnv = process.env): VendorSelection<MediaTranscoder> {
   if (_override) return { adapter: _override, configured: _override.name, configuredButUnknown: false };
-  return selectVendor(env.MEDIA_TRANSCODER, IMPLEMENTED_TRANSCODERS, REFUSING_TRANSCODER);
+  const factories = Object.fromEntries(Object.entries(IMPLEMENTED_TRANSCODERS).map(([name, factory]) => [name, () => factory(env)]));
+  return selectVendor(env.MEDIA_TRANSCODER, factories, REFUSING_TRANSCODER);
 }
 
 /** A ladder the seam will accept, or null. See the header for the rules. */

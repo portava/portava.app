@@ -12,13 +12,14 @@
  *  - Successful resolutions are cached per place id for the session.
  */
 import type { Place } from './placeTypes.ts';
-import { freshToken } from '../../services/apiToken.ts';
+import { captureMessagingOwnerRequest, messagingOwnerToken, type MessagingOwnerRequest } from '../../services/messagingOwnerRequest.ts';
 
 function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 }
 
 const cache = new Map<string, Place>();
+let cacheOwner: MessagingOwnerRequest | null = null;
 
 export async function resolveCanonicalPlace(
   place: Place,
@@ -29,12 +30,19 @@ export async function resolveCanonicalPlace(
   // Already resolved (registry rows echoed back from popular/recents)
   if (place.canonicalId) return place;
 
+  const owner = captureMessagingOwnerRequest();
+  if (!cacheOwner?.isCurrent()) {
+    cache.clear();
+    cacheOwner = null;
+  }
+  if (!owner) return place;
+
   const cached = cache.get(place.id);
   if (cached) return cached;
 
   try {
-    const token = await freshToken();
-    if (!token) return place; // signed-out: selection proceeds unresolved
+    const token = await messagingOwnerToken(owner);
+    if (!token || !owner.isCurrent()) return place; // signed-out: selection proceeds unresolved
 
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -48,11 +56,18 @@ export async function resolveCanonicalPlace(
         body: JSON.stringify({ place }),
         signal: ctrl.signal,
       });
-      if (!res.ok) return place;
+      if (!owner.isCurrent() || ctrl.signal.aborted || !res.ok) return place;
       const body = await res.json();
+      if (!owner.isCurrent() || ctrl.signal.aborted) return place;
       const resolved: Place | undefined = body?.place;
       if (!resolved || typeof resolved !== 'object' || !resolved.id) return place;
-      if (body.canonicalId) cache.set(place.id, resolved);
+      if (body.canonicalId) {
+        if (!cacheOwner?.isCurrent()) {
+          cache.clear();
+          cacheOwner = owner;
+        }
+        cache.set(place.id, resolved);
+      }
       return resolved;
     } finally {
       clearTimeout(timer);

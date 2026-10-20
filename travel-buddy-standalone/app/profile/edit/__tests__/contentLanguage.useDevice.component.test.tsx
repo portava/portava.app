@@ -145,7 +145,7 @@ describe('ContentLanguageScreen — Use device language', () => {
       });
     } catch {
       await waitFor(() => {
-        target = screen.getByText('Use device language');
+        target = screen.getByText('No preferred language');
       });
     }
 

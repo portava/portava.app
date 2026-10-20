@@ -27,7 +27,7 @@ jest.mock('expo-av', () => {
         playAsync: mockPlayAsync,
         pauseAsync: mockPauseAsync,
         setStatusAsync: mockSetStatusAsync,
-      }));
+      }), []);
       return <View testID={testID ?? 'mock-video'} {...rest} />;
     },
   );

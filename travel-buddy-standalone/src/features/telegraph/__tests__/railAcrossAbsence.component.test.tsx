@@ -15,6 +15,15 @@
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { supabase } from '../../../lib/supabase.ts';
+
+let mockSessionUserId = 'acct-1';
+jest.mock('../../../context/SessionContext.tsx', () => ({
+  ...jest.requireActual('../../../context/SessionContext.tsx'), useSession: () => ({ userId: mockSessionUserId }),
+}));
+jest.mock('../../../services/auth.ts', () => ({
+  ...jest.requireActual('../../../services/auth.ts'), onAuthChange: () => () => {},
+}));
 
 // NOTE: intentional stub — the real api module imports lib/supabase, which builds a client at
 // import time and fails outside an Expo runtime. Every rail DECISION still runs in railBehavior.
@@ -76,10 +85,12 @@ beforeEach(async () => {
   mockedFetch.mockReset();
   await AsyncStorage.clear();
   _setTestAccountId(ACCT);
+  mockSessionUserId = ACCT;
 });
 
-afterAll(() => {
+afterAll(async () => {
   _setTestAccountId(undefined);
+  await supabase.auth.stopAutoRefresh();
 });
 
 describe('T264 — a plan changed while the member was away is promoted when they come back', () => {
@@ -143,6 +154,7 @@ describe('T264 — a plan changed while the member was away is promoted when the
   it('another account on the same device reads nothing of the first one', async () => {
     await storeSeen(ACCT, { p1: { status: 'active', startsAt: T1 } });
     _setTestAccountId('acct-2');
+    mockSessionUserId = 'acct-2';
     mockedFetch.mockResolvedValue({ ok: true, data: served(plan({ startsAt: T2 })) });
     await openConversation();
     expect(screen.queryByTestId('telegraph-rail-change-card')).toBeNull();

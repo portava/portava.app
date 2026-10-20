@@ -27,7 +27,7 @@ import {
   computeTrailHealth, isTrailStaleObject, newCreatorExposureShare, trailGeoCell, creatorPageBoundRemovals,
   diversifyTrailModule, MAX_PER_CONTRIBUTOR_PER_PAGE, TRAIL_PAGE_CREATOR_SHARE,
 } from "../lib/discoveryTrailHealth.js";
-import { getTrailModules, trailTrending, encodeMemberCursor } from "../services/trails/TrailService.js";
+import { getTrailModules, trailTrending, encodeMemberCursor, detachContentFromTrail } from "../services/trails/TrailService.js";
 import { makeRulesDb, type Row } from "./helpers/fakeTrailRulesDb.js";
 
 const NOW = Date.parse("2026-09-28T12:00:00Z");
@@ -62,6 +62,43 @@ const postRow = (id: string, author: string, over: Row = {}): Row => ({
 const profiles = (n: number) => Array.from({ length: n }, (_, i) => ({ id: U(i + 1), account_status: "active", role: "user" }));
 
 // ── pure rules ───────────────────────────────────────────────────────────────
+
+describe("DC-20 — detach checks ownership and Trail identity at deletion time", () => {
+  for (const change of ["contributor", "trail", "deleted"] as const) {
+    it(`refuses a membership changed after the ownership read: ${change}`, async () => {
+      const membership = memberRow({ contributor_id: U(1) });
+      const db = makeRulesDb({ content_trails: [membership] });
+      const originalFrom = db.from.bind(db);
+      db.from = (table: string) => {
+        const builder = originalFrom(table);
+        const originalDelete = builder.delete.bind(builder);
+        builder.delete = () => {
+          if (table === "content_trails") {
+            if (change === "contributor") membership.contributor_id = U(2);
+            else if (change === "trail") membership.trail_id = T2;
+            else db.tables.content_trails = [];
+          }
+          return originalDelete();
+        };
+        return builder;
+      };
+      assert.deepEqual(await detachContentFromTrail(db, T, membership.id, U(1)), { refusal: "unknown_trail", detached: false });
+      assert.equal(db.tables.content_trails.length, change === "deleted" ? 0 : 1);
+    });
+  }
+
+  it("removes only the caller's matching membership and refuses missing or foreign rows identically", async () => {
+    const mine = memberRow({ contributor_id: U(1) });
+    const theirs = memberRow({ contributor_id: U(2) });
+    const db = makeRulesDb({ content_trails: [mine, theirs] });
+    const denied = { refusal: "unknown_trail", detached: false };
+    assert.deepEqual(await detachContentFromTrail(db, T, theirs.id, U(1)), denied);
+    assert.deepEqual(await detachContentFromTrail(db, T, "missing", U(1)), denied);
+    assert.deepEqual(await detachContentFromTrail(db, T2, mine.id, U(1)), denied);
+    assert.deepEqual(await detachContentFromTrail(db, T, mine.id, U(1)), { refusal: null, detached: true });
+    assert.deepEqual(db.tables.content_trails, [theirs]);
+  });
+});
 
 describe("R1 — E-11: stale means out of rotation, or old and not durable (D-W10T-5)", () => {
   it("an evergreen or featured member is never stale by age; an old growing one is; an archived one always is", () => {

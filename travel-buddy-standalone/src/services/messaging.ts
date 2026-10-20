@@ -12,8 +12,9 @@
  * All writes go through the API server (service-role + JWT verification).
  * No private posts, trip data, live location, or GPS are accessible here.
  */
-import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
-import { freshToken as freshApiToken } from './apiToken.ts'; import { noteTelegraphRequest } from '../features/telegraph/connection/connectionMonitor.ts'; import { networkDurationMs } from '../features/telegraph/connection/bandwidthSignal.ts'; // §30A.15: every answer (or none) feeds the connection banner; §17.4: the network share
+import { isSupabaseConfigured } from '../lib/supabase.ts';
+import { captureMessagingOwnerRequest, messagingOwnerToken, assertMessagingOwnerRequest, type MessagingOwnerRequest } from './messagingOwnerRequest.ts';
+import { freshToken as freshApiToken, isCurrentSessionToken } from './apiToken.ts'; import { noteTelegraphRequest } from '../features/telegraph/connection/connectionMonitor.ts'; import { networkDurationMs } from '../features/telegraph/connection/bandwidthSignal.ts'; // §30A.15: every answer (or none) feeds the connection banner; §17.4: the network share
 
 export type MessageVerdict = 'allowed' | 'requires_request' | 'denied';
 
@@ -251,6 +252,7 @@ import {
   decryptIncoming,
   joinFromWelcomeIfNeeded,
   E2EE_WELCOME_SUBTYPE,
+  type CryptoPort,
 } from '../lib/e2ee/threadCrypto.ts';
 import { realCryptoPort } from '../lib/e2ee/realPort.ts'; import { parseRetryAfterSeconds } from '../features/telegraph/lifecycle/readState.ts';
 
@@ -285,44 +287,73 @@ function isNetworkError(e: unknown): boolean {
   return e.message.includes('Network request failed') || e.message.includes('fetch');
 }
 
-async function apiGet<T>(path: string): Promise<MsgResult<T>> {
+export interface LanguageSettingsScope { userId: string; isCurrent: () => boolean }
+
+async function matchesLanguageScope(scope: LanguageSettingsScope, token: string): Promise<boolean> {
+  if (!scope.isCurrent()) return false;
+  // Owner binding is apiToken.ts's job (the one sanctioned token-reading site,
+  // see getSession.bypassGuard.test.ts); it fails closed on any read error.
+  const bound = await isCurrentSessionToken(scope.userId, token);
+  return scope.isCurrent() && bound;
+}
+
+async function apiGet<T>(path: string, owner?: MessagingOwnerRequest, scope?: LanguageSettingsScope): Promise<MsgResult<T>> {
   if (!isSupabaseConfigured || !apiBase()) return { ok: true, data: null };
-  const token = await freshToken();
-  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+  const token = owner ? await messagingOwnerToken(owner) : await freshToken();
+  if (!token || (owner && !owner.isCurrent())) return { ok: false, data: null, errorKind: 'unauthenticated' };
+  if (scope && (!await matchesLanguageScope(scope, token) || !scope.isCurrent())) return { ok: false, data: null, errorKind: 'unauthenticated' };
   try {
     const startedAt = Date.now(); const res = await fetch(`${apiBase()}${path}`, { // §17.4: timed for the bandwidth signal
       headers: { Authorization: `Bearer ${token}` },
     });
-    noteTelegraphRequest(res.status >= 500 ? 'server' : 'ok', networkDurationMs(Date.now() - startedAt, res.headers?.get?.('server-timing') ?? null)); if (!res.ok) return mapApiError<T>(res.status, await res.json().catch(() => ({})), res.headers?.get?.('Retry-After') ?? null); // T376: a shed resume says how long to wait
-    return { ok: true, data: await res.json() };
+    if (owner && !owner.isCurrent()) return { ok: false, data: null, errorKind: 'unauthenticated' };
+    noteTelegraphRequest(res.status >= 500 ? 'server' : 'ok', networkDurationMs(Date.now() - startedAt, res.headers?.get?.('server-timing') ?? null));
+    if (!res.ok) {
+      const result = mapApiError<T>(res.status, await res.json().catch(() => ({})), res.headers?.get?.('Retry-After') ?? null);
+      if (owner && !owner.isCurrent()) return { ok: false, data: null, errorKind: 'unauthenticated' };
+      return result;
+    }
+    const data = await res.json();
+    if (owner && !owner.isCurrent()) return { ok: false, data: null, errorKind: 'unauthenticated' };
+    return { ok: true, data };
   } catch (e) {
+    if (owner && !owner.isCurrent()) return { ok: false, data: null, errorKind: 'unauthenticated' };
     noteTelegraphRequest(isNetworkError(e) ? 'network' : 'server'); if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
     return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
   }
 }
 
-async function apiPost<T>(path: string, body?: unknown): Promise<MsgResult<T>> {
+async function apiPost<T>(path: string, body?: unknown, owner?: MessagingOwnerRequest): Promise<MsgResult<T>> {
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
-  const token = await freshToken();
-  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+  const token = owner ? await messagingOwnerToken(owner) : await freshToken();
+  if (!token || (owner && !owner.isCurrent())) return { ok: false, data: null, errorKind: 'unauthenticated' };
   try {
     const res = await fetch(`${apiBase()}${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
-    noteTelegraphRequest(res.status >= 500 ? 'server' : 'ok'); if (!res.ok) return mapApiError<T>(res.status, await res.json().catch(() => ({})), res.headers?.get?.('Retry-After') ?? null);
-    return { ok: true, data: await res.json() };
+    if (owner && !owner.isCurrent()) return { ok: false, data: null, errorKind: 'unauthenticated' };
+    noteTelegraphRequest(res.status >= 500 ? 'server' : 'ok');
+    if (!res.ok) {
+      const result = mapApiError<T>(res.status, await res.json().catch(() => ({})), res.headers?.get?.('Retry-After') ?? null);
+      if (owner && !owner.isCurrent()) return { ok: false, data: null, errorKind: 'unauthenticated' };
+      return result;
+    }
+    const data = await res.json();
+    if (owner && !owner.isCurrent()) return { ok: false, data: null, errorKind: 'unauthenticated' };
+    return { ok: true, data };
   } catch (e) {
+    if (owner && !owner.isCurrent()) return { ok: false, data: null, errorKind: 'unauthenticated' };
     noteTelegraphRequest(isNetworkError(e) ? 'network' : 'server'); if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
     return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
   }
 }
 
-async function apiPatch<T>(path: string, body: unknown): Promise<MsgResult<T>> {
+async function apiPatch<T>(path: string, body: unknown, scope?: LanguageSettingsScope): Promise<MsgResult<T>> {
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
   const token = await freshToken();
-  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+  if (!token || (scope && (!await matchesLanguageScope(scope, token) || !scope.isCurrent()))) return { ok: false, data: null, errorKind: 'unauthenticated' };
   try {
     const res = await fetch(`${apiBase()}${path}`, {
       method: 'PATCH',
@@ -351,14 +382,29 @@ export async function updateMyMessageSettings(
 
 // ── Language settings ─────────────────────────────────────────────────────────
 
-export async function getMyLanguageSettings(): Promise<MsgResult<LanguageSettings>> {
-  return apiGet('/api/me/language-settings');
+const languageSettingsRequests = new Map<string, Promise<MsgResult<LanguageSettings>>>();
+
+function languageSettingsRequest(scope: LanguageSettingsScope | undefined, request: () => Promise<MsgResult<LanguageSettings>>): Promise<MsgResult<LanguageSettings>> {
+  if (!scope) return request();
+  const result = (languageSettingsRequests.get(scope.userId) ?? Promise.resolve()).catch(() => {}).then(async (): Promise<MsgResult<LanguageSettings>> => {
+    if (!scope.isCurrent()) return { ok: false, data: null, errorKind: 'unauthenticated' };
+    const response = await request();
+    return scope.isCurrent() ? response : { ok: false, data: null, errorKind: 'unauthenticated' };
+  });
+  languageSettingsRequests.set(scope.userId, result);
+  void result.finally(() => { if (languageSettingsRequests.get(scope.userId) === result) languageSettingsRequests.delete(scope.userId); }).catch(() => {});
+  return result;
+}
+
+export async function getMyLanguageSettings(scope?: LanguageSettingsScope): Promise<MsgResult<LanguageSettings>> {
+  return languageSettingsRequest(scope, () => apiGet('/api/me/language-settings', undefined, scope));
 }
 
 export async function updateMyLanguageSettings(
   patch: Partial<Omit<LanguageSettings, 'translation_updated_at'>>,
+  scope?: LanguageSettingsScope,
 ): Promise<MsgResult<LanguageSettings>> {
-  return apiPatch('/api/me/language-settings', patch);
+  return languageSettingsRequest(scope, () => apiPatch('/api/me/language-settings', patch, scope));
 }
 
 // ── Permission check ──────────────────────────────────────────────────────────
@@ -548,6 +594,23 @@ async function hydrateMessages(threadId: string, messages: Message[]): Promise<M
   return out;
 }
 
+function ownerCryptoPort(owner: MessagingOwnerRequest): CryptoPort {
+  const assertCurrent = () => assertMessagingOwnerRequest(owner);
+  const guarded = async <Result>(operation: () => Promise<Result>): Promise<Result> => {
+    assertCurrent();
+    const result = await operation();
+    assertCurrent();
+    return result;
+  };
+  return {
+    ...realCryptoPort,
+    isNative: () => { assertCurrent(); return realCryptoPort.isNative(); },
+    hasGroupSession: (threadId) => guarded(() => realCryptoPort.hasGroupSession(threadId)),
+    encryptForThread: (threadId, body) => guarded(() => realCryptoPort.encryptForThread(threadId, body, assertCurrent)),
+    initGroupAsInitiator: (threadId, userId, keyPackage) => guarded(() => realCryptoPort.initGroupAsInitiator(threadId, userId, keyPackage, assertCurrent)),
+  };
+}
+
 export async function sendMessage(
   threadId: string,
   body: string,
@@ -568,13 +631,24 @@ export async function sendMessage(
      */
     isE2ee?: boolean;
   },
+  request?: MessagingOwnerRequest,
 ): Promise<MsgResult<Message>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
+  const owner = request ?? captureMessagingOwnerRequest();
+  if (!owner?.isCurrent()) return { ok: false, data: null, errorKind: 'unauthenticated' };
   const { isE2ee, ...rest } = opts ?? {};
-  const payload = await buildOutgoingPayload(realCryptoPort, threadId, body, isE2ee === true);
+  let payload: Awaited<ReturnType<typeof buildOutgoingPayload>>;
+  try {
+    payload = await buildOutgoingPayload(ownerCryptoPort(owner), threadId, body, isE2ee === true);
+  } catch (error) {
+    if (!owner.isCurrent()) return { ok: false, data: null, errorKind: 'unauthenticated' };
+    throw error;
+  }
+  if (!owner.isCurrent()) return { ok: false, data: null, errorKind: 'unauthenticated' };
   // T231: the clientId doubles as the idempotency key, so a retry of a send that actually landed (the
   // response was lost) answers with the ORIGINAL message instead of writing a second one. retrySend
   // reuses the failed message's clientId for exactly this reason. Ignored by a server with the flag OFF.
-  return apiPost(`/api/threads/${threadId}/messages`, { ...payload, ...rest, ...(rest.clientId ? { idempotencyKey: rest.clientId } : {}) });
+  return apiPost(`/api/threads/${threadId}/messages`, { ...payload, ...rest, ...(rest.clientId ? { idempotencyKey: rest.clientId } : {}) }, owner);
 }
 
 /**
@@ -585,8 +659,9 @@ export async function sendMessage(
  */
 export async function consumePeerKeyPackage(
   userId: string,
+  owner?: MessagingOwnerRequest,
 ): Promise<MsgResult<{ keyPackageB64: string; deviceId: string }>> {
-  return apiGet(`/api/users/${encodeURIComponent(userId)}/key-packages/consume`);
+  return apiGet(`/api/users/${encodeURIComponent(userId)}/key-packages/consume`, owner);
 }
 
 /**
@@ -605,8 +680,8 @@ export async function publishKeyPackages(
  * The server refuses unless the Welcome is already in the thread, so calling
  * this too early fails loudly instead of stranding a thread nobody can read.
  */
-export async function markThreadE2ee(threadId: string): Promise<MsgResult<{ ok: boolean }>> {
-  return apiPost(`/api/threads/${threadId}/e2ee`, {});
+export async function markThreadE2ee(threadId: string, owner?: MessagingOwnerRequest): Promise<MsgResult<{ ok: boolean }>> {
+  return apiPost(`/api/threads/${threadId}/e2ee`, {}, owner);
 }
 
 export async function saveMessage(
@@ -721,8 +796,10 @@ export async function openDirectThread(
   userId: string,
 ): Promise<MsgResult<{ threadId: string; created: boolean }>> {
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
-  const token = await freshToken();
-  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+  const owner = captureMessagingOwnerRequest();
+  if (!owner) return { ok: false, data: null, errorKind: 'unauthenticated' };
+  const token = await messagingOwnerToken(owner);
+  if (!token || !owner.isCurrent()) return { ok: false, data: null, errorKind: 'unauthenticated' };
   try {
     const res = await fetch(`${apiBase()}/api/users/${encodeURIComponent(userId)}/open-thread`, {
       method: 'POST',
@@ -731,7 +808,9 @@ export async function openDirectThread(
         'Content-Type': 'application/json',
       },
     });
+    if (!owner.isCurrent()) return { ok: false, data: null, errorKind: 'unauthenticated' };
     const body = await res.json().catch(() => ({}));
+    if (!owner.isCurrent()) return { ok: false, data: null, errorKind: 'unauthenticated' };
     if (!res.ok) return mapApiError(res.status, body);
 
     // E2EE negotiation lives HERE rather than at each screen, because
@@ -748,14 +827,16 @@ export async function openDirectThread(
     // Negotiation failure leaves the thread plaintext and perfectly usable.
     if (body?.created === true && typeof body?.threadId === 'string') {
       try {
-        await negotiateE2eeForNewThread(body.threadId, userId);
+        await negotiateE2eeForNewThread(body.threadId, userId, owner);
       } catch {
         // Never block opening a conversation on encryption setup.
       }
     }
 
+    if (!owner.isCurrent()) return { ok: false, data: null, errorKind: 'unauthenticated' };
     return { ok: true, data: body };
   } catch (e) {
+    if (!owner.isCurrent()) return { ok: false, data: null, errorKind: 'unauthenticated' };
     if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
     return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
   }
@@ -768,23 +849,11 @@ export async function openDirectThread(
  * lib/e2ee/threadCrypto.ts stays import-free and testable and there is no
  * messaging <-> e2ee import cycle.
  */
-/** Current signed-in user id, used as the PUBLIC credential identity in MLS. */
-async function currentUserId(): Promise<string | null> {
-  try {
-    const { data } = await supabase.auth.getSession();
-    return data?.session?.user?.id ?? null;
-  } catch {
-    return null;
-  }
-}
-
-async function negotiateE2eeForNewThread(threadId: string, peerUserId: string): Promise<void> {
-  const myUserId = await currentUserId();
-  if (!myUserId) return;
-
-  await establishE2ee(realCryptoPort, threadId, myUserId, peerUserId, {
+async function negotiateE2eeForNewThread(threadId: string, peerUserId: string, owner: MessagingOwnerRequest): Promise<void> {
+  assertMessagingOwnerRequest(owner);
+  await establishE2ee(ownerCryptoPort(owner), threadId, owner.ownerId, peerUserId, {
     consumeKeyPackage: async (peer) => {
-      const r = await consumePeerKeyPackage(peer);
+      const r = await consumePeerKeyPackage(peer, owner);
       return r.ok && r.data?.keyPackageB64 ? r.data.keyPackageB64 : null;
     },
     // Plaintext system message, sent while the thread is still plaintext —
@@ -794,10 +863,10 @@ async function negotiateE2eeForNewThread(threadId: string, peerUserId: string): 
       const r = await sendMessage(tid, welcomeB64, {
         msgType: 'system',
         subtype: E2EE_WELCOME_SUBTYPE,
-      });
+      }, owner);
       return r.ok;
     },
-    markThreadE2ee: async (tid) => (await markThreadE2ee(tid)).ok,
+    markThreadE2ee: async (tid) => (await markThreadE2ee(tid, owner)).ok,
   });
 }
 

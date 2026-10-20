@@ -37,7 +37,8 @@
 import { describe, it, before } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFileSync, readdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SCRIPT = fileURLToPath(new URL("../scripts/checkCensusIntegrity.ts", import.meta.url));
@@ -167,5 +168,118 @@ describe("the tool reads census-map's qualified verdicts", () => {
     const map = rowFor("map");
     assert.equal(map.c + map.w + map.n + map.x + map.unreconciled, map.denom,
       "census-map's parsed rows plus its unreconciled prose must still account for its denominator");
+  });
+});
+
+const API_ROOT = fileURLToPath(new URL("../../", import.meta.url));
+const CENSUS_DIR = fileURLToPath(new URL("../../../../docs/architecture/", import.meta.url));
+const COVERAGE = "`check:census-scope-coverage` passes: census-discovery is at 351 / 351 = 100 %, with the seven quoted rule sources declared NOT-GRADED.";
+
+function run(directory: string, dump = "") {
+  const result = spawnSync(process.execPath, ["--import", "tsx/esm", SCRIPT], {
+    cwd: API_ROOT,
+    encoding: "utf8",
+    env: { ...process.env, CENSUS_INTEGRITY_DIR: directory, CENSUS_INTEGRITY_DUMP: dump },
+    maxBuffer: 1 << 24,
+    timeout: 30_000,
+  });
+  assert.ifError(result.error);
+  return result;
+}
+
+function fixture(text: string, check: (directory: string) => void) {
+  const directory = mkdtempSync(join(API_ROOT, ".census-denominator-"));
+  try {
+    for (let index = 0; index < 9; index++) {
+      writeFileSync(join(directory, `census-control-${index}.md`), "| A01 | control | C |\n");
+    }
+    writeFileSync(join(directory, "census-discovery.md"), text);
+    check(directory);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+function discoveryLine(output: string): string {
+  const line = output.split("\n").find((entry) => /^\s+discovery\s+\d/.test(entry));
+  assert.ok(line, `Discovery report missing:\n${output}`);
+  return line;
+}
+
+const ROWS = "| A01 | first | C |\n| A02 | second | W |\n";
+
+describe("Discovery census denominators count requirements, not cited files", () => {
+  it("reconciles the real census without inventing 163 requirements", () => {
+    const source = readFileSync(join(CENSUS_DIR, "census-discovery.md"), "utf8");
+    assert.ok(source.includes(COVERAGE), "the documented file-coverage regression must be exercised");
+    const result = run(CENSUS_DIR);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(discoveryLine(result.stdout), /^\s+discovery\s+188\s+\d+\s+\d+\s+\d+\s+\d+\s+188\s+0 counted/);
+    assert.match(discoveryLine(result.stdout), /states 4 denominators: 67, 153, 187, 188 —/);
+  });
+
+  it("ignores coverage percentages without changing any requirement ID or verdict", () => {
+    const source = readFileSync(join(CENSUS_DIR, "census-discovery.md"), "utf8");
+    const expected = run(CENSUS_DIR, "ALL").stdout.split("\n").filter((line) => line.startsWith("discovery|"));
+    for (const coverage of [COVERAGE, "578 cited files / 578 = **100 %**", "351 / 351 = 100 %"]) {
+      fixture(source.replace(COVERAGE, coverage), (directory) => {
+        const result = run(directory);
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(discoveryLine(result.stdout), /\s188\s+0 counted/);
+        const actual = run(directory, "ALL");
+        assert.equal(actual.status, 0, actual.stderr);
+        assert.deepEqual(actual.stdout.split("\n").filter((line) => line.startsWith("discovery|")), expected);
+      });
+    }
+  });
+
+  it("keeps genuine stated denominators and prose gaps rather than using the parsed row count", () => {
+    for (const declaration of [
+      "| Denominator (testable requirements) | **200** |",
+      "how 200 was counted",
+      "CONSTRUCTED = (100+86)/200 = **93.0 %** · CORRECT = 100/200 = **50.0 %**",
+      "CORRECT is 100 / 200 = 50.0 %",
+      "CORRECT 100 → **102 / 200 = 51.0 %**",
+    ]) {
+      fixture(`${ROWS}\n${declaration}\n${COVERAGE}`, (directory) => {
+        const result = run(directory);
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(discoveryLine(result.stdout), /\s200\s+198 counted/);
+      });
+    }
+  });
+
+  it("does not fabricate a denominator when only file coverage is stated", () => {
+    fixture(`${ROWS}\n${COVERAGE}`, (directory) => {
+      const result = run(directory);
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(discoveryLine(result.stdout), /denominator not stated in a parseable form/);
+    });
+  });
+
+  it("still rejects overcounts instead of hiding them behind file coverage", () => {
+    fixture(`${ROWS}\n| Denominator | **1** |\n${COVERAGE}`, (directory) => {
+      const result = run(directory);
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /2 verdict rows parsed but the stated denominator is 1/);
+    });
+  });
+
+  it("exposes a stale headline once file coverage no longer masks reconciliation", () => {
+    fixture(`${ROWS}\n| Denominator | **2** |\n${COVERAGE}\n` +
+      "| BUILT-AND-CORRECT | 2 |\n| BUILT-BUT-WRONG | 0 |\n| NOT-BUILT | 0 |\n| CANNOT-VERIFY | 0 |", (directory) => {
+      const result = run(directory);
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /stated headline is C 2 \/ W 0 \/ N 0 \/ X 0 but its own rows count C 1 \/ W 1 \/ N 0 \/ X 0/);
+    });
+  });
+
+  it("leaves the percentage-denominator grammar for other censuses unchanged", () => {
+    fixture(`${ROWS}\n${COVERAGE}`, (directory) => {
+      writeFileSync(join(directory, "census-control-0.md"), `${ROWS}\n351 / 351 = 100 %`);
+      const result = run(directory);
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, /control-0\s+2\s+1\s+1\s+0\s+0\s+351\s+349 counted/);
+    });
   });
 });

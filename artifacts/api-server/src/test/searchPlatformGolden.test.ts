@@ -19,6 +19,12 @@
  * refusal), and the input gateway's `generateSuggestions` for five contexts,
  * which is the path that reaches `dispatchSearch` from the platform side.
  *
+ * Re-recorded 2026-10-16 (SEARCH_GOLDEN_WRITE=1) for ONE intended change:
+ * readBuddyEligibility now reads feature_flags `discovery_buddy_launch_gate_enabled`
+ * (lib/discoveryPeopleBuddy.ts payment-readiness gate). Every body and status,
+ * and every select/or/ilike, was unchanged; each affected case gained exactly one
+ * feature_flags read, and the extra await reordered the concurrent bucket reads.
+ *
  * Date is frozen (node:test mock timers, Date only) so recency and "upcoming"
  * terms cannot drift the golden between runs.
  *

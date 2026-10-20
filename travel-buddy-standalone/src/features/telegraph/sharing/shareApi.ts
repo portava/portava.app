@@ -13,6 +13,7 @@
  */
 import { isSupabaseConfigured } from '../../../lib/supabase.ts';
 import { freshToken } from '../../../services/apiToken.ts';
+import { captureMessagingOwnerRequest, messagingOwnerToken, type MessagingOwnerRequest } from '../../../services/messagingOwnerRequest.ts';
 import type { TelegraphAction, TelegraphObjectType } from '../sharedContext/types.ts';
 
 export type UnavailableReason = 'deleted' | 'private' | 'unauthorized' | 'not_found' | 'unknown';
@@ -68,22 +69,27 @@ function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 }
 
-async function post<T>(path: string, body: unknown): Promise<ShareResult<T>> {
+async function post<T>(path: string, body: unknown, owner?: MessagingOwnerRequest): Promise<ShareResult<T>> {
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'unconfigured' };
-  const token = await freshToken();
-  if (!token) return { ok: false, error: 'unauthenticated' };
+  const token = owner ? await messagingOwnerToken(owner) : await freshToken();
+  if (!token || (owner && !owner.isCurrent())) return { ok: false, error: 'unauthenticated' };
   try {
     const res = await fetch(`${apiBase()}${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify(body),
     });
+    if (owner && !owner.isCurrent()) return { ok: false, error: 'unauthenticated' };
     if (!res.ok) {
       const parsed = await res.json().catch(() => ({}) as any);
+      if (owner && !owner.isCurrent()) return { ok: false, error: 'unauthenticated' };
       return { ok: false, error: String(parsed?.error ?? res.status) };
     }
-    return { ok: true, data: (await res.json()) as T };
+    const data = (await res.json()) as T;
+    if (owner && !owner.isCurrent()) return { ok: false, error: 'unauthenticated' };
+    return { ok: true, data };
   } catch (e) {
+    if (owner && !owner.isCurrent()) return { ok: false, error: 'unauthenticated' };
     return { ok: false, error: e instanceof Error ? e.message : 'network' };
   }
 }
@@ -104,7 +110,10 @@ export async function shareObjectIntoThread(
   objectId: string,
   caption?: string | null,
 ): Promise<ShareResult<{ id: string; msgType: string; subtype: string }>> {
-  return post(`/api/threads/${threadId}/share`, { objectType, objectId, caption: caption ?? null });
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'unconfigured' };
+  const owner = captureMessagingOwnerRequest();
+  if (!owner) return { ok: false, error: 'unauthenticated' };
+  return post(`/api/threads/${threadId}/share`, { objectType, objectId, caption: caption ?? null }, owner);
 }
 
 /**

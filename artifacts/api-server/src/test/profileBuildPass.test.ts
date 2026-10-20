@@ -20,6 +20,7 @@ import type { Server } from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
+import { _setTestTranslationProvider, MockTranslationProvider } from "../lib/translation.js";
 import profileRouter from "../routes/profile.js";
 import reportsRouter from "../routes/reports.js";
 
@@ -234,6 +235,11 @@ describe("PATCH /api/me/profile — allowed fields", () => {
   let state: FakeState;
 
   before(async () => {
+    // The provider no longer defaults to the mock (lib/translation.ts: the
+    // default is 'self-hosted', which refuses without its URL+token, and 'mock'
+    // is honoured only under NODE_ENV=test). Inject it, so the fire-and-forget
+    // bio language detection below is live and deterministic.
+    _setTestTranslationProvider(new MockTranslationProvider());
     const app = express();
     app.use(express.json());
     app.use("/api", profileRouter);
@@ -248,6 +254,7 @@ describe("PATCH /api/me/profile — allowed fields", () => {
     await new Promise<void>((r) => server.close(() => r()));
     _setTestClient(null as any, false);
     _setTestServiceClient(null as any);
+    _setTestTranslationProvider(null);
   });
 
   beforeEach(() => {
@@ -306,8 +313,8 @@ describe("PATCH /api/me/profile — allowed fields", () => {
     );
 
     // MockTranslationProvider maps 'hola' -> 'es' (src/lib/translation.ts).
-    // TRANSLATION_PROVIDER defaults to 'mock' and TRANSLATION_ENABLED defaults
-    // to true, so this path is live in tests without any env setup.
+    // It is injected in this describe's before(); TRANSLATION_ENABLED defaults
+    // to true, so the path is live.
     assert.equal((langWrite.data as any).bio_original_language, "es");
 
     // A STATED INVARIANT, not an incidental one. contentTranslation.ts says:

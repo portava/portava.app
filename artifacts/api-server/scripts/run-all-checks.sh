@@ -197,6 +197,7 @@ run_check "check:memory-certification" pnpm run check:memory-certification
 # a guard that cries stale on every commit gets switched off and then the real
 # staleness comes back.
 run_check "check:census-freshness" pnpm run check:census-freshness
+run_check "check:discovery-ledger" pnpm run check:discovery-ledger
 # check:census-policy-citations — a census that cites an RLS policy must cite the
 # migration that CURRENTLY defines it. census-trips made the mistake twice in one
 # sitting: it read route_plans' owner-only policy and stopped three lines short

@@ -38,7 +38,7 @@
  * pressing "20 min" then "30 min" is two reports, which is what the traveller
  * meant.
  */
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
 import { Users, AlertTriangle, RefreshCw } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
@@ -150,21 +150,52 @@ type LoadState =
   | { kind: 'unavailable' }
   | { kind: 'ready'; data: AirportObservationsResult };
 
-export function AirportConditionsCard({ sessionId, refreshKey = 0 }: Props) {
+export function AirportConditionsCard(props: Props) {
+  return <AirportConditionsSession key={props.sessionId} {...props} />;
+}
+
+function AirportConditionsSession({ sessionId, refreshKey = 0 }: Props) {
   const [state, setState] = useState<LoadState>({ kind: 'loading' });
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const tokens = useRef<Map<string, string>>(new Map());
+  const lifetime = useRef<object | null>(null);
+  const readTicket = useRef(0);
+  const activeReport = useRef<object | null>(null);
+
+  useLayoutEffect(() => {
+    lifetime.current = {};
+    setBusy(null);
+    return () => {
+      lifetime.current = null;
+      activeReport.current = null;
+      readTicket.current += 1;
+    };
+  }, []);
 
   const load = useCallback(async () => {
-    const data = await getAirportObservations(sessionId);
-    // `null` here is a FAILED READ, not an empty airport — see the header.
-    setState(data ? { kind: 'ready', data } : { kind: 'unavailable' });
+    const owner = lifetime.current;
+    if (!owner) return;
+    const ticket = ++readTicket.current;
+    setState({ kind: 'loading' });
+    try {
+      const data = await getAirportObservations(sessionId);
+      if (lifetime.current !== owner || readTicket.current !== ticket) return;
+      setState(data ? { kind: 'ready', data } : { kind: 'unavailable' });
+    } catch {
+      if (lifetime.current === owner && readTicket.current === ticket) {
+        setState({ kind: 'unavailable' });
+      }
+    }
   }, [sessionId]);
 
   useEffect(() => { void load(); }, [load, refreshKey]);
 
   const report = useCallback(async (factType: TravellerFactType, value: number) => {
+    const owner = lifetime.current;
+    if (!owner || activeReport.current) return;
+    const request = {};
+    activeReport.current = request;
     const key = `${factType}:${value}`;
     // Held across retries so migration 2982's unique index can recognise the
     // second press as the same report. Cleared only on success.
@@ -173,16 +204,23 @@ export function AirportConditionsCard({ sessionId, refreshKey = 0 }: Props) {
 
     setBusy(key);
     setNotice(null);
-    const outcome = await submitAirportObservation(sessionId, { factType, value, submissionToken: token });
-    setBusy(null);
-
-    if (!outcome.ok) { setNotice(outcome.message); return; }
-    tokens.current.delete(key);
-    setNotice(outcome.duplicate ? 'Already recorded — thank you.' : 'Thank you — your report is in.');
-    // Re-read rather than patching local state from the response, so what the
-    // card shows is what the server would serve on a fresh load. This is the
-    // same thing a reload does, which is what makes the flow verifiable.
-    await load();
+    try {
+      const outcome = await submitAirportObservation(sessionId, { factType, value, submissionToken: token });
+      if (lifetime.current !== owner || activeReport.current !== request) return;
+      if (!outcome.ok) { setNotice(outcome.message); return; }
+      tokens.current.delete(key);
+      setNotice(outcome.duplicate ? 'Already recorded — thank you.' : 'Thank you — your report is in.');
+      await load();
+    } catch {
+      if (lifetime.current === owner && activeReport.current === request) {
+        setNotice('Your report could not be sent. Please try again.');
+      }
+    } finally {
+      if (lifetime.current === owner && activeReport.current === request) {
+        activeReport.current = null;
+        setBusy(null);
+      }
+    }
   }, [sessionId, load]);
 
   if (state.kind === 'loading') {
@@ -202,7 +240,7 @@ export function AirportConditionsCard({ sessionId, refreshKey = 0 }: Props) {
             otherwise would be a claim about the airport we have no basis for. */}
         <Text style={styles.body}>Reports for this airport could not be loaded.</Text>
         <Pressable
-          onPress={() => { setState({ kind: 'loading' }); void load(); }}
+          onPress={() => { void load(); }}
           accessibilityRole="button"
           accessibilityLabel="Retry loading airport reports"
           style={styles.retry}

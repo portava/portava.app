@@ -639,7 +639,7 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   ["src/routes/highlights.ts|select|select list not statically resolvable", 4],
   ["src/routes/telegraphVoice.ts|insert|payload not statically resolvable", 1],
   ["src/services/highlights/highlightControlWrites.ts|select|select list not statically resolvable", 4],
-
+  /* PR #762 (2026-10-17), each a deliberate non-literal: accountMediaDeletion iterates its fixed RETAINED pair (media_caption_translation_artifacts, media_dubbing_artifacts) with literal select lists; memoryEvidenceErasure selects the retired-episode columns from the RETIRED_EPISODE_CLEARED constant it then asserts cleared; outboxConsumer reads MEMORY_EVENT_TABLE, the one named event-log constant; messageTranslation picks between two literal select lists on the message-kernel flag; TrailService selects TRAIL_COLUMNS. check:missing-live-columns and each migration's postconditions still cover them. */ ["src/services/accountDeletion/accountMediaDeletion.ts|select|dynamic table name", 4], ["src/services/memory/memoryEvidenceErasure.ts|select|payload partially resolvable", 1], ["src/services/memoryProjections/outboxConsumer.ts|select|dynamic table name", 1], ["src/services/messageTranslation.ts|select|select list not statically resolvable", 1], ["src/services/trails/TrailService.ts|select|payload partially resolvable", 1],
 ]);
 
 // ── Read-path baseline ────────────────────────────────────────────────────────

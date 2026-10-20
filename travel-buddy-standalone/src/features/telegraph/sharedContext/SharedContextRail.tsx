@@ -17,7 +17,7 @@
  * All decisions live in `railBehavior.ts`; this file renders them. That split
  * is what lets §11.2 be tested without a device.
  */
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -28,13 +28,16 @@ import {
 } from 'react-native';
 import { useReducedMotionSetting } from '../../wall/hooks/useReducedMotionSetting.ts';
 import { space, radius, type as t } from '../../../theme/tokens.ts';
+import { useSession } from '../../../context/SessionContext.tsx';
+import { onAuthChange } from '../../../services/auth.ts';
 import { useTelegraphPalette, statusLabelFor, type TelegraphPalette } from '../theme/telegraphTheme.ts';
 import { fetchSharedContext } from './api.ts';
 import {
   detectCriticalChanges,
   resolveRailPresentation,
   type CriticalChange,
-} from './railBehavior.ts'; import { detectChangesSinceSeen, nextSeenSnapshot, type SeenSnapshot } from './railBehavior.ts'; import { readRailSeen, writeRailSeen } from './railSeenStore.ts'; // T264
+} from './railBehavior.ts'; import { detectChangesSinceSeen, nextSeenSnapshot, type SeenSnapshot } from './railBehavior.ts';
+import { captureRailSeenScope, readRailSeen, writeRailSeen, type RailSeenScope } from './railSeenStore.ts';
 import type {
   SharedContextItem,
   SharedContextResponse,
@@ -52,62 +55,116 @@ export interface SharedContextRailProps {
   initialResponse?: SharedContextResponse | null;
 }
 
-export function SharedContextRail({
+export function SharedContextRail(props: SharedContextRailProps) {
+  const { userId } = useSession();
+  const authEpoch = useRef(0);
+  const observedOwner = useRef(userId);
+  const [authState, setAuthState] = useState<{ userId: string | null; epoch: number } | null>(null);
+  useLayoutEffect(() => {
+    const unsubscribe = onAuthChange((nextUserId) => {
+      if (observedOwner.current === nextUserId) return;
+      observedOwner.current = nextUserId;
+      authEpoch.current++;
+      setAuthState({ userId: nextUserId, epoch: authEpoch.current });
+    });
+    return unsubscribe;
+  }, []);
+  const ownerId = authState && authState.userId !== userId ? null : userId;
+  const epoch = authState?.epoch ?? 0;
+  const scope = useMemo(() => ({ ownerId, threadId: props.threadId, epoch }), [ownerId, props.threadId, epoch]);
+  const currentScope = useRef(scope);
+  currentScope.current = scope;
+  const initialScope = useRef(scope);
+  const isScopeCurrent = useCallback(() => currentScope.current === scope && authEpoch.current === scope.epoch, [scope]);
+  if (!ownerId) return null;
+  return <ScopedSharedContextRail
+    {...props}
+    key={JSON.stringify([ownerId, props.threadId, epoch])}
+    ownerId={ownerId}
+    isScopeCurrent={isScopeCurrent}
+    initialResponse={initialScope.current === scope ? props.initialResponse : null}
+  />;
+}
+
+function ScopedSharedContextRail({
   threadId,
   scrolled = false,
   onOpenObject,
   onSeeAll,
   initialResponse = null,
-}: SharedContextRailProps) {
+  ownerId,
+  isScopeCurrent,
+}: SharedContextRailProps & { ownerId: string; isScopeCurrent: () => boolean }) {
   const palette = useTelegraphPalette();
   const reduceMotion = useReducedMotionSetting();
   const styles = useMemo(() => makeStyles(palette), [palette]);
 
   const [response, setResponse] = useState<SharedContextResponse | null>(initialResponse);
   // T264: the last projection shown by THIS mount, and what this account last SAW in this conversation on this device.
-  const lastShown = useRef<{ projection: TelegraphSharedContextProjection | null; seen: SeenSnapshot | null; key: string | null; found: CriticalChange[] }>({ projection: null, seen: null, key: null, found: [] });
+  const lastShown = useRef<{ projection: TelegraphSharedContextProjection | null; seen: SeenSnapshot | null; scope: RailSeenScope | null; found: CriticalChange[] }>({ projection: null, seen: null, scope: null, found: [] });
   const [changes, setChanges] = useState<CriticalChange[]>([]);
   const [acknowledged, setAcknowledged] = useState<string[]>([]);
   const acknowledgedRef = useRef<string[]>([]);
   const [loading, setLoading] = useState(initialResponse === null);
   const [failed, setFailed] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    const r = await fetchSharedContext(threadId);
-    if (r.ok) {
-      const current = r.data.sharedContext;
-      // §11.2 row 5 across an absence: compare with what was last SEEN here (kept per account), so a plan moved or
-      // called off while the member was away is promoted when they return; with no record, only this mount's last fetch.
-      const stored = await readRailSeen(threadId);
-      const seen = stored.state === 'seen' ? stored.snapshot : null;
-      const found = seen ? detectChangesSinceSeen(seen, current) : detectCriticalChanges(lastShown.current.projection, current);
-      // An unreadable record is not "never seen": nothing is written over it.
-      const key = stored.state === 'none' || stored.state === 'seen' ? stored.key : null;
-      lastShown.current = { projection: current, seen, key, found };
-      if (key) void writeRailSeen(key, nextSeenSnapshot(seen, current, found, acknowledgedRef.current));
-      setChanges(found);
-      setResponse(r.data);
-      setFailed(false);
-    } else {
-      // "Could not tell" is not "nothing shared": render nothing at all.
-      setFailed(true);
-    }
-    setLoading(false);
-  }, [threadId]);
+  const mounted = useRef(false);
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+  const isCurrent = useCallback(() => mounted.current && isScopeCurrent(), [isScopeCurrent]);
 
   useEffect(() => {
-    if (initialResponse !== null) return;
-    void load();
-  }, [initialResponse, load]);
+    let active = true;
+    let ownerScope: RailSeenScope | null = null;
+    const requestCurrent = () => active && isCurrent() && (ownerScope?.isCurrent() ?? true);
+    const load = async () => {
+      try {
+        ownerScope = await captureRailSeenScope(threadId, ownerId);
+        if (!ownerScope || !requestCurrent()) {
+          ownerScope?.dispose();
+          return;
+        }
+        setLoading(true);
+        const result = await fetchSharedContext(threadId);
+        if (!requestCurrent()) return;
+        if (!result.ok || result.data.sharedContext.conversationId !== threadId) {
+          setFailed(true);
+          return;
+        }
+        const current = result.data.sharedContext;
+        // §11.2 row 5 across an absence: compare with what was last SEEN here (kept per account), so a plan moved or
+        // called off while the member was away is promoted when they return; with no record, only this mount's last fetch.
+        const stored = await readRailSeen(ownerScope);
+        if (!requestCurrent()) return;
+        const seen = stored.state === 'seen' ? stored.snapshot : null;
+        const found = seen ? detectChangesSinceSeen(seen, current) : detectCriticalChanges(lastShown.current.projection, current);
+        // An unreadable record is not "never seen": nothing is written over it.
+        const scope = stored.state === 'none' || stored.state === 'seen' ? ownerScope : null;
+        lastShown.current = { projection: current, seen, scope, found };
+        if (scope) void writeRailSeen(scope, nextSeenSnapshot(seen, current, found, acknowledgedRef.current));
+        setChanges(found);
+        setResponse(result.data);
+        setFailed(false);
+      } catch {
+        if (requestCurrent()) setFailed(true);
+      } finally {
+        if (active && isCurrent()) setLoading(false);
+      }
+    };
+    if (initialResponse === null) void load();
+    return () => { active = false; ownerScope?.dispose(); };
+  }, [initialResponse, isCurrent, ownerId, threadId]);
 
   const acknowledge = useCallback((key: string) => {
+    const shown = lastShown.current;
+    if (!isCurrent() || !shown.scope?.isCurrent() || !shown.found.some((change) => change.changeKey === key)) return;
     if (!acknowledgedRef.current.includes(key)) acknowledgedRef.current = [...acknowledgedRef.current, key];
     setAcknowledged(acknowledgedRef.current);
     // T264: an acknowledged change is seen — the record takes the new value, so it is not promoted again.
-    const shown = lastShown.current;
-    if (shown.key && shown.projection) void writeRailSeen(shown.key, nextSeenSnapshot(shown.seen, shown.projection, shown.found, acknowledgedRef.current));
-  }, []);
+    if (shown.projection) void writeRailSeen(shown.scope, nextSeenSnapshot(shown.seen, shown.projection, shown.found, acknowledgedRef.current));
+  }, [isCurrent]);
 
   if (loading && !response) {
     return (
@@ -161,7 +218,7 @@ export function SharedContextRail({
           testID="telegraph-rail-minimized"
           accessibilityRole="button"
           accessibilityLabel={`Shared context: ${presentation.summary || 'shared plans'}`}
-          onPress={() => onSeeAll?.(response.sharedContext)}
+          onPress={() => { if (isCurrent()) onSeeAll?.(response.sharedContext); }}
           style={styles.minimized}
         >
           <Text style={styles.minimizedText} numberOfLines={1}>
@@ -175,7 +232,7 @@ export function SharedContextRail({
           testID="telegraph-rail-summary"
           accessibilityRole="button"
           accessibilityLabel={`Shared context: ${presentation.summary}`}
-          onPress={() => onSeeAll?.(response.sharedContext)}
+          onPress={() => { if (isCurrent()) onSeeAll?.(response.sharedContext); }}
           style={styles.summary}
         >
           <Text style={styles.summaryText} numberOfLines={1}>
@@ -198,7 +255,7 @@ export function SharedContextRail({
               expanded={presentation.mode === 'EXPANDED_NOW' && index === 0}
               palette={palette}
               styles={styles}
-              onPress={() => onOpenObject?.(item)}
+              onPress={() => { if (isCurrent()) onOpenObject?.(item); }}
             />
           ))}
           {presentation.seeAllCount > 0 ? (
@@ -206,7 +263,7 @@ export function SharedContextRail({
               testID="telegraph-rail-see-all"
               accessibilityRole="button"
               accessibilityLabel={`See all shared context, ${presentation.seeAllCount} more`}
-              onPress={() => onSeeAll?.(response.sharedContext)}
+              onPress={() => { if (isCurrent()) onSeeAll?.(response.sharedContext); }}
               style={styles.seeAll}
             >
               <Text style={styles.seeAllText}>See all · {presentation.seeAllCount}</Text>
@@ -228,6 +285,16 @@ function changeWord(change: CriticalChange): string {
   return change.reason === 'CANCELLED' ? 'Cancelled' : 'Time changed';
 }
 
+function eventAttendanceLabel(item: SharedContextItem): string | null {
+  if (item.objectType !== 'EVENT') return null;
+  const attendance = item.eventAttendance;
+  if (!Array.isArray(attendance) || attendance.some((person) =>
+    !person || typeof person.userId !== 'string' || !person.userId.trim() ||
+    typeof person.label !== 'string' || !person.label.trim())) return 'Attendance unavailable';
+  if (attendance.length === 0) return 'No visible Going members from this conversation';
+  return `Going from this conversation: ${attendance.map((person) => person.label).join(', ')}`;
+}
+
 function RailCard({
   item,
   expanded,
@@ -242,10 +309,11 @@ function RailCard({
   onPress: () => void;
 }) {
   const bandWord = statusLabelFor(item.orderBand);
+  const attendance = eventAttendanceLabel(item);
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${bandWord}: ${item.title}`}
+      accessibilityLabel={`${bandWord}: ${item.title}${attendance ? `. ${attendance}` : ''}`}
       onPress={onPress}
       style={[styles.card, expanded ? styles.cardExpanded : null]}
       testID={`telegraph-rail-card-${item.objectId}`}
@@ -256,6 +324,7 @@ function RailCard({
       <Text style={styles.cardTitle} numberOfLines={expanded ? 2 : 1}>
         {item.title}
       </Text>
+      {attendance ? <Text style={styles.cardAttendance}>{attendance}</Text> : null}
       {item.availableActions.length > 0 ? (
         <Text style={styles.cardActions} numberOfLines={1}>
           {item.availableActions.slice(0, expanded ? 3 : 1).map(prettyAction).join(' · ')}
@@ -298,6 +367,7 @@ function makeStyles(p: TelegraphPalette) {
     bandRule: { height: 2, width: 18, borderRadius: 2, marginBottom: 4 },
     bandWord: { ...t.small, color: p.mute, letterSpacing: 0.4 },
     cardTitle: { ...t.body, color: p.recvText, fontWeight: '700' },
+    cardAttendance: { ...t.small, color: p.recvText },
     cardActions: { ...t.small, color: p.operational },
     seeAll: {
       justifyContent: 'center',

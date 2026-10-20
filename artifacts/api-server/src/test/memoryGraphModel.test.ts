@@ -31,6 +31,7 @@ import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import memoriesRouter from "../routes/memories.js";
 import memoryGraphRouter, { MEMORY_MERGE_SPLIT_FLAG } from "../routes/memoryGraph.js";
+import correctionsRouter from "../routes/memoryCorrections.js";
 import {
   CUTOVER_GATE,
   MEMORY_GRAPH_CUTOVER_FLAG,
@@ -111,7 +112,7 @@ function cleanWeek(compared = 100): ShadowDailyRow[] {
   return out;
 }
 
-interface Opts { failReads?: Set<string>; absent?: Set<string>; rpcError?: Set<string> }
+interface Opts { failReads?: Set<string>; throwReads?: Set<string>; absent?: Set<string>; rpcError?: Set<string> }
 interface Call { table?: string; fn?: string; mode: string; args?: any }
 function makeClient(store: Store, calls: Call[], opts: Opts, rpc: (fn: string, args: any) => any) {
   function from(table: string) {
@@ -138,13 +139,14 @@ function makeClient(store: Store, calls: Call[], opts: Opts, rpc: (fn: string, a
     };
     async function run(single: boolean): Promise<any> {
       calls.push({ table, mode });
+      if (mode === "select" && opts.throwReads?.has(table)) throw new Error(`${table} synthetic thrown read`);
       if (opts.absent?.has(table)) return { data: null, error: { code: "42P01", message: `relation "public.${table}" does not exist` }, count: null };
       if (mode === "select" && opts.failReads?.has(table)) return { data: null, error: { code: "57014", message: `${table} read failed` }, count: null };
       const all = (store[table] ??= []);
       const rows = all.filter((r) => filters.every((f) => f(r)));
       if (mode === "update") { rows.forEach((r) => Object.assign(r, payload)); return { data: rows, error: null }; }
       if (mode === "delete") { store[table] = all.filter((r) => !rows.includes(r)); return { data: rows, error: null }; }
-      if (mode === "insert" || mode === "upsert") { const ps = Array.isArray(payload) ? payload : [payload]; all.push(...ps); return { data: ps, error: null }; }
+      if (mode === "insert" || mode === "upsert") { const ps = (Array.isArray(payload) ? payload : [payload]).map((row) => table === "memory_corrections" ? { id: `correction-${all.length}`, created_at: NOW.toISOString(), ...row } : row); all.push(...ps); return { data: ps, error: null }; }
       if (head) return { data: null, error: null, count: rows.length };
       const lim = limitN == null ? rows : rows.slice(0, limitN);
       return single ? { data: lim[0] ?? null, error: null } : { data: lim, error: null, count: rows.length };
@@ -177,6 +179,7 @@ async function startApp(store: Store, calls: Call[], opts: Opts = {}, rpc: (fn: 
   app.use(express.json());
   app.use((req: any, _r: any, next: any) => { req.log = { error: () => {}, info: () => {}, warn: () => {} }; next(); });
   app.use("/api", memoryGraphRouter);
+  app.use("/api", correctionsRouter);
   app.use("/api", memoriesRouter);
   return new Promise<{ base: string; close: () => Promise<void> }>((resolve, reject) => {
     const srv = http.createServer(app);
@@ -201,12 +204,130 @@ const settle = () => new Promise((r) => setTimeout(r, 30));
 const graphReads = (calls: Call[]) => calls.filter((c) => c.table === "memory_entity_links").length;
 const shadowRecords = (calls: Call[]) => calls.filter((c) => c.fn === "memory_graph_shadow_record");
 
+describe("H37 corrected places override imported graph links and legacy fallback", () => {
+  const canonical = "50000000-0000-4000-8000-000000000001";
+  for (const correction of [
+    { name: "provider rejection with canonical twin", kind: "reject", place_id: "osm:1", canonical_location_id: null, expected: null },
+    { name: "canonical rejection", kind: "reject", place_id: null, canonical_location_id: canonical, expected: "osm:1" },
+    { name: "replacement assertion", kind: "assert", place_id: "replacement", canonical_location_id: null, expected: "replacement" },
+    { name: "explicit null assertion", kind: "assert", place_id: null, canonical_location_id: null, expected: null },
+  ]) {
+    it(`honors ${correction.name} with flags off, a closed gate, graph failure and stale cutover links`, async () => {
+      for (const mode of ["off", "closed", "failure", "cutover"]) {
+        const store = seed();
+        store.memories = [mem(M1, { trip_id: TRIP_A, place_id: "osm:1", canonical_location_id: canonical })];
+        store.memory_entity_links = mirroredLinks().map((row) => row.entity_type === "PLACE" ? { ...row, entity_id: canonical } : row);
+        store.memory_corrections = [{ ...correction, id: "correction-1", memory_id: M1, owner_id: OWNER,
+          field: "place", source: "memory_edit", created_at: NOW.toISOString() }];
+        if (mode !== "off") flags(store, MEMORY_GRAPH_CUTOVER_FLAG);
+        if (mode !== "closed") store.memory_graph_shadow_daily = cleanWeek().map((row) => ({ ...row, surface: "memories_graph" }));
+        const moment: GraphMoment = { memory_id: M1, owner_id: OWNER, occurred_at: NOW.toISOString(), utc_offset_minutes: 0,
+          episode_id: null, trip_id: TRIP_A, place_id: canonical, people: [PERSON], significance_score: null };
+        const result = await memoryGraphLinkPath(makeClient(store, [], mode === "failure"
+          ? { failReads: new Set(["memory_entity_links"]) } : {}, () => null) as any,
+        { ownerId: OWNER, moments: [moment], placeRows: store.memories, now: NOW });
+        assert.ok("moments" in result);
+        assert.equal(result.moments[0]!.place_id, correction.expected, mode);
+        assert.equal(result.moments[0]!.trip_id, TRIP_A, mode);
+        assert.deepEqual(result.moments[0]!.people, [PERSON], mode);
+        assert.equal(result.source, mode === "cutover" ? "graph" : "legacy");
+      }
+    });
+  }
+
+  for (const cutover of [false, true]) {
+    it(`POST rejection removes an imported place chapter with cutover ${cutover}, even with stale edges`, async () => {
+      const store = seed();
+      store.memories.find((row) => row.id === M3)!.place_id = "osm:1";
+      store.memory_entity_links = [...mirroredLinks(), links(M3, "PLACE", "osm:1")];
+      if (cutover) {
+        flags(store, MEMORY_GRAPH_CUTOVER_FLAG);
+        const today = new Date();
+        store.memory_graph_shadow_daily = cleanWeek().map((row, index) => ({ ...row, surface: "memories_graph",
+          day: new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - index - 1)).toISOString().slice(0, 10) }));
+      }
+      const app = await startApp(store, []);
+      try {
+        const before = await call(app.base, "GET", "/api/memories/graph", "owner-tok");
+        assert.equal(before.status, 200);
+        assert.ok(before.body.graph.chapters.some((chapter: any) => chapter.key === "place:osm:1"));
+        assert.equal((await call(app.base, "POST", `/api/memories/${M1}/corrections`, "stranger-tok",
+          { field: "place", kind: "reject", placeId: "osm:1" })).status, 404);
+        assert.equal((await call(app.base, "POST", `/api/memories/${M1}/corrections`, "owner-tok",
+          { field: "place", kind: "reject", placeId: "osm:1" })).status, 204);
+        const after = await call(app.base, "GET", "/api/memories/graph", "owner-tok");
+        assert.equal(after.status, 200);
+        assert.ok(!after.body.graph.chapters.some((chapter: any) => chapter.key === "place:osm:1"));
+        assert.deepEqual(tripKeys(after.body), tripKeys(before.body));
+        assert.equal(after.body.graph.momentCount, 3);
+      } finally { await app.close(); }
+    });
+  }
+
+  it("refuses graph fallback when corrections or rejected-place resolution cannot be read", async () => {
+    for (const table of ["memory_corrections", "places"]) {
+      const store = seed();
+      store.memories.find((row) => row.id === M1)!.canonical_location_id = canonical;
+      store.memory_corrections = [{ id: "correction-1", memory_id: M1, owner_id: OWNER, field: "place",
+        kind: "reject", place_id: "rejected-alias", canonical_location_id: null, created_at: NOW.toISOString() }];
+      const app = await startApp(store, [], { failReads: new Set([table]) });
+      try {
+        const response = await call(app.base, "GET", "/api/memories/graph", "owner-tok");
+        assert.equal(response.status, 503, table);
+        assert.equal(response.body.graph, undefined);
+      } finally { await app.close(); }
+    }
+  });
+
+  it("drops a raw and graph reference that reaches a rejected catalog alias", async () => {
+    const store = seed();
+    const rejected = "60000000-0000-4000-8000-000000000001";
+    store.memories = [mem(M1, { place_id: "provider", canonical_location_id: canonical })];
+    store.places = [{ id: rejected, canonical_location_id: canonical, status: "active", merged_into_place_id: null }];
+    store.memory_corrections = [{ id: "correction-1", memory_id: M1, owner_id: OWNER, field: "place",
+      kind: "reject", place_id: rejected, canonical_location_id: null, created_at: NOW.toISOString() }];
+    flags(store, MEMORY_GRAPH_CUTOVER_FLAG, MEMORY_GRAPH_SHADOW_FLAG);
+    store.memory_graph_shadow_daily = cleanWeek().map((row) => ({ ...row, surface: "memories_graph" }));
+    store.memory_entity_links = [links(M1, "PLACE", canonical)];
+    const calls: Call[] = [];
+    const result = await memoryGraphLinkPath(makeClient(store, calls, {}, () => null) as any, {
+      ownerId: OWNER, placeRows: store.memories, now: NOW,
+      moments: [{ memory_id: M1, owner_id: OWNER, occurred_at: NOW.toISOString(), utc_offset_minutes: 0,
+        episode_id: null, trip_id: null, place_id: canonical, people: [], significance_score: null }],
+    });
+    assert.ok(result.ok);
+    assert.equal(result.source, "graph");
+    assert.equal(result.moments[0]!.place_id, null);
+    await result.shadow;
+    assert.equal(shadowRecords(calls)[0]!.args.p_place, 1);
+  });
+});
+
 function tripKeys(body: any): string[] {
   return (body.graph.levels.TRIP as any[]).map((n) => `${n.key}:${[...n.memberMemoryIds].sort().join("+")}`).sort();
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
 describe("H196 — GET /memories/graph: legacy answer, shadow comparison, gated cutover", () => {
+  for (const failure of ["returned", "thrown"] as const) {
+    it(`refuses the graph without exposing participants when the block read is ${failure}`, async () => {
+      const store = seed();
+      const calls: Call[] = [];
+      const options: Opts = failure === "returned" ? { failReads: new Set(["blocks"]) } : { throwReads: new Set(["blocks"]) };
+      const app = await startApp(store, calls, options);
+      try {
+        const response = await call(app.base, "GET", "/api/memories/graph", "owner-tok");
+        assert.equal(response.status, 503);
+        assert.equal(response.body.graph, undefined);
+        assert.ok(calls.some(entry => entry.table === "blocks" && entry.mode === "select"));
+        const serialized = JSON.stringify(response.body);
+        for (const identity of [OWNER, PERSON, M1, M2, M3, TRIP_A, TRIP_B]) assert.ok(!serialized.includes(identity));
+      } finally {
+        await app.close();
+      }
+    });
+  }
+
   it("every flag OFF: the legacy answer, byte-for-byte the shape it had, and the graph is never read", async () => {
     const store = seed(); const calls: Call[] = [];
     store.memory_entity_links = []; // an EMPTY graph: if it were read for serving, trips would vanish
@@ -428,7 +549,8 @@ describe("H196 — the comparison itself", () => {
   });
   it("memoryGraphLinkPath with no moments reads no flag and nothing else", async () => {
     const calls: Call[] = [];
-    const out = await memoryGraphLinkPath(makeClient(seed(), calls, {}, () => null) as any, { ownerId: OWNER, moments: [] });
+    const out = await memoryGraphLinkPath(makeClient(seed(), calls, {}, () => null) as any, { ownerId: OWNER, moments: [], placeRows: [] });
+    assert.ok(out.ok);
     assert.equal(out.source, "legacy");
     assert.equal(calls.length, 0);
   });

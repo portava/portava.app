@@ -15,6 +15,7 @@ import { describe, it, before } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  captureCacheBuild,
   getCachedFeed,
   setCachedFeed,
   invalidate,
@@ -61,12 +62,16 @@ function baseProfile(overrides: Partial<CompassProfile> = {}): CompassProfile {
     trustLevel:           null,
     activeUserScore:      null,
     hasActiveTrip:        false,
+    tripStateUnread:     false,
     hasActiveBooking:     false,
     upcomingTripWithin48h: false,
     hasFutureTripScheduled: false,
     currentCity:          null,
     currentCountry:       null,
     safeReturnActive:     false,
+    categoryWeights:      null,
+    ignoredItemIds:        [],
+    mutedHashtags:         [],
     computedAt:           new Date().toISOString(),
     ...overrides,
   };
@@ -192,7 +197,7 @@ describe("CompassCacheEngine — safety bypass", () => {
     };
     const { db } = makeFakeDb(tableData);
     const payload = { sections: [{ name: "for_you" }] };
-    await setCachedFeed(db, USER_A, "feed:test", "feed", payload);
+    await setCachedFeed(db, USER_A, captureCacheBuild(USER_A), "feed:test", "feed", payload);
     // After set, L1 should have it
     const hit = await getCachedFeed(db, USER_A, "feed:test", "feed");
     assert.deepStrictEqual(hit, payload, "L1 cache hit must return stored payload");
@@ -209,7 +214,7 @@ describe("CompassCacheEngine — safety bypass", () => {
     const { db, calls } = makeFakeDb(tableData);
 
     // Warm L1
-    await setCachedFeed(db, USER_A, "feed:for_you", "feed", { test: true });
+    await setCachedFeed(db, USER_A, captureCacheBuild(USER_A), "feed:for_you", "feed", { test: true });
 
     // Block → triggers invalidation
     await invalidate(db, USER_A, "block");
@@ -266,7 +271,7 @@ describe("feedCacheKey — tz offset partitions cache entries", () => {
     const eveningPayload = { sections: [{ name: "for_you", vibe: "evening" }] };
 
     // Cache written for UTC+8 traveler
-    await setCachedFeed(db, USER_A, feedCacheKey("feed", undefined, 480), "feed", eveningPayload);
+    await setCachedFeed(db, USER_A, captureCacheBuild(USER_A), feedCacheKey("feed", undefined, 480), "feed", eveningPayload);
 
     // Same user now reporting UTC-5 must NOT get the UTC+8 payload
     const crossTz = await getCachedFeed(db, USER_A, feedCacheKey("feed", undefined, -300), "feed");
@@ -318,7 +323,7 @@ describe("feedCacheKey — auto path partitions by time-of-day bucket", () => {
       _setTestNowUtc(new Date("2026-07-21T14:30:00Z"));
       const hourBefore = await resolveLocalHour(db, USER_A, null);
       const keyBefore  = feedCacheKey("feed", undefined, null, hourBefore);
-      await setCachedFeed(db, USER_A, keyBefore, "feed", morningPayload);
+      await setCachedFeed(db, USER_A, captureCacheBuild(USER_A), keyBefore, "feed", morningPayload);
 
       // One hour later (within cache TTL): 11:30 local → "afternoon" bucket
       _setTestNowUtc(new Date("2026-07-21T15:30:00Z"));
@@ -348,7 +353,7 @@ describe("feedCacheKey — auto path partitions by time-of-day bucket", () => {
     const hourBefore = 16; // 08:59 UTC + 480min = 16:59 local → hour 16 → afternoon
     const keyBefore  = feedCacheKey("feed", undefined, 480, hourBefore);
     const { db } = makeFakeDb({ compass_feed_cache: [] });
-    await setCachedFeed(db, USER_A, keyBefore, "feed", afternoonPayload);
+    await setCachedFeed(db, USER_A, captureCacheBuild(USER_A), keyBefore, "feed", afternoonPayload);
 
     const hourAfter = 17; // 09:01 UTC + 480min = 17:01 local → hour 17 → evening
     const keyAfter  = feedCacheKey("feed", undefined, 480, hourAfter);
@@ -385,9 +390,47 @@ describe("CompassFrontLoadEngine — resolveMaxTier", () => {
 // ── CompassFrontLoadEngine — buildFrontLoadPayload ────────────────────────────
 
 describe("CompassFrontLoadEngine — buildFrontLoadPayload", () => {
+  it("does not repopulate any tier when invalidation finishes during assembly", async () => {
+    clearL1Cache();
+    const viewer = "frontload-revoked-during-build";
+    const { db, calls } = makeFakeDb();
+    let releaseRules!: () => void;
+    let reportStarted!: () => void;
+    const rulesGate = new Promise<void>((resolve) => { releaseRules = resolve; });
+    const started = new Promise<void>((resolve) => { reportStarted = resolve; });
+    const originalFrom = db.from.bind(db);
+    let paused = false;
+    db.from = (table: string) => {
+      const query = originalFrom(table);
+      if (table === "compass_frontload_rules" && !paused) {
+        paused = true;
+        const originalThen = query.then.bind(query);
+        query.then = async (resolve: (value: unknown) => unknown, reject: (error: unknown) => unknown) => {
+          reportStarted();
+          await rulesGate;
+          return originalThen(resolve, reject);
+        };
+      }
+      return query;
+    };
+    const build = buildFrontLoadPayload(db, viewer, captureCacheBuild(viewer), baseProfile({ userId: viewer }), { networkHint: "wifi" });
+    await started;
+    try {
+      await invalidate(db, viewer, "block");
+    } finally {
+      releaseRules();
+    }
+    await build;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    for (const tier of [1, 2, 3]) {
+      assert.equal(await getCachedFeed(null, viewer, `frontload:tier${tier}:wifi`, "frontload"), null);
+    }
+    assert.equal(calls.some((call) => call.table === "compass_feed_cache" && call.method === "upsert"), false);
+  });
+
   it("slow network hint → maxTier=1; tier0 + tier1 populated, tier2/3 empty", async () => {
     const { db } = makeFakeDb({});
-    const payload = await buildFrontLoadPayload(db, USER_A, baseProfile(), {
+    const payload = await buildFrontLoadPayload(db, USER_A, captureCacheBuild(USER_A), baseProfile(), {
       networkHint: "slow",
     });
     // slow caps at Tier 1 — feed is still preloaded; heavy Tier 2+ (events/buddies) avoided
@@ -400,7 +443,7 @@ describe("CompassFrontLoadEngine — buildFrontLoadPayload", () => {
 
   it("offline network hint → only Tier 0 items", async () => {
     const { db } = makeFakeDb({});
-    const payload = await buildFrontLoadPayload(db, USER_A, baseProfile(), {
+    const payload = await buildFrontLoadPayload(db, USER_A, captureCacheBuild(USER_A), baseProfile(), {
       networkHint: "offline",
     });
     assert.strictEqual(payload.maxTier, 0);
@@ -409,7 +452,7 @@ describe("CompassFrontLoadEngine — buildFrontLoadPayload", () => {
 
   it("low battery → maxTier is 2 (Tier 3 paused)", async () => {
     const { db } = makeFakeDb({});
-    const payload = await buildFrontLoadPayload(db, USER_A, baseProfile(), {
+    const payload = await buildFrontLoadPayload(db, USER_A, captureCacheBuild(USER_A), baseProfile(), {
       networkHint: "wifi",
       batteryHint: "low",
     });
@@ -419,7 +462,7 @@ describe("CompassFrontLoadEngine — buildFrontLoadPayload", () => {
 
   it("emergency_contact type is never present in any tier", async () => {
     const { db } = makeFakeDb({});
-    const payload = await buildFrontLoadPayload(db, USER_A, baseProfile(), {
+    const payload = await buildFrontLoadPayload(db, USER_A, captureCacheBuild(USER_A), baseProfile(), {
       networkHint: "wifi",
     });
     const allItems = [...payload.tier0, ...payload.tier1, ...payload.tier2, ...payload.tier3];
@@ -429,7 +472,7 @@ describe("CompassFrontLoadEngine — buildFrontLoadPayload", () => {
 
   it("id_document type is never present in any tier", async () => {
     const { db } = makeFakeDb({});
-    const payload = await buildFrontLoadPayload(db, USER_A, baseProfile(), {
+    const payload = await buildFrontLoadPayload(db, USER_A, captureCacheBuild(USER_A), baseProfile(), {
       networkHint: "wifi",
     });
     const allItems = [...payload.tier0, ...payload.tier1, ...payload.tier2, ...payload.tier3];
@@ -439,7 +482,7 @@ describe("CompassFrontLoadEngine — buildFrontLoadPayload", () => {
 
   it("tier0 always contains safety_state and feature_flags items", async () => {
     const { db } = makeFakeDb({});
-    const payload = await buildFrontLoadPayload(db, USER_A, baseProfile(), {
+    const payload = await buildFrontLoadPayload(db, USER_A, captureCacheBuild(USER_A), baseProfile(), {
       networkHint: "offline",
     });
     const types = payload.tier0.map((i) => i.type);
@@ -450,7 +493,7 @@ describe("CompassFrontLoadEngine — buildFrontLoadPayload", () => {
 
   it("tier1 contains a first_feed_page item when network allows Tier 1 (cellular+)", async () => {
     const { db } = makeFakeDb({});
-    const payload = await buildFrontLoadPayload(db, USER_A, baseProfile(), {
+    const payload = await buildFrontLoadPayload(db, USER_A, captureCacheBuild(USER_A), baseProfile(), {
       networkHint: "cellular",
     });
     assert.ok(payload.maxTier >= 1, "cellular network must allow at least Tier 1");
@@ -473,7 +516,7 @@ describe("CompassFrontLoadEngine — buildFrontLoadPayload", () => {
     // but we verify the engine's own safety_state payload does not accidentally
     // carry delayed-post markers.
     const { db } = makeFakeDb({});
-    return buildFrontLoadPayload(db, USER_A, baseProfile(), { networkHint: "wifi" }).then((payload) => {
+    return buildFrontLoadPayload(db, USER_A, captureCacheBuild(USER_A), baseProfile(), { networkHint: "wifi" }).then((payload) => {
       const allItems = [...payload.tier0, ...payload.tier1, ...payload.tier2, ...payload.tier3];
       for (const item of allItems) {
         const d = item.data as Record<string, unknown> | null;
@@ -657,7 +700,7 @@ describe("Per-item authz — blocked users excluded from city_pulse_preview", ()
       blockedUserIds: [BLOCKED_USER],
     });
 
-    const payload = await buildFrontLoadPayload(db, USER_A, profile, { networkHint: "wifi" });
+    const payload = await buildFrontLoadPayload(db, USER_A, captureCacheBuild(USER_A), profile, { networkHint: "wifi" });
 
     const pulseItem = [...payload.tier1].find((i) => i.type === "city_pulse_preview");
     assert.ok(pulseItem, "city_pulse_preview must be present in tier1");
@@ -693,7 +736,7 @@ describe("Per-item authz — blocked users excluded from city_pulse_preview", ()
     });
 
     const payload = await buildFrontLoadPayload(
-      db, USER_A, baseProfile({ currentCity: "Lisbon" }), { networkHint: "wifi" },
+      db, USER_A, captureCacheBuild(USER_A), baseProfile({ currentCity: "Lisbon" }), { networkHint: "wifi" },
     );
 
     const pulseItem = [...payload.tier1].find((i) => i.type === "city_pulse_preview");
@@ -721,7 +764,7 @@ describe("Per-item authz — blocked users excluded from city_pulse_preview", ()
     });
 
     const profile = baseProfile({ currentCity: "Tokyo" });
-    const payload  = await buildFrontLoadPayload(db, USER_A, profile, { networkHint: "wifi" });
+    const payload  = await buildFrontLoadPayload(db, USER_A, captureCacheBuild(USER_A), profile, { networkHint: "wifi" });
 
     const pulseItem = [...payload.tier1].find((i) => i.type === "city_pulse_preview");
     const pulseData = (pulseItem?.data ?? []) as Array<{ id: string }>;
@@ -756,7 +799,7 @@ describe("Cellular mode — no video previews in city_pulse_preview", () => {
     const { db } = makeFakeDb({ posts: [fakeVideoPost, fakeTextPost] });
     const profile = baseProfile({ currentCity: "Barcelona" });
 
-    const payload = await buildFrontLoadPayload(db, USER_A, profile, { networkHint: "cellular" });
+    const payload = await buildFrontLoadPayload(db, USER_A, captureCacheBuild(USER_A), profile, { networkHint: "cellular" });
 
     const pulseItem = [...payload.tier1].find((i) => i.type === "city_pulse_preview");
     const pulseData = (pulseItem?.data ?? []) as Array<{ id: string }>;
@@ -782,7 +825,7 @@ describe("Cellular mode — no video previews in city_pulse_preview", () => {
     const { db } = makeFakeDb({ posts: [fakeVideoPost] });
     const profile = baseProfile({ currentCity: "Barcelona" });
 
-    const payload = await buildFrontLoadPayload(db, USER_A, profile, { networkHint: "wifi" });
+    const payload = await buildFrontLoadPayload(db, USER_A, captureCacheBuild(USER_A), profile, { networkHint: "wifi" });
 
     const pulseItem = [...payload.tier1].find((i) => i.type === "city_pulse_preview");
     const pulseData = (pulseItem?.data ?? []) as Array<{ id: string }>;
@@ -815,7 +858,7 @@ describe("notification_preview — live-schema column check (event_type)", () =>
       notifications: [fakeUnread],
     });
 
-    const payload = await buildFrontLoadPayload(db, USER_A, baseProfile(), {
+    const payload = await buildFrontLoadPayload(db, USER_A, captureCacheBuild(USER_A), baseProfile(), {
       networkHint: "wifi",
     });
 
@@ -861,7 +904,7 @@ describe("notification_preview — live-schema column check (event_type)", () =>
       notifications: [fakeRead],
     });
 
-    const payload = await buildFrontLoadPayload(db, USER_A, baseProfile(), {
+    const payload = await buildFrontLoadPayload(db, USER_A, captureCacheBuild(USER_A), baseProfile(), {
       networkHint: "wifi",
     });
 
@@ -896,11 +939,11 @@ describe("Cache-backed tier 1–3 assembly", () => {
 
     // Seed the L1 in-process cache (setCachedFeed stores in L1 synchronously).
     // Key includes ':wifi' because buildFrontLoadPayload is called with networkHint='wifi'.
-    await setCachedFeed(db, USER_A, 'frontload:tier1:wifi', 'frontload', cachedPayload);
+    await setCachedFeed(db, USER_A, captureCacheBuild(USER_A), 'frontload:tier1:wifi', 'frontload', cachedPayload);
 
     // buildFrontLoadPayload should detect the L1 hit and return the cached tier1
     const profile = baseProfile({ currentCity: 'Rome' });
-    const result = await buildFrontLoadPayload(db, USER_A, profile, { networkHint: 'wifi' });
+    const result = await buildFrontLoadPayload(db, USER_A, captureCacheBuild(USER_A), profile, { networkHint: 'wifi' });
 
     // The returned tier1 must come from L1 cache (not freshly built from DB).
     // applyScores() adds preloadScore to each item after cache retrieval, so we
@@ -939,7 +982,7 @@ describe("Cache-backed tier 1–3 assembly", () => {
     assert.strictEqual(before, null, "L1 must be empty before buildFrontLoadPayload on cache miss");
 
     const profile = baseProfile({ currentCity: 'Berlin' });
-    await buildFrontLoadPayload(db, USER_A, profile, { networkHint: 'wifi' });
+    await buildFrontLoadPayload(db, USER_A, captureCacheBuild(USER_A), profile, { networkHint: 'wifi' });
 
     // After a cache miss, setCachedFeed sets L1 synchronously inside buildFrontLoadPayload.
     // The fire-and-forget DB upsert may still be in-flight, but L1 is available immediately.
@@ -987,7 +1030,7 @@ describe("Invalidation timing — await semantics", () => {
 
     // Prime L1 cache
     const payload = { items: [{ id: "test-item" }] };
-    await setCachedFeed(db, USER_A, "feed:evict_test", "feed", payload);
+    await setCachedFeed(db, USER_A, captureCacheBuild(USER_A), "feed:evict_test", "feed", payload);
 
     // Confirm L1 has the item before invalidation
     const before = await getCachedFeed(db, USER_A, "feed:evict_test", "feed");
@@ -1031,7 +1074,7 @@ describe("top_events — live-schema column check", () => {
     const { db } = makeFakeDb({ events: [fakeEvent] });
 
     const profile = baseProfile({ currentCity: "Lisbon" });
-    const payload = await buildFrontLoadPayload(db, USER_A, profile, { networkHint: "wifi" });
+    const payload = await buildFrontLoadPayload(db, USER_A, captureCacheBuild(USER_A), profile, { networkHint: "wifi" });
 
     const eventsItem = [...payload.tier2].find((i) => i.type === "top_events");
     assert.ok(eventsItem, "top_events must be present in tier2");
@@ -1081,7 +1124,7 @@ describe("top_events — live-schema column check", () => {
     });
 
     const profile = baseProfile({ currentCity: "Lisbon", blockedUserIds: [BLOCKED_HOST] });
-    const payload = await buildFrontLoadPayload(db, USER_A, profile, { networkHint: "wifi" });
+    const payload = await buildFrontLoadPayload(db, USER_A, captureCacheBuild(USER_A), profile, { networkHint: "wifi" });
 
     const eventsItem = [...payload.tier2].find((i) => i.type === "top_events");
     const eventsData = (eventsItem?.data ?? []) as Array<Record<string, unknown>>;
@@ -1126,7 +1169,7 @@ describe("top_buddies — live-schema column check", () => {
 
     const { db } = makeFakeDb({ buddy_profiles: [fakeBuddy] });
 
-    const payload = await buildFrontLoadPayload(db, USER_A, baseProfile(), { networkHint: "wifi" });
+    const payload = await buildFrontLoadPayload(db, USER_A, captureCacheBuild(USER_A), baseProfile(), { networkHint: "wifi" });
 
     const buddiesItem = [...payload.tier2].find((i) => i.type === "top_buddies");
     assert.ok(buddiesItem, "top_buddies must be present in tier2");
@@ -1173,7 +1216,7 @@ describe("top_buddies — live-schema column check", () => {
     });
 
     const profile = baseProfile({ blockedUserIds: [BLOCKED_BUDDY] });
-    const payload = await buildFrontLoadPayload(db, USER_A, profile, { networkHint: "wifi" });
+    const payload = await buildFrontLoadPayload(db, USER_A, captureCacheBuild(USER_A), profile, { networkHint: "wifi" });
 
     const buddiesItem = [...payload.tier2].find((i) => i.type === "top_buddies");
     const buddiesData = (buddiesItem?.data ?? []) as Array<Record<string, unknown>>;
@@ -1215,7 +1258,7 @@ describe("saved_places — live-schema column check", () => {
 
     const { db } = makeFakeDb({ discovery_places: [fakePlace] });
 
-    const payload = await buildFrontLoadPayload(db, USER_A, baseProfile(), { networkHint: "wifi" });
+    const payload = await buildFrontLoadPayload(db, USER_A, captureCacheBuild(USER_A), baseProfile(), { networkHint: "wifi" });
 
     const savedItem = [...payload.tier2].find((i) => i.type === "saved_places");
     assert.ok(savedItem, "saved_places must be present in tier2");
@@ -1241,7 +1284,7 @@ describe("saved_places — live-schema column check", () => {
 
     const { db } = makeFakeDb({ discovery_places: [] });
 
-    const payload = await buildFrontLoadPayload(db, USER_A, baseProfile(), { networkHint: "wifi" });
+    const payload = await buildFrontLoadPayload(db, USER_A, captureCacheBuild(USER_A), baseProfile(), { networkHint: "wifi" });
 
     const savedItem = [...payload.tier2].find((i) => i.type === "saved_places");
     assert.ok(savedItem, "saved_places item must still be present in tier2 even with no rows");

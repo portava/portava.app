@@ -60,7 +60,7 @@ export const CARD_BODY_READERS: Ledger = {
   "services/telegraph/lifecycleSweep.ts": { sites: 1, status: "exempt", why: "Server sweep over §6.2 envelopes; serves nothing." },
   "services/telegraph/shareables.ts": { sites: 1, status: "exempt", why: "loadLayoverPlan reads its own layover reference message to authorize; serves no card body." },
   "services/messageTranslation.ts": { sites: 1, status: "exempt",
-    why: "The translation pipeline's input. Its OUTPUT for a card is never served: every re-resolving reader excludes card rows from the translation read." },
+    why: "The translation pipeline's input: readTranslationSource (kernel/legacy ternary select) — and it refuses a card outright (isStructuredEnvelopeBody(message.body) returns null, services/messageTranslation.ts:526), so no card body is ever translated. Its OUTPUT for a card is never served: every re-resolving reader excludes card rows from the translation read. The stamp UPDATE…select at :401 is a write's returning row compared against the expected source, and is not counted." },
   "services/telegraphReliability.ts": { sites: 1, status: "exempt", why: "Idempotent resend: replays the SENDER's own just-written row to the sender." },
   "lib/liveReferenceMessages.ts": { sites: 1, status: "exempt",
     why: "Read through the MESSAGES_TABLE const (fix round 1, F2). GET /telegraph/live-references/:messageId (flag telegraph_live_references_enabled, seeded OFF) reads its OWN server-authored live-claim reference — msg_type card / subtype live_reference, refused for any other subtype — and compares it with the current claims; it is a reference by design, not a legacy card's snapshot." },
@@ -172,7 +172,14 @@ export function bodyReadsByFile(files: Record<string, string>): Record<string, n
       if (table !== "messages") continue;
       const sel = selectArgAfter(src, m.index);
       if (!sel) continue;
-      const readsBody = sel.text === null ? /columns/i.test(sel.raw) : /(^|[\s,`(])body([\s,`)]|$)/.test(sel.text);
+      // A non-literal select argument (a ternary between column lists, a call)
+      // still reads body when ANY string literal inside it names body — the
+      // kernel/legacy ternary in services/messageTranslation.ts
+      // readTranslationSource was invisible to the literal-only test.
+      const BODY_COL = /(^|[\s,`(])body([\s,`)]|$)/;
+      const readsBody = sel.text === null
+        ? /columns/i.test(sel.raw) || [...sel.raw.matchAll(/(["'`])([^"'`]*)\1/g)].some((lit) => BODY_COL.test(lit[2]!))
+        : BODY_COL.test(sel.text);
       if (readsBody) out[path] = (out[path] ?? 0) + 1;
     }
   }
@@ -214,8 +221,11 @@ describe("T448 — every server read of messages.body is a re-resolving reader o
       "routes/viaTableConst.ts": 'const T = "messages";\nawait sc.from(T).select("id, body").eq("id", x);',
       "lib/tables.ts": 'export const MSG_TABLE = "messages";\nexport const OTHER = "profiles";',
       "routes/viaImport.ts": 'import { MSG_TABLE as M, OTHER } from "../lib/tables.js";\nawait sc.from(M)\n  .select("body, id");\nawait sc.from(OTHER).select("id, body");',
+      // A ternary between two column lists: either branch naming body is a body read; neither naming it is not.
+      "routes/viaTernary.ts": 'await sc.from("messages")\n  .select(kernel\n    ? "id, body, unsent_at"\n    : "id, body")\n  .eq("id", x);',
+      "routes/ternaryFine.ts": 'await sc.from("messages").select(kernel ? "id, unsent_at" : "id").eq("id", x);',
     };
-    assert.deepEqual(bodyReadsByFile(mutant), { "routes/newDoor.ts": 1, "routes/viaConst.ts": 1, "routes/viaTableConst.ts": 1, "routes/viaImport.ts": 1 });
+    assert.deepEqual(bodyReadsByFile(mutant), { "routes/newDoor.ts": 1, "routes/viaConst.ts": 1, "routes/viaTableConst.ts": 1, "routes/viaImport.ts": 1, "routes/viaTernary.ts": 1 });
   });
 });
 

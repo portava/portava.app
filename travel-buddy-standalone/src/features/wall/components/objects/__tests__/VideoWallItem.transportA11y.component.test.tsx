@@ -79,7 +79,7 @@ jest.mock('expo-av', () => {
         playAsync: mockPlayAsync,
         pauseAsync: mockPauseAsync,
         setStatusAsync: mockSetStatusAsync,
-      }));
+      }), []); // stable handle: the real expo-av Video is a class instance ref
       return ReactLocal.createElement(View, { testID: testID ?? 'mock-video', ...rest });
     },
   );

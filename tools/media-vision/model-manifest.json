@@ -1,0 +1,14 @@
+{
+  "modelId": "google/siglip-base-patch16-224",
+  "revision": "7fd15f0689c79d79e38b1c2e2e2370a7bf2761ed",
+  "license": "Apache-2.0",
+  "files": {
+    "config.json": { "size": 432, "gitBlobSha1": "54bbd19bf5ee8f3dad513be4042dfa5dd9d85f15" },
+    "model.safetensors": { "size": 812672320, "sha256": "2c63cb7d1f2e95ba501893cbb8faeb4ea9a3af295498d35097126228659c2af8" },
+    "preprocessor_config.json": { "size": 368, "gitBlobSha1": "3c352ecee4198efe2f6c6ba7446892b86203ed32" },
+    "special_tokens_map.json": { "size": 409, "gitBlobSha1": "6555f2261d409dea394d6b6973129a53b8725803" },
+    "spiece.model": { "size": 798330, "sha256": "1e5036bed065526c3c212dfbe288752391797c4bb1a284aa18c9a0b23fcaf8ec" },
+    "tokenizer.json": { "size": 2399357, "gitBlobSha1": "6d6fd0bd6cc263099dc98e4fa383f90c9baa3521" },
+    "tokenizer_config.json": { "size": 711, "gitBlobSha1": "70741c5c1f6d21423ebf51ee77ef2fce868c33f2" }
+  }
+}

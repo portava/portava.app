@@ -308,10 +308,10 @@ describe("E2. OD-TRIP-3 — another member's private plan item reaches the model
         { trip_id: TRIP_ID, user_id: OTHER, role: "owner", status: "accepted" },
       ],
       trip_plan_items: [
-        { id: "p-mine", trip_id: TRIP_ID, title: "Alice's dive", day_date: "2026-08-05", status: "confirmed", removed_at: null, creator_id: ALICE_ID, location_is_private: true , privacy_scope: "crew" },
-        { id: "p-secret", trip_id: TRIP_ID, title: "Rehab clinic", day_date: "2026-08-05", status: "confirmed", removed_at: null, creator_id: OTHER, location_is_private: true , privacy_scope: "crew" },
-        { id: "p-null", trip_id: TRIP_ID, title: "Unknown flag place", day_date: "2026-08-05", status: "confirmed", removed_at: null, creator_id: OTHER, location_is_private: null , privacy_scope: "crew" },
-        { id: "p-public", trip_id: TRIP_ID, title: "Group dinner", day_date: "2026-08-05", status: "confirmed", removed_at: null, creator_id: OTHER, location_is_private: false, privacy_scope: "crew" },
+        { id: "30000000-0000-4000-8000-000000000001", trip_id: TRIP_ID, title: "Alice's dive", day_date: "2026-08-05", status: "confirmed", removed_at: null, creator_id: ALICE_ID, location_is_private: true , privacy_scope: "crew" },
+        { id: "30000000-0000-4000-8000-000000000002", trip_id: TRIP_ID, title: "Rehab clinic", day_date: "2026-08-05", status: "confirmed", removed_at: null, creator_id: OTHER, location_is_private: true , privacy_scope: "crew" },
+        { id: "30000000-0000-4000-8000-000000000003", trip_id: TRIP_ID, title: "Unknown flag place", day_date: "2026-08-05", status: "confirmed", removed_at: null, creator_id: OTHER, location_is_private: null , privacy_scope: "crew" },
+        { id: "30000000-0000-4000-8000-000000000004", trip_id: TRIP_ID, title: "Group dinner", day_date: "2026-08-05", status: "confirmed", removed_at: null, creator_id: OTHER, location_is_private: false, privacy_scope: "crew" },
       ],
     });
   }
@@ -330,12 +330,12 @@ describe("E2. OD-TRIP-3 — another member's private plan item reaches the model
   it("check_trip_conflicts: a private item its owner SHARED with the caller (sharing on) keeps its title; without the grant it is a slot", async () => {
     const shared = sharedTripDb();
     shared.feature_flags = [...(shared.feature_flags ?? []), { flag: "trip_private_anchor_sharing_enabled", enabled: true }];
-    shared.trip_private_anchor_shares = [{ trip_id: TRIP_ID, plan_item_id: "p-secret", owner_id: OTHER, member_id: ALICE_ID }];
+    shared.trip_private_anchor_shares = [{ trip_id: TRIP_ID, plan_item_id: "30000000-0000-4000-8000-000000000002", owner_id: OTHER, member_id: ALICE_ID }];
     const granted: any = await executeCompassTool(makeClient(shared), ALICE_ID, profileFor(), "check_trip_conflicts", { startDate: "2026-08-05", endDate: "2026-08-06" });
     assert.match(JSON.stringify(granted), /Rehab clinic/, "a grant the owner made was not honoured");
     assert.doesNotMatch(JSON.stringify(granted), /Unknown flag place/, "a grant reached an item it does not name");
     const off = sharedTripDb();
-    off.trip_private_anchor_shares = [{ trip_id: TRIP_ID, plan_item_id: "p-secret", owner_id: OTHER, member_id: ALICE_ID }];
+    off.trip_private_anchor_shares = [{ trip_id: TRIP_ID, plan_item_id: "30000000-0000-4000-8000-000000000002", owner_id: OTHER, member_id: ALICE_ID }];
     const notOn: any = await executeCompassTool(makeClient(off), ALICE_ID, profileFor(), "check_trip_conflicts", { startDate: "2026-08-05", endDate: "2026-08-06" });
     assert.doesNotMatch(JSON.stringify(notOn), /Rehab clinic/, "a grant was honoured while sharing is off");
   });
@@ -1022,7 +1022,8 @@ describe("H2. Trust restrictions reach the plan-proposal confirm (TRV2-08)", () 
 // member had the place as a PRIVATE item: a 409 that tells the caller where that
 // member privately plans to be. Only an item the caller may see is a duplicate.
 describe("D-65 — the confirm route's duplicate guard is not an oracle for another member's private item", () => {
-  const BOB_PRIVATE = { id: "pi-bob", trip_id: TRIP_ID, creator_id: BOB_ID, source_type: "place", source_id: PLACE_ID, removed_at: null, location_is_private: true, title: "Bob's secret cafe", privacy_scope: "crew" };
+  // ids are canonical uuids: a share grant naming a non-uuid plan_item_id is refused as unreadable (privateAnchorShares.anchorAccessFor)
+  const BOB_PRIVATE = { id: "40000000-0000-4000-8000-000000000001", trip_id: TRIP_ID, creator_id: BOB_ID, source_type: "place", source_id: PLACE_ID, removed_at: null, location_is_private: true, title: "Bob's secret cafe", privacy_scope: "crew" };
   function db(proposalId: string, items: any[]): Db {
     return makeDb({
       compass_conversations: [{ id: CONV_ID, user_id: ALICE_ID, last_active_at: new Date().toISOString() }],
@@ -1083,7 +1084,7 @@ describe("D-65 — the confirm route's duplicate guard is not an oracle for anot
     const pid = "d6945678-1234-1234-1234-123456789abc";
     const d = db(pid, [{ ...BOB_PRIVATE }]);
     d.feature_flags = [...(d.feature_flags ?? []), { flag: "trip_private_anchor_sharing_enabled", enabled: true }];
-    d.trip_private_anchor_shares = [{ trip_id: TRIP_ID, plan_item_id: "pi-bob", owner_id: BOB_ID, member_id: ALICE_ID }];
+    d.trip_private_anchor_shares = [{ trip_id: TRIP_ID, plan_item_id: BOB_PRIVATE.id, owner_id: BOB_ID, member_id: ALICE_ID }];
     const client = makeClient(d);
     _setTestClient(client, true);
     const r = await post(`/api/compass/proposals/${pid}/confirm`, { conversationId: CONV_ID });

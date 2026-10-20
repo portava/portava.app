@@ -30,37 +30,18 @@ import { readOpenSession } from "../lib/experienceSessionStore.js";
 import { sessionState, type ExperienceSessionEnvelope } from "../lib/experienceSession.js";
 import type { ContextKernel } from "../lib/contextKernel.js";
 import type { SurfaceProjection } from "../lib/opportunityEngine.js";
-import { PLAN_ITEM_PRIVACY_COLUMNS, planItemAccessFor, withholdPrivatePlanItems } from "./planItemAccess.js";
+import { buildTripCompassDayCountProjection } from "../domain/trips/projections/TripCompassDayCountProjection.js";
+import { buildTripCompassTodayProjection } from "../domain/trips/projections/TripCompassTodayProjection.js";
+import { buildTripCompassDisruptionPlanProjection, COMPASS_DISRUPTION_PLAN_READ_LIMIT } from "../domain/trips/projections/TripCompassDisruptionPlanProjection.js";
+import { buildTripCompassCrewHandlesProjection, COMPASS_CREW_HANDLES_READ_LIMIT } from "../domain/trips/projections/TripCompassCrewHandlesProjection.js";
+import { acceptTripProjection, TRIP_PROJECTION_SCHEMA_VERSION } from "../domain/trips/contracts/TripProjectionEnvelope.js";
 
 const MAX_BLOCK_CHARS      = 1200;
 const UPCOMING_WINDOW_DAYS = 60;
-const MAX_TODAY_ITEMS      = 5;
 const DAY_MS               = 86_400_000;
 
 // Trip COLUMNS and STATUSES moved to compass/CompassCurrentTrip.ts with the
 // selection they belonged to; this module now names only what it reads itself.
-//
-// WHY THE DAY-SCOPED PLAN READS BELOW ARE STILL RAW — CT-02, re-measured.
-// The sentence here used to be "which no Trip projection serves yet", and
-// §15.4 gave two reasons, both of which are now FALSE:
-// `TripCompassProjection` carries `timezone` (CompassTripSummary.timezone) and
-// its plan window is anchored on the focus day (`CompassPlanWindow`), so
-// neither "the consumer guesses the day boundary" nor "day seven is past the
-// cap" holds any more. A stale reason on a live read is the source-(c) defect
-// this census grades, so here is the reason that does hold:
-//
-//   1. `CompassPlanItem` carries no `starts_at` and no `sort_order`. This block
-//      prints "Ramen (19:30)" and orders the day by time; consuming the
-//      projection would drop both — a narrower answer wearing a cleaner one's
-//      clothes, which is the trade CompassTools.ts:1201 already refuses for
-//      `check_trip_conflicts`.
-//   2. The window spans today FORWARD and is capped at ten items, so TOMORROW's
-//      count cannot be derived from it: a traveller with eleven items today
-//      would be told tomorrow is clear. That is the exact failure mode the
-//      window was built to remove, one day over.
-//
-// Closing it needs `startsAt` / `sortOrder` on `CompassPlanItem` and a
-// day-exact window — both additive, both the Trips owner's file.
 
 /** Parse a YYYY-MM-DD(-prefixed) string to a UTC-midnight timestamp. */
 function ymdToUtcMs(ymd: unknown): number | null {
@@ -180,34 +161,18 @@ export async function buildTripContextLines(sc: any, userId: string): Promise<st
       );
 
       // Today's plan items (≤5, not cancelled, not removed).
-      const { data: todayItems, error: todayErr } = await sc
-        .from("trip_plan_items")
-        .select("id, title, starts_at, sort_order, status, creator_id, location_is_private, privacy_scope" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`)
-        .eq("trip_id", trip.id)
-        .eq("day_date", today)
-        .neq("status", "cancelled")
-        .is("removed_at", null)
-        .order("starts_at", { ascending: true })
-        .order("sort_order", { ascending: true })
-        .limit(MAX_TODAY_ITEMS);
-      // OD-TRIP-3 (compass/planItemAccess.ts): another member's private item is
-      // listed as "Private plan" — the time is taken, the place and name are not
-      // this viewer's to know.
-      const items = (todayErr
-        ? []
-        : withholdPrivatePlanItems((todayItems ?? []) as any[], await planItemAccessFor(sc, trip.id, userId))) as any[];
-      if (items.length > 0) {
-        const parts = items.map((i) => {
-          const itemTitle = wrapUgc(String(i.title ?? ""));
-          const at = hhmm(i.starts_at, tz);
+      const planned = await buildTripCompassTodayProjection(sc, trip.id, userId, today);
+      if (!planned.ok || !acceptTripProjection(planned.projection, {
+        acceptedSchemaVersion: TRIP_PROJECTION_SCHEMA_VERSION, metric: "TripCompassTodayProjection",
+      }).accepted) {
+        lines.push("Today's plan could not be read — do not state whether anything is scheduled today.");
+      } else if (planned.projection.items.length > 0) {
+        const parts = planned.projection.items.map((item) => {
+          const itemTitle = wrapUgc(item.title);
+          const at = hhmm(item.startsAt, tz);
           return at ? `${itemTitle} (${at})` : itemTitle;
         });
         lines.push(`Today's plan: ${parts.join("; ")}`);
-      } else if (todayErr) {
-        // NOT "no plan items scheduled today". The assistant repeats these
-        // lines as fact; telling someone their day is empty because a query
-        // failed is the worst answer available here.
-        lines.push("Today's plan could not be read — do not state whether anything is scheduled today.");
       } else {
         lines.push("No plan items scheduled today.");
       }
@@ -215,21 +180,17 @@ export async function buildTripContextLines(sc: any, userId: string): Promise<st
       // Tomorrow's count (only mentioned when > 0).
       const tomorrow = addDays(today, 1);
       if (tomorrow) {
-        const { data: tomorrowItems, error: tomorrowErr } = await sc
-          .from("trip_plan_items")
-          .select("id, creator_id, location_is_private, privacy_scope" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`)
-          .eq("trip_id", trip.id)
-          .eq("day_date", tomorrow)
-          .neq("status", "cancelled")
-          .is("removed_at", null)
-          .limit(50);
+        const counted = await buildTripCompassDayCountProjection(sc, trip.id, userId, tomorrow);
         // Omitted on failure rather than reported as 0. This line is only ever
         // emitted when n > 0, so an unreadable table already said nothing —
         // binding the error keeps it that way deliberately rather than by
         // accident, and stops a future edit from adding an `else` branch that
         // asserts tomorrow is clear.
-        const n = tomorrowErr ? 0 : withholdPrivatePlanItems((tomorrowItems ?? []) as any[], await planItemAccessFor(sc, trip.id, userId)).length; // census-trips §96: a plan its scope keeps from the viewer is not counted — a count reveals it exists
-        if (n > 0) lines.push(`Tomorrow: ${n} planned item(s).`);
+        if (counted.ok && acceptTripProjection(counted.projection, {
+          acceptedSchemaVersion: TRIP_PROJECTION_SCHEMA_VERSION, metric: "TripCompassDayCountProjection",
+        }).accepted && counted.projection.visibleCount > 0) {
+          lines.push(`Tomorrow: ${counted.projection.visibleCount} planned item(s).`);
+        }
       }
     } else if (startMs != null) {
       // Upcoming trip — only surfaced within the 60-day window.
@@ -329,8 +290,8 @@ export const TRIP_DISRUPTION_CLAIM_TYPES: readonly string[] = Object.freeze([
 ]) as readonly string[];
 
 /** How many of today's plan places are checked for disruption. Bounded like every other block here. */
-export const TRIP_DISRUPTION_SUBJECT_CAP = 5;
-export const TRIP_CREW_CAP = 8;
+export const TRIP_DISRUPTION_SUBJECT_CAP = COMPASS_DISRUPTION_PLAN_READ_LIMIT;
+export const TRIP_CREW_CAP = COMPASS_CREW_HANDLES_READ_LIMIT;
 
 export interface TripWorldSubjectState {
   subjectId: string;
@@ -465,32 +426,24 @@ export async function buildTripWorldContext(
     // Today's plan items that name a place, checked for the three claim types
     // that can say a planned thing will not happen. NO COORDINATE IS SELECTED.
     const disruptions: TripDisruption[] = [];
-    const { data: planRows, error: planErr } = await sc
-      .from("trip_plan_items")
-      .select("id, title, place_id, status, creator_id, location_is_private, privacy_scope" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`)
-      .eq("trip_id", trip.id)
-      .eq("day_date", today)
-      .neq("status", "cancelled")
-      .is("removed_at", null)
-      .limit(TRIP_DISRUPTION_SUBJECT_CAP);
-    if (planErr) {
+    const planned = await buildTripCompassDisruptionPlanProjection(sc, trip.id, userId, today, { now });
+    if (!planned.ok || !acceptTripProjection(planned.projection, {
+      acceptedSchemaVersion: TRIP_PROJECTION_SCHEMA_VERSION, metric: "TripCompassDisruptionPlanProjection",
+    }).accepted) {
       unavailable.push("disruptions");
     } else {
       // OD-TRIP-3: a withheld item has no place_id, so no disruption can be
       // looked up for — and therefore no claim can disclose — another member's
       // private place.
-      const visibleRows = withholdPrivatePlanItems((planRows ?? []) as any[], await planItemAccessFor(sc, trip.id, userId));
-      for (const item of visibleRows) {
-        const placeId = typeof item.place_id === "string" ? item.place_id : null;
-        if (!placeId) continue;
-        const envelopes = await readLiveClaimEnvelopes(sc, placeId, {
+      for (const item of planned.projection.items) {
+        const envelopes = await readLiveClaimEnvelopes(sc, item.placeId, {
           claimTypes: TRIP_DISRUPTION_CLAIM_TYPES,
           now,
         });
         for (const e of envelopes) {
           const band = bandOf(e, nowMs);
           disruptions.push({
-            subjectId: placeId,
+            subjectId: item.placeId,
             planTitle: wrapUgc(String(item.title ?? "").slice(0, 120)),
             claimType: e.claimType,
             value: e.value,
@@ -515,18 +468,13 @@ export async function buildTripWorldContext(
     // Handles only. No location, no status, no last-seen: who is on the trip,
     // which is what "crew context" means here and all it may mean.
     let crew: string[] = [];
-    const { data: crewRows, error: crewErr } = await sc
-      .from("trip_members")
-      .select("profiles(handle), role, status")
-      .eq("trip_id", trip.id)
-      .eq("status", "accepted")
-      .limit(TRIP_CREW_CAP);
-    if (crewErr) unavailable.push("crew");
-    else {
-      crew = ((crewRows ?? []) as any[])
-        .map((r) => (r.profiles as any)?.handle)
-        .filter((h): h is string => typeof h === "string" && h.length > 0)
-        .map((h) => `@${h}`);
+    const handles = await buildTripCompassCrewHandlesProjection(sc, trip.id, userId, { now });
+    if (!handles.ok || !acceptTripProjection(handles.projection, {
+      acceptedSchemaVersion: TRIP_PROJECTION_SCHEMA_VERSION, metric: "TripCompassCrewHandlesProjection",
+    }).accepted) {
+      unavailable.push("crew");
+    } else {
+      crew = handles.projection.handles.map((handle) => `@${handle}`);
     }
 
     return {

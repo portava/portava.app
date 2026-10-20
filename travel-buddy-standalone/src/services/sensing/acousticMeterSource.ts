@@ -4,11 +4,10 @@
  *
  * ── WHAT CROSSES THIS BOUNDARY ───────────────────────────────────────────────
  * One number per tick: `status.metering`, a dBFS level. No PCM buffer, no file
- * handle, no URI. The OS recorder is started with the shortest viable settings
- * purely because metering is the only way any mobile OS exposes a level, it is
- * never played, read or uploaded, and `stopAndUnloadAsync` runs in a finally so
- * the temporary file the OS insists on is released on every path including a
- * throw.
+ * handle, no URI. Expo creates a temporary recording for metering. This path
+ * does not read, play or upload it. Recorder release and exact owned-cache-file
+ * deletion are best-effort: native failures, pending operations or process exit
+ * can delay release or leave the temporary file behind.
  *
  * ── IT REFUSES TO EXIST WITHOUT THE SEPARATE PERMISSION ──────────────────────
  * `createAcousticMeterSource` returns `null` unless `acousticCaptureAllowed`
@@ -28,6 +27,20 @@ import type { AcousticMeterSource, Unsubscribe } from './sensingCapture.ts';
 /** How often a level is read. Fast enough for a tempo, far below speech rates. */
 export const ACOUSTIC_METER_INTERVAL_MS = 250;
 
+let lifecycle = Promise.resolve();
+let releaseUncertain = false;
+
+async function deleteOwnedRecording(uri: string | null): Promise<void> {
+  if (!uri) return;
+  try {
+    const filesystem: typeof import('expo-file-system/legacy') = require('expo-file-system/legacy');
+    const cache = filesystem.cacheDirectory;
+    if (!cache?.startsWith('file://') || !cache.endsWith('/') || !uri.startsWith(cache)) return;
+    if (!/^(AV|Audio)\/recording-[A-Za-z0-9-]+\.[A-Za-z0-9]+$/.test(uri.slice(cache.length))) return;
+    await filesystem.deleteAsync(uri, { idempotent: true });
+  } catch {}
+}
+
 /**
  * Build the meter source, or null when it is not permitted or not possible.
  * Null is the normal state: this is off unless a user turned it on.
@@ -41,21 +54,29 @@ export function createAcousticMeterSource(
   return {
     subscribe(onSample): Unsubscribe {
       let stopped = false;
-      let stop: (() => Promise<void>) | null = null;
-
-      void (async () => {
+      let recording: InstanceType<typeof import('expo-av').Audio.Recording> | null = null;
+      let finish!: () => void;
+      const untilStopped = new Promise<void>((resolve) => { finish = resolve; });
+      const detach = () => {
+        try { recording?.setOnRecordingStatusUpdate(null); } catch {}
+      };
+      const run = async () => {
+        if (stopped || releaseUncertain) return;
+        let Audio: typeof import('expo-av').Audio | undefined;
+        let modeAttempted = false;
         try {
-          // eslint-disable-next-line @typescript-eslint/no-var-requires
-          const av = require('expo-av') as Record<string, any>;
-          const Audio = av?.Audio;
+          const av: typeof import('expo-av') = require('expo-av');
+          Audio = av.Audio;
           if (!Audio?.Recording) return;
-
+          modeAttempted = true;
           await Audio.setAudioModeAsync?.({ allowsRecordingIOS: true, playsInSilentModeIOS: false });
-          const recording = new Audio.Recording();
+          if (stopped) return;
+          recording = new Audio.Recording();
           const preset = Audio.RecordingOptionsPresets?.LOW_QUALITY ?? {};
           await recording.prepareToRecordAsync({ ...preset, isMeteringEnabled: true });
+          if (stopped) return;
           recording.setProgressUpdateInterval?.(ACOUSTIC_METER_INTERVAL_MS);
-          recording.setOnRecordingStatusUpdate?.((status: any) => {
+          recording.setOnRecordingStatusUpdate?.((status) => {
             if (stopped) return;
             const level = status?.metering;
             if (typeof level === 'number' && Number.isFinite(level)) {
@@ -64,26 +85,41 @@ export function createAcousticMeterSource(
           });
           if (stopped) return;
           await recording.startAsync();
-
-          stop = async () => {
+          if (stopped) return;
+          await untilStopped;
+        } catch {
+        } finally {
+          stopped = true;
+          detach();
+          let releasedUri: string | null = null;
+          if (recording) {
+            let uri: string | null = null;
+            try { uri = recording.getURI?.() ?? null; } catch {}
+            let released = false;
             try {
               await recording.stopAndUnloadAsync();
-            } finally {
-              // The OS writes to a cache file whatever we do; forget the handle
-              // immediately so nothing in this process can read it back.
-              recording.setOnRecordingStatusUpdate?.(null);
-              await Audio.setAudioModeAsync?.({ allowsRecordingIOS: false });
+              released = true;
+            } catch {
+              try {
+                const status = await recording.getStatusAsync?.();
+                released = status?.canRecord === false && status.isRecording === false && status.isDoneRecording === true;
+              } catch {}
             }
-          };
-        } catch {
-          // No module, no permission at the OS layer, or no recorder — silence
-          // is the correct outcome, and the window simply carries no acoustic.
+            if (released) releasedUri = uri;
+            else releaseUncertain = true;
+          }
+          if (modeAttempted) {
+            try { await Audio?.setAudioModeAsync?.({ allowsRecordingIOS: false }); } catch { releaseUncertain = true; }
+          }
+          await deleteOwnedRecording(releasedUri);
         }
-      })();
+      };
+      lifecycle = lifecycle.then(run, run);
 
       return () => {
         stopped = true;
-        void stop?.().catch(() => undefined);
+        detach();
+        finish();
       };
     },
   };

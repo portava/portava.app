@@ -40,8 +40,12 @@ describe('T242 — language detection is not a translation-quality measurement',
         },
       });
       const client = makeFakeClient({
-        messages: [{ id: 'message', body: original }],
-        message_thread_members: [{ thread_id: 'thread', user_id: 'recipient' }],
+        feature_flags: [], blocks: [],
+        messages: [{ id: 'message', body: original, thread_id: 'thread', sender_id: 'sender',
+          created_at: '2026-10-01T00:00:00.000Z', edited_at: null, deleted_at: null, ciphertext: null,
+          original_language: null, language_detection_source: null }],
+        message_threads: [{ id: 'thread', is_e2ee: false }],
+        message_thread_members: [{ thread_id: 'thread', user_id: 'recipient', left_at: null }],
         profiles: [{ id: 'recipient', preferred_language: 'fr', auto_translate_messages: true }],
         message_translations: [],
       });

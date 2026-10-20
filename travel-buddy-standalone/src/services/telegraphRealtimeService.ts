@@ -85,6 +85,7 @@ class TelegraphRealtime {
   private failureCount = 0;
   private started = false;
   private stopped = false;
+  private generation = 0;
 
   /** Subscribe to realtime events. Starts the connection on first subscriber. */
   subscribe(listener: EventListener): () => void {
@@ -125,35 +126,53 @@ class TelegraphRealtime {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
-    if (this.xhr) {
-      try { this.xhr.abort(); } catch { /* noop */ }
-      this.xhr = null;
+    const generation = this.retireConnection();
+    if (this.generation === generation) this.setStatus('idle');
+  }
+
+  private isCurrent(generation: number): boolean {
+    return !this.stopped && this.generation === generation;
+  }
+
+  private retireConnection(): number {
+    const generation = ++this.generation;
+    const xhr = this.xhr;
+    this.xhr = null;
+    if (xhr) {
+      xhr.onreadystatechange = null;
+      xhr.onerror = null;
+      xhr.ontimeout = null;
+      try { xhr.abort(); } catch {}
     }
-    this.setStatus('idle');
+    return generation;
   }
 
   private setStatus(next: RealtimeStatus) {
     if (this.status === next) return;
     this.status = next;
+    const generation = this.generation;
     for (const l of this.statusListeners) {
+      if (this.generation !== generation || this.status !== next) return;
       try { l(next); } catch { /* isolate */ }
     }
   }
 
   private async connect() {
     if (this.stopped) return;
+    const generation = ++this.generation;
     const base = apiBase();
     if (!base) { this.setStatus('polling'); return; }
 
     const token = await freshApiToken();
+    if (!this.isCurrent(generation)) return;
     if (!token) {
       // Not signed in yet; retry later without escalating to a hard failure.
-      this.scheduleReconnect();
+      this.scheduleReconnect(generation);
       return;
     }
-    if (this.stopped) return;
 
     this.setStatus('connecting');
+    if (!this.isCurrent(generation)) return;
     this.parseOffset = 0;
 
     const xhr = new XMLHttpRequest();
@@ -166,27 +185,29 @@ class TelegraphRealtime {
       const seqCursors = cursorHeaderValue(); if (seqCursors) xhr.setRequestHeader('X-Telegraph-Sequence-Cursors', seqCursors);
 
       xhr.onreadystatechange = () => {
+        if (!this.isCurrent(generation) || this.xhr !== xhr) return;
         if (xhr.readyState >= 2 && xhr.status === 200 && this.status !== 'open') {
           this.failureCount = 0;
           this.setStatus('open');
         }
+        if (!this.isCurrent(generation) || this.xhr !== xhr) return;
         if (xhr.readyState === 3 || xhr.readyState === 4) {
-          this.consume(xhr.responseText ?? '');
+          this.consume(xhr.responseText ?? '', generation);
         }
         if (xhr.readyState === 4) {
-          this.handleDisconnect();
+          this.handleDisconnect(generation);
         }
       };
-      xhr.onerror = () => this.handleDisconnect();
-      xhr.ontimeout = () => this.handleDisconnect();
+      xhr.onerror = () => this.handleDisconnect(generation);
+      xhr.ontimeout = () => this.handleDisconnect(generation);
       xhr.send();
     } catch {
-      this.handleDisconnect();
+      this.handleDisconnect(generation);
     }
   }
 
   /** Parse any newly-arrived bytes from the accumulating responseText. */
-  private consume(text: string) {
+  private consume(text: string, generation: number) {
     if (text.length <= this.parseOffset) return;
     const chunk = text.slice(this.parseOffset);
     this.parseOffset = text.length;
@@ -204,11 +225,12 @@ class TelegraphRealtime {
     this.parseOffset -= chunk.length - (lastBoundary + 2);
 
     for (const frame of complete.split('\n\n')) {
-      this.parseFrame(frame);
+      if (!this.isCurrent(generation)) return;
+      this.parseFrame(frame, generation);
     }
   }
 
-  private parseFrame(frame: string) {
+  private parseFrame(frame: string, generation: number) {
     const trimmed = frame.trim();
     if (!trimmed || trimmed.startsWith(':')) return; // heartbeat / comment
 
@@ -228,13 +250,15 @@ class TelegraphRealtime {
       // backoff path.
       if (evt.type === 'access.revoked' || evt.type === 'reconnect') {
         for (const l of this.eventListeners) {
+          if (!this.isCurrent(generation)) return;
           try { l(evt); } catch { /* isolate consumer errors */ }
         }
-        this.immediateReconnect();
+        this.immediateReconnect(generation);
         return;
       }
 
       for (const l of this.eventListeners) {
+        if (!this.isCurrent(generation)) return;
         try { l(evt); } catch { /* isolate consumer errors */ }
       }
     } catch {
@@ -248,12 +272,10 @@ class TelegraphRealtime {
    * is not mis-classified as a persistent failure, and bypasses the backoff
    * timer so the fresh auth token is sent without delay.
    */
-  private immediateReconnect() {
-    if (this.xhr) {
-      try { this.xhr.abort(); } catch { /* noop */ }
-      this.xhr = null;
-    }
-    if (this.stopped) return;
+  private immediateReconnect(generation: number) {
+    if (!this.isCurrent(generation)) return;
+    const retiredGeneration = this.retireConnection();
+    if (!this.isCurrent(retiredGeneration)) return;
     // Reset failure tracking — this was a clean server-side close, not a fault.
     this.failureCount = 0;
     if (this.reconnectTimer) {
@@ -261,35 +283,32 @@ class TelegraphRealtime {
       this.reconnectTimer = null;
     }
     // Small delay to let the server fully flush before we reconnect.
-    this.reconnectTimer = setTimeout(() => {
-      this.reconnectTimer = null;
-      void this.connect();
-    }, 100);
+    this.scheduleReconnect(retiredGeneration, 100);
   }
 
-  private handleDisconnect() {
-    if (this.xhr) {
-      try { this.xhr.abort(); } catch { /* noop */ }
-      this.xhr = null;
-    }
-    if (this.stopped) return;
+  private handleDisconnect(generation: number) {
+    if (!this.isCurrent(generation)) return;
+    const retiredGeneration = this.retireConnection();
+    if (!this.isCurrent(retiredGeneration)) return;
     this.failureCount += 1;
     if (this.failureCount >= POLLING_AFTER_FAILURES) {
       this.setStatus('polling');
     }
-    this.scheduleReconnect();
+    this.scheduleReconnect(retiredGeneration);
   }
 
-  private scheduleReconnect() {
-    if (this.stopped || this.reconnectTimer) return;
-    const delay = Math.min(
+  private scheduleReconnect(generation: number, immediateDelay?: number) {
+    if (!this.isCurrent(generation) || this.reconnectTimer) return;
+    const delay = immediateDelay ?? Math.min(
       RECONNECT_BASE_MS * 2 ** Math.min(this.failureCount, 5),
       RECONNECT_MAX_MS,
     );
-    this.reconnectTimer = setTimeout(() => {
+    const timer = setTimeout(() => {
+      if (!this.isCurrent(generation) || this.reconnectTimer !== timer) return;
       this.reconnectTimer = null;
       void this.connect();
     }, delay);
+    this.reconnectTimer = timer;
   }
 }
 

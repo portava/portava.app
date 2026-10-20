@@ -58,6 +58,11 @@ import {
   revokeMemoryAudienceCaches,
   type MemoryAudienceState,
 } from "./memoryAudienceRevocation.js";
+import {
+  EVIDENCE_STORE_ABSENT, MAX_DEAD_LETTER_WRITE_ATTEMPTS,
+  readDeadLetterSnapshot, matchingDeadLetter, readRetryDetail, writeRetryDetail,
+  type EpisodeCheckpointState,
+} from "./memoryDeletionDeadLetters.js";
 
 export const MEMORY_DELETION_LIFECYCLE_VERSION = "memory-deletion@1";
 
@@ -78,6 +83,19 @@ export const MAX_STEP_ATTEMPTS = 3;
 
 /** §3.6 `memory_evidence` — named here so the absence has a subject. */
 export const RAW_EVIDENCE_TABLE = "memory_evidence";
+
+async function evidenceStoreRequiredForRetry(sc: any, memoryId: string, ownerId: string): Promise<boolean> {
+  try {
+    const { data, error } = await sc.from("memory_deletion_dead_letters")
+      .select("detail").eq("memory_id", memoryId).eq("owner_id", ownerId)
+      .is("resolved_at", null).maybeSingle();
+    if (error) return true;
+    if (data === null) return false;
+    return typeof data?.detail !== "string" || !data.detail.startsWith(EVIDENCE_STORE_ABSENT);
+  } catch {
+    return true;
+  }
+}
 
 export interface StepReport {
   step: MemoryDeletionStep;
@@ -243,16 +261,28 @@ export async function runMemoryDeletionLifecycle(
   //    is applied, so every deletion dead-lettered and the evidence survived.
   //    memoryEvidenceErasure follows the link, retires the episode (so its
   //    photos are never proposed again) and purges every row it rests on.
-  steps.push(await runStep("RAW_EVIDENCE_PURGED", async () => {
-    const erased = await eraseEvidenceForMemory(sc, { ownerId: opts.ownerId, memoryId: opts.memoryId, now }); const corrections = await eraseCorrectionsForDeletedMemory(sc, { memoryId: opts.memoryId }); // lead ruling H-13: the deleted Memory's place corrections (3673) go in this same §21 state, both purges attempted every time
+  let evidenceStoreRequired = await evidenceStoreRequiredForRetry(sc, opts.memoryId, opts.ownerId);
+  const checkpointState: EpisodeCheckpointState = { required: false, checkpoints: [] };
+  const evidenceStep = await runStep("RAW_EVIDENCE_PURGED", async () => {
+    const allowAbsent = !evidenceStoreRequired;
+    evidenceStoreRequired = true;
+    const erased = await eraseEvidenceForMemory(sc, { ownerId: opts.ownerId, memoryId: opts.memoryId, now, checkpointState });
+    if (erased.state === "absent" && allowAbsent) evidenceStoreRequired = false;
+    const corrections = await eraseCorrectionsForDeletedMemory(sc, { memoryId: opts.memoryId });
+    const evidenceFailure = erased.state === "failed" ? erased.detail
+      : erased.state === "absent" && evidenceStoreRequired ? `memory_evidence absence cannot confirm erasure while required or retry history is uncertain: ${erased.detail}` : "";
+    if (evidenceFailure || corrections.state === "failed") {
+      return { outcome: "failed", retryable: true, detail: [evidenceFailure, corrections.state === "failed" ? corrections.detail : ""].filter(Boolean).join(" | "), facts: { episodes: erased.state === "failed" ? erased.episodes.length : 0, correctionsFailed: corrections.state === "failed" } };
+    }
     if (erased.state === "absent" && corrections.state === "absent") {
       return { outcome: "not_applicable", detail: `${RAW_EVIDENCE_TABLE} is not deployed: ${erased.detail}; memory_corrections is not deployed: ${corrections.detail}`, facts: {} };
     }
-    if (erased.state === "failed" || corrections.state === "failed") {
-      return { outcome: "failed", retryable: true, detail: [erased.state === "failed" ? erased.detail : "", corrections.state === "failed" ? corrections.detail : ""].filter(Boolean).join(" | "), facts: { episodes: erased.state === "failed" ? erased.episodes.length : 0, correctionsFailed: corrections.state === "failed" } };
-    }
     return { outcome: "done", facts: { purged: erased.state === "done" ? erased.purged : 0, episodesRetired: erased.state === "done" ? erased.retired : 0, correctionsPurged: corrections.state === "done" ? corrections.purged : 0, notDeployed: [erased.state === "absent" ? RAW_EVIDENCE_TABLE : "", corrections.state === "absent" ? "memory_corrections" : ""].filter(Boolean) } };
-  }));
+  });
+  evidenceStep.facts.evidenceStoreRequired = evidenceStoreRequired;
+  evidenceStep.facts.checkpointRequired = checkpointState.required;
+  evidenceStep.facts.checkpointPending = checkpointState.checkpoints;
+  steps.push(evidenceStep);
 
   // 5. DELETED. Not an announcement — a READ. The soft delete is written by the
   //    caller's command; this step confirms the row is actually in the state
@@ -284,6 +314,16 @@ export async function runMemoryDeletionLifecycle(
     return { outcome: "done", facts: { finalState: state } };
   }));
 
+  if (steps.every((step) => step.outcome !== "failed")) {
+    const resolved = await resolveDeadLetter(sc, opts.memoryId, opts.ownerId, now, !evidenceStoreRequired, checkpointState.required);
+    if (!resolved.ok) {
+      evidenceStep.outcome = "failed";
+      evidenceStep.retryable = true;
+      evidenceStep.detail = `deletion retry state could not confirm completion: ${resolved.detail}`;
+      evidenceStep.facts.evidenceStoreRequired = true;
+    }
+  }
+
   let reached: MemoryDeletionStep | null = null;
   for (const s of steps) {
     if (s.outcome === "failed") break;
@@ -311,9 +351,6 @@ export async function runMemoryDeletionLifecycle(
     const written = await recordDeadLetter(sc, report, now);
     report.deadLetterDurable = written.durable;
     report.deadLetterDetail = written.detail;
-  } else {
-    const resolved = await resolveDeadLetter(sc, report.memoryId, report.ownerId, now);
-    if (!resolved.ok) opts.log?.warn?.({ memoryId: report.memoryId, detail: resolved.detail }, "memories: an open §21 dead letter could not be marked resolved");
   }
 
   if (!completed) {
@@ -330,7 +367,6 @@ export async function runMemoryDeletionLifecycle(
 
 /** §21's dead letter (migration 3670). One row per Memory. */
 export const DEAD_LETTER_TABLE = "memory_deletion_dead_letters";
-const DEAD_LETTER_DETAIL_MAX = 4000;
 
 /**
  * Write (or bump) this Memory's dead letter. Durable only when the write is
@@ -339,36 +375,45 @@ const DEAD_LETTER_DETAIL_MAX = 4000;
  */
 async function recordDeadLetter(sc: any, report: DeletionReport, now: Date): Promise<{ durable: boolean; detail: string }> {
   const failed = report.steps.filter((s) => s.outcome === "failed");
-  const detail = failed.map((s) => `${s.step} ×${s.attempts}: ${s.detail}`).join(" | ").slice(0, DEAD_LETTER_DETAIL_MAX);
+  const evidenceStep = report.steps.find((step) => step.step === "RAW_EVIDENCE_PURGED");
   try {
-    const { data: prior, error: priorErr } = await sc
-      .from("memory_deletion_dead_letters")
-      .select("letters, first_failed_at")
-      .eq("memory_id", report.memoryId)
-      .maybeSingle();
-    if (priorErr) {
-      return { durable: false, detail: isStoreAbsent(priorErr) ? `${DEAD_LETTER_TABLE} is not deployed (3670 unapplied): ${String(priorErr.message ?? "")}` : `${DEAD_LETTER_TABLE} unreadable: ${String(priorErr.message ?? "")}` };
+    for (let attempt = 0; attempt < MAX_DEAD_LETTER_WRITE_ATTEMPTS; attempt++) {
+      const { prior, error: priorErr } = await readDeadLetterSnapshot(sc, report.memoryId, report.ownerId);
+      if (priorErr) {
+        return { durable: false, detail: isStoreAbsent(priorErr) ? `${DEAD_LETTER_TABLE} is not deployed (3670 unapplied): ${String(priorErr.message ?? "")}` : `${DEAD_LETTER_TABLE} unreadable: ${String(priorErr.message ?? "")}` };
+      }
+      const parsed = readRetryDetail(prior?.detail ?? EVIDENCE_STORE_ABSENT);
+      if (!parsed.ok) return { durable: false, detail: parsed.detail };
+      const checkpointPending = (evidenceStep?.facts.checkpointPending ?? []) as EpisodeCheckpointState["checkpoints"];
+      const checkpoints = [...parsed.checkpoints];
+      for (const checkpoint of checkpointPending) {
+        if (!checkpoints.some((entry) => entry.episodeId === checkpoint.episodeId)) checkpoints.push(checkpoint);
+      }
+      const required = evidenceStep?.facts.evidenceStoreRequired !== false || (prior !== null && parsed.required);
+      const detail = writeRetryDetail(required, checkpoints,
+        failed.map((step) => `${step.step} ×${step.attempts}: ${step.detail}`).join(" | "), parsed.versioned || evidenceStep?.facts.checkpointRequired === true);
+      const nowIso = new Date(Math.max(now.getTime(), prior ? Date.parse(prior.last_failed_at) : now.getTime())).toISOString();
+      const row = {
+        memory_id: report.memoryId,
+        owner_id: report.ownerId,
+        failed_steps: failed.map((step) => step.step),
+        reached_state: report.reachedState,
+        detail,
+        lifecycle_version: report.version,
+        letters: (prior?.letters ?? 0) + 1,
+        first_failed_at: prior?.first_failed_at ?? nowIso,
+        last_failed_at: nowIso,
+        resolved_at: null,
+      };
+      const write = prior
+        ? matchingDeadLetter(sc.from("memory_deletion_dead_letters").update(row), prior)
+        : sc.from("memory_deletion_dead_letters").upsert(row, { onConflict: "memory_id", ignoreDuplicates: true });
+      const { data, error } = await write.select("memory_id");
+      if (error) return { durable: false, detail: `${DEAD_LETTER_TABLE} write failed: ${String(error.message ?? "")}` };
+      if (!Array.isArray(data) || data.length > 1 || (data.length === 1 && data[0]?.memory_id !== report.memoryId)) return { durable: false, detail: `${DEAD_LETTER_TABLE} write unconfirmed: malformed result` };
+      if (data.length === 1) return { durable: true, detail: "" };
     }
-    const nowIso = now.toISOString();
-    const row = {
-      memory_id: report.memoryId,
-      owner_id: report.ownerId,
-      failed_steps: failed.map((s) => s.step),
-      reached_state: report.reachedState,
-      detail,
-      lifecycle_version: report.version,
-      letters: (typeof (prior as any)?.letters === "number" ? (prior as any).letters : 0) + 1,
-      first_failed_at: (prior as any)?.first_failed_at ?? nowIso,
-      last_failed_at: nowIso,
-      resolved_at: null,
-    };
-    const { data, error } = await sc
-      .from("memory_deletion_dead_letters")
-      .upsert(row, { onConflict: "memory_id" })
-      .select("memory_id");
-    if (error) return { durable: false, detail: `${DEAD_LETTER_TABLE} write failed: ${String(error.message ?? "")}` };
-    if (!Array.isArray(data) || data.length !== 1) return { durable: false, detail: `${DEAD_LETTER_TABLE} write unconfirmed: no row returned` };
-    return { durable: true, detail: "" };
+    return { durable: false, detail: `${DEAD_LETTER_TABLE} changed concurrently; write unconfirmed after bounded retries` };
   } catch (err) {
     return { durable: false, detail: `${DEAD_LETTER_TABLE} write threw: ${String((err as any)?.message ?? err)}` };
   }
@@ -379,17 +424,23 @@ async function recordDeadLetter(sc: any, report: DeletionReport, now: Date): Pro
  * An absent table has no letter to resolve (true); any other failure is
  * reported, and leaves the letter open — an over-report, never an under-report.
  */
-async function resolveDeadLetter(sc: any, memoryId: string, ownerId: string, now: Date): Promise<{ ok: boolean; detail: string }> {
+async function resolveDeadLetter(sc: any, memoryId: string, ownerId: string, now: Date, evidenceAbsent: boolean, checkpointRequired: boolean): Promise<{ ok: boolean; detail: string }> {
   try {
-    const { error } = await sc
-      .from("memory_deletion_dead_letters")
-      .update({ resolved_at: now.toISOString() })
-      .eq("memory_id", memoryId)
-      .eq("owner_id", ownerId)
-      .is("resolved_at", null)
-      .select("memory_id");
-    if (!error || isTableAbsentError(error)) return { ok: true, detail: "" };
-    return { ok: false, detail: String(error.message ?? "update failed") };
+    const { prior, error: priorErr } = await readDeadLetterSnapshot(sc, memoryId, ownerId);
+    if (priorErr) return { ok: !checkpointRequired && !evidenceAbsent && isStoreAbsent(priorErr), detail: String(priorErr.message ?? "retry state unreadable") };
+    if (!prior) return { ok: !checkpointRequired, detail: checkpointRequired ? "episode checkpoint receipt was lost before resolution" : "" };
+    const parsed = readRetryDetail(prior.detail);
+    if (!parsed.ok) return parsed;
+    if (checkpointRequired && !parsed.versioned) return { ok: false, detail: "episode checkpoint receipt was replaced before resolution" };
+    if (parsed.checkpoints.length > 0) return { ok: false, detail: "episode checkpoints remain unconfirmed" };
+    if (evidenceAbsent && !prior.detail.startsWith(EVIDENCE_STORE_ABSENT)) return { ok: false, detail: "evidence became required or retry history is uncertain; absence cannot resolve this deletion" };
+    if (prior.resolved_at !== null) return { ok: true, detail: "" };
+    const { data, error } = await matchingDeadLetter(sc.from("memory_deletion_dead_letters")
+      .update({ resolved_at: now.toISOString() }), prior).select("memory_id");
+    if (error) return { ok: false, detail: String(error.message ?? "update failed") };
+    return Array.isArray(data) && data.length === 1 && data[0]?.memory_id === memoryId
+      ? { ok: true, detail: "" }
+      : { ok: false, detail: "deletion retry state changed concurrently; resolution unconfirmed" };
   } catch (err) {
     return { ok: false, detail: String((err as any)?.message ?? err) };
   }

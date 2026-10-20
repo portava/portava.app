@@ -69,6 +69,7 @@ import { logger as rootLogger } from "../../lib/logger.js"; import { isAbsentTab
 import { fetchBlockedSet, submitterIsVisible } from "../../lib/blocks.js";
 import { decidePostReadable, isPostPublished } from "../../lib/postVisibility.js";
 import { NON_ACTIVE_ACCOUNT_STATUSES } from "../../lib/mediaEligibility.js";
+import { readBoundedTrailRows, TRAIL_READ_PAGE_SIZE } from "./trailRead.js";
 
 const logger = rootLogger.child({ mod: "trailService" });
 
@@ -282,13 +283,8 @@ async function readMembers(sc: any, trailId: string): Promise<{ refusal: TrailRe
  * which `computeTrailHealth` records as unmeasured rather than as clean.
  */
 async function readOpenReportCount(sc: any, trailId: string): Promise<number | null> {
-  const { data, error } = await sc.from("trail_reports").select("id, reported_by, content_trail_id")
-    .eq("trail_id", trailId).is("resolution", null);
-  if (error) {
-    logger.warn({ trailId, code: error?.code, message: error?.message }, "trail report count unread");
-    return null;
-  }
-  return distinctReportCount((data ?? []) as any[]);
+  const counts = await readOpenReportCounts(sc, [trailId]);
+  return counts ? counts[trailId] ?? 0 : null;
 }
 
 // ── What a viewer may be SERVED of a Trail (census-discovery §51) ───────────
@@ -898,10 +894,9 @@ export async function relatedTrails(sc: any, trailId: string): Promise<RelatedTr
   const t = await readTrail(sc, trailId);
   if (t.refusal || !t.trail) return { refusal: t.refusal, edges: [] };
 
-  const out = await sc.from("trail_edges").select("from_trail_id, to_trail_id, edge_type, strength").eq("from_trail_id", trailId);
-  if (out.error) return { refusal: refusalFor(out.error, "relatedTrails.out"), edges: [] };
-  const inc = await sc.from("trail_edges").select("from_trail_id, to_trail_id, edge_type, strength").eq("to_trail_id", trailId);
-  if (inc.error) return { refusal: refusalFor(inc.error, "relatedTrails.in"), edges: [] };
+  const candidates = await readRelatedTrailEdges(sc, trailId);
+  if (candidates.refusal) return { refusal: candidates.refusal, edges: [] };
+  const declared = new Set(candidates.edges.map((edge) => `${edge.other}|${edge.edgeType}|${edge.direction}`));
 
   // §18's `trails.parent_trail_id` IS the parent/child relationship; the
   // `child` edge proposeTrail writes beside it is the same fact in graph form.
@@ -912,16 +907,15 @@ export async function relatedTrails(sc: any, trailId: string): Promise<RelatedTr
   // directions, and a pair the edge table already carries is not listed twice.
   const kids = await sc.from("trails").select("id").eq("parent_trail_id", trailId);
   if (kids.error) return { refusal: refusalFor(kids.error, "relatedTrails.children"), edges: [] };
-  const unaccepted = await readUnacceptedEdges(sc, trailId); if (unaccepted === null) return { refusal: "db_error", edges: [] }; // §86 (DV-24): only an ACCEPTED declaration is navigable
   const listed = new Set<string>();
   const rows = [
-    ...((out.data ?? []) as any[]).map((e) => ({ other: e.to_trail_id, edgeType: e.edge_type, strength: Number(e.strength), direction: "out" as const })),
-    ...((inc.data ?? []) as any[]).map((e) => ({ other: e.from_trail_id, edgeType: e.edge_type, strength: Number(e.strength), direction: "in" as const })),
-    ...(t.trail.parent_trail_id
+    ...candidates.edges.filter((edge) => edge.accepted),
+    ...(t.trail.parent_trail_id && !declared.has(`${t.trail.parent_trail_id}|child|in`)
       ? [{ other: t.trail.parent_trail_id, edgeType: "child", strength: 1, direction: "in" as const }] : []),
-    ...((kids.data ?? []) as any[]).map((k) => ({ other: k.id as string, edgeType: "child", strength: 1, direction: "out" as const })),
+    ...((kids.data ?? []) as any[]).filter((child) => !declared.has(`${child.id}|child|out`))
+      .map((child) => ({ other: child.id as string, edgeType: "child", strength: 1, direction: "out" as const })),
   ].filter((r) => {
-    const key = `${r.other}|${r.edgeType}|${r.direction}`; if (unaccepted.has(key)) return false;
+    const key = `${r.other}|${r.edgeType}|${r.direction}`;
     if (listed.has(key)) return false;
     listed.add(key);
     return true;
@@ -1094,8 +1088,9 @@ async function readOpenReportCounts(
   sc: any, trailIds: readonly string[],
 ): Promise<Record<string, number> | undefined> {
   const out: Record<string, number> = {};
-  const { data, error } = await sc.from("trail_reports").select("id, trail_id, reported_by, content_trail_id")
-    .in("trail_id", trailIds).is("resolution", null);
+  const { data, error } = await readBoundedTrailRows((from, to) => sc.from("trail_reports")
+    .select("id, trail_id, reported_by, content_trail_id", { count: "exact" })
+    .in("trail_id", trailIds).is("resolution", null).order("id", { ascending: true }).range(from, to));
   if (error) {
     logger.warn({ code: error?.code, message: error?.message }, "trail report counts unread");
     return undefined;
@@ -1175,7 +1170,8 @@ export async function loadViewerTrailModifier(
   // Lead ruling D-66 (verifier on dc0107eda5, L2): a Trail under review is not ranked. A follow placed on a
   // `proposed` Trail before 3977 survives its move to `pending`, so the followed set is narrowed to APPROVED Trails
   // here, as every other ranking reader is. An unreadable review state is a refusal, never "approved".
-  const approved = await sc.from("trails").select("id").in("id", followedAll).eq("review_state", "approved");
+  const approved = await sc.from("trails").select("id").in("id", followedAll)
+    .eq("review_state", "approved").neq("lifecycle_status", "archived");
   if (approved.error) return { ...none, refusal: refusalFor(approved.error, "loadViewerTrailModifier.reviewState") };
   const approvedIds = new Set(((approved.data ?? []) as any[]).map((r) => String(r.id)));
   const followedTrailIds = followedAll.filter((id: string) => approvedIds.has(String(id)));
@@ -1578,8 +1574,10 @@ export async function detachContentFromTrail(
   // probe which membership rows exist by the shape of the refusal.
   if (!data || data.contributor_id !== userId) return { refusal: "unknown_trail", detached: false };
 
-  const del = await sc.from("content_trails").delete().eq("id", contentTrailId);
+  const del = await sc.from("content_trails").delete()
+    .eq("id", contentTrailId).eq("trail_id", trailId).eq("contributor_id", userId).select("id");
   if (del.error) return { refusal: refusalFor(del.error, "detach.delete"), detached: false };
+  if (!Array.isArray(del.data) || del.data.length === 0) return { refusal: "unknown_trail", detached: false };
   return { refusal: null, detached: true };
 }
 
@@ -2110,7 +2108,7 @@ async function trailModulesExplored(
   // §7: the move each member is owed now, decided BEFORE the page is built so
   // the page is served from the decided states; persisted after the response.
   const stamps = await readStateChangedAt(sc, served.map((r) => r.id));
-  const stampOf = (r: ServableMember) => (stamps ? (stamps.has(r.id) ? stamps.get(r.id)! : null) : undefined);
+  const stampOf = (r: ServableMember) => stamps?.get(r.id);
   const transitions: ContentTransition[] = [];
   const view: ServableMember[] = [];
   const sinceById = new Map<string, number | null>();
@@ -2125,7 +2123,7 @@ async function trailModulesExplored(
 
   const byNewest = [...view].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
   const arrived = byNewest.filter((r) => (r.content_state === "just_arrived" || r.content_state === "rediscovered")
-    && insideJustArrivedHorizon({ state: r.content_state, createdAtMs: Date.parse(r.created_at), stateChangedAtMs: since(r), nowMs }));
+    && insideJustArrivedHorizon({ state: r.content_state, createdAtMs: Date.parse(r.created_at), stateChangedAtMs: since(r) ?? undefined, nowMs }));
   const retest = byNewest.filter((r) => r.content_state === "archived_from_active_rotation" && since(r) !== null && nowMs - since(r)! >= TRAIL_RETEST_INTERVAL_MS);
 
   // §9 steps 1, 2, 5: rotation through the backlog by denominator. Unmeasured → no reservation (as before: `null`, never `[]`).
@@ -2141,7 +2139,8 @@ async function trailModulesExplored(
   }
   const reserved = new Set(explorationSlots ?? []);
 
-  const byConfidence = [...view].sort((a, b) => Number(b.confidence) - Number(a.confidence));
+  const byConfidence = view.filter((row) => row.content_state !== "archived_from_active_rotation")
+    .sort((a, b) => Number(b.confidence) - Number(a.confidence));
   const byMomentum = [...view].sort((a, b) => (momentum[b.source_id] ?? 0) - (momentum[a.source_id] ?? 0))
     .filter((r) => (momentum[r.source_id] ?? 0) > 0 && r.content_state !== "archived_from_active_rotation"); // out of rotation means out of every module but a retest slot
   const justArrived = buildTrailModule("just_arrived", "recency", JUST_ARRIVED_HORIZON_MS,
@@ -2342,19 +2341,44 @@ export async function readTrendReviewVerdict(sc: any, subjectKind: "trail" | "pl
 
 // ── DV-24: declared relationships ─────────────────────────────────────────────
 
-/** 3486's pending/rejected edges touching this Trail, keyed as `relatedTrails` keys a row; `null` = unreadable. */
-async function readUnacceptedEdges(sc: any, trailId: string): Promise<Set<string> | null> {
-  const out = new Set<string>();
-  for (const [col, direction] of [["from_trail_id", "out"], ["to_trail_id", "in"]] as const) {
-    const { data, error } = await sc.from("trail_edges").select("from_trail_id, to_trail_id, edge_type, review_state")
-      .eq(col, trailId).in("review_state", ["pending", "rejected"]);
-    if (error) {
-      if (isMissingRelation(error) || ["42703", "PGRST204"].includes(String(error.code))) return out; // pre-3486: every edge is a proposal's own `child`
-      return null;
+type RelatedTrailCandidate = Omit<RelatedTrailsResult["edges"][number], "trail"> & { other: string; accepted: boolean };
+
+async function readRelatedTrailEdges(
+  sc: any, trailId: string,
+): Promise<{ refusal: TrailRefusal; edges: RelatedTrailCandidate[] }> {
+  const edges: RelatedTrailCandidate[] = [];
+  let legacy = false;
+  try {
+    for (const [column, direction] of [["from_trail_id", "out"], ["to_trail_id", "in"]] as const) {
+      const read = () => sc.from("trail_edges")
+        .select(`from_trail_id, to_trail_id, edge_type, strength${legacy ? "" : ", review_state"}`, { count: "exact" })
+        .eq(column, trailId)
+        .order("from_trail_id", { ascending: true }).order("to_trail_id", { ascending: true }).order("edge_type", { ascending: true })
+        .limit(TRAIL_READ_PAGE_SIZE);
+      let result = await read();
+      if (direction === "out" && ["42703", "PGRST204"].includes(String(result.error?.code))
+          && /\breview_state\b/.test(`${result.error?.message ?? ""} ${result.error?.details ?? ""}`)) {
+        legacy = true;
+        result = await read();
+      }
+      if (result.error) return { refusal: direction === "in" ? "db_error" : refusalFor(result.error, "relatedTrails.edges"), edges: [] };
+      if (!Array.isArray(result.data) || !Number.isSafeInteger(result.count) || result.count < 0
+          || result.count > TRAIL_READ_PAGE_SIZE || result.data.length !== result.count) return { refusal: "db_error", edges: [] };
+      for (const edge of result.data) {
+        if (!edge || typeof edge.from_trail_id !== "string" || !edge.from_trail_id
+            || typeof edge.to_trail_id !== "string" || !edge.to_trail_id
+            || typeof edge.edge_type !== "string" || !edge.edge_type || edge[column] !== trailId) return { refusal: "db_error", edges: [] };
+        edges.push({
+          other: direction === "out" ? edge.to_trail_id : edge.from_trail_id,
+          edgeType: edge.edge_type, strength: Number(edge.strength), direction,
+          accepted: legacy || edge.review_state === "accepted",
+        });
+      }
     }
-    for (const e of (data ?? []) as any[]) out.add(`${direction === "out" ? e.to_trail_id : e.from_trail_id}|${e.edge_type}|${direction}`);
+  } catch {
+    return { refusal: "db_error", edges: [] };
   }
-  return out;
+  return { refusal: null, edges };
 }
 
 /** §6's kinds a person may declare after creation; `child` is declared by the proposal that names its parent. */

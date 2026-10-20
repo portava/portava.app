@@ -144,12 +144,7 @@ export async function grantAcousticPermission(
     revokedAt: null,
     osMicrophoneGranted,
   };
-  try {
-    await storage.setItem(ACOUSTIC_PERMISSION_STORAGE_KEY, JSON.stringify(next));
-  } catch {
-    // Fire-and-forget, per the app's storage convention. An unpersisted grant
-    // lapses at relaunch, which is the safe direction.
-  }
+  await storage.setItem(ACOUSTIC_PERMISSION_STORAGE_KEY, JSON.stringify(next));
   return next;
 }
 
@@ -165,10 +160,6 @@ export async function revokeAcousticPermission(
     revokedAt: new Date(nowMs).toISOString(),
     osMicrophoneGranted: false,
   };
-  try {
-    await storage.setItem(ACOUSTIC_PERMISSION_STORAGE_KEY, JSON.stringify(next));
-  } catch {
-    // As above.
-  }
+  await storage.setItem(ACOUSTIC_PERMISSION_STORAGE_KEY, JSON.stringify(next));
   return next;
 }

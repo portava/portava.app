@@ -36,7 +36,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  startApp, call, fixtureTables, highlight, listIds, feedIds,
+  startApp, call, fixtureTables, highlight, listIds, feedIds, makeFakeClient,
   VIEWER, OWNER, H_PUB, H_MINE, FUTURE,
 } from "./highlightsSpecHarness.js";
 import {
@@ -259,6 +259,59 @@ describe("§4 PERMANENT is stored with NO expiry, and refused by name when it ca
       assert.ok(!listIds(active.body).has(EXPIRED), "expired must not reach the active list");
     } finally { await app.close(); }
   });
+
+  for (const [lifetimeClass, expiresAt] of [["DAY", FUTURE], ["PERMANENT", null]] as const) {
+    it(`the active query filters expiry before its fetch limit, preserving an older ${lifetimeClass} Highlight`, async () => {
+      const tables = fixtureTables();
+      const pageLimit = 1;
+      const fetchLimit = pageLimit * 5;
+      const now = Date.now();
+      const olderId = "30000000-0000-4000-8000-0000000000dd";
+      const expired = Array.from({ length: fetchLimit + 1 }, (_, index) => highlight(
+        `31000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+        VIEWER,
+        {
+          created_at: new Date(now - 2 * 60 * 60 * 1000 + index * 1000).toISOString(),
+          expires_at: new Date(now - 60 * 60 * 1000).toISOString(),
+          lifetime_class: "DAY",
+          pinned_at: null,
+        },
+      ));
+      tables.highlights.push(...expired, highlight(olderId, VIEWER, {
+        created_at: new Date(now - 3 * 60 * 60 * 1000).toISOString(),
+        expires_at: expiresAt,
+        lifetime_class: lifetimeClass,
+        pinned_at: null,
+      }));
+
+      const unfiltered = await makeFakeClient(tables).from("highlights")
+        .select("id")
+        .is("deleted_at", null)
+        .is("archived_at", null)
+        .in("visibility", ["public", "travelers_nearby", "circle_only", "trip_only"])
+        .eq("owner_id", VIEWER)
+        .order("pinned_at", { ascending: true, nullsFirst: false })
+        .order("created_at", { ascending: false })
+        .limit(fetchLimit);
+      assert.equal(unfiltered.error, null);
+      assert.deepEqual(
+        unfiltered.data.map((row: Record<string, unknown>) => row.id),
+        [...expired].reverse().slice(0, fetchLimit).map((row) => row.id),
+        "without the SQL expiry predicate, newer expired rows fill the entire fetch window",
+      );
+
+      const app = await startApp({ tables });
+      try {
+        const active = await call(app, "GET", `/api/highlights/active?userId=${VIEWER}&limit=${pageLimit}`, VIEWER);
+        assert.equal(active.status, 200, JSON.stringify(active.body));
+        assert.deepEqual(
+          [...listIds(active.body)],
+          [olderId],
+          `${lifetimeClass} must survive: expiry filtering after the fetch limit cannot recover the older row`,
+        );
+      } finally { await app.close(); }
+    });
+  }
 
   it("isHighlightActive treats a null expiry as active and a past expiry as not", async () => {
     const now = new Date("2026-06-01T00:00:00.000Z");

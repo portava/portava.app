@@ -54,6 +54,7 @@
  * every cache-A hit would pay a 30-day rank_events scan.
  */
 import { pruneAndBound } from "./boundedMapCache.js";
+import { unfilteredTrendBlockReason } from "./discoveryTrendProducerPrivacy.js";
 import { logger as rootLogger } from "./logger.js";
 // `03` §9's six place-momentum stages, computed from the SAME rows this module
 // already pages in. Separate module, separate function, and the scalar above is
@@ -233,6 +234,12 @@ export async function loadLocalMomentum(
   // answer is provenanced too, or a caller cannot tell it from a real one.
   const empty = (): MomentumMap => computeLocalMomentum([], nowMs);
   if (!sc || placeIds.length === 0) return empty();
+
+  if (await unfilteredTrendBlockReason(sc)) {
+    _cache.clear();
+    _retests.clear();
+    return empty();
+  }
 
   const hit = _cache.get(opts.cacheKey);
   if (hit && nowMs - hit.at < MOMENTUM_CACHE_TTL_MS) return hit.map;

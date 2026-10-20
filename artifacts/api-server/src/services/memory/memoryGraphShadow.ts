@@ -32,6 +32,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { isFlagEnabled } from "../../lib/featureFlags.js";
 import { isTableAbsentError } from "../../lib/tableAbsence.js";
 import type { GraphMoment } from "../memoryProjections/memoryGraph.js";
+import { placesThroughCorrections, type MemoryPlaceRow } from "./memoryCorrections.js";
 
 export const MEMORY_GRAPH_SHADOW_FLAG = "memory_graph_shadow_read_enabled";
 export const MEMORY_GRAPH_CUTOVER_FLAG = "memory_graph_read_cutover_enabled";
@@ -247,18 +248,26 @@ export type LinkSource = "legacy" | "graph";
 
 /**
  * GET /memories/graph's link path. Returns the moments to build from and where
- * their links came from. The legacy moments are returned UNCHANGED unless the
- * cutover flag is on, the gate is open and the graph read succeeded.
+ * their links came from. Both paths honor authoritative place corrections;
+ * unreadable corrections refuse the read rather than falling back to raw links.
  *
  * The shadow pass is started, not awaited: it must not delay the response. Its
  * promise is returned so a test can await it.
  */
 export async function memoryGraphLinkPath(
   sc: SupabaseClient,
-  input: { ownerId: string; moments: GraphMoment[]; log?: Log; now?: Date },
-): Promise<{ moments: GraphMoment[]; source: LinkSource; shadow: Promise<unknown> | null; gate: GateVerdict | null }> {
+  input: { ownerId: string; moments: GraphMoment[]; placeRows: readonly MemoryPlaceRow[]; log?: Log; now?: Date },
+): Promise<{ ok: true; moments: GraphMoment[]; source: LinkSource; shadow: Promise<unknown> | null; gate: GateVerdict | null } | { ok: false }> {
   const now = input.now ?? new Date();
-  let moments = input.moments;
+  const sourceIds = new Set(input.placeRows.map((row) => row.id));
+  if (sourceIds.size !== input.placeRows.length || sourceIds.size !== input.moments.length
+    || input.placeRows.some((row) => row.owner_id !== input.ownerId)
+    || input.moments.some((moment) => moment.owner_id !== input.ownerId || !sourceIds.has(moment.memory_id))) return { ok: false };
+  const places = await placesThroughCorrections(sc, input.placeRows, now);
+  if (!places.ok) return { ok: false };
+  const correctedPlaces = new Map(places.rows.map((row) => [row.id, norm(row.canonical_location_id ?? row.place_id)]));
+  const legacyMoments = input.moments.map((moment) => ({ ...moment, place_id: correctedPlaces.get(moment.memory_id) ?? null }));
+  let moments = legacyMoments;
   let source: LinkSource = "legacy";
   let gate: GateVerdict | null = null;
 
@@ -267,7 +276,8 @@ export async function memoryGraphLinkPath(
     if (gate.open) {
       const read = await readGraphLinks(sc, input.ownerId, input.moments.map((m) => m.memory_id));
       if (read.ok) {
-        moments = momentsFromGraph(input.moments, read.links);
+        moments = momentsFromGraph(legacyMoments, read.links).map((moment) => places.byMemory.has(moment.memory_id)
+          ? { ...moment, place_id: correctedPlaces.get(moment.memory_id) ?? null } : moment);
         source = "graph";
       } else {
         input.log?.error?.({ absent: read.absent }, "memory graph cutover: graph read failed — serving the legacy answer");
@@ -280,8 +290,8 @@ export async function memoryGraphLinkPath(
   let shadow: Promise<unknown> | null = null;
   if (input.moments.length > 0 && await isFlagEnabled(sc, MEMORY_GRAPH_SHADOW_FLAG)) {
     // Compares the LEGACY moments with the graph, whichever path served.
-    shadow = runShadowComparison(sc, { ownerId: input.ownerId, moments: input.moments, log: input.log })
+    shadow = runShadowComparison(sc, { ownerId: input.ownerId, moments: legacyMoments, log: input.log })
       .catch(() => undefined);
   }
-  return { moments, source, shadow, gate };
+  return { ok: true, moments, source, shadow, gate };
 }

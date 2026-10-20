@@ -63,7 +63,7 @@ jest.mock('expo-av', () => {
       playAsync: jest.fn().mockResolvedValue(undefined),
       pauseAsync: jest.fn().mockResolvedValue(undefined),
       setPositionAsync: jest.fn().mockResolvedValue(undefined),
-    }));
+    }), []);
     return <View />;
   });
   Video.displayName = 'Video';

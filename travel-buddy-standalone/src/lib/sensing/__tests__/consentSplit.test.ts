@@ -68,7 +68,11 @@ describe('OD-MAP-6 — the three consents on the device', () => {
 
   test('the installer drops every send unless upload is in effect, and re-checks on every Settings change', () => {
     const src = readFileSync(join(CLIENT, 'src/services/sensing/installSensingCapture.ts'), 'utf8');
-    assert.match(src, /if \(!uploadAllowed\) return;\s*await transport\.submit\(payload\);/);
-    assert.match(src, /onSensingConsentChange\(/);
+    // The gate may carry further OR-ed refusals (the installer now also drops
+    // sends from a disposed installation or a superseded capture generation),
+    // but `!uploadAllowed` must remain one of the disjuncts guarding the submit
+    // directly — OR only ever drops more sends, never fewer.
+    assert.match(src, /if \((?:[^()&|]+ \|\| )*!uploadAllowed\) return;\s*await transport\.submit\(payload\);/);
+    assert.match(src, /onSensingConsentChange\(\(\) => \{ if \(!disposed\) void recheck\(\); \}\)/);
   });
 });

@@ -119,18 +119,21 @@ describe('useCommunityDiscovery — one viewer\'s gems are never painted for ano
     await waitFor(() => expect(mockGetCommunityPlaces).toHaveBeenCalledTimes(2));
   });
 
-  it('an answer whose scope moved while it was in flight is shown but NOT cached', async () => {
+  it('an answer whose scope moved while it was in flight is neither shown nor cached', async () => {
     const CITY = 'InFlightBlockCity';
     setDiscoveryViewerFromSession('user-x');
     // The service hands back the scope the request was SENT in; a block lands
     // before the hook writes, so that scope is no longer current.
-    mockGetCommunityPlaces.mockImplementation(async () => {
+    mockGetCommunityPlaces.mockImplementationOnce(async () => {
       const sentIn = currentDiscoveryScope();
       invalidateDiscoveryCaches();
       return { ok: true, data: { items: [gem('z1', null)], city: 'Cebu', total: 1 }, scope: sentIn };
     });
+    mockGetCommunityPlaces.mockImplementation(async () => answer());
     const first = await renderHook(() => useCommunityDiscovery(CITY, null));
-    await waitFor(() => expect(first.result.current.gems).toHaveLength(1));
+    await waitFor(() => expect(first.result.current.loading).toBe(false));
+    expect(first.result.current.gems).toEqual([]);
+    expect(_communityCacheSizeForTests()).toBe(0);
     await act(async () => { first.unmount(); });
 
     mockGetCommunityPlaces.mockImplementation(async () => answer());

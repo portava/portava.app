@@ -47,7 +47,7 @@
  */
 
 /** Tables AccountDeletionService clears today. */
-export const ERASED_BY_CASCADE: readonly string[] = [
+export const ERASED_BY_CASCADE: readonly string[] = [ "memory_snapshots", "memory_video_segments", "memory_video_segment_operations", "memory_import_batches", "memory_import_batch_items", "memory_resurfacing_policy_heads",
   // PENDING BASELINE RECAPTURE — do not add the string yet.
   //   "phone_verification_challenges" (migration 2142) holds a phone number and
   //   a hashed live credential, and IS already deleted explicitly by
@@ -254,7 +254,7 @@ export const ERASED_BY_CASCADE: readonly string[] = [
   "sensing_consent_grants",
   // CPH-08-ADAPT live-search quota (migration 3704): user_id REFERENCES
   // auth.users(id) ON DELETE CASCADE — the same mechanism.
-  "compass_live_search_usage",
+  "compass_live_search_usage", "media_derivative_jobs", "media_derivative_job_events", "media_image_understanding_consents", "media_image_understanding_artifacts", "media_visual_index_consents", "media_visual_embeddings", "media_caption_manifests", "media_caption_asr_epochs", "media_caption_asr_consents", "media_dubbing_epochs", "media_dubbing_consents", "media_caption_translation_consents", "media_caption_translation_epochs", "media_dubbing_artifacts", "media_caption_translation_artifacts", /* Media derivatives (migrations 3980-3995, unapplied). AccountDeletionService's FIRST step `erase_canonical_account_media` (AccountDeletionService.ts:504; on failure it returns pending at :511 before any other step) calls eraseAccountMedia (accountMediaDeletion.ts:141): every media_assets row the user owns or uploaded is withdrawn, purged through purgeWithdrawnAccountMedia -> purgeDerivedMedia (DerivedMediaLifecycleService.ts:80), and hard-deleted only once purge_status is completed (accountMediaDeletion.ts:125). The first THIRTEEN go by ON DELETE CASCADE from that confirmed source DELETE, directly or via media_derivative_jobs: 3980:5, 3980:48; 3981:5, 3981:18/:20; 3982:7, 3982:22/:31; 3983:4, 3983:27, 3983:32/:41; 3986:4, 3986:10; 3987:14/:24, 3987:30. The 3981 / 3982 four rest on those FK lines ALONE: no account-path suite installs 3981 or 3982. A cascade erases ROWS, not caption or translation bytes in storage; those are the purge's job. The last TWO are receipt ledgers with NO FK (3986:24, 3995:5), so they are SERVICE-erased, not cascaded: a source is deleted only after requireNoRows on its receipts (accountMediaDeletion.ts:124), and owner-scoped orphans go through RetainedCaptionTranslationReconciler / RetainedDubbingReconciler (accountMediaDeletion.ts:163-171). PENDING DEBT, not completion: an unsettled (reserved / dispatched / pending) or unreadable receipt fails the step, and the request stays pending with its user_id. NOT listed, deliberately: media_visual_index_tombstones (3982:16, no FK, written at 3982:187) survives completed erasure and its fate is UNDECIDED; media_caption_asr_config (3983:16) and media_caption_translation_config (3987:3) are singleton config with no person. One line so cited lines hold. */
 ];
 
 /**
@@ -911,7 +911,7 @@ export const DENOMINATOR_CORRECTION_BACKLOG: readonly string[] = [
  *     is DERIVED_USER_LINKED by hand registration — in scope, with no schema
  *     evidence either way, which is what these five now are.
  */
-export const POST_BASELINE_TABLES: readonly string[] = [
+export const POST_BASELINE_TABLES: readonly string[] = [ "memory_snapshots", "memory_video_segments", "memory_video_segment_operations", "memory_import_batches", "memory_import_batch_items", "memory_resurfacing_policy_heads",
   // Derived memory, added by migrations 2183-2191 (post-baseline).
   "memory_projections",
   "memory_events",
@@ -1009,6 +1009,27 @@ export const POST_BASELINE_TABLES: readonly string[] = [
   "layover_checkpoints",
   "layover_outcomes",
   "layover_certified_computations", "layover_event_pseudonymisation_dead_letters", // 3622 (PR-R-L163a): session id, failure text and times; erased with its session (ON DELETE CASCADE)
+  // Media derivatives (migrations 3980, 3981, 3982, 3983, 3986, 3987, 3995;
+  // post-baseline and unapplied). Classified in ERASED_BY_CASCADE above: the
+  // first thirteen by ON DELETE CASCADE from the confirmed media_assets DELETE,
+  // the two receipt ledgers (no FK) by service erasure, with unsettled receipts
+  // left as pending debt. media_visual_index_tombstones (3982) is NOT here: its
+  // fate is undecided. The two singleton config tables carry no person.
+  "media_derivative_jobs",
+  "media_derivative_job_events",
+  "media_image_understanding_consents",
+  "media_image_understanding_artifacts",
+  "media_visual_index_consents",
+  "media_visual_embeddings",
+  "media_caption_manifests",
+  "media_caption_asr_epochs",
+  "media_caption_asr_consents",
+  "media_dubbing_epochs",
+  "media_dubbing_consents",
+  "media_caption_translation_consents",
+  "media_caption_translation_epochs",
+  "media_dubbing_artifacts",
+  "media_caption_translation_artifacts",
 ];
 
 /** Columns that make a table user-keyed for the purposes of this manifest. */

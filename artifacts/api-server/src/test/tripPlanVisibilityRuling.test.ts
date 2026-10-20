@@ -26,6 +26,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import express from "express";
+import { createClient } from "@supabase/supabase-js";
 import { _setTestClient } from "../lib/http.js";
 import tripsRouter from "../routes/trips.js";
 import {
@@ -35,7 +36,7 @@ import {
 import {
   ownerOnlyAccess, planScopeAdmitsViewer, planItemVisibility, withholdPrivatePlanItems, canSeePlanItemLocation, type PlanItemAccess,
 } from "../domain/trips/policies/privateAnchorAccess.js";
-import { checkAudience } from "../server/trips/planItemAudience.js";
+import { checkAudience, readSelectedPlanItemIds } from "../server/trips/planItemAudience.js";
 import { planItemAccessFor } from "../server/trips/privateAnchorShares.js";
 import { readTripLifecycleFacts } from "../routes/trips-expansion.js";
 
@@ -300,6 +301,63 @@ describe("L. planItemAccessFor reads the selection", () => {
 // ── W. the write doors ───────────────────────────────────────────────────────
 
 const CREATE = { title: SECRET, category: "activity" };
+
+describe("Selected audience response integrity", () => {
+  function reader(data: unknown, options: { errorCode?: string; enabled?: boolean } = {}) {
+    return createClient("http://127.0.0.1:9", "dummy", {
+      auth: { persistSession: false, autoRefreshToken: false },
+      global: { fetch: async (input, init) => {
+        const url = new URL(String(input));
+        assert.equal(url.origin, "http://127.0.0.1:9");
+        assert.equal(init?.method, "GET");
+        if (url.pathname.endsWith("/feature_flags")) {
+          return Response.json({ enabled: url.searchParams.get("flag") === "eq.trip_plan_selected_participants_enabled" && options.enabled !== false });
+        }
+        assert.ok(url.pathname.endsWith("/trip_plan_item_audience"));
+        assert.equal(url.searchParams.get("select"), "plan_item_id");
+        assert.equal(url.searchParams.get("trip_id"), `eq.${TRIP}`);
+        assert.equal(url.searchParams.get("member_id"), `eq.${BEN}`);
+        return options.errorCode
+          ? Response.json({ code: options.errorCode, message: "fixture read failure" }, { status: 400 })
+          : Response.json(data);
+      } },
+    });
+  }
+
+  const malformed: Array<[string, unknown]> = [
+    ["null", null], ["object", {}], ["string", "unread"], ["null row", [null]],
+    ["array row", [[]]], ["missing id", [{}]], ["null id", [{ plan_item_id: null }]],
+    ["numeric id", [{ plan_item_id: 7 }]], ["empty id", [{ plan_item_id: "" }]],
+    ["padded id", [{ plan_item_id: ` ${ITEM}` }]], ["uppercase id", [{ plan_item_id: ANA.toUpperCase() }]],
+    ["non-UUID id", [{ plan_item_id: "plan-1" }]],
+    ["malformed tail", [{ plan_item_id: ITEM }, { plan_item_id: null }]],
+  ];
+  for (const [name, data] of malformed) {
+    it(`treats ${name} as unread, never an empty or partial audience`, async () => {
+      const client = reader(data);
+      assert.equal(await readSelectedPlanItemIds(client, TRIP, BEN), null);
+      const access = await planItemAccessFor(client, TRIP, BEN);
+      assert.equal(access.status, "ok");
+      assert.equal(access.selected?.size, 0);
+      assert.match(access.selectionUnread ?? "", /could not be read/);
+      assert.equal(planScopeAdmitsViewer(access, plan({ privacy_scope: "selected_participants" })), false);
+    });
+  }
+
+  it("preserves a genuinely empty audience and exact canonical IDs without normalization", async () => {
+    assert.deepEqual(await readSelectedPlanItemIds(reader([]), TRIP, BEN), new Set());
+    assert.deepEqual(await readSelectedPlanItemIds(reader([{ plan_item_id: ITEM }, { plan_item_id: ITEM }]), TRIP, BEN), new Set([ITEM]));
+  });
+  for (const code of ["42P01", "PGRST205"]) {
+    it(`preserves known missing audience ${code} as exactly none`, async () => {
+      assert.deepEqual(await readSelectedPlanItemIds(reader(null, { errorCode: code }), TRIP, BEN), new Set());
+    });
+  }
+  it("keeps other read failures unread and flag-off independent of the store", async () => {
+    assert.equal(await readSelectedPlanItemIds(reader(null, { errorCode: "42501" }), TRIP, BEN), null);
+    assert.deepEqual(await readSelectedPlanItemIds(reader(null, { enabled: false }), TRIP, BEN), new Set());
+  });
+});
 
 describe("W. selected_participants is stored WITH its selection", () => {
   it("W1. create: the plan, its scope and the author's selection; the answer names the selection", async () => {

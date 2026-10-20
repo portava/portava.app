@@ -9,6 +9,9 @@ import React, { useCallback } from 'react';
 import { MemoryRowsScreen, formatMemoryDate, placeLine, type MemoryRowsLoad } from '../../src/features/memories/social/MemoryRowsScreen.tsx';
 import { getMemoryTimeline } from '../../src/services/memorySocial.ts';
 import { CandidateInbox } from '../../src/features/memories/candidates/CandidateInbox.tsx';
+import { Pressable, Text } from 'react-native';
+import { router } from 'expo-router';
+import { color, space } from '../../src/theme/tokens.ts';
 
 export default function MemoryTimelineRoute() {
   const load = useCallback<MemoryRowsLoad>(async () => {
@@ -30,7 +33,7 @@ export default function MemoryTimelineRoute() {
       testID="memory-timeline-screen"
       title="Your timeline"
       intro="Only you can see this."
-      header={<CandidateInbox />}
+      header={<><Pressable accessibilityRole="button" onPress={() => router.push('/memory/chapters' as never)} style={{ padding: space.lg }}><Text style={{ color: color.deep }}>Your Life Chapters</Text></Pressable><CandidateInbox /></>}
       load={load}
       emptyTitle="No memories yet"
       emptyBody="Memories you make from your trips and places will line up here."

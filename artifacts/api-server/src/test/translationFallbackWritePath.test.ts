@@ -42,24 +42,26 @@
  *     `check:write-path-columns`, not this file — that check is the other half
  *     of this pair and neither replaces the other.
  */
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Logger } from 'pino';
 
 import { makeSchemaStrictClient, type SchemaStrictClient } from './helpers/schemaStrictSupabase.js';
+import { makeFailClosedClient } from './helpers/failClosedSupabase.js';
 import {
   retranslateForUser,
   isMissingTranslationConfidenceColumn,
   CONFIDENCE_MIGRATION_PENDING_MESSAGE,
   __resetConfidenceColumnProbe,
 } from '../services/messageTranslation.js';
-import { MOCK_TRANSLATION_VERSION } from '../lib/translation.js';
+import { MOCK_TRANSLATION_VERSION, MockTranslationProvider, _setTestTranslationProvider } from '../lib/translation.js';
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
 const USER = '11111111-1111-4111-8111-111111111111';
 const MSG = '22222222-2222-4222-8222-222222222222';
 const ROW = '33333333-3333-4333-8333-333333333333';
+const THREAD = '44444444-4444-4444-8444-444444444444';
 
 /** Long enough and terminated, so `validateTranslation` passes and the write
  *  under test is the `status: 'translated'` one rather than a failure row. */
@@ -84,6 +86,9 @@ const BASE_COLUMNS = [
 
 function seed(): Record<string, Array<Record<string, unknown>>> {
   return {
+    message_threads: [{ id: THREAD, is_e2ee: false }],
+    message_thread_members: [{ thread_id: THREAD, user_id: USER, left_at: null }],
+    profiles: [{ id: USER, preferred_language: 'es', auto_translate_messages: true }],
     message_translations: [
       {
         id: ROW,
@@ -102,6 +107,12 @@ function seed(): Record<string, Array<Record<string, unknown>>> {
     messages: [
       {
         id: MSG,
+        thread_id: THREAD,
+        sender_id: ROW,
+        created_at: '2026-01-01T00:00:00.000Z',
+        deleted_at: null,
+        ciphertext: null,
+        unsent_at: null,
         body: BODY,
         original_language: 'en',
         language_detection_source: 'provider',
@@ -158,13 +169,18 @@ function attemptsOf(sc: SchemaStrictClient): Array<Record<string, unknown>> {
 
 /** One sweep that produces exactly one `status: 'translated'` upsert. */
 async function sweep(sc: SchemaStrictClient, logger: Logger): Promise<void> {
+  const from = sc.from.bind(sc);
+  const blocks = makeFailClosedClient({ rows: { blocks: [] } });
+  sc.from = table => table === 'blocks' ? blocks.from(table) : from(table);
   await retranslateForUser(sc as any, USER, 'es', logger);
 }
 
 beforeEach(() => {
+  _setTestTranslationProvider(new MockTranslationProvider());
   // The flag is module-level and therefore shared by every test in this file.
   __resetConfidenceColumnProbe();
 });
+afterEach(() => _setTestTranslationProvider(null));
 
 // ── 1. New schema ────────────────────────────────────────────────────────────
 

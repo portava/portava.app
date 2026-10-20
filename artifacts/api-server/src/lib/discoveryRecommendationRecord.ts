@@ -635,3 +635,27 @@ export function screenFeaturesForStorage<V>(features: Readonly<Record<string, V>
 export function unclassifiedColumns(row: Readonly<Record<string, unknown>>): string[] {
   return Object.keys(row).filter((c) => !Object.prototype.hasOwnProperty.call(RANK_EVENTS_COLUMN_CLASSES, c));
 }
+
+export function discoveryExposureRowIdFor(recommendationId: string): string {
+  const bytes = createHash("sha256")
+    .update(JSON.stringify(["portava:discovery:exposure-row:v1", recommendationId]))
+    .digest().subarray(0, 16);
+  bytes[6] = (bytes[6]! & 0x0f) | 0x80;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+export function isDuplicateDiscoveryExposureRow(
+  error: unknown,
+  rows: ReadonlyArray<Record<string, unknown>>,
+): boolean {
+  if (isDuplicateExposureReplay(error)) return true;
+  const failure = error as { code?: unknown; message?: unknown; details?: unknown } | null;
+  if (failure?.code !== "23505" || !String(failure.message ?? "").includes('"rank_events_pkey"')) return false;
+  const conflict = /^Key \(id\)=\(([0-9a-f-]{36})\) already exists\.$/i.exec(String(failure.details ?? ""));
+  if (!conflict) return false;
+  return rows.some((row) => row.id === conflict[1]!.toLowerCase()
+    && isRecommendationId(row.recommendation_id)
+    && row.id === discoveryExposureRowIdFor(row.recommendation_id));
+}

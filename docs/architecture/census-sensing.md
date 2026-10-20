@@ -5045,12 +5045,12 @@ pass verified it, in the order the RED WHEN demands — claims into the context
 FIRST, checker over that context SECOND, *"because a checker over an empty
 context is vacuous"*:
 
-* The context half. `` `artifacts/api-server/src/routes/compass.ts:1853#liveClaimEvidence = live.evidence;` ``
+* The context half. `` `artifacts/api-server/src/routes/compass.ts:1856#liveClaimEvidence = live.evidence;` ``
   — `buildLiveClaimContext` pushes its lines onto the prompt and keeps the
   per-subject band it derived, on the request path, before any answer exists.
 * The checker half, on BOTH branches so streamed and non-streamed answers
-  cannot drift: `` `artifacts/api-server/src/routes/compass.ts:2020#groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence)` ``
-  and `` `artifacts/api-server/src/routes/compass.ts:2092#groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence)` ``.
+  cannot drift: `` `artifacts/api-server/src/routes/compass.ts:2023#groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence)` ``
+  and `` `artifacts/api-server/src/routes/compass.ts:2095#groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence)` ``.
   `groundCompassAnswer` merges the tool-log evidence with the context band
   and hands the union to `enforceCompassGroundingEnvelope`.
 * The proof is a REGISTERED suite, not a reading: `` `artifacts/api-server/src/test/compassGroundingLiveClaims.test.ts:99#describe("S79 part 1` ``
@@ -5079,15 +5079,15 @@ The row was scored W because `CompassTripContext` was *"trip grounding only:
 no world state, no opportunities, no disruptions, no sessions"*. Re-derived:
 
 * The five parts are a closed list the module exports and the test pins by
-  value: `` `artifacts/api-server/src/compass/CompassTripContext.ts:313#export const TRIP_WORLD_PARTS = ["world_state", "opportunities", "disruptions", "sessions", "crew"] as const;` ``.
+  value: `` `artifacts/api-server/src/compass/CompassTripContext.ts:274#export const TRIP_WORLD_PARTS = ["world_state", "opportunities", "disruptions", "sessions", "crew"] as const;` ``.
 * The projection is built from their EXISTING owners and computes nothing of
-  its own: `` `artifacts/api-server/src/compass/CompassTripContext.ts:409#export async function buildTripWorldContext(` ``
+  its own: `` `artifacts/api-server/src/compass/CompassTripContext.ts:370#export async function buildTripWorldContext(` ``
   takes the kernel this turn already assembled and the opportunity projection
   the ranker was handed, and reads disruptions, the viewer's open
   `ExperienceSession` and the crew on the trip itself.
 * It is on the request path, handed the same kernel and the same admitted
   opportunities the prompt gets, so the trip world cannot show a different
-  world from the ranker: `` `artifacts/api-server/src/routes/compass.ts:1935#const tripWorld = await buildTripWorldContext(sc, user.id, {` ``.
+  world from the ranker: `` `artifacts/api-server/src/routes/compass.ts:1938#const tripWorld = await buildTripWorldContext(sc, user.id, {` ``.
 * The suite: `` `artifacts/api-server/src/test/sensingConsumersTripWorld.test.ts:88#describe("S83 — the projection carries all five named parts"` ``
   — builds all five from a stub client that FILTERS per table, asserts a
   closed session is not an open one, that the disruption claim types are the
@@ -5189,7 +5189,7 @@ canonical intel evidence — account deletion, through `erase_intel_for_actor`
 — and the anonymous path's `purge_sensing_contributions_for_token()` has no
 route and no caller. So the reach runs inside the deletion, BEFORE the erase
 removes the observations the question is keyed on:
-`` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1224#{ name: "sensing_revocation_reach", subject: "sensing lineage reach — sessions resting on the erased evidence" },` ``,
+`` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1200#{ name: "sensing_revocation_reach", subject: "sensing lineage reach — sessions resting on the erased evidence" },` ``,
 through the service's one pager, calling
 `` `artifacts/api-server/src/services/accountDeletion/sensingRevocationReach.ts:141#export async function enumerateSensingRevocationReach(` ``,
 which is now `sessionRevocationReach`'s first non-test importer.
@@ -5405,7 +5405,7 @@ revoke is not a ban). The production points:
 | a member pauses one Circle context / pauses all / the session-end pause | `revokeCirclePresence` / `revokeAllCirclePresence` — helpers on the shaper, one line per handler. | `` `artifacts/api-server/src/routes/circle.ts:1345#revokeCirclePresence(user.id, type, id);` ``; `` `artifacts/api-server/src/lib/circleResponseShaper.ts:65#export function revokeCirclePresence(` `` |
 | the sweep deletes an expired row, or a trip or event ends | per row / `revokeCircleContext` per ended context | `` `artifacts/api-server/src/routes/circle.ts:2275#for (const tid of endedTripIds) revokeCircleContext("trip", tid);` `` |
 | an admin disables a context, or engages the kill switch | `revokeCircleContext` / `revokeEveryCirclePresence` | `` `artifacts/api-server/src/routes/circle.ts:2186#if (enabled) revokeEveryCirclePresence();` `` |
-| an account is deleted | `revokeSubject(user)` — every source, every scope; logged, deliberately NOT a receipt count (one process's cache is not a durable deletion). | `` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1363#{ userId, revokedPresenceEstimates: presenceFusion.revokeSubject(userId) },` `` |
+| an account is deleted | `revokeSubject(user)` — every source, every scope; logged, deliberately NOT a receipt count (one process's cache is not a durable deletion). | `` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1339#{ userId, revokedPresenceEstimates: presenceFusion.revokeSubject(userId) },` `` |
 
 **Mutation results, measured on the suite of 45** (each mutation applied,
 run, and reverted; the file was diffed clean afterwards):
@@ -5571,7 +5571,7 @@ refuses any `%observation%` column on `sensing_anon_contributions`.
 | Without 3311 (production today) the writer retries WITHOUT the column and logs it once — provenance degrades to "unrecorded", projection does not stop | `` `artifacts/api-server/src/lib/intelProjection.ts:520#async function writeWithProvenanceFallback<T extends Record<string, unknown>>(` ``; `` `artifacts/api-server/src/lib/intelProjection.ts:531#      { event: "intel.projection.provenance_unavailable", what, err: firstError },` `` |
 | The reach finds EXACTLY the snapshots resting on the erased ids, and reports which granularity it used | `` `artifacts/api-server/src/services/accountDeletion/sensingRevocationReach.ts:218#            .overlaps("input_observation_ids", part)` ``; `` `artifacts/api-server/src/services/accountDeletion/sensingRevocationReach.ts:106#  provenance: "exact" | "subject";` `` |
 | After the erase, every affected (subject, zone) is RE-PROJECTED from the evidence that remains, through the real aggregator and writer; any row that still names an erased id is RETRACTED in place and a retraction version is appended saying why | `` `artifacts/api-server/src/services/accountDeletion/sensingErasureRecompute.ts:118#export async function recomputeSnapshotsAfterErasure(` ``; `` `artifacts/api-server/src/services/accountDeletion/sensingErasureRecompute.ts:189#      .update({ privacy_eligible: false, expires_at: nowIso, input_observation_ids: [] })` ``; `` `artifacts/api-server/src/services/accountDeletion/sensingErasureRecompute.ts:210#      privacy_reason: "input_erased",` `` |
-| The deletion runs it as its own step, after the erase, and warns if any retraction failed | `` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1306#    const recomputeOk = await step(steps, "recompute_intel_snapshots_after_erase", async () => {` `` |
+| The deletion runs it as its own step, after the erase, and warns if any retraction failed | `` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1282#    const recomputeOk = await step(steps, "recompute_intel_snapshots_after_erase", async () => {` `` |
 
 **The effect, verified end to end rather than counted.** The last describe of
 `` `artifacts/api-server/src/test/sensingErasureRecompute.test.ts:216#describe("END TO END — the real aggregator and writer, a real erasure, a verified effect", () => {` ``
@@ -5729,7 +5729,7 @@ owner's and is not.
 | # | §21.4 blocker | Now |
 |---|---|---|
 | 2 | *"Nothing publishes. `publishThroughDifferencingGate` has no caller outside tests."* | `lib/sensingPublicationScheduler` is that caller: on its own clock, per live cohort of the current and previous privacy bucket, `readSensingCohort` → `aggregateSensingCohort` → `` `artifacts/api-server/src/lib/sensingPublicationScheduler.ts:225#    const decision = await publishThroughDifferencingGate(` ``. A cohort the k-gate withholds never reaches the gate or the store (`` `artifacts/api-server/src/lib/sensingPublicationScheduler.ts:219#    if (aggregate.publishable !== true) {` ``). Started at boot: `` `artifacts/api-server/src/index.ts:162#  startSensingPublicationScheduler();` ``. |
-| 3 | *"A Compass turn carries a city, not a sensing `zone_id`."* | The turn now carries the device's OWN coarse zone — the spatial bucket its capture stamps on its contributions, present only while capture runs (`` `travel-buddy-standalone/src/services/sensing/sensingCapture.ts:103#  currentZone(): string | null;` ``, registered by `` `travel-buddy-standalone/src/services/sensing/installSensingCapture.ts:154#    registerSensingZoneSource(() => running.currentZone());` ``, sent on both ask paths per `` `travel-buddy-standalone/src/services/__tests__/compass.sensingZone.test.ts:68#describe('the wiring, by source: both ask paths apply the rule to the body they send', () => {` ``). The route accepts it (`` `artifacts/api-server/src/routes/compass.ts:1131#  sensingZoneIds:      z.array(z.string().min(1).max(64)).max(5).optional(),` ``), turns it into the cohort refs of the current and previous bucket (`` `artifacts/api-server/src/compass/CompassSensingPresenceProducer.ts:254#export function sensingCohortRefsForZones(` ``, pure, bounded by the zone cap on the READS) and hands them to the producer (`` `artifacts/api-server/src/routes/compass.ts:1875#        sensingCohortRefsForZones(sensingZoneIds, turnNowMs),` ``). |
+| 3 | *"A Compass turn carries a city, not a sensing `zone_id`."* | The turn now carries the device's OWN coarse zone — the spatial bucket its capture stamps on its contributions, present only while capture runs (`` `travel-buddy-standalone/src/services/sensing/sensingCapture.ts:103#  currentZone(): string | null;` ``, registered by `` `travel-buddy-standalone/src/services/sensing/installSensingCapture.ts:171#    registerSensingZoneSource(() => running.currentZone());` ``, sent on both ask paths per `` `travel-buddy-standalone/src/services/__tests__/compass.sensingZone.test.ts:68#describe('the wiring, by source: both ask paths apply the rule to the body they send', () => {` ``). The route accepts it (`` `artifacts/api-server/src/routes/compass.ts:1134#  sensingZoneIds:      z.array(z.string().min(1).max(64)).max(5).optional(),` ``), turns it into the cohort refs of the current and previous bucket (`` `artifacts/api-server/src/compass/CompassSensingPresenceProducer.ts:254#export function sensingCohortRefsForZones(` ``, pure, bounded by the zone cap on the READS) and hands them to the producer (`` `artifacts/api-server/src/routes/compass.ts:1878#        sensingCohortRefsForZones(sensingZoneIds, turnNowMs),` ``). |
 | 1 | *"`surface` is not in `SENSING_ANON_GRANTED_SCOPES`"* | **Unchanged, deliberately.** Both the publisher and the producer test the scope BEFORE reading their flag and before any read: `` `artifacts/api-server/src/lib/sensingPublicationScheduler.ts:153#  if (!sensingPublicationScopeGranted(opts.policy ?? SENSING_ANON_POLICY_V1)) {` `` precedes `` `artifacts/api-server/src/lib/sensingPublicationScheduler.ts:161#  if (!(await isFlagEnabled(db, SENSING_PUBLICATION_FLAG))) return SKIPPED("capability_off");` ``. The frozen constant was not edited. |
 
 **Proven with the scope INJECTED through the seam, never granted.**
@@ -5900,7 +5900,7 @@ session: closing it.
 | The column, NOT NULL, GIN-indexed; and the projector's watermark no longer retracts a session memory it never wrote | `` `artifacts/api-server/src/migrations/3314_memory_projection_claim_refs.sql:113#      AND subject_type IS DISTINCT FROM 'experience_session'` `` |
 | The deletion reach enumerates other people's memories resting on the account's evidence, by overlap, and says when the column is absent | `` `artifacts/api-server/src/services/accountDeletion/sensingRevocationReach.ts:283#            .overlaps("claim_refs", part)` ``; `` `artifacts/api-server/src/services/accountDeletion/sensingRevocationReach.ts:128#  memoryStore: "persisted" | "column_absent";` `` |
 | After the snapshot recompute, each reached memory is RETAINED and its refs to withdrawn snapshots are removed, with the change recorded in its provenance | `` `artifacts/api-server/src/services/accountDeletion/sensingErasureRecompute.ts:261#export async function pruneMemoryLineageAfterErasure(` `` |
-| The deletion runs it as its own step, after the recompute, and fails the step on any failure | `` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1319#    const lineageOk = await step(steps, "prune_memory_lineage_after_erase", async () => {` `` |
+| The deletion runs it as its own step, after the recompute, and fails the step on any failure | `` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1295#    const lineageOk = await step(steps, "prune_memory_lineage_after_erase", async () => {` `` |
 
 **The effect, verified rather than counted.**
 `` `artifacts/api-server/src/test/accountDeletionSensingRevocationReach.test.ts:377#  it("AFTER the recompute, the reached memory is RETAINED and its references to WITHDRAWN snapshots are removed — its reference to a standing one is kept", async () => {` ``
@@ -6467,7 +6467,7 @@ applied, flipped or deployed: 3703 is applied nowhere and `sensing_consent_split
   The bundled Quick Signals / v2 path is no longer read: OD-MAP-6 forbids one grant for all three.
 - **The device obeys it.** The capture loop starts only under capture and drops every send unless upload
   is in effect, re-checking on foreground and on every Settings change
-  (`travel-buddy-standalone/src/services/sensing/installSensingCapture.ts:147#if (!uploadAllowed) return;`);
+  (`travel-buddy-standalone/src/services/sensing/installSensingCapture.ts:164#if (disposed || generation !== captureGeneration || !uploadAllowed) return;`);
   three switches in Settings, each OFF until turned on, OFF always reachable
   (`travel-buddy-standalone/src/components/intel/SensingConsentSection.tsx:42#export function SensingConsentSection() {`).
 
@@ -6522,7 +6522,7 @@ No row moves. S18, S24, S32 and S39 stay `W` for §33.3's reasons.
 
 The real `installSensingCapture` now runs against stand-ins: a fake consent reader with its change channel, a
 fake capture loop that records the `submit` the installer gives it, and a fake transport
-(`travel-buddy-standalone/src/services/sensing/__tests__/installSensingCapture.component.test.ts:103#describe('installSensingCapture obeys OD-MAP-6 on the device'`,
+(`travel-buddy-standalone/src/services/sensing/__tests__/installSensingCapture.component.test.ts:104#describe('installSensingCapture obeys OD-MAP-6 on the device'`,
 8 cases). The test shows:
 
 - **No loop starts** when capture is not granted, or when the consent cannot be read.
@@ -6565,4 +6565,29 @@ erasure/recompute evidence. §35's installer tests are already present, not an o
 Worker-local fixture results and this pass's metadata checks are separated in
 `docs/ops/small-area-corrections-20261015.md`. No database auditor, migration, deployment or native
 device was run here. Historical live observations remain dated observations, not newly checked facts.
+
+## §37 — 2026-10-16: immediate acoustic withdrawal and owned cleanup. NO ROW MOVES
+
+The twelve-file local repair denies capture immediately when a permission intent
+starts, before its ordered persistence write
+(`travel-buddy-standalone/src/services/sensing/acousticSensingPermission.ts:78#publish({ permission: ACOUSTIC_PERMISSION_DENIED`).
+Revision checks prevent delayed storage or OS-permission results from restoring
+an obsolete grant. The settings control reports persistence failure honestly;
+the installer, recording lifecycle and transport reject stale work. Cleanup is
+restricted to the owned temporary recording, serialized with its native work,
+and an uncertain release retains a safety hold instead of admitting a successor.
+Other microphone users and their permissions are not changed.
+
+Independent review accepts 132 author/neighbor cases and 26 additional probes.
+Parent's combined Sensing/Layover run passes 113 tests in five suites with
+open-handle detection; it is an overlapping integration subset, not 113 new
+requirements. Native hardware, durable storage failure followed by process
+death, deployment and actual contribution capture are not certified. In
+particular, the startup grant policy is unchanged: a failed durable withdrawal
+followed by process death can expose the prior persisted grant again. This
+limitation must not be hidden behind runtime-only denial.
+
+The thirteen W rows and §36's legal, policy, migration, release, pepper,
+separate-grant and real-device gates remain. No activation, new permission
+policy, census grade, total or `head_commit` changes.
 

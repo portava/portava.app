@@ -236,12 +236,28 @@ const PAYOUT_STATE: Record<PayoutSnapshot["state"], MonthlyPayoutState> = {
   failed: "failed", returned: "returned", canceled: "canceled", reversed: "canceled",
 };
 
-async function applyPayout(deps: PaymentSliceDeps, snap: PayoutSnapshot, occurredAt: string): Promise<WebhookEventOutcome | string> {
-  if (snap.reference === null) return "ignored"; // a payout the provider started on its own schedule: not one of ours
+async function applyPayout(deps: PaymentSliceDeps, snap: PayoutSnapshot, event: PaymentWebhookEvent): Promise<WebhookEventOutcome | string> {
+  if (snap.reference?.kind !== "rab_monthly_payout" || typeof snap.reference.id !== "string" || snap.reference.id.length === 0) return "ignored";
+  if (event.provider !== deps.provider.id || event.endpoint !== "connect" || event.accountRef !== snap.recipientRef ||
+    snap.kind !== "payout" || snap.livemode !== event.livemode) return "payout event binding mismatch";
+  const occurredAt = event.occurredAt;
   const found = await deps.store.findPayoutByRef(deps.provider.id, snap.payoutRef);
   if (!found.ok) return "store unreadable";
-  const payout = found.value;
+  const referenced = found.value ? found : await deps.store.getPayout(snap.reference.id);
+  if (!referenced.ok) return "store unreadable";
+  let payout = referenced.value;
   if (!payout) return "ignored";
+  if (payout.id !== snap.reference.id || payout.provider !== event.provider || payout.recipientRef !== snap.recipientRef ||
+    payout.amountMinor !== snap.amount.amountMinor || payout.currency !== snap.amount.currency ||
+    (payout.payoutRef !== null && payout.payoutRef !== snap.payoutRef)) return "payout record binding mismatch";
+  if (payout.payoutRef === null) {
+    if ((payout.state !== "planned" && payout.state !== "held") || payout.lastSnapshot !== null) return "payout cannot recover an unrecorded reference in this state";
+    const bound = await deps.store.transitionPayout(payout.id, [payout.state], {
+      state: "requested", payoutRef: snap.payoutRef, updatedAt: deps.now().toISOString(),
+    });
+    if (!bound.ok) return bound.conflict ? "payout changed concurrently" : "payout reference write failed";
+    payout = { ...payout, state: "requested", payoutRef: snap.payoutRef };
+  }
   if (!isNewer(payoutBody(payout.lastSnapshot), { kind: "payout", payout: snap }, bodyTime)) return "stale";
   const wasPaid = payout.lastSnapshot?.state === "paid";
   if (snap.state === "paid" && !wasPaid) {
@@ -310,7 +326,7 @@ export async function processPaymentWebhook(deps: PaymentSliceDeps, delivery: We
       case "payment_intent": result = await applyIntent(deps, event.body.intent, event.occurredAt); break;
       case "refund": result = await applyRefund(deps, event.body.refund); break;
       case "recipient": result = await applyRecipient(deps, event.body.recipient); break;
-      case "payout": result = await applyPayout(deps, event.body.payout, event.occurredAt); break;
+      case "payout": result = await applyPayout(deps, event.body.payout, event); break;
       case "dispute": result = await applyDispute(deps, event.body.dispute, event.occurredAt); break;
       default: result = "ignored";
     }

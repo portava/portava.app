@@ -130,6 +130,7 @@ function store(body: string): Record<string, any[]> {
     messages: [
       { id: MSG, thread_id: DM, sender_id: A, body, created_at: "2026-01-01T00:00:00.000Z",
         deleted_at: null, edited_at: null, original_language: null, language_detection_source: null,
+        ciphertext: null,
         msg_type: "voice", subtype: null, media_url: STORAGE_KEY, media_type: "audio",
         media_thumbnail_url: null, media_duration_seconds: 12, reply_to_id: null },
     ],
