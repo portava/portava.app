@@ -448,3 +448,95 @@ export async function replaySessionDecisions(
     truncated: rows.length > SESSION_REPLAY_LIMIT,
   };
 }
+
+// ── L190 — "what changed since the last answer", as a traveller is shown it ──
+//
+// The spec's north star asks Layover to answer "what changed since the last
+// answer". `diffSnapshots` above names the fields that differ, and its
+// `materiallyChanged` counts ANY usable-minute change. Usable time runs from the
+// later of now and the earliest exit to the hard return (LayoverSafetyEngine
+// computeWindow), so once the traveller is out it shrinks by exactly the minutes
+// that passed between two answers: a diff of two answers ten minutes apart
+// always "changed". A traveller told that on every refresh is told nothing.
+//
+// `travellerChangesOf` is what the app shows. Each field a traveller acts on,
+// with its value in BOTH answers, and usable time only when neither the clock
+// nor the moved deadline explains it (the window's START moved: a later arrival,
+// a longer exit). Values are the stored records' own; nothing is recomputed.
+// Appended at the tail so no cited line above moves; the route reads it through
+// `diffSnapshotsForTraveller`, which resolves exactly as `diffSnapshots` does.
+
+/** The fields a traveller acts on, in the order the app says them. */
+export const TRAVELLER_CHANGE_FIELDS = ["verdict", "returnState", "hardReturnTime", "usableMinutes", "confidence"] as const;
+export type TravellerChangeField = (typeof TRAVELLER_CHANGE_FIELDS)[number];
+
+export interface TravellerChange {
+  field: TravellerChangeField;
+  previous: string | number;
+  next: string | number;
+  /** `hardReturnTime` only: whole minutes the deadline moved, negative = earlier. */
+  minutesMoved?: number;
+}
+
+/** Both usable figures are whole minutes (Math.round), so their difference carries up to one minute of rounding. */
+export const USABLE_ROUNDING_TOLERANCE_MIN = 1;
+
+/**
+ * PURE. The changes between two stored answers that a traveller should be told
+ * about. `previous` is the older answer; an answer compared with itself, or one
+ * whose only movement is the clock, yields `[]`.
+ */
+export function travellerChangesOf(previous: DecisionRecord, next: DecisionRecord): TravellerChange[] {
+  const out: TravellerChange[] = [];
+  const p = previous.result, n = next.result;
+  if (p.verdict !== n.verdict) out.push({ field: "verdict", previous: p.verdict, next: n.verdict });
+  if (p.returnState !== n.returnState) out.push({ field: "returnState", previous: p.returnState, next: n.returnState });
+  const prevEnd = Date.parse(p.hardReturnTime), nextEnd = Date.parse(n.hardReturnTime);
+  const endMovedMin = Number.isFinite(prevEnd) && Number.isFinite(nextEnd) ? (nextEnd - prevEnd) / 60_000 : null;
+  if (p.hardReturnTime !== n.hardReturnTime) {
+    out.push({ field: "hardReturnTime", previous: p.hardReturnTime, next: n.hardReturnTime, ...(endMovedMin !== null ? { minutesMoved: Math.round(endMovedMin) } : {}) });
+  }
+  if (p.usableMinutes !== n.usableMinutes) {
+    // With the window's start and end unchanged, usable time can only lose the
+    // minutes that passed (0 before the exit, all of them after). Anything
+    // outside [moved deadline − elapsed, moved deadline] is the start moving.
+    const elapsedMin = Math.max(0, (Date.parse(next.computedAt) - Date.parse(previous.computedAt)) / 60_000);
+    const delta = n.usableMinutes - p.usableMinutes;
+    const shift = endMovedMin ?? 0;
+    const explained = endMovedMin !== null && Number.isFinite(elapsedMin)
+      && delta >= shift - elapsedMin - USABLE_ROUNDING_TOLERANCE_MIN
+      && delta <= shift + USABLE_ROUNDING_TOLERANCE_MIN;
+    if (!explained) out.push({ field: "usableMinutes", previous: p.usableMinutes, next: n.usableMinutes });
+  }
+  if (p.confidence !== n.confidence) out.push({ field: "confidence", previous: p.confidence, next: n.confidence });
+  return out;
+}
+
+export type TravellerDiffOutcome =
+  | { ok: true; diff: DecisionDiff; changes: TravellerChange[] }
+  | { ok: false; reason: SnapshotDiffRefusal };
+
+/**
+ * `diffSnapshots` plus `travellerChangesOf`, over the same resolution: the
+ * persistence flag first (OFF reads nothing), both ids through the replaying
+ * reader, another session's snapshot reported exactly as a missing one, and an
+ * unreadable ledger refused rather than diffed as empty.
+ */
+export async function diffSnapshotsForTraveller(
+  db: SupabaseClient,
+  sessionId: string,
+  previousSnapshotId: string,
+  nextSnapshotId: string,
+): Promise<TravellerDiffOutcome> {
+  if (!(await isFlagEnabled(db, "layover_decision_persistence_enabled"))) { // = DECISION_PERSISTENCE_FLAG, literal for check:flag-polarity
+    return { ok: false, reason: "persistence_disabled" };
+  }
+  const [prev, next] = await Promise.all([
+    decisionBySnapshotId(db, previousSnapshotId),
+    decisionBySnapshotId(db, nextSnapshotId),
+  ]);
+  if (!prev.ok || !next.ok) return { ok: false, reason: "read_failed" };
+  if (prev.value === null || next.value === null) return { ok: false, reason: "not_found" };
+  if (prev.value.sessionId !== sessionId || next.value.sessionId !== sessionId) return { ok: false, reason: "not_found" };
+  return { ok: true, diff: diffDecisions(prev.value, next.value), changes: travellerChangesOf(prev.value, next.value) };
+}

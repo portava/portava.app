@@ -5092,7 +5092,7 @@ export async function mapBandedStops(sc: any, airport: AirportProfile, record: L
 // `{ state: "not_stored" }`. A snapshot of another session is a 404, exactly
 // like a missing one; an unreadable or unreplayable row is a 503, never a diff.
 
-import { diffSnapshots } from "../services/layover/LayoverDecisionService.js";
+import { diffSnapshotsForTraveller } from "../services/layover/LayoverDecisionService.js"; // `changes`: what a traveller is told changed (the app's "since your last answer" card)
 
 const SNAPSHOT_ID_RE = /^snap:[0-9a-f]{32}$/;
 
@@ -5113,8 +5113,8 @@ router.get("/airport/sessions/:id/decisions/diff", async (req, res) => {
   const session = await ownedSessionOr(res, sc, req.params.id, auth.user.id);
   if (!session) return;
 
-  const out = await diffSnapshots(sc, session.id, from, to);
-  if (out.ok) { res.json({ featureEnabled: true, state: "stored", diff: out.diff }); return; }
+  const out = await diffSnapshotsForTraveller(sc, session.id, from, to);
+  if (out.ok) { res.json({ featureEnabled: true, state: "stored", diff: out.diff, changes: out.changes }); return; }
   if (out.reason === "persistence_disabled") { res.json({ featureEnabled: true, state: "not_stored", reason: "persistence_disabled" }); return; }
   if (out.reason === "not_found") { sendError(res, "not_found", "Snapshot not found"); return; }
   sendError(res, "degraded_unavailable", "Your layover's decision history could not be read. Please try again.");

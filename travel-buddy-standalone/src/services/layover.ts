@@ -2984,3 +2984,68 @@ export async function getLayoverSafeReturnProduct(sessionId:string):Promise<Layo
   if (!res.ok) throw new Error('Safe Return could not be checked.');
   return await res.json() as LayoverSafeReturnProductState;
 }
+
+// ── census-layover L190 — "what changed since the last answer" ───────────────
+//
+//   GET /api/airport/sessions/:id/decisions/diff?from=<snapshotId>&to=<snapshotId>
+//
+// The client caller for `LayoverDecisionService.diff(previousSnapshotId,
+// nextSnapshotId)`. `changes` is the server's list of what a traveller is told
+// moved between two STORED answers (verdict, return state, the be-back-by time
+// with the minutes it moved, usable time only when the clock does not explain
+// it, confidence); the reason codes come from `diff`. Every refusal resolves as
+// the code it is: nothing here compares two answers itself or invents a value.
+
+export type LayoverChangeField = 'verdict' | 'returnState' | 'hardReturnTime' | 'usableMinutes' | 'confidence';
+
+export interface LayoverAnswerChange {
+  field: LayoverChangeField | string;
+  previous: string | number;
+  next: string | number;
+  /** `hardReturnTime` only: whole minutes the deadline moved, negative = earlier. */
+  minutesMoved?: number;
+}
+
+export type LayoverAnswerChangesRead =
+  | { ok: true; previousSnapshotId: string; nextSnapshotId: string; changes: LayoverAnswerChange[]; reasonCodesAdded: string[]; reasonCodesRemoved: string[] }
+  /** The ledger did not store answers (persistence off): there is nothing to compare. */
+  | LayoverDecisionUnavailable
+  | LayoverDecisionFailed;
+
+function answerChangesOf(v: unknown): LayoverAnswerChange[] | null {
+  if (!Array.isArray(v)) return null;
+  const out: LayoverAnswerChange[] = [];
+  for (const c of v) {
+    if (!c || typeof c !== 'object') return null;
+    const o = c as Record<string, unknown>;
+    const scalar = (x: unknown) => typeof x === 'string' || (typeof x === 'number' && Number.isFinite(x));
+    if (typeof o.field !== 'string' || !scalar(o.previous) || !scalar(o.next)) return null;
+    out.push({
+      field: o.field, previous: o.previous as string | number, next: o.next as string | number,
+      ...(typeof o.minutesMoved === 'number' && Number.isFinite(o.minutesMoved) ? { minutesMoved: o.minutesMoved } : {}),
+    });
+  }
+  return out;
+}
+
+/** census L190 — what changed between the answer the traveller last saw (`from`) and the one on screen (`to`). */
+export async function getLayoverAnswerChanges(sessionId: string, from: string, to: string): Promise<LayoverAnswerChangesRead> {
+  const url = `${airportUrl('sessions', encodeURIComponent(sessionId), 'decisions', 'diff')}?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+  const read = await decisionRead(url);
+  if (!read.ok) return read;
+  const { json } = read;
+  if (json.state === 'not_stored') return unavailableOf(json);
+  const diff = json.diff as Record<string, unknown> | undefined;
+  const changes = answerChangesOf(json.changes);
+  if (json.state === 'stored' && diff && typeof diff === 'object' && changes) {
+    return {
+      ok: true,
+      previousSnapshotId: typeof diff.previousSnapshotId === 'string' ? diff.previousSnapshotId : from,
+      nextSnapshotId: typeof diff.nextSnapshotId === 'string' ? diff.nextSnapshotId : to,
+      changes,
+      reasonCodesAdded: stringList(diff.reasonCodesAdded),
+      reasonCodesRemoved: stringList(diff.reasonCodesRemoved),
+    };
+  }
+  return { ok: false, kind: 'failed', message: 'Portava answered, but not with anything this version of the app can show.', retryable: false };
+}
