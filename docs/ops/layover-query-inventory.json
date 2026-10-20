@@ -9552,24 +9552,6 @@
       "name": "id"
     },
     {
-      "file": "src/services/layover/LayoverObservationService.ts",
-      "line": 540,
-      "via": null,
-      "kind": "table",
-      "method": "from",
-      "table": "trust_profiles",
-      "name": "trust_profiles"
-    },
-    {
-      "file": "src/services/layover/LayoverObservationService.ts",
-      "line": 540,
-      "via": null,
-      "kind": "select",
-      "method": "select",
-      "table": "trust_profiles",
-      "name": "overall_score"
-    },
-    {
       "file": "src/services/layover/LayoverPresenceStore.ts",
       "line": 166,
       "via": null,
@@ -18507,15 +18489,6 @@
       "name": "submission_token"
     },
     {
-      "file": "src/services/layover/LayoverObservationService.ts",
-      "line": 540,
-      "via": null,
-      "kind": "filter",
-      "method": "eq",
-      "table": "trust_profiles",
-      "name": "user_id"
-    },
-    {
       "file": "src/services/layover/LayoverOutcomeStore.ts",
       "line": 130,
       "via": null,
@@ -21011,15 +20984,6 @@
       ]
     },
     {
-      "file": "src/services/layover/LayoverObservationService.ts",
-      "line": 540,
-      "via": null,
-      "table": "trust_profiles",
-      "variants": [
-        "overall_score"
-      ]
-    },
-    {
       "file": "src/services/layover/LayoverPresenceStore.ts",
       "line": 166,
       "via": null,
@@ -22727,7 +22691,9 @@
       "line": 8,
       "method": "POST",
       "path": "/airport/sessions/:id/current-position-check",
-      "authorization": [],
+      "authorization": [
+        "requireUser"
+      ],
       "audit": "3890 atomic protected-table trigger; verified request actor from global HTTP middleware, explicit system identity for the credentialed event producer"
     },
     {
@@ -22775,7 +22741,9 @@
       "line": 42,
       "method": "GET",
       "path": "/airport/sessions/:id/experiences/plan/map",
-      "authorization": [],
+      "authorization": [
+        "requireUser"
+      ],
       "audit": "3890 atomic protected-table trigger; verified request actor from global HTTP middleware, explicit system identity for the credentialed event producer"
     },
     {

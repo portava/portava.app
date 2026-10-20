@@ -40,8 +40,8 @@ export default router;
 import { readExperienceGeometry } from '../services/airport/LayoverExperienceGeometry.js';
 const mapQuery=z.object({planId:z.string().uuid(),version:z.coerce.number().int().positive()}).strict();
 router.get('/airport/sessions/:id/experiences/plan/map',asyncHandler(async(req,res)=>{
-  res.setHeader('Cache-Control','private, no-store');
   const auth=await requireUser(req,res);if(!auth)return;
+  res.setHeader('Cache-Control','private, no-store'); // after the guard: the authorization guard is the handler's FIRST statement (layoverQueryInventory.test.ts)
   const parsed=mapQuery.safeParse(req.query);if(!parsed.success){sendError(res,'invalid_payload','Choose the current reviewed plan.');return;}
   const db=getServiceClient();if(!db){sendError(res,'server_not_configured');return;}
   if(!await isFlagEnabled(db,'airport_mode_enabled')){sendError(res,'feature_disabled');return;}

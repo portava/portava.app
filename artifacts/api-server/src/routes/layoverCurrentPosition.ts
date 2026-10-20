@@ -6,7 +6,7 @@ import { asyncHandler } from '../lib/asyncHandler.js';
 import { currentPositionRequestSchema, previewCurrentPosition } from '../services/airport/LayoverCurrentPosition.js';
 const router=Router();
 router.post('/airport/sessions/:id/current-position-check',asyncHandler(async(req,res)=>{
-  res.setHeader('Cache-Control','no-store');const auth=await requireUser(req,res);if(!auth)return;
+  const auth=await requireUser(req,res);if(!auth)return;res.setHeader('Cache-Control','no-store'); // the authorization guard is the handler's FIRST statement (layoverQueryInventory.test.ts)
   const db=getServiceClient();if(!db){sendError(res,'server_not_configured');return;}
   if(!await isFlagEnabled(db,'airport_mode_enabled')){sendError(res,'feature_disabled');return;}
   const parsed=currentPositionRequestSchema.safeParse(req.body);if(!parsed.success){sendError(res,'invalid_payload','A current, accurate location and a current recommendation are required.');return;}
