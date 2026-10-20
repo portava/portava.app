@@ -405,6 +405,10 @@ describe("B1-F flight data and connections — PRESSED (3826/3827/3828 + flags O
   });
 
   it("P12 L259 — the flight-subject reads are served by 3827's indexes", async () => {
+    // Give the planner a selective population. On a six-row fixture PostgreSQL
+    // legitimately prefers the status index; that says nothing about this index.
+    const population = await db.seedUser("flight-index-population");
+    await db.exec(`INSERT INTO public.layover_sessions(user_id,arrival_time,departure_time,status) SELECT '${population.id}',now(),now()+interval '6 hours','active' FROM generate_series(1,10000); ANALYZE public.layover_sessions;`);
     for (const [col, idx] of [["arrival_segment_id", "layover_sessions_arrival_segment_idx"], ["departure_segment_id", "layover_sessions_departure_segment_idx"]]) {
       const plan = String(await (db as any).explain(`SELECT * FROM public.layover_sessions WHERE ${col} IN ('${bobOut.id}', '${bobIn.id}') AND status = 'active'`));
       assert.match(plan, new RegExp(`"Index Name":\\s*"${idx}"`), `${col}: ${plan.slice(0, 300)}`);
