@@ -435,3 +435,33 @@ describe("moveLegacyReport: every outcome is said, nothing is guessed", () => {
     assert.deepEqual([row.status, row.reviewed_by, row.reviewed_at, row.moderation_notes], ["in_review", FLAGGER, at(40), "flagged"]);
   });
 });
+
+/**
+ * The UNRESOLVED_ALLOWLIST entries for select(LEGACY_REPORT_CLOSE_READ) — admin.ts ×4,
+ * adminMedia.ts ×1 — rest on one arrangement: every column the constant names is ALSO
+ * selected as a literal on `reports` in adminMedia.ts, where check:write-path-columns
+ * resolves it and checks it against the live schema. legacyReportClose.ts does not select
+ * through its own constant, so nothing else holds that cover in place. Pinned here: a
+ * column added to the constant alone turns this red instead of going unchecked.
+ */
+describe("LEGACY_REPORT_CLOSE_READ's allowlist entry is earned, not assumed", () => {
+  it("every column it reads is selected as a literal on reports in a file the live check scans", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { LEGACY_REPORT_CLOSE_READ } = await import("../lib/legacyReportClose.js");
+    const cols = LEGACY_REPORT_CLOSE_READ.split(",").map((c) => c.trim());
+    assert.ok(cols.length > 0 && cols.every((c) => /^[a-z_]+$/.test(c)), "a plain column list, nothing embedded");
+    const media = readFileSync(new URL("../routes/adminMedia.ts", import.meta.url), "utf8");
+    const literal = new Set(
+      [...media.matchAll(/\.from\("reports"\)\s*\.select\("([^"]+)"/g)].flatMap((m) => (m[1] ?? "").split(",").map((c) => c.trim())),
+    );
+    const unchecked = cols.filter((c) => !literal.has(c));
+    assert.deepEqual(unchecked, [], `no literal list selects these, so nothing checks them live: ${unchecked.join(", ")}`);
+  });
+
+  it("the allowlist names exactly these sites — a changed count must be re-argued, not absorbed", async () => {
+    const { readFileSync } = await import("node:fs");
+    const guard = readFileSync(new URL("../scripts/checkWritePathColumns.ts", import.meta.url), "utf8");
+    assert.ok(guard.includes('["src/routes/admin.ts|select|select list not statically resolvable", 4],'));
+    assert.ok(guard.includes('["src/routes/adminMedia.ts|select|select list not statically resolvable", 1],'));
+  });
+});
