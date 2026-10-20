@@ -252,10 +252,10 @@ describe("census L239 — one layover walks detection → … → completion ove
  * pins both halves.
  *
  * It is NOT `C`. "visa-free" is unrepresentable — there is no entry-permission
- * field on `layover_sessions` (census L34, `N`) — and the contract's `route` is
- * hard-`null` with `routeUnavailableReason: "no_routing_provider"`, so a
- * traveller is told WHEN to leave and never HOW to get back. Both are asserted
- * so the case fails the day either changes.
+ * field on `layover_sessions` (census L34, `N`). The route changed on ee52da82 (tracker "### L221": "routed abort …
+ * implemented", from an "actual fresh origin"): `return-now` routes back from a FRESH client origin, so this abort, which
+ * sends none, gets `route: null` with `routeUnavailableReason: "origin_unavailable"` (no longer the hard-coded
+ * "no_routing_provider"). Both are asserted so the case fails the day either changes.
  */
 describe("census L221 — 6h international at a curated airport: landside, with the contract", () => {
   it("the window reaches the city and the abort hands back a full return contract", async () => {
@@ -285,9 +285,9 @@ describe("census L221 — 6h international at a curated airport: landside, with 
     assert.ok(c.certification?.inputHash, "the contract names the computation behind it");
     assert.equal(c.airport.iataCode, "TPE");
 
-    // The half that is still missing, asserted rather than assumed.
+    // No origin was sent, so there is no measured route back — asserted rather than assumed.
     assert.equal(c.route, null, "there is no route back — only a deadline");
-    assert.equal(c.routeUnavailableReason, "no_routing_provider");
+    assert.equal(c.routeUnavailableReason, "origin_unavailable", "an abort without a fresh origin names that, not a missing provider");
   });
 
   it("the 'visa-free' half of L221 has no field to carry it", async () => {
