@@ -286,15 +286,21 @@ describe("structural — no hand-rolled bearer verification outside lib/http.ts 
       const text = fs.readFileSync(file, "utf8");
       // Any VALUE import that can reach the package's createClient — by name, under an alias, or
       // through a namespace / default import. `import type …` and `type X` specifiers cannot.
-      const importRe = /import\s+(type\s+)?([^;]*?)\s+from\s+["']@supabase\/supabase-js["']/g;
-      let m: RegExpExecArray | null;
-      while ((m = importRe.exec(text)) !== null) {
-        if (m[1]) continue;
-        const clause = m[2]!.trim();
-        const named = /\{([^}]*)\}/.exec(clause);
-        const outsideBraces = clause.replace(/\{[^}]*\}/, "").replace(/,/g, "").trim();
-        const reaches = outsideBraces !== "" ||
-          (named?.[1] ?? "").split(",").some((spec) => /^\s*createClient\b/.test(spec));
+      //
+      // Read from the PARSED import declarations, not from raw text. The text regex this replaced
+      // matched the word `import` in PROSE: services/layover/layoverActiveSnapshotRead.ts's header
+      // says "no import of the decision store … without an import cycle" with no `;` before its
+      // real `import type { SupabaseClient } from "@supabase/supabase-js"`, so the lazy match ran
+      // from the comment into that type-only import and reported a client builder that does not
+      // exist. A declaration the compiler sees is exactly an import; a comment never is one.
+      const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+      for (const st of sf.statements) {
+        if (!ts.isImportDeclaration(st) || !ts.isStringLiteral(st.moduleSpecifier) || st.moduleSpecifier.text !== "@supabase/supabase-js") continue;
+        const clause = st.importClause;
+        if (!clause || clause.isTypeOnly) continue;
+        const nb = clause.namedBindings;
+        const reaches = clause.name !== undefined || (nb !== undefined && ts.isNamespaceImport(nb)) ||
+          (nb !== undefined && ts.isNamedImports(nb) && nb.elements.some((e) => !e.isTypeOnly && (e.propertyName ?? e.name).text === "createClient"));
         if (reaches) offenders.push(rel);
       }
     }
