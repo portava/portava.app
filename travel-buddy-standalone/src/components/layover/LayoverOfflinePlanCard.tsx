@@ -33,9 +33,9 @@
  * said plainly. Neither is computed here.
  *
  * ── WHAT IS NOT HERE ─────────────────────────────────────────────────────────
- * No route (there is no routing provider) and no flight or gate status (no
- * flight feed). Those are L152 and L153, and each is a server-side absence; none
- * is papered over here. The crew meeting point (L154) IS here since
+ * No route (L152): a provider's directions are not cached. The onward flight's
+ * last RECORDED gate/status (L153) is, since 2026-10-20 (LayoverCachedFlightStatus),
+ * stale-badged from its observation; a typed schedule never is. The crew meeting point (L154) IS here since
  * census-layover §48, and the return phrases (L155) since §55 — the cached set,
  * in the airport's language with the English beside it, or why there is none.
  */
@@ -146,7 +146,7 @@ export function LayoverOfflinePlanCard({ plan, replan, nowMs }: Props) {
         </View>
       )}
 
-      {/* §16 L154 — where to meet the crew, or why that is not saved. The same
+      <LayoverCachedFlightStatus cap={plan.flightStatus} timezone={plan.airport.timezone} nowMs={nowMs} />{/* §16 L153: the onward flight's last recorded values, stale-badged. §16 L154 — where to meet the crew, or why that is not saved. The same
           words the online card uses; a failed crew read is never "no crew". */}
       <Text style={styles.stopText} testID="layover-cached-plan-crew-point">
         {describeCrewMeetingPointCapability(plan.crewMeetingPoint).sentence}
@@ -219,3 +219,4 @@ const styles = StyleSheet.create({
 
 import { LayoverRoutedMapPanel } from './LayoverRoutedMapPanel.tsx';
 import { LayoverPhraseOptions } from './LayoverPhraseOptions.tsx';
+import { LayoverCachedFlightStatus } from './LayoverCachedFlightStatus.tsx';

@@ -846,7 +846,7 @@ export default function LayoverDashboardScreen() {
             ) : null}
           </View>
         ) : null}
-        {/* §2.1/§22 (census L9, L250): the card says which rung of the fallback
+        <LayoverReentryCard reentry={overview.reentry} timezone={airport.timezone} nowMs={nowMs} />{/* census L43: back at the airport, gate context replaces exploration. §2.1/§22 (census L9, L250): the card says which rung of the fallback
             ladder these minutes came off. The server derives it from the
             certified record; this screen only forwards it. */}
         <CanILeaveCard
@@ -1194,3 +1194,4 @@ import { LayoverObjectiveIntentCard } from '../../src/components/layover/Layover
 import { LayoverTimingEvidenceCard } from '../../src/components/layover/LayoverTimingEvidenceCard.tsx';
 import { LayoverCurrentPositionCard } from '../../src/components/layover/LayoverCurrentPositionCard.tsx';
 import { LayoverAnswerChangesCard } from '../../src/components/layover/LayoverAnswerChangesCard.tsx';
+import { LayoverReentryCard } from '../../src/components/layover/LayoverReentryCard.tsx';

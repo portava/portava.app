@@ -44,9 +44,9 @@
  *
  * ── WHAT IS STILL NOT CACHED, AND WHY ────────────────────────────────────────
  *   L152 route         no routing provider exists to cache from.
- *   L153 flight/gate   `flightStatus: unavailable("no_flight_feed")`; the
- *                      traveller's own typed schedule is not a confirmed
- *                      flight status and must not be dressed up as one.
+ *   (L153 flight/gate  CACHED since 2026-10-20 when an observation was recorded
+ *                      — see `normaliseFlightStatus`; the traveller's typed
+ *                      schedule alone is still not one and is never cached as one.)
  *   (L154 crew point   CACHED since census-layover §48 — see
  *                      `CachedLayoverPlan.crewMeetingPoint`.)
  *   L155 phrases       `no_phrase_catalogue` — there is nothing to cache.
@@ -54,7 +54,7 @@
  * papered over here.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { LayoverOfflineBundle, LayoverPhraseSet, LayoverSafeEnvelope, OfflineCapability } from '../services/layover.ts';
+import type { LayoverOfflineBundle, LayoverOfflineFlightStatus, LayoverPhraseSet, LayoverSafeEnvelope, OfflineCapability } from '../services/layover.ts';
 
 /**
  * Bumped whenever the stored SHAPE changes. A record written by another version
@@ -111,7 +111,7 @@ export interface CachedPlanSchedule {
   boardingTime: string | null;
 }
 
-export interface CachedLayoverPlan { abortReturnRoute?: AbortReturnRoute | null; routedMap?: RoutedMapData | null;
+export interface CachedLayoverPlan { abortReturnRoute?: AbortReturnRoute | null; routedMap?: RoutedMapData | null; /** §16 L153 — the onward flight's last recorded values as the bundle answered them; `null`/absent = no answer saved (ADDITIVE, no version bump). */ flightStatus?: OfflineCapability<LayoverOfflineFlightStatus> | null;
   sessionId: string;
   /** The server's own bundle-shape version, carried so support can read it. */
   bundleVersion: string;
@@ -275,7 +275,7 @@ export async function cacheCertifiedPlan(
           }
         : null,
     crewMeetingPoint: normaliseCrewPoint(bundle.crewMeetingPoint),
-    translationPhrases: normalisePhrases(bundle.translationPhrases),
+    translationPhrases: normalisePhrases(bundle.translationPhrases), flightStatus: normaliseFlightStatus(bundle.flightStatus),
     cachedAt: new Date().toISOString(), routedMap: routedMapForStorage(routedMap === undefined ? (await readCachedPlan(sessionId))?.routedMap : routedMap), abortReturnRoute: await readCachedAbortReturnRoute(sessionId),
   };
 
@@ -356,7 +356,7 @@ export async function readCachedPlan(sessionId: string): Promise<CachedLayoverPl
           }
         : null,
     crewMeetingPoint: normaliseCrewPoint(rec.crewMeetingPoint),
-    translationPhrases: normalisePhrases(rec.translationPhrases),
+    translationPhrases: normalisePhrases(rec.translationPhrases), flightStatus: normaliseFlightStatus(rec.flightStatus),
     cachedAt: isNonEmptyString(rec.cachedAt) ? rec.cachedAt : rec.certifiedAt, abortReturnRoute: await readCachedAbortReturnRoute(sessionId), routedMap: routedMapForStorage(rec.routedMap),
   };
 }
@@ -517,4 +517,48 @@ function normalisePhraseOptions(v: Record<string, unknown>): Pick<LayoverPhraseS
     languageOptions.push({ language: o.language, languageName: o.languageName, phrases: main, stops });
   }
   return { languageOptions, reviewStatus: 'native_review_pending' };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §16 L153 — "Flight/gate: cache last confirmed values with stale indicator"
+// (census-layover L153; appended so no cited line above moves)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The bundle's `flightStatus` is the onward flight's last RECORDED observation
+// (the traveller's own or an approved feed's), with who recorded it, when, and
+// the server's `staleAfter` — the bundle TTL from the observation instant. It is
+// kept VERBATIM: the bound is never renewed at write time, so an hour-old gate
+// read back offline is still an hour old. A value missing its source, its
+// instant or its bound is no answer rather than a guessed one, and the server's
+// "no" (`no_flight_observation`, `flight_unreadable`, …) is kept as said.
+function isoInstant(v: unknown): v is string {
+  return isNonEmptyString(v) && Number.isFinite(Date.parse(v));
+}
+
+export function normaliseFlightStatus(raw: unknown): OfflineCapability<LayoverOfflineFlightStatus> | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const cap = raw as Record<string, unknown>;
+  const reason = isNonEmptyString(cap.reason) ? (cap.reason as OfflineCapability<LayoverOfflineFlightStatus>['reason']) : null;
+  const v = cap.value as Record<string, unknown> | null | undefined;
+  if (cap.available !== true || !v || typeof v !== 'object') return { available: false, value: null, reason };
+  if (!isNonEmptyString(v.status) || !isNonEmptyString(v.source) || !isoInstant(v.observedAt) || !isoInstant(v.staleAfter)) {
+    return { available: false, value: null, reason };
+  }
+  const text = (x: unknown): string | null => (isNonEmptyString(x) ? x : null);
+  return {
+    available: true,
+    reason: null,
+    value: {
+      designator: text(v.designator),
+      departureAirport: text(v.departureAirport),
+      scheduledDepartureAt: isoInstant(v.scheduledDepartureAt) ? v.scheduledDepartureAt : null,
+      estimatedDepartureAt: isoInstant(v.estimatedDepartureAt) ? v.estimatedDepartureAt : null,
+      terminal: text(v.terminal),
+      gate: text(v.gate),
+      status: v.status,
+      source: v.source,
+      observedAt: v.observedAt,
+      staleAfter: v.staleAfter,
+    },
+  };
 }
