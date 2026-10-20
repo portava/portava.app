@@ -52,7 +52,7 @@ const OTHER = "22222222-2222-2222-2222-222222222222";
 const TRIP_ID = "33333333-3333-3333-3333-333333333333";
 const CIRCLE_ID = "44444444-4444-4444-4444-444444444444";
 const TARGET_ID = "55555555-5555-5555-5555-555555555555";
-const SESSION_ID = "66666666-6666-6666-6666-666666666666";
+const SESSION_ID = "66666666-6666-6666-6666-666666666666"; const AIRPORT_ID = "88888888-8888-8888-8888-888888888888";
 const EVENT_ID = "77777777-7777-7777-7777-777777777777";
 
 const BLOCKS_ERROR = { code: "57014", message: "simulated blocks read failure" };
@@ -115,7 +115,8 @@ function makeClient() {
       _limit: null as number | null,
       _single: false,
       _head: false,
-      select(_c?: string, o?: any) { if (o?.head) obj._head = true; return obj; },
+      _cols: null as string | null,
+      select(_c?: string, o?: any) { obj._cols = _c ?? null; if (o?.head) obj._head = true; return obj; },
       insert() { return obj; },
       update() { return obj; },
       upsert() { return obj; },
@@ -152,6 +153,11 @@ function makeClient() {
       }
       if (table === "profiles") {
         const id = obj._filters.find(([c]: [string, any]) => c === "id")?.[1];
+        // B2-BUDDY (census-layover L273): the layover buddies list serves only a
+        // `layover` specialist whose owner holds a current identity level
+        // (LayoverBuddyBooking.ts verifiedLayoverSpecialists). Only that read asks
+        // for this one column, so no other route here sees a changed profile.
+        if (obj._cols === "verification_level") return { data: id === OTHER ? { verification_level: "id_verified" } : null, error: null, count: null };
         const handle = obj._filters.find(([c]: [string, any]) => c === "handle" || c === "username")?.[1];
         if (obj._single) return { data: PROFILE(id ?? (handle ? OTHER : OTHER)), error: null, count: null };
         return { data: [PROFILE(VIEWER), PROFILE(OTHER)], error: null, count: 2 };
@@ -168,6 +174,17 @@ function makeClient() {
           "airport_buddies_enabled",
           "stamp_system_v2_enabled",
           "rent_buddy_enabled",
+          // B2-BUDDY (census-layover L273): the buddies route also asks the
+          // specialist flag before it reads rent_buddy_profiles; off, it answers
+          // `rent_buddy_not_enabled` and the block read is never reached.
+          "layover_buddy_specialist_enabled",
+          // Owner decision 2026-10-18 (services/airport/layoverEntryGate.ts
+          // ENTRY_POLICY_FAIL_CLOSED, LAYOVER 165 lane B2-CURATE): an unconfirmed
+          // entry corridor closes landside in every flag state, so the buddies
+          // control must STATE a confirmed corridor (as helpers/confirmedCorridor.ts
+          // does for the table-backed fakes): this flag, the viewer's passport and
+          // a curated visa-free corridor below.
+          "passport_entry_intelligence_enabled",
         ]);
         return { data: on.has(flag) ? { flag, enabled: true } : { flag, enabled: false }, error: null, count: null };
       }
@@ -194,21 +211,65 @@ function makeClient() {
       }
       if (table === "layover_sessions") {
         const row = {
-          id: SESSION_ID, user_id: VIEWER, airport_id: null, trip_id: null,
-          // DAYTIME at the fallback (UTC) airport: the buddies route requires a
+          // A STORED airport, not the manual fallback: since the owner's
+          // 2026-10-18 decision (LAYOVER 165 lane B2-CURATE, layoverMaturityGate.ts
+          // "ENFORCED, NOT FLAGGED") a fallback profile carries the uncurated
+          // projection, is L0, and closes landside as `airport_maturity_limited` —
+          // so the control would never reach the block read.
+          id: SESSION_ID, user_id: VIEWER, airport_id: AIRPORT_ID, trip_id: null,
+          // DAYTIME at the airport (08:00–16:00 Asia/Bangkok): the buddies route requires a
           // verified non-new buddy when the landside window touches 22:00–06:00
           // local (census-layover L254 night arm), and this control's buddy is
           // `new`. A midnight window would turn the control into a night case.
-          arrival_time: "2099-01-01T08:00:00.000Z", departure_time: "2099-01-01T16:00:00.000Z",
+          arrival_time: "2099-01-01T01:00:00.000Z", departure_time: "2099-01-01T09:00:00.000Z",
           manual_city: "Bangkok", manual_country: "Thailand", manual_iata: "BKK",
           status: "active", share_city_status: false, flight_type: "international",
         };
         return obj._single ? { data: row, error: null, count: null } : { data: [row], error: null, count: 1 };
       }
+      // The buddy's owner is a VERIFIED layover specialist (L273): a current
+      // live-mode adult identity, a verified payout recipient and no hosting
+      // restriction — the three reads `verifiedLayoverSpecialists` makes.
+      if (table === "airport_profiles") {
+        // A row from a database without 3874's curation columns (production
+        // today): the legacy profile, as helpers/fakeLayoverDb.ts airportRow().
+        const id = obj._filters.find(([c]: [string, any]) => c === "id")?.[1];
+        const row = id === AIRPORT_ID ? {
+          id: AIRPORT_ID, iata_code: "BKK", name: "Suvarnabhumi Airport", city: "Bangkok", country: "Thailand", country_code: "TH",
+          timezone: "Asia/Bangkok", lat: 13.69, lng: 100.7501, domestic_buffer_min: 60, domestic_buffer_max: 90,
+          international_buffer_min: 120, international_buffer_max: 180, immigration_extra_min: 30, checked_bags_extra_min: 15,
+          traffic_extra_min: 20, verified: false,
+        } : null;
+        return obj._single ? { data: row, error: null, count: null } : { data: row ? [row] : [], error: null, count: row ? 1 : 0 };
+      }
+      if (table === "traveler_passports") {
+        const uid = obj._filters.find(([c]: [string, any]) => c === "user_id")?.[1];
+        const rows = uid === VIEWER ? [{ issuing_country: "US", is_primary: true, created_at: "2026-01-01T00:00:00.000Z" }] : [];
+        return { data: rows, error: null, count: rows.length };
+      }
+      if (table === "entry_requirements") {
+        const from = obj._filters.find(([c]: [string, any]) => c === "passport_country")?.[1];
+        const to = obj._filters.find(([c]: [string, any]) => c === "destination_country")?.[1];
+        const row = from === "US" && to === "TH" ? { passport_country: "US", destination_country: "TH", status: "visa_free", allowed_stay_days: 30, official_source_url: "https://example.test/official-corridor", notes: null, updated_at: "2026-01-01T00:00:00.000Z" } : null;
+        return { data: row, error: null, count: null };
+      }
+      if (table === "identity_verifications") {
+        const uid = obj._filters.find(([c]: [string, any]) => c === "user_id")?.[1];
+        const row = uid === OTHER ? { id: "idv-other", provider: "stripe", provider_mode: "live", status: "verified", is_over_18: true, document_country: null, verified_at: "2026-01-01T00:00:00.000Z", created_at: "2026-01-01T00:00:00.000Z" } : null;
+        return obj._single ? { data: row, error: null, count: null } : { data: row ? [row] : [], error: null, count: row ? 1 : 0 };
+      }
+      if (table === "payment_parties") {
+        const pid = obj._filters.find(([c]: [string, any]) => c === "profile_id")?.[1];
+        return { data: pid === OTHER ? { id: "party-other" } : null, error: null, count: null };
+      }
+      if (table === "rent_buddy_payment_recipients") {
+        const party = obj._filters.find(([c]: [string, any]) => c === "party_id")?.[1];
+        return { data: party === "party-other" ? { onboarding: "verified", charges_enabled: true } : null, error: null, count: null };
+      }
       if (table === "rent_buddy_profiles") {
         const row = {
           id: "buddy-prof-1", user_id: OTHER, display_name: "Buddy", tagline: null,
-          city: "Bangkok", country: "Thailand", categories: ["city"], hourly_rate_usd: 30,
+          city: "Bangkok", country: "Thailand", categories: ["layover"], hourly_rate_usd: 30,
           average_rating: 4.5, review_count: 10, verified: true, cover_photo_url: null,
           buddy_level: "new", available_now: true, status: "active", admin_status: "active",
         };

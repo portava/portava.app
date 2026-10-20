@@ -21,7 +21,7 @@ import http from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import airportRouter from "../routes/airport.js";
-import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js"; import { withConfirmedCorridor } from "./helpers/confirmedCorridor.js";
+import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js"; import { withConfirmedCorridor } from "./helpers/confirmedCorridor.js"; import { withVerifiedLayoverSpecialists } from "./helpers/verifiedLayoverSpecialists.js";
 
 let server: http.Server;
 let base: string;
@@ -64,13 +64,14 @@ function stage(opts: { rentBuddyEnabled: boolean; blocks?: any[]; blocksFail?: b
     airport_profiles: [airportRow()],
     layover_sessions: [sessionRow({ user_id: USER_ID }, { nowMs: DAY })],
     rent_buddy_profiles: [
-      { id: "b1", user_id: "buddy-1", display_name: "Amy", city: "Taoyuan", status: "active", review_count: 3, verified: true },
-      { id: "b2", user_id: "buddy-2", display_name: "Ben", city: "Taoyuan", status: "active", review_count: 1, verified: false },
+      { id: "b1", user_id: "buddy-1", display_name: "Amy", city: "Taoyuan", status: "active", review_count: 3, verified: true, categories: ["layover"] },
+      { id: "b2", user_id: "buddy-2", display_name: "Ben", city: "Taoyuan", status: "active", review_count: 1, verified: false, categories: ["layover"] },
     ],
     rent_buddy_availability: [],
     blocks: opts.blocks ?? [],
   };
-  const db = makeLayoverDb(withConfirmedCorridor(tables, { userIds: [USER_ID], destination: "TW" }), {
+  // B2-BUDDY (census-layover L273): both profiles are verified `layover` specialists and the specialist flag is ON, so `rent_buddy_enabled` is the only switch these cases move.
+  const db = makeLayoverDb(withVerifiedLayoverSpecialists(withConfirmedCorridor(tables, { userIds: [USER_ID], destination: "TW" })), {
     users: { [TOKEN]: USER_ID },
     failures: opts.blocksFail ? { "blocks:select": { message: "relation unavailable" } } : {},
   });
@@ -108,12 +109,12 @@ describe("GET /airport/sessions/:id/buddies", () => {
   it("master flag row ABSENT → no buddies (fail-closed reader)", async () => {
     stage({ rentBuddyEnabled: true });
     // remove the row after staging
-    _setTestClient(makeLayoverDb({
+    _setTestClient(makeLayoverDb(withVerifiedLayoverSpecialists(withConfirmedCorridor({
       feature_flags: [{ flag: "airport_mode_enabled", enabled: true }],
       airport_profiles: [airportRow()],
       layover_sessions: [sessionRow({ user_id: USER_ID }, { nowMs: DAY })],
-      rent_buddy_profiles: [{ id: "b1", user_id: "buddy-1", city: "Taoyuan", status: "active", review_count: 3 }],
-    }, { users: { [TOKEN]: USER_ID } }), true);
+      rent_buddy_profiles: [{ id: "b1", user_id: "buddy-1", city: "Taoyuan", status: "active", review_count: 3, categories: ["layover"] }],
+    } as Record<string, any[]>, { userIds: [USER_ID], destination: "TW" })), { users: { [TOKEN]: USER_ID } }), true);
     const r = await get("/api/airport/sessions/session-1/buddies");
     assert.equal(r.status, 200);
     assert.deepEqual(r.body.buddies, []);
