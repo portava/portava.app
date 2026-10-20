@@ -25,14 +25,14 @@ export async function saveObjectiveIntent(db: SupabaseClient, userId: string, se
   if (!(await enabled(db))) return { ok: false, reason: "feature_disabled" };
   const parsed = objectiveIntentSchema.safeParse(value); if (!parsed.success) return { ok: false, reason: "invalid_intent" };
   const session = await owned(db, userId, sessionId); if (!session.ok) return session;
-  if (session.value.status !== "active" || Date.parse(session.value.departure_time) <= Date.now()) return { ok: false, reason: "session_not_active" };
+  const nowMs = Date.now(); if (session.value.status !== "active" || Date.parse(session.value.departure_time) <= nowMs) return { ok: false, reason: "session_not_active" }; // ONE clock read: the instant the session is judged live is the instant the intent is stamped
   const ids = parsed.data.meaningfulPlaces.map(p => p.placeId);
   if (ids.length) {
     const { data, error } = await db.from("discovery_places").select("id").in("id", ids).eq("status", "active");
     if (error) { logger.warn({ err: error, sessionId }, "Meaningful place validation unreadable"); return { ok: false, reason: "place_unreadable" }; }
     if (!data || new Set(data.map(r => r.id)).size !== ids.length) return { ok: false, reason: "place_not_found" };
   }
-  const { error } = await db.from("layover_objective_intents").upsert({ session_id: sessionId, user_id: userId, intent: parsed.data, updated_at: new Date().toISOString() }, { onConflict: "session_id" });
+  const { error } = await db.from("layover_objective_intents").upsert({ session_id: sessionId, user_id: userId, intent: parsed.data, updated_at: new Date(nowMs).toISOString() }, { onConflict: "session_id" });
   if (error) { logger.warn({ err: error, sessionId }, "Objective intent write failed"); return { ok: false, reason: "intent_write_unavailable" }; }
   return { ok: true, intent: parsed.data };
 }
