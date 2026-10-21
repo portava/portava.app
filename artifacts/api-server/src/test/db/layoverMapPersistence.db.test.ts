@@ -16,7 +16,7 @@ const provider: RouteCorridorProvider = { id: 'google-geometry-fixture', routed:
 describe('provider geometry response versus database persistence', { skip: PRESSED_SKIP_REASON }, () => {
   before(async () => {
     db = await openPressedLayoverDb(); await productionBaseFlags(db);
-    await db.setFlags({ layover_place_dwell_enabled:true, layover_decision_persistence_enabled:true, layover_canonical_snapshot_enabled:true, layover_recommendation_snapshot_enabled:true, layover_recommendation_status_enabled:true });
+    await db.setFlags({ layover_place_dwell_enabled:true, layover_decision_persistence_enabled:true, layover_canonical_snapshot_enabled:true, layover_recommendation_snapshot_enabled:true, layover_recommendation_status_enabled:true, layover_stable_recommendation_ids_enabled:true }); // getCandidates' cutover prerequisite (a0f8754f3)
     owner = await db.seedUser('map_geometry_owner'); const curator = await db.seedUser('map_geometry_curator'); await seedConfirmedCorridor(db,owner.id);
     app = await startPressedLayoverApp(db); sid = (await startSession(app,owner,{wantsToLeave:true})).id;
     const [airport] = await db.query<{id:string;city:string;lat:number;lng:number}>("SELECT id,city,lat,lng FROM public.airport_profiles WHERE iata_code='SIN'"); assert.ok(airport);
