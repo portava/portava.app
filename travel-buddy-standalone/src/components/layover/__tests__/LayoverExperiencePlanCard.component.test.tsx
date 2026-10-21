@@ -3,7 +3,7 @@ import React from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LayoverExperiencePlanCard } from '../LayoverExperiencePlanCard.tsx';
-import { experienceCacheKey } from '../../../lib/layoverExperienceCache.ts';
+import { experienceCacheKey, parseOfflineExperience } from '../../../lib/layoverExperienceCache.ts';
 import type { PlanStop } from '../../../services/layover.ts';
 // NOTE: intentionally exhaustive — apiToken imports native SecureStore through Supabase;
 // requireActual would initialize unavailable native modules. The real experience service runs.
@@ -13,7 +13,7 @@ const selectedId = '33333333-3333-4333-8333-333333333333', startedId = '44444444
 const stop = { id: stopId, stopOrder: 0, durationMin: 30, travelMin: 0 } as PlanStop;
 const onChanged = jest.fn();
 function plan(phase: 'selected' | 'executing' = 'selected') {
-  const at = (min: number) => new Date(Date.now() + min * 60_000).toISOString();
+  const base = Date.now(), at = (min: number) => new Date(base + min * 60_000).toISOString(); // one instant: equal deadlines (hardReturnBy = returnBy = returnDeadline) must be byte-equal, or parseOfflineExperience refuses the plan when the clock ticks mid-object
   return { id: phase === 'selected' ? selectedId : startedId, version: phase === 'selected' ? 1 : 2, phase, stopIds: [stopId], createdAt: at(-1),
     contract: { state: 'READY', snapshotId: 'current-snapshot', candidateIds: ['card-1'], insideAirport: true,
       departBy: at(20), estimatedArrival: at(1), leaveActivityBy: at(50), expectedAirportReturn: at(31), hardReturnBy: at(60), expiresAt: at(10),
@@ -99,4 +99,14 @@ it('failed cache refresh after a successful start reports execution truth and of
   fireEvent.press(screen.getByText('Save timetable offline'));
   await waitFor(() => expect(screen.getByText('Timetable and return deadline saved. Street navigation is not saved.')).toBeTruthy());
   expect(posts(spy)).toHaveLength(1);
+});
+it('the plan fixture stays one consistent contract when the clock ticks while it is built (CI flake, PR #766)', () => {
+  let t = Date.now(); const spy = jest.spyOn(Date, 'now').mockImplementation(() => (t += 1));
+  try {
+    for (const phase of ['selected', 'executing'] as const) {
+      const p = plan(phase);
+      expect(p.contract.fallbackPlan.returnBy).toBe(p.contract.hardReturnBy); expect(p.contract.abortThreshold.returnDeadline).toBe(p.contract.hardReturnBy);
+      expect(parseOfflineExperience(p)).not.toBeNull();
+    }
+  } finally { spy.mockRestore(); }
 });
