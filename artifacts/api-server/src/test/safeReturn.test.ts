@@ -137,7 +137,7 @@ function makeFakeClient(state: FakeState = {}) {
       upsert(row: any) { pendingInsert = row; return b; },
       delete() { return b; },
       eq(col: string, val: any) { filters.push((r) => r[col] === val); return b; },
-      neq(col: string, val: any) { filters.push((r) => r[col] !== val); return b; },
+      neq(col: string, val: any) { filters.push((r) => r[col] !== val); return b; }, or(expression: string) { const cutoff=expression.split("timer_end_at.lte.")[1]; assert.ok(cutoff,"fixture supports the due-or-manual timer predicate"); filters.push(r=>r.timer_end_at==null || Date.parse(r.timer_end_at)<=Date.parse(cutoff)); return b; },
       in(col: string, vals: any[]) { filters.push((r) => vals.includes(r[col])); return b; },
       is(col: string, val: any) { filters.push((r) => val === null ? r[col] == null : r[col] === val); return b; },
       lt(col: string, val: any) { filters.push((r) => r[col] < val); return b; },

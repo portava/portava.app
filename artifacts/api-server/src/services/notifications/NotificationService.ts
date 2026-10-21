@@ -18,6 +18,8 @@ import { renderTemplate, getTemplate, type NotificationCategory, type Notificati
 const logger = rootLogger.child({ service: "NotificationService" });
 
 export interface CreateNotificationInput {
+  /** Internal producer identity only. Never copy from a public request; existing PK makes concurrent inserts atomic. */
+  idempotentId?: string;
   userId: string;
   eventType: string;
   params?: Record<string, string>;
@@ -211,6 +213,7 @@ export class NotificationService {
     // (in_app/push/email/telegraph) are enforced in NotificationRouter after the
     // row exists, allowing independent per-channel control even when in_app is off.
     const row: Record<string, unknown> = {
+      ...(input.idempotentId ? { id: input.idempotentId } : {}),
       user_id:       input.userId,
       category,
       event_type:    input.eventType,

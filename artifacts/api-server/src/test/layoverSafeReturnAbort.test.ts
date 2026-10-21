@@ -169,7 +169,7 @@ describe("§15.1 the return contract never fabricates a route", () => {
     assert.equal(c.safeReturnVersion, LAYOVER_SAFE_RETURN_VERSION);
     assert.equal(c.hardReturnTime, record(s).deadline.hardReturnTime.toISOString());
     assert.equal(c.route, null);
-    assert.equal(c.routeUnavailableReason, "no_routing_provider");
+    assert.equal(c.routeUnavailableReason, "origin_unavailable");
     assert.ok(c.certification.inputHash.startsWith("sha256:"));
     assert.equal(c.airport.terminalInfo, null, "no curated terminal data exists; none is invented");
   });
@@ -565,5 +565,20 @@ describe("§15 the return reminder — the two defects, not the delivery questio
     const loud = shouldSuggestSafeReturn(session(), { isNightLayover: true });
     assert.equal(loud.suggest, true);
     assert.ok(loud.reasons.length > 0);
+  });
+});
+
+// L294: a transport exception is an unsuccessful lifecycle write, not an unhandled abort.
+describe("abort lifecycle write transport failures", () => {
+  it("reports a thrown returning-status write and retains the abort ledger", async () => {
+    const { db, tables } = stage({ stops: [] });
+    const throwing = { from(table: string) { if (table === "layover_sessions") throw new Error("status transport unavailable"); return db.from(table); } } as typeof db;
+    const s = session();
+    const result = await abortToAirport(throwing, { session: s, airport: AIRPORT, record: record(s), userId: USER, nowMs: NOW, statusEnabled: true });
+    assert.equal(result.ok, false);
+    assert.equal(result.statusApplied, false);
+    assert.ok(result.effects.includes("status_write_failed"));
+    assert.ok(result.effects.includes("ledger_recorded"));
+    assert.equal(tables.layover_sessions[0].status, "active");
   });
 });

@@ -21,9 +21,9 @@
  * `submission_token`, and `POST /airport/sessions/:id/observations` is a live
  * route whose only gate is `airport_mode_enabled` (TRUE in production).
  *
- * WHAT IS STILL TRUE, and it is what every §10 census row rests on: NOTHING
- * SUPPLIES `liveConditions` OUTSIDE TESTS, so no observation moves a deadline
- * and this module's arithmetic is term-for-term what it was before it existed.
+ * CORRECTED AGAIN 2026-10-18 (lane B2-LIVE): `liveConditions` now HAS a producer —
+ * services/airport/layoverLiveSignals.ts, behind `layover_live_signals_enabled`
+ * (3885, seeded FALSE); with it OFF no observation moves a deadline, as before.
  *
  * ── WHY THE POLICY LIVES HERE AND NOT IN THE ENGINE ──────────────────────────
  * The safety engine must not learn how to weigh a stranger's queue report
@@ -611,7 +611,7 @@ export function getTruth(
   atTime: number,
   corpus: AirportObservation[],
 ): TruthValue<number> | null {
-  return reconcile(corpus, { nowMs: atTime, factType, airportRef: subject }).truth;
+  return reconcileValidated(corpus, { nowMs: atTime, factType, airportRef: subject }).truth; // census L180 (lane B2-LIVE): validated before it can reach a safety calculation (foot of file)
 }
 
 // ── §10 → the safety buffer ──────────────────────────────────────────────────
@@ -835,10 +835,10 @@ export function measureCalibration(
 // fetches a corpus and hands it to `reconcile`. The client is the first argument,
 // as every service on this tree takes it; the spec's three arguments follow.
 //
-// NOT WIRED INTO THE SAFETY PATH, DELIBERATELY. Nothing calls it from
-// `liveConditionsFrom` or the engine: whether screened observations may move a
-// deadline is the owner's open L81 decision, recorded at routes/airport.ts.
-// Making the store-reading truth AVAILABLE decides nothing about using it.
+// CORRECTED 2026-10-18 (lane B2-LIVE): the owner DECIDED L81 — stored observations
+// may move a deadline, VALIDATED first. This now folds through `reconcileValidated`
+// (foot of file), and the safety path reads the store through the same window in
+// services/airport/layoverLiveSignals.ts, behind `layover_live_signals_enabled`.
 //
 // HISTORICAL `atTime` IS HONOURED, NOT APPROXIMATED. The read bounds both ends —
 // observed at or before `atTime`, and not expired at `atTime` — so a question
@@ -856,7 +856,7 @@ export type StoredTruthRefusal =
 
 export type StoredTruthRead =
   /** `truth` is null when nothing credible survived screening — an absence, never a zero. */
-  | { ok: true; truth: TruthValue<number> | null; outcome: ReconciliationOutcome }
+  | { ok: true; truth: TruthValue<number> | null; outcome: ReconciliationOutcome & { validation: ValidatedObservationWindow } } // lane B2-LIVE (L180): the outcome carries the validation window it was decided over
   | { ok: false; reason: StoredTruthRefusal };
 
 export async function getTruthFromStore(
@@ -894,6 +894,240 @@ export async function getTruthFromStore(
       sourceRef: String(r.source_ref),
     };
   });
-  const outcome = reconcile(corpus, { nowMs: atTime, factType, airportRef: subject });
+  const outcome = reconcileValidated(corpus, { nowMs: atTime, factType, airportRef: subject }); // census L180 (lane B2-LIVE): the VALIDATED window — see the foot of this file
   return { ok: true, truth: outcome.truth, outcome };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LAYOVER 165, lane B2-LIVE — census L180: STORED OBSERVATIONS ARE VALIDATED
+// BEFORE THEY CAN INFLUENCE A SAFETY CALCULATION.
+//
+// Appended at the foot so every line cited above keeps its number. `reconcile`
+// is unchanged and still serves the published conditions card (GET/POST
+// /observations). What is added is the stricter window the SAFETY path reads —
+// `getTruth` and `getTruthFromStore` above now fold through it, and so does the
+// live-signal producer (layoverLiveSignals.ts). Owner decision 2026-10-18:
+// "Official airport information; Licensed or approved live feeds; Verified
+// traveler observations; Confidence calculations; Data provenance; Freshness
+// checks; Conflict resolution; Trust weighting; Outlier detection. Traveler
+// reports are supporting evidence, not authoritative proof of safety."
+//
+// THE WINDOW, in the order the rules fire. Every rejection names exactly one
+// reason, and a rejected reading is kept in `rejections`, never silently gone.
+//   1. `screenObservations`, unchanged — plausibility range, freshness (the
+//      class TTL), future-dated, duplicate id, the per-observer rate limit, and
+//      the trust × decay weight.
+//   2. TRUST FLOOR — an observer whose own declared standing (`observer_trust`)
+//      is below MIN_REPORTER_TRUST does not count at all: "untrusted_reporter".
+//      Absent standing is the kind's floor, exactly as `screenObservations`
+//      reads it; only a DECLARED low standing removes a reading.
+//   3. ONE READING PER REPORTER — the newest accepted reading per observer id;
+//      every older one is "superseded_by_reporter". One person is one witness,
+//      and their own earlier reading is not a second one.
+//   4. OUTLIERS, COMMUNITY ONLY — the median absolute deviation over the
+//      community readings, once at least OUTLIER_MIN_REPORTERS distinct
+//      reporters remain: |x − median| > max(K · 1.4826 · MAD, 2 · tolerance) is
+//      "outlier". A dispersion test needs a population, which is why it waits
+//      for three (with two, `isImplausible`'s range and rule 5 are the guards).
+//      It is NEVER applied to an official or feed reading: a crowd of short
+//      readings can never vote an authoritative long queue away.
+//   5. INDEPENDENT REPORTERS — for a SAFETY_CRITICAL fact, community readings
+//      count only when at least MIN_INDEPENDENT_REPORTERS distinct reporters
+//      survive 2–4; otherwise each is "uncorroborated" — EVEN BESIDE AN
+//      OFFICIAL READING. `reconcile`'s floor applies only to a community-ONLY
+//      set, so there one stranger could still raise an official figure and
+//      move a deadline; here they cannot.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Version of the validation POLICY below; bump on any threshold change. */
+export const LIVE_VALIDATION_VERSION = "2026.10.18-1";
+/** A declared `observer_trust` below this removes the reading (rule 2). */
+export const MIN_REPORTER_TRUST = 0.25;
+/** Distinct community reporters before the dispersion test is meaningful (rule 4). */
+export const OUTLIER_MIN_REPORTERS = 3;
+/** Rule 4's multiplier on the MAD-derived sigma. */
+export const OUTLIER_MAD_K = 3;
+/** MAD → sigma for a normal population. */
+export const MAD_TO_SIGMA = 1.4826;
+/** Rule 4 never calls a reading an outlier within this many conflict tolerances of the median. */
+export const OUTLIER_MIN_DEVIATION_TOLERANCES = 2;
+/** Rule 5: distinct community reporters a safety-critical community reading needs. */
+export const MIN_INDEPENDENT_REPORTERS = MIN_COMMUNITY_CORROBORATION;
+
+export type ValidationRejection =
+  | ObservationRejection
+  | "untrusted_reporter"
+  | "superseded_by_reporter"
+  | "outlier"
+  | "uncorroborated";
+
+export interface ValidatedObservationWindow {
+  validationVersion: string;
+  airportRef: string;
+  factType: AirportFactType;
+  /** The survivors: one per reporter, inliers, corroborated. Weighted as `screenObservations` weighted them. */
+  accepted: ScreenedObservation[];
+  /** Every reading that did not survive, with its one reason, in the order the rules fired. */
+  rejections: Array<{ observationId: string; reason: ValidationRejection }>;
+  /** Distinct observer ids among `accepted`, all kinds. */
+  independentReporters: number;
+  /** Distinct community observer ids among `accepted`. */
+  communityReporters: number;
+  outlierTest: { applied: boolean; median: number | null; mad: number | null; threshold: number | null };
+  rulesApplied: string[];
+  /** Rule 1's own output for every input reading — what existed, before rules 2–5. */
+  screened: ScreenedObservation[];
+}
+
+/** Median of a list; null for an empty one. */
+export function medianOf(values: readonly number[]): number | null {
+  if (values.length === 0) return null;
+  const s = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 === 1 ? s[mid]! : (s[mid - 1]! + s[mid]!) / 2;
+}
+
+/** Rules 1–5 above over one (airport, fact) pair. Pure: `nowMs` is an argument. */
+export function validateObservationWindow(
+  observations: AirportObservation[],
+  opts: { nowMs: number; factType: AirportFactType; airportRef: string },
+): ValidatedObservationWindow {
+  const rulesApplied: string[] = [];
+  const rejections: Array<{ observationId: string; reason: ValidationRejection }> = [];
+  const reject = (s: ScreenedObservation, reason: ValidationRejection) => rejections.push({ observationId: s.observation.observationId, reason });
+
+  // 1. screening, unchanged
+  const screened = screenObservations(observations, opts);
+  for (const s of screened) if (s.rejected !== null) reject(s, s.rejected);
+  let live = screened.filter((s) => s.rejected === null);
+
+  // 2. trust floor — only a DECLARED low standing removes a reading
+  live = live.filter((s) => {
+    const t = s.observation.observerTrust;
+    if (typeof t === "number" && Number.isFinite(t) && t < MIN_REPORTER_TRUST) { reject(s, "untrusted_reporter"); return false; }
+    return true;
+  });
+
+  // 3. one reading per reporter: the newest (screening has already proved every timestamp parses)
+  const newest = new Map<string, ScreenedObservation>();
+  for (const s of live) {
+    const prev = newest.get(s.observation.observerId);
+    if (!prev || Date.parse(s.observation.observedAt) >= Date.parse(prev.observation.observedAt)) newest.set(s.observation.observerId, s);
+  }
+  live = live.filter((s) => {
+    if (newest.get(s.observation.observerId) === s) return true;
+    reject(s, "superseded_by_reporter");
+    return false;
+  });
+
+  // 4. community outliers, by median absolute deviation
+  const tolerance = CONFLICT_TOLERANCE_MIN[opts.factType];
+  let outlierTest: ValidatedObservationWindow["outlierTest"] = { applied: false, median: null, mad: null, threshold: null };
+  const communityBefore = live.filter((s) => s.observation.observerKind === "community");
+  if (communityBefore.length >= OUTLIER_MIN_REPORTERS) {
+    const values = communityBefore.map((s) => s.observation.value);
+    const median = medianOf(values)!;
+    const mad = medianOf(values.map((v) => Math.abs(v - median)))!;
+    const threshold = Math.max(OUTLIER_MAD_K * MAD_TO_SIGMA * mad, OUTLIER_MIN_DEVIATION_TOLERANCES * tolerance);
+    outlierTest = { applied: true, median, mad, threshold };
+    live = live.filter((s) => {
+      if (s.observation.observerKind !== "community") return true;
+      if (Math.abs(s.observation.value - median) > threshold) { reject(s, "outlier"); return false; }
+      return true;
+    });
+    rulesApplied.push(`outlier test over ${values.length} community reporter(s): median ${median}, MAD ${mad}, threshold ${threshold.toFixed(1)} min`);
+  } else if (communityBefore.length > 0) {
+    rulesApplied.push(`outlier test not applied: ${communityBefore.length} community reporter(s), below ${OUTLIER_MIN_REPORTERS}`);
+  }
+
+  // 5. independent community reporters for a safety-critical fact — beside an official reading too
+  const community = live.filter((s) => s.observation.observerKind === "community");
+  if (SAFETY_CRITICAL_FACTS.has(opts.factType) && community.length > 0 && community.length < MIN_INDEPENDENT_REPORTERS) {
+    for (const s of community) reject(s, "uncorroborated");
+    live = live.filter((s) => s.observation.observerKind !== "community");
+    rulesApplied.push(`community evidence dropped: ${community.length} independent reporter(s), below ${MIN_INDEPENDENT_REPORTERS}`);
+  }
+
+  return {
+    validationVersion: LIVE_VALIDATION_VERSION,
+    airportRef: opts.airportRef,
+    factType: opts.factType,
+    accepted: live,
+    rejections,
+    independentReporters: new Set(live.map((s) => s.observation.observerId)).size,
+    communityReporters: new Set(live.filter((s) => s.observation.observerKind === "community").map((s) => s.observation.observerId)).size,
+    outlierTest,
+    rulesApplied,
+    screened,
+  };
+}
+
+/**
+ * `reconcile` over the VALIDATED window: the §10.1 rules, unchanged, applied to
+ * what survived rules 1–5. What `getTruth` and `getTruthFromStore` answer.
+ */
+export function reconcileValidated(
+  observations: AirportObservation[],
+  opts: { nowMs: number; factType: AirportFactType; airportRef: string },
+): ReconciliationOutcome & { validation: ValidatedObservationWindow } {
+  const validation = validateObservationWindow(observations, opts);
+  const outcome = reconcile(validation.accepted.map((s) => s.observation), opts);
+  // The DIAGNOSTICS describe what was read (rule 1), so a reader still sees a lone
+  // stranger's report existed; the TRUTH is decided over what survived rules 2–5.
+  const screenedIn = validation.screened.filter((s) => s.rejected === null);
+  const corroboration = { ...outcome.corroboration };
+  for (const kind of OBSERVER_KINDS) corroboration[kind] = new Set(screenedIn.filter((s) => s.observation.observerKind === kind).map((s) => s.observation.observerId)).size;
+  return {
+    ...outcome,
+    screened: validation.screened,
+    corroboration,
+    rejections: validation.screened.filter((s) => s.rejected !== null).map((s) => ({ observationId: s.observation.observationId, reason: s.rejected! })),
+    rulesApplied: [...validation.rulesApplied, ...outcome.rulesApplied],
+    validation,
+  };
+}
+
+/** A 2860 row as an observation (NUMERIC arrives as a string; unparseable → NaN → `not_finite`). */
+export function storedObservationOf(r: Record<string, unknown>): AirportObservation {
+  const trust = r.observer_trust === null || r.observer_trust === undefined ? undefined : Number(r.observer_trust);
+  return {
+    observationId: String(r.id),
+    airportRef: String(r.airport_ref),
+    factType: r.fact_type as AirportFactType,
+    value: Number(r.value),
+    observerKind: r.observer_kind as ObserverKind,
+    observerId: String(r.observer_id),
+    ...(trust === undefined || !Number.isFinite(trust) ? {} : { observerTrust: trust }),
+    observedAt: String(r.observed_at),
+    sourceRef: String(r.source_ref),
+  };
+}
+
+/**
+ * The live-signal producer's ONE read of the store: every fact in `factTypes`
+ * at `subject`, observed at or before `atTime` and still inside `holdMinutes`
+ * past its stored expiry (so a reading that has just gone stale can be HELD
+ * and named DATA_STALE rather than vanish). Each row is still screened by its
+ * own class TTL downstream; the wider window only lets the caller SEE it.
+ * A failed read is a named refusal, never an empty corpus.
+ */
+export async function readStoredObservations(
+  db: SupabaseClient,
+  subject: string,
+  factTypes: readonly AirportFactType[],
+  atTime: number,
+  holdMinutes: number,
+): Promise<{ ok: true; corpus: AirportObservation[] } | { ok: false; reason: StoredTruthRefusal }> {
+  const { data, error } = await db
+    .from("airport_fact_observations")
+    .select("id,airport_ref,fact_type,value,observer_kind,observer_id,observer_trust,source_ref,observed_at")
+    .eq("airport_ref", subject)
+    .in("fact_type", [...factTypes])
+    .lte("observed_at", new Date(atTime).toISOString())
+    .gt("expires_at", new Date(atTime - holdMinutes * 60_000).toISOString())
+    .order("observed_at", { ascending: false })
+    .limit(STORED_TRUTH_READ_LIMIT * 2);
+  if (error) return { ok: false, reason: isMissingSchemaError(error) ? "storage_unavailable" : "read_failed" };
+  if (!Array.isArray(data)) return { ok: false, reason: "read_failed" };
+  return { ok: true, corpus: (data as Array<Record<string, unknown>>).map(storedObservationOf) };
 }

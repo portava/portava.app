@@ -42,7 +42,7 @@ import type { EntryEligibility } from "../services/airport/layoverEntryGate.js";
 import { _setTestClient } from "../lib/http.js";
 import airportRouter, { mapBandedStops } from "../routes/airport.js";
 import simulateRouter from "../routes/layoverSimulate.js";
-import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js";
+import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js"; import { withConfirmedCorridor } from "./helpers/confirmedCorridor.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -400,7 +400,7 @@ function stage(flags: { chips?: boolean; bands?: boolean; mode?: boolean } = {},
     layover_checkpoints: [], layover_outcomes: [], layover_events: [], layover_recommendations: [],
     layover_certified_computations: [], passport_stamps: [], passport_visibility_preferences: [], trip_plan_items: [],
   };
-  _setTestClient(makeLayoverDb(tables, { users: { [TOKEN]: "user-1" }, failures }), true);
+  _setTestClient(makeLayoverDb(withConfirmedCorridor(tables, { userIds: ["user-1"], destination: "TW" }), { users: { [TOKEN]: "user-1" }, failures }), true);
 }
 
 before(() => {

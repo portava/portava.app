@@ -133,7 +133,7 @@ export function LayoverOfflinePlanCard({ plan, replan, nowMs }: Props) {
       )}
 
       {/* L151 — the area half, stated only in the direction it is proved. */}
-      {plan.envelope && (
+      {plan.routedMap || plan.abortReturnRoute ? <LayoverRoutedMapPanel data={plan.routedMap ?? null} selectedRecommendationIds={plan.routedMap?.cards.map(c => c.id)} timezone={plan.airport.timezone} nowMs={nowMs} offline abortRoute={plan.abortReturnRoute} /> : plan.envelope && (
         <View style={styles.envelopeBox} testID="layover-cached-plan-envelope">
           <Text style={styles.envelopeText}>
             Beyond about {km(plan.envelope.radiusMetres)} from this airport, nothing fitted the{' '}
@@ -162,8 +162,8 @@ export function LayoverOfflinePlanCard({ plan, replan, nowMs }: Props) {
         }
         return (
           <View testID="layover-cached-plan-phrases">
-            <Text style={styles.stopText}>Phrases in {phrases.set.languageName}</Text>
-            {phrases.set.phrases.map((p) => (
+            {phrases.set.languageOptions?.length ? <LayoverPhraseOptions set={phrases.set} /> : <Text style={styles.stopText}>Phrases in {phrases.set.languageName}</Text>}
+            {(phrases.set.languageOptions?.length ? [] : phrases.set.phrases).map((p) => (
               <View key={p.key} testID={`layover-cached-plan-phrase-${p.key}`}>
                 <Text style={styles.stopText}>{p.local}</Text>
                 <Text style={styles.envelopeText}>{p.english}</Text>
@@ -216,3 +216,6 @@ const styles = StyleSheet.create({
   replan:      { ...t.small, color: color.ink, marginTop: 4 },
   replanRefused:{ ...t.small, color: color.mute, marginTop: 4 },
 });
+
+import { LayoverRoutedMapPanel } from './LayoverRoutedMapPanel.tsx';
+import { LayoverPhraseOptions } from './LayoverPhraseOptions.tsx';

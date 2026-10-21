@@ -166,7 +166,7 @@ app.listen(port, (err) => {
   // without 2984 it is an inert heartbeat rather than a failure. Its 10-minute
   // startup delay sits just after the sensing sweep's 9 deliberately, so the
   // two retention passes do not contend on boot.
-  startLayoverCrewExpiryScheduler(); startLayoverAuditRetentionScheduler(); startLayoverPresenceExpiryScheduler(); // OD-MAP-4: pseudonymised layover_events leave at retain_until; census L196: expired layover_presence rows (3900) leave at expires_at (on this line so no cited line moves)
+  startLayoverCrewExpiryScheduler(); startLayoverAuditRetentionScheduler(); startLayoverPresenceExpiryScheduler(); startLayoverMetricsScheduler(); // OD-MAP-4: pseudonymised layover_events leave at retain_until; census L196: expired layover_presence rows (3900) leave at expires_at (on this line so no cited line moves)
   startIntelPromotionScheduler();
   startIntelProjectionScheduler();
   // Telegraph §13.2's two expiry events. §4.3 says availability "expires
@@ -440,3 +440,5 @@ app.listen(port, (err) => {
     logger.warn({ err: startupErr }, "startup: could not query push retry queue health");
   });
 });
+
+import { startLayoverMetricsScheduler } from "./lib/layoverMetricsScheduler.js";

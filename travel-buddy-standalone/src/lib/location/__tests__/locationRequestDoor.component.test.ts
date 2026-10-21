@@ -51,7 +51,14 @@ describe('locationRequestDoor', () => {
     expect(gps).toHaveBeenCalledTimes(1);
     expect(result).toBe(FIX);
     expect(USER_PRESS_MAP_CONTEXT).toEqual({ trigger: 'user_press', purpose: 'map_context' });
-    expect(LOCATION_REQUEST_PURPOSES).toEqual(['map_context']);
+    expect(LOCATION_REQUEST_PURPOSES).toEqual(['map_context', 'live_return_assistance']);
+  });
+
+  it('1a. a press turning on live return assistance (L157) asks once and returns the fix unchanged', async () => {
+    const request = { trigger: 'user_press', purpose: 'live_return_assistance' } as const;
+    expect(isUserLocationRequest(request)).toBe(true);
+    await expect(requestLocationForUserAction(request)).resolves.toBe(FIX);
+    expect(gps).toHaveBeenCalledTimes(1);
   });
 
   it('1b. a denied permission from the OS comes back as the OS said it', async () => {
@@ -68,7 +75,7 @@ describe('locationRequestDoor', () => {
     ['an automatic trigger', { trigger: 'auto', purpose: 'map_context' }],
     ['a mount trigger', { trigger: 'mount', purpose: 'map_context' }],
     ['an unknown purpose', { trigger: 'user_press', purpose: 'background_tracking' }],
-    ['live return assistance (not built)', { trigger: 'user_press', purpose: 'live_return_assistance' }],
+    ['live return assistance without a press', { trigger: 'auto', purpose: 'live_return_assistance' }],
     ['a purpose with no trigger', { purpose: 'map_context' }],
   ])('2. %s is refused without asking the OS', async (_label, request) => {
     const result = await requestLocationForUserAction(request as never);

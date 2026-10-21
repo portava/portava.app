@@ -65,29 +65,29 @@ import {
 /**
  * The layover-compatible slice of `rent_buddy_profiles.categories`.
  *
- * THERE IS NO `layover` CATEGORY ANYWHERE IN THIS REPOSITORY. The vocabulary
- * the column carries is city / language / arrival / shopping / content, plus
- * nightlife / group / concierge / packages which MVP mode blocks
- * (`routes/rentABuddyRollout.ts:41`, `migrations/0090_rent_buddy_rollout_tables.sql:221`).
- * So this is a COMPATIBILITY set over the vocabulary that exists — the services
- * a person can actually deliver inside a few certified hours near an airport —
- * and NOT a specialist credential. Inventing a `layover_specialist` value here
- * would mean filtering on something no profile can hold and no admin surface
- * can grant: an empty list wearing the name of a boundary.
+ * `layover` is an explicit specialist declaration in the marketplace.
+ * Generic city, shopping and arrival services do not imply that specialism.
+ * The declaration editors require a current live identity verification.
+ * The traveller list independently rechecks identity, including revocation.
+ * A profile flag alone cannot substitute for that verification.
+ * Booking still uses the existing KYC, rollout, trust and payment gates.
+ * Its server-owned context ties the requested slot to the certified deadline.
+ * A missing category remains an unknown and is withheld from this offer.
+ * Neither a declaration nor a safety gate asserts availability for a slot.
  *
  * `content` is excluded deliberately: a content shoot is a scheduled
  * production, not something that fits between two flights.
  */
 export const LAYOVER_COMPATIBLE_BUDDY_CATEGORIES = [
-  "city",
-  "language",
-  "arrival",
-  "shopping",
+  "layover",
+  // Only the specialist category qualifies.
+  // Other marketplace services retain their own categories.
+  // Identity is checked by the caller, independently of this predicate.
 ] as const;
 
 /** The certified answer to "may this session be offered a landside meeting?". */
 export interface BuddySafetyGate {
-  passed: boolean;
+  passed: boolean; bookingStartsAt: string; bookingEndsBy: string; timezone: string;
   /** The certified §9 verdict. Not re-derived here. */
   verdict: LayoverFeasibilityRecord["verdict"];
   usableMinutes: number;
@@ -147,7 +147,7 @@ export function buddySafetyGateFor(record: LayoverFeasibilityRecord): BuddySafet
     verdict: record.verdict,
     usableMinutes: record.envelope.usableMinutes,
     returnState: record.envelope.returnState,
-    engineVersion: record.engineVersion, landside: landsideStatusOf(record),
+    engineVersion: record.engineVersion, landside: landsideStatusOf(record), bookingStartsAt:new Date(Math.max(record.inputs.nowMs,record.envelope.earliestOutTime.getTime())).toISOString(),bookingEndsBy:record.deadline.hardReturnTime.toISOString(),timezone:record.inputs.airport.timezone,
   };
 }
 
@@ -253,13 +253,13 @@ export function isLayoverCompatibleBuddy(row: { categories?: unknown }): boolean
 /**
  * L273's "strict boundaries": a profile that positively declares a DIFFERENT
  * service is not a layover service and is removed. A profile that declares
- * nothing is kept — and `isLayoverCompatibleBuddy` is published beside it so
- * the unknown is visible rather than dressed up as a specialism.
+ * nothing is withheld — `isLayoverCompatibleBuddy` requires the declaration,
+ * and identity is independently checked before an offer is published.
  */
 export function filterLayoverCompatible<T extends { categories?: unknown }>(rows: T[]): T[] {
   return rows.filter((r) => {
     const cats = Array.isArray(r.categories) ? (r.categories as string[]) : [];
-    return cats.length === 0 || isLayoverCompatibleBuddy(r);
+    return cats.length > 0 && isLayoverCompatibleBuddy(r);
   });
 }
 

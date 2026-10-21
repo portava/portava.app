@@ -1,0 +1,47 @@
+{
+  "routes": [
+    {
+      "distanceMeters": 14200,
+      "duration": "6000s",
+      "staticDuration": "1085s",
+      "legs": [
+        {
+          "steps": [
+            {
+              "distanceMeters": 1600,
+              "staticDuration": "200s",
+              "travelMode": "DRIVE",
+              "navigationInstruction": {
+                "maneuver": "DEPART"
+              }
+            },
+            {
+              "distanceMeters": 5900,
+              "staticDuration": "380s",
+              "travelMode": "DRIVE",
+              "navigationInstruction": {
+                "maneuver": "RAMP_RIGHT"
+              }
+            },
+            {
+              "distanceMeters": 6100,
+              "staticDuration": "410s",
+              "travelMode": "DRIVE",
+              "navigationInstruction": {
+                "maneuver": "MERGE"
+              }
+            },
+            {
+              "distanceMeters": 600,
+              "staticDuration": "95s",
+              "travelMode": "DRIVE",
+              "navigationInstruction": {
+                "maneuver": "STRAIGHT"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

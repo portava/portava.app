@@ -283,16 +283,16 @@ describe("L207 — with persistence ON the external replan stores its snapshot a
     assert.deepEqual(r.snapshots, [{ recorded: true, citations: [{ sessionId: "session-1", snapshotPersisted: false, snapshotId: null, snapshotUnavailableReason: "write_failed" }] }]);
   });
 
-  it("with 3623's stamp flag ON too, step 6 is APPLIED on this path as on the PATCH path: a stale citation is cleared and audited", async () => {
+  it("with 3623's stamp flag ON too, step 6 is APPLIED on this path as on the PATCH path: a stale citation is retained, superseded and audited", async () => {
     const w = world({
-      flags: [{ flag: PERSIST, enabled: true }, { flag: STAMP, enabled: true }],
-      tables: { layover_recommendations: [{ id: "rec-stale", session_id: "session-1", rec_type: "food", title: "x", status: "active", snapshot_id: "snap:old" }] },
+      flags: [{ flag: PERSIST, enabled: true }, { flag: STAMP, enabled: true }, { flag: "layover_recommendation_status_enabled", enabled: true }],
+      tables: { layover_recommendations: [{ id: "rec-stale", session_id: "session-1", rec_type: "food", title: "x", status: "active", snapshot_id: "snap:old", superseded_at: null }] },
     });
     await replanOnce(w);
-    assert.equal(w.tables.layover_recommendations[0].snapshot_id, null);
+    assert.equal(w.tables.layover_recommendations[0].snapshot_id, "snap:old"); assert.equal(w.tables.layover_recommendations[0].recommendation_status, "SUPERSEDED");
     const applied = decisionRows(w.tables)[0].metadata.replan.invalidationApplied;
     assert.equal(applied.applied, true);
-    assert.deepEqual(applied.uncited.map((u: any) => u.recommendationId), ["rec-stale"]);
+    assert.deepEqual(applied.superseded.map((u: any) => u.recommendationId), ["rec-stale"]);
   });
 
   it("SHAPE PARITY: the external record and publication have exactly the PATCH replan's members", async () => {

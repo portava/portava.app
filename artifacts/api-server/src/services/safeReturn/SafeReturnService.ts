@@ -34,7 +34,7 @@ export interface CreateSessionInput {
   subgroupId?: string | null;
   triggerReason?: string | null;
   escalationLevel?: 0 | 1 | 2 | 3;
-  timerMinutes?: number | null;
+  timerMinutes?: number | null; /** Server-only, never accepted as a client clock. */ certifiedDeadline?: string;
   trustedCircleEnabled?: boolean;
   liveShareEnabled?: boolean;
   notifyHostEnabled?: boolean;
@@ -250,7 +250,7 @@ export async function createSession(
   db: SupabaseClient,
   input: CreateSessionInput,
 ): Promise<CreateSessionResult | null> {
-  const timerEndAt = input.timerMinutes
+  const timerEndAt = input.certifiedDeadline ? new Date(input.certifiedDeadline).toISOString() : input.timerMinutes
     ? new Date(Date.now() + input.timerMinutes * 60_000).toISOString()
     : null;
 
@@ -509,7 +509,7 @@ export async function markMissed(
       .from("safe_return_sessions")
       .update({ status: "missed", last_prompt_at: now, updated_at: now })
       .eq("id", sessionId)
-      .eq("status", "active")
+      .eq("status", "active").eq("user_id",userId).or(`timer_end_at.is.null,timer_end_at.lte.${now}`)
       .select("*")
       .single();
 
@@ -655,7 +655,7 @@ export async function findExpiredActiveSessions(
       .select("*")
       .eq("status", "active")
       .not("timer_end_at", "is", null)
-      .lt("timer_end_at", now);
+      .lt("timer_end_at", now).limit(50);
 
     if (error) {
       // The scheduler's `expired.length === 0 → return` was the entire

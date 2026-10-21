@@ -244,14 +244,14 @@ async function crewTablesPresent(db: any): Promise<boolean> {
  * caller can prove exactly which rows a pass would remove without owning a
  * clock — the same property migration 2315 gave its purge function on purpose.
  */
-export async function runLayoverCrewExpirySweep(
+async function runLayoverCrewExpirySweepImpl(
   opts: { client?: any; now: Date; batchSize?: number },
 ): Promise<LayoverCrewExpirySweepResult> {
   // Explicit null means "no client"; undefined means "use the service client".
   // NOT `opts.client ?? getServiceClient()` — `??` does not short-circuit on an
   // explicit null, so a unit test passing `client: null` would get a REAL
   // client and open a socket. lib/intelRetentionScheduler records that defect.
-  const db = "client" in opts && opts.client !== undefined ? opts.client : getServiceClient();
+  const db = auditedLayoverClient("client" in opts && opts.client !== undefined ? opts.client : getServiceClient());
   if (!db) return refused("no_client");
 
   if (!(await crewTablesPresent(db))) return refused("tables_absent");
@@ -438,3 +438,6 @@ export function stopLayoverCrewExpiryScheduler(): void {
     _timer = null;
   }
 }
+
+import { auditedLayoverClient, withLayoverSystemAudit } from './layoverServiceAudit.js';
+export function runLayoverCrewExpirySweep(...args: Parameters<typeof runLayoverCrewExpirySweepImpl>): ReturnType<typeof runLayoverCrewExpirySweepImpl> { return withLayoverSystemAudit('layover:crew-expiry', () => runLayoverCrewExpirySweepImpl(...args)); }

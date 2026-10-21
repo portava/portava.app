@@ -1,0 +1,10 @@
+{
+  "contract": "portava.layover.live-feed.v1",
+  "airport": "SIN",
+  "authority": "licensed",
+  "generatedAt": "2030-06-14T20:58:00.000Z",
+  "readings": [
+    { "id": "sec-t1", "fact": "security_wait", "minutes": 20, "observedAt": "2030-06-14T20:57:00.000Z" },
+    { "id": "sec-t3", "fact": "security_wait", "observedAt": "2030-06-14T20:57:00.000Z" }
+  ]
+}

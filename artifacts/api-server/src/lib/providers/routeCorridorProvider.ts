@@ -179,7 +179,7 @@ export interface RouteLeg {
 /** One route through the corridor. */
 export interface RouteOption {
   legs: RouteLeg[];
-  totalMinutes: number;
+  totalMinutes: number; geometry?: import('./providerMapGeometry.js').ProviderRouteGeometry | null;
   /**
    * L71. Changes of vehicle, which is `legs.length - 1` only when every leg is
    * a vehicle; a walk to a station and the train are one transfer, a walk that
@@ -291,7 +291,7 @@ export interface CorridorQuery {
   departAt: Date;
   mode?: TravelMode;
   /** How many alternatives to ask for. Bounded by the adapter. */
-  wantAlternatives?: boolean;
+  wantAlternatives?: boolean; /** A transient traveller origin must never enter shared or request memo stores. */ cachePolicy?: 'no_store';
 }
 
 export interface BidirectionalQuery {

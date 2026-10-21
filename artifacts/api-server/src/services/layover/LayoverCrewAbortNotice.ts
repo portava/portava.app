@@ -82,7 +82,7 @@ import { logger as rootLogger } from "../../lib/logger.js";
 import { isFlagEnabled } from "../../lib/featureFlags.js";
 import { readBlockExclusions } from "../../lib/exclusionSet.js";
 import { nameVisibilitySet } from "../../lib/publicIdentity.js";
-import { evaluateSharingGate, publishableUserIds } from "../airport/LayoverPrivacyGuard.js";
+import { evaluateSharingGate, discloseSharingGate, publishableUserIds } from "../airport/LayoverPrivacyGuard.js";
 import { NotificationService } from "../notifications/NotificationService.js";
 import { NotificationRouter } from "../notifications/NotificationRouter.js";
 import { activeCrewForUser, crewMembers, type CrewMemberRow } from "./LayoverCrewStore.js";
@@ -187,7 +187,7 @@ async function travellerRefusal(
   userId: string,
   tripId: string | null | undefined,
 ): Promise<"sharing_not_allowed" | "sharing_preferences_unreadable" | null> {
-  const gate = await evaluateSharingGate(db, { userId, tripId: tripId ?? null });
+  const gate = discloseSharingGate(await evaluateSharingGate(db, { userId, tripId: tripId ?? null }));
   if (gate.degraded) return "sharing_preferences_unreadable";
   if (!gate.allowed) return "sharing_not_allowed";
   return null;
@@ -365,7 +365,7 @@ export async function tellCrewOfAbortWithin(
   input: { userId: string; sessionId: string; nowMs: number; request: CrewAbortNoticeRequest; tripId?: string | null },
   deadlineMs: number = CREW_ABORT_NOTICE_DEADLINE_MS,
 ): Promise<CrewAbortNoticeOutcome> {
-  if (!input.request.enabled || !input.request.requested) return tellCrewOfAbort(db, input);
+  if (!input.request.enabled) return tellCrewOfAbortAuthorized(db, input); // census L144 (lane B2-CREW): an unticked abort may still be authorized (a live crew share, an emergency contact), so only the flag short-circuits
   let timedOut = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const bound = new Promise<CrewAbortNoticeOutcome>((resolve) => {
@@ -376,8 +376,249 @@ export async function tellCrewOfAbortWithin(
     }, deadlineMs);
   });
   try {
-    return await Promise.race([tellCrewOfAbort(db, { ...input, cancelled: () => timedOut }), bound]);
+    return await Promise.race([tellCrewOfAbortAuthorized(db, { ...input, cancelled: () => timedOut }).catch((err: unknown): CrewAbortNoticeOutcome => { logger.warn({ err, sessionId: input.sessionId }, "crew abort notice threw — nobody is reported told"); return untold("notify_failed"); }), bound]);
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE AUTHORIZATION RULE, MADE EXPLICIT — LAYOVER 165, lane B2-CREW (census-layover L144)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Owner decision 2026-10-18: "Abort notifications may be sent to the crew ONLY under established user authorization
+// or emergency-sharing rules." Before this, the rule was implicit in the order of `tellCrewOfAbort`'s early returns
+// and had one basis (the per-abort tick). It is now ONE pure function, `crewAbortNoticeAuthorization`, decided per
+// recipient, with exactly three bases and a named denial for everything else:
+//
+//   explicit_request              the traveller ticked "tell my crew" on THIS abort (`tellCrew: true`) — their
+//                                 authorization for this very notice. Their standing §17 sharing gate must also be
+//                                 open (paused / location off / Ghost Mode on this trip = the standing refusal wins),
+//                                 and the crewmate's own sharing must publish them (the crew card's gate).
+//   standing_crew_location_share  the traveller is, at the moment of the abort, LIVE-SHARING their location with THIS
+//                                 crew (3996 grant, evaluated with every §14.1 terminator). They already authorized
+//                                 the crew to know where they are; "heading back to the airport" discloses less than
+//                                 that share does. Same two sharing gates as above.
+//   emergency_contact             EMERGENCY-SHARING RULE: the crewmate is an in-app contact the traveller nominated on
+//                                 an ACTIVE Safe Return session (safe_return_contacts.contact_user_id). Safe Return's
+//                                 own basis is vital interest during an active session (lib/locationPurposes.ts
+//                                 `safety_return`), so neither sharing preference is consulted for that person.
+//
+// BLOCKS ALWAYS WIN: a block in either direction denies every basis, and an unreadable block list tells nobody.
+// THE FLAG (3786) still decides first: OFF / absent / unreadable tells nobody on any basis.
+
+export type CrewAbortAuthorizationBasis = "explicit_request" | "standing_crew_location_share" | "emergency_contact";
+export type CrewAbortAuthorizationDenial = "crew_notify_not_enabled" | "blocked" | "sharing_not_allowed" | "recipient_not_publishable" | "not_requested";
+
+export interface CrewAbortAuthorizationInput {
+  flagEnabled: boolean;
+  /** `tellCrew: true` on this abort. */
+  requested: boolean;
+  /** The traveller's own §17 gate: open and READ (a degraded gate is false). */
+  travellerSharingAllowed: boolean;
+  /** A live 3996 share from the traveller to THIS crew at the abort instant. */
+  liveCrewShare: boolean;
+  recipient: {
+    /** A block either way between the traveller and this crewmate. */
+    blocked: boolean;
+    /** The crewmate's own sharing preference publishes them (the crew card's gate). */
+    publishable: boolean;
+    /** The crewmate is an in-app contact on the traveller's ACTIVE Safe Return session. */
+    emergencyContact: boolean;
+  };
+}
+
+export type CrewAbortAuthorization =
+  | { allowed: true; basis: CrewAbortAuthorizationBasis }
+  | { allowed: false; denial: CrewAbortAuthorizationDenial };
+
+/** Pure. The ONLY place the abort notice decides whether one crewmate may be told. */
+export function crewAbortNoticeAuthorization(input: CrewAbortAuthorizationInput): CrewAbortAuthorization {
+  if (!input.flagEnabled) return { allowed: false, denial: "crew_notify_not_enabled" };
+  if (input.recipient.blocked) return { allowed: false, denial: "blocked" };
+  if (input.recipient.emergencyContact) return { allowed: true, basis: "emergency_contact" };
+  if (!input.requested && !input.liveCrewShare) return { allowed: false, denial: "not_requested" };
+  if (!input.travellerSharingAllowed) return { allowed: false, denial: "sharing_not_allowed" };
+  if (!input.recipient.publishable) return { allowed: false, denial: "recipient_not_publishable" };
+  return { allowed: true, basis: input.requested ? "explicit_request" : "standing_crew_location_share" };
+}
+
+/**
+ * Does the traveller hold a LIVE crew location share to this crew right now? Behind the crew-location flag (3996's
+ * `layover_crew_location_enabled`): OFF / unreadable / any failed read = no standing authorization (never assumed).
+ */
+async function liveCrewShareOf(
+  db: SupabaseClient,
+  input: { userId: string; sessionId: string; crew: { id: string; status: string; expiresAt: string }; nowMs: number },
+): Promise<boolean> {
+  if (!(await isFlagEnabled(db, "layover_crew_location_enabled"))) return false;
+  const { data, error } = await db
+    .from("layover_crew_location_grants")
+    .select("crew_id, user_id, session_id, purpose, precision, label, lat, lng, granted_at, expires_at")
+    .eq("crew_id", input.crew.id)
+    .eq("user_id", input.userId)
+    .limit(1);
+  if (error) {
+    logger.warn({ err: error.message, crewId: input.crew.id }, "crew abort notice: crew location share unreadable — no standing authorization assumed");
+    return false;
+  }
+  const g = ((data ?? []) as Array<Record<string, any>>)[0];
+  if (!g || String(g.session_id) !== input.sessionId) return false;
+  const grant = { grantedByUserId: input.userId, crewId: input.crew.id, grantedAtMs: Date.parse(g.granted_at), expiresAtMs: Date.parse(g.expires_at) };
+  const signals = await abortCrewShareSignals(db, input, g);
+  const share = evaluateCrewLocationShare(grant, signals, input.nowMs);
+  return share.active;
+}
+
+/**
+ * Which of these crewmates did the traveller nominate as in-app contacts on an ACTIVE Safe Return session? Any failed
+ * read = nobody (the emergency basis is never assumed).
+ */
+async function activeSafeReturnContactsAmong(db: SupabaseClient, userId: string, candidateIds: string[]): Promise<Set<string>> {
+  const none = new Set<string>();
+  if (candidateIds.length === 0) return none;
+  const { data: sessions, error } = await db
+    .from("safe_return_sessions")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("status", "active")
+    .limit(5);
+  if (error) {
+    logger.warn({ err: error.message }, "crew abort notice: Safe Return sessions unreadable — no emergency basis assumed");
+    return none;
+  }
+  const ids = ((sessions ?? []) as Array<{ id?: unknown }>).map((s) => String(s.id));
+  if (ids.length === 0) return none;
+  const { data: contacts, error: cErr } = await db
+    .from("safe_return_contacts")
+    .select("contact_user_id").eq("contact_method", "in_app")
+    .in("session_id", ids)
+    .in("contact_user_id", candidateIds);
+  if (cErr) {
+    logger.warn({ err: cErr.message }, "crew abort notice: Safe Return contacts unreadable — no emergency basis assumed");
+    return none;
+  }
+  return new Set(((contacts ?? []) as Array<{ contact_user_id?: unknown }>).map((c) => String(c.contact_user_id)));
+}
+
+export interface CrewAbortNoticeAuthorizedOutcome extends CrewAbortNoticeOutcome {
+  /** How many crewmates were told on each basis. Counts, never people. */
+  bases: Partial<Record<CrewAbortAuthorizationBasis, number>>;
+}
+
+/**
+ * `tellCrewOfAbort` under the explicit rule above. Same recipients' crew, same minimal text, same duplicate identity,
+ * same "a count, never a person" outcome. NO try/catch in here (it holds a block read, and `readBlockExclusions`
+ * never rejects); the bounded caller turns any other throw into `notify_failed`.
+ */
+export async function tellCrewOfAbortAuthorized(
+  db: SupabaseClient,
+  input: {
+    userId: string; sessionId: string; nowMs: number; request: CrewAbortNoticeRequest;
+    tripId?: string | null;
+    cancelled?: () => boolean;
+  },
+): Promise<CrewAbortNoticeAuthorizedOutcome> {
+  const { userId, sessionId, nowMs, request } = input;
+  const told = (reason: CrewAbortNoticeReason | null, n = 0, bases: CrewAbortNoticeAuthorizedOutcome["bases"] = {}): CrewAbortNoticeAuthorizedOutcome => ({ notifiedCount: n, reason, bases });
+  if (!request.enabled) return told("crew_notify_not_enabled");
+
+  const mine = await activeCrewForUser(db, userId, new Date(nowMs).toISOString());
+  if (!mine.ok) return told("crew_unreadable");
+  if (!mine.value || mine.value.membership.sessionId !== sessionId) return told(request.requested ? "not_in_a_crew" : "not_requested");
+  const members = await crewMembers(db, mine.value.crew.id);
+  if (!members.ok) return told("crew_unreadable");
+  const seen = new Set<string>([userId]);
+  const others: CrewMemberRow[] = [];
+  for (const m of members.value) { if (!seen.has(m.userId)) { seen.add(m.userId); others.push(m); } }
+  if (others.length === 0) return told(request.requested ? "no_crewmate_to_tell" : "not_requested");
+  const otherIds = others.map((m) => m.userId);
+
+  const blocked = await readBlockExclusions(db, userId, { among: otherIds });
+  if (!blocked.ok) return told("blocks_unreadable");
+
+  const emergency = await activeSafeReturnContactsAmong(db, userId, otherIds);
+  const liveShare = await liveCrewShareOf(db, { userId, sessionId, crew: mine.value.crew, nowMs });
+  const userBasis = request.requested || liveShare;
+
+  // The user bases need both standing gates read; an unreadable one is a refusal for those bases only.
+  let travellerAllowed = false;
+  let publishable = new Set<string>();
+  let gateReason: CrewAbortNoticeReason | null = null;
+  if (userBasis) {
+    const gate = discloseSharingGate(await evaluateSharingGate(db, { userId, tripId: input.tripId ?? null }));
+    if (gate.degraded) gateReason = "sharing_preferences_unreadable";
+    else if (!gate.allowed) gateReason = "sharing_not_allowed";
+    else travellerAllowed = true;
+    if (travellerAllowed) {
+      const sharing = await publishableUserIds(db, otherIds);
+      if (sharing.kind === "degraded") { gateReason = "sharing_preferences_unreadable"; travellerAllowed = false; }
+      else publishable = new Set(sharing.value.allowed);
+    }
+  }
+
+  const recipients: Array<{ m: CrewMemberRow; basis: CrewAbortAuthorizationBasis }> = [];
+  for (const m of others) {
+    const a = crewAbortNoticeAuthorization({
+      flagEnabled: request.enabled,
+      requested: request.requested,
+      travellerSharingAllowed: travellerAllowed,
+      liveCrewShare: liveShare,
+      recipient: { blocked: blocked.ids.has(m.userId), publishable: publishable.has(m.userId), emergencyContact: emergency.has(m.userId) },
+    });
+    if (a.allowed) recipients.push({ m, basis: a.basis });
+  }
+  if (recipients.length === 0) return told(gateReason ?? (userBasis ? "no_crewmate_to_tell" : "not_requested"));
+
+  const actor = await senderLabel(db, userId);
+  const sourceId = crewAbortNoticeSourceId(mine.value.crew.id, sessionId);
+  const prior = await priorNotices(db, recipients.map((r) => r.m.userId), sourceId);
+  if (input.cancelled?.()) return told("notify_timed_out");
+  const service = new NotificationService(db);
+  const crewId = mine.value.crew.id;
+  const results = await Promise.all(recipients.map(async ({ m, basis }): Promise<CrewAbortAuthorizationBasis | null> => {
+    const { row, refusal } = await service.createDetailed({
+      userId: m.userId,
+      eventType: CREW_ABORT_NOTICE_EVENT_TYPE,
+      params: { actor },
+      actionUrl: `/layover/${m.sessionId}`,
+      sourceType: CREW_ABORT_NOTICE_SOURCE_TYPE,
+      sourceId,
+    }).catch((err: unknown) => { logger.warn({ err, crewId }, "crew abort notice: create threw"); return { row: null, refusal: "threw" as const }; });
+    if (row) {
+      void new NotificationRouter(db).route(row).catch((err) => { logger.warn({ err, crewId }, "crew abort notice: routing failed (the row exists)"); });
+      return basis;
+    }
+    return refusal === "duplicate" && prior !== null && prior.has(m.userId) ? basis : null;
+  }));
+  const bases: CrewAbortNoticeAuthorizedOutcome["bases"] = {};
+  for (const b of results) if (b) bases[b] = (bases[b] ?? 0) + 1;
+  const n = results.filter(Boolean).length;
+  if (n === results.length) return told(null, n, bases);
+  return told(n === 0 ? "notify_failed" : "notify_partially_failed", n, bases);
+}
+import { evaluateCrewLocationShare } from "../airport/LayoverCrewService.js"; // census-layover L144 (lane B2-CREW): appended at the tail so no cited line above moves; ESM hoists it
+
+import { crewShareSignalsFor, type CrewGrantRow } from "./LayoverCrewLocation.js";
+import { readSharerSessions } from "./LayoverCrewLocationStore.js";
+import { landsideSuppressionFor } from "./LayoverCheckpointStore.js";
+
+/** Standing authorization ends at the same boundaries as the live location card, even before its next purge. */
+async function abortCrewShareSignals(
+  db: SupabaseClient,
+  input: { userId: string; sessionId: string; crew: { id: string; status: string; expiresAt: string }; nowMs: number },
+  row: Record<string, any>,
+) {
+  const sessions = await readSharerSessions(db, [input.sessionId]);
+  const suppression = await landsideSuppressionFor(db, input.sessionId, input.nowMs);
+  const reentryAtMs = suppression.state === "unknown" ? input.nowMs : suppression.state === "suppressed" ? Date.parse(suppression.reportedAt) : null;
+  const grant: CrewGrantRow = {
+    crewId: row.crew_id, userId: row.user_id, sessionId: row.session_id, purpose: row.purpose,
+    precision: row.precision, label: row.label, lat: row.lat, lng: row.lng, grantedAt: row.granted_at, expiresAt: row.expires_at,
+  };
+  return crewShareSignalsFor({
+    grant, crew: input.crew, membershipLive: true, nowMs: input.nowMs,
+    sharerSession: sessions.ok ? sessions.value.get(input.sessionId) ?? null : null,
+    reentryAtMs: reentryAtMs !== null && !Number.isFinite(reentryAtMs) ? input.nowMs : reentryAtMs,
+  });
 }

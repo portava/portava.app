@@ -81,7 +81,7 @@ import { statedTravelMin } from "./LayoverPlanFit.js";
  *                 shape's version moved; the arithmetic gained a term, so
  *                 `LAYOVER_ENGINE_VERSION` moved too and for its own reason.
  */
-export const LAYOVER_FEASIBILITY_VERSION = "2026.10.06-1"; // 2026.10.06-1: `landsideGate` gains `status` / `cautions` and `open` narrows to the verdict `yes`; `constraints.read` may be `undeclared` — history (and 2026.10.04-1) in LayoverConstraints.ts
+export const LAYOVER_FEASIBILITY_VERSION = "2026.10.19-3"; // Named sourced timing and exact terminal applicability. Old stored shapes are explicitly refused by replayDecision, never silently re-certified.
 
 // ── §6.2 Estimate representation ─────────────────────────────────────────────
 
@@ -120,20 +120,20 @@ export type EstimateConfidence = (typeof ESTIMATE_CONFIDENCES)[number];
 /**
  * How far the value fell back from a live measurement. Lower is better.
  * 0 live · 1 historical aggregate · 2 curated per-airport row · 3 code constant.
- * Everything this tree produces is 2 or 3.
+ * Sourced timing observations use level1; unresolved stage terms remain absent.
  */
 export type EstimateFallbackLevel = 0 | 1 | 2 | 3;
 
 /**
  * Spec §6.2 `Estimate`. Every field the spec names is present.
  *
- * THE PERCENTILES ARE DEGENERATE AND MUST NOT BE PRESENTED AS A SPREAD.
+ * DEFAULT PERCENTILES ARE DEGENERATE AND MUST NOT BE PRESENTED AS A SPREAD.
  * `p50Minutes === p75Minutes === p90Minutes === valueMinutes` for every
- * estimate this tree can build, because no observation set exists to take a
- * percentile OF. Manufacturing a spread (say p90 = value × 1.3) would be
+ * default estimate. Published stage observations have real samples to take a
+ * percentile of. Manufacturing a spread (say p90 = value × 1.3) would be
  * exactly the "fabricated freshness" §2.1 forbids — it would put a number in
  * front of a traveller that no measurement supports. So the shape is here, the
- * selection policy is here and applied, and the distribution is honestly flat.
+ * selection policy is applied; only actual sampled estimates have a spread.
  * `confidence` and `fallbackLevel` are what tell a consumer that.
  */
 export interface Estimate {
@@ -171,7 +171,7 @@ export function estimateMinutesAt(e: Estimate, percentile: EstimatePercentile): 
   return Math.max(e.valueMinutes, at);
 }
 
-/** Build a degenerate (single-point) estimate. The only kind this tree can make. */
+/** A constant baseline estimate; sourced observations use sampledTimingEstimate. */
 function pointEstimate(
   valueMinutes: number,
   sourceClass: EstimateSourceClass,
@@ -214,7 +214,7 @@ export function worstConfidence(estimates: Estimate[]): EstimateConfidence {
  * taken from this function instead. Wiring that today would change nothing
  * except to add a second way to compute the number travellers act on.
  */
-export interface BufferEstimates {
+export interface BufferEstimates { timingEvidenceExtra?: Estimate;
   baseBuffer: Estimate;
   immigrationExtra: Estimate;
   bagsExtra: Estimate;
@@ -240,7 +240,7 @@ export interface BufferEstimates {
   returnTransport: Estimate;
 }
 
-export interface FeasibilityEstimates extends BufferEstimates {
+export interface FeasibilityEstimates extends BufferEstimates { deplane: Estimate; arrivalImmigration: Estimate; baggageClaim: Estimate; exitFriction: Estimate; stageLadder?: TimingLadder;
   /** Wheels-down → landside. Code constants, unrelated to the airport row. */
   exitDelay: Estimate;
   /**
@@ -263,7 +263,7 @@ export function conservativeBufferMinutes(
     estimateMinutesAt(b.trafficExtra, percentile) +
     estimateMinutesAt(b.timeOfDayExtra, percentile) +
     estimateMinutesAt(b.returnTransport, percentile) +
-    estimateMinutesAt(b.liveExtra, percentile)
+    estimateMinutesAt(b.liveExtra, percentile) + (b.timingEvidenceExtra ? estimateMinutesAt(b.timingEvidenceExtra, percentile) : 0)
   );
 }
 
@@ -276,16 +276,16 @@ export function conservativeBufferMinutes(
  * fall out of step with what is actually consumed.
  */
 export type FeasibilityAirport = Pick<AirportProfile,
-  | "iataCode" | "timezone" | "verified"
+  | "iataCode" | "timezone" | "verified" | "curation" | "calibratedCheckpointExtra" | "timingEvidence" | "timingEvidenceUnavailable" /* Curated observations and their unavailable state are named inputs. */
   | "domesticBufferMin" | "internationalBufferMin"
   | "immigrationExtraMin" | "checkedBagsExtraMin" | "trafficExtraMin"
-> & { id: string | null };
+> & { id: string | null; lat?: number | null; lng?: number | null };
 
 /** Exactly the session fields the feasibility arithmetic reads. */
 export type FeasibilitySession = Pick<LayoverSession,
   | "id" | "arrivalTime" | "departureTime" | "boardingTime"
   | "flightType" | "immigrationRequired" | "checkedBags" | "wantsToLeave" | "constraints"
->;
+> & Partial<Pick<LayoverSession, "comfortLevel" | "vibeChips">> & { arrivalTerminalId?:string|null; departureTerminalId?:string|null };
 
 /**
  * A named landside journey to certify alongside the window.
@@ -341,8 +341,8 @@ export interface FeasibilityInputs {
    *
    * `null` is UNRESOLVED, never permitted — see `adviseLeaving`.
    */
-  entry: EntryEligibility | null; /** §4 the declared constraint set and §6.1's entry policy — OPTIONAL and ABSENT unless something was declared / the policy is on, so a legacy computation hashes exactly as before. See LayoverConstraints.ts. */ constraints?: ConstraintInput; policy?: LandsidePolicyInput;
-  returnCorridorRisk?: ReturnCorridorRisk | null;
+  entry: EntryEligibility | null; /** §4 the declared constraint set and §6.1's entry policy — OPTIONAL and ABSENT unless something was declared / the policy is on, so a legacy computation hashes exactly as before. See LayoverConstraints.ts. */ constraints?: ConstraintInput; policy?: LandsidePolicyInput; /** §22 L243/L249 (LAYOVER 165 B2-CURATE): the airport's maturity at `nowMs` from its curated, validated, unexpired facts; present for every profile AirportProfileService builds, absent for a hand-built one (legacy). gateLandside closes `airport_maturity_limited` below L1. */ maturity?: LandsideMaturityInput;
+  returnCorridorRisk?: ReturnCorridorRisk | null; freedomPolicy?: NamedFreedomPolicy;
 }
 /** Project the domain objects onto the named input set. */
 export function feasibilityInputs(
@@ -362,14 +362,14 @@ export function feasibilityInputs(
     feasibilityVersion: LAYOVER_FEASIBILITY_VERSION,
     airport: {
       id: airport.id,
-      iataCode: airport.iataCode,
+      iataCode: airport.iataCode, ...namedAirportPosition(airport),
       timezone: airport.timezone,
-      verified: airport.verified,
+      verified: airport.curation ? airport.verified === true && landsideMaturityInput(airport, opts.nowMs)?.rung === "L1_MAPPED" : airport.verified, // L14: a curated profile is verified only while its published facts are UNEXPIRED at this record's instant
       domesticBufferMin: airport.domesticBufferMin,
       internationalBufferMin: airport.internationalBufferMin,
       immigrationExtraMin: airport.immigrationExtraMin,
       checkedBagsExtraMin: airport.checkedBagsExtraMin,
-      trafficExtraMin: airport.trafficExtraMin,
+      trafficExtraMin: airport.trafficExtraMin, ...(airport.calibratedCheckpointExtra ? { calibratedCheckpointExtra: [...airport.calibratedCheckpointExtra] } : {}), ...namedTimingInputs(airport, opts.nowMs), // Sample evidence and unavailable state participate in replay identity.
     },
     session: {
       id: session.id,
@@ -379,7 +379,7 @@ export function feasibilityInputs(
       flightType: session.flightType,
       immigrationRequired: session.immigrationRequired,
       checkedBags: session.checkedBags,
-      wantsToLeave: session.wantsToLeave,
+      wantsToLeave: session.wantsToLeave, ...namedTimingTerminals(session),
     },
     nowMs: opts.nowMs,
     bufferPercentile: opts.bufferPercentile ?? SAFETY_CRITICAL_PERCENTILE,
@@ -394,7 +394,7 @@ export function feasibilityInputs(
           groundTransportExtraMin: live.groundTransportExtraMin,
           reasonCodes: [...live.reasonCodes],
           observedAt: live.observedAt,
-          expiresAt: live.expiresAt,
+          expiresAt: live.expiresAt, ...namedLiveEstimate(live), ...namedAuthoritativeLiveEvidence(live), // live distribution and screened authority are named inputs; absent keys preserve legacy hashes
         }
       : null,
     // Projected field by field like everything above, so an extra key on the
@@ -410,7 +410,7 @@ export function feasibilityInputs(
               destinationCountry: opts.entry.corridor.destinationCountry,
             },
           }
-      : null, ...namedConstraintInputs(opts.constraints !== undefined ? opts.constraints : session.constraints),
+      : null, ...namedConstraintInputs(opts.constraints !== undefined ? opts.constraints : session.constraints), ...maturityNamedInput(airport, opts.nowMs), freedomPolicy: namedFreedomPolicy(session),
   };
 }
 
@@ -578,7 +578,7 @@ function bufferEstimates(inputs: FeasibilityInputs, breakdown: SafetyAssessment[
       // the helper returns 6. Pinned by layoverReturnConditions.test.ts §6.2.
       ["LayoverSafetyEngine.returnTransportExtra", "TripDepartureAssumptions.DEPARTURE_FACTORS"],
     ),
-    liveExtra: liveExtraEstimate(inputs.liveConditions, breakdown.liveExtra),
+    liveExtra: liveExtraEstimate(inputs.liveConditions, breakdown.liveExtra), ...(breakdown.timingEvidenceExtra ? { timingEvidenceExtra: pointEstimate(breakdown.timingEvidenceExtra, 'STATIC_DEFAULT', 'LOW', 3, ['conservative processing floor above existing aggregate; selected marginal quantiles, not a journey quantile']) } : {}),
   };
 }
 
@@ -592,7 +592,7 @@ function bufferEstimates(inputs: FeasibilityInputs, breakdown: SafetyAssessment[
  * that says so in words. It never claims to be a live reading of "no queue".
  */
 function liveExtraEstimate(live: LiveConditions | null, minutes: number): Estimate {
-  if (!live) {
+  const distributed = liveDistributionEstimate(live, minutes); if (distributed) return distributed; if (!live) {
     return pointEstimate(0, "STATIC_DEFAULT", "LOW", 3, ["no live conditions supplied"]);
   }
   return {
@@ -611,14 +611,14 @@ function liveExtraEstimate(live: LiveConditions | null, minutes: number): Estima
  * same `inputs` always produce the same record, which is what makes
  * `inputHash` an identity rather than a decoration.
  */
-export function certifyFeasibility(sourceInputs: FeasibilityInputs): LayoverFeasibilityRecord {
-  const inputs = namedReturnCorridorInputs(sourceInputs);
+export function certifyFeasibility(sourceInputs: FeasibilityInputs, previous?: LayoverFeasibilityRecord): LayoverFeasibilityRecord {
+  const inputs = namedReturnCorridorInputs(sourceInputs); const derivation = new ConstraintDerivation(previous ? FEASIBILITY_DERIVATIONS.get(previous) : undefined);
   const { airport, nowMs } = inputs; const session = engineSession(inputs.session, inputs.constraints); // what the constraint input charges (declared bag mode, separate tickets) replaces the boolean HERE, once, for every term below
   const live = inputs.liveConditions;
 
   // ONE deadline computation. Everything below reads it; nothing recomputes it.
-  const deadline = computeReturnDeadline(airport, session, live);
-  const envelope = computeWindow(airport, session, nowMs, live);
+  const deadline = derivation.run("deadline", [...deadlineDependencies(airport, session, live) as unknown[], airport.timingEvidence, inputs.bufferPercentile, airport.timingEvidence ? nowMs : null], () => computeReturnDeadline(airport, session, live, derivation, { nowMs, percentile: inputs.bufferPercentile }));
+  const exitDelayMin = derivation.run("exitDelay", [session.flightType, session.immigrationRequired, session.checkedBags, session.arrivalTerminalId, session.departureTerminalId, airport.timingEvidence, inputs.bufferPercentile, airport.timingEvidence ? nowMs : null], () => sourcedExitDelay(airport, session, nowMs, inputs.bufferPercentile)); const envelope = derivation.run("envelope", [session.arrivalTime, session.departureTime, session.wantsToLeave, airport.verified, airport.iataCode, airport.timezone, airport.lat, airport.lng, nowMs, deadline, exitDelayMin], () => computeWindow(airport, session, nowMs, live, { deadline, exitDelayMin }));
 
   const probe = inputs.landsideProbe;
   const candidate: ActivityCandidate | null = probe
@@ -631,16 +631,16 @@ export function certifyFeasibility(sourceInputs: FeasibilityInputs): LayoverFeas
       }
     : null;
   const landside = candidate
-    ? { ...assess(airport, session, candidate, nowMs, { deadline, envelope, inputs }), probe: probe! } // census-layover §75: rated against THIS record's envelope, the usable time it certifies
+    ? { ...derivation.run("landsideAssessment", [inputs, deadline, envelope, candidate], () => assess(airport, session, candidate, nowMs, { deadline, envelope, inputs })), probe: probe! } // rated against THIS record's envelope
     : null;
   // Same deadline object, not a second derivation. See `windowOnly`.
-  const windowOnlyByClock = assessWindowOnly(airport, session, envelope, nowMs, deadline);
+  const windowOnlyByClock = derivation.run("windowAssessment", [airport, session, envelope, nowMs, deadline], () => assessWindowOnly(airport, session, envelope, nowMs, deadline));
 
-  const gated = gateLandside(inputs, envelope, adviseLeaving(airport, session, envelope, {
+  const gated = derivation.run("landsideGate", [inputs, envelope], () => gateLandside(inputs, envelope, adviseLeaving(airport, session, envelope, {
     travelTimeSource: probe?.travelTimeSource,
     liveConditions: live,
     entry: inputs.entry,
-  })); const advice = gated.advice; // the gate may only WITHDRAW the clock's verdict — swept in src/test/layoverConstraintGate.test.ts
+  }))); const advice = gated.advice; // the gate may only WITHDRAW the clock's verdict — swept in src/test/layoverConstraintGate.test.ts
 
   // ── ONE RESPONSE CANNOT SAY TWO THINGS ──────────────────────────────────
   //
@@ -691,9 +691,9 @@ export function certifyFeasibility(sourceInputs: FeasibilityInputs): LayoverFeas
       }
     : windowOnlyByClock;
 
-  const buffers = bufferEstimates(inputs, deadline.breakdown);
+  const buffers = derivation.run("bufferEstimates", [airport.id, airport.iataCode, airport.verified, inputs.session.flightType, live, deadline.breakdown], () => bufferEstimates(inputs, deadline.breakdown));
   const estimates: FeasibilityEstimates = {
-    ...buffers,
+    ...buffers, ...exitComponentEstimates(session), ...sourcedExitEstimates(inputs, session), stageLadder: timingLadder(inputs, session),
     exitDelay: pointEstimate(
       envelope.exitDelayMin, "STATIC_DEFAULT", "LOW", 3,
       ["LayoverSafetyEngine.estimateExitDelay"],
@@ -711,7 +711,7 @@ export function certifyFeasibility(sourceInputs: FeasibilityInputs): LayoverFeas
     ...(live ? [buffers.liveExtra] : []),
   ];
 
-  return applyCertifiedReturnCorridor({
+  return retainFeasibilityDerivation(applyCertifiedReturnCorridor({
     feasibilityVersion: LAYOVER_FEASIBILITY_VERSION,
     engineVersion: LAYOVER_ENGINE_VERSION,
     inputHash: feasibilityInputHash(inputs),
@@ -729,7 +729,7 @@ export function certifyFeasibility(sourceInputs: FeasibilityInputs): LayoverFeas
     disclaimer: advice.disclaimer,
     landside,
     windowOnly: windowOnlyUnderGate(windowOnly, gated.gate, advice.verdict, advice.reasons), landsideGate: gated.gate,
-  }, inputs.returnCorridorRisk ?? null);
+  }, inputs.returnCorridorRisk ?? null), derivation);
 }
 
 /**
@@ -1043,4 +1043,168 @@ function namedReturnCorridorRisk(value: unknown): ReturnCorridorRisk | null {
       unmeasured: facts.unmeasured.map(signal => ({ signal: signal.signal, blockedBy: signal.blockedBy })),
     },
   };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LAYOVER 165, lane B2-LIVE — §6.2 L54 / L55: the live term's DISTRIBUTION.
+//
+// Appended at the tail so every cited line above keeps its number; ESM hoists
+// the import.
+//
+// `liveExtraEstimate` above published the live term as a point — p50, p75 and
+// p90 the same number — because the only thing that could hand it a live term
+// was a test, and a test hands it one figure. The live-signal producer
+// (`layoverLiveSignals.ts`) now builds `LiveConditions` from validated readings
+// and attaches `estimate`: the per-term percentiles it selected FROM. When that
+// is present AND consistent with the minutes the buffer actually added, the
+// record's `estimates.liveExtra` carries the real spread:
+//   valueMinutes = p50 (the central reading), p75, p90 — and the SELECTED
+//   percentile equals the minutes in the deadline, so
+//   `bufferMinutesAtPercentile === deadline.breakdown.totalBuffer` still holds
+//   at the record's configured percentile, and
+//   `conservativeBufferMinutes(b, "p50")` is now SMALLER than the deadline's
+//   buffer — the "do not collapse to a single average" half of §6.2, visible.
+// An inconsistent estimate (a hand-edited LiveConditions whose terms no longer
+// sum to its selected percentile — the event replanner overrides one term) is
+// IGNORED and the point estimate is published, rather than a spread that does
+// not describe the arithmetic.
+// ═══════════════════════════════════════════════════════════════════════════
+import type { LiveConditionsEstimate } from "./LayoverSafetyEngine.js";
+
+/** `estimate`, projected field by field for the input hash; NO key at all when absent. */
+function namedLiveEstimate(live: LiveConditions): { estimate?: LiveConditionsEstimate } {
+  const e = live.estimate;
+  if (!e) return {};
+  return {
+    estimate: {
+      p50ExtraMin: e.p50ExtraMin,
+      p75ExtraMin: e.p75ExtraMin,
+      p90ExtraMin: e.p90ExtraMin,
+      percentile: e.percentile,
+      confidence: e.confidence,
+      fallbackLevel: e.fallbackLevel,
+      sourceRefs: [...e.sourceRefs],
+    },
+  };
+}
+
+/** The live term as a distributed §6.2 estimate, or null to fall back to the point estimate. */
+function liveDistributionEstimate(live: LiveConditions | null, minutes: number): Estimate | null {
+  const e = live?.estimate;
+  if (!live || !e) return null;
+  const ok = (n: number) => Number.isFinite(n) && n >= 0;
+  if (![e.p50ExtraMin, e.p75ExtraMin, e.p90ExtraMin].every(ok)) return null;
+  if (!(e.p50ExtraMin <= e.p75ExtraMin && e.p75ExtraMin <= e.p90ExtraMin)) return null;
+  const selected = e.percentile === "p50" ? e.p50ExtraMin : e.percentile === "p75" ? e.p75ExtraMin : e.p90ExtraMin;
+  if (Math.abs(selected - minutes) > 1e-6) return null;
+  return {
+    valueMinutes: e.p50ExtraMin,
+    p50Minutes: e.p50ExtraMin,
+    p75Minutes: e.p75ExtraMin,
+    p90Minutes: e.p90ExtraMin,
+    confidence: e.confidence,
+    sourceClass: "LIVE",
+    observedAt: live.observedAt,
+    expiresAt: live.expiresAt,
+    fallbackLevel: e.fallbackLevel,
+    sourceRefs: [`LayoverAirportTruth.liveConditionsFrom(${live.reasonCodes.join(",") || "no codes"})`, ...e.sourceRefs],
+  };
+}
+
+// ── §22 L243/L249: the airport's maturity as a NAMED INPUT (LAYOVER 165, lane B2-CURATE) ──
+//
+// Appended at the foot so no cited line above moves; ESM hoists the import. The
+// two call sites above are one-line additions: the `verified` projection and the
+// spread after `namedConstraintInputs`.
+//
+// The owner's 2026-10-18 decision restricts airport-specific (landside)
+// recommendations to airports whose CURATED data meets §22's L1 threshold, in
+// every flag state. `landsideMaturityInput` computes it from the profile's 3874
+// projection at the record's own instant (expiry is judged at `nowMs`, never at
+// a second clock read), and `gateLandside` closes `airport_maturity_limited`
+// when it is below the threshold. A profile that carries no projection is a
+// hand-built object — no production mapper makes one — and contributes no key,
+// so its computation hashes exactly as before.
+import { landsideMaturityInput, type LandsideMaturityInput } from "./layoverMaturity.js";
+
+function maturityNamedInput(airport: FeasibilityAirport, nowMs: number): { maturity?: LandsideMaturityInput } {
+  const m = landsideMaturityInput(airport, nowMs);
+  return m ? { maturity: m } : {};
+}
+
+import { namedAuthoritativeLiveEvidence } from "./layoverLiveMaturity.js";
+
+// L94: only records produced in this request have reusable, privately held node values.
+// Returned objects and persisted JSON never serve as trusted computation caches.
+import { ConstraintDerivation } from "./layoverConstraintDerivation.js";
+import { estimateExitDelay, estimateExitComponents, engineAirportPoint, type EngineSession } from "./LayoverSafetyEngine.js";
+const FEASIBILITY_DERIVATIONS = new WeakMap<LayoverFeasibilityRecord, ConstraintDerivation>();
+function retainFeasibilityDerivation(record: LayoverFeasibilityRecord, derivation: ConstraintDerivation): LayoverFeasibilityRecord {
+  const result = withFreedomPolicy(record); FEASIBILITY_DERIVATIONS.set(result, derivation);
+  return result;
+}
+function deadlineDependencies(airport: FeasibilityAirport, session: EngineSession, live: LiveConditions | null): unknown {
+  return [airport.timezone, airport.domesticBufferMin, airport.internationalBufferMin, airport.immigrationExtraMin,
+    airport.checkedBagsExtraMin, airport.trafficExtraMin, airport.calibratedCheckpointExtra,
+    session.departureTime, session.boardingTime, session.flightType, session.immigrationRequired, session.checkedBags, session.arrivalTerminalId, session.departureTerminalId,
+    live?.securityWaitExtraMin, live?.immigrationWaitExtraMin, live?.groundTransportExtraMin];
+}
+/** Reuse only unaffected derivations; dependency values are verified rather than trusting an event's declared node list. */
+export function recomputeFeasibility(previous: LayoverFeasibilityRecord, inputs: FeasibilityInputs): LayoverFeasibilityRecord {
+  return certifyFeasibility(inputs, previous);
+}
+/** Diagnostic trace only; no cached values, eligibility or personal facts are exposed. */
+export function feasibilityDerivationTrace(record: LayoverFeasibilityRecord): { recomputed: string[]; reused: string[] } | null {
+  return FEASIBILITY_DERIVATIONS.get(record)?.trace() ?? null;
+}
+
+function namedAirportPosition(airport: FeasibilityAirport): { lat?: number; lng?: number } {
+  return engineAirportPoint(airport) ?? {};
+}
+function exitComponentEstimates(session: EngineSession): Pick<FeasibilityEstimates, "deplane" | "arrivalImmigration" | "baggageClaim" | "exitFriction"> {
+  const c = estimateExitComponents(session);
+  const make = (key: keyof typeof c) => pointEstimate(c[key], "STATIC_DEFAULT", "LOW", 3, [`LayoverSafetyEngine.estimateExitComponents.${key}:model_assumption`]);
+  return { deplane: make("deplane"), arrivalImmigration: make("arrivalImmigration"), baggageClaim: make("baggageClaim"), exitFriction: make("exitFriction") };
+}
+
+import { constrainFreedomWindow, type TemporalSoftConstraint } from "../../domain/temporal/TemporalFreedomPolicy.js";
+import { ENVELOPE_UNCERTAINTY_BUDGET } from "./LayoverEnvelope.js";
+export interface NamedFreedomPolicy {
+  version: "2026.10.19-1"; maxLatenessMinutes: 0; unsafeActionsPermitted: false;
+  uncertaintyShares: Record<EstimateConfidence, number>; softConstraints: TemporalSoftConstraint[];
+}
+function namedFreedomPolicy(session: FeasibilitySession): NamedFreedomPolicy {
+  const softConstraints: TemporalSoftConstraint[] = [];
+  if (session.comfortLevel) softConstraints.push({ key: "comfortLevel", value: session.comfortLevel });
+  for (const value of session.vibeChips ?? []) if (typeof value === "string" && value.trim()) softConstraints.push({ key: "vibe", value: value.trim() });
+  return { version: "2026.10.19-1", maxLatenessMinutes: 0, unsafeActionsPermitted: false,
+    uncertaintyShares: { ...ENVELOPE_UNCERTAINTY_BUDGET }, softConstraints };
+}
+function withFreedomPolicy(record: LayoverFeasibilityRecord): LayoverFeasibilityRecord {
+  const window = record.envelope.freedomWindow;
+  if (!window) return record;
+  const policy = record.inputs.freedomPolicy ?? namedFreedomPolicy(record.inputs.session);
+  const narrowed = constrainFreedomWindow(window, { maxLatenessMinutes: 0, unsafeActionsPermitted: false,
+    uncertaintyShare: policy.uncertaintyShares[record.confidence], softConstraints: policy.softConstraints }, record.inputs.nowMs);
+  return { ...record, envelope: { ...record.envelope, freedomWindow: narrowed } };
+}
+import { namedTimingEvidence, stageTimingEstimates, TIMING_STAGES, type TimingStage } from './layoverTimingEvidence.js';
+import { sourcedExitDelay } from './LayoverSafetyEngine.js';
+export interface TimingLadder { stages: Array<{stage:TimingStage;estimate:Estimate|null;absence:string|null}>; wholeJourney: null; wholeJourneyAbsence: string; aggregateFallback: string; percentile: EstimatePercentile }
+function namedTimingInputs(airport:FeasibilityAirport,nowMs:number): Partial<FeasibilityAirport> {
+  const evidence=namedTimingEvidence(airport.timingEvidence,nowMs);
+  return {...(evidence?{timingEvidence:evidence}:{}),...(airport.timingEvidenceUnavailable || airport.timingEvidence && !evidence?{timingEvidenceUnavailable:true}:{})};
+}
+function sourcedExitEstimates(inputs:FeasibilityInputs,session:EngineSession): Partial<FeasibilityEstimates> {
+  const stages=stageTimingEstimates(inputs.airport.timingEvidence,session,inputs.nowMs);
+  return {...(stages.deplane?{deplane:stages.deplane}:{}),...(stages.arrival_immigration?{arrivalImmigration:stages.arrival_immigration}:{}),...(stages.baggage_claim?{baggageClaim:stages.baggage_claim}:{}),...(stages.airport_exit?{exitFriction:stages.airport_exit}:{})};
+}
+function timingLadder(inputs:FeasibilityInputs,session:EngineSession): TimingLadder {
+  const stages=stageTimingEstimates(inputs.airport.timingEvidence,session,inputs.nowMs);
+  return {stages:TIMING_STAGES.map(stage=>({stage,estimate:stages[stage]??null,absence:stages[stage]?null:stage.endsWith('_transport')?'candidate-specific measured route required':'no fresh stage observations for this flight context'})),
+    wholeJourney:null,wholeJourneyAbsence:'a whole-journey percentile requires paired complete observations for the selected place and travel mode',aggregateFallback:'Existing airport processing and contingency aggregates remain a minimum; marginal stage quantiles are not a journey quantile.',percentile:inputs.bufferPercentile};
+}
+import { normalizeTimingTerminalId } from './layoverTimingEvidence.js';
+function namedTimingTerminals(session:FeasibilitySession): Pick<FeasibilitySession,'arrivalTerminalId'|'departureTerminalId'> {
+  return {...(session.arrivalTerminalId!==undefined?{arrivalTerminalId:normalizeTimingTerminalId(session.arrivalTerminalId)}:{}),...(session.departureTerminalId!==undefined?{departureTerminalId:normalizeTimingTerminalId(session.departureTerminalId)}:{})};
 }

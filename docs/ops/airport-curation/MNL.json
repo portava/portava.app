@@ -1,0 +1,44 @@
+{
+  "packetVersion": 1,
+  "iata": "MNL",
+  "airportName": "Ninoy Aquino International Airport",
+  "state": "proposed_unvalidated",
+  "preparedBy": "machine-prepared by lane B2-CURATE research agent; NOT validated by a human curator",
+  "preparedAt": "2026-10-19T02:09:46Z",
+  "facts": [
+    {
+      "kind": "terminal_topology",
+      "value": {
+        "terminals": [
+          { "id": "T1", "name": "NAIA Terminal 1" },
+          { "id": "T2", "name": "NAIA Terminal 2" },
+          { "id": "T3", "name": "NAIA Terminal 3" }
+        ]
+      },
+      "source": {
+        "kind": "official_airport",
+        "url": "https://www.miaa.gov.ph/index.php/faq",
+        "retrievedAt": "2026-10-19T02:03:00Z",
+        "title": "Frequently Asked Questions (MIAA FAQ; no separate HTML title captured)"
+      },
+      "evidence": "FAQ 'List of AIRLINES by Terminal' headed NAIA Terminal 1, 2, 3",
+      "notes": "Airline list on the page is attributed to newnaia.com.ph 'as of March 10, 2026'. The page does not label any terminal as international or domestic, so 'serves' is omitted. Terminal 4 is not mentioned on this page. No gates, checkpoints or inter-terminal links stated. airportName is from the title of https://www.newnaia.com.ph/ ('New NAIA | Ninoy Aquino International Airport', retrieved 2026-10-19T02:02:25Z)."
+    }
+  ],
+  "unreachable": [
+    { "url": "https://newnaia.com.ph/transport", "error": "Page content is rendered client-side; fetch returned only the title 'Getting To & From NAIA | Transport Options'" },
+    { "url": "https://newnaia.com.ph/passenger-guide", "error": "Page content is rendered client-side; fetch returned only the title 'NAIA Passenger Guide | Before You Fly & On Arrival'" },
+    { "url": "https://www.newnaia.com.ph/", "error": "Page content is rendered client-side; fetch returned only the title (used for airportName only)" }
+  ],
+  "gaps": [
+    "terminal_topology.serves: the MIAA FAQ does not say which terminal is international or domestic",
+    "terminal_topology.walkingLinks: no inter-terminal transfer service, time or hours stated on any reachable official page (the FAQ lists 'Shuttle bus transfers' only as a service category)",
+    "ground_transport: the operator's transport page (newnaia.com.ph/transport) renders client-side; no content retrievable",
+    "transport_schedules: no official page reachable with schedule content",
+    "security_layout: not stated on any reachable official page",
+    "lounge_hours: the MIAA FAQ lists 'Lounges' only as a service category, no names or hours",
+    "overnight_lodging: not stated on any reachable official page",
+    "entry_restrictions: the MIAA FAQ refers passengers to their airline and the relevant embassy; no transit rule stated",
+    "consulted without usable facts: MIAA home page https://www.miaa.gov.ph/ (retrieved 2026-10-19T02:01:50Z) and https://www.miaa.gov.ph/index.php/about-miaa/naia-aerodrome (retrieved 2026-10-19T02:02:05Z)"
+  ]
+}

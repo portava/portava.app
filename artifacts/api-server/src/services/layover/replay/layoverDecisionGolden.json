@@ -2,7 +2,7 @@
   "decisions": [
     {
       "computedAt": "2026-10-01T02:20:00.000Z",
-      "engineVersion": "2026.09.22-1",
+      "engineVersion": "2026.10.19-2",
       "inputFacts": [
         {
           "key": "airport.id",
@@ -119,7 +119,7 @@
           "value": "p90"
         }
       ],
-      "inputHash": "sha256:2174d943103278f18dbdee7c097ce7fdd7002fc506d2d8bba0e6d79743c4f976",
+      "inputHash": "sha256:7be0524efe3d2506b1bd0944ca44e295b2dfdec67091402cd32982a8268d4dfa",
       "reasonCodes": [
         "AIRPORT_MATURITY_LIMITED",
         "INSUFFICIENT_USABLE_TIME"
@@ -145,7 +145,7 @@
         "percentile.p90"
       ],
       "sessionId": "corpus:s01-2h-domestic",
-      "snapshotId": "snap:edd5d0aa52e0eefd692faae6a6b8663e",
+      "snapshotId": "snap:20cc665340397ed07fb4d73692585599",
       "sourceRefs": [
         "LayoverSafetyEngine.estimateExitDelay",
         "LayoverSafetyEngine.timeOfDayBand",
@@ -156,7 +156,7 @@
     },
     {
       "computedAt": "2026-10-01T02:20:00.000Z",
-      "engineVersion": "2026.09.22-1",
+      "engineVersion": "2026.10.19-2",
       "inputFacts": [
         {
           "key": "airport.id",
@@ -273,7 +273,7 @@
           "value": "p90"
         }
       ],
-      "inputHash": "sha256:5d4d2ff977543ec820d09e6ad87b2502c57e388b5def6f81d5d24acf5f4fa720",
+      "inputHash": "sha256:1a586e1ce7b5efe77df1bff3444a22120174c0de40b6a7837be384d9f6dcaeb4",
       "reasonCodes": [
         "AIRPORT_MATURITY_LIMITED",
         "INSUFFICIENT_USABLE_TIME"
@@ -300,7 +300,7 @@
         "percentile.p90"
       ],
       "sessionId": "corpus:s02-4h-international-permitted-generic",
-      "snapshotId": "snap:d0d33e795773b133fd946663b116091a",
+      "snapshotId": "snap:d89ebd407d2b893fcfaf3cf9c30b2c8e",
       "sourceRefs": [
         "LayoverSafetyEngine.estimateExitDelay",
         "LayoverSafetyEngine.timeOfDayBand",
@@ -311,7 +311,7 @@
     },
     {
       "computedAt": "2026-10-01T02:20:00.000Z",
-      "engineVersion": "2026.09.22-1",
+      "engineVersion": "2026.10.19-2",
       "inputFacts": [
         {
           "key": "airport.id",
@@ -428,7 +428,7 @@
           "value": "p90"
         }
       ],
-      "inputHash": "sha256:5604835709ce76a0b0c2381043c0d9b40e024cd2ee02184b38d21e2a6b37362a",
+      "inputHash": "sha256:8240f63b9655f8bfa6f4f3570411f235af8c60f982fc339d18a43a99fc0079a8",
       "reasonCodes": [],
       "result": {
         "confidence": "LOW",
@@ -452,7 +452,7 @@
         "percentile.p90"
       ],
       "sessionId": "corpus:s03-4h-international-permitted-curated",
-      "snapshotId": "snap:6ef76ad38e2f6109c8a11242c9c4458f",
+      "snapshotId": "snap:4976f023c903fca17445e9fbb931e69c",
       "sourceRefs": [
         "LayoverSafetyEngine.estimateExitDelay",
         "LayoverSafetyEngine.timeOfDayBand",
@@ -467,7 +467,7 @@
     },
     {
       "computedAt": "2026-10-01T02:20:00.000Z",
-      "engineVersion": "2026.09.22-1",
+      "engineVersion": "2026.10.19-2",
       "inputFacts": [
         {
           "key": "airport.id",
@@ -584,7 +584,7 @@
           "value": "p90"
         }
       ],
-      "inputHash": "sha256:4620f697ee151d691332ddb8e8a92db8e01d94132edb9cef99e958185e1ff7c6",
+      "inputHash": "sha256:92a42180bc13c99dcdff3cbbf7303f9ca407462c119030e4eca8db53b6fc3ff8",
       "reasonCodes": [
         "AIRPORT_MATURITY_LIMITED"
       ],
@@ -610,7 +610,7 @@
         "percentile.p90"
       ],
       "sessionId": "corpus:s04-5h-international-generic",
-      "snapshotId": "snap:ca8a0d54a9a6aaef0e2483fd1fb9d1ec",
+      "snapshotId": "snap:cfbd279c9973c52171fbee7df99f9f01",
       "sourceRefs": [
         "LayoverSafetyEngine.estimateExitDelay",
         "LayoverSafetyEngine.timeOfDayBand",
@@ -621,7 +621,7 @@
     },
     {
       "computedAt": "2026-10-01T02:20:00.000Z",
-      "engineVersion": "2026.09.22-1",
+      "engineVersion": "2026.10.19-2",
       "inputFacts": [
         {
           "key": "airport.id",
@@ -738,7 +738,7 @@
           "value": "p90"
         }
       ],
-      "inputHash": "sha256:efa7a4d7a5d1921bb93a1880396865b75968aaea5baa0c00f0f406ab28c03e91",
+      "inputHash": "sha256:c90401e42c9d3bc5755d5ff5565531b3a9477a201cd017685d564a38ca362e12",
       "reasonCodes": [],
       "result": {
         "confidence": "LOW",
@@ -762,7 +762,7 @@
         "percentile.p90"
       ],
       "sessionId": "corpus:s05-5h-international-curated",
-      "snapshotId": "snap:afe8344e15091cd9d6e1d357b0c2157a",
+      "snapshotId": "snap:2e1b2c20ec701cbea37601b1a4feb91b",
       "sourceRefs": [
         "LayoverSafetyEngine.estimateExitDelay",
         "LayoverSafetyEngine.timeOfDayBand",
@@ -777,7 +777,7 @@
     },
     {
       "computedAt": "2026-10-01T02:20:00.000Z",
-      "engineVersion": "2026.09.22-1",
+      "engineVersion": "2026.10.19-2",
       "inputFacts": [
         {
           "key": "airport.id",
@@ -894,7 +894,7 @@
           "value": "p90"
         }
       ],
-      "inputHash": "sha256:0e18304de952c3c87eab01df1d140c8eb131886e70d24c26b2722d1120569dfb",
+      "inputHash": "sha256:00f048b51caebf2159739ea4af7d8562caf5422498b9a0862ea90f57c59e722b",
       "reasonCodes": [
         "AIRPORT_MATURITY_LIMITED"
       ],
@@ -920,7 +920,7 @@
         "percentile.p90"
       ],
       "sessionId": "corpus:s06-6h-visa-free",
-      "snapshotId": "snap:ad61c6b9290ee2b921cfee15b1bd5bfd",
+      "snapshotId": "snap:17868a968946589e36acc74c160948c0",
       "sourceRefs": [
         "LayoverSafetyEngine.estimateExitDelay",
         "LayoverSafetyEngine.timeOfDayBand",
@@ -931,7 +931,7 @@
     },
     {
       "computedAt": "2026-10-01T02:20:00.000Z",
-      "engineVersion": "2026.09.22-1",
+      "engineVersion": "2026.10.19-2",
       "inputFacts": [
         {
           "key": "airport.id",
@@ -1048,7 +1048,7 @@
           "value": "p90"
         }
       ],
-      "inputHash": "sha256:8508529a621f81a52d72fbec35b14bf69eef1bea82474aa0a0ebcecfbb32a51c",
+      "inputHash": "sha256:26a8c5a8cc16a4f949f946dd7979f9e0e3028e64ffc22d1cf86eb48a034cbec2",
       "reasonCodes": [
         "AIRPORT_MATURITY_LIMITED",
         "INSUFFICIENT_USABLE_TIME"
@@ -1076,7 +1076,7 @@
         "percentile.p90"
       ],
       "sessionId": "corpus:s07-5h-checked-bags-recheck",
-      "snapshotId": "snap:9c88ede6abf24df68768e43273f94225",
+      "snapshotId": "snap:2c885df029f46d59bcaf3f6efd3b763d",
       "sourceRefs": [
         "LayoverSafetyEngine.estimateExitDelay",
         "LayoverSafetyEngine.timeOfDayBand",
@@ -1087,7 +1087,7 @@
     },
     {
       "computedAt": "2026-10-01T15:20:00.000Z",
-      "engineVersion": "2026.09.22-1",
+      "engineVersion": "2026.10.19-2",
       "inputFacts": [
         {
           "key": "airport.id",
@@ -1204,7 +1204,7 @@
           "value": "p90"
         }
       ],
-      "inputHash": "sha256:791601505ff0ab9cf2e87c6b4202450fb834fce434af2c6d41e65fdd8fa58111",
+      "inputHash": "sha256:0803caeb9ae16c1c1a9e2a568e1cd27261f55be95aa410e1fdb077e998d1439b",
       "reasonCodes": [
         "AIRPORT_MATURITY_LIMITED"
       ],
@@ -1231,7 +1231,7 @@
         "percentile.p90"
       ],
       "sessionId": "corpus:s08-overnight",
-      "snapshotId": "snap:05c6300c08f5e46e0b66abc290ad4f59",
+      "snapshotId": "snap:fca384fcde7a31a8c133b910a6236219",
       "sourceRefs": [
         "LayoverSafetyEngine.estimateExitDelay",
         "LayoverSafetyEngine.timeOfDayBand",
@@ -1242,7 +1242,7 @@
     },
     {
       "computedAt": "2026-10-01T03:50:00.000Z",
-      "engineVersion": "2026.09.22-1",
+      "engineVersion": "2026.10.19-2",
       "inputFacts": [
         {
           "key": "airport.id",
@@ -1359,7 +1359,7 @@
           "value": "p90"
         }
       ],
-      "inputHash": "sha256:e42df70446c45debaf6d38eef92b130acf854d373074af205cd879b5928a1f3f",
+      "inputHash": "sha256:75e4b53f0b9a10bd10deadc73eb71388283964685a89dca5baf65180bc9712a2",
       "reasonCodes": [
         "AIRPORT_MATURITY_LIMITED",
         "INSUFFICIENT_USABLE_TIME"
@@ -1386,7 +1386,7 @@
         "percentile.p90"
       ],
       "sessionId": "corpus:s09-arrival-delay",
-      "snapshotId": "snap:aa7404a63fae55fd80be4b474457a526",
+      "snapshotId": "snap:99d7e90e11a2ccf5ccd6a5fc3d22cd4d",
       "sourceRefs": [
         "LayoverSafetyEngine.estimateExitDelay",
         "LayoverSafetyEngine.timeOfDayBand",
@@ -1397,7 +1397,7 @@
     },
     {
       "computedAt": "2026-10-01T02:20:00.000Z",
-      "engineVersion": "2026.09.22-1",
+      "engineVersion": "2026.10.19-2",
       "inputFacts": [
         {
           "key": "airport.id",
@@ -1514,7 +1514,7 @@
           "value": "p90"
         }
       ],
-      "inputHash": "sha256:ea1d613a53166af19c2b7e43c91c4a65d714c620fc0ecde2c293506cb4ad4d6e",
+      "inputHash": "sha256:3b85bc086c922791fd4d0f08fedc920596e40399915c63154608bac75c64b67b",
       "reasonCodes": [
         "AIRPORT_MATURITY_LIMITED"
       ],
@@ -1540,7 +1540,7 @@
         "percentile.p90"
       ],
       "sessionId": "corpus:s10-departure-delay",
-      "snapshotId": "snap:0412140fbb3a6dd0a937b81fb07dcf16",
+      "snapshotId": "snap:f456dabe3a5f651a4080c92564ccb6ae",
       "sourceRefs": [
         "LayoverSafetyEngine.estimateExitDelay",
         "LayoverSafetyEngine.timeOfDayBand",
@@ -1551,7 +1551,7 @@
     },
     {
       "computedAt": "2026-10-01T02:20:00.000Z",
-      "engineVersion": "2026.09.22-1",
+      "engineVersion": "2026.10.19-2",
       "inputFacts": [
         {
           "key": "airport.id",
@@ -1686,7 +1686,7 @@
           "value": 0
         }
       ],
-      "inputHash": "sha256:8e05899fd002c698428751b474bb2d7ddc6dd1025bdecb0aef3eb7f14fc8a3c1",
+      "inputHash": "sha256:d5b3de3a615ceef342431ed85da3cadaad313f8109b53cd943070da224f8251b",
       "reasonCodes": [
         "AIRPORT_MATURITY_LIMITED"
       ],
@@ -1713,7 +1713,7 @@
         "percentile.p90"
       ],
       "sessionId": "corpus:s11-security-spike",
-      "snapshotId": "snap:4814582f08ec9c2ee993f5674e5ca2f1",
+      "snapshotId": "snap:e969566e0a0e5f3cad6c1f69192522a7",
       "sourceRefs": [
         "LayoverAirportTruth.liveConditionsFrom(no codes)",
         "LayoverSafetyEngine.estimateExitDelay",
@@ -1725,7 +1725,7 @@
     },
     {
       "computedAt": "2026-10-01T02:20:00.000Z",
-      "engineVersion": "2026.09.22-1",
+      "engineVersion": "2026.10.19-2",
       "inputFacts": [
         {
           "key": "airport.id",
@@ -1860,7 +1860,7 @@
           "value": 30
         }
       ],
-      "inputHash": "sha256:a07acc52f1d3d46940f448cf7cd269e83aa4874e39c9beb5e2bd86f716c23dc1",
+      "inputHash": "sha256:dd9483257f761ba15d53e5a5e53b92535a5a94c9b7571bdae8381ce1f6cc2fae",
       "reasonCodes": [
         "AIRPORT_MATURITY_LIMITED"
       ],
@@ -1887,7 +1887,7 @@
         "percentile.p90"
       ],
       "sessionId": "corpus:s12-traffic-spike",
-      "snapshotId": "snap:3f5ecf4d1196ee6d8de52fdd70ef8628",
+      "snapshotId": "snap:2f8a46530290a408d9d54a057597e97d",
       "sourceRefs": [
         "LayoverAirportTruth.liveConditionsFrom(no codes)",
         "LayoverSafetyEngine.estimateExitDelay",
@@ -1899,7 +1899,7 @@
     },
     {
       "computedAt": "2026-10-01T02:20:00.000Z",
-      "engineVersion": "2026.09.22-1",
+      "engineVersion": "2026.10.19-2",
       "inputFacts": [
         {
           "key": "airport.id",
@@ -2016,7 +2016,7 @@
           "value": "p90"
         }
       ],
-      "inputHash": "sha256:259dcbe88d1907a9ac39d08ae012d4dcccf1fcbb06b27f644df27ba995981ed5",
+      "inputHash": "sha256:9cbabbdd198d2f036ec50b2c39073f244946550392e3f9727907deee04da291d",
       "reasonCodes": [
         "ENTRY_NOT_CONFIRMED",
         "AIRPORT_MATURITY_LIMITED"
@@ -2043,7 +2043,7 @@
         "percentile.p90"
       ],
       "sessionId": "corpus:s13-entry-unresolved",
-      "snapshotId": "snap:f348505aca4677f1483fb4d1fa6d13ac",
+      "snapshotId": "snap:e2e2d66241931d6eba81567e19aab114",
       "sourceRefs": [
         "LayoverSafetyEngine.estimateExitDelay",
         "LayoverSafetyEngine.timeOfDayBand",
@@ -2054,7 +2054,7 @@
     },
     {
       "computedAt": "2026-10-01T02:20:00.000Z",
-      "engineVersion": "2026.09.22-1",
+      "engineVersion": "2026.10.19-2",
       "inputFacts": [
         {
           "key": "airport.id",
@@ -2171,7 +2171,7 @@
           "value": "p90"
         }
       ],
-      "inputHash": "sha256:be7cce8bfc5786fd5380412feb58e2967f50815afaae145c1194821e65c6fda6",
+      "inputHash": "sha256:8d2e7d3ee8b8e43cdbc61eb60892b058fea000a3dcc35071baa8cdc2a97a1ba4",
       "reasonCodes": [
         "ENTRY_NOT_CONFIRMED",
         "AIRPORT_MATURITY_LIMITED"
@@ -2198,7 +2198,7 @@
         "percentile.p90"
       ],
       "sessionId": "corpus:s14-entry-refused",
-      "snapshotId": "snap:782f93ace34e4a60abf12edb9e0bb69c",
+      "snapshotId": "snap:e591629467e93a2802ae3c963982275a",
       "sourceRefs": [
         "LayoverSafetyEngine.estimateExitDelay",
         "LayoverSafetyEngine.timeOfDayBand",
@@ -2209,7 +2209,7 @@
     },
     {
       "computedAt": "2026-10-01T02:20:00.000Z",
-      "engineVersion": "2026.09.22-1",
+      "engineVersion": "2026.10.19-2",
       "inputFacts": [
         {
           "key": "airport.id",
@@ -2326,7 +2326,7 @@
           "value": "p90"
         }
       ],
-      "inputHash": "sha256:ac9ec98e38e3bd9b74362e5751f002bc12abbd79b3bcc6d3730200574c523353",
+      "inputHash": "sha256:b2ec43b4308c0a809b5c476dcf740374c082d9f5654e2d9b72ed88628d38a92d",
       "reasonCodes": [
         "ENTRY_NOT_CONFIRMED",
         "AIRPORT_MATURITY_LIMITED"
@@ -2353,7 +2353,7 @@
         "percentile.p90"
       ],
       "sessionId": "corpus:s15-entry-not-resolved-by-caller",
-      "snapshotId": "snap:dddeff71a45b0ecad0048b5a6563f538",
+      "snapshotId": "snap:c1b0c49986875e3205bb06fb60ce052e",
       "sourceRefs": [
         "LayoverSafetyEngine.estimateExitDelay",
         "LayoverSafetyEngine.timeOfDayBand",
@@ -2364,7 +2364,7 @@
     },
     {
       "computedAt": "2026-10-01T02:20:00.000Z",
-      "engineVersion": "2026.09.22-1",
+      "engineVersion": "2026.10.19-2",
       "inputFacts": [
         {
           "key": "airport.id",
@@ -2481,7 +2481,7 @@
           "value": "p90"
         }
       ],
-      "inputHash": "sha256:024405d4c974be521d6a0b42ccdf7216fea77f38686aa0464b8b0460cf1faf53",
+      "inputHash": "sha256:b604b0cfe4f92959badee909a05b4f25cd47322aaa1dce637b8194e374f50ec5",
       "reasonCodes": [
         "AIRPORT_MATURITY_LIMITED"
       ],
@@ -2507,7 +2507,7 @@
         "percentile.p90"
       ],
       "sessionId": "corpus:s16-stay-airside",
-      "snapshotId": "snap:a63dfa5b265e70b34dd2d09055c3aca0",
+      "snapshotId": "snap:ce0f7fb897c3bdee2547257c499722d2",
       "sourceRefs": [
         "LayoverSafetyEngine.estimateExitDelay",
         "LayoverSafetyEngine.timeOfDayBand",
@@ -2518,7 +2518,7 @@
     },
     {
       "computedAt": "2026-10-01T04:33:00.000Z",
-      "engineVersion": "2026.09.22-1",
+      "engineVersion": "2026.10.19-2",
       "inputFacts": [
         {
           "key": "airport.id",
@@ -2635,7 +2635,7 @@
           "value": "p90"
         }
       ],
-      "inputHash": "sha256:ecd0bac2824118684ab43102542980eeeabadb6f299d0d5e23e95421ebf589f7",
+      "inputHash": "sha256:f0be657a2f9fa8fc03762e97725e7b13964f2b7bef5b85f5fdd92eae26bf2045",
       "reasonCodes": [
         "AIRPORT_MATURITY_LIMITED",
         "INSUFFICIENT_USABLE_TIME"
@@ -2662,7 +2662,7 @@
         "percentile.p90"
       ],
       "sessionId": "corpus:s17-return-soon",
-      "snapshotId": "snap:1895e48382148a59949a7997456e9be3",
+      "snapshotId": "snap:33b4164746bb0fc3dfd2f919c218292b",
       "sourceRefs": [
         "LayoverSafetyEngine.estimateExitDelay",
         "LayoverSafetyEngine.timeOfDayBand",
@@ -2673,7 +2673,7 @@
     },
     {
       "computedAt": "2026-10-01T05:02:00.000Z",
-      "engineVersion": "2026.09.22-1",
+      "engineVersion": "2026.10.19-2",
       "inputFacts": [
         {
           "key": "airport.id",
@@ -2790,7 +2790,7 @@
           "value": "p90"
         }
       ],
-      "inputHash": "sha256:34000baa6f7d300f98ca51efa084f1f3940be023b1c0bb7a44dd028384c2cbe6",
+      "inputHash": "sha256:1daa39c7f2ff2182d4fed6176b965dbd3f97779a303ecd34922a20ee4511f12f",
       "reasonCodes": [
         "AIRPORT_MATURITY_LIMITED",
         "RETURN_THRESHOLD_REACHED",
@@ -2818,7 +2818,7 @@
         "percentile.p90"
       ],
       "sessionId": "corpus:s23-return-now",
-      "snapshotId": "snap:9bd9e8677960bdb8fc496889a74e3674",
+      "snapshotId": "snap:e19b919ee555191b3acbbc89a6f379c7",
       "sourceRefs": [
         "LayoverSafetyEngine.estimateExitDelay",
         "LayoverSafetyEngine.timeOfDayBand",
@@ -2829,7 +2829,7 @@
     },
     {
       "computedAt": "2026-10-01T06:10:00.000Z",
-      "engineVersion": "2026.09.22-1",
+      "engineVersion": "2026.10.19-2",
       "inputFacts": [
         {
           "key": "airport.id",
@@ -2946,7 +2946,7 @@
           "value": "p90"
         }
       ],
-      "inputHash": "sha256:a0bca5445917c216d0f3005500d95e3cded8685615884f7ef6cc5249f4bd12bb",
+      "inputHash": "sha256:3d3365006b69529e2b03eb37fbf364085a746a902f0233bba054c0f8d580da14",
       "reasonCodes": [
         "AIRPORT_MATURITY_LIMITED",
         "RETURN_THRESHOLD_REACHED",
@@ -2974,7 +2974,7 @@
         "percentile.p90"
       ],
       "sessionId": "corpus:s18-past-hard-return",
-      "snapshotId": "snap:51d99bf2a7b8851c0f16dfd55e057fe9",
+      "snapshotId": "snap:034579e6831df1d78f3790d3e994dfb9",
       "sourceRefs": [
         "LayoverSafetyEngine.estimateExitDelay",
         "LayoverSafetyEngine.timeOfDayBand",
@@ -2985,7 +2985,7 @@
     },
     {
       "computedAt": "2026-10-01T02:20:00.000Z",
-      "engineVersion": "2026.09.22-1",
+      "engineVersion": "2026.10.19-2",
       "inputFacts": [
         {
           "key": "airport.id",
@@ -3102,7 +3102,7 @@
           "value": "p90"
         }
       ],
-      "inputHash": "sha256:65e78ed7848e2fe16579ade0523ba216350a5a950290cb6c72dce1f047fa8f17",
+      "inputHash": "sha256:21ed37c110cb88d6fd02228b9734a58f1c181967964b461a478df7722b0f699b",
       "reasonCodes": [
         "AIRPORT_MATURITY_LIMITED"
       ],
@@ -3128,7 +3128,7 @@
         "percentile.p90"
       ],
       "sessionId": "corpus:s19-boarding-time-wins",
-      "snapshotId": "snap:e69b4731c87894cc812916f4666afa8a",
+      "snapshotId": "snap:b9ef7bb22fc8af21070c6f400e09ea44",
       "sourceRefs": [
         "LayoverSafetyEngine.estimateExitDelay",
         "LayoverSafetyEngine.timeOfDayBand",
@@ -3139,7 +3139,7 @@
     },
     {
       "computedAt": "2026-10-01T02:20:00.000Z",
-      "engineVersion": "2026.09.22-1",
+      "engineVersion": "2026.10.19-2",
       "inputFacts": [
         {
           "key": "airport.id",
@@ -3274,7 +3274,7 @@
           "value": "unmeasured"
         }
       ],
-      "inputHash": "sha256:a6bd9fddcd212304030e05222941a708079834cbcb6e56904ce57c624bd9e4cc",
+      "inputHash": "sha256:0ddfd8b6d0046a6754871d81bdaed0dc8c23f6e34220349cfd635e7b0f6cbd0c",
       "reasonCodes": [
         "AIRPORT_MATURITY_LIMITED"
       ],
@@ -3302,7 +3302,7 @@
         "probe.requiredIsLowerBound"
       ],
       "sessionId": "corpus:s20-landside-probe-unmeasured-leg",
-      "snapshotId": "snap:1a414eee1f45d621647cc69a3a054df1",
+      "snapshotId": "snap:9c4616dcf8b408ee2c2b736b1aa8e273",
       "sourceRefs": [
         "LayoverSafetyEngine.estimateExitDelay",
         "LayoverSafetyEngine.timeOfDayBand",
@@ -3313,7 +3313,7 @@
     },
     {
       "computedAt": "2026-10-01T02:20:00.000Z",
-      "engineVersion": "2026.09.22-1",
+      "engineVersion": "2026.10.19-2",
       "inputFacts": [
         {
           "key": "airport.id",
@@ -3448,7 +3448,7 @@
           "value": "traveller_stated"
         }
       ],
-      "inputHash": "sha256:9604777b3bccaa886604ab6fad4c21304a1319c164732d9945154dc8bdb3013e",
+      "inputHash": "sha256:e1a29f0e877398cf8176d22e2f17d756f3dd575e23689b850c0c97de9dde49a4",
       "reasonCodes": [
         "AIRPORT_MATURITY_LIMITED"
       ],
@@ -3475,7 +3475,7 @@
         "probe.traveller_stated"
       ],
       "sessionId": "corpus:s21-landside-probe-stated-leg",
-      "snapshotId": "snap:6246108c2b02f6ec7192b00226124501",
+      "snapshotId": "snap:74c26dd19481d5760864243551a17def",
       "sourceRefs": [
         "LayoverSafetyEngine.estimateExitDelay",
         "LayoverSafetyEngine.timeOfDayBand",
@@ -3487,7 +3487,7 @@
     },
     {
       "computedAt": "2026-10-01T02:00:00.000Z",
-      "engineVersion": "2026.09.22-1",
+      "engineVersion": "2026.10.19-2",
       "inputFacts": [
         {
           "key": "airport.id",
@@ -3604,7 +3604,7 @@
           "value": "p90"
         }
       ],
-      "inputHash": "sha256:1c2e4220fdb5b2636af920a439073144ea9aacb40ced2823c957dea3ac58fd5f",
+      "inputHash": "sha256:75e5ffd4bb66a00907915d273f93b211729818dd91174283d2be9d9c9a11f936",
       "reasonCodes": [
         "AIRPORT_MATURITY_LIMITED"
       ],
@@ -3629,7 +3629,7 @@
         "percentile.p90"
       ],
       "sessionId": "corpus:s24-3h-domestic-at-touchdown",
-      "snapshotId": "snap:123b62c58f3d176ddc18c873f537bc79",
+      "snapshotId": "snap:da5436654efd908fb2914e39728973f4",
       "sourceRefs": [
         "LayoverSafetyEngine.estimateExitDelay",
         "LayoverSafetyEngine.timeOfDayBand",
@@ -3640,7 +3640,7 @@
     },
     {
       "computedAt": "2026-10-01T02:20:00.000Z",
-      "engineVersion": "2026.09.22-1",
+      "engineVersion": "2026.10.19-2",
       "inputFacts": [
         {
           "key": "airport.id",
@@ -3787,7 +3787,7 @@
           "value": false
         }
       ],
-      "inputHash": "sha256:e3eda351c04a27f63c9c6d894b0713e639d8eb52d2650bff34bc4d3cb6ffd520",
+      "inputHash": "sha256:26d485fafb3c0840fb114c452e15877af0f9adca6c509d20e9bb5f10b96cb998",
       "reasonCodes": [
         "AIRPORT_MATURITY_LIMITED",
         "INSUFFICIENT_USABLE_TIME",
@@ -3818,7 +3818,7 @@
         "gate.baggage_unknown"
       ],
       "sessionId": "corpus:s25-unknown-baggage",
-      "snapshotId": "snap:2e9451b0ab5d79494b3fb146ebaba1e7",
+      "snapshotId": "snap:44f5e82c614cba98fdd05a3cdf0c9bd1",
       "sourceRefs": [
         "LayoverSafetyEngine.estimateExitDelay",
         "LayoverSafetyEngine.timeOfDayBand",
@@ -3829,7 +3829,7 @@
     },
     {
       "computedAt": "2026-10-01T02:20:00.000Z",
-      "engineVersion": "2026.09.22-1",
+      "engineVersion": "2026.10.19-2",
       "inputFacts": [
         {
           "key": "airport.id",
@@ -3976,7 +3976,7 @@
           "value": false
         }
       ],
-      "inputHash": "sha256:dfe0aa1f5c30a99672b5f4354da8a98c2be513381203855b2d4e7969bae9fcd1",
+      "inputHash": "sha256:edaf758eb28614316c395a471789d8c184d3dfe18d3ac0b60c764e1d6f920234",
       "reasonCodes": [
         "AIRPORT_MATURITY_LIMITED"
       ],
@@ -4003,7 +4003,7 @@
         "constraints.baggage.CHECKED_THROUGH"
       ],
       "sessionId": "corpus:s26-checked-through",
-      "snapshotId": "snap:51d62597a796b2ca969c8b35c4082beb",
+      "snapshotId": "snap:92e41acbf7c2fb5a33e1d9c1849e6b15",
       "sourceRefs": [
         "LayoverSafetyEngine.estimateExitDelay",
         "LayoverSafetyEngine.timeOfDayBand",
@@ -4014,7 +4014,7 @@
     },
     {
       "computedAt": "2026-10-01T02:20:00.000Z",
-      "engineVersion": "2026.09.22-1",
+      "engineVersion": "2026.10.19-2",
       "inputFacts": [
         {
           "key": "airport.id",
@@ -4161,7 +4161,7 @@
           "value": true
         }
       ],
-      "inputHash": "sha256:4614a43de32fd1dbb58898bddd2bf8f822ad62dd2da59ae2e98838fdaca267b5",
+      "inputHash": "sha256:a52d941f564e4d3166cc6cb5495594db403b30f0ea7c8dc605ebc781df8b8e52",
       "reasonCodes": [
         "AIRPORT_MATURITY_LIMITED",
         "AIRPORT_CHANGE_REQUIRED"
@@ -4191,7 +4191,7 @@
         "gate.airport_change"
       ],
       "sessionId": "corpus:s27-airport-change",
-      "snapshotId": "snap:ac5e6ac06416a8d39a37175cfda2202b",
+      "snapshotId": "snap:48143ddd76fe4e73149d0eaee424fe7c",
       "sourceRefs": [
         "LayoverSafetyEngine.estimateExitDelay",
         "LayoverSafetyEngine.timeOfDayBand",
@@ -4202,7 +4202,7 @@
     },
     {
       "computedAt": "2026-10-01T02:20:00.000Z",
-      "engineVersion": "2026.09.22-1",
+      "engineVersion": "2026.10.19-2",
       "inputFacts": [
         {
           "key": "airport.id",
@@ -4349,7 +4349,7 @@
           "value": null
         }
       ],
-      "inputHash": "sha256:a3c13cb50b4a469fe3285502635bdf6fe548f463af5c402555e1f43b4013d1de",
+      "inputHash": "sha256:39ea5e797e32d3dae073b71d20b1271bc052913aff874e94be4a60712753c499",
       "reasonCodes": [
         "AIRPORT_MATURITY_LIMITED",
         "INSUFFICIENT_USABLE_TIME",
@@ -4379,7 +4379,7 @@
         "constraints.baggage.COLLECT_RECHECK"
       ],
       "sessionId": "corpus:s28-self-transfer-recheck-declared",
-      "snapshotId": "snap:232207d3fb97cfad248f30a516f22e7a",
+      "snapshotId": "snap:255bedd43b78110beb13e2196b81e853",
       "sourceRefs": [
         "LayoverSafetyEngine.estimateExitDelay",
         "LayoverSafetyEngine.timeOfDayBand",
@@ -4390,7 +4390,7 @@
     },
     {
       "computedAt": "2026-10-01T02:20:00.000Z",
-      "engineVersion": "2026.09.22-1",
+      "engineVersion": "2026.10.19-2",
       "inputFacts": [
         {
           "key": "airport.id",
@@ -4543,7 +4543,7 @@
           "value": true
         }
       ],
-      "inputHash": "sha256:d7ff951a292ce75c070ed17cbabe4696b284db4e890fb27db39741fb8e603f77",
+      "inputHash": "sha256:1d9885c3c23ff967b2cb544b6432acd59c32c3934505429b24c7f403529b053d",
       "reasonCodes": [
         "ENTRY_NOT_CONFIRMED",
         "AIRPORT_MATURITY_LIMITED"
@@ -4573,7 +4573,7 @@
         "gate.entry_unconfirmed"
       ],
       "sessionId": "corpus:s29-entry-unresolved-policy-on",
-      "snapshotId": "snap:9ca0eb527c2cde38fb7dccbf6d7cb95b",
+      "snapshotId": "snap:ec1d35e3f3c6dffae6ae58baee53f128",
       "sourceRefs": [
         "LayoverSafetyEngine.estimateExitDelay",
         "LayoverSafetyEngine.timeOfDayBand",
@@ -4584,7 +4584,7 @@
     },
     {
       "computedAt": "2026-10-01T02:20:00.000Z",
-      "engineVersion": "2026.09.22-1",
+      "engineVersion": "2026.10.19-2",
       "inputFacts": [
         {
           "key": "airport.id",
@@ -4731,7 +4731,7 @@
           "value": null
         }
       ],
-      "inputHash": "sha256:39019f655ed63952bda50a33f5bf068185fdaf5d28753f818a2a07a6018ddeff",
+      "inputHash": "sha256:baa966e46163fd8cb02dcb6a8898e3ae809366ccd8f81ba3c4de5c2c78dd8b0e",
       "reasonCodes": [
         "AIRPORT_MATURITY_LIMITED"
       ],
@@ -4760,7 +4760,7 @@
         "gate.constraints_unreadable"
       ],
       "sessionId": "corpus:s30-constraints-unreadable",
-      "snapshotId": "snap:1bfaf6e0ea9f7f136d0b845ec40c5d91",
+      "snapshotId": "snap:c14d59625cbbae621a4d91237fcbbe68",
       "sourceRefs": [
         "LayoverSafetyEngine.estimateExitDelay",
         "LayoverSafetyEngine.timeOfDayBand",
@@ -4771,7 +4771,7 @@
     },
     {
       "computedAt": "2026-10-01T02:20:00.000Z",
-      "engineVersion": "2026.09.22-1",
+      "engineVersion": "2026.10.19-2",
       "inputFacts": [
         {
           "key": "airport.id",
@@ -4918,7 +4918,7 @@
           "value": null
         }
       ],
-      "inputHash": "sha256:6dfc43629d4c37527135f301e8a0d24dc5f0195f5da9b4637195aafaf480d33c",
+      "inputHash": "sha256:34a07d74cdbfadf52c58f386052df8f92ab748c1c6eae8c027db056d020b2ebe",
       "reasonCodes": [
         "AIRPORT_MATURITY_LIMITED",
         "INSUFFICIENT_USABLE_TIME"
@@ -4948,7 +4948,7 @@
         "gate.recheck_unknown"
       ],
       "sessionId": "corpus:s31-checked-through-tickets-unstated",
-      "snapshotId": "snap:edde50ee3814d234733914d19148f306",
+      "snapshotId": "snap:de97b4f764722aed779fc34affd7616e",
       "sourceRefs": [
         "LayoverSafetyEngine.estimateExitDelay",
         "LayoverSafetyEngine.timeOfDayBand",
@@ -4959,7 +4959,7 @@
     },
     {
       "computedAt": "2026-10-01T02:20:00.000Z",
-      "engineVersion": "2026.09.22-1",
+      "engineVersion": "2026.10.19-2",
       "inputFacts": [
         {
           "key": "airport.id",
@@ -5076,7 +5076,7 @@
           "value": "p90"
         }
       ],
-      "inputHash": "sha256:4abad65cabb8debd36a339ff7bf4aa15c12c88e90931cd22f0bad91e1493779a",
+      "inputHash": "sha256:a811c982d4943bf8801952c9cd01010fbe23fb1e3a3000666bc41e4ce4a28b61",
       "reasonCodes": [
         "AIRPORT_MATURITY_LIMITED"
       ],
@@ -5102,7 +5102,7 @@
         "percentile.p90"
       ],
       "sessionId": "corpus:s22-hnd-6h",
-      "snapshotId": "snap:94e8dffa0ea7811737ba49699bc7729f",
+      "snapshotId": "snap:c61cf59d71ea7a7c33e8e12dd6db0610",
       "sourceRefs": [
         "LayoverSafetyEngine.estimateExitDelay",
         "LayoverSafetyEngine.timeOfDayBand",
@@ -5112,6 +5112,6 @@
       ]
     }
   ],
-  "head": "75734e340",
-  "note": "REGENERATED 2026-10-06 by mission lane R (wave 2) for the lead's L219 ruling: \"follow the spec (§21.1). 2h domestic -> airport-only.\" computeWindow's ladder (LayoverSafetyEngine.ts, the tier block) now keeps too_short only for a window with NO certified spare minute (usableMinutes <= 0); every window with spare minutes and no landside answer is airport_only, which is §5's AIRPORT_ONLY state for insufficient time.\n\nWHAT CHANGED, measured by this check before regeneration: 31 compared, 8 changed, 0 added, 0 removed. All 8 changed ONLY result.tier (too_short -> airport_only) and rulesApplied (window.tier.too_short -> window.tier.airport_only): s01-2h-domestic, s02-4h-international-permitted-generic, s07-5h-checked-bags-recheck, s09-arrival-delay, s17-return-soon, s25-unknown-baggage, s28-self-transfer-recheck-declared, s31-checked-through-tickets-unstated. In each the usable window is between 1 and 44 minutes. NO verdict, deadline, usable-minute figure, return state, confidence, reason code or gate rule moved in any scenario: the tier is a label, and nothing in the engine reads it (LayoverEventReplanner reports tierChanged only). s01 is §21.1's own 2h domestic case and now answers its sentence. Every scenario whose window is 0 keeps too_short.\n\nPrevious note, first line: \"REGENERATED 2026-10-06 after merging origin/main 02acdb0f0 (carrying #624, \"the landside gate fails closed\"), by mission lane A. The engine is main's; the golden and the corpus were the branch's. Previous note, first line: \"REGENERATED 2026-10-05 after merging origin/main e3daeb739 (PR #588, LAY-01), by mission lane A. Previous note: \\\"initial record: 24 synthetic scenarios ... at engine 2026.09.2\""
+  "head": "2a99ebc36",
+  "note": "Exact linked-terminal applicability for sourced timing: missing or mismatched scoped terminal observations close planning; explicitly airport-wide observations remain applicable. Separate 31-scenario review changed only version/inputHash/snapshotId, with identical numerical results, verdicts, facts and rules. Both old arithmetic and shape versions refuse historical replay."
 }

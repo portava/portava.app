@@ -51,7 +51,7 @@ import http from "node:http";
 import express from "express";
 import { _setTestClient } from "../../../lib/http.js";
 import airportRouter from "../../../routes/airport.js";
-import { makeLayoverDb, airportRow, sessionRow } from "../../../test/helpers/fakeLayoverDb.js";
+import { makeLayoverDb, airportRow, sessionRow } from "../../../test/helpers/fakeLayoverDb.js"; import { withConfirmedCorridor } from "../../../test/helpers/confirmedCorridor.js";
 
 let server: http.Server;
 let base: string;
@@ -144,7 +144,7 @@ function stage(
     trips: [],
   };
   _setTestClient(
-    makeLayoverDb(tables, {
+    makeLayoverDb(withConfirmedCorridor(tables, { userIds: [USER_A, USER_B], destination: "TW" }), {
       users: { [A_TOKEN]: USER_A, [B_TOKEN]: USER_B },
       failures: opts.failures ?? {},
     }),
@@ -200,7 +200,7 @@ describe("L28/L29/L185 — a crew can be formed and survives a reload", () => {
     assert.equal(fresh.status, 200, JSON.stringify(fresh.body));
     assert.equal(fresh.body.inCrew, true);
     assert.equal(fresh.body.crew.title, "Ramen in the old town");
-    assert.equal(fresh.body.crew.meetingPointLabel, "Terminal 2 food court");
+    assert.equal(fresh.body.crew.meetingPointLabel, null); assert.deepEqual(fresh.body.crew.meetingPointWithheld, ["safety_gate_not_cleared"]); // The persisted label has no airside scope, and a passport-free aggregate cannot clear landside.
   });
 
   it("a crew is discoverable by another traveller in the same city", async () => {

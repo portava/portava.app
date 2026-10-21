@@ -52,7 +52,7 @@ import assert from "node:assert/strict";
 
 import { certifiedLayoverSnapshot, certifiedActionUniverse } from "../LayoverSnapshot.js";
 import { candidateFits, candidateIsUnmeasured } from "../LayoverEventReplanner.js";
-import { makeLayoverDb, airportRow, sessionRow } from "../../../test/helpers/fakeLayoverDb.js";
+import { makeLayoverDb, airportRow, sessionRow } from "../../../test/helpers/fakeLayoverDb.js"; import { withConfirmedCorridor } from "../../../test/helpers/confirmedCorridor.js";
 import { statedLayoverTimings } from "../../../lib/discoveryLayoverTiming.js";
 import { discoveryLayoverGate } from "../../../lib/discoveryLayoverMode.js";
 import type {
@@ -85,7 +85,7 @@ function tables(over: { session?: Record<string, any> } = {}) {
 }
 
 async function snapshot() {
-  const r = await certifiedLayoverSnapshot(makeLayoverDb(tables()) as any, USER, {
+  const r = await certifiedLayoverSnapshot(makeLayoverDb(withConfirmedCorridor(tables(), { userIds: [USER], destination: "TW" })) as any, USER, {
     sessionId: "session-1",
     nowMs: NOW,
   });
@@ -436,7 +436,7 @@ describe("L269 — Discovery's gate charges the ride back it was told about", ()
   }
 
   async function gateWith(provider?: TravelTimeProvider) {
-    const db = makeLayoverDb(liveTables()) as any;
+    const db = makeLayoverDb(withConfirmedCorridor(liveTables(), { userIds: [USER], destination: "TW" })) as any;
     return discoveryLayoverGate(db, USER, [{ id: "p1", ...NEAR }], "GET /discovery", { provider });
   }
 

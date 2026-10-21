@@ -36,7 +36,7 @@ interface Props {
   session: SafeReturnSession;
   onSessionEnded?: () => void;
   onSessionUpdated?: (session: SafeReturnSession) => void;
-  compact?: boolean;
+  compact?: boolean; deadlineLocked?: boolean; onConfirmArrival?: () => Promise<{ok:boolean}>;
 }
 
 // ── Countdown hook ────────────────────────────────────────────────────────────
@@ -84,7 +84,7 @@ const STATUS_LABEL: Record<string, string> = {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function ActiveSafeReturnCard({ session, onSessionEnded, onSessionUpdated, compact = false }: Props) {
+export function ActiveSafeReturnCard({ session, onSessionEnded, onSessionUpdated, compact = false, deadlineLocked = false, onConfirmArrival }: Props) {
   const router = useRouter();
   const [expanded, setExpanded] = useState(false);
   const [showEmergency, setShowEmergency] = useState(false);
@@ -94,7 +94,7 @@ export function ActiveSafeReturnCard({ session, onSessionEnded, onSessionUpdated
 
   const handleConfirmSafe = useCallback(async () => {
     setLoading(true);
-    const r = await confirmSafe(session.id);
+    const r = await (onConfirmArrival ? onConfirmArrival() : confirmSafe(session.id)).catch(() => ({ok:false}));
     setLoading(false);
     if (r.ok) {
       setExpanded(false);
@@ -102,7 +102,7 @@ export function ActiveSafeReturnCard({ session, onSessionEnded, onSessionUpdated
     } else {
       Alert.alert('Error', 'Could not confirm. Please try again.');
     }
-  }, [session.id, onSessionEnded]);
+  }, [session.id, onSessionEnded, onConfirmArrival]);
 
   const handleExtend = useCallback(async () => {
     setLoading(true);
@@ -216,7 +216,7 @@ export function ActiveSafeReturnCard({ session, onSessionEnded, onSessionUpdated
             shareLoading={shareLoading}
             onClose={() => setExpanded(false)}
             onConfirmSafe={handleConfirmSafe}
-            onExtend={handleExtend}
+            onExtend={handleExtend} deadlineLocked={deadlineLocked} confirmationLabel={onConfirmArrival ? "I'm back at the airport" : "I'm Safe"}
             onCancel={handleCancel}
             onEmergency={() => setShowEmergency(true)}
             onShareLocation={handleShareLocation}
@@ -249,13 +249,13 @@ export function ActiveSafeReturnCard({ session, onSessionEnded, onSessionUpdated
             {loading ? <ActivityIndicator color="#fff" size="small" /> : (
               <>
                 <CheckCircle size={16} color="#fff" />
-                <Text style={styles.primaryBtnText}>I'm Safe</Text>
+                <Text style={styles.primaryBtnText}>{onConfirmArrival ? "I'm back at the airport" : "I'm Safe"}</Text>
               </>
             )}
           </Pressable>
-          <Pressable style={styles.secondaryBtn} onPress={handleExtend} disabled={loading}>
+          {!deadlineLocked ? <Pressable style={styles.secondaryBtn} onPress={handleExtend} disabled={loading}>
             <Text style={styles.secondaryBtnText}>+15 min</Text>
-          </Pressable>
+          </Pressable> : null}
           <Pressable style={styles.emergencyBtn} onPress={() => setShowEmergency(true)} accessibilityRole="button" accessibilityLabel="Emergency help" testID="safe-return-emergency">
             <PhoneCall size={14} color={color.signal} />
           </Pressable>
@@ -290,8 +290,8 @@ export function ActiveSafeReturnCard({ session, onSessionEnded, onSessionUpdated
 
 // ── Full-screen expand modal ──────────────────────────────────────────────────
 
-function SafeReturnModal({ session, countdown, statusLabel, statusColor, loading, shareLoading, onClose, onConfirmSafe, onExtend, onCancel, onEmergency, onShareLocation, onMessageCircle }: {
-  session: SafeReturnSession;
+function SafeReturnModal({ session, countdown, statusLabel, statusColor, loading, shareLoading, onClose, onConfirmSafe, onExtend, onCancel, onEmergency, onShareLocation, onMessageCircle, deadlineLocked, confirmationLabel }: {
+  session: SafeReturnSession; deadlineLocked?: boolean; confirmationLabel?: string;
   countdown: string;
   statusLabel: string;
   statusColor: string;
@@ -336,13 +336,13 @@ function SafeReturnModal({ session, countdown, statusLabel, statusColor, loading
             {loading ? <ActivityIndicator color="#fff" /> : (
               <>
                 <CheckCircle size={18} color="#fff" />
-                <Text style={styles.modalPrimaryBtnText}>I'm Safe</Text>
+                <Text style={styles.modalPrimaryBtnText}>{confirmationLabel ?? "I'm Safe"}</Text>
               </>
             )}
           </Pressable>
-          <Pressable style={styles.modalSecondaryBtn} onPress={onExtend} disabled={loading}>
+          {!deadlineLocked ? <Pressable style={styles.modalSecondaryBtn} onPress={onExtend} disabled={loading}>
             <Text style={styles.modalSecondaryBtnText}>Extend 15 minutes</Text>
-          </Pressable>
+          </Pressable> : null}
           <Pressable style={[styles.modalSecondaryBtn, styles.modalActionBtn]} onPress={onShareLocation} disabled={shareLoading}>
             {shareLoading
               ? <ActivityIndicator size="small" color={color.deep} />

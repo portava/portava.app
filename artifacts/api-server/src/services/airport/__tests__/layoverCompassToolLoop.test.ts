@@ -188,11 +188,11 @@ describe("L-CL02d — the layover door asks no model and runs no tool, for every
     });
   }
 
-  it("entry unverified: the certified 'not confirmed' text, no model", async () => {
+  it("entry unconfirmed: the certified refusal, no model", async () => {
     stage({ entry: "unverified" });
     const r = await ask("Where can I eat?", scriptedModel([{ content: "Try the noodle bar." }]));
-    assert.equal(r.body.certification.verdict, "entry_unverified");
-    assert.match(r.body.answer, /^Leaving the airport has not been confirmed as possible on this layover/);
+    assert.equal(r.body.certification.verdict, "no");
+    assert.match(r.body.answer, /^Leaving the airport is not recommended on this layover/);
   });
 });
 
@@ -408,8 +408,8 @@ describe("flag ON (owner decision 2026-10-18) — L100 / L102–L113 / L268 on t
     stageOn({ entry: "unverified" });
     const m = scriptedModel([{ content: replyJson("You won't need a visa, so head into the city. The cathedral is a short cab away.") }]);
     const r = await askOn("Can I leave the airport?", m);
-    assert.equal(r.body.certification.verdict, "entry_unverified");
-    assert.match(r.body.answer, /^Leaving the airport has not been confirmed as possible on this layover/);
+    assert.equal(r.body.certification.verdict, "no");
+    assert.match(r.body.answer, /^Leaving the airport is not recommended on this layover/);
     assert.doesNotMatch(r.body.answer, /visa|cathedral|head into/i);
     assert.ok(r.body.boundaryViolations.some((v: any) => v.kind === "entry_status_asserted"));
     assert.ok(r.body.boundaryViolations.some((v: any) => v.kind === "risk_band_widened"));

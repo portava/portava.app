@@ -1,0 +1,28 @@
+{
+  "packetVersion": 1,
+  "iata": "FLL",
+  "airportName": "Fort Lauderdale-Hollywood",
+  "state": "proposed_unvalidated",
+  "preparedBy": "machine-prepared by lane B2-CURATE research agent; NOT validated by a human curator",
+  "preparedAt": "2026-10-19T02:09:46Z",
+  "facts": [],
+  "unreachable": [
+    { "url": "https://www.fll.net/", "error": "HTTP 301 redirect to https://www.broward.org/airport (followed; see next entry)" },
+    { "url": "https://www.broward.org/airport", "error": "HTTP 403 Forbidden" },
+    { "url": "https://www.broward.org/Airport/Business/about/Pages/FactSheets.aspx", "error": "HTTP 403 Forbidden" },
+    { "url": "https://www.broward.org/Airport/Pages/maps.aspx", "error": "HTTP 403 Forbidden" },
+    { "url": "https://www.broward.org/airport/Passengers/WhereIsMyAirline", "error": "HTTP 403 Forbidden" },
+    { "url": "https://www.tri-rail.com/stations/fort-lauderdale-airport", "error": "HTTP 500 Internal Server Error (tried twice)" },
+    { "url": "https://media.tri-rail.com/Files/Schedules/Ride%20Partners/FLA-1_Airport_Shuttle_MAR23_PRINT.pdf", "error": "Fetched (binary PDF, file metadata last modified March 2023) but no readable text could be extracted in this environment; no values taken from it" }
+  ],
+  "gaps": [
+    "airportName: not confirmed from an official page (every broward.org airport page returned 403); the value is the label given in the task brief and must be confirmed by the curator",
+    "terminal_topology: the Broward County airport site (broward.org/airport, fll.net redirect) returned 403 on every page tried",
+    "ground_transport: Tri-Rail home page (https://www.tri-rail.com/, fetched 2026-10-19T01:54:50Z) only lists 'Fort Lauderdale Airport' as a station option, with no service/route/journey facts; the Tri-Rail airport station page returned 500",
+    "transport_schedules: the Tri-Rail FLA-1 airport shuttle PDF was fetched but its text was not extractable; no first/last departures could be read",
+    "security_layout: no official page reachable",
+    "lounge_hours: no official page reachable",
+    "overnight_lodging: no official page reachable",
+    "entry_restrictions: no official page reachable"
+  ]
+}

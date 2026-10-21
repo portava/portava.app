@@ -69,8 +69,8 @@ async function isFlagEnabled(
 
 // ── Expired session escalation ────────────────────────────────────────────────
 
-async function processExpiredSessions(): Promise<void> {
-  const db = getServiceClient();
+export async function processExpiredSessions(client?: ReturnType<typeof getServiceClient>): Promise<void> { return withLayoverSystemAudit('safe-return:expired',async () => {
+  const db = auditedLayoverClient(client ?? getServiceClient());
   if (!db) {
     logger.warn("processExpiredSessions: no service client, skipping");
     return;
@@ -165,7 +165,7 @@ async function processExpiredSessions(): Promise<void> {
       logger.error({ err, sessionId: session.id }, "processExpiredSessions: error processing session — escalation incomplete");
     }
   }
-}
+}); }
 
 // ── Stale live-share expiry ───────────────────────────────────────────────────
 
@@ -302,3 +302,5 @@ export function stopSafeReturnScheduler(): void {
     _interval = null;
   }
 }
+
+import { withLayoverSystemAudit, auditedLayoverClient } from './layoverServiceAudit.js';

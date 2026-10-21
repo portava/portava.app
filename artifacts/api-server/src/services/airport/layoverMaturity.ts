@@ -22,12 +22,12 @@
  * longer true. `services/airport/layoverMaturityGate.ts` is the consumer, and
  * `generateRecommendations` applies its answer to both landside gates.
  *
- * IT IS STILL OFF. The gate sits behind `layover_maturity_gate_enabled`, which
- * `2977_layover_maturity_gate_flag.sql` seeds FALSE and which no database has
- * ever had on — so the policy below is stated, consulted, and not yet enforced
- * anywhere. Turning it on withdraws landside cards from every airport that has
- * not reached L1, which is all 3,206 production rows; that is spec §22 L243's
- * own default and it is an owner decision, not a deployment step.
+ * AFTER 3874, curated profiles enforce L1 in every flag state. Bare airport
+ * values carry no provenance and cannot advance the ladder. The upper rungs
+ * consume screened fresh official/licensed evidence from the certified live
+ * record, the de-identified observation count, and unexpired calibration.
+ * The migration, live-signal switch, human curation and real evidence must
+ * still exist in a deployment; reachable code does not assert that they do.
  *
  * ── WHY THE LADDER DOES NOT SKIP ─────────────────────────────────────────────
  * A rung is reached only when every rung below it is. "Reliable live signals"
@@ -170,10 +170,8 @@ export const MATURITY_LEVEL_REACHABILITY: Record<
     blockedBy: null,
   },
   L2_EXTERNAL_LIVE: {
-    reachable: false,
-    blockedBy:
-      "no external live feed is connected: nothing on this tree produces LiveConditions outside tests, " +
-      "and `airport_profiles` has no feed reference column.",
+    reachable: true,
+    blockedBy: null,
   },
   L3_PORTAVA_OBSERVED: {
     // CORRECTED 2026-09-22. This entry used to read `reachable: false`, blocked
@@ -191,19 +189,12 @@ export const MATURITY_LEVEL_REACHABILITY: Record<
     blockedBy: null,
   },
   L4_CALIBRATED: {
-    reachable: false,
-    blockedBy:
-      "nothing measures its own error: `LayoverAirportTruth.measureCalibration` exists and now HAS a " +
-      "corpus (2860/2982 are applied and travellers can report), but no OUTCOME is stored beside a " +
-      "prediction, so there is still nothing to measure against (census L217, L247).",
+    reachable: true,
+    blockedBy: null,
   },
   L5_DENSE_LIVE: {
-    reachable: false,
-    blockedBy:
-      "requires every rung below it. CORRECTED 2026-09-22: the nearest blocker is no longer L3 (a route " +
-      "accepts observations and an applied table stores them) — it is L2, whose own entry names " +
-      "`LayoverAirportTruth.liveConditionsFrom` as the producer no feed on this tree calls, and then L4, " +
-      "whose entry names `LayoverAirportTruth.measureCalibration` with no stored outcome to measure.",
+    reachable: true,
+    blockedBy: null,
   },
 };
 
@@ -361,3 +352,99 @@ export function maturityDisclosure(level: AirportMaturityLevel): MaturityDisclos
       };
   }
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// LAYOVER 165, lane B2-CURATE (2026-10-18) — the rung is computed from CURATED,
+// VALIDATED, UNEXPIRED data, and the landside threshold is ENFORCED.
+//
+// Owner decision 2026-10-18: "Restrict airport-specific recommendations to
+// airports whose data meets the required maturity threshold" and "Unknown or
+// conflicting critical safety information must fail closed". Spec §22 L243: L0
+// Generic is "airport-side guidance only by default". So the threshold below
+// holds in EVERY flag state: `layover_maturity_gate_enabled` (2977) can no longer
+// relax it (see layoverMaturityGate.ts).
+//
+// The L0/L1 boundary needs no I/O: §22 L1 is "Terminal/topology and known
+// transport modeled", and with 3874 that is three PUBLISHED, UNEXPIRED curated
+// facts (timing assumptions, terminal topology, ground transport) that the
+// airport row already projects. So the landside decision is a pure function of
+// the profile and an instant, and it is a NAMED INPUT of the certified record
+// (`FeasibilityInputs.maturity`): replay reproduces it, the input hash moves
+// when an authoritative change moves it, and every surface that reads the
+// record — the dashboard, Compass, the map, the recommendation list, the
+// lifecycle guard — reads the same closure.
+// ═════════════════════════════════════════════════════════════════════════════
+
+import { curatedLive, type AirportCurationProjection } from "./airportCurationPolicy.js";
+
+/** The rung the landside threshold names. `landside_recommendations` sits here (MATURITY_FEATURES). */
+export const LANDSIDE_MATURITY_THRESHOLD: AirportMaturityLevel = "L1_MAPPED";
+
+/** What the certified record carries about the airport's maturity. Part of `inputHash`. */
+export interface LandsideMaturityInput {
+  /** The rung as far as the landside threshold can see it: L0, or L1 (= "L1 or above"). */
+  rung: "L0_GENERIC" | "L1_MAPPED";
+  /** featureAllowedAt("landside_recommendations", rung). */
+  landsideAllowed: boolean;
+  /** Why it is not one rung higher, or null at L1. */
+  cappedBy: string | null;
+  /** Which of the three L1 facts are published and unexpired at the record's instant. */
+  curated: { timing: boolean; topology: boolean; transport: boolean };
+  /** 3874's topology_version: an authoritative change moves it, and with it the record's hash. */
+  topologyVersion: number;
+}
+
+/** §22's signals from the curation projection, at an instant. The upper rungs' signals are supplied by the caller. */
+export function curatedMaturitySignals(
+  airport: { id: string | null | undefined; curation: AirportCurationProjection },
+  nowMs: number,
+  upper: { hasExternalLiveFeed?: boolean; portavaObservationCount?: number } = {},
+): MaturitySignals {
+  const c = airport.curation;
+  return {
+    hasAirportRow: airport.id !== null && airport.id !== undefined,
+    verified: curatedLive(c.timing, nowMs),
+    hasTerminalTopology: curatedLive(c.topology, nowMs),
+    hasKnownTransportModel: curatedLive(c.transport, nowMs),
+    hasExternalLiveFeed: upper.hasExternalLiveFeed ?? false,
+    portavaObservationCount: upper.portavaObservationCount ?? 0,
+    hasCalibration: c.calibration !== null && Date.parse(c.calibration.expiresAt) > nowMs,
+  };
+}
+
+/** Plain words for the missing L1 facts (the curated reading of `airportMaturity`'s cap). */
+export function curatedCappedBy(s: MaturitySignals): string | null {
+  if (!s.hasAirportRow) return "no airport_profiles row — the buffers are code constants";
+  const missing = [
+    s.verified ? null : "no published, unexpired timing assumptions",
+    s.hasTerminalTopology ? null : "no published, unexpired terminal topology",
+    s.hasKnownTransportModel ? null : "no published, unexpired ground-transport model",
+  ].filter(Boolean) as string[];
+  return missing.length > 0 ? missing.join("; ") : null;
+}
+
+/**
+ * The record's maturity input, or `undefined` for a profile that carries no
+ * curation projection (a hand-built object: the legacy arm, which no production
+ * mapper produces — `AirportProfileService` sets `curation` on every profile).
+ */
+export function landsideMaturityInput(
+  airport: { id: string | null | undefined; curation?: AirportCurationProjection | null },
+  nowMs: number,
+): LandsideMaturityInput | undefined {
+  if (!airport.curation) return undefined;
+  const signals = curatedMaturitySignals({ id: airport.id, curation: airport.curation }, nowMs);
+  const mapped = airportMaturity({ ...signals, hasExternalLiveFeed: false, portavaObservationCount: 0, hasCalibration: false });
+  const rung = mapped.level === "L1_MAPPED" ? "L1_MAPPED" : "L0_GENERIC";
+  return {
+    rung,
+    landsideAllowed: featureAllowedAt("landside_recommendations", rung),
+    cappedBy: rung === "L1_MAPPED" ? null : curatedCappedBy(signals),
+    curated: { timing: signals.verified, topology: signals.hasTerminalTopology, transport: signals.hasKnownTransportModel },
+    topologyVersion: airport.curation.topologyVersion,
+  };
+}
+
+/** The sentence a traveller reads when the airport's data maturity closes landside (Appendix A AIRPORT_MATURITY_LIMITED). */
+export const MATURITY_LIMITED_REASON =
+  "We don't have checked information about this airport's terminals, transport and timings yet, so we only suggest things to do inside the airport.";

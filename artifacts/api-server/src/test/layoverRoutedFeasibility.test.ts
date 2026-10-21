@@ -186,7 +186,7 @@ describe("L60 — both directions, the return under its own future instant", () 
     const start = Math.max(NOW, r.envelope.earliestOutTime.getTime());
     const outs = p.asked.filter((q) => isAirport(q.from));
     const backs = p.asked.filter((q) => isAirport(q.to));
-    assert.ok(outs.length >= 1 && backs.length === 1);
+    assert.ok(outs.length >= 1 && backs.length === 2); assert.ok(backs.some(q => q.mode === 'transit'), 'one additional future transit return follows the primary');
     assert.equal(outs[0]!.departAt.getTime(), start);
     assert.equal(backs[0]!.departAt.getTime(), start + (20 + 45) * MIN, "the return is priced when the traveller would set off back");
     assert.notEqual(backs[0]!.departAt.getTime(), outs[0]!.departAt.getTime());

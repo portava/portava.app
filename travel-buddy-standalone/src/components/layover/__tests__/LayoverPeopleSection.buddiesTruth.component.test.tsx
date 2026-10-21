@@ -23,14 +23,14 @@
  * drawn for a measured `true`, and an unmeasured availability says so.
  */
 import React from 'react';
-import { render, screen } from '@testing-library/react-native';
+import { render, screen, fireEvent } from '@testing-library/react-native';
 
 import { LayoverPeopleSection } from '../LayoverPeopleSection.tsx';
 import type { LayoverBuddiesAnswer, LayoverBuddy } from '../../../services/layover.ts';
 
 const BUDDY: LayoverBuddy = {
   id: 'b-1', userId: 'u-9', displayName: 'Mai', tagline: null, city: 'Bangkok', country: 'Thailand',
-  categories: ['city'], hourlyRateUsd: 20, averageRating: 4.8, reviewCount: 12, verified: true,
+  categories: ['layover'], hourlyRateUsd: 20, averageRating: 4.8, reviewCount: 12, verified: true,
   coverPhotoUrl: null, buddyLevel: 'pro', availableNow: false, availableDuringLayover: true,
 };
 
@@ -103,7 +103,7 @@ describe('LayoverPeopleSection — the buddy list is an answer, or it says why n
     }));
     expect(screen.getByText('Mai')).toBeTruthy();
     // Exact text: the BADGE reads exactly this; the caption below merely mentions it.
-    expect(screen.queryByText('free during your layover')).toBeNull();
+    expect(screen.queryByText('available that day')).toBeNull();
     expect(screen.getByTestId('layover-buddies-availability-unknown')).toBeTruthy();
   });
 
@@ -137,7 +137,7 @@ describe('LayoverPeopleSection — the buddy list is an answer, or it says why n
   it('8. CONTROL: a measured list with measured availability shows the badge and no caveat', async () => {
     await renderCard(measured());
     expect(screen.getByText('Mai')).toBeTruthy();
-    expect(screen.getByText('free during your layover')).toBeTruthy();
+    expect(screen.getByText('available that day')).toBeTruthy(); expect(screen.queryByText('free during your layover')).toBeNull();
     for (const id of ['layover-buddies-unavailable', 'layover-buddies-gate', 'layover-buddies-off',
       'layover-buddies-unmeasured', 'layover-buddies-availability-unknown', 'layover-buddies-verified-only']) {
       expect(screen.queryByTestId(id)).toBeNull();
@@ -146,7 +146,7 @@ describe('LayoverPeopleSection — the buddy list is an answer, or it says why n
 
   it('9. CONTROL: a measured EMPTY list claims nothing — no section, no "nobody here"', async () => {
     await renderCard(measured({ buddies: [] }));
-    expect(screen.queryByText(/Local buddies for a few hours/i)).toBeNull();
+    expect(screen.queryByText(/Layover specialists/i)).toBeNull();
     expect(screen.queryByText(/no (local )?buddies/i)).toBeNull();
     expect(screen.queryByTestId('layover-buddies-unavailable')).toBeNull();
   });
@@ -156,4 +156,11 @@ describe('LayoverPeopleSection — the buddy list is an answer, or it says why n
     expect(screen.queryByTestId('layover-buddies-unavailable')).toBeNull();
     expect(screen.queryByText(/Local buddies for a few hours/i)).toBeNull();
   });
+});
+
+it('passes the certified window and owned session into checkout; missing bounds disable booking',async()=>{
+ const open=jest.fn(),context={layoverSessionId:'owned-session',bookingStartsAt:'2099-06-01T01:00:00Z',bookingEndsBy:'2099-06-01T06:00:00Z',timezone:'Asia/Bangkok'};
+ const props={city:'Bangkok',shareEnabled:false,shareBusy:false,presence:{sharing:false,count:0,travelers:[],degraded:false,degradedReasons:[],withheld:[]},canEdit:true,onToggleShare:()=>{},onOpenBuddy:open,sessionId:context.layoverSessionId};
+ const view=await render(<LayoverPeopleSection {...props} buddies={measured({safetyGate:{...OPEN_GATE,...context}})}/>);await fireEvent.press(screen.getByLabelText('Book Mai for this layover'));expect(open).toHaveBeenCalledWith(BUDDY,context);
+ await view.rerender(<LayoverPeopleSection {...props} buddies={measured()}/>);expect(screen.getByLabelText('Book Mai for this layover')).toBeDisabled();
 });

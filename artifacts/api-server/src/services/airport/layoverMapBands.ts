@@ -84,7 +84,7 @@ const CLOSURE_WORDS: Partial<Record<LandsideClosure, string>> = {
   airport_change: "your next flight leaves from a different airport",
   constraints_unreadable: "your bag and connection details could not be read",
   airport_change_unknown: "it is not known whether your next flight leaves from this airport",
-  recheck_unknown: "it is not known whether you must check in again",
+  recheck_unknown: "it is not known whether you must check in again", airport_maturity_limited: "this airport's terminals, transport and timings are not yet checked",
 };
 
 function positive(v: unknown): number | null {

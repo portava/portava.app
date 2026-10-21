@@ -31,7 +31,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js";
+import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js"; import { withConfirmedCorridor } from "./helpers/confirmedCorridor.js";
 import { generateRecommendations } from "../services/airport/LayoverRecommendationService.js";
 import { certifiedActionUniverse, certifiedLayoverSnapshot, LAYOVER_DISCOVERY_MODE_FLAG } from "../services/airport/LayoverSnapshot.js";
 import * as TravelTime from "../services/airport/LayoverTravelTime.js";
@@ -175,7 +175,7 @@ function snapshotTables(tripId: string | null): Record<string, any[]> {
 }
 
 async function liveSnapshot(tripId: string | null) {
-  const r = await certifiedLayoverSnapshot(makeLayoverDb(snapshotTables(tripId)), USER);
+  const r = await certifiedLayoverSnapshot(makeLayoverDb(withConfirmedCorridor(snapshotTables(tripId), { userIds: [USER], destination: "TW" })), USER);
   assert.ok(r.ok, `positive control: a live layover snapshot (${!r.ok ? r.reason : ""})`);
   assert.ok(r.snapshot.envelope, "positive control: the airport has a coordinate, so the corridor is asked");
   assert.notEqual(r.snapshot.landsideStatus, "closed", "positive control: landside is not closed, so the corridor is asked");
@@ -210,7 +210,7 @@ describe("1. a layover read WITH a trip charges its routed calls to the travelle
 
   it("1c. Discovery's layover timing (discoveryLayoverMode → statedLayoverTimings → landsideLeg): charged to the session", async () => {
     const g = liveGoogle();
-    const gate = await discoveryLayoverGate(makeLayoverDb(snapshotTables(TRIP)), USER, CANDIDATES, "GET /test", { provider: g.travel });
+    const gate = await discoveryLayoverGate(makeLayoverDb(withConfirmedCorridor(snapshotTables(TRIP), { userIds: [USER], destination: "TW" })), USER, CANDIDATES, "GET /test", { provider: g.travel });
     assert.ok(gate.ok && gate.active, `positive control: layover mode applies (${JSON.stringify(gate).slice(0, 200)})`);
     assert.ok(g.spend.calls.length >= 1, "the timing leg was never charged — it ran outside any Routes budget");
     for (const c of g.spend.calls) assert.deepEqual(c, SESSION_CHARGE);

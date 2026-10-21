@@ -1,45 +1,45 @@
 /**
- * layoverObservability — the ten §20 metrics, and an honest answer for the six
- * that cannot be computed on this tree.
- *
- * Spec §20 (observability and decision ledger) names ten measures. Census
- * L208–L217 scores one BUILT-BUT-WRONG and nine NOT-BUILT, each with a reason
- * of the form "there is no X to count".
- *
- * ── THE DESIGN RULE ──────────────────────────────────────────────────────────
- * A METRIC WHOSE INPUT DOES NOT EXIST REPORTS `null`, NEVER `0`.
- *
- * `replan_rate: 0` and "there is no replanner" are opposite claims that render
- * identically on a dashboard. Emitting the second as the first is the semantic
- * substitution Appendix C1 forbids, and observability is the worst place to do
- * it: a metric exists precisely so that nobody re-derives the number by hand,
- * so a wrong one is believed for longer than a wrong anything else. Every
- * unproducible metric therefore carries `blockedBy` naming the exact table,
- * column, enum literal or module that would have to exist.
- *
- * The distinction is not decoration. THREE OF THE SIX BLOCKED METRICS COULD
- * EACH BE FAKED CONVINCINGLY from something already in the schema, and each
- * would be wrong in the traveller's disfavour:
- *   - `safe_return_completion_rate` from `session_completed` — but a session
- *     that ended is not a return that completed; a traveller who missed the
- *     flight also ends the session.
- *   - `replan_rate` from `session_updated` — but a user editing their flight
- *     time is not the system replanning.
- *   - `recommendation_contract_violation` from a later verdict/card mismatch —
- *     two numbers computed apart disagree for unknown reasons. census L216 now
- *     checks each card AT GENERATION against its own record (layoverContractMonitor).
- *
- * ── AND A RATE WITH AN EMPTY DENOMINATOR IS ALSO UNPRODUCIBLE ────────────────
- * 0/0 is not 0. A rate computed over no decisions says nothing and must not
- * present as a healthy zero. Counters are different: "no sessions were
- * detected" is a fact about the window, and reports 0.
- *
- * ONE CALLER, `GET /api/admin/layover/metrics` (routes/adminLayoverMetrics.ts).
- * No exporter is BOUND: `lib/providers/metricsExporter.ts` renders this shape
- * and nothing calls it, and there is no `report*` script for layover under
- * `src/scripts/` (census L208). This module computes; where the numbers go
- * beyond the admin route and the logs is owner question OQ-8.
+ * The ten Layover §20 metrics. Shared by the admin report, Prometheus scrape
+ * and scheduled monitoring. Unreadable inputs, incomplete windows and empty
+ * rate denominators are explicitly UNPRODUCIBLE, never healthy zeroes.
+ * Replans count distinct sessions from the durable metadata ledger. Return
+ * completion requires an observed airport reentry after a recorded start;
+ * session completion or BOARDED alone is not evidence of airport return.
+ * Exporting and target alerts use existing Pino/Sentry infrastructure.
  */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import type { LayoverReasonCode } from "./LayoverSafetyEngine.js";
 import type { DecisionRecord } from "./layoverLedger.js";
 import type { ReplaySummary } from "./layoverReplay.js"; import type { RecommendationContractWindow } from "./layoverContractMonitor.js";
@@ -55,10 +55,13 @@ export interface LayoverEventRow {
   sessionId: string;
   eventType: string;
   at: string;
+  metadata?: unknown;
 }
 
 export interface LayoverMetricInput {
   events: LayoverEventRow[];
+  replans?: { rows: LayoverEventRow[]; truncated: boolean } | null;
+  safeReturns?: SafeReturnMetricWindow | null;
   decisions: DecisionRecord[];
   /** The §21 replay pass over the ledger, when one was run. */
   replay: ReplaySummary | null; /** census L216 — the window's `recommendation_generated` tallies (layoverContractMonitor). Absent/null = not read. */ contract?: RecommendationContractWindow | null;
@@ -229,7 +232,7 @@ const byName = (name: string): LayoverMetricDefinition =>
  */
 function ranOnFallback(d: DecisionRecord): boolean {
   const f = d.inputFacts.find((x) => x.key === "airport.internationalBufferMin");
-  return f ? f.source === "GENERIC" : false;
+  return (f ? f.source === "GENERIC" : false) || d.reasonCodes.includes("DATA_STALE");
 }
 
 export function computeLayoverMetrics(input: LayoverMetricInput): LayoverMetricValue[] {
@@ -262,13 +265,7 @@ export function computeLayoverMetrics(input: LayoverMetricInput): LayoverMetricV
       noDecisions,
     ),
 
-    blocked(
-      byName("replan_rate"),
-      "no replan event literal exists: `layover_events.event_type`'s CHECK constraint " +
-        "(src/migrations/0127_layover_system.sql) has no `replan_*` member, and " +
-        "`session_updated` is a USER edit, not a system replan — counting it would be a " +
-        "semantic substitute (Appendix C1).",
-    ),
+    measuredReplanRate(input.replans),
 
     rate(
       byName("return_warning_rate"),
@@ -277,12 +274,7 @@ export function computeLayoverMetrics(input: LayoverMetricInput): LayoverMetricV
       noDecisions,
     ),
 
-    blocked(
-      byName("safe_return_completion_rate"),
-      "no return completion is recorded anywhere: `layover_events.event_type` carries " +
-        "`safe_return_suggested` but no `safe_return_completed`, and `session_completed` " +
-        "is not a return — a traveller who missed the flight also ends the session.",
-    ),
+    measuredSafeReturnRate(input.safeReturns),
 
     rate(
       byName("stale_fallback_rate"),
@@ -358,4 +350,52 @@ function replayMismatch(replay: ReplaySummary | null): LayoverMetricValue {
     );
   }
   return ok(def, replay.mismatchRate, replay.replayed);
+}
+
+
+export type SafeReturnMetricWindow =
+  | { available: false; reason: string }
+  | { available: true; started: Array<{ sessionId: string; at: string }>; outcomes: Array<{ sessionId: string; leftAirport: boolean | null; returnedAt: string | null }>; truncated: boolean };
+
+/** Unique sessions replanned / unique sessions in the eligible window. A fanout
+ * publication repeats aggregate counts in each session event: never sum them. */
+function measuredReplanRate(window: LayoverMetricInput["replans"]): LayoverMetricValue {
+  const def = byName("replan_rate");
+  if (!window) return blocked(def, "layover_events event_type/metadata replan window was not read.");
+  if (window.truncated) return blocked(def, "layover_events replan window is truncated; no complete rate can be reported.");
+  const cohort = new Set<string>(); const replanned = new Set<string>();
+  for (const row of window.rows) {
+    if (!["session_created", "session_updated", "recommendation_generated"].includes(row.eventType)) continue;
+    cohort.add(row.sessionId);
+    const metadata = row.metadata;
+    if (metadata === null || typeof metadata !== "object" || Array.isArray(metadata)) return blocked(def, "layover_events metadata is unreadable in the replan window.");
+    if (!("replan" in metadata)) continue;
+    const r = (metadata as Record<string, any>).replan;
+    const n = r?.counts?.replanned;
+    if (!Number.isSafeInteger(n) || n < 0) return blocked(def, "layover_events metadata.replan.counts.replanned is malformed.");
+    if (row.eventType === "session_updated" && n > 0) replanned.add(row.sessionId);
+  }
+  return rate(def, replanned.size, cohort.size, "layover_events has no sessions evaluated, created or edited in the replan window.");
+}
+
+/** Confirmed airport reentry after the first observed return start. Closing a
+ * session, reporting BOARDED, or confirming generic safety is not reentry. */
+function measuredSafeReturnRate(window: LayoverMetricInput["safeReturns"]): LayoverMetricValue {
+  const def = byName("safe_return_completion_rate");
+  if (!window) return blocked(def, "layover_outcomes and return-start records were not read for this window.");
+  if (!window.available) return blocked(def, window.reason);
+  if (window.truncated) return blocked(def, "layover_outcomes or return-start cohort is truncated; no complete rate can be reported.");
+  const starts = new Map<string, number>();
+  for (const s of window.started) {
+    const time = Date.parse(s.at);
+    if (!Number.isFinite(time)) return blocked(def, "layover return-start record contains an invalid timestamp.");
+    starts.set(s.sessionId, Math.min(starts.get(s.sessionId) ?? Infinity, time));
+  }
+  const returned = new Set<string>();
+  for (const o of window.outcomes) {
+    const start = starts.get(o.sessionId); const at = o.returnedAt === null ? NaN : Date.parse(o.returnedAt);
+    if (o.returnedAt !== null && !Number.isFinite(at)) return blocked(def, "layover_outcomes contains an invalid airport-return timestamp.");
+    if (start !== undefined && o.leftAirport === true && at >= start) returned.add(o.sessionId);
+  }
+  return rate(def, returned.size, starts.size, "layover_events and layover_safe_return_links contain no return starts in this window.");
 }

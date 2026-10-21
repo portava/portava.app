@@ -46,10 +46,10 @@
  *      state advanced on the graph (DEPARTURE_CANCELLED, MATERIAL_DISRUPTION,
  *      BOARDING_STARTED, DEPARTURE_CONFIRMED — LayoverLifecycle decides), and a
  *      terminal change at the connection reported.
- * A terminal change moves no number: the engine has no terminal-transfer term
- * (census L46/L79). It is recorded on the segment with its source and reported
- * per session, and §11 has no terminal event to carry it further. Said, not
- * implied.
+ * Terminal observations are projected from the owned linked flights into the
+ * canonical inputs. A terminal-only change re-certifies applicable sourced
+ * timing; an unknown or mismatched terminal closes scoped timing evidence.
+ * No terminal-transfer duration is invented and no new event type is implied.
  *
  * NO FEED IS LICENSED. `NO_FLIGHT_STATUS_FEED` refuses by name; the HTTP adapter
  * is complete, vendor-neutral and contract-tested against a fixture, and reads
@@ -77,7 +77,7 @@ import { replanExternalEvent, type ReplanReport } from "./LayoverExternalReplanP
 import { assessMissedConnection, type MissedConnectionAssessment } from "./LayoverConnectionDetection.js";
 import {
   advanceSessionLifecycle, readActiveSessionRowsByFlightSubjects, readSessionConnection, readSessionsByIds,
-  syncConnectionSessionTimes, type LayoverSession, type StateWrite,
+  syncConnectionSessionTimes, normalizeFlightTerminalId, type LayoverSession, type StateWrite,
 } from "./LayoverSessionService.js";
 import { consumerLayoverRecord } from "./LayoverSnapshot.js";
 
@@ -333,7 +333,7 @@ async function recalcSession(
   const loaded = await readSessionsByIds(db, [sessionId], 1);
   if (!loaded.ok || !loaded.sessions[0]) { out.syncRefusal = loaded.ok ? "session_not_found" : "session_unreadable"; return out; }
   let session: LayoverSession = loaded.sessions[0];
-  if (airport) out.before = windowOf(await certifiedRecordFor(db, airport, session, opts.nowMs));
+  if (airport) out.before = windowOf(tc && before.tripId === session.tripId && before.createdBy === session.userId ? certifySessionFeasibility(airport, { ...session, [role === "arrival" ? "arrivalTerminalId" : "departureTerminalId"]: normalizeFlightTerminalId(tc.from) }, { nowMs: opts.nowMs, entry: null }) : await certifiedRecordFor(db, airport, session, opts.nowMs)); // Compare prior terminal context without publishing an obsolete canonical row after the flight observation was committed.
 
   // 4. the schedule follows the segment
   if (opts.recalculate !== false) {
@@ -667,7 +667,7 @@ export async function refreshFlightStatusFromFeed(db: SupabaseClient, feed: Flig
   if (!feed.live) return { ...report, ok: false, refusals: [{ segmentId: "", reason: "PROVIDER_UNBOUND" }] };
   const ids = new Set<string>();
   for (const col of ["arrival_segment_id", "departure_segment_id"] as const) {
-    const { data, error } = await db.from("layover_sessions").select("arrival_segment_id, departure_segment_id").eq("status", "active").not(col === "arrival_segment_id" ? "arrival_segment_id" : "departure_segment_id", "is", null).limit(opts.limit ?? 200);
+    const { data, error } = await (col === "arrival_segment_id" ? db.from("layover_sessions").select("arrival_segment_id").eq("status", "active").not("arrival_segment_id", "is", null) : db.from("layover_sessions").select("departure_segment_id").eq("status", "active").not("departure_segment_id", "is", null)).limit(opts.limit ?? 200);
     if (error) {
       logger.warn({ err: error.message, col }, "flight-status refresh: linked sessions unreadable — nothing asked of the feed");
       return { ...report, ok: false, refusals: [{ segmentId: "", reason: "sessions_unreadable" }] };

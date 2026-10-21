@@ -54,7 +54,7 @@ import http from "node:http";
 import express from "express";
 import { _setTestClient } from "../../../lib/http.js";
 import airportRouter from "../../../routes/airport.js";
-import { makeLayoverDb, airportRow, sessionRow } from "../../../test/helpers/fakeLayoverDb.js";
+import { makeLayoverDb, airportRow, sessionRow } from "../../../test/helpers/fakeLayoverDb.js"; import { withConfirmedCorridor } from "../../../test/helpers/confirmedCorridor.js";
 
 let server: http.Server;
 let base: string;
@@ -157,7 +157,7 @@ function stage(opts: {
     trips: [],
   };
   _setTestClient(
-    makeLayoverDb(tables, {
+    makeLayoverDb(withConfirmedCorridor(tables, { userIds: [USER_A, USER_B, USER_C, USER_D], destination: "TW" }), {
       users: { [TOKENS.a]: USER_A, [TOKENS.b]: USER_B, [TOKENS.c]: USER_C },
       failures: opts.failures ?? {},
     }),

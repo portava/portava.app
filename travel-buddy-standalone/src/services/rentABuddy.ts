@@ -30,7 +30,7 @@ export type ApplicationStatus = 'pending' | 'under_review' | 'approved' | 'rejec
 
 export type BuddyCategory =
   | 'arrival' | 'city' | 'nightlife' | 'language' | 'content' | 'food'
-  | 'nature' | 'culture' | 'adventure' | 'shopping' | 'wellness' | 'other';
+  | 'nature' | 'culture' | 'adventure' | 'shopping' | 'wellness' | 'other' | 'layover';
 
 export interface BuddyProfile {
   id: string;
@@ -353,7 +353,7 @@ export async function createBooking(payload: {
   category: BuddyCategory;
   notes?: string;
   addonIds?: string[];
-  acceptSafety?: boolean;
+  acceptSafety?: boolean; layoverSessionId?: string;
 }): Promise<ApiResult<{ booking: BuddyBooking | null }>> {
   return apiFetch('/api/rent-a-buddy/bookings', {
     method: 'POST',

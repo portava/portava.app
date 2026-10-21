@@ -190,9 +190,11 @@ function inCrewBody() {
 type Answer = { status: number; body: unknown } | 'offline';
 
 /**
- * Every fetch the screen makes reaches this spy; only the crew location GET is
- * expected. `landed` flips once the card's read has had its body parsed (or its
- * fetch rejected), so a test can tell "drew nothing" from "has not asked yet".
+ * Every fetch the screen makes reaches this spy; only the crew location GET gets
+ * the scenario's answer. Other dashboard cards' reads are answered as switched
+ * off, so their own refusal copy cannot be mistaken for the crew card's. `landed`
+ * flips once the crew read has had its body parsed (or its fetch rejected), so a
+ * test can tell "drew nothing" from "has not asked yet".
  */
 function spy(answer: Answer) {
   const seen: string[] = [];
@@ -200,6 +202,7 @@ function spy(answer: Answer) {
   jest.spyOn(globalThis, 'fetch').mockImplementation(async (input: any, init?: any) => {
     const url = String(input);
     seen.push(`${init?.method ?? 'GET'} ${url}`);
+    if (!url.endsWith('/crew/location')) return { ok: false, status: 404, json: async () => ({ ok: false, reason: 'feature_disabled' }) } as unknown as Response;
     if (answer === 'offline') { state.landed = true; throw new TypeError('Network request failed'); }
     const { status, body } = answer;
     return {

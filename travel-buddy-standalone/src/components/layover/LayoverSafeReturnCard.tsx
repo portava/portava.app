@@ -145,7 +145,7 @@ export function LayoverSafeReturnCard({ overview, nowMs, canAbort, abort: contro
         </Text>
       </View>
 
-      {/* ── §15.1 the control ── */}{canAbort ? <LayoverCrewAbortToggle overview={overview} controller={controller} /> : null}{/* census-layover L144: the traveller's own per-abort choice, offered only when the server would honour it */}
+      {/* ── §15.1 the control ── */}{canAbort ? <><LayoverCrewAbortToggle overview={overview} controller={controller} /><LayoverBuddyAbortToggle overview={overview} controller={controller} /></> : null}{/* census-layover L144: the traveller's own per-abort choice, offered only when the server would honour it */}
       {canAbort ? (
         <Pressable
           accessibilityRole="button"
@@ -166,7 +166,7 @@ export function LayoverSafeReturnCard({ overview, nowMs, canAbort, abort: contro
         </Text>
       )}
 
-      {/* ── Outcome ── */}
+      {/* ── Outcome ── */}{canAbort && controller.runWithOrigin ? <LayoverReturnRouteAction sessionId={overview.session.id} controller={controller} /> : null}{overview.safeReturnProduct ? <LayoverReturnProduct key={overview.session.id} sessionId={overview.session.id} initial={overview.safeReturnProduct} /> : null}
       {outcome?.kind === 'partial' ? (
         <View style={[styles.notice, styles.noticeBad]} testID="abort-partial-notice">
           <AlertTriangle size={14} color={color.signal} />
@@ -217,10 +217,10 @@ export function LayoverSafeReturnCard({ overview, nowMs, canAbort, abort: contro
           <Text style={styles.contractSub}>
             Includes a {contract.bufferMinutes} min return buffer.
           </Text>
-          {/* No routing provider exists — say so rather than showing nothing. */}
+          {/* Route responses retain their own server expiry beside the deadline. */}{contract.route ? <LayoverAbortRouteSummary route={contract.route} nowMs={nowMs} /> :
           <Text style={styles.contractSub} testID="contract-route-unavailable">
             No route guidance available here — use your own maps app.
-          </Text>
+          </Text>}
           {outcome?.kind === 'ok' && outcome.result.cancelledStopIds.length > 0 ? (
             <Text style={styles.contractSub} testID="contract-cancelled-count">
               {outcome.result.cancelledStopIds.length} landside stop
@@ -238,7 +238,7 @@ export function LayoverSafeReturnCard({ overview, nowMs, canAbort, abort: contro
               reported here; the only control is the traveller's own per-abort
               choice above (LayoverCrewAbortToggle), and whether a crew may be told at all is the owner's flag, not decided
               on the client. See `describeCrewNotification`. */}
-          {crewNotice ? (
+          <BuddyAbortNotice outcome={outcome} />{crewNotice ? (
             <Text style={styles.contractSub} testID="abort-crew-notice">{crewNotice}</Text>
           ) : null}
           {describeAbortEffects(
@@ -304,3 +304,65 @@ const styles = StyleSheet.create({
 
   cert:          { ...t.stamp, color: color.faint, marginTop: space.md, lineHeight: 15 },
 });
+
+// L221: location is requested only by this explicit control, never at mount or by the basic abort action.
+import { requestLocationForUserAction, USER_PRESS_LIVE_RETURN } from '../../lib/location/locationRequestDoor.ts';
+import type { AbortReturnRoute } from '../../services/layover.ts';
+
+function LayoverReturnRouteAction({ sessionId, controller }: { sessionId: string; controller: SafeReturnAbortController }) {
+  const [locating, setLocating] = React.useState(false);
+  const generation = React.useRef(0);
+  const inFlight = React.useRef(false);
+  React.useEffect(() => { setLocating(false); return () => { ++generation.current; inFlight.current = false; }; }, [sessionId]);
+  async function returnFromLocation() {
+    if (inFlight.current || controller.busy) return;
+    inFlight.current = true; setLocating(true); const mine = generation.current;
+    try {
+      const gps = await requestLocationForUserAction(USER_PRESS_LIVE_RETURN);
+      if (mine !== generation.current) return;
+      if (gps.granted && typeof gps.lat === 'number' && typeof gps.lng === 'number' && typeof gps.accuracyMeters === 'number' && typeof gps.observedAtMs === 'number' && Number.isFinite(gps.observedAtMs)) {
+        controller.runWithOrigin?.({ lat: gps.lat, lng: gps.lng, accuracyMeters: gps.accuracyMeters, observedAt: new Date(gps.observedAtMs).toISOString(), mode: 'drive' });
+      } else controller.run();
+    } catch { if (mine === generation.current) controller.run(); }
+    finally { if (mine === generation.current) { inFlight.current = false; setLocating(false); } }
+  }
+  return <Pressable testID="return-with-location" onPress={returnFromLocation} accessibilityRole="button" disabled={locating || controller.busy} accessibilityState={{ disabled: locating || controller.busy }}>
+    <Text style={styles.contractSub}>{locating ? 'Finding your location…' : 'Return with a driving route from my location'}</Text>
+  </Pressable>;
+}
+
+function LayoverAbortRouteSummary({ route, nowMs }: { route: AbortReturnRoute; nowMs: number }) {
+  const expired = !Number.isFinite(Date.parse(route.expiresAt)) || Date.parse(route.expiresAt) <= nowMs;
+  return <View testID="contract-measured-route">
+    <Text style={styles.contractSub}>{route.mode === 'walk' ? 'Walk' : 'Drive'}: {route.minutes} min estimated; allow {route.conservativeMinutes} min.</Text>
+    {expired ? <Text testID="contract-route-expired" style={styles.stale}>Last route estimate has expired. Check current conditions before relying on it.</Text> : null}
+    {!route.canMeetDeadline ? <Text testID="contract-route-late" style={styles.stale}>This route is estimated to reach the airport after your required return time. Head back now and contact the airline.</Text> : null}
+    {route.conveyances.map((leg, i) => <Text key={i} style={styles.contractSub}>{i + 1}. {leg.mode}: {leg.minutes} min{leg.endsAt ? ` · ${leg.endsAt}` : ''}</Text>)}
+  </View>;
+}
+
+import { SafeReturnSetupSheet } from '../safeReturn/SafeReturnSetupSheet.tsx';
+import { ActiveSafeReturnCard } from '../safeReturn/ActiveSafeReturnCard.tsx';
+import { getLayoverSafeReturnProduct, reportLayoverCheckpoint, type LayoverSafeReturnProductState } from '../../services/layover.ts';
+function LayoverReturnProduct({sessionId,initial}:{sessionId:string;initial:LayoverSafeReturnProductState}) {
+  const [state,setState]=React.useState(initial), [setup,setSetup]=React.useState(false), [error,setError]=React.useState<string|null>(null);
+  const alive=React.useRef(true), arrivalOperation=React.useRef<string|null>(null);
+  React.useEffect(() => {setState(initial);},[initial]);
+  React.useEffect(() => {alive.current=true;return () => {alive.current=false;};},[]);
+  const refresh=async () => {try {const next=await getLayoverSafeReturnProduct(sessionId);if(alive.current){setState(next);setError(null);}} catch {if(alive.current)setError('Safe Return could not be checked. Open it again to retry.');}};
+  const arrive=async () => {
+    arrivalOperation.current ??= `safe-return-arrival-${Date.now()}`;
+    const result=await reportLayoverCheckpoint(sessionId,'AIRPORT_REENTRY',arrivalOperation.current);
+    if(!result.ok || result.safeReturn?.ok!==true || result.safeReturn.closed!==true){if(alive.current)setError('Your return timer could not be closed. Please retry the airport check-in.');return {ok:false};}
+    await refresh();return {ok:true};
+  };
+  if(!state.available) return error ? <Text style={styles.stale}>{error}</Text> : null;
+  const active=state.session && ['pending','active','missed'].includes(state.session.status);
+  return <View testID="layover-safe-return-product">
+    {error ? <Text style={styles.stale}>{error}</Text> : null}
+    {active && state.session ? <ActiveSafeReturnCard session={state.session} deadlineLocked onConfirmArrival={arrive} onSessionEnded={() => {void refresh();}} onSessionUpdated={(session) => setState(s=>({...s,session}))} /> : state.session ? <Text style={styles.contractSub}>Safe Return has ended.</Text> : <Pressable testID="layover-product-setup" accessibilityRole="button" onPress={() => setSetup(true)}><Text style={styles.contractSub}>Use Safe Return for this trip back</Text></Pressable>}
+    <SafeReturnSetupSheet visible={setup} onClose={() => setSetup(false)} onStarted={() => {void refresh();}} layoverSessionId={sessionId} certifiedDeadline={state.certifiedDeadline ?? undefined} suggestionReason="Use your certified airport return deadline. Choose who, if anyone, should be alerted if you miss it." />
+  </View>;
+}
+
+import { LayoverBuddyAbortToggle, BuddyAbortNotice } from './LayoverBuddyAbortToggle.tsx';

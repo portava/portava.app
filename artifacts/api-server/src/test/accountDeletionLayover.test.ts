@@ -75,6 +75,21 @@ const layoverOps = (c: ReturnType<typeof makeStub>) => c._ops.filter((o) => LAYO
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 describe("account deletion — layover (census-layover L163, OD-MAP-4)", () => {
+  it("nulls only the deleting curator before tombstoning, and leaves source facts in place", async () => {
+    const c=makeStub();const result=await executeAccountDeletion(c as any,USER_ID,{actorId:null});assert.equal(result.ok,true);
+    const op=c._ops.find(o=>o.table==='layover_objective_facts');assert.ok(op);
+    assert.equal(op.op,'update');assert.deepEqual(op.payload,{stated_by:null});assert.deepEqual(op.filters,[['eq','stated_by',USER_ID]]);
+    assert.ok(c._ops.indexOf(op)<c._ops.findIndex(o=>o.table==='profiles'&&o.op==='update'));
+  });
+  for(const code of ['42P01','PGRST205']) it(`genuinely absent objective schema ${code} has no source identifiers to erase`,async()=>{
+    const c=makeStub({fail:{'layover_objective_facts:update':{code,message:'relation public.layover_objective_facts does not exist'}}});
+    assert.equal((await executeAccountDeletion(c as any,USER_ID,{actorId:null})).ok,true);
+  });
+  for(const [code,message] of [['57014','timeout'],['42501','permission denied'],['42703','column stated_by does not exist'],['42P01','relation unrelated_trigger_dependency does not exist']]) it(`objective erasure fault ${code}/${message} blocks account finalization`,async()=>{
+    const c=makeStub({fail:{'layover_objective_facts:update':{code,message}}});const result=await executeAccountDeletion(c as any,USER_ID,{actorId:null});
+    assert.equal(result.ok,false);assert.equal(result.steps.find(x=>x.step==='anonymise_layover_objective_sources')?.ok,false);
+    assert.equal(result.steps.some(x=>x.step==='anonymise_profile'),false);assert.deepEqual(c._authDeleted,[]);
+  });
   it("pseudonymises the events, then deletes the crew memberships, then the sessions — each scoped to this user", async () => {
     const c = makeStub();
     const out = await executeAccountDeletion(c as any, USER_ID, { actorId: null });

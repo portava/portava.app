@@ -1,0 +1,27 @@
+{
+  "packetVersion": 1,
+  "iata": "DAD",
+  "airportName": "Da Nang",
+  "state": "proposed_unvalidated",
+  "preparedBy": "machine-prepared by lane B2-CURATE research agent; NOT validated by a human curator",
+  "preparedAt": "2026-10-19T02:09:46Z",
+  "facts": [],
+  "unreachable": [
+    { "url": "https://danangairport.vn/", "error": "TLS error: unable to verify the first certificate" },
+    { "url": "https://danangairport.vn/airport-guide-transport-between-terminal", "error": "TLS error: unable to verify the first certificate" },
+    { "url": "https://www.vietnamairport.vn/danangairport/", "error": "HTTP 301 redirect to https://outlook.office.com/owa/acv.vn/ (a webmail login, not an airport page; not followed)" },
+    { "url": "https://vietnamairport.vn/danangairport/en/tin-tuc/passenger-information/passenger-guide", "error": "HTTP 301 redirect to https://acv.vn/ (corporate home page; not followed)" },
+    { "url": "https://acv.vn/cang-hang-khong-quoc-te-da-nang", "error": "Page content is rendered client-side; fetch returned only the title 'ACV - Sân bay' and a loading placeholder" },
+    { "url": "https://www.acv.vn/danangairport/en", "error": "HTTP 404 Not Found" }
+  ],
+  "gaps": [
+    "airportName: not confirmed from a fetched official page; the value is the label given in the task brief",
+    "terminal_topology: the Da Nang airport site (danangairport.vn) failed TLS verification on every page; ACV pages redirected, 404'd or rendered client-side",
+    "ground_transport: no official page reachable",
+    "transport_schedules: no official page reachable",
+    "security_layout: no official page reachable",
+    "lounge_hours: no official page reachable",
+    "overnight_lodging: no official page reachable",
+    "entry_restrictions: no official page reachable"
+  ]
+}

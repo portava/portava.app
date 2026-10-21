@@ -157,8 +157,8 @@ describe("L39 — the declared state graph", () => {
 
   it("names a producer — or the absence of one — for every event", () => {
     assert.deepEqual(Object.keys(LIFECYCLE_EVENT_PRODUCERS).sort(), [...LIFECYCLE_EVENTS].sort());
-    // The three states with no producer on this tree are declared as such, not approximated.
-    for (const ev of ["BOARDING_STARTED", "DEPARTURE_CONFIRMED", "ABANDONED"] as const) {
+    // Abandonment has no producer; observed flight and reported boarding producers are now wired.
+    for (const ev of ["ABANDONED"] as const) {
       assert.equal(LIFECYCLE_EVENT_PRODUCERS[ev], null);
     }
     // ABANDONED is §4.1's enum member; §5 draws no edge to it, and the edge says so.

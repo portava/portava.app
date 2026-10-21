@@ -5,7 +5,7 @@
  *   A. THE MODE RESOLVER (lib/layoverRolloutMode.ts): every failure is legacy.
  *   B. THE OBJECTIVE (services/airport/layoverObjective.ts): each term is a real
  *      input with its provenance, or UNKNOWN — and an UNKNOWN term contributes
- *      0 and is named. OQ-6: no price and no presence is read.
+ *      0 and is named. Commercial price signals and presence remain excluded; L78 admits sourced traveller costs.
  *   C. THE ELIGIBILITY BOUNDARY, as a randomised property: the served set equals
  *      the legacy set; only the order WITHIN a safety rating changes.
  *   D. THE HOOK (services/airport/layoverRankingMode.ts): legacy serves the very
@@ -216,7 +216,7 @@ describe("B. the objective: a real input with its provenance, or UNKNOWN — and
     assert.deepEqual(OBJECTIVE_TERMS.filter((t) => TERM_SIGN[t] === -1), ["monetary_cost", "energy_cost", "uncertainty", "stress", "return_risk"]);
   });
 
-  it("OQ-6: monetary_cost and social_value are UNKNOWN for every card — a price or a presence count on the card is not read", () => {
+  it("raw price or presence properties on a card cannot impersonate sourced traveller-cost or social evidence", () => {
     const r = rng(6);
     for (let i = 0; i < 200; i += 1) {
       const c = Object.assign(card({ verified: r() < 0.5, leg: r() < 0.5 ? null : 10 + Math.floor(r() * 40), dwell: r() < 0.5 ? null : 30 }), {
@@ -227,8 +227,8 @@ describe("B. the objective: a real input with its provenance, or UNKNOWN — and
       const withMoney = cardObjective(c, { keyOf: () => "c" });
       assert.equal(withMoney.terms.monetary_cost.state, "UNKNOWN");
       assert.equal(withMoney.terms.social_value.state, "UNKNOWN");
-      assert.match((withMoney.terms.monetary_cost as { reason: string }).reason, /OQ-6/);
-      assert.match((withMoney.terms.social_value as { reason: string }).reason, /OQ-6/);
+      assert.match((withMoney.terms.monetary_cost as { reason: string }).reason, /source|intent/);
+      assert.match((withMoney.terms.social_value as { reason: string }).reason, /source|intent/);
       assert.deepEqual(withMoney.terms, cardObjective(bare, { keyOf: () => "c" }).terms, "a money or presence field changed a term");
     }
   });
@@ -406,7 +406,7 @@ describe("D. the hook: legacy serves its input, shadow publishes nothing, on ser
       assert.equal(out.mode, "shadow");
       assert.deepEqual(out.event.ranking, {
         objectiveVersion: LAYOVER_OBJECTIVE_VERSION, mode: "shadow", compared: 3, moved: 2, topChanged: false,
-        knownByTerm: Object.fromEntries(OBJECTIVE_TERMS.map((t) => [t, t === "uncertainty" ? 3 : t === "return_risk" ? 1 : 0])),
+        knownByTerm: Object.fromEntries(OBJECTIVE_TERMS.map((t) => [t, t === "uncertainty" ? 3 : t === "return_risk" || t === "experience_density" ? 1 : 0])),
         refused: false,
       });
       // A comparison that agrees is counted and NOT logged.
@@ -515,16 +515,21 @@ describe("E. the real generator", () => {
         ["enabled, mode shadow, no cohort (nobody)", [modeRow(true, { mode: "shadow" })], undefined],
         ["enabled, mode on, a cohort without this traveller", [modeRow(true, { mode: "on", cohort: { kind: "users", userIds: ["user-2"] } })], undefined],
         ["enabled, mode invalid", [modeRow(true, { mode: "objective", cohort: { kind: "all" } })], undefined],
-        ["feature_flags unreadable", [ON_ALL], { "feature_flags:select": { message: "flags down" } }],
       ] as const) {
         const got = await generate([...rows], s, NIGHT, { stableIds, failures: failures as never });
         assert.deepEqual(got, baseline, label);
       }
     });
   }
+  it("a global flag-store outage also makes required route-monitoring state unknown and refuses publication", async () => {
+    const db = makeLayoverDb(genTables([ON_ALL]), { failures: { "feature_flags:select": { message: "flags down" } } });
+    const result = await generateRecommendations(db as never, AIRPORT, sessionAt(NIGHT, 11), NIGHT, {});
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.match(result.message, /route monitoring/);
+  });
 
   it("shadow publishes nothing: the rows and the cards are legacy's; the event differs ONLY by its counts-only ranking tally", async () => {
-    const s = sessionAt(NIGHT, 11);
+    const s = sessionAt(NIGHT, 11, { vibeChips: [] }); // isolate uncertainty from the now-wired stated-category preference term
     const legacy = await generate([], s, NIGHT);
     const shadow = await generate([SHADOW_ALL], s, NIGHT);
     assert.deepEqual(shadow.rows, legacy.rows);
@@ -537,7 +542,7 @@ describe("E. the real generator", () => {
   });
 
   it("on (the non-vacuous case): the same cards and ratings; only the order within not_recommended changes", async () => {
-    const s = sessionAt(NIGHT, 11);
+    const s = sessionAt(NIGHT, 11, { vibeChips: [] });
     const legacy = await generate([], s, NIGHT);
     const on = await generate([ON_ALL], s, NIGHT);
     const landside = (rows: Array<Record<string, unknown>>) => rows.filter((r) => r.inside_airport === false).map((r) => r.title);
@@ -588,7 +593,7 @@ describe("E. the real generator", () => {
 
   it("a daytime window where the two orders agree: on serves legacy's order exactly (ties keep it)", async () => {
     const DAY = Date.parse("2026-10-14T02:00:00.000Z"); // 10:00 in Taipei
-    const s = sessionAt(DAY, 9);
+    const s = sessionAt(DAY, 9, { vibeChips: [] });
     const legacy = await generate([], s, DAY);
     const on = await generate([ON_ALL], s, DAY);
     assert.deepEqual(on.rows, legacy.rows);
@@ -730,7 +735,7 @@ describe("F. GET /api/admin/layover/metrics — the rollout mode and the objecti
   it("END TO END: the real generator under shadow writes the tally the route reports", async () => {
     const t: ReturnType<typeof genTables> = { ...genTables([SHADOW_ALL]), profiles: [{ id: "admin-1", role: "admin" }] };
     const db = makeLayoverDb(t, { users: { [ADMIN]: "admin-1" } });
-    await generateRecommendations(db as never, AIRPORT, sessionAt(NIGHT, 11), NIGHT, {});
+    await generateRecommendations(db as never, AIRPORT, sessionAt(NIGHT, 11, { vibeChips: [] }), NIGHT, {});
     // The double stamps the event at write time; age it a second so the route's half-open window
     // [now - 7d, now) cannot exclude it by landing in the same millisecond (§72.8's flake).
     for (const e of t.layover_events) e.created_at = new Date(Date.now() - 1_000).toISOString();
@@ -796,7 +801,7 @@ describe("G. the registry says what the tree does; 3784 seeds legacy; the five l
 
 // ── H. H5: the money guard scans the new files, and they are clean ───────────
 
-describe("H. H5 — check:no-money-in-ranking scans the objective and the hook; no price, no primitive, no presence", () => {
+describe("H. H5 — check:no-money-in-ranking scans objective and hook; only explicit traveller-cost allowances", () => {
   const NEW_FILES = ["services/airport/layoverObjective.ts", "services/airport/layoverRankingMode.ts"];
 
   it("both files are in the guard's scope, scanned and clean, and no owner question is open", () => {
@@ -805,10 +810,15 @@ describe("H. H5 — check:no-money-in-ranking scans the objective and the hook; 
     assert.equal(failureCount(real), 0);
     assert.deepEqual(real.findings.filter((f) => NEW_FILES.includes(f.file) || f.file === "services/airport/LayoverRecommendationService.ts"), []);
     assert.equal(OPEN_DECISIONS.length, 0, "OPEN_DECISIONS must stay empty (H5)");
-    for (const f of [...NEW_FILES, "lib/layoverRolloutMode.ts"]) assert.deepEqual(moneyIdentifiersIn(read(f)), [], f);
+    for (const f of [...NEW_FILES, "lib/layoverRolloutMode.ts"]) {
+      const hits = moneyIdentifiersIn(read(f));
+      // L78 restored explicit traveller cost; only its registered currency disclosure is admitted here.
+      assert.deepEqual(hits.filter(hit => f !== "services/airport/layoverObjective.ts" || hit.identifier !== "currency"), [], f);
+      for (const hit of hits) assert.ok(real.allowed.some(a => a.file === f && a.identifier === hit.identifier));
+    }
   });
 
-  it("a price read planted in the objective is a finding at its line (the guard would catch the OQ-6 decision being taken silently)", () => {
+  it("an unsourced price read planted in the objective remains a finding at its line", () => {
     const root = mkdtempSync(join(tmpdir(), "lay4-money-"));
     try {
       const file = "services/airport/layoverObjective.ts";

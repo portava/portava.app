@@ -34,7 +34,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { makeLayoverDb } from "./helpers/fakeLayoverDb.js";
 import {
-  evaluateSharingGate,
+  evaluateSharingGate as readSharingGate, discloseSharingGate,
   publishableUserIds,
   readTripGhostMode,
   disclosePresence,
@@ -335,5 +335,30 @@ describe("the primitives the module always exported and nothing called", () => {
     assert.equal(serialised.includes("25.07"), false);
     assert.equal(serialised.includes("121.2"), false);
     assert.equal(serialised.includes("Dayuan"), false);
+  });
+});
+
+// Existing gate assertions exercise the wire projection; the store itself now requires an explicit branch.
+async function evaluateSharingGate(...args: Parameters<typeof readSharingGate>): Promise<SharingGateResult> {
+  return discloseSharingGate(await readSharingGate(...args));
+}
+describe("L294 typed sharing-read boundary", () => {
+  it("does not expose a failed settings read as measured allowed data", async () => {
+    const result = await readSharingGate(db({ failures: { "location_preferences:select": { message: "settings unavailable" } } }), { userId: USER });
+    assert.equal(result.kind, "degraded");
+    assert.equal("value" in result, false);
+    assert.equal("allowed" in result, false);
+    if (result.kind !== "degraded") assert.fail("expected typed degradation");
+    assert.equal(result.fallback.allowed, false);
+    assert.ok(result.reasons.includes("preferences_unreadable"));
+    assert.equal(discloseSharingGate(result).degraded, true);
+  });
+  it("reports a thrown transport read as degraded and refuses sharing", async () => {
+    const throwing = { from() { throw new Error("privacy transport unavailable"); } } as unknown as Parameters<typeof readSharingGate>[0];
+    const result = await readSharingGate(throwing, { userId: USER, tripId: TRIP });
+    assert.equal(result.kind, "degraded");
+    if (result.kind !== "degraded") assert.fail("expected typed degradation");
+    assert.deepEqual(result.reasons, ["sharing_gate_read_threw"]);
+    assert.equal(discloseSharingGate(result).allowed, false);
   });
 });

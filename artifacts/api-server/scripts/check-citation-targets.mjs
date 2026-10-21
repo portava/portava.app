@@ -647,7 +647,7 @@ import {
  * vocabulary) had drifted the same way and were anchored onto their claims
  * too. Every other line of the list is the same pointer at a shifted line.
  * Same rule as above. */
-export const MAX_DEAD_TARGETS = 152; // RATCHETED 2026-10-18 155 -> 152 (wave 5: the guard printed "152 < 155 — LOWER THE CEILING")
+export const MAX_DEAD_TARGETS = 150; // RATCHETED 2026-10-19 152 -> 150: six reviewed Layover citations now name the actual declaration/decision and its semantic anchor.
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set([

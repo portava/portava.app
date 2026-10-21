@@ -45,7 +45,7 @@ async function isFlagEnabled(db: any, flag: string): Promise<boolean> {
 }
 
 /** Find and execute every due request. Exported for tests. */
-export async function processDueDeletions(): Promise<{
+async function processDueDeletionsImpl(): Promise<{
   considered: number;
   executed: number;
   failed: number;
@@ -141,3 +141,6 @@ export function stopAccountDeletionScheduler(): void {
     _interval = null;
   }
 }
+
+import { withLayoverSystemAudit } from './layoverServiceAudit.js';
+export function processDueDeletions(): ReturnType<typeof processDueDeletionsImpl> { return withLayoverSystemAudit('account:scheduled-deletion', processDueDeletionsImpl); }

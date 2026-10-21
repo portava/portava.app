@@ -21,7 +21,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js";
+import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js"; import { withConfirmedCorridor } from "./helpers/confirmedCorridor.js";
 import { certifiedActionUniverse, certifiedLayoverSnapshot, LAYOVER_DISCOVERY_MODE_FLAG } from "../services/airport/LayoverSnapshot.js";
 import {
   bothDirections,
@@ -41,7 +41,7 @@ const isAirport = (p: { lat: number; lng: number } | null) => !!p && p.lat === A
 
 async function liveSnapshot() {
   const now = Date.now();
-  const r = await certifiedLayoverSnapshot(makeLayoverDb({
+  const r = await certifiedLayoverSnapshot(makeLayoverDb(withConfirmedCorridor({
     feature_flags: [{ flag: LAYOVER_DISCOVERY_MODE_FLAG, enabled: true }],
     airport_profiles: [airportRow()],
     layover_sessions: [sessionRow({
@@ -50,7 +50,7 @@ async function liveSnapshot() {
       layover_minutes: 560, wants_to_leave: true, status: "active",
     })],
     layover_plan_stops: [], layover_events: [],
-  }), USER);
+  }, { userIds: [USER], destination: "TW" })), USER);
   assert.ok(r.ok && r.snapshot.envelope && r.snapshot.landsideStatus !== "closed", "positive control: a live layover with landside not closed");
   return r.snapshot;
 }

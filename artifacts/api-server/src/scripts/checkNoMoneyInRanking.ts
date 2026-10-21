@@ -252,6 +252,15 @@ export interface AllowEntry {
 }
 
 export const ALLOWLIST: readonly AllowEntry[] = [
+  ...(["readBuddyPaymentReadiness", "payments", "bookingPayments", "payout", "payment", "layoverBuddyPaymentReadiness", "payment_parties", "rent_buddy_payment_recipients"] as const).map((identifier) => ({
+    file: "services/airport/LayoverBuddyBooking.ts", identifier,
+    why: "ENFORCES eligibility for the owner-authorized L273 specialist booking: current identity, trust and payout readiness may only refuse an offer or booking. The narrow adapter reads party identity and recipient eligibility, never price, revenue, commission or ranking weight. The existing Buddy list-price ban remains unchanged.",
+  })),
+  ...(["currency", "amountMinor"] as const).map((identifier) => ({
+    file: "services/airport/layoverObjectiveEvidence.ts", identifier,
+    why: "Owner's 2026-10-18 all165 directive requires the original Layover spec L78 eleven-term objective, including traveler monetary_cost. This is the user's explicitly stated budget compared only with a complete sourced out-of-pocket experience quote in the same currency and actual route mode; missing fare remains UNKNOWN. No Portava revenue, sponsor, merchant payment or Buddy list price participates, and safety eligibility/ordering partitions precede this preference.",
+  })),
+  { file: "services/airport/layoverObjective.ts", identifier: "currency", why: "L78's disclosure names the matching-currency requirement for an owner-authorized complete traveler-cost quote. It is an UNKNOWN reason string, not a provider payment, commercial ranking signal, exchange-rate assumption or Buddy price input." },
   {
     file: "compass/CompassFeedbackEngine.ts",
     identifier: "paid",

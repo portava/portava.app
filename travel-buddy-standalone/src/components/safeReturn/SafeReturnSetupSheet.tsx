@@ -35,7 +35,7 @@ interface Props {
   visible: boolean;
   onClose: () => void;
   onStarted?: (sessionId: string) => void;
-  planItemId?: string;
+  planItemId?: string; layoverSessionId?: string; certifiedDeadline?: string;
   tripId?: string;
   /** ISO timestamp of when the linked plan item ends (enables "Until plan ends" timer chip). */
   planEndsAt?: string | null;
@@ -78,7 +78,7 @@ const ESCALATION_OPTIONS: Array<{ level: 0 | 1 | 2 | 3; label: string; desc: str
 // (or expose as a prop) to adjust the feedback window.
 const SLOW_CHECK_LINGER_MS = 1_500;
 
-export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, tripId, planEndsAt, suggestionReason, onCheckingChange, onSlowCheck }: Props) {
+export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, tripId, planEndsAt, suggestionReason, onCheckingChange, onSlowCheck, layoverSessionId, certifiedDeadline }: Props) {
   const insets = useSafeAreaInsets();
   const [timerMinutes, setTimerMinutes] = useState<number | null>(30);
   const [escalationLevel, setEscalationLevel] = useState<0 | 1 | 2 | 3>(0);
@@ -243,7 +243,7 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
 
       const outcome = await runHandleStart({
         createSession: () => createSession({
-          timerMinutes: timerMinutes ?? undefined,
+          timerMinutes: layoverSessionId ? undefined : timerMinutes ?? undefined, layoverSessionId,
           escalationLevel,
           trustedCircleEnabled,
           liveShareEnabled,
@@ -319,7 +319,7 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
 
           {/* Timer picker */}
           <Text style={styles.sectionLabel}>Check-in timer</Text>
-          <View style={styles.optionRow}>
+          {layoverSessionId ? <Text testID="layover-certified-timer">Airport return deadline: {certifiedDeadline ? new Date(certifiedDeadline).toLocaleTimeString() : 'Checked by the server when you start'}. This timer cannot be extended.</Text> : <View style={styles.optionRow}>
             {TIMER_OPTIONS.map((opt) => (
               <Pressable
                 key={opt.label}
@@ -347,7 +347,7 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
             })() : null}
           </View>
 
-          {/* Escalation level */}
+          }{/* Escalation level */}
           <Text style={styles.sectionLabel}>If I miss the check-in…</Text>
           {ESCALATION_OPTIONS.map((opt) => (
             <Pressable

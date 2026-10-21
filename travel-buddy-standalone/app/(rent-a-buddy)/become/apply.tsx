@@ -35,7 +35,7 @@ const verifyButtons = (): Array<{ text: string; style?: 'cancel'; onPress?: () =
 const TOTAL_STEPS = 7;
 
 const ALL_CATEGORIES: { value: BuddyCategory; label: string; emoji: string }[] = [
-  { value: 'arrival', label: 'Arrival Support', emoji: '✈️' },
+  { value: 'arrival', label: 'Arrival Support', emoji: '✈️' }, { value: 'layover', label: 'Layover Specialist', emoji: '⏱️' },
   { value: 'city', label: 'City Tours', emoji: '🗺️' },
   { value: 'nightlife', label: 'Nightlife', emoji: '🌙' },
   { value: 'food', label: 'Food & Markets', emoji: '🍜' },
@@ -766,7 +766,7 @@ export default function ApplyToBeBuddy() {
         {/* STEP 2 — Categories */}
         {step === 2 && (
           <View>
-            <StepHeader step={2} title="What do you offer?" sub="Select all that apply. You can change this later." />
+            <StepHeader step={2} title="What do you offer?" sub="Select all that apply. Layover specialists need live identity verification and verified payout setup." />
             <View style={grid.wrap}>
               {ALL_CATEGORIES.map((c) => (
                 <Pressable

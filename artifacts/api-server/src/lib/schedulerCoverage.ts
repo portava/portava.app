@@ -101,7 +101,7 @@ export const STARTED_SCHEDULERS: readonly SchedulerRow[] = [
   { start: "startInviteSlotReconciler", reportedAs: ["inviteSlotReconciler"] },
   { start: "startInviteSlotSweeper", reportedAs: ["inviteSlotSweeper"] },
   { start: "startLayoverCrewExpiryScheduler" }, { start: "startLayoverAuditRetentionScheduler", reportedAs: ["layoverAuditRetention", "layoverSnapshotCompaction"], persists: ["layoverSnapshotCompaction"] },
-  { start: "startLayoverExternalEventScheduler" }, { start: "startLayoverPresenceExpiryScheduler" }, // census L196 presence half (3900): unobservable like the crew sweep, so 44 -> 45; line-neutral
+  { start: "startLayoverExternalEventScheduler" }, { start: "startLayoverPresenceExpiryScheduler" }, { start: "startLayoverMetricsScheduler", reportedAs: ["layoverMetrics"] }, // census L196 presence half (3900): unobservable like the crew sweep, so 44 -> 45; line-neutral
   { start: "startLocationSnapshotPurgeScheduler" },
   { start: "startMediaDedupWorker" },
   { start: "startMediaProcessingWorker" },

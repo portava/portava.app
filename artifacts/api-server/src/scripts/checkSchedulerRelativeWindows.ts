@@ -220,10 +220,10 @@ export const ALLOWLIST: readonly AllowEntry[] = [
     kind: "governed",
     requires: [".limit(DECISION_WINDOW_LIMIT + 1)", "export async function decisionsInWindow("], // the bound is THIS read's own text (unique in the file since B58 LAY-2): delete it and the entry goes stale
     reason:
-      "Not a scheduled pass. This file became scheduler-reachable only because the L261 snapshot-compaction phase " +
-      "(services/layover/LayoverDecisionService.ts, run from the layover retention tick) imports its per-session " +
-      "readers; decisionsInWindow itself has exactly one caller, the admin metrics route " +
-      "(routes/adminLayoverMetrics.ts), and its [fromIso, toIso) is the REPORTING window an admin asks about, not a " +
+      "The shared LayoverMetricsReport collector calls this for the admin report and scheduled rolling gauges. " +
+      "The scheduler replaces its aggregate gauges, never marks decisions processed or increments a cumulative total. " +
+      "decisionsInWindow has one production caller, services/airport/LayoverMetricsReport.ts; " +
+      "its [fromIso, toIso) is the REPORTING window, not a " +
       "span a pass consumes. Nothing is processed once per window, so a gap between requests skips no row: the " +
       "next request over the same window reads the same rows. The compaction sweep's own predicate is absolute " +
       "(`.lt(\"computed_at\", cutoff)`), which this check does not flag.",
@@ -234,10 +234,28 @@ export const ALLOWLIST: readonly AllowEntry[] = [
     requires: [".limit(STORED_COMPUTATION_READ_LIMIT)", "export async function storedComputationsInWindow("],
     reason:
       "The same reporting window as decisionsInWindow above, read the other way (census-layover L217, §72): the " +
-      "decision columns AS WRITTEN, for the admin metrics route's replay pass. Exactly one caller, " +
-      "routes/adminLayoverMetrics.ts; [fromIso, toIso) is the window an admin asks about, nothing is consumed or " +
+      "decision columns AS WRITTEN, for the shared report's replay pass. Exactly one production caller, " +
+      "services/airport/LayoverMetricsReport.ts; [fromIso, toIso) is a reporting window, nothing is consumed or " +
       "marked per window, so a gap between requests skips no row — the next request over the same window replays " +
-      "the same rows. No scheduled pass calls it; the file is scheduler-reachable only through the L261 compaction imports.",
+      "the same rows. Scheduled monitoring replaces current-window gauges; it does not claim a cumulative event ledger or historical alert catch-up.",
+  },
+  {
+    key: 'services/airport/LayoverMetricsReport.ts::readLayoverMetricsReport::layover_events.gte("created_at")',
+    kind: "governed",
+    requires: ['.lt("created_at", toIso)', 'countedLayoverWindow(ev, EVENT_COLUMNS, EVENT_WINDOW_LIMIT)', 'computeLayoverMetrics'],
+    reason: "A reporting cohort, not queued work: this shared collector returns a bounded [fromIso,toIso) aggregate to the admin endpoint and rolling monitoring gauges. It marks no row processed and replaces the complete gauge snapshot rather than accumulating counts. Repeating the same window reads the same retained evidence; a suspended process resumes with an explicitly new reporting window. Scheduler health exposes gaps and unavailable exports; historical alert catch-up is not claimed.",
+  },
+  {
+    key: 'services/airport/LayoverMetricsReport.ts::readLayoverMetricsReport::layover_events.gte("created_at")#2',
+    kind: "governed",
+    requires: ['.lt("created_at", toIso)', 'countedLayoverWindow(gen, GENERATION_COLUMNS, CONTRACT_EVENT_LIMIT)', 'recommendationContractWindow'],
+    reason: "Contract violations are a gauge over the same explicit report cohort, not a consumer acknowledgement or destructive queue. Exact-count overflow refuses the metric, and the exporter replaces the complete snapshot. No generation is marked handled; an admin can query retained historical windows. Current-window alerts and stale scheduler health are implemented; this read does not promise historical alert delivery during an outage.",
+  },
+  {
+    key: 'services/airport/LayoverMetricsReturns.ts::readSafeReturnMetricWindow::layover_safe_return_links.gte("return_started_at")',
+    kind: "governed",
+    requires: [".lt('return_started_at',toIso)", "countedLayoverWindow", "actual_airport_return_at"],
+    reason: "The lower bound defines the cohort whose return-completion rate the report measures. Starts are immutable evidence and nothing is consumed, acknowledged or deleted by this read. The shared collector/exporter publishes the rate for this named window as a replacing gauge. A gap changes the next report window without losing queued work; existing Safe Return scheduling uses an absolute due deadline independently of these analytics.",
   },
   {
     key: 'lib/stamps/countryGeocoder.ts::runCorrectionSweep::city_country_geocode_cache.gte("corrected_at")',

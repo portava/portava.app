@@ -182,7 +182,7 @@ function stage(opts: {
         // certifies `yes` and the tool cases below still run through the model.
         { flag: ENTRY_FLAG, enabled: true },
       ],
-      traveler_passports: [{ user_id: USER_V, issuing_country: "US", is_primary: true, created_at: "2026-01-01T00:00:00.000Z" }],
+      traveler_passports: [USER_V, USER_M, USER_O].map((user_id) => ({ user_id, issuing_country: "US", is_primary: true, created_at: "2026-01-01T00:00:00.000Z" })),
       entry_requirements: [{
         id: "corr-visa_free", passport_country: "US", destination_country: "TW", status: "visa_free",
         allowed_stay_days: null, passport_validity_rule: null, fee_text: null, processing_time_text: null,
@@ -515,13 +515,13 @@ describe("L138 — the safety gate on crew discovery (door 1) and the Compass to
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe("L138 — the meeting point on the traveller's own crew, both doors", () => {
-  it("CONTROL door 1: a legitimate crew member still gets the meeting point", async () => {
+  it("door 1: membership cannot clear an unscoped meeting point when the aggregate has no entry fact", async () => {
     stage({ inCrew: true });
     const r = await crewDoor();
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.equal(r.body.inCrew, true);
-    assert.equal(r.body.crew.meetingPointLabel, POINT_MINE);
-    assert.deepEqual(r.body.crew.meetingPointWithheld, []);
+    assert.equal(r.body.crew.meetingPointLabel, null);
+    assert.deepEqual(r.body.crew.meetingPointWithheld, ["safety_gate_not_cleared"]); // The stored label has no authoritative airside scope; passport-free aggregate certification fails closed.
   });
 
   // RESTATED 2026-10-09 under L-CL02a: door 2 can no longer disclose the own
@@ -564,7 +564,7 @@ describe("L138 — the meeting point on the traveller's own crew, both doors", (
     const r = await crewDoor();
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.equal(r.body.crew.meetingPointLabel, null);
-    assert.deepEqual(r.body.crew.meetingPointWithheld, ["return_state_escalated"]);
+    assert.deepEqual(r.body.crew.meetingPointWithheld, ["safety_gate_not_cleared", "return_state_escalated"]);
     assertNoPoint(JSON.stringify(r.body), POINT_MINE, "door 1 / crewmate escalated");
   });
 
@@ -582,7 +582,7 @@ describe("L138 — the meeting point on the traveller's own crew, both doors", (
       const d1 = await crewDoor();
       assert.equal(d1.status, 200, JSON.stringify(d1.body));
       assert.equal(d1.body.crew.meetingPointLabel, null, `door 1, viewerFirst=${viewerFirst}`);
-      assert.deepEqual(d1.body.crew.meetingPointWithheld, ["return_state_escalated"]);
+      assert.deepEqual(d1.body.crew.meetingPointWithheld, ["safety_gate_not_cleared", "return_state_escalated"]);
 
       stage({ inCrew: true, mate: "escalated", viewerFirst });
       await compassDoor();
@@ -590,15 +590,15 @@ describe("L138 — the meeting point on the traveller's own crew, both doors", (
   });
 
   it("door 1: ONE crewmate nobody can place on the ladder withholds it — not a worst over the readable subset", async () => {
-    // The viewer IS certified and clear here, so nothing but the crew-side
-    // clause can close this. A worst taken over the members we could certify
+    // The passport-free aggregate also lacks entry clearance; the crew-side
+    // denial must still be reported. A worst over only the members we could certify
     // would be NORMAL — a CALMER state than the truth, which is the direction a
     // safety maximum must never move.
     stage({ inCrew: true, mateSessionMissing: true });
     const r = await crewDoor();
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.equal(r.body.crew.meetingPointLabel, null);
-    assert.deepEqual(r.body.crew.meetingPointWithheld, ["return_state_escalated"]);
+    assert.deepEqual(r.body.crew.meetingPointWithheld, ["safety_gate_not_cleared", "return_state_escalated"]);
     assert.equal(r.body.crew.memberCount, 2, "the crew's size is still true");
     assertNoPoint(JSON.stringify(r.body), POINT_MINE, "door 1 / crewmate uncertifiable");
   });
@@ -616,7 +616,7 @@ describe("L138 — the meeting point on the traveller's own crew, both doors", (
     const r = await crewDoor();
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.equal(r.body.crew.meetingPointLabel, null);
-    assert.deepEqual(r.body.crew.meetingPointWithheld, ["blocked"]);
+    assert.deepEqual(r.body.crew.meetingPointWithheld, ["blocked", "safety_gate_not_cleared"]);
     assertNoPoint(JSON.stringify(r.body), POINT_MINE, "door 1 / blocked after joining");
   });
 
@@ -638,7 +638,7 @@ describe("L138 — an input that could not be read withholds, never discloses", 
     const r = await crewDoor();
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.equal(r.body.crew.meetingPointLabel, null);
-    assert.deepEqual(r.body.crew.meetingPointWithheld, ["blocked"]);
+    assert.deepEqual(r.body.crew.meetingPointWithheld, ["blocked", "safety_gate_not_cleared"]);
     // The existing degraded contract is unchanged beside it.
     assert.equal(r.body.degraded, true);
     assert.ok(r.body.degradedReasons.includes("blocks_unreadable"));

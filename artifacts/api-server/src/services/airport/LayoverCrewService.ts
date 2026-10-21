@@ -513,3 +513,90 @@ export function sharedRideDisclosure(input: {
   }
   return { offered: true, leg: input.sharedLeg, withheldLegs: Math.max(0, withheld) };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §14.1 EXPLICIT SPLIT PLANS WITH THEIR T1 / T2 — census-layover L134, L135
+// (LAYOVER 165, lane B2-CREW; appended so no cited line above moves)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// "Unless an explicit split plan exists: member A leaves at T1, members B/C
+// continue until T2. Crew plan must be certified against every member branch."
+//
+// `certifyCrewPlan` above certifies a branch's STOPS against each member. A split
+// plan also names WHEN each branch is back at the airport — the spec's T1 and T2
+// — and that time is a claim about every member of the branch, so it is
+// certified the same way: against EACH member's own certified hard return, never
+// the crew's best member. `certifyTimedCrewPlan` is `certifyCrewPlan` plus those
+// checks; it adds reasons and never removes one, so a branch the base solver
+// refuses stays refused.
+
+/** A branch with the time it is back at the airport (the spec's T). */
+export interface TimedCrewBranch extends CrewBranch {
+  /** Epoch ms the branch is back at the airport. */
+  returnByMs: number;
+}
+
+/** What a T adds to the base solver's reasons. */
+export type CrewTimedBranchReason =
+  /** The branch's T is past at least one of ITS members' certified hard return. */
+  | "branch_returns_after_member_deadline"
+  /** The branch's T is not in the future. */
+  | "branch_return_time_passed"
+  /** The branch's stops (their journeys included) do not fit between now and its T. */
+  | "stops_do_not_fit_before_branch_return"
+  /** A member of a branch that leaves the airport must already head back (RETURN_NOW / CONNECTION_AT_RISK, §15). */
+  | "member_must_return_now";
+
+export type CrewPlanReason = CrewInfeasibilityReason | CrewTimedBranchReason;
+
+export interface TimedCrewBranchVerdict extends Omit<CrewBranchVerdict, "reasons"> {
+  returnBy: string | null;
+  reasons: CrewPlanReason[];
+}
+
+export interface TimedCrewSolution extends Omit<CrewSolution, "branches" | "reasons"> {
+  branches: TimedCrewBranchVerdict[];
+  reasons: CrewPlanReason[];
+}
+
+/**
+ * §14.1 "Crew plan must be certified against every member branch", for a plan
+ * whose branches carry their T. Pure: `nowMs` is an argument and the members
+ * arrive carrying records the caller certified.
+ */
+export function certifyTimedCrewPlan(
+  plan: { branches: TimedCrewBranch[] },
+  members: CrewMember[],
+  opts: { nowMs: number },
+): TimedCrewSolution {
+  const base = certifyCrewPlan({ branches: plan.branches.map(({ returnByMs: _t, ...b }) => b) }, members, opts);
+  const byId = new Map(members.map((m) => [m.userId, m]));
+  const branches: TimedCrewBranchVerdict[] = base.branches.map((v, i) => {
+    const b = plan.branches[i]!;
+    const extra: CrewTimedBranchReason[] = [];
+    const t = b.returnByMs;
+    const valid = typeof t === "number" && Number.isFinite(t);
+    if (!valid || t <= opts.nowMs) extra.push("branch_return_time_passed");
+    if (valid && opts.nowMs + v.neededMinutes * 60_000 > t) extra.push("stops_do_not_fit_before_branch_return");
+    const leaves = b.stops.some((s) => !s.insideAirport);
+    let late = false;
+    let mustReturn = false;
+    for (const id of b.memberIds) {
+      const r = byId.get(id)?.record;
+      if (!r) continue; // already `member_without_certified_feasibility` (base)
+      if (!valid || t > r.deadline.hardReturnTime.getTime()) late = true;
+      if (leaves && (r.envelope.returnState === "RETURN_NOW" || r.envelope.returnState === "CONNECTION_AT_RISK")) mustReturn = true;
+    }
+    if (late) extra.push("branch_returns_after_member_deadline");
+    if (mustReturn) extra.push("member_must_return_now");
+    const reasons: CrewPlanReason[] = [...v.reasons, ...extra];
+    return { ...v, returnBy: valid ? new Date(t).toISOString() : null, reasons, feasible: v.feasible && extra.length === 0 };
+  });
+  const reasons = Array.from(new Set<CrewPlanReason>([...base.reasons, ...branches.flatMap((b) => b.reasons)]));
+  return {
+    ...base,
+    branches,
+    reasons,
+    feasible: base.feasible && branches.length > 0 && branches.every((b) => b.feasible),
+  };
+}

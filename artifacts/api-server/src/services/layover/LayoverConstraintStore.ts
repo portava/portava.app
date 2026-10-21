@@ -100,7 +100,7 @@ export async function readConstraintFlags(db: SupabaseClient): Promise<Constrain
     );
     return { readable: false };
   }
-  return { readable: true, storage: storage === "on", entryForbidsLandside: entryForbidsLandside === "on" };
+  return { readable: true, storage: storage === "on", entryForbidsLandside: entryForbidsLandside === "on" || ENTRY_POLICY_FAIL_CLOSED }; // L48/L77 (LAYOVER 165 B2-CURATE): the owner decided 2026-10-18 — an unconfirmed border fails closed in EVERY flag state; the flag is read (unreadable still closes) and can no longer relax it. See layoverEntryGate.ts ENTRY_POLICY_FAIL_CLOSED.
 }
 
 /**
@@ -350,3 +350,6 @@ export async function insertConstraintVersion(
   }
   return { ok: true, set };
 }
+
+// LAYOVER 165 B2-CURATE (L48/L77) — the owner's fail-closed entry decision; at the foot so no line above moves.
+import { ENTRY_POLICY_FAIL_CLOSED } from "../airport/layoverEntryGate.js";

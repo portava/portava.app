@@ -100,7 +100,7 @@ export interface OfflineAirport {
   timezone: string;
   lat: number | null;
   lng: number | null;
-  terminalInfo: Record<string, unknown> | null;
+  terminalInfo: Record<string, unknown> | null; topologyGeometry?: import('./airportTopologyGeometry.js').AirportTopologyGeometry;
 }
 
 export interface LayoverOfflineBundle {
@@ -165,7 +165,7 @@ export function buildOfflineBundle(input: {
       timezone: airport.timezone ?? "UTC",
       lat: airport.lat ?? null,
       lng: airport.lng ?? null,
-      terminalInfo: airport.terminalInfo ?? null,
+      terminalInfo: airport.terminalInfo ?? null, topologyGeometry: airportTopologyGeometry(airport, record.inputs.nowMs),
     },
     mapGeometry: unavailable("no_envelope_geometry"),
     route: unavailable("no_routing_provider"),
@@ -369,7 +369,7 @@ function crewMeetingPointOf(crew: import("../layover/LayoverCrewStore.js").CrewR
 function phrasesOf(
   session: LayoverSession,
   airport: AirportProfile,
-  stops: ReadonlyArray<{ insideAirport: boolean }>,
+  stops: ReadonlyArray<{ insideAirport: boolean; title?: string }>,
 ): OfflineCapability<LayoverPhraseSet> {
   const r = layoverPhrasesFor({
     countryCode: airport.countryCode,
@@ -380,4 +380,6 @@ function phrasesOf(
   });
   return r.ok ? available(r.value) : unavailable(r.reason);
 }
+
+import { airportTopologyGeometry } from './airportTopologyGeometry.js';
 

@@ -26,12 +26,12 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 // NOTE: intentional stub — expo-router is mocked so router.push can be asserted.
 jest.mock('expo-router', () => ({
   router: { push: jest.fn(), back: jest.fn(), replace: jest.fn(), canGoBack: () => true },
-  useLocalSearchParams: () => ({ buddyId: 'buddy-77' }),
+  useLocalSearchParams: jest.fn(() => ({ buddyId: 'buddy-77' })),
   useFocusEffect: (cb: () => unknown) => { require('react').useEffect(cb, []); },
   useRouter: () => ({ push: jest.fn() }),
 }));
 
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 const routerPush = router.push as jest.Mock;
 
 jest.mock('react-native-safe-area-context', () => ({
@@ -108,7 +108,7 @@ async function fillAndBook(experience?: string | RegExp) {
 }
 
 beforeEach(async () => {
-  // The one-time safety tutorial has already been seen on this device.
+  (useLocalSearchParams as jest.Mock).mockReturnValue({ buddyId: 'buddy-77' });
   await AsyncStorage.setItem('rab_safety_tutorial_shown', '1');
   (getBuddyProfile as jest.Mock).mockResolvedValue({
     ok: true,
@@ -323,4 +323,19 @@ describe('checkout — age refusals apply only to the age-relevant request conte
     expect(request).toHaveBeenCalledTimes(1);
     expect(router.replace).not.toHaveBeenCalled();
   });
+});
+
+// NOTE: intentional stub — selecting an airport-local time is the only picker interaction under test here.
+jest.mock('../../../src/components/selectors/GlobalTimePicker', () => ({
+ GlobalTimePicker: ({visible,onChange}:{visible:boolean;onChange:(value:string)=>void}) => {
+  const React=require('react'),{Pressable,Text}=require('react-native');return visible?React.createElement(Pressable,{testID:'pick-time',onPress:()=>onChange('09:00')},React.createElement(Text,null,'Choose time')):null;
+ },
+}));
+it('layover checkout shows airport time, keeps its specialism, and sends the session context through the actual booking client',async()=>{
+ (useLocalSearchParams as jest.Mock).mockReturnValue({buddyId:'buddy-77',layoverSessionId:'session-123',bookingStartsAt:'2099-06-01T01:00:00Z',bookingEndsBy:'2099-06-01T06:00:00Z',timezone:'Asia/Singapore'});
+ (createBooking as jest.Mock).mockImplementation(jest.requireActual('../../../src/services/rentABuddy').createBooking);
+ const request=jest.spyOn(global,'fetch').mockResolvedValue({ok:false,status:409,json:async()=>({error:'layover_booking_crosses_deadline'})} as Response),alert=jest.spyOn(Alert,'alert').mockImplementation(()=>{});
+ await fillForm();expect(screen.getByTestId('layover-booking-window')).toHaveTextContent(/Asia\/Singapore/);expect(screen.queryByText('Type of experience')).toBeNull();
+ await fireEvent.press(screen.getByText('Select (optional)'));await fireEvent.press(screen.getByTestId('pick-time'));await fireEvent.press(screen.getByTestId('checkout-confirm-btn'));
+ await waitFor(()=>expect(request).toHaveBeenCalledTimes(1));const body=JSON.parse(String(request.mock.calls[0][1]?.body));expect(body).toMatchObject({category:'layover',layoverSessionId:'session-123',startTime:'09:00'});expect(body).not.toHaveProperty('bookingEndsBy');expect(body).not.toHaveProperty('packageId');await waitFor(()=>expect(alert).toHaveBeenCalledWith('Booking failed',expect.stringMatching(/outside your certified layover window/i)));expect(router.replace).not.toHaveBeenCalled();
 });

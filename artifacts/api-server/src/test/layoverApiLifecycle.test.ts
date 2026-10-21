@@ -47,7 +47,7 @@ import http from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import airportRouter from "../routes/airport.js";
-import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js";
+import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js"; import { withConfirmedCorridor } from "./helpers/confirmedCorridor.js";
 
 const TOKEN = "lifecycle-token";
 const USER = "lifecycle-user";
@@ -81,7 +81,7 @@ function stage(over: Record<string, unknown> = {}) {
     layover_events: [],
     trip_plan_items: [], trips: [], trip_members: [],
   };
-  _setTestClient(makeLayoverDb(tables, { users: { [TOKEN]: USER } }) as any, true);
+  _setTestClient(makeLayoverDb(withConfirmedCorridor(tables, { userIds: [USER], destination: "TW" }), { users: { [TOKEN]: USER } }) as any, true);
   return tables;
 }
 
@@ -164,7 +164,7 @@ describe("census L239 — one layover walks detection → … → completion ove
     assert.equal(planned.status, 200, "plan stage");
     assert.equal(planned.body.stops.length, 1);
     assert.ok(planned.body.planFit, "the plan is certified against the window"); assert.equal(planned.body.planFit.clockFit, "fits"); // the CLOCK says it fits — which is all this stage ever established
-    assert.equal(planned.body.planFit.fit, "unconfirmed"); assert.deepEqual(planned.body.planFit.landside.cautions, ["entry_unconfirmed"]); // LAY-FIX (was `fit === "fits"`): this world has no curated entry corridor, so the verdict is `entry_unverified`, and a plan through the city is no longer a green `fits` — planFit reads the landside gate as well as the window. Same line: line 260 of this file is cited.
+    assert.equal(planned.body.planFit.fit, "fits"); assert.deepEqual(planned.body.planFit.landside.cautions, []); // The fixture confirms entry; unknown entry now closes landside in every flag state.
     const stopId = planned.body.stops[0].id;
 
     // ── 4. EXECUTION ────────────────────────────────────────────────────────
@@ -252,10 +252,10 @@ describe("census L239 — one layover walks detection → … → completion ove
  * pins both halves.
  *
  * It is NOT `C`. "visa-free" is unrepresentable — there is no entry-permission
- * field on `layover_sessions` (census L34, `N`) — and the contract's `route` is
- * hard-`null` with `routeUnavailableReason: "no_routing_provider"`, so a
- * traveller is told WHEN to leave and never HOW to get back. Both are asserted
- * so the case fails the day either changes.
+ * field on `layover_sessions` (census L34, `N`). The route changed on ee52da82 (tracker "### L221": "routed abort …
+ * implemented", from an "actual fresh origin"): `return-now` routes back from a FRESH client origin, so this abort, which
+ * sends none, gets `route: null` with `routeUnavailableReason: "origin_unavailable"` (no longer the hard-coded
+ * "no_routing_provider"). Both are asserted so the case fails the day either changes.
  */
 describe("census L221 — 6h international at a curated airport: landside, with the contract", () => {
   it("the window reaches the city and the abort hands back a full return contract", async () => {
@@ -285,9 +285,9 @@ describe("census L221 — 6h international at a curated airport: landside, with 
     assert.ok(c.certification?.inputHash, "the contract names the computation behind it");
     assert.equal(c.airport.iataCode, "TPE");
 
-    // The half that is still missing, asserted rather than assumed.
+    // No origin was sent, so there is no measured route back — asserted rather than assumed.
     assert.equal(c.route, null, "there is no route back — only a deadline");
-    assert.equal(c.routeUnavailableReason, "no_routing_provider");
+    assert.equal(c.routeUnavailableReason, "origin_unavailable", "an abort without a fresh origin names that, not a missing provider");
   });
 
   it("the 'visa-free' half of L221 has no field to carry it", async () => {

@@ -248,19 +248,21 @@ const OS_ADAPTER = 'src/services/location.ts';
 const DOOR = 'src/lib/location/locationRequestDoor.ts';
 const DOOR_FN = 'requestLocationForUserAction';
 const PICKER = 'src/components/selectors/GlobalPlacePicker.tsx';
-const MARKER = 'src/components/map/UserPositionMarker.tsx';
+const MARKER = 'src/components/map/UserPositionMarker.tsx'; const LIVE_RETURN_SAMPLER = 'src/lib/location/layoverLiveReturnSampler.ts'; const LIVE_RETURN_CARD = 'src/components/layover/LayoverLiveReturnCard.tsx'; /* census L157 (LAYOVER 165, lane B2-CREW) */
 
 /** Every location-capable file the graph may reach: the rules it matches, exactly, and why that is safe. */
 const LOCATION_DOORS: ReadonlyArray<{ file: string; rules: readonly string[]; why: string }> = [
   { file: OS_ADAPTER, rules: ['imports expo-location', 'calls a location permission/watch API', 'names an app location-request function'], why: 'the OS adapter whose GPS function prompts; on this graph only the door imports it' },
   { file: DOOR, rules: ['names an app location-request function'], why: 'the door: refuses an unattributed request, then calls the GPS function once' },
   { file: PICKER, rules: ['imports expo-location'], why: 'reads the EXISTING permission and the last known fix for "Near You" (members that ask nothing); asks only through the door' },
-  { file: MARKER, rules: ["uses a map SDK's own location tracking", "turns on the map SDK's location puck"], why: 'renders the SDK puck only behind followDeviceFix, false by default and set by no file on the graph' },
+  { file: MARKER, rules: ["uses a map SDK's own location tracking", "turns on the map SDK's location puck"], why: 'renders the SDK puck only behind followDeviceFix, false by default and set by no file on the graph' }, { file: LIVE_RETURN_SAMPLER, rules: ['imports expo-location', 'calls a location permission/watch API'], why: 'census L157 (LAYOVER 165, lane B2-CREW): live return assistance takes ONE-SHOT fixes only after the press-gated prompt — it reads the EXISTING permission (getForegroundPermissionsAsync asks nothing) and refuses unless granted before its one getCurrentPositionAsync; no watch; imported only by the live return card (pinned below)' },
 ];
 
 /** The ONLY controls that may open the door: each a press handler bound to a Pressable. */
 const DOOR_CALLERS: ReadonlyArray<{ file: string; handler: string; binding: string; why: string }> = [
-  { file: PICKER, handler: 'useGPS', binding: '<Pressable style={s.row} onPress={useGPS}', why: '"Use my current location": the user asks to place this pick where they are — L164\'s map context' },
+  { file:'src/components/layover/LayoverCurrentPositionCard.tsx',handler:'checkFromLocation',binding:'<Pressable testID="check-from-location" onPress={checkFromLocation}',why:'L56 explicit one-shot driving preview; fresh OS timestamp, no background or mount-time GPS' },
+  { file: 'src/components/layover/LayoverSafeReturnCard.tsx', handler: 'returnFromLocation', binding: '<Pressable testID="return-with-location" onPress={returnFromLocation}', why: 'L221 explicit return with driving route from my location; server validates the OS timestamp, no mount-time request' },
+  { file: PICKER, handler: 'useGPS', binding: '<Pressable style={s.row} onPress={useGPS}', why: '"Use my current location": the user asks to place this pick where they are — L164\'s map context' }, { file: LIVE_RETURN_CARD, handler: 'turnOnLiveReturn', binding: '<Pressable testID="layover-live-return-enable" onPress={turnOnLiveReturn}', why: 'census L157: "Turn on live return assistance" — L164\'s live return assistance, the one prompt' },
 ];
 
 /** expo-location members the picker may touch: neither asks the user nor starts a fix. */
@@ -590,7 +592,7 @@ const DOOR_TREE: Readonly<Record<string, string>> = {
     '}',
     '',
   ].join('\n'),
-};
+  [LIVE_RETURN_SAMPLER]: "import * as Location from 'expo-location';\nexport async function sampleLiveReturnFix(a: string) {\n  const { status } = await Location.getForegroundPermissionsAsync();\n  if (status !== 'granted') return null;\n  return Location.getCurrentPositionAsync({});\n}\n", [LIVE_RETURN_CARD]: "import { USER_PRESS_LIVE_RETURN, requestLocationForUserAction } from '../../lib/location/locationRequestDoor.ts';\nimport { sampleLiveReturnFix } from '../../lib/location/layoverLiveReturnSampler.ts';\nexport function LayoverLiveReturnCard() {\n  async function turnOnLiveReturn() {\n    await requestLocationForUserAction(USER_PRESS_LIVE_RETURN);\n    void sampleLiveReturnFix('low');\n  }\n  return <Pressable testID=\"layover-live-return-enable\" onPress={turnOnLiveReturn} />;\n}\n", /* census L157 (LAYOVER 165, lane B2-CREW): the live return door and its one press-bound caller, in the minimal tree */ };
 
 type DoorPlant = { plant: (rel: string, body: string) => void; edit: (rel: string, from: string, to: string) => void };
 
@@ -653,7 +655,7 @@ const DOOR_CASES: ReadonlyArray<{ name: string; mutate: (p: DoorPlant) => void; 
     mutate: ({ edit }) => edit(MARKER, 'followDeviceFix = false,', 'followDeviceFix = true,') },
   { name: 'the marker renders the puck outside its gate', expect: [`${MARKER}: the SDK puck renders outside the followDeviceFix gate`],
     mutate: ({ edit }) => edit(MARKER, "  return <Marker lngLat={[lng, lat]} />;", '  return <UserLocation visible />;') },
-  { name: 'a NEW door caller', expect: [`${DOOR}: imported on the layover graph by [${MAP_CARD}, ${PICKER}], not exactly the enumerated callers`],
+  { name: 'a NEW door caller', expect: [`${DOOR}: imported on the layover graph by [${LIVE_RETURN_CARD}, ${MAP_CARD}, ${PICKER}], not exactly the enumerated callers`],
     mutate: ({ edit }) => edit(MAP_CARD, 'export const', "import { requestLocationForUserAction, USER_PRESS_MAP_CONTEXT } from '../../lib/location/locationRequestDoor.ts';\nuseEffect(() => { void requestLocationForUserAction(USER_PRESS_MAP_CONTEXT); }, []);\nexport const") },
   { name: 'the enumerated caller opens the door on mount', expect: [`${PICKER}: opens the door outside useGPS`],
     mutate: ({ edit }) => edit(PICKER, '  async function useGPS() {', '  useEffect(() => { void requestLocationForUserAction(USER_PRESS_MAP_CONTEXT); }, []);\n  async function useGPS() {') },
@@ -687,7 +689,7 @@ const DOOR_CASES: ReadonlyArray<{ name: string; mutate: (p: DoorPlant) => void; 
     `${PICKER}: listed as a location door but no longer reached — remove it`,
     `${DOOR}: listed as a location door but no longer reached — remove it`,
     `${OS_ADAPTER}: listed as a location door but no longer reached — remove it`,
-  ], mutate: ({ edit }) => edit('src/components/RouteBuilderSheet.tsx', "import { GlobalPlacePicker } from './selectors/GlobalPlacePicker.tsx';\n", '') },
+  ], mutate: ({ edit }) => { edit('src/components/RouteBuilderSheet.tsx', "import { GlobalPlacePicker } from './selectors/GlobalPlacePicker.tsx';\n", ''); edit(LIVE_RETURN_CARD, "import { USER_PRESS_LIVE_RETURN, requestLocationForUserAction } from '../../lib/location/locationRequestDoor.ts';\nimport { sampleLiveReturnFix } from '../../lib/location/layoverLiveReturnSampler.ts';\n", ''); } }, // census L157 (lane B2-CREW): the live return card also reaches the door, so it is cut too
 ];
 
 test('L164 PLANTED: the baseline door tree passes — the control every planted case is measured against', () => {
@@ -720,5 +722,138 @@ test('PLANTED: a template-literal import()/require() is walked and its expo-loca
     assert.ok(loc.includes('src/lib/probeT.ts: loads expo-location dynamically'), `expected the dynamic load to be caught; got:\n${loc.join('\n')}`);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// census L157 (LAYOVER 165, lane B2-CREW) — adaptive location sensing for live return assistance. Appended at the end
+// of the file so no line §70 cites moves.
+// ─────────────────────────────────────────────────────────────────────────────
+import {
+  LAYOVER_MIN_SAMPLE_MS, LAYOVER_SENSING_BANDS, layoverLiveSensing, metresBetween, type LiveSensingInput,
+} from '../layoverSensingCadence.ts';
+
+const ON: LiveSensingInput = {
+  enabled: true, permission: 'granted', sessionStatus: 'active', returnState: 'NORMAL', stationary: false,
+  power: { lowPowerMode: null, batteryLevel: null }, appActive: true,
+};
+const sense = (over: Partial<LiveSensingInput>) => layoverLiveSensing({ ...ON, ...over });
+
+test('L157 the permission gate: nothing is sensed until the traveller turned it on AND the permission is granted, on a live layover, in the foreground', () => {
+  for (const over of [{ enabled: false }, { permission: 'denied' as const }, { permission: 'undetermined' as const }, { sessionStatus: 'completed' }, { sessionStatus: null }, { appActive: false }]) {
+    const d = sense(over);
+    assert.equal(d.mode, 'off', JSON.stringify(over));
+    assert.equal(d.intervalMs, null);
+    assert.equal(d.accuracy, null);
+  }
+});
+
+test('L157 adaptive bands: low when safe, lower still when stationary, moderate near the boundary, navigation-appropriate while returning', () => {
+  const normal = sense({});
+  const still = sense({ stationary: true });
+  const soon = sense({ returnState: 'RETURN_SOON' });
+  const now = sense({ returnState: 'RETURN_NOW' });
+  const risk = sense({ returnState: 'CONNECTION_AT_RISK' });
+  const aborted = sense({ sessionStatus: 'returning', returnState: 'NORMAL' });
+  assert.deepEqual([normal.mode, still.mode, soon.mode, now.mode, risk.mode, aborted.mode], ['low', 'low', 'moderate', 'navigation', 'navigation', 'navigation']);
+  assert.ok(still.intervalMs! > normal.intervalMs!, 'stationary must sense LESS often');
+  assert.ok(normal.intervalMs! > soon.intervalMs!, 'near the boundary must sense more often than when safe');
+  assert.ok(soon.intervalMs! > now.intervalMs!, 'returning must sense most often');
+  assert.equal(now.accuracy, 'high');
+  assert.equal(normal.accuracy, 'low');
+  assert.equal(now.intervalMs, LAYOVER_SENSING_BANDS.navigation.intervalMs);
+});
+
+test('L157 battery-aware: low power mode or a low battery samples less often and less precisely in every band; an UNKNOWN power state changes nothing', () => {
+  for (const returnState of ['NORMAL', 'RETURN_SOON', 'RETURN_NOW'] as const) {
+    const plain = sense({ returnState });
+    for (const power of [{ lowPowerMode: true, batteryLevel: null }, { lowPowerMode: null, batteryLevel: 0.15 }]) {
+      const saving = sense({ returnState, power });
+      assert.ok(saving.intervalMs! > plain.intervalMs!, `${returnState}: low power did not slow sampling`);
+      assert.notEqual(saving.accuracy, 'high', `${returnState}: low power still asked for high accuracy`);
+    }
+    assert.deepEqual(sense({ returnState, power: { lowPowerMode: false, batteryLevel: 0.9 } }), plain);
+  }
+});
+
+test('L157 avoid continuous GPS: no decision is ever continuous or closer than the minimum one-shot interval', () => {
+  const states = [null, 'NORMAL', 'RETURN_SOON', 'RETURN_NOW', 'CONNECTION_AT_RISK'] as const;
+  for (const returnState of states) for (const stationary of [null, true, false]) for (const lowPowerMode of [null, true, false]) for (const sessionStatus of ['active', 'returning']) {
+    const d = sense({ returnState, stationary, sessionStatus, power: { lowPowerMode, batteryLevel: null } });
+    assert.equal(d.continuous, false);
+    assert.ok(d.intervalMs === null || d.intervalMs >= LAYOVER_MIN_SAMPLE_MS, JSON.stringify(d));
+  }
+});
+
+test('L157 metresBetween is a plain great-circle distance (local only)', () => {
+  assert.equal(Math.round(metresBetween({ lat: 0, lng: 0 }, { lat: 0, lng: 0 })), 0);
+  const d = metresBetween({ lat: 1.3644, lng: 103.9915 }, { lat: 1.2834, lng: 103.8607 });
+  assert.ok(d > 16_000 && d < 19_000, String(d));
+});
+
+/**
+ * The live return sampler, mechanically (the L164 door conditions for it): expo-location taken by ONE namespace
+ * import; only members that ask nothing plus the one fix call; the fix call AFTER the granted check inside its own
+ * function; and the sampler imported on the layover graph by the live return card ONLY.
+ */
+function liveReturnSamplerFindings(root = APP_ROOT): string[] {
+  const out: string[] = [];
+  const rel = (f: string) => relative(root, f);
+  const closure = layoverImportClosure(root);
+  const reached = new Set(closure.map(rel));
+  if (!reached.has(LIVE_RETURN_SAMPLER)) return [`${LIVE_RETURN_SAMPLER}: not reached — the live return card no longer uses it`];
+  const importers: string[] = [];
+  for (const f of closure) {
+    for (const m of readFileSync(f, 'utf8').matchAll(IMPORT_SPEC)) {
+      if (resolveImport(f, m[1]!, root).some((t) => rel(t) === LIVE_RETURN_SAMPLER) && !importers.includes(rel(f))) importers.push(rel(f));
+    }
+  }
+  if (JSON.stringify(importers.sort()) !== JSON.stringify([LIVE_RETURN_CARD])) out.push(`${LIVE_RETURN_SAMPLER}: imported by [${importers.join(', ')}], not only by the live return card`);
+  const src = readFileSync(join(root, LIVE_RETURN_SAMPLER), 'utf8');
+  const decls = [...src.matchAll(FROM_DECL)].filter((m) => m[1] === 'expo-location');
+  const ns = decls.length === 1 ? /^import \* as (\w+) from/.exec(decls[0]![0])?.[1] : undefined;
+  if (!ns) { out.push(`${LIVE_RETURN_SAMPLER}: expo-location must be taken by exactly one namespace import`); return out; }
+  const rest = src.slice(0, decls[0]!.index!) + src.slice(decls[0]!.index! + decls[0]![0].length);
+  for (const m of rest.matchAll(new RegExp(`\\b${ns}\\b(?:\\.(\\w+))?`, 'g'))) {
+    if (!m[1] || !['getForegroundPermissionsAsync', 'getCurrentPositionAsync', 'Accuracy'].includes(m[1])) out.push(`${LIVE_RETURN_SAMPLER}: expo-location used as ${m[0]}`);
+  }
+  const def = src.indexOf('export async function sampleLiveReturnFix(');
+  const body = def < 0 ? null : braceBody(src, src.indexOf(')', def));
+  const calls = positionsOf(src, /\bgetCurrentPositionAsync\s*\(/);
+  const gate = src.indexOf("if (status !== 'granted') return");
+  if (!body) out.push(`${LIVE_RETURN_SAMPLER}: sampleLiveReturnFix not found`);
+  else {
+    if (calls.length !== 1 || calls[0]! < body[0] || calls[0]! >= body[1]) out.push(`${LIVE_RETURN_SAMPLER}: exactly one fix call, inside sampleLiveReturnFix, is allowed`);
+    if (gate < body[0] || gate >= body[1] || calls.some((p) => p < gate)) out.push(`${LIVE_RETURN_SAMPLER}: the fix call is not behind the granted check`);
+  }
+  return out.sort();
+}
+
+test('L157 the live return sampler asks nothing, fixes only behind the granted check, and only the press-gated card reaches it', () => {
+  const findings = liveReturnSamplerFindings();
+  assert.deepEqual(findings, [], findings.join('\n'));
+  // and the whole-graph door guard holds with the sampler and the card on it
+  assert.deepEqual(locationDoorFindings(), []);
+});
+
+test('L157 PLANTED: a second importer of the sampler, a prompting member in it, and a fix before the granted check are each caught', () => {
+  const cases: Array<[string, (p: DoorPlant) => void, RegExp]> = [
+    ['second importer', ({ plant }) => plant('src/components/layover/LayoverMapCard.tsx', "import { sampleLiveReturnFix } from '../../lib/location/layoverLiveReturnSampler.ts';\nexport const LayoverMapCard = () => sampleLiveReturnFix('low');\n"), /not only by the live return card/],
+    ['prompting member', ({ edit }) => edit(LIVE_RETURN_SAMPLER, 'Location.getForegroundPermissionsAsync()', 'Location.requestForegroundPermissionsAsync()'), /expo-location used as Location\.requestForegroundPermissionsAsync/],
+    ['fix before the gate', ({ edit }) => edit(LIVE_RETURN_SAMPLER, "  if (status !== 'granted') return null;\n  return Location.getCurrentPositionAsync({});", "  const early = Location.getCurrentPositionAsync({});\n  if (status !== 'granted') return null;\n  return early;"), /not behind the granted check/],
+  ];
+  for (const [name, mutate, re] of cases) {
+    const root = mkdtempSync(join(tmpdir(), 'layover-live-return-'));
+    try {
+      const plant = (rel: string, body: string) => { mkdirSync(join(root, dirname(rel)), { recursive: true }); writeFileSync(join(root, rel), body); };
+      const edit = (rel: string, from: string, to: string) => { const s = readFileSync(join(root, rel), 'utf8'); assert.ok(s.includes(from), `${name}: ${from}`); writeFileSync(join(root, rel), s.replace(from, to)); };
+      for (const [rel, body] of Object.entries(DOOR_TREE)) plant(rel, body);
+      assert.deepEqual(liveReturnSamplerFindings(root), [], `${name}: the baseline tree is not clean`);
+      mutate({ plant, edit });
+      const f = liveReturnSamplerFindings(root);
+      assert.ok(f.some((x) => re.test(x)), `${name}: not caught — ${f.join(' | ')}`);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   }
 });

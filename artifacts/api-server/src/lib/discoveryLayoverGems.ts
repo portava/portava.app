@@ -149,6 +149,7 @@ export async function gemsUnderLayoverMode<T extends TimeableCandidate>(
       logger.warn({ route, refusal: gate.refusal }, "layover gems: Layover-mode gate refused — withholding");
       return { ok: false, message: LAYOVER_MODE_UNDECIDED_MESSAGE };
     }
+    if (!gate.active && !landsideNotForbidden(window.read.snapshot)) return { ok: true, gems: [], summary: null }; // L48/L77/L243 (LAYOVER 165 B2-CURATE): with Layover mode OFF the gate is an identity, but a CLOSED certified landside gate (an unconfirmed border, an uncurated airport) still withholds every gem — a "layover-safe" gem is a landside recommendation, and this route is not a way around the gate. The reason is published by `certifiedWindowKeys` (`landsideClosedBy`). Mode ON already marks each gem CLOSED.
     return { ok: true, gems: serveUnderLayoverGate(gate, gems), summary: gate.summary };
   } catch (err) {
     logger.warn({ err, route }, "layover gems: Layover-mode gate threw — withholding rather than serving ungated");
@@ -171,5 +172,9 @@ export function certifiedWindowKeys(
     minutesSource: CERTIFIED_MINUTES_SOURCE,
     snapshotId: window.snapshotId,
     ...(summary ? { layover: summary } : {}),
+    ...(landsideNotForbidden(window.read.snapshot) ? {} : { landsideClosedBy: [...(window.read.snapshot.certifiedRecord.landsideGate?.closedBy ?? [])] }), // LAYOVER 165 B2-CURATE: why landside gems are withheld (closure codes only — nothing about the corridor)
   };
 }
+
+// LAYOVER 165 B2-CURATE (L48/L77/L243) — the snapshot's three-valued gate, read in `layoverGemWindow`; at the foot so no line above moves.
+import { landsideNotForbidden } from "../services/airport/LayoverSnapshot.js";

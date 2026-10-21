@@ -12,34 +12,24 @@
  * `featureAllowedAt` whether that rung may offer a landside recommendation, and
  * hands the answer — with its evidence — to `generateRecommendations`.
  *
- * ── IT IS SEEDED OFF, AND OFF IS THE WHOLE PRODUCT TODAY ─────────────────────
- * `layover_maturity_gate_enabled` is created FALSE by migration 2977 and can
- * only be changed through `toggle_feature_flag_with_audit`. That is not
- * timidity; it is the shape of the decision. Production holds 3,206
- * `airport_profiles` rows, of which **0 are verified and 0 carry
- * `terminal_info`** — so every single one classifies `L0_GENERIC`, and
- * `MATURITY_FEATURES` puts `landside_recommendations` at `L1_MAPPED`. Turning
- * this flag on withdraws the landside half of the Layover product from every
- * airport on earth until somebody curates one.
+ * ── CORRECTED 2026-10-18 (LAYOVER 165, lane B2-CURATE): ENFORCED, NOT FLAGGED ─
+ * This block used to say the gate sat behind `layover_maturity_gate_enabled`
+ * (2977, seeded FALSE), that OFF meant ALLOW, and that turning it on was an
+ * owner decision. The owner made it on 2026-10-18: "Restrict airport-specific
+ * recommendations to airports whose data meets the required maturity
+ * threshold", and "Unknown or conflicting critical safety information must
+ * fail closed". So the threshold (`landside_recommendations` at L1_MAPPED,
+ * spec §22 L243 "airport-side guidance only by default") is ENFORCED in every
+ * flag state; the flag is read only to record its value in the audit event.
  *
- * That withdrawal is EXACTLY what spec §22 L243 asks for — "airport-side
- * guidance only by default" — and census L243 has scored the divergence
- * BUILT-BUT-WRONG for as long as the row has existed. It is still an owner's
- * decision about what travellers are shown, so the code makes it POSSIBLE and
- * does not make it.
- *
- * ── WITH THE FLAG OFF, NOTHING IS READ ───────────────────────────────────────
- * Not "the answer is discarded" — the observation corpus is not queried at all.
- * `generateRecommendations` runs on the dashboard's hot path; a gate that costs
- * a round trip per load while changing nothing is a cost with no buyer, and it
- * would also make the gate's own performance profile depend on a flag whose
- * whole claim is that it changes nothing.
- *
- * The CLASSIFICATION still happens, because it is free — every signal but the
- * observation count is a field already in hand — and because L250 ("do not
- * imply equivalent intelligence globally") is a different requirement from
- * L249. A surface may want to SAY which rung it is on while the enforcement is
- * off. Withholding the rung because enforcement is off would conflate the two.
+ * And the rung is no longer read off bare columns. With migration 3874 an
+ * airport is L1 only when its timing assumptions, terminal topology and ground
+ * transport are PUBLISHED, VALIDATED and UNEXPIRED curated facts
+ * (`airportCurationPolicy`, `airport_curated_facts`); the bare `verified` and
+ * `terminal_info` values carry no provenance and count for nothing. Production
+ * has no curated airport today, so every production airport is L0 and offers
+ * airport-side guidance only until a human curator validates and publishes its
+ * facts. That is the honest state, and it is the owner's decision.
  *
  * ── AN OUTAGE MAY NOT PROMOTE, AND MAY NOT DEMOTE EITHER ─────────────────────
  * An unreadable corpus counts as ZERO observations, never as "assume the rung".
@@ -61,8 +51,13 @@ import { enablementRefusal } from "../../lib/providers/providerRefusal.js";
 import { ENABLEMENT_ENV } from "../../lib/providers/googleRoutesCorridorProvider.js";
 import { readAirportObservationAggregate } from "../layover/LayoverObservationAggregate.js";
 import type { AirportProfile } from "./AirportProfileService.js";
+import type { LiveConditions } from "./LayoverSafetyEngine.js";
+import { hasFreshAuthoritativeLiveEvidence } from "./layoverLiveMaturity.js";
+import { readValue, readDegraded, type LayoverRead } from "../layover/layoverRead.js";
 import {
   airportMaturity,
+  curatedCappedBy,
+  curatedMaturitySignals,
   featureAllowedAt,
   maturityDisclosure,
   type AirportMaturityLevel,
@@ -76,8 +71,8 @@ const logger = rootLogger.child({ service: "layoverMaturityGate" });
  * Literal name so `check-flag-polarity` resolves the read. `*_enabled` ⇒ a
  * CAPABILITY gate, fail-closed: an unreadable `feature_flags` leaves it off.
  *
- * Off means "do not enforce the maturity policy", which is the behaviour every
- * database has today. Seeded by `2977_layover_maturity_gate_flag.sql`.
+ * After 3874 this is audit-only; the curated threshold holds in every flag
+ * state. Unmigrated database rows retain the legacy flag-governed policy.
  */
 export const LAYOVER_MATURITY_GATE_FLAG = "layover_maturity_gate_enabled";
 
@@ -85,10 +80,13 @@ export const LAYOVER_MATURITY_GATE_FLAG = "layover_maturity_gate_enabled";
 export const LANDSIDE_FEATURE = "landside_recommendations";
 
 export interface LandsideMaturityDecision {
-  /** Was the gate actually enforcing? False on every database today. */
+  /**
+   * The value of `layover_maturity_gate_enabled` at this instant — RECORDED FOR
+   * AUDIT ONLY. Since 2026-10-18 the threshold is enforced in every flag state.
+   */
   flagOn: boolean;
   level: AirportMaturityLevel;
-  /** May a landside recommendation be offered? True whenever `flagOn` is false. */
+  /** May a landside recommendation be offered? featureAllowedAt(landside, level), in every flag state. */
   allowed: boolean;
   /** The first signal the ladder found missing. Why it is not one rung higher. */
   cappedBy: string | null;
@@ -145,8 +143,23 @@ export function maturitySignalsFor(
     routedTransportModelAvailable?: boolean;
     hasExternalLiveFeed?: boolean;
     hasCalibration?: boolean;
+    /** The instant curated facts are judged at. Required for a curated profile (expiry is a fact about NOW). */
+    nowMs?: number;
   },
 ): MaturitySignals {
+  // LAYOVER 165 B2-CURATE: a profile from AirportProfileService carries its
+  // curation projection, and THEN every L1 signal is a published, unexpired,
+  // validated fact — never the bare `verified` / `terminal_info` columns, which
+  // carry no provenance (census L14). The routed-provider shortcut below no
+  // longer counts for such a profile: a provider being switched on says nothing
+  // about THIS airport's transport.
+  if (airport.curation) {
+    const s = curatedMaturitySignals({ id: airport.id, curation: airport.curation }, opts.nowMs ?? Number.NaN, {
+      hasExternalLiveFeed: opts.hasExternalLiveFeed,
+      portavaObservationCount: opts.observationCount,
+    });
+    return opts.hasCalibration === undefined ? s : { ...s, hasCalibration: opts.hasCalibration };
+  }
   const topology = airport.terminalInfo;
   return {
     hasAirportRow: airport.id !== null && airport.id !== undefined,
@@ -169,15 +182,22 @@ function decide(
   flagOn: boolean,
   observationCount: number | null,
   signalsReadable: boolean,
+  curated: boolean,
 ): LandsideMaturityDecision {
   const { level, cappedBy } = airportMaturity(signals);
   return {
     flagOn,
     level,
-    // OFF is ALLOW, unconditionally and by construction: the enforcement half
-    // of this module is the only half the flag governs.
-    allowed: flagOn ? featureAllowedAt(LANDSIDE_FEATURE, level) : true,
-    cappedBy,
+    // ENFORCED IN EVERY FLAG STATE after migration 3874 supplies the curation
+    // projection (owner decision 2026-10-18; spec §22 L243). Static and fallback
+    // profiles are explicitly uncurated and therefore restricted too.
+    // The migration press is required: an unmigrated database row or a legacy
+    // hand-built fixture has no projection and retains the old flag policy.
+    // `flagOn` is recorded for audit; it does not relax a curated profile.
+    // No stored bare `verified` value can substitute for published provenance.
+    allowed: curated || flagOn ? featureAllowedAt(LANDSIDE_FEATURE, level) : true,
+    // A curated profile's L0 cap names the missing CURATED facts, not bare columns.
+    cappedBy: curated && level === "L0_GENERIC" && signals.hasAirportRow ? (curatedCappedBy(signals) ?? cappedBy) : cappedBy,
     disclosure: maturityDisclosure(level),
     observationCount,
     signalsReadable,
@@ -190,7 +210,23 @@ function decide(
  * The one entry point. `generateRecommendations` calls it once per request and
  * applies `allowed` to both landside gates — the Discovery candidates and the
  * city-escape card — so the two cannot come to different conclusions about the
- * same airport.
+ * same airport. The certified record carries the same threshold as a NAMED
+ * INPUT (`FeasibilityInputs.maturity`, layoverMaturity.landsideMaturityInput),
+ * so every other surface reads the same answer off the record.
+ *
+ * ── LAYOVER 165 B2-CURATE: THE FLAG NO LONGER RELAXES IT ─────────────────────
+ * `layover_maturity_gate_enabled` (2977) used to make OFF mean ALLOW. Under the
+ * owner's 2026-10-18 decision ("restrict airport-specific recommendations to
+ * airports whose data meets the required maturity threshold"; unknown critical
+ * safety information fails closed) the threshold holds whatever the flag says:
+ * absent, FALSE, TRUE or unreadable. The flag is still read, and its value is
+ * published as `flagOn` for the audit event, so a stored card says which regime
+ * produced it; it has no other effect.
+ *
+ * The observation corpus is read on every call now (it is what lets the count
+ * reach the ladder, census L246). An unreadable corpus is ZERO observations
+ * with `signalsReadable: false` — never an assumed rung — and a read that
+ * throws is the same answer.
  */
 export async function landsideMaturityDecision(
   db: SupabaseClient,
@@ -200,8 +236,10 @@ export async function landsideMaturityDecision(
     routedTransportModelAvailable?: boolean;
     hasExternalLiveFeed?: boolean;
     hasCalibration?: boolean;
+    liveConditions?: LiveConditions | null;
   } = {},
-): Promise<LandsideMaturityDecision> {
+): Promise<LayoverRead<LandsideMaturityDecision>> {
+  const evidence = { ...overrides, hasExternalLiveFeed: overrides.hasExternalLiveFeed ?? hasFreshAuthoritativeLiveEvidence(overrides.liveConditions, nowMs) };
   let flagOn = false;
   try {
     flagOn = await isFlagEnabled(db as any, LAYOVER_MATURITY_GATE_FLAG);
@@ -209,14 +247,10 @@ export async function landsideMaturityDecision(
     flagOn = false;
   }
 
-  if (!flagOn) {
-    // No corpus read. See the header: off must cost nothing.
-    return decide(
-      maturitySignalsFor(airport, { observationCount: 0, ...overrides }),
-      false,
-      null,
-      true,
-    );
+  if (!airport.curation && !flagOn) {
+    // The LEGACY arm (an unmigrated DB row or hand-built fixture) with the
+    // flag off: exactly the old behaviour — allow, and read no corpus.
+    return readValue(decide(maturitySignalsFor(airport, { observationCount: 0, nowMs, ...evidence }), false, null, true, false));
   }
 
   const airportRef = observationAirportRef(airport);
@@ -224,30 +258,26 @@ export async function landsideMaturityDecision(
     // The generic fallback profile. There is no airport to have been observed,
     // and pooling every unidentified airport's reports under one ref is what
     // the route already refuses to do.
-    return decide(
-      maturitySignalsFor(airport, { observationCount: 0, ...overrides }),
-      true,
-      0,
-      true,
-    );
+    return readValue(decide(maturitySignalsFor(airport, { observationCount: 0, nowMs, ...evidence }), flagOn, 0, true, Boolean(airport.curation)));
   }
 
-  const read = await readAirportObservationAggregate(db, airportRef, airport.timezone, nowMs);
+  let read: Awaited<ReturnType<typeof readAirportObservationAggregate>>;
+  try {
+    read = await readAirportObservationAggregate(db, airportRef, airport.timezone, nowMs);
+  } catch (err) {
+    logger.warn({ err, airportRef }, "maturity gate: observation aggregate threw — the rung is computed with ZERO observations, never assumed");
+    return readDegraded(decide(maturitySignalsFor(airport, { observationCount: 0, nowMs, ...evidence }), flagOn, 0, false, Boolean(airport.curation)), ["maturity_observations_read_threw"]);
+  }
   if (!read.ok) {
     logger.warn(
-      { airportRef },
+      { airportRef, reason: read.reason },
       "maturity gate: observation aggregate unreadable — the rung is computed with ZERO observations, never assumed",
     );
-    return decide(
-      maturitySignalsFor(airport, { observationCount: 0, ...overrides }),
-      true,
-      0,
-      false,
-    );
+    return readDegraded(decide(maturitySignalsFor(airport, { observationCount: 0, nowMs, ...evidence }), flagOn, 0, false, Boolean(airport.curation)), [`maturity_observations_${read.reason}`]);
   }
 
   const count = read.aggregate.maturityObservationCount;
-  return decide(maturitySignalsFor(airport, { observationCount: count, ...overrides }), true, count, true);
+  return readValue(decide(maturitySignalsFor(airport, { observationCount: count, nowMs, ...evidence }), flagOn, count, true, Boolean(airport.curation)));
 }
 
 /**
