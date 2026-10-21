@@ -121,7 +121,7 @@ function computeFreshness(lastUpdatedAt: string | null): LocationFreshness {
 // ── API helpers (no import cycle — fetch directly) ───────────────────────────
 
 async function apiBase(): Promise<string> {
-  return (process.env as any).EXPO_PUBLIC_API_BASE_URL ?? '';
+  return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 }
 
 async function fetchToken(): Promise<string | null> {

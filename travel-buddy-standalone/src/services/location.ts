@@ -120,7 +120,7 @@ export async function checkLocationPermission(): Promise<'granted' | 'denied' | 
  * is unreachable or returns no result.
  */
 export async function reverseGeocodeToPlace(lat: number, lng: number): Promise<Place> {
-  const apiBase = (process.env as any).EXPO_PUBLIC_API_BASE_URL ?? '';
+  const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
   // Delegate to the pure core (unit-tested in reverseGeocodePlace.test.ts),
   // wiring in the real fetch + expo geocoder.
   return reverseGeocodeToPlaceCore(
