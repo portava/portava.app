@@ -56,7 +56,7 @@ import {
 const ALICE = "c1000000-0000-4000-a000-000000000001";
 const BOB = "c2000000-0000-4000-a000-000000000002"; // blocked by the viewer
 const HAL = "c4000000-0000-4000-a000-000000000004";
-const FUTURE = "2026-10-20T18:00:00.000Z";
+const FUTURE = new Date(Date.now() + 30 * 86_400_000).toISOString(); // relative: the events lane serves starts_at >= now - 2h (searchCandidates.ts); a fixed instant expired 2026-10-20 20:00Z
 
 const SHELTER_C = { lat: 38.7200, lng: -9.1300 };
 const CLINIC_C = { lat: 38.7400, lng: -9.1500 };
