@@ -135,11 +135,11 @@ async function startMetro(expoPublicDomain, expoPublicReplId) {
   }
 
   console.log("Starting Metro...");
-  console.log(`Setting EXPO_PUBLIC_DOMAIN=${expoPublicDomain}`);
+  const apiBaseUrl = process.env.EXPO_PUBLIC_API_BASE_URL || `https://${expoPublicDomain}`; console.log(`Setting EXPO_PUBLIC_DOMAIN=${expoPublicDomain}, EXPO_PUBLIC_API_BASE_URL=${apiBaseUrl}`);
   const env = {
     ...process.env,
     EXPO_PUBLIC_DOMAIN: expoPublicDomain,
-    EXPO_PUBLIC_REPL_ID: expoPublicReplId,
+    EXPO_PUBLIC_REPL_ID: expoPublicReplId, EXPO_PUBLIC_API_BASE_URL: apiBaseUrl, // the client builds every /api URL from this with no fallback; default it to the deployment serving this bundle, as scripts/android-dev.sh does for dev
   };
 
   if (expoPublicReplId) {
