@@ -31,7 +31,7 @@ async function publish(placeId: string, kind: string, value: unknown) {
 describe("L78 real authorized sources feed the objective, never eligibility",{skip:PRESSED_SKIP_REASON},()=>{
  before(async()=>{
   db=await openPressedLayoverDb(); await productionBaseFlags(db);
-  await db.setFlags({layover_objective_evidence_enabled:true,layover_place_dwell_enabled:true,layover_decision_persistence_enabled:true,layover_canonical_snapshot_enabled:true,layover_recommendation_snapshot_enabled:true,layover_recommendation_status_enabled:true});
+  await db.setFlags({layover_stable_recommendation_ids_enabled: true,layover_objective_evidence_enabled:true,layover_place_dwell_enabled:true,layover_decision_persistence_enabled:true,layover_canonical_snapshot_enabled:true,layover_recommendation_snapshot_enabled:true,layover_recommendation_status_enabled:true});
   owner=await db.seedUser("objective_owner");other=await db.seedUser("objective_other");admin=await db.seedUser("objective_curator");
   await db.exec(`UPDATE public.profiles SET role='admin' WHERE id='${admin.id}'`); await seedConfirmedCorridor(db,owner.id);
   app=await startPressedLayoverApp(db); sid=(await startSession(app,owner,{wantsToLeave:true})).id;

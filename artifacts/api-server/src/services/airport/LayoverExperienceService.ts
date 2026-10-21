@@ -12,7 +12,7 @@ import type { AirportProfile } from "./AirportProfileService.js";
 import type { GeoPoint } from "../../domain/trips/contracts/TravelTimeProvider.js";
 import type { LayoverFeasibilityRecord } from "./LayoverFeasibility.js";
 import type { LayoverRecommendationContract } from "./LayoverRecommendationContract.js";
-import { recommendationStatusEnabled } from "../layover/LayoverRecommendationStatus.js";
+import { recommendationStatusEnabled } from "../layover/LayoverRecommendationStatus.js"; import { isFlagEnabled } from "../../lib/featureFlags.js";
 import { routeSelectedExperiences } from "./LayoverExperienceRouting.js";
 import { LAYOVER_ROUTED_POLICY } from "./LayoverRoutedFeasibility.js";
 import type { RouteCorridorProvider } from "../../lib/providers/routeCorridorProvider.js";
@@ -33,7 +33,7 @@ async function loadOwned(db: SupabaseClient, userId: string, sessionId: string, 
 /** Get the owner's certified candidates through the existing authoritative recommendation pipeline. */
 export async function getCandidates(db: SupabaseClient, userId: string, sessionId: string, nowMs = Date.now(), opts: GenerateRecommendationsOptions = {}) {
   try {
-    if (!(await recommendationStatusEnabled(db))) return { ok: false as const, reason: "feature_disabled" };
+    if (!(await recommendationStatusEnabled(db)) || !(await isFlagEnabled(db, "layover_stable_recommendation_ids_enabled"))) return { ok: false as const, reason: "feature_disabled" }; // stableIds: true below sweeps unkeyed legacy cards: only after 2411 and the cutover
     const loaded = await loadOwned(db, userId, sessionId, nowMs);
     if (!loaded.ok) return loaded;
     return await generateRecommendations(db, loaded.airport, loaded.session, nowMs, { ...opts, stableIds: true });

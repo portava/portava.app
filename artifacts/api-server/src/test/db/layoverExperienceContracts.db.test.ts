@@ -18,7 +18,7 @@ describe("B2-RECS-B persisted executable experiences through the actual API", { 
   before(async () => {
     Date.now = () => now;
     db = await openPressedLayoverDb(); await productionBaseFlags(db);
-    await db.setFlags({ layover_decision_persistence_enabled: true, layover_canonical_snapshot_enabled: true, layover_recommendation_snapshot_enabled: true, layover_recommendation_status_enabled: true, layover_stable_recommendation_ids: true });
+    await db.setFlags({ layover_stable_recommendation_ids_enabled: true, layover_decision_persistence_enabled: true, layover_canonical_snapshot_enabled: true, layover_recommendation_snapshot_enabled: true, layover_recommendation_status_enabled: true, layover_stable_recommendation_ids: true });
     owner = await db.seedUser("experience_owner"); other = await db.seedUser("experience_other");
     app = await startPressedLayoverApp(db); sid = (await startSession(app, owner)).id;
   });
@@ -145,5 +145,16 @@ describe("B2-RECS-B persisted executable experiences through the actual API", { 
   it("a real missing provenance column refuses before modifying cards or history", { skip: PRESSED_SKIP_REASON }, async () => {
     assert.ok(missingProvenanceCase, "routed fixture must have completed");
     await missingProvenanceCase();
+  });
+  it("without the stable-ID cutover flag GET candidates refuses before any card or history changes (its stableIds: true sweeps unkeyed legacy cards)", async () => {
+    const cardsBefore = await db.query(`SELECT * FROM public.layover_recommendations WHERE session_id='${sid}' ORDER BY id`);
+    const historyBefore = await db.query(`SELECT * FROM public.layover_recommendation_supersessions WHERE session_id='${sid}' ORDER BY id`);
+    await db.setFlag("layover_stable_recommendation_ids_enabled", false);
+    try {
+      const r = await app.call("GET", `/api/airport/sessions/${sid}/experiences`, owner);
+      assert.notEqual(r.status, 200, r.raw); assert.match(r.raw, /feature_disabled/);
+      assert.deepEqual(await db.query(`SELECT * FROM public.layover_recommendations WHERE session_id='${sid}' ORDER BY id`), cardsBefore);
+      assert.deepEqual(await db.query(`SELECT * FROM public.layover_recommendation_supersessions WHERE session_id='${sid}' ORDER BY id`), historyBefore);
+    } finally { await db.setFlag("layover_stable_recommendation_ids_enabled", true); }
   });
 });

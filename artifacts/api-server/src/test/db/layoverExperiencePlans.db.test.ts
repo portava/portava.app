@@ -22,7 +22,7 @@ async function readySession() {
 describe("L15 persistent selected/start contracts on the real migrated API", { skip: PRESSED_SKIP_REASON }, () => {
   before(async () => {
     db = await openPressedLayoverDb(); await productionBaseFlags(db);
-    await db.setFlags({ layover_experience_execution_enabled: true, layover_lifecycle_machine_enabled: true, layover_plans_enabled: true, layover_decision_persistence_enabled: true, layover_canonical_snapshot_enabled: true, layover_recommendation_snapshot_enabled: true, layover_recommendation_status_enabled: true, layover_stable_recommendation_ids: true });
+    await db.setFlags({ layover_stable_recommendation_ids_enabled: true, layover_experience_execution_enabled: true, layover_lifecycle_machine_enabled: true, layover_plans_enabled: true, layover_decision_persistence_enabled: true, layover_canonical_snapshot_enabled: true, layover_recommendation_snapshot_enabled: true, layover_recommendation_status_enabled: true, layover_stable_recommendation_ids: true });
     owner = await db.seedUser("experience_plan_owner"); other = await db.seedUser("experience_plan_other"); app = await startPressedLayoverApp(db);
   });
   after(async () => { await app?.close(); await db?.close(); });

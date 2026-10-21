@@ -27,7 +27,7 @@ async function enabled(db: SupabaseClient): Promise<boolean> {
   if (!(await isFlagEnabled(db, "layover_compass_replan_enabled"))) return false;
   const dependencies = await Promise.all([
     isFlagEnabled(db, "layover_compass_assistant_enabled"), isFlagEnabled(db, "layover_canonical_snapshot_enabled"),
-    isFlagEnabled(db, "layover_decision_persistence_enabled"), isFlagEnabled(db, "layover_recommendation_status_enabled"),
+    isFlagEnabled(db, "layover_decision_persistence_enabled"), isFlagEnabled(db, "layover_recommendation_status_enabled"), isFlagEnabled(db, "layover_stable_recommendation_ids_enabled"), // stableIds: true below sweeps unkeyed legacy cards: only after 2411 and the cutover
   ]);
   return dependencies.every(Boolean);
 }

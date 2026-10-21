@@ -22,7 +22,7 @@ async function generations() {
 describe("L112 explicit Compass replan on the actual migrated schema and API", { skip: PRESSED_SKIP_REASON }, () => {
   before(async () => {
     db = await openPressedLayoverDb(); await productionBaseFlags(db);
-    await db.setFlags({ layover_compass_enabled: true, layover_compass_assistant_enabled: true, layover_compass_replan_enabled: true, layover_canonical_snapshot_enabled: true, layover_decision_persistence_enabled: true, layover_recommendation_status_enabled: true, layover_recommendation_snapshot_enabled: true });
+    await db.setFlags({ layover_stable_recommendation_ids_enabled: true, layover_compass_enabled: true, layover_compass_assistant_enabled: true, layover_compass_replan_enabled: true, layover_canonical_snapshot_enabled: true, layover_decision_persistence_enabled: true, layover_recommendation_status_enabled: true, layover_recommendation_snapshot_enabled: true });
     owner = await db.seedUser("compass_action_owner"); other = await db.seedUser("compass_action_other");
     app = await startPressedLayoverApp(db); sid = (await startSession(app, owner, { wantsToLeave: false })).id;
   });
@@ -101,5 +101,16 @@ describe("L112 explicit Compass replan on the actual migrated schema and API", {
     assert.equal(await generations(), before);
     assert.equal((await db.query(`SELECT status FROM public.layover_compass_actions WHERE id='${p.id}'`))[0].status, "proposed");
     await db.exec("INSERT INTO public.feature_flags(flag,enabled) VALUES ('layover_compass_replan_enabled',true)");
+  });
+
+  it("without the stable-ID cutover flag a replan is refused before anything is superseded or regenerated (its stableIds: true sweeps unkeyed legacy cards)", async () => {
+    const p = await proposal(), before = await generations();
+    await db.setFlag("layover_stable_recommendation_ids_enabled", false);
+    try {
+      assert.deepEqual(await proposeCompassReplan(db.client, owner.id, sid, p.snapshotId), { ok: false, reason: "feature_disabled" });
+      assert.deepEqual(await executeCompassReplan(db.client, owner.id, sid, p.id), { ok: false, reason: "feature_disabled" });
+      assert.equal(await generations(), before);
+      assert.equal((await db.query(`SELECT status FROM public.layover_compass_actions WHERE id='${p.id}'`))[0].status, "proposed");
+    } finally { await db.setFlag("layover_stable_recommendation_ids_enabled", true); }
   });
 });
