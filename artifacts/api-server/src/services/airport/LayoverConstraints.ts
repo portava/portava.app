@@ -359,7 +359,7 @@ export const LANDSIDE_CLOSURES = [
   /** Whether the next flight leaves from another airport is not stated. */
   "airport_change_unknown",
   /** Whether the flights are on separate tickets is not stated, and it decides. */
-  "recheck_unknown",
+  "recheck_unknown", /** §22 L243/L249 (LAYOVER 165 B2-CURATE): the airport's curated data is below the L1 threshold. */ "airport_maturity_limited", "timing_evidence_unavailable",
 ] as const;
 export type LandsideClosure = (typeof LANDSIDE_CLOSURES)[number];
 
@@ -509,7 +509,7 @@ export function gateLandside(
   let reasons = base.reasons;
   let unknowns = base.unknowns;
   let reasonCodes = base.reasonCodes;
-  const criticalUnknowns: string[] = [];
+  const criticalUnknowns: string[] = []; if (inputs.airport.timingEvidenceUnavailable || inputs.airport.timingEvidence && !timingForContext(inputs.airport.timingEvidence, engineSession(inputs.session,inputs.constraints), inputs.nowMs)) { closedBy.push('timing_evidence_unavailable'); criticalUnknowns.push('timing evidence'); reasons = withLine(reasons, 'Published timing observations are unavailable, expired or do not cover this journey and terminal. We cannot confirm a landside timetable until they are refreshed.'); unknowns = withLine(unknowns, 'timing evidence unavailable'); }
   /** Every field whose answer would lift a closure, in no particular order. */
   const askable = new Set<ConstraintQuestionField>();
   /** The sentence that explains the closure the traveller can lift — placed LAST. */
@@ -576,7 +576,7 @@ export function gateLandside(
   if (entryForbidsLandside && entryState === "UNKNOWN" && !staying) {
     closedBy.push("entry_unconfirmed");
     reasons = withLine(reasons, ENTRY_POLICY_REASON);
-  }
+  } if (inputs.maturity && inputs.maturity.landsideAllowed !== true && !staying) { closedBy.push("airport_maturity_limited"); reasons = withLine(reasons, MATURITY_LIMITED_REASON); reasonCodes = withCode(reasonCodes, "AIRPORT_MATURITY_LIMITED"); } // §22 L243/L249 (LAYOVER 165 B2-CURATE): below the curated L1 threshold landside is CLOSED, in every flag state — owner decision 2026-10-18
 
   // ── §6.1 invariant 2 / §12.1 / App B.2: an unknown that decides ───────────
   if (c) {
@@ -671,7 +671,7 @@ export function gateLandside(
 /** The closures THIS module adds; the other three are the clock's, the border's and the traveller's. */
 const CONSTRAINT_CLOSURES: ReadonlySet<LandsideClosure> = new Set<LandsideClosure>([
   "entry_unconfirmed", "baggage_unknown", "airport_change",
-  "constraints_unreadable", "airport_change_unknown", "recheck_unknown",
+  "constraints_unreadable", "airport_change_unknown", "recheck_unknown", "airport_maturity_limited", "timing_evidence_unavailable",
 ]);
 
 /**
@@ -949,7 +949,7 @@ export const LAYOVER_STATE_SOURCES: Record<LayoverState, { derivable: boolean; f
  * own answer or a closure they were shown before they could have left.
  */
 const CLOSURES_THAT_DO_NOT_PLACE_THE_TRAVELLER: ReadonlySet<LandsideClosure> = new Set<LandsideClosure>([
-  "insufficient_time", "constraints_unreadable",
+  "insufficient_time", "constraints_unreadable", "timing_evidence_unavailable",
 ]);
 
 /**
@@ -1075,3 +1075,7 @@ export function nextConstraintSet(
       patch.airportChangeRequired !== undefined ? patch.airportChangeRequired : from.airportChangeRequired,
   };
 }
+
+// LAYOVER 165 B2-CURATE — the §22 maturity closure's sentence (one call site in gateLandside); at the foot so no line above moves.
+import { MATURITY_LIMITED_REASON } from "./layoverMaturity.js";
+import { timingForContext } from './layoverTimingEvidence.js';

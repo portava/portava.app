@@ -10920,7 +10920,7 @@ Who reaches it, measured on a PGlite full-chain replica:
   conversation are the canonical durable class "until deletion/retention policy" (Trips spec v4 §5.3; TR96).
 - **Not decided.** What a trip's conversation and its messages become when the trip row itself is destroyed. `trips`,
   `message_threads` and `message_thread_members` are all in `UNCLASSIFIED_BACKLOG`
-  (`artifacts/api-server/src/lib/deletionDispositions.ts:496#export const UNCLASSIFIED_BACKLOG: readonly string[] = [`).
+  (`artifacts/api-server/src/lib/deletionDispositions.ts:507#export const UNCLASSIFIED_BACKLOG: readonly string[] = [`).
   No retention period exists for trips or chat. So this section does not pick an answer (§95.5).
 
 ### §95.3 What changed

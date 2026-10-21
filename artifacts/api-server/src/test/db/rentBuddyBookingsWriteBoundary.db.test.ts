@@ -437,7 +437,7 @@ SELECT 'TAGLINE=' || COALESCE(tagline, '(none)') FROM public.rent_buddy_profiles
       const out = inRolledBackTx(`${breakIt}\n${postcondition()}`);
       assert.notEqual(out.status, 0, `the postcondition passed although ${what}`);
       assert.match(out.stderr, expected, `${what}: ${out.stderr}`);
-      const real = inRolledBackTx(`${FIXTURES}${API_ROWS}${breakIt}\n${attempt}`);
+      const real = inRolledBackTx(`${FIXTURES}${API_ROWS}SET CONSTRAINTS ALL IMMEDIATE;\n${breakIt}\n${attempt}`); // the API's rows are committed before a client acts: their deferred checks (3894's layover_buddy_booking_guard) have run, so an ALTER TABLE in breakIt meets no pending trigger event
       assert.equal(real.status, 0, `${what}: the postcondition says the role can write, and the write was refused: ${real.stderr}`);
       assert.match(real.stdout, wrote, `${what}: the write did not land: ${real.stdout}`);
     }

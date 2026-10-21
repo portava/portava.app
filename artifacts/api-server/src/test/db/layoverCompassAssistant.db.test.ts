@@ -25,7 +25,7 @@
 import { describe, it, before, after, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { PRESSED_SKIP_REASON, PRESS_ARM, applyPress, openForPress, type PressedDb, type PressedUser } from "./pressedLayoverDb.js";
-import { productionBaseFlags, seedConfirmedCorridor, startPressedLayoverApp, startSession, type PressedApp } from "./pressedLayoverApp.js";
+import { productionBaseFlags, seedConfirmedCorridor, seedCuratedAirport, startPressedLayoverApp, startSession, type PressedApp } from "./pressedLayoverApp.js";
 import { _setTestOpenAI } from "../../lib/openai.js";
 import { _resetRateLimit } from "../../lib/rateLimit.js";
 import { LAYOVER_TOOL_NAMES } from "../../services/airport/LayoverCompassAssistant.js";
@@ -69,7 +69,7 @@ describe("B1-C the Layover Compass assistant, pressed on the real schema", { ski
     await applyPress(db, PRESS);
     app = await startPressedLayoverApp(db);
     u = await db.seedUser("b1c");
-    await seedConfirmedCorridor(db, u.id, "US", "SG");
+    await seedConfirmedCorridor(db, u.id, "US", "SG"); await seedCuratedAirport(app, db, "SIN"); // 3874 + the 2026-10-18 maturity decision: landside opens only at a curated airport
     sid = (await startSession(app, u, { iata: "SIN", wantsToLeave: true }, { departsInH: 10 })).id;
     // The persisted shortlist the tools read: the card route generates and stores it.
     const recs = await app.call("GET", `/api/airport/sessions/${sid}/recommendations`, u);

@@ -417,7 +417,7 @@ export async function submitTravellerObservation(
   const factClass = factClassOf(factType);
   const observedAt = new Date(nowMs).toISOString();
   const expiresAt = new Date(nowMs + FACT_CLASS_TTL_MIN[factClass] * 60_000).toISOString();
-  const observerId = travellerObserverHandle(input.userId, airportRef);
+  const observerId = travellerObserverHandle(input.userId, airportRef); const reporterStanding = await reporterTrustStanding(db, input.userId); // lane B2-LIVE: trust weighting from the EXISTING trust engine (foot of file)
 
   const read = await readObservationCorpus(db, airportRef, factType, nowMs);
   if (!read.ok) return { ok: false, kind: "unavailable" };
@@ -471,7 +471,7 @@ export async function submitTravellerObservation(
       observer_id: observerId,
       // NULL, not 0: "absent" and "rated zero" are different claims, and the
       // reconciler reads absent as the kind floor.
-      observer_trust: null,
+      observer_trust: reporterStanding, // NULL when the reporter is unscored or the standing is unreadable — still the kind floor; a SCORED standing is stored coarse (see reporterTrustStanding)
       source_ref: TRAVELLER_SOURCE_REF,
       observed_at: observedAt,
       expires_at: expiresAt,
@@ -504,3 +504,65 @@ export async function submitTravellerObservation(
 
 /** Re-exported so callers do not need a second import for the disclosure. */
 export { OBSERVATION_RATE_LIMIT };
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LAYOVER 165, lane B2-LIVE — "Verified traveler observations … Trust
+// weighting" (owner decision 2026-10-18), census L180.
+//
+// Appended at the foot so every cited line above keeps its number.
+//
+// TRUST, FROM THE TRUST ENGINE THAT EXISTS. The comment on the candidate above
+// says "There is no per-traveller standing score in this tree" — there is:
+// `trust_profiles.overall_score` (services/trust, 0–100, NULL = not scored,
+// migration 2999). A traveller's report now carries their standing at the
+// moment they made it, in the column 2860 created for exactly this
+// (`observer_trust`, 0–1). It is read HERE, at the write, because the row is
+// pseudonymous by design and can never be joined back to a profile later.
+//
+//   scored          → overall_score / 100, ROUNDED TO ONE DECIMAL. Coarse on
+//                     purpose: a two-decimal standing beside a stable handle
+//                     would be a quasi-identifier; a tenth is a weight.
+//   unscored/absent → NULL, the kind's floor — the reconciler's long-standing
+//                     reading of "an unrated observer is not a trusted one".
+//   unreadable      → NULL and a structured warning. A weighting that cannot be
+//                     read is not a reason to refuse a report, and a guessed
+//                     standing would be the fabrication App C1 forbids.
+//
+// What the standing DOES: `screenObservations` multiplies it into the reading's
+// weight (confidence), and `validateObservationWindow`'s trust floor
+// (MIN_REPORTER_TRUST) keeps a reporter the trust engine has scored below it out
+// of every SAFETY calculation. It never raises a reading above the kind's trust.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** The reporter's coarse standing in [0,1], or null when unscored / unreadable. */
+export async function reporterTrustStanding(db: SupabaseClient, userId: string): Promise<number | null> {
+  try {
+    const read = await getTrustProfileResult(db, userId); // the Trust seam (services/trust owns trust_profiles; check:trust-table-ownership)
+    if (read.state === "unavailable") {
+      logger.warn({ err: read.reason }, "reporter trust standing unreadable — stored as NULL (the kind floor)");
+      return null;
+    }
+    if (read.state === "absent") return null;
+    const score = read.profile.overall_score; // shapeProfile: NULL or unparseable → null, numeric(5,2) strings → numbers
+    if (score === null) return null;
+    if (!Number.isFinite(score)) return null;
+    return Math.round(Math.min(100, Math.max(0, score)) / 10) / 10;
+  } catch (err) {
+    logger.warn({ err: String(err) }, "reporter trust standing read threw — stored as NULL (the kind floor)");
+    return null;
+  }
+}
+
+/**
+ * The string an airport's observations are filed under — the SAME rule
+ * `routes/airport.ts` files a traveller's report by (IATA first, the profile
+ * id otherwise, null for the generic `UNK` fallback), so the live-signal
+ * producer reads exactly the corpus the channel writes.
+ */
+export function observationAirportRefOf(airport: { iataCode?: string | null; id?: string | null }): string | null {
+  if (airport.iataCode && airport.iataCode !== "UNK") return airport.iataCode;
+  if (airport.id) return airport.id;
+  return null;
+}
+
+import { getTrustProfileResult } from "../trust/TrustScoreService.js"; // reporterTrustStanding reads Trust through its seam; appended so no cited line above moves

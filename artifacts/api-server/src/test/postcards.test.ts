@@ -1949,6 +1949,7 @@ describe('census-media §37.10 — the owner delete moves the cover, an uncounta
       const proxy: any = new Proxy({}, {
         get(_t, prop: string | symbol) {
           if (prop === 'then') return (ok: any, bad: any) => replay().then(({ b }) => b.then(ok, bad));
+          if (prop === 'setHeader') return undefined; // like every other fake builder: the service-audit wrapper (lib/layoverServiceAudit.ts) stamps headers only where setHeader exists
           if (prop === 'maybeSingle' || prop === 'single') return () => replay().then(({ b }) => b[prop]());
           return (...a: any[]) => {
             if (!used && (prop === 'update' || prop === 'delete') && match(table, String(prop), a[0])) { used = true; gated = true; }

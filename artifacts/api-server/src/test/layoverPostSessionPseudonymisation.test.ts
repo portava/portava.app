@@ -56,12 +56,12 @@ function fake(w: World) {
   function from(table: string) {
     touched.push(table);
     if (table === "feature_flags") {
-      const f: any = {
-        select: () => f, eq: () => f,
+      let asked: unknown = FLAG; const f: any = { // the table holds ONE row, this flag's: a read of any other flag (3890's `layover_service_write_audit_enabled` sentinel, 3624's compaction flag) finds no row, as on a database without those migrations
+        select: () => f, eq: (_c: string, v: unknown) => { asked = v; return f; },
         maybeSingle: () => {
           if (w.flag === "throw") throw new Error("socket hang up");
           if (w.flag === "error") return Promise.resolve({ data: null, error: { code: "57014", message: "timeout" } });
-          return Promise.resolve({ data: { flag: FLAG, enabled: w.flag === "on" }, error: null });
+          return Promise.resolve({ data: asked === FLAG ? { flag: FLAG, enabled: w.flag === "on" } : null, error: null });
         },
       };
       return f;

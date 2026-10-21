@@ -24,10 +24,12 @@ import { color, radius, space, type as t } from '../../theme/tokens.ts';
 import { askCompass, type CompassAnswer } from '../../services/layover.ts';
 import { summarizeCertification } from './layoverReturnFacts.ts';
 import { fmtClock } from './layoverFormat.ts';
+import { LayoverCompassReplanAction } from './LayoverCompassReplanAction.tsx';
 
 interface Props {
   sessionId: string;
   timezone: string | null;
+  onReplanned?: () => void;
 }
 
 /**
@@ -57,13 +59,18 @@ function toolLabel(name: string): string {
   return TOOL_LABELS[name] ?? name;
 }
 
-export function LayoverCompassCard({ sessionId, timezone }: Props) {
+export function LayoverCompassCard(props: Props) {
+  return <SessionCompassCard key={props.sessionId} {...props} />;
+}
+
+function SessionCompassCard({ sessionId, timezone, onReplanned }: Props) {
   const [open, setOpen] = useState(false);
   const [question, setQuestion] = useState('');
   const [asking, setAsking] = useState(false);
   const [answer, setAnswer] = useState<CompassAnswer | null>(null);
   const [unavailable, setUnavailable] = useState(false);
   const inFlight = useRef(false);
+  const [replanNotice, setReplanNotice] = useState<string | null>(null);
 
   const handleAsk = useCallback(async () => {
     const q = question.trim();
@@ -71,6 +78,7 @@ export function LayoverCompassCard({ sessionId, timezone }: Props) {
     inFlight.current = true;
     setAsking(true);
     setUnavailable(false);
+    setReplanNotice(null);
     try {
       const ans = await askCompass(sessionId, q);
       if (ans) { setAnswer(ans); setQuestion(''); }
@@ -135,8 +143,11 @@ export function LayoverCompassCard({ sessionId, timezone }: Props) {
                   Computed {fmtClock(cert.computedAt, timezone)} · {cert.versionLine}
                 </Text>
               ) : null}
+              <LayoverCompassReplanAction key={`${sessionId}:${(answer as CompassAnswer & { replanAction?: { id?: string } }).replanAction?.id ?? ''}`} sessionId={sessionId} action={(answer as CompassAnswer & { replanAction?: unknown }).replanAction} onRechecked={(message) => { setAnswer(null); setReplanNotice(message); onReplanned?.(); }} />
             </View>
           ) : null}
+
+          {replanNotice ? <Text testID="compass-replan-notice" accessibilityRole="alert" style={styles.tools}>{replanNotice}</Text> : null}
 
           {unavailable ? (
             <Text style={styles.unavailable} testID="compass-unavailable">

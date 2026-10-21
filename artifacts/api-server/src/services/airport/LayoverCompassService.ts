@@ -57,7 +57,7 @@ export interface CompassLayoverInput {
   /** The session owner's corridor, resolved by the route (`resolveLayoverEntry`) as the snapshot resolves it — census-discovery §65. Omitted = unresolved. */
   entry?: EntryEligibility | null;
   /** census-discovery §81: the certified snapshot, when the route read one — its record and its usable minutes are then the answer's, and nothing is re-derived here. */
-  snapshot?: LayoverSnapshot | null;
+  snapshot?: LayoverSnapshot | null; /** The route's shared live-conditioned record when snapshot consumers are disabled. */ certifiedRecord?: LayoverFeasibilityRecord | null;
   /** The instant to certify at when there is no snapshot (the route's one clock). Omitted = now. */
   nowMs?: number;
 }
@@ -243,7 +243,7 @@ export async function answerLayoverQuestion(
   const now = new Date(input.snapshot ? input.snapshot.certifiedRecord.inputs.nowMs : (input.nowMs ?? Date.now())); // §81: the snapshot's instant, not a second clock
   // ONE certified record — the same one every other layover surface consumes,
   // so Compass cannot answer from a different derivation than the screen.
-  const record = input.snapshot?.certifiedRecord ?? certifySessionFeasibility(airport, session, { nowMs: now.getTime(), entry: input.entry ?? null });
+  const record = input.snapshot?.certifiedRecord ?? input.certifiedRecord ?? certifySessionFeasibility(airport, session, { nowMs: now.getTime(), entry: input.entry ?? null });
   const { cutoffMs, breakdown, hardReturnTime } = record.deadline;
   const availMin  = input.snapshot ? Math.max(0, input.snapshot.minutesToHardReturn + breakdown.totalBuffer) : Math.max(0, Math.round((cutoffMs - now.getTime()) / 60000)); // §81: ON, the clock too is read off the snapshot
   const bufferMin = breakdown.totalBuffer;
@@ -260,7 +260,7 @@ export async function answerLayoverQuestion(
     bufferMinutes: bufferMin,
     involvesLeaving: questionMentionsLeaving(question),
     // §12.1 / census L114: at most ONE question, asked only when the answer could move the verdict, the risk band or the usable window.
-    clarifyingQuestion: nextClarifyingQuestion(airport, session, now.getTime(), record.inputs.entry),
+    clarifyingQuestion: nextClarifyingQuestion(airport, session, now.getTime(), record.inputs.entry, record.inputs.liveConditions),
     boundaryViolations: [],
     certification: certificationHeader(record),
     toolsConsulted: [],
@@ -368,12 +368,12 @@ function riskBand(record: LayoverFeasibilityRecord): SafetyRating {
 export function valueOfInformation(
   airport: FeasibilityAirport,
   session: FeasibilitySession,
-  nowMs: number, /** The corridor the base record was certified with; each flip is certified with the SAME one (census-discovery §65). */ entry?: EntryEligibility | null, /** §12.1 "the top plan": candidate plans in rank order (the assistant's); omitted = not measured, exactly as before. */ plans?: ReadonlyArray<readonly PlanFitStop[]>,
+  nowMs: number, /** The corridor the base record was certified with; each flip is certified with the SAME one (census-discovery §65). */ entry?: EntryEligibility | null, /** §12.1 "the top plan": candidate plans in rank order (the assistant's); omitted = not measured, exactly as before. */ plans?: ReadonlyArray<readonly PlanFitStop[]>, liveConditions?: LayoverFeasibilityRecord["inputs"]["liveConditions"],
 ): ClarifyingQuestion[] {
-  const base = certifySessionFeasibility(airport, session, { nowMs, entry }); const topOf = (r: LayoverFeasibilityRecord) => (plans ?? []).findIndex((stops) => certifiedPlanFit(r, stops).fitsWindow); const baseTop = topOf(base);
+  const base = certifySessionFeasibility(airport, session, { nowMs, entry, liveConditions }); const topOf = (r: LayoverFeasibilityRecord) => (plans ?? []).findIndex((stops) => certifiedPlanFit(r, stops).fitsWindow); const baseTop = topOf(base);
   const out: ClarifyingQuestion[] = [];
   for (const field of CLARIFIABLE_FIELDS) {
-    const alt = certifySessionFeasibility(airport, flip(session, field), { nowMs, entry });
+    const alt = certifySessionFeasibility(airport, flip(session, field), { nowMs, entry, liveConditions });
     const verdictChanges = alt.verdict !== base.verdict;
     const riskBandChanges = riskBand(alt) !== riskBand(base);
     const returnStateChanges = alt.envelope.returnState !== base.envelope.returnState;
@@ -401,7 +401,7 @@ export function valueOfInformation(
 export function nextClarifyingQuestion(
   airport: FeasibilityAirport,
   session: FeasibilitySession,
-  nowMs: number, entry?: EntryEligibility | null,
+  nowMs: number, entry?: EntryEligibility | null, liveConditions?: LayoverFeasibilityRecord["inputs"]["liveConditions"],
 ): ClarifyingQuestion | null {
-  return valueOfInformation(airport, session, nowMs, entry)[0] ?? null;
+  return valueOfInformation(airport, session, nowMs, entry, undefined, liveConditions)[0] ?? null;
 }

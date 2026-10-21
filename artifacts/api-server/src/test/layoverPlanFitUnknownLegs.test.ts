@@ -173,7 +173,7 @@ describe("A. computePlanFit — an unstated leg can refuse a plan, never certify
     // One tap: the plan form's travel chip labelled "none" on a stop outside
     // the airport. Before the fix this answered `fitsWindow: true` — the
     // traveller was told a journey nobody had measured fits.
-    stage({ stops: [stopRow({ title: "Night market", duration_min: 60, travel_min: 0, inside_airport: false })] });
+    stage({ entryPermitted: true, stops: [stopRow({ title: "Night market", duration_min: 60, travel_min: 0, inside_airport: false })] });
     const r = await getStops();
 
     assert.equal(r.status, 200);
@@ -230,7 +230,7 @@ describe("A. computePlanFit — an unstated leg can refuse a plan, never certify
     // Counting it as 0 and omitting it produce the same integer; what separates
     // them is the claim attached to it. The known stop is charged in full, the
     // unknown one contributes its dwell only, and the total is labelled.
-    stage({
+    stage({ entryPermitted: true,
       stops: [
         stopRow({ id: "s1", title: "Known", stop_order: 0, duration_min: 30, travel_min: 15, inside_airport: false }),
         stopRow({ id: "s2", title: "Unknown", stop_order: 1, duration_min: 45, travel_min: 0, inside_airport: false }),
@@ -257,7 +257,7 @@ describe("A. computePlanFit — an unstated leg can refuse a plan, never certify
     // `stopRowToJson` read `row.duration_min ?? 30`: a row with no duration was
     // given one. The column is NOT NULL today, so this is the defensive half —
     // but the substitution was the same shape as the travel one and is gone.
-    stage({ stops: [stopRow({ title: "No duration", duration_min: null, travel_min: 20, inside_airport: false })] });
+    stage({ entryPermitted: true, stops: [stopRow({ title: "No duration", duration_min: null, travel_min: 20, inside_airport: false })] });
     const r = await getStops();
 
     assert.equal(r.body.stops[0].durationMin, 0, "0 means nobody said, and nothing pretends otherwise");
@@ -408,9 +408,9 @@ describe("A (continued). computePlanFit reads the landside GATE as well as the w
     const r = await getStops();
 
     assert.equal(r.body.planFit.clockFit, "fits");
-    assert.equal(r.body.planFit.fit, "unconfirmed");
+    assert.equal(r.body.planFit.fit, "blocked");
     assert.equal(r.body.planFit.fitsWindow, false);
-    assert.deepEqual(r.body.planFit.landside.cautions, ["entry_unconfirmed"]);
+    assert.deepEqual(r.body.planFit.landside.closedBy, ["entry_unconfirmed"]);
     assert.equal(r.body.planFit.neededMin, 110, "the gate withholds the affirmative; it does not move a number");
   });
 

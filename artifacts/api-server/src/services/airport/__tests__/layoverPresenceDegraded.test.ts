@@ -106,7 +106,7 @@ describe("L294/C2 — an unreadable presence read degrades visibly", () => {
   });
 
   it("an unreadable blocks table degrades too, with its own reason", async () => {
-    stage({ "blocks:select": { message: "relation unavailable" } });
+    const t = stage({ "blocks:select": { message: "relation unavailable" } }); t.feature_flags.push({ flag: "layover_mutual_discovery_enabled", enabled: true }); t.layover_discovery_consents = [{ id: "c-1", requester_session_id: "session-1", target_session_id: "session-2", requester_user_id: USER_ID, target_user_id: "user-2", status: "accepted", requested_at: new Date(Date.now() - 60_000).toISOString(), responded_at: new Date().toISOString(), ended_at: null, ended_by_user_id: null, expires_at: new Date(Date.now() + 3_600_000).toISOString() }]; /* LAYOVER 165 B2-CREW (census L130): the L2 roster reads blocks only for travellers with a mutual consent, so the blocks read is reached through one */
     const r = await get(PRESENCE);
     // D-PRESENCE-K-4: the L2 answer carries no count at all (`null`), and nobody is published.
     assert.strictEqual(r.body.count, null);

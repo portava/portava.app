@@ -145,7 +145,7 @@ describe("GET /airport/sessions/:id/overview publishes the contracted edge", () 
     const express = (await import("express")).default;
     const { _setTestClient } = await import("../../../lib/http.js");
     const airportRouter = (await import("../../../routes/airport.js")).default;
-    const { makeLayoverDb, airportRow, sessionRow } = await import("../../../test/helpers/fakeLayoverDb.js");
+    const { makeLayoverDb, airportRow, sessionRow } = await import("../../../test/helpers/fakeLayoverDb.js"); const { withConfirmedCorridor } = await import("../../../test/helpers/confirmedCorridor.js");
 
     const app = express();
     app.use(express.json());
@@ -156,12 +156,12 @@ describe("GET /airport/sessions/:id/overview publishes the contracted edge", () 
     });
     const port = (server.address() as any).port;
 
-    _setTestClient(makeLayoverDb({
+    _setTestClient(makeLayoverDb(withConfirmedCorridor({
       feature_flags: [{ flag: "airport_mode_enabled", enabled: true }],
       airport_profiles: [airportRow()],
       layover_sessions: [sessionRow({ user_id: "user-1" })],
       layover_events: [], layover_plan_stops: [], trip_plan_items: [],
-    }, { users: { "env-token": "user-1" } }), true);
+    }, { userIds: ["user-1"], destination: "TW" }), { users: { "env-token": "user-1" } }), true);
 
     const body = await new Promise<any>((resolve, reject) => {
       const r = http.request(

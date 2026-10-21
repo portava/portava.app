@@ -72,7 +72,7 @@ function stage() {
     feature_flags: [
       { flag: "airport_mode_enabled", enabled: true },
       { flag: "layover_plans_enabled", enabled: true },
-      { flag: "rent_buddy_enabled", enabled: true },
+      { flag: "rent_buddy_enabled", enabled: true }, { flag: "layover_buddy_specialist_enabled", enabled: true }, // B2-BUDDY (census-layover L273): the route asks both before the safety gate; either off answers `rent_buddy_not_enabled` and the gate is never reached
     ],
     airport_profiles: [airportRow({ verified: true })],
     layover_sessions: [

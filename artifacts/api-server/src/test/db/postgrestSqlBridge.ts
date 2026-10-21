@@ -367,9 +367,9 @@ export function makeBridge(engine: BridgeEngine, opts: {
   const pgStatus = (code: string) =>
     code === "23505" || code === "23503" ? 409 : code === "42501" ? 403 : code === "PGRST205" || code === "PGRST202" ? 404 : code.startsWith("08") || code === "57014" ? 503 : 400;
 
-  async function run(method: string, path: string, statements: string[]): Promise<{ ok: true; json: any } | { ok: false; res: Response }> {
+  async function run(method: string, path: string, statements: string[], headers: Record<string,string>): Promise<{ ok: true; json: any } | { ok: false; res: Response }> {
     try {
-      const text = await engine.request(statements, role, claims as Record<string, unknown>);
+      const text = await engine.request([`SELECT set_config('request.headers', ${lit(JSON.stringify(Object.fromEntries(Object.entries(headers).filter(([k])=>k.startsWith('x-portava-layover-')))))}, true)`, ...statements], role, claims as Record<string, unknown>);
       return { ok: true, json: JSON.parse(text || "null") };
     } catch (err: any) {
       let code = String(err?.code ?? "XX000");
@@ -448,7 +448,7 @@ export function makeBridge(engine: BridgeEngine, opts: {
           : s.rettype === "void" ? `SELECT 'null'::text FROM (SELECT ${call}) _v`
           : composite ? `SELECT COALESCE((SELECT to_json(_r) FROM ${call} _r WHERE _r IS NOT NULL LIMIT 1), 'null'::json)::text`
           : `SELECT COALESCE(to_json(${call}), 'null'::json)::text`;
-        const r = await run(method, path, [sql]);
+        const r = await run(method, path, [sql], headers);
         if (!r.ok) return done(r.res);
         return done(single && Array.isArray(r.json) ? shape(r.json, 200) : respond(r.json, 200));
       }
@@ -473,7 +473,7 @@ export function makeBridge(engine: BridgeEngine, opts: {
           + `${limit !== null ? ` LIMIT ${Number(limit)}` : ""}${offset !== null ? ` OFFSET ${Number(offset)}` : ""}`;
         const stmts = [`SELECT COALESCE(json_agg(_q._o), '[]'::json)::text FROM (${inner}) _q`];
         if (counting) stmts[0] = `SELECT json_build_object('rows', (${stmts[0]})::json, 'total', (SELECT count(*) FROM ${T} _t0${where("_t0")}))::text`;
-        const r = await run(method, path, stmts);
+        const r = await run(method, path, stmts, headers);
         if (!r.ok) return done(r.res);
         const rows = (counting ? r.json.rows : r.json) as any[];
         const extra: Record<string, string> = {};
@@ -545,7 +545,7 @@ export function makeBridge(engine: BridgeEngine, opts: {
       } else {
         throw new Error(`unhandled method ${method}`);
       }
-      const r = await run(method, path, stmts);
+      const r = await run(method, path, stmts, headers);
       if (!r.ok) return done(r.res);
       const okStatus = method === "POST" ? 201 : representation ? 200 : 204;
       const extra: Record<string, string> = counting && Array.isArray(r.json) ? { "content-range": `*/${r.json.length}` } : {};

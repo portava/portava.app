@@ -80,7 +80,7 @@ export const RESIDUAL_PREDICATE = [
  * 5: the point of the rule is that nobody gets to decide "order does not matter"
  * silently.
  */
-const CO_TOUCHER_CLASSIFICATION_DEFAULT: Record<string, string> = {
+const CO_TOUCHER_CLASSIFICATION_DEFAULT: Record<string, string> = { "3871_layover_recommendation_status_and_supersession": "ORDER-INSENSITIVE. Adds nullable defaultless classification columns and CHECKs, a separate immutable history table and a FALSE flag; writes no recommendation row and neither reads nor changes rec_key or any 2411 derivation input. Existing rows retain NULL in every added field and satisfy the CHECKs in either order. 2411 changes rec_key only; 3871 requires the column from 2410, not its 2411 backfill.",
   // WAS EMPTY, AND THE EMPTINESS WAS A RESULT RATHER THAN AN OMISSION.
   //
   // This map held one entry — 2335_layover_recommendation_write_boundary,
@@ -133,6 +133,35 @@ const CO_TOUCHER_CLASSIFICATION_DEFAULT: Record<string, string> = {
     "only snapshot_id, which is NULL on every existing row in either order, so neither " +
     "migration can make the other's precondition or postcondition false, and 2411's unique " +
     "index on (session_id, rec_key) is untouched by an ADD COLUMN.",
+  // 2026-10-20 (Layover 165, L259 route watches and fanout, landed in ee52da82):
+  // two more unapplied co-touchers, decided in writing for the same reason.
+  "3895_layover_route_subject_index":
+    "ORDER-INSENSITIVE. On layover_recommendations 3895 adds ONE AFTER INSERT OR UPDATE row " +
+    "trigger — layover_recommendation_route_watch — and writes NO recommendation row; its other " +
+    "effects are a new table (layover_route_subjects), a plan-stop trigger, a read function and " +
+    "the FALSE seed of its own flag, layover_route_subjects_enabled — not the cutover flag " +
+    "layover_stable_recommendation_ids_enabled. Applied before 2411, the trigger fires on each row " +
+    "2411's UPDATE keys and returns without a write or a raise in every flag state: FALSE (the seed, " +
+    "which 3895's own postcondition requires) returns at its first line, and TRUE meets the " +
+    "trigger's status-only early return, because a rec_key-only UPDATE leaves session_id, " +
+    "snapshot_id and plan_json->'routing' unchanged — so its prerequisite RAISE is never reached. " +
+    "3895 neither reads nor writes rec_key or any column 2411's derivation reads (id, place_id, " +
+    "inside_airport, rec_type, title, city, session_id), and 2411 neither reads nor writes " +
+    "layover_route_subjects. Either order leaves the identical shape and the identical rows, neither " +
+    "migration's precondition or postcondition reads the other's objects, and 2411's unique index " +
+    "on (session_id, rec_key) is untouched.",
+  "3908_layover_route_fanout":
+    "ORDER-INSENSITIVE. Applying 3908 writes NO layover_recommendations row: it creates two " +
+    "service-only tables (layover_route_dispatches, layover_route_work) and functions, and seeds " +
+    "its own flag layover_route_fanout_enabled FALSE (its postcondition requires FALSE) — not the " +
+    "cutover flag. Its one UPDATE of layover_recommendations is inside layover_route_fanout_settle, " +
+    "which runs only when the fanout worker calls it and raises route_fanout_disabled unless " +
+    "layover_route_fanout_ready() — and that requires layover_stable_recommendation_ids_enabled " +
+    "TRUE, the state in which 2411's own precondition refuses to run, so the two can never write " +
+    "the table in the same window. That UPDATE sets recommendation_status, status_reason, " +
+    "superseded_by_snapshot_id and superseded_at, never rec_key or any column 2411's derivation " +
+    "reads; 2411 neither reads nor writes any 3908 object. Either order leaves the identical shape " +
+    "and the identical rows, and neither can make the other's precondition or postcondition false.",
 };
 
 /**
@@ -1067,18 +1096,46 @@ function conditionWriterReadiness(srcFiles: string[], srcDir: string, snapshot: 
   const payloadWriters: string[] = [];
   const flagReaders: string[] = [];
   const optionCarriers: string[] = [];
+  // 2026-10-20: each of the three facts is now about THIS column, THIS flag and
+  // THIS option, not about a word appearing somewhere. Layover 165 (ee52da82)
+  // added product files that matched the old file-wide text tests without being
+  // any of the three — a supersession HISTORY payload carrying `rec_key:` into
+  // layover_recommendation_supersessions (services/layover/LayoverRecommendationStatus.ts),
+  // a route-publication prerequisite that names the flag but decides nothing
+  // (services/airport/LayoverRouteSubjects.ts), and two callers that pass a
+  // constant `stableIds: true` (LayoverCompassReplan.ts, LayoverExperienceService.ts).
+  // Counting them kept this condition GO with the real writer, the real flag
+  // read and the real wiring all removed (src/test/layoverCutover.test.ts
+  // "condition 6"). They are REPORTED below, never counted.
+  const namesFlag: string[] = [];
+  const constantCarriers: string[] = [];
+  const otherKeyPayloads: string[] = [];
+  const writesTargetRows = new RegExp(`\\.from\\(\\s*["'\`]${TARGET_TABLE}["'\`]\\s*\\)\\s*\\.(?:insert|upsert)\\s*\\(`);
   for (const p of srcFiles) {
     if (!isProduct(p)) continue;
     let text: string;
     try { text = stripComments(readFileSync(p, "utf8")); } catch { continue; }
     const rel = p.slice(srcDir.length + 1);
-    if (new RegExp(`\\b${TARGET_COLUMN}\\s*:`).test(text)) payloadWriters.push(rel);
-    if (text.includes(CUTOVER_FLAG)) flagReaders.push(rel);
+    // A payload carrying the column, in a file that INSERTS or UPSERTS rows of
+    // the table 2411 backfills. An UPDATE of other columns of that table is not
+    // a writer of the key, and a `rec_key` on another table's payload is a
+    // different column that happens to share the name.
+    if (new RegExp(`\\b${TARGET_COLUMN}\\s*:`).test(text)) (writesTargetRows.test(text) ? payloadWriters : otherKeyPayloads).push(rel);
+    if (text.includes(CUTOVER_FLAG)) namesFlag.push(rel);
     // A file that DECLARES generateRecommendations is not a caller of it: the
     // writer naming its own option proves nothing about the flag reaching it.
     const declaresWriter = /function\s+generateRecommendations\s*\(/.test(text);
-    if (!declaresWriter && /generateRecommendations\s*\(/.test(text) && /\bstableIds\b/.test(text)) optionCarriers.push(rel);
+    if (!declaresWriter && /generateRecommendations\s*\(/.test(text)) {
+      // The FLAG reaches the writer only through a non-constant option; a
+      // literal `stableIds: true` turns the path on whatever the flag says.
+      if (/\bstableIds\b(?!\s*:\s*(?:true|false)\b)/.test(text)) optionCarriers.push(rel);
+      else if (/\bstableIds\s*:\s*true\b/.test(text)) constantCarriers.push(rel);
+    }
   }
+  // The flag is READ where it decides the option: a file that names it and
+  // carries a non-constant stableIds into the writer. Naming it elsewhere (a
+  // prerequisite list) cannot turn the path on.
+  for (const rel of namesFlag) if (optionCarriers.includes(rel)) flagReaders.push(rel);
 
   if (payloadWriters.length === 0) {
     blockers.push(
@@ -1097,6 +1154,17 @@ function conditionWriterReadiness(srcFiles: string[], srcDir: string, snapshot: 
     blockers.push("NOT WIRED: no product file both calls generateRecommendations() and passes stableIds, so the flag cannot reach the writer.");
   } else {
     evidence.push(`carries the option to the writer: ${optionCarriers.join(", ")}`);
+  }
+  if (otherKeyPayloads.length > 0) evidence.push(`REPORTED, NOT COUNTED: a ${TARGET_COLUMN} key in a payload that is not a ${TARGET_TABLE} insert/upsert: ${otherKeyPayloads.join(", ")}`);
+  const otherNames = namesFlag.filter((rel) => !flagReaders.includes(rel));
+  if (otherNames.length > 0) evidence.push(`REPORTED, NOT COUNTED: names ${CUTOVER_FLAG} without deciding stableIds from it: ${otherNames.join(", ")}`);
+  if (constantCarriers.length > 0) {
+    evidence.push(
+      `REPORTED, NOT COUNTED: reaches the stable-identity writer with a CONSTANT stableIds: true, whatever ${CUTOVER_FLAG} says: ` +
+        `${constantCarriers.join(", ")}. Those paths sweep unkeyed legacy rows when their own flags are on, so they must ` +
+        `not be activated before 2411 has run and the cutover flag is on (docs/ops/layover-165-activation-packet.md, ` +
+        `"Recommendation history and canonical state": activation dependency "Stable recommendation IDs").`,
+    );
   }
 
   const flagValue = (snapshot.flags ?? {})[CUTOVER_FLAG];

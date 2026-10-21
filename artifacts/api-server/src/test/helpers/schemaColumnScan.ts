@@ -285,6 +285,20 @@ function payloadKeys(expr: ts.Expression, sf: ts.SourceFile, usePos: number, env
     if (bound) return payloadKeys(bound.expr, bound.sf, bound.usePos, bound.env, depth + 1);
     const hit = initializerIn(sf, e.text, usePos);
     if (!hit) return null;
+    // Array builders commonly append concrete rows before insert/upsert. Bind
+    // each push to this declaration, so an inner shadow cannot supply its keys.
+    if (hit.sf === sf && ts.isArrayLiteralExpression(unwrap(hit.init))) {
+      const parts: Keys[] = []; const initial = payloadKeys(hit.init,sf,hit.init.getStart(sf),NO_ENV,depth+1); if(initial)parts.push(initial);
+      const visitPush = (n: ts.Node): void => {
+        if(n.getStart(sf)>=usePos)return;
+        if(ts.isCallExpression(n)&&ts.isPropertyAccessExpression(n.expression)&&n.expression.name.text==='push'&&ts.isIdentifier(n.expression.expression)&&n.expression.expression.text===e.text) {
+          const binding=initializerIn(sf,e.text,n.getStart(sf));
+          if(binding?.init===hit.init)for(const arg of n.arguments){const k=payloadKeys(arg,sf,n.getStart(sf),NO_ENV,depth+1);if(k)parts.push(k);}
+        }
+        ts.forEachChild(n,visitPush);
+      };visitPush(sf);
+      if(parts.length)return {keys:new Set(parts.flatMap(p=>[...p.keys])),complete:parts.every(p=>p.complete)};
+    }
     return payloadKeys(hit.init, hit.sf, hit.sf === sf ? hit.init.getStart(sf) : Number.MAX_SAFE_INTEGER, NO_ENV, depth + 1);
   }
   if (ts.isCallExpression(e)) {
@@ -292,7 +306,7 @@ function payloadKeys(expr: ts.Expression, sf: ts.SourceFile, usePos: number, env
     // rows.map((r) => ({ … })) / flatMap — the row shape is the callback's return.
     if (ts.isPropertyAccessExpression(callee) && (callee.name.text === "map" || callee.name.text === "flatMap") && e.arguments[0]) {
       const cb = unwrap(e.arguments[0]);
-      if (ts.isArrowFunction(cb) || ts.isFunctionExpression(cb)) return returnsKeys(cb, sf, env, depth);
+      if (ts.isArrowFunction(cb) || ts.isFunctionExpression(cb)) { const bindings=new Map(env);const row=cb.parameters[0];if(row&&ts.isIdentifier(row.name))bindings.set(row.name.text,{expr:callee.expression,sf,usePos,env});return returnsKeys(cb,sf,bindings,depth); }
       if (ts.isIdentifier(cb)) {
         const fn = functionNamed(sf, cb.text);
         return fn ? returnsKeys(fn.decl, fn.sf, NO_ENV, depth) : null;

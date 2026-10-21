@@ -81,7 +81,7 @@ export type EvaluationStorage =
     }
   | {
       stored: false;
-      reason: "flag_unreadable" | PersistRefusal;
+      reason: "flag_unreadable" | PersistRefusal | CanonicalRefusal; // CanonicalRefusal (lane B2-RECS-A, L6): the canonical door served this record uncited and says why
     };
 
 export type FeasibilityEvaluation =
@@ -105,17 +105,17 @@ export async function evaluate(
   db: SupabaseClient,
   userId: string,
   sessionId: string,
-  opts: { nowMs?: number } = {},
+  opts: { nowMs?: number; loaded?: LoadedLayoverSession } = {}, // `loaded` (lane B2-RECS-A, L175): a route that already read the owned session and its airport hands them in, so evaluate() costs no second read
 ): Promise<FeasibilityEvaluation> {
   const nowMs = opts.nowMs ?? Date.now();
 
-  const read = await getSession(db, sessionId, userId);
+  const read = opts.loaded ? { ok: true as const, session: opts.loaded.session } : await getSession(db, sessionId, userId);
   if (!read.ok) return { ok: false, reason: "session_unreadable" };
   const session = read.session;
-  if (!session) return { ok: false, reason: "not_found" };
+  if (!session || session.id !== sessionId || session.userId !== userId) return { ok: false, reason: "not_found" };
   if (!layoverSessionIsLiveAt(session, nowMs)) return { ok: false, reason: "session_ended" };
 
-  const airportRead = await resolveSessionAirport(db, session);
+  const airportRead = opts.loaded ? { ok: true as const, airport: opts.loaded.airport } : await resolveSessionAirport(db, session);
   if (!airportRead.ok) return { ok: false, reason: "airport_unreadable" };
   const airport = airportRead.airport;
 
@@ -142,7 +142,7 @@ async function storeEvaluation(
   sessionId: string,
   record: LayoverFeasibilityRecord,
 ): Promise<EvaluationStorage> {
-  const flag = await readFlagState(db, "layover_decision_persistence_enabled");
+  const canon = canonicalOutcomeOf(record); if (canon) return canonicalStorage(canon); const flag = await readFlagState(db, "layover_decision_persistence_enabled"); // L6: the canonical door already stored (or reused) this record — report THAT, never a second write
   if (flag === "unreadable") return { stored: false, reason: "flag_unreadable" };
   if (flag !== "on") return { stored: false, reason: "persistence_disabled" };
 
@@ -150,3 +150,26 @@ async function storeEvaluation(
   if (!persisted.ok) return { stored: false, reason: persisted.reason };
   return { stored: true, snapshotId: persisted.snapshotId, state: persisted.state, unwritten: [...persisted.unwritten] };
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LAYOVER 165, lane B2-RECS-A — L6 / L175: evaluate() over the canonical snapshot.
+//
+// Appended at the TAIL so every line above keeps its number; ESM hoists the
+// imports. With `layover_canonical_snapshot_enabled` ON the record evaluate()
+// receives from the door (consumerLayoverRecord → certifiedLayoverSnapshot) is
+// the session's canonical snapshot, and the door has ALREADY stored it through
+// the compare-and-swap (or served the stored active one). `storeEvaluation`
+// reports that outcome instead of writing again: a second persistDecision would
+// be the double write the canonical snapshot exists to remove.
+// ═══════════════════════════════════════════════════════════════════════════
+import type { LoadedLayoverSession } from "./LayoverSnapshot.js";
+import { canonicalOutcomeOf, type CanonicalOutcome, type CanonicalRefusal } from "../layover/LayoverActiveSnapshot.js";
+
+/** The canonical door's outcome, in evaluate()'s storage vocabulary. */
+function canonicalStorage(canon: CanonicalOutcome): EvaluationStorage {
+  if (!canon.canonical) return { stored: false, reason: canon.reason };
+  if (canon.state === "recorded" && canon.persisted) return { stored: true, snapshotId: canon.snapshotId, state: canon.persisted.state, unwritten: [...canon.persisted.unwritten] };
+  return { stored: true, snapshotId: canon.snapshotId, state: "active_snapshot", unwritten: [] };
+}
+
+export { certifyRecommendation } from "../layover/LayoverRecommendationStatus.js";

@@ -107,7 +107,7 @@ export async function applyLayoverRankingMode<T extends ObjectiveCard>(
   session: { id: string; userId: string | null | undefined },
   ranked: T[],
   // NoInfer: T is the RANKED card type, taken from `ranked` alone; `keyOf` only has to accept it.
-  ctx: { keyOf: (card: NoInfer<T>) => string; live?: ReadonlyMap<string, ObjectiveLiveReading> },
+  ctx: import("./layoverObjective.js").ObjectiveContext<NoInfer<T>>,
 ): Promise<RankingModeOutcome<T>> {
   const resolved = await resolveLayoverRolloutMode(db, "ranking_objective");
   const forUser = layoverModeFor(resolved, session.userId);

@@ -379,7 +379,7 @@ async function certifyFoundLayoverSession(
   const airport = resolved.airport;
 
   // THE ONE CERTIFICATION. Everything below reads it.
-  const record = certifySessionFeasibility(airport, session, { nowMs, entry: await resolveLayoverEntry(db, session.userId, layoverAirportCountry(airport)) });
+  const record = await canonicalLayoverRecordOr(db, session, async () => certifySessionFeasibility(airport, session, { ...{ nowMs, entry: await resolveLayoverEntry(db, session.userId, layoverAirportCountry(airport)) }, liveConditions: await resolveLayoverLiveConditions(db, airport, session, nowMs) })); // lane B2-RECS-A (L6): the session's ACTIVE snapshot when it certifies the same decision, else this certification stored through the compare-and-swap (canonical switch ON; OFF = exactly this certification, foot of file). lane B2-LIVE: §10 live conditions are a NAMED INPUT of the one certification (null = nothing live, or the producer switched off — exactly the computation before); the spread keeps the cited `{ nowMs, entry: … }` text whole
   const posture = safeReturnPosture(record);
   const centre = airportPoint(airport);
   const envelope = safeEnvelope(record.envelope.usableMinutes, centre, record.confidence);
@@ -782,7 +782,7 @@ export async function consumerLayoverSnapshot(
   session: LayoverSession,
   nowMs: number,
 ): Promise<LayoverSnapshot | null> {
-  if (!(await isFlagEnabled(db, LAYOVER_SNAPSHOT_CONSUMERS_FLAG))) return null;
+  if (!(await isFlagEnabled(db, LAYOVER_SNAPSHOT_CONSUMERS_FLAG)) && !(await isFlagEnabled(db, "layover_canonical_snapshot_enabled"))) return null; // L6 (lane B2-RECS-A): with the canonical snapshot ON every consumer reads the door's snapshot, whatever the consumers flag says
   const read = await certifiedLayoverSnapshot(db, session.userId, { nowMs, loaded: { session, airport } });
   return read.ok ? read.snapshot : null;
 }
@@ -794,7 +794,7 @@ export async function consumerLayoverRecord(
   session: LayoverSession,
   nowMs: number,
 ): Promise<LayoverFeasibilityRecord | null> {
-  return (await consumerLayoverSnapshot(db, airport, session, nowMs))?.certifiedRecord ?? null;
+  return (await consumerLayoverSnapshot(db, airport, session, nowMs))?.certifiedRecord ?? (await liveConditionedLayoverRecord(db, airport, session, nowMs)); // lane B2-LIVE: with the consumers OFF, a session under LIVE conditions still certifies through this door (foot of file) — the legacy arm cannot see them
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -904,3 +904,66 @@ const routedPlanOfCandidate = new WeakMap<ActionUniverseCandidate, UniverseRouti
 function routedTermsFor(c: ActionUniverseCandidate): RoutedFeasibilityTerms | null {
   return routedPlanOfCandidate.get(c)?.termsOf(c) ?? null;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LAYOVER 165, lane B2-LIVE — §10 live conditions reach EVERY consumer.
+//
+// Appended at the TAIL so every cited line above keeps its number; ESM hoists
+// the import.
+//
+// The snapshot's one certification now takes `liveConditions` from the
+// live-signal producer (layoverLiveSignals.ts), beside `entry`. With
+// `layover_snapshot_consumers_enabled` ON every consumer reads that record.
+// With it OFF (production today) each consumer took its LEGACY ARM —
+// `consumerLayoverRecord(...) ?? certifySessionFeasibility(airport, session,
+// { nowMs, entry })` — and a legacy arm cannot see live conditions, so the
+// dashboard, /safety, the recommendations, Safe Return, the notifications and
+// the constraint surfaces would each have certified as if no queue had ever
+// been reported, while the snapshot certified with it.
+//
+// So when the consumers are OFF, `consumerLayoverRecord` asks the producer, and:
+//   null (the producer is off, or nothing live exists) → null, and the caller
+//     takes its legacy arm exactly as before — byte for byte;
+//   live conditions → THIS door's certification of the same inputs the legacy
+//     arm would use (`nowMs`, the traveller's entry corridor) PLUS the live
+//     conditions, so every record-shaped consumer publishes the SAME certified
+//     record, and none of them re-derives a deadline without the live term.
+// The parity the consumers' suite proves (ON equals OFF) is what makes the
+// substitution safe: the door's record IS the legacy arm's record, plus §10.
+// ═══════════════════════════════════════════════════════════════════════════
+import { resolveLayoverLiveConditions } from "./layoverLiveSignals.js";
+
+/** The door's certification under live conditions, or null when there are none (the caller's legacy arm then stands). */
+async function liveConditionedLayoverRecord(
+  db: SupabaseClient,
+  airport: AirportProfile,
+  session: LayoverSession,
+  nowMs: number,
+): Promise<LayoverFeasibilityRecord | null> {
+  const liveConditions = await resolveLayoverLiveConditions(db, airport, session, nowMs);
+  if (!liveConditions) return null;
+  return certifySessionFeasibility(airport, session, { nowMs, entry: await resolveLayoverEntry(db, session.userId, layoverAirportCountry(airport)), liveConditions });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LAYOVER 165, lane B2-RECS-A — §2.1 "All surfaces consume the same certified
+// LayoverSnapshot" (census-layover L6): the door's ONE certification is the
+// session's canonical, versioned snapshot.
+//
+// Appended at the TAIL so every cited line above keeps its number; ESM hoists
+// the import. Two one-line call sites above:
+//   - `certifyFoundLayoverSession`'s certification goes through
+//     `canonicalLayoverRecordOr`: with `layover_canonical_snapshot_enabled` AND
+//     `layover_decision_persistence_enabled` ON it serves the session's ACTIVE
+//     snapshot (3828's pointer) when that certifies the same decision, and
+//     otherwise stores this certification through 3873's compare-and-swap and
+//     serves the stored one (services/layover/LayoverActiveSnapshot.ts). OFF:
+//     the certification is exactly what it was.
+//   - `consumerLayoverSnapshot` opens the door for every consumer when the
+//     canonical switch is ON, whatever `layover_snapshot_consumers_enabled`
+//     says — so the overview, /safety, the recommendations, Safe Return, the
+//     notifications, the constraint surfaces and the flight-status recalculation
+//     (all `consumerLayoverRecord` callers), and Compass and Discovery (direct
+//     `certifiedLayoverSnapshot` callers), read ONE stored snapshot.
+// ═══════════════════════════════════════════════════════════════════════════
+import { canonicalLayoverRecordOr } from "../layover/LayoverActiveSnapshot.js";

@@ -1,0 +1,4 @@
+{
+  "//": "check:layover-certification — the certification entries (src/services/airport/layoverCertification.ts) allowed to be UNPROVED. This list may only shrink: an unproved entry not named here fails, and an entry named here that is now proved fails until it is removed. Census-layover L218.",
+  "unproved": []
+}

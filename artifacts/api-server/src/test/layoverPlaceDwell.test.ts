@@ -31,7 +31,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js";
+import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js"; import { withConfirmedCorridor } from "./helpers/confirmedCorridor.js";
 import { statedLayoverTimings } from "../lib/discoveryLayoverTiming.js";
 import {
   LAYOVER_PLACE_DWELL_FLAG,
@@ -97,7 +97,7 @@ function world(opts: { flag: boolean; dwell?: Array<Record<string, unknown>> | n
     })],
   };
   if (opts.dwell !== null) t.layover_place_dwell = opts.dwell ?? [dwellRow()];
-  return t;
+  return withConfirmedCorridor(t, { userIds: [USER], destination: "TW" });
 }
 
 function tracked(tables: Rows, failures: Record<string, { message: string }> = {}) {

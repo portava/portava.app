@@ -112,11 +112,28 @@ describe("deletion coverage — the guard bites", () => {
     //     its erasure fate is its report's, which is the open D-38b / D-39, so a
     //     decided bucket overstated it. Back to 7 on that branch; with layover_events
     //     (above, from main) the merged count is 8, re-derived from the merged list.
-    assert.equal(RETAINED_WITH_REASON.length, 8,
+    //   * migration 3874's airport_curated_facts (Layover 165 lane B2-CURATE, 2026-10-18; 8 -> 9): a
+    //     curated AIRPORT fact whose only person-shaped columns are the staff curators who proposed,
+    //     validated and published it — the audit trail the owner's "a human curator validates" asks for.
+    //     PROPOSED by the lane; the lead confirms it or moves it (see the entry's reason).
+    //   * two more from the Layover 165 continuation (ee52da82, 9 -> 11), each with the entry's written
+    //     reason and each checked against its migration, not just its prose:
+    //       - migration 3908's layover_route_dispatches (census-layover L259, route fanout): one row per
+    //         SHARED external event (event_id -> layover_external_events ON DELETE CASCADE) holding a scan
+    //         cursor, a completion marker and a timestamp. Its one person-adjacent column, after_session_id,
+    //         is ON DELETE SET NULL, so once the owner's session goes the row names no one — the same "no
+    //         person at all" pattern as the projection history and the webhook log above;
+    //       - migration 3890's layover_service_write_audit (census-layover L205): a person's row kept for at
+    //         most 30 days (CHECK retain_until <= created_at + 30 days; layoverServiceAudit.ts expires it),
+    //         whose actor and session ids a profiles trigger scrubs atomically with the account tombstone.
+    //     Both PROPOSED by the lane that wrote them (docs/ops/layover-165-remediation-progress.md L205, L259);
+    //     the lead confirms each or moves it, like airport_curated_facts.
+    assert.equal(RETAINED_WITH_REASON.length, 11,
       "once retentions are decided, update this expectation deliberately");
     assert.deepEqual(
       RETAINED_WITH_REASON.map((r) => r.table).sort(),
-      ["creator_rule_versions", "intel_state_snapshot_versions", "layover_events", "payment_webhook_events",
+      ["airport_curated_facts", "creator_rule_versions", "intel_state_snapshot_versions", "layover_events", "layover_route_dispatches",
+       "layover_service_write_audit", "payment_webhook_events",
        "rent_buddy_booking_payments", "rent_buddy_monthly_payouts", "rent_buddy_payment_recipients", "rent_buddy_payment_refunds"],
     );
     // Asserted for EVERY entry, not just the first: indexing by [0] let a second
@@ -131,6 +148,10 @@ describe("deletion coverage — the guard bites", () => {
     assert.match(byTable.get("layover_events")!, /pseudonymised/);
     assert.match(byTable.get("layover_events")!, /at most 12 months/);
     assert.match(byTable.get("payment_webhook_events")!, /No person, no account and no amount/);
+    assert.match(byTable.get("layover_route_dispatches")!, /ON DELETE SET NULL/);
+    assert.match(byTable.get("layover_route_dispatches")!, /No owner, location or recommendation payload is retained/);
+    assert.match(byTable.get("layover_service_write_audit")!, /created_at plus 30 days/);
+    assert.match(byTable.get("layover_service_write_audit")!, /removes actor\/session identifiers on account tombstoning/);
   });
 });
 

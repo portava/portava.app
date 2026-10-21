@@ -145,3 +145,24 @@ describe('SessionProvider → Discovery viewer scope', () => {
     off();
   });
 });
+
+import AsyncStorage from '@react-native-async-storage/async-storage';
+describe('Layover device cache boundary', () => {
+  it('a direct account switch clears private Layover data before the new account is published', async () => {
+    const ui = await mountProvider();
+    await AsyncStorage.setItem('layover.experience.v1:old-session', 'private');
+    await AsyncStorage.setItem('theme', 'dark');
+    await act(async () => { mockAuthCallback!('user-y'); });
+    await waitFor(() => expect(ui.getByText('user-y')).toBeTruthy());
+    expect(await AsyncStorage.getItem('layover.experience.v1:old-session')).toBeNull();
+    expect(await AsyncStorage.getItem('theme')).toBe('dark');
+  });
+  it('same-user refresh preserves the offline return plan; explicit sign-out clears it', async () => {
+    await mountProvider();
+    await AsyncStorage.setItem('layover.return-route.v1.old-session', 'private');
+    await act(async () => { mockAuthCallback!('user-x'); });
+    expect(await AsyncStorage.getItem('layover.return-route.v1.old-session')).toBe('private');
+    await act(async () => { await signOutFromUi!(); });
+    expect(await AsyncStorage.getItem('layover.return-route.v1.old-session')).toBeNull();
+  });
+});

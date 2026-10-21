@@ -54,7 +54,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { _setTestClient } from "../lib/http.js";
 import airportRouter from "../routes/airport.js";
 import { ENTRY_FLAG } from "../lib/entryRequirements.js";
-import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js";
+import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js"; import { attachConstraintContext } from "../services/layover/LayoverConstraintStore.js";
 import { certifiedLayoverSnapshot } from "../services/airport/LayoverSnapshot.js";
 import { generateRecommendations } from "../services/airport/LayoverRecommendationService.js";
 import { valueOfInformation } from "../services/airport/LayoverCompassService.js";
@@ -170,7 +170,7 @@ function stage(world: World, over: { session?: Record<string, unknown>; stops?: 
       { flag: "airport_mode_enabled", enabled: true },
       { flag: "layover_compass_enabled", enabled: true },
       { flag: "layover_plans_enabled", enabled: true },
-      { flag: "rent_buddy_enabled", enabled: true },
+      { flag: "rent_buddy_enabled", enabled: true }, { flag: "layover_buddy_specialist_enabled", enabled: true },
       ...entryFlags(world),
     ],
     airport_profiles: [airportRow()],
@@ -235,13 +235,13 @@ describe("POST /airport/sessions/:id/compass — the answer certifies with the e
     assert.equal((await snapshotVerdict(db)).verdict, "yes");
   });
 
-  it("a data gap (passports unreadable, entry flag off) is `entry_unverified`, never `yes` — the snapshot's answer", async () => {
+  it("a data gap (passports unreadable, entry flag off) closes landside — the snapshot's answer", async () => {
     for (const world of ["passports_unreadable", "flag_off"] as const) {
       stage(world);
       const r = await send("POST", `/api/airport/sessions/${SESSION}/compass`, { question: "Can I leave the airport?" });
       assert.equal(r.status, 200, `${world}: ${JSON.stringify(r.body)}`);
-      assert.equal(at(r.body, "certification", "verdict"), "entry_unverified", world);
-      assert.equal((await snapshotVerdict(db)).verdict, "entry_unverified", world);
+      assert.equal(at(r.body, "certification", "verdict"), "no", world);
+      assert.equal((await snapshotVerdict(db)).verdict, "no", world);
     }
   });
 
@@ -286,7 +286,7 @@ describe("generateRecommendations — landside cards follow the entry-bearing ve
   }
   async function landsideCards(world: World): Promise<Array<{ title: string }>> {
     const d = asDb(makeLayoverDb(recTables(world), { failures: entryFailures(world) }));
-    const r = await generateRecommendations(d, profile(), layoverSession(NOW, 9 * 60), NOW);
+    const r = await generateRecommendations(d, profile(), await attachConstraintContext(d, layoverSession(NOW, 9 * 60)), NOW);
     if (!r.ok) assert.fail(`expected recommendations, got a refusal: ${r.message}`);
     return r.recommendations.filter((c) => c.insideAirport === false);
   }
@@ -299,7 +299,7 @@ describe("generateRecommendations — landside cards follow the entry-bearing ve
     assert.ok((await landsideCards("permitted")).length > 0, "a permitted border must not close landside");
   });
 
-  it("PARITY with the snapshot's 'not forbidden' reading (`landsideStatus` open or caution) in every world (a data gap closes neither)", async () => {
+  it("PARITY with snapshot admission in every world, including fail-closed data gaps", async () => {
     for (const world of WORLDS) {
       stage(world);
       const snap = await snapshotVerdict(db);
@@ -364,8 +364,8 @@ describe("POST /airport/sessions/:id/disruption — the recomputed schedule keep
     assert.equal(at(await report("permitted"), "certification", "verdict"), "yes");
   });
 
-  it("a data gap stays `entry_unverified`, never `yes`", async () => {
-    assert.equal(at(await report("passports_unreadable"), "certification", "verdict"), "entry_unverified");
+  it("a data gap stays closed", async () => {
+    assert.equal(at(await report("passports_unreadable"), "certification", "verdict"), "no");
   });
 });
 
@@ -478,9 +478,9 @@ describe("replanExternalEvent — the external-event port certifies each session
     assert.equal(await notifications("refused"), 0);
   });
 
-  it("POSITIVE CONTROL — permitted or unresolved, the same delay DOES change the verdict and notifies", async () => {
+  it("POSITIVE CONTROL — permitted entry notifies on changed verdict; unresolved entry remains closed", async () => {
     assert.equal(await notifications("permitted"), 1);
-    assert.equal(await notifications("passports_unreadable"), 1);
+    assert.equal(await notifications("passports_unreadable"), 0);
   });
 });
 
@@ -552,9 +552,9 @@ describe("every production certification site names the entry input", () => {
     // tool when lead ruling L-CL02d deleted the tool loop from the layover door;
     // no other caller of valueOfInformation exists in that file.)
     const src = readFileSync(join(HERE, "..", "services", "airport", "LayoverCompassService.ts"), "utf8");
-    assert.match(src, /nextClarifyingQuestion\(airport, session, now\.getTime\(\), record\.inputs\.entry\)/);
+    assert.match(src, /nextClarifyingQuestion\(airport, session, now\.getTime\(\), record\.inputs\.entry, record\.inputs\.liveConditions\)/);
     const callers = src.split("\n").filter((l) => /valueOfInformation\(/.test(l) && !/^\s*(\/\/|\*)/.test(l) && !/export function valueOfInformation\(/.test(l));
-    assert.deepEqual(callers.map((l) => l.trim()), ["return valueOfInformation(airport, session, nowMs, entry)[0] ?? null;"], "a new caller must pass the record's entry");
+    assert.deepEqual(callers.map((l) => l.trim()), ["return valueOfInformation(airport, session, nowMs, entry, undefined, liveConditions)[0] ?? null;"], "a new caller must pass the record's entry and live inputs");
   });
 });
 

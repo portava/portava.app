@@ -57,11 +57,41 @@ jest.mock('../../../services/apiToken.ts', () => ({
   freshToken: jest.fn(async () => 'test-token'),
 }));
 
+jest.mock('react-native-safe-area-context', () => ({ ...jest.requireActual('react-native-safe-area-context'), useSafeAreaInsets: () => ({ top:0,right:0,bottom:0,left:0 }) }));
+
 // ── Fixtures, transcribed from the server ─────────────────────────────────────
 
 const CERTIFIED_AT = '2026-09-08T10:00:00.000Z';
 const CERTIFIED_MS = Date.parse(CERTIFIED_AT);
 const HARD_RETURN = '2026-09-08T13:40:00.000Z';
+
+test('a server-offered Safe Return opens the existing consent setup with the certified clock locked', async () => {
+  fetchSpy.mockImplementation(async (url:string) => jsonResponse(200, String(url).includes('/sessions/active') ? {session:null} : {contacts:[]}));
+  const overview=overviewFixture(); overview.safeReturnProduct={available:true,reason:null,certifiedDeadline:HARD_RETURN,session:null};
+  await render(<CardUnderTest overview={overview} nowMs={CERTIFIED_MS} canAbort />);
+  fireEvent.press(screen.getByTestId('layover-product-setup'));
+  await waitFor(() => expect(screen.getByTestId('layover-certified-timer')).toBeTruthy());
+  expect(screen.queryByText('30 minutes')).toBeNull();
+  await act(async () => {fireEvent.press(screen.getByText('Start Safe Return'));});
+  await waitFor(() => expect(fetchSpy.mock.calls.some(([url,options]) => String(url).endsWith('/me/safe-return/sessions') && options?.method==='POST')).toBe(true));
+  const request=fetchSpy.mock.calls.find(([url,options]) => String(url).endsWith('/me/safe-return/sessions') && options?.method==='POST')!;
+  const body:unknown=JSON.parse(String(request[1].body));
+  expect(body).toEqual(expect.objectContaining({layoverSessionId:overview.session.id,trustedCircleEnabled:false,contacts:[]}));
+  expect(body).not.toHaveProperty('timerMinutes'); expect(body).not.toHaveProperty('certifiedDeadline');
+});
+
+test('a return response for the previous session cannot replace the new session or retain its crew choice', async () => {
+  let finish!: (value: Response) => void;
+  fetchSpy.mockReturnValue(new Promise<Response>(resolve => {finish=resolve;}));
+  const first={...overviewFixture(),crewAbortNotice:{available:true,reason:null}};
+  const view=await render(<CardUnderTest overview={first} nowMs={CERTIFIED_MS} canAbort />);
+  await act(async () => {fireEvent.press(screen.getByTestId('return-to-airport-btn'));});
+  await waitFor(() => expect(returnNowCalls()).toHaveLength(1));
+  const next={...first,session:{...first.session,id:'next-layover'}};
+  await view.rerender(<CardUnderTest overview={next} nowMs={CERTIFIED_MS} canAbort />);
+  await act(async () => {finish(jsonResponse(200,ABORT_OK_BODY));});
+  expect(screen.queryByTestId('return-contract')).toBeNull();
+});
 
 const CERTIFICATION = {
   engineVersion: '2026.09.02-3',
@@ -734,4 +764,61 @@ test('L144 — a pre-L144 server\'s partial body (no crew fields) says nothing a
   await act(async () => { fireEvent.press(screen.getByTestId('return-to-airport-btn')); });
   await waitFor(() => expect(screen.getByTestId('abort-partial-notice')).toBeTruthy());
   expect(screen.queryByTestId('abort-crew-notice')).toBeNull();
+});
+
+// NOTE: intentionally exhaustive — the location door loads native Expo modules. This fixture is a user-pressed fix, not a simulated permission result from production.
+jest.mock('../../../lib/location/locationRequestDoor.ts', () => ({
+  USER_PRESS_LIVE_RETURN: { trigger: 'user_press', purpose: 'live_return_assistance' },
+  requestLocationForUserAction: jest.fn(),
+}));
+import { requestLocationForUserAction } from '../../../lib/location/locationRequestDoor.ts';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+test('L221 — an explicit location-route press sends the measured timestamp and shows the returned route, with no mount-time location request', async () => {
+  jest.mocked(requestLocationForUserAction).mockReset().mockResolvedValue({ granted: true, lat: 1.31, lng: 103.89, accuracyMeters: 15, observedAtMs: CERTIFIED_MS });
+  const route = { mode: 'drive', departAt: CERTIFIED_AT, minutes: 20, conservativeMinutes: 38, hardReturnBy: RETURN_CONTRACT.hardReturnTime, leaveBy: CERTIFIED_AT, expectedAirportReturnAt: RETURN_CONTRACT.hardReturnTime, canMeetDeadline: true, confidence: 'LOW', expiresAt: new Date(CERTIFIED_MS + 300000).toISOString(), independentRoutes: 1, conveyances: [{ mode: 'drive', minutes: 20, interruptibility: 'interruptible', endsAt: null }] };
+  fetchSpy.mockResolvedValue(jsonResponse(200, { ...ABORT_OK_BODY, returnContract: { ...RETURN_CONTRACT, route, routeUnavailableReason: null } }));
+  await render(<CardUnderTest overview={overviewFixture()} nowMs={CERTIFIED_MS} canAbort />);
+  expect(requestLocationForUserAction).not.toHaveBeenCalled();
+  await act(async () => { fireEvent.press(screen.getByTestId('return-with-location')); });
+  await waitFor(() => expect(returnNowCalls()).toHaveLength(1));
+  expect(bodyOf(returnNowCalls()[0])).toEqual({ origin:{ lat: 1.31, lng: 103.89, accuracyMeters: 15, observedAt: CERTIFIED_AT, mode: 'drive' } });
+  expect(screen.getByTestId('contract-measured-route')).toBeTruthy();
+  expect(screen.queryByTestId('contract-route-unavailable')).toBeNull();
+  await waitFor(() => {const saved=jest.mocked(AsyncStorage.setItem).mock.calls.filter(([key])=>key===`layover.return-route.v1.${overviewFixture().session.id}`).at(-1);expect(saved).toBeDefined();expect(JSON.parse(saved![1])).toEqual({sessionId:overviewFixture().session.id,route});});
+});
+
+test('L221 — an expired route stays visible with an expired warning and never claims a live return estimate', async () => {
+  const route = { mode: 'drive', departAt: CERTIFIED_AT, minutes: 20, conservativeMinutes: 38, hardReturnBy: RETURN_CONTRACT.hardReturnTime, leaveBy: CERTIFIED_AT, expectedAirportReturnAt: RETURN_CONTRACT.hardReturnTime, canMeetDeadline: false, confidence: 'LOW', expiresAt: new Date(CERTIFIED_MS - 1000).toISOString(), independentRoutes: 1, conveyances: [] };
+  fetchSpy.mockResolvedValue(jsonResponse(200, { ...ABORT_OK_BODY, returnContract: { ...RETURN_CONTRACT, route, routeUnavailableReason: null } }));
+  await render(<CardUnderTest overview={overviewFixture()} nowMs={CERTIFIED_MS} canAbort />);
+  await act(async () => { fireEvent.press(screen.getByTestId('return-to-airport-btn')); });
+  await waitFor(() => expect(screen.getByTestId('contract-route-expired')).toBeTruthy());
+  expect(screen.getByTestId('contract-route-late')).toBeTruthy();
+});
+
+// L144 booked Buddy: separate consent, the real hook and wire service.
+test('booked Buddy choice is absent unless the server offers it and defaults unticked',async()=>{
+ fetchSpy.mockResolvedValue(jsonResponse(200,ABORT_OK_BODY));
+ const view=await render(<CardUnderTest overview={overviewFixture()} nowMs={CERTIFIED_MS} canAbort />);expect(screen.queryByTestId('abort-tell-buddy-toggle')).toBeNull();
+ await view.rerender(<CardUnderTest overview={{...overviewFixture(),buddyAbortNotice:OFFERED}} nowMs={CERTIFIED_MS} canAbort />);
+ expect(screen.getByTestId('abort-tell-buddy-toggle').props.accessibilityState.checked).toBe(false);
+ await act(async()=>fireEvent.press(screen.getByTestId('return-to-airport-btn')));await waitFor(()=>expect(returnNowCalls()).toHaveLength(1));expect(bodyOf(returnNowCalls()[0])).toBeUndefined();
+});
+test('booked Buddy consent travels once, resets and reports only the server count',async()=>{
+ fetchSpy.mockResolvedValue(jsonResponse(200,{...ABORT_OK_BODY,buddyNotifiedCount:1,buddyNotifyUnavailableReason:null}));
+ await render(<CardUnderTest overview={{...overviewFixture(),buddyAbortNotice:OFFERED}} nowMs={CERTIFIED_MS} canAbort />);
+ await act(async()=>fireEvent.press(screen.getByTestId('abort-tell-buddy-toggle')));
+ await act(async()=>{fireEvent.press(screen.getByTestId('return-to-airport-btn'));fireEvent.press(screen.getByTestId('return-to-airport-btn'));});
+ await waitFor(()=>expect(returnNowCalls()).toHaveLength(1));expect(bodyOf(returnNowCalls()[0])).toEqual({tellBuddy:true});expect(screen.getByTestId('abort-tell-buddy-toggle').props.accessibilityState.checked).toBe(false);
+ await waitFor(()=>expect(screen.getByTestId('abort-buddy-notice').props.children).toBe('Your booked Buddy has an in-app heading-back notice.'));
+ await act(async()=>fireEvent.press(screen.getByTestId('return-to-airport-btn')));await waitFor(()=>expect(returnNowCalls()).toHaveLength(2));expect(bodyOf(returnNowCalls()[1])).toBeUndefined();
+});
+test('booked Buddy choice resets on session change and partial timeout remains unconfirmed',async()=>{
+ fetchSpy.mockResolvedValue(jsonResponse(500,{ok:false,message:'Head to the airport now.',returnContract:ABORT_OK_BODY.returnContract,posture:ABORT_OK_BODY.posture,effects:[],buddyNotifiedCount:0,buddyNotifyUnavailableReason:'notify_timed_out'}));
+ const overview={...overviewFixture(),buddyAbortNotice:OFFERED},view=await render(<CardUnderTest overview={overview} nowMs={CERTIFIED_MS} canAbort />);
+ await act(async()=>fireEvent.press(screen.getByTestId('abort-tell-buddy-toggle')));await view.rerender(<CardUnderTest overview={{...overview,session:{...overview.session,id:'other-session'}}} nowMs={CERTIFIED_MS} canAbort />);
+ expect(screen.getByTestId('abort-tell-buddy-toggle').props.accessibilityState.checked).toBe(false);
+ await act(async()=>fireEvent.press(screen.getByTestId('abort-tell-buddy-toggle')));await act(async()=>fireEvent.press(screen.getByTestId('return-to-airport-btn')));
+ await waitFor(()=>expect(screen.getByTestId('abort-buddy-notice').props.children).toBe('Your Buddy notice could not be confirmed in time.'));expect(screen.getByTestId('contract-hard-time')).toBeTruthy();
 });

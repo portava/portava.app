@@ -381,7 +381,7 @@ async function safetyBody(departureIso: string, trafficExtraMin: number) {
   const express = (await import("express")).default;
   const { _setTestClient } = await import("../lib/http.js");
   const airportRouter = (await import("../routes/airport.js")).default;
-  const { makeLayoverDb, airportRow, sessionRow } = await import("./helpers/fakeLayoverDb.js");
+  const { makeLayoverDb, airportRow, sessionRow } = await import("./helpers/fakeLayoverDb.js"); const { withConfirmedCorridor } = await import("./helpers/confirmedCorridor.js");
 
   const app = express();
   app.use(express.json());
@@ -392,7 +392,7 @@ async function safetyBody(departureIso: string, trafficExtraMin: number) {
   });
   const port = (server.address() as any).port;
 
-  _setTestClient(makeLayoverDb({
+  _setTestClient(makeLayoverDb(withConfirmedCorridor({
     feature_flags: [
       { flag: "airport_mode_enabled", enabled: true },
       { flag: "layover_safety_engine_enabled", enabled: true },
@@ -404,7 +404,7 @@ async function safetyBody(departureIso: string, trafficExtraMin: number) {
       arrival_time: new Date(Date.parse(departureIso) - 8 * 3_600_000).toISOString(),
     })],
     layover_events: [], layover_plan_stops: [], trip_plan_items: [],
-  }, { users: { "env-token": "user-1" } }), true);
+  }, { userIds: ["user-1"], destination: "TW" }), { users: { "env-token": "user-1" } }), true);
 
   const body = await new Promise<any>((resolve, reject) => {
     const r = http.request(

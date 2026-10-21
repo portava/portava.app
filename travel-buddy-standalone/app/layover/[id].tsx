@@ -54,13 +54,13 @@ import { AirportEssentialsCard } from '../../src/components/layover/AirportEssen
 import { AirportConditionsCard } from '../../src/components/layover/AirportConditionsCard';
 import { LayoverHero } from '../../src/components/layover/LayoverHero';
 import { CanILeaveCard } from '../../src/components/layover/CanILeaveCard'; import { LayoverConstraintsCard } from '../../src/components/layover/LayoverConstraintsCard';
-import { LayoverPlanSection } from '../../src/components/layover/LayoverPlanSection';
+import { LayoverPlanSection } from '../../src/components/layover/LayoverPlanSection'; import { LayoverExperiencePlanCard } from '../../src/components/layover/LayoverExperiencePlanCard.tsx';
 import { LayoverRecsSection } from '../../src/components/layover/LayoverRecsSection';
 import { LayoverMapCard } from '../../src/components/layover/LayoverMapCard';
 import { LayoverPeopleSection } from '../../src/components/layover/LayoverPeopleSection';
 import { LayoverCrewSection } from '../../src/components/layover/LayoverCrewSection'; import { LayoverCrewLocationCard } from '../../src/components/layover/LayoverCrewLocationCard'; import type { CrewLocationRead } from '../../src/services/layoverCrewLocation'; // census-layover L132/L124 (on this line so no line below moves)
 import { LayoverDiscoveryCard } from '../../src/components/layover/LayoverDiscoveryCard';
-import { LayoverSafeReturnCard } from '../../src/components/layover/LayoverSafeReturnCard';
+import { LayoverSafeReturnCard } from '../../src/components/layover/LayoverSafeReturnCard'; import { LayoverPinnedTerminalCard } from '../../src/components/layover/LayoverPinnedTerminalCard'; // L143/L120 (LAYOVER 165 B2-CURATE)
 import { LayoverEndSheet } from '../../src/components/layover/LayoverEndSheet'; import { endLayoverToast } from '../../src/components/layover/layoverEndToast';
 import { useSafeReturnAbort } from '../../src/components/layover/useSafeReturnAbort';
 import { LayoverCompassCard } from '../../src/components/layover/LayoverCompassCard';
@@ -74,7 +74,7 @@ import {
 } from '../../src/components/layover/layoverDeadlineCache';
 import { describeDeadline } from '../../src/components/layover/layoverReturnFacts';
 import { LayoverOfflinePlanCard } from '../../src/components/layover/LayoverOfflinePlanCard';
-import { layoverSensingCadence } from '../../src/lib/layoverSensingCadence';
+import { layoverSensingCadence } from '../../src/lib/layoverSensingCadence'; import { LayoverCrewPlanCard } from '../../src/components/layover/LayoverCrewPlanCard'; import { LayoverMutualDiscoveryCard } from '../../src/components/layover/LayoverMutualDiscoveryCard'; import { LayoverLiveReturnCard } from '../../src/components/layover/LayoverLiveReturnCard'; /* LAYOVER 165 lane B2-CREW: census L134/L135, L130, L157 — on this line so no line below moves */
 import { localReplan } from '../../src/components/layover/layoverLocalReplan';
 import {
   cacheCertifiedPlan,
@@ -98,7 +98,7 @@ export default function LayoverDashboardScreen() {
   const insets = useSafeAreaInsets();
 
   const [overview, setOverview] = useState<LayoverOverview | null>(null);
-  const [recs, setRecs] = useState<LayoverRecommendation[]>([]);
+  const [recs, setRecs] = useState<LayoverRecommendation[]>([]); const [routedMap, setRoutedMap] = useState<RoutedMapData | null>(null);
   const [loading, setLoading] = useState(true);
   const [recsLoading, setRecsLoading] = useState(true);
   // census L294 (C2) — the SERVER's refusal sentence, or null when it served a
@@ -306,7 +306,7 @@ export default function LayoverDashboardScreen() {
             usableMinutes: ovRead.overview.window.usableMinutes,
             departureTime: ovRead.overview.session.departureTime,
             boardingTime: ovRead.overview.session.boardingTime ?? null,
-          },
+          }, recRes.ok && (!ovRead.overview.snapshotId || ovRead.overview.snapshotId === recRes.snapshotId) ? routedMapForPlan(buildRoutedMapData(recRes.snapshotId, recRes.routedEnvelope, recRes.recommendations), ovRead.overview.stops.map(s => s.recommendationId)) : null,
         );
         if (ovRead.overview.share.enabled) loadPresence(id);
         setBuddies(buddyRes); // the WHOLE answer — a failed read or a gate refusal is not `[]` (census §48)
@@ -337,11 +337,11 @@ export default function LayoverDashboardScreen() {
       // census L294 (C2) — keep the two apart all the way to the card. An empty
       // `recs` with `recsError` null is a measured "nothing fits"; a non-null
       // `recsError` is the server's refusal and carries its sentence.
-      setRecs(recRes.ok ? recRes.recommendations : []);
+      setRecs(recRes.ok ? recRes.recommendations : []); setRoutedMap(recRes.ok ? buildRoutedMapData(recRes.snapshotId, recRes.routedEnvelope, recRes.recommendations) : null);
       setRecsError(recRes.ok ? null : recRes.message); setRecsLandside(recRes.ok ? recRes.landsideSuppression : null);
     } catch {
       setRecsLoading(false);
-      setRecs([]);
+      setRecs([]); setRoutedMap(null);
       setRecsError(UNREACHABLE_COPY);
       setLoadFailure({ reason: 'unreachable', message: UNREACHABLE_COPY, retryable: true });
       // census L150 — the same fallback on the belt-and-braces path. The two
@@ -359,7 +359,7 @@ export default function LayoverDashboardScreen() {
 
   // The abort cancels landside stops and may flip the session status, so the
   // screen must re-read rather than keep rendering the plan it just cleared.
-  const reloadAfterAbort = useCallback(() => { void load(true); }, [load]);
+  const reloadAfterAbort = useCallback(() => { void load(true); }, [load]); const refreshRoutedMap = useCallback(() => { setNowMs(Date.now()); return load(true); }, [load]); useRoutedMapRefresh(id, routedMap, overview?.snapshotId, refreshRoutedMap, nowMs);
   const returnAbort = useSafeReturnAbort(id, reloadAfterAbort);
 
   const canEdit = overview?.session.status === 'active';
@@ -713,7 +713,7 @@ export default function LayoverDashboardScreen() {
         {/* census L151/L233 — where they were going, which airport they have to
             be back at, and how far the certified envelope reached. Captioned
             last-certified by the card itself, through the one staleness rule. */}
-        <LayoverOfflinePlanCard plan={plan} replan={replanDecision} nowMs={nowMs} />{plan ? <View style={styles.offlineMap}><LayoverMapCard cached={plan} cachedReturn={cached} nowMs={nowMs} /></View> : null}{/* census-layover L126 — §13 offline state: the MAP card itself, drawn from the cached plan with its last-certified instant and stale badge */}
+        <LayoverOfflinePlanCard plan={plan} replan={replanDecision} nowMs={nowMs} />{!gone ? <LayoverCachedExperience sessionId={id} nowMs={nowMs} /> : null}{plan ? <View style={styles.offlineMap}><LayoverMapCard cached={plan} cachedReturn={cached} nowMs={nowMs} /></View> : loadFailure?.reason !== 'gone' ? <LayoverCachedAbortRoute sessionId={id} nowMs={nowMs} /> : null}{/* census-layover L126 — §13 offline state: the MAP card itself, drawn from the cached plan with its last-certified instant and stale badge */}
         {retryable && (
           <Pressable style={styles.retryBtn} onPress={() => load()} testID="layover-load-retry">
             <Text style={styles.retryBtnText}>Try again</Text>
@@ -728,13 +728,13 @@ export default function LayoverDashboardScreen() {
 
   const { session, airport, window: win, advice, stops, planFit, localTimes } = overview;
 
-  const returnCard = (
+  const returnCard = (<>
     <LayoverSafeReturnCard
       overview={overview}
       nowMs={nowMs}
       canAbort={!!canEdit}
       abort={returnAbort}
-    />
+    /><LayoverLiveReturnCard sessionStatus={session.status} returnState={overview.safeReturn?.returnState ?? win.returnState ?? null} airport={{ name: airport.name, lat: airport.lat, lng: airport.lng }} />{/* census-layover L157 — live return assistance: adaptive one-shot location sensing, only after the traveller turns it on (L164) */}</>
   );
   // §13 L123 — what the map's airport element needs in order to be the return
   // CTA's anchor. Every field is the server's certified posture; the action is
@@ -801,7 +801,7 @@ export default function LayoverDashboardScreen() {
             says so (RETURN_NOW / CONNECTION_AT_RISK), the abort card is hoisted
             above the hero instead of sitting with the plan. Nothing is hidden —
             position is the only thing that changes. */}
-        {returnCardFirst && returnCard}
+        {returnCardFirst && returnCard}{returnCardFirst ? <LayoverPinnedTerminalCard terminalInfo={overview.airport?.terminalInfo ?? null} airportCode={overview.airport?.iataCode ?? null} /> : null}{/* §15 L143 / §13 L120: in the return posture the curated terminal/gate context is PINNED under the return card (null when the airport has no checked topology — the card says so) */}
 
         <LayoverHero airport={airport} session={session} window={win} localTimes={localTimes} nowMs={nowMs} />
         {/* §24 L265 — a reminder that no longer matches the certified deadline,
@@ -846,7 +846,7 @@ export default function LayoverDashboardScreen() {
             ) : null}
           </View>
         ) : null}
-        {/* §2.1/§22 (census L9, L250): the card says which rung of the fallback
+        <LayoverReentryCard reentry={overview.reentry} timezone={airport.timezone} nowMs={nowMs} />{/* census L43: back at the airport, gate context replaces exploration. §2.1/§22 (census L9, L250): the card says which rung of the fallback
             ladder these minutes came off. The server derives it from the
             certified record; this screen only forwards it. */}
         <CanILeaveCard
@@ -854,7 +854,7 @@ export default function LayoverDashboardScreen() {
           window={win}
           airport={airport}
           airportIntelligence={overview.airportIntelligence ?? null}
-        /><LayoverDecisionRecordCard sessionId={session.id} snapshotId={overview.snapshotId} persisted={overview.persisted} engineVersion={overview.certification?.engineVersion ?? advice.engineVersion ?? null} timezone={airport.timezone} /><LayoverConstraintsCard sessionId={session.id} canEdit={!!canEdit} refreshKey={dataEpoch} onChanged={() => load(true)} creationNotice={typeof constraintsAtStart === 'string' ? constraintsAtStart : null} />{/* §4/§5/§12.1 (census L22, L35, L49): the declared bags and connection, and the one question when the answer could change the verdict. */}
+        /><LayoverAnswerChangesCard sessionId={session.id} snapshotId={overview.snapshotId} persisted={overview.persisted} timezone={airport.timezone} />{/* census L190: what changed since the answer this traveller last acknowledged */}<LayoverTimingEvidenceCard estimates={overview.estimates} /><LayoverDecisionRecordCard sessionId={session.id} snapshotId={overview.snapshotId} persisted={overview.persisted} engineVersion={overview.certification?.engineVersion ?? advice.engineVersion ?? null} timezone={airport.timezone} /><LayoverConstraintsCard sessionId={session.id} canEdit={!!canEdit} refreshKey={dataEpoch} onChanged={() => load(true)} creationNotice={typeof constraintsAtStart === 'string' ? constraintsAtStart : null} />{/* §4/§5/§12.1 (census L22, L35, L49): the declared bags and connection, and the one question when the answer could change the verdict. */}
         {/* The one §11 event producer this tree has: the traveller. A flight
             time the gate agent just announced is a fact no feed here carries,
             and the server runs the whole §11.1 pipeline over it. */}
@@ -884,13 +884,13 @@ export default function LayoverDashboardScreen() {
           canEdit={!!canEdit}
           onChanged={onStopsChanged}
           onError={showToast}
-        />
+        /><LayoverExperiencePlanCard sessionId={session.id} stops={stops} timezone={airport.timezone} canStart={session.status === 'active' && !!canEdit} refreshKey={dataEpoch} onChanged={() => { void load(true); }} />
         {/* Compass is the EXPLAINER, not an exploration affordance, so it sits
             outside the block below and stays mounted in every posture. It moved
             here from between the recommendations and the map only so that the
             three exploration surfaces are contiguous and can be collapsed as
             one; nothing about the panel itself changed. */}
-        <LayoverCompassCard sessionId={session.id} timezone={airport.timezone} />
+        <LayoverCompassCard sessionId={session.id} timezone={airport.timezone} onReplanned={() => { void load(true); }} />
 
         {explorationCollapsed ? (
           <View style={styles.collapsedNotice} testID="layover-exploration-collapsed">
@@ -912,8 +912,8 @@ export default function LayoverDashboardScreen() {
             </Pressable>
           </View>
         ) : (
-          <View style={styles.exploration} testID="layover-exploration">
-            <LayoverRecsSection
+          <View style={styles.exploration} testID="layover-exploration"><LayoverObjectiveIntentCard sessionId={session.id} places={recs} editable={session.status === 'active'} onChanged={() => { void load(true); }} />
+            <LayoverCurrentPositionCard sessionId={session.id} recs={recs} timezone={airport?.timezone ?? null} enabled={!!canEdit} /><LayoverRecsSection
               recs={recs}
               loading={recsLoading}
               error={recsError}
@@ -942,7 +942,7 @@ export default function LayoverDashboardScreen() {
               stops={stops}
               airportReturn={airportReturn}
               envelope={overview.safeEnvelope ?? null} envelopeGate={overview.safeEnvelopeGate ?? null}
-              candidateFeasibility={candidateFeasibility}
+              candidateFeasibility={candidateFeasibility} routedMap={routedMap} currentSnapshotId={overview.snapshotId}
               offline={overview.offlineBundle ?? null} crewLocations={crewLoc && crewLoc.ok && crewLoc.available && crewLoc.inCrew ? crewLoc.crewmates : null} /* census-layover L124: the SAME read the crew location card landed; feature off, no crew or a failed read is null */
               nowMs={nowMs} budgetChips={overview.mapBudgetChips ?? null} sessionId={id ?? null} /* census-layover L118: the server-offered time-budget chips; each press is a server simulation */
             />
@@ -963,8 +963,8 @@ export default function LayoverDashboardScreen() {
               buddies={buddies}
               canEdit={!!canEdit}
               onToggleShare={handleToggleShare}
-              onOpenBuddy={(b) => router.push(`/(rent-a-buddy)/buddy/${b.id}` as any)} intentsEnabled={overview.share.intentsEnabled === true} sessionId={id ?? null}
-            />
+              onOpenBuddy={(b, context) => router.push({ pathname: '/(rent-a-buddy)/checkout', params: { buddyId: b.id, ...context } } as any)} intentsEnabled={overview.share.intentsEnabled === true} sessionId={id ?? null}
+            /><LayoverMutualDiscoveryCard sessionId={session.id} refreshKey={dataEpoch} />{/* census-layover L130 — §14 L2 mutual discovery: a per-pair consent (3875). A SIBLING of the people section (its own read); draws nothing while the server's flag is off */}
 
             {/* §25.2 L269 — Layover Discovery. `getLayoverGems` and
                 `GET /hidden-gems/layover-safe` had NO caller under `app/layover/`
@@ -998,7 +998,7 @@ export default function LayoverDashboardScreen() {
               sessionId={session.id}
               timezone={airport.timezone}
               refreshKey={dataEpoch}
-            /><LayoverCrewLocationCard sessionId={session.id} timezone={airport.timezone} refreshKey={dataEpoch} onRead={setCrewLoc} />{/* census-layover L132 — §14 L4 temporary location. A SIBLING of the crew section, never inside it (its own read would join the section's fetches); it draws nothing unless the server says the feature is on and this traveller is in a crew */}
+            /><LayoverCrewLocationCard sessionId={session.id} timezone={airport.timezone} refreshKey={dataEpoch} onRead={setCrewLoc} />{/* census-layover L132 — §14 L4 temporary location. A SIBLING of the crew section, never inside it (its own read would join the section's fetches); it draws nothing unless the server says the feature is on and this traveller is in a crew */}<LayoverCrewPlanCard sessionId={session.id} timezone={airport.timezone} refreshKey={dataEpoch} />{/* census-layover L134/L135 — §14.1 explicit split plans, certified against every member branch by the server (3872); a SIBLING, drawn only when the flag is on and this traveller is in a crew */}
           </View>
         )}
       </ScrollView>
@@ -1185,3 +1185,13 @@ import { layoverPostcardOffered, layoverPostcardHref } from '../../src/component
 import { LayoverDisruptionCard } from '../../src/components/layover/LayoverDisruptionCard';
 // census-layover L189/L191 — Portava's stored record of the answer, explained and re-checked. Imported at the TAIL so no cited line moves; ESM hoists imports.
 import { LayoverDecisionRecordCard } from '../../src/components/layover/LayoverDecisionRecordCard';
+
+import { buildRoutedMapData, routedMapForPlan, type RoutedMapData } from '../../src/lib/layoverRoutedMap.ts';
+import { useRoutedMapRefresh } from '../../src/components/layover/useRoutedMapRefresh.ts';
+import { LayoverCachedAbortRoute } from '../../src/components/layover/LayoverCachedAbortRoute.tsx';
+import { LayoverCachedExperience } from '../../src/components/layover/LayoverCachedExperience.tsx';
+import { LayoverObjectiveIntentCard } from '../../src/components/layover/LayoverObjectiveIntentCard.tsx';
+import { LayoverTimingEvidenceCard } from '../../src/components/layover/LayoverTimingEvidenceCard.tsx';
+import { LayoverCurrentPositionCard } from '../../src/components/layover/LayoverCurrentPositionCard.tsx';
+import { LayoverAnswerChangesCard } from '../../src/components/layover/LayoverAnswerChangesCard.tsx';
+import { LayoverReentryCard } from '../../src/components/layover/LayoverReentryCard.tsx';

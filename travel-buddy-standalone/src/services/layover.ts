@@ -194,7 +194,7 @@ export interface PublicAirport {
   timezone: string;
   lat: number | null;
   lng: number | null;
-  verified: boolean;
+  verified: boolean; topologyGeometry?: import('../lib/layoverAirportGeometry.ts').AirportTopologyGeometry | null; /** §15 L143 (LAYOVER 165 B2-CURATE): the airport's curated, validated, unexpired terminal topology — null when it has none. */ terminalInfo?: Record<string, unknown> | null;
 }
 
 export interface LayoverLocalTimes {
@@ -301,16 +301,16 @@ export interface ReturnContract {
     lng: number | null;
     terminalInfo: unknown | null;
   };
-  /** Always null on this tree — there is no routing provider. */
-  route: null;
-  routeUnavailableReason: 'no_routing_provider';
+  /** Measured return from an explicitly supplied origin; null when unavailable. */
+  route: AbortReturnRoute | null;
+  routeUnavailableReason: string | null;
   certification: LayoverCertification;
 }
 
 export type OfflineUnavailableReason =
   | 'no_routing_provider'
   | 'no_envelope_geometry'
-  | 'no_flight_feed'
+  | 'no_flight_feed' | 'not_linked_to_a_trip_flight' | 'no_flight_observation' | 'flight_unreadable' // §16 L153: the onward flight as Trips recorded it
   | 'no_crew_storage' | 'crew_not_read' | 'not_in_crew' | 'no_meeting_point_set' | 'crew_unreadable' // §48 L154; the first is what pre-§48 cached bundles carry
   | 'no_phrase_catalogue' // what bundles cached before §16 L155 carry
   | 'language_not_in_catalogue' | 'plan_stays_airside'; // §16 L155 (lane R, 2026-10-07)
@@ -318,7 +318,7 @@ export type OfflineUnavailableReason =
 /** §16 L155 — one return phrase: the local sentence to show, and what it says. */
 export interface LayoverPhrase { key: string; english: string; local: string }
 /** §16 L155 — the return phrases the plan requires, in the airport country's language. */
-export interface LayoverPhraseSet { language: string; languageName: string; phrases: LayoverPhrase[] }
+export interface LayoverPhraseSet { language: string; languageName: string; phrases: LayoverPhrase[]; reviewStatus?: 'native_review_pending'; languageOptions?: Array<{ language: string; languageName: string; phrases: LayoverPhrase[]; stops: Array<{ stopTitle: string; phrases: LayoverPhrase[] }> }> }
 
 export interface OfflineCapability<T> {
   available: boolean;
@@ -349,11 +349,11 @@ export interface LayoverOfflineBundle {
     timezone: string;
     lat: number | null;
     lng: number | null;
-    terminalInfo: Record<string, unknown> | null;
+    terminalInfo: Record<string, unknown> | null; topologyGeometry?: import('../lib/layoverAirportGeometry.ts').AirportTopologyGeometry | null;
   };
   mapGeometry: OfflineCapability<never>;
   route: OfflineCapability<never>;
-  flightStatus: OfflineCapability<never>;
+  flightStatus: OfflineCapability<LayoverOfflineFlightStatus>; /** §16 L153 — the onward flight's last recorded observation, or why there is none. */
   /**
    * §16 L154 — the crew meeting point, cached for offline.
    *
@@ -438,7 +438,7 @@ export interface ReturnNowSuccess {
   effects: AbortEffect[];
   /** census-layover L144: how many crewmates the server says hold the notice — a count, never ids (absent on a pre-L144 server). */
   crewNotifiedCount?: number; /** pre-L144 servers only: always empty there. */ crewNotified?: string[];
-  crewNotifyUnavailableReason: CrewNotifyUnavailableReason | null;
+  crewNotifyUnavailableReason: CrewNotifyUnavailableReason | null; buddyNotifiedCount?: number; buddyNotifyUnavailableReason?: string | null;
   statusApplied: boolean;
   statusCapability: ReturnNowStatusCapability;
 }
@@ -459,7 +459,7 @@ export type ReturnNowOutcome =
       message: string;
       returnContract: ReturnContract;
       posture: SafeReturnPosture;
-      effects: AbortEffect[]; /** census-layover L144: a partial abort still says whether the crew was told (absent on a pre-L144 server). */ crewNotifiedCount?: number; crewNotifyUnavailableReason?: CrewNotifyUnavailableReason | null;
+      effects: AbortEffect[]; /** census-layover L144: a partial abort still says whether the crew was told (absent on a pre-L144 server). */ crewNotifiedCount?: number; crewNotifyUnavailableReason?: CrewNotifyUnavailableReason | null; buddyNotifiedCount?: number; buddyNotifyUnavailableReason?: string | null;
     }
   | { kind: 'already_ended'; message: string }
   | { kind: 'offline' }
@@ -558,7 +558,7 @@ export interface LayoverReminderDisposition {
   rung: { level: string; priority: string; label: string };
 }
 
-export interface LayoverOverview {
+export interface LayoverOverview { estimates?: unknown;
   session: LayoverSession;
   airport: PublicAirport;
   window: LayoverWindow;
@@ -584,7 +584,7 @@ export interface LayoverOverview {
   /** §2.1/§22 — how much of THIS airport went into those numbers. */
   airportIntelligence: LayoverAirportIntelligence;
   /** §15 — the posture the surface should take now. */
-  safeReturn: SafeReturnPosture; /** census-layover L144 — whether the abort may OFFER "tell my crew" (flag on + a live crew joined with this session). Absent on a pre-L144 server: not offered. */ crewAbortNotice?: { available: boolean; reason: string | null };
+  safeReturn: SafeReturnPosture; safeReturnProduct?: LayoverSafeReturnProductState; /** census-layover L144 — whether the abort may OFFER "tell my crew" (flag on + a live crew joined with this session). Absent on a pre-L144 server: not offered. */ crewAbortNotice?: { available: boolean; reason: string | null }; buddyAbortNotice?: {available:boolean;reason:string|null};
   /** §16 — the bundle that lets an offline client say how old its answer is. */
   offlineBundle: LayoverOfflineBundle;
   /**
@@ -596,7 +596,7 @@ export interface LayoverOverview {
    */
   safeEnvelope: LayoverSafeEnvelope | null; /** The landside gate `safeEnvelope` was published under: WITHHELD (null, `withheld: "landside_closed"`) when closed; not to be called "safe" unless `status === "open"`. ABSENT on a server that predates it — which a client must read as not-open. */ safeEnvelopeGate?: LayoverSafeEnvelopeGate | null;
   returnReminderAt: string | null; /** wave W (census L18/L41/L99) — the §15 rung each phone-scheduled return alert fires at, and the server's materiality threshold. Optional: an older server sends none, and the alerts fall back. */ returnAlertPolicy?: LayoverReturnAlertPolicy | null;
-  localTimes: LayoverLocalTimes; /** §20 — the decision store's state. `{ state: 'not_stored', reason: 'persistence_disabled' }` means 2992's write gate is OFF (census L30's checkpoints sit behind it). Optional: an older server sends none. */ persisted?: { state: string; reason?: string; unwritten?: string[] } | null;
+  reentry?: LayoverReentryContext; /** census L43 — present only after a re-entry check-in (or when check-ins could not be read). */ localTimes: LayoverLocalTimes; /** §20 — the decision store's state. `{ state: 'not_stored', reason: 'persistence_disabled' }` means 2992's write gate is OFF (census L30's checkpoints sit behind it). Optional: an older server sends none. */ persisted?: { state: string; reason?: string; unwritten?: string[] } | null;
 }
 
 export interface PresenceTraveler {
@@ -639,7 +639,7 @@ export interface LayoverBuddy {
  * this screen shows, so the list and the countdown cannot disagree.
  */
 export interface LayoverBuddySafetyGate {
-  passed: boolean;
+  passed: boolean; bookingStartsAt?: string; bookingEndsBy?: string; timezone?: string;
   verdict: LeaveAdvice['verdict'] | string;
   usableMinutes: number;
   returnState: LayoverReturnState | string;
@@ -738,10 +738,10 @@ export interface LayoverRecommendation {
    * that has the candidate-feasibility contract; optional here only so an older
    * server degrades to "not measured" rather than to a crash.
    */
-  feasibility?: CandidateFeasibility; /** census L75 — the §9 ExperiencePrimitive for the card's KIND (typical, never this place's); see `LayoverExperience` at the end of this file. Absent from an older server. */ experience?: LayoverExperience; /** census L296 (App C5) — the snapshot this card was returned with (`GET /:id/recommendations` → `snapshotId`); adding it to a plan names this, never a newer one. Absent from an older server. */ snapshotId?: string | null;
+  feasibility?: CandidateFeasibility; routing?: RoutedCardContract | null; /** census L75 — the §9 ExperiencePrimitive for the card's KIND (typical, never this place's); see `LayoverExperience` at the end of this file. Absent from an older server. */ experience?: LayoverExperience; /** census L296 (App C5) — the snapshot this card was returned with (`GET /:id/recommendations` → `snapshotId`); adding it to a plan names this, never a newer one. Absent from an older server. */ snapshotId?: string | null;
 }
 
-export interface LayoverSafetyResult {
+export interface LayoverSafetyResult { estimates?: unknown;
   overallRating: SafetyRating;
   overallLabel: string;
   availableMinutes: number;
@@ -1029,7 +1029,7 @@ export async function updateLayoverSession(
  * the SERVER's own sentence for it.
  */
 export type LayoverRecsResult =
-  | { ok: true; recommendations: LayoverRecommendation[]; /** census L43 — why landside ideas were withheld (re-entry), or that the check could not be made; null when neither. */ landsideSuppression: LayoverLandsideSuppression | null; /** census L296 — the snapshot every card above was certified under; null from an older server. */ snapshotId: string | null }
+  | { ok: true; recommendations: LayoverRecommendation[]; routedEnvelope?: RoutedSafeEnvelope | null; /** census L43 — why landside ideas were withheld (re-entry), or that the check could not be made; null when neither. */ landsideSuppression: LayoverLandsideSuppression | null; /** census L296 — the snapshot every card above was certified under; null from an older server. */ snapshotId: string | null }
   | { ok: false; message: string };
 
 /** What a failure says when the server said nothing at all (offline, unparseable). */
@@ -1069,7 +1069,7 @@ export async function getRecommendations(sessionId: string): Promise<LayoverRecs
     };
   }
   return {
-    ok: true, landsideSuppression: landsideSuppressionOf(json.landsideSuppression), snapshotId: recommendationSnapshotOf(json.snapshotId),
+    ok: true, landsideSuppression: landsideSuppressionOf(json.landsideSuppression), snapshotId: recommendationSnapshotOf(json.snapshotId), routedEnvelope: routedEnvelopeOf(json.routedEnvelope),
     recommendations: Array.isArray(json.recommendations)
       ? stampRecommendationSnapshot(json.recommendations as LayoverRecommendation[], recommendationSnapshotOf(json.snapshotId))
       : [],
@@ -1131,10 +1131,10 @@ export async function setReturnDeadline(
  * server is idempotent-safe either way (see the route's comment), and a guard
  * living in the service would silently swallow a deliberate retry.
  */
-export async function returnToAirportNow(sessionId: string, opts: { tellCrew?: boolean } = {}): Promise<ReturnNowOutcome> {
+export async function returnToAirportNow(sessionId: string, opts: { tellCrew?: boolean; tellBuddy?: boolean; origin?: ReturnRouteOrigin } = {}): Promise<ReturnNowOutcome> {
   let res: Response;
   try {
-    res = await authedFetch(airportUrl('sessions', sessionId, 'return-now'), { method: 'POST', ...(opts.tellCrew === true ? { body: JSON.stringify({ tellCrew: true }) } : {}) });
+    res = await authedFetch(airportUrl('sessions', sessionId, 'return-now'), { method: 'POST', ...(opts.tellCrew === true || opts.tellBuddy === true || opts.origin ? { body: JSON.stringify({ ...(opts.tellCrew === true ? { tellCrew: true } : {}), ...(opts.tellBuddy === true ? { tellBuddy: true } : {}), ...(opts.origin ? { origin: opts.origin } : {}) }) } : {}) });
   } catch {
     // No response at all: airplane mode, dead tunnel, DNS. The caller falls
     // back to the last certified deadline it already holds.
@@ -1159,7 +1159,7 @@ export async function returnToAirportNow(sessionId: string, opts: { tellCrew?: b
         : 'Your plan could not be fully cleared. Head to the airport now.',
       returnContract: body.returnContract as ReturnContract,
       posture: body.posture as SafeReturnPosture,
-      effects: Array.isArray(body.effects) ? (body.effects as AbortEffect[]) : [], ...(typeof body.crewNotifiedCount === 'number' ? { crewNotifiedCount: body.crewNotifiedCount } : {}), ...(body.crewNotifyUnavailableReason !== undefined ? { crewNotifyUnavailableReason: typeof body.crewNotifyUnavailableReason === 'string' ? body.crewNotifyUnavailableReason : null } : {}),
+      effects: Array.isArray(body.effects) ? (body.effects as AbortEffect[]) : [], ...(typeof body.buddyNotifiedCount === 'number' ? {buddyNotifiedCount:body.buddyNotifiedCount}:{}), ...(body.buddyNotifyUnavailableReason !== undefined ? {buddyNotifyUnavailableReason:typeof body.buddyNotifyUnavailableReason==='string'?body.buddyNotifyUnavailableReason:null}:{}), ...(typeof body.crewNotifiedCount === 'number' ? { crewNotifiedCount: body.crewNotifiedCount } : {}), ...(body.crewNotifyUnavailableReason !== undefined ? { crewNotifyUnavailableReason: typeof body.crewNotifyUnavailableReason === 'string' ? body.crewNotifyUnavailableReason : null } : {}),
     };
   }
 
@@ -2154,7 +2154,7 @@ export async function getLayoverCheckpoints(sessionId: string): Promise<LayoverC
 }
 
 export type LayoverCheckpointReport =
-  | { ok: true; duplicate: boolean; airportPresence: AirportPresence | null }
+  | { ok: true; duplicate: boolean; airportPresence: AirportPresence | null; safeReturn?: {ok:boolean;closed?:boolean;reason?:string} }
   | { ok: false; reason: 'off' | 'ended' | 'unavailable' | 'unreachable' | 'refused'; message: string };
 
 /**
@@ -2178,7 +2178,7 @@ export async function reportLayoverCheckpoint(
   const json = await readJsonRecord(res);
   const message = stringField(json, 'message') ?? 'Your check-in was not saved.';
   if (res.ok && json?.ok === true) {
-    return { ok: true, duplicate: json.duplicate === true, airportPresence: presenceOf(json.airportPresence) };
+    return { ok: true, duplicate: json.duplicate === true, airportPresence: presenceOf(json.airportPresence), ...(json.safeReturn && typeof json.safeReturn==='object' ? {safeReturn:{ok:(json.safeReturn as Record<string,unknown>).ok===true,closed:(json.safeReturn as Record<string,unknown>).closed===true}} : {}) };
   }
   if (stringField(json, 'error') === 'feature_disabled') return { ok: false, reason: 'off', message };
   if (res.status === 409) return { ok: false, reason: 'ended', message };
@@ -2216,7 +2216,7 @@ export type LandsideClosure =
   /** Whether the next flight leaves from another airport is not stated. */
   | 'airport_change_unknown'
   /** Whether the flights are on separate tickets is not stated, and it decides. */
-  | 'recheck_unknown';
+  | 'recheck_unknown' | 'airport_maturity_limited'; // §22 L243 (LAYOVER 165 B2-CURATE): the airport's checked data is below the L1 threshold — airport-side guidance only
 
 /** Why a gate that nothing CLOSED is still not open. */
 export type LandsideCaution = 'entry_unconfirmed' | 'tight_window';
@@ -2753,7 +2753,7 @@ function notifyRecommendationExpiry(): void {
  */
 function stampRecommendationSnapshot(recs: LayoverRecommendation[], snapshotId: string | null): LayoverRecommendation[] {
   if (snapshotId !== null && expiredRecommendationSnapshots.delete(snapshotId)) notifyRecommendationExpiry();
-  return recs.map((r) => ({ ...r, snapshotId }));
+  return recs.map((r) => ({ ...r, snapshotId, ...(r.routing === undefined ? {} : { routing: routedCardOf(r.routing) }) }));
 }
 
 /** The snapshot of the card the traveller pressed, held from the press until its add is sent. */
@@ -2966,3 +2966,139 @@ export async function replayLayoverDecisions(sessionId: string, engineVersion: s
   if (json.state === 'unavailable') return unavailableOf(json);
   return { ok: false, kind: 'failed', message: 'Portava answered, but not with anything this version of the app can show.', retryable: false };
 }
+
+/** L221: transmitted only after an explicit location-route press; never persisted by the server. */
+export interface ReturnRouteOrigin { lat: number; lng: number; accuracyMeters: number; observedAt: string; mode: 'walk' | 'drive' }
+export interface AbortReturnRoute {
+  mode: 'walk' | 'drive'; departAt: string; minutes: number; conservativeMinutes: number;
+  hardReturnBy: string; leaveBy: string; expectedAirportReturnAt: string; canMeetDeadline: boolean;
+  confidence: 'HIGH' | 'MEDIUM' | 'LOW' | 'INSUFFICIENT'; expiresAt: string; independentRoutes: number;
+  conveyances: Array<{ mode: string; minutes: number; interruptibility: string; endsAt: string | null }>;
+}
+
+import { routedCardOf, routedEnvelopeOf, type RoutedCardContract, type RoutedSafeEnvelope } from '../lib/layoverRoutedMap.ts';
+
+export interface LayoverSafeReturnProductState { available:boolean; reason:string|null; certifiedDeadline:string|null; session:import('./safeReturn.ts').SafeReturnSession|null }
+export async function getLayoverSafeReturnProduct(sessionId:string):Promise<LayoverSafeReturnProductState> {
+  const res=await authedFetch(airportUrl('sessions',sessionId,'safe-return'));
+  if (!res.ok) throw new Error('Safe Return could not be checked.');
+  return await res.json() as LayoverSafeReturnProductState;
+}
+
+// ── census-layover L190 — "what changed since the last answer" ───────────────
+//
+//   GET /api/airport/sessions/:id/decisions/diff?from=<snapshotId>&to=<snapshotId>
+//
+// The client caller for `LayoverDecisionService.diff(previousSnapshotId,
+// nextSnapshotId)`. `changes` is the server's list of what a traveller is told
+// moved between two STORED answers (verdict, return state, the be-back-by time
+// with the minutes it moved, usable time only when the clock does not explain
+// it, confidence); the reason codes come from `diff`. Every refusal resolves as
+// the code it is: nothing here compares two answers itself or invents a value.
+
+export type LayoverChangeField = 'verdict' | 'returnState' | 'hardReturnTime' | 'usableMinutes' | 'confidence';
+
+export interface LayoverAnswerChange {
+  field: LayoverChangeField | string;
+  previous: string | number;
+  next: string | number;
+  /** `hardReturnTime` only: whole minutes the deadline moved, negative = earlier. */
+  minutesMoved?: number;
+}
+
+export type LayoverAnswerChangesRead =
+  | { ok: true; previousSnapshotId: string; nextSnapshotId: string; changes: LayoverAnswerChange[]; reasonCodesAdded: string[]; reasonCodesRemoved: string[] }
+  /** The ledger did not store answers (persistence off): there is nothing to compare. */
+  | LayoverDecisionUnavailable
+  | LayoverDecisionFailed;
+
+function answerChangesOf(v: unknown): LayoverAnswerChange[] | null {
+  if (!Array.isArray(v)) return null;
+  const out: LayoverAnswerChange[] = [];
+  for (const c of v) {
+    if (!c || typeof c !== 'object') return null;
+    const o = c as Record<string, unknown>;
+    const scalar = (x: unknown) => typeof x === 'string' || (typeof x === 'number' && Number.isFinite(x));
+    if (typeof o.field !== 'string' || !scalar(o.previous) || !scalar(o.next)) return null;
+    out.push({
+      field: o.field, previous: o.previous as string | number, next: o.next as string | number,
+      ...(typeof o.minutesMoved === 'number' && Number.isFinite(o.minutesMoved) ? { minutesMoved: o.minutesMoved } : {}),
+    });
+  }
+  return out;
+}
+
+/** census L190 — what changed between the answer the traveller last saw (`from`) and the one on screen (`to`). */
+export async function getLayoverAnswerChanges(sessionId: string, from: string, to: string): Promise<LayoverAnswerChangesRead> {
+  const url = `${airportUrl('sessions', encodeURIComponent(sessionId), 'decisions', 'diff')}?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+  const read = await decisionRead(url);
+  if (!read.ok) return read;
+  const { json } = read;
+  if (json.state === 'not_stored') return unavailableOf(json);
+  const diff = json.diff as Record<string, unknown> | undefined;
+  const changes = answerChangesOf(json.changes);
+  if (json.state === 'stored' && diff && typeof diff === 'object' && changes) {
+    return {
+      ok: true,
+      previousSnapshotId: typeof diff.previousSnapshotId === 'string' ? diff.previousSnapshotId : from,
+      nextSnapshotId: typeof diff.nextSnapshotId === 'string' ? diff.nextSnapshotId : to,
+      changes,
+      reasonCodesAdded: stringList(diff.reasonCodesAdded),
+      reasonCodesRemoved: stringList(diff.reasonCodesRemoved),
+    };
+  }
+  return { ok: false, kind: 'failed', message: 'Portava answered, but not with anything this version of the app can show.', retryable: false };
+}
+
+// ── census-layover L153 / L43 — the onward flight, as Trips last recorded it ──
+//
+// Served by `LayoverDepartureFlight.ts` (api-server). The values are the last
+// RECORDED OBSERVATION of the traveller's onward flight (the traveller's own
+// report or an approved feed's, 3826's RECORD_FLIGHT_STATUS), each with who
+// recorded it and when. `staleAfter` is the server's: the bundle TTL from the
+// OBSERVATION instant, never renewed. Nothing here re-derives a flight status.
+
+/** §16 L153 — the offline bundle's flight/gate values. */
+export interface LayoverOfflineFlightStatus {
+  designator: string | null;
+  departureAirport: string | null;
+  scheduledDepartureAt: string | null;
+  estimatedDepartureAt: string | null;
+  terminal: string | null;
+  gate: string | null;
+  status: string;
+  /** 'traveller' or 'feed'. */
+  source: string;
+  observedAt: string;
+  staleAfter: string;
+}
+
+export interface LayoverDepartureFlightObservation {
+  segmentId: string;
+  designator: string | null;
+  departureAirport: string | null;
+  scheduledDepartureAt: string | null;
+  estimatedDepartureAt: string | null;
+  terminal: string | null;
+  gate: string | null;
+  status: string;
+  source: string;
+  observedAt: string;
+  staleAfter: string;
+}
+
+export type LayoverDepartureFlightRead =
+  | { state: 'off' }
+  | { state: 'not_linked' }
+  | { state: 'not_observed'; segmentId: string }
+  | { state: 'unreadable'; reason: string }
+  | { state: 'observed'; flight: LayoverDepartureFlightObservation };
+
+export type LayoverReentrySecurity =
+  | { state: 'live'; extraMinutes: number; observedAt: string | null; expiresAt: string | null }
+  | { state: 'no_live_reading' };
+
+/** census L43 — RETURNING → AIRPORT_REENTERED: the gate and security, refreshed at this request. */
+export type LayoverReentryContext =
+  | { state: 'reentered'; reportedAt: string; refreshedAt: string; flight: LayoverDepartureFlightRead; security: LayoverReentrySecurity }
+  | { state: 'unknown'; reason: string };

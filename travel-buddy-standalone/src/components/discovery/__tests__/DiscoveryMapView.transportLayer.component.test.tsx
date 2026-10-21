@@ -7,7 +7,7 @@
  * Run: pnpm test:component  (matches --testPathPattern='\.component\.test\.')
  */
 import React from 'react';
-import { render } from '@testing-library/react-native';
+import { render, within } from '@testing-library/react-native';
 
 jest.mock('@maplibre/maplibre-react-native', () => {
   const RN = jest.requireActual('react-native');
@@ -73,4 +73,10 @@ describe('DiscoveryMapView — the Transport layer restyles the base map', () =>
     for (const id of TRANSPORT_STYLE_LAYER_IDS) expect(ids).toContain(id);
     expect(style.sources).toBe(PORTAVA_DARK_MAP_STYLE.sources);
   });
+});
+
+it('hosts server geographic overlays in the native map beneath markers', async () => {
+  const RN = jest.requireActual('react-native');
+  const view = await render(<DiscoveryMapView places={[]} onSelectPlace={noop} fallbackLat={1} fallbackLng={2}><RN.View testID="server-geography" /></DiscoveryMapView>);
+  expect(within(view.getByTestId('map-container')).getByTestId('server-geography')).toBeTruthy();
 });

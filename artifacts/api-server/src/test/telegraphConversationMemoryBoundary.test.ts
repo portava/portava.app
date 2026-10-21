@@ -1534,3 +1534,23 @@ describe("T366 wave 5 correction — PIN for the reviewed composerTaskOutcome mo
     assert.match(units.find((u) => u.declares.includes("recipientServed"))!.code, /entities: \[\{ entityType: 'user', entityId: id \}\]/, "a recipient pick no longer names exactly one user");
   });
 });
+
+describe("T366 detector — a negated non-database `.from(` is not a read (Layover 165 release, fix lane B, 2026-10-20)", () => {
+  // `!Array.from(xs)` captured its receiver as "!Array", which NON_DB_FROM_RECEIVER does not name, so the
+  // detector seeded an UNRESOLVED read in services/airport/LayoverFeasibility.ts's namedReturnCorridorRisk
+  // (`!Array.from(risk.contributingFactors)`), and every caller up to routes/safeReturn.ts's confirm handler
+  // became a possible history reader beside its createSuggestedMemory. Nothing in that chain reads a table.
+  it("a leading logical NOT does not turn Array/Buffer/Set.from into a database read", () => {
+    for (const src of ["if (!Array.from(xs).every(ok)) return;", "const bad = !Buffer.from(raw).length;", "return !!Set.from(xs);"]) {
+      assert.deepEqual(fromSites(src), [], src);
+      assert.deepEqual(conversationReadsResolved(src, new Map()), [], src);
+    }
+  });
+
+  it("CONTROL — a negated or non-null-asserted client read is still a read, resolved or not", () => {
+    assert.deepEqual(fromSites("if (!db.from(table)) return;").map((s) => s.expr), ["table"]);
+    assert.deepEqual(fromSites("const r = !sc!.from(table);").map((s) => s.expr), ["table"]);
+    assert.deepEqual(fromSites('const r = await client!.from("messages").select("body");').map((s) => s.table), ["messages"]);
+    assert.ok(conversationReadsResolved("const r = !sc.from(t);", new Map())[0]!.startsWith("?"), "an unresolved negated read still fails closed");
+  });
+});

@@ -1322,3 +1322,7 @@ export function renderTemplate(
     actionUrl: tpl.actionUrl ? tpl.actionUrl(params) : undefined,
   };
 }
+
+// L144: appended to preserve all existing template indexes. Generic in-app-only disclosure.
+const buddyAbortTemplate = tpl({ eventType:'layover.buddy.traveler_heading_back', category:'airport', defaultPriority:'normal', defaultChannels:['in_app'], title:()=> 'Your booked traveler', body:()=> 'Your booked traveler is heading back to the airport.' });
+TEMPLATES.push(buddyAbortTemplate); TEMPLATE_MAP.set(buddyAbortTemplate.eventType,buddyAbortTemplate);

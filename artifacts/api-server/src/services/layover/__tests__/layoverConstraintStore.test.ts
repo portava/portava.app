@@ -114,19 +114,42 @@ function decisiveMinutes(): number {
 }
 const DECISIVE = decisiveMinutes();
 
+/**
+ * LAYOVER 165 B2-CURATE: since 2026-10-18 an unconfirmed border CLOSES landside (owner decision, fail closed), so
+ * the only CAUTION left is a tight window under a CONFIRMED border. The LONGEST such window, found rather than
+ * assumed, so a short landside candidate still fits it.
+ */
+function tightMinutes(): number {
+  let found = -1;
+  for (let m = 120; m < 900; m += 1) {
+    const r = certifySessionFeasibility(AIRPORT, {
+      id: SESSION, arrivalTime: new Date(NOW).toISOString(), departureTime: new Date(NOW + m * 60_000).toISOString(), boardingTime: null,
+      flightType: "international", immigrationRequired: true, checkedBags: false, wantsToLeave: true,
+      constraints: { read: "storage_off", set: null, entryForbidsLandside: true },
+    } as never, { nowMs: NOW, entry: { state: "permitted", status: "visa_free", corridor: { passportCountry: "US", destinationCountry: "TW" } } });
+    if (r.verdict === "tight") found = m;
+  }
+  if (found < 0) throw new Error("fixture: no tight window");
+  return found;
+}
+const TIGHT = tightMinutes();
+
 // ═══════════════════════════════════════════════════════════════════════════
-describe("the loaders attach the context — and attach NOTHING when both flags are off", () => {
-  it("flags absent or FALSE: the session has no `constraints` key and the table is never touched", async () => {
+describe("the loaders attach the context — with both flags off, the entry policy alone (fail closed since 2026-10-18)", () => {
+  // LAYOVER 165 B2-CURATE (census L48/L77): the owner decided that an unconfirmed border fails closed in EVERY flag
+  // state, so a flag-off session is no longer the bare row: it carries `storage_off` with the policy ON. The table
+  // is still never touched with layover_constraints_enabled off.
+  it("flags absent or FALSE: `storage_off` with the entry policy ON, and the table is never touched", async () => {
     for (const w of [world(), world({ storage: false, entryPolicy: false })]) {
       const s = await owned(w.db);
-      assert.equal("constraints" in s, false, "a flag-off session gained a constraints key — responses that serialise it changed");
+      assert.deepEqual(s.constraints, { read: "storage_off", set: null, entryForbidsLandside: true });
       assert.equal("layover_constraints" in w.tables, false, "the store was read with layover_constraints_enabled off");
     }
   });
 
   it("storage ON, nothing declared: `undeclared`", async () => {
     const s = await owned(world({ storage: true }).db);
-    assert.deepEqual(s.constraints, { read: "undeclared", set: null, entryForbidsLandside: false });
+    assert.deepEqual(s.constraints, { read: "undeclared", set: null, entryForbidsLandside: true });
   });
 
   it("storage ON, two versions: the LATEST is the declared set", async () => {
@@ -148,7 +171,7 @@ describe("the loaders attach the context — and attach NOTHING when both flags 
   it("storage ON, the read FAILS: `unreadable`, the session still loads, and the engine takes the cautious case", async () => {
     const { db } = world({ storage: true, minutes: DECISIVE, failures: { "layover_constraints:select": { message: "relation does not exist" } } });
     const s = await owned(db);
-    assert.deepEqual(s.constraints, { read: "unreadable", set: null, entryForbidsLandside: false });
+    assert.deepEqual(s.constraints, { read: "unreadable", set: null, entryForbidsLandside: true });
     const record = certifySessionFeasibility(AIRPORT, s, { nowMs: NOW, entry: { state: "permitted", status: "visa_free", corridor: { passportCountry: "GB", destinationCountry: "TW" } } });
     assert.equal(record.deadline.breakdown.bagsExtra, 15, "an unreadable store was read as the row's `checked_bags: false`");
     assert.equal(record.landsideGate.open, false);
@@ -197,7 +220,7 @@ describe("the loaders attach the context — and attach NOTHING when both flags 
     const one = await getSession(db, SESSION, USER);
     assert.ok(active.ok && list.ok && batch.ok && one.ok, "a constraint read that threw failed the session load");
     for (const s of [active.session, list.sessions[0], batch.sessions[0], one.session]) {
-      assert.deepEqual(s?.constraints, { read: "unreadable", set: null, entryForbidsLandside: false });
+      assert.deepEqual(s?.constraints, { read: "unreadable", set: null, entryForbidsLandside: true });
     }
     assert.equal(throws, 6, "fixture: every read reached the throwing table");
     const record = certifySessionFeasibility(AIRPORT, one.session!, { nowMs: NOW, entry: { state: "permitted", status: "visa_free", corridor: { passportCountry: "GB", destinationCountry: "TW" } } });
@@ -379,11 +402,13 @@ describe("L35 on the schema that exists today — storage OFF keeps the cautious
     assert.deepEqual(pOff.declarable, ["baggageMode"]);
     assert.equal(pOff.constraints, null);
     assert.equal(pOff.baggageCharged, false);
-    // Flags off, the border unconfirmed: this was published as LANDSIDE_AVAILABLE.
-    assert.equal(pOff.verdict, "entry_unverified");
+    // Flags off, the border unconfirmed: this was published as LANDSIDE_AVAILABLE, then as a caution; since the
+    // owner's 2026-10-18 decision it is a CLOSURE (entry_unconfirmed) and the state is AIRPORT_ONLY.
+    assert.equal(pOff.verdict, "no");
     assert.equal(pOff.landsideGate.open, false);
-    assert.equal(pOff.layoverState, null);
-    assert.equal(pOff.layoverStateUnavailableReason, "landside_unconfirmed");
+    assert.ok(pOff.landsideGate.closedBy.includes("entry_unconfirmed"));
+    assert.equal(pOff.layoverState, "AIRPORT_ONLY");
+    assert.equal(pOff.layoverStateUnavailableReason, null);
 
     const on = world({ storage: true, constraints: [{ version: 3, baggage_mode: "UNKNOWN", recheck_required: null, airport_change_required: null }] });
     const sOn = await owned(on.db);
@@ -417,13 +442,12 @@ describe("L40 / L77 / L230 — the two consumers that offer a city close on the 
   // The control used to be `world({ storage: true })` — NOTHING declared — and
   // asserted that session was offered a city. That is the defect, not the
   // control: it is the next case now. The control is a traveller who answered.
-  it("CONTROL: with everything answered the same session is offered landside places", async () => {
-    const { db } = world({ storage: true, constraints: ANSWERED });
+  it("CONTROL: with everything answered (and the border confirmed) the same session is offered landside places", async () => {
+    const { db } = world({ storage: true, constraints: ANSWERED, entryPermitted: true });
     const got = landside(await generateRecommendations(db, AIRPORT, await owned(db), NOW));
     assert.ok(got.length > 0, "fixture: the ungated session was offered nothing landside, so the cases below would pass vacuously");
     const snap = await certifiedLayoverSnapshot(db, USER, { sessionId: SESSION, nowMs: NOW });
-    // Served, not affirmed: this world's border is unconfirmed, so the gate is a CAUTION.
-    assert.ok(snap.ok && snap.snapshot.landsideStatus === "caution" && snap.snapshot.landsideOpen === false, JSON.stringify(snap.ok && snap.snapshot.landsideStatus));
+    assert.ok(snap.ok && snap.snapshot.landsideStatus === "open" && snap.snapshot.landsideOpen === true, JSON.stringify(snap.ok && snap.snapshot.landsideStatus));
   });
 
   it("NOTHING declared, where declarations are kept: no landside recommendation, the snapshot closes, one question", async () => {
@@ -478,12 +502,21 @@ describe("L40 / L77 / L230 — the two consumers that offer a city close on the 
     assert.equal(snap.snapshot.verdict, "no");
   });
 
-  it("L230 CONTROL — the policy OFF: the same session keeps its city (production behaviour does not move)", async () => {
-    const { db } = world({ entryPolicy: false });
-    assert.ok(landside(await generateRecommendations(db, AIRPORT, await owned(db), NOW)).length > 0);
-    const snap = await certifiedLayoverSnapshot(db, USER, { sessionId: SESSION, nowMs: NOW });
-    assert.ok(snap.ok && snap.snapshot.landsideStatus === "caution" && snap.snapshot.landsideOpen === false);
-    assert.equal(snap.snapshot.verdict, "entry_unverified");
+  it("L230 — the flag OFF changes nothing: an unconfirmed corridor stays closed (owner decision 2026-10-18)", async () => {
+    for (const entryPolicy of [false, undefined]) {
+      const { db } = world({ entryPolicy });
+      assert.equal(landside(await generateRecommendations(db, AIRPORT, await owned(db), NOW)).length, 0, String(entryPolicy));
+      const snap = await certifiedLayoverSnapshot(db, USER, { sessionId: SESSION, nowMs: NOW });
+      assert.ok(snap.ok && snap.snapshot.landsideStatus === "closed" && snap.snapshot.landsideOpen === false, String(entryPolicy));
+      assert.equal(snap.snapshot.verdict, "no");
+    }
+  });
+
+  it("L230 CONTROL — a CONFIRMED corridor keeps its city, whatever the flag says", async () => {
+    for (const entryPolicy of [false, true, undefined]) {
+      const { db } = world({ entryPolicy, entryPermitted: true });
+      assert.ok(landside(await generateRecommendations(db, AIRPORT, await owned(db), NOW)).length > 0, String(entryPolicy));
+    }
   });
 });
 
@@ -492,7 +525,8 @@ describe("BLOCKER 3 — a failed FLAG read closes the gate; it is not read as 'o
   const FLAGS_DOWN = { "feature_flags:select": { message: "connection reset by peer" } };
 
   it("`readConstraintFlags` is three-valued: on, off/absent, and UNREADABLE", async () => {
-    assert.deepEqual(await readConstraintFlags(world().db as never), { readable: true, storage: false, entryForbidsLandside: false });
+    // The entry policy reads TRUE when the flag is absent or off (owner decision 2026-10-18, fail closed).
+    assert.deepEqual(await readConstraintFlags(world().db as never), { readable: true, storage: false, entryForbidsLandside: true });
     assert.deepEqual(await readConstraintFlags(world({ storage: true, entryPolicy: true }).db as never), { readable: true, storage: true, entryForbidsLandside: true });
     assert.deepEqual(await readConstraintFlags(world({ storage: true, entryPolicy: true, failures: FLAGS_DOWN }).db as never), { readable: false });
     // A client that THROWS is the same fact as one that resolves with an error.
@@ -524,17 +558,25 @@ describe("BLOCKER 3 — a failed FLAG read closes the gate; it is not read as 'o
   });
 
   it("the consumers close on it: no landside recommendation, and the snapshot closes", async () => {
-    const { db } = world({ failures: FLAGS_DOWN, entryPermitted: true });
-    const recs = await generateRecommendations(db, AIRPORT, await owned(db), NOW);
+    // ONLY the two constraint flags are unreadable. Since ee52da82 (L259) a GLOBAL flag-store outage also
+    // leaves route-monitoring state unknown, and the generator then refuses to publish anything at all
+    // (layoverRankingObjective.test.ts, "a global flag-store outage …"), which would never reach this
+    // property. Failing just these two reads keeps the entry corridor and every other flag readable, so the
+    // closure below is BLOCKER 3's and nothing else's: the world is the CONTROL's below, which IS offered a city.
+    const { db } = world({ storage: false, entryPolicy: false, entryPermitted: true });
+    const failing = new Set<string>([LAYOVER_CONSTRAINT_FLAGS.storage, LAYOVER_CONSTRAINT_FLAGS.entryForbidsLandside]);
+    const flagsDown = constraintFlagsUnreadable(db, failing);
+    assert.deepEqual(await readConstraintFlags(flagsDown as never), { readable: false }, "fixture: the constraint flags are unreadable");
+    const recs = await generateRecommendations(flagsDown as never, AIRPORT, await owned(flagsDown), NOW);
     assert.ok(recs.ok);
     assert.equal(recs.recommendations.filter((x: any) => !x.insideAirport).length, 0);
-    const snap = await certifiedLayoverSnapshot(db, USER, { sessionId: SESSION, nowMs: NOW });
+    const snap = await certifiedLayoverSnapshot(flagsDown as never, USER, { sessionId: SESSION, nowMs: NOW });
     assert.ok(snap.ok);
     assert.equal(snap.snapshot.landsideOpen, false);
   });
 
   it("CONTROL: the same world with the flags READABLE (and off) is offered a city", async () => {
-    const { db } = world({ storage: false, entryPolicy: false });
+    const { db } = world({ storage: false, entryPolicy: false, entryPermitted: true });
     const recs = await generateRecommendations(db, AIRPORT, await owned(db), NOW);
     assert.ok(recs.ok && recs.recommendations.some((x: any) => !x.insideAirport), "fixture: the readable world serves nothing landside");
   });
@@ -697,17 +739,18 @@ describe("FOLLOW-UP 2 — `landsideOpen` is true ONLY for an open gate, and the 
     assert.equal(landsideNotForbidden(s), true);
   });
 
-  it("CAUTION: a border nobody confirmed is NOT `landsideOpen`, is not closed, and the model is told what it may not say", async () => {
-    const s = await snapOf(world().db);
-    assert.equal(s.verdict, "entry_unverified");
+  it("CAUTION: a tight window under a confirmed border is NOT `landsideOpen`, is not closed, and the model is told what it may not say", async () => {
+    // Was "a border nobody confirmed" — that is a CLOSURE since the owner's 2026-10-18 decision (see L230 above).
+    const s = await snapOf(world({ entryPermitted: true, minutes: TIGHT }).db);
+    assert.equal(s.verdict, "tight");
     assert.equal(s.landsideStatus, "caution");
     assert.equal(s.landsideOpen, false, "a cautionary gate was published as landsideOpen");
-    assert.deepEqual(s.landsideCautions, ["entry_unconfirmed"]);
+    assert.deepEqual(s.landsideCautions, ["tight_window"]);
     assert.equal(s.landsideClosedReason, null, "a caution is not a closure and must not carry a closed reason");
     assert.equal(landsideNotForbidden(s), true);
 
     const phrase = landsideContextPhrase(s);
-    assert.match(phrase, /^not forbidden, not confirmed \(entry_unconfirmed\)/);
+    assert.match(phrase, /^not forbidden, not confirmed \(tight_window\)/);
     assert.match(phrase, /do NOT tell the traveller they can leave the airport/);
     assert.doesNotMatch(phrase, /^open\b|landside open|\bis open\b/);
   });
@@ -731,7 +774,7 @@ describe("FOLLOW-UP 2 — `landsideOpen` is true ONLY for an open gate, and the 
     const worlds: Array<Parameters<typeof world>[0]> = [
       {}, { entryPermitted: true }, { entryPolicy: true }, { entryPolicy: false }, { storage: true }, { storage: true, entryPermitted: true },
       { storage: true, entryPermitted: true, constraints: ANSWERED }, { storage: true, constraints: ANSWERED },
-      { entryPermitted: true, minutes: 60 }, { minutes: 60 }, { entryPermitted: true, session: { wants_to_leave: false } },
+      { entryPermitted: true, minutes: 60 }, { minutes: 60 }, { entryPermitted: true, session: { wants_to_leave: false } }, { entryPermitted: true, minutes: TIGHT },
       { failures: { "feature_flags:select": { message: "down" } } },
       { storage: true, entryPermitted: true, failures: { "layover_constraints:select": { message: "down" } } },
     ];
@@ -752,7 +795,7 @@ describe("FOLLOW-UP 2 — `landsideOpen` is true ONLY for an open gate, and the 
 
   it("the action universe: landside is ADMITTED under open and caution, CLOSED under closed — and says which", async () => {
     const open = await snapOf(world({ entryPermitted: true }).db);
-    const caution = await snapOf(world().db);
+    const caution = await snapOf(world({ entryPermitted: true, minutes: TIGHT }).db);
     const closed = await snapOf(world(UNREADABLE_STORE).db);
 
     const uOpen = await certifiedActionUniverse(open, [LANDSIDE_CANDIDATE, AIRSIDE_CANDIDATE]);
@@ -760,7 +803,7 @@ describe("FOLLOW-UP 2 — `landsideOpen` is true ONLY for an open gate, and the 
     assert.equal(uOpen.landsideStatus, "open");
     assert.equal(uOpen.landsideOpen, true);
 
-    // The owner's forbid policy is OFF: content is still served under a caution…
+    // Content is still served under a caution (a tight window under a confirmed border)…
     const uCaution = await certifiedActionUniverse(caution, [LANDSIDE_CANDIDATE, AIRSIDE_CANDIDATE]);
     assert.deepEqual(uCaution.admittedIds, ["gem-landside", "lounge"]);
     // …and the universe no longer calls that open.
@@ -772,8 +815,8 @@ describe("FOLLOW-UP 2 — `landsideOpen` is true ONLY for an open gate, and the 
     assert.deepEqual(uClosed.refusedIds, ["gem-landside"]);
     assert.equal(uClosed.actions.find((a) => a.id === "gem-landside")?.state, "CLOSED");
 
-    // With the owner's policy ON the same unconfirmed border is a closure, and nothing landside is admitted.
-    const policyOn = await snapOf(world({ entryPolicy: true }).db);
+    // An unconfirmed border is a closure in every flag state, and nothing landside is admitted.
+    const policyOn = await snapOf(world({ entryPolicy: false }).db);
     assert.equal(policyOn.landsideStatus, "closed");
     assert.deepEqual((await certifiedActionUniverse(policyOn, [LANDSIDE_CANDIDATE, AIRSIDE_CANDIDATE])).admittedIds, ["lounge"]);
   });
@@ -790,7 +833,7 @@ describe("FOLLOW-UP 2 — `landsideOpen` is true ONLY for an open gate, and the 
   });
 
   it("the Compass snapshot tool hands the model the status, and NO reach under a closed gate", async () => {
-    const cautioned: any = await toolGetLayoverSnapshot(world().db as never, USER);
+    const cautioned: any = await toolGetLayoverSnapshot(world({ entryPermitted: true, minutes: TIGHT }).db as never, USER);
     assert.equal(cautioned.snapshot.landsideStatus, "caution");
     assert.equal(cautioned.snapshot.landsideOpen, false);
     assert.ok(cautioned.snapshot.envelope, "fixture: a cautionary snapshot must still carry its envelope");
@@ -837,3 +880,31 @@ describe("FOLLOW-UP 2 — `landsideOpen` is true ONLY for an open gate, and the 
 import { readFileSync, readdirSync } from "node:fs";
 import { certifiedActionUniverse, landsideContextPhrase, landsideNotForbidden } from "../../airport/LayoverSnapshot.js";
 import { toolGetLayoverSnapshot } from "../../../compass/CompassTools.js";
+
+/**
+ * A client whose `feature_flags` reads fail for the NAMED flags only (resolved `{ data: null, error }`, as
+ * supabase-js does), and answer normally for every other flag. Every flag read here filters `eq("flag", …)`
+ * (or `in("flag", […])`), so the filter is what decides.
+ */
+function constraintFlagsUnreadable(db: any, failing: ReadonlySet<string>): any {
+  return {
+    ...db,
+    from(table: string) {
+      const builder = db.from(table);
+      if (table !== "feature_flags") return builder;
+      let hit = false;
+      const down = { data: null, error: { message: "connection reset by peer" } };
+      const proxy: any = new Proxy(builder, {
+        get(target, prop) {
+          if (prop === "eq") return (col: string, v: unknown) => { if (col === "flag" && failing.has(String(v))) hit = true; target.eq(col, v); return proxy; };
+          if (prop === "in") return (col: string, vs: unknown[]) => { if (col === "flag" && vs.some((v) => failing.has(String(v)))) hit = true; target.in(col, vs); return proxy; };
+          if (prop === "maybeSingle" || prop === "single") return () => (hit ? Promise.resolve(down) : target[prop]());
+          if (prop === "then") return (onF: any, onR: any) => (hit ? Promise.resolve(down) : target).then(onF, onR);
+          const v = target[prop];
+          return typeof v === "function" ? (...a: unknown[]) => { const out = v.apply(target, a); return out === target ? proxy : out; } : v;
+        },
+      });
+      return proxy;
+    },
+  };
+}

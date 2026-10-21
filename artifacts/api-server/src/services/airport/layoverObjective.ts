@@ -36,9 +36,9 @@
  *   preference_fit        the live reading's intent-relative `experienceValue`
  *                         (Sensing §11; `lib/layoverLiveIntersection.ts`) — the
  *                         traveller's own vibe-chip crowd preference against
- *                         observed claims. KNOWN only with a reading AND a
- *                         stated intent; the live pass runs only under
- *                         `layover_live_intersection_enabled` (2851, FALSE).
+ *                         observed claims. A live value requires stated intent;
+ *                         an explicit category chip also supplies evidence. Live
+ *                         readings use `layover_live_intersection_enabled` (FALSE).
  *   opportunity_scarcity  the same reading's horizon against the arrival:
  *                         +1 a time-limited window the traveller arrives inside,
  *                         -1 one that closes first. Unknowable without a leg.
@@ -47,17 +47,17 @@
  *                         is not — `TRAVEL_TIME_SOURCE_IS_ROUTED`) and the
  *                         place's `verified` flag. Averaged.
  *   return_risk           airside: -1, there is no landside leg to return on (a
- *                         fact). Landside: the stated out-and-back (2 × leg +
+ *                         fact). Landside: stated outbound + actual return +
  *                         dwell, the figures `assess` used) as a share of the
  *                         certified usable minutes. A term nobody stated makes
  *                         that a lower bound, and a lower bound cannot size a
  *                         risk (L293): UNKNOWN.
  *
- * UNKNOWN by construction (`ALWAYS_UNKNOWN`, each with its reason):
- * local_uniqueness, social_value, experience_density, memory_value,
- * monetary_cost, energy_cost, stress. Owner question OQ-6 is OPEN and its
- * default is built: NO PRICE and NO PRESENCE is read here — monetary_cost and
- * social_value stay UNKNOWN until the owner answers. `check:no-money-in-ranking`
+ * Missing-evidence defaults (`ALWAYS_UNKNOWN`, overridden only by stated facts):
+ * local_uniqueness, social_value, memory_value, monetary_cost and energy_cost.
+ * Density uses actual dwell/travel; stress uses routed signals. The owner restored
+ * all eleven terms. Source evidence and explicit own intent supply the other five;
+ * no revenue, commission, purchased placement, Buddy list price or presence enters. `check:no-money-in-ranking`
  * scans this file (services/airport is in its SCOPE).
  *
  * ── H4: NO CATEGORY-DEFAULT MINUTES ─────────────────────────────────────────
@@ -65,7 +65,8 @@
  * minutes and energy cost (census L75, `layoverExperiencePrimitive.ts`) are a
  * descriptor that census §71.3 keeps out of the rating AND the order, and its
  * suite pins that the order is byte-identical whatever its defaults say; so
- * energy_cost and experience_density are UNKNOWN rather than typical-for-type.
+ * energy_cost requires sourced per-place exertion and explicit available energy;
+ * density uses only stated dwell and routed travel.
  * The only minutes read are the ones `assess` itself rated with.
  */
 import {
@@ -75,9 +76,10 @@ import {
   type SafetyRating,
   type TravelTimeSource,
 } from "./LayoverSafetyEngine.js";
+import { statedObjectiveTerms, type ObjectiveEvidence } from "./layoverObjectiveEvidence.js";
 
 /** Bump when a term's input, its scale or the combination changes. Stored with every comparison. */
-export const LAYOVER_OBJECTIVE_VERSION = "2026.10.14-1";
+export const LAYOVER_OBJECTIVE_VERSION = "2026.10.19-2";
 
 /** The spec's eleven terms, in the spec's order (§9.1). */
 export const OBJECTIVE_TERMS = [
@@ -111,25 +113,25 @@ export const TERM_SIGN: Readonly<Record<ObjectiveTerm, 1 | -1>> = {
 };
 
 /**
- * The seven terms no input on this tree can make KNOWN, and why. Not a
- * placeholder list: each reason is the missing input, and a term leaves this
- * map only when that input exists and is read with its provenance.
+ * Missing-evidence defaults for seven terms. Actual routed density and stress
+ * evidence can override their entries below; the remaining terms stay unknown
+ * until a producer supplies a real input with its provenance.
  */
 export const ALWAYS_UNKNOWN: Readonly<Partial<Record<ObjectiveTerm, string>>> = {
   local_uniqueness:
     "no uniqueness input: `verified` is a curation fact and feeds uncertainty; no layover producer writes a hidden_gem card",
   social_value:
-    "owner question OQ-6 (open): no presence or crew aggregate is read in ranking (D-PRESENCE-K..K-3 govern presence counts)",
+    "no explicit traveller social preference and fresh sourced activity format; no presence or crew aggregate is read",
   experience_density:
-    "no per-place density input; the ExperiencePrimitive's typical minutes are a category default census §71.3 keeps out of the order (H4)",
+    "no stated dwell and measured round-trip combination; category-default minutes cannot fill the absence (H4)",
   memory_value:
     "no memory input on the layover path: the traveller's memories are not read to order cards",
   monetary_cost:
-    "owner question OQ-6 (open): what the traveller would pay is not read in ranking (check:no-money-in-ranking)",
+    "no complete sourced out-of-pocket quote matched to actual travel mode and stated budget currency",
   energy_cost:
     "no per-place energy input; the ExperiencePrimitive's energy cost is typical-for-type, a category default census §71.3 keeps out of the order",
   stress:
-    "no per-card stress/complexity input: transfers, modes and reservations are not read, and the record's risk band is one value per request",
+    "no feasible route with stated transfer, interruptibility and corridor-fragility signals",
 };
 
 export type TermValue =
@@ -145,7 +147,7 @@ export interface ObjectiveLiveReading {
 
 /** The fields of a ranked card this reads. No price, no presence, no category default. */
 export interface ObjectiveCard {
-  insideAirport: boolean;
+  insideAirport: boolean; returnTravelTimeMin?: number | null; recType?: string; placeId?: string | null;
   verified?: boolean;
   travelTimeMin: number | null;
   travelTimeSource?: TravelTimeSource;
@@ -153,7 +155,8 @@ export interface ObjectiveCard {
 }
 
 export interface ObjectiveContext<T> {
-  /** The card's stable key — the service's `recommendationKey`. */
+  evidence?: ReadonlyMap<string, ObjectiveEvidence>;
+  routing?: ReadonlyMap<string, import("./LayoverRoutedFeasibility.js").RoutedCardContract | null>; preferences?: readonly string[];
   keyOf: (card: T) => string;
   /** The live pass's verdicts by key, when it ran. Absent / empty ⇒ the live terms are UNKNOWN. */
   live?: ReadonlyMap<string, ObjectiveLiveReading>;
@@ -189,7 +192,7 @@ export function objectiveTerms<T extends ObjectiveCard>(card: T, ctx: ObjectiveC
   const a = card.assessment;
 
   // preference_fit — the traveller's stated intent, through a live reading.
-  const preference_fit = live && isUnit(live.experienceValue)
+  let preference_fit = live && isUnit(live.experienceValue)
     ? known(2 * live.experienceValue - 1, "live experienceValue: observed claims against the traveller's vibe-chip intent (Sensing §11)")
     : unknown(live
       ? "a live reading, but no stated crowd intent to measure it against"
@@ -224,13 +227,13 @@ export function objectiveTerms<T extends ObjectiveCard>(card: T, ctx: ObjectiveC
   } else if (!isFiniteNonNeg(a.statedTravelMin) || !isFiniteNonNeg(a.statedActivityMin) || !isFiniteNonNeg(a.usableMinutes) || a.usableMinutes === 0) {
     return_risk = unknown("no certified usable minutes to measure the round trip against");
   } else {
-    const share = Math.min(1, (2 * a.statedTravelMin + a.statedActivityMin) / a.usableMinutes);
-    return_risk = known(2 * share - 1, `stated 2 × ${a.statedTravelMin} + ${a.statedActivityMin} min of ${a.usableMinutes} certified usable min`);
+    const back = isFiniteNonNeg(card.returnTravelTimeMin) ? card.returnTravelTimeMin : a.statedTravelMin; const share = Math.min(1, (a.statedTravelMin + back + a.statedActivityMin) / a.usableMinutes);
+    return_risk = known(2 * share - 1, `stated outbound ${a.statedTravelMin} + return ${back} + experience ${a.statedActivityMin} min of ${a.usableMinutes} certified usable min`);
   }
 
   const terms = { preference_fit, opportunity_scarcity, uncertainty, return_risk } as Partial<Record<ObjectiveTerm, TermValue>>;
   for (const [term, reason] of Object.entries(ALWAYS_UNKNOWN) as Array<[ObjectiveTerm, string]>) terms[term] = unknown(reason);
-  return Object.fromEntries(OBJECTIVE_TERMS.map((t) => [t, terms[t]!])) as Record<ObjectiveTerm, TermValue>;
+  addRoutedObjectiveEvidence(card, ctx, terms); Object.assign(terms, statedObjectiveTerms(card.placeId, card.insideAirport, ctx.evidence?.get(ctx.keyOf(card)), ctx.routing?.get(ctx.keyOf(card)))); return Object.fromEntries(OBJECTIVE_TERMS.map((t) => [t, terms[t]!])) as Record<ObjectiveTerm, TermValue>;
 }
 
 /** The signed sum over the KNOWN terms; an UNKNOWN term contributes 0 and is named. */
@@ -306,4 +309,24 @@ export function isPermutationWithinRatings<T extends ObjectiveCard>(legacy: read
     if (c.assessment.rating !== legacy[i]!.assessment.rating) return false;
   }
   return true;
+}
+
+/** Known route and stated-preference evidence only. These scales never participate in the hard safety gate. */
+function addRoutedObjectiveEvidence<T extends ObjectiveCard>(card: T, ctx: ObjectiveContext<T>, terms: Partial<Record<ObjectiveTerm, TermValue>>): void {
+  const routing = ctx.routing?.get(ctx.keyOf(card));
+  const signals = routing?.signals;
+  if (routing?.state === "FEASIBLE" && signals && Number.isFinite(signals.transferCount) && signals.transferCount >= 0) {
+    const complexity = (Math.min(1, signals.transferCount / 3) + Number(signals.nonInterruptible) + Number(signals.fragileCorridor)) / 3;
+    terms.stress = known(2 * complexity - 1, `routed return: ${signals.transferCount} transfers, nonInterruptible=${signals.nonInterruptible}, fragileCorridor=${signals.fragileCorridor}; three observed burdens equally weighted`);
+  }
+  const selected = (ctx.preferences ?? []).filter(p => ["food", "rest", "nightlife", "activity", "meetup"].includes(p));
+  if (selected.length && card.recType && ["food", "rest", "nightlife", "activity", "meetup"].includes(card.recType) && terms.preference_fit?.state !== "KNOWN") {
+    terms.preference_fit = known(selected.includes(card.recType) ? 1 : -1, "explicit traveller vibe-chip category matched against this candidate's stated activity type");
+  }
+  const dwell = card.assessment.statedActivityMin;
+  const out = card.insideAirport ? 0 : routing?.state === "FEASIBLE" ? routing.outboundMinutes : null;
+  const back = card.insideAirport ? 0 : routing?.state === "FEASIBLE" ? routing.conservativeReturnMinutes : null;
+  if (isFiniteNonNeg(dwell) && dwell > 0 && isFiniteNonNeg(out) && isFiniteNonNeg(back)) {
+    terms.experience_density = known(2 * dwell / (out + dwell + back) - 1, `chosen experience ${dwell} min as a share of measured outbound ${out} + experience + conservative return ${back}; no typical duration`);
+  }
 }

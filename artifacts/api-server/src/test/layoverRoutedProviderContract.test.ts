@@ -180,7 +180,7 @@ describe("B. the REQUEST Google receives", () => {
       "routes.legs.steps.transitDetails.stopCount", "routes.legs.steps.navigationInstruction.maneuver", "fallbackInfo"]) {
       assert.ok(h["X-Goog-FieldMask"]!.split(",").includes(field), `field mask lacks ${field}`);
     }
-    assert.ok(!h["X-Goog-FieldMask"]!.includes("polyline") && !h["X-Goog-FieldMask"]!.includes("tollInfo"), "no Enterprise-SKU field (traffic on polylines, toll calculation) is asked for");
+    assert.ok(!/speedReadingIntervals|tollInfo/.test(h["X-Goog-FieldMask"]!) && s.body.extraComputations === undefined, "no Enterprise-SKU field (traffic on polylines, toll calculation) is asked for"); // Enterprise triggers per Google's SKU details (read 2026-10-20): two-wheeled, toll calculation, traffic information on polylines, large vehicle. The BASIC routes.polyline.geoJsonLinestring is none of them; it is requested since ee52da82 for L270's Google-map-only route display (layoverMapGeometry.test.ts), so the old blanket "no polyline" no longer stood for this rule
     assert.equal(s.body.travelMode, "DRIVE");
     assert.equal(s.body.routingPreference, "TRAFFIC_AWARE");
     assert.equal(s.body.departureTime, Q.departAt.toISOString(), "priced at the instant asked — the return instant, not now");

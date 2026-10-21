@@ -132,11 +132,11 @@ async function presenceTablePresent(db: any): Promise<boolean> {
 }
 
 /** One sweep, deterministic in its instant: `opts.now` is the cutoff. */
-export async function runLayoverPresenceExpirySweep(
+async function runLayoverPresenceExpirySweepImpl(
   opts: { client?: any; now: Date; batchSize?: number },
 ): Promise<LayoverPresenceExpirySweepResult> {
   // Explicit null means "no client"; undefined means "use the service client".
-  const db = "client" in opts && opts.client !== undefined ? opts.client : getServiceClient();
+  const db = auditedLayoverClient("client" in opts && opts.client !== undefined ? opts.client : getServiceClient());
   if (!db) return refused("no_client");
 
   if (!(await presenceTablePresent(db))) return refused("table_absent");
@@ -263,3 +263,6 @@ export function stopLayoverPresenceExpiryScheduler(): void {
     _timer = null;
   }
 }
+
+import { auditedLayoverClient, withLayoverSystemAudit } from './layoverServiceAudit.js';
+export function runLayoverPresenceExpirySweep(...args: Parameters<typeof runLayoverPresenceExpirySweepImpl>): ReturnType<typeof runLayoverPresenceExpirySweepImpl> { return withLayoverSystemAudit('layover:presence-expiry', () => runLayoverPresenceExpirySweepImpl(...args)); }

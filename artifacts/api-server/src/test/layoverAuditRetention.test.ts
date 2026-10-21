@@ -28,7 +28,7 @@ function fakeDb(rows: Row[], opts: { schema?: boolean; failProbe?: boolean; fail
   function from(table: string) {
     // The tick's first phase (PR-R-L163a) reads its flag; seeded FALSE, so OFF here.
     if (table === "feature_flags") {
-      const f: any = { select: () => f, eq: () => f, maybeSingle: () => Promise.resolve({ data: { enabled: false }, error: null }) };
+      let selected='';const f: any = { select: (columns:string) => {selected=columns;return f;}, eq: () => f, maybeSingle: () => Promise.resolve({ data: selected==='flag'?null:{ enabled: false }, error: null }) };
       return f;
     }
     const filters: Array<(r: Row) => boolean> = [];
@@ -185,7 +185,7 @@ function timerClient(pending = false) {
   let release!: () => void;
   const gate = pending ? new Promise<void>((r) => { release = r; }) : Promise.resolve();
   let probes = 0;
-  const from = () => {
+  const from = (table:string) => { if(table==='feature_flags')return fakeDb([]).from(table);
     let head = false;
     const b: any = {
       select(_c: string, o?: { head?: boolean }) { head = o?.head === true; if (head) probes += 1; return b; },
@@ -231,6 +231,19 @@ describe("the retention sweep's timer (startLayoverAuditRetentionScheduler)", ()
     c.release(); await drain();
     mock.timers.tick(LAYOVER_AUDIT_RETENTION_INTERVAL_MS * 5); await drain();
     assert.equal(c.probes(), 1, "a sweep that settled after stop() must not schedule another");
+  });
+
+  it("an expired service-audit backlog retries after 30 seconds, then returns to hourly once empty", async () => {
+    mock.timers.enable({apis:['setTimeout']}); const base=timerClient();let remaining=5001,calls=0;
+    const client={from(table:string){
+      if(table==='feature_flags'){let selected='';const f:any={select(c:string){selected=c;return f;},eq:()=>f,maybeSingle:async()=>({data:selected==='flag'?{flag:'layover_service_write_audit_enabled'}:{enabled:false},error:null})};return f;}
+      if(table==='layover_service_write_audit'){const q:any={select:()=>q,lte:()=>q,order:()=>q,limit:()=>q,then(a:any,b:any){return Promise.resolve({data:remaining?[{retain_until:'2020-01-01T00:00:00Z'}]:[],error:null}).then(a,b);}};return q;}
+      return base.client.from(table);
+    },async rpc(){calls++;const count=Math.min(500,remaining);remaining-=count;return{data:count,error:null};}};
+    _setTestServiceClient(client as any);startLayoverAuditRetentionScheduler();mock.timers.tick(STARTUP_DELAY_MS);await drain();
+    assert.equal(remaining,1);assert.equal(calls,10);assert.equal(getLayoverAuditRetentionStatus().lastReason,'retention_backlog');assert.equal(getLayoverAuditRetentionStatus().lastSuccessAt,null);
+    mock.timers.tick(29_999);await drain();assert.equal(remaining,1);mock.timers.tick(1);await drain();assert.equal(remaining,0);assert.equal(calls,11);assert.equal(getLayoverAuditRetentionStatus().consecutiveFailures,0);
+    mock.timers.tick(30_000);await drain();assert.equal(calls,11);mock.timers.tick(LAYOVER_AUDIT_RETENTION_INTERVAL_MS-30_000);await drain();assert.equal(calls,12);
   });
 });
 

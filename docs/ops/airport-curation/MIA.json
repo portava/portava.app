@@ -1,0 +1,49 @@
+{
+  "packetVersion": 1,
+  "iata": "MIA",
+  "airportName": "Miami International Airport",
+  "state": "proposed_unvalidated",
+  "preparedBy": "machine-prepared by lane B2-CURATE research agent; NOT validated by a human curator",
+  "preparedAt": "2026-10-19T02:09:46Z",
+  "facts": [
+    {
+      "kind": "ground_transport",
+      "value": {
+        "modes": [
+          { "mode": "bus", "name": "Metrobus Route 7", "toCity": "Downtown Bus Terminal / Dolphin Mall / Sweetwater" },
+          { "mode": "bus", "name": "Metrobus Route 37", "toCity": "Hialeah / South Miami" },
+          { "mode": "bus", "name": "Metrobus Route 42", "toCity": "Opa-locka / Coral Gables" },
+          { "mode": "bus", "name": "Metrobus Route 57", "toCity": "South Miami / SW 152 Street Park & Ride" },
+          { "mode": "bus", "name": "Metrobus Route 110 (Route J)", "toCity": "Miami Beach" },
+          { "mode": "bus", "name": "Metrobus Route 150 (Miami Beach Airport Express)", "toCity": "Miami Beach" },
+          { "mode": "bus", "name": "Metrobus Route 238 (East-West Connection)", "toCity": "Dolphin Mall / Miami International Mall" },
+          { "mode": "bus", "name": "Metrobus Route 297 (27th Avenue Orange MAX)", "toCity": "Opa-locka / Miami Gardens" },
+          { "mode": "bus", "name": "Metrobus Route 338 (Weekend Express)", "toCity": "Dolphin Mall" }
+        ]
+      },
+      "source": {
+        "kind": "official_operator",
+        "url": "https://www.miamidade.gov/global/transportation/mia-metrobus-service.page",
+        "retrievedAt": "2026-10-19T01:56:40Z",
+        "title": "Metrobus Routes Serving Miami International Airport (MIA)"
+      },
+      "evidence": "Route list; bus stops at the MIA Metrorail station, ground level",
+      "notes": "Miami-Dade County transit page. All routes stop at the MIA Metrorail station (drop-off east side, pick-up west side); terminalIds omitted because no terminal topology could be sourced. toCity values are destinations named on the page, abbreviated. Page states: Route 42 no Saturday/Sunday service; Routes 57, 238, 297 weekdays only; Route 338 weekends only. No journey times or hours stated. Metrorail Orange Line also serves MIA station per https://www.miamidade.gov/global/transportation/metrorail.page (retrieved 2026-10-19T01:57:30Z): system 'operates from 5 a.m. to midnight, seven days a week'; on weekends the Orange Line runs only as an Airport Shuttle train between Earlington Heights and MIA, every 15 minutes (transfer at Earlington Heights). No first/last train from MIA stated."
+    }
+  ],
+  "unreachable": [
+    { "url": "https://www.miami-airport.com/", "error": "connect ECONNREFUSED 65.87.66.20:443" },
+    { "url": "https://www.miami-airport.com/terminal_maps.asp", "error": "connect ECONNREFUSED 65.87.66.20:443" },
+    { "url": "https://www.miami-airport.com/public-transportation.asp", "error": "connect ECONNREFUSED 65.87.66.20:443" },
+    { "url": "https://miami-airport.com/ground-transportation.asp", "error": "connect ECONNREFUSED 65.87.66.20:443" },
+    { "url": "https://www8.miamidade.gov/global/transportation/mia-metrobus-service.page", "error": "getaddrinfo ENOTFOUND www8.miamidade.gov (same page then fetched from www.miamidade.gov)" }
+  ],
+  "gaps": [
+    "terminal_topology: the airport operator site miami-airport.com refused every connection",
+    "transport_schedules: neither the Metrobus page nor the Metrorail page (or https://www.miamidade.gov/transportation-publicworks/rail_schedules.asp, retrieved 2026-10-19T01:58:30Z) states first/last departures from MIA",
+    "security_layout: miami-airport.com unreachable",
+    "lounge_hours: miami-airport.com unreachable",
+    "overnight_lodging: miami-airport.com unreachable",
+    "entry_restrictions: miami-airport.com unreachable"
+  ]
+}

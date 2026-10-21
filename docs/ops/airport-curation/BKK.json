@@ -1,0 +1,76 @@
+{
+  "packetVersion": 1,
+  "iata": "BKK",
+  "airportName": "Suvarnabhumi Airport",
+  "state": "proposed_unvalidated",
+  "preparedBy": "machine-prepared by lane B2-CURATE research agent; NOT validated by a human curator",
+  "preparedAt": "2026-10-19T02:09:46Z",
+  "facts": [
+    {
+      "kind": "terminal_topology",
+      "value": {
+        "terminals": [
+          { "id": "MTB", "name": "Main Terminal Building" },
+          { "id": "SAT-1", "name": "Midfield Satellite 1 (SAT-1)" }
+        ],
+        "gates": [
+          { "terminalId": "SAT-1", "label": "28 contact gates (gate numbers not stated)" }
+        ],
+        "walkingLinks": [
+          { "fromTerminalId": "MTB", "toTerminalId": "SAT-1", "minutes": 3, "mode": "train" }
+        ]
+      },
+      "source": {
+        "kind": "official_airport",
+        "url": "https://suvarnabhumi.airportthai.co.th/service/way-to-airport/detail/suvarnabhumi_airport_SAT-1",
+        "retrievedAt": "2026-10-19T02:07:05Z",
+        "title": "THE MIDFIELD SATELLITE 1 SUVARNABHUMI AIRPORT"
+      },
+      "evidence": "APM driverless train, ~1 km tunnel to Main Terminal; about three minutes",
+      "notes": "The ~3 minutes is the page's total travel time including waiting at the station; the page gives one time for the link, so the reverse direction (SAT-1→MTB) is not separately recorded. SAT-1 gates: 8 Code F and 20 Code E contact gates; no gate labels. The page does not explicitly say SAT-1 serves international flights, so 'serves' is omitted. 4th floor has passenger and airline lounges (no names or hours). Main Terminal Building concourses/gates are not described on this page."
+    },
+    {
+      "kind": "ground_transport",
+      "value": {
+        "modes": [
+          { "mode": "bus", "name": "BMTA S1", "toCity": "Sanam Luang" },
+          { "mode": "bus", "name": "BMTA 555", "toCity": "Rangsit (via Rama 9 Expressway)" },
+          { "mode": "bus", "name": "BMTA 554", "toCity": "Rangsit (via Ramindra Road)" },
+          { "mode": "bus", "name": "BMTA 558", "toCity": "Central Rama 2" },
+          { "mode": "bus", "name": "The Transport Co., Ltd. 825", "toCity": "Nong Khai" },
+          { "mode": "bus", "name": "The Transport Co., Ltd. 825", "toCity": "Udon Thani" },
+          { "mode": "bus", "name": "The Transport Co., Ltd. 917", "toCity": "Laem Ngop" },
+          { "mode": "bus", "name": "The Transport Co., Ltd. 9907", "toCity": "Chanthaburi" },
+          { "mode": "bus", "name": "The Transport Co., Ltd. 9908", "toCity": "Trat" },
+          { "mode": "bus", "name": "The Transport Co., Ltd. 9909", "toCity": "Laem Chabang" },
+          { "mode": "bus", "name": "Public Mini Bus 549", "toCity": "Minburi" },
+          { "mode": "bus", "name": "Public Mini Bus 552", "toCity": "On Nut" },
+          { "mode": "bus", "name": "Public Mini Bus 552A", "toCity": "Pak Nam" },
+          { "mode": "bus", "name": "Public Mini Bus 555", "toCity": "Don Mueang" },
+          { "mode": "bus", "name": "Public Mini Bus 559", "toCity": "Future Park Rangsit" },
+          { "mode": "bus", "name": "Roong Reuang Coach Co., Ltd. 389", "toCity": "Pattaya" },
+          { "mode": "bus", "name": "Roong Reuang Coach Co., Ltd. 789", "toCity": "Hua Hin" }
+        ]
+      },
+      "source": {
+        "kind": "official_airport",
+        "url": "https://suvarnabhumi.airportthai.co.th/service/way-to-airport/detail/754",
+        "retrievedAt": "2026-10-19T02:07:20Z",
+        "title": "Public Bus at Public Transportation Center, Suvarnabhumi Airport"
+      },
+      "evidence": "Route table with provider, destination, 'Pick-up Point' and 'Service Time'",
+      "notes": "STALE RISK: the post is dated January 24, 2022. Pick-up: 'Public Transportation Center, Suvarnabhumi Airport' for most routes; S1 at 'Passenger Terminal'; 389 and 789 at 'Passenger Terminal, 1st Floor, Exit 8'. terminalIds omitted because the page's 'Passenger Terminal' is not explicitly tied to the 'Main Terminal Building' id and the Public Transportation Center is not a terminal. The page lists a 'Service Time' per route (e.g. S1 06:00-17:00) but does not say these are departures from the airport, so no transport_schedules fact was made. No journey times or frequency stated. Airport Rail Link is not covered on any fetched airport page."
+    }
+  ],
+  "unreachable": [],
+  "gaps": [
+    "terminal_topology: Main Terminal Building concourses/gates not described on any fetched page",
+    "ground_transport (Airport Rail Link, taxi, limousine): https://suvarnabhumi.airportthai.co.th/service/transportation (retrieved 2026-10-19T02:07:05Z) lists mode names only (Public car service, Public Bus, AOT Limousine, Taxi, Public Van) with no details; Airport Rail Link not mentioned on fetched pages; ARL operator site not fetched (official domain not confirmed)",
+    "transport_schedules: bus page gives 'Service Time' without stating these are departures from the airport; not recorded",
+    "security_layout: not stated on fetched pages (https://suvarnabhumi.airportthai.co.th/service/airport-guide, retrieved 2026-10-19T02:07:20Z, returned navigation only)",
+    "lounge_hours: SAT-1 page mentions 4F lounges without names or hours",
+    "overnight_lodging: not stated on fetched pages (hotel listing /explore/hotel/ not fetched)",
+    "entry_restrictions: no transfer/transit page found on fetched pages",
+    "shuttle bus page https://suvarnabhumi.airportthai.co.th/service/way-to-airport/detail/shuttle_bus_services_around_Suvarnabhumi_airport (retrieved 2026-10-19T02:07:20Z) describes internal airport shuttle lines A-F/Express to the Public Transportation Center with no hours/frequency/journey times; not recorded as a fact (one source per kind)"
+  ]
+}

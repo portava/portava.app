@@ -79,7 +79,7 @@ describe("certifiedLayoverSnapshot certifies with the airport routes' entry inpu
     assert.equal((s.certifiedRecord as any).inputs.entry.state, "permitted");
   });
 
-  it("a data gap is `entry_unverified`, never a refusal and never a permit: flag off, no passport, no corridor row, unreadable tables", async () => {
+  it("a data gap closes landside and preserves the unresolved entry fact: flag off, no passport, no corridor row, unreadable tables", async () => {
     const cases: Array<[string, Record<string, any[]>, Record<string, { message: string }>, string]> = [
       ["entry flag off",               world({ flag: false }),        {}, "entry_intelligence_disabled"],
       ["no passport on file",          world({ passport: false }),    {}, "no_passport_on_file"],
@@ -90,8 +90,8 @@ describe("certifiedLayoverSnapshot certifies with the airport routes' entry inpu
     ];
     for (const [label, tables, failures, reason] of cases) {
       const { s } = await snap(tables, failures);
-      assert.equal(s.verdict, "entry_unverified", label);
-      assert.equal(s.landsideStatus, "caution", `${label}: a data gap must not close landside on its own`); assert.equal(s.landsideOpen, false, `${label}: …and it is not an OPEN gate either — not forbidden is not confirmed`); assert.deepEqual(s.landsideCautions, ["entry_unconfirmed"], label);
+      assert.equal(s.verdict, "no", label);
+      assert.equal(s.landsideStatus, "closed", `${label}: unknown entry fails closed`); assert.equal(s.landsideOpen, false, label); assert.deepEqual(s.certifiedRecord.landsideGate.closedBy, ["entry_unconfirmed"], label);
       assert.deepEqual((s.certifiedRecord as any).inputs.entry, { state: "unresolved", reason }, label);
     }
   });
@@ -154,11 +154,11 @@ describe("an unreadable `feature_flags` is not a data gap that leaves landside o
     assert.equal((s.certifiedRecord as any).landsideGate.constraintsRead, "unreadable");
   });
 
-  it("CONTROL: the same world with the flags READABLE is the data gap it always was — `entry_unverified`, landside not forbidden", async () => {
+  it("CONTROL: readable flags still close unconfirmed entry with its specific reason", async () => {
     const { s } = await snap(world({ flag: false }));
-    assert.equal(s.verdict, "entry_unverified");
-    assert.equal(s.landsideStatus, "caution"); assert.equal(s.landsideOpen, false);
-    assert.deepEqual((s.certifiedRecord as any).landsideGate.closedBy, []);
+    assert.equal(s.verdict, "no");
+    assert.equal(s.landsideStatus, "closed"); assert.equal(s.landsideOpen, false);
+    assert.deepEqual((s.certifiedRecord as any).landsideGate.closedBy, ["entry_unconfirmed"]);
     assert.equal((s.certifiedRecord as any).landsideGate.open, false, "not forbidden is not affirmed");
   });
 });

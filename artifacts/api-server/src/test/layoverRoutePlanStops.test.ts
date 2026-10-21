@@ -48,7 +48,7 @@ import http from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import airportRouter from "../routes/airport.js";
-import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js";
+import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js"; import { withConfirmedCorridor } from "./helpers/confirmedCorridor.js";
 import {
   AIRSIDE_UNBANDED_REASON,
   NO_POSITION_UNBANDED_REASON,
@@ -75,7 +75,7 @@ let issued: Array<{ table: string; op: string; eqs: Array<[string, unknown]> }>;
  * returned itself, which is what keeps the chain chainable.
  */
 function recordingDb(seed: Record<string, any[]>, users: Record<string, string>) {
-  const inner: any = makeLayoverDb(seed, { users });
+  const inner: any = makeLayoverDb(withConfirmedCorridor(seed, { userIds: [USER], destination: "TW" }), { users });
   return {
     ...inner,
     from(table: string) {

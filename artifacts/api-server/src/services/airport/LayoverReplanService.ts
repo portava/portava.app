@@ -573,24 +573,24 @@ export type ReplanSnapshotUnavailableReason =
   /** `persistDecision`'s own refusal, verbatim. */
   | PersistRefusal;
 
-export type ReplanInvalidationApplied =
-  | {
-      applied: true;
-      /**
-       * The identity of the computation this replan certified; every card citing
-       * another one is stale. It names a STORED row only when the publication's
-       * `snapshotPersisted` is true — nothing here writes it anywhere.
-       */
-      currentSnapshotId: string;
-      /** The cards whose citation was cleared, and the snapshot each had cited. */
-      uncited: Array<{ recommendationId: string; citedSnapshotId: string; why: Array<"stale_certification" | "no_longer_feasible"> }>;
-    }
-  | {
-      applied: false;
-      reason: "flag_unreadable" | "storage_unavailable" | "read_failed" | "write_failed";
-      /** On `write_failed` only: the cards whose citation WAS cleared before the refusal. Never hidden. */
-      uncitedBeforeFailure?: string[];
-    };
+export type ReplanInvalidationApplied = SupersessionOutcome; // census L44/L97 (lane B2-RECS-A): VERSIONED SUPERSESSION (services/layover/LayoverRecommendationStatus.ts), which replaced the citation clear
+// The shape this replaced (lane 5 / lane B1-P), kept as the record of what changed:
+//   { applied: true; currentSnapshotId; uncited: [{ recommendationId, citedSnapshotId, why }] }
+//   | { applied: false; reason: "flag_unreadable" | "storage_unavailable" | "read_failed" | "write_failed"; uncitedBeforeFailure? }
+// Invalidating a card CLEARED its citation (`layover_recommendations.snapshot_id = NULL`): the evidence of which
+// snapshot had certified the card was destroyed by the act of invalidating it, and the next regeneration destroyed the
+// rest. The owner's decision of 2026-10-18 — "Stale recommendations must be invalidated by marking them superseded,
+// preserving their history and reason"; "For L44, use versioned invalidation and preserve historical decision
+// evidence" — replaces it. Now:
+//   applied: true  → `superseded` lists each card marked SUPERSEDED (its citation, plan, risk band and deadline kept),
+//                    the snapshot it had cited and why; one immutable history row per card is in
+//                    layover_recommendation_supersessions (3871), and `currentSnapshotVersion` is the superseding
+//                    snapshot's 3623 version;
+//   applied: false → `supersession_disabled` (3871's flag OFF: nothing is cleared any more, and nothing is marked),
+//                    `snapshot_not_stored` (nothing may be superseded BY a snapshot no row holds — the stale cards are
+//                    served STALE at read time instead), `flag_unreadable`, `storage_unavailable`, `read_failed`,
+//                    `write_failed` (with `historyRecordedButUnmarked`). The key is still `invalidationApplied`, so the
+//                    audit row and the PATCH / disruption / external-event publications keep their place for it.
 
 /**
  * Runs inside `recordReplanDecision`, BEFORE the ledger row is written, so the
@@ -650,25 +650,21 @@ async function storeReplanSnapshot(
 }
 
 /**
- * census L44 / L97 — §11.1 step 6 APPLIED, not only decided.
+ * census L44 / L97 — §11.1 step 6 APPLIED, as VERSIONED SUPERSESSION (lane B2-RECS-A, 2026-10-18).
  *
- * The only invalidation marker this schema has is 3623's citation,
- * `layover_recommendations.snapshot_id`: a card that cites a snapshot claims it
- * was certified under that snapshot. A card is invalidated by CLEARING that
- * claim. Not deleted — L97 records that destroying a card loses its id for every
- * client holding it — and not `status = 'hidden'`, which is the admin
- * moderation state (`USER_HIDDEN_RECOMMENDATION_STATUS`) and survives
- * regeneration by design. The next certification re-stamps the card it still
- * stands behind.
+ * §5 `* → DISRUPTED`: "Invalidate stale recommendations; replan; preserve audit trail". §11.1 step 6: "Invalidate
+ * recommendations whose snapshot is stale or no longer feasible". Which cards: every card of the session that cites a
+ * snapshot OTHER than the one this replan stored (stale — App C5), and every card a plan stop that no longer fits came
+ * from (`noLongerFeasible`, through the stop's `recommendation_id`). Each is SUPERSEDED, not cleared and not deleted:
+ * `supersedeCards` appends its decision evidence to layover_recommendation_supersessions (immutable) and only then marks
+ * the card SUPERSEDED with the reason and the superseding snapshot, as a compare-and-set on the citation it read and on
+ * "not yet superseded" — a card re-certified meanwhile is left alone. The superseding snapshot must be STORED
+ * (`snapshotPersisted`): with canonical snapshots on it is the session's active one, possibly another surface's
+ * identical decision (`persistDecision` answers `active_snapshot`), and the cards cite exactly that.
  *
- * Which cards: every card of the session that cites a snapshot OTHER than the
- * one this replan certified (stale — App C5), and every cited card a plan stop
- * that no longer fits came from (`noLongerFeasible`, through the stop's
- * `recommendation_id`). Each clear is a compare-and-set on the citation it read,
- * so a card re-certified between the read and the write is left alone.
- *
- * OFF or absent (production today): nothing is read, nothing written, nothing
- * published. Unreadable: nothing written, and the publication says why.
+ * Gates, each read once: `layover_recommendation_snapshot_enabled` (3623) OFF or absent → nothing is read, written or
+ * published (production today — the publication is byte-identical); `layover_recommendation_status_enabled` (3871) OFF
+ * → `supersession_disabled`, nothing written. Unreadable → `flag_unreadable`, nothing written. Never throws.
  */
 async function applyReplanInvalidation(
   db: SupabaseClient,
@@ -681,23 +677,27 @@ async function applyReplanInvalidation(
     publication.invalidationApplied = { applied: false, reason: "flag_unreadable" };
     return;
   }
-
-  const sessionId = decision.sessionId;
-  const currentSnapshotId = snapshotIdFor(sessionId, decision.inputHash);
-
-  const held = await db.from("layover_recommendations").select("id,snapshot_id").eq("session_id", sessionId);
-  if (held.error) {
-    logger.warn({ err: held.error.message, sessionId }, "replan invalidation: held cards unreadable — nothing invalidated");
-    publication.invalidationApplied = { applied: false, reason: isMissingSchemaError(held.error) ? "storage_unavailable" : "read_failed" };
+  const status = await readFlagState(db, "layover_recommendation_status_enabled");
+  if (status === "unreadable") {
+    publication.invalidationApplied = { applied: false, reason: "flag_unreadable" };
+    return;
+  }
+  if (status !== "on") {
+    publication.invalidationApplied = { applied: false, reason: "supersession_disabled" };
+    return;
+  }
+  if (!publication.snapshotPersisted || typeof publication.snapshotId !== "string") {
+    publication.invalidationApplied = { applied: false, reason: "snapshot_not_stored" };
     return;
   }
 
+  const sessionId = decision.sessionId;
   const infeasibleCards = new Set<string>();
   const lostStops = publication.invalidation.noLongerFeasible;
   if (lostStops.length > 0) {
     const stops = await db.from("layover_plan_stops").select("id,recommendation_id").eq("session_id", sessionId).in("id", lostStops);
     if (stops.error) {
-      logger.warn({ err: stops.error.message, sessionId }, "replan invalidation: plan stops unreadable — nothing invalidated");
+      logger.warn({ err: stops.error.message, sessionId }, "replan invalidation: plan stops unreadable — nothing superseded");
       publication.invalidationApplied = { applied: false, reason: "read_failed" };
       return;
     }
@@ -706,33 +706,33 @@ async function applyReplanInvalidation(
     }
   }
 
-  const uncited: Extract<ReplanInvalidationApplied, { applied: true }>["uncited"] = [];
-  for (const r of (held.data ?? []) as Array<{ id: unknown; snapshot_id: unknown }>) {
-    if (typeof r.id !== "string" || typeof r.snapshot_id !== "string" || r.snapshot_id.length === 0) continue;
-    const why: Array<"stale_certification" | "no_longer_feasible"> = [];
-    if (r.snapshot_id !== currentSnapshotId) why.push("stale_certification");
-    if (infeasibleCards.has(r.id)) why.push("no_longer_feasible");
-    if (why.length > 0) uncited.push({ recommendationId: r.id, citedSnapshotId: r.snapshot_id, why });
-  }
-
-  const byCitation = new Map<string, string[]>();
-  for (const u of uncited) byCitation.set(u.citedSnapshotId, [...(byCitation.get(u.citedSnapshotId) ?? []), u.recommendationId]);
-  const cleared: string[] = [];
-  for (const [cited, ids] of byCitation) {
-    const { error } = await db
-      .from("layover_recommendations")
-      .update({ snapshot_id: null })
-      .eq("session_id", sessionId)
-      .eq("snapshot_id", cited)
-      .in("id", ids);
-    if (error) {
-      logger.warn({ err: error.message, sessionId }, "replan invalidation: citation clear refused — stale cards keep their citation");
-      publication.invalidationApplied = { applied: false, reason: "write_failed", uncitedBeforeFailure: cleared };
-      return;
-    }
-    cleared.push(...ids);
-  }
-  publication.invalidationApplied = { applied: true, currentSnapshotId, uncited };
+  publication.invalidationApplied = await supersedeCards(db, {
+    sessionId,
+    currentSnapshotId: publication.snapshotId,
+    cause: supersessionCauseOf(publication),
+    infeasibleCardIds: infeasibleCards,
+  });
+  // The cards are superseded BY the stored snapshot the publication cites. `snapshotIdFor(sessionId, decision.inputHash)`
+  // is this replan's own record, which with canonical snapshots on may be a decision-identical twin of the stored one,
+  // and is therefore NOT what a card may be superseded by. Nothing else is read or written here: the audit row
+  // (`recordReplanDecision`, written after this) records `invalidationApplied` exactly as it is.
+  //
+  // WHY THE HISTORY ROW IS WRITTEN FIRST. If the mark landed and the history did not, a superseded card would carry
+  // a reason and a superseding snapshot while the evidence of what it had said was gone — the exact loss the owner's
+  // decision forbids. Written first, a failed mark leaves a recorded history and an unmarked card, which is reported
+  // (`write_failed`, `historyRecordedButUnmarked`) and is served STALE at read time anyway, because its citation is no
+  // longer the session's active snapshot.
+  //
+  // WHAT THE REGENERATION DOES WITH A SUPERSEDED CARD. The next GET /recommendations rewrites the session's cards
+  // (delete+insert, or upsert in place on rec_key): the card's ROW becomes the re-certified current card, and its
+  // superseded version lives on, unreachable by that rewrite, in layover_recommendation_supersessions. The
+  // regeneration itself supersedes the cards it is about to rewrite when its snapshot is a newer one
+  // (`recommendationStamp`, cause `regeneration`), so no version of a card is ever overwritten without a history row.
+  //
+  // THE CAUSE (`supersessionCauseOf`): `reported_disruption` for POST /:id/disruption (`settleDisruptionRecompute`),
+  // `external_event` for the producer's events (`externalReplanRecord`), `window_edit` for the traveller's PATCH — so
+  // the history says which of §5's three `* → DISRUPTED` inputs superseded the card.
+  //
 }
 
 // ── census L207, layover round 2 lane B — the EXTERNAL-event replan cites its snapshot too ─
@@ -893,7 +893,7 @@ function externalReplanRecord(
     reasonCodes: [...new Set<LayoverReasonCode>([...outcome.after.reasonCodes, ...reasonCodes])],
     computedAt: new Date(nowMs).toISOString(),
   };
-  REPLAN_CERTIFIED_RECORDS.set(decision, outcome.after);
+  REPLAN_CERTIFIED_RECORDS.set(decision, outcome.after); SUPERSESSION_CAUSE.set(publication, "external_event"); // L44 (lane B2-RECS-A): the history row names the producer's event as the cause
   return { publication, decision };
 }
 
@@ -957,7 +957,7 @@ export async function settleDisruptionRecompute(
   const dark = (s: string) => s === "off" || s === "absent";
   if (dark(persistence) && dark(stamping)) return null;
 
-  const publication = { snapshotPersisted: false, invalidation: { noLongerFeasible: [] } } as unknown as ReplanPublication;
+  const publication = { snapshotPersisted: false, invalidation: { noLongerFeasible: [] } } as unknown as ReplanPublication; SUPERSESSION_CAUSE.set(publication, "reported_disruption"); // L44 (lane B2-RECS-A): the history row names the traveller's report as the cause
   const decision = { sessionId, inputHash: record.inputHash, snapshotId: null } as unknown as LayoverDecisionRecord;
   REPLAN_CERTIFIED_RECORDS.set(decision, record);
   await settleReplanSnapshot(db, userId, publication, decision);
@@ -975,3 +975,31 @@ export async function settleDisruptionRecompute(
   }
   return settlement;
 }
+
+// ── census L44 / L97, lane B2-RECS-A (2026-10-18) — supersession, not a cleared citation ─
+//
+// Appended at the foot so no line above moves (this file is cited by line); ESM hoists the import. The one call site
+// is `applyReplanInvalidation` above, which every replan input reaches (the PATCH window edit through
+// `recordReplanDecision`, the external event through `recordExternalReplanDecisions`, the reported disruption through
+// `settleDisruptionRecompute`). The cause each one records is set where its publication is built.
+import { supersedeCards, type SupersessionCause, type SupersessionOutcome } from "../layover/LayoverRecommendationStatus.js";
+
+const SUPERSESSION_CAUSE = new WeakMap<ReplanPublication, SupersessionCause>();
+
+/** Which of §5's `* → DISRUPTED` inputs superseded the cards. A publication nobody marked is the traveller's PATCH. */
+function supersessionCauseOf(publication: ReplanPublication): SupersessionCause {
+  return SUPERSESSION_CAUSE.get(publication) ?? "window_edit";
+}
+
+/** 3908: prepare the same certified rows and publication without any writes.
+ * The durable worker commits them and its checkpoint in one database transaction. */
+export function prepareDurableExternalSettlement(result:HandleEventResult,owner:string,nowMs:number):Record<string,unknown>|null {
+  if(result.replanned.length!==1)return null;
+  const outcome=result.replanned[0]!;
+  const {publication,decision}=externalReplanRecord(result,outcome,nowMs);
+  const record=REPLAN_CERTIFIED_RECORDS.get(decision);if(!record)return null;
+  const computation=certifiedComputationRowFor(owner,decision.sessionId,record);
+  const snapshotId=String(computation.snapshot_id);
+  return {computation,budget:timeBudgetRowFor(snapshotId,decision.sessionId,record),returnPlan:returnPlanRowFor(snapshotId,decision.sessionId,record),publication,decision};
+}
+import { certifiedComputationRowFor, timeBudgetRowFor, returnPlanRowFor } from '../layover/LayoverDecisionStore.js';

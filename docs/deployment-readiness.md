@@ -158,7 +158,7 @@ The older statement that no workflow applies migrations is too broad: the manual
 (`.github/workflows/beta-db.yml:141#workflow_dispatch`) has an explicit apply step (`.github/workflows/beta-db.yml:678#db:apply-migrations`).
 Pending beta application requires `apply=yes` (`.github/workflows/beta-db.yml:647#if:`, with the dry-run alternative at `:632#if:`); this is not evidence that production has this branch's schema.
 A production build therefore does not establish migration readiness. The repository's ledger comparison remains `pnpm run check:migration-ledger`
-(`artifacts/api-server/package.json:243#check:migration-ledger`); its missing-credentials outcome is explicitly non-success (`artifacts/api-server/src/scripts/checkMigrationLedger.ts:55#Exit code 2`).
+(`artifacts/api-server/package.json:244#check:migration-ledger`); its missing-credentials outcome is explicitly non-success (`artifacts/api-server/src/scripts/checkMigrationLedger.ts:55#Exit code 2`).
 This documentation pass does not use database credentials, invoke workflows or verify any deployment or activation state.
 
 ### 1.5 Deployment readiness checklist

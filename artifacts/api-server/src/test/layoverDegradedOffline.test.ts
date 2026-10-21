@@ -309,7 +309,7 @@ describe("§16 L155 — the return phrases the plan requires, cached with the bu
     assert.equal(at("TH").value?.language, "th");
     assert.equal(at("BR").value?.language, "pt-BR");
     assert.equal(at("PT").value?.language, "pt-PT");
-    assert.equal(at("CH").reason, "language_not_in_catalogue", "a country with several everyday languages is not guessed");
+    assert.deepEqual(at("CH").value?.languageOptions?.map(x => x.language), ['de', 'fr', 'it'], "multilingual airports expose choices instead of claiming one language");
     assert.equal(at("").reason, "language_not_in_catalogue");
   });
 
@@ -318,7 +318,7 @@ describe("§16 L155 — the return phrases the plan requires, cached with the bu
       { title: "Lounge", durationMin: 30, travelMin: 0, insideAirport: true },
       { title: "Temple", durationMin: 45, travelMin: 30, insideAirport: false },
     ] });
-    assert.equal(mixed.translationPhrases.available, true);
+    assert.equal(mixed.translationPhrases.available, true); assert.equal(mixed.translationPhrases.value?.languageOptions?.[0]?.stops[0]?.stopTitle, 'Temple');
     const leaving = bundle({ session: { ...SESSION, wantsToLeave: true }, airport: AIRPORT, record: RECORD, stops: [] });
     assert.equal(leaving.translationPhrases.available, true);
   });

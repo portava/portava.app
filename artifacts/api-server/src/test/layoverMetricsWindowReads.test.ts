@@ -59,6 +59,7 @@ function fixture(options: FixtureOptions = {}) {
   const originalFrom = database.from;
   database.from = (table: string) => {
     const builder = originalFrom(table);
+    if (!["layover_events", "layover_certified_computations"].includes(table)) return builder;
     if (table !== "layover_events" && table !== "layover_certified_computations") return builder;
     const originalSelect = builder.select;
     const originalLimit = builder.limit;
@@ -68,7 +69,7 @@ function fixture(options: FixtureOptions = {}) {
     let limit: number | undefined;
     builder.select = (columns: string, selectOptions?: { count?: string }) => {
       source = table === "layover_events"
-        ? columns.includes("metadata") ? "generations" : "events"
+        ? columns.includes("session_id") ? "events" : "generations"
         : columns.includes("verdict") ? "replay" : "decisions";
       count = selectOptions?.count;
       return originalSelect(columns, selectOptions);
@@ -114,7 +115,8 @@ describe("admin Layover metrics counted-window disclosure", () => {
         assert.equal(source.truncated, true);
       }
       assert.equal(result.body.layoverRollout.ranking.window.truncated, true);
-      assert.equal(result.body.metrics.find((metric: any) => metric.name === "recommendation_contract_violation").value, 0);
+      assert.equal(result.body.metrics.find((metric: any) => metric.name === "recommendation_contract_violation").value, null);
+      assert.equal(result.body.metrics.find((metric: any) => metric.name === "recommendation_contract_violation").status, "UNPRODUCIBLE");
       assert.deepEqual(result.reads.map((read) => read.count), ["exact", "exact", "exact", "exact"]);
       assert.deepEqual(result.reads.map((read) => read.limit), [50_001, 5001, 5001, 5001]);
     });

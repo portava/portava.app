@@ -372,7 +372,7 @@ export type PersistRefusal =
   | "read_failed"
   | "write_failed"
   /** A different result would be stored under an id that already names one. */
-  | "immutable_conflict";
+  | "immutable_conflict" | /** 3873 (L264): another writer moved the active snapshot after this one read it (LY409), the session was edited after it was read (LY412), or the canonical switch is ON and no expectation was stated (LY428). Nothing was stored. */ "stale_snapshot_write" | "stale_session_inputs" | "cas_expectation_required";
 
 export type PersistState =
   /** Parent and every child written. */
@@ -380,7 +380,7 @@ export type PersistState =
   /** The identical computation was already stored. The unique index said so. */
   | "already_recorded"
   /** The parent landed and at least one child did not. NEVER reported as success. */
-  | "write_unconfirmed";
+  | "write_unconfirmed" | /** 3873 (L6): the session's ACTIVE snapshot already certifies this decision; its id is returned and nothing was written. */ "active_snapshot";
 
 export interface PersistResult {
   ok: true;
@@ -410,9 +410,9 @@ export async function persistDecision(
   db: SupabaseClient,
   userId: string,
   sessionId: string,
-  record: LayoverFeasibilityRecord,
+  record: LayoverFeasibilityRecord, opts: PersistOptions = {}, // 3873 (L264): the canonical door states the active snapshot it read; see the foot of this file
 ): Promise<PersistOutcome> {
-  if (!(await isFlagEnabled(db, DECISION_PERSISTENCE_FLAG))) {
+  if (opts.canonical === undefined && !(await isFlagEnabled(db, DECISION_PERSISTENCE_FLAG))) {
     return {
       ok: false,
       reason: "persistence_disabled",
@@ -422,7 +422,7 @@ export async function persistDecision(
     };
   }
 
-  const snapshotId = snapshotIdFor(sessionId, record.inputHash);
+  const snapshotId = snapshotIdFor(sessionId, record.inputHash); const cas = await casExpectation(db, sessionId, record, opts); if (cas.kind === "settled") return cas.outcome;
 
   // ── the immutability check, BEFORE the write ──────────────────────────────
   // `assertSnapshotImmutable` names the field that differs; a unique-index
@@ -446,13 +446,13 @@ export async function persistDecision(
         message: err instanceof Error ? err.message : String(err),
       };
     }
-    return { ok: true, snapshotId, state: "already_recorded", unwritten: [] };
+    if (cas.column.expected_active_version !== undefined) { const current = await readActiveSnapshot(db, sessionId); if (!current.ok || current.active?.snapshotId !== snapshotId) return { ok: false, reason: "stale_snapshot_write", message: "an existing historical snapshot cannot be republished as the active decision" }; } return { ok: true, snapshotId, state: "already_recorded", unwritten: [] };
   }
 
-  // ── 1. the parent ─────────────────────────────────────────────────────────
+  // ── 1. the parent (3873: with the compare-and-swap expectation read before the immutability check above)
   const { error: parentErr } = await db
     .from("layover_certified_computations")
-    .insert(certifiedComputationRowFor(userId, sessionId, record));
+    .insert({ ...certifiedComputationRowFor(userId, sessionId, record), ...cas.column });
 
   let state: PersistState = "recorded";
   if (parentErr) {
@@ -462,7 +462,7 @@ export async function persistDecision(
       // trigger.
       return { ok: true, snapshotId, state: "already_recorded", unwritten: [] };
     }
-    logger.warn({ err: parentErr.message, sessionId, snapshotId }, "certified computation write failed");
+    const casRefused = casRefusalOf(parentErr, sessionId); if (casRefused) return casRefused; logger.warn({ err: parentErr.message, sessionId, snapshotId }, "certified computation write failed");
     return {
       ok: false,
       reason: "write_failed",
@@ -834,4 +834,72 @@ export function countedLayoverWindow(
       selectedColumns.every((column) => Object.hasOwn(row, column) && row[column] !== undefined))) return null;
   const rows = data.slice(0, limit) as Record<string, unknown>[];
   return { rows, truncated: count > rows.length };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LAYOVER 165, lane B2-RECS-A — §24 / App C6 (census-layover L264): the decision
+// write is a COMPARE-AND-SWAP on the session's active snapshot.
+//
+// Appended at the TAIL so every cited line above keeps its number; ESM hoists
+// the import. Migration 3873 adds `expected_active_version` and a BEFORE INSERT
+// trigger that refuses a stated expectation that is no longer the session's
+// active snapshot version (LY409), a decision certified from session inputs that
+// are no longer the session's (LY412), and — while
+// `layover_canonical_snapshot_enabled` is ON — a write that states none (LY428).
+//
+// `persistDecision` states the expectation exactly when the canonical snapshot is
+// on:
+//   - the canonical door (services/layover/LayoverActiveSnapshot.ts) read the
+//     active snapshot BEFORE it certified and passes it (`opts.canonical`): that
+//     version is the expectation, and nothing more is read here;
+//   - any other writer (a replan, a declared constraint, the stamp) did not:
+//     this reads the active snapshot now, returns IT when it certifies the same
+//     decision (`active_snapshot` — nothing is written, the caller cites the
+//     stored row), and otherwise states the version it read.
+// With the switch off (production today) nothing here reads or adds anything:
+// the payload is the pre-3873 payload, byte for byte.
+// ═══════════════════════════════════════════════════════════════════════════
+import { readActiveSnapshot, sameDecision, type ActiveSnapshot } from "./layoverActiveSnapshotRead.js";
+
+export interface PersistOptions {
+  /**
+   * Set ONLY by the canonical door, which has already read BOTH switches ON
+   * (`layover_canonical_snapshot_enabled`, `layover_decision_persistence_enabled`)
+   * and the session's active snapshot before certifying. `expectedActive: null`
+   * means it read that the session had none (expectation 0).
+   */
+  canonical?: { expectedActive: ActiveSnapshot | null };
+}
+
+type CasExpectation =
+  | { kind: "write"; column: { expected_active_version?: number } }
+  | { kind: "settled"; outcome: PersistOutcome };
+
+/** The compare-and-swap column for this write, or the answer when nothing needs writing. */
+async function casExpectation(
+  db: SupabaseClient,
+  sessionId: string,
+  record: LayoverFeasibilityRecord,
+  opts: PersistOptions,
+): Promise<CasExpectation> {
+  if (opts.canonical !== undefined) return { kind: "write", column: { expected_active_version: opts.canonical.expectedActive?.version ?? 0 } };
+  if (!(await isFlagEnabled(db, "layover_canonical_snapshot_enabled"))) return { kind: "write", column: {} };
+  const read = await readActiveSnapshot(db, sessionId);
+  if (!read.ok) {
+    return { kind: "settled", outcome: { ok: false, reason: "read_failed", message: `the session's active snapshot could not be read (${read.reason}) — refusing rather than writing without a compare-and-swap expectation` } };
+  }
+  if (read.active && sameDecision(read.active.record, record)) {
+    return { kind: "settled", outcome: { ok: true, snapshotId: read.active.snapshotId, state: "active_snapshot", unwritten: [] } };
+  }
+  if (read.active && read.active.record.inputs.nowMs > record.inputs.nowMs) return { kind: "settled", outcome: { ok: false, reason: "stale_snapshot_write", message: "the current snapshot was certified after this calculation; refusing to supersede it with older inputs" } };
+  return { kind: "write", column: { expected_active_version: read.active?.version ?? 0 } };
+}
+
+/** 3873's three refusals, by SQLSTATE. Anything else is the caller's ordinary write failure. */
+function casRefusalOf(err: { code?: string; message?: string }, sessionId: string): PersistOutcome | null {
+  const reason: PersistRefusal | null =
+    err.code === "LY409" ? "stale_snapshot_write" : err.code === "LY412" ? "stale_session_inputs" : err.code === "LY428" ? "cas_expectation_required" : null;
+  if (reason === null) return null;
+  logger.info({ sessionId, reason }, "certified computation refused by the active-snapshot compare-and-swap — nothing written");
+  return { ok: false, reason, message: String(err.message ?? reason) };
 }

@@ -175,7 +175,6 @@ const UNRESOLVED_REFERENCE_CEILING: Readonly<Record<string, number>> = {
   "src/services/accountDeletion/AccountDeletionService.ts": 1,
   "src/services/accountDeletion/DeletionDryRun.ts": 1,
   "src/services/accountDeletion/accountMediaDeletion.ts": 4,
-  "src/services/airport/LayoverRecommendationService.ts": 1,
   "src/services/highlights/highlightSchemaAvailability.ts": 1,
   "src/services/ledger/CanonicalShareReader.ts": 1,
   "src/services/media/MediaCleanupTransport.ts": 1,
@@ -447,6 +446,7 @@ describe("the scan finds each kind of plant", () => {
       ``,
     ].join("\n"));
     w("controls.ts", `export async function a(sc: any) { return sc.from("trips").select("id, title, destination_city").eq("owner_id", "x").order("created_at"); }\n`);
+    w("push.ts", `export async function a(sc:any){const rows:any[]=[];const row={author_id:'x',zz_dead_push:1};rows.push(row);{const rows:any[]=[];rows.push({zz_other_scope:1});}await sc.from('posts').insert(rows);\nawait sc.from('posts').upsert(rows.map(row=>({...row,id:'x'})));}\n`);
     w("dynamic.ts", `export async function a(sc: any, col: () => string) { return sc.from("posts").select("id").eq(col(), 1); }\n`);
     w("skipped.test.ts", `export async function a(sc: any) { return sc.from("zz_dead_table_in_a_test").select("id"); }\n`);
     planted = scanSchemaReferences(root, scanSelectEmbeds(root));
@@ -485,6 +485,10 @@ describe("the scan finds each kind of plant", () => {
     assert.deepEqual(at("A", "shadow.ts"), ["column posts.zz_shadow_const"]);
     assert.ok(!planted.refs.some((r) => r.file === "shadow.ts" && (r.table === "trips" || r.table === "events") && r.kind === "write"),
       "a parameter / loop variable named like the const must not resolve to it");
+  });
+  it('array push and spread-map builders expose their write columns without leaking a shadowed array',()=>{
+    assert.deepEqual(at('A','push.ts'),['column posts.zz_dead_push']);
+    assert.equal(planted.refs.filter(r=>r.file==='push.ts'&&r.kind==='write'&&r.name==='zz_dead_push').length,2);
   });
 
   it("CONTROLS: live names pass; a result's .filter(cb), a Storage bucket and Array.from are not PostgREST; a test file is not production", () => {

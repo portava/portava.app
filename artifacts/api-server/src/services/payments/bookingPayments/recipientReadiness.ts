@@ -28,7 +28,7 @@
  * "no unverified bookings", and bookings are already closed on this tree by
  * lib/rentBuddyKycGate.ts while identity verification is not operational.
  */
-import type { BookingPaymentStore } from "./model.js";
+import type { BookingPaymentStore, Read, RecipientRecord } from "./model.js";
 import { supabaseBookingPaymentStore } from "./supabaseStore.js";
 
 export type BuddyPaymentReadiness =
@@ -38,7 +38,7 @@ export type BuddyPaymentReadiness =
 
 /** Decide from the two stored reads. Never throws. */
 export async function readBuddyPaymentReadiness(
-  store: Pick<BookingPaymentStore, "partyForProfile" | "getRecipient">,
+  store: Pick<BookingPaymentStore, "partyForProfile"> & { getRecipient(partyId: string): Promise<Read<Pick<RecipientRecord, "onboarding" | "chargesEnabled"> | null>> },
   buddyUserId: string,
 ): Promise<BuddyPaymentReadiness> {
   try {

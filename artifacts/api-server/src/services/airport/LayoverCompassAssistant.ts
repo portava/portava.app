@@ -28,7 +28,7 @@
  *   2. THE TOOLS ARE READS OF THE CERTIFIED RECORD. Every value a tool returns
  *      is read off `ctx.record` (the answer's own certification) or an
  *      owner-scoped, privacy-scrubbed read the route made. No tool computes a
- *      deadline, a buffer, an envelope or a rating, and none writes. `replan`
+ *      deadline, a buffer, an envelope or a rating. `replan` may offer a recheck;
  *      runs the server's own §11.1 pipeline as a PREVIEW labelled hypothetical;
  *      `requestConstraintClarification` asks, it never writes a constraint.
  *   3. THE DETECTOR (`enforceCompassEnvelope`, restored from 6239b11f2 and
@@ -219,7 +219,7 @@ export interface LayoverToolContext {
   entry: EntryEligibility | null;
   /** The certification instant. No tool reads a second clock. */
   nowMs: number;
-  sources: Required<{ [K in keyof LayoverToolSources]: NonNullable<LayoverToolSources[K]> }>;
+  sources: Required<{ [K in keyof LayoverToolSources]: NonNullable<LayoverToolSources[K]> }>; requestRecheck?: () => Promise<void>;
 }
 
 export type LayoverToolResult =
@@ -647,7 +647,7 @@ export async function runLayoverTool(
         nowMs: ctx.nowMs,
       });
       const titleOf = (id: string) => stops.value.find((s) => s.id === id)?.title ?? id;
-      const out = result.replanned[0];
+      const out = result.replanned[0]; if (out) await ctx.requestRecheck?.(); // proposal only; explicit owner route executes against saved facts
       if (!out) {
         return ok({ preview: true, applied: false, trigger, impacted: 0, reason: result.skipped[0]?.reason ?? "only_active_sessions_replan" });
       }
@@ -754,9 +754,9 @@ export function planAwareClarifications(
   session: FeasibilitySession,
   nowMs: number,
   entry: EntryEligibility | null,
-  plans: readonly PlanCandidate[],
+  plans: readonly PlanCandidate[], liveConditions?: LayoverFeasibilityRecord["inputs"]["liveConditions"],
 ): PlanAwareClarifyingQuestion[] {
-  return valueOfInformation(airport, session, nowMs, entry, plans.map((p) => p.stops))
+  return valueOfInformation(airport, session, nowMs, entry, plans.map((p) => p.stops), liveConditions)
     .map((q) => ({ ...q, impact: { ...q.impact, topPlanChanges: q.impact.topPlanChanges === true } }));
 }
 
@@ -1082,7 +1082,7 @@ lounge lounges shops store stores boutique bookstore bookshop books magazine gif
 sleep music art gallery seat seats chair space spot corner place option options choice choices idea ideas picks
 mood interests interest style vibe vibes preference preferences energy comfort quality variety value experience experiences break
 hello hi thanks thank welcome glad happy layover
-`.trim().split(/\s+/));
+`.trim().split(/\s+/).filter((word) => !["can", "may", "must", "shall", "have", "has", "had", "having", "hasn't", "haven't", "local", "famous", "popular", "authentic", "traditional"].includes(word)));
 
 /**
  * The safety lexicon the vocabulary is checked against (by test), and the
@@ -1129,8 +1129,8 @@ const ADMISSIBLE_CHARS = /^[A-Za-z\s.,!;:'’()&\u0001-]*$/;
  * it carries no digit and it asks nothing. Anything else is withheld, with the
  * reason — never rewritten.
  */
-export function admitModelSentence(sentence: string, names: readonly string[]): { ok: true } | { ok: false; reason: string } {
-  if (/[?¿]/.test(sentence)) return { ok: false, reason: "question" };
+export function admitModelSentence(sentence: string, names: readonly string[], forbiddenNames: readonly string[] = []): { ok: true } | { ok: false; reason: string } {
+  if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(sentence)) return { ok: false, reason: "unanalysable_character" }; if (mentionsUnavailablePlan(sentence, forbiddenNames)) return { ok: false, reason: "unavailable_plan" }; if (/[?¿]/.test(sentence)) return { ok: false, reason: "question" };
   let masked = sentence.replace(/[’‘]/g, "'");
   for (const n of [...names].filter((x) => x.trim().length >= 2).sort((a, b) => b.length - a.length)) {
     masked = masked.split(new RegExp(n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/[’‘]/g, "'"), "gi")).join("\u0001");
@@ -1145,11 +1145,11 @@ export function admitModelSentence(sentence: string, names: readonly string[]): 
   return { ok: true };
 }
 
-export function confineModelText(text: string, names: readonly string[], maxSentences: number): { admitted: string[]; dropped: Array<{ sentence: string; reason: string }> } {
+export function confineModelText(text: string, names: readonly string[], maxSentences: number, forbiddenNames: readonly string[] = []): { admitted: string[]; dropped: Array<{ sentence: string; reason: string }> } {
   const admitted: string[] = [];
   const dropped: Array<{ sentence: string; reason: string }> = [];
   for (const s of splitSentences(text)) {
-    const verdict = admitModelSentence(s, names);
+    const verdict = admitModelSentence(s, names, forbiddenNames);
     if (!verdict.ok) { dropped.push({ sentence: s, reason: verdict.reason }); continue; }
     if (admitted.length >= maxSentences) { dropped.push({ sentence: s, reason: "over_sentence_budget" }); continue; }
     admitted.push(/[.!]$/.test(s) ? s : `${s}.`);
@@ -1194,7 +1194,7 @@ export interface CompassAssistantAnswer extends Omit<CompassLayoverAnswer, "boun
   modelProse: { mode: "certified_only" | "confined"; droppedSentences: number };
   modelConsulted: boolean;
   planComparison: PlanComparisonLine[];
-  assistant: CompassAssistantStatus;
+  assistant: CompassAssistantStatus; replanAction?: import("./LayoverCompassReplan.js").CompassReplanAction;
 }
 
 /** The certified-only answer, as the door publishes it with the assistant OFF. */
@@ -1207,11 +1207,11 @@ export interface CompassAssistantInput {
   session: LayoverSession;
   airport: AirportProfile;
   entry?: EntryEligibility | null;
-  snapshot?: LayoverSnapshot | null;
+  snapshot?: LayoverSnapshot | null; certifiedRecord?: LayoverFeasibilityRecord | null;
   /** The certification instant. REQUIRED: the assistant reads no clock of its own. */
   nowMs: number;
   userId: string;
-  sources: LayoverToolSources;
+  sources: LayoverToolSources; requestRecheck?: () => Promise<void>;
   limits?: Partial<AssistantLimits>;
   /** The certified answer the route already computed for THIS question and instant; recomputed when absent. Its certification must match (checked). */
   base?: CompassLayoverAnswer;
@@ -1308,7 +1308,7 @@ export async function answerLayoverQuestionWithAssistant(db: SupabaseClient | nu
   const entry = input.entry ?? null;
   // The certified core: the safety facts, the airport facts and the
   // certification header — exactly the answer the flag-OFF door gives.
-  const base = input.base ?? await answerLayoverQuestion(db as SupabaseClient, { question: input.question, session: input.session, airport: input.airport, entry, snapshot: input.snapshot ?? null, nowMs: input.nowMs });
+  const base = input.base ?? await answerLayoverQuestion(db as SupabaseClient, { question: input.question, session: input.session, airport: input.airport, entry, snapshot: input.snapshot ?? null, certifiedRecord: input.certifiedRecord, nowMs: input.nowMs });
   const fallback = (reason: AssistantFallbackReason, extra: Partial<CompassAssistantAnswer> = {}): CompassAssistantAnswer => ({
     ...base, planComparison: [], ...extra, assistant: { enabled: true, status: "fallback", fallbackReason: reason, model: ASSISTANT_MODEL },
   });
@@ -1317,16 +1317,16 @@ export async function answerLayoverQuestionWithAssistant(db: SupabaseClient | nu
   if (!rl.allowed) return fallback("rate_limited");
 
   // THE SAME record the certified text was read off, or nothing at all.
-  const record = input.snapshot?.certifiedRecord ?? certifySessionFeasibility(input.airport, input.session, { nowMs: input.nowMs, entry });
+  const record = input.snapshot?.certifiedRecord ?? input.certifiedRecord ?? certifySessionFeasibility(input.airport, input.session, { nowMs: input.nowMs, entry });
   if (certificationHeader(record).inputHash !== base.certification.inputHash) return fallback("certification_mismatch");
   const usableMinutes = input.snapshot ? input.snapshot.usableMinutes : record.envelope.usableMinutes;
 
-  const ctx: LayoverToolContext = { db, session: input.session, airport: input.airport, record, usableMinutes, entry, nowMs: input.nowMs, sources: toolSources(input.sources) };
+  const ctx: LayoverToolContext = { db, session: input.session, airport: input.airport, record, usableMinutes, entry, nowMs: input.nowMs, sources: toolSources(input.sources), requestRecheck: input.requestRecheck };
 
   const plans = await planCandidates(ctx);
   // §12.1: ONE question, the decisive one, measured by re-certification — the
   // model cannot add one (its questions are withheld) or swap in a weaker one.
-  const clarifyingQuestion = planAwareClarifications(input.airport, input.session, input.nowMs, entry, plans)[0] ?? null;
+  const clarifyingQuestion = planAwareClarifications(input.airport, input.session, input.nowMs, entry, plans, record.inputs.liveConditions)[0] ?? null;
 
   // ── the model, with the twelve tools ─────────────────────────────────────
   const consulted: LayoverToolName[] = [];
@@ -1394,7 +1394,7 @@ export async function answerLayoverQuestionWithAssistant(db: SupabaseClient | nu
   // airside spa that outlasts the window is still a missed flight), not a
   // landside place the record does not admit, and never other travellers' text
   // (crew titles are theirs to write — the crew card shows them, the model may not relay them).
-  const names = [input.airport.name, ...plans.filter((p) => nameable(record, p)).map((p) => p.title)];
+  const names = [input.airport.name, ...plans.filter((p) => nameable(record, p)).map((p) => p.title)]; const forbiddenNames = plans.filter((p) => !nameable(record, p)).map((p) => p.title);
 
   // Comparison: server-rendered from the certified fit of plans the record knows.
   const comparison: PlanComparisonLine[] = [];
@@ -1404,13 +1404,13 @@ export async function answerLayoverQuestionWithAssistant(db: SupabaseClient | nu
     if (!plan) { dropped += splitSentences(c.why).length; continue; } // an invented plan is not compared
     const fit = certifiedPlanFit(record, plan.stops);
     const insideAirport = plan.stops.length > 0 && plan.stops.every((s) => s.insideAirport === true);
-    const note = confineModelText(c.why, names, 1);
+    const note = confineModelText(c.why, names, fit.fitsWindow ? 1 : 0, forbiddenNames);
     dropped += note.dropped.length;
     comparison.push({ planRef: plan.ref, title: plan.title, available: fit.fitsWindow, status: fitStatusText(fit, insideAirport), note: note.admitted[0] ?? null });
   }
 
   // Layer 4: sentence by sentence, the closed vocabulary.
-  const reply = confineModelText(out.reply, names, limits.maxReplySentences);
+  const reply = confineModelText(out.reply, names, limits.maxReplySentences, forbiddenNames);
   dropped += reply.dropped.length;
 
   // Defence in depth: what is about to be published from the model, re-checked.
@@ -1490,4 +1490,11 @@ export async function readLayoverOpportunities(db: SupabaseClient, userId: strin
       title: String(row.title ?? ""), why: String(row.body ?? ""), priority: String(row.priority ?? "normal"), at: String(row.created_at ?? ""),
     })),
   };
+}
+
+/** Match refused titles before any name masking; punctuation cannot turn them into ordinary vocabulary. */
+function mentionsUnavailablePlan(sentence: string, names: readonly string[]): boolean {
+  const tokens = (value: string) => value.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  const text = ` ${tokens(sentence)} `;
+  return names.some((name) => { const title = tokens(name); return title.length > 0 && text.includes(` ${title} `); });
 }

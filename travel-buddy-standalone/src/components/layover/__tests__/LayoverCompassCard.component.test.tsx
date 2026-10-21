@@ -127,3 +127,67 @@ describe('L102–L113 — the tools the server ran are shown to the traveller', 
     expect(screen.getByTestId('compass-answer')).toBeTruthy();
   });
 });
+
+describe('L112 — explicit recheck action', () => {
+  const action = () => ({ id: 'aaf09aa0-d75c-4bac-bb36-67335e7e032d', kind: 'recheck_current_facts', snapshotId: 'snapshot-current', expiresAt: new Date(Date.now() + 300_000).toISOString() });
+  it('offers the precise scope and sends no mutation before the traveller taps', async () => {
+    const a = action(), spy = stubFetch(answerBody({ replanAction: a }));
+    await ask();
+    expect(screen.getByText(/saved flight details and current verified conditions/)).toBeTruthy();
+    expect(spy).toHaveBeenCalledTimes(1);
+    spy.mockImplementation(async () => ({ ok: true, status: 200, json: async () => ({ ok: true, result: { state: 'applied' } }) }) as unknown as Response);
+    fireEvent.press(screen.getByText('Recheck plan with saved details'));
+    await waitFor(() => expect(screen.getByTestId('compass-replan-notice')).toBeTruthy());
+    expect(spy).toHaveBeenCalledTimes(2);
+    const [url, init] = spy.mock.calls[1] as unknown as [string, RequestInit];
+    expect(url).toContain('/airport/sessions/sess-1/compass/replan');
+    expect(init.method).toBe('POST'); expect(JSON.parse(String(init.body))).toEqual({ actionId: a.id, confirmed: true });
+    expect(screen.queryByTestId('compass-answer')).toBeNull(); // old certified text is withdrawn after a recheck
+  });
+  it('does not execute an expired offer', async () => {
+    const spy = stubFetch(answerBody({ replanAction: { ...action(), expiresAt: new Date(Date.now() - 1_000).toISOString() } }));
+    await ask();
+    expect(screen.getByText('This recheck offer expired. Ask Compass again.')).toBeTruthy();
+    fireEvent.press(screen.getByText('Recheck plan with saved details'));
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+  it('an unsupported operation is never offered as an apply button', async () => {
+    const spy = stubFetch(answerBody({ replanAction: { ...action(), kind: 'edit_flight_from_model' } }));
+    await ask(); expect(screen.queryByTestId('compass-replan-apply')).toBeNull(); expect(spy).toHaveBeenCalledTimes(1);
+  });
+  it('a stale refusal explains the current offer is unusable instead of claiming success', async () => {
+    const spy = stubFetch(answerBody({ replanAction: action() })); await ask();
+    spy.mockImplementation(async () => ({ ok: false, status: 409, json: async () => ({ ok: false, reason: 'action_stale' }) }) as unknown as Response);
+    fireEvent.press(screen.getByText('Recheck plan with saved details'));
+    await waitFor(() => expect(screen.getByText('Your layover changed. Ask Compass again for a current recheck.')).toBeTruthy());
+    expect(screen.queryByTestId('compass-replan-notice')).toBeNull();
+  });
+  it('discloses partial updates and withdraws the old answer', async () => {
+    const spy = stubFetch(answerBody({ replanAction: action() })); await ask();
+    spy.mockImplementation(async () => ({ ok: false, status: 503, json: async () => ({ ok: true, result: { state: 'partial' } }) }) as unknown as Response);
+    fireEvent.press(screen.getByText('Recheck plan with saved details'));
+    await waitFor(() => expect(screen.getByText(/Some updates completed, but the recheck could not finish/)).toBeTruthy());
+    expect(screen.queryByTestId('compass-answer')).toBeNull();
+  });
+  it('drops the answer and approval when the displayed session changes', async () => {
+    stubFetch(answerBody({ replanAction: action() })); await ask();
+    await screen.rerender(<LayoverCompassCard sessionId="sess-2" timezone="Asia/Taipei" />);
+    fireEvent.press(screen.getByTestId('compass-toggle'));
+    expect(screen.queryByTestId('compass-answer')).toBeNull();
+    expect(screen.queryByTestId('compass-replan-apply')).toBeNull();
+  });
+  it('double tap sends one approval and a late result cannot refresh another session', async () => {
+    const spy = stubFetch(answerBody({ replanAction: action() })); await ask();
+    let resolve!: (r: Response) => void;
+    spy.mockImplementation(() => new Promise<Response>(r => { resolve = r; }));
+    fireEvent.press(screen.getByText('Recheck plan with saved details'));
+    fireEvent.press(screen.getByText('Recheck plan with saved details'));
+    await waitFor(() => expect(spy).toHaveBeenCalledTimes(2));
+    const onReplanned = jest.fn();
+    await screen.rerender(<LayoverCompassCard sessionId="sess-2" timezone="Asia/Taipei" onReplanned={onReplanned} />);
+    resolve({ ok: true, status: 200, json: async () => ({ ok: true, result: { state: 'applied' } }) } as Response);
+    fireEvent.press(screen.getByTestId('compass-toggle'));
+    await waitFor(() => expect(screen.getByTestId('compass-input')).toBeTruthy());
+    expect(onReplanned).not.toHaveBeenCalled(); expect(screen.queryByTestId('compass-replan-notice')).toBeNull();
+  });
+});

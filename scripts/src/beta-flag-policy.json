@@ -1508,6 +1508,27 @@
       ]
     },
     {
+      "flag": "layover_activity_commitment_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3907_layover_activity_commitment.sql:11, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
+      "evidence": []
+    },
+    {
+      "flag": "layover_buddy_specialist_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3894_layover_buddy_booking_links.sql:94, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
+      "evidence": []
+    },
+    {
+      "flag": "layover_canonical_snapshot_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3873_layover_active_snapshot_compare_and_swap.sql:193, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
+      "evidence": []
+    },
+    {
       "flag": "layover_compass_assistant_enabled",
       "kind": "CAPABILITY",
       "enabled": false,
@@ -1523,6 +1544,13 @@
         "census-compass:§4",
         "snapshot:20260922-production-schema.json"
       ]
+    },
+    {
+      "flag": "layover_compass_replan_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3897_layover_compass_replan_actions.sql:87, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
+      "evidence": []
     },
     {
       "flag": "layover_constraints_enabled",
@@ -1543,6 +1571,13 @@
       "kind": "CAPABILITY",
       "enabled": false,
       "reason": "OFF: seeded FALSE by 3996_layover_crew_location_grants.sql:346, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
+      "evidence": []
+    },
+    {
+      "flag": "layover_crew_split_plans_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3872_layover_crew_plans.sql:325, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
       "evidence": []
     },
     {
@@ -1590,6 +1625,13 @@
       "evidence": []
     },
     {
+      "flag": "layover_experience_execution_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3898_layover_experience_plan_versions.sql:99, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
+      "evidence": []
+    },
+    {
       "flag": "layover_flight_connections_enabled",
       "kind": "CAPABILITY",
       "enabled": false,
@@ -1611,6 +1653,13 @@
       "evidence": []
     },
     {
+      "flag": "layover_live_signals_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3885_layover_live_signals_flag.sql:54, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
+      "evidence": []
+    },
+    {
       "flag": "layover_map_bands_enabled",
       "kind": "CAPABILITY",
       "enabled": false,
@@ -1629,6 +1678,20 @@
       "kind": "CAPABILITY",
       "enabled": false,
       "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "layover_mutual_discovery_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3875_layover_discovery_consents.sql:198, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
+      "evidence": []
+    },
+    {
+      "flag": "layover_objective_evidence_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3899_layover_objective_evidence.sql:61, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
       "evidence": []
     },
     {
@@ -1677,10 +1740,38 @@
       "evidence": []
     },
     {
+      "flag": "layover_recommendation_status_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3871_layover_recommendation_status_and_supersession.sql:220, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
+      "evidence": []
+    },
+    {
+      "flag": "layover_route_fanout_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3908_layover_route_fanout.sql:189, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
+      "evidence": []
+    },
+    {
+      "flag": "layover_route_subjects_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3895_layover_route_subject_index.sql:103, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
+      "evidence": []
+    },
+    {
       "flag": "layover_routed_corridor_enabled",
       "kind": "CAPABILITY",
       "enabled": false,
       "reason": "OFF: seeded FALSE by 3856_layover_routes_session_budget.sql:92, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
+      "evidence": []
+    },
+    {
+      "flag": "layover_safe_return_product_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3893_layover_safe_return_links.sql:91, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
       "evidence": []
     },
     {
@@ -1699,6 +1790,13 @@
         "migration:0127_layover_system.sql",
         "snapshot:20260922-production-schema.json"
       ]
+    },
+    {
+      "flag": "layover_service_write_audit_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3890_layover_service_write_audit.sql:84, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
+      "evidence": []
     },
     {
       "flag": "layover_snapshot_compaction_enabled",

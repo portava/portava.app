@@ -33,9 +33,9 @@
  * said plainly. Neither is computed here.
  *
  * ── WHAT IS NOT HERE ─────────────────────────────────────────────────────────
- * No route (there is no routing provider) and no flight or gate status (no
- * flight feed). Those are L152 and L153, and each is a server-side absence; none
- * is papered over here. The crew meeting point (L154) IS here since
+ * No route (L152): a provider's directions are not cached. The onward flight's
+ * last RECORDED gate/status (L153) is, since 2026-10-20 (LayoverCachedFlightStatus),
+ * stale-badged from its observation; a typed schedule never is. The crew meeting point (L154) IS here since
  * census-layover §48, and the return phrases (L155) since §55 — the cached set,
  * in the airport's language with the English beside it, or why there is none.
  */
@@ -133,7 +133,7 @@ export function LayoverOfflinePlanCard({ plan, replan, nowMs }: Props) {
       )}
 
       {/* L151 — the area half, stated only in the direction it is proved. */}
-      {plan.envelope && (
+      {plan.routedMap || plan.abortReturnRoute ? <LayoverRoutedMapPanel data={plan.routedMap ?? null} selectedRecommendationIds={plan.routedMap?.cards.map(c => c.id)} timezone={plan.airport.timezone} nowMs={nowMs} offline abortRoute={plan.abortReturnRoute} /> : plan.envelope && (
         <View style={styles.envelopeBox} testID="layover-cached-plan-envelope">
           <Text style={styles.envelopeText}>
             Beyond about {km(plan.envelope.radiusMetres)} from this airport, nothing fitted the{' '}
@@ -146,7 +146,7 @@ export function LayoverOfflinePlanCard({ plan, replan, nowMs }: Props) {
         </View>
       )}
 
-      {/* §16 L154 — where to meet the crew, or why that is not saved. The same
+      <LayoverCachedFlightStatus cap={plan.flightStatus} timezone={plan.airport.timezone} nowMs={nowMs} />{/* §16 L153: the onward flight's last recorded values, stale-badged. §16 L154 — where to meet the crew, or why that is not saved. The same
           words the online card uses; a failed crew read is never "no crew". */}
       <Text style={styles.stopText} testID="layover-cached-plan-crew-point">
         {describeCrewMeetingPointCapability(plan.crewMeetingPoint).sentence}
@@ -162,8 +162,8 @@ export function LayoverOfflinePlanCard({ plan, replan, nowMs }: Props) {
         }
         return (
           <View testID="layover-cached-plan-phrases">
-            <Text style={styles.stopText}>Phrases in {phrases.set.languageName}</Text>
-            {phrases.set.phrases.map((p) => (
+            {phrases.set.languageOptions?.length ? <LayoverPhraseOptions set={phrases.set} /> : <Text style={styles.stopText}>Phrases in {phrases.set.languageName}</Text>}
+            {(phrases.set.languageOptions?.length ? [] : phrases.set.phrases).map((p) => (
               <View key={p.key} testID={`layover-cached-plan-phrase-${p.key}`}>
                 <Text style={styles.stopText}>{p.local}</Text>
                 <Text style={styles.envelopeText}>{p.english}</Text>
@@ -216,3 +216,7 @@ const styles = StyleSheet.create({
   replan:      { ...t.small, color: color.ink, marginTop: 4 },
   replanRefused:{ ...t.small, color: color.mute, marginTop: 4 },
 });
+
+import { LayoverRoutedMapPanel } from './LayoverRoutedMapPanel.tsx';
+import { LayoverPhraseOptions } from './LayoverPhraseOptions.tsx';
+import { LayoverCachedFlightStatus } from './LayoverCachedFlightStatus.tsx';

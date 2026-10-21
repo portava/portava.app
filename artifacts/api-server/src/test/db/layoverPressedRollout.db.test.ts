@@ -27,7 +27,7 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { PRESSED_SKIP_REASON, PRESS_ARM, applyPress, openForPress, type PressedDb, type PressedUser } from "./pressedLayoverDb.js";
-import { productionBaseFlags, seedConfirmedCorridor, startPressedLayoverApp, startSession, type PressedApp } from "./pressedLayoverApp.js";
+import { productionBaseFlags, seedConfirmedCorridor, seedCuratedAirport, seedVerifiedLayoverSpecialist, startPressedLayoverApp, startSession, type PressedApp } from "./pressedLayoverApp.js";
 import { discoveryLayoverGate } from "../../lib/discoveryLayoverMode.js";
 import { _setTestFetch } from "../../lib/push.js";
 
@@ -58,7 +58,7 @@ describe("B1-P rollout switches (P10, P14, L254 test-only, P18)", { skip: PRESSE
       pushes.push(...body);
       return new Response(JSON.stringify({ data: body.map(() => ({ status: "ok", id: "ticket" })) }), { status: 200 });
     }) as any);
-    app = await startPressedLayoverApp(db);
+    app = await startPressedLayoverApp(db); await seedCuratedAirport(app, db, "SIN"); await db.setFlag("layover_buddy_specialist_enabled", true); // 3874 + the 2026-10-18 maturity decision: landside opens only at a curated airport; the buddies route's second gate (routes/airport.ts, ee52da82c) — G3 presses rent_buddy_enabled
   });
   after(async () => { _setTestFetch(null); delete process.env["PUSH_IOS_TIME_SENSITIVE_ENTITLED"]; await app?.close(); await db?.close(); });
 
@@ -104,9 +104,9 @@ describe("B1-P rollout switches (P10, P14, L254 test-only, P18)", { skip: PRESSE
       const t = await db.seedUser("nighttraveller");
       await seedConfirmedCorridor(db, t.id);
       const mk = async (label: string, verified: boolean, level: string) => {
-        const b = await db.seedUser(label);
+        const b = await db.seedUser(label); await seedVerifiedLayoverSpecialist(db, b); // L273: each is a live-verified, payout-ready `layover` specialist, so the PROFILE's verified/level (L254) is the only difference
         await db.exec(`INSERT INTO public.rent_buddy_profiles (user_id, display_name, city, country, categories, status, verified, buddy_level)
-          VALUES ('${b.id}', '${label}', 'Singapore', 'Singapore', '{}', 'active', ${verified}, '${level}')`);
+          VALUES ('${b.id}', '${label}', 'Singapore', 'Singapore', '{layover}', 'active', ${verified}, '${level}')`);
         return b.id;
       };
       const trusted = await mk("trusted_buddy", true, "trusted");

@@ -198,7 +198,7 @@ export async function optionalUser(
   if (!client) return null;
   // Token verification AND the account-state gate (lib/accountStateGate.ts).
   const user = await optionalUserFromToken(client, token, { log: (req as any).log });
-  return user ? { client, user } : null;
+  if (user) setLayoverAuditActor(user.id); return user ? { client: auditedLayoverClient(client), user } : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -366,7 +366,7 @@ export async function requireUser(
   // revokes by setting it to now) refuses with 403, read per request — so a token
   // issued before the ban is refused too. deleted / deactivated / pending_deletion / no profile row are served.
   const accountStatus = statusRead.restriction.kind; // the MODERATION restriction ("none" | "banned" | "suspended"), not profiles.account_status
-  if (accountStatus !== "none" && restrictedAccountMayUse(req)) { (req as any).accountRestriction = statusRead.restriction; return { client, user: data.user as User }; } if (accountStatus !== "none") res = withRefusalReason(res, statusRead.restriction); // TV-4b allow-list first (lib/restrictedAccountAccess.ts); the 403 below also carries `reason` (lib/accountStateGate.ts)
+  if (accountStatus !== "none" && restrictedAccountMayUse(req)) { (req as any).accountRestriction = statusRead.restriction; setLayoverAuditActor(data.user.id); return { client: auditedLayoverClient(client), user: data.user as User }; } if (accountStatus !== "none") res = withRefusalReason(res, statusRead.restriction); // TV-4b allow-list first (lib/restrictedAccountAccess.ts); the 403 below also carries `reason` (lib/accountStateGate.ts)
   if (accountStatus === "banned") {
     sendError(res, "forbidden", "Your account has been banned");
     return null;
@@ -376,7 +376,7 @@ export async function requireUser(
     return null;
   }
 
-  return { client, user: data.user as User };
+  setLayoverAuditActor(data.user.id); return { client: auditedLayoverClient(client), user: data.user as User };
 }
 
 // ---------------------------------------------------------------------------
@@ -708,3 +708,5 @@ export function requireIdempotencyKey(
 
 // TV-4b (lane B, 2026-10-06): the routes a banned or suspended account may still use. Imported at the foot so every cited line keeps its number.
 import { restrictedAccountMayUse } from "./restrictedAccountAccess.js";
+
+import { auditedLayoverClient, setLayoverAuditActor } from './layoverServiceAudit.js';

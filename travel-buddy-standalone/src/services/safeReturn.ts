@@ -119,7 +119,7 @@ export async function getSuggestion(planItemId: string): Promise<SuggestionResul
 }
 
 export async function createSession(opts: {
-  timerMinutes?: number | null;
+  timerMinutes?: number | null; layoverSessionId?: string;
   escalationLevel?: 0 | 1 | 2 | 3;
   trustedCircleEnabled?: boolean;
   liveShareEnabled?: boolean;

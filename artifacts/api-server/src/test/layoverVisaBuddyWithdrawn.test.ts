@@ -23,7 +23,7 @@
  *      category, or in its own words (display name, tagline or bio; the bio is
  *      what the tap opens) — is not on the layover list. `PATCH
  *      /rent-a-buddy/dashboard/offer` writes categories, tagline and bio
- *      UNVALIDATED, so a buddy can declare `visa_assistance` beside `city`;
+ *      UNVALIDATED, so a buddy can declare `visa_assistance` beside `layover`;
  *      before this test such a profile passed `filterLayoverCompatible` (it
  *      matches on ANY compatible category) and was served. Positive controls
  *      keep the list from passing by being empty.
@@ -45,7 +45,7 @@ import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import airportRouter from "../routes/airport.js";
 import * as AirportRoutes from "../routes/airport.js";
-import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js";
+import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js"; import { withConfirmedCorridor } from "./helpers/confirmedCorridor.js"; import { withVerifiedLayoverSpecialists } from "./helpers/verifiedLayoverSpecialists.js";
 import { LAYOVER_COMPATIBLE_BUDDY_CATEGORIES } from "../services/airport/LayoverBuddyGate.js";
 import { detectTravelScamSignals } from "../domain/telegraph/policies/travelScamSignals.js";
 
@@ -83,21 +83,21 @@ function get(p: string): Promise<{ status: number; body: any }> {
 const profile = (id: string, over: Record<string, unknown>) => ({
   // A neutral name, so each case below trips the screen through the ONE field it is about.
   id, user_id: `buddy-${id}`, display_name: "Local buddy", city: "Taoyuan", status: "active", review_count: 1,
-  verified: true, buddy_level: "trusted", categories: ["city"], tagline: null, bio: null, ...over,
+  verified: true, buddy_level: "trusted", categories: ["layover"], tagline: null, bio: null, ...over,
 });
 
-/** The profiles a buddy can write today through PATCH /rent-a-buddy/dashboard/offer. */
+/** The profiles a buddy can write today through PATCH /rent-a-buddy/dashboard/offer. Every one is a verified `layover` specialist (L273), so the visa screen is the ONLY thing that can withhold it. */
 const OFFERS_VISA_HELP = [
-  profile("declared-category", { categories: ["city", "visa_assistance"], tagline: "Food walks near the airport" }),
-  profile("declared-entry", { categories: ["arrival", "entry_help"] }),
-  profile("tagline-scam", { categories: ["arrival"], tagline: "Guaranteed visa approval, I fast-track it for a fee" }),
-  profile("tagline-plain", { categories: ["arrival"], tagline: "I help with immigration forms at arrivals" }),
-  profile("bio-embassy", { categories: ["language"], tagline: "Translator", bio: "Embassy contact — I can sort your entry paperwork in an hour." }),
-  profile("name", { categories: ["city"], display_name: "Visa Fixer Tom" }),
+  profile("declared-category", { categories: ["layover", "city", "visa_assistance"], tagline: "Food walks near the airport" }),
+  profile("declared-entry", { categories: ["layover", "arrival", "entry_help"] }),
+  profile("tagline-scam", { categories: ["layover", "arrival"], tagline: "Guaranteed visa approval, I fast-track it for a fee" }),
+  profile("tagline-plain", { categories: ["layover", "arrival"], tagline: "I help with immigration forms at arrivals" }),
+  profile("bio-embassy", { categories: ["layover", "language"], tagline: "Translator", bio: "Embassy contact — I can sort your entry paperwork in an hour." }),
+  profile("name", { categories: ["layover", "city"], display_name: "Visa Fixer Tom" }),
 ];
 const CLEAN = [
-  profile("clean-city", { categories: ["city"], tagline: "Night market walks", bio: "Born in Taoyuan." }),
-  profile("clean-arrival", { categories: ["arrival"], tagline: "Airport pickup and a SIM card" }),
+  profile("clean-city", { categories: ["layover", "city"], tagline: "Night market walks", bio: "Born in Taoyuan." }),
+  profile("clean-arrival", { categories: ["layover", "arrival"], tagline: "Airport pickup and a SIM card" }),
 ];
 
 function stage(rows: unknown[]) {
@@ -112,7 +112,7 @@ function stage(rows: unknown[]) {
     rent_buddy_availability: [],
     blocks: [],
   };
-  _setTestClient(projecting(makeLayoverDb(tables, { users: { [TOKEN]: USER } }), "rent_buddy_profiles"), true);
+  _setTestClient(projecting(makeLayoverDb(withVerifiedLayoverSpecialists(withConfirmedCorridor(tables, { userIds: [USER], destination: "TW" })), { users: { [TOKEN]: USER } }), "rent_buddy_profiles"), true);
 }
 
 /**
@@ -157,8 +157,8 @@ before(() => {
 after(() => { mock.timers.reset(); return new Promise<void>((resolve) => server.close(() => resolve())); });
 
 describe("A. the vocabulary of the layover → Rent-a-Buddy path names no visa or entry service", () => {
-  it("A1. the layover-compatible categories are city/language/arrival/shopping and none is a visa or entry service", () => {
-    assert.deepEqual([...LAYOVER_COMPATIBLE_BUDDY_CATEGORIES], ["city", "language", "arrival", "shopping"]);
+  it("A1. the layover-compatible category is the explicit `layover` specialist declaration (L273, B2-BUDDY) and none is a visa or entry service", () => {
+    assert.deepEqual([...LAYOVER_COMPATIBLE_BUDDY_CATEGORIES], ["layover"]); // was city/language/arrival/shopping until B2-BUDDY: docs/ops/layover-165-remediation-progress.md "### L273" (specialist path; generic city/arrival services do not imply it)
     for (const c of LAYOVER_COMPATIBLE_BUDDY_CATEGORIES) assert.doesNotMatch(c.replace(/_/g, " "), VISA_OR_ENTRY, c);
   });
 

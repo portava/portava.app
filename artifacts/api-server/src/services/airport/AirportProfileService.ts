@@ -28,6 +28,13 @@ function noteFallback(where: string, error: unknown): void {
   logger.warn({ err: error, where }, "airport_profiles unreadable — answering from the static dataset with DEFAULT buffers");
 }
 import {
+  UNCURATED_PROJECTION,
+  calibratedExtraFromRow,
+  curatedLive,
+  curationProjectionFromRow,
+  type AirportCurationProjection,
+} from "./airportCurationPolicy.js";
+import {
   searchStaticAirports,
   resolveStaticByIata,
   resolveStaticByCity,
@@ -73,6 +80,23 @@ export interface AirportProfile {
    * wiring that closes the gap is one line there — see `airportRowToProfile`.
    */
   terminalInfo?: Record<string, unknown> | null;
+  /**
+   * census L14 / L79 / L243 — the airport's CURATED facts, as migration 3874
+   * projects them onto the row: which timing assumptions, topology and transport
+   * model are published (and until when), and the version every derivation of
+   * the static model carries. ALWAYS SET by the three mappers in this file
+   * (an uncurated airport carries `UNCURATED_PROJECTION`), so the certified
+   * record's maturity input is computed for every production airport; a profile
+   * built by hand without it is the legacy arm (see LayoverFeasibility).
+   */
+  curation?: AirportCurationProjection;
+  /**
+   * census L83 / L247 — the recalibrated time-of-day bands (3880): per local
+   * hour, the EXTRA minutes above what the engine already budgets at that hour.
+   * `null` when the airport has no unexpired calibration. The engine folds it
+   * into the time-of-day term; it can tighten a deadline and never relax one.
+   */
+  calibratedCheckpointExtra?: number[] | null; timingEvidence?: import('./layoverTimingEvidence.js').TimingEvidence | null; timingEvidenceUnavailable?: boolean;
 }
 
 /** Convert a static airport record to an AirportProfile with fallback buffer values. */
@@ -97,6 +121,8 @@ function staticToProfile(s: StaticAirport): AirportProfile {
     verified:               false,
     // The static dataset carries no terminal or gate detail at all.
     terminalInfo:           null,
+    curation:               UNCURATED_PROJECTION,
+    calibratedCheckpointExtra: null,
   };
 }
 
@@ -111,6 +137,8 @@ const FALLBACK_PROFILE: Omit<AirportProfile, "id" | "iataCode" | "name" | "city"
   trafficExtraMin: 20,
   verified: false,
   terminalInfo: null,
+  curation: UNCURATED_PROJECTION,
+  calibratedCheckpointExtra: null,
 };
 
 /**
@@ -125,6 +153,54 @@ export function airportRowToProfile(row: any): AirportProfile {
 }
 
 function rowToProfile(row: any): AirportProfile {
+  // census L14 — a BARE value is never trusted as curated. `verified` is TRUE
+  // only when 3874's projection names a published timing, topology AND
+  // transport fact (its trigger derives the column the same way, so a row on a
+  // migrated database already agrees); on a database without 3874 the curated
+  // references are absent and the bare boolean — an unvalidated claim with no
+  // provenance — reads FALSE. Expiry is applied where the clock is: the
+  // certified record (LayoverFeasibility, at its own instant) and the readers
+  // below, at the instant the row was read.
+  //
+  // THE PRESS IS MIGRATION 3874. A row that carries none of 3874's columns comes
+  // from a database where the curation schema does not exist yet: there is no
+  // way to curate anything there, so the profile is the LEGACY one, exactly as
+  // before (no `curation` key; the bare `verified` and `terminal_info`). The
+  // moment 3874 is applied every row carries the columns, and every airport is
+  // judged by its curated, validated, unexpired facts — in every flag state.
+  if (!Object.prototype.hasOwnProperty.call(row ?? {}, "curated_timing_fact_id")) return legacyRowToProfile(row);
+  const curation = curationProjectionFromRow(row);
+  const readAtMs = Date.now();
+  const curatedVerified = Boolean(row.verified) && curation.timing !== null && curation.topology !== null && curation.transport !== null;
+  return {
+    id:                     row.id,
+    iataCode:               row.iata_code,
+    name:                   row.name,
+    city:                   row.city,
+    country:                row.country,
+    countryCode:            row.country_code,
+    timezone:               row.timezone ?? "UTC",
+    lat:                    Number(row.lat),
+    lng:                    Number(row.lng),
+    domesticBufferMin:      row.domestic_buffer_min     ?? 60,
+    domesticBufferMax:      row.domestic_buffer_max     ?? 90,
+    internationalBufferMin: row.international_buffer_min ?? 120,
+    internationalBufferMax: row.international_buffer_max ?? 180,
+    immigrationExtraMin:    row.immigration_extra_min    ?? 30,
+    checkedBagsExtraMin:    row.checked_bags_extra_min   ?? 15,
+    trafficExtraMin:        row.traffic_extra_min         ?? 20,
+    verified:               curatedVerified,
+    // Only a PUBLISHED, UNEXPIRED topology is terminal information. A bare
+    // `terminal_info` (no curated reference) is unvalidated and is not pinned
+    // in front of a traveller running for a gate.
+    terminalInfo:           curatedLive(curation.topology, readAtMs) ? normaliseTerminalInfo(row.terminal_info) : null,
+    curation,
+    calibratedCheckpointExtra: calibratedExtraFromRow(row, readAtMs), timingEvidence: timingEvidenceFromRow(row, readAtMs), timingEvidenceUnavailable: row.curated_timing_evidence != null && timingEvidenceFromRow(row, readAtMs) === null,
+  };
+}
+
+/** A row from a database without 3874: the profile exactly as it was mapped before curation existed. */
+function legacyRowToProfile(row: any): AirportProfile {
   return {
     id:                     row.id,
     iataCode:               row.iata_code,
@@ -478,3 +554,4 @@ export function staleFallbackCounters(): Record<string, number> {
 export function _resetStaleFallbackCounters(): void {
   staleFallbackCounts.clear();
 }
+import { timingEvidenceFromRow } from './layoverTimingEvidence.js';

@@ -68,7 +68,7 @@ import {
   SESSION_EDIT_EVENT_SOURCE,
 } from "../services/airport/LayoverReplanService.js";
 import type { FeasibilitySession } from "../services/airport/LayoverFeasibility.js";
-import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js";
+import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js"; import { withConfirmedCorridor } from "./helpers/confirmedCorridor.js";
 
 let server: http.Server;
 let base: string;
@@ -117,7 +117,7 @@ function stage(
     layover_plan_stops: opts.stops ?? [],
     trip_plan_items: [],
   };
-  _setTestClient(makeLayoverDb(tables, { users: { [TOKEN]: USER_ID }, failures: opts.failures }), true);
+  _setTestClient(makeLayoverDb(withConfirmedCorridor(tables, { userIds: [USER_ID], destination: "TW" }), { users: { [TOKEN]: USER_ID }, failures: opts.failures }), true);
   return tables;
 }
 

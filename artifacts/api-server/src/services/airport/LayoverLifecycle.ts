@@ -91,7 +91,7 @@ export const LIFECYCLE_EVENTS = [
   "FACTS_MISSING",
   "FACTS_SUFFICIENT",
   "EVALUATED",
-  "PLAN_CHOSEN",
+  "PLAN_CHOSEN", "EXPERIENCE_STARTED",
   "AIRPORT_EXITED",
   "RETURN_THRESHOLD",
   "HARD_THRESHOLD",
@@ -113,17 +113,17 @@ export const LIFECYCLE_EVENT_PRODUCERS: Record<LifecycleEvent, string | null> = 
   FACTS_MISSING: "landsideGate.needsInfo (certified record)",
   FACTS_SUFFICIENT: "landsideGate.needsInfo cleared by a declaration (certified record)",
   EVALUATED: "every certification (certifySessionFeasibility / consumerLayoverRecord)",
-  PLAN_CHOSEN: "a landside stop on the plan (POST /airport/sessions/:id/stops)",
+  PLAN_CHOSEN: "a certified executable plan is selected", EXPERIENCE_STARTED: "the owner starts a freshly revalidated selected executable contract",
   AIRPORT_EXITED: "traveller checkpoint LANDSIDE_EXIT (POST /airport/sessions/:id/checkpoints)",
   RETURN_THRESHOLD: "certified returnState RETURN_SOON",
   HARD_THRESHOLD: "certified returnState RETURN_NOW / CONNECTION_AT_RISK",
   RETURN_BEGINS: "POST /airport/sessions/:id/return-now (abortToAirport)",
   AIRPORT_REENTERED: "traveller checkpoint AIRPORT_REENTRY (POST /airport/sessions/:id/checkpoints)",
-  BOARDING_STARTED: null,
-  DEPARTURE_CONFIRMED: null,
+  BOARDING_STARTED: "approved flight observation, or traveller-reported boarding before completing a layover",
+  DEPARTURE_CONFIRMED: "approved observed departure status from LayoverFlightStatus",
   MATERIAL_DISRUPTION: "POST /airport/sessions/:id/disruption",
   DISRUPTION_RECOMPUTED: "the recertification after a disruption",
-  DEPARTURE_CANCELLED: null,
+  DEPARTURE_CANCELLED: "approved flight cancellation or the owner's cancellation report, including unlinked sessions",
   TIMEOUT: "expireOldSessions (departure in the past)",
   TRAVELLER_CLOSED: "DELETE /airport/sessions/:id (endSessionWrite, completed | cancelled)",
   ABANDONED: null,
@@ -156,7 +156,7 @@ export type LifecycleIntent = (typeof LIFECYCLE_INTENTS)[number];
 // ── guard context ────────────────────────────────────────────────────────────
 
 /** Everything an edge's guard may read. Every member optional; absent fails closed. */
-export interface LifecycleGuardContext {
+export interface LifecycleGuardContext { executablePlanReady?: boolean; planInsideAirport?: boolean; reportedBoarded?: boolean;
   entryPermissionState?: EntryPermissionState | null;
   criticalUnknowns?: readonly string[] | null;
   usableMinutes?: number | null;
@@ -231,7 +231,7 @@ const RETURN_ABORT_INTENTS: LifecycleIntent[] = [
 
 const ESCALATED: ReadonlySet<LayoverReturnState> = new Set(["RETURN_NOW", "CONNECTION_AT_RISK"]);
 
-export const LIFECYCLE_EDGES: readonly LifecycleEdge[] = [
+export const LIFECYCLE_EDGES: readonly LifecycleEdge[] = [ ...executableExperienceEdges(), ...reportedBoardingEdges(),
   { from: ["DETECTED"], event: "FACTS_MISSING", to: "NEEDS_INFO",
     guard: (c) => (c.needsInfo === true ? [] : ["no_field_needs_info"]),
     intents: () => ["ASK_ONE_QUESTION", "SUPPRESS_LANDSIDE_RECOMMENDATIONS"], source: "§5" },
@@ -548,4 +548,22 @@ export function lifecycleStateFrom(args: {
     projectedState: p,
     divergence,
   };
+}
+
+function executableExperienceEdges(): LifecycleEdge[] {
+  return [
+    { from: ["AIRPORT_ONLY"], event: "PLAN_CHOSEN", to: "PLAN_SELECTED",
+      guard: c => c.executablePlanReady === true && c.planInsideAirport === true ? [] : ["airside_contract_not_ready"],
+      intents: () => [], source: "§5" },
+    { from: ["PLAN_SELECTED"], event: "EXPERIENCE_STARTED", to: "EXECUTING",
+      guard: c => [...(c.executablePlanReady === true ? [] : ["executable_contract_not_ready"]),
+        ...(c.planInsideAirport === true ? [] : landsideAvailableGuard(c))],
+      intents: () => [], source: "§5" },
+  ];
+}
+
+/** The owner saying they made the flight is a boarding report, never an observed departure. */
+function reportedBoardingEdges(): LifecycleEdge[] {
+  return [{ from: ACTIVE_STATES.filter(s => s !== "AIRPORT_REENTERED"), event: "BOARDING_STARTED", to: "BOARDING",
+    guard: c => c.reportedBoarded === true ? [] : ["boarding_not_reported"], intents: () => [], source: "§18 close" }];
 }

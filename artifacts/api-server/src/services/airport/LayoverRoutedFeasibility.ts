@@ -134,7 +134,7 @@ export type RoutedPrefilter =
 export type RoutedCandidateState = "FEASIBLE" | "INFEASIBLE" | "UNMEASURED" | "NOT_ROUTED";
 
 export interface RoutedCandidateInput {
-  key: string;
+  key: string; placeId?: string | null; activityCommitment?: ActivityCommitment | null;
   point: GeoPoint | null;
   insideAirport?: boolean;
   /** Minimum experience duration as STATED (curated dwell, plan stop). `null` = nobody stated one. */
@@ -160,7 +160,7 @@ export interface RoutedRobustness {
   totalMarginMinutes: number;
 }
 
-export interface RoutedFeasibilityTerms {
+export interface RoutedFeasibilityTerms { activityCommitment?: ActivityCommitment | null; journeyTiming?: { estimate: Estimate; stages: Record<TimingStage,Estimate>; sampleCount: number; departBy: string } | null;
   mode: TravelMode;
   windowStartsAt: string;
   outboundDepartAt: string;
@@ -221,7 +221,7 @@ export interface RouteLayoverCandidatesInput {
   /** The certified outer bound (the straight-line disc) — the envelope pre-filter. */
   outerBound: SafeEnvelope | null;
   /** The route-shape port. Default: the layover surface's own (Google Routes, behind its gates). */
-  corridorProvider?: RouteCorridorProvider;
+  corridorProvider?: RouteCorridorProvider; coverageOptions?: Pick<Parameters<typeof continuousWalkingCoverage>[0], 'readEnv' | 'fetchImpl' | 'spendGate' | 'now'>;
 }
 
 export interface RoutedLayoverEvaluation {
@@ -328,7 +328,7 @@ async function pool<T, R>(items: readonly T[], n: number, fn: (t: T) => Promise<
  * I/O — the legs and the record carry every instant it needs.
  */
 export function judgeRoutedCandidate(args: {
-  key: string;
+  key: string; placeId?: string | null; activityCommitment?: ActivityCommitment | null;
   record: LayoverFeasibilityRecord;
   legs: RoutedLegs;
   risk: ReturnCorridorRisk | null;
@@ -338,7 +338,7 @@ export function judgeRoutedCandidate(args: {
 }): RoutedCandidate {
   const policy = args.policy ?? LAYOVER_ROUTED_POLICY;
   const { key, record, legs, risk, straightLine } = args;
-  const nowMs = record.inputs.nowMs;
+  const nowMs = certifiedPlanningInstant(record);
   const hardReturnMs = record.deadline.hardReturnTime.getTime();
   const windowStartMs = Math.max(nowMs, record.envelope.earliestOutTime.getTime());
   const out = legs.outbound;
@@ -381,9 +381,9 @@ export function judgeRoutedCandidate(args: {
   const returnDepartMs = Date.parse(back.departAt);
   const leaveByMs = hardReturnMs - conservative.minutes * 60_000;
   const expectedReturnMs = stated === null ? null : arrivalMs + stated * 60_000 + conservative.minutes * 60_000;
-  const slack = expectedReturnMs === null ? null : Math.floor((hardReturnMs - expectedReturnMs) / 60_000);
+  const joint = args.placeId && out.conveyances.length>0 && back.conveyances.length>0 && [...out.conveyances,...back.conveyances].every(c=>c.mode===legs.mode) ? jointJourneyEstimate(record.inputs.airport.timingEvidence, record.inputs.session, nowMs, args.placeId, legs.mode) : null; const journeyDepartBy = joint && stated !== null ? record.deadline.cutoffMs - (selectedTimingMinutes(joint.estimate, record.inputs.bufferPercentile) + stated) * 60000 : null; const journeySlack = journeyDepartBy === null ? Infinity : Math.floor((journeyDepartBy - Math.max(nowMs,Date.parse(record.inputs.session.arrivalTime)))/60000); const slack = expectedReturnMs === null ? null : Math.min(Math.floor((hardReturnMs - expectedReturnMs) / 60_000), journeySlack);
   const terms: RoutedFeasibilityTerms = {
-    mode: legs.mode === "unspecified" ? "drive" : legs.mode,
+    mode: legs.mode === "unspecified" ? "drive" : legs.mode, ...(args.activityCommitment !== undefined ? { activityCommitment: args.activityCommitment } : {}), journeyTiming: joint && journeyDepartBy !== null ? { ...joint, departBy: new Date(journeyDepartBy).toISOString() } : null,
     windowStartsAt: new Date(windowStartMs).toISOString(),
     outboundDepartAt: out.departAt,
     outboundMinutes: out.minutes,
@@ -406,27 +406,27 @@ export function judgeRoutedCandidate(args: {
   const preference = routedPreference(robustness);
   // A POINT of the envelope: feasible with the place's own dwell, or the floor when it states none.
   const pointDwell = stated ?? policy.envelopeDwellFloorMinutes;
-  const inEnvelope = arrivalMs + pointDwell * 60_000 + conservative.minutes * 60_000 <= hardReturnMs;
+  const inEnvelope = arrivalMs + pointDwell * 60_000 + conservative.minutes * 60_000 <= hardReturnMs && journeySlack >= 0 && args.activityCommitment !== null;
 
   // ── L65 — the formula, with routed terms ───────────────────────────────────
-  if (arrivalMs + (stated ?? 0) * 60_000 + conservative.minutes * 60_000 > hardReturnMs) {
+  if (arrivalMs + (stated ?? 0) * 60_000 + conservative.minutes * 60_000 > hardReturnMs || journeySlack < 0) {
     return {
       ...base, state: "INFEASIBLE", band: "BLOCKED", absence: null, terms, preference, inEnvelope: false,
       reason: `${out.minutes} min there, ${stated !== null ? `${stated} min there, ` : ""}and ${conservative.minutes} min to allow for the way back — past your ${terms.hardReturnBy} return`,
     };
   }
-  if (stated === null) {
+  if (stated === null || args.activityCommitment === null) {
     return {
-      ...base, state: "UNMEASURED", band: "UNCERTIFIED", absence: { reason: "experience_unstated", detail: null }, terms, preference, inEnvelope,
+      ...base, state: "UNMEASURED", band: "UNCERTIFIED", absence: { reason: args.activityCommitment === null ? "activity_commitment_unavailable" : "experience_unstated", detail: null }, terms, preference, inEnvelope,
       reason: "nobody has said how long this takes, so it cannot be certified against your window",
     };
   }
   const safe = slack !== null && slack >= policy.tightSlackMinutes
     && !robustness.fragileCorridor && !robustness.nonInterruptible
-    && risk?.returnRouteUnreliable !== true;
+    && risk?.returnRouteUnreliable !== true && args.activityCommitment?.interruptibility !== 'committed';
   const why: string[] = [];
   if (slack !== null && slack < policy.tightSlackMinutes) why.push(`only ${slack} min to spare`);
-  if (robustness.fragileCorridor) why.push("one way back");
+  if (robustness.fragileCorridor) why.push("one way back"); if(args.activityCommitment?.interruptibility === 'committed') why.push('this activity cannot be left before its stated commitment');
   if (robustness.nonInterruptible) why.push("the way back cannot be left part-way");
   if (risk?.returnRouteUnreliable === true) why.push("the way back is not dependable");
   return {
@@ -443,7 +443,7 @@ export function judgeRoutedCandidate(args: {
 export async function routeLayoverCandidates(input: RouteLayoverCandidatesInput): Promise<RoutedLayoverEvaluation> {
   const policy = LAYOVER_ROUTED_POLICY;
   const { record, airport } = input;
-  const nowMs = record.inputs.nowMs;
+  const nowMs = certifiedPlanningInstant(record);
   const windowStartMs = Math.max(nowMs, record.envelope.earliestOutTime.getTime());
   const usable = record.envelope.usableMinutes;
   const provider = layoverRoutesGuardedCorridor(input.corridorProvider ?? LAYOVER_RETURN_CORRIDOR_PROVIDER);
@@ -472,8 +472,8 @@ export async function routeLayoverCandidates(input: RouteLayoverCandidatesInput)
     queue.push({ c, point: c.point, sl });
   }
 
-  const routedNow = queue.slice(0, policy.candidatesPerRead);
-  for (const q of queue.slice(policy.candidatesPerRead)) {
+  const routedLimit = googleIsochronesConfigured(input.coverageOptions?.readEnv) ? Math.max(0, policy.candidatesPerRead - 1) : policy.candidatesPerRead; const routedNow = queue.slice(0, routedLimit);
+  for (const q of queue.slice(routedLimit)) {
     count("candidate_cap");
     results.set(q.c.key, notRouted(q.c.key, "candidate_cap", "UNCERTIFIED", "not measured this time — only the nearest candidates are routed per look", q.sl, { reason: "candidate_cap", detail: null }));
   }
@@ -512,10 +512,10 @@ export async function routeLayoverCandidates(input: RouteLayoverCandidatesInput)
       });
       return;
     }
-    results.set(c.key, judgeRoutedCandidate({ key: c.key, record, legs: outcome.legs, risk: outcome.risk, minExperienceMin: minExp, straightLine: sl, policy }));
+    results.set(c.key, judgeRoutedCandidate({ key: c.key, placeId: c.placeId, activityCommitment: c.activityCommitment, record, legs: outcome.legs, risk: outcome.risk, minExperienceMin: minExp, straightLine: sl, policy }));
   });
 
-  const candidates = input.candidates.map((c) => results.get(c.key)!);
+  const continuous = await continuousWalkingCoverage({ ...input.coverageOptions, record, airport, landsideAllowed: input.landsideAllowed, dwellMinutes: policy.envelopeDwellFloorMinutes }); await addTransitReturnAlternatives(routedNow.map(q => ({ ...q, airport: airport! })), results, provider, record, nowMs); const candidates = input.candidates.map((c) => results.get(c.key)!);
   const byKey = new Map(candidates.map((c) => [c.key, c] as const));
   const envelope = airport
     ? routedSafeEnvelope({
@@ -541,7 +541,7 @@ export async function routeLayoverCandidates(input: RouteLayoverCandidatesInput)
         }),
       })
     : null;
-  return { candidates, byKey, envelope, summary: { routed: routedNow.length, prefiltered, absences } };
+  if (envelope) { envelope.continuous = continuous; if (candidates.some(c => c.legs?.sourceRefs.some(ref => ref.includes('google')))) envelope.displayPolicy = 'google_map_only'; } return { candidates, byKey, envelope, summary: { routed: routedNow.length, prefiltered, absences } };
 }
 
 /**
@@ -624,7 +624,7 @@ export function universeRoutingPlan<T extends UniverseRoutable>(args: {
 }): UniverseRoutingPlan<T> {
   const policy = LAYOVER_ROUTED_POLICY;
   const { record, centre } = args;
-  const windowStartMs = Math.max(record.inputs.nowMs, record.envelope.earliestOutTime.getTime());
+  const windowStartMs = Math.max(certifiedPlanningInstant(record), record.envelope.earliestOutTime.getTime());
   const usable = record.envelope.usableMinutes;
   const results = new Map<string, RoutedCandidate>();
   const terms = new WeakMap<T, RoutedFeasibilityTerms>();
@@ -747,8 +747,8 @@ export interface RoutableRecommendation {
   returnTravelTimeMin?: number | null;
 }
 
-/** The card's routing contract — what a client renders. No operator detail, no coordinate. */
-export interface RoutedCardContract {
+/** The card's routing contract. Provider geometry is transient and carries its display policy. */
+export interface RoutedCardContract { activityCommitment?: ActivityCommitment | null; journeyTiming?: RoutedFeasibilityTerms['journeyTiming']; geometry?: { outbound: import('../../lib/providers/providerMapGeometry.js').ProviderRouteGeometry | null; returnLeg: import('../../lib/providers/providerMapGeometry.js').ProviderRouteGeometry | null };
   state: RoutedCandidateState;
   band: EnvelopeBand;
   reason: string | null;
@@ -795,7 +795,7 @@ export interface RoutedCardContract {
       conveyances: Array<{ mode: TravelMode; minutes: number; interruptibility: string; endsAt: string | null }>;
     };
   } | null;
-  expiresAt: string | null;
+  expiresAt: string | null; routeSubjectRefs?: string[]; /** Opaque Portava directional corridor refs; not provider road IDs. */
 }
 
 export function routedCardContract(r: RoutedCandidate | undefined): RoutedCardContract | null {
@@ -803,8 +803,8 @@ export function routedCardContract(r: RoutedCandidate | undefined): RoutedCardCo
   const t = r.terms;
   const back = r.legs?.returnLeg ?? null;
   return {
-    state: r.state,
-    band: r.band,
+    state: r.state, routeSubjectRefs: [r.legs?.outbound.routeSubjectRef, r.legs?.returnLeg.routeSubjectRef].filter((ref): ref is string => typeof ref === "string"),
+    band: r.band, ...(t?.activityCommitment !== undefined ? {activityCommitment:t.activityCommitment}:{}), ...(t?.journeyTiming ? {journeyTiming:t.journeyTiming}:{}),
     reason: r.reason,
     reasonCodes: [...r.reasonCodes],
     preference: r.preference,
@@ -834,7 +834,7 @@ export function routedCardContract(r: RoutedCandidate | undefined): RoutedCardCo
       hardReturnBy: t.hardReturnBy,
       leaveBy: t.leaveBy,
       route: {
-        mode: t.mode,
+        mode: back.conveyances.some(c => c.mode === 'transit') ? 'transit' : t.mode,
         departAt: t.returnDepartAt,
         minutes: t.returnMinutes,
         conservativeMinutes: t.conservativeReturnMinutes,
@@ -846,7 +846,7 @@ export function routedCardContract(r: RoutedCandidate | undefined): RoutedCardCo
         conveyances: back.conveyances.map((c) => ({ ...c })),
       },
     } : null,
-    expiresAt: r.legs?.expiresAt ?? null,
+    expiresAt: r.legs ? new Date(Math.min(Date.parse(r.legs.expiresAt),t?.activityCommitment?Date.parse(t.activityCommitment.expiresAt):Infinity,t?.journeyTiming?.estimate.expiresAt?Date.parse(t.journeyTiming.estimate.expiresAt):Infinity)).toISOString() : null, geometry: { outbound: r.legs?.outbound.geometry ?? null, returnLeg: back?.geometry ?? null },
   };
 }
 
@@ -875,6 +875,7 @@ export async function applyRoutedRecommendationPass<C extends RoutableRecommenda
   const dwell = await readCuratedDwell(args.db, landside.map((c) => c.placeId ?? null));
   const curated = (c: C): number | null => (dwell.state === "read" && c.placeId ? dwell.byPlace.get(c.placeId)?.activityMin ?? null : null);
   const stated = (v: number | null | undefined) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null);
+  const activityRead = await readActivityCommitments(args.db, args.record.inputs.airport.id, landside.flatMap(c=>c.placeId?[c.placeId]:[]), certifiedPlanningInstant(args.record)); const activityFor=(c:C)=>activityRead.state==='disabled'?undefined:activityRead.state==='read'&&c.placeId?activityRead.byPlace.get(c.placeId)??null:null; const activityMinutes=(c:C)=>activityRead.state==='disabled'?(stated(c.activityTimeMin)??curated(c)):requiredActivityMinutes(stated(c.activityTimeMin)??curated(c),activityFor(c)??null); const plannedActivity=new Map(landside.map(c=>[c,activityMinutes(c)])); for(const c of landside) if(activityRead.state!=='disabled') c.activityTimeMin=plannedActivity.get(c)??null;
   const evaluation = await withLayoverRoutesBudget(args.session, () => routeLayoverCandidates({
     record: args.record,
     airport: args.airport,
@@ -882,10 +883,10 @@ export async function applyRoutedRecommendationPass<C extends RoutableRecommenda
     outerBound: args.outerBound,
     corridorProvider: args.corridorProvider,
     candidates: landside.map((c) => ({
-      key: args.keyOf(c),
+      key: args.keyOf(c), placeId:c.placeId, activityCommitment:activityFor(c),
       point: c.point,
       insideAirport: false,
-      minExperienceMin: stated(c.activityTimeMin) ?? curated(c),
+      minExperienceMin: plannedActivity.get(c)??null,
     })),
   }));
   for (const c of landside) {
@@ -898,7 +899,7 @@ export async function applyRoutedRecommendationPass<C extends RoutableRecommenda
     c.travelTimeMin = r.terms.outboundMinutes;
     c.travelTimeSource = "measured";
     c.returnTravelTimeMin = r.terms.conservativeReturnMinutes;
-    if (stated(c.activityTimeMin) === null && curated(c) !== null) c.activityTimeMin = curated(c);
+    if (activityRead.state==='disabled' && stated(c.activityTimeMin) === null && curated(c) !== null) c.activityTimeMin = curated(c);
   }
   // The operator's half of every named absence: the reason token reaches the card, the refusal's own words (which gate,
   // which variable NAME — never a value) reach the log. Counts and tokens only; no place, no person, no coordinate.
@@ -911,3 +912,47 @@ export async function applyRoutedRecommendationPass<C extends RoutableRecommenda
 }
 
 const routedLogger = rootLogger.child({ service: "LayoverRoutedFeasibility" });
+
+import { certifiedPlanningInstant } from "../layover/layoverCanonicalValidity.js";
+
+import { assessReturnRisk } from '../../lib/providers/returnRouteRisk.js';
+import { logger as transitLogger } from '../../lib/logger.js';
+
+/** L71: after primary round trips, ask one additional TRANSIT return per DRIVE candidate within the SAME request budget.
+ * At the 12-call cap no transit call is billed; at one candidate the maximum is three billed calls. Never merge road
+ * and transit counts into invented independence. Each alternative keeps its own robustness and forecast evidence. */
+async function addTransitReturnAlternatives(
+  queue: Array<{ c: RoutedCandidateInput; point: GeoPoint; sl: EnvelopeVerdict | null; airport: GeoPoint }>,
+  results: Map<string, RoutedCandidate>, provider: RouteCorridorProvider, record: LayoverFeasibilityRecord, nowMs: number,
+): Promise<void> {
+  for (const { c, point, airport, sl } of queue) {
+    const current = results.get(c.key);
+    if (!current?.legs || current.legs.mode !== 'drive') continue;
+    const departAt = new Date(current.legs.returnLeg.departAt);
+    try {
+      const response = await provider.corridor({ from: point, to: airport, mode: 'transit', departAt, wantAlternatives: true });
+      if (!response.ok) continue; // Additional option absent; primary answer remains exactly as measured.
+      const corridor = response.value;
+      if (!Number.isFinite(Date.parse(corridor.expiresAt)) || Date.parse(corridor.expiresAt) <= nowMs || Date.parse(corridor.departAt) !== departAt.getTime()
+        || corridor.from.lat !== point.lat || corridor.from.lng !== point.lng || corridor.to.lat !== airport.lat || corridor.to.lng !== airport.lng
+        || !corridor.routes.length || corridor.routes.some(r => !Number.isFinite(r.totalMinutes) || r.totalMinutes < 0 || !r.legs.length || r.legs.some(l => !Number.isFinite(l.minutes) || l.minutes < 0))) continue;
+      // A provider must actually describe a transit conveyance, not return road directions under the wrong mode.
+      const routes = corridor.routes.filter(r => r.legs.some(l => l.mode === 'transit')).sort((a,b) => a.totalMinutes - b.totalMinutes);
+      if (!routes.length) continue;
+      const transit = { ...corridor, routes };
+      const back = routedLegOf(transit, 'transit');
+      const risk = assessReturnRisk(transit, nowMs);
+      const legs: RoutedLegs = { ...current.legs, returnLeg: back, expiresAt: new Date(Math.min(Date.parse(current.legs.expiresAt), Date.parse(corridor.expiresAt))).toISOString(), sourceRefs: [...new Set([...current.legs.sourceRefs, ...corridor.sourceRefs])] };
+      const alternative = judgeRoutedCandidate({ key: c.key, placeId:c.placeId, activityCommitment:c.activityCommitment, record, legs, risk, minExperienceMin: c.minExperienceMin, straightLine: sl });
+      // Prefer a feasible option, then the safer band, then its conservative measured return. A faster risky option
+      // cannot displace a SAFE primary; a missing/unforecast option never displaces any measured primary.
+      const rank = (value: RoutedCandidate) => value.state === 'FEASIBLE' ? value.band === 'SAFE' ? 2 : 1 : 0;
+      if (rank(alternative) > rank(current) || (rank(alternative) > 0 && rank(alternative) === rank(current) && alternative.terms!.conservativeReturnMinutes < (current.terms?.conservativeReturnMinutes ?? Infinity))) results.set(c.key, alternative);
+    } catch (err) { transitLogger.warn({ err, surface: 'layover.transit-return', provider: provider.id }, 'additional return alternative unavailable'); }
+  }
+}
+
+import { continuousWalkingCoverage, googleIsochronesConfigured } from './LayoverContinuousCoverage.js';
+import { readActivityCommitments, requiredActivityMinutes, type ActivityCommitment } from './layoverActivityCommitment.js';
+import { jointJourneyEstimate, selectedTimingMinutes, type TimingStage } from './layoverTimingEvidence.js';
+import type { Estimate } from './LayoverFeasibility.js';

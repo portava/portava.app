@@ -71,7 +71,7 @@ const TRAVELERS_TOGGLE_KEY = 'discovery_map_travelers';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export interface DiscoveryMapViewProps {
+export interface DiscoveryMapViewProps { children?: React.ReactNode;
   userLat?: number | null;
   userLng?: number | null;
   fallbackLat?: number | null;
@@ -266,7 +266,7 @@ function computeViewport(places: DiscoveryPlace[]) {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function DiscoveryMapView({
-  places,
+  places, children,
   onSelectPlace,
   fallbackLat,
   fallbackLng,
@@ -578,7 +578,7 @@ export function DiscoveryMapView({
                 closed on their own. */}
             <TravelerFlowLayer objects={zoneObjects} />
           </>
-        ) : null}
+        ) : null}{children}
         {visiblePlaces.map((place) => {
           const db = isDbPlace(place.id);
           const pinBg = db ? DB_PIN_COLOR : (CAT_COLOR[place.category] ?? color.signal);

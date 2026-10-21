@@ -564,7 +564,7 @@ export interface RoutedEnvelopeSector {
   measured: boolean;
 }
 
-export interface RoutedSafeEnvelope {
+export interface RoutedSafeEnvelope { continuous?: import('./LayoverContinuousCoverage.js').ContinuousCoverage; displayPolicy?: 'google_map_only';
   centre: GeoPoint;
   basis: "routed_union";
   /** TRUE: every member was routed both ways and satisfies the constraint. */

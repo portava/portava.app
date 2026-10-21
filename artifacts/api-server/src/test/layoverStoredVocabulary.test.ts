@@ -199,7 +199,7 @@ describe("the sweep: every enumerated CHECK on the 2700/2992 tables admits what 
     assert.deepEqual(
       sites.map((s) => `${s.table} ${s.verb} ${s.payload} @ ${s.file}`).sort(),
       [
-        "layover_certified_computations insert certifiedComputationRowFor( @ services/layover/LayoverDecisionStore.ts",
+        "layover_certified_computations insert { @ services/layover/LayoverDecisionStore.ts",
         "layover_checkpoints insert row @ services/layover/LayoverCheckpointStore.ts",
         "layover_constraints insert { @ services/layover/LayoverConstraintStore.ts",
         "layover_outcomes upsert row @ services/layover/LayoverOutcomeStore.ts",

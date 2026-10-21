@@ -76,7 +76,7 @@ export type SafetyRating =
  *                 `hardReturnTime` computed under the old rules is not
  *                 reproducible under these.
  */
-export const LAYOVER_ENGINE_VERSION = "2026.09.22-1";
+export const LAYOVER_ENGINE_VERSION = "2026.10.19-2"; // Sourced stages may tighten the floor; mismatched terminal context cannot reuse them or authorize landside.
 
 /**
  * Spec Appendix A reason codes — the whole vocabulary, declared once so it can
@@ -294,7 +294,7 @@ export interface LiveConditions {
    * the arithmetic ignores both. `null` when there is no observation.
    */
   observedAt: string | null;
-  expiresAt: string | null;
+  expiresAt: string | null; /** §6.2 (lane B2-LIVE, L54/L55): how these minutes are DISTRIBUTED and where they came from. Optional — absent is a point estimate, exactly as before. See `LiveConditionsEstimate` at the foot. */ estimate?: LiveConditionsEstimate | null; /** Fresh screened official/licensed evidence for the maturity ladder; never emitted from crowd reports alone. */ authoritativeEvidence?: import("./layoverLiveMaturity.js").AuthoritativeLiveEvidence;
 }
 
 /** The absence of live intelligence, spelled out. Adds 0 to every term. */
@@ -404,7 +404,7 @@ export interface SafetyAssessment {
      * `timeOfDayExtra` rather than on its own.
      */
     returnTransportExtra: number;
-    totalBuffer:      number;
+    totalBuffer:      number; timingEvidenceExtra?: number;
   };
 }
 
@@ -568,6 +568,8 @@ function returnTransportExtra(
   return Math.max(0, joint - timeOfDayExtraMin);
 }
 
+import { certifiedPlanningInstant } from "../layover/layoverCanonicalValidity.js";
+
 /**
  * Exactly the airport fields this engine reads, and exactly the session fields
  * it reads. Declared as narrowings rather than the full domain types so that
@@ -578,9 +580,9 @@ function returnTransportExtra(
  * caller is unaffected.
  */
 export type EngineAirport = Pick<AirportProfile,
-  | "timezone" | "verified"
+  | "timezone" | "verified" | "timingEvidence"
   | "domesticBufferMin" | "internationalBufferMin"
-  | "immigrationExtraMin" | "checkedBagsExtraMin" | "trafficExtraMin"
+  | "immigrationExtraMin" | "checkedBagsExtraMin" | "trafficExtraMin" | "calibratedCheckpointExtra" /* L83/L247 (LAYOVER 165 B2-CURATE): 3880's recalibrated bands, folded into the time-of-day term; optional, absent = the generic band */
 > & {
   /**
    * OPTIONAL, and read by NO arithmetic in this file — which is why it is added
@@ -590,12 +592,12 @@ export type EngineAirport = Pick<AirportProfile,
    * caller that does not hold it (there is none today — both `AirportProfile`
    * and `FeasibilityAirport` carry it) loses the label and nothing else.
    */
-  iataCode?: string;
+  iataCode?: string; lat?: number | null; lng?: number | null;
 };
 export type EngineSession = Pick<LayoverSession,
   | "arrivalTime" | "departureTime" | "boardingTime"
   | "flightType" | "immigrationRequired" | "checkedBags" | "wantsToLeave"
->;
+> & { arrivalTerminalId?:string|null; departureTerminalId?:string|null };
 
 /** The certified deadline computation, as `computeReturnDeadline` returns it. */
 export interface ReturnDeadline {
@@ -607,7 +609,7 @@ export interface ReturnDeadline {
 export function computeBuffer(
   airport: Pick<AirportProfile,
     "domesticBufferMin" | "internationalBufferMin" |
-    "immigrationExtraMin" | "checkedBagsExtraMin" | "trafficExtraMin"
+    "immigrationExtraMin" | "checkedBagsExtraMin" | "trafficExtraMin" | "calibratedCheckpointExtra" | "timingEvidence"
   >,
   session: Pick<LayoverSession, "flightType" | "immigrationRequired" | "checkedBags">,
   /** Instant the buffer is required to be complete by — the flight cutoff. */
@@ -617,28 +619,28 @@ export function computeBuffer(
    * §10 reconciled live conditions. Absent (the only case in production today)
    * adds 0 and leaves every other term untouched.
    */
-  live?: LiveConditions | null,
+  live?: LiveConditions | null, derivation?: ConstraintDerivation, timing?: { nowMs: number; percentile: import('./LayoverFeasibility.js').EstimatePercentile },
 ): SafetyAssessment["breakdown"] {
-  const baseBuffer       = session.flightType === "international"
+  const baseBuffer       = deriveConstraintNode(derivation, "buffer.baseBuffer", [session.flightType, airport.internationalBufferMin, airport.domesticBufferMin], () => session.flightType === "international"
     ? airport.internationalBufferMin
-    : airport.domesticBufferMin;
-  const immigrationExtra = session.immigrationRequired ? airport.immigrationExtraMin : 0;
-  const bagsExtra        = session.checkedBags         ? airport.checkedBagsExtraMin  : 0;
-  const trafficExtra     = airport.trafficExtraMin;
-  const timeOfDayExtraMin = timeOfDayExtra(at, timezone);
+    : airport.domesticBufferMin);
+  const immigrationExtra = deriveConstraintNode(derivation, "buffer.immigrationExtra", [session.immigrationRequired, airport.immigrationExtraMin], () => session.immigrationRequired ? airport.immigrationExtraMin : 0);
+  const bagsExtra        = deriveConstraintNode(derivation, "buffer.bagsExtra", [session.checkedBags, airport.checkedBagsExtraMin], () => session.checkedBags ? airport.checkedBagsExtraMin : 0);
+  const trafficExtra     = deriveConstraintNode(derivation, "buffer.trafficExtra", airport.trafficExtraMin, () => airport.trafficExtraMin);
+  const timeOfDayExtraMin = deriveConstraintNode(derivation, "buffer.timeOfDayExtra", [at.getTime(), timezone, airport.calibratedCheckpointExtra], () => calibratedTimeOfDayExtra(at, timezone, airport.calibratedCheckpointExtra)); // L83/L247: calibrated band or generic band
   // §8.1 L72. `at` IS the return instant — every caller anchors the buffer to
   // the flight cutoff (`computeReturnDeadline`), which is the moment the
   // traveller must already be back. So the forecast is taken at the hour the
   // ride home happens, not at the hour they left.
-  const returnTransportExtraMin = returnTransportExtra(trafficExtra, at, timezone, timeOfDayExtraMin);
-  const liveExtra         = liveExtraMinutes(live);
-  const totalBuffer       = baseBuffer + immigrationExtra + bagsExtra + trafficExtra
-    + timeOfDayExtraMin + returnTransportExtraMin + liveExtra;
+  const returnTransportExtraMin = deriveConstraintNode(derivation, "buffer.returnTransportExtra", [trafficExtra, at.getTime(), timezone, timeOfDayExtraMin, airport.calibratedCheckpointExtra], () => calibratedReturnTransportExtra(trafficExtra, at, timezone, timeOfDayExtraMin, airport.calibratedCheckpointExtra)); // joint ramp preserves monotonicity
+  const liveExtra         = deriveConstraintNode(derivation, "buffer.liveExtra", [live?.securityWaitExtraMin, live?.immigrationWaitExtraMin, live?.groundTransportExtraMin], () => liveExtraMinutes(live));
+  const timingEvidenceExtra = timing ? Math.max(0, returnProcessingFloor(airport.timingEvidence, session, timing.nowMs, timing.percentile) - (baseBuffer + immigrationExtra + bagsExtra)) : 0; const totalBuffer = baseBuffer + immigrationExtra + bagsExtra + trafficExtra
+    + timeOfDayExtraMin + returnTransportExtraMin + liveExtra + timingEvidenceExtra;
   return {
     baseBuffer, immigrationExtra, bagsExtra, trafficExtra,
     timeOfDayExtra: timeOfDayExtraMin,
     returnTransportExtra: returnTransportExtraMin,
-    liveExtra, totalBuffer,
+    liveExtra, totalBuffer, ...(timingEvidenceExtra > 0 ? { timingEvidenceExtra } : {}),
   };
 }
 
@@ -676,10 +678,10 @@ export function computeReturnDeadline(
    * it — proved for non-zero live conditions in
    * `src/test/layoverLiveConditions.test.ts`, not merely argued here.
    */
-  live?: LiveConditions | null,
+  live?: LiveConditions | null, derivation?: ConstraintDerivation, timing?: { nowMs: number; percentile: import('./LayoverFeasibility.js').EstimatePercentile },
 ): ReturnDeadline {
   const cutoffMs  = layoverCutoffMs(session);
-  const breakdown = computeBuffer(airport, session, new Date(cutoffMs), airport.timezone, live);
+  const breakdown = computeBuffer(airport, session, new Date(cutoffMs), airport.timezone, live, derivation, timing);
   return {
     cutoffMs,
     breakdown,
@@ -752,7 +754,7 @@ export function assess(
 ): SafetyAssessment { const certified = record?.deadline; // the record's deadline, reused — the destructure below is cited by line
   const { cutoffMs, breakdown, hardReturnTime } = certified ?? computeReturnDeadline(airport, session, live);
   const availableMin   = Math.max(0, Math.round((cutoffMs - nowMs) / 60000));
-  const window         = certified && Number.isFinite(cutoffMs) && record?.inputs?.nowMs === nowMs && [record.envelope?.usableMinutes, record.envelope?.totalMinutes].every((m) => Number.isFinite(m) && (m as number) >= 0) ? record.envelope : null; // §75: THIS instant's readable record, or none
+  const window         = certified && Number.isFinite(cutoffMs) && record?.inputs && certifiedPlanningInstant(record) === nowMs && [record.envelope?.usableMinutes, record.envelope?.totalMinutes].every((m) => Number.isFinite(m) && (m as number) >= 0) ? record.envelope : null; // §75: THIS instant's readable record or freshly validated canonical decision
   const bufferMin      = breakdown.totalBuffer;
   const usableMin      = window ? window.usableMinutes : 0; // census-layover §75: the record's figure, the ONE definition (`computeWindow`)
   const airsideMin     = window ? Math.min(availableMin, window.totalMinutes) : 0; // the layover ITSELF (arrival→cutoff), clipped to now
@@ -1066,11 +1068,11 @@ export function computeReturnState(
 export function estimateExitDelay(
   session: Pick<LayoverSession, "flightType" | "immigrationRequired" | "checkedBags">,
 ): number {
-  let mins = session.flightType === "international"
-    ? (session.immigrationRequired ? 45 : 25)
-    : 15;
-  if (session.checkedBags) mins += 20;
-  return mins;
+  const c = estimateExitComponents(session);
+  // Named static assumptions, not measured stage durations. The original
+  // 15/25/45 plus baggage total is preserved; no empirical spread is invented.
+  // A future curated measurement must replace an explicitly named term.
+  return c.deplane + c.arrivalImmigration + c.baggageClaim + c.exitFriction;
 }
 
 const TIER_META: Record<LayoverTier, { label: string; blurb: string }> = {
@@ -1090,15 +1092,15 @@ export function computeWindow(
   session: EngineSession,
   nowMs = Date.now(),
   /** §10 reconciled live conditions; absent adds 0 to the buffer. */
-  live?: LiveConditions | null,
+  live?: LiveConditions | null, derived?: { deadline: ReturnDeadline; exitDelayMin: number },
 ): LayoverWindow {
   const arrivalMs = new Date(session.arrivalTime).getTime();
   const tz        = airport.timezone;
 
-  const { cutoffMs, breakdown: breakdownBase, hardReturnTime } = computeReturnDeadline(airport, session, live);
+  const { cutoffMs, breakdown: breakdownBase, hardReturnTime } = derived?.deadline ?? computeReturnDeadline(airport, session, live);
 
   const totalMinutes  = Math.max(0, Math.round((cutoffMs - arrivalMs) / 60000));
-  const exitDelayMin  = estimateExitDelay(session);
+  const exitDelayMin  = derived?.exitDelayMin ?? estimateExitDelay(session);
 
   const hardReturnMs   = hardReturnTime.getTime();
 
@@ -1120,11 +1122,11 @@ export function computeWindow(
     exitDelayMin,
     returnBufferMin: breakdownBase.totalBuffer,
     // The two commitments are the SAME place, so the hop between them is 0 by
-    // identity and no coordinate is needed to know that. `computeWindow` reads
-    // no coordinate at all, and saying `point: null` is what makes the engine
-    // report that honestly (a `NO_ORIGIN` constraint) instead of this file
-    // asserting a location the arithmetic never opened.
-    airportPoint: null,
+    // identity; the validated airport coordinate names that planning origin.
+    // It is an airport origin, not a claim about the traveller's current GPS.
+    // A missing or invalid profile coordinate remains null and the general
+    // engine reports NO_ORIGIN rather than inventing a location.
+    airportPoint: engineAirportPoint(airport),
     airportPlaceId: airport.iataCode ?? null,
     confidence: airport.verified ? "MEDIUM" : "LOW",
   };
@@ -1596,4 +1598,123 @@ export function statedReturnLegMin(
   if (c.insideAirport || statedTravel === null) return statedTravel ?? 0;
   const back = c.returnTravelTimeMin;
   return typeof back === "number" && Number.isFinite(back) && back > 0 ? back : statedTravel;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LAYOVER 165, lane B2-LIVE — §6.2 for the live term (census L54 / L55).
+//
+// Appended at the foot so every cited line above keeps its number.
+//
+// `LiveConditions` carries three minute figures, and the arithmetic adds them
+// (`liveExtraMinutes`). Those figures are ALREADY the conservative percentile
+// the policy selected (`layoverLiveSignals.LIVE_PERCENTILE_POLICY`), so nothing
+// in this engine changes: what is declared here is the rest of the §6.2
+// estimate — the distribution the selection was made FROM, the confidence and
+// the provenance — so the record can publish p50/p75/p90 that are not one
+// number written three times. DECLARED HERE, PRODUCED ELSEWHERE, like
+// `LiveConditions` itself: only `layoverLiveSignals.ts` builds one.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** The live term's §6.2 distribution. Every figure is EXTRA minutes over the static baselines, >= 0. */
+export interface LiveConditionsEstimate {
+  /** Sum of the per-term medians. */
+  p50ExtraMin: number;
+  /** Sum of the per-term 75th percentiles. */
+  p75ExtraMin: number;
+  /** Sum of the per-term 90th percentiles — equal to `liveExtraMinutes` when the selected percentile is p90. */
+  p90ExtraMin: number;
+  /** The percentile the minute terms were taken at (the policy's choice for this consequence and maturity). */
+  percentile: "p50" | "p75" | "p90";
+  /** §6.2 confidence of the live evidence (traveller-only evidence is never above LOW). */
+  confidence: "INSUFFICIENT" | "LOW" | "MEDIUM" | "HIGH";
+  /** 0 a current reading · 1 a reading HELD past its TTL (DATA_STALE). */
+  fallbackLevel: 0 | 1;
+  /** Every observation, feed reading and route the terms rest on. */
+  sourceRefs: string[];
+}
+
+// ── §10 "Historical model — time-of-day distributions … recalibrated" (LAYOVER 165, lane B2-CURATE) ──
+//
+// Appended at the foot so every line the censuses cite above keeps its number;
+// `computeBuffer` reaches it through two in-place call sites.
+//
+// `timeOfDayBand` is ONE table for every airport. Migration 3880 stores, per
+// airport and airport-local hour, a RECALIBRATED p90 of the re-entry checkpoint
+// time (layoverCalibration.ts: measured prediction error from traveller
+// observations and stored outcomes, a minimum-sample rule and a bounded step),
+// and projects onto the airport row the EXTRA minutes each hour needs above
+// what this engine already budgets there. Those minutes are ADDED to the band:
+// the calibrated term can only make a deadline earlier, never later.
+//
+// THE L53 GUARANTEE IS KEPT, by the same construction `returnTransportExtra`
+// uses: the band plus the calibrated extra is ramped as ONE function over a
+// window as wide as its largest possible rise, and the return-transport term is
+// ramped JOINTLY over the sum of all three, so `timeOfDayExtra +
+// returnTransportExtra` is still a single running maximum and still 1-Lipschitz
+// in the cutoff — the deadline cannot move backwards when a flight moves later.
+// With no calibration (every airport today) both functions return EXACTLY what
+// `timeOfDayExtra` and `returnTransportExtra` return.
+
+/** The engine's own time-of-day band at an airport-local hour, for the calibrator's prior. Not for a deadline: see `timeOfDayExtra`. */
+export function engineTimeOfDayBandMinutes(hour: number): number {
+  return timeOfDayBand(hour);
+}
+
+/** A usable 24-entry calibrated band, or null. Non-finite and negative entries count as 0; nothing is coerced upward. */
+function calibratedBandOf(cal: readonly number[] | null | undefined): { at: (hour: number) => number; max: number } | null {
+  if (!Array.isArray(cal) || cal.length !== 24) return null;
+  const vals = cal.map((v) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.min(240, Math.round(v)) : 0));
+  const max = Math.max(...vals);
+  if (max <= 0) return null;
+  return { at: (hour) => vals[hour] ?? 0, max };
+}
+
+/** `timeOfDayExtra` with the airport's recalibrated band added, ramped as one function. */
+export function calibratedTimeOfDayExtra(at: Date, timezone: string | undefined, cal: readonly number[] | null | undefined): number {
+  const band = calibratedBandOf(cal);
+  if (!band) return timeOfDayExtra(at, timezone);
+  return rampedBandMax(at, timezone, TOD_RAMP_MIN + band.max, (hour) => timeOfDayBand(hour) + band.at(hour));
+}
+
+/** `returnTransportExtra`, ramped JOINTLY with the calibrated band so the sum stays 1-Lipschitz. */
+export function calibratedReturnTransportExtra(
+  trafficExtraMin: number,
+  at: Date,
+  timezone: string | undefined,
+  timeOfDayExtraMin: number,
+  cal: readonly number[] | null | undefined,
+): number {
+  const band = calibratedBandOf(cal);
+  if (!band) return returnTransportExtra(trafficExtraMin, at, timezone, timeOfDayExtraMin);
+  const maxExtra = maxReturnTransportExtraMinutes(trafficExtraMin);
+  if (maxExtra === 0) return 0;
+  const weekend = isWeekendLocal(at, timezone);
+  const joint = rampedBandMax(
+    at, timezone, TOD_RAMP_MIN + band.max + maxExtra,
+    (hour) => timeOfDayBand(hour) + band.at(hour) + rawReturnTransportExtraMinutes(trafficExtraMin, hour, weekend),
+  );
+  return Math.max(0, joint - timeOfDayExtraMin);
+}
+
+import { deriveConstraintNode, type ConstraintDerivation } from "./layoverConstraintDerivation.js";
+
+/** Decomposed conservative defaults; these are model assumptions and carry LOW confidence, never observations. */
+export function estimateExitComponents(session: Pick<LayoverSession, "flightType" | "immigrationRequired" | "checkedBags">): {
+  deplane: number; arrivalImmigration: number; baggageClaim: number; exitFriction: number;
+} {
+  const international = session.flightType === "international";
+  return { deplane: international ? 15 : 10, arrivalImmigration: international && session.immigrationRequired ? 20 : 0,
+    baggageClaim: session.checkedBags ? 20 : 0, exitFriction: international ? 10 : 5 };
+}
+
+/** The airport is the layover's known commitment origin; this never claims a sensed current position. */
+export function engineAirportPoint(airport: { lat?: number | null; lng?: number | null }): { lat: number; lng: number } | null {
+  return typeof airport.lat === "number" && Number.isFinite(airport.lat) && Math.abs(airport.lat) <= 90
+    && typeof airport.lng === "number" && Number.isFinite(airport.lng) && Math.abs(airport.lng) <= 180
+    ? { lat: airport.lat, lng: airport.lng } : null;
+}
+import { returnProcessingFloor, stageTimingEstimates, selectedTimingMinutes } from './layoverTimingEvidence.js';
+export function sourcedExitDelay(airport: EngineAirport, session: EngineSession, nowMs: number, percentile: import('./LayoverFeasibility.js').EstimatePercentile): number {
+  const baseline=estimateExitComponents(session), stages=stageTimingEstimates(airport.timingEvidence,session,nowMs);
+  return (Object.entries({deplane:'deplane',arrivalImmigration:'arrival_immigration',baggageClaim:'baggage_claim',exitFriction:'airport_exit'}) as Array<[keyof typeof baseline,import('./layoverTimingEvidence.js').TimingStage]>).reduce((sum,[key,stage])=>sum+Math.max(baseline[key],stages[stage]?selectedTimingMinutes(stages[stage]!,percentile):0),0);
 }

@@ -375,7 +375,7 @@ function classify(o: {
 }
 
 function schedulerReports(): JobReport[] {
-  const reports: JobReport[] = [];
+  const reports: JobReport[] = []; const layoverMetrics=getLayoverMetricsStatus();reports.push({job: "layoverMetrics",status:classify({lastRunAt:layoverMetrics.lastAttemptAt,lastSuccessAt:layoverMetrics.lastSuccessAt,consecutiveFailures:layoverMetrics.consecutiveFailures,requiresSuccess:true,staleAfterMs:layoverMetrics.staleAfterMs}),lastRunAt:layoverMetrics.lastAttemptAt,lastSuccessAt:layoverMetrics.lastSuccessAt,consecutiveFailures:layoverMetrics.consecutiveFailures,detail:layoverMetrics.detail});
 
   const reconcile = getReconcileStatus();
   reports.push({
@@ -607,3 +607,4 @@ router.get("/healthz/schedulers", (_req, res) => {
 });
 
 export default router;
+import { getLayoverMetricsStatus } from '../lib/layoverMetricsScheduler.js';

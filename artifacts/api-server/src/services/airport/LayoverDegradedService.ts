@@ -26,9 +26,9 @@
  * ── WHAT IS DELIBERATELY EMPTY, AND WHY THAT IS THE HONEST ANSWER ───────────
  * Route (L152) and map geometry (L151) are `null` with a named reason: no
  * routing provider and no envelope geometry exist on this tree. Flight/gate
- * (L153) is `null` for the same reason — there is no flight feed; the SCHEDULE
- * the traveller typed in is not a confirmed operational value and is not dressed
- * up as one. Crew meeting point (L154) is `null` because no crew storage
+ * (L153) carries the onward flight's last RECORDED observation (see the tail of
+ * this file); with none, the SCHEDULE the traveller typed in is still not a
+ * confirmed operational value and is not dressed up as one. Crew meeting point (L154) is `null` because no crew storage
  * exists. Each is an explicit `unavailable` entry rather than an omitted key,
  * so a client can render "unavailable" (which §16 asks for) rather than
  * rendering nothing (which looks like "fine").
@@ -65,7 +65,7 @@ export const OFFLINE_BUNDLE_TTL_MIN = 15;
 export type UnavailableReason =
   | "no_routing_provider"
   | "no_envelope_geometry"
-  | "no_flight_feed"
+  | "no_flight_feed" | "not_linked_to_a_trip_flight" | "no_flight_observation" | "flight_unreadable" // §16 L153: the onward flight as Trips recorded it (LayoverDepartureFlight.ts); "no_flight_feed" = the connections flag is off, nothing read
   | "not_in_crew" | "no_meeting_point_set" | "crew_unreadable" | "crew_not_read" // §48 L154 — was "no_crew_storage", false since 2984
   | "no_phrase_catalogue"
   | "language_not_in_catalogue" | "plan_stays_airside"; // §16 L155 (lane R, 2026-10-07): services/airport/layoverPhrases.ts
@@ -100,7 +100,7 @@ export interface OfflineAirport {
   timezone: string;
   lat: number | null;
   lng: number | null;
-  terminalInfo: Record<string, unknown> | null;
+  terminalInfo: Record<string, unknown> | null; topologyGeometry?: import('./airportTopologyGeometry.js').AirportTopologyGeometry;
 }
 
 export interface LayoverOfflineBundle {
@@ -118,8 +118,8 @@ export interface LayoverOfflineBundle {
   airport: OfflineAirport;
   mapGeometry: OfflineCapability<never>;
   route: OfflineCapability<never>;
-  /** L153 — no operational feed; the traveller's own schedule is not one. */
-  flightStatus: OfflineCapability<never>;
+  /** L153 — the onward flight's last recorded observation (traveller or approved feed), with its source, instant and stale bound; never the typed schedule as a status. */
+  flightStatus: OfflineCapability<OfflineFlightStatus>;
   /** L154 — the traveller's OWN crew's meeting point, or why not (§48). */
   crewMeetingPoint: OfflineCapability<string>;
   /** L155 — the return phrases the plan requires, in the airport's language, or why not (layoverPhrases.ts). */
@@ -140,7 +140,7 @@ export function buildOfflineBundle(input: {
   airport: AirportProfile;
   record: LayoverFeasibilityRecord;
   hardReturnLocal?: string | null;
-  stops?: Array<{ title: string; durationMin: number; travelMin: number; insideAirport: boolean }>; /** §48 L154: `activeCrewForUser`'s answer for the session owner. Omitted = not read. */ crew?: import("../layover/LayoverCrewStore.js").CrewRead<{ crew: { meetingPointLabel: string | null } } | null>;
+  stops?: Array<{ title: string; durationMin: number; travelMin: number; insideAirport: boolean }>; /** §48 L154: `activeCrewForUser`'s answer for the session owner. Omitted = not read. */ crew?: import("../layover/LayoverCrewStore.js").CrewRead<{ crew: { meetingPointLabel: string | null } } | null>; /** §16 L153: `readDepartureFlight`'s answer. Omitted = not read = "no_flight_feed", as before. */ flight?: DepartureFlightRead;
 }): LayoverOfflineBundle {
   const { session, airport, record } = input;
   const certifiedAtMs = record.inputs.nowMs;
@@ -165,11 +165,11 @@ export function buildOfflineBundle(input: {
       timezone: airport.timezone ?? "UTC",
       lat: airport.lat ?? null,
       lng: airport.lng ?? null,
-      terminalInfo: airport.terminalInfo ?? null,
+      terminalInfo: airport.terminalInfo ?? null, topologyGeometry: airportTopologyGeometry(airport, record.inputs.nowMs),
     },
     mapGeometry: unavailable("no_envelope_geometry"),
     route: unavailable("no_routing_provider"),
-    flightStatus: unavailable("no_flight_feed"),
+    flightStatus: flightStatusOf(input.flight),
     crewMeetingPoint: crewMeetingPointOf(input.crew),
     translationPhrases: phrasesOf(session, airport, input.stops ?? []),
     stops: input.stops ?? [],
@@ -369,7 +369,7 @@ function crewMeetingPointOf(crew: import("../layover/LayoverCrewStore.js").CrewR
 function phrasesOf(
   session: LayoverSession,
   airport: AirportProfile,
-  stops: ReadonlyArray<{ insideAirport: boolean }>,
+  stops: ReadonlyArray<{ insideAirport: boolean; title?: string }>,
 ): OfflineCapability<LayoverPhraseSet> {
   const r = layoverPhrasesFor({
     countryCode: airport.countryCode,
@@ -381,3 +381,57 @@ function phrasesOf(
   return r.ok ? available(r.value) : unavailable(r.reason);
 }
 
+import { airportTopologyGeometry } from './airportTopologyGeometry.js';
+
+// ── §16 L153 — "Flight/gate: cache last confirmed values with stale indicator" ──
+//
+// Appended so no cited line above moves. The onward flight's last recorded
+// observation (LayoverDepartureFlight.ts: the traveller's own report or an
+// approved feed's, through Trips' RECORD_FLIGHT_STATUS), cached with its source
+// and the instant it was OBSERVED. It goes stale OFFLINE_BUNDLE_TTL_MIN after
+// that instant — the bundle's own bound, measured from the observation and
+// never renewed — so a gate seen an hour ago is badged as an hour old, not as
+// fresh because the bundle was written a minute ago. Each "no" is its own word:
+//   no_flight_feed               the connections flag is off (nothing read; as before)
+//   not_linked_to_a_trip_flight  the session is not linked to a flight on the traveller's trip
+//   no_flight_observation        linked, but nobody has observed the flight: the typed
+//                                schedule is not a status and is not cached as one
+//   flight_unreadable            a read failed — never "no flight"
+import type { DepartureFlightRead } from "./LayoverDepartureFlight.js";
+
+export interface OfflineFlightStatus {
+  designator: string | null;
+  departureAirport: string | null;
+  /** The booked departure (itinerary). */
+  scheduledDepartureAt: string | null;
+  /** The departure the observation stated; null = none stated. */
+  estimatedDepartureAt: string | null;
+  terminal: string | null;
+  gate: string | null;
+  status: string;
+  /** Who recorded it: "traveller" or "feed". */
+  source: string;
+  observedAt: string;
+  /** After this instant a client MUST badge these values stale. observedAt + OFFLINE_BUNDLE_TTL_MIN. */
+  staleAfter: string;
+}
+
+export function flightStatusOf(read: DepartureFlightRead | undefined): OfflineCapability<OfflineFlightStatus> {
+  if (!read || read.state === "off") return unavailable("no_flight_feed");
+  if (read.state === "not_linked") return unavailable("not_linked_to_a_trip_flight");
+  if (read.state === "not_observed") return unavailable("no_flight_observation");
+  if (read.state === "unreadable") return unavailable("flight_unreadable");
+  const f = read.flight;
+  return available({
+    designator: f.designator,
+    departureAirport: f.departureAirport,
+    scheduledDepartureAt: f.scheduledDepartureAt,
+    estimatedDepartureAt: f.estimatedDepartureAt,
+    terminal: f.terminal,
+    gate: f.gate,
+    status: f.status,
+    source: f.source,
+    observedAt: f.observedAt,
+    staleAfter: f.staleAfter,
+  });
+}

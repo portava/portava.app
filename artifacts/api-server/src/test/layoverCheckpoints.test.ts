@@ -25,7 +25,7 @@ import http from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import airportRouter from "../routes/airport.js";
-import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js";
+import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js"; import { withConfirmedCorridor } from "./helpers/confirmedCorridor.js";
 import { _setTestOpenAI } from "../lib/openai.js";
 import {
   CHECKPOINT_WRITE_FLAG,
@@ -82,7 +82,7 @@ function stage(opts: { gate?: boolean; status?: string; checkpoints?: any[]; rec
     layover_outcomes: [], layover_events: [], layover_plan_stops: [], layover_recommendations: opts.recommendations ?? [],
     passport_stamps: [], passport_visibility_preferences: [], trip_plan_items: [],
   };
-  if (opts.recommendations) stagePairedGeneration(tables, "session-1", USER_ID); _setTestClient(makeLayoverDb(tables, { users: { [TOKEN]: USER_ID, [STRANGER_TOKEN]: "user-2" }, failures: opts.failures }), true);
+  if (opts.recommendations) stagePairedGeneration(tables, "session-1", USER_ID); _setTestClient(makeLayoverDb(withConfirmedCorridor(tables, { userIds: [USER_ID], destination: "TW" }), { users: { [TOKEN]: USER_ID, [STRANGER_TOKEN]: "user-2" }, failures: opts.failures }), true);
   return tables;
 }
 

@@ -15,11 +15,11 @@ export function _setTestServiceClient(client: SupabaseClient | null): void {
 }
 
 export function getServiceClient(): SupabaseClient | null {
-  if (_testServiceClient) return _testServiceClient;
+  if (_testServiceClient) return auditedLayoverClient(_testServiceClient);
   if (!isServiceClientReady) return null;
-  return createClient(supabaseUrl, serviceRoleKey, {
+  return auditedLayoverClient(createClient(supabaseUrl, serviceRoleKey, {
     auth: { autoRefreshToken: false, persistSession: false },
-  });
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -55,7 +55,7 @@ function createClient(
 
 /** True for a client built by getServiceClient; never for an injected test double. */
 export function isPostgrestBackedClient(client: unknown): boolean {
-  return typeof client === "object" && client !== null && postgrestBackedClients.has(client);
+  return typeof client === "object" && client !== null && postgrestBackedClients.has(originalLayoverAuditClient(client));
 }
 
 /**
@@ -66,3 +66,5 @@ export function isPostgrestBackedClient(client: unknown): boolean {
 export function _markPostgrestBackedForTest(client: object): void {
   postgrestBackedClients.add(client);
 }
+
+import { auditedLayoverClient, originalLayoverAuditClient } from './layoverServiceAudit.js';

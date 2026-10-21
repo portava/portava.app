@@ -51,7 +51,7 @@ import {
   runLayoverTool,
   runNamedLayoverTool,
   scrubForModel,
-  toolSources,
+  toolSources, readLayoverOpportunities,
   validateToolArgs,
   type LayoverToolContext,
   type LayoverToolName,
@@ -567,7 +567,7 @@ describe("L100 — the model orchestrates and explains: tools invoked, plans com
       ["rec:r-spa", false, "does not fit your certified window"],
     ], "an invented plan is not compared; an overflowing one says so in the server's words");
     assert.equal(a.planComparison[0]!.note, "A hearty bowl of ramen suits your mood.");
-    assert.equal(a.planComparison[1]!.note, "The spa offers a calm treat.");
+    assert.equal(a.planComparison[1]!.note, null, "an unavailable plan never carries a model endorsement");
     assert.match(a.answer, /Comparing your options: Ramen Bar — inside the airport; fits your certified window\. A hearty bowl/);
     assert.deepEqual(a.modelProse.mode, "confined");
     assert.equal(a.modelConsulted, true);
@@ -689,5 +689,87 @@ describe("fail closed: every model failure answers with the certified text alone
     assert.deepEqual(results, ["unknown_tool:bookMeAFlight", "malformed_tool_arguments"]);
     assert.deepEqual(a.toolsConsulted, []);
     assert.equal(a.assistant.status, "answered");
+  });
+});
+
+// Independent-review regressions: each input previously bypassed a different boundary.
+describe("resumed review — assistant admissions cannot endorse unavailable plans or invent permission", () => {
+  it("a refused title made entirely of admitted vocabulary is withheld in replies and comparison notes", async () => {
+    const recs = RECS.map((r) => r.id === "r-land" ? { ...r, title: "Local Food Spot" } : r);
+    const sentence = "Local Food Spot is the best pick for you.";
+    const { a } = await ask(REFUSED, [reply(sentence, [
+      { planRef: "rec:r-land", why: sentence },
+      { planRef: "rec:r-air", why: sentence },
+    ])], { sources: poisonedSources({ recommendations: async () => ({ ok: true, value: recs }) }) });
+    assert.ok(!a.answer.includes(sentence), a.answer);
+    assert.equal(a.planComparison[0]!.available, false);
+    assert.equal(a.planComparison[0]!.note, null);
+    assert.equal(a.planComparison[1]!.note, null, "an available comparison must not endorse a refused neighbor");
+    assert.match(a.planComparison[0]!.status, /^not available/);
+  });
+  for (const text of ["Enjoy the ramen 2330.", "Enjoy the food ★.", "You have much more than you think \u0001."]) {
+    it(`isolates the admission rule for ${JSON.stringify(text)}`, () => {
+      assert.equal(admitModelSentence(text, ["Ramen Bar"]).ok, false);
+    });
+  }
+  for (const text of [
+    "You have much more than you think, so enjoy the food.",
+    "You may have the famous local food; it is the best choice on this layover.",
+    "You have the layover to enjoy the food, so take the local place.",
+  ]) {
+    it(`a food noun does not admit implied permission: ${text}`, async () => {
+      assert.equal(admitModelSentence(text, ["Ramen Bar"]).ok, false);
+      const { a, base } = await ask(REFUSED, [reply(text)]);
+      assert.equal(a.answer, base.answer);
+    });
+  }
+  it("opportunities are restricted to both the viewer and the exact session", async () => {
+    const event = { event_type: "compass.layover.opportunity", body: "Changed", priority: "normal", created_at: new Date(NOW).toISOString() };
+    const db = makeLayoverDb({ notifications: [
+      { ...event, id: "n-own", user_id: "u1", action_url: "/airport/sessions/s1", title: "Own" },
+      { ...event, id: "n-other-user", user_id: "u2", action_url: "/airport/sessions/s1", title: "Private" },
+      { ...event, id: "n-other-session", user_id: "u1", action_url: "/airport/sessions/s2", title: "Other session" },
+    ] });
+    const result = await readLayoverOpportunities(db as never, "u1", "s1");
+    assert.equal(result.ok, true);
+    if (result.ok) assert.deepEqual(result.value.map((v) => v.title), ["Own"]);
+  });
+});
+
+describe("resumed review — load-bearing blocked-name and marker checks", () => {
+  for (const title of ["Coffee Spot", "Coffee  Spot", "coffee-spot"]) {
+    it(`cannot endorse the refused Coffee Spot as ${title}`, async () => {
+      const sentence = `${title} is a great pick.`;
+      const recs = RECS.map((r) => r.id === "r-land" ? { ...r, title: "Coffee Spot" } : r);
+      const { a, base } = await ask(REFUSED, [reply(sentence)], { sources: poisonedSources({ recommendations: async () => ({ ok: true, value: recs }) }) });
+      assert.equal(a.answer, base.answer);
+    });
+  }
+  it("a raw name marker cannot manufacture a subject using otherwise admitted words", () => {
+    assert.equal(admitModelSentence("Lovely \u0001.", []).ok, false);
+  });
+});
+
+// B2-LIVE: the assistant and its counterfactual questions must retain the live input of the base answer.
+describe("Compass live-input continuity", () => {
+  const live = { securityWaitExtraMin: 120, immigrationWaitExtraMin: 0, groundTransportExtraMin: 0, reasonCodes: ["SECURITY_WAIT_HIGH" as const], observedAt: new Date(NOW).toISOString(), expiresAt: new Date(NOW + 10 * MIN).toISOString() };
+  it("uses the supplied live record for both certified text and the assistant tools", async () => {
+    const s = YES.session();
+    const record = certifySessionFeasibility(AP, s, { nowMs: NOW, entry: PERMITTED, liveConditions: live });
+    const normal = certifySessionFeasibility(AP, s, { nowMs: NOW, entry: PERMITTED });
+    assert.equal(normal.deadline.hardReturnTime.getTime() - record.deadline.hardReturnTime.getTime(), 120 * MIN);
+    const { a } = await ask(YES, [reply("The lounge offers a calm spot to recharge.")], { certifiedRecord: record });
+    assert.equal(a.hardReturnTime, record.deadline.hardReturnTime.toISOString());
+    assert.equal(a.certification.inputHash, certificationHeader(record).inputHash);
+    assert.notEqual(a.assistant.fallbackReason, "certification_mismatch");
+  });
+  it("asks about top-plan changes only under the same live queue penalty", () => {
+    const s = session(600, { checkedBags: false });
+    const record = certifySessionFeasibility(AP, s, { nowMs: NOW, entry: PERMITTED, liveConditions: live });
+    const plans = [{ ref: "rec:live-bound", title: "Lounge", stops: [{ durationMin: record.envelope.usableMinutes, travelMin: 0, insideAirport: true }] }];
+    const staticBags = planAwareClarifications(AP, s, NOW, PERMITTED, plans).find((q) => q.field === "checkedBags");
+    const liveBags = planAwareClarifications(AP, s, NOW, PERMITTED, plans, live).find((q) => q.field === "checkedBags");
+    assert.equal(staticBags?.impact.topPlanChanges, false, "fixture has room under the obsolete static input");
+    assert.equal(liveBags?.impact.topPlanChanges, true, "the current live window loses this plan when baggage adds time");
   });
 });

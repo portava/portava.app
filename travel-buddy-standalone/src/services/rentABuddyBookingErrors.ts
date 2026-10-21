@@ -103,7 +103,7 @@ export function bookingRefusalAction(
   code: string | null | undefined,
 ): BookingRefusalAction | null {
   if (!code) return null;
-  return BOOKING_REFUSAL_ACTIONS[code === 'identity_verification_required' ? 'verification_required' : code] ?? null;
+  return BOOKING_REFUSAL_ACTIONS[code === 'identity_verification_required' || code === 'layover_identity_verification_required' ? 'verification_required' : code] ?? null;
 }
 
 /**
@@ -130,7 +130,7 @@ export function bookingErrorCopy(
   // "don't show a machine string" rule, which lives in lib/errorCopy so other
   // features can use it WITHOUT inheriting Rent-a-Buddy's wording.
   if (code) {
-    const known = BOOKING_UNAVAILABLE_COPY[code];
+    const known = BOOKING_UNAVAILABLE_COPY[code] ?? LAYOVER_BOOKING_COPY[code];
     if (known) return known;
     const actionable = code === 'identity_verification_required' ? 'Rent a Buddy bookings require a current identity check. Open verification to check your status and continue.' : BOOKING_ACTIONABLE_COPY[code];
     if (actionable) return actionable; const ineligible = BOOKING_INELIGIBLE_COPY[code]; if (ineligible) return ineligible; const knownFailure = BOOKING_FAILURE_COPY[code]; if (knownFailure) return knownFailure; // census-trust §31: one line, so cited lines keep their numbers
@@ -212,3 +212,21 @@ const BOOKING_FAILURE_COPY: Record<string, string> = {
 // BOOKING_ACTIONABLE_COPY above) — the location checks age and no date of
 // birth was found on the profile. "Couldn't find", not "has none": the server
 // sends the same code when it could not read one.
+
+const LAYOVER_BOOKING_COPY: Record<string,string> = {
+ layover_identity_verification_required:'Complete live identity verification before offering or booking layover services.',
+ layover_specialist_disabled:'Layover specialist bookings are not open here yet.',
+ layover_specialist_unavailable:'This specialist cannot offer layover services right now. An eligible account and verified payout setup are required.',
+ layover_specialist_checks_unavailable:'We could not check specialist eligibility. Please try again.',
+ layover_booking_crosses_deadline:'This booking falls outside your certified layover window. Choose an earlier or shorter visit, or return to your layover to refresh it.',
+ layover_safety_gate_not_passed:'Your current layover does not allow this visit. Return to your layover to check the safety advice.',
+ layover_booking_time_invalid:'Choose a valid date, start time and duration in the airport’s local time.',
+ layover_buddy_availability_unconfirmed:'The specialist has not confirmed availability for that whole slot. Choose another time.',
+ layover_buddy_already_booked:'That slot is already booked. Choose another time.',
+ layover_public_meetup_required:'Choose a public meeting place, such as the airport arrivals hall.',
+ layover_checkout_required:'Start a new booking from your active layover so its current return deadline can be checked.',
+ layover_session_required:'Return to your active layover and choose a specialist there.',
+ layover_not_exploring:'This layover is no longer exploring. A new specialist booking cannot be made.',
+ layover_booking_unavailable:'We could not check your layover booking. Please retry from your layover.',
+ layover_change_not_applied:'The booking changed or no longer fits the certified window. Your change was not applied.',
+};

@@ -17,7 +17,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js";
+import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js"; import { getSession } from "../services/airport/LayoverSessionService.js";
 import { evaluate } from "../services/airport/LayoverFeasibilityService.js";
 import { snapshotIdFor } from "../services/airport/layoverLedger.js";
 import { certifySessionFeasibility } from "../services/airport/LayoverFeasibility.js";
@@ -68,7 +68,8 @@ describe("L175 — evaluate(sessionId) with the ledger ON: a certified, STORED e
     const out = await evaluate(makeLayoverDb(t) as any, "user-1", "session-1", { nowMs: NOW });
     assert.ok(out.ok);
     if (!out.ok) return;
-    const direct = certifySessionFeasibility(airportRowToProfile(airportRow()), out.record.inputs.session as any, { nowMs: NOW, entry: out.record.inputs.entry ?? null });
+    const loaded = await getSession(makeLayoverDb(t) as any, "session-1", "user-1"); assert.ok(loaded.ok && loaded.session, "fixture: the owned session loads"); // the SAME session evaluate() loads — not record.inputs.session, the engine's projection, which does not carry comfortLevel / vibeChips, the inputs ee52da82's FreedomWindow softConstraints (record.inputs.freedomPolicy) derive from
+    const direct = certifySessionFeasibility(airportRowToProfile(airportRow()), loaded.session!, { nowMs: NOW, entry: out.record.inputs.entry ?? null });
     assert.equal(out.record.inputHash, direct.inputHash);
     assert.equal(out.record.deadline.hardReturnTime.toISOString(), direct.deadline.hardReturnTime.toISOString());
   });

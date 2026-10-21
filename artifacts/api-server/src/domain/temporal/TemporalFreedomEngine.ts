@@ -116,7 +116,7 @@ export interface FreedomWindow {
   /** ISO instants. */
   beginsAt: string;
   endsAt: string;
-  durationMinutes: number;
+  durationMinutes: number; usableMinutes?: number; softConstraints?: Array<{ key: string; value: string }>; riskBudget?: { maxLatenessMinutes: number; unsafeActionsPermitted: false }; uncertaintyBudget?: { reservedMinutes: number; share: number; basis: "policy_reserve" };
   origin: FreedomPlace | null;
   requiredDestination: (FreedomPlace & { commitmentId: string; arriveBy: string }) | null;
   participants: string[];

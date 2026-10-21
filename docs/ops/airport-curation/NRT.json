@@ -1,0 +1,83 @@
+{
+  "packetVersion": 1,
+  "iata": "NRT",
+  "airportName": "Narita International Airport",
+  "state": "proposed_unvalidated",
+  "preparedBy": "machine-prepared by lane B2-CURATE research agent; NOT validated by a human curator",
+  "preparedAt": "2026-10-19T02:09:46Z",
+  "facts": [
+    {
+      "kind": "terminal_topology",
+      "value": {
+        "terminals": [
+          { "id": "T1", "name": "Terminal 1" },
+          { "id": "T2", "name": "Terminal 2" },
+          { "id": "T3", "name": "Terminal 3" }
+        ],
+        "walkingLinks": [
+          { "fromTerminalId": "T1", "toTerminalId": "T3", "minutes": 14, "mode": "shuttle" },
+          { "fromTerminalId": "T3", "toTerminalId": "T2", "minutes": 3, "mode": "shuttle" },
+          { "fromTerminalId": "T2", "toTerminalId": "T1", "minutes": 10, "mode": "shuttle" },
+          { "fromTerminalId": "T1", "toTerminalId": "T2", "minutes": 10, "mode": "shuttle" },
+          { "fromTerminalId": "T2", "toTerminalId": "T3", "minutes": 6, "mode": "shuttle" },
+          { "fromTerminalId": "T2", "toTerminalId": "T3", "mode": "walk" },
+          { "fromTerminalId": "T3", "toTerminalId": "T2", "mode": "walk" }
+        ]
+      },
+      "source": {
+        "kind": "official_airport",
+        "url": "https://www.narita-airport.jp/en/access/shuttlebus/",
+        "retrievedAt": "2026-10-19T02:05:30Z",
+        "title": "Traveling Between Terminals | NARITA INTERNATIONAL AIRPORT"
+      },
+      "evidence": "'between Terminals 1 & 3 : about 14 minutes' etc., per shuttle route",
+      "notes": "Free terminal shuttle buses run in the 'Before Security Check' area (i.e. for passengers not in transit); transit passengers after the transit security check use separate transit shuttles (linked page, not fetched). Three routes: (1) loop T1→T3 about 14, T3→T2 about 3, T2→T1 about 10; (2) T1↔T2 about 10 each way; (3) T2→T3 about 6, T3→T2 about 3. Directions are read from the route order printed on the page. Page notes times may be longer due to road congestion; after leaving T1 the bus also stops at Higashi-Narita Station bus stop. Walking T2↔T3 via the access corridor is stated as possible, but no walking time is given. First/last departures and intervals were not in the fetched content (page points to a 'Bus Stops' section). The page does not label terminals domestic/international."
+    },
+    {
+      "kind": "ground_transport",
+      "value": {
+        "modes": [
+          { "mode": "rail", "name": "Keisei Skyliner", "toCity": "Nippori / Keisei Ueno", "terminalIds": ["T1", "T2", "T3"] },
+          { "mode": "rail", "name": "Keisei Access Express", "toCity": "Higashi-Matsudo / Keisei Takasago / Aoto / Nippori / Keisei Ueno", "terminalIds": ["T1", "T2", "T3"] },
+          { "mode": "rail", "name": "Keisei Main Line", "toCity": "Keisei Narita / Keisei Funabashi / Keisei Takasago / Aoto / Nippori / Keisei Ueno", "terminalIds": ["T1", "T2", "T3"] },
+          { "mode": "rail", "name": "JR Narita Express (NEX)", "toCity": "Tokyo / Shinagawa / Shibuya / Shinjuku / Yokohama", "terminalIds": ["T1", "T2", "T3"] },
+          { "mode": "rail", "name": "JR Line", "toCity": "Chiba / Tokyo / Ueno / Ikebukuro / Shinjuku / Yokohama", "terminalIds": ["T1", "T2", "T3"] }
+        ]
+      },
+      "source": {
+        "kind": "official_airport",
+        "url": "https://www.narita-airport.jp/en/access/train/",
+        "retrievedAt": "2026-10-19T02:05:30Z",
+        "title": "Rail | NARITA INTERNATIONAL AIRPORT"
+      },
+      "evidence": "Each service lists major stops; served from both airport stations",
+      "notes": "Stations: Narita Airport Station for Terminal 1 ('5-minute walk'); Airport Terminal 2·3 Station for Terminal 2 (5-minute walk) and Terminal 3 (10-minute walk). Skyliner: page says some trains stop at Aoto and Shin-Kamagaya. toCity values are the major stops the page lists. No journey times, first/last departures or frequency stated (page refers to the railway operators' sites)."
+    },
+    {
+      "kind": "overnight_lodging",
+      "value": {
+        "options": [
+          { "name": "Capsule Hotel", "kind": "sleep_pods", "terminalId": "T2" },
+          { "name": "Showers, Nap Rooms", "kind": "rest_area", "terminalId": "T1" },
+          { "name": "Showers, Nap Rooms", "kind": "rest_area", "terminalId": "T2" }
+        ]
+      },
+      "source": {
+        "kind": "official_airport",
+        "url": "https://www.narita-airport.jp/en/service/transportation/",
+        "retrievedAt": "2026-10-19T02:05:45Z",
+        "title": "Transportation / Accommodation / Refreshment Space | NARITA INTERNATIONAL AIRPORT"
+      },
+      "evidence": "Facility list: 'Capsule Hotel' (T2); 'Showers, Nap Rooms' (T1, T2)",
+      "notes": "The page names facility categories with terminal tags only: no operator names, floors, side (before/after security) or hours. 'kind' is a classification by the research agent (capsule hotel mapped to sleep_pods, showers/nap rooms to rest_area); curator to confirm. 'Hotels around the airport' (off-site, via shuttle bus) also listed for T1/T2 and excluded as not on-airport."
+    }
+  ],
+  "unreachable": [],
+  "gaps": [
+    "transport_schedules: no first/last departures on the airport's rail or shuttle pages; the shuttle timetable is in a 'Bus Stops' section that was not in the fetched content; rail operators' sites not fetched",
+    "security_layout: not fetched (security pages /en/airportguide/security/ not reached within the per-airport URL budget)",
+    "lounge_hours: https://www.narita-airport.jp/en/service/lounge/ (retrieved 2026-10-19T02:05:30Z) shows only categories (airline lounges, credit card company lounge) for T1/T2, no names or hours",
+    "entry_restrictions: https://www.narita-airport.jp/en/airportguide/connect/ (retrieved 2026-10-19T02:05:30Z) only links to a separate international-connection guide and states transfers are screened to Japanese criteria; no landside-exit rule stated",
+    "overnight_lodging details: hours, side and operator names not stated"
+  ]
+}

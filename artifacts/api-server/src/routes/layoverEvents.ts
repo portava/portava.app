@@ -147,7 +147,7 @@ router.post("/layover/events", asyncHandler(async (req, res) => {
   // `occurredAt` is judged against disagree, and the table's
   // `layover_external_events_not_future` CHECK would then refuse an event the
   // normaliser had just accepted.
-  const result = await ingestExternalEvent(sc, parsed.data, Date.now());
+  const result = await withLayoverSystemAudit('layover:verified-producer', () => ingestExternalEvent(auditedLayoverClient(sc), parsed.data, Date.now()));
 
   if (!result.ok) {
     if (result.kind === "rejected") {
@@ -175,3 +175,4 @@ router.post("/layover/events", asyncHandler(async (req, res) => {
 }));
 
 export default router;
+import { auditedLayoverClient, withLayoverSystemAudit } from '../lib/layoverServiceAudit.js';
