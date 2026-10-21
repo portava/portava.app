@@ -107,7 +107,7 @@ for(const order of ['sorted-gap','after-3999'] as const)test('3898 full catalog 
  await refuses('custom-role grant',"CREATE ROLE objective_extra_grantee; GRANT SELECT ON public.layover_experience_plans TO objective_extra_grantee;",/privileges were changed/);
  await refuses('column grant',"GRANT SELECT(contract) ON public.layover_experience_plans TO authenticated;",/privileges were changed/);
  await refuses('function grant',"GRANT EXECUTE ON FUNCTION public.layover_experience_plan_immutable() TO authenticated;",/privileges were changed/);
- await refuses('all table privileges removed',"REVOKE ALL ON public.layover_experience_plans FROM CURRENT_USER,service_role;",/privileges were changed/);
+ await refuses('all table privileges removed',"REVOKE ALL ON public.layover_experience_plans FROM CURRENT_USER,service_role;",/privileges were changed/); await refuses('partial table privileges removed',"REVOKE TRUNCATE ON public.layover_experience_plans FROM service_role;",/privileges were changed/);
  await refuses('all function privileges removed',"REVOKE ALL ON FUNCTION public.layover_experience_plan_immutable() FROM CURRENT_USER,service_role;",/privileges were changed/);
  await refuses('function attributes',"ALTER FUNCTION public.layover_experience_plan_immutable() COST 99;",/attributes or privileges/);
  await refuses('trigger disabled',"ALTER TABLE public.layover_experience_plans DISABLE TRIGGER layover_experience_plan_immutable;",/table.*was changed/);

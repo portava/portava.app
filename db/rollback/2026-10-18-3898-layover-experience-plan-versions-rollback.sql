@@ -1,6 +1,6 @@
 -- Rollback 3898: never discard a plan version, outcome, flag audit, or changed object.
 -- Isolated, repeatable and no CASCADE. Any downstream dependency or audit trigger refuses.
--- PostgreSQL 18 also catalogs NOT NULL constraints; attnotnull below preserves that check on all supported versions.
+-- PostgreSQL 18 also catalogs NOT NULL constraints; attnotnull below preserves that check on all supported versions. The table ACL hash names a grantee holding the owner's whole default set (acldefault) ALL, so PostgreSQL 16 (no MAINTAIN) and 17 pin one value and a partial revoke still refuses.
 BEGIN;
 SET LOCAL lock_timeout='5s';
 SET LOCAL search_path=pg_catalog,pg_temp;
@@ -34,7 +34,7 @@ BEGIN
   IF EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid='public.layover_experience_plans'::regclass AND attacl IS NOT NULL)
     OR EXISTS(SELECT 1 FROM pg_class c WHERE c.oid='public.layover_experience_plans'::regclass AND (
       relforcerowsecurity OR relkind<>'r' OR relpersistence<>'p' OR reloptions IS NOT NULL
-      OR (SELECT md5(jsonb_agg(jsonb_build_array(CASE WHEN a.grantee=0 THEN 'PUBLIC' WHEN a.grantee=c.relowner THEN 'OWNER' ELSE pg_get_userbyid(a.grantee) END,CASE WHEN a.grantor=c.relowner THEN 'OWNER' ELSE pg_get_userbyid(a.grantor) END,a.privilege_type,a.is_grantable) ORDER BY CASE WHEN a.grantee=0 THEN 'PUBLIC' WHEN a.grantee=c.relowner THEN 'OWNER' ELSE pg_get_userbyid(a.grantee) END,a.privilege_type,a.is_grantable)::text) FROM aclexplode(coalesce(c.relacl,acldefault('r',c.relowner))) a) IS DISTINCT FROM '469b5ae4221720bc0485c8f6c0eee3b6'))
+      OR (SELECT md5(jsonb_agg(jsonb_build_array(g.grantee,g.grantor,CASE WHEN g.privs=(SELECT array_agg(d.privilege_type ORDER BY d.privilege_type) FROM aclexplode(acldefault('r',c.relowner)) d) THEN ARRAY['ALL'] ELSE g.privs END,g.is_grantable) ORDER BY g.grantee,g.grantor,g.is_grantable)::text) FROM (SELECT CASE WHEN a.grantee=0 THEN 'PUBLIC' WHEN a.grantee=c.relowner THEN 'OWNER' ELSE pg_get_userbyid(a.grantee) END grantee,CASE WHEN a.grantor=c.relowner THEN 'OWNER' ELSE pg_get_userbyid(a.grantor) END grantor,a.is_grantable,array_agg(a.privilege_type ORDER BY a.privilege_type) privs FROM aclexplode(coalesce(c.relacl,acldefault('r',c.relowner))) a GROUP BY 1,2,3) g) IS DISTINCT FROM '448e1a16e7e012dd102b859139de3843'))
     THEN RAISE EXCEPTION 'ROLLBACK REFUSED (3898): experience table attributes or privileges were changed.'; END IF;
   SELECT md5(jsonb_build_object(
     'columns',(SELECT jsonb_agg(attname||'|'||format_type(atttypid,atttypmod)||'|'||attnotnull||'|'||coalesce(pg_get_expr(d.adbin,d.adrelid),'') ORDER BY attnum) FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum WHERE a.attrelid='public.layover_experience_plans'::regclass AND attnum>0 AND NOT attisdropped),

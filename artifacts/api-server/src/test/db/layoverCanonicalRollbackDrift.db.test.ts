@@ -48,7 +48,7 @@ for (const d of definitions) for (const order of ["sorted-gap", "after-3999"] as
    await refuses("changed trigger predicate", `DROP TRIGGER ${d.trigger} ON public.${d.triggerTable}; ${definition.replace(' EXECUTE FUNCTION ', ' WHEN (false) EXECUTE FUNCTION ')};`);
    if (d.table) {
     await refuses("table grant", `GRANT SELECT ON public.${d.table} TO authenticated;`);
-    await refuses("zero table ACL", `REVOKE ALL ON public.${d.table} FROM CURRENT_USER,service_role;`);
+    await refuses("zero table ACL", `REVOKE ALL ON public.${d.table} FROM CURRENT_USER,service_role;`); await refuses("partial table ACL", `REVOKE TRUNCATE ON public.${d.table} FROM service_role;`); if (Number((await db.query<{v:string}>("SELECT current_setting('server_version_num') AS v"))[0]!.v) >= 170000) await refuses("MAINTAIN-only table ACL", `REVOKE MAINTAIN ON public.${d.table} FROM service_role;`); // the ACL hash reads a full owner-default set as ALL; it must not read a partial one, or MAINTAIN, as unchanged
     await refuses("column grant", `GRANT SELECT(${d.column}) ON public.${d.table} TO authenticated;`);
     await refuses("policy addition", `CREATE POLICY rollback_extra_policy ON public.${d.table} FOR SELECT TO authenticated USING(true);`);
     await refuses("extra table column", `ALTER TABLE public.${d.table} ADD COLUMN extra boolean;`);
