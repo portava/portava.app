@@ -1,5 +1,5 @@
 -- Rollback 3873. Refuse stored expectations, an enabled canonical switch, or audit history; no evidence is deleted.
--- No CASCADE; independent later dependencies refuse rollback. Lock writers before checking data. Repeat is a no-op.
+-- No CASCADE; independent later dependencies refuse rollback. Lock writers before checking data. Repeat is a no-op. Index names sort COLLATE "C", so the shape pin does not depend on the database collation.
 BEGIN;
 SET LOCAL lock_timeout = '5s';
 SET LOCAL search_path = pg_catalog, pg_temp;
@@ -27,7 +27,7 @@ BEGIN
  SELECT md5(jsonb_build_object(
  'columns',(SELECT jsonb_agg(jsonb_build_array(attname,format_type(atttypid,atttypmod),attnotnull,expr,attidentity,attgenerated,attacl::text,col_description(attrelid,attnum)) ORDER BY attname) FROM attrs),
  'constraints',(SELECT jsonb_agg(conname||'|'||pg_get_constraintdef(oid)||'|'||convalidated ORDER BY conname) FROM pg_constraint WHERE conrelid='public.layover_certified_computations'::regclass AND conkey && ARRAY(SELECT attnum FROM attrs)),
- 'indexes',(SELECT jsonb_agg(pg_get_indexdef(indexrelid)||'|'||indisvalid||'|'||indisready ORDER BY indexrelid::regclass::text) FROM pg_index i WHERE indrelid='public.layover_certified_computations'::regclass AND EXISTS(SELECT 1 FROM pg_depend d WHERE d.classid='pg_class'::regclass AND d.objid=i.indexrelid AND d.refclassid='pg_class'::regclass AND d.refobjid=i.indrelid AND d.refobjsubid IN(SELECT attnum FROM attrs)))
+ 'indexes',(SELECT jsonb_agg(pg_get_indexdef(indexrelid)||'|'||indisvalid||'|'||indisready ORDER BY indexrelid::regclass::text COLLATE "C") FROM pg_index i WHERE indrelid='public.layover_certified_computations'::regclass AND EXISTS(SELECT 1 FROM pg_depend d WHERE d.classid='pg_class'::regclass AND d.objid=i.indexrelid AND d.refclassid='pg_class'::regclass AND d.refobjid=i.indrelid AND d.refobjsubid IN(SELECT attnum FROM attrs)))
  )::text) INTO shape;
   IF shape IS DISTINCT FROM '4ea08bcf2d0645b3bac5c048222d11af' THEN RAISE EXCEPTION 'ROLLBACK REFUSED (3873): owned column definitions, privileges or dependencies were changed.'; END IF;
   IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid='public.layover_certified_computations'::regclass AND attname='expected_active_version' AND NOT attisdropped) THEN

@@ -1,7 +1,7 @@
 -- Rollback 3871. Isolated and idempotent; refuses classified cards, history, an enabled flag or flag audit history.
 -- No production application is claimed. Locks prevent new evidence or a flag toggle between the checks and DROP.
 -- No CASCADE: dependencies owned by another migration refuse the rollback. Preserve/export evidence separately.
--- PostgreSQL 18 also catalogs NOT NULL constraints; attnotnull below preserves that check on all supported versions. The table ACL hash names a grantee holding the owner's whole default set (acldefault) ALL, so PostgreSQL 16 (no MAINTAIN) and 17 pin one value and a partial revoke still refuses.
+-- PostgreSQL 18 also catalogs NOT NULL constraints; attnotnull below preserves that check on all supported versions. The table ACL hash names a grantee holding the owner's whole default set (acldefault) ALL, so PostgreSQL 16 (no MAINTAIN) and 17 pin one value and a partial revoke still refuses. Text sort keys (index names, ACL grantees) are COLLATE "C": a pin must not depend on the database collation (glibc en_US ignores "_", macOS and C do not).
 BEGIN;
 SET LOCAL lock_timeout = '5s';
 SET LOCAL search_path = pg_catalog, pg_temp;
@@ -29,7 +29,7 @@ BEGIN
  SELECT md5(jsonb_build_object(
  'columns',(SELECT jsonb_agg(jsonb_build_array(attname,format_type(atttypid,atttypmod),attnotnull,expr,attidentity,attgenerated,attacl::text,col_description(attrelid,attnum)) ORDER BY attname) FROM attrs),
  'constraints',(SELECT jsonb_agg(conname||'|'||pg_get_constraintdef(oid)||'|'||convalidated ORDER BY conname) FROM pg_constraint WHERE conrelid='public.layover_recommendations'::regclass AND conkey && ARRAY(SELECT attnum FROM attrs)),
- 'indexes',(SELECT jsonb_agg(pg_get_indexdef(indexrelid)||'|'||indisvalid||'|'||indisready ORDER BY indexrelid::regclass::text) FROM pg_index i WHERE indrelid='public.layover_recommendations'::regclass AND EXISTS(SELECT 1 FROM pg_depend d WHERE d.classid='pg_class'::regclass AND d.objid=i.indexrelid AND d.refclassid='pg_class'::regclass AND d.refobjid=i.indrelid AND d.refobjsubid IN(SELECT attnum FROM attrs)))
+ 'indexes',(SELECT jsonb_agg(pg_get_indexdef(indexrelid)||'|'||indisvalid||'|'||indisready ORDER BY indexrelid::regclass::text COLLATE "C") FROM pg_index i WHERE indrelid='public.layover_recommendations'::regclass AND EXISTS(SELECT 1 FROM pg_depend d WHERE d.classid='pg_class'::regclass AND d.objid=i.indexrelid AND d.refclassid='pg_class'::regclass AND d.refobjid=i.indrelid AND d.refobjsubid IN(SELECT attnum FROM attrs)))
  )::text) INTO shape;
   IF shape IS DISTINCT FROM '4348579bc0fa5be0d2fd506ff0b3c258' THEN RAISE EXCEPTION 'ROLLBACK REFUSED (3871): owned column definitions, privileges or dependencies were changed.'; END IF;
 
@@ -56,12 +56,12 @@ BEGIN
   IF EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid='public.layover_recommendation_supersessions'::regclass AND attacl IS NOT NULL)
     OR EXISTS(SELECT 1 FROM pg_class c WHERE c.oid='public.layover_recommendation_supersessions'::regclass AND (
       relforcerowsecurity OR relkind<>'r' OR relpersistence<>'p' OR reloptions IS NOT NULL
-      OR (SELECT md5(jsonb_agg(jsonb_build_array(g.grantee,g.grantor,CASE WHEN g.privs=(SELECT array_agg(d.privilege_type ORDER BY d.privilege_type) FROM aclexplode(acldefault('r',c.relowner)) d) THEN ARRAY['ALL'] ELSE g.privs END,g.is_grantable) ORDER BY g.grantee,g.grantor,g.is_grantable)::text) FROM (SELECT CASE WHEN a.grantee=0 THEN 'PUBLIC' WHEN a.grantee=c.relowner THEN 'OWNER' ELSE pg_get_userbyid(a.grantee) END grantee,CASE WHEN a.grantor=c.relowner THEN 'OWNER' ELSE pg_get_userbyid(a.grantor) END grantor,a.is_grantable,array_agg(a.privilege_type ORDER BY a.privilege_type) privs FROM aclexplode(coalesce(c.relacl,acldefault('r',c.relowner))) a GROUP BY 1,2,3) g) IS DISTINCT FROM '448e1a16e7e012dd102b859139de3843'))
+      OR (SELECT md5(jsonb_agg(jsonb_build_array(g.grantee,g.grantor,CASE WHEN g.privs=(SELECT array_agg(d.privilege_type ORDER BY d.privilege_type) FROM aclexplode(acldefault('r',c.relowner)) d) THEN ARRAY['ALL'] ELSE g.privs END,g.is_grantable) ORDER BY g.grantee COLLATE "C",g.grantor COLLATE "C",g.is_grantable)::text) FROM (SELECT CASE WHEN a.grantee=0 THEN 'PUBLIC' WHEN a.grantee=c.relowner THEN 'OWNER' ELSE pg_get_userbyid(a.grantee) END grantee,CASE WHEN a.grantor=c.relowner THEN 'OWNER' ELSE pg_get_userbyid(a.grantor) END grantor,a.is_grantable,array_agg(a.privilege_type ORDER BY a.privilege_type) privs FROM aclexplode(coalesce(c.relacl,acldefault('r',c.relowner))) a GROUP BY 1,2,3) g) IS DISTINCT FROM '448e1a16e7e012dd102b859139de3843'))
     THEN RAISE EXCEPTION 'ROLLBACK REFUSED (3871): supersession table attributes or privileges were changed.'; END IF;
   SELECT md5(jsonb_build_object(
  'columns',(SELECT jsonb_agg(attname||'|'||format_type(atttypid,atttypmod)||'|'||attnotnull||'|'||coalesce(pg_get_expr(d.adbin,d.adrelid),'') ORDER BY attnum) FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum WHERE a.attrelid='public.layover_recommendation_supersessions'::regclass AND attnum>0 AND NOT attisdropped),
  'constraints',(SELECT jsonb_agg(conname||'|'||pg_get_constraintdef(oid)||'|'||convalidated ORDER BY conname) FROM pg_constraint WHERE contype<>'n' AND conrelid='public.layover_recommendation_supersessions'::regclass),
- 'indexes',(SELECT jsonb_agg(pg_get_indexdef(indexrelid)||'|'||indisvalid||'|'||indisready ORDER BY indexrelid::regclass::text) FROM pg_index WHERE indrelid='public.layover_recommendation_supersessions'::regclass),
+ 'indexes',(SELECT jsonb_agg(pg_get_indexdef(indexrelid)||'|'||indisvalid||'|'||indisready ORDER BY indexrelid::regclass::text COLLATE "C") FROM pg_index WHERE indrelid='public.layover_recommendation_supersessions'::regclass),
  'triggers',(SELECT jsonb_agg(pg_get_triggerdef(oid)||'|'||tgenabled::text ORDER BY tgname) FROM pg_trigger WHERE tgrelid='public.layover_recommendation_supersessions'::regclass AND NOT tgisinternal),
  'policies',(SELECT jsonb_agg(polname ORDER BY polname) FROM pg_policy WHERE polrelid='public.layover_recommendation_supersessions'::regclass),
  'rls',(SELECT relrowsecurity FROM pg_class WHERE oid='public.layover_recommendation_supersessions'::regclass)
