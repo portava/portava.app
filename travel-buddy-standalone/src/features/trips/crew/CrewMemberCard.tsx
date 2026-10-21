@@ -46,7 +46,7 @@ function getStatusConfig(status: CrewStatusLabel, liveShareExpiresAt?: string | 
     case 'location_hidden':
       return { label: 'Location hidden', color: color.mute, icon: <EyeOff size={12} color={color.mute} /> };
     case 'not_shared':
-      return { label: 'Not sharing', color: color.faint, icon: <EyeOff size={12} color={color.faint} /> };
+      return { label: 'Not sharing', color: color.mute, icon: <EyeOff size={12} color={color.faint} /> };
     case 'city_only':
       return { label: 'City only', color: color.mute, icon: <MapPin size={12} color={color.mute} /> };
     case 'neighborhood':
@@ -70,12 +70,12 @@ function getStatusConfig(status: CrewStatusLabel, liveShareExpiresAt?: string | 
       }
       return {
         label: expiry ? `Live · ${expiry}` : 'Live sharing',
-        color: color.signal,
+        color: color.signalStrong,
         icon: <Navigation size={12} color={color.signal} />,
       };
     }
     default:
-      return { label: 'Unknown', color: color.faint, icon: <MapPin size={12} color={color.faint} /> };
+      return { label: 'Unknown', color: color.mute, icon: <MapPin size={12} color={color.faint} /> };
   }
 }
 
@@ -105,7 +105,7 @@ export function CrewMemberCard({ member, isBlockedByViewer = false, onBlockSucce
   // position; a hidden or blocked member has no position line to speak of.
   const showPresence = !isBlockedByViewer && effectiveStatusLabel !== 'location_hidden' && effectiveStatusLabel !== 'not_shared';
   const line = showPresence ? presenceLine(member) : null;
-  const lineColor = !positionIsCurrent ? color.mute : member.freshnessClass === 'LIVE' ? color.signal : color.deep;
+  const lineColor = !positionIsCurrent ? color.mute : member.freshnessClass === 'LIVE' ? color.signalStrong : color.deep;
   const a11y = showPresence
     ? `${presenceAccessibleLabel(displayName, member)}, ${status.label}`
     : `${displayName}, ${status.label}`;

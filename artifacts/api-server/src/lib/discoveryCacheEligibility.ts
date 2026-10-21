@@ -38,7 +38,7 @@
  * unit-testable without standing up the route, and so the route's line numbers
  * move as little as possible — a census elsewhere in this repo cites them.
  */
-
+import { readMuteExclusions } from "./exclusionSet.js"; // census-telegraph T220c: withMutedAuthors reads the mute list through its definition of record (on this blank line, so no cited line moves)
 /**
  * Order-independent digest of a viewer's block set, used to decide whether a
  * cached ranked page is still authorized for the request in hand.
@@ -344,12 +344,12 @@ export async function withMutedAuthors(
   if (blocked === null) return null;
   if (!sc) return null;
   try {
-    const { data, error } = await sc.from("user_mutes").select("muted_id").eq("muter_id", viewerId);
-    if (error || !Array.isArray(data)) return null;
-    if (data.length === 0) return blocked;
+    const muted = await readMuteExclusions(sc, viewerId); // census-telegraph T220c: the mute list's definition of record — whole, by key; never rejects
+    if (!muted.ok) return null; // a returned error, a thrown read, a non-list answer — and a row naming nobody, which was SKIPPED here (a mute dropped as if absent)
+    if (muted.ids.size === 0) return blocked;
     const out = new Set(blocked);
-    for (const r of data as Array<{ muted_id?: unknown }>) {
-      if (typeof r?.muted_id === "string" && r.muted_id !== "") out.add(r.muted_id);
+    for (const id of muted.ids) {
+      out.add(id);
     }
     return out;
   } catch {

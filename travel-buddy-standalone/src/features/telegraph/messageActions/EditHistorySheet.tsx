@@ -18,9 +18,9 @@
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import { Modal, Pressable, Text, View, ActivityIndicator, ScrollView } from 'react-native';
-import { color } from '../../../theme/tokens.ts';
+// census T123: colours come from the scheme's palette (useMessageActionSheet), not the static tokens.
 import { getMessageEditHistory, type MessageEditHistory } from '../../../services/messaging.ts';
-import { sheet } from './sheetStyles.ts';
+import { useMessageActionSheet } from './sheetStyles.ts';
 
 export interface EditHistorySheetProps {
   visible: boolean;
@@ -45,7 +45,7 @@ export function editHistoryErrorCopy(code: string | undefined): string {
   }
 }
 
-export function EditHistorySheet({ visible, threadId, messageId, onClose }: EditHistorySheetProps) {
+export function EditHistorySheet({ visible, threadId, messageId, onClose }: EditHistorySheetProps) { const { palette, sheet } = useMessageActionSheet();
   const [loading, setLoading] = useState(true);
   const [history, setHistory] = useState<MessageEditHistory | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -76,7 +76,7 @@ export function EditHistorySheet({ visible, threadId, messageId, onClose }: Edit
         <View style={sheet.handle} />
         <Text style={sheet.title}>Edit history</Text>
         {loading ? (
-          <View style={sheet.center} testID="telegraph-edit-history-loading"><ActivityIndicator color={color.mute} /></View>
+          <View style={sheet.center} testID="telegraph-edit-history-loading"><ActivityIndicator color={palette.mute} /></View>
         ) : error ? (
           <View testID="telegraph-edit-history-error">
             <Text style={sheet.error}>{error}</Text>

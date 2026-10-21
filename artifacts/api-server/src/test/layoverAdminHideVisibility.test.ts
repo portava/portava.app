@@ -273,7 +273,7 @@ _after(() => new Promise<void>((resolve) => hideServer.close(() => resolve())));
 describe("POST /stops/from-recommendation — the hide is not one API call wide", () => {
   it("positive control: an ACTIVE recommendation can be added to the plan", async () => {
     const tables = stageRoute("active");
-    const r = await post("/api/airport/sessions/session-1/stops/from-recommendation", { recommendationId: "rec-1" });
+    const r = await post("/api/airport/sessions/session-1/stops/from-recommendation", { recommendationId: "rec-1", snapshotId: stagePairedGeneration(tables, SESSION_ID, HIDE_USER) });
     assert.equal(r.status, 200);
     assert.equal(tables.layover_plan_stops!.length, 1, "vacuity: the allowed path must actually write a stop");
     assert.equal(tables.layover_plan_stops![0]!.recommendation_id, "rec-1");
@@ -291,8 +291,31 @@ describe("POST /stops/from-recommendation — the hide is not one API call wide"
 
   it("a FLAGGED recommendation is still addable — keep_flagged is not hide", async () => {
     const tables = stageRoute("flagged");
-    const r = await post("/api/airport/sessions/session-1/stops/from-recommendation", { recommendationId: "rec-1" });
+    const r = await post("/api/airport/sessions/session-1/stops/from-recommendation", { recommendationId: "rec-1", snapshotId: stagePairedGeneration(tables, SESSION_ID, HIDE_USER) });
     assert.equal(r.status, 200);
     assert.equal(tables.layover_plan_stops!.length, 1);
   });
 });
+
+// census-layover L296 (App C5) — appended so no cited line above moves; ESM hoists the imports.
+import { recommendationPairingFor, recommendationRowKey } from "../services/airport/LayoverRecommendationService.js";
+import { snapshotIdFor } from "../services/airport/layoverLedger.js";
+
+/**
+ * A plan add must name the snapshot of the session's NEWEST generation, and that
+ * generation must have certified the card as its row stands
+ * (layoverRecommendationSnapshotPairing.test.ts). A real generation always
+ * writes this `recommendation_generated` event beside its rows; a fixture that
+ * stages rows by hand stages the event too. Returns the snapshot to name.
+ */
+function stagePairedGeneration(tables: Record<string, any[]>, sessionId: string, userId: string): string {
+  const inputHash = "sha256:" + "f".repeat(64);
+  const rows = (tables.layover_recommendations ?? []).filter((r) => r.session_id === sessionId);
+  if (!tables.layover_events) tables.layover_events = [];
+  tables.layover_events.push({
+    id: `generation-${tables.layover_events.length}`, session_id: sessionId, user_id: userId,
+    event_type: "recommendation_generated", created_at: new Date().toISOString(),
+    metadata: { inputHash, pairing: recommendationPairingFor(sessionId, inputHash, rows, rows.map(recommendationRowKey)) },
+  });
+  return snapshotIdFor(sessionId, inputHash);
+}

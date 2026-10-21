@@ -201,7 +201,7 @@ router.get("/appeals", asyncHandler(async (req, res) => {
 
   let q = sc
     .from("appeals")
-    .select("id, appellant_id, target_type, target_id, reason, evidence_url, state, moderator_id, resolution_note, created_at, updated_at, profiles!appellant_id(handle, display_name, avatar_url)")
+    .select("id, appellant_id, target_type, target_id, reason, evidence_url, state, moderator_id, resolution_note, created_at, updated_at") // census-trust wave 5: no `profiles!appellant_id(...)` embed — appeals.appellant_id keys auth.users, not profiles (PGRST200); see readAppellantProfiles
     .order("created_at", { ascending: true });
 
   if (stateFilter && VALID_STATES.includes(stateFilter)) {
@@ -212,15 +212,15 @@ router.get("/appeals", asyncHandler(async (req, res) => {
 
   const { data, error } = await q;
   if (error) { req.log.error({ err: error }, "admin get appeals"); sendError(res, "db_error", error.message); return; }
-
+  const appellants = await readAppellantProfiles(sc, (data as any[]) ?? []); if (!appellants) { req.log.error("admin get appeals: appellant profiles unreadable"); sendError(res, "db_error", "Appellant profiles could not be read"); return; } // census-trust wave 5: step two, one batched profiles read
   res.json({
     appeals: ((data as any[]) ?? []).map((a: any) => ({
       id:             a.id,
       appellantId:    a.appellant_id,
       appellant: {
-        handle:      a.profiles?.handle ?? null,
-        displayName: a.profiles?.display_name ?? null,
-        avatarUrl:   a.profiles?.avatar_url ?? null,
+        handle:      appellants.get(a.appellant_id)?.handle ?? null,
+        displayName: appellants.get(a.appellant_id)?.display_name ?? null,
+        avatarUrl:   appellants.get(a.appellant_id)?.avatar_url ?? null,
       },
       targetType:     a.target_type,
       targetId:       a.target_id,
@@ -400,14 +400,14 @@ router.patch("/appeals/:id", asyncHandler(async (req, res) => {
       body:              restorationDeferred
         ? `Your appeal was approved.${resolutionNote ? ` ${resolutionNote}` : ""} ${pendingOf(reversal)?.appellantMessage ?? RESTORATION_PENDING_SENTENCE}`
         : (resolutionNote
-            ? `Your appeal was approved. ${resolutionNote}`
-            : "Your appeal was approved and the action has been reversed."),
+            ? `Your appeal was approved. ${resolutionNote}${reversal!.action === "event_visibility_restored_state_kept" ? " Your event is visible again. Its status was not changed." : ""}`
+            : (reversal!.action === "event_visibility_restored_state_kept" ? "Your appeal was approved and your event is visible again. Its status was not changed." : "Your appeal was approved and the action has been reversed.")), // a KEPT state (wave 5): the hide was reversed, the event's own state stands, so it is not "the action has been reversed"
       action_url:        "/appeals",
       metadata: {
         appealId:       id,
         targetType:     (appeal as any).target_type,
         resolutionNote: resolutionNote ?? null,
-        reversalAction: reversal!.action,
+        reversalAction: reversal!.action, ...((reversal as any).stateKept ? { stateKept: (reversal as any).stateKept } : {}),
         // Explicit, so an audit reader never has to infer restoration from the
         // appeal reaching 'approved'.
         restored:       !restorationDeferred,
@@ -656,3 +656,61 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Request, Response } from "express";
 
 export default router;
+
+/**
+ * census-trust (wave 5, 2026-10-17) — the appellant, read in two steps.
+ *
+ * WHAT WAS BROKEN. GET /api/appeals embedded `profiles!appellant_id(...)` from
+ * `appeals`. The only foreign key on public.appeals is
+ * `appeals_appellant_id_fkey`: appeals.appellant_id → auth.users(id) (read from
+ * the production catalog 2026-10-17; migration 0070 and the 2026-08-19 baseline
+ * agree). PostgREST had no relationship from `appeals` to `profiles` to follow,
+ * answered PGRST200, and the admin queue answered `db_error` on every call.
+ *
+ * NOW, no migration. The page of appeals is read on its own; then ONE batched
+ * read of public.profiles by id finds its appellants. profiles.id IS the auth
+ * user id (`profiles_id_fkey` → auth.users(id)), so `appellant_id` is the
+ * profile key. The fields are exactly the embed's three.
+ *
+ * STANDING. None applied, deliberately: this is an ADMIN queue, and the admin
+ * user surfaces (GET /admin/users, /admin/users/:id/moderation-summary) read a
+ * profile whatever its account_status. A deactivated, pending-deletion or
+ * deleted account's appeal is still owed a decision, so it stays listed with
+ * its appellant's handle. An appellant with no profile row is listed with null
+ * fields, as the embed rendered a missing row; the appeal is never dropped.
+ *
+ * FAILURE. `null` when the read fails, and the route answers `db_error`, as it
+ * does for an unreadable appeals page. A queue of nameless appellants would
+ * read as appeals from accounts that have no profile.
+ */
+const APPELLANT_PROFILE_COLUMNS = "id, handle, display_name, avatar_url";
+
+interface AppellantProfile {
+  handle: string | null;
+  display_name: string | null;
+  avatar_url: string | null;
+}
+
+async function readAppellantProfiles(
+  sc: any,
+  rows: ReadonlyArray<{ appellant_id?: unknown }>,
+): Promise<Map<string, AppellantProfile> | null> {
+  const ids = [...new Set(rows.map((r) => r.appellant_id).filter((v): v is string => typeof v === "string" && v !== ""))];
+  if (ids.length === 0) return new Map();
+  try {
+    const { data, error } = await sc.from("profiles").select(APPELLANT_PROFILE_COLUMNS).in("id", ids);
+    if (error || !Array.isArray(data)) return null;
+    const out = new Map<string, AppellantProfile>();
+    for (const p of data as Array<Record<string, unknown>>) {
+      if (typeof p?.id !== "string") continue;
+      out.set(p.id, {
+        handle: (p.handle as string | null | undefined) ?? null,
+        display_name: (p.display_name as string | null | undefined) ?? null,
+        avatar_url: (p.avatar_url as string | null | undefined) ?? null,
+      });
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}

@@ -23,7 +23,7 @@ import { color, space, radius, type as t, shadow } from '../../../theme/tokens.t
 import {
   fetchTripDecisions, recommendationHeadline, reasonText, acceptanceMet, myVoteLabel,
   type DecisionRead, type Recommendation, type DecisionBoard,
-} from './tripDecisions.ts';
+} from './tripDecisions.ts'; import { goalsOf, goalLine, type GoalsRead } from './tripGoals.ts';
 
 interface Props {
   tripId: string;
@@ -126,15 +126,18 @@ export function TripDecisionsCard({ tripId, load = fetchTripDecisions }: Props) 
 
   const board = read.board;
   const openRisks = board.risks.filter((r) => r.status === 'open');
+  const goals = goalsOf(board);
+  const pending = board.recommendations.length > 0 || openRisks.length > 0;
 
-  // A trip with nothing pending renders nothing rather than an empty card —
-  // this is the ONE empty state that is honest, because the board was read and
-  // it really is empty.
-  if (board.recommendations.length === 0 && openRisks.length === 0) return null;
+  // A trip with nothing pending and no goals renders nothing rather than an
+  // empty card — this is the ONE empty state that is honest, because the board
+  // was read and it really is empty. Goals the board did not carry are NOT
+  // that state: an unreadable list is drawn as unreadable below.
+  if (!pending && goals.state === 'none') return null;
 
   return (
     <View style={s.wrap} testID="trip-decisions-card">
-      <Text style={s.heading}>What this trip is waiting on</Text>
+      {pending ? <Text style={s.heading}>What this trip is waiting on</Text> : null}
 
       {board.recommendations.map((rec) => (
         <RecommendationRow key={rec.decisionTaskId} rec={rec} board={board} />
@@ -158,6 +161,8 @@ export function TripDecisionsCard({ tripId, load = fetchTripDecisions }: Props) 
         </View>
       )}
 
+      <GoalsSection goals={goals} />
+
       {board.tallyFailures > 0 && (
         // Visible rather than inferred from a null: a reader has to know that
         // some governance state on this card is missing, not zero.
@@ -170,7 +175,47 @@ export function TripDecisionsCard({ tripId, load = fetchTripDecisions }: Props) 
   );
 }
 
+/**
+ * The trip's goals (census-trips wave-5 follow-up): the board always carried
+ * them and this card never drew them. "No goals set yet" only for a list the
+ * board actually carried empty; a list it did not carry is unreadable, and a
+ * row that cannot be read is counted rather than dropped.
+ */
+function GoalsSection({ goals }: { goals: GoalsRead }) {
+  if (goals.state === 'unreadable') {
+    return (
+      <View style={s.row} testID="trip-goals-unreadable">
+        <CloudOff size={14} color={color.mute} />
+        <View style={{ flex: 1 }}>
+          <Text style={s.title}>Goals</Text>
+          <Text style={s.detail}>This trip&apos;s goals couldn&apos;t be read. That isn&apos;t the same as having none.</Text>
+        </View>
+      </View>
+    );
+  }
+  return (
+    <View style={s.goals} testID="trip-goals">
+      <Text style={s.title}>Goals</Text>
+      {goals.state === 'none' ? (
+        <Text style={s.detail} testID="trip-goals-none">No goals set yet.</Text>
+      ) : (
+        <>
+          {goals.goals.map((g) => (
+            <Text key={g.id} style={s.detail} testID={`trip-goal-${g.id}`}>{goalLine(g)}</Text>
+          ))}
+          {goals.unreadable > 0 && (
+            <Text style={s.detail} testID="trip-goals-partly-unreadable">
+              {goals.unreadable} goal{goals.unreadable === 1 ? '' : 's'} couldn&apos;t be read.
+            </Text>
+          )}
+        </>
+      )}
+    </View>
+  );
+}
+
 const s = StyleSheet.create({
+  goals: { paddingHorizontal: space.lg, paddingVertical: space.sm },
   wrap: {
     marginHorizontal: space.lg, marginTop: space.md,
     backgroundColor: color.paperRaised, borderRadius: radius.md,

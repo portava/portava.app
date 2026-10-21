@@ -44,6 +44,7 @@ const MEDIA_PUB   = "eeeeeeee-0000-0000-0000-000000000001"; // public Watch post
 const MEDIA_SELF  = "eeeeeeee-0000-0000-0000-000000000002"; // public Watch post by ALICE (self-stamp)
 const MEDIA_BLK   = "eeeeeeee-0000-0000-0000-000000000003"; // public Watch post by BOB, BOB blocked ALICE
 const MEDIA_TRIP  = "eeeeeeee-0000-0000-0000-000000000004"; // trip_only Watch post by BOB
+const GEM_BLK     = "eeeeeeee-0000-0000-0000-000000000005"; // hidden gem submitted by BOB, BOB blocked ALICE (census-telegraph T220)
 const TRIP2_ID    = "dddddddd-0000-0000-0000-000000000002";
 
 // ── Test infrastructure ───────────────────────────────────────────────────────
@@ -101,6 +102,7 @@ interface FakeState {
   event_roles?:         any[];
   circle_memberships?:  any[];
   profiles?:            any[];
+  hidden_gems?:         any[];
 }
 
 function makeClient(state: FakeState = {}) {
@@ -120,6 +122,7 @@ function makeClient(state: FakeState = {}) {
     event_roles:         state.event_roles         ?? [],
     circle_memberships:  state.circle_memberships  ?? [],
     profiles:            state.profiles            ?? [],
+    hidden_gems:         state.hidden_gems         ?? [],
   };
 
   function from(table: string) {
@@ -470,6 +473,7 @@ describe("E — POST /stamps: media — blocked and trip_only non-member", () =>
         ],
         trip_members: [], // no memberships
         content_stamps: [],
+        hidden_gems: [{ id: GEM_BLK, submitted_by: BOB_ID, status: "active" }],
       }),
       true,
     );
@@ -484,6 +488,17 @@ describe("E — POST /stamps: media — blocked and trip_only non-member", () =>
       method: "POST",
       headers: bearer("alice-tok"),
       body: JSON.stringify({ entityType: "media", entityId: MEDIA_BLK }),
+    });
+    assert.equal(r.status, 404);
+  });
+
+  // census-telegraph T220 (wave 5): the media stamp's hidden-gem fallback reads
+  // the block through the shared gate; ignoring it survived every case here.
+  it("blocked media gem (submitter blocked viewer) → 404", async () => {
+    const r = await fetch(`${url}/api/stamps`, {
+      method: "POST",
+      headers: bearer("alice-tok"),
+      body: JSON.stringify({ entityType: "media", entityId: GEM_BLK }),
     });
     assert.equal(r.status, 404);
   });

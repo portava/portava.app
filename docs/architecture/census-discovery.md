@@ -17398,3 +17398,85 @@ No row changes bucket.
 | CANNOT-VERIFY | **0** |
 
 CONSTRUCTED 186 / 188 = **98.9 %**. CORRECT 103 / 188 = **54.8 %**. These equal §129.1's counts.
+
+### Correction (2026-10-17, wave 5) — "Live from events" Path B: the venue embed never resolved in production
+
+*Measured on branch `claude/wave4-build-20261017` against the working tree. `head_commit` is not re-declared. The fix
+is uncommitted and not deployed, so production keeps the defect below until it ships. **NO ROW MOVES.***
+
+**What was broken, in production.** `lib/eventPostsDiscovery.ts` Path B (venue category) selected
+`discovery_places!posts_location_place_id_fkey(...)` from `posts`. `posts.location_place_id` is TEXT with no foreign
+key in production (the lead's read-only catalog check, 2026-10-17; the 2026-08-19 baseline and every migration
+agree), and no constraint of that name exists anywhere. PostgREST answered PGRST200 and Path B answered null on every
+call. So every signed-in `GET /discovery/feed` carried `failedSources: ["event_posts"]` (`partial`, or `nothing` when
+Path A had no rows), no venue-category post was ever served, and the event-post cache was never written. DV-83's `C`
+rests on the envelope being honest about a failed read, and it was: every one of those refusals was true. Its control
+C1 ("a healthy read carries no refusal") was never observable for a signed-in feed in production. No row rests on
+Path B serving posts, so none moves. census-map M174 cites the delayed-publish gate at
+`artifacts/api-server/src/lib/eventPostsDiscovery.ts:186#Delayed-publish gate`, which Path B
+still applies; it is unaffected.
+
+**What changed, with no migration.** Path B reads its posts with no embed, then the venues they name in ONE batched
+read keyed on the join this module always documented, `discovery_places.osm_id = posts.location_place_id`
+(`artifacts/api-server/src/lib/eventPostsDiscovery.ts:399#const venues = await readEventVenuesByOsmId(db, data as any[]);`,
+helper `artifacts/api-server/src/lib/eventPostsDiscovery.ts:634#async function readEventVenuesByOsmId(`). An unreadable
+venue read makes the path unreadable (`readFailed`, not cached), exactly as an unreadable posts read does. Every
+served field is unchanged.
+
+**What the text holds.** `location_place_id` is a client-supplied provider reference (`nominatim-<n>` and Google ids
+from the picker, `legacy-<city>`, `seed-place-<city>` from the seeds). `discovery_places.osm_id` only ever holds
+`node|way|relation/<digits>`, because `routes/wishlist.ts` writes it behind `OSM_ID_RE`. So only OSM-shaped keys are
+sent (`artifacts/api-server/src/lib/eventPostsDiscovery.ts:632#const OSM_PLACE_KEY = /^(node|way|relation)\/\d+$/;`).
+Free text never reaches the filter: postgrest-js quotes `,()` in an `.in()` value but not `"`, so one crafted post
+could otherwise reshape the list or fail the read for a whole city. **Open, for the owner of posting:** no current
+writer stores an OSM key in `location_place_id`, so even with the read fixed, Path B will list only posts whose place
+id is an OSM key. Choosing which writer should store one, or a different join, is a product decision, not made here.
+
+**Also fixed.** Path B handed `fetchPostMediaMap` the ids `r.posts?.id` from rows that ARE posts, so it read no
+post_media and storage-backed media never reached a venue post. It now passes the matched posts' ids
+(`artifacts/api-server/src/lib/eventPostsDiscovery.ts:417#matched.map(({ post }) => post.id).filter(Boolean),`).
+
+**Tests.** `artifacts/api-server/src/test/eventPostsVenueTwoStepRead.test.ts:106#it("serves the post at an events venue with the venue's name, and embeds nothing on the posts read"`
+(9 cases). Red first: 8 of 9 red on the pre-fix module. Five mutants killed and restored by sha256: the embed put back
+(10 red, including `selectEmbedForeignKeyScan.test.ts`), the venue batch dropped, a failed venue read answered as
+"no venues", every place id sent, the media ids read from `r.posts?.id` again. The three suites that carried a
+pretend `discovery_places` object on each post (`eventPostsDiscovery.test.ts`,
+`discoveryFeedEventPostsCoverage.test.ts`, `postLocationModeOutsideMedia.test.ts`) now seed real `discovery_places`
+rows. The last two changed line-neutrally, so every cited `it(` still holds.
+
+- NOT-GRADED: artifacts/api-server/src/test/eventPostsDiscovery.test.ts — named above only because its fixtures moved from a pretend embed to real `discovery_places` rows; no Discovery verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts — census-media's suite; named above only because its Path B fixtures moved to real `discovery_places` rows, line-neutrally; no Discovery verdict rests on it.
+
+Rows: none move. Headline unchanged: 103 C / 83 W / 2 N / 0 X of 188.
+
+### Correction (2026-10-17, wave 5) — tag suggestions: trips.name and trips.destination do not exist in production
+
+*Measured on branch `claude/wave4-build-20261017` against the working tree. `head_commit` is not re-declared. The fix
+is uncommitted and not deployed, so production keeps the defect below until it ships. **NO ROW MOVES.***
+
+**What was broken, in production.** The mention picker, `GET /api/tags/suggestions` (`routes/tags.ts`), offered the
+caller's trips by reading `trip_members` with the embed `trips(id, name, destination, status)`. `trips` has `title`
+and `destination_city`; it has never had `name` or `destination` (the 2026-08-19 production baseline, the 2026-09-22
+production capture, no migration). PostgREST failed the read with 42703, the route never read `error`, and no trip
+was ever suggested: the picker's trip half was empty on every call. DV-76 grades tagging privacy (Phase 0.3: tag
+writes, pending tags, who is notified) and §80.14 the picker's `.or()` escaping; neither rests on the picker's trip
+suggestions, so no row moves.
+
+**What changed, with no migration.** The embed reads `name:title, destination:destination_city` (the keys the route
+already used) and only for an accepted membership
+(`artifacts/api-server/src/routes/tags.ts:363#.select('trip_id, trips(id, name:title, destination:destination_city, status)')`,
+`artifacts/api-server/src/routes/tags.ts:364#.eq('status', 'accepted')`). The status filter is new: `trip_members.status`
+also holds `invited`, `declined`, `removed` and `left`, and once the read works none of those may surface a trip's
+title in the picker.
+
+**How it was found.** `artifacts/api-server/src/test/schemaColumnProductionScan.test.ts` (class A: declared by no SQL in
+the repository; the embed's columns are graded on the table the embed resolves to).
+
+**Tests.** `artifacts/api-server/src/test/tagSuggestionsTripEntities.test.ts:114#it("a matching accepted trip is suggested with its title and destination city"`
+(3 cases on schemaStrictSupabase with `joinEmbeds`, which materialises the embed from flat seed tables and answers
+42703 for a dead column). Red first: the old embed restored turns 2 of 3 red; the status filter dropped turns 2 red;
+the aliases dropped turns 1 red. Each mutant was restored byte-identically (`cmp`). Both route edits are line-neutral, so no other
+citation into `routes/tags.ts` moves.
+
+- NOT-GRADED: artifacts/api-server/src/test/tagSuggestionsTripEntities.test.ts — this correction's own test; no Discovery row rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/schemaColumnProductionScan.test.ts — the repository-wide scan that found the defect; no Discovery row rests on it.

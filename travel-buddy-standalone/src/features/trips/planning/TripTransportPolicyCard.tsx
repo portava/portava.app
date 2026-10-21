@@ -131,7 +131,7 @@ export function TripTransportPolicyCard({ tripId, isOwner, load = fetchTripFeasi
               <Text style={[s.detail, { color: color.success, marginTop: 0 }]}>Saved — the schedule check now uses these rules.</Text>
             </View>
           ) : result ? (
-            <Text style={[s.detail, { color: color.signal }]} testID="trip-transport-not-saved">{writeFailureText(result)}</Text>
+            <Text style={[s.detail, { color: color.signalStrong }]} testID="trip-transport-not-saved">{writeFailureText(result)}</Text>
           ) : null}
         </View>
       </View>
@@ -149,6 +149,6 @@ const s = StyleSheet.create({
   buttonOn: { backgroundColor: color.deep, borderColor: color.deep },
   buttonText: { ...t.small, color: color.ink },
   buttonTextOn: { color: '#fff' },
-  save: { backgroundColor: color.signal, borderColor: color.signal },
+  save: { backgroundColor: color.signalStrong, borderColor: color.signalStrong },
   inline: { flexDirection: 'row', alignItems: 'center', gap: space.xs, marginTop: space.xs },
 });

@@ -246,7 +246,7 @@ function latestMomentumRun(ctx: RetrievalContext): Promise<string | null> {
   return memo(ctx, "place_momentum.head", async () => {
     const data = await rows("place_momentum.head", ctx.sc
       .from("place_momentum")
-      .select("computed_at")
+      .select("computed_at").eq("source_surface", "discovery")  // 2026-10-17 (wave 4): the product's corpus only, as the trend API reads (3410: NULL is 2892's all-surfaces rows, "not the product's reading")
       .order("computed_at", { ascending: false })
       .limit(1));
     const at = data[0]?.computed_at;
@@ -268,7 +268,7 @@ export async function momentumPlaceIds(
   const data = await rows(read, ctx.sc
     .from("place_momentum")
     .select(disclosure ? "place_id, trend_state, recent_rate, computed_at, recent_unique_travelers, window_unique_travelers" : "place_id, trend_state, recent_rate, computed_at")
-    .eq("computed_at", run)
+    .eq("computed_at", run).eq("source_surface", "discovery")  // 2026-10-17 (wave 4): and only that corpus's rows of the run
     .in("trend_state", [...states])
     .order("recent_rate", { ascending: false })
     .order("place_id", { ascending: true })

@@ -56,7 +56,7 @@ export function TripTimelineConflictsCard({ tripId, load = fetchTripTimeline }: 
       <View style={s.row}>
         <AlertTriangle size={16} color={color.signal} />
         <View style={{ flex: 1 }}>
-          <Text style={[s.title, { color: color.signal }]}>
+          <Text style={[s.title, { color: color.signalStrong }]}>
             {days.length === 1 ? '1 day has a conflict' : `${days.length} days have conflicts`}
           </Text>
           {days.map((d) => (
@@ -81,5 +81,5 @@ const s = StyleSheet.create({
   detail: { ...t.stamp, color: color.mute, marginTop: 2 },
   day: { marginTop: space.sm },
   dayLabel: { ...t.small, fontWeight: '600', color: color.ink },
-  reading: { ...t.stamp, color: color.faint, marginTop: space.sm },
+  reading: { ...t.stamp, color: color.mute, marginTop: space.sm },
 });

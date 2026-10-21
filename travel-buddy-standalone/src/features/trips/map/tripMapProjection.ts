@@ -148,3 +148,36 @@ export const LAYER_LABEL: Record<ProjectionLayer, string> = {
   liveOpportunities: 'opportunities',
   safetyPoints: 'safety points',
 };
+
+// ── §14.1 stage: what the layer did NOT draw, and what it drew coarsely (census-trips wave-5 follow-up) ──
+//
+// A stage anchored to a CITY is drawn at that city's centre (`meta.precision:
+// 'city_centre'`), never at an invented spot; one whose anchor has no position
+// is not drawn at all, and the server lists it in `stagesNotDrawn` so the
+// legend can say so. Both are read here rather than in the card, for the same
+// reason as the three rules above: an absent field is not an empty list.
+
+export interface StageNotDrawn {
+  id: string;
+  stageType: string | null;
+  sequence: number | null;
+  /** 'place_has_no_position' | 'city_has_no_position' | 'anchor_is_not_a_city' | 'no_anchor', or a newer reason passed through. */
+  reason: string;
+}
+
+/**
+ * The stages the server says are NOT on the map, or null when this projection
+ * does not say (a server from before the field). Null is not "none": a caller
+ * must not tell the user every stage is drawn on the strength of it.
+ */
+export function stagesNotDrawn(p: TripMapProjection): StageNotDrawn[] | null {
+  const raw = (p as { stagesNotDrawn?: unknown }).stagesNotDrawn;
+  if (!Array.isArray(raw)) return null;
+  return raw.filter((s): s is StageNotDrawn => !!s && typeof s === 'object'
+    && typeof (s as StageNotDrawn).id === 'string' && typeof (s as StageNotDrawn).reason === 'string');
+}
+
+/** Stage points drawn at their CITY's centre — a coarse position, not an exact spot. */
+export function coarseStagePoints(p: TripMapProjection): MapPoint[] {
+  return layerPoints(p.stage).filter((pt) => pt.meta?.precision === 'city_centre');
+}

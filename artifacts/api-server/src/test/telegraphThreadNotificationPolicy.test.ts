@@ -177,7 +177,7 @@ function use(state: Record<string, unknown[]>, opts?: Parameters<typeof makeFake
 }
 const mentionNotifications = (c: FakeClient) =>
   c._observed.inserts.filter((w) => w.table === "notifications").flatMap((w) => w.rows)
-    .filter((r: { user_id?: string }) => r.user_id === BOB);
+    .filter((r: { user_id?: string; event_type?: string }) => r.user_id === BOB && r.event_type === "pulse.user_tagged"); // the MENTION notification: census-telegraph T256 adds a MESSAGE one, which the real ledger dedupes by causal id and this harness (no JSON-path filter) cannot
 
 async function mentionBob(c: FakeClient) {
   const r = await call(messaging.base, "POST", `/threads/${THREAD}/messages`, ALICE, { body: "@bob where are you" });

@@ -12,7 +12,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../../lib/logger.js";
 import { NotificationPrivacyGuard, type PrivacyContext } from "./NotificationPrivacyGuard.js";
 import { NotificationPreferenceService } from "./NotificationPreferenceService.js";
-import { NotificationDeduplicationService } from "./NotificationDeduplicationService.js";
+import { NotificationDeduplicationService, isCausalEventId } from "./NotificationDeduplicationService.js";
 import { renderTemplate, getTemplate, type NotificationCategory, type NotificationChannel, type NotificationPriority } from "./NotificationTemplateService.js";
 
 const logger = rootLogger.child({ service: "NotificationService" });
@@ -39,7 +39,7 @@ export interface CreateNotificationInput {
   senderId?: string;
   isLiveShare?: boolean; /** OD-1012-LAY-1: an ESSENTIAL warning (a layover "leave now"). Only an exact duplicate in the ledger suppresses it — an UNREADABLE ledger does not. */ essential?: boolean;
   /** OD-1012-LAY-1 (V-L99 D1): rows written before this instant are not duplicates of this one (NotificationDeduplicationService rule 4). */
-  dedupNotBefore?: string | 'unknown';
+  dedupNotBefore?: string | 'unknown'; /** census-telegraph T397: the underlying event (NotificationDeduplicationService.causalEventIdOf). Persisted as metadata.causal_event_id; a second notification about the same event, in any category, is a duplicate. */ causalEventId?: string;
 }
 
 /** Why `create` wrote nothing — `createDetailed` says which, `create` keeps answering null. */
@@ -157,7 +157,7 @@ export class NotificationService {
       eventType:  input.eventType,
       sourceType: input.sourceType,
       sourceId:   input.sourceId, ...(input.essential === true ? { essential: true } : {}),
-      ...(input.dedupNotBefore !== undefined ? { notBefore: input.dedupNotBefore } : {}),
+      ...(input.dedupNotBefore !== undefined ? { notBefore: input.dedupNotBefore } : {}), ...(input.causalEventId !== undefined ? { causalEventId: input.causalEventId } : {}), // T397
     });
     if (dedupResult.isDuplicate) {
       logger.debug({ userId: input.userId, eventType: input.eventType, reason: dedupResult.reason }, 'NotificationService: deduped');
@@ -222,7 +222,7 @@ export class NotificationService {
       source_type:   input.sourceType ?? null,
       source_id:     input.sourceId ?? null,
       actor_id:      input.actorId ?? null,
-      metadata:      input.metadata ?? {},
+      metadata:      isCausalEventId(input.causalEventId) ? { ...(input.metadata ?? {}), causal_event_id: input.causalEventId } : (input.metadata ?? {}), // T397: the identity the next producer's dedupe finds
       privacy_level: sanitised.privacyLevel,
       expires_at:    input.expiresAt ?? null,
     };

@@ -170,7 +170,7 @@ export function ArrivalBoard({ tripId, members }: Props) {
   if (board === undefined) {
     return (
       <View style={s.loadingWrap}>
-        <ActivityIndicator size="small" color={color.faint} />
+        <ActivityIndicator size="small" color={color.mute} />
       </View>
     );
   }

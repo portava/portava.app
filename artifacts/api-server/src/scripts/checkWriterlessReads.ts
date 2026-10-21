@@ -205,14 +205,14 @@ export const KNOWN_WRITERLESS_READS: Record<
 
   // ── EXTERNALLY SEEDED REFERENCE DATA ──────────────────────────────────────
   fsq_places: {
-    readers: 2,
+    readers: 3, // 3 since 2026-10-17: lib/inputAssistance/providerFederation.ts (Input G222/G237), a bounded read behind fsq_places_enabled (seeded FALSE), ranked below every Portava row
     classification: "external-seed",
     note:
       "Foursquare venue cache. Declared in REFERENCE_LOCATION_TABLES (lib/locationPurposes.ts) " +
       "as venue reference data, not personal location. Populated out of band.",
   },
   canonical_locations: {
-    readers: 9,
+    readers: 10, // 10 since 2026-10-17: server/trips/readRoutes/tripStageMapLayer.ts `cityCentres` reads id/kind/lat/lng for a trip's city-anchored stages in ONE batched .in('id', …) — a SELECT only, failing CLOSED to an unread stage layer (census-trips wave-5 follow-up)
     classification: "external-seed",
     note:
       "Canonical city/region reference rows, also in REFERENCE_LOCATION_TABLES. Populated out " +

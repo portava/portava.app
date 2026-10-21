@@ -186,7 +186,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError, type ApiErrorCode } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js"; import { findVisibleSourcedPlanItem } from "../server/trips/privateAnchorShares.js"; // census-trips §87.3 (D-65)
-import { logger } from "../lib/logger.js"; import { readEventViewAccess } from "../lib/eventViewAccess.js";
+import { logger } from "../lib/logger.js"; import { readEventViewAccess, EventAccessUnavailableError } from "../lib/eventViewAccess.js"; import { refuseHostWriteUnderModeration, guardHostVisibilityWrite, recordHostVisibilityChange, type HostVisibilityGuard } from "../lib/eventModerationClaim.js"; // the moderation hold (wave 5)
 import { detectAndStoreLanguage, invalidateContentTranslations } from "../services/contentTranslation.js";
 import { nameVisibilitySet, sanitizeIdentity } from "../lib/publicIdentity.js";
 import { isFlagEnabled, isKillSwitchEngaged } from "../lib/featureFlags.js"; import { readFlagState } from "../lib/capability/schemaCapability.js";  // census-trust §30: eventTrustGatesRun
@@ -208,9 +208,9 @@ import {
 } from "../lib/gateAge.js";
 import { readVerifiedAgeSignal } from "../lib/travelerVerification.js";
 import { tripKernelClient, executeTripCommand, TRIP_VERSION_RESPONSE_HEADER } from "../domain/trips/commands/tripKernel.js";
-import { readBlockExclusions, sendExclusionsUnavailable } from "../lib/exclusionSet.js";
+import { readBlockExclusions, sendExclusionsUnavailable, readPairExclusion } from "../lib/exclusionSet.js";
 import { appStorageUrlInfo } from "../lib/mediaUrl.js"; import { postMediaModerationHold, postMediaHoldRefusal } from "../lib/media/postMediaModerationHold.js"; // census-media MD269 (a), lead ruling D-82
-import { sendPushWithRetry } from "../lib/pushWithRetry.js";
+import { sendPushWithRetry } from "../lib/pushWithRetry.js"; import { readEveryRow } from "../lib/moderationCounts.js"; const ATTENDEE_ID_CHUNK = 100; // getAttendeeRecipients pages every RSVP (wave 5); same line: events.ts is cited by line
 import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine.js";
 import {
   recordTrustEvent,
@@ -249,15 +249,15 @@ async function getEventRole(
   eventId: string,
   userId: string,
 ): Promise<"host" | "co_host" | "moderator" | "banned" | null> {
-  const { data: ev } = await sc.from("events").select("host_id").eq("id", eventId).maybeSingle();
+  const { data: ev, error: evErr } = await sc.from("events").select("host_id").eq("id", eventId).maybeSingle(); if (evErr) throw new EventAccessUnavailableError("events", evErr); // a failed read was "no role": 403 (wave 5) — now 503
   if (!ev) return null;
   if ((ev as any).host_id === userId) return "host";
-  const { data: r } = await sc
+  const { data: r, error: rErr } = await sc
     .from("event_roles")
     .select("role")
     .eq("event_id", eventId)
     .eq("user_id", userId)
-    .maybeSingle();
+    .maybeSingle(); if (rErr) throw new EventAccessUnavailableError("event_roles", rErr); // a co-host's failed role read was "no role" (wave 5)
   return (r as any)?.role ?? null;
 }
 
@@ -331,11 +331,11 @@ async function canManageAttendance(sc: any, eventId: string, userId: string): Pr
  * This function used to run its own copy and DISCARD `error`, so an unreadable
  * `blocks` table read as "not blocked" and admitted the pair — on a path whose
  * only caller is checkEventEligibility, an authorization gate. The shared
- * helper answers `true` when it cannot read, so an outage denies the
- * interaction instead of allowing it.
+ * helper answered `true` when it could not read — which these routes served as
+ * 404 / 403 / a silently shorter list. Wave 5: unreadable now THROWS (503).
  */
 async function isBlocked(sc: any, userA: string, userB: string): Promise<boolean> {
-  return isBlockedBetween(sc, userA, userB);
+  if (!userA || !userB) return false; const pair = await readPairExclusion(sc, userA, userB); if (!pair.ok) throw new EventAccessUnavailableError("blocks", pair.reason); return pair.ids.size > 0; // wave 5 (event reads): an empty id is "not blocked", as isBlockedBetween answers it
 }
 
 /** Get going_count for event — `null` when event_rsvps cannot be read (census-trust §30.8: was 0, so every capacity check admitted) */
@@ -546,20 +546,20 @@ async function writeEventState(
   return { ok: true, from: decision.from, to };
 }
 
-async function syncEventState(sc: any, eventId: string): Promise<void> {
-  const { data: ev } = await sc
+async function syncEventState(sc: any, eventId: string, holdFreedSeat: boolean | "offered" = false): Promise<void> {
+  const { data: ev, error: evErr } = await sc
     .from("events")
     .select("state, max_attendees, waitlist_enabled")
     .eq("id", eventId)
     .maybeSingle();
-  if (!ev || !["open", "full", "waitlist"].includes((ev as any).state)) return;
+  if (evErr) { logger.warn({ err: evErr, eventId }, "event capacity sync: event unreadable — state left as it was"); return; } if (!ev || !["open", "full", "waitlist"].includes((ev as any).state)) return;
 
   const maxAttendees: number | null = (ev as any).max_attendees;
   if (!maxAttendees) return; // unlimited
 
   const going = await getGoingCount(sc, eventId); if (going === null) { logger.warn({ eventId }, "event capacity sync: going count unreadable — state left as it was"); return; }  // census-trust §30.8: was 0, which reopened a full event
-  const current = String((ev as any).state ?? "");
-
+  const current = String((ev as any).state ?? ""); if (holdFreedSeat === true && going < maxAttendees && ["full", "waitlist"].includes(current)) { logger.warn({ eventId, state: current, going, maxAttendees }, "event capacity sync: the freed seat is HELD on this pass — the waitlist flag could not be read, or the offer to the queue failed (state left as it was, not reopened to walk-ins)"); return; } // wave 5 follow-up B: holdFreedSeat (see readWaitlistFlagForFreedSeat, freedSeatAfterPromotion)
+  if (holdFreedSeat !== "offered" && going < maxAttendees && ["full", "waitlist"].includes(current) && (await offerFreedSeatToQueue(sc, eventId)) !== "reopen") return; // wave 5 follow-up B2: a free seat is offered to the QUEUE before the reopen below may give it to walk-ins (offerFreedSeatToQueue, end of file)
   // The capacity cycle. Reopening only happens when there is no active waitlist
   // offer — that slot is RESERVED for the offer holder, and hasActiveWaitlistOffer
   // answers `true` when it cannot read, so an outage keeps the reservation.
@@ -627,8 +627,8 @@ async function promoteNextWaitlisted(sc: any, eventId: string, req?: any): Promi
   const pick = await pickEligibleWaitlisted(sc, eventId, (next as any) ?? null, req); if (pick.outcome !== "eligible") return pick;  // census-trust §30.6: the offer goes to the first ELIGIBLE user in queue order
 
   const userId = pick.userId;
-  const offerExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-  const { data: claimed, error: updErr } = await sc
+  const offerExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(); const lockedClaim = await claimWaitlistSeatLocked(sc, eventId, userId, offerExpiresAt, req); if (lockedClaim.kind === "outcome") return lockedClaim.outcome; // wave 5 follow-up B4: under 3906 the claim is made under the event lock, only while a seat is free (claimWaitlistSeatLocked, end of file); absent, the UPDATE below runs as before
+  const { data: claimed, error: updErr } = lockedClaim.kind === "claimed" ? { data: [{ user_id: userId }], error: null as any } : await sc
     .from("event_waitlist")
     .update({ offer_expires_at: offerExpiresAt })
     .eq("event_id", eventId)
@@ -646,16 +646,16 @@ async function promoteNextWaitlisted(sc: any, eventId: string, req?: any): Promi
   }
 
   // Notify them — only now, because only now do they actually hold the offer.
-  const { data: profile } = await sc
+  await notifyWaitlistOffer(sc, eventId, userId, offerExpiresAt, req); const { data: profile, error: profileErr } = await sc
     .from("profiles")
     .select("expo_push_token")
     .eq("id", userId)
-    .maybeSingle();
+    .maybeSingle(); if (profileErr) req?.log?.warn?.({ err: profileErr, eventId, userId }, "waitlist promotion: push token unreadable — the offer stands, its push was not sent");
   if ((profile as any)?.expo_push_token) {
     await sendPushWithRetry(
       sc,
       { userId, tokens: [(profile as any).expo_push_token] },
-      { title: "A spot opened up!", body: "You're next on the waitlist. You have 24 hours to accept." },
+      { title: "A spot opened up!", body: "You're next on the waitlist. You have 24 hours to accept.", data: { type: "event_waitlist_offer", eventId, actionUrl: `/event/${eventId}` } },
     );
   }
   return { outcome: "promoted", userId };
@@ -677,17 +677,17 @@ export async function checkEventEligibility(
   if (userId === ev.host_id) return { ok: true };
 
   // Check if user is a co_host or moderator — they also bypass viewer gates
-  const { data: staffRole } = await sc
+  const { data: staffRole, error: staffErr } = await sc
     .from("event_roles")
     .select("role")
     .eq("event_id", ev.id)
     .eq("user_id", userId)
     .in("role", ["co_host", "moderator"])
     .maybeSingle();
-  if (staffRole) return { ok: true };
+  if (staffErr) return { ok: false, errorCode: "degraded_unavailable", message: "Event access check is temporarily unavailable", unavailable: true }; if (staffRole) return { ok: true }; // wave 5 (event reads): an unread staff role ran the viewer gates on a co-host and refused them with a verdict about the user
 
   // Block check
-  if (await isBlocked(sc, userId, ev.host_id)) {
+  const blockPair = ev.host_id ? await readPairExclusion(sc, userId, ev.host_id) : null; if (blockPair && !blockPair.ok) return { ok: false, errorCode: "degraded_unavailable", message: "Event access check is temporarily unavailable", unavailable: true }; if (blockPair?.ok && blockPair.ids.size > 0) { // wave 5 (event reads): an unreadable blocks table was "Cannot join this event"
     return { ok: false, errorCode: "forbidden", message: "Cannot join this event" };
   }
   // Ban check. FAIL CLOSED, for the same reason as the trust_profiles read
@@ -704,7 +704,7 @@ export async function checkEventEligibility(
     .eq("role", "banned")
     .maybeSingle();
   if (bannedErr) {
-    return { ok: false, errorCode: "forbidden", message: "Event access check is temporarily unavailable", unavailable: true };
+    return { ok: false, errorCode: "degraded_unavailable", message: "Event access check is temporarily unavailable", unavailable: true };
   }
   if (bannedRole) return { ok: false, errorCode: "forbidden", message: "You are banned from this event" };
 
@@ -712,7 +712,7 @@ export async function checkEventEligibility(
   const trustGatesEnabled = await eventTrustGatesRun(sc);  // census-trust §30: an UNREAD flag keeps the gates on (was two-state: unread = "gates off")
   if (trustGatesEnabled) {
     if (ev.verified_only) {
-      const { data: profile, error: profileErr } = await sc.from("profiles").select("verified").eq("id", userId).maybeSingle(); if (profileErr) return { ok: false, errorCode: "forbidden", message: "Verification check is temporarily unavailable for this event", unavailable: true };  // census-trust §30.6: a failed read is not "unverified"
+      const { data: profile, error: profileErr } = await sc.from("profiles").select("verified").eq("id", userId).maybeSingle(); if (profileErr) return { ok: false, errorCode: "degraded_unavailable", message: "Verification check is temporarily unavailable for this event", unavailable: true };  // census-trust §30.6: a failed read is not "unverified"
       if (!(profile as any)?.verified) {
         return { ok: false, errorCode: "forbidden", message: "This event is for verified users only" };
       }
@@ -729,7 +729,7 @@ export async function checkEventEligibility(
       // gate evaluates) from "could not read" (gate refuses).
       const tpRead = await getTrustProfileResult(sc, userId);
       if (tpRead.state === "unavailable") {
-        return { ok: false, errorCode: "forbidden", message: "Trust check is temporarily unavailable for this event", unavailable: true };
+        return { ok: false, errorCode: "degraded_unavailable", message: "Trust check is temporarily unavailable for this event", unavailable: true };
       }
       const score = (tpRead.state === "ok" ? tpRead.profile.overall_score : null) ?? TRUST_SCORE_WHEN_NO_PROFILE;
       if (score < ev.trust_score_min) {
@@ -745,7 +745,7 @@ export async function checkEventEligibility(
       // read that failed. The seam answers all three cases distinctly.
       const gateAge = await resolveGateAge(sc, userId);
       if (gateAge.state === "unreadable") {
-        return { ok: false, errorCode: "forbidden", message: AGE_CHECK_UNAVAILABLE_MESSAGE, unavailable: true };
+        return { ok: false, errorCode: "degraded_unavailable", message: AGE_CHECK_UNAVAILABLE_MESSAGE, unavailable: true };
       }
       if (gateAge.state === "verified_minor") {
         return { ok: false, errorCode: "forbidden", message: AGE_NOT_VERIFIED_ADULT_MESSAGE };
@@ -765,29 +765,29 @@ export async function checkEventEligibility(
   return { ok: true };
 }
 
-/** Get push recipients ({ userId, tokens }) for Going/Maybe RSVPs on an event */
+/** Push recipients ({ userId, tokens }) for the Going/Maybe RSVPs on an event: EVERY RSVP, paged past the row cap, and a read that fails THROWS into the caller's logged catch (wave 5) — it was cut at the cap and answered "nobody" on a failed read, silently */
 async function getAttendeeRecipients(
   sc: any,
   eventId: string,
 ): Promise<{ userId: string; tokens: (string | null | undefined)[] }[]> {
-  const { data: rsvps } = await sc
+  const rsvps = await readEveryRow((from, to, count) => sc
     .from("event_rsvps")
-    .select("user_id")
+    .select("user_id", { count })
     .eq("event_id", eventId)
-    .in("status", ["going", "maybe"]);
-
-  const ids = ((rsvps as any[]) ?? []).map((r: any) => r.user_id as string);
-  if (ids.length === 0) return [];
-
-  const { data: profiles } = await sc
-    .from("profiles")
-    .select("id, expo_push_token")
-    .in("id", ids)
-    .not("expo_push_token", "is", null);
-
-  return ((profiles as any[]) ?? [])
-    .map((p: any) => ({ userId: p.id as string, tokens: [p.expo_push_token as string] }))
-    .filter((r: any) => r.tokens[0]);
+    .in("status", ["going", "maybe"]).order("user_id", { ascending: true }).range(from, to));
+  if (rsvps.error || !rsvps.data) throw new Error(`the attendees could not be read (event_rsvps): ${rsvps.error?.message ?? "no rows answered"}; nobody was told`);
+  const ids = [...new Set(rsvps.data.map((r: any) => String(r.user_id)))];
+  const out: { userId: string; tokens: (string | null | undefined)[] }[] = [];
+  for (let i = 0; i < ids.length; i += ATTENDEE_ID_CHUNK) { // a bounded `.in()` per read keeps the request URI short; each chunk is itself paged
+    const got = await readEveryRow((from, to, count) => sc
+      .from("profiles")
+      .select("id, expo_push_token", { count })
+      .in("id", ids.slice(i, i + ATTENDEE_ID_CHUNK))
+      .not("expo_push_token", "is", null).order("id", { ascending: true }).range(from, to));
+    if (got.error || !got.data) throw new Error(`the attendees' push tokens could not be read (profiles): ${got.error?.message ?? "no rows answered"}; nobody was told`);
+    for (const p of got.data) if (p?.expo_push_token) out.push({ userId: String(p.id), tokens: [String(p.expo_push_token)] });
+  }
+  return out;
 }
 
 // ── Schemas ───────────────────────────────────────────────────────────────────
@@ -1081,7 +1081,7 @@ router.get("/events", async (req, res) => {
     const [f1, f2] = await Promise.all([
       sc.from("user_friendships").select("user_b").eq("user_a", user.id).in("user_b", friendsOnlyHosts),
       sc.from("user_friendships").select("user_a").eq("user_b", user.id).in("user_a", friendsOnlyHosts),
-    ]);
+    ]); if ((f1 as any).error || (f2 as any).error) throw new EventAccessUnavailableError("user_friendships", (f1 as any).error ?? (f2 as any).error); // wave 5 (event reads): an unread friendship hid every friends-only event in silence
     for (const f of (((f1 as any).data as any[]) ?? [])) friendHosts.add(f.user_b as string);
     for (const f of (((f2 as any).data as any[]) ?? [])) friendHosts.add(f.user_a as string);
   }
@@ -1098,17 +1098,17 @@ router.get("/events", async (req, res) => {
   // numbers for the same event. Overwrite the cached column with a live
   // per-event count before ranking/formatting.
   if (allEventIds.length > 0) {
-    const { data: liveGoingRows } = await sc
+    const { data: liveGoingRows, error: liveGoingErr } = await sc
       .from("event_rsvps")
       .select("event_id")
       .in("event_id", allEventIds)
-      .eq("status", "going");
+      .eq("status", "going"); if (liveGoingErr) req.log?.warn({ err: liveGoingErr }, "list events: live going counts unreadable — serving the stored going_count, never 0");
     const liveGoingCounts = new Map<string, number>();
     for (const r of ((liveGoingRows as any[]) ?? [])) {
       const eid = r.event_id as string;
       liveGoingCounts.set(eid, (liveGoingCounts.get(eid) ?? 0) + 1);
     }
-    for (const ev of rows) {
+    if (!liveGoingErr) for (const ev of rows) {
       (ev as any).going_count = liveGoingCounts.get(ev.id as string) ?? 0;
     }
   }
@@ -1154,7 +1154,7 @@ router.get("/events", async (req, res) => {
         // and it keeps this gate at two reads rather than three.
         readVerifiedAgeSignal(sc, user.id),
       ]);
-      const profile = (profileRes as any).data;
+      if ((profileRes as any).error) throw new EventAccessUnavailableError("profiles", (profileRes as any).error); const profile = (profileRes as any).data; // wave 5 (event reads): an unread profile hid every verified-only / age-gated event in silence
       viewerVerified = !!profile?.verified;
       // WAS: "Ranking/visibility input rather than an authorization gate, so
       // this one is left substituting rather than failing closed." It is not a
@@ -1204,7 +1204,7 @@ router.get("/events", async (req, res) => {
     const [rsvpResult, waitlistResult] = await Promise.all([
       sc.from("event_rsvps").select("event_id, status").eq("user_id", user.id).in("event_id", eventIds),
       sc.from("event_waitlist").select("event_id, position").eq("user_id", user.id).in("event_id", eventIds),
-    ]);
+    ]); if ((rsvpResult as any).error || (waitlistResult as any).error) throw new EventAccessUnavailableError((rsvpResult as any).error ? "event_rsvps" : "event_waitlist", (rsvpResult as any).error ?? (waitlistResult as any).error); // wave 5 (event reads): an unread RSVP / queue place was served as none
     for (const r of ((rsvpResult as any).data as any[]) ?? []) {
       rsvpMap[(r as any).event_id as string] = (r as any).status as string;
     }
@@ -1214,25 +1214,25 @@ router.get("/events", async (req, res) => {
   }
 
   // Batch-fetch saved state for this user across these events
-  let savedEventIds = new Set<string>();
+  let savedEventIds = new Set<string>(); let savedUnread = false; // wave 5 (event reads): a bookmark is side data (class c) — an unread saved state is `isSaved: null`, never false, and the feed is kept
   if (eventIds.length > 0) {
     try {
-      const { data: userCols } = await sc
+      const { data: userCols, error: colsErr } = await sc
         .from("collections")
         .select("id")
-        .eq("owner_id", user.id);
+        .eq("owner_id", user.id); if (colsErr) throw colsErr;
       const colIds = ((userCols ?? []) as any[]).map((c) => c.id as string);
       if (colIds.length > 0) {
-        const { data: savedItems } = await sc
+        const { data: savedItems, error: savedErr } = await sc
           .from("collection_items")
           .select("entity_id")
           .eq("entity_type", "event")
           .in("collection_id", colIds)
-          .in("entity_id", eventIds);
+          .in("entity_id", eventIds); if (savedErr) throw savedErr;
         for (const s of (savedItems ?? []) as any[]) savedEventIds.add(s.entity_id as string);
       }
-    } catch {
-      // non-fatal — isSaved defaults to false
+    } catch (err) { savedUnread = true; req.log?.warn({ err }, "list events: saved state unreadable — isSaved served as null (unknown), the feed kept");
+      // wave 5 (event reads): was "non-fatal — isSaved defaults to false"; an unread saved state is unknown (null), not "not saved"
     }
   }
 
@@ -1256,7 +1256,7 @@ router.get("/events", async (req, res) => {
       getDisplayTrustScores(sc, hostIds),
     ]);
     const allowedNames = await nameVisibilitySet(sc, hostIds);
-    for (const p of ((hpsResult as any).data as any[]) ?? []) hostProfileMap[p.id as string] = sanitizeIdentity(p, allowedNames, user.id);
+    if ((hpsResult as any).error) req.log?.warn({ err: (hpsResult as any).error }, "list events: host profiles unreadable — cards served without host names"); for (const p of ((hpsResult as any).data as any[]) ?? []) hostProfileMap[p.id as string] = sanitizeIdentity(p, allowedNames, user.id);
     if (trustRead.state === "ok") {
       for (const [id, score] of trustRead.scores) hostTrustMap.set(id, score);
     } else {
@@ -1277,20 +1277,20 @@ router.get("/events", async (req, res) => {
 
   let followedIds = new Set<string>();
   try {
-    const { data: followRows } = await sc
+    const { data: followRows, error: followErr } = await sc
       .from("user_follows")
       .select("following_id")
-      .eq("follower_id", user.id);
+      .eq("follower_id", user.id); if (followErr) req.log?.warn({ err: followErr }, "event ranking: follows unreadable — ranking without the follow signal");
     for (const row of (followRows as any[]) ?? []) followedIds.add(row.following_id as string);
   } catch { /* non-fatal */ }
 
   let interestTags = new Set<string>();
   try {
-    const { data: prefRow } = await sc
+    const { data: prefRow, error: prefErr } = await sc
       .from("compass_user_preferences")
       .select("interests")
       .eq("user_id", user.id)
-      .maybeSingle();
+      .maybeSingle(); if (prefErr) req.log?.warn({ err: prefErr }, "event ranking: interests unreadable — ranking without the interest signal");
     const interests: string[] = (prefRow as any)?.interests ?? [];
     interestTags = new Set(interests.map((t: string) => t.toLowerCase()));
   } catch { /* non-fatal */ }
@@ -1329,7 +1329,7 @@ router.get("/events", async (req, res) => {
       ...formatEvent(ev, user.id, { hostProfile: hostProfileMap[ev.host_id as string] }),
       myRsvp:              rsvpMap[ev.id] ?? null,
       myWaitlistPosition:  waitlistPositionMap[ev.id] ?? null,
-      isSaved:             savedEventIds.has(ev.id as string),
+      isSaved:             savedUnread ? null : savedEventIds.has(ev.id as string), // null: the saved state could not be read (wave 5, event reads)
     })),
     page,
     limit,
@@ -1380,15 +1380,15 @@ router.get("/events/city/:city", async (req, res) => {
   for (const ev of (events as any[]) ?? []) {
     if (await isBlocked(sc, user.id, (ev as any).host_id)) continue;
     if ((ev as any).visibility === "friends_only" && (ev as any).host_id !== user.id) {
-      const { data: friendship } = await sc
+      const { data: friendship, error: friendErr } = await sc
         .from("user_friendships")
         .select("user_a")
         .or(`and(user_a.eq.${user.id},user_b.eq.${(ev as any).host_id}),and(user_b.eq.${user.id},user_a.eq.${(ev as any).host_id})`)
-        .maybeSingle();
+        .maybeSingle(); if (friendErr) throw new EventAccessUnavailableError("user_friendships", friendErr);
       if (!friendship) continue;
     }
     const elig = await checkEventEligibility(sc, ev as any, user.id);
-    if (!elig.ok) continue;
+    if (!elig.ok) { if (elig.unavailable) throw new EventAccessUnavailableError("eligibility", elig.message); continue; } // wave 5 (event reads): an unread gate input dropped the event in silence
     filtered.push(ev);
   }
 
@@ -1399,7 +1399,7 @@ router.get("/events/city/:city", async (req, res) => {
     const [cityRsvpResult, cityWaitlistResult] = await Promise.all([
       sc.from("event_rsvps").select("event_id, status").eq("user_id", user.id).in("event_id", cityEventIds),
       sc.from("event_waitlist").select("event_id, position").eq("user_id", user.id).in("event_id", cityEventIds),
-    ]);
+    ]); if ((cityRsvpResult as any).error || (cityWaitlistResult as any).error) throw new EventAccessUnavailableError((cityRsvpResult as any).error ? "event_rsvps" : "event_waitlist", (cityRsvpResult as any).error ?? (cityWaitlistResult as any).error);
     for (const r of ((cityRsvpResult as any).data as any[]) ?? []) {
       cityRsvpMap[(r as any).event_id as string] = (r as any).status as string;
     }
@@ -1412,17 +1412,17 @@ router.get("/events/city/:city", async (req, res) => {
   // endpoint — recompute from event_rsvps so this alias never disagrees
   // with the detail screen either.
   if (cityEventIds.length > 0) {
-    const { data: liveGoingRows } = await sc
+    const { data: liveGoingRows, error: liveGoingErr } = await sc
       .from("event_rsvps")
       .select("event_id")
       .in("event_id", cityEventIds)
-      .eq("status", "going");
+      .eq("status", "going"); if (liveGoingErr) req.log?.warn({ err: liveGoingErr }, "city events: live going counts unreadable — serving the stored going_count, never 0");
     const liveGoingCounts = new Map<string, number>();
     for (const r of ((liveGoingRows as any[]) ?? [])) {
       const eid = (r as any).event_id as string;
       liveGoingCounts.set(eid, (liveGoingCounts.get(eid) ?? 0) + 1);
     }
-    for (const ev of filtered) {
+    if (!liveGoingErr) for (const ev of filtered) {
       (ev as any).going_count = liveGoingCounts.get(ev.id as string) ?? 0;
     }
   }
@@ -1483,15 +1483,15 @@ router.get("/events/nearby", async (req, res) => {
   for (const ev of (events as any[]) ?? []) {
     if (await isBlocked(sc, user.id, (ev as any).host_id)) continue;
     if ((ev as any).visibility === "friends_only" && (ev as any).host_id !== user.id) {
-      const { data: friendship } = await sc
+      const { data: friendship, error: friendErr } = await sc
         .from("user_friendships")
         .select("user_a")
         .or(`and(user_a.eq.${user.id},user_b.eq.${(ev as any).host_id}),and(user_b.eq.${user.id},user_a.eq.${(ev as any).host_id})`)
-        .maybeSingle();
+        .maybeSingle(); if (friendErr) throw new EventAccessUnavailableError("user_friendships", friendErr);
       if (!friendship) continue;
     }
     const elig = await checkEventEligibility(sc, ev as any, user.id);
-    if (!elig.ok) continue;
+    if (!elig.ok) { if (elig.unavailable) throw new EventAccessUnavailableError("eligibility", elig.message); continue; } // wave 5 (event reads): an unread gate input dropped the event in silence
     filtered.push(ev);
   }
 
@@ -1502,7 +1502,7 @@ router.get("/events/nearby", async (req, res) => {
     const [nearbyRsvpResult, nearbyWaitlistResult] = await Promise.all([
       sc.from("event_rsvps").select("event_id, status").eq("user_id", user.id).in("event_id", nearbyEventIds),
       sc.from("event_waitlist").select("event_id, position").eq("user_id", user.id).in("event_id", nearbyEventIds),
-    ]);
+    ]); if ((nearbyRsvpResult as any).error || (nearbyWaitlistResult as any).error) throw new EventAccessUnavailableError((nearbyRsvpResult as any).error ? "event_rsvps" : "event_waitlist", (nearbyRsvpResult as any).error ?? (nearbyWaitlistResult as any).error);
     for (const r of ((nearbyRsvpResult as any).data as any[]) ?? []) {
       nearbyRsvpMap[(r as any).event_id as string] = (r as any).status as string;
     }
@@ -1541,21 +1541,21 @@ router.get("/events/search", async (req, res) => {
 
   // Fetch without DB-level pagination so friendship/block filtering produces a
   // consistent result set before we slice — DB range + post-filter double-slices.
-  const { data: byTitle } = await sc
+  const { data: byTitle, error: titleErr } = await sc
     .from("events")
     .select("*")
     .not("state", "in", '("draft","cancelled","archived")')
     .in("visibility", ["public","friends_only"])
     .ilike("title", `%${q}%`)
-    .order("starts_at", { ascending: true, nullsFirst: false });
+    .order("starts_at", { ascending: true, nullsFirst: false }); if (titleErr) { req.log.error({ err: titleErr }, "search events"); sendError(res, "db_error", titleErr.message); return; } // wave 5 (event reads): was "no events match"
 
-  const { data: byCity } = await sc
+  const { data: byCity, error: cityErr } = await sc
     .from("events")
     .select("*")
     .not("state", "in", '("draft","cancelled","archived")')
     .in("visibility", ["public","friends_only"])
     .ilike("city", `%${q}%`)
-    .order("starts_at", { ascending: true, nullsFirst: false });
+    .order("starts_at", { ascending: true, nullsFirst: false }); if (cityErr) { req.log.error({ err: cityErr }, "search events"); sendError(res, "db_error", cityErr.message); return; }
 
   // Merge, dedupe, enforce friendship + block + eligibility — then paginate
   const seen = new Set<string>();
@@ -1565,15 +1565,15 @@ router.get("/events/search", async (req, res) => {
     seen.add((ev as any).id);
     if (await isBlocked(sc, user.id, (ev as any).host_id)) continue;
     if ((ev as any).visibility === "friends_only" && (ev as any).host_id !== user.id) {
-      const { data: friendship } = await sc
+      const { data: friendship, error: friendErr } = await sc
         .from("user_friendships")
         .select("user_a")
         .or(`and(user_a.eq.${user.id},user_b.eq.${(ev as any).host_id}),and(user_b.eq.${user.id},user_a.eq.${(ev as any).host_id})`)
-        .maybeSingle();
+        .maybeSingle(); if (friendErr) throw new EventAccessUnavailableError("user_friendships", friendErr);
       if (!friendship) continue;
     }
     const elig = await checkEventEligibility(sc, ev as any, user.id);
-    if (!elig.ok) continue;
+    if (!elig.ok) { if (elig.unavailable) throw new EventAccessUnavailableError("eligibility", elig.message); continue; } // wave 5 (event reads): an unread gate input dropped the event in silence
     merged.push(ev);
   }
 
@@ -1602,18 +1602,18 @@ router.get("/events/me", async (req, res) => {
     sc.from("event_rsvps").select("event_id")
       .eq("user_id", user.id)
       .eq("status", "going"),
-  ]);
+  ]); { const meErr = (hostedResult as any).error ?? (rsvpResult as any).error; if (meErr) { req.log.error({ err: meErr }, "my events"); sendError(res, "db_error", meErr.message); return; } } // wave 5 (event reads): an unread list was "no events"
 
   const hosted = ((hostedResult as any).data ?? []) as any[];
   const rsvpIds = (((rsvpResult as any).data ?? []) as any[]).map((r: any) => r.event_id as string);
 
   let attending: any[] = [];
   if (rsvpIds.length > 0) {
-    const { data: ev } = await sc.from("events").select("*")
+    const { data: ev, error: attErr } = await sc.from("events").select("*")
       .in("id", rsvpIds)
       .not("state", "in", '("cancelled","archived")')
       .order("starts_at", { ascending: true, nullsFirst: false })
-      .limit(limit);
+      .limit(limit); if (attErr) { req.log.error({ err: attErr }, "my events (attending)"); sendError(res, "db_error", attErr.message); return; }
     attending = (ev as any[]) ?? [];
   }
 
@@ -1672,8 +1672,8 @@ router.get("/events/joined", async (req, res) => {
   const limit  = Math.min(50, Math.max(1, parseInt((req.query.limit as string) ?? "20")));
   const offset = (page - 1) * limit;
 
-  const { data: rsvps } = await sc.from("event_rsvps").select("event_id")
-    .eq("user_id", user.id).eq("status", "going");
+  const { data: rsvps, error: rsvpsErr } = await sc.from("event_rsvps").select("event_id")
+    .eq("user_id", user.id).eq("status", "going"); if (rsvpsErr) { req.log.error({ err: rsvpsErr }, "joined events"); sendError(res, "db_error", rsvpsErr.message); return; } // wave 5 (event reads): was "no events"
 
   const ids = ((rsvps as any[]) ?? []).map((r: any) => r.event_id as string);
   if (ids.length === 0) { res.json({ events: [], page, limit }); return; }
@@ -1706,10 +1706,10 @@ router.get("/events/circles", async (req, res) => {
   // Step 1 — Fetch all circle IDs the viewer belongs to (member or owner).
   // Live table is circle_memberships(user_id = circle owner, other_id = member,
   // status, created_at); a circle's id is its owner's user id.
-  const { data: memberRows } = await sc
+  const { data: memberRows, error: memberErr } = await sc
     .from("circle_memberships")
     .select("user_id")
-    .eq("other_id", user.id);
+    .eq("other_id", user.id); if (memberErr) throw new EventAccessUnavailableError("circle_memberships", memberErr); // wave 5 (event reads): an unread membership listed the viewer's own circle only
 
   // The viewer always belongs to their own circle (owner has no self-membership row).
   const circleIds = [...new Set([
@@ -1743,7 +1743,7 @@ router.get("/events/circles", async (req, res) => {
     if (await isBlocked(sc, user.id, (ev as any).host_id)) continue;
     // Eligibility gate (age / trust / verified)
     const elig = await checkEventEligibility(sc, ev as any, user.id);
-    if (!elig.ok) continue;
+    if (!elig.ok) { if (elig.unavailable) throw new EventAccessUnavailableError("eligibility", elig.message); continue; } // wave 5 (event reads): an unread gate input dropped the event in silence
     filtered.push(ev);
   }
 
@@ -1751,7 +1751,7 @@ router.get("/events/circles", async (req, res) => {
   const hostIdSet = [...new Set(filtered.map((e: any) => e.host_id as string))];
   const hpMap: Record<string, { name?: string | null; avatar_url?: string | null }> = {};
   if (hostIdSet.length > 0) {
-    const { data: hps } = await sc.from("profiles").select("id, name, handle, avatar_url").in("id", hostIdSet);
+    const { data: hps, error: hpsErr } = await sc.from("profiles").select("id, name, handle, avatar_url").in("id", hostIdSet); if (hpsErr) req.log?.warn({ err: hpsErr }, "circle events: host profiles unreadable — cards served without host names");
     const allowedNames = await nameVisibilitySet(sc, hostIdSet);
     for (const p of (hps as any[]) ?? []) hpMap[p.id as string] = sanitizeIdentity(p, allowedNames, user.id);
   }
@@ -1760,11 +1760,11 @@ router.get("/events/circles", async (req, res) => {
   const filteredIds = filtered.map((e: any) => e.id as string);
   let rsvpMap: Record<string, string> = {};
   if (filteredIds.length > 0) {
-    const { data: rsvps } = await sc
+    const { data: rsvps, error: rsvpsErr } = await sc
       .from("event_rsvps")
       .select("event_id, status")
       .eq("user_id", user.id)
-      .in("event_id", filteredIds);
+      .in("event_id", filteredIds); if (rsvpsErr) throw new EventAccessUnavailableError("event_rsvps", rsvpsErr);
     for (const r of (rsvps as any[]) ?? []) rsvpMap[(r as any).event_id as string] = (r as any).status as string;
   }
 
@@ -1795,10 +1795,10 @@ router.get("/events/saved", async (req, res) => {
   const limit  = Math.min(50, Math.max(1, parseInt((req.query.limit as string) ?? "20")));
   const offset = (page - 1) * limit;
 
-  const { data: saves } = await sc.from("event_saves").select("event_id")
+  const { data: saves, error: savesErr } = await sc.from("event_saves").select("event_id")
     .eq("user_id", user.id)
     .order("saved_at", { ascending: false })
-    .range(offset, offset + limit - 1);
+    .range(offset, offset + limit - 1); if (savesErr) { req.log.error({ err: savesErr }, "saved events"); sendError(res, "db_error", savesErr.message); return; } // wave 5 (event reads): was "nothing saved"
 
   const ids = ((saves as any[]) ?? []).map((r: any) => r.event_id as string);
   if (ids.length === 0) { res.json({ events: [], page, limit }); return; }
@@ -1807,8 +1807,8 @@ router.get("/events/saved", async (req, res) => {
   if (error) { req.log.error({ err: error }, "saved events"); sendError(res, "db_error", error.message); return; }
 
   // For saved events, determine per-event whether viewer is a participant (going/maybe or host)
-  const { data: savedRsvps } = await sc.from("event_rsvps").select("event_id, status")
-    .eq("user_id", user.id).in("event_id", ids);
+  const { data: savedRsvps, error: savedRsvpsErr } = await sc.from("event_rsvps").select("event_id, status")
+    .eq("user_id", user.id).in("event_id", ids); if (savedRsvpsErr) throw new EventAccessUnavailableError("event_rsvps", savedRsvpsErr);
   const savedRsvpSet = new Set<string>(
     ((savedRsvps as any[]) ?? [])
       .filter((r: any) => r.status === "going" || r.status === "maybe")
@@ -1853,11 +1853,11 @@ router.get("/events/invites", async (req, res) => {
   let inviterMap: Record<string, any> = {};
 
   if (eventIds.length > 0) {
-    const { data: evs } = await sc.from("events").select("*").in("id", eventIds);
+    const { data: evs, error: evsErr } = await sc.from("events").select("*").in("id", eventIds); if (evsErr) { req.log.error({ err: evsErr }, "list invites (events)"); sendError(res, "db_error", evsErr.message); return; } // wave 5 (event reads): was `event: null` on every invite
     for (const e of (evs as any[]) ?? []) eventMap[e.id as string] = e;
   }
   if (inviterIds.length > 0) {
-    const { data: profiles } = await sc.from("profiles").select("id, handle, name, avatar_url").in("id", inviterIds);
+    const { data: profiles, error: profilesErr } = await sc.from("profiles").select("id, handle, name, avatar_url").in("id", inviterIds); if (profilesErr) req.log?.warn({ err: profilesErr }, "list invites: inviter profiles unreadable — served without inviter names");
     const allowedNames = await nameVisibilitySet(sc, inviterIds);
     for (const p of (profiles as any[]) ?? []) inviterMap[p.id as string] = sanitizeIdentity(p, allowedNames, user.id);
   }
@@ -1905,7 +1905,7 @@ router.get("/events/requests", async (req, res) => {
 
   let eventMap: Record<string, any> = {};
   if (eventIds.length > 0) {
-    const { data: evs } = await sc.from("events").select("*").in("id", eventIds);
+    const { data: evs, error: evsErr } = await sc.from("events").select("*").in("id", eventIds); if (evsErr) { req.log.error({ err: evsErr }, "my requests (events)"); sendError(res, "db_error", evsErr.message); return; } // wave 5 (event reads): was `event: null` on every request
     for (const e of (evs as any[]) ?? []) eventMap[e.id as string] = e;
   }
 
@@ -2022,7 +2022,7 @@ router.patch("/events/drafts/:draftId", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: existing } = await sc.from("event_drafts").select("host_id").eq("id", draftId).maybeSingle();
+  const { data: existing, error: draftErr } = await sc.from("event_drafts").select("host_id").eq("id", draftId).maybeSingle(); if (draftErr) throw new EventAccessUnavailableError("event_drafts", draftErr); // wave 5 (event reads): was 404
   if (!existing) { sendError(res, "not_found", "Draft not found"); return; }
   if ((existing as any).host_id !== user.id) { sendError(res, "forbidden", "Not your draft"); return; }
 
@@ -2050,7 +2050,7 @@ router.delete("/events/drafts/:draftId", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: existing } = await sc.from("event_drafts").select("host_id").eq("id", draftId).maybeSingle();
+  const { data: existing, error: draftErr } = await sc.from("event_drafts").select("host_id").eq("id", draftId).maybeSingle(); if (draftErr) throw new EventAccessUnavailableError("event_drafts", draftErr); // wave 5 (event reads): was 404
   if (!existing) { sendError(res, "not_found", "Draft not found"); return; }
   if ((existing as any).host_id !== user.id) { sendError(res, "forbidden", "Not your draft"); return; }
 
@@ -2082,7 +2082,7 @@ router.post("/events/drafts/:draftId/publish", async (req, res) => {
   const flagEnabled = await isFlagEnabled(sc, "events_enabled");
   if (!flagEnabled) { sendError(res, "feature_disabled", "Events are not enabled"); return; }
 
-  const { data: draft } = await sc.from("event_drafts").select("*").eq("id", draftId).maybeSingle();
+  const { data: draft, error: draftErr } = await sc.from("event_drafts").select("*").eq("id", draftId).maybeSingle(); if (draftErr) throw new EventAccessUnavailableError("event_drafts", draftErr); // wave 5 (event reads): was 404
   if (!draft) { sendError(res, "not_found", "Draft not found"); return; }
   if ((draft as any).host_id !== user.id) { sendError(res, "forbidden", "Not your draft"); return; }
 
@@ -2221,7 +2221,7 @@ router.get("/events/share-link/:token/preview", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: link } = await sc.from("event_share_links").select("*").eq("token", token).maybeSingle();
+  const { data: link, error: linkErr } = await sc.from("event_share_links").select("*").eq("token", token).maybeSingle(); if (linkErr) throw new EventAccessUnavailableError("event_share_links", linkErr); // wave 5 (event reads): was 404
   if (!link) { sendError(res, "not_found", "Share link not found or expired"); return; }
 
   if ((link as any).expires_at && new Date((link as any).expires_at) < new Date()) {
@@ -2231,7 +2231,7 @@ router.get("/events/share-link/:token/preview", async (req, res) => {
     sendError(res, "not_found", "Share link usage limit reached"); return;
   }
 
-  const { data: ev } = await sc.from("events").select("*").eq("id", (link as any).event_id).maybeSingle();
+  const { data: ev, error: evErr } = await sc.from("events").select("*").eq("id", (link as any).event_id).maybeSingle(); if (evErr) throw new EventAccessUnavailableError("events", evErr); // wave 5 (event reads): was 404
   if (!ev || ["cancelled","archived"].includes((ev as any).state) || await isBlocked(sc, (ctx as any).user.id, (ev as any).host_id)) {
     sendError(res, "not_found", "Event not found"); return; // blocked with the host = not found, exactly as GET /events/:id answers
   }
@@ -2244,8 +2244,8 @@ router.get("/events/share-link/:token/preview", async (req, res) => {
 
   // Share-link preview: check if the viewer is a participant (going/maybe RSVP or host)
   const previewUser = (ctx as any).user;
-  const { data: previewRsvp } = await sc.from("event_rsvps").select("status")
-    .eq("event_id", (ev as any).id).eq("user_id", previewUser.id).maybeSingle();
+  const { data: previewRsvp, error: previewRsvpErr } = await sc.from("event_rsvps").select("status")
+    .eq("event_id", (ev as any).id).eq("user_id", previewUser.id).maybeSingle(); if (previewRsvpErr) throw new EventAccessUnavailableError("event_rsvps", previewRsvpErr);
   const previewIsParticipant =
     (ev as any).host_id === previewUser.id ||
     (["going","maybe"].includes((previewRsvp as any)?.status ?? ""));
@@ -2268,15 +2268,15 @@ router.get("/events/near-trip/:tripId", async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
   // Caller must be an accepted trip member
-  const { data: mem } = await sc.from("trip_members").select("role")
-    .eq("trip_id", tripId).eq("user_id", user.id).maybeSingle();
+  const { data: mem, error: memErr } = await sc.from("trip_members").select("role")
+    .eq("trip_id", tripId).eq("user_id", user.id).maybeSingle(); if (memErr) throw new EventAccessUnavailableError("trip_members", memErr); // wave 5 (event reads): was 403
   if (!mem || !["owner", "member"].includes((mem as any).role)) {
     sendError(res, "forbidden", "Must be a trip member to see nearby events"); return;
   }
 
-  const { data: trip } = await sc.from("trips")
+  const { data: trip, error: tripErr } = await sc.from("trips")
     .select("destination_city, start_date, end_date")
-    .eq("id", tripId).maybeSingle();
+    .eq("id", tripId).maybeSingle(); if (tripErr) throw new EventAccessUnavailableError("trips", tripErr); // wave 5 (event reads): was `events: []`
   if (!trip || !(trip as any).destination_city) {
     res.json({ events: [] }); return;
   }
@@ -2304,11 +2304,11 @@ router.get("/events/near-trip/:tripId", async (req, res) => {
     if (await isBlocked(sc, user.id, (ev as any).host_id)) continue;
     // Enforce friends_only: viewer must be friends with the host
     if ((ev as any).visibility === "friends_only" && (ev as any).host_id !== user.id) {
-      const { data: friendship } = await sc
+      const { data: friendship, error: friendErr } = await sc
         .from("user_friendships")
         .select("user_a")
         .or(`and(user_a.eq.${user.id},user_b.eq.${(ev as any).host_id}),and(user_b.eq.${user.id},user_a.eq.${(ev as any).host_id})`)
-        .maybeSingle();
+        .maybeSingle(); if (friendErr) throw new EventAccessUnavailableError("user_friendships", friendErr);
       if (!friendship) continue;
     }
     // Same eligibility gate the sibling browse routes apply (ban / trust /
@@ -2317,7 +2317,7 @@ router.get("/events/near-trip/:tripId", async (req, res) => {
     // they tap it — the list and the detail view disagreed about who may see
     // the event.
     const elig = await checkEventEligibility(sc, ev as any, user.id);
-    if (!elig.ok) continue;
+    if (!elig.ok) { if (elig.unavailable) throw new EventAccessUnavailableError("eligibility", elig.message); continue; } // wave 5 (event reads): an unread gate input dropped the event in silence
     filtered.push(ev);
   }
 
@@ -2342,8 +2342,8 @@ router.get("/events/following", async (req, res) => {
   const limit  = Math.min(50, Math.max(1, parseInt((req.query.limit as string) ?? "20")));
   const cursor = (req.query.cursor as string) ?? null;
 
-  const { data: followRows } = await sc
-    .from("user_follows").select("following_id").eq("follower_id", user.id);
+  const { data: followRows, error: followErr } = await sc
+    .from("user_follows").select("following_id").eq("follower_id", user.id); if (followErr) { req.log.error({ err: followErr }, "following events"); sendError(res, "db_error", followErr.message); return; } // wave 5 (event reads): was "no events"
   const hostIds = [...new Set(((followRows as any[]) ?? []).map((r: any) => r.following_id as string))];
   if (hostIds.length === 0) { res.json({ events: [], cursor: null }); return; }
 
@@ -2362,17 +2362,17 @@ router.get("/events/following", async (req, res) => {
   const filtered: any[] = [];
   for (const ev of (events as any[]) ?? []) {
     if (filtered.length >= limit) break;
-    if (!await canViewEvent(sc, ev as any, user.id)) continue;
+    if (!await viewableOrThrow(sc, ev as any, user.id)) continue;
     if (await isBlocked(sc, user.id, (ev as any).host_id)) continue;
     const elig = await checkEventEligibility(sc, ev as any, user.id);
-    if (!elig.ok) continue;
+    if (!elig.ok) { if (elig.unavailable) throw new EventAccessUnavailableError("eligibility", elig.message); continue; } // wave 5 (event reads): an unread gate input dropped the event in silence
     filtered.push(ev);
   }
 
   const hostIdSet = [...new Set(filtered.map((e: any) => e.host_id as string))];
   const hpMap: Record<string, { name?: string | null; handle?: string | null; avatar_url?: string | null }> = {};
   if (hostIdSet.length > 0) {
-    const { data: hps } = await sc.from("profiles").select("id, name, handle, avatar_url").in("id", hostIdSet);
+    const { data: hps, error: hpsErr } = await sc.from("profiles").select("id, name, handle, avatar_url").in("id", hostIdSet); if (hpsErr) req.log?.warn({ err: hpsErr }, "following events: host profiles unreadable — cards served without host names");
     const allowedNames = await nameVisibilitySet(sc, hostIdSet);
     for (const p of (hps as any[]) ?? []) hpMap[p.id as string] = sanitizeIdentity(p, allowedNames, user.id);
   }
@@ -2380,8 +2380,8 @@ router.get("/events/following", async (req, res) => {
   const filteredIds = filtered.map((e: any) => e.id as string);
   const rsvpMap: Record<string, string> = {};
   if (filteredIds.length > 0) {
-    const { data: rsvps } = await sc
-      .from("event_rsvps").select("event_id, status").eq("user_id", user.id).in("event_id", filteredIds);
+    const { data: rsvps, error: rsvpsErr } = await sc
+      .from("event_rsvps").select("event_id, status").eq("user_id", user.id).in("event_id", filteredIds); if (rsvpsErr) throw new EventAccessUnavailableError("event_rsvps", rsvpsErr);
     for (const r of (rsvps as any[]) ?? []) rsvpMap[(r as any).event_id as string] = (r as any).status as string;
   }
 
@@ -2407,7 +2407,7 @@ router.get("/events/:id", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: ev } = await sc.from("events").select("*").eq("id", id).maybeSingle();
+  const { data: ev, error: evErr } = await sc.from("events").select("*").eq("id", id).maybeSingle(); if (evErr) throw new EventAccessUnavailableError("events", evErr); // wave 5 (event reads): was 404
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
 
   // Block check FIRST — blocking overrides all other relationships.
@@ -2423,7 +2423,7 @@ router.get("/events/:id", async (req, res) => {
   // private-wall screen instead of a generic "not found" error.
   // Public events that the viewer still cannot access (e.g. eligibility gate)
   // remain a 404 to avoid probing event existence.
-  if (!await canViewEvent(sc, ev as any, user.id)) {
+  if (!await viewableOrThrow(sc, ev as any, user.id)) {
     const evVis = (ev as any).visibility as string | null ?? "public";
     if (evVis !== "public") {
       // Non-public event: return locked sentinel — no title/venue/dates exposed.
@@ -2437,7 +2437,7 @@ router.get("/events/:id", async (req, res) => {
   // Viewer eligibility gates (age / trust / verified) — same rules as RSVP.
   const readElig = await checkEventEligibility(sc, ev as any, user.id);
   if (!readElig.ok) {
-    sendError(res, "not_found", "Event not found or access denied"); return;
+    if (readElig.unavailable) throw new EventAccessUnavailableError("eligibility", readElig.message); sendError(res, "not_found", "Event not found or access denied"); return;
   }
 
   const [rsvpResult, waitlistResult, roleResult, attendeeResult, goingResult, hostResult, joinReqResult] = await Promise.all([
@@ -2448,7 +2448,7 @@ router.get("/events/:id", async (req, res) => {
     sc.from("event_rsvps").select("user_id, status").eq("event_id", id).in("status", ["going", "maybe"]),
     sc.from("profiles").select("id, handle, name, avatar_url").eq("id", (ev as any).host_id).maybeSingle(),
     sc.from("event_join_requests").select("status").eq("event_id", id).eq("user_id", user.id).maybeSingle(),
-  ]);
+  ]); { const unread = ([["event_rsvps", rsvpResult], ["event_waitlist", waitlistResult], ["event_roles", roleResult], ["event_attendee_states", attendeeResult], ["event_rsvps", goingResult], ["event_join_requests", joinReqResult]] as Array<[string, any]>).find(([, r]) => r?.error); if (unread) throw new EventAccessUnavailableError(unread[0], unread[1].error); if ((hostResult as any).error) req.log?.warn({ err: (hostResult as any).error, eventId: id }, "event detail: host profile unreadable — served without the host card"); } // wave 5 (event reads): each was served as "none" / 0
 
   const goingData = (goingResult as any).data ?? [];
   const counts = {
@@ -2459,7 +2459,7 @@ router.get("/events/:id", async (req, res) => {
   };
 
   // Full RSVP counts
-  const { data: allRsvps } = await sc.from("event_rsvps").select("status").eq("event_id", id);
+  const { data: allRsvps, error: allRsvpsErr } = await sc.from("event_rsvps").select("status").eq("event_id", id); if (allRsvpsErr) throw new EventAccessUnavailableError("event_rsvps", allRsvpsErr);
   for (const r of (allRsvps as any[]) ?? []) {
     if (r.status === "interested") counts.interested++;
     if (r.status === "cant_go") counts.cant_go++;
@@ -2478,15 +2478,15 @@ router.get("/events/:id", async (req, res) => {
 
   let goingProfiles: any[] = [];
   if (isParticipant && goingAvatars.length > 0) {
-    const { data: gp } = await sc.from("profiles").select("id, handle, name, avatar_url").in("id", goingAvatars);
+    const { data: gp, error: gpErr } = await sc.from("profiles").select("id, handle, name, avatar_url").in("id", goingAvatars); if (gpErr) req.log?.warn({ err: gpErr, eventId: id }, "event detail: going avatars unreadable — served without them");
     const allowedGoing = await nameVisibilitySet(sc, goingAvatars);
     goingProfiles = ((gp as any[]) ?? []).map((p) => sanitizeIdentity(p, allowedGoing, user.id));
   }
 
-  const { data: waitlistData } = await sc
+  const { data: waitlistData, error: waitlistDataErr } = await sc
     .from("event_waitlist")
     .select("user_id")
-    .eq("event_id", id);
+    .eq("event_id", id); if (waitlistDataErr) throw new EventAccessUnavailableError("event_waitlist", waitlistDataErr);
   const waitlistCount = ((waitlistData as any[]) ?? []).length;
 
   const hpRaw = (hostResult as any).data;
@@ -2552,9 +2552,9 @@ router.patch("/events/:id", async (req, res) => {
   }
 
   // Fetch current event to detect key-detail changes for notifications
-  const { data: current } = await sc.from("events").select("*").eq("id", id).maybeSingle();
+  const { data: current, error: currentErr } = await sc.from("events").select("*").eq("id", id).maybeSingle(); if (currentErr) { sendError(res, "degraded_unavailable", "The event could not be read right now, so nothing was changed. Please try again."); return; } // a failed read answered 404 (wave 5)
   if (!current) { sendError(res, "not_found", "Event not found"); return; }
-  if (refuseTicketUrlOnUpdate(res, b, current)) return; // REV-020: before the state write, so a refusal changes nothing (helper at the end of this file)
+  if (refuseTicketUrlOnUpdate(res, b, current)) return; const visTo = b.visibility !== undefined && b.visibility !== (current as any).visibility ? b.visibility : null; const stateChanges = b.state !== undefined && b.state !== (current as any).state; const held = await refuseHostWriteUnderModeration(sc, id, { visibility: visTo !== null, stateFrom: stateChanges ? (current as any).state : null }); if (!held.ok) { sendError(res, held.code, held.message); return; } // REV-020: before the state write, so a refusal changes nothing (helper at the end of this file); so is the moderation hold (wave 5: a host un-hid a moderator-hidden event here)
   // ── the state transition, through the one authority ───────────────────────
   // `started` is refused here by NAME rather than by the table: the table says
   // open|full|waitlist -> started is a structurally legal pair, but WHO may
@@ -2609,11 +2609,11 @@ router.patch("/events/:id", async (req, res) => {
   if (b.country            !== undefined) patch.country             = b.country;
   if (b.showHeaderPublicly !== undefined) patch.show_header_publicly = b.showHeaderPublicly;
 
-  const { data: updated, error } = await sc
-    .from("events").update(patch).eq("id", id).select("*").single();
-
-  if (error) { req.log.error({ err: error }, "update event"); sendError(res, "db_error", error.message); return; }
-
+  const visGuard: HostVisibilityGuard | null = visTo !== null ? { from: (current as any).visibility, ...(stateChanges ? {} : { updatedAt: (current as any).updated_at }) } : null; const { data: updated, error } = await guardHostVisibilityWrite(sc // a visibility change is conditional on what was read: a moderator's hide (it stamps updated_at) landing since the hold read wins
+    .from("events").update(patch).eq("id", id), visGuard).select("*").single();
+  if (error && visGuard && (error as any).code === "PGRST116") { sendError(res, "conflict", "The event changed while this request was in flight (it may have been moderated) — reload and try again"); return; } // the guarded write matched no row: nothing written by it
+  if (error) { req.log.error({ err: error }, "update event"); sendError(res, "db_error", error.message); return; } if (b.maxAttendees !== undefined) await syncEventState(sc, id); // wave 5 follow-up B2: a capacity edit runs the capacity cycle — a raised capacity is offered to the queue first (offerFreedSeatToQueue), never straight to walk-ins
+  if (visGuard) { const rec = await recordHostVisibilityChange(sc, { eventId: id, actorId: user.id, from: visGuard.from, to: visTo, via: "edit" }); if (rec.error) req.log.error({ err: rec.error, eventId: id }, "host visibility change: its record (visibility_changed) could not be written — the change stands unrecorded"); } // from / to: what a later restore reads as the host's own value (wave 5)
   // Notify attendees if key details changed (fire-and-forget)
   const changed = KEY_FIELDS.some((f) => {
     const snakeToCamel = f.replace(/_([a-z])/g, (_, c) => c.toUpperCase()) as string;
@@ -2632,7 +2632,7 @@ router.patch("/events/:id", async (req, res) => {
             data: { eventId: id, type: "event_updated" },
           });
         }
-      } catch {}
+      } catch (err) { req.log?.warn({ err, eventId: id }, "event-updated push notify failed"); } // resolves-not-throws-ok: fire-and-forget push, logged — the recipients read now throws on failure (wave 5); a bare catch made it silent
     })();
   }
 
@@ -2645,11 +2645,11 @@ router.patch("/events/:id", async (req, res) => {
   if (b.state === "completed" && (current as any).state !== "completed") {
     void (async () => {
       try {
-        const { data: confirmed } = await sc
+        const { data: confirmed, error: confErr } = await sc
           .from("event_attendee_states")
           .select("user_id, profiles!user_id(expo_push_token)")
           .eq("event_id", id)
-          .not("confirmed_at", "is", null);
+          .not("confirmed_at", "is", null); if (confErr) { req.log?.warn({ err: confErr, eventId: id }, "review prompt: confirmed attendees unreadable — nobody was prompted"); return; }
 
         if (confirmed && (confirmed as any[]).length > 0) {
           const recipients = (confirmed as any[])
@@ -2727,7 +2727,7 @@ router.delete("/events/:id", async (req, res) => {
   const role = await getEventRole(sc, id, user.id);
   if (role !== "host") { sendError(res, "forbidden", "Only the host can cancel an event"); return; }
 
-  const { data: ev } = await sc.from("events").select("title, state, starts_at").eq("id", id).maybeSingle();
+  const { data: ev, error: evErr } = await sc.from("events").select("title, state, starts_at").eq("id", id).maybeSingle(); if (evErr) { sendError(res, "degraded_unavailable", "The event could not be read right now, so nothing was changed. Please try again."); return; } // a failed read answered 404 (wave 5)
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
   // Captured BEFORE the transition: the trust rule is about the state the host
   // walked away from, not the one the update leaves behind.
@@ -2782,7 +2782,7 @@ router.post("/events/:id/rsvp", async (req, res) => {
   const parsed = RsvpSchema.safeParse(req.body);
   if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
 
-  const { data: ev } = await sc.from("events").select("*").eq("id", id).maybeSingle();
+  const { data: ev, error: evErr } = await sc.from("events").select("*").eq("id", id).maybeSingle(); if (evErr) throw new EventAccessUnavailableError("events", evErr); // wave 5 (event reads): was 404
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
 
   if (!["open", "full", "waitlist"].includes((ev as any).state)) {
@@ -2799,12 +2799,12 @@ router.post("/events/:id/rsvp", async (req, res) => {
 
   // Invite-only: require approved join request
   if ((ev as any).visibility === "invite_only") {
-    const { data: req_ } = await sc
+    const { data: req_, error: reqErr } = await sc
       .from("event_join_requests")
       .select("status")
       .eq("event_id", id)
       .eq("user_id", user.id)
-      .maybeSingle();
+      .maybeSingle(); if (reqErr) throw new EventAccessUnavailableError("event_join_requests", reqErr); // wave 5 (event reads): was "requires host approval"
     if (!(req_ as any) || (req_ as any).status !== "approved") {
       sendError(res, "forbidden", "This event requires host approval to join"); return;
     }
@@ -2987,12 +2987,12 @@ router.delete("/events/:id/rsvp", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: existing } = await sc
+  const { data: existing, error: existingErr } = await sc
     .from("event_rsvps")
     .select("status")
     .eq("event_id", id)
     .eq("user_id", user.id)
-    .maybeSingle();
+    .maybeSingle(); if (existingErr) throw new EventAccessUnavailableError("event_rsvps", existingErr); // wave 5 (event reads): was 404 "No RSVP found"
 
   if (!existing) { sendError(res, "not_found", "No RSVP found"); return; }
 
@@ -3007,13 +3007,13 @@ router.delete("/events/:id/rsvp", async (req, res) => {
   // first, hasActiveWaitlistOffer would still be false (no offer yet) and the
   // event would flip to 'open' — letting a walk-in RSVP steal the promoted
   // user's seat before they can accept. Sync AFTER, so the reservation holds.
-  if ((existing as any).status === "going") {
-    const waitlistEnabled = await isFlagEnabled(sc, "events_waitlist_enabled");
-    if (waitlistEnabled) {
-      await promoteNextWaitlisted(sc, id, req);
+  let seatHeld: boolean | "offered" = false; if ((existing as any).status === "going") {
+    const waitlistFlag = await readWaitlistFlagForFreedSeat(sc, id, req); seatHeld = waitlistFlag === "unknown";
+    if (waitlistFlag === "on") {
+      seatHeld = freedSeatAfterPromotion(await promoteNextWaitlisted(sc, id, req), id, req);
     }
   }
-  await syncEventState(sc, id);
+  await syncEventState(sc, id, seatHeld);
 
   res.json({ ok: true });
 });
@@ -3033,7 +3033,7 @@ router.post("/events/:id/join", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: ev } = await sc.from("events").select("*").eq("id", id).maybeSingle();
+  const { data: ev, error: evErr } = await sc.from("events").select("*").eq("id", id).maybeSingle(); if (evErr) throw new EventAccessUnavailableError("events", evErr); // wave 5 (event reads): was 404
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
 
   // Check event state
@@ -3121,11 +3121,11 @@ router.post("/events/:id/leave", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: existing } = await sc
+  const { data: existing, error: existingErr } = await sc
     .from("event_rsvps")
     .select("status")
     .eq("event_id", id).eq("user_id", user.id)
-    .maybeSingle();
+    .maybeSingle(); if (existingErr) throw new EventAccessUnavailableError("event_rsvps", existingErr); // wave 5 (event reads): was 404 "No active RSVP found"
 
   if (!existing) { sendError(res, "not_found", "No active RSVP found"); return; }
 
@@ -3137,11 +3137,11 @@ router.post("/events/:id/leave", async (req, res) => {
 
   // Promote BEFORE syncing state so the freed seat is reserved by an active
   // offer (see DELETE /rsvp) — otherwise syncEventState reopens to a walk-in.
-  if ((existing as any).status === "going") {
-    const waitlistEnabled = await isFlagEnabled(sc, "events_waitlist_enabled");
-    if (waitlistEnabled) await promoteNextWaitlisted(sc, id, req);
+  let seatHeld: boolean | "offered" = false; if ((existing as any).status === "going") {
+    const waitlistFlag = await readWaitlistFlagForFreedSeat(sc, id, req); seatHeld = waitlistFlag === "unknown";
+    if (waitlistFlag === "on") seatHeld = freedSeatAfterPromotion(await promoteNextWaitlisted(sc, id, req), id, req);
   }
-  await syncEventState(sc, id);
+  await syncEventState(sc, id, seatHeld);
 
   await logEventActivity(sc, id, user.id, "left", {});
 
@@ -3162,9 +3162,9 @@ async function checkEventJoinVisibility(
   sc: any, ev: any, eventId: string, userId: string,
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   if ((ev as any).visibility === "invite_only") {
-    const { data: req_ } = await sc
+    const { data: req_, error: reqErr } = await sc
       .from("event_join_requests")
-      .select("status").eq("event_id", eventId).eq("user_id", userId).maybeSingle();
+      .select("status").eq("event_id", eventId).eq("user_id", userId).maybeSingle(); if (reqErr) throw new EventAccessUnavailableError("event_join_requests", reqErr); // wave 5 (event reads): was "requires host approval" — and at accept that refusal DELETED the queue place
     if (!(req_ as any) || (req_ as any).status !== "approved") {
       return { ok: false, message: "This event requires host approval to join" };
     }
@@ -3194,11 +3194,11 @@ router.post("/events/:id/waitlist", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: ev } = await sc
+  const { data: ev, error: evErr } = await sc
     .from("events")
     .select("state, waitlist_enabled, host_id, visibility, circle_id, trip_id, age_min, age_max, trust_score_min, verified_only")
     .eq("id", id)
-    .maybeSingle();
+    .maybeSingle(); if (evErr) throw new EventAccessUnavailableError("events", evErr); // wave 5 (event reads): was 404
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
 
   // Private-event join gate (same as /rsvp) — closes the waitlist bypass.
@@ -3229,7 +3229,7 @@ router.post("/events/:id/waitlist", async (req, res) => {
   const trustGatesEnabledWl = await eventTrustGatesRun(sc);  // census-trust §30: an UNREAD flag keeps the gates on
   if (trustGatesEnabledWl) {
     if ((ev as any).verified_only) {
-      const { data: profileWl } = await sc.from("profiles").select("verified").eq("id", user.id).maybeSingle();
+      const { data: profileWl, error: profileWlErr } = await sc.from("profiles").select("verified").eq("id", user.id).maybeSingle(); if (profileWlErr) throw new EventAccessUnavailableError("profiles", profileWlErr); // wave 5 (event reads): was "for verified users only"
       if (!(profileWl as any)?.verified) {
         sendError(res, "forbidden", "This event is for verified users only"); return;
       }
@@ -3239,7 +3239,7 @@ router.post("/events/:id/waitlist", async (req, res) => {
       // join gate above; this path had the identical discarded-error defect.
       const tpWlRead = await getTrustProfileResult(sc, user.id);
       if (tpWlRead.state === "unavailable") {
-        sendError(res, "forbidden", "Trust check is temporarily unavailable for this event"); return;
+        sendError(res, "degraded_unavailable", "Trust check is temporarily unavailable for this event"); return;
       }
       const scoreWl = (tpWlRead.state === "ok" ? tpWlRead.profile.overall_score : null) ?? TRUST_SCORE_WHEN_NO_PROFILE;
       if (scoreWl < (ev as any).trust_score_min) {
@@ -3252,7 +3252,7 @@ router.post("/events/:id/waitlist", async (req, res) => {
       // reaches the waitlist, and being seated on a waitlist is how you get
       // into the event.
       const gateAgeWl = await resolveGateAge(sc, user.id);
-      if (gateAgeWl.state === "unreadable") { sendError(res, "forbidden", AGE_CHECK_UNAVAILABLE_MESSAGE); return; }
+      if (gateAgeWl.state === "unreadable") { sendError(res, "degraded_unavailable", AGE_CHECK_UNAVAILABLE_MESSAGE); return; }
       if (gateAgeWl.state === "verified_minor") { sendError(res, "forbidden", AGE_NOT_VERIFIED_ADULT_MESSAGE); return; }
       if (gateAgeWl.age === null) {
         sendError(res, "forbidden", "Your profile must have a date of birth to join this age-restricted event"); return;
@@ -3290,12 +3290,12 @@ router.post("/events/:id/waitlist/accept", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: wlEntry } = await sc
+  const { data: wlEntry, error: wlEntryErr } = await sc
     .from("event_waitlist")
     .select("position, offer_expires_at")
     .eq("event_id", id)
     .eq("user_id", user.id)
-    .maybeSingle();
+    .maybeSingle(); if (wlEntryErr) throw new EventAccessUnavailableError("event_waitlist", wlEntryErr); // wave 5 (event reads): was 404 "Not on waitlist"
 
   if (!wlEntry) { sendError(res, "not_found", "Not on waitlist for this event"); return; }
 
@@ -3304,11 +3304,11 @@ router.post("/events/:id/waitlist/accept", async (req, res) => {
     sendError(res, "forbidden", "No spot offer is pending for you"); return;
   }
   if (new Date(offerExpiresAt) < new Date()) {
-    // Expired — remove user from queue entirely, then promote the next person.
+    // Expired — remove user from queue entirely, then the capacity cycle releases the seat their offer reserved.
     // Nulling offer_expires_at would cause promoteNextWaitlisted to re-offer
     // this same user (it queries IS NULL), so we delete instead.
-    await sc.from("event_waitlist").delete().eq("event_id", id).eq("user_id", user.id);
-    await promoteNextWaitlisted(sc, id, req);
+    const { error: lapsedDelErr } = await sc.from("event_waitlist").delete().eq("event_id", id).eq("user_id", user.id); if (lapsedDelErr) req.log?.warn?.({ err: lapsedDelErr, eventId: id }, "waitlist accept: the lapsed offer could not be removed — nobody is offered its seat here; the sweeper removes the row and releases the seat once");
+    if (!lapsedDelErr) await syncEventState(sc, id); // wave 5 follow-up B3: was promoteNextWaitlisted, which read no flag and offered whether or not a seat was free — the sync offers the queue only with the flag ON and a seat really free; OFF reopens, UNREADABLE holds (offerFreedSeatToQueue)
     sendError(res, "forbidden", "Your spot offer has expired"); return;
   }
 
@@ -3327,34 +3327,34 @@ router.post("/events/:id/waitlist/accept", async (req, res) => {
   if (!acceptVis.ok) {
     // Remove them from the queue so the seat can go to an eligible member.
     await sc.from("event_waitlist").delete().eq("event_id", id).eq("user_id", user.id);
-    await promoteNextWaitlisted(sc, id, req);
+    await syncEventState(sc, id); // wave 5 follow-up B3: the seat their offer reserved goes through the capacity cycle, flag-aware (was promoteNextWaitlisted, which read no flag)
     sendError(res, "forbidden", acceptVis.message); return;
   }
   const accElig = await checkEventEligibility(sc, evCapCheck as any, user.id); if (!accElig.ok) { sendEligibilityRefusal(req, res, id, accElig); return; } const maxAtt = (evCapCheck as any)?.max_attendees ?? null;  // census-trust §30.6: the join gate re-runs at accept; a refusal writes nothing
-  if (maxAtt != null) {
-    const currentGoing = await getGoingCount(sc, id); if (currentGoing === null) { sendCapacityUnavailable(req, res, id, "waitlist:accept"); return; }  // census-trust §30.8: the row and its offer are left as they are
-    if (currentGoing >= maxAtt) {
-      // Slot was taken — expire this offer and promote the next person
-      await sc.from("event_waitlist").update({ offer_expires_at: null }).eq("event_id", id).eq("user_id", user.id);
-      await promoteNextWaitlisted(sc, id, req);
+  const lockedAccept = await acceptWaitlistSeatLocked(sc, id, user.id, req, res); if (lockedAccept === "answered") return; if (lockedAccept === "no_seat" || (maxAtt != null && lockedAccept === "legacy")) { // wave 5 follow-up B4: under 3906 the seat is checked and taken under the event lock (acceptWaitlistSeatLocked, end of file); absent, today's count below
+    const currentGoing = lockedAccept === "no_seat" ? null : await getGoingCount(sc, id); if (currentGoing === null && lockedAccept !== "no_seat") { sendCapacityUnavailable(req, res, id, "waitlist:accept"); return; }  // census-trust §30.8: the row and its offer are left as they are
+    if (lockedAccept === "no_seat" || (currentGoing !== null && currentGoing >= maxAtt)) {
+      // Slot was taken — withdraw this offer (they keep their place in the queue); no seat is free, so nobody is offered one
+      const { error: unofferErr } = await sc.from("event_waitlist").update({ offer_expires_at: null }).eq("event_id", id).eq("user_id", user.id); if (unofferErr) { sendSpotFilledOfferStands(req, res, id, unofferErr); return; }
+      await syncEventState(sc, id); // wave 5 follow-up B3: was promoteNextWaitlisted — the accepter keeps their place, so the head it found was usually the accepter: a fresh offer and notice each time, a loop. The sync offers only a seat that is really free
       sendError(res, "forbidden", "This spot was filled before you accepted. You have been returned to the waitlist queue."); return;
     }
   }
 
   // Accept: create Going RSVP and remove from waitlist
-  const { error: rsvpErr } = await sc.from("event_rsvps").upsert(
+  const { error: rsvpErr } = lockedAccept === "seated" ? { error: null as any } : await sc.from("event_rsvps").upsert(
     { event_id: id, user_id: user.id, status: "going", updated_at: new Date().toISOString() },
     { onConflict: "event_id,user_id" },
   );
   if (rsvpErr) { req.log.error({ err: rsvpErr }, "waitlist accept rsvp"); sendError(res, "db_error", rsvpErr.message); return; }
 
-  await sc.from("event_waitlist").delete().eq("event_id", id).eq("user_id", user.id);
+  if (lockedAccept !== "seated") await sc.from("event_waitlist").delete().eq("event_id", id).eq("user_id", user.id); // wave 5 follow-up B4: the locked accept deleted the queue row together with the RSVP
   await syncEventState(sc, id);
   const goingNow = await getGoingCount(sc, id);
-  const { data: wlAfterAccept } = await sc.from("event_waitlist").select("user_id").eq("event_id", id);
+  const { data: wlAfterAccept, error: wlAfterAcceptErr } = await sc.from("event_waitlist").select("user_id").eq("event_id", id); if (wlAfterAcceptErr) req.log?.warn({ err: wlAfterAcceptErr, eventId: id }, "waitlist accept: queue recount unreadable — waitlist_count left as it was");
   await sc.from("events").update({
     going_count: goingNow ?? undefined,  // census-trust §30.8: unread → the column is left alone (JSON drops undefined), never 0
-    waitlist_count: ((wlAfterAccept as any[]) ?? []).length,
+    waitlist_count: wlAfterAcceptErr ? undefined : ((wlAfterAccept as any[]) ?? []).length, // wave 5 (event reads): unread → left alone (JSON drops undefined), never 0
   }).eq("id", id);
   await syncAttendee(sc, id, user.id, "going");
 
@@ -3392,10 +3392,10 @@ router.get("/events/:id/waitlist", async (req, res) => {
 
   // Fetch display profiles
   const userIds = rows.map((r: any) => r.user_id as string);
-  const { data: profiles } = await sc
+  const { data: profiles, error: profilesErr } = await sc
     .from("profiles")
     .select("id, handle, name, avatar_url")
-    .in("id", userIds);
+    .in("id", userIds); if (profilesErr) req.log?.warn({ err: profilesErr, eventId: id }, "event waitlist: profiles unreadable — served without names");
 
   const profileMap: Record<string, any> = {};
   {
@@ -3434,12 +3434,12 @@ router.delete("/events/:id/waitlist", async (req, res) => {
 
   await sc.from("event_waitlist").delete().eq("event_id", id).eq("user_id", user.id);
   // Recompute waitlist_count so UI stays accurate
-  const { data: wlRemaining } = await sc.from("event_waitlist").select("user_id").eq("event_id", id);
-  await sc
+  const { data: wlRemaining, error: wlRemainingErr } = await sc.from("event_waitlist").select("user_id").eq("event_id", id); if (wlRemainingErr) req.log?.warn({ err: wlRemainingErr, eventId: id }, "waitlist leave: recount unreadable — waitlist_count left as it was");
+  if (!wlRemainingErr) await sc
     .from("events")
     .update({ waitlist_count: ((wlRemaining as any[]) ?? []).length, updated_at: new Date().toISOString() })
     .eq("id", id);
-  res.json({ ok: true });
+  await syncEventState(sc, id); res.json({ ok: true }); // wave 5 follow-up B2: an offer holder who leaves frees the seat their offer reserved — the sync offers it to the next in the queue (offerFreedSeatToQueue)
 });
 
 // ── POST /api/events/:id/requests ─────────────────────────────────────────────
@@ -3455,7 +3455,7 @@ router.post("/events/:id/requests", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: ev } = await sc.from("events").select("visibility, state, host_id, title").eq("id", id).maybeSingle();
+  const { data: ev, error: evErr } = await sc.from("events").select("visibility, state, host_id, title").eq("id", id).maybeSingle(); if (evErr) throw new EventAccessUnavailableError("events", evErr); // wave 5 (event reads): was 404
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
 
   if ((ev as any).visibility !== "invite_only") {
@@ -3477,7 +3477,7 @@ router.post("/events/:id/requests", async (req, res) => {
   // Notify host (fire-and-forget)
   void (async () => {
     try {
-      const { data: hp } = await sc.from("profiles").select("expo_push_token").eq("id", (ev as any).host_id).maybeSingle();
+      const { data: hp, error: hpErr } = await sc.from("profiles").select("expo_push_token").eq("id", (ev as any).host_id).maybeSingle(); if (hpErr) req.log?.warn({ err: hpErr, eventId: id }, "join-request push: host token unreadable — not sent");
       if ((hp as any)?.expo_push_token) {
         await sendPushWithRetry(sc, { userId: (ev as any).host_id, tokens: [(hp as any).expo_push_token] }, {
           title: "New join request",
@@ -3511,21 +3511,21 @@ router.get("/events/:id/requests", async (req, res) => {
     sendError(res, "forbidden", "Only host/moderator can view join requests"); return;
   }
 
-  const { data: requests } = await sc
+  const { data: requests, error: requestsErr } = await sc
     .from("event_join_requests")
     .select("id, user_id, status, message, created_at")
     .eq("event_id", id)
     .eq("status", "pending")
-    .order("created_at", { ascending: true });
+    .order("created_at", { ascending: true }); if (requestsErr) { req.log.error({ err: requestsErr }, "get join requests"); sendError(res, "db_error", requestsErr.message); return; } // wave 5 (event reads): was "no requests"
 
   // Enrich with profiles
   const userIds = ((requests as any[]) ?? []).map((r: any) => r.user_id as string);
   let profileMap: Record<string, any> = {};
   if (userIds.length > 0) {
-    const { data: profiles } = await sc
+    const { data: profiles, error: profilesErr } = await sc
       .from("profiles")
       .select("id, handle, name, avatar_url")
-      .in("id", userIds);
+      .in("id", userIds); if (profilesErr) req.log?.warn({ err: profilesErr, eventId: id }, "join requests: profiles unreadable — served without names");
     const allowedNames = await nameVisibilitySet(sc, userIds);
     for (const p of (profiles as any[]) ?? []) {
       profileMap[p.id as string] = sanitizeIdentity(p, allowedNames, user.id);
@@ -3570,7 +3570,7 @@ router.patch("/events/:id/requests/:userId", async (req, res) => {
 
   // On approval: run gate checks before committing the RSVP
   if (action === "approve") {
-    const { data: evFull } = await sc.from("events").select("*").eq("id", id).maybeSingle();
+    const { data: evFull, error: evFullErr } = await sc.from("events").select("*").eq("id", id).maybeSingle(); if (evFullErr) throw new EventAccessUnavailableError("events", evFullErr); // wave 5 (event reads): was 404
     if (!evFull) { sendError(res, "not_found", "Event not found"); return; }
 
     // Eligibility: ban / block / trust / age / verified
@@ -3606,7 +3606,7 @@ router.patch("/events/:id/requests/:userId", async (req, res) => {
     // Capacity check: if full, route to waitlist (when enabled) instead of going
     const maxAtt = (evFull as any).max_attendees ?? null;
     const currentGoing = maxAtt != null ? await getGoingCount(sc, id) : 0; if (currentGoing === null) { sendCapacityUnavailable(req, res, id, "requests:approve"); return; }  // census-trust §30.8
-    if (maxAtt != null && currentGoing >= maxAtt) {
+    if (maxAtt != null && (currentGoing >= maxAtt || freeSeatHeldForQueue(evFull))) { // wave 5 follow-up B3: a seat a live offer reserves, or one held for the queue, is not free to an approval (freeSeatHeldForQueue)
       if ((evFull as any).waitlist_enabled) {
         // Add to waitlist if not already there
         const seated = await addToEventWaitlist(sc, id, userId);
@@ -3651,8 +3651,8 @@ router.patch("/events/:id/requests/:userId", async (req, res) => {
   // Notify the requester (fire-and-forget)
   void (async () => {
     try {
-      const { data: evData } = await sc.from("events").select("title").eq("id", id).maybeSingle();
-      const { data: hp } = await sc.from("profiles").select("expo_push_token").eq("id", userId).maybeSingle();
+      const { data: evData, error: evDataErr } = await sc.from("events").select("title").eq("id", id).maybeSingle(); if (evDataErr) req.log?.warn({ err: evDataErr, eventId: id }, "request-decision push: event title unreadable");
+      const { data: hp, error: hpErr } = await sc.from("profiles").select("expo_push_token").eq("id", userId).maybeSingle(); if (hpErr) req.log?.warn({ err: hpErr, eventId: id }, "request-decision push: requester token unreadable — not sent");
       if ((hp as any)?.expo_push_token) {
         await sendPushWithRetry(sc, { userId, tokens: [(hp as any).expo_push_token] }, {
           title: action === "approve" ? "You're in! 🎉" : "Join request declined",
@@ -3694,19 +3694,19 @@ router.post("/events/:id/roles", async (req, res) => {
   if (targetId === user.id) { sendError(res, "invalid_payload", "Cannot change your own role"); return; }
 
   // If banning: remove RSVP and waitlist entry, remove from chat, recompute counts
-  let banWlDelErr: unknown = null; if (role === "banned") {  // census-trust §30.7: the waitlist delete's error is bound and answered below
+  let banWlDelErr: unknown = null; let banChatErr: unknown = null; if (role === "banned") {  // census-trust §30.7: the waitlist delete's error is bound and answered below
     await sc.from("event_rsvps").delete().eq("event_id", id).eq("user_id", targetId);
     ({ error: banWlDelErr } = await sc.from("event_waitlist").delete().eq("event_id", id).eq("user_id", targetId)); if (banWlDelErr) req.log?.error({ err: banWlDelErr, eventId: id, targetId }, "ban: waitlist row could not be removed");
-    await syncEventState(sc, id);
+    await syncEventState(sc, id, Boolean(banWlDelErr)); // wave 5 follow-up B2: their queue row survived and the ban is written only below — the sync must not offer them the seat, so it is HELD on this pass
     const going = await getGoingCount(sc, id);
-    const { data: wlAfterBan } = await sc.from("event_waitlist").select("user_id").eq("event_id", id);
+    const { data: wlAfterBan, error: wlAfterBanErr } = await sc.from("event_waitlist").select("user_id").eq("event_id", id); if (wlAfterBanErr) req.log?.warn({ err: wlAfterBanErr, eventId: id }, "ban: queue recount unreadable — waitlist_count left as it was");
     await sc.from("events").update({
       going_count: going ?? undefined,  // census-trust §30.8: unread → the column is left alone, never 0
-      waitlist_count: ((wlAfterBan as any[]) ?? []).length,
+      waitlist_count: wlAfterBanErr ? undefined : ((wlAfterBan as any[]) ?? []).length, // wave 5 (event reads): never 0 from an unread queue
     }).eq("id", id);
     await syncAttendee(sc, id, targetId, null);
 
-    const { data: ev } = await sc.from("events").select("chat_thread_id").eq("id", id).maybeSingle();
+    const { data: ev, error: banChatReadErr } = await sc.from("events").select("chat_thread_id").eq("id", id).maybeSingle(); if (banChatReadErr) { banChatErr = banChatReadErr; req.log?.error({ err: banChatReadErr, eventId: id, targetId }, "ban: the event chat could not be read — the banned user was not removed from it"); }
     if ((ev as any)?.chat_thread_id) {
       await removeUserFromChatThread(sc, (ev as any).chat_thread_id, targetId);
     }
@@ -3718,7 +3718,7 @@ router.post("/events/:id/roles", async (req, res) => {
   );
   if (error) { sendError(res, "db_error", error.message); return; }
 
-  if (banWlDelErr) { sendBanWaitlistUnremoved(res); return; } res.json({ ok: true, userId: targetId, role });  // census-trust §30.7: not "ok" over a failed delete
+  if (banWlDelErr) { sendBanWaitlistUnremoved(res); return; } if (banChatErr) { sendError(res, "degraded_unavailable", "The ban was recorded, but they could not be removed from the event chat. Please try again."); return; } res.json({ ok: true, userId: targetId, role });  // census-trust §30.7: not "ok" over a failed delete
 });
 
 // ── DELETE /api/events/:id/roles/:userId ──────────────────────────────────────
@@ -3755,12 +3755,12 @@ router.post("/events/:id/checkin", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: rsvp } = await sc
+  const { data: rsvp, error: rsvpErr } = await sc
     .from("event_rsvps")
     .select("status")
     .eq("event_id", id)
     .eq("user_id", user.id)
-    .maybeSingle();
+    .maybeSingle(); if (rsvpErr) throw new EventAccessUnavailableError("event_rsvps", rsvpErr); // wave 5 (event reads): was 403 "must have a Going RSVP"
 
   if (!(rsvp as any) || (rsvp as any).status !== "going") {
     sendError(res, "forbidden", "You must have a Going RSVP to check in"); return;
@@ -3792,14 +3792,14 @@ router.post("/events/:id/attendance/:userId", async (req, res) => {
   }
 
   // Event must be in progress or completed
-  const { data: evState } = await sc.from("events").select("state").eq("id", id).maybeSingle();
+  const { data: evState, error: evStateErr } = await sc.from("events").select("state").eq("id", id).maybeSingle(); if (evStateErr) throw new EventAccessUnavailableError("events", evStateErr); // wave 5 (event reads): was 403 "during or after the event"
   if (!evState || !["started", "completed"].includes((evState as any).state)) {
     sendError(res, "forbidden", "Attendance can only be confirmed during or after the event"); return;
   }
 
   // Target user must have a Going RSVP
-  const { data: targetRsvp } = await sc
-    .from("event_rsvps").select("status").eq("event_id", id).eq("user_id", userId).maybeSingle();
+  const { data: targetRsvp, error: targetRsvpErr } = await sc
+    .from("event_rsvps").select("status").eq("event_id", id).eq("user_id", userId).maybeSingle(); if (targetRsvpErr) throw new EventAccessUnavailableError("event_rsvps", targetRsvpErr); // wave 5 (event reads): was 403
   if (!(targetRsvp as any) || (targetRsvp as any).status !== "going") {
     sendError(res, "forbidden", "User does not have a Going RSVP for this event"); return;
   }
@@ -3853,14 +3853,14 @@ router.post("/events/:id/noshow/:userId", async (req, res) => {
   }
 
   // Event must be in progress or completed
-  const { data: evStateNs } = await sc.from("events").select("state").eq("id", id).maybeSingle();
+  const { data: evStateNs, error: evStateNsErr } = await sc.from("events").select("state").eq("id", id).maybeSingle(); if (evStateNsErr) throw new EventAccessUnavailableError("events", evStateNsErr); // wave 5 (event reads): was 403 "during or after the event"
   if (!evStateNs || !["started", "completed"].includes((evStateNs as any).state)) {
     sendError(res, "forbidden", "No-shows can only be marked during or after the event"); return;
   }
 
   // Target must have committed to going
-  const { data: nsRsvp } = await sc
-    .from("event_rsvps").select("status").eq("event_id", id).eq("user_id", userId).maybeSingle();
+  const { data: nsRsvp, error: nsRsvpErr } = await sc
+    .from("event_rsvps").select("status").eq("event_id", id).eq("user_id", userId).maybeSingle(); if (nsRsvpErr) throw new EventAccessUnavailableError("event_rsvps", nsRsvpErr); // wave 5 (event reads): was 403
   if (!(nsRsvp as any) || (nsRsvp as any).status !== "going") {
     sendError(res, "forbidden", "User does not have a Going RSVP for this event"); return;
   }
@@ -3933,7 +3933,7 @@ router.get("/events/:id/attendees", async (req, res) => {
       sc.from("profiles").select("id, handle, name, avatar_url").in("id", userIds),
       sc.from("event_attendee_states").select("user_id, checked_in_at, confirmed_at, no_show_at").eq("event_id", id).in("user_id", userIds),
     ]);
-    profiles = (profilesResult as any).data ?? [];
+    if ((statesResult as any).error) throw new EventAccessUnavailableError("event_attendee_states", (statesResult as any).error); if ((profilesResult as any).error) req.log?.warn({ err: (profilesResult as any).error, eventId: id }, "attendees: profiles unreadable — served without names"); profiles = (profilesResult as any).data ?? []; // wave 5 (event reads): unread states were "not checked in"
     states = (statesResult as any).data ?? [];
   }
 
@@ -3980,7 +3980,7 @@ router.post("/events/:id/memory", async (req, res) => {
   const ok = await isHostOrCoHost(sc, id, user.id) || await isGoingAttendee(sc, id, user.id);
   if (!ok) { sendError(res, "forbidden", "Only the host, co-hosts and Going attendees can save this event as a memory"); return; }
 
-  const { data: ev } = await sc.from("events").select("*").eq("id", id).maybeSingle();
+  const { data: ev, error: evErr } = await sc.from("events").select("*").eq("id", id).maybeSingle(); if (evErr) throw new EventAccessUnavailableError("events", evErr); // wave 5 (event reads): was 404
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
   if ((ev as any).state !== "completed") {
     sendError(res, "forbidden", "Only completed events can be converted to a memory"); return;
@@ -4025,11 +4025,11 @@ router.post("/events/:id/chat", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: ev } = await sc
+  const { data: ev, error: evErr } = await sc
     .from("events")
     .select("chat_thread_id, chat_enabled, title, host_id, state")
     .eq("id", id)
-    .maybeSingle();
+    .maybeSingle(); if (evErr) throw new EventAccessUnavailableError("events", evErr); // wave 5 (event reads): was 404
 
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
   if (!(ev as any).chat_enabled) { sendError(res, "forbidden", "Chat is disabled for this event"); return; }
@@ -4062,11 +4062,11 @@ router.post("/events/:id/chat/join", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: ev } = await sc
+  const { data: ev, error: evErr } = await sc
     .from("events")
     .select("chat_thread_id, chat_enabled, state, title")
     .eq("id", id)
-    .maybeSingle();
+    .maybeSingle(); if (evErr) throw new EventAccessUnavailableError("events", evErr); // wave 5 (event reads): was 404
 
   if (!ev) {
     sendError(res, "not_found", "Event not found"); return;
@@ -4079,7 +4079,7 @@ router.post("/events/:id/chat/join", async (req, res) => {
   const [rsvpResult, roleResult] = await Promise.all([
     sc.from("event_rsvps").select("status").eq("event_id", id).eq("user_id", user.id).maybeSingle(),
     getEventRole(sc, id, user.id),
-  ]);
+  ]); if ((rsvpResult as any).error) throw new EventAccessUnavailableError("event_rsvps", (rsvpResult as any).error); // wave 5 (event reads): was 403
 
   const hasGoingRsvp = (rsvpResult as any).data?.status === "going";
   const isStaff = roleResult === "host" || roleResult === "co_host";
@@ -4091,12 +4091,12 @@ router.post("/events/:id/chat/join", async (req, res) => {
   // Lazily create the thread on first join rather than 404'ing — most
   // events never have chat_thread_id set by the host explicitly, which
   // previously left every eligible attendee's "Event Chat" button dead.
-  let threadId: string | null = (ev as any).chat_thread_id ?? null;
+  let threadId: string | null = (ev as any).chat_thread_id ?? null; let chatUnread: unknown = null;
   if (!threadId) {
-    threadId = await createEventChatThread(sc, id, (ev as any).title, user.id);
+    threadId = await createEventChatThread(sc, id, (ev as any).title, user.id, (e) => { chatUnread = e; });
   }
   if (!threadId) {
-    sendError(res, "not_found", "Event chat not found"); return;
+    if (chatUnread) throw new EventAccessUnavailableError("events", chatUnread); sendError(res, "not_found", "Event chat not found"); return; // wave 5 (event reads): an unread winning thread was "not found"
   }
 
   await addUserToChatThread(sc, threadId, user.id);
@@ -4137,7 +4137,7 @@ router.post("/events/:id/updates", async (req, res) => {
       try {
         const recipients = await getAttendeeRecipients(sc, id);
         if (recipients.length > 0) {
-          const { data: ev } = await sc.from("events").select("title").eq("id", id).maybeSingle();
+          const { data: ev, error: evErr } = await sc.from("events").select("title").eq("id", id).maybeSingle(); if (evErr) req.log?.warn({ err: evErr, eventId: id }, "event-update push: title unreadable — sent as \"Event\"");
           await sendPushWithRetry(sc, recipients, {
             title: `Update: ${(ev as any)?.title ?? "Event"}`,
             body,
@@ -4290,12 +4290,12 @@ async function checkDuplicateEvent(
  *  a circle's id is its owner's user id, so the owner is always a member. */
 async function isCircleMember(sc: any, circleId: string, userId: string): Promise<boolean> {
   if (circleId === userId) return true;
-  const { data } = await sc
+  const { data, error } = await sc
     .from("circle_memberships")
     .select("other_id")
     .eq("user_id", circleId)
     .eq("other_id", userId)
-    .maybeSingle();
+    .maybeSingle(); if (error) throw new EventAccessUnavailableError("circle_memberships", error); // wave 5 (event reads): was "not a member" (403)
   return !!data;
 }
 
@@ -4307,7 +4307,7 @@ async function isTripEventMember(sc: any, tripId: string, userId: string): Promi
     .eq("trip_id", tripId)
     .eq("user_id", userId)
     .maybeSingle();
-  if (error || !data) return false;
+  if (error) throw new EventAccessUnavailableError("trip_members", error); if (!data) return false; // wave 5 (event reads): an unread membership was "not a member" (403)
   const row = data as { role: string; status?: string | null };
   const acceptedRoles = ["owner", "co_host", "member", "viewer"];
   if (!acceptedRoles.includes(row.role)) return false;
@@ -4319,13 +4319,13 @@ export async function canViewEvent(sc: any, ev: any, userId: string): Promise<bo
   return await readEventViewAccess(sc, ev, userId) === "allowed";
 }
 
-async function createEventChatThread(sc: any, eventId: string, title: string, hostId: string): Promise<string | null> {
+async function createEventChatThread(sc: any, eventId: string, title: string, hostId: string, onUnreadable?: (err: unknown) => void): Promise<string | null> {
   try {
     const chatEnabled = await isFlagEnabled(sc, "events_chat_enabled");
     if (!chatEnabled) return null;
 
     // Quick read: if a thread already exists, return it without touching anything.
-    const { data: ev0 } = await sc.from("events").select("chat_thread_id").eq("id", eventId).maybeSingle();
+    const { data: ev0, error: ev0Err } = await sc.from("events").select("chat_thread_id").eq("id", eventId).maybeSingle(); if (ev0Err) logger.warn({ err: ev0Err, eventId }, "event chat: existing-thread read failed — going to the conditional claim, which cannot overwrite a thread");
     if ((ev0 as any)?.chat_thread_id) return (ev0 as any).chat_thread_id as string;
 
     // Pre-generate the thread ID so we can commit it to events.chat_thread_id atomically
@@ -4347,7 +4347,7 @@ async function createEventChatThread(sc: any, eventId: string, title: string, ho
 
     if (claimedRows.length === 0) {
       // We lost the race — return the thread the winner already created.
-      const { data: ev1 } = await sc.from("events").select("chat_thread_id").eq("id", eventId).maybeSingle();
+      const { data: ev1, error: ev1Err } = await sc.from("events").select("chat_thread_id").eq("id", eventId).maybeSingle(); if (ev1Err) { logger.error({ err: ev1Err, eventId }, "event chat: lost the claim and the winning thread could not be read"); onUnreadable?.(ev1Err); return null; }
       return (ev1 as any)?.chat_thread_id ?? null;
     }
 
@@ -4424,7 +4424,7 @@ router.post("/events/:id/reviews", async (req, res) => {
   const parsed = ReviewSchema.safeParse(req.body);
   if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid input"); return; }
 
-  const { data: ev } = await sc.from("events").select("state, host_id").eq("id", id).maybeSingle();
+  const { data: ev, error: evErr } = await sc.from("events").select("state, host_id").eq("id", id).maybeSingle(); if (evErr) throw new EventAccessUnavailableError("events", evErr); // wave 5 (event reads): was 404
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
   if ((ev as any).state !== "completed") {
     sendError(res, "forbidden", "Reviews are only allowed after the event has completed"); return;
@@ -4434,13 +4434,13 @@ router.post("/events/:id/reviews", async (req, res) => {
   if ((ev as any).host_id === user.id) {
     sendError(res, "forbidden", "Hosts cannot review their own event"); return;
   }
-  const { data: attendeeState } = await sc
+  const { data: attendeeState, error: attendeeStateErr } = await sc
     .from("event_attendee_states")
     .select("confirmed_at")
     .eq("event_id", id)
     .eq("user_id", user.id)
     .not("confirmed_at", "is", null)
-    .maybeSingle();
+    .maybeSingle(); if (attendeeStateErr) throw new EventAccessUnavailableError("event_attendee_states", attendeeStateErr); // wave 5 (event reads): was 403 "Only confirmed attendees"
   if (!attendeeState) {
     sendError(res, "forbidden", "Only confirmed attendees can review this event"); return;
   }
@@ -4493,14 +4493,14 @@ router.post("/events/:id/reviews", async (req, res) => {
   }
 
   // Recompute average rating
-  const { data: allRatings } = await sc
+  const { data: allRatings, error: ratingsErr } = await sc
     .from("event_reviews")
     .select("rating")
-    .eq("event_id", id);
+    .eq("event_id", id); if (ratingsErr) req.log?.warn({ err: ratingsErr, eventId: id }, "review: ratings unreadable — avg_rating / review_count left as they were");
   const avg = allRatings && (allRatings as any[]).length > 0
     ? Math.round(((allRatings as any[]).reduce((s: number, r: any) => s + r.rating, 0) / (allRatings as any[]).length) * 10) / 10
     : parsed.data.rating;
-  await sc.from("events").update({ avg_rating: avg, review_count: ((allRatings as any[]) ?? []).length }).eq("id", id);
+  if (!ratingsErr) await sc.from("events").update({ avg_rating: avg, review_count: ((allRatings as any[]) ?? []).length }).eq("id", id);
 
   res.status(201).json({
     id:        (review as any).id,
@@ -4527,9 +4527,9 @@ router.get("/events/:id/reviews", async (req, res) => {
   // SEC-05: reviews inherit the event's visibility — gate exactly like the detail
   // route so a private/invite-only event's reviews aren't readable by anyone
   // holding the UUID.
-  const { data: ev } = await sc.from("events").select("*").eq("id", id).maybeSingle();
+  const { data: ev, error: evErr } = await sc.from("events").select("*").eq("id", id).maybeSingle(); if (evErr) throw new EventAccessUnavailableError("events", evErr); // wave 5 (event reads): was 404
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
-  if (!await canViewEvent(sc, ev as any, user.id)) { sendError(res, "not_found", "Event not found or access denied"); return; }
+  if (!await viewableOrThrow(sc, ev as any, user.id)) { sendError(res, "not_found", "Event not found or access denied"); return; }
   if (await isBlocked(sc, user.id, (ev as any).host_id)) { sendError(res, "not_found", "Event not found or access denied"); return; }
 
   const page  = Math.max(1, parseInt((req.query.page as string) ?? "1"));
@@ -4538,21 +4538,21 @@ router.get("/events/:id/reviews", async (req, res) => {
 
   const { data: reviews, error } = await sc
     .from("event_reviews")
-    .select("id, rating, body, anonymous, created_at, reviewer_id, profiles!reviewer_id(handle, display_name, avatar_url)")
+    .select("id, rating, body, anonymous, created_at, reviewer_id") // census-trust wave 5: the reviewer is read in step two, under the standing rule routes/reviews.ts applies (readEventReviewerProfiles)
     .eq("event_id", id)
     .order("created_at", { ascending: false })
     .range(offset, offset + limit - 1);
 
   if (error) { req.log.error({ err: error }, "get event reviews"); sendError(res, "db_error", error.message); return; }
-
+  const eventReviewers = await readEventReviewerProfiles(sc, (reviews as any[]) ?? []); if (!eventReviewers) { req.log.error("get event reviews: reviewer profiles unreadable"); sendError(res, "degraded_unavailable", "Reviewer profiles could not be read"); return; } const shownReviews = ((reviews as any[]) ?? []).filter((r: any) => eventReviewers.has(r.reviewer_id)).map((r: any) => ({ ...r, profiles: eventReviewers.get(r.reviewer_id) })); // census-trust wave 5: one batch; a reviewer not in good standing is withheld, as on reviews.ts
   // Universal display-name rule: reviewer names show only when opted in.
-  const reviewerIds = ((reviews as any[]) ?? [])
+  const reviewerIds = shownReviews
     .filter((r: any) => !r.anonymous)
     .map((r: any) => r.reviewer_id as string);
   const allowedReviewerNames = await nameVisibilitySet(sc, reviewerIds);
 
   res.json({
-    reviews: ((reviews as any[]) ?? []).map((r: any) => ({
+    reviews: shownReviews.map((r: any) => ({
       id:        r.id,
       rating:    r.rating,
       body:      r.body ?? null,
@@ -4630,7 +4630,7 @@ router.post("/events/:id/publish", async (req, res) => {
   const role = await getEventRole(sc, id, user.id);
   if (role !== "host") { sendError(res, "forbidden", "Only the host can publish this event"); return; }
 
-  const { data: ev } = await sc.from("events").select("*").eq("id", id).maybeSingle();
+  const { data: ev, error: evErr } = await sc.from("events").select("*").eq("id", id).maybeSingle(); if (evErr) throw new EventAccessUnavailableError("events", evErr); // wave 5 (event reads): was 404
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
 
   if ((ev as any).state !== "draft") {
@@ -4686,14 +4686,14 @@ router.post("/events/:id/publish", async (req, res) => {
   // Fire-and-forget: award first_event_hosted stamp on a user's very first published event
   void (async () => {
     try {
-      const { data: prior } = await sc
+      const { data: prior, error: priorErr } = await sc
         .from("events")
         .select("id")
         .eq("host_id", user.id)
         .eq("state", "open")
         .neq("id", id)
         .limit(1)
-        .maybeSingle();
+        .maybeSingle(); if (priorErr) { req.log?.warn({ err: priorErr, userId: user.id, eventId: id }, "first_event_hosted: prior-event check unavailable; skipping award"); return; } // wave 5 (event reads): an unread "prior event" awarded a FIRST-event bonus
       if (!prior) {
         await recordTrustEvent(sc, {
           userId: user.id,
@@ -4760,7 +4760,7 @@ router.post("/events/:id/cancel", async (req, res) => {
   const role = await getEventRole(sc, id, user.id);
   if (role !== "host") { sendError(res, "forbidden", "Only the host can cancel this event"); return; }
 
-  const { data: ev } = await sc.from("events").select("title, state, starts_at").eq("id", id).maybeSingle();
+  const { data: ev, error: evErr } = await sc.from("events").select("title, state, starts_at").eq("id", id).maybeSingle(); if (evErr) { sendError(res, "degraded_unavailable", "The event could not be read right now, so nothing was changed. Please try again."); return; } // a failed read answered 404 (wave 5)
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
 
   if ((ev as any).state === "cancelled") { res.json({ ok: true }); return; }
@@ -4792,7 +4792,7 @@ router.post("/events/:id/cancel", async (req, res) => {
       }
     } catch (err) {
       // resolves-not-throws-ok: fire-and-forget push — best-effort, logged.
-      req.log?.warn({ err, eventId: id }, "admin-cancel push notify failed");
+      req.log?.warn({ err, eventId: id }, "event-cancelled push notify failed"); // the HOST's POST /events/:id/cancel; it was mislabelled "admin-cancel"
     }
   })();
 
@@ -4815,7 +4815,7 @@ router.post("/events/:id/postpone", async (req, res) => {
   const role = await getEventRole(sc, id, user.id);
   if (role !== "host") { sendError(res, "forbidden", "Only the host can postpone this event"); return; }
 
-  const { data: ev } = await sc.from("events").select("title, state").eq("id", id).maybeSingle();
+  const { data: ev, error: evErr } = await sc.from("events").select("title, state").eq("id", id).maybeSingle(); if (evErr) throw new EventAccessUnavailableError("events", evErr); // wave 5 (event reads): was 404
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
   if (["cancelled","archived","completed"].includes((ev as any).state)) {
     sendError(res, "invalid_payload", "Cannot postpone an event in this state"); return;
@@ -4865,7 +4865,7 @@ router.post("/events/:id/complete", async (req, res) => {
     sendError(res, "forbidden", "Only host or co-host can mark event as complete"); return;
   }
 
-  const { data: ev } = await sc.from("events").select("state, title, host_id").eq("id", id).maybeSingle();
+  const { data: ev, error: evErr } = await sc.from("events").select("state, title, host_id").eq("id", id).maybeSingle(); if (evErr) throw new EventAccessUnavailableError("events", evErr); // wave 5 (event reads): was 404
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
 
   // Only active ("started") events can be marked completed
@@ -4898,11 +4898,11 @@ router.post("/events/:id/complete", async (req, res) => {
       }).catch(() => {});
 
       // Find all checked-in attendees via event_attendee_states (the canonical check-in table)
-      const { data: checkins } = await sc
+      const { data: checkins, error: checkinsErr } = await sc
         .from("event_attendee_states")
         .select("user_id")
         .eq("event_id", id)
-        .not("checked_in_at", "is", null);
+        .not("checked_in_at", "is", null); if (checkinsErr) req.log?.warn({ err: checkinsErr, eventId: id }, "complete: check-ins unreadable — attendee trust, stamps and review prompts not given");
       const checkinUserIds = ((checkins as any[]) ?? []).map((c: any) => c.user_id as string);
 
       if (checkinUserIds.length > 0) {
@@ -4923,8 +4923,8 @@ router.post("/events/:id/complete", async (req, res) => {
         // Send review-prompt push notifications to checked-in attendees (excluding host)
         const attendeeIds = checkinUserIds.filter((uid) => uid !== evData.host_id);
         if (attendeeIds.length > 0) {
-          const { data: profiles } = await sc.from("profiles").select("id, expo_push_token")
-            .in("id", attendeeIds).not("expo_push_token", "is", null);
+          const { data: profiles, error: profilesErr } = await sc.from("profiles").select("id, expo_push_token")
+            .in("id", attendeeIds).not("expo_push_token", "is", null); if (profilesErr) req.log?.warn({ err: profilesErr, eventId: id }, "complete: review-prompt tokens unreadable — not sent");
           const recipients = ((profiles as any[]) ?? [])
             .map((p: any) => ({ userId: p.id as string, tokens: [p.expo_push_token as string] }))
             .filter((r: any) => r.tokens[0]);
@@ -5011,9 +5011,9 @@ router.post("/events/:id/archive", async (req, res) => {
   // This route read no state at all and discarded the UPDATE's `.error`, so a
   // refused write answered {ok:true} and an already-archived / cancelled /
   // completed event was re-archived silently.
-  const { data: archEv } = await sc.from("events").select("state").eq("id", id).maybeSingle();
+  const { data: archEv, error: archErr } = await sc.from("events").select("state").eq("id", id).maybeSingle(); if (archErr) { sendError(res, "degraded_unavailable", "The event could not be read right now, so nothing was changed. Please try again."); return; } // a failed read answered 404 (wave 5)
   if (!archEv) { sendError(res, "not_found", "Event not found"); return; }
-  if ((archEv as any).state === "archived") { res.json({ ok: true }); return; }
+  if ((archEv as any).state === "archived") { res.json({ ok: true }); return; } const archHold = await refuseHostWriteUnderModeration(sc, id, { visibility: false, stateFrom: (archEv as any).state }); if (!archHold.ok) { sendError(res, archHold.code, archHold.message); return; } // a moderator's cancel holds until restored: archiving it made the cancel irreversible (wave 5)
   const archiveWrite = await writeEventState(sc, id, (archEv as any).state, "archived");
   if (!archiveWrite.ok) { sendError(res, archiveWrite.code, archiveWrite.message); return; }
   await logEventActivity(sc, id, user.id, "archived", {});
@@ -5038,7 +5038,7 @@ router.post("/events/:id/close-rsvps", async (req, res) => {
     sendError(res, "forbidden", "Only host or co-host can close RSVPs"); return;
   }
 
-  const { data: ev } = await sc.from("events").select("id").eq("id", id).maybeSingle();
+  const { data: ev, error: evErr } = await sc.from("events").select("id").eq("id", id).maybeSingle(); if (evErr) throw new EventAccessUnavailableError("events", evErr); // wave 5 (event reads): was 404
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
 
   await sc.from("events").update({ rsvp_closed: true, updated_at: new Date().toISOString() }).eq("id", id);
@@ -5064,7 +5064,7 @@ router.post("/events/:id/reopen-rsvps", async (req, res) => {
     sendError(res, "forbidden", "Only host or co-host can reopen RSVPs"); return;
   }
 
-  const { data: ev } = await sc.from("events").select("id").eq("id", id).maybeSingle();
+  const { data: ev, error: evErr } = await sc.from("events").select("id").eq("id", id).maybeSingle(); if (evErr) throw new EventAccessUnavailableError("events", evErr); // wave 5 (event reads): was 404
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
 
   await sc.from("events").update({ rsvp_closed: false, updated_at: new Date().toISOString() }).eq("id", id);
@@ -5123,7 +5123,7 @@ router.delete("/events/:id/attendees/:userId", async (req, res) => {
   if (!await canManageAttendance(sc, id, user.id)) {
     sendError(res, "forbidden", "Only host/moderator can remove attendees"); return;
   }
-
+  const { data: removedRsvp, error: removedRsvpErr } = await sc.from("event_rsvps").select("status").eq("event_id", id).eq("user_id", userId).maybeSingle(); if (removedRsvpErr) throw new EventAccessUnavailableError("event_rsvps", removedRsvpErr); // wave 5 follow-up B2: only a removed GOING seat promotes or holds; an unread prior status is 503, never a default
   await sc.from("event_rsvps").delete().eq("event_id", id).eq("user_id", userId);
 
   const going = await getGoingCount(sc, id);
@@ -5132,18 +5132,18 @@ router.delete("/events/:id/attendees/:userId", async (req, res) => {
 
   // Promote BEFORE syncing state so the freed seat is reserved by an active
   // offer (see DELETE /rsvp) — otherwise syncEventState reopens to a walk-in.
-  const waitlistEnabled = await isFlagEnabled(sc, "events_waitlist_enabled");
-  if (waitlistEnabled) await promoteNextWaitlisted(sc, id, req);
-  await syncEventState(sc, id);
+  const waitlistFlag = (removedRsvp as any)?.status === "going" ? await readWaitlistFlagForFreedSeat(sc, id, req) : null; let seatHeld: boolean | "offered" = waitlistFlag === "unknown";
+  if (waitlistFlag === "on") seatHeld = freedSeatAfterPromotion(await promoteNextWaitlisted(sc, id, req), id, req);
+  await syncEventState(sc, id, seatHeld);
 
-  const { data: ev } = await sc.from("events").select("chat_thread_id").eq("id", id).maybeSingle();
+  const { data: ev, error: attChatErr } = await sc.from("events").select("chat_thread_id").eq("id", id).maybeSingle(); if (attChatErr) req.log?.error({ err: attChatErr, eventId: id, userId }, "attendee removal: the event chat could not be read — they were not removed from it");
   if ((ev as any)?.chat_thread_id) {
     await removeUserFromChatThread(sc, (ev as any).chat_thread_id, userId);
   }
 
   await logEventActivity(sc, id, user.id, "attendee_removed", { targetUserId: userId });
 
-  res.json({ ok: true });
+  res.json(attChatErr ? { ok: true, chatRemoved: false } : { ok: true }); // wave 5 (event reads): not a bare ok over an unread chat
 });
 
 // ── POST /api/events/:id/join-request ─────────────────────────────────────────
@@ -5160,7 +5160,7 @@ router.post("/events/:id/join-request", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: ev } = await sc.from("events").select("visibility, state, host_id, title").eq("id", id).maybeSingle();
+  const { data: ev, error: evErr } = await sc.from("events").select("visibility, state, host_id, title").eq("id", id).maybeSingle(); if (evErr) throw new EventAccessUnavailableError("events", evErr); // wave 5 (event reads): was 404
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
   if ((ev as any).visibility !== "invite_only") { sendError(res, "forbidden", "This event does not require a join request"); return; }
   if (!["open","full","waitlist"].includes((ev as any).state)) { sendError(res, "forbidden", "Event is not accepting requests"); return; }
@@ -5175,7 +5175,7 @@ router.post("/events/:id/join-request", async (req, res) => {
 
   void (async () => {
     try {
-      const { data: hp } = await sc.from("profiles").select("expo_push_token").eq("id", (ev as any).host_id).maybeSingle();
+      const { data: hp, error: hpErr } = await sc.from("profiles").select("expo_push_token").eq("id", (ev as any).host_id).maybeSingle(); if (hpErr) req.log?.warn({ err: hpErr, eventId: id }, "join-request push: host token unreadable — not sent");
       if ((hp as any)?.expo_push_token) {
         await sendPushWithRetry(sc, { userId: (ev as any).host_id, tokens: [(hp as any).expo_push_token] }, {
           title: "New join request",
@@ -5209,13 +5209,13 @@ router.post("/events/:id/join-requests/:requestId/approve", async (req, res) => 
     sendError(res, "forbidden", "Only host/moderator can approve join requests"); return;
   }
 
-  const { data: jr } = await sc.from("event_join_requests").select("*").eq("id", requestId).eq("event_id", id).maybeSingle();
+  const { data: jr, error: jrErr } = await sc.from("event_join_requests").select("*").eq("id", requestId).eq("event_id", id).maybeSingle(); if (jrErr) throw new EventAccessUnavailableError("event_join_requests", jrErr); // wave 5 (event reads): was 404
   if (!jr) { sendError(res, "not_found", "Join request not found"); return; }
   if ((jr as any).status !== "pending") { sendError(res, "invalid_payload", "Request is no longer pending"); return; }
 
   const targetId = (jr as any).user_id;
 
-  const { data: evFull } = await sc.from("events").select("*").eq("id", id).maybeSingle();
+  const { data: evFull, error: evFullErr } = await sc.from("events").select("*").eq("id", id).maybeSingle(); if (evFullErr) throw new EventAccessUnavailableError("events", evFullErr); // wave 5 (event reads): was 404
   if (!evFull) { sendError(res, "not_found", "Event not found"); return; }
 
   const approveElig = await checkEventEligibility(sc, evFull as any, targetId);
@@ -5232,7 +5232,7 @@ router.post("/events/:id/join-requests/:requestId/approve", async (req, res) => 
   // with waitlisting DISABLED fell through and seated an attendee past
   // max_attendees. The legacy sibling PATCH /events/:id/requests/:userId
   // already nests it this way.
-  if (maxAtt != null && currentGoing >= maxAtt) {
+  if (maxAtt != null && (currentGoing >= maxAtt || freeSeatHeldForQueue(evFull))) { // wave 5 follow-up B3: a seat a live offer reserves, or one held for the queue, is not free to an approval (freeSeatHeldForQueue)
     if ((evFull as any).waitlist_enabled) {
       const seated = await addToEventWaitlist(sc, id, targetId);
       if (!seated.ok) { sendWaitlistUnavailable(req, res, id, "join-requests:approve"); return; }
@@ -5284,7 +5284,7 @@ router.post("/events/:id/join-requests/:requestId/decline", async (req, res) => 
     sendError(res, "forbidden", "Only host/moderator can decline join requests"); return;
   }
 
-  const { data: jr } = await sc.from("event_join_requests").select("user_id, status").eq("id", requestId).eq("event_id", id).maybeSingle();
+  const { data: jr, error: jrErr } = await sc.from("event_join_requests").select("user_id, status").eq("id", requestId).eq("event_id", id).maybeSingle(); if (jrErr) throw new EventAccessUnavailableError("event_join_requests", jrErr); // wave 5 (event reads): was 404
   if (!jr) { sendError(res, "not_found", "Join request not found"); return; }
 
   await sc.from("event_join_requests").update({ status: "denied", reviewed_by: user.id, reviewed_at: new Date().toISOString() }).eq("id", requestId);
@@ -5307,8 +5307,8 @@ router.post("/events/:id/join-requests/:requestId/cancel", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: jr } = await sc.from("event_join_requests")
-    .select("user_id, status").eq("id", requestId).eq("event_id", id).maybeSingle();
+  const { data: jr, error: jrErr } = await sc.from("event_join_requests")
+    .select("user_id, status").eq("id", requestId).eq("event_id", id).maybeSingle(); if (jrErr) throw new EventAccessUnavailableError("event_join_requests", jrErr); // wave 5 (event reads): was 404
   if (!jr) { sendError(res, "not_found", "Join request not found"); return; }
   if ((jr as any).user_id !== user.id) { sendError(res, "forbidden", "Can only cancel your own request"); return; }
   if ((jr as any).status !== "pending") { sendError(res, "invalid_payload", "Only pending requests can be cancelled"); return; }
@@ -5352,11 +5352,11 @@ router.post("/events/:id/invite", async (req, res) => {
   void (async () => {
     try {
       const [evData, inviteeProfile, inviterProfile] = await Promise.all([
-        sc.from("events").select("title").eq("id", id).maybeSingle(),
+        null, // wave 5 (event reads): the event title was read here and never used (the push names no event) — no read, nothing discarded
         sc.from("profiles").select("expo_push_token").eq("id", inviteeId).maybeSingle(),
         sc.from("profiles").select("handle").eq("id", user.id).maybeSingle(),
       ]);
-      if ((inviteeProfile as any).data?.expo_push_token) {
+      if ((inviteeProfile as any).error) req.log?.warn({ err: (inviteeProfile as any).error, eventId: id }, "invite push: invitee token unreadable — not sent"); if ((inviteeProfile as any).data?.expo_push_token) {
         await sendPushWithRetry(sc, { userId: inviteeId, tokens: [(inviteeProfile as any).data.expo_push_token] }, {
           title: "You're invited!",
           // Privacy: do not expose the event name on the lock screen — the
@@ -5371,7 +5371,7 @@ router.post("/events/:id/invite", async (req, res) => {
       // sent above via sendPushWithRetry to avoid double-delivery.
       const { NotificationService } = await import("../services/notifications/NotificationService.js");
       const notifSvc = new NotificationService(sc);
-      const inviterHandle = (inviterProfile as any).data?.handle;
+      if ((inviterProfile as any).error) req.log?.warn({ err: (inviterProfile as any).error, eventId: id }, "invite notification: inviter handle unreadable — named \"Someone\""); const inviterHandle = (inviterProfile as any).data?.handle;
       const actorName = inviterHandle ? `@${inviterHandle}` : "Someone";
       await notifSvc.create({
         userId:     inviteeId,
@@ -5403,7 +5403,7 @@ router.post("/events/:id/invites/:inviteId/accept", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: invite } = await sc.from("event_invites").select("*").eq("id", inviteId).eq("event_id", id).maybeSingle();
+  const { data: invite, error: inviteErr } = await sc.from("event_invites").select("*").eq("id", inviteId).eq("event_id", id).maybeSingle(); if (inviteErr) throw new EventAccessUnavailableError("event_invites", inviteErr); // wave 5 (event reads): was 404
   if (!invite) { sendError(res, "not_found", "Invite not found"); return; }
   if ((invite as any).invitee_id !== user.id) { sendError(res, "forbidden", "This invite is not for you"); return; }
   if ((invite as any).status !== "pending") { sendError(res, "invalid_payload", "Invite is no longer pending"); return; }
@@ -5465,7 +5465,7 @@ router.post("/events/:id/invites/:inviteId/decline", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: invite } = await sc.from("event_invites").select("invitee_id, status").eq("id", inviteId).eq("event_id", id).maybeSingle();
+  const { data: invite, error: inviteErr } = await sc.from("event_invites").select("invitee_id, status").eq("id", inviteId).eq("event_id", id).maybeSingle(); if (inviteErr) throw new EventAccessUnavailableError("event_invites", inviteErr); // wave 5 (event reads): was 404
   if (!invite) { sendError(res, "not_found", "Invite not found"); return; }
   if ((invite as any).invitee_id !== user.id) { sendError(res, "forbidden", "This invite is not for you"); return; }
 
@@ -5486,7 +5486,7 @@ router.get("/events/:id/cohosts", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: ev } = await sc.from("events").select("host_id, state").eq("id", id).maybeSingle();
+  const { data: ev, error: evErr } = await sc.from("events").select("host_id, state").eq("id", id).maybeSingle(); if (evErr) throw new EventAccessUnavailableError("events", evErr); // wave 5 (event reads): was 404
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
 
   // Visible to host, co-hosts, and moderators only
@@ -5594,7 +5594,7 @@ router.patch("/events/:id/cohosts/:userId/permissions", async (req, res) => {
     post_updates:  z.boolean().optional(),
   }).parse(req.body.permissions ?? req.body);
 
-  const { data: existing } = await sc.from("event_cohosts").select("permissions").eq("event_id", id).eq("user_id", userId).maybeSingle();
+  const { data: existing, error: existingErr } = await sc.from("event_cohosts").select("permissions").eq("event_id", id).eq("user_id", userId).maybeSingle(); if (existingErr) throw new EventAccessUnavailableError("event_cohosts", existingErr); // wave 5 (event reads): was 404 — and the merge below wrote from it
   if (!existing) { sendError(res, "not_found", "Co-host not found"); return; }
 
   const merged = { ...((existing as any).permissions ?? {}), ...permissions };
@@ -5621,7 +5621,7 @@ router.post("/events/:id/save", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: ev } = await sc.from("events").select("id, state").eq("id", id).maybeSingle();
+  const { data: ev, error: evErr } = await sc.from("events").select("id, state").eq("id", id).maybeSingle(); if (evErr) throw new EventAccessUnavailableError("events", evErr); // wave 5 (event reads): was 404
   if (!ev || ["cancelled","archived"].includes((ev as any).state)) {
     sendError(res, "not_found", "Event not found"); return;
   }
@@ -5720,15 +5720,15 @@ router.get("/events/:id/posts", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: ev } = await sc.from("events").select("state, visibility, host_id").eq("id", id).maybeSingle();
+  const { data: ev, error: evErr } = await sc.from("events").select("state, visibility, host_id").eq("id", id).maybeSingle(); if (evErr) throw new EventAccessUnavailableError("events", evErr); // wave 5 (event reads): was 404
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
 
   // Posts are participant-scoped: host/cohost or going/maybe attendees only.
   const role = await getEventRole(sc, id, user.id);
   const isStaff = role === "host" || role === "co_host";
   if (!isStaff) {
-    const { data: rsvp } = await sc.from("event_rsvps").select("status")
-      .eq("event_id", id).eq("user_id", user.id).maybeSingle();
+    const { data: rsvp, error: rsvpErr } = await sc.from("event_rsvps").select("status")
+      .eq("event_id", id).eq("user_id", user.id).maybeSingle(); if (rsvpErr) throw new EventAccessUnavailableError("event_rsvps", rsvpErr); // wave 5 (event reads): was 403
     if (!rsvp || !["going","maybe"].includes((rsvp as any).status)) {
       sendError(res, "forbidden", "Posts are only visible to event participants"); return;
     }
@@ -5749,7 +5749,7 @@ router.get("/events/:id/posts", async (req, res) => {
   const authorIds = [...new Set(((posts as any[]) ?? []).map((p: any) => p.author_id as string))];
   let authorMap: Record<string, any> = {};
   if (authorIds.length > 0) {
-    const { data: profiles } = await sc.from("profiles").select("id, handle, name, avatar_url").in("id", authorIds);
+    const { data: profiles, error: profilesErr } = await sc.from("profiles").select("id, handle, name, avatar_url").in("id", authorIds); if (profilesErr) req.log?.warn({ err: profilesErr, eventId: id }, "event posts: author profiles unreadable — served without authors");
     const allowedAuthors = await nameVisibilitySet(sc, authorIds); for (const p of (profiles as any[]) ?? []) authorMap[p.id as string] = sanitizeIdentity(p, allowedAuthors, user.id);
   }
 
@@ -5785,14 +5785,14 @@ router.post("/events/:id/posts", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: ev } = await sc.from("events").select("state, host_id, attendee_comments_enabled").eq("id", id).maybeSingle();
+  const { data: ev, error: evErr } = await sc.from("events").select("state, host_id, attendee_comments_enabled").eq("id", id).maybeSingle(); if (evErr) throw new EventAccessUnavailableError("events", evErr); // wave 5 (event reads): was 404
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
 
   const isStaff = await isHostOrCoHost(sc, id, user.id);
   if (!isStaff) {
     // Attendees can only post if attendee_comments_enabled and they have a Going RSVP
     if (!(ev as any).attendee_comments_enabled) { sendError(res, "forbidden", "Posting is restricted to host/co-host"); return; }
-    const { data: rsvp } = await sc.from("event_rsvps").select("status").eq("event_id", id).eq("user_id", user.id).maybeSingle();
+    const { data: rsvp, error: rsvpErr } = await sc.from("event_rsvps").select("status").eq("event_id", id).eq("user_id", user.id).maybeSingle(); if (rsvpErr) throw new EventAccessUnavailableError("event_rsvps", rsvpErr); // wave 5 (event reads): was 403
     if ((rsvp as any)?.status !== "going") { sendError(res, "forbidden", "Only Going attendees can post"); return; }
   }
 
@@ -5829,15 +5829,15 @@ router.get("/events/:id/media", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: ev } = await sc.from("events").select("state, visibility, host_id").eq("id", id).maybeSingle();
+  const { data: ev, error: evErr } = await sc.from("events").select("state, visibility, host_id").eq("id", id).maybeSingle(); if (evErr) throw new EventAccessUnavailableError("events", evErr); // wave 5 (event reads): was 404
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
 
   // Media is participant-scoped: host/cohost or going/maybe attendees only.
   const mediaRole = await getEventRole(sc, id, user.id);
   const isMediaStaff = mediaRole === "host" || mediaRole === "co_host";
   if (!isMediaStaff) {
-    const { data: mediaRsvp } = await sc.from("event_rsvps").select("status")
-      .eq("event_id", id).eq("user_id", user.id).maybeSingle();
+    const { data: mediaRsvp, error: mediaRsvpErr } = await sc.from("event_rsvps").select("status")
+      .eq("event_id", id).eq("user_id", user.id).maybeSingle(); if (mediaRsvpErr) throw new EventAccessUnavailableError("event_rsvps", mediaRsvpErr); // wave 5 (event reads): was 403
     if (!mediaRsvp || !["going","maybe"].includes((mediaRsvp as any).status)) {
       sendError(res, "forbidden", "Media is only visible to event participants"); return;
     }
@@ -5870,13 +5870,13 @@ router.post("/events/:id/media", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: ev } = await sc.from("events").select("state, host_id").eq("id", id).maybeSingle();
+  const { data: ev, error: evErr } = await sc.from("events").select("state, host_id").eq("id", id).maybeSingle(); if (evErr) throw new EventAccessUnavailableError("events", evErr); // wave 5 (event reads): was 404
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
 
   // Must be going or staff to upload media
   const isStaff = await isHostOrCoHost(sc, id, user.id);
   if (!isStaff) {
-    const { data: rsvp } = await sc.from("event_rsvps").select("status").eq("event_id", id).eq("user_id", user.id).maybeSingle();
+    const { data: rsvp, error: rsvpErr } = await sc.from("event_rsvps").select("status").eq("event_id", id).eq("user_id", user.id).maybeSingle(); if (rsvpErr) throw new EventAccessUnavailableError("event_rsvps", rsvpErr); // wave 5 (event reads): was 403
     if ((rsvp as any)?.status !== "going") { sendError(res, "forbidden", "Only Going attendees can upload media"); return; }
   }
 
@@ -5928,15 +5928,15 @@ router.get("/events/:id/comments", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: ev } = await sc.from("events").select("visibility, host_id, state").eq("id", id).maybeSingle();
+  const { data: ev, error: evErr } = await sc.from("events").select("visibility, host_id, state").eq("id", id).maybeSingle(); if (evErr) throw new EventAccessUnavailableError("events", evErr); // wave 5 (event reads): was 404
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
 
   // Comments/updates are participant-scoped: host/cohost or going/maybe attendees only.
   const commRole = await getEventRole(sc, id, user.id);
   const isCommStaff = commRole === "host" || commRole === "co_host";
   if (!isCommStaff) {
-    const { data: commRsvp } = await sc.from("event_rsvps").select("status")
-      .eq("event_id", id).eq("user_id", user.id).maybeSingle();
+    const { data: commRsvp, error: commRsvpErr } = await sc.from("event_rsvps").select("status")
+      .eq("event_id", id).eq("user_id", user.id).maybeSingle(); if (commRsvpErr) throw new EventAccessUnavailableError("event_rsvps", commRsvpErr); // wave 5 (event reads): was 403
     if (!commRsvp || !["going","maybe"].includes((commRsvp as any).status)) {
       sendError(res, "forbidden", "Comments are only visible to event participants"); return;
     }
@@ -5971,11 +5971,11 @@ router.post("/events/:id/comments", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: ev } = await sc
+  const { data: ev, error: evErr } = await sc
     .from("events")
     .select("host_id, state, attendee_comments_enabled")
     .eq("id", id)
-    .maybeSingle();
+    .maybeSingle(); if (evErr) throw new EventAccessUnavailableError("events", evErr); // wave 5 (event reads): was 404
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
 
   // Only host/cohosts or going attendees may post
@@ -5985,9 +5985,9 @@ router.post("/events/:id/comments", async (req, res) => {
     if (!(ev as any).attendee_comments_enabled) {
       sendError(res, "forbidden", "Comments are disabled for this event"); return;
     }
-    const { data: rsvp } = await sc
+    const { data: rsvp, error: rsvpErr } = await sc
       .from("event_rsvps").select("status")
-      .eq("event_id", id).eq("user_id", user.id).maybeSingle();
+      .eq("event_id", id).eq("user_id", user.id).maybeSingle(); if (rsvpErr) throw new EventAccessUnavailableError("event_rsvps", rsvpErr); // wave 5 (event reads): was 403
     if (!rsvp || (rsvp as any).status !== "going") {
       sendError(res, "forbidden", "Only going attendees can post comments"); return;
     }
@@ -6026,7 +6026,7 @@ router.post("/events/:id/report", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: ev } = await sc.from("events").select("id").eq("id", id).maybeSingle();
+  const { data: ev, error: evErr } = await sc.from("events").select("id").eq("id", id).maybeSingle(); if (evErr) throw new EventAccessUnavailableError("events", evErr); // wave 5 (event reads): was 404
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
 
   const parsed = z.object({
@@ -6068,7 +6068,7 @@ router.post("/events/:id/report-user/:userId", async (req, res) => {
 
   if (userId === user.id) { sendError(res, "invalid_payload", "Cannot report yourself"); return; }
 
-  const { data: ev } = await sc.from("events").select("id").eq("id", id).maybeSingle();
+  const { data: ev, error: evErr } = await sc.from("events").select("id").eq("id", id).maybeSingle(); if (evErr) throw new EventAccessUnavailableError("events", evErr); // wave 5 (event reads): was 404
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
 
   const parsed = z.object({
@@ -6124,8 +6124,8 @@ router.post("/events/:id/block-user/:userId", async (req, res) => {
 
   await syncEventState(sc, id);
   const going = await getGoingCount(sc, id);
-  const { data: wlAfter } = await sc.from("event_waitlist").select("user_id").eq("event_id", id);
-  await sc.from("events").update({ going_count: going ?? undefined, waitlist_count: ((wlAfter as any[]) ?? []).length }).eq("id", id);
+  const { data: wlAfter, error: wlAfterErr } = await sc.from("event_waitlist").select("user_id").eq("event_id", id); if (wlAfterErr) req.log?.warn({ err: wlAfterErr, eventId: id }, "block-user: queue recount unreadable — waitlist_count left as it was");
+  await sc.from("events").update({ going_count: going ?? undefined, waitlist_count: wlAfterErr ? undefined : ((wlAfter as any[]) ?? []).length }).eq("id", id);
   await syncAttendee(sc, id, userId, null);
 
   await logEventActivity(sc, id, user.id, "user_blocked", { targetUserId: userId });
@@ -6232,7 +6232,7 @@ router.post("/events/:id/reminders", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: ev } = await sc.from("events").select("id, state").eq("id", id).maybeSingle();
+  const { data: ev, error: evErr } = await sc.from("events").select("id, state").eq("id", id).maybeSingle(); if (evErr) throw new EventAccessUnavailableError("events", evErr); // wave 5 (event reads): was 404
   if (!ev || ["cancelled","archived"].includes((ev as any).state)) {
     sendError(res, "not_found", "Event not found"); return;
   }
@@ -6277,8 +6277,8 @@ router.patch("/events/:id/reminders/:reminderId", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: existing } = await sc.from("event_reminders").select("user_id")
-    .eq("id", reminderId).eq("event_id", id).maybeSingle();
+  const { data: existing, error: existingErr } = await sc.from("event_reminders").select("user_id")
+    .eq("id", reminderId).eq("event_id", id).maybeSingle(); if (existingErr) throw new EventAccessUnavailableError("event_reminders", existingErr); // wave 5 (event reads): was 404
   if (!existing) { sendError(res, "not_found", "Reminder not found"); return; }
   if ((existing as any).user_id !== user.id) { sendError(res, "forbidden", "Not your reminder"); return; }
 
@@ -6318,8 +6318,8 @@ router.delete("/events/:id/reminders/:reminderId", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: existing } = await sc.from("event_reminders").select("user_id")
-    .eq("id", reminderId).eq("event_id", id).maybeSingle();
+  const { data: existing, error: existingErr } = await sc.from("event_reminders").select("user_id")
+    .eq("id", reminderId).eq("event_id", id).maybeSingle(); if (existingErr) throw new EventAccessUnavailableError("event_reminders", existingErr); // wave 5 (event reads): was 404
   if (!existing) { sendError(res, "not_found", "Reminder not found"); return; }
   if ((existing as any).user_id !== user.id) { sendError(res, "forbidden", "Not your reminder"); return; }
 
@@ -6347,11 +6347,11 @@ router.post("/events/:id/add-to-trip", async (req, res) => {
   const { tripId } = parsed.data;
 
   // Fetch the full event row so canViewEvent has all visibility/circle/trip fields
-  const { data: ev } = await sc.from("events").select("*").eq("id", id).maybeSingle();
+  const { data: ev, error: evErr } = await sc.from("events").select("*").eq("id", id).maybeSingle(); if (evErr) throw new EventAccessUnavailableError("events", evErr); // wave 5 (event reads): was 404
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
 
   // Enforce event visibility — caller must be permitted to see this event
-  const canView = await canViewEvent(sc, ev as any, user.id);
+  const canView = await viewableOrThrow(sc, ev as any, user.id);
   if (!canView) { sendError(res, "not_found", "Event not found"); return; }
 
   if (["cancelled", "archived"].includes((ev as any).state)) {
@@ -6359,8 +6359,8 @@ router.post("/events/:id/add-to-trip", async (req, res) => {
   }
 
   // Verify user is an accepted trip member (owner or member)
-  const { data: membership } = await sc.from("trip_members").select("role")
-    .eq("trip_id", tripId).eq("user_id", user.id).maybeSingle();
+  const { data: membership, error: membershipErr } = await sc.from("trip_members").select("role")
+    .eq("trip_id", tripId).eq("user_id", user.id).maybeSingle(); if (membershipErr) throw new EventAccessUnavailableError("trip_members", membershipErr); // wave 5 (event reads): was 403
   if (!membership || !["owner", "member"].includes((membership as any).role)) {
     sendError(res, "forbidden", "You must be an accepted trip member to add events"); return;
   } if (await refuseTripActionIfRestricted(res, sc, tripId, user.id, "change_shared_plan")) return; // census-trips §85 (lead ruling D-24/D-24a): adding to a group trip's plan is hosting it
@@ -6524,10 +6524,10 @@ router.post("/events/:id/link-circle", async (req, res) => {
 
   const patch: Record<string, any> = { circle_id: circleId, updated_at: new Date().toISOString() };
   if (setCircleVisibility) patch.visibility = "circle";
-
-  const { error: patchErr } = await sc.from("events").update(patch).eq("id", id);
-  if (patchErr) { sendError(res, "db_error", patchErr.message); return; }
-
+  let lcGuard: HostVisibilityGuard | null = null; if (setCircleVisibility) { const { data: lcEv, error: lcErr } = await sc.from("events").select("visibility, updated_at").eq("id", id).maybeSingle(); if (lcErr) { sendError(res, "degraded_unavailable", "The event could not be read right now, so nothing was changed. Please try again."); return; } if (!lcEv) { sendError(res, "not_found", "Event not found"); return; } if ((lcEv as any).visibility !== "circle") { const held = await refuseHostWriteUnderModeration(sc, id, { visibility: true, stateFrom: null }); if (!held.ok) { sendError(res, held.code, held.message); return; } lcGuard = { from: (lcEv as any).visibility, updatedAt: (lcEv as any).updated_at }; } } // the moderation hold, as PATCH (wave 5)
+  const { data: linked, error: patchErr } = await guardHostVisibilityWrite(sc.from("events").update(patch).eq("id", id), lcGuard).select("id");
+  if (patchErr) { sendError(res, "db_error", patchErr.message); return; } if (lcGuard && (!Array.isArray(linked) || linked.length === 0)) { sendError(res, "conflict", "The event changed while this request was in flight (it may have been moderated) — reload and try again"); return; }
+  if (lcGuard) { const rec = await recordHostVisibilityChange(sc, { eventId: id, actorId: user.id, from: lcGuard.from, to: "circle", via: "link-circle" }); if (rec.error) req.log.error({ err: rec.error, eventId: id }, "host visibility change: its record (visibility_changed) could not be written — the change stands unrecorded"); }
   await logEventActivity(sc, id, user.id, "circle_linked", { circleId });
 
   res.json({ ok: true, circleId });
@@ -6553,9 +6553,9 @@ router.post("/events/:id/telegraph-thread", async (req, res) => {
     sendError(res, "forbidden", "Only host or co-host can manage the event chat"); return;
   }
 
-  const { data: ev } = await sc.from("events")
+  const { data: ev, error: evErr } = await sc.from("events")
     .select("title, state, host_id, chat_enabled, chat_thread_id, starts_at, city, visibility")
-    .eq("id", id).maybeSingle();
+    .eq("id", id).maybeSingle(); if (evErr) throw new EventAccessUnavailableError("events", evErr); // wave 5 (event reads): was 404
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
 
   if (!(ev as any).chat_enabled) {
@@ -6569,8 +6569,8 @@ router.post("/events/:id/telegraph-thread", async (req, res) => {
   // Sync all current Going attendees into the thread, skipping blocked users (fire-and-forget)
   void (async () => {
     try {
-      const { data: goingRsvps } = await sc.from("event_rsvps").select("user_id")
-        .eq("event_id", id).eq("status", "going");
+      const { data: goingRsvps, error: goingErr } = await sc.from("event_rsvps").select("user_id")
+        .eq("event_id", id).eq("status", "going"); if (goingErr) { req.log?.warn({ err: goingErr, eventId: id, threadId }, "event chat attendee sync: going RSVPs unreadable — nobody synced"); return; }
       for (const r of (goingRsvps as any[]) ?? []) {
         const uid = (r as any).user_id as string;
         // Skip attendees who are blocking or blocked by the host
@@ -6652,19 +6652,19 @@ router.get("/events/:id/agenda-items", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: ev } = await sc.from("events").select("host_id").eq("id", id).maybeSingle();
+  const { data: ev, error: evErr } = await sc.from("events").select("host_id").eq("id", id).maybeSingle(); if (evErr) throw new EventAccessUnavailableError("events", evErr); // wave 5 (event reads): was 404
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
 
   // Allow host/co-host and going/maybe RSVP'd attendees; 403 for outsiders
   const isStaff = await isHostOrCoHost(sc, id, user.id);
   if (!isStaff) {
-    const { data: rsvp } = await sc
+    const { data: rsvp, error: rsvpErr } = await sc
       .from("event_rsvps")
       .select("status")
       .eq("event_id", id)
       .eq("user_id", user.id)
       .in("status", ["going", "maybe"])
-      .maybeSingle();
+      .maybeSingle(); if (rsvpErr) throw new EventAccessUnavailableError("event_rsvps", rsvpErr); // wave 5 (event reads): was 403
     if (!rsvp) {
       sendError(res, "forbidden", "Must be a host or going/maybe attendee to view agenda items");
       return;
@@ -6699,19 +6699,19 @@ router.post("/events/:id/agenda-items", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: ev } = await sc.from("events").select("state, host_id").eq("id", id).maybeSingle();
+  const { data: ev, error: evErr } = await sc.from("events").select("state, host_id").eq("id", id).maybeSingle(); if (evErr) throw new EventAccessUnavailableError("events", evErr); // wave 5 (event reads): was 404
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
 
   // Allow hosts/co-hosts and going/maybe attendees to add agenda items
   const isStaff = await isHostOrCoHost(sc, id, user.id);
   if (!isStaff) {
-    const { data: rsvp } = await sc
+    const { data: rsvp, error: rsvpErr } = await sc
       .from("event_rsvps")
       .select("status")
       .eq("event_id", id)
       .eq("user_id", user.id)
       .in("status", ["going", "maybe"])
-      .maybeSingle();
+      .maybeSingle(); if (rsvpErr) throw new EventAccessUnavailableError("event_rsvps", rsvpErr); // wave 5 (event reads): was 403
     if (!rsvp) {
       sendError(res, "forbidden", "Must be a host or going/maybe attendee to add agenda items");
       return;
@@ -6772,11 +6772,11 @@ async function sendEventNotification(
 ): Promise<void> {
   if (!recipientUserIds.length) return;
   try {
-    const { data: profiles } = await sc
+    const { data: profiles, error: profilesErr } = await sc
       .from("profiles")
       .select("id, expo_push_token")
       .in("id", recipientUserIds)
-      .not("expo_push_token", "is", null);
+      .not("expo_push_token", "is", null); if (profilesErr) { logger.warn({ err: profilesErr, eventId, notificationType }, "event notification: push tokens unreadable — not sent"); return; }
     const recipients = ((profiles as any[]) ?? [])
       .map((p: any) => ({ userId: p.id as string, tokens: [p.expo_push_token as string] }))
       .filter((r: any) => r.tokens[0]);
@@ -6862,7 +6862,7 @@ async function checkInGateFor(
 /** True only on a readable Going RSVP — an unreadable one is not a grant. */
 async function isGoingAttendee(sc: any, eventId: string, userId: string): Promise<boolean> {
   const { data, error } = await sc.from("event_rsvps").select("status").eq("event_id", eventId).eq("user_id", userId).maybeSingle();
-  return !error && (data as any)?.status === "going";
+  if (error) throw new EventAccessUnavailableError("event_rsvps", error); return (data as any)?.status === "going"; // wave 5 (event reads): an unread RSVP was "not going" (403)
 }
 
 /** The caller's existing memory of this event, so a second save does not duplicate it. */
@@ -6881,7 +6881,7 @@ async function existingEventMemory(
 async function publicIdentityMap(sc: any, userIds: string[], viewerId: string): Promise<Record<string, any>> {
   const ids = [...new Set(userIds.filter(Boolean))];
   if (ids.length === 0) return {};
-  const { data: profiles } = await sc.from("profiles").select("id, handle, name, avatar_url").in("id", ids);
+  const { data: profiles, error: profilesErr } = await sc.from("profiles").select("id, handle, name, avatar_url").in("id", ids); if (profilesErr) logger.warn({ err: profilesErr, users: ids.length }, "event identities: profiles unreadable — names and avatars left blank");
   const allowed = await nameVisibilitySet(sc, ids);
   const out: Record<string, any> = {};
   for (const p of (profiles as any[]) ?? []) {
@@ -7085,3 +7085,461 @@ function isHttpsUrl(url: string): boolean {
   try { return new URL(url).protocol === "https:"; } catch { return false; }
 }
 import { readVerifiedBadges, identityBadgeField } from "../services/identityVerification/verifiedBadges.js"; // census-trust TV-2c
+
+/**
+ * census-trust (wave 5, 2026-10-17) — GET /api/events/:id/reviews reads its
+ * reviewers in a second step, under the reviewer-standing rule routes/reviews.ts
+ * applies to every other review list (readReviewerProfiles there).
+ *
+ * WHY. The event page embedded `profiles!reviewer_id(...)` from event_reviews.
+ * That embed resolves (event_reviews_reviewer_id_fkey → profiles), but it
+ * applied no standing rule, while the host's merged list (GET
+ * /users/:id/reviews) withholds an event review whose reviewer is not active.
+ * A deactivated reviewer's review therefore showed on the event page and not in
+ * the host's list. Now both read the same batch the same way.
+ *
+ * THE FIELDS. The embed's three (handle, display_name, avatar_url);
+ * `account_status` is read to decide standing and is never returned.
+ *
+ * STANDING. A review whose reviewer is not `active` (deactivated,
+ * pending_deletion, deleted) is withheld, anonymous ones included (the server
+ * knows the author). A reviewer with no profile row is standing-unknown and
+ * withheld. A NULL status reads as active (lib/http.ts). Withheld rows shorten
+ * the page, as on the trip and place lists.
+ *
+ * FAILURE. `null` when the read fails; the route answers 503
+ * `degraded_unavailable`, as reviews.ts does, never reviews with blank reviewers
+ * or unread standing.
+ */
+const EVENT_REVIEWER_PROFILE_COLUMNS = "id, handle, display_name, avatar_url, account_status";
+
+async function readEventReviewerProfiles(
+  sc: any,
+  rows: ReadonlyArray<{ reviewer_id?: unknown }>,
+): Promise<Map<string, { handle: string | null; display_name: string | null; avatar_url: string | null }> | null> {
+  const ids = [...new Set(rows.map((r) => r.reviewer_id).filter((v): v is string => typeof v === "string" && v !== ""))];
+  if (ids.length === 0) return new Map();
+  try {
+    const { data, error } = await sc.from("profiles").select(EVENT_REVIEWER_PROFILE_COLUMNS).in("id", ids);
+    if (error || !Array.isArray(data)) return null;
+    const out = new Map<string, { handle: string | null; display_name: string | null; avatar_url: string | null }>();
+    for (const p of data as Array<Record<string, unknown>>) {
+      if (typeof p?.id !== "string") continue;
+      if ((p.account_status ?? "active") !== "active") continue;
+      out.set(p.id, {
+        handle: (p.handle as string | null | undefined) ?? null,
+        display_name: (p.display_name as string | null | undefined) ?? null,
+        avatar_url: (p.avatar_url as string | null | undefined) ?? null,
+      });
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * census-trust (wave 5, 2026-10-18) — EVENT READS: a failed read is never not-found, not-allowed or a default.
+ *
+ * supabase-js RESOLVES on a database error, so `const { data: ev } = await …maybeSingle()` followed by
+ * `if (!ev) 404` answered "Event not found" for a read that never answered — and the same shape made an
+ * unread RSVP "you have no RSVP" (403), an unread friendship "not your friend" (the event silently left
+ * the list), an unread queue "nobody waiting" (waitlist_count stamped 0), an unread prior event "this is
+ * your first" (a first-event trust bonus). Every read in this file now falls in one of three classes:
+ *
+ *   (a) an authorization or existence gate — the route refuses: EventAccessUnavailableError, which the
+ *       global handler (lib/errorEnvelope.ts) answers 503 `degraded_unavailable`, retryable, logged at
+ *       error. Never 404, never 403, never "allowed", and never a write after it.
+ *   (b) data the response states as fact (the viewer's RSVP / queue place / saved state, a count, an
+ *       attendance state, each list row's event) — refused the same way; a list route's PRIMARY read
+ *       answers as that route's sibling reads already do (500 `db_error`).
+ *   (c) best-effort side data (names and avatars, ranking signals, push tokens, fire-and-forget fan-out,
+ *       the cached-counter refresh) — degrades, is LOGGED, never widens access, never claims success,
+ *       and never writes a value derived from the failed read (a recount that could not read leaves the
+ *       stored count alone).
+ *
+ * canViewEvent stays exported unchanged (contentStamps, collections, contentTranslation, trails,
+ * telegraph shareables and the media resolver ask it). These routes ask viewableOrThrow: the same answer
+ * when readEventViewAccess could read its inputs, a refusal when it could not.
+ */
+async function viewableOrThrow(sc: any, ev: any, userId: string): Promise<boolean> {
+  const access = await readEventViewAccess(sc, ev, userId);
+  if (access === "unavailable") throw new EventAccessUnavailableError("event view access", "readEventViewAccess could not read its inputs");
+  return access === "allowed";
+}
+
+// ── Wave 5 follow-up B: the waitlist — a failed read never gives a queued seat away; a promoted person is told ──
+
+/**
+ * The waitlist flag, read where a seat has just been freed (DELETE /rsvp, POST
+ * /leave, DELETE /attendees/:userId) — THREE answers, not two.
+ *
+ * Those doors read `events_waitlist_enabled` through `isFlagEnabled`, which
+ * answers `false` on a database error. `false` skipped the promotion (right)
+ * and then let syncEventState reopen the full/waitlist event, because no offer
+ * held the freed seat — so an unreadable flag handed the seat to the first
+ * walk-in, ahead of everyone in the queue. A failed read became a write.
+ *
+ *   "on"      → promote, as before.
+ *   "off"     → the flag row reads false OR is ABSENT: the waitlist is disabled,
+ *               nobody is promoted and the event may reopen — exactly as before.
+ *               A missing row is "disabled", not "unknown": the same reasoning
+ *               as isKillSwitchEngaged (lib/featureFlags.ts) — only a genuine
+ *               error leaves the state unestablished.
+ *   "unknown" → the read failed. Nobody is promoted, and the caller passes
+ *               `holdFreedSeat` to syncEventState so the event is NOT moved
+ *               toward open on this pass. The person leaving is not refused.
+ *
+ * Read through readFlagState (lib/capability/schemaCapability.ts), the tree's
+ * four-valued reader that events.ts already imports; it never answers "on" on
+ * a failure path. What later releases a seat held this way: the next
+ * syncEventState on the event that is not itself holding: a maybe / interested / can't-go RSVP, a leave or removal, a ban or block-user, a status change, a
+ * queue leave, a waitlist accept, an approval with room or a capacity edit (a GOING RSVP, join or invite on a full or waitlist event is waitlisted before any sync).
+ * With the flag readable ON that sync offers the seat to the QUEUE first (offerFreedSeatToQueue, below), never to walk-ins; no sweep looks for a held seat.
+ */
+async function readWaitlistFlagForFreedSeat(sc: any, eventId: string, req?: any): Promise<"on" | "off" | "unknown"> {
+  const state = await readFlagState(sc, "events_waitlist_enabled");
+  if (state === "unreadable") {
+    (req?.log ?? logger).warn({ eventId, flag: "events_waitlist_enabled" }, "freed seat: events_waitlist_enabled could not be read — nobody promoted, and the seat is HELD (the event is not reopened on this pass); the leave itself stands");
+    return "unknown";
+  }
+  return state === "on" ? "on" : "off";
+}
+
+/**
+ * Tell a person they hold a waitlist offer, through the durable in-app row.
+ *
+ * The offer used to reach its holder through ONE path: a read of
+ * profiles.expo_push_token and a push. An unreadable token, no token, or a
+ * failed push left them untold, and the offer lapsed to the next person 24 h
+ * later. The notifications row is the Activity Center entry and the unread
+ * badge, and its action opens the event, where the app shows the offer with
+ * Accept (waitlistState.ts `offer_pending`). It depends on no read.
+ *
+ * Mirrors the event-invite producer: NotificationService.createDetailed writes
+ * the row, NotificationRouter.route is NOT called, because the push is still
+ * sent by the caller and routing would deliver it a second time. No sourceType
+ * / sourceId: the general dedup (rule 4) would read the ledger first, and an
+ * unreadable ledger is treated as "already sent" — the row must not depend on a
+ * read. Two rows for one person can only come from two real claims, each a
+ * separate offer worth telling. Generic text, no event title (the invite rule).
+ *
+ * Called only AFTER the claim succeeded. It never throws and never touches
+ * event_waitlist: the claim is the record, and a notice that cannot be written
+ * neither undoes nor repeats the offer — it is logged at warn.
+ */
+export async function notifyWaitlistOffer(sc: any, eventId: string, userId: string, offerExpiresAt: string, req?: any): Promise<boolean> {
+  const log = req?.log ?? logger;
+  try {
+    const { NotificationService } = await import("../services/notifications/NotificationService.js");
+    const out = await new NotificationService(sc).createDetailed({
+      userId,
+      eventType: "event.waitlist_offer",
+      category: "plans",
+      priority: "important",
+      title: "A spot opened up!",
+      body: "You're next on the waitlist. You have 24 hours to accept.",
+      actionUrl: `/event/${eventId}`,
+      metadata: { eventId, offerExpiresAt },
+      expiresAt: offerExpiresAt,
+    });
+    if (out.row) return true;
+    log.warn({ eventId, userId, refusal: out.refusal }, "waitlist offer: the in-app notification was not written — the offer STANDS (the claim is the record; the event screen still shows it)");
+    return false;
+  } catch (err) {
+    log.warn({ err, eventId, userId }, "waitlist offer: the in-app notification threw — the offer STANDS (the claim is the record; the event screen still shows it)");
+    return false;
+  }
+}
+
+// ── Wave 5 follow-up B2: a freed seat goes to the queue, never to a walk-in ahead of it, on every path ──
+
+/**
+ * syncEventState's catch-up. It runs on a pass that could reopen the event —
+ * full or waitlist, with a free seat (going < max_attendees) — and BEFORE that
+ * reopen, so it is the ONE place every caller offers a free seat to the queue:
+ * a going → maybe RSVP, PATCH attendee status, a ban, block-user, an offer
+ * holder leaving the queue (DELETE /waitlist now syncs), a capacity edit
+ * (PATCH /events/:id now syncs), a seat HELD on an earlier pass, or a seat an
+ * account deletion freed (seen by the next sync). Before this, only the three
+ * leave doors offered a freed seat; on every other path the reopen gave it to
+ * the first walk-in, ahead of everyone queued.
+ *
+ *   "reopen"   — run the capacity cycle exactly as before. The flag reads OFF
+ *                or its row is ABSENT (the waitlist is disabled: today's
+ *                behaviour, unchanged), or it reads ON and nobody can be offered
+ *                the seat (`stranded`: an empty queue, or every queued user
+ *                refused by the gate — a readable refusal, not a failure).
+ *   "reserved" — an offer holds a seat, so the reopen would not run anyway: one
+ *                was already live (hasActiveWaitlistOffer, which answers TRUE
+ *                when it cannot read), this pass made one, or a concurrent
+ *                writer claimed the same person first (`contended`). Nothing is
+ *                written.
+ *   "held"     — the flag could not be read, or the offer could not be made (a
+ *                queue / event / eligibility read or the claim write failed). The
+ *                seat stays reserved for the queue: nothing is written, warn.
+ *
+ * ONE OFFER AT A TIME, and never two for one seat: a live offer stops the
+ * catch-up, and the claim is atomic (promoteNextWaitlisted re-asserts
+ * `offer_expires_at IS NULL`). A capacity raised by N seats is therefore
+ * offered one seat at a time — the next when this offer is accepted (accept
+ * syncs) or lapses (the sweeper promotes the next). The doors make their own
+ * offer and pass `"offered"`, so their sync does not offer the same seat twice.
+ * Closed on the press of 3906: two passes at the same instant can both read
+ * "no live offer" and each offer one person. claim_waitlist_seat counts going
+ * plus live offers under the event row's lock, for the routes, the catch-up and
+ * the sweeper alike. Until 3906 is applied the window remains, and an unlocked
+ * accept can seat past capacity (census-trust's waitlist-race correction).
+ */
+async function offerFreedSeatToQueue(sc: any, eventId: string): Promise<"reopen" | "reserved" | "held"> {
+  const flag = await readFlagState(sc, "events_waitlist_enabled");
+  if (flag === "unreadable") {
+    logger.warn({ eventId, flag: "events_waitlist_enabled" }, "event capacity sync: events_waitlist_enabled could not be read — the free seat is HELD for the queue (nobody offered, not reopened to walk-ins)");
+    return "held";
+  }
+  if (flag !== "on") return "reopen";
+  if (await hasActiveWaitlistOffer(sc, eventId)) return "reserved";
+  const promotion = await promoteNextWaitlisted(sc, eventId, { log: logger });
+  if (freedSeatAfterPromotion(promotion, eventId) === true) return "held";
+  return promotion.outcome === "stranded" ? "reopen" : "reserved";
+}
+
+/**
+ * What a freed seat becomes once an offer was attempted for it: `true` (HOLD
+ * it) when the attempt FAILED — the queue, the event or a queued user's
+ * eligibility could not be read (`unreadable`), or the claim write was refused
+ * (`write_failed`) — logged at warn; otherwise `"offered"`, which tells
+ * syncEventState the seat has had its offer on this pass. A failed read or
+ * write must not become "the seat goes to the public": with the flag ON the
+ * doors used to sync after a failed promotion and reopen to walk-ins. A clean
+ * `contended` (someone else's offer holds it) or `stranded` (nobody to offer)
+ * is not a failure: the capacity cycle then decides as it always did.
+ */
+function freedSeatAfterPromotion(promotion: PromoteOutcome, eventId: string, req?: any): true | "offered" {
+  if (promotion.outcome !== "unreadable" && promotion.outcome !== "write_failed") return "offered";
+  (req?.log ?? logger).warn({ eventId, outcome: promotion.outcome, reason: promotion.message }, "freed seat: the offer to the waitlist could not be made (a read or write failed) — the seat is HELD for the queue, not reopened to walk-ins");
+  return true;
+}
+
+// ── Wave 5 follow-up B3: the accept route's re-offers go through the capacity cycle; an approval respects a held seat ──
+//
+// POST /events/:id/waitlist/accept has three branches that end an offer without seating its holder: the offer
+// LAPSED (the row is deleted), the private-event gate REFUSES the holder (deleted), or the SPOT WAS FILLED (the
+// offer is withdrawn and the holder keeps their place in the queue). Each called promoteNextWaitlisted directly,
+// which reads no flag and offers whether or not a seat is free. In the spot-filled branch that was a loop: the
+// holder kept their position, so the head it found was usually the holder — a fresh offer, a fresh in-app notice
+// and push, and a 403 telling them they had been "returned to the waitlist queue". Each branch now calls
+// syncEventState, whose catch-up (offerFreedSeatToQueue) is the one flag-aware path the doors and every other
+// seat-freeing route already use: flag UNREADABLE holds the seat, OFF/ABSENT promotes nobody (the event may
+// reopen), ON offers the queue head only when a seat is really free (going < max_attendees, state full or
+// waitlist, no live offer). A lapsed row that could not be deleted releases nothing here: the sweeper deletes
+// it and releases the seat, once (offering it here too made two offers for one seat).
+
+/**
+ * "Spot filled" at accept, and the offer could not be withdrawn. The holder is
+ * NOT told they were returned to the queue — their offer still stands (it lapses
+ * at its time and the sweeper releases it); nobody else is offered anything,
+ * since no seat is free. A retry withdraws it.
+ */
+function sendSpotFilledOfferStands(req: any, res: any, eventId: string, err: unknown): void {
+  req.log?.warn?.({ err, eventId }, "waitlist accept: the spot was filled, but the offer could not be withdrawn — it stands until it lapses; nobody else was offered");
+  sendError(res, "degraded_unavailable", "This spot was filled before you accepted, and we could not update your waitlist place just now. Please try again shortly.");
+}
+
+/**
+ * Does the event hold its free seats back from newcomers? The two join-request
+ * approvals admitted on the going-count alone, and a seat a live waitlist offer
+ * RESERVES, or one HELD for the queue (an unreadable waitlist flag, a failed
+ * offer), shows as free in that count — so a host's approval seated the
+ * requester in it, and the offer holder was then told the spot was filled.
+ *
+ * The rule is the one every other newcomer door applies (POST /rsvp, POST /join,
+ * invite accept): an event whose STATE is full or waitlist is not taking walk-in
+ * seats. syncEventState keeps the state there exactly while a seat is reserved
+ * or held (it reopens only when no offer is live, and holds on an unread flag or
+ * a failed offer). So an approval on such an event waitlists the requester
+ * behind the queue (or answers approved_pending_capacity when the event's
+ * waitlist is off), as a full event already did. An OPEN event with room still
+ * seats them. NOT changed: PATCH /events/:id/attendees/:userId/status {going},
+ * which has no capacity check at all — whether a host may seat someone past
+ * capacity or ahead of the queue is an owner decision.
+ */
+function freeSeatHeldForQueue(ev: any): boolean {
+  return ["full", "waitlist"].includes(String(ev?.state ?? ""));
+}
+
+// ── Wave 5 follow-up B4: the same-instant race — a seat is offered and taken only under the event's row lock (migration 3906) ──
+//
+// Two passes in the same instant (two syncs, a sync and a leave) both read "no live offer"; the first claims W1, the
+// second reads the queue head after that claim and claims W2: two offers for one seat. The claim's own UPDATE can only
+// re-assert `offer_expires_at IS NULL` (two claims of the SAME person); "only while going + live offers <
+// max_attendees" spans two tables, which no PostgREST filter can say, and nothing serialised the passes. Accepting had
+// the same shape: two holders of live offers for the last seat both counted going < max and both upserted going.
+// Migration 3906 adds public.claim_waitlist_seat and public.accept_waitlist_seat: each locks the event row, counts under
+// the lock, and writes only when a seat is free, so the second of two racing calls waits and then counts the first.
+// promoteNextWaitlisted (the eligibility pick stays here) and POST /waitlist/accept call them when they are installed.
+//
+// INSTALLED OR NOT is established by a side-effect-free probe, never by the call that writes: each function answers
+// `no_event` for a nil event id without writing (nothing to lock), memoised PROCESS-WIDE per database URL with
+// schemaCapability's TTLs (READY_TTL_MS / ABSENT_TTL_MS; pass 12 C2, lockedSeatMemoFor at the end of the file):
+//   ready    — the probe answered no_event: the locked call is made, and a FAILED locked call is a failure — the claim
+//              HOLDS the seat (write_failed), the accept answers 503 — never a fall-back to the unlocked statements,
+//              which could double what a call whose answer was lost had already done;
+//   missing  — PGRST202 / 42883 (3906 unapplied: production today): today's statements run, exactly as before;
+//   unknown  — any other answer, a throw, a non-envelope, or no `.rpc`: today's statements run, as before the migration.
+//              Only a probe failed here, and a probe writes nothing, so running the unlocked path is the pre-3906
+//              behaviour, not a guess about a write.
+// A locked call that answers PGRST202 / 42883 ran nothing (the function is gone, or the schema cache is stale): the
+// verdict becomes `missing` and today's statements run. Still not serialised (stated): the admissions that take a seat
+// without the queue count outside the lock. The sweeper's claim takes it (claimWaitlistSeatForSweeper, end of file).
+import { READY_TTL_MS as LOCKED_SEAT_READY_TTL_MS, ABSENT_TTL_MS as LOCKED_SEAT_ABSENT_TTL_MS } from "../lib/capability/schemaCapability.js";
+
+type LockedSeatFunction = "claim_waitlist_seat" | "accept_waitlist_seat";
+type LockedSeatVerdict = "ready" | "missing" | "unknown";
+const LOCKED_SEAT_PROBE_ID = "00000000-0000-0000-0000-000000000000";
+const lockedSeatVerdicts = new WeakMap<object, Map<LockedSeatFunction, { verdict: LockedSeatVerdict; at: number }>>();
+
+/** PostgREST's schema-cache miss for an RPC (PGRST202), or PostgreSQL's undefined_function (42883): the house's two codes. */
+function isLockedSeatFunctionAbsent(err: unknown): boolean {
+  const code = String((err as any)?.code ?? "");
+  return code === "PGRST202" || code === "42883";
+}
+
+function rememberLockedSeatVerdict(sc: any, fn: LockedSeatFunction, verdict: LockedSeatVerdict): LockedSeatVerdict {
+  const perClient = lockedSeatMemoFor(sc);
+  // pass 12 C2: the verdict is kept for the database the client names, not for this client object (one request long)
+  perClient.set(fn, { verdict, at: Date.now() });
+  return verdict;
+}
+
+/** Is 3906's function installed behind this client? The probe passes a nil event id: the function answers no_event and writes nothing. */
+async function lockedSeatFunctionVerdict(sc: any, fn: LockedSeatFunction): Promise<LockedSeatVerdict> {
+  if (!sc || typeof sc !== "object" || typeof sc.rpc !== "function") return "unknown";
+  const memo = lockedSeatMemoFor(sc).get(fn);
+  if (memo && Date.now() - memo.at < (memo.verdict === "ready" ? LOCKED_SEAT_READY_TTL_MS : LOCKED_SEAT_ABSENT_TTL_MS)) return memo.verdict;
+  const { data, error } = await settledLockedSeatRpc(() => fn === "claim_waitlist_seat"
+    ? sc.rpc("claim_waitlist_seat", { p_event_id: LOCKED_SEAT_PROBE_ID, p_user_id: LOCKED_SEAT_PROBE_ID, p_offer_expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() })
+    : sc.rpc("accept_waitlist_seat", { p_event_id: LOCKED_SEAT_PROBE_ID, p_user_id: LOCKED_SEAT_PROBE_ID }));
+  if (!error && data === "no_event") return rememberLockedSeatVerdict(sc, fn, "ready");
+  if (error && isLockedSeatFunctionAbsent(error)) {
+    logger.info({ fn }, "waitlist seat lock: the function is not installed (migration 3906 unapplied) — the unlocked statements run, as before");
+    return rememberLockedSeatVerdict(sc, fn, "missing");
+  }
+  logger.warn({ err: error ?? null, data: data ?? null, fn }, "waitlist seat lock: the probe's answer did not establish the function — the unlocked statements run, as before migration 3906");
+  return rememberLockedSeatVerdict(sc, fn, "unknown");
+}
+
+/** supabase-js RESOLVES `{ data, error }`; a client that THROWS, or RESOLVES no envelope (a double, a broken fetch shim), gets the same shape here: a failed call, never an escaped exception (pass 12 C3). */
+async function settledLockedSeatRpc(call: () => PromiseLike<{ data: unknown; error: unknown }>): Promise<{ data: unknown; error: any }> {
+  try { const r: any = await call(); return r !== null && typeof r === "object" && ("data" in r || "error" in r) ? { data: r.data, error: r.error } : { data: null, error: new Error("rpc answered no { data, error } envelope") }; } catch (err) { return { data: null, error: err ?? new Error("rpc threw") }; }
+}
+
+type LockedClaim = { kind: "legacy" } | { kind: "claimed" } | { kind: "outcome"; outcome: PromoteOutcome };
+
+/**
+ * promoteNextWaitlisted's claim, under the event lock when 3906 is installed. `legacy`: run today's UPDATE (the
+ * function is not established). `claimed`: the offer is the person's — notify as before. `outcome`: return it —
+ * `contended` when the row was not claimable or no seat is free (another offer, or a seated attendee, holds it: the
+ * capacity cycle decides as it does for a lost race), `stranded` when the event is gone, `write_failed` (the seat is
+ * HELD) when the locked call failed.
+ */
+async function claimWaitlistSeatLocked(sc: any, eventId: string, userId: string, offerExpiresAt: string, req?: any): Promise<LockedClaim> {
+  if ((await lockedSeatFunctionVerdict(sc, "claim_waitlist_seat")) !== "ready") return { kind: "legacy" };
+  const log = req?.log ?? logger;
+  const { data, error } = await settledLockedSeatRpc(() => sc.rpc("claim_waitlist_seat", { p_event_id: eventId, p_user_id: userId, p_offer_expires_at: offerExpiresAt }));
+  if (error && isLockedSeatFunctionAbsent(error)) { rememberLockedSeatVerdict(sc, "claim_waitlist_seat", "missing"); log.warn?.({ eventId, userId }, "waitlist promotion: claim_waitlist_seat is gone (PGRST202/42883, nothing ran) — the unlocked claim runs"); return { kind: "legacy" }; }
+  if (error) { log.warn?.({ err: error, eventId, userId }, "waitlist promotion: the locked claim failed — seat not offered"); return { kind: "outcome", outcome: { outcome: "write_failed", message: String(error?.message ?? error) } }; }
+  if (data === "claimed") return { kind: "claimed" };
+  if (data === "contended") { log.info?.({ eventId, userId }, "waitlist promotion lost a race — no second offer issued"); return { kind: "outcome", outcome: { outcome: "contended" } }; }
+  if (data === "no_seat") { log.info?.({ eventId, userId }, "waitlist promotion: no free seat under the event lock (going + live offers >= max_attendees) — no offer issued"); return { kind: "outcome", outcome: { outcome: "contended" } }; }
+  if (data === "no_event") { log.info?.({ eventId, userId }, "waitlist promotion: the event is gone — no offer issued"); return { kind: "outcome", outcome: { outcome: "stranded" } }; }
+  log.warn?.({ eventId, userId, data: data ?? null }, "waitlist promotion: the locked claim gave an unknown answer — seat not offered");
+  return { kind: "outcome", outcome: { outcome: "write_failed", message: `claim_waitlist_seat answered ${String(data)}` } };
+}
+
+/**
+ * POST /waitlist/accept's seat, under the event lock when 3906 is installed. `legacy`: run today's count and upsert.
+ * `seated`: the going RSVP is written and the queue row deleted (together) — the route's after-steps run as before.
+ * `no_seat`: the route's own spot-filled branch runs (withdraw the offer, sync, 403). `answered`: this sent the answer —
+ * a refusal the lock found (the offer lapsed or went, the event stopped being live) or a failed call (503).
+ */
+async function acceptWaitlistSeatLocked(sc: any, eventId: string, userId: string, req: any, res: any): Promise<"legacy" | "seated" | "no_seat" | "answered"> {
+  if ((await lockedSeatFunctionVerdict(sc, "accept_waitlist_seat")) !== "ready") return "legacy";
+  const { data, error } = await settledLockedSeatRpc(() => sc.rpc("accept_waitlist_seat", { p_event_id: eventId, p_user_id: userId }));
+  if (error && isLockedSeatFunctionAbsent(error)) { rememberLockedSeatVerdict(sc, "accept_waitlist_seat", "missing"); req.log?.warn?.({ eventId }, "waitlist accept: accept_waitlist_seat is gone (PGRST202/42883, nothing ran) — the unlocked accept runs"); return "legacy"; }
+  if (error) { sendLockedAcceptUnconfirmed(req, res, eventId, error); return "answered"; }
+  switch (data) {
+    case "seated": return "seated";
+    case "no_seat": return "no_seat";
+    case "expired": sendError(res, "forbidden", "Your spot offer has expired"); return "answered";
+    case "no_offer": sendError(res, "forbidden", "No spot offer is pending for you"); return "answered";
+    case "not_queued": sendError(res, "not_found", "Not on waitlist for this event"); return "answered";
+    case "not_live": sendError(res, "forbidden", "This event is no longer accepting attendees"); return "answered";
+    case "no_event": sendError(res, "not_found", "Event not found"); return "answered";
+    default: sendLockedAcceptUnconfirmed(req, res, eventId, { message: `accept_waitlist_seat answered ${String(data)}` }); return "answered";
+  }
+}
+
+/**
+ * The locked accept failed. A database error rolled its transaction back, but an answer lost on the way back cannot
+ * say whether the seat was taken, so the person is not told "no seat was given": they are asked to look first.
+ */
+function sendLockedAcceptUnconfirmed(req: any, res: any, eventId: string, err: unknown): void {
+  req.log?.error?.({ err, eventId }, "waitlist accept: the locked accept failed — not confirmed either way; nothing else written");
+  sendError(res, "degraded_unavailable", "We could not confirm your place just now. Please refresh the event, then try again.");
+}
+
+// ── Pass 12 C2 (independent verification, 2026-10-18): the probe's memo is process-wide ──
+//
+// It was keyed on the client object, and getServiceClient() builds a NEW client on every call (lib/supabase.ts:20, no
+// cache) and every door takes its own: in production the memo lived one request, so the probe was sent on every
+// promotion door and every accept request, not once per TTL. Every supabase-js client carries the URL it was built
+// for (`supabaseUrl`), and every client this API builds is the one service client at SUPABASE_URL (lib/supabase.ts's
+// single createClient call, pinned by handRolledAuthAccountState.test.ts), so the verdict is kept per URL for the
+// process: at most one probe per function per READY_TTL_MS / ABSENT_TTL_MS, however many requests and clients. The
+// TTLs still expire, so a press is noticed within ABSENT_TTL_MS without a restart. A client that names no URL (a test
+// double) keeps the per-object memo it always had (lockedSeatVerdicts, above).
+const lockedSeatVerdictsByUrl = new Map<string, Map<LockedSeatFunction, { verdict: LockedSeatVerdict; at: number }>>();
+
+/** The verdict memo for the database this client talks to: per URL when it names one, otherwise per client object. */
+function lockedSeatMemoFor(sc: object): Map<LockedSeatFunction, { verdict: LockedSeatVerdict; at: number }> {
+  const url = (sc as { supabaseUrl?: unknown }).supabaseUrl;
+  if (typeof url === "string" && url !== "") {
+    let byUrl = lockedSeatVerdictsByUrl.get(url);
+    if (!byUrl) { byUrl = new Map(); lockedSeatVerdictsByUrl.set(url, byUrl); }
+    return byUrl;
+  }
+  let perObject = lockedSeatVerdicts.get(sc);
+  if (!perObject) { perObject = new Map(); lockedSeatVerdicts.set(sc, perObject); }
+  return perObject;
+}
+
+// ── Sweeper lock lane (2026-10-18): the sweeper's claim takes 3906's event lock, through the routes' own probe and memo ──
+//
+// lib/eventWaitlistSweeper.ts offered a lapsed offer's seat with its own unlocked UPDATE (`.in("user_id", promoteIds)
+// .is("offer_expires_at", null)`). It counts nothing, and a route's catch-up treats a lapsed offer as no offer, so a
+// route that had already offered that seat to the queue head was followed by a sweeper pass that offered it again:
+// two offers for one seat, in the same instant or minutes apart. The sweeper now claims each pick here, one person
+// per call, through claimWaitlistSeatLocked: the SAME probe (lockedSeatFunctionVerdict), the SAME process-wide memo
+// (lockedSeatMemoFor: a route's verdict is the sweeper's, and the other way round) and the SAME failure rules.
+//   unlocked — the function is not established (missing, unknown, or no `.rpc`), or this call answered PGRST202 / 42883
+//              (nothing ran; the verdict is now missing): the sweeper runs today's unlocked UPDATE for this person;
+//   claimed  — the offer is theirs, made under the lock: they are told, as the unlocked path tells them;
+//   taken    — no free seat under the lock (going + live offers >= max_attendees: another writer's offer or seat holds
+//              it), or the row was not claimable (offered already, or gone): nothing was written;
+//   no_event — the event is gone: nothing was written;
+//   failed   — the locked call failed (an error, a lost answer, a throw, a non-envelope, an unknown answer): the seat
+//              is HELD. The sweeper offers nobody further and never runs the unlocked UPDATE after it, which could
+//              repeat what a call whose answer was lost had already committed.
+export type SweeperSeatClaim = { kind: "unlocked" } | { kind: "claimed" } | { kind: "taken" } | { kind: "no_event" } | { kind: "failed"; message: string };
+
+/** The sweeper's claim of ONE pick, under the event lock when 3906 is established: claimWaitlistSeatLocked's verdicts, named for the sweeper. */
+export async function claimWaitlistSeatForSweeper(sc: any, eventId: string, userId: string, offerExpiresAt: string, log?: any): Promise<SweeperSeatClaim> {
+  const r = await claimWaitlistSeatLocked(sc, eventId, userId, offerExpiresAt, log ? { log } : undefined);
+  if (r.kind === "legacy") return { kind: "unlocked" };
+  if (r.kind === "claimed") return { kind: "claimed" };
+  const o = r.outcome;
+  if (o.outcome === "contended") return { kind: "taken" };
+  if (o.outcome === "stranded") return { kind: "no_event" };
+  return { kind: "failed", message: o.outcome === "write_failed" || o.outcome === "unreadable" ? o.message : `claim_waitlist_seat outcome ${o.outcome}` };
+}

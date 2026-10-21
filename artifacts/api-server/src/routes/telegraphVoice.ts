@@ -50,7 +50,7 @@ import { Router } from "express";
 import { requireUser, sendError } from "../lib/http.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { logger as rootLogger } from "../lib/logger.js";
-import { getServiceClient } from "../lib/supabase.js";
+import { getServiceClient } from "../lib/supabase.js"; import { notifyNewMessage } from "../services/telegraph/messageNotifications.js"; // census-telegraph T256
 import { appStorageUrlInfo } from "../lib/mediaUrl.js";
 import { guardTelegraphThreadWrite, sendThreadWriteRefusal } from "../lib/telegraphThreadWrite.js";
 import { classifyMemoryMediaUrl } from "../services/memory/memoryMediaOrigin.js";
@@ -376,7 +376,7 @@ router.post(
       clientId,
     });
 
-    void publishMessageCreated(client, threadId, { // T154 (V-TR F1): the drainer owns message.created when fan-out is in force
+    void notifyNewMessage(getServiceClient() ?? client, { threadId, senderId: user.id, messageId: m.id, msgType: "voice", nowMs: Date.parse(now) }, { log }); /* census-telegraph T256: the voice door */ void publishMessageCreated(client, threadId, { // T154 (V-TR F1): the drainer owns message.created when fan-out is in force
       type: "message.created",
       payload: {
         messageId: m.id,

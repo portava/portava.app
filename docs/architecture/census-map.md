@@ -3312,3 +3312,7 @@ probe was missing from this census's declared source watch set. The parent added
 that exact path; all thirteen censuses now pass scope coverage at 100%, without
 lowering a floor or exempting the product file as NOT-GRADED. This metadata-only
 pass did not edit the checker. Age acknowledgement alone was not the remedy.
+
+### Correction (2026-10-17, wave 5) — the circle need-help host push now reaches a host in quiet hours (census-telegraph T254)
+
+The one push the circle need-help route sends to the host (`circle.need_help_host_alert`) now pierces quiet hours where the host's own safety_override is on; it had been held by the Compass gate as activity_social. With the override off it is still held. No Map verdict rests on it (MAP-F08 §46.3; routes/circle.ts is NOT-GRADED here).

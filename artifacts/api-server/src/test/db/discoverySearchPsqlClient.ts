@@ -54,7 +54,7 @@ export function psqlReadClient(log: PsqlCall[] = []): any {
         log.push({ table, sql });
         const script =
           `\\set VERBOSITY verbose\nSET LOCAL ROLE service_role;\n` +
-          `SELECT COALESCE(json_agg(t), '[]'::json)::text FROM (${sql}) t;`;
+          `SELECT COALESCE(json_agg(t.*), '[]'::json)::text FROM (${sql}) t;`;
         const r = psql(script, { single: true });
         if (r.status !== 0) return { data: null, error: pgError(r.stderr) };
         // json_agg puts a newline between elements, so the whole of stdout is the value.

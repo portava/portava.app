@@ -128,7 +128,7 @@ import {
   LAYOVER_DISCOVERY_MODE_FLAG,
   certifiedActionUniverse,
   certifiedLayoverSnapshot,
-  isDegradedRefusal,
+  isDegradedRefusal, layoverRoutesFor,
   type ActionAdmission, type LayoverSnapshotResult,
 } from "../services/airport/LayoverSnapshot.js";
 
@@ -291,14 +291,14 @@ export async function discoveryLayoverGate(
     };
   }
 
-  const timing = await statedLayoverTimings(sc, snapshot.sessionId, candidates, {
+  const timing = await layoverRoutesFor(snapshot, () => statedLayoverTimings(sc, snapshot.sessionId, candidates, {
     // The snapshot's OWN centre and the record's OWN instant. A second clock
     // here would time the journey from a different moment than the window it
     // is measured against.
     centre: snapshot.envelope ? snapshot.envelope.centre : null,
     departAt: new Date(snapshot.certifiedRecord.inputs.nowMs),
-    provider: opts.provider,
-  });
+    provider: opts.provider ?? LAYOVER_DEFERRED_LEG_PROVIDER,
+  })); // R5: every leg this read asks for is charged to the layover session and the person; routing waits for the universe's pre-filter (L260)
   if (!timing.ok) {
     return {
       ok: false,
@@ -390,3 +390,7 @@ export function serveUnderLayoverGate<T extends { id: string }>(
   if (!gate.ok || !gate.active) return items;
   return items.filter((i) => gate.admittedIds.has(i.id));
 }
+
+// Layover 165 (L260): the timing read defers routing to the pre-filtered universe. Imported at the TAIL so no cited
+// line above moves; ESM hoists it.
+import { LAYOVER_DEFERRED_LEG_PROVIDER } from "../services/airport/LayoverTravelTime.js";

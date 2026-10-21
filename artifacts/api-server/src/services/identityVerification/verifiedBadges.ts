@@ -31,12 +31,12 @@
  *   absent / unreadable: no badge is computed, no identity row is read, and no
  *   `identityBadge` key is added to any response (the flag value is cached 30 s).
  */
-import { isFlagEnabled } from "../../lib/featureFlags.js";
+import { readFlagState } from "../../lib/featureFlags.js";
 import {
   FINISHED_ATTEMPT_STATUSES,
   providerModeCounts,
 } from "./currentVerification.js";
-
+import { logger } from "../../lib/logger.js";
 export const IDENTITY_VERIFIED_BADGE_FLAG = "identity_verified_badge_enabled";
 
 export type VerifiedBadgeTier = "id" | "id_selfie";
@@ -69,7 +69,7 @@ const FLAG_TTL_MS = 30_000;
 let flagCache: { value: boolean; at: number } | null = null;
 async function badgeFlagOn(db: any): Promise<boolean> {
   if (flagCache && Date.now() - flagCache.at < FLAG_TTL_MS) return flagCache.value;
-  const value = await isFlagEnabled(db, IDENTITY_VERIFIED_BADGE_FLAG);
+  const state = await readFlagState(db, IDENTITY_VERIFIED_BADGE_FLAG); if (state === "unknown") logger.warn({ flag: IDENTITY_VERIFIED_BADGE_FLAG }, "readVerifiedBadges: identity_verified_badge_enabled could not be read — NO badge is shown (treated as off, fail-closed; cached like any answer)"); const value = state === "on"; // wave 5 follow-up B2: was isFlagEnabled, silent on a failed read
   flagCache = { value, at: Date.now() };
   return value;
 }
@@ -101,7 +101,7 @@ export async function readVerifiedBadges(
         .limit(ids.length * 20),
       db.from("profiles").select("id, verification_level").in("id", ids),
     ]);
-    if (attemptRead?.error || profileRead?.error) return out;
+    if (attemptRead?.error || profileRead?.error) { logger.warn({ err: attemptRead?.error ?? profileRead?.error, source: attemptRead?.error ? "identity_verifications" : "profiles", users: ids.length }, "readVerifiedBadges: a badge read failed — NO badge is shown for this batch (fail-closed)"); return out; }
     const latest = new Map<string, Record<string, any>>();
     for (const a of (attemptRead?.data ?? []) as Array<Record<string, any>>) {
       const uid = a["user_id"];
@@ -117,8 +117,8 @@ export async function readVerifiedBadges(
       const tier = tierOf(level.get(uid)); // criterion 3: one of IDENTITY_VERIFIED_LEVELS (a withdrawal clears it)
       if (tier) out.set(uid, { tier });
     }
-  } catch {
-    return new Map();
+  } catch (err) {
+    logger.warn({ err, users: ids.length }, "readVerifiedBadges: the badge read threw — NO badge is shown for this batch (fail-closed)"); return new Map();
   }
   return out;
 }

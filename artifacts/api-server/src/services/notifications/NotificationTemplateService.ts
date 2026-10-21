@@ -215,7 +215,7 @@ export const TEMPLATES: NotificationTemplate[] = [
     eventType: 'telegraph.message',
     category: 'telegraph',
     defaultPriority: 'important',
-    defaultChannels: ['in_app', 'push', 'telegraph'],
+    defaultChannels: ['in_app', 'push'], // census-telegraph T256: never the telegraph channel — it would post a second, system message into the thread whose message it reports (services/telegraph/messageNotifications.ts)
     title: ({ actor }) => `${actor}`,
     body: ({ preview }) => preview ?? 'New message',
     actionUrl: ({ threadId }) => `/messages/${threadId}`,
@@ -1193,6 +1193,91 @@ export const TEMPLATES: NotificationTemplate[] = [
     defaultChannels: ['in_app'],
     title: () => 'Your layover crew',
     body: ({ actor }) => `${actor ?? 'A crew member'} is heading back to the airport.`,
+  }),
+
+  // ── Telegraph coordination (census-telegraph T395 — §30A.6's COORDINATION) ──
+  // Somebody in the conversation opened a coordination session or declared a
+  // §9.1 quick state (services/telegraph/coordinationNotifications.ts decides
+  // who is told). The words are FIXED per act: `act` is one of that module's
+  // closed phrases, never the sender's note or place label, so no free text
+  // reaches a lock screen. `actor` is the shown name only for a person who
+  // shows their real name, else their @handle, else "Someone". Appended LAST so
+  // every template row routerDecisionMatrix.ts indexes before it keeps its index.
+  tpl({
+    eventType: 'telegraph.coordination',
+    category: 'telegraph',
+    defaultPriority: 'important',
+    defaultChannels: ['in_app', 'push'],
+    title: () => 'Coordination update',
+    body: ({ actor, act }) => `${actor || 'Someone'} ${act || 'posted a coordination update'}`,
+    actionUrl: ({ threadId }) => threadId ? `/messages/${threadId}` : '/messages',
+  }),
+
+  // ── A Plan's time confirmed (census-telegraph T397 — §30A.6's causal dedupe) ──
+  // POST /meetups/:id/confirm-time used to push the RSVPs directly, outside the
+  // ledger, so Compass Sense's report of the same change was a second
+  // notification. It is now written here (services/notifications/
+  // planNotifications.ts) with the change's causal id. The words are the old
+  // push's words, unchanged. Appended LAST, as the coordination template was.
+  tpl({
+    eventType: 'plan.time_confirmed',
+    category: 'plans',
+    defaultPriority: 'important',
+    defaultChannels: ['in_app', 'push'],
+    title: ({ actor }) => `${actor || 'The organizer'} confirmed a meetup time`,
+    body: ({ meetupTitle, when }) => `${meetupTitle || 'Your meetup'}${when ? ` — ${when}` : ''}`,
+    actionUrl: ({ meetupId }) => meetupId ? `/meetup/${meetupId}` : '/',
+  }),
+
+  // ── Telegraph safety and kinds (wave 5 safety lane — census-telegraph T254/T395/T398) ──
+  // services/telegraph/safetyNotifications.ts and messageNotifications.ts decide who
+  // is told. Every word is FIXED: `signal` is one of SAFETY_SIGNAL_PHRASES, never the
+  // label, note or place the sender typed, and no announcement title or location
+  // label ever reaches a lock screen. Appended LAST, as the templates above were.
+  //
+  // §19 P0 "SOS, safety escalation — Interruptive". `urgent` is the one existing
+  // safety rule (quiet hours and push-off yield where the recipient's own
+  // safety_override is on), and the name carries `sos`, which NotificationRouter's
+  // Compass map reads as emergency_safety. Category `safe_return` is the safety
+  // category the circle need-help alert already uses.
+  tpl({
+    eventType: 'telegraph.sos',
+    category: 'safe_return',
+    defaultPriority: 'urgent',
+    defaultChannels: ['in_app', 'push'],
+    title: () => 'Safety alert',
+    body: ({ actor, signal }) => `${actor || 'Someone'} ${signal || 'raised a safety alert'}`,
+    actionUrl: ({ threadId }) => threadId ? `/messages/${threadId}` : '/messages',
+  }),
+  // §19 P1 "return state": the ALL CLEAR that ends a raised mode — safe_return.cleared's shape.
+  tpl({
+    eventType: 'telegraph.safety_all_clear',
+    category: 'safe_return',
+    defaultPriority: 'normal',
+    defaultChannels: ['in_app', 'push'],
+    title: () => 'All clear',
+    body: ({ actor }) => `${actor || 'Someone'} posted ALL CLEAR`,
+    actionUrl: ({ threadId }) => threadId ? `/messages/${threadId}` : '/messages',
+  }),
+  // §30A.6 LOCATION, §19 P2. Category `location`: the privacy guard's Ghost Mode rule applies.
+  tpl({
+    eventType: 'telegraph.location',
+    category: 'location',
+    defaultPriority: 'important',
+    defaultChannels: ['in_app', 'push'],
+    title: ({ actor }) => `${actor || 'Someone'}`,
+    body: () => 'Shared a location',
+    actionUrl: ({ threadId }) => threadId ? `/messages/${threadId}` : '/messages',
+  }),
+  // §30A.5 ANNOUNCEMENT as §30A.6 COORDINATION, §19 P1.
+  tpl({
+    eventType: 'telegraph.announcement',
+    category: 'telegraph',
+    defaultPriority: 'important',
+    defaultChannels: ['in_app', 'push'],
+    title: ({ actor }) => `${actor || 'Someone'}`,
+    body: () => 'Posted an announcement',
+    actionUrl: ({ threadId }) => threadId ? `/messages/${threadId}` : '/messages',
   }),
 ];
 

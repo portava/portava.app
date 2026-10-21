@@ -67,7 +67,7 @@ import {
 } from "../services/memory/historicalTruth.js";
 import { canReadMemory, canCompassReadMemory } from "../services/memory/memoryReadPolicy.js";
 import { _clearLiveCache, _setSimulatedOutage } from "../lib/liveIntelligence.js";
-import { FOURSQUARE_KEY_VARS, snapshotKeyEnv, restoreKeyEnv, setKeyEnv } from "./helpers/apiKeyEnv.js";
+import { FOURSQUARE_KEY_VARS, snapshotKeyEnv, restoreKeyEnv, setKeyEnv } from "./helpers/apiKeyEnv.js"; import { orPredicate } from "./helpers/postgrestOrFilter.js"; // census-telegraph T220: a real `.or()` (the shared block readers narrow inside one)
 
 const ALICE = "aaaaaaaa-0000-4000-8000-000000000001";
 const BOB = "bbbbbbbb-0000-4000-8000-000000000002";
@@ -219,7 +219,7 @@ function makeClient(state: State = {}): Client {
       },
       eq(col: string, val: any) { preds.push((r) => String(r[col]) === String(val)); return proxy; },
       neq(col: string, val: any) { preds.push((r) => String(r[col]) !== String(val)); return proxy; },
-      in(col: string, vals: any[]) { preds.push((r) => vals.map(String).includes(String(r[col]))); return proxy; },
+      in(col: string, vals: any[]) { preds.push((r) => vals.map(String).includes(String(r[col]))); return proxy; }, or(expr: string) { preds.push(orPredicate(expr)); return proxy; },
       /**
        * PostgREST semantics, not "contains". `.ilike(col, "carl")` sends
        * `ilike.carl`, which has no wildcard and is therefore an EXACT

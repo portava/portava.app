@@ -177,3 +177,56 @@ describe('TripMapLayersCard', () => {
     expect(await findByTestId('trip-map-layers-unread')).toBeTruthy();
   });
 });
+
+// ── census-trips wave-5 follow-up: city-anchored stages, and stages the map could not place ──
+describe('TripMapLayersCard — stages the map draws coarsely or not at all', () => {
+  const cityStage = pt('s1', { kind: 'stage', label: 'city', meta: { state: 'planned', sequence: 1, anchor: 'city', precision: 'city_centre' } });
+  const withNotDrawn = (p: TripMapProjection, list: unknown) => ({ ...p, stagesNotDrawn: list }) as TripMapProjection;
+
+  it("a city-anchored stage is counted on the map, and the card says it sits at the city's centre", async () => {
+    const { findByText, findByTestId } = await render(
+      <TripMapLayersCard tripId={TRIP_ID} load={loader(ok(withNotDrawn(projection({ stage: { status: 'ok', items: [cityStage] } }), [])))} />,
+    );
+    expect(await findByText(/1 thing on this trip's map/)).toBeTruthy();
+    expect(await findByTestId('trip-map-stages-coarse')).toBeTruthy();
+    expect(await findByText(/drawn at its city's centre, not at an exact spot/)).toBeTruthy();
+  });
+
+  it('a place-anchored stage is drawn at its place, and is not called coarse', async () => {
+    const placeStage = pt('s0', { kind: 'stage', label: 'city', meta: { state: 'planned', sequence: 0 } });
+    const { findByText, queryByTestId } = await render(
+      <TripMapLayersCard tripId={TRIP_ID} load={loader(ok(withNotDrawn(projection({ stage: { status: 'ok', items: [placeStage] } }), [])))} />,
+    );
+    expect(await findByText(/1 thing on this trip's map/)).toBeTruthy();
+    expect(queryByTestId('trip-map-stages-coarse')).toBeNull();
+  });
+
+  it('a stage with no known position is SAID, even when nothing else is on the map', async () => {
+    const { findByTestId, findByText, queryByTestId } = await render(
+      <TripMapLayersCard tripId={TRIP_ID} load={loader(ok(withNotDrawn(projection(), [
+        { id: 's2', stageType: 'city', sequence: 2, reason: 'city_has_no_position' },
+        { id: 's3', stageType: 'city', sequence: 3, reason: 'anchor_is_not_a_city' },
+      ])))} />,
+    );
+    expect(await findByTestId('trip-map-stages-not-drawn')).toBeTruthy();
+    expect(await findByText(/2 stages not on the map/)).toBeTruthy();
+    expect(await findByText(/listed with the trip's stages but not drawn/)).toBeTruthy();
+    expect(queryByTestId('trip-map-stages-coarse')).toBeNull();
+  });
+
+  it('a projection that does not carry the list (an older server) claims nothing about undrawn stages', async () => {
+    const { toJSON, queryByTestId } = await render(<TripMapLayersCard tripId={TRIP_ID} load={loader(ok(projection()))} />);
+    await waitFor(() => expect(queryByTestId('trip-map-layers-loading')).toBeNull());
+    expect(queryByTestId('trip-map-stages-not-drawn')).toBeNull();
+    expect(toJSON()).toBeNull();
+  });
+
+  it('a malformed entry is not counted as a stage', async () => {
+    const { findByText } = await render(
+      <TripMapLayersCard tripId={TRIP_ID} load={loader(ok(withNotDrawn(projection(), [
+        { id: 's2', reason: 'no_anchor' }, { reason: 'no_anchor' }, 'nonsense', null,
+      ])))} />,
+    );
+    expect(await findByText(/1 stage not on the map/)).toBeTruthy();
+  });
+});

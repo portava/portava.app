@@ -16,9 +16,9 @@
  * emphasis) from `attention` (vermilion, reserved for safety and urgent
  * change).
  *
- * The pre-existing `TG` export is left exactly as it is, and this palette's
- * light values are the same colours, so a screen that has not yet moved keeps
- * rendering identically. Adoption is per-component.
+ * Every Telegraph module now reads this palette (census T123); the static `TG`
+ * in `theme/telegraphTokens.ts` has no importer, and a ratchet forbids a new one
+ * (`__tests__/telegraphPaletteRatchet.component.test.ts`). Light values = old TG.
  */
 import { useColorScheme } from 'react-native';
 import { color } from '../../../theme/tokens.ts';
@@ -44,7 +44,7 @@ export interface TelegraphPalette {
   /** Hairlines and separators. */
   hairline: string;
   /** Subtle chip / pill fill. */
-  chipFill: string;
+  chipFill: string; /** Opaque fill / divider (light: color.haze). */ haze: string; /** Tertiary text (light: color.faint). */ faint: string; /** Confirmed state (light: color.success). */ success: string;
   /**
    * §11.1 "restrained teal/cyan as operational emphasis" — the colour for
    * ordinary Telegraph emphasis: a rail card's active edge, a selected filter,
@@ -76,7 +76,7 @@ const LIGHT: TelegraphPalette = {
   recvText: color.ink,
   mute: color.mute,
   hairline: 'rgba(0,0,0,0.08)',
-  chipFill: 'rgba(0,0,0,0.05)',
+  chipFill: 'rgba(0,0,0,0.05)', haze: color.haze, faint: color.faint, success: color.success,
   operational: TEAL_DEEP,
   operationalOn: '#FFFFFF',
   attention: color.signal,
@@ -95,7 +95,7 @@ const DARK: TelegraphPalette = {
   recvText: '#F2F4F2',
   mute: '#A8B0AB',
   hairline: 'rgba(255,255,255,0.12)',
-  chipFill: 'rgba(255,255,255,0.08)',
+  chipFill: 'rgba(255,255,255,0.08)', haze: '#2A3530', faint: '#8A938E', success: '#5DBB8F',
   operational: TEAL_BRIGHT,
   operationalOn: '#07100E',
   attention: color.signal,
@@ -145,4 +145,41 @@ export function statusLabelFor(
     default:
       return 'Shared';
   }
+}
+
+/**
+ * census T123 — a Telegraph module's styles, for the current scheme.
+ *
+ * `StyleSheet.create` used to run once at module scope over the static `TG`;
+ * it cannot see a hook. A module now writes `makeStyles(p: TelegraphPalette)`
+ * and asks for its sheet here. The sheet is built once per (module, scheme) and
+ * cached, so a re-render does not rebuild it and two schemes never share one.
+ */
+const themedSheets = new WeakMap<object, Map<TelegraphScheme, unknown>>();
+
+export function themedStyles<T>(
+  make: (p: TelegraphPalette) => T,
+  palette: TelegraphPalette,
+): T {
+  let byScheme = themedSheets.get(make);
+  if (!byScheme) {
+    byScheme = new Map();
+    themedSheets.set(make, byScheme);
+  }
+  const hit = byScheme.get(palette.scheme);
+  if (hit) return hit as T;
+  const sheet = make(palette);
+  byScheme.set(palette.scheme, sheet);
+  return sheet;
+}
+
+/** `themedStyles(make, useTelegraphPalette())` — the hook a component calls. */
+export function useTelegraphStyles<T>(make: (p: TelegraphPalette) => T): T {
+  return themedStyles(make, useTelegraphPalette());
+}
+
+/** The palette and a module's sheet together, for a component that also colours an icon. */
+export function useTelegraphTheme<T>(make: (p: TelegraphPalette) => T): { palette: TelegraphPalette; styles: T } {
+  const palette = useTelegraphPalette();
+  return { palette, styles: themedStyles(make, palette) };
 }

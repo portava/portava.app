@@ -49,7 +49,7 @@ import {
   decisionsForSession,
   diffDecisions,
   type DecisionDiff,
-} from "./LayoverDecisionStore.js";
+} from "./LayoverDecisionStore.js"; import { readFlagState, isMissingSchemaError } from "../../lib/capability/schemaCapability.js"; import { decisionRecordFor, type DecisionRecord } from "../../services/airport/layoverLedger.js"; import { replayStoredComputation, replayStoredComputations, type ReplaySummary, type StoredComputationRow } from "../../services/airport/layoverReplay.js"; import { replayFeasibility, type FeasibilityInputs, type LayoverFeasibilityRecord } from "../../services/airport/LayoverFeasibility.js"; import { LAYOVER_ENGINE_VERSION } from "../../services/airport/LayoverSafetyEngine.js"; // census L189/L191 (lane 5): the foot of this file
 
 const logger = rootLogger.child({ service: "LayoverDecisionService" });
 
@@ -257,4 +257,194 @@ export async function runSnapshotCompactionSweep(
     logger.warn({ err: err instanceof Error ? err.message : String(err) }, "snapshot compaction sweep threw — nothing further deleted");
     return { outcome: "failed", sessions: 0, dropped: 0, failedSessions: 0 };
   }
+}
+
+// ── L189 / L191 — explain(snapshotId) and replay(sessionId, engineVersion) ────
+//
+// Appended at the foot so no line above moves (this file is cited by line).
+//
+// BOTH READ THE ROW AS WRITTEN, NOT `decisionBySnapshotId`. That reader rebuilds
+// a record BY REPLAYING the stored inputs and never reads the decision columns,
+// so an explanation or a replay built on it would compare a recomputation with a
+// recomputation (layoverReplay.ts's header). These two hand the stored row to
+// `replayStoredComputation`, the §20 L217 replay, and act only on what it says.
+//
+// THE GATE IS THE FOUR-STATE FLAG READ. `layover_decision_persistence_enabled`
+// on → read; off or absent → `persistence_disabled`, nothing read (2700/2992
+// are unapplied in production, so "not stored" is the truthful answer there);
+// unreadable → `flag_unreadable`, nothing read. Unreadable is not "off": an
+// operator told "disabled" when the row could not be read looks in the wrong
+// place. Neither function writes anything, on any path.
+
+/** 2700's typed columns, 2992's two, and the inputs — the same list `storedComputationsInWindow` reads. */
+const AS_WRITTEN_COLUMNS =
+  "session_id,snapshot_id,engine_version,feasibility_version,input_hash,computed_at,verdict,confidence,buffer_percentile,cutoff_at,hard_return_time,total_buffer_min,usable_minutes,breakdown,reason_codes,rules_applied,inputs";
+
+export type LedgerGateRefusal = "persistence_disabled" | "flag_unreadable";
+
+/** `null` = open. The literal is spelled here so check:flag-polarity can resolve it. */
+async function ledgerGate(db: SupabaseClient): Promise<LedgerGateRefusal | null> {
+  const state = await readFlagState(db, "layover_decision_persistence_enabled");
+  if (state === "on") return null;
+  return state === "unreadable" ? "flag_unreadable" : "persistence_disabled";
+}
+
+/** A refused read names WHY: the ledger is not in this database, or the read failed. */
+function readRefusal(error: unknown): "storage_unavailable" | "read_failed" {
+  return isMissingSchemaError(error) ? "storage_unavailable" : "read_failed";
+}
+
+export type SnapshotExplainRefusal =
+  | LedgerGateRefusal
+  /** The ledger tables or columns are not in this database (2700/2992 unapplied). */
+  | "storage_unavailable"
+  | "read_failed"
+  /** No such snapshot, OR it belongs to another session — the same answer, deliberately. */
+  | "not_found"
+  /** `replayStoredComputation` refused it: other arithmetic, another record shape, or unusable inputs. */
+  | "not_replayable"
+  /** The stored decision does not follow from its stored inputs. Explaining it would explain a fiction. */
+  | "replay_mismatch";
+
+export interface SnapshotExplanation {
+  snapshotId: string;
+  sessionId: string;
+  /** §20's ten members for this snapshot. */
+  decision: DecisionRecord;
+  /** §9's explanation as this snapshot published it: the engine's reasons, unknowns and disclaimer. */
+  reasons: string[];
+  unknowns: string[];
+  disclaimer: string;
+  /** How the numbers were made: the deadline's per-term breakdown and the buffer percentile. */
+  breakdown: LayoverFeasibilityRecord["deadline"]["breakdown"];
+  bufferPercentile: string;
+  /**
+   * What licenses this explanation: the stored decision columns were reproduced
+   * field for field by replaying the stored inputs under the running engine.
+   * There is no other value; a row that does not replay is refused, not explained.
+   */
+  verifiedBy: "replay_match";
+}
+
+export type SnapshotExplainOutcome =
+  | { ok: true; explanation: SnapshotExplanation }
+  | { ok: false; reason: SnapshotExplainRefusal; detail: string[] };
+
+/**
+ * census L189 — `LayoverDecisionService.explain(snapshotId)`.
+ *
+ * Explains a STORED snapshot, not a live computation: the reasons, unknowns and
+ * disclaimer the engine published for exactly the inputs that snapshot stored.
+ * They are not stored as text, so they are reproduced by replay — and only after
+ * the replay has reproduced every stored decision column, so the words cannot
+ * describe a different answer from the one the traveller was given.
+ *
+ * `sessionId` is the session the caller has already proven they own (as in
+ * `diffSnapshots`); another session's snapshot is `not_found`.
+ */
+export async function explainSnapshot(
+  db: SupabaseClient,
+  sessionId: string,
+  snapshotId: string,
+): Promise<SnapshotExplainOutcome> {
+  const gate = await ledgerGate(db);
+  if (gate) return { ok: false, reason: gate, detail: [] };
+
+  const { data, error } = await db
+    .from("layover_certified_computations")
+    .select(AS_WRITTEN_COLUMNS)
+    .eq("snapshot_id", snapshotId)
+    .maybeSingle();
+  if (error) {
+    logger.warn({ err: (error as { message?: string }).message, snapshotId }, "snapshot explain: stored computation unreadable — refusing rather than explaining nothing");
+    return { ok: false, reason: readRefusal(error), detail: [] };
+  }
+  if (!data) return { ok: false, reason: "not_found", detail: [] };
+  const row = data as unknown as StoredComputationRow;
+  if (row.session_id !== sessionId) return { ok: false, reason: "not_found", detail: [] };
+
+  const replay = replayStoredComputation(row);
+  if (replay.status === "refused") return { ok: false, reason: "not_replayable", detail: replay.refusal ? [replay.refusal] : [] };
+  if (replay.status === "mismatch") {
+    logger.warn({ snapshotId, fields: replay.mismatchedFields }, "snapshot explain: stored decision does not replay — refusing to explain it");
+    return { ok: false, reason: "replay_mismatch", detail: [...replay.mismatchedFields] };
+  }
+
+  // `replayStoredComputation` matched, so these inputs reproduce the stored row.
+  const record = replayFeasibility(row.inputs as FeasibilityInputs);
+  return {
+    ok: true,
+    explanation: {
+      snapshotId,
+      sessionId: row.session_id,
+      decision: decisionRecordFor(row.session_id, record),
+      reasons: [...record.reasons],
+      unknowns: [...record.unknowns],
+      disclaimer: record.disclaimer,
+      breakdown: record.deadline.breakdown,
+      bufferPercentile: record.inputs.bufferPercentile,
+      verifiedBy: "replay_match",
+    },
+  };
+}
+
+/** The most stored decisions one session replay reads. One over it is read, so `truncated` is measured. */
+export const SESSION_REPLAY_LIMIT = 50;
+
+export type SessionReplayRefusal =
+  | LedgerGateRefusal
+  /**
+   * The requested engine is not the one running. This tree can only run its own
+   * arithmetic; "what would THIS engine say about those records" is the L241
+   * decision diff (`decisionDiffCorpus`), not a replay.
+   */
+  | "engine_version_not_running"
+  | "storage_unavailable"
+  | "read_failed";
+
+export type SessionReplayOutcome =
+  | { ok: true; sessionId: string; engineVersion: string; summary: ReplaySummary; truncated: boolean }
+  | { ok: false; reason: SessionReplayRefusal; runningEngineVersion: string };
+
+/**
+ * census L191 — `LayoverDecisionService.replay(sessionId, engineVersion)`.
+ *
+ * Every decision this session stored under `engineVersion`, newest first and
+ * bounded, each replayed from its stored inputs and compared with its stored
+ * decision columns (`replayStoredComputations`). A match is a record that is
+ * what it claims; a mismatch names the fields that are not. Refusals stay out of
+ * the summary's denominator, exactly as L217's metric keeps them out.
+ *
+ * `sessionId` is the session the caller has already proven they own.
+ */
+export async function replaySessionDecisions(
+  db: SupabaseClient,
+  sessionId: string,
+  engineVersion: string,
+): Promise<SessionReplayOutcome> {
+  const gate = await ledgerGate(db);
+  if (gate) return { ok: false, reason: gate, runningEngineVersion: LAYOVER_ENGINE_VERSION };
+  if (engineVersion !== LAYOVER_ENGINE_VERSION) {
+    return { ok: false, reason: "engine_version_not_running", runningEngineVersion: LAYOVER_ENGINE_VERSION };
+  }
+
+  const { data, error } = await db
+    .from("layover_certified_computations")
+    .select(AS_WRITTEN_COLUMNS)
+    .eq("session_id", sessionId)
+    .eq("engine_version", engineVersion)
+    .order("computed_at", { ascending: false })
+    .limit(SESSION_REPLAY_LIMIT + 1);
+  if (error || !Array.isArray(data)) {
+    logger.warn({ err: (error as { message?: string } | null)?.message ?? "no row set", sessionId }, "session replay: stored decisions unreadable — refusing rather than replaying an empty history");
+    return { ok: false, reason: error ? readRefusal(error) : "read_failed", runningEngineVersion: LAYOVER_ENGINE_VERSION };
+  }
+  const rows = data as unknown as StoredComputationRow[];
+  return {
+    ok: true,
+    sessionId,
+    engineVersion,
+    summary: replayStoredComputations(rows.slice(0, SESSION_REPLAY_LIMIT)),
+    truncated: rows.length > SESSION_REPLAY_LIMIT,
+  };
 }

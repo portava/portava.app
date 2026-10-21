@@ -36,11 +36,11 @@ import { executeAccountDeletion } from "../services/accountDeletion/AccountDelet
 import { runSchemaDriftCheck, getCachedSchemaDriftResult } from "../lib/schemaDriftCheck";
 import { logAdminAccess, accessReason } from "../lib/adminAudit.js";
 import { resolveStoragePath } from "../lib/storagePath.js";
-import { logModerationAction, auditReportAction, checkActionReportLink, checkContentReportLink, reportLinkColumnId } from "../lib/moderationAudit.js"; import { applyAccountRestriction, revokeAccountRestrictions, parseRestrictionEnd, recordModerationNotApplied, notAppliedAuditNote } from "../lib/accountModeration.js"; // same line: admin.ts is cited by line
+import { logModerationAction, auditReportAction, checkActionReportLink, checkContentReportLink, reportLinkColumnId } from "../lib/moderationAudit.js"; import { applyAccountRestriction, revokeAccountRestrictions, parseRestrictionEnd, recordModerationNotApplied, notAppliedAuditNote } from "../lib/accountModeration.js"; import { countOpenReportsAgainst, exactListCount, LEGACY_REPORT_STATUSES, UNRESOLVED_REPORT_STATUSES } from "../lib/moderationCounts.js"; import { moveLegacyReport, moveLegacyReports, describeLegacyBulkFailure, LEGACY_REPORT_CLOSE_READ, type LegacyReportRow } from "../lib/legacyReportClose.js"; import { readReportedVenueQueue } from "../lib/reportedVenueQueue.js"; import { applyEventModeration, decideModeratedEventState, decideRestoredEventVisibility, stateKeptRecordOf, type ModeratedEventRow, type EventModerationStateIntent } from "../lib/eventModerationClaim.js"; // same line: admin.ts is cited by line
 import { loadCapturedReportContent, loadModerationSubjectSnapshots, resolveContentOwnerDetailed, MODERATION_REPORT_CATEGORIES, MODERATION_REPORT_STATUSES, MODERATION_REPORT_TRANSITIONS, type ModerationReportStatus } from "../lib/moderationReportSnapshots.js";
 
 import { requireAdmin } from "../lib/requireAdmin.js"; import { computeAttemptsPerVerifiedUser } from "../services/identityVerification/attemptMetrics.js"; // same line on purpose: a new import line shifts every anchored citation into this file
-import { listRestrictionsForAudit } from "../services/trust/TrustRestrictionService.js";
+import { listRestrictionsForAudit } from "../services/trust/TrustRestrictionService.js"; import { countBlockRows, countMuteRows, countRestrictRows } from "../lib/exclusionSet.js"; // census-telegraph T220 (+T220c: muteCount, +T220d: restrictCount): same line — admin.ts is cited by line
 import {
   GEO_ZONE_DB_TYPES,
   GEO_ZONE_SAFETY_RATINGS,
@@ -443,42 +443,42 @@ router.get("/admin/venues/reported", async (req, res) => {
   if (!admin) return;
   const { sc } = admin;
 
-  const limit = Math.min(100, Number(req.query.limit) || 50);
+  const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 50)); // Math.max (wave 5): a negative ?limit sliced from the END of the queue
 
-  const { data, error } = await sc
-    .from("discovery_places")
-    .select(
-      "id, name, place_type, category, city, neighborhood, blurb, status, submitted_by, created_at, " +
-      "discovery_place_reports(count)",
-    )
-    .gt("discovery_place_reports.count" as any, 0)
-    .order("created_at", { ascending: false })
-    .limit(limit);
+  // ── wave 5 (census-trust, the remaining seven): the queue starts from the REPORTS ──
+  // This read the newest `limit` places with a `discovery_place_reports(count)`
+  // embed and DROPPED every row whose count was not above 0, so:
+  //   - a venue whose report-count embed answered without a count read as 0
+  //     reports and VANISHED from the moderation queue;
+  //   - a reported venue older than the newest `limit` places was never in the
+  //     queue at all, however many reports it had (the limit ran first);
+  //   - `total` was the page's length.
+  // Now every report is read, paged past the row cap, and grouped by place; the
+  // reported places are read by id (lib/reportedVenueQueue.ts). A read that
+  // fails or answers no list or no exact count REFUSES the page, naming it —
+  // this route's own convention for a returned error (db_error) — never a queue
+  // a reported venue could be missing from. A reported place gone by the time
+  // it is read is KEPT, flagged venueMissing, as the trips and events queues
+  // keep a report whose parent is gone.
+  const queue = await readReportedVenueQueue(sc);
+  if (!queue.ok) { sendError(res, "db_error", queue.message, { exposeDetail: true }); return; }
 
-  if (error) { sendError(res, "db_error", error.message); return; }
-
-  // Sort by report count descending after fetch (Supabase doesn't support ordering by embedded count)
-  const venues = (data ?? [])
-    .map((row: any) => ({
-      id:           row.id,
-      name:         row.name,
-      placeType:    row.place_type,
-      category:     row.category,
-      city:         row.city,
-      neighborhood: row.neighborhood,
-      blurb:        row.blurb,
-      status:       row.status,
-      submittedBy:  row.submitted_by,
-      createdAt:    row.created_at,
-      reportCount:  Array.isArray(row.discovery_place_reports)
-        ? (row.discovery_place_reports[0]?.count ?? 0)
-        : 0,
-    }))
-    .filter((v: any) => v.reportCount > 0)
-    .sort((a: any, b: any) => b.reportCount - a.reportCount);
+  // Ordered by report count (most first), then the newest report. Each venue
+  // carries reportCount (every report row, counted), latestReason and
+  // latestReportAt — the "most recent report reason" this route's doc promised
+  // and never sent. `total` counts EVERY reported venue, not this page.
+  const venues = queue.venues.slice(0, limit);
+  const total = queue.venues.length;
+  // There is no `.filter(reportCount > 0)` any more: a venue is in this list
+  // because a report row names it, so no missing count can drop it. The page is
+  // a slice of the measured queue, so `total` and the page agree: ?limit=N lists
+  // the N most-reported venues and says how many are reported in all. Ties go to
+  // the venue reported most recently, then by id, so the order is stable. The
+  // response keeps its shape ({ venues, total }); each venue gains three fields
+  // and, for a place removed mid-read, venueMissing. No client calls this route.
 
   void logAdminAccess(sc, admin.userId, "profile", "list", "view", accessReason(req));
-  res.json({ venues, total: venues.length });
+  res.json({ venues, total });
 });
 
 /**
@@ -1290,16 +1290,16 @@ router.patch("/admin/users/:userId/moderation-action", async (req, res) => {
         moderation_notes: reason ?? null,
         updated_at:       now,
       })
-      .eq("id", target_ref_id)
+      .eq("id", target_ref_id).in("status", UNRESOLVED_REPORT_STATUSES) // only an UNRESOLVED report moves (lib/moderationCounts.ts): a closed one is never re-resolved
       .select("id");
     if (error) {
       sideEffects.reportStatus = "error";
-    } else if (!Array.isArray(resolvedRows) || resolvedRows.length === 0) {
-      req.log.error(
-        { targetRefId: target_ref_id, targetUserId: userId, adminUserId },
-        "moderation-action report_resolved matched no report — nothing was resolved",
-      );
-      sideEffects.reportStatus = "not_found";
+    } else if (!Array.isArray(resolvedRows)) {
+      sideEffects.reportStatus = "error"; // no rows came back to count: what the write did is unmeasured, never "not found"
+    } else if (resolvedRows.length === 0) {
+      const { data: closedRow, error: closedErr } = await sc.from("reports").select("status").eq("id", target_ref_id).maybeSingle(); // why nothing moved: no such report, or one already closed
+      req.log.error({ targetRefId: target_ref_id, targetUserId: userId, adminUserId, closedStatus: (closedRow as any)?.status ?? null }, "moderation-action report_resolved moved no report — nothing was resolved");
+      sideEffects.reportStatus = closedErr ? "error" : closedRow ? "already_closed" : "not_found";
     } else {
       sideEffects.reportStatus = "resolved";
     }
@@ -1351,19 +1351,19 @@ router.get("/admin/users", async (req, res) => {
     let page = 1;
     while (!authUserId) {
       const { data: authPage, error: authErr } = await sc.auth.admin.listUsers({ page, perPage: 1000 });
-      if (authErr || !authPage?.users?.length) break;
+      if (authErr) { sendError(res, "db_error", `The account lookup by email could not run: ${authErr.message}. This is NOT "no such user" -- retry.`, { exposeDetail: true }); return; } if (!authPage?.users?.length) break;
       const match = authPage.users.find((u: any) => u.email?.toLowerCase() === email);
       if (match) { authUserId = match.id; break; }
       if (authPage.users.length < 1000) break; // last page — not found
       page++;
     }
     if (authUserId) {
-      const { data: pById } = await sc
+      const { data: pById, error: pByIdErr } = await sc
         .from("profiles")
         .select("id, handle, username, name, display_name, bio, avatar_url, role, verified, account_status, created_at")
         .eq("id", authUserId)
         .maybeSingle();
-      profileData = pById ?? null;
+      if (pByIdErr) { sendError(res, "db_error", pByIdErr.message); return; } profileData = pById ?? null; // a failed profile read answered "User not found" (wave 5)
     }
   } else if (handle) {
     const { data, error } = await sc
@@ -1389,10 +1389,10 @@ router.get("/admin/users", async (req, res) => {
       .eq("user_id", userId)
       .order("created_at", { ascending: false })
       .limit(5),
-    sc.from("reports")
-      .select("id", { count: "exact", head: true })
-      .eq("target_id", userId)
-      .eq("status", "open"),
+    // census-trust (wave 5): the shared count form (the same HEAD count) — a count-less, failed or thrown answer is a failed read, never 0
+    countOpenReportsAgainst(sc, userId).then((r) =>
+      r.ok ? { count: r.count, error: null } : { count: null, error: { message: r.reason } },
+    ),
     sc.from("compass_settings")
       .select("onboarding_completed, onboarding_completed_at")
       .eq("user_id", userId)
@@ -1487,18 +1487,18 @@ router.get("/admin/users/:userId/summary", async (req, res) => {
         ? { data: r.rows, error: null }
         : { data: null, error: { message: r.reason } },
     ),
-    sc.from("blocks")
-      .select("id", { count: "exact", head: true })
-      .or(`blocker_id.eq.${userId},blocked_id.eq.${userId}`),
-    sc.from("user_mutes")
-      .select("id", { count: "exact", head: true })
-      .eq("muter_id", userId),
-    sc.from("user_restrictions")
-      .select("id", { count: "exact", head: true })
-      .eq("restrictor_id", userId),
+    countBlockRows(sc, userId, "either").then((r) => // census-telegraph T220: the shared count form (the same HEAD count) — a count-less answer is a failed read, never 0
+      r.ok ? { count: r.count, error: null } : { count: null, error: { message: r.reason } },
+    ),
+    countMuteRows(sc, userId).then((r) => // census-telegraph T220c: the shared count form (the same HEAD count) — a count-less answer is a failed read, never 0
+      r.ok ? { count: r.count, error: null } : { count: null, error: { message: r.reason } },
+    ),
+    countRestrictRows(sc, userId).then((r) => // census-telegraph T220d: the shared count form (the same HEAD count) — a count-less answer is a failed read, never 0
+      r.ok ? { count: r.count, error: null } : { count: null, error: { message: r.reason } },
+    ),
   ]);
 
-  if (!profileRes.data) { sendError(res, "not_found", "User not found"); return; }
+  if ((profileRes as { error?: { message?: string } | null }).error) { sendError(res, "db_error", `The profile could not be read: ${(profileRes as any).error.message}. This is NOT "no such user" -- retry.`, { exposeDetail: true }); return; } if (!profileRes.data) { sendError(res, "not_found", "User not found"); return; }
 
   const failedSummaryReads = failedModerationReads([
     ["accountStates", accountStateRes],
@@ -1548,13 +1548,13 @@ router.get("/admin/users/:userId/summary", async (req, res) => {
  * Three states must stay distinguishable: no record, read failed, record
  * exists. This returns the names of the sections in the middle state so the
  * caller can refuse to render the record at all rather than render a partial
- * one that reads as exculpatory.
+ * one that reads as exculpatory. A no-error answer with no list (a count read: no count) is that middle state too (wave 5).
  */
 function failedModerationReads(
   reads: ReadonlyArray<readonly [string, { error?: unknown } | null | undefined]>,
 ): string[] {
   return reads
-    .filter(([, r]) => Boolean(r && (r as { error?: unknown }).error))
+    .filter(([, r]) => !r || Boolean((r as { error?: unknown }).error) || ("data" in r || !("count" in r) ? !Array.isArray((r as { data?: unknown }).data) : !(Number.isSafeInteger((r as { count?: unknown }).count) && ((r as { count: number }).count >= 0)))) // a list read must answer a list, a count read a count: `data ?? []` / `count ?? 0` turned a no-error, list-less answer into a clean record
     .map(([name]) => name);
 }
 
@@ -2138,8 +2138,8 @@ router.get("/admin/moderation/reports", async (req, res) => {
   if (category !== "all") query = query.eq("category", category);
 
   const { data, error, count } = await query;
-  if (error) { sendError(res, "db_error", error.message); return; }
-
+  if (error) { sendError(res, "db_error", error.message); return; } const total = exactListCount(count, data); // a queue whose total is unknown is refused, never `count ?? 0`
+  if (total === null) { sendError(res, "db_error", "The moderation report list answered without an exact total. A queue page with no total is not served: it would hide every report past it. Retry.", { exposeDetail: true }); return; }
   const rows: any[] = data ?? [];
   const { snapshots, failedTypes } = await loadModerationSubjectSnapshots(sc, rows); const { captures, unavailable: capturesUnavailable } = await loadCapturedReportContent(sc, rows.map((r) => String(r.id))); // Q-L23: the content as it was when reported, moderators only
 
@@ -2157,7 +2157,7 @@ router.get("/admin/moderation/reports", async (req, res) => {
   void logAdminAccess(sc, admin.userId, "profile", "list", "view", accessReason(req));
   res.json({
     reports: enriched,
-    total: count ?? 0,
+    total,
     page,
     // Named, so a client cannot read a page with failed snapshot reads as a
     // complete one.
@@ -2181,7 +2181,7 @@ router.get("/admin/reports", async (req, res) => {
   const limit  = Math.min(100, Number(req.query.limit) || 50);
   const type   = (req.query.type   as string | undefined) || null;
   const status = (req.query.status as string | undefined) || "open";
-
+  if (!(LEGACY_REPORT_STATUSES as readonly string[]).includes(status)) { sendError(res, "invalid_payload", `Unknown status '${status}'. One of: ${LEGACY_REPORT_STATUSES.join(", ")}`); return; } // a word no report carries is refused by name, never answered with an empty page
   let query = sc
     .from("reports")
     .select("id, reporter_id, target_type, target_id, reason_code, reason_detail, severity, status, created_at, reviewed_at, reviewed_by, moderation_notes", { count: "exact" })
@@ -2192,9 +2192,9 @@ router.get("/admin/reports", async (req, res) => {
   if (status) query = query.eq("status", status);
 
   const { data, error, count } = await query;
-  if (error) { sendError(res, "db_error", error.message); return; }
-  void logAdminAccess(sc, admin.userId, "profile", "list", "view", accessReason(req));
-  res.json({ reports: data ?? [], total: count ?? 0, page });
+  if (error) { sendError(res, "db_error", error.message); return; } const total = exactListCount(count, data); // never `count ?? 0`: the client paginates on it
+  if (total === null) { sendError(res, "db_error", "The report list answered without an exact total. A queue page with no total is not served: it would hide every report past it. Retry.", { exposeDetail: true }); return; } void logAdminAccess(sc, admin.userId, "profile", "list", "view", accessReason(req));
+  res.json({ reports: data, total, page });
 });
 
 const resolveReportSchema = z.object({
@@ -2227,44 +2227,44 @@ router.post("/admin/reports/:id/resolve", async (req, res) => {
   // OWNER, and which table to look in depends on the type.
   const { data: reportRow, error: fetchErr } = await sc
     .from("reports")
-    .select("id, target_type, target_id, status")
+    .select(LEGACY_REPORT_CLOSE_READ) // + the reviewer fields: a claim undone after a failed audit restores them
     .eq("id", req.params.id)
-    .neq("status", "resolved")
+    .in("status", UNRESOLVED_REPORT_STATUSES) // open or in_review — `neq resolved` also let a DISMISSED report be re-resolved
     .maybeSingle();
 
   if (fetchErr) { sendError(res, "db_error", fetchErr.message); return; }
-  if (!reportRow) { sendError(res, "not_found", "Report not found or already resolved"); return; }
+  if (!reportRow) { sendError(res, "not_found", "Report not found or already closed (resolved or dismissed)"); return; }
 
-  // Audit first (fail-closed). This previously passed target_id straight in as
-  // target_user_id, which is a FK to profiles(id) — so every report whose
-  // target was not a user (post, place, trip, event, message, thread) failed
-  // the insert and 500'd here, before the report could ever be resolved.
-  const auditR = await auditReportAction(sc, req, {
-    reportId: req.params.id,
-    targetType: (reportRow as any).target_type as string,
-    targetId: (reportRow as any).target_id as string,
+  // CLAIM first, then AUDIT, then undo the claim if the audit row cannot be
+  // written (lib/legacyReportClose.ts) — the order POST /admin/moderation/
+  // reports/:id/review uses. This route AUDITED FIRST until wave 5 (2026-10-18),
+  // so a report someone else closed between the read and the write answered 409
+  // having already written an audit row for a resolve that never happened.
+  //   - claimed by someone else first: 409, and NOTHING is written;
+  //   - the audit row fails: the report is restored to the status and reviewer
+  //     it held when read, and the 500 says so; a failed restore is a 500 that
+  //     says the report reads resolved with no audit row, to be fixed by hand.
+  // The audit row still names the content OWNER (auditReportAction): target_id
+  // went straight into target_user_id once, a FK to profiles(id), so every
+  // non-user report 500'd here before it could ever be resolved.
+  const moveR = await moveLegacyReport(sc, req, reportRow as LegacyReportRow, {
+    to: "resolved",
     adminUserId,
     actionType: parsed.data.action,
-    reason: parsed.data.notes ?? null,
+    notes: parsed.data.notes ?? null,
   });
-  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
+  if (moveR.outcome === "conflict") { sendError(res, "conflict", moveR.message); return; }
+  if (moveR.outcome === "failed") { sendError(res, "db_error", moveR.message, { exposeDetail: true }); return; }
+  const auditR = { audit: moveR.audit, ownerUserId: moveR.ownerUserId, id: moveR.auditId ?? undefined };
+  const data = moveR.report;
 
-  const now = new Date().toISOString();
-  const { data, error } = await sc
-    .from("reports")
-    .update({ status: "resolved", reviewed_by: adminUserId, reviewed_at: now, moderation_notes: parsed.data.notes ?? null, updated_at: now })
-    .eq("id", req.params.id)
-    .select("id, status, reviewed_at")
-    .maybeSingle();
-
-  if (error) { sendError(res, "db_error", error.message); return; }
 
   // Trust: an UPHELD report against a message charges the message's SENDER
   // (the accountable user auditReportAction resolved — never the reporter,
   // never the admin, who is recorded by recordAdjudicatedTrustEvent as the
   // confirming reviewer). Keyed on the MESSAGE id, so two reports against one
   // message confirm once; the report and audit row ride in metadata. The
-  // status guard above (`neq status resolved`) already makes a replayed
+  // status guard above (unresolved only) already makes a replayed
   // resolve a 404, so this cannot fire twice for one report. Only
   // `upheld: true` reaches here — see resolveReportSchema. Fire-and-forget.
   const targetType = (reportRow as any).target_type as string;
@@ -2306,36 +2306,36 @@ router.post("/admin/reports/:id/dismiss", async (req, res) => {
   // target_type as well as target_id — same reason as resolve above.
   const { data: reportRow, error: fetchErr } = await sc
     .from("reports")
-    .select("id, target_type, target_id, status")
+    .select(LEGACY_REPORT_CLOSE_READ) // + the reviewer fields, for an undo
     .eq("id", req.params.id)
-    .eq("status", "open")
+    .in("status", UNRESOLVED_REPORT_STATUSES) // open or in_review — `eq open` refused every in_review report the admin client offers to dismiss
     .maybeSingle();
 
   if (fetchErr) { sendError(res, "db_error", fetchErr.message); return; }
-  if (!reportRow) { sendError(res, "not_found", "Report not found or not in open status"); return; }
+  if (!reportRow) { sendError(res, "not_found", "Report not found or already closed (resolved or dismissed)"); return; }
 
-  // Audit first (fail-closed). Same FK defect as resolve: target_id was passed
-  // straight in as target_user_id.
-  const auditR = await auditReportAction(sc, req, {
-    reportId: req.params.id,
-    targetType: (reportRow as any).target_type as string,
-    targetId: (reportRow as any).target_id as string,
+  // CLAIM first, then AUDIT (report_dismissed, against the content OWNER — the
+  // same FK rule as resolve), then undo the claim if the audit row cannot be
+  // written: the order resolve above uses (lib/legacyReportClose.ts).
+  //
+  // What each answer means:
+  //   200  the report is dismissed, reviewed_by / reviewed_at name this admin,
+  //        and `audit` says whether the audit row was recorded or skipped (no
+  //        accountable owner, or an owner lookup that could not run);
+  //   409  someone else moved the report first: NOTHING was written (this used
+  //        to answer 409 after its audit row had already been written);
+  //   500  the update or the audit failed: the message says whether the report
+  //        was left as it was, restored, or left dismissed with no audit row.
+  const moveR = await moveLegacyReport(sc, req, reportRow as LegacyReportRow, {
+    to: "dismissed",
     adminUserId,
     actionType: "report_dismissed",
-    reason: notes,
+    notes,
   });
-  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
+  if (moveR.outcome === "conflict") { sendError(res, "conflict", moveR.message); return; }
+  if (moveR.outcome === "failed") { sendError(res, "db_error", moveR.message, { exposeDetail: true }); return; }
 
-  const now = new Date().toISOString();
-  const { data, error } = await sc
-    .from("reports")
-    .update({ status: "dismissed", reviewed_by: adminUserId, reviewed_at: now, moderation_notes: notes, updated_at: now })
-    .eq("id", req.params.id)
-    .select("id, status, reviewed_at")
-    .maybeSingle();
-
-  if (error) { sendError(res, "db_error", error.message); return; }
-  res.json({ report: data, audit: auditR.audit });
+  res.json({ report: moveR.report, audit: moveR.audit });
 });
 
 /**
@@ -2344,7 +2344,7 @@ router.post("/admin/reports/:id/dismiss", async (req, res) => {
  * Hides the content item (post, message, etc.) referenced by this report from
  * all public feeds, without necessarily resolving the report.  Works by setting
  * the target item's visibility/status to a hidden state based on target_type.
- * Also marks the report as "in_review".
+ * Also moves an UNRESOLVED report to "in_review"; a resolved or dismissed one stays closed.
  *
  * Supported target_types:
  *   post  — sets posts.post_status = 'removed'
@@ -2449,12 +2449,12 @@ router.post("/admin/reports/:id/hide-content", async (req, res) => {
     // the gated path would have rejected.
     contentHidden = Array.isArray(hideRes.data) && hideRes.data.length > 0;
   } else if (target_type === "event") {
-    const { data: hiddenEvents, error } = await sc.from("events")
-      .update({ visibility: "invite_only", updated_at: now })
-      .eq("id", target_id)
-      .select("id");
-    if (error) { sendError(res, "db_error", error.message); return; }
-    contentHidden = Array.isArray(hiddenEvents) && hiddenEvents.length > 0;
+    // census-trust (wave 5): this hide was a raw UNRECORDED update (no event_activity_log row), so nothing could tell it held — the host's PATCH un-hid it, and no restore could reverse it. It is now the moderate route's hide: claimed, recorded (admin_hide, from / to visibility, via: report), undone if that record cannot be written.
+    const { data: hEv, error: hReadErr } = await sc.from("events").select("id, host_id, title, state, visibility, featured").eq("id", target_id).maybeSingle(); if (hReadErr) { sendError(res, "degraded_unavailable", "The event could not be read right now, so it was not hidden. Please try again."); return; }
+    const hid = !hEv ? null : await applyEventModeration(sc, req, hEv as ModeratedEventRow, { changes: { visibility: "invite_only" }, now, activityAction: "admin_hide",
+      writeActivity: (st) => sc.from("event_activity_log").insert({ event_id: target_id, actor_id: adminUserId, action: "admin_hide", metadata: { reason, via: "report", report_id: req.params.id, ...st } }).select("id"), writeAudit: () => Promise.resolve({ error: null }) }); // the moderation_actions row (content_removed) is auditReportAction's, written above
+    if (hid && hid.outcome === "conflict") { sendError(res, "conflict", hid.message); return; } if (hid && hid.outcome !== "applied") { sendError(res, "db_error", hid.message, { exposeDetail: true }); return; }
+    contentHidden = hid !== null; // no row (the event is gone) hid nothing, as the affected-row count said
   }
 
   if (!contentHidden && ["post", "trip", "event"].includes(target_type)) {
@@ -2493,13 +2493,13 @@ router.post("/admin/reports/:id/hide-content", async (req, res) => {
     }).catch(() => {});
   }
 
-  // Move report to in_review
-  await sc.from("reports")
+  // Move the report to in_review — only an UNRESOLVED one moves (lib/moderationCounts.ts): a closed report is never reopened. `status` answers what the row holds.
+  const { data: movedRows, error: moveErr } = await sc.from("reports")
     .update({ status: "in_review", updated_at: now })
-    .eq("id", req.params.id)
-    .then(undefined, () => {});
-
-  res.json({ reportId: req.params.id, targetType: target_type, targetId: target_id, contentHidden, status: "in_review" });
+    .eq("id", req.params.id).in("status", UNRESOLVED_REPORT_STATUSES).select("id");
+  const prevStatus = String((reportRow as any).status); const closed = !(UNRESOLVED_REPORT_STATUSES as readonly string[]).includes(prevStatus); const moved = !moveErr && Array.isArray(movedRows) && movedRows.length === 1;
+  if (!moved && !closed) req.log.error({ err: moveErr ?? null, reportId: req.params.id, prevStatus }, "hide-content: the report was NOT moved to in_review — its status is unknown, not claimed");
+  res.json({ reportId: req.params.id, targetType: target_type, targetId: target_id, contentHidden, status: moved ? "in_review" : closed ? prevStatus : null });
 });
 
 // ── Admin deletion request queue ──────────────────────────────────────────────
@@ -2624,47 +2624,47 @@ router.get("/admin/dev/interaction-test", async (req, res) => {
 /**
  * GET /admin/trips
  *
- * Returns trips that have been reported (target_type = 'trip') and are still
- * pending review, newest first.  Each row includes the trip title, owner, and
- * the count of open reports against it so the admin dashboard can triage.
+ * Returns the UNRESOLVED trip reports grouped by trip, newest first, a page at a
+ * time (?page, ?limit — as /admin/reports), with `total` = every unresolved trip
+ * report. `pendingReports` counts the reports on THIS page. A trip that no longer exists keeps its reports in the queue (tripMissing).
  */
 router.get("/admin/trips", async (req, res) => {
   const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
   const sc = admin.sc;
-
-  const { data: reports, error } = await sc
+  const page = Math.max(1, Number(req.query.page) || 1); const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 50)); const offset = (page - 1) * limit; // paged like /admin/reports: this read had NO limit, so PostgREST's row cap cut the queue with no sign
+  const { data: reports, error, count } = await sc
     .from("reports")
-    .select("id, target_id, reason_code, severity, status, created_at")
+    .select("id, target_id, reason_code, severity, status, created_at", { count: "exact" })
     .eq("target_type", "trip")
-    .eq("status", "pending")
-    .order("created_at", { ascending: false });
-
+    .in("status", UNRESOLVED_REPORT_STATUSES) // open or in_review (lib/moderationCounts.ts) — 'pending' is a word no trip report carries
+    .order("created_at", { ascending: false }).range(offset, offset + limit - 1);
+  const total = error ? null : exactListCount(count, reports, offset); // the queue's size, measured: never `count ?? 0`
   if (error) { sendError(res, "db_error", error.message); return; }
-
-  if (!reports || reports.length === 0) {
-    res.json({ trips: [] });
+  if (total === null) { sendError(res, "db_error", "The reported-trips queue answered without an exact total. A queue page with no total is not served: it would hide every report past it. Retry.", { exposeDetail: true }); return; }
+  if ((reports as any[]).length === 0) {
+    res.json({ trips: [], total, page });
     return;
   }
 
   // Collect unique trip IDs from the report rows.
   const tripIds = [...new Set((reports as any[]).map((r: any) => r.target_id as string))];
 
-  const { data: trips } = await sc
+  const { data: trips, error: tripsErr } = await sc
     .from("trips")
     .select("id, title, owner_id, visibility, status, created_at")
     .in("id", tripIds);
-
+  if (tripsErr) { sendError(res, "db_error", tripsErr.message); return; } if (!Array.isArray(trips)) { sendError(res, "db_error", "The reported trips could not be read.", { exposeDetail: true }); return; } // a failed trips read is not "no reported trips"
   const tripMap: Record<string, any> = {};
-  (trips ?? []).forEach((t: any) => { tripMap[t.id] = t; });
-
+  (trips as any[]).forEach((t: any) => { tripMap[t.id] = t; });
+  // A report whose trip no longer exists is still a safety report: it was DROPPED here (`.filter(!!tripMap[id])`). It is shown, its trip marked missing; report-resolve closes it by the trip id.
   const result = tripIds
-    .filter((id) => !!tripMap[id])
     .map((id) => {
       const tripReports = (reports as any[]).filter((r: any) => r.target_id === id);
       return {
-        trip: tripMap[id],
-        pendingReports: tripReports.length,
+        trip: tripMap[id] ?? null,
+        tripId: id, tripMissing: !tripMap[id],
+        pendingReports: tripReports.length, // the reports on this page; `total` is the whole queue
         highestSeverity: tripReports.reduce((max: string, r: any) => {
           const order: Record<string, number> = { low: 1, medium: 2, high: 3, critical: 4 };
           return (order[r.severity] ?? 0) > (order[max] ?? 0) ? r.severity : max;
@@ -2674,7 +2674,7 @@ router.get("/admin/trips", async (req, res) => {
     });
 
   void logAdminAccess(sc, admin.userId, "trip", "list", "view", accessReason(req));
-  res.json({ trips: result });
+  res.json({ trips: result, total, page });
 });
 
 /**
@@ -2694,15 +2694,15 @@ router.post("/admin/trips/:tripId/hide", async (req, res) => {
     sendError(res, "invalid_payload", "tripId must be a valid UUID"); return;
   }
 
-  const { data: trip } = await sc.from("trips").select("id, owner_id, visibility").eq("id", tripId).maybeSingle();
-  if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
+  const { data: trip, error: tripReadErr } = await sc.from("trips").select("id, owner_id, visibility").eq("id", tripId).maybeSingle();
+  if (tripReadErr) { sendError(res, "degraded_unavailable", "The trip could not be read right now, so nothing was changed. Please try again."); return; } if (!trip) { sendError(res, "not_found", "Trip not found"); return; } // a failed read answered 404
 
   const reason = typeof req.body?.reason === "string" ? req.body.reason.slice(0, 500) : "Admin hide";
 
   // Trip Kernel path (ADMIN_HIDE_TRIP, admin family) — see /admin/reports/:id/
   // hide-content. The existence check above is unchanged; the kernel re-checks
   // profiles.role = 'admin' for the actor. Off => the direct update below,
-  // whose result was — and with the flag off still is — discarded.
+  // whose result was discarded until wave 5; it is checked now, as is the audit row.
   const kernelHide = await tripKernelClient(sc);
   let kernelHidden = false;
   if (kernelHide) {
@@ -2723,23 +2723,23 @@ router.post("/admin/trips/:tripId/hide", async (req, res) => {
     kernelHidden = true;
   }
   // trip-kernel:legacy-path — the flag-off twin of ADMIN_HIDE_TRIP above.
-  if (!kernelHidden) await sc.from("trips").update({ visibility: "private", updated_at: new Date().toISOString() }).eq("id", tripId);
-
-  await sc.from("moderation_actions").insert({
+  const legacyHide = kernelHidden ? null : await sc.from("trips").update({ visibility: "private", updated_at: new Date().toISOString() }).eq("id", tripId).select("id"); // CHECKED (wave 5): a failed or zero-row hide is never answered `hidden: true`
+  if (legacyHide && (legacyHide.error || !Array.isArray(legacyHide.data) || legacyHide.data.length !== 1)) { const unknown = !legacyHide.error && !Array.isArray(legacyHide.data); sendError(res, legacyHide.error || unknown ? "db_error" : "not_found", legacyHide.error ? `The trip could not be hidden: ${legacyHide.error.message}. Nothing was changed.` : unknown ? "The hide answered no row to count; whether the trip is hidden is unknown. Re-read it before retrying." : "The trip was removed while this request ran; nothing was hidden.", { exposeDetail: true }); return; }
+  const { error: hideAuditErr } = await sc.from("moderation_actions").insert({
     target_user_id: (trip as any).owner_id,
     action_type:    "trip_hidden",
     reason,
-    performed_by:  admin.userId,
+    performed_by:  admin.userId, metadata: { trip_id: tripId, prior_visibility: (trip as any).visibility ?? null }, // the audit row names the trip it hid
   });
-
+  if (hideAuditErr) { req.log.error({ err: hideAuditErr, tripId }, "trip hide: applied, but its moderation_actions row was NOT written"); sendError(res, "db_error", `The trip IS hidden (visibility private), but its audit row could not be written: ${hideAuditErr.message}. Hiding is idempotent: retry to record it.`, { exposeDetail: true }); return; }
   res.json({ tripId, visibility: "private", hidden: true });
 });
 
 /**
  * POST /admin/trips/:tripId/report-resolve
  *
- * Resolves all pending reports against a trip (accepted / rejected by admin).
- * Body: { resolution: 'accepted' | 'rejected', reason?: string }
+ * Closes every UNRESOLVED report (open / in_review) against a trip (accepted → resolved, rejected → dismissed), each CLAIMED then AUDITED (lib/legacyReportClose.ts).
+ * Body: { resolution: 'accepted' | 'rejected', reason?: string } — `reason` is the reports' moderation_notes and the audit rows' reason.
  */
 router.post("/admin/trips/:tripId/report-resolve", async (req, res) => {
   const admin = await requireAdmin(req, res, { withDisplayName: true });
@@ -2757,18 +2757,18 @@ router.post("/admin/trips/:tripId/report-resolve", async (req, res) => {
     return;
   }
 
-  const { data: updated, error } = await sc
+  const reason = typeof req.body?.reason === "string" ? req.body.reason.slice(0, 1000) : null; // documented, and never written until wave 5
+  const { data: openRows, error } = await sc // read FIRST: each report is claimed out of the status it holds, then audited — the update used to close them all with no audit row and no reviewed_by
     .from("reports")
-    .update({ status: resolution === "accepted" ? "resolved" : "dismissed",
-              updated_at: new Date().toISOString() })
+    .select(LEGACY_REPORT_CLOSE_READ)
     .eq("target_type", "trip")
     .eq("target_id", tripId)
-    .eq("status", "pending")
-    .select("id");
-
-  if (error) { sendError(res, "db_error", error.message); return; }
-
-  res.json({ tripId, resolution, resolvedCount: (updated ?? []).length });
+    .in("status", UNRESOLVED_REPORT_STATUSES) // was eq 'pending', which no filed report carries: resolvedCount was 0 for every trip
+    .order("created_at", { ascending: true });
+  if (error || !Array.isArray(openRows)) { sendError(res, "db_error", error?.message ?? "The trip's reports could not be read; nothing was closed."); return; }
+  const moved = await moveLegacyReports(sc, req, openRows as LegacyReportRow[], { to: resolution === "accepted" ? "resolved" : "dismissed", adminUserId: admin.userId, notes: reason, actionType: resolution === "accepted" ? "report_resolved" : "report_dismissed" }); const updated = moved.moved;
+  if (moved.failure) { sendError(res, "db_error", describeLegacyBulkFailure(moved, "the trip"), { exposeDetail: true }); return; }
+  res.json({ tripId, resolution, resolvedCount: updated.length, reports: updated.map((m) => ({ id: m.report.id, audit: m.audit })), closedConcurrently: moved.conflicts });
 });
 
 /**
@@ -2866,44 +2866,44 @@ router.get("/admin/events", async (req, res) => {
   if (!admin) return;
   const sc = admin.sc;
 
-  const limit     = Math.min(100, Math.max(1, parseInt((req.query.limit as string) ?? "50")));
+  const limit     = Math.min(100, Math.max(1, Number(req.query.limit) || 50)); // parseInt("abc") was NaN, and NaN survived Math.max
   const onlyReported = req.query.reported === "true";
   const statusFilter = req.query.status as string | undefined;
   const featuredFilter = req.query.featured === "true" ? true : req.query.featured === "false" ? false : undefined;
-
+  const page = Math.max(1, Number(req.query.page) || 1); const offset = (page - 1) * limit; // ?reported=true pages like /admin/trips and /admin/reports
   if (onlyReported) {
-    // Return events that have pending reports
-    const { data: reports, error: rErr } = await sc
+    // Return events that have UNRESOLVED reports (open / in_review), grouped by event; `total` = every unresolved event report
+    const { data: reports, error: rErr, count } = await sc
       .from("reports")
-      .select("id, target_id, reason_code, severity, status, created_at")
+      .select("id, target_id, reason_code, severity, status, created_at", { count: "exact" })
       .eq("target_type", "event")
-      .eq("status", "pending")
+      .in("status", UNRESOLVED_REPORT_STATUSES) // was eq 'pending', which no filed report carries: this queue was always empty
       .order("created_at", { ascending: false })
-      .limit(limit);
+      .range(offset, offset + limit - 1);
     if (rErr) { sendError(res, "db_error", rErr.message); return; }
+    const total = exactListCount(count, reports, offset); if (total === null) { sendError(res, "db_error", "The reported-events queue answered without an exact total. A queue page with no total is not served: it would hide every report past it. Retry.", { exposeDetail: true }); return; } // never a page that reads as the whole queue
+    const eventIds = [...new Set((reports as any[]).map((r: any) => r.target_id as string))];
+    if (eventIds.length === 0) { res.json({ events: [], total, page }); return; }
 
-    const eventIds = [...new Set(((reports as any[]) ?? []).map((r: any) => r.target_id as string))];
-    if (eventIds.length === 0) { res.json({ events: [] }); return; }
-
-    const { data: events } = await sc
+    const { data: events, error: evErr } = await sc
       .from("events")
       .select("id, title, host_id, state, visibility, city, starts_at, created_at, featured")
       .in("id", eventIds);
-
+    if (evErr || !Array.isArray(events)) { sendError(res, "db_error", evErr?.message ?? "the reported events could not be read"); return; } // was ignored: a failed read crashed the filter below into a bare 500
     const reportMap: Record<string, any[]> = {};
-    for (const r of (reports as any[]) ?? []) {
+    for (const r of reports as any[]) {
       if (!reportMap[r.target_id]) reportMap[r.target_id] = [];
       reportMap[r.target_id].push(r);
     }
-
+    // A report whose event no longer exists is still a safety report: it was DROPPED here (`.filter(find)`). It is shown, its event marked missing.
     void logAdminAccess(sc, admin.userId, "event", "list", "view", accessReason(req));
     res.json({
       events: eventIds
-        .filter((id) => !!(events as any[]).find((e: any) => e.id === id))
         .map((id) => {
           const ev = (events as any[]).find((e: any) => e.id === id);
-          return { event: ev, pendingReports: reportMap[id]?.length ?? 0, reports: reportMap[id] ?? [] };
+          return { event: ev ?? null, eventId: id, eventMissing: !ev, pendingReports: reportMap[id]?.length ?? 0, reports: reportMap[id] ?? [] }; // pendingReports: the reports on this page
         }),
+      total, page,
     });
     return;
   }
@@ -2948,27 +2948,27 @@ router.patch("/admin/events/:eventId/moderate", async (req, res) => {
   }
   const { action, reason } = parsed.data;
 
-  const { data: ev } = await sc.from("events").select("id, host_id, title, state, visibility, featured")
+  const { data: ev, error: evReadErr } = await sc.from("events").select("id, host_id, title, state, visibility, featured")
     .eq("id", eventId).maybeSingle();
-  if (!ev) { sendError(res, "not_found", "Event not found"); return; }
+  if (evReadErr) { sendError(res, "degraded_unavailable", "The event could not be read right now, so nothing was changed. Please try again."); return; } if (!ev) { sendError(res, "not_found", "Event not found"); return; } // a failed read answered 404 (wave 5)
 
-  const patch: Record<string, any> = { updated_at: new Date().toISOString() };
+  const patch: Record<string, any> = { updated_at: new Date().toISOString() }; let stateIntent: EventModerationStateIntent | null = null; // events.state is never patched here: the intent goes to the transition authority (wave 5, honesty 3)
 
   switch (action) {
     case "hide":
       patch.visibility = "invite_only";
       break;
     case "cancel":
-      patch.state = "cancelled";
+      stateIntent = { to: "cancelled" }; // decideEventTransition: completed / archived are refused, as for the host; already cancelled is no state change
       break;
     case "remove":
       // Soft-remove: archive the event so it disappears from all feeds
-      patch.state = "archived";
+      stateIntent = { to: "archived" };
       patch.visibility = "invite_only";
       break;
     case "restore":
-      patch.visibility = "public";
-      if ((ev as any).state === "cancelled" || (ev as any).state === "archived") patch.state = "open";
+      // visibility: back ONLY to what the recorded hide / remove found (decideRestoredEventVisibility, below) — it wrote "public" over every event, so a friends-only or circle event came back PUBLIC (wave 5)
+      if ((ev as any).state === "cancelled" || (ev as any).state === "archived") stateIntent = { reverse: true }; // back to what the RECORDED moderation found (decideEventModerationReversal) — it wrote "open" over the host's own cancellations too, and published a moderated draft
       break;
     case "feature":
       patch.featured = true;
@@ -2982,49 +2982,49 @@ router.patch("/admin/events/:eventId/moderate", async (req, res) => {
   }
 
   const link = await checkContentReportLink(sc, (req.body as any)?.report_id, "event", eventId); if (!link.ok) { sendError(res, link.code, link.message); return; } const linkColumn = await reportLinkColumnId(sc, link.metadata); // TV-4a: the event report this answers, checked against the HOST before anything is written
-  // Write event_activity_log FIRST (before any mutation) — fail-closed: if it fails, the event is not mutated and the caller gets a clear error.
-  const { error: auditErr } = await sc.from("event_activity_log").insert({
-    event_id: eventId,
-    actor_id: admin.userId,
-    action: `admin_${action}`,
-    metadata: { reason: reason ?? null },
-  });
-  if (auditErr) {
-    req.log.error({ err: auditErr, eventId, action }, "event_activity_log insert failed — aborting moderation");
-    sendError(res, "db_error", "Failed to write audit log; no action was applied", { exposeDetail: true }); return;
-  }
-
-  // Now apply the event mutation (audit already recorded)
+  // CLAIM -> AUDIT -> UNDO (wave 5, census-trust, the remaining seven; lib/eventModerationClaim.ts, as lib/legacyReportClose.ts
+  // moves a report). This route wrote event_activity_log, then an UNGUARDED patch whose row count it never read, then the
+  // event_<action> moderation_actions row FAIL-OPEN — a warn and `200 { ok: true }` — so an event could be hidden, cancelled
+  // or removed with no row in the global audit trail while the admin was told it worked; a patch that lost a race overwrote
+  // another admin's decision; a patch that matched nothing (the event deleted) was a 200; and a patch that FAILED left an
+  // activity row for an action that never happened. Every action here is a plain column patch on `events` (state /
+  // visibility / featured; no trigger exists on the table), so each is reversible by writing back what was read:
+  //   CLAIM — the patch, guarded on each column it writes still holding the value read; zero rows = 409, NOTHING written;
+  //   AUDIT — the event_activity_log row, then the moderation_actions row; both required, neither fails open;
+  //   UNDO  — when an audit row fails: the event back to what was read (guarded on what this request wrote and its own
+  //           updated_at), and this request's activity row removed; a step that fails is NAMED ("fix by hand").
+  // warn_host writes no column: there is nothing to claim, and a failed audit row means nothing was recorded.
+  const changes: Record<string, unknown> = {}; // the columns this action writes — never updated_at, which is the claim's stamp
   if (Object.keys(patch).length > 1) {
-    const { error: updateErr } = await sc.from("events").update(patch).eq("id", eventId);
-    if (updateErr) { sendError(res, "db_error", updateErr.message); return; }
+    for (const [k, v] of Object.entries(patch)) if (k !== "updated_at") changes[k] = v;
   }
-
-  // Write moderation_actions for the global admin audit trail (also fail-closed)
-  const { error: modErr } = await sc.from("moderation_actions").insert({
-    target_user_id: (ev as any).host_id,
-    action_type:    `event_${action}`,
-    reason:         reason ?? `Admin ${action}`,
-    performed_by:   admin.userId, ...(linkColumn ? { report_id: linkColumn } : {}), // the 3705 column when present; metadata below
-    metadata:       { event_id: eventId, event_title: (ev as any).title, ...link.metadata },
+  const decidedE = await decideModeratedEventState(sc, ev as ModeratedEventRow, stateIntent); if (!decidedE.ok) { sendError(res, decidedE.code, decidedE.message, { exposeDetail: true }); return; } // the authority decides events.state; a refusal writes NOTHING
+  const decidedV = action === "restore" ? await decideRestoredEventVisibility(sc, ev as ModeratedEventRow) : null; if (decidedV && !decidedV.ok) { sendError(res, decidedV.code, decidedV.message, { exposeDetail: true }); return; } if (decidedE.kept && !decidedV?.decision) { sendError(res, "invalid_state_transition", `${decidedE.kept} Nothing was changed or recorded.`, { exposeDetail: true }); return; } if (decidedV?.decision) changes.visibility = decidedV.decision.to; const moveE = await applyEventModeration(sc, req, ev as ModeratedEventRow, { // visibility: a restore puts back only what a recorded hide found; a hide that never recorded it is refused, never widened on a guess (wave 5)
+    changes, stateDecision: decidedE.decision,
+    now: patch.updated_at, activityAction: `admin_${action}`,
+    writeActivity: (st) => sc.from("event_activity_log").insert({ event_id: eventId, actor_id: admin.userId, action: `admin_${action}`, metadata: { reason: reason ?? null, ...st, ...stateKeptRecordOf(decidedE.kept) } }).select("id"), // st: { from_state, to_state } when the state changed — the record a restore reverses; + state_kept when a restore KEPT the state (never a state change)
+    writeAudit: () => sc.from("moderation_actions").insert({
+      target_user_id: (ev as any).host_id,
+      action_type:    `event_${action}`,
+      reason:         reason ?? `Admin ${action}`,
+      performed_by:   admin.userId, ...(linkColumn ? { report_id: linkColumn } : {}), // the 3705 column when present; metadata below
+      metadata:       { event_id: eventId, event_title: (ev as any).title, ...link.metadata, ...stateKeptRecordOf(decidedE.kept) }, // + state_kept: the audit trail says the state was KEPT, as the answer does
+    }),
   });
-  if (modErr) {
-    // Fail-open: the event mutation is already applied; log the audit failure but
-    // do not surface it to the caller as a 500.
-    req.log.warn({ err: modErr, eventId, action }, "moderation_actions insert failed — event action was applied");
-  }
+  if (moveE.outcome === "conflict") { sendError(res, "conflict", moveE.message); return; } if (moveE.outcome === "refused") { sendError(res, "invalid_state_transition", moveE.message); return; } // 409 either way: nothing was written
+  if (moveE.outcome === "failed") { req.log.error({ eventId, action, state: moveE.state }, "event moderation did not apply"); sendError(res, "db_error", moveE.message, { exposeDetail: true }); return; }
 
-  // Resolve pending reports for hide/cancel/remove actions
-  if (["hide", "cancel", "remove"].includes(action)) {
-    await sc.from("reports")
-      .update({ status: "resolved", updated_at: new Date().toISOString() })
+  // hide/cancel/remove close the event's UNRESOLVED reports (open / in_review), each CLAIMED then AUDITED with reviewed_by (lib/legacyReportClose.ts), as the report resolve routes do — it closed them with neither. The event action above is already applied, so a close that does not complete is NAMED (reportsResolved: null, reportsCloseError), never swallowed.
+  let reportsResolved: number | null | undefined; let reportsCloseError: string | undefined; if (["hide", "cancel", "remove"].includes(action)) {
+    const { data: openRows, error: openErr } = await sc.from("reports")
+      .select(LEGACY_REPORT_CLOSE_READ)
       .eq("target_type", "event")
       .eq("target_id", eventId)
-      .eq("status", "pending")
-      .then(undefined, () => {});
+      .in("status", UNRESOLVED_REPORT_STATUSES) // was eq 'pending', which no filed report carries: hiding an event closed none of its reports
+      .order("created_at", { ascending: true }); const closed = openErr || !Array.isArray(openRows) ? null : await moveLegacyReports(sc, req, openRows as LegacyReportRow[], { to: "resolved", adminUserId: admin.userId, notes: reason ?? null, actionType: "report_resolved" }); reportsResolved = closed && !closed.failure ? closed.moved.length : null;
+    if (reportsResolved === null) { reportsCloseError = closed ? describeLegacyBulkFailure(closed, "the event") : `The event's reports could not be read (${openErr?.message ?? "no rows answered"}); none was closed.`; req.log.error({ err: openErr ?? null, eventId, action, reportsCloseError }, "event moderated, but its reports were NOT all resolved"); }
   }
-
-  res.json({ eventId, action, ok: true });
+  res.json({ eventId, action, ok: true, ...(decidedE.decision ? { state: { from: decidedE.decision.from, to: decidedE.decision.to } } : {}), ...(decidedV?.decision ? { visibility: { from: decidedV.decision.from, to: decidedV.decision.to } } : {}), ...(decidedE.kept ? { stateKept: decidedE.kept } : {}), ...(reportsResolved !== undefined ? { reportsResolved } : {}), ...(reportsCloseError ? { reportsCloseError } : {}) });
 });
 
 // ── Invite-link slot reconciliation ──────────────────────────────────────────
@@ -3147,7 +3147,7 @@ router.get("/admin/users/:userId/moderation-summary", async (req, res) => {
       .limit(20),
   ]);
 
-  if (!profileRes.data) { sendError(res, "not_found", "User not found"); return; }
+  if ((profileRes as { error?: { message?: string } | null }).error) { sendError(res, "db_error", `The profile could not be read: ${(profileRes as any).error.message}. This is NOT "no such user" -- retry.`, { exposeDetail: true }); return; } if (!profileRes.data) { sendError(res, "not_found", "User not found"); return; }
 
   const failedModSummaryReads = failedModerationReads([
     ["accountStates", accountStateRes],

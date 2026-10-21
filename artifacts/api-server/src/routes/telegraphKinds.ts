@@ -51,7 +51,7 @@ import {
   type DrawerTab,
 } from "../services/telegraph/messageKinds.js";
 import { isFlagEnabled } from "../lib/featureFlags.js"; import { applySharedCardTruth, sharedCardIndexText } from "../services/telegraph/sharedCardTruth.js"; // census-telegraph T448/T359 (lane w-tg-cardtruth)
-import { getServiceClient } from "../lib/supabase.js";
+import { getServiceClient } from "../lib/supabase.js"; import { notifyNewMessage } from "../services/telegraph/messageNotifications.js"; // census-telegraph T256
 import { schemaToStamp } from "../services/telegraph/structuredSchemas.js";
 import {
   applyHistoryWindow,
@@ -283,7 +283,7 @@ router.post(
       return;
     }
 
-    const m = written.row;
+    const m = written.row; void notifyNewMessage(getServiceClient() ?? client, { threadId, senderId: user.id, messageId: String(m.id), msgType: m.msg_type, subtype: m.subtype ?? null, nowMs }, { log }); // census-telegraph T256 + wave 5 safety lane: each kind under its own cause — SAFETY need_help / heads_up as §19 P0 (safetyNotifications.ts), LOCATION, an ANNOUNCEMENT as COORDINATION (P1); a GIF, album, Memory Note, ACTION or check-in is a MESSAGE
     res.status(201).json({
       id: m.id,
       threadId: m.thread_id,

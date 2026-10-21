@@ -217,7 +217,7 @@ const s = StyleSheet.create({
     borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze,
     backgroundColor: color.paper,
   },
-  optionActive: { backgroundColor: color.signal, borderColor: color.signal },
+  optionActive: { backgroundColor: color.signalStrong, borderColor: color.signalStrong },
   optionText: { ...t.small, fontWeight: '700', color: color.ink, fontSize: 12 },
   optionTextActive: { color: color.onInk },
   toggleRow: {
@@ -240,12 +240,12 @@ const s = StyleSheet.create({
     borderWidth: 1.5, borderColor: color.haze,
     alignItems: 'center', justifyContent: 'center',
   },
-  memberCheckOn: { backgroundColor: color.signal, borderColor: color.signal },
+  memberCheckOn: { backgroundColor: color.signalStrong, borderColor: color.signalStrong },
   memberCheckMark: { color: color.onInk, fontSize: 12, fontWeight: '700' },
   memberName: { ...t.body, color: color.ink, flex: 1 },
   cta: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-    backgroundColor: color.signal, borderRadius: radius.md, paddingVertical: 14, marginTop: space.md,
+    backgroundColor: color.signalStrong, borderRadius: radius.md, paddingVertical: 14, marginTop: space.md,
   },
   ctaDisabled: { opacity: 0.6 },
   ctaText: { ...t.bodyStrong, color: color.onInk },

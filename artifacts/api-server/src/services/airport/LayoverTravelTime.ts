@@ -208,7 +208,7 @@ export async function landsideLeg(
       detail: `${provider.id} does not compute routes`,
     };
   }
-  const r = await estimateTravel(provider, { from, to, departAt }, departAt);
+  const unscoped = layoverRoutesRefusal(); if (unscoped !== null) return { minutes: null, source: "unmeasured", reason: from && to ? "NO_ROUTED_PROVIDER" : "NO_COORDINATES", detail: ROUTES_UNSCOPED_NO_SESSION_DETAIL }; const r = await estimateTravel(provider, { from, to, departAt }, departAt);
   if (r.kind !== "estimate") {
     return { minutes: null, source: "unmeasured", reason: r.reason, detail: r.detail ?? null };
   }
@@ -237,3 +237,140 @@ export async function landsideLeg(
   }
   return { minutes: Math.ceil(minutes), source, reason: null, detail: null };
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// THE ROUTES BUDGET SCOPE FOR A LAYOVER READ (finding F1; owner decision R5,
+// 2026-10-18, lane B1-R1).
+//
+// Appended at the TAIL so no cited line above moves; ESM hoists the imports.
+//
+// `googleRoutesCorridorProvider` charges every call to somebody, read from the
+// enclosing `withRoutesRequestBudget` scope, and refuses a call with no scope
+// as `unscoped`. F1 opened that scope for every layover reader. R5 then
+// decided WHO a layover call is charged to:
+//
+//   (a) a layover read is charged to a LAYOVER-SESSION scope, keyed by the
+//       session and the person, with its own caps (`layoverRoutesSpendGate.ts`:
+//       36 calls per session, 60 per person per UTC day, 12 per read), sharing
+//       only the day's quota and hard budget with Trips;
+//   (b) NOT to a trip's D-7 share, even when the layover has a trip: 3 calls per
+//       trip per day route one and a half candidates, and the §8 rows need two
+//       calls per candidate.
+//
+// `withLayoverRoutesBudget(session, fn)` is that scope:
+//
+//   a session with an id    `withRoutesRequestBudget({ userId, layoverSessionId },
+//                           fn, { maxCalls: 12 })`. Nested inside another read's
+//                           budget it shares that read's counter and is charged
+//                           to its own session.
+//   no session id, Routes   a NAMED absence, `routes_unscoped_no_session`, and the
+//   live                    provider is never called: a call nobody can be
+//                           charged for is an uncapped one.
+//   Routes NOT live         `fn` runs exactly as it did: the provider refuses on
+//                           its own first gate, byte for byte the answer it gave.
+//
+// The named absence is honoured at the two layover choke points: `landsideLeg`
+// and `layoverRoutesGuardedCorridor` (the §8 return corridor in
+// `certifiedActionUniverse`).
+// ═══════════════════════════════════════════════════════════════════════════
+import { AsyncLocalStorage } from "node:async_hooks";
+import { withRoutesRequestBudget } from "../../domain/trips/contracts/RoutesRequestBudget.js"; import { LAYOVER_ROUTES_CAPS } from "./layoverRoutesSpendGate.js";
+import { credentialRefusal, enablementRefusal, refuse } from "../../lib/providers/providerRefusal.js";
+import { CREDENTIAL_ENV, ENABLEMENT_ENV } from "../../lib/providers/googleRoutesCorridorProvider.js";
+import type { RouteCorridorProvider } from "../../lib/providers/routeCorridorProvider.js";
+
+/** The named absence for a layover read that names no session to charge (R5(a): a layover is charged to its SESSION). */
+export const ROUTES_UNSCOPED_NO_SESSION = "routes_unscoped_no_session" as const;
+
+/** Operator-facing; names the ruling, never a credential. */
+export const ROUTES_UNSCOPED_NO_SESSION_DETAIL =
+  `${ROUTES_UNSCOPED_NO_SESSION}: this layover read names no session, and the owner's layover Routes caps charge a ` +
+  `layover SESSION and a person (owner decision R5(a), 2026-10-18); a call nobody can be charged for is an uncapped one, ` +
+  `so nothing was asked of the routing provider.`;
+
+/** Who a layover read's routed calls are charged to. A `LayoverSession` satisfies it. */
+export interface LayoverRoutesSession {
+  userId: string;
+  tripId: string | null; /** The layover session the read is charged to (R5(a)). Absent → the named absence while Routes is live, never an uncharged call. */ id?: string | null;
+}
+
+const layoverRoutesScope = new AsyncLocalStorage<{ refusal: typeof ROUTES_UNSCOPED_NO_SESSION | null }>();
+
+/** Inside a layover read that names no session, with Routes live: the named absence. Otherwise null. */
+export function layoverRoutesRefusal(): typeof ROUTES_UNSCOPED_NO_SESSION | null {
+  return layoverRoutesScope.getStore()?.refusal ?? null;
+}
+
+/**
+ * Is the layover routing provider live in this deployment — BOTH of its own
+ * gates open? Asked with the provider's own gate functions and variable names,
+ * so this cannot disagree with the provider about what "enabled" means. With no
+ * `readEnv` the gate functions read the environment themselves; this module
+ * never does (layoverTravelTimeProvenanceColumn.test.ts holds that line).
+ */
+export function layoverRoutesLive(readEnv?: (name: string) => string | undefined): boolean {
+  return enablementRefusal("layover-routes", ENABLEMENT_ENV, readEnv) === null
+    && credentialRefusal("layover-routes", CREDENTIAL_ENV, readEnv) === null;
+}
+
+/**
+ * Run one layover read's routed calls inside the Routes budget scope. See the
+ * block header for the three cases. `readEnv` is injectable so a test proves the
+ * live case without mutating `process.env`.
+ */
+export function withLayoverRoutesBudget<T>(
+  session: LayoverRoutesSession,
+  fn: () => Promise<T>,
+  opts: { readEnv?: (name: string) => string | undefined } = {},
+): Promise<T> {
+  const layoverSessionId = session.id ?? null; // R5(b): the trip, if any, is deliberately NOT charged
+  if (layoverSessionId) {
+    return layoverRoutesScope.run({ refusal: null }, () => withRoutesRequestBudget({ userId: session.userId, layoverSessionId }, fn, { maxCalls: LAYOVER_ROUTES_CAPS.perReadCalls }));
+  }
+  if (!layoverRoutesLive(opts.readEnv)) return layoverRoutesScope.run({ refusal: null }, fn);
+  return layoverRoutesScope.run({ refusal: ROUTES_UNSCOPED_NO_SESSION }, fn);
+}
+
+/**
+ * The route-shape port, behind the same named absence. Inside a session-less
+ * layover read with Routes live it answers `PROVIDER_NOT_ENABLED` (the
+ * corridor→travel-time adapter maps that to `NO_ROUTED_PROVIDER`, the same
+ * reason `landsideLeg` gives) WITHOUT calling `inner`; everywhere else it is
+ * `inner`, call for call.
+ */
+export function layoverRoutesGuardedCorridor(inner: RouteCorridorProvider): RouteCorridorProvider {
+  const unscoped = () => refuse(inner.id, "PROVIDER_NOT_ENABLED", ROUTES_UNSCOPED_NO_SESSION_DETAIL);
+  return {
+    id: inner.id,
+    routed: inner.routed,
+    corridor: (q) => (layoverRoutesRefusal() !== null ? Promise.resolve(unscoped()) : inner.corridor(q)),
+    bidirectional: (q) => (layoverRoutesRefusal() !== null ? Promise.resolve(unscoped()) : inner.bidirectional(q)),
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// L260 — the expensive evaluation comes AFTER the cheap filters (lane B1-R1).
+//
+// `fetchDiscoveryPlaces` used to ask the port for every place it read, before
+// the envelope, the time-of-day and the category filters had run — so with
+// Routes live, a place the straight-line envelope had already PROVED
+// unreachable would have been billed for first and filtered second. The
+// recommendation path now reads its places with this provider, which answers
+// the same named absence every unrouted leg already gets, and asks Google only
+// for the candidates that survive the pre-filter
+// (`LayoverRoutedFeasibility.routeLayoverCandidates`).
+// ═══════════════════════════════════════════════════════════════════════════
+import type { TravelTimeResult } from "../../domain/trips/contracts/TravelTimeProvider.js";
+
+/** The leg provider a reader uses when the routed evaluation runs later, on the pre-filtered set. */
+export const LAYOVER_DEFERRED_LEG_PROVIDER: TravelTimeProvider = {
+  id: "layover-routing-deferred-to-prefiltered-evaluation",
+  routed: false,
+  async estimate(): Promise<TravelTimeResult> {
+    return {
+      kind: "unknown",
+      reason: "NO_ROUTED_PROVIDER",
+      detail: "routing is deferred until the candidate survives the envelope, time and category pre-filter (L260)",
+    };
+  },
+};

@@ -27,7 +27,7 @@ export interface LayoverSessionInput {
   manualCity?: string | null;
   manualCountry?: string | null;
   manualIata?: string | null;
-  canonicalCityId?: string | null;
+  canonicalCityId?: string | null; /** 3827 (census L21/L267): the two Trips flight segments a DETECTED session joins. Absent = a session typed into the sheet, and the insert is exactly what it was. */ connection?: LayoverConnectionInput;
 }
 
 /**
@@ -214,7 +214,7 @@ export async function createSessionWrite(
       manual_country:      input.manualCountry     ?? null,
       manual_iata:         input.manualIata         ?? null,
       canonical_city_id:   input.canonicalCityId    ?? null,
-      status:              "active",
+      status:              "active", ...connectionInsertColumns(input.connection), // 3827: {} for a typed session
     })
     .select("*")
     .maybeSingle();
@@ -689,4 +689,323 @@ export async function syncSessionBaggage(
   const session = await attachConstraintContext(db, rowToSession(data));
   await emitEvent(db, session.id, userId, "session_updated", metadata);
   return { ok: true, session };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 3827 — FLIGHT CONNECTIONS: the session's link to Trips, and its stored state
+// (census-layover L21, L33, L259, L267; Layover 165 program, lane B1-F)
+// ─────────────────────────────────────────────────────────────────────────────
+// Appended at the tail: this file's lines are citation-anchored. Everything
+// here is read and written ONLY by callers that have checked
+// `layover_flight_connections_enabled` (seeded FALSE by 3827), because the
+// columns exist only where 3827 is applied. With the flag off nothing below
+// runs and every existing reader and writer above is byte-identical.
+
+import type { LayoverState } from "./LayoverConstraints.js";
+import { LAYOVER_STATES } from "./LayoverConstraints.js";
+import { operationContext, transition, STORED_OPERATION_EVENTS, type LifecycleEvent, type LifecycleGuardContext, type StoredOperation } from "./LayoverLifecycle.js";
+
+export const LAYOVER_FLIGHT_CONNECTIONS_FLAG = "layover_flight_connections_enabled";
+
+/** 3827's CHECK vocabulary: what the two segments' booking references say, and nothing more. */
+export const LAYOVER_CONNECTION_TYPES = ["single_booking", "separate_bookings", "unknown"] as const;
+export type LayoverConnectionType = (typeof LAYOVER_CONNECTION_TYPES)[number];
+
+export interface LayoverConnectionInput {
+  arrivalSegmentId: string;
+  departureSegmentId: string;
+  connectionType: LayoverConnectionType;
+}
+
+/** The columns a DETECTED session is born with. `{}` for a typed session: the trigger stamps DETECTED / manual itself. */
+function connectionInsertColumns(c: LayoverConnectionInput | undefined): Record<string, unknown> {
+  if (!c) return {};
+  return {
+    arrival_segment_id: c.arrivalSegmentId,
+    departure_segment_id: c.departureSegmentId,
+    connection_type: c.connectionType,
+    detected_source: "trip_itinerary",
+    state: "DETECTED",
+  };
+}
+
+export interface SessionConnection {
+  sessionId: string;
+  userId: string;
+  status: string;
+  arrivalSegmentId: string | null;
+  departureSegmentId: string | null;
+  /** §4.1 LayoverState as stored; null = not recorded (a session from before 3827). */
+  state: LayoverState | null;
+  connectionType: LayoverConnectionType | null;
+  detectedSource: "manual" | "trip_itinerary" | null;
+  expiresAt: string | null;
+}
+
+const CONNECTION_COLUMNS = "id, user_id, status, arrival_segment_id, departure_segment_id, state, connection_type, detected_source, expires_at";
+
+function asState(v: unknown): LayoverState | null {
+  return typeof v === "string" && (LAYOVER_STATES as readonly string[]).includes(v) ? (v as LayoverState) : null;
+}
+
+export function rowToSessionConnection(row: Record<string, any>): SessionConnection {
+  return {
+    sessionId: String(row.id),
+    userId: String(row.user_id ?? ""),
+    status: String(row.status ?? ""),
+    arrivalSegmentId: typeof row.arrival_segment_id === "string" ? row.arrival_segment_id : null,
+    departureSegmentId: typeof row.departure_segment_id === "string" ? row.departure_segment_id : null,
+    state: asState(row.state),
+    connectionType: (LAYOVER_CONNECTION_TYPES as readonly string[]).includes(row.connection_type) ? row.connection_type : null,
+    detectedSource: row.detected_source === "manual" || row.detected_source === "trip_itinerary" ? row.detected_source : null,
+    expiresAt: typeof row.expires_at === "string" ? row.expires_at : null,
+  };
+}
+
+export type ConnectionRead =
+  | { ok: true; connection: SessionConnection | null }
+  | { ok: false; message: string };
+
+export type ConnectionListRead =
+  | { ok: true; connections: SessionConnection[] }
+  | { ok: false; message: string };
+
+/** One session's connection facts, owner-scoped. */
+export async function readSessionConnection(db: SupabaseClient, sessionId: string, userId: string): Promise<ConnectionRead> {
+  const { data, error } = await db
+    .from("layover_sessions")
+    .select(CONNECTION_COLUMNS)
+    .eq("id", sessionId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) {
+    logger.warn({ err: error, sessionId }, "layover session connection read failed — refusing rather than reporting 'not linked'");
+    return { ok: false, message: String(error.message ?? "layover_sessions unreadable") };
+  }
+  return { ok: true, connection: data ? rowToSessionConnection(data as Record<string, any>) : null };
+}
+
+/**
+ * The traveller's LIVE sessions linked to any of these Trips flight segments,
+ * on either side. Two reads, not an `.or()` (the fake client models `.or()` as a
+ * no-op, and the two columns are two indexes). A failed read is `ok: false`.
+ */
+export async function readLiveConnectionSessions(db: SupabaseClient, userId: string, segmentIds: string[]): Promise<ConnectionListRead> {
+  const ids = [...new Set(segmentIds.filter(Boolean))].slice(0, 200);
+  if (ids.length === 0) return { ok: true, connections: [] };
+  const out = new Map<string, SessionConnection>();
+  for (const col of ["arrival_segment_id", "departure_segment_id"] as const) {
+    const { data, error } = await db
+      .from("layover_sessions")
+      .select(CONNECTION_COLUMNS)
+      .eq("user_id", userId)
+      .in(col === "arrival_segment_id" ? "arrival_segment_id" : "departure_segment_id", ids)
+      .in("status", [...LAYOVER_LIVE_SESSION_STATUSES])
+      .limit(200);
+    if (error) {
+      logger.warn({ err: error, userId, col }, "layover connection sessions read failed — refusing rather than reporting 'no session'");
+      return { ok: false, message: String(error.message ?? "layover_sessions unreadable") };
+    }
+    for (const row of (data ?? []) as Record<string, any>[]) out.set(String(row.id), rowToSessionConnection(row));
+  }
+  return { ok: true, connections: [...out.values()] };
+}
+
+/**
+ * §24 / census L259 — THE FLIGHT-SUBJECT AXIS of the replan fan-out: every
+ * ACTIVE session linked to one of these Trips flight segments, on either side,
+ * whoever it belongs to. Full rows, for the replan port. Served by 3827's
+ * layover_sessions_arrival_segment_idx / _departure_segment_idx. Bounded by
+ * `limit` per side and reported when the bound is hit.
+ */
+export async function readActiveSessionRowsByFlightSubjects(
+  db: SupabaseClient,
+  segmentIds: string[],
+  limit: number,
+): Promise<{ ok: true; rows: Array<Record<string, any>>; limitReached: boolean } | { ok: false; message: string }> {
+  const ids = [...new Set(segmentIds.filter(Boolean))].slice(0, 50);
+  const rows = new Map<string, Record<string, any>>();
+  let limitReached = false;
+  if (ids.length === 0) return { ok: true, rows: [], limitReached };
+  for (const col of ["arrival_segment_id", "departure_segment_id"] as const) {
+    const { data, error } = await db
+      .from("layover_sessions")
+      .select("*")
+      .in(col === "arrival_segment_id" ? "arrival_segment_id" : "departure_segment_id", ids)
+      .eq("status", "active")
+      .limit(limit);
+    if (error) return { ok: false, message: `layover_sessions unreadable by ${col}: ${String(error.message ?? "unknown")}` };
+    const got = (data ?? []) as Array<Record<string, any>>;
+    if (got.length >= limit) limitReached = true;
+    for (const r of got) rows.set(String(r.id), r);
+  }
+  return { ok: true, rows: [...rows.values()], limitReached };
+}
+
+/** The live session a traveller already holds for this exact connection, if any (3827's unique pair). */
+export async function readLiveSessionForConnection(
+  db: SupabaseClient,
+  userId: string,
+  arrivalSegmentId: string,
+  departureSegmentId: string,
+): Promise<SessionRead> {
+  const { data, error } = await db
+    .from("layover_sessions")
+    .select("*")
+    .eq("user_id", userId)
+    .eq("arrival_segment_id", arrivalSegmentId)
+    .eq("departure_segment_id", departureSegmentId)
+    .in("status", [...LAYOVER_LIVE_SESSION_STATUSES])
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    logger.warn({ err: error, userId }, "layover connection session read failed");
+    return { ok: false, message: String(error.message ?? "layover_sessions unreadable") };
+  }
+  return { ok: true, session: data ? rowToSession(data) : null };
+}
+
+export type StateWrite =
+  | { ok: true; written: boolean; from: LayoverState | null; to: LayoverState | null; refusal?: string }
+  | { ok: false; message: string };
+
+/**
+ * Write a session's §4.1 state, COMPARE-AND-SWAP on the state it was read in,
+ * live sessions only (an ended session's state is its terminal state, which
+ * 3827's trigger owns). `written: false` = the row moved under us or ended.
+ */
+export async function writeSessionState(db: SupabaseClient, sessionId: string, prior: LayoverState | null, next: LayoverState): Promise<StateWrite> {
+  let q: any = db
+    .from("layover_sessions")
+    .update({ state: next, updated_at: new Date().toISOString() })
+    .eq("id", sessionId)
+    .in("status", [...LAYOVER_LIVE_SESSION_STATUSES]);
+  q = prior === null ? q.is("state", null) : q.eq("state", prior);
+  const { data, error } = await q.select("id");
+  if (error) {
+    logger.warn({ err: error, sessionId, next }, "layover session state write failed");
+    return { ok: false, message: String(error.message ?? "layover_sessions unwritable") };
+  }
+  return { ok: true, written: ((data ?? []) as unknown[]).length > 0, from: prior, to: next };
+}
+
+async function readStoredState(db: SupabaseClient, sessionId: string): Promise<{ ok: true; state: LayoverState | null; status: string } | { ok: false; message: string }> {
+  const { data, error } = await db.from("layover_sessions").select("state, status").eq("id", sessionId).maybeSingle();
+  if (error) return { ok: false, message: String(error.message ?? "layover_sessions unreadable") };
+  if (!data) return { ok: false, message: "session not found" };
+  return { ok: true, state: asState((data as any).state), status: String((data as any).status ?? "") };
+}
+
+/**
+ * Take a §5 EVENT on the STORED state: read it, ask the graph (LayoverLifecycle's
+ * `transition`, unchanged) and CAS-write the target. The graph decides; this
+ * never writes a state the graph has no edge to. A null stored state (a session
+ * from before 3827) is the graph's `from === null`, "unresolved", which takes an
+ * event only when every active state agrees.
+ */
+export async function advanceSessionLifecycle(
+  db: SupabaseClient,
+  sessionId: string,
+  event: LifecycleEvent,
+  ctx: LifecycleGuardContext = {},
+): Promise<StateWrite> {
+  const read = await readStoredState(db, sessionId);
+  if (!read.ok) return read;
+  if (!(LAYOVER_LIVE_SESSION_STATUSES as readonly string[]).includes(read.status)) {
+    return { ok: true, written: false, from: read.state, to: null, refusal: "session_ended" };
+  }
+  const t = transition(read.state, event, ctx);
+  if (!t.ok) return { ok: true, written: false, from: read.state, to: null, refusal: t.refusal };
+  if (t.to === read.state) return { ok: true, written: false, from: read.state, to: t.to, refusal: "already_there" };
+  return writeSessionState(db, sessionId, read.state, t.to);
+}
+
+/** A stored operation of LayoverLifecycle's map (a checkpoint, the abort, a close), taken on the stored state. */
+export async function advanceSessionLifecycleForOperation(db: SupabaseClient, sessionId: string, op: StoredOperation): Promise<StateWrite> {
+  return advanceSessionLifecycle(db, sessionId, STORED_OPERATION_EVENTS[op], operationContext(op));
+}
+
+/**
+ * The states the overview's PROJECTION cannot see, and so must not overwrite:
+ * RETURNING comes from the traveller's RETURN TO AIRPORT (§15.1), which leaves
+ * the stored status `active` unless layover_safe_return_status_enabled is on,
+ * and only the re-entry checkpoint (the graph) moves it on; a cancelled
+ * departure and boarding come from flight observations; the terminal states
+ * end the graph. Everything else the projection places from
+ * the certified record and the traveller's checkpoints, which is §5's own
+ * reading, and it is stored as placed.
+ */
+export const PROJECTION_HELD_STATES: readonly LayoverState[] = ["RETURNING", "CANCELLED", "BOARDING", "COMPLETED", "EXPIRED", "ABANDONED"];
+
+/** Store the lifecycle projection's state (GET /airport/sessions/:id/overview, lifecycle machine ON). */
+export async function recordProjectedSessionState(db: SupabaseClient, sessionId: string, projected: LayoverState): Promise<StateWrite> {
+  const read = await readStoredState(db, sessionId);
+  if (!read.ok) return read;
+  if (read.state !== null && PROJECTION_HELD_STATES.includes(read.state)) {
+    return { ok: true, written: false, from: read.state, to: null, refusal: "held_by_observation" };
+  }
+  if (read.state === projected) return { ok: true, written: false, from: read.state, to: projected, refusal: "already_there" };
+  return writeSessionState(db, sessionId, read.state, projected);
+}
+
+/**
+ * Move a linked session's schedule to what its Trips segments now say (an
+ * approved feed's update, LayoverFlightStatus.ts). By id, not by owner: the
+ * caller found the session through the flight it is linked to. Active sessions
+ * only, the same predicate every session edit uses. The whole-window rules the
+ * PATCH and the disruption route apply are the CALLER's to check first.
+ */
+export async function syncConnectionSessionTimes(
+  db: SupabaseClient,
+  sessionId: string,
+  patch: { arrivalTime?: string; departureTime?: string },
+  metadata: Record<string, unknown>,
+): Promise<SessionWrite> {
+  const update: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (patch.arrivalTime !== undefined) update.arrival_time = patch.arrivalTime;
+  if (patch.departureTime !== undefined) update.departure_time = patch.departureTime;
+  const { data, error } = await db
+    .from("layover_sessions")
+    .update(update)
+    .eq("id", sessionId)
+    .eq("status", "active")
+    .select("*")
+    .maybeSingle();
+  if (error) {
+    logger.warn({ err: error, sessionId }, "linked session schedule sync failed");
+    return { ok: false, message: String(error.message ?? "layover_sessions unwritable") };
+  }
+  if (!data) return { ok: true, session: null };
+  const session = rowToSession(data);
+  await emitEvent(db, session.id, session.userId, "session_updated", metadata);
+  return { ok: true, session };
+}
+
+// ── the stored lifecycle, from the API's own lifecycle code paths ────────────
+// routes/airport.ts calls these two from `lifecycleForWrite` and
+// `overviewLifecycle`, which run them only while `layover_lifecycle_machine_enabled`
+// is ON; each also needs 3827's storage flag. Neither ever fails the request.
+
+import { isFlagEnabled } from "../../lib/featureFlags.js";
+
+/**
+ * The stored operations the graph moves the stored state for: the two
+ * checkpoints (AIRPORT_EXITED, AIRPORT_REENTERED) and the one-tap abort
+ * (RETURN_BEGINS → RETURNING, §15.1 — whether or not the status column follows,
+ * which it does only under layover_safe_return_status_enabled). The traveller's
+ * close is the status write's, and 3827's trigger stores it.
+ */
+const GRAPH_OPERATIONS: readonly StoredOperation[] = ["checkpoint_landside_exit", "checkpoint_airport_reentry", "return_now"];
+
+/** A checkpoint or the abort, taken on the stored §5 state. */
+export async function storeLifecycleForOperation(db: SupabaseClient, sessionId: string, op: StoredOperation): Promise<StateWrite | null> {
+  if (!GRAPH_OPERATIONS.includes(op)) return null;
+  if (!await isFlagEnabled(db, "layover_flight_connections_enabled")) return null;
+  return advanceSessionLifecycleForOperation(db, sessionId, op);
+}
+
+/** The overview's placement of the session in §5's graph, stored (unless an observation holds it). */
+export async function storeProjectedLifecycle(db: SupabaseClient, sessionId: string, state: LayoverState): Promise<StateWrite | null> {
+  if (!await isFlagEnabled(db, "layover_flight_connections_enabled")) return null;
+  return recordProjectedSessionState(db, sessionId, state);
 }

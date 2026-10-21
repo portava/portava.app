@@ -122,7 +122,7 @@ export function projectSearchResult(
       ),
       `${r.title} ${r.subtitle ?? ''}`,
     ), privacyRisk(r)), staleness(r, signals.temporalWindow ?? null, Date.now())),
-    signals.demoted === true,
+    signals.demoted === true || eventUnavailable(r, context), // §20 G123: a FULL event the viewer is not going to, where the operating state is relevant (operatingStatus.ts)
   );
 
   // Canonical registry rows carry source:"canonical" in metadata; every other
@@ -164,7 +164,7 @@ export function projectSearchResult(
   if (r.isOfficial === true) suggestion.official = true;
   // §20/§24 Hidden Gem protection label — a precision word, never a position.
   const precision = entityType === 'hidden_gem' ? gemLocationPrecision(r.metadata) : undefined;
-  if (precision) suggestion.locationPrecision = precision;
+  if (precision) suggestion.locationPrecision = precision; const availability = eventAvailability(r); if (availability) suggestion.availability = availability; // §28 G177: an event's current availability; open / unknown states nothing
   if (r.destinationRoute) {
     suggestion.destination = { route: r.destinationRoute, entityType, entityId: r.id };
     suggestion.canonicalUri = `portava:${r.destinationRoute}`;
@@ -666,3 +666,6 @@ export function trustPosition(s: InputSuggestion, ctx: TrustOrderContext = {}): 
   if (s.freshness && FRESH_LIVE_STATES.has(s.freshness.state)) return TRUST_POSITION.liveRelevance;
   return TRUST_POSITION.otherCanonical;
 }
+
+// §20 G123 / §28 G177 (wave 4) — imported at the foot so no cited line above moves.
+import { eventAvailability, eventUnavailable } from './operatingStatus';

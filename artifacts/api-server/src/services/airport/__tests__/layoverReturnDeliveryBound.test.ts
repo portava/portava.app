@@ -98,7 +98,7 @@ function fakeDb(o: DbOpts = {}) {
     feature_flags: [{ flag: "push_notifications_enabled", enabled: true }, { flag: "notifications_enabled", enabled: true }],
     notification_preferences: [{
       user_id: USER, push_enabled: o.pushEnabled ?? true, email_enabled: false, in_app_enabled: true, digests_enabled: false,
-      safety_override: o.safetyOverride ?? true, quiet_hours_enabled: o.quiet === true, quiet_start: "00:00", quiet_end: "23:59", timezone: "UTC",
+      safety_override: o.safetyOverride ?? true, quiet_hours_enabled: o.quiet === true, quiet_start: "00:00", quiet_end: "00:00", timezone: "UTC",
       message_previews: true, location_previews: false,
     }],
     notification_devices: (o.devices ?? [{ push_token: "ExponentPushToken[ios1]", ios_time_sensitive_capable: null }]).map((d) => ({ user_id: USER, ...d })),

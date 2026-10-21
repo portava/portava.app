@@ -168,6 +168,21 @@ export async function issueTripCommand(
   if (res.status === 503) {
     return { ok: false, kind: 'unavailable', detail: String(body?.reason ?? 'kernel unavailable') };
   }
+  // The ROUTE's own refusal, before the kernel: a 4xx whose body names an
+  // `error` code (invalid_payload — e.g. a §9.3 field the proposal door
+  // refused —, forbidden, trust_restriction, trip_record_read_only). The
+  // request reached the server and was turned down before anything could
+  // apply, and the same key cannot change that, so it is a refusal with the
+  // server's words — not "couldn't reach the trip, try again". A 401 (the
+  // token was not accepted) and anything the server marks `retryable` stay
+  // unavailable.
+  if (res.status >= 400 && res.status < 500 && res.status !== 401 && res.status !== 429 && body
+    && typeof body.reason !== 'string' && typeof body.error === 'string' && body.retryable !== true) {
+    return {
+      ok: false, kind: 'refused', status: res.status, reason: body.error,
+      detail: typeof body.message === 'string' ? body.message : null, currentVersion: null, expectedVersion: null,
+    };
+  }
   // A response we cannot read is not a refusal either — we do not know what
   // happened, and calling it a refusal would tell the user their command was
   // rejected when it may well have applied.

@@ -136,27 +136,27 @@ export function missingObjectsNamedBy(
 
 // ── Memo ─────────────────────────────────────────────────────────────────────
 
-const memo = new WeakMap<object, Map<string, SchemaReadiness>>();
-/** Keys we have memoised, so reset can drop them (a WeakMap is not iterable). */
-const tracked = new Set<object>();
+let memo = new WeakMap<object, Map<string, SchemaReadiness>>(); let memoByUrl = new Map<string, Map<string, SchemaReadiness>>();
+/** Per database URL when the client names one (production builds a client per request, so a per-object memo never hit and every check probed), else per object; reset replaces both, and no strong reference to any client is kept (independent verification pass 12). */
+// (was: a Set holding every memoised client strongly — one per probing request in production, released only by the test reset)
 
 function ttlFor(state: SchemaReadinessState): number {
   return state === "ready" ? READY_TTL_MS : ABSENT_TTL_MS;
 }
 
 function fresh(sc: object, flag: string, now: number): SchemaReadiness | null {
-  const v = memo.get(sc)?.get(flag);
+  const v = memoGet(sc)?.get(flag);
   if (!v) return null;
   if (now - v.checkedAt > ttlFor(v.state)) return null;
   return { ...v, cached: true };
 }
 
 function remember(sc: object, v: SchemaReadiness): SchemaReadiness {
-  let m = memo.get(sc);
+  let m = memoGet(sc);
   if (!m) {
     m = new Map();
-    memo.set(sc, m);
-    tracked.add(sc);
+    memoSet(sc, m);
+    // (no strong reference to sc is kept: see the memo above)
   }
   m.set(v.capability, v);
   return v;
@@ -164,8 +164,8 @@ function remember(sc: object, v: SchemaReadiness): SchemaReadiness {
 
 /** Forget every memoised verdict, for every capability. Tests only. */
 export function resetSchemaCapabilityMemo(): void {
-  for (const k of tracked) memo.delete(k);
-  tracked.clear();
+  memo = new WeakMap(); memoByUrl = new Map();
+  // (both memos replaced; nothing else holds a client)
 }
 
 /**
@@ -416,4 +416,19 @@ export async function requireCapability(
   const v = await resolveCapability(sc, def, opts);
   if (v.flag === "on" && !v.enabled) throw new CapabilityUnavailableError(v);
   return v;
+}
+
+// ═══ Independent verification pass 12: the memo is per database URL ═══
+/** The URL a supabase-js client was built for, when it names one (`supabaseUrl`); test doubles name none. */
+function memoUrlOf(sc: object): string | null {
+  const url = (sc as { supabaseUrl?: unknown }).supabaseUrl;
+  return typeof url === "string" && url !== "" ? url : null;
+}
+function memoGet(sc: object): Map<string, SchemaReadiness> | undefined {
+  const url = memoUrlOf(sc);
+  return url !== null ? memoByUrl.get(url) : memo.get(sc);
+}
+function memoSet(sc: object, m: Map<string, SchemaReadiness>): void {
+  const url = memoUrlOf(sc);
+  if (url !== null) memoByUrl.set(url, m); else memo.set(sc, m);
 }

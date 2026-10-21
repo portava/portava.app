@@ -165,3 +165,18 @@ export function useDataSaver(): DataSaverState {
 }
 
 export default useDataSaver;
+
+/**
+ * census-trips TR340 — the device's data-saver SETTING, read once outside React,
+ * for a surface that decides a one-off bulk download (a trip's offline map) at
+ * the moment the traveller asks for it. The same key and the same permissive
+ * direction as the hook: an unreadable or absent setting is 'off'.
+ */
+export async function readDataSaverSetting(): Promise<DataSaverLevel> {
+  try {
+    const raw = await AsyncStorage.getItem(STORAGE_KEY);
+    return raw === 'on' ? 'on' : 'off';
+  } catch {
+    return 'off';
+  }
+}

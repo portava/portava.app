@@ -17,7 +17,7 @@
  * already entitled to.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { areSharedMomentsEnabled } from "../../lib/places/sharedMoments.js";
+import { areSharedMomentsEnabled } from "../../lib/places/sharedMoments.js"; import { readStampPresenceView } from "./stampPresenceView.js";
 import { loadOwnerFieldVisibility } from "./PassportPrivacyGuard.js"; import { ownerAvailabilityWithheld } from "../telegraph/availabilityInvisibility.js"; // lead ruling P-T1
 
 /** One explainable overlap fact. `detail` is safe, coarse, viewer-permitted. */
@@ -149,11 +149,11 @@ async function loadStampCities(sc: SupabaseClient, userId: string): Promise<Set<
   try {
     const { data } = await sc
       .from("user_stamps")
-      .select("city, stamp_definitions(evidences_presence)")
+      .select("city, user_id, source_type, source_id, stamp_definitions(slug, evidences_presence)")
       .eq("user_id", userId)
       .eq("is_revoked", false);
     const out = new Set<string>();
-    for (const r of ((data as any[]) ?? [])) {
+    const view = await readStampPresenceView(sc, (data as any[]) ?? []); for (const r of ((data as any[]) ?? [])) { if (!view.mayShowPlace(r)) continue; // H4 (wave 5): "places you have both been" needs the occurrence evidence each stamp's source names
       // PostgREST returns an embedded to-one either as an object or as a
       // single-element array; handle both, as buildStats does.
       const def = Array.isArray(r.stamp_definitions) ? r.stamp_definitions[0] : r.stamp_definitions;

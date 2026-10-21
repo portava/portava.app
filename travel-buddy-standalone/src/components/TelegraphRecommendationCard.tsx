@@ -10,19 +10,33 @@ import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Zap, MapPin, Clock, DollarSign, X, CalendarPlus, Bookmark, ThumbsDown } from 'lucide-react-native';
 import { PortavaShareIcon } from './icons/PortavaShareIcon.tsx';
 import type { TelegraphActivityRecommendation } from '../types/models.ts';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
-import { TG } from '../theme/telegraphTokens.ts';
+import { space, radius, type as t } from '../theme/tokens.ts';
+import { useTelegraphTheme, type TelegraphPalette, type TelegraphScheme } from '../features/telegraph/theme/telegraphTheme.ts';
 import { RichText } from './RichText.tsx';
 
-const CATEGORY_COLOR: Record<string, string> = {
-  food:      '#C8851A',
-  nightlife: '#7A4DBF',
-  beach:     '#0A7DBF',
-  activity:  '#2E7D5B',
-  hotel:     '#C0392B',
-  transport: '#888',
-  tip:       '#555',
-  default:   '#333',
+// census T123: a category hue is the card's edge, its badge tint AND its badge
+// text, so each scheme has its own — '#333' text on the dark card was unreadable.
+const CATEGORY_COLOR: Readonly<Record<TelegraphScheme, Record<string, string>>> = {
+  light: {
+    food:      '#C8851A',
+    nightlife: '#7A4DBF',
+    beach:     '#0A7DBF',
+    activity:  '#2E7D5B',
+    hotel:     '#C0392B',
+    transport: '#888888',
+    tip:       '#555555',
+    default:   '#333333',
+  },
+  dark: {
+    food:      '#E0A040',
+    nightlife: '#B08BE8',
+    beach:     '#4FB3E8',
+    activity:  '#5DBB8F',
+    hotel:     '#E8705F',
+    transport: '#A0A0A0',
+    tip:       '#B8B8B8',
+    default:   '#CCCCCC',
+  },
 };
 
 const PRICE_LABEL: Record<string, string> = {
@@ -43,7 +57,9 @@ interface Props {
 }
 
 export function TelegraphRecommendationCard({ rec, onAddToTrip, onDismiss, onSave, onShare, onNotInterested }: Props) {
-  const accent = CATEGORY_COLOR[rec.category] ?? CATEGORY_COLOR.default;
+  const { palette, styles } = useTelegraphTheme(makeStyles);
+  const hues = CATEGORY_COLOR[palette.scheme];
+  const accent = hues[rec.category] ?? hues.default;
 
   return (
     <View style={[styles.card, { borderLeftColor: accent }]}>
@@ -51,14 +67,14 @@ export function TelegraphRecommendationCard({ rec, onAddToTrip, onDismiss, onSav
       <View style={styles.header}>
         <View style={styles.headerLeft}>
           <View style={[styles.zapRow]}>
-            <Zap size={11} color={color.signal} />
+            <Zap size={11} color={palette.operational} />
             <Text style={styles.telegraphLabel}>TELEGRAPH</Text>
           </View>
           <Text style={styles.title} numberOfLines={2}>{rec.title}</Text>
         </View>
         {onDismiss && (
           <Pressable style={styles.dismissBtn} onPress={() => onDismiss(rec.id)} hitSlop={8}>
-            <X size={14} color={color.mute} />
+            <X size={14} color={palette.mute} />
           </Pressable>
         )}
       </View>
@@ -73,6 +89,8 @@ export function TelegraphRecommendationCard({ rec, onAddToTrip, onDismiss, onSav
         content={rec.reason}
         tags={rec.tagSpans}
         hashtagUsages={rec.hashtagSpans}
+        mentionColor={palette.operational}
+        hashtagColor={palette.operational}
         style={styles.reason}
       />
 
@@ -80,19 +98,19 @@ export function TelegraphRecommendationCard({ rec, onAddToTrip, onDismiss, onSav
       <View style={styles.meta}>
         {rec.locationContext ? (
           <View style={styles.metaItem}>
-            <MapPin size={11} color={color.mute} />
+            <MapPin size={11} color={palette.mute} />
             <Text style={styles.metaText} numberOfLines={1}>{rec.locationContext}</Text>
           </View>
         ) : null}
         {rec.estimatedTime ? (
           <View style={styles.metaItem}>
-            <Clock size={11} color={color.mute} />
+            <Clock size={11} color={palette.mute} />
             <Text style={styles.metaText}>{rec.estimatedTime}</Text>
           </View>
         ) : null}
         {rec.priceLevel ? (
           <View style={styles.metaItem}>
-            <DollarSign size={11} color={color.mute} />
+            <DollarSign size={11} color={palette.mute} />
             <Text style={styles.metaText}>{PRICE_LABEL[rec.priceLevel] ?? rec.priceLevel}</Text>
           </View>
         ) : null}
@@ -103,13 +121,13 @@ export function TelegraphRecommendationCard({ rec, onAddToTrip, onDismiss, onSav
         <View style={styles.actions}>
           {onAddToTrip && (
             <Pressable style={styles.addBtn} onPress={() => onAddToTrip(rec)}>
-              <CalendarPlus size={13} color={color.onInk} />
+              <CalendarPlus size={13} color={palette.operationalOn} />
               <Text style={styles.addBtnText}>Add to Trip</Text>
             </Pressable>
           )}
           {onSave && (
             <Pressable style={styles.iconBtn} onPress={() => onSave(rec)} hitSlop={8}>
-              <Bookmark size={15} color={color.signal} />
+              <Bookmark size={15} color={palette.operational} />
             </Pressable>
           )}
           {onShare && (
@@ -120,12 +138,12 @@ export function TelegraphRecommendationCard({ rec, onAddToTrip, onDismiss, onSav
               accessibilityRole="button"
               accessibilityLabel="Share this recommendation"
             >
-              <PortavaShareIcon size={15} color={color.mute} />
+              <PortavaShareIcon size={15} color={palette.mute} />
             </Pressable>
           )}
           {onNotInterested && (
             <Pressable style={styles.iconBtn} onPress={() => onNotInterested(rec)} hitSlop={8}>
-              <ThumbsDown size={15} color={color.mute} />
+              <ThumbsDown size={15} color={palette.mute} />
             </Pressable>
           )}
         </View>
@@ -134,12 +152,14 @@ export function TelegraphRecommendationCard({ rec, onAddToTrip, onDismiss, onSav
   );
 }
 
-const styles = StyleSheet.create({
+// census T123/T124: the scheme's colours; the Telegraph mark, Save and Add to
+// Trip are ordinary actions, so they are the operational teal, not vermilion.
+const makeStyles = (p: TelegraphPalette) => StyleSheet.create({
   card: {
-    backgroundColor: TG.surfaceRaised,
+    backgroundColor: p.surfaceRaised,
     borderRadius: radius.lg,
     borderWidth: 1,
-    borderColor: TG.recvBorder,
+    borderColor: p.recvBorder,
     borderLeftWidth: 3,
     padding: space.lg,
     gap: space.sm,
@@ -161,12 +181,12 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontFamily: 'Courier',
     fontWeight: '700',
-    color: color.signal,
+    color: p.operational,
     letterSpacing: 1,
   },
   title: {
     ...t.bodyStrong,
-    color: color.ink,
+    color: p.recvText,
     lineHeight: 20,
   },
   dismissBtn: {
@@ -187,7 +207,7 @@ const styles = StyleSheet.create({
   },
   reason: {
     ...t.small,
-    color: color.mute,
+    color: p.mute,
     lineHeight: 18,
   },
   meta: {
@@ -203,7 +223,7 @@ const styles = StyleSheet.create({
   },
   metaText: {
     ...t.small,
-    color: color.mute,
+    color: p.mute,
     fontSize: 11,
   },
   actions: {
@@ -215,14 +235,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: space.xs,
-    backgroundColor: color.signal,
+    backgroundColor: p.operational,
     borderRadius: radius.pill,
     paddingVertical: 7,
     paddingHorizontal: space.md,
   },
   addBtnText: {
     ...t.small,
-    color: color.onInk,
+    color: p.operationalOn,
     fontWeight: '700',
     fontSize: 12,
   },
@@ -231,7 +251,7 @@ const styles = StyleSheet.create({
     height: 30,
     borderRadius: radius.pill,
     borderWidth: 1,
-    borderColor: TG.recvBorder,
+    borderColor: p.recvBorder,
     alignItems: 'center',
     justifyContent: 'center',
   },

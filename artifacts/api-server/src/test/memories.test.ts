@@ -4,7 +4,7 @@ import http from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import memoriesRouter from "../routes/memories.js";
-import { logger } from "../lib/logger.js";
+import { logger } from "../lib/logger.js"; import { orPredicate } from "./helpers/postgrestOrFilter.js"; // census-telegraph T220: a real `.or()` (the shared block readers narrow inside one)
 import { asHistoricalMemoryPayload } from "../services/memory/historicalTruth.js"; import { memoryItemMediaUrlAccepted, MEMORY_MEDIA_URL_REFUSAL } from "../services/memory/memoryMediaOrigin.js"; import { configuredStorageOrigin } from "../lib/mediaUrl.js";
 
 /**
@@ -120,7 +120,7 @@ function makeClient(state: FakeState) {
       delete() { pendingDelete = true; return builder; },
       eq(col: string, val: any)  { filters.push((r) => r[col] === val); return builder; },
       neq(col: string, val: any) { filters.push((r) => r[col] !== val); return builder; }, contains(col: string, vals: any[]) { filters.push((r) => Array.isArray(r[col]) && vals.every((v) => r[col].includes(v))); return builder; },
-      in(col: string, vals: any[]) { filters.push((r) => vals.includes(r[col])); return builder; },
+      in(col: string, vals: any[]) { filters.push((r) => vals.includes(r[col])); return builder; }, or(expr: string) { filters.push(orPredicate(expr)); return builder; },
       lt(col: string, val: any)  { filters.push((r) => r[col] < val); return builder; },
       gt(col: string, val: any)  { filters.push((r) => r[col] > val); return builder; },
       // PostgREST negations used by the discovery feed's pre-filters:

@@ -628,7 +628,7 @@ export async function runLiveCheck(
         priority: "normal",
         actionUrl: nudge.actionUrl,
         sourceType: "compass_live",
-        sourceId: nudge.dedupeKey,
+        sourceId: nudge.dedupeKey, ...(nudge.causalEventId ? { causalEventId: nudge.causalEventId } : {}), // census-telegraph T397: a Sense-derived nudge keeps the change it reports
         metadata: { confidence: nudge.confidence, liveSessionId: session.id, nudgeType: nudge.type },
       });
       if (row) {

@@ -194,3 +194,55 @@ test('suggestionToPlace: an ACTION row is never a Place, even with a label and a
     null,
   );
 });
+
+// ── census-trips wave-5 follow-up (G109): a gateway CITY row keeps the zone its own binding states ──
+const daNangId = '33333333-3333-4333-8333-333333333333';
+const cityValue = {
+  entityType: 'city', cityId: daNangId, city: 'Da Nang', country: 'Vietnam', countryCode: 'VN',
+  lat: 16.05, lng: 108.2, timezone: 'Asia/Ho_Chi_Minh',
+};
+function cityRow(over: Partial<InputSuggestion> = {}): InputSuggestion {
+  return sug({ context: 'city_picker', label: 'Da Nang', subtitle: 'Vietnam', entityType: 'city', entityId: daNangId,
+    action: { type: 'set_structured_value', value: cityValue }, structuredValue: cityValue, ...over });
+}
+
+test('a gateway city row carries the time zone its own binding states', () => {
+  const p = suggestionToPlace(cityRow());
+  assert.equal(p?.type, 'city');
+  assert.equal(p?.canonicalId, daNangId);
+  assert.equal(p?.timezone, 'Asia/Ho_Chi_Minh');
+});
+
+test('a multi-segment zone and UTC are carried as sent', () => {
+  assert.equal(suggestionToPlace(cityRow({ structuredValue: { ...cityValue, timezone: 'America/Argentina/Buenos_Aires' } }))?.timezone, 'America/Argentina/Buenos_Aires');
+  assert.equal(suggestionToPlace(cityRow({ structuredValue: { ...cityValue, timezone: ' UTC ' } }))?.timezone, 'UTC');
+});
+
+test('no zone is invented: a null, blank, malformed or non-string bound zone stays null', () => {
+  for (const timezone of [null, undefined, '', '   ', 'null', 'Asia/', '/Ho_Chi_Minh', 'Asia Ho Chi Minh', 7]) {
+    const p = suggestionToPlace(cityRow({ structuredValue: { ...cityValue, timezone } }));
+    assert.ok(p, `the row is still a Place (${String(timezone)})`);
+    assert.equal(p.timezone, null, `bound zone ${JSON.stringify(timezone)}`);
+  }
+});
+
+test('a binding for ANOTHER entity says nothing about this row: no zone', () => {
+  // a different city's binding
+  assert.equal(suggestionToPlace(cityRow({ structuredValue: { ...cityValue, cityId: cityId } }))?.timezone, null);
+  // a row with no canonical id cannot be matched to any binding
+  assert.equal(suggestionToPlace(cityRow({ entityId: undefined }))?.timezone, null);
+  // a non-city row carrying a city binding
+  assert.equal(suggestionToPlace(cityRow({ entityType: 'country' }))?.timezone, null);
+  // a binding that is not a city binding
+  assert.equal(suggestionToPlace(cityRow({ structuredValue: { ...cityValue, entityType: 'region' } }))?.timezone, null);
+  // no binding at all (the label alone): unchanged, null
+  assert.equal(suggestionToPlace(cityRow({ structuredValue: undefined, action: undefined }))?.timezone, null);
+});
+
+test('only the zone is carried: the binding\'s coordinates and country are not (scoped follow-up)', () => {
+  const p = suggestionToPlace(cityRow());
+  assert.equal(p?.lat, null);
+  assert.equal(p?.lng, null);
+  assert.equal(p?.country, null);
+  assert.equal(p?.countryCode, null);
+});

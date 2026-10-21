@@ -772,7 +772,7 @@ const ps = StyleSheet.create({
   addBtn:         { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: color.deep, borderRadius: radius.md, paddingHorizontal: 10, paddingVertical: 6 },
   addBtnText:     { ...t.small, color: color.onInk, fontWeight: '700' },
   readOnlyBanner: { flexDirection: 'row', alignItems: 'center', gap: 6, marginHorizontal: space.lg, marginBottom: space.sm, paddingHorizontal: space.md, paddingVertical: 8, backgroundColor: color.haze, borderRadius: radius.md },
-  readOnlyText:   { ...t.small, color: color.mute, flex: 1 },
+  readOnlyText:   { ...t.small, color: color.muteStrong, flex: 1 },
   warnBanner:     { flexDirection: 'row', alignItems: 'center', gap: 6, marginHorizontal: space.lg, marginBottom: space.sm, backgroundColor: '#FFFBEB', borderRadius: radius.md, borderWidth: 1, borderColor: '#F5D77B', paddingHorizontal: space.md, paddingVertical: 8 },
   warnBannerText: { ...t.small, color: '#8B5E00', fontWeight: '600' as const, flex: 1 },
   warnBannerLink: { ...t.small, color: '#F59E0B', fontWeight: '700' as const },
@@ -789,7 +789,7 @@ const vt = StyleSheet.create({
   wrap:         { flexDirection: 'row', backgroundColor: color.haze, borderRadius: radius.md, padding: 2 },
   btn:          { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
   btnActive:    { backgroundColor: color.deep },
-  btnText:      { ...t.small, color: color.mute, fontWeight: '600', fontSize: 11 },
+  btnText:      { ...t.small, color: color.muteStrong, fontWeight: '600', fontSize: 11 },
   btnTextActive:{ color: '#fff' },
 });
 

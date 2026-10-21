@@ -9,7 +9,7 @@
 import React from 'react';
 import { Pressable, View, type StyleProp, type ViewStyle } from 'react-native';
 import { Bookmark, Settings2 } from 'lucide-react-native';
-import { color } from '../../../theme/tokens.ts';
+import { useTelegraphPalette } from '../theme/telegraphTheme.ts';
 
 export interface InboxHeaderActionsProps {
   composeStyle: StyleProp<ViewStyle>;
@@ -20,13 +20,14 @@ export interface InboxHeaderActionsProps {
 }
 
 export function InboxHeaderActions({ composeStyle, composeIcon, onCompose, onSaved, onSettings }: InboxHeaderActionsProps) {
+  const palette = useTelegraphPalette();
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
       <Pressable style={composeStyle} onPress={onSaved} accessibilityRole="button" accessibilityLabel="Saved messages" testID="telegraph-inbox-saved" hitSlop={8}>
-        <Bookmark size={19} color={color.mute} />
+        <Bookmark size={19} color={palette.mute} />
       </Pressable>
       <Pressable style={composeStyle} onPress={onSettings} accessibilityRole="button" accessibilityLabel="Message settings" testID="telegraph-inbox-settings" hitSlop={8}>
-        <Settings2 size={19} color={color.mute} />
+        <Settings2 size={19} color={palette.mute} />
       </Pressable>
       <Pressable style={composeStyle} onPress={onCompose} accessibilityRole="button" accessibilityLabel="New Telegraph" hitSlop={8}>
         {composeIcon}

@@ -932,7 +932,7 @@ export const CLIENT_SHARED_STORE_RE =
   /\bcreateContext\s*[<(]|\buseSyncExternalStore\s*[<(]|from\s+["'](?:zustand|jotai|valtio|mobx|redux|@reduxjs\/toolkit|react-redux|recoil)/;
 
 export const REVIEWED_CLIENT_SHARED_STORES: readonly { readonly file: string; readonly carries: string }[] = [
-  { file: "src/components/stamps/StampEarnedToast.tsx", carries: "showStampToast(stamp) and checkForNewStamps(delay) — a PassportStampNew from /stamps/me; no message content. A thread screen consumes it, nothing of the thread is handed in." },
+  /* wave 5 correction: StampAnimationContext un-reviewed — it was reached only through the GET /memories/X false positive (REVIEWED_PREDICATE_READS, foot of file) */ { file: "src/components/stamps/StampEarnedToast.tsx", carries: "showStampToast(stamp) and checkForNewStamps(delay) — a PassportStampNew from /stamps/me; no message content. A thread screen consumes it, nothing of the thread is handed in." },
   { file: "src/context/BlockedIdsContext.tsx", carries: "blockedIds / blockerIds (user-id sets), load state, addBlock/removeBlock(id) — ids only." },
   { file: "src/context/CallContext.tsx", carries: "call state (phase, session, peer, participants, roles, device toggles, an error/notice string the call layer sets) and call actions — no message content." },
   { file: "src/context/FeatureFlagsContext.tsx", carries: "the flag lookups (isEnabled, isLivePlacesEnabled: a flag name to a boolean) over the server's flag map — booleans." },
@@ -944,3 +944,327 @@ export const REVIEWED_CLIENT_SHARED_STORES: readonly { readonly file: string; re
   { file: "src/hooks/useRecentPlaces.ts", carries: "a module-level useSyncExternalStore cache of Place[] from GET /api/me/recent-places (publishCache at useRecentPlaces.ts:44 is its only writer), plus loading, saveRecent(place, usedFor) which POSTs a Place, and reload — places only, no message content. It imports services/messagingOwnerRequest.ts only for the owner-scoped bearer token." },
   { file: "src/platform/input-assistance/hooks/useInputAccountEpoch.ts", carries: "useSyncExternalStore over services/discoveryViewerScope.ts: returns currentDiscoveryScope().epoch — a single number that changes on account switch; no content of any kind." },
 ];
+
+// ── Wave 5 (2026-10-17): T366's last stated hole — module-level state and device storage ──
+//
+// census-telegraph T366 (§67.2, its latest statement): "on the client, content
+// kept in a module-level variable (outside a context or store module) or in
+// device storage between two screens is not followed." Both are channels a
+// screen can leave content in for another screen to pick up, with no call or
+// JSX prop between them — the same shape §66 closed for contexts and stores.
+// Both are now reviewed channels, by the same rule: a history-reading unit
+// (`isReaderUnit`: it reads conversation history, or history reaches it through
+// a JSX prop) that WRITES one is a crossing into a channel, and every such
+// channel is on a closed list with what it holds. A new one is red until it is
+// reviewed here; a listed one that no longer qualifies is red until removed.
+//
+//   MODULE STATE  a client module's top-level mutable binding — a `let`, or a
+//                 top-level `const` Map/Set/array/object some other unit of
+//                 the file mutates. A reader WRITES it when the reader's own
+//                 unit mutates it, or the reader passes arguments to an
+//                 imported function whose unit mutates it (one hop: the
+//                 function that holds the write is the reviewed entry point).
+//   DEVICE        AsyncStorage / SecureStore / local or session storage /
+//   STORAGE       expo-file-system writes, MMKV. A reader writes it when the
+//                 reader's own unit calls a write, or passes arguments to an
+//                 imported function whose unit does. Each reviewed WRITE
+//                 STATEMENT is pinned by its exact text, so a write that
+//                 starts storing something else is red until re-reviewed.
+//
+// What this does not follow, stated: a write reached through two or more
+// helpers (the token cache every API call refreshes would make that rule name
+// almost every screen), and data flow inside a unit (a reviewed writer is
+// trusted to hold what its entry says; a NEW writer or entry point is not).
+
+/** A device-storage write, by API. */
+export const CLIENT_DEVICE_STORAGE_WRITE_RE =
+  /\bAsyncStorage\s*\.\s*(?:setItem|mergeItem|multiSet|multiMerge)\b|\bSecureStore\s*\.\s*setItemAsync\b|\b(?:local|session)Storage\s*\.\s*setItem\b|\bFileSystem\s*\.\s*(?:writeAsStringAsync|copyAsync|moveAsync)\b|\bnew\s+MMKV\b|\bsetItemAsync\s*\(|\bwriteAsStringAsync\s*\(/;
+
+const escapeName = (n: string) => n.replace(/\$/g, "\\$");
+
+/** A write to binding `name`: a reassignment, a compound assignment, a property or index assignment, or a mutating method. */
+export function stateWriteRe(name: string): RegExp {
+  const n = escapeName(name);
+  return new RegExp(
+    `(?<![.\\w$])${n}\\s*(?:\\.\\s*(?:set|add|push|unshift|splice|delete|clear|pop|shift|sort|reverse|fill)\\s*\\(|\\[[^\\]]*\\]\\s*=(?!=)|\\.\\s*[A-Za-z_$][\\w$]*\\s*=(?!=)|=(?!=)|\\+=|-=|\\?\\?=|\\|\\|=|&&=|\\+\\+|--)|Object\\.assign\\(\\s*${n}\\b`,
+  );
+}
+
+/**
+ * A file's top-level mutable state: every top-level `let`, and every top-level
+ * `const` initialised with a Map/Set/array/object that a unit OTHER than its
+ * declaration mutates.
+ */
+export function moduleStateBindings(units: readonly CodeUnit[]): string[] {
+  const out: string[] = [];
+  for (const u of units) {
+    const text = u.code.trim();
+    const l = /^(?:export\s+)?let\s+([A-Za-z0-9_$]+)/.exec(text);
+    if (l) { out.push(l[1]!); continue; }
+    const c = /^(?:export\s+)?const\s+([A-Za-z0-9_$]+)\s*(?::[^=]+)?=\s*(?:new\s+(?:Map|Set|WeakMap|WeakSet|Array)\b|\[|\{)/.exec(text);
+    if (c && units.some((v) => v !== u && stateWriteRe(c[1]!).test(v.code))) out.push(c[1]!);
+  }
+  return out;
+}
+
+/** Does `unit` write one of `bindings` (other than the one it declares)? */
+export function unitWritesState(unit: CodeUnit, bindings: readonly string[]): boolean {
+  return bindings.some((b) => !unit.declares.includes(b) && stateWriteRe(b).test(unit.code));
+}
+
+/** Does `code` call `local` with at least one argument — i.e. hand it data? */
+export function passesArguments(code: string, local: string): boolean {
+  return new RegExp(`(?<![.\\w$])${escapeName(local)}\\s*\\(\\s*[^)\\s]`).test(code);
+}
+
+/** The device-storage write statements in `code`, whitespace collapsed — what a review pins. */
+export function deviceStorageWrites(code: string): string[] {
+  const out: string[] = [];
+  const re = new RegExp(CLIENT_DEVICE_STORAGE_WRITE_RE.source, "g");
+  for (const m of code.matchAll(re)) {
+    const start = m.index!;
+    let depth = 0;
+    let end = start;
+    for (let i = start; i < code.length; i++) {
+      const ch = code[i];
+      if (ch === "(") depth++;
+      else if (ch === ")") { depth--; if (depth === 0) { end = i + 1; break; } }
+      else if ((ch === ";" || ch === "\n") && depth === 0 && i > start + m[0].length) { end = i; break; }
+    }
+    out.push(code.slice(start, Math.max(end, start + m[0].length)).replace(/\s+/g, " ").trim());
+  }
+  return out;
+}
+
+/** A client module whose top-level state a history-reading unit writes, reviewed. Paths under travel-buddy-standalone/. */
+export interface ReviewedClientModuleState {
+  readonly file: string;
+  /** How readers reach the write: an imported function's name, or `self:<unit>` for the module's own reader unit. Exactly the computed set. */
+  readonly writers: readonly string[];
+  readonly carries: string;
+}
+
+export const REVIEWED_CLIENT_MODULE_STATE: readonly ReviewedClientModuleState[] = [
+  { file: "src/components/trip/NeighborhoodMatchSheet.tsx", writers: ["self:LocationCheckSheet"], carries: "`_sessionMapFullScreen = true` when the person opens the map full screen — one boolean UI preference for the session; no content." },
+  { file: "src/features/telegraph/composer/composerTaskOutcome.ts", writers: ["reportThreadSend"], carries: "held: thread id → { served, at } — the recipient pick that opened that thread from New Telegraph (a ServedField: the telegraph.recipient field id and context, and ONE entity { entityType: 'user', entityId }) and the epoch-ms time it was held. Its only setter is holdRecipientPick, called by app/telegraph/new.tsx, which reads no history. The thread screen hands reportThreadSend only (thread id, whether the send succeeded); that unit only DELETES the hold (on success, or once older than HOLD_MS) and reports the held pick as message_sent — ids, a field id, a boolean and a timestamp, never message content (wave 5 correction: reviewed on the lead's request; pinned below the REVIEWED_PREDICATE_READS suite)." }, { file: "src/features/telegraph/connection/sequenceCursorStore.ts", writers: ["noteThreadCursor"], carries: "cursors: thread id → the last §12 sequence NUMBER this device has seen (bounded, recency-ordered) — integers, never a message." },
+  { file: "src/features/telegraph/kinds/useAnnouncementAcknowledgement.ts", writers: ["self:load", "self:useAnnouncementAcknowledgement", "useAnnouncementAcknowledgement"], carries: "cache: thread id → the in-flight GET /threads/:id/announcements promise for TTL_MS. That answer DOES hold conversation content — each announcement's title and the acknowledgement notes — but the map is module-private (only _resetAnnouncementCache is exported beside the hook), and the hook returns only { acknowledged, acknowledgedCount } for one announcement. No other module can read the cached answer." },
+  { file: "src/features/telegraph/lifecycle/readerFaces.ts", writers: ["publishReaderFaces"], carries: "faces: reader id → avatar URL or null, as the read-receipts route answered (the store REVIEWED_CLIENT_SHARED_STORES lists through useReaderAvatars) — no message content." },
+  { file: "src/features/telegraph/media/compactPlaybackStore.ts", writers: ["openMessageVideo"], carries: "session: the playing video's stored media reference and poster reference, its presentation, the (source, thread, message ids) that hold it and their sender ids — media references and ids, never body, translation or caption (sources are projected before storing, census-telegraph §90)." },
+  { file: "src/features/telegraph/sharedContext/railSeenStore.ts", writers: ["captureRailSeenScope"], carries: "accountGenerations / accountOperations / writeOwners: per-account generation counters and the write-ownership closures that keep one account's rail-seen record from being written after a switch — numbers and functions, no content." },
+  { file: "src/hooks/useHighlightRingState.ts", writers: ["invalidateHighlightCache", "useHighlightRingState"], carries: "cache / inFlight: user id → the Highlight ring state (whether that person has unseen Highlights) and its fetch promise; invalidateHighlightCache only deletes — state flags, no content." },
+  { file: "src/hooks/useMessaging.ts", writers: ["self:useUnreadCounts"], carries: "unreadCountsListeners: the set of subscriber callbacks for unread-count patches (thread id → count) — functions; the patches are counts." },
+  { file: "src/lib/batchSignMedia.ts", writers: ["_evictBatchSignEntry"], carries: "the reader only EVICTS a signed-URL cache entry by its URL (_cache.delete) when an image fails to load — it removes, it never stores." },
+  { file: "src/lib/location/resolveCanonical.ts", writers: ["resolveCanonicalPlace"], carries: "cache / cacheOwner: place id → the canonical Place the server resolved, scoped to the signed-in account — places only." },
+  { file: "src/services/compass.ts", writers: ["reportCompassViewed"], carries: "reportedViewedIds: the keys of Compass items whose 'viewed' outcome was already reported (so it is sent once) — ids only." },
+  { file: "src/services/discovery.ts", writers: ["getDiscoveryPlaces"], carries: "_CLIENT_CACHE: (destination, category, radius, page, intent) → the Discovery places page and its viewer scope — places, no conversation content." },
+  // wave 5 correction: src/services/memoryResurfacingControls.ts un-reviewed — its readers were history readers only through the GET /memories/X false positive (REVIEWED_PREDICATE_READS, foot of file).
+  { file: "src/services/savedPostsCache.ts", writers: ["setSaved"], carries: "_store: user id → post id → saved (boolean) — whether a post is bookmarked; no content." },
+];
+
+/** A client module whose history-reading unit writes device storage (or hands data to one that does), reviewed. */
+export interface ReviewedClientDeviceStorage {
+  readonly file: string;
+  /** Each write statement, exactly as `deviceStorageWrites` prints it. A changed statement is a new write. */
+  readonly writes: readonly string[];
+  readonly carries: string;
+}
+
+export const REVIEWED_CLIENT_DEVICE_STORAGE: readonly ReviewedClientDeviceStorage[] = [
+  { file: "app/messages/[id].tsx", writes: ["AsyncStorage.setItem(`thread_ai_hidden:${id}`, next ? '1' : '0')", "AsyncStorage.setItem(`thread_translation:${id}`, JSON.stringify({ autoTranslate: at, showOriginal: so }))"], carries: "Two per-thread display choices keyed by thread id: whether the AI tray is hidden ('1'/'0'), and the translation toggles { autoTranslate, showOriginal } — booleans, no message content." },
+  { file: "src/components/GroupChatScreen.tsx", writes: ["AsyncStorage.setItem(`thread_translation:${id}`, JSON.stringify({ autoTranslate: at, showOriginal: so }))"], carries: "The group thread's translation toggles { autoTranslate, showOriginal } keyed by thread id — booleans." },
+  { file: "src/features/telegraph/coordination/CoordinationPanel.tsx", writes: ["AsyncStorage.setItem(closeoutDismissKey(threadId, closeoutPlanId), '1')"], carries: "A '1' under a (thread id, plan id) key once the person dismisses the closeout card — a flag." },
+  { file: "src/features/telegraph/sharedContext/railSeenStore.ts", writes: ["AsyncStorage.setItem(scope.key, serialized)"], carries: "serialized = { v: 1, items: snapshot }: shared-context item id → { status, startsAt } as last seen, so the rail can promote a CHANGE (census T132) — object status and time, never message content." },
+  { file: "src/features/trips/planning/TripPlanSection.tsx", writes: ["AsyncStorage.setItem(`tripPlanMode:${tripId}`, m)"], carries: "The trip plan's view mode (a ViewMode string such as 'list' or 'map') keyed by trip id." },
+];
+
+// ── Wave 5 correction (2026-10-17): PREDICATE READS ──────────────────────────
+//
+// The fixpoint cannot tell "reaches a history read" from "carries what was
+// read", and REVIEWED_CALL_TREE_NON_FLOWS answers that per CROSSING. This
+// answers it once, at the read: a unit that reads conversation history ONLY to
+// decide a yes/no about the viewer's access, and lets nothing out but that one
+// bit, does not SEED the readers fixpoint.
+//
+// THE FALSE POSITIVE. 60d199e2d made GET /memories/:id offer image renditions
+// (services/memory/memoryItemRenditions.ts). A rendition may only be offered
+// where the ORIGINAL's rules admit the viewer, so the descriptor path
+// re-authorizes through lib/mediaAccess.ts, whose `decide` reads `messages` in
+// branch 3c — "is this storage key a message's media the viewer may see?" —
+// and returns a boolean. The fixpoint then classed GET /memories/X as a
+// conversation-history read, and every client unit that reads a Memory and
+// adds to one became a "crossing" (census-telegraph W5.4). The
+// re-authorization is privacy-correct and stays.
+//
+// WHAT A LISTED UNIT MUST KEEP TRUE — `predicateReadProblems`, every run:
+//   1. it DECLARES `boolean` or `Promise<boolean>` (an inferred return type
+//      is refused): one bit leaves, never a row;
+//   2. every parameter is DECLARED a primitive or the database client — no
+//      object it could fill with a row for its caller;
+//   3. it writes no module-level state of its file (moduleStateBindings);
+//   4. the history tables it reads are EXACTLY `reads`, and each such read
+//      selects EXACTLY one of `selects` — metadata, so the bit is decided on
+//      who/where/when and never on what was said; a new history read, a
+//      widened select, or the last read gone is red until re-reviewed or
+//      removed;
+//   5. (the suite) un-reviewing it re-classes EXACTLY `declassifies` — the
+//      GET endpoints whose only history read is this predicate. A new GET that
+//      reaches history only through it is red until argued here; so is a SERVER crossing it clears (`clears`, exact).
+// NOT EXEMPTED: the unit's OWN crossing check (a predicate unit that itself
+// reaches a memory creation still crosses); a history read it reaches through
+// another unit (that unit seeds as before, and the predicate unit is reached
+// through it); every unit not on the list.
+// NOT CLAIMED: content leaving by a thrown error or a log line. And, stated
+// because this list makes it visible: message MEDIA (storage bytes) and text
+// derived from it (captions) were never modelled as history. Five of the
+// endpoints `decide` declassifies serve them for a key the CALLER names, and
+// were classed as history reads only because their authorization runs
+// through `decide`. That incidental coverage is KEPT as a tripwire: the suite
+// lets the review clear only client crossings through `clientMayClear` (the
+// endpoints that serve Memories), so a client unit crossing through a media
+// or caption endpoint is still red.
+
+export interface ReviewedPredicateRead {
+  /** Repo-relative module (from artifacts/api-server). */
+  readonly file: string;
+  /** The unit's first line starts with this. */
+  readonly unit: string;
+  /** Exactly the conversation-history tables the unit reads, as the scan resolves them. */
+  readonly reads: readonly string[];
+  /** Exactly the `.select(…)` argument text of each history read in the unit. */
+  readonly selects: readonly string[];
+  /** Exactly the GET endpoints (server-analysis spelling) that are history reads only through this unit. */
+  readonly declassifies: readonly string[]; /** The subset of `declassifies` that serves MEMORIES: the only endpoints through which the review may clear a client crossing (the rest stay a tripwire). */ readonly clientMayClear: readonly string[]; /** Exactly the SERVER crossings ("file :: unit head") that exist only through this unit, each a memory creation that reaches the predicate and nothing else of the read. */ readonly clears: readonly string[];
+  readonly why: string;
+  /** The suite whose assertions keep `why` true. */
+  readonly pinnedBy: string;
+}
+
+export const REVIEWED_PREDICATE_READS: readonly ReviewedPredicateRead[] = [
+  {
+    file: "src/lib/mediaAccess.ts",
+    unit: "async function decide(",
+    reads: ["messages"],
+    selects: ["thread_id, sender_id, created_at"],
+    declassifies: ["${base}/draft", "/me/saved-memories", "/media/captions/X", "/media/captions/X/draft", "/media/captions/source", "/media/file/X/X", "/memories", "/memories/X", "/users/X/memories"], clientMayClear: ["/me/saved-memories", "/memories", "/memories/X", "/users/X/memories"], clears: ['src/routes/memories.ts :: router.post("/memories/:id/items", async (req, res) => {', 'src/routes/memories.ts :: router.post("/memories/:id/items/from-post", async (req, res) => {'],
+    why:
+      "authorizeMediaAccess's decision function. Branch 3c finds the live message whose media_url or media_thumbnail_url IS " +
+      "the requested storage key, selecting only thread_id, sender_id and created_at, and uses them to require that the " +
+      "sender owns the object, the viewer is a current member of that thread, and the message is inside the viewer's " +
+      "§14.3 window. It returns Promise<boolean>; the row never leaves. The endpoints it reaches serve Memories with their " +
+      "renditions (/memories/X, and the cover renditions of the three Memory lists), or the bytes / caption text of an object the CALLER names (/media/file, /media/captions, " +
+      "the caption-translation draft) — none returns a messages row. The two POSTs it `clears` add a Memory item from the request's own mediaUrl / post and only ENQUEUE that photo's rendition ladder (enqueueMemoryItemRenditions), which uses createImageVariantsAccess's enabled() and row() and never its authorized(); the fixpoint is unit-granular, so the factory as a whole reaches this boolean.",
+    pinnedBy: "src/test/telegraphConversationMemoryBoundary.test.ts",
+  },
+];
+
+/** The return types a predicate read may declare: one bit. */
+export const PREDICATE_RETURN_TYPES: readonly string[] = ["boolean", "Promise<boolean>"];
+/** The parameter types a predicate read may declare: values it cannot fill, and the database client. */
+export const PREDICATE_PARAMETER_TYPE_RE = /^(?:string|number|boolean|SupabaseClient)$/;
+
+/** Is this unit of `file` (repo-relative) a reviewed predicate read? */
+export function isReviewedPredicateRead(file: string, unitCode: string, list: readonly ReviewedPredicateRead[] = REVIEWED_PREDICATE_READS): boolean {
+  return list.some((r) => r.file === file && unitCode.trim().startsWith(r.unit));
+}
+
+/** Split `code` from `start` at top-level commas until the bracket that closes depth 0; returns the parts and the index of that closer. */
+function topLevelParts(code: string, start: number): { parts: string[]; end: number } {
+  const parts: string[] = [];
+  let depth = 0;
+  let cur = "";
+  let quote: string | null = null;
+  for (let i = start; i < code.length; i++) {
+    const ch = code[i]!;
+    if (quote) { cur += ch; if (ch === quote && code[i - 1] !== "\\") quote = null; continue; }
+    if (ch === "'" || ch === '"' || ch === "`") { quote = ch; cur += ch; continue; }
+    if (ch === "=" && code[i + 1] === ">") { cur += "=>"; i++; continue; }
+    if ("([{<".includes(ch)) depth++;
+    else if (")]}>".includes(ch)) {
+      if (depth === 0) { parts.push(cur); return { parts, end: i }; }
+      depth--;
+    }
+    if (ch === "," && depth === 0) { parts.push(cur); cur = ""; continue; }
+    cur += ch;
+  }
+  parts.push(cur);
+  return { parts, end: code.length };
+}
+
+/**
+ * A top-level `function` unit's DECLARED signature, as written: each
+ * parameter's name and annotation (null when untyped) and the return
+ * annotation (null when inferred). `null` when the unit is not a function.
+ */
+export function declaredSignature(unitCode: string): { name: string; params: Array<{ name: string; type: string | null }>; returns: string | null } | null {
+  const code = unitCode.trim();
+  const head = /^(?:export\s+)?(?:async\s+)?function\s+([A-Za-z0-9_$]+)\s*(?:<[^>(]*>)?\s*\(/.exec(code);
+  if (!head) return null;
+  const { parts, end } = topLevelParts(code, head[0].length);
+  const params = parts.map((p) => p.trim()).filter(Boolean).map((p) => {
+    // name[?] [: type] [= default], split at the TOP-LEVEL `:` and `=` (not `=>`).
+    let depth = 0, colon = -1, eq = -1;
+    for (let i = 0; i < p.length; i++) {
+      const ch = p[i]!;
+      if (ch === "=" && p[i + 1] === ">") { i++; continue; }
+      if ("([{<".includes(ch)) depth++;
+      else if (")]}>".includes(ch)) depth--;
+      else if (depth === 0 && ch === ":" && colon < 0 && eq < 0) colon = i;
+      else if (depth === 0 && ch === "=" && eq < 0) eq = i;
+    }
+    const nameEnd = colon >= 0 ? colon : eq >= 0 ? eq : p.length;
+    const name = p.slice(0, nameEnd).trim().replace(/\?$/, "");
+    const type = colon >= 0 ? p.slice(colon + 1, eq >= 0 ? eq : p.length).replace(/\s+/g, " ").trim() : null;
+    return { name, type };
+  });
+  const after = code.slice(end + 1);
+  const ret = /^\s*:\s*/.exec(after);
+  if (!ret) return { name: head[1]!, params, returns: null };
+  let depth = 0;
+  let i = ret[0].length;
+  for (; i < after.length; i++) {
+    const ch = after[i]!;
+    if (ch === "=" && after[i + 1] === ">") { i++; continue; }
+    if (ch === "{" && depth === 0) break;
+    if ("([{<".includes(ch)) depth++;
+    else if (")]}>".includes(ch)) depth--;
+  }
+  return { name: head[1]!, params, returns: after.slice(ret[0].length, i).replace(/\s+/g, " ").trim() };
+}
+
+/** The `.select(…)` argument text of every history-table read in `unitCode` (table named by a literal or a constant). */
+export function historySelects(unitCode: string, consts: ReadonlyMap<string, string>): string[] {
+  const history = new Set<string>(CONVERSATION_HISTORY_TABLES);
+  const out: string[] = [];
+  for (const s of fromSites(unitCode, consts)) {
+    if (s.table === null || !history.has(s.table)) continue;
+    const sel = /\.select\(\s*(["'`])([^"'`]*)\1/.exec(statementAfter(unitCode, s.end));
+    out.push(sel ? sel[2]!.replace(/\s+/g, " ").trim() : "<no select>");
+  }
+  return out;
+}
+
+/**
+ * Checks 1–4 of a predicate-read entry against its file. `fileUnits` are the
+ * file's comment-stripped units; `unitReads` the history tables the analysis
+ * resolves for the unit (its fixpoint seed). Empty = the entry holds.
+ */
+export function predicateReadProblems(entry: ReviewedPredicateRead, fileUnits: readonly CodeUnit[], unitReads: readonly string[], consts: ReadonlyMap<string, string> = new Map()): string[] {
+  const hits = fileUnits.filter((u) => u.code.trim().startsWith(entry.unit));
+  if (hits.length !== 1) return [`${hits.length} units start with ${JSON.stringify(entry.unit)} (want exactly one)`];
+  const u = hits[0]!;
+  const out: string[] = [];
+  const sig = declaredSignature(u.code);
+  if (!sig) out.push("not a function declaration — its signature cannot be read");
+  else {
+    if (!PREDICATE_RETURN_TYPES.includes(sig.returns ?? "")) out.push(`declares return type ${sig.returns ?? "(none: inferred)"}; a predicate read declares boolean or Promise<boolean>`);
+    for (const p of sig.params) if (!PREDICATE_PARAMETER_TYPE_RE.test(p.type ?? "")) out.push(`parameter ${p.name}: ${p.type ?? "(untyped)"} is not a primitive or the database client — it could carry a row out`);
+  }
+  if (unitWritesState(u, moduleStateBindings(fileUnits))) out.push("writes module-level state another unit can read");
+  const want = [...new Set(entry.reads)].sort();
+  const got = [...new Set(unitReads)].sort();
+  if (got.length === 0) out.push("no longer reads conversation history — remove the entry");
+  else if (got.join(",") !== want.join(",")) out.push(`reads ${got.join(",")}, reviewed for ${want.join(",")} — re-review`);
+  const sels = [...new Set(historySelects(u.code, consts))].sort();
+  if (sels.join("|") !== [...new Set(entry.selects)].sort().join("|")) out.push(`selects ${JSON.stringify(sels)}, reviewed for ${JSON.stringify(entry.selects)} — re-review`);
+  return out;
+}

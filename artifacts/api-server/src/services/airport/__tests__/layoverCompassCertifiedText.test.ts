@@ -27,11 +27,11 @@
  *   2. Below an explicit yes the certified text never says "you can leave the
  *      airport" — it used to on `tight`, `entry_unverified` and `stay_airside`
  *      whenever 30+ usable minutes remained, because only `no` was a refusal.
- *   3. RESTATED 2026-10-09 under lead ruling L-CL02d: there is no model on this
- *      door at all. Every scenario that used to drive a model answer on an
- *      explicit yes — §50.1's paraphrases, the widening prose, a throwing model,
- *      a guard-refused model, every session status — now pins that the model is
- *      NEVER called and the answer is the certified text + airport facts.
+ *   3. RESTATED 2026-10-09 (L-CL02d), SCOPED 2026-10-18 (owner decision): the CORE
+ *      `answerLayoverQuestion` has no model (the assistant, behind its flag, is
+ *      LayoverCompassAssistant.ts). On an explicit yes — §50.1's paraphrases, the
+ *      widening prose, a throwing or guard-refused model, every status — the core
+ *      NEVER calls a model and its answer is the certified text + airport facts.
  *   4. L-CL02c: what "live" means (status-live OR clock-live, fail closed).
  *   5. The gate and the certified text, directly.
  */

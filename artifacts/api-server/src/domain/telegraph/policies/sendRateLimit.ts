@@ -46,7 +46,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { checkRateLimit, type RateLimitResult } from "../../../lib/rateLimit.js"; import { sendLimiterId, type SendBucket } from "./messageDoorPolicy.js";
-import { logger as rootLogger } from "../../../lib/logger.js";
+import { logger as rootLogger } from "../../../lib/logger.js"; import { UNRESOLVED_REPORT_STATUSES } from "../../../lib/moderationCounts.js";
 
 const log = rootLogger.child({ mod: "telegraphSendRateLimit" });
 
@@ -192,7 +192,7 @@ export async function resolveSendTier(
     .select("id")
     .eq("target_type", "user")
     .eq("target_id", userId)
-    .eq("status", "open")
+    .in("status", UNRESOLVED_REPORT_STATUSES) // open or in_review: a report a moderator touched but did not close still counts
     .limit(5);
   if (reportsErr) {
     degraded = true;

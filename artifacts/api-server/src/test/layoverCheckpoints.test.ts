@@ -82,7 +82,7 @@ function stage(opts: { gate?: boolean; status?: string; checkpoints?: any[]; rec
     layover_outcomes: [], layover_events: [], layover_plan_stops: [], layover_recommendations: opts.recommendations ?? [],
     passport_stamps: [], passport_visibility_preferences: [], trip_plan_items: [],
   };
-  _setTestClient(makeLayoverDb(tables, { users: { [TOKEN]: USER_ID, [STRANGER_TOKEN]: "user-2" }, failures: opts.failures }), true);
+  if (opts.recommendations) stagePairedGeneration(tables, "session-1", USER_ID); _setTestClient(makeLayoverDb(tables, { users: { [TOKEN]: USER_ID, [STRANGER_TOKEN]: "user-2" }, failures: opts.failures }), true);
   return tables;
 }
 
@@ -384,3 +384,26 @@ describe("L43 — the pure suppression rule", () => {
     assert.equal(applyLandsideSuppression(unsaid, { state: "unknown", reason: "checkpoints_unreadable" }).length, 1);
   });
 });
+
+// census-layover L296 (App C5) — appended so no cited line above moves; ESM hoists the imports.
+import { recommendationPairingFor, recommendationRowKey } from "../services/airport/LayoverRecommendationService.js";
+import { snapshotIdFor } from "../services/airport/layoverLedger.js";
+
+/**
+ * A plan add must name the snapshot of the session's NEWEST generation, and that
+ * generation must have certified the card as its row stands
+ * (layoverRecommendationSnapshotPairing.test.ts). A real generation always
+ * writes this `recommendation_generated` event beside its rows; a fixture that
+ * stages rows by hand stages the event too. Returns the snapshot to name.
+ */
+function stagePairedGeneration(tables: Record<string, any[]>, sessionId: string, userId: string): string {
+  const inputHash = "sha256:" + "f".repeat(64);
+  const rows = (tables.layover_recommendations ?? []).filter((r) => r.session_id === sessionId);
+  if (!tables.layover_events) tables.layover_events = [];
+  tables.layover_events.push({
+    id: `generation-${tables.layover_events.length}`, session_id: sessionId, user_id: userId,
+    event_type: "recommendation_generated", created_at: new Date().toISOString(),
+    metadata: { inputHash, pairing: recommendationPairingFor(sessionId, inputHash, rows, rows.map(recommendationRowKey)) },
+  });
+  return snapshotIdFor(sessionId, inputHash);
+}

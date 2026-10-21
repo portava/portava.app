@@ -12,7 +12,8 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Zap, MapPin, Clock, X } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
+import { space, radius, type as t } from '../theme/tokens.ts';
+import { useTelegraphTheme, type TelegraphPalette } from '../features/telegraph/theme/telegraphTheme.ts';
 import type { TelegraphSuggestion } from '../services/telegraphChat.ts';
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -21,7 +22,7 @@ const CATEGORY_COLORS: Record<string, string> = {
   beach: '#0EA5E9',
   attraction: '#10B981',
   transport: '#6B7280',
-  meetup: color.signal,
+  meetup: 'operational', // census T124: the scheme's teal, resolved at render (it was vermilion)
   poll: '#EC4899',
   plan: '#F59E0B',
   availability: '#14B8A6',
@@ -46,9 +47,11 @@ export function TelegraphChatCard({
   onDismiss,
   onAction,
 }: TelegraphChatCardProps) {
+  const { palette, styles } = useTelegraphTheme(makeStyles);
   const [acting, setActing] = useState(false);
 
-  const chipColor = CATEGORY_COLORS[suggestion.category] ?? CATEGORY_COLORS.activity;
+  const chipHue = CATEGORY_COLORS[suggestion.category] ?? CATEGORY_COLORS.activity;
+  const chipColor = chipHue === 'operational' ? palette.operational : chipHue;
   const actionLabel = ACTION_LABELS[suggestion.action_type] ?? 'View';
 
   async function handleAction() {
@@ -68,7 +71,7 @@ export function TelegraphChatCard({
       {/* Header row */}
       <View style={styles.headerRow}>
         <View style={styles.zapBadge}>
-          <Zap size={10} color={color.onInk} fill={color.onInk} />
+          <Zap size={10} color={palette.operationalOn} fill={palette.operationalOn} />
         </View>
         <Text style={styles.brandLabel}>Telegraph suggestion</Text>
         <View style={[styles.chip, { backgroundColor: chipColor + '22' }]}>
@@ -81,7 +84,7 @@ export function TelegraphChatCard({
           onPress={() => onDismiss(suggestion.id)}
           hitSlop={8}
         >
-          <X size={14} color={color.mute} />
+          <X size={14} color={palette.mute} />
         </Pressable>
       </View>
 
@@ -100,7 +103,7 @@ export function TelegraphChatCard({
         <View style={styles.contextRow}>
           {suggestion.location_context && (
             <View style={styles.contextItem}>
-              <MapPin size={11} color={color.mute} />
+              <MapPin size={11} color={palette.mute} />
               <Text style={styles.contextText} numberOfLines={1}>
                 {suggestion.location_context}
               </Text>
@@ -108,7 +111,7 @@ export function TelegraphChatCard({
           )}
           {suggestion.time_context && (
             <View style={styles.contextItem}>
-              <Clock size={11} color={color.mute} />
+              <Clock size={11} color={palette.mute} />
               <Text style={styles.contextText}>{suggestion.time_context}</Text>
             </View>
           )}
@@ -122,7 +125,7 @@ export function TelegraphChatCard({
         disabled={acting}
       >
         {acting ? (
-          <ActivityIndicator size="small" color={color.onInk} />
+          <ActivityIndicator size="small" color={palette.operationalOn} />
         ) : (
           <Text style={styles.actionLabel}>{actionLabel}</Text>
         )}
@@ -131,12 +134,13 @@ export function TelegraphChatCard({
   );
 }
 
-const styles = StyleSheet.create({
+// census T123/T124: the scheme's palette; the Telegraph mark and the action are ordinary emphasis (teal).
+const makeStyles = (p: TelegraphPalette) => StyleSheet.create({
   card: {
-    backgroundColor: color.paperRaised,
+    backgroundColor: p.surfaceRaised,
     borderRadius: radius.lg,
     borderWidth: 1,
-    borderColor: color.signal + '33',
+    borderColor: p.operational + '33',
     padding: space.md,
     gap: 6,
   },
@@ -150,7 +154,7 @@ const styles = StyleSheet.create({
     width: 16,
     height: 16,
     borderRadius: 4,
-    backgroundColor: color.signal,
+    backgroundColor: p.operational,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -158,7 +162,7 @@ const styles = StyleSheet.create({
     ...t.stamp,
     fontFamily: 'Courier',
     fontSize: 10,
-    color: color.signal,
+    color: p.operational,
     letterSpacing: 0.3,
     flex: 1,
   },
@@ -180,14 +184,14 @@ const styles = StyleSheet.create({
 
   title: {
     ...t.bodyStrong,
-    color: color.ink,
+    color: p.recvText,
     fontSize: 14,
     fontWeight: '700',
     lineHeight: 18,
   },
   reason: {
     ...t.small,
-    color: color.mute,
+    color: p.mute,
     fontSize: 12,
     lineHeight: 16,
   },
@@ -207,12 +211,12 @@ const styles = StyleSheet.create({
     ...t.stamp,
     fontFamily: 'Courier',
     fontSize: 11,
-    color: color.mute,
+    color: p.mute,
   },
 
   actionBtn: {
     marginTop: 4,
-    backgroundColor: color.signal,
+    backgroundColor: p.operational,
     borderRadius: radius.md,
     paddingVertical: 8,
     alignItems: 'center',
@@ -221,7 +225,7 @@ const styles = StyleSheet.create({
   },
   actionLabel: {
     ...t.bodyStrong,
-    color: color.onInk,
+    color: p.operationalOn,
     fontSize: 13,
     fontWeight: '700',
   },

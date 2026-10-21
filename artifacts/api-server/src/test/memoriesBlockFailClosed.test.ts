@@ -60,7 +60,7 @@ function makeFakeClient() {
       select(_cols?: string, opts?: any) { if (opts?.head) head = true; return obj; },
       eq() { return obj; },
       neq() { return obj; },
-      in() { return obj; },
+      in() { return obj; }, or() { return obj; }, // census-telegraph T220: the shared pair gate reads through `.or()` — without it the read THREW, and the returned-error path went untested
       lt() { return obj; },
       gt() { return obj; },
       not() { return obj; },

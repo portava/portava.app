@@ -24,7 +24,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 import express from "express";
-import { _setTestClient } from "../lib/http.js";
+import { _setTestClient } from "../lib/http.js"; import { orPredicate } from "./helpers/postgrestOrFilter.js"; // census-telegraph T220: a real `.or()` (the shared block readers narrow inside one)
 import memoriesRouter from "../routes/memories.js";
 
 const OWNER = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -108,7 +108,7 @@ function makeClient(state: FakeState, failTables = new Set<string>()) {
       neq(c: string, v: any) { filters.push((r) => r[c] !== v); return b; },
       is(c: string, v: any) { filters.push((r) => (r[c] ?? null) === v); return b; },
       in(c: string, vs: any[]) { filters.push((r) => vs.includes(r[c])); return b; },
-      or() { return b; },
+      or(expr: string) { filters.push(orPredicate(expr)); return b; },
       gt(c: string, v: any) { filters.push((r) => r[c] > v); return b; },
       lt(c: string, v: any) { filters.push((r) => r[c] < v); return b; },
       order() { return b; },

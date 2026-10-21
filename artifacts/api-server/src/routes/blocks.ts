@@ -327,33 +327,33 @@ router.get("/users/:userId/block-status", async (req, res) => {
   const target = req.params.userId;
   if (!UUID.test(target)) { sendError(res, "invalid_payload", "Invalid user id"); return; }
 
-  const [iBlocked, theyBlocked] = await Promise.all([
-    client.from("blocks").select("blocked_id").eq("blocker_id", user.id).eq("blocked_id", target).maybeSingle(),
-    client.from("blocks").select("blocked_id").eq("blocker_id", target).eq("blocked_id", user.id).maybeSingle(),
-  ]);
-
-  // FAIL CLOSED. supabase-js RESOLVES on a database error rather than throwing,
-  // so `data` is null both when there is genuinely no block row AND when the
-  // read failed. `Boolean(data)` collapses those two into `false` -- and on this
-  // endpoint `false` means "you are not blocked", the permissive answer, handed
-  // out because the database was unreachable.
-  //
-  // There is no honest way to answer this question from a failed read: we cannot
-  // say "not blocked" (that may be untrue and leaks contact) and saying "blocked"
-  // would be a fabrication. So the endpoint reports that it does not know.
-  if (iBlocked.error || theyBlocked.error) {
-    sendError(
-      res,
-      "db_error",
-      "Block status is temporarily unavailable",
-    );
+  // census-telegraph T220c: EXISTENCE reads — `.limit(1)` and "is there a row", never `.maybeSingle()`.
+  // maybeSingle RAISES on a second row, so this answer leaned on UNIQUE(blocker_id, blocked_id)
+  // (blocks_pair_unique) holding one row per direction: a duplicate made a REAL block read as
+  // "temporarily unavailable". And a row list is the only answer: a thrown read used to escape as
+  // a bare 500, and a non-null `data` that was not a row (a string) read as `true`.
+  let iBlockedThem: boolean; let theyBlockedMe: boolean;
+  try {
+    const [iBlocked, theyBlocked] = await Promise.all([
+      client.from("blocks").select("blocked_id").eq("blocker_id", user.id).eq("blocked_id", target).limit(1),
+      client.from("blocks").select("blocked_id").eq("blocker_id", target).eq("blocked_id", user.id).limit(1),
+    ]);
+    // FAIL CLOSED. supabase-js RESOLVES on a database error rather than throwing, so a failed
+    // read used to look like "no block row" -- and on this endpoint `false` means "you are not
+    // blocked", the permissive answer. There is no honest way to answer from a failed read: "not
+    // blocked" may be untrue and leaks contact, and "blocked" would be a fabrication. So every
+    // failure -- a returned error, a thrown read, an answer that is not a row list -- reports
+    // that the endpoint does not know.
+    if (iBlocked.error || theyBlocked.error || !Array.isArray(iBlocked.data) || !Array.isArray(theyBlocked.data)) throw new Error("blocks unreadable");
+    iBlockedThem = iBlocked.data.length > 0;
+    theyBlockedMe = theyBlocked.data.length > 0;
+  } catch {
+    sendError(res, "db_error", "Block status is temporarily unavailable");
     return;
   }
 
   res.status(200).json({
-    userId: target,
-    iBlocked: Boolean(iBlocked.data),
-    theyBlockedMe: Boolean(theyBlocked.data),
+    userId: target, iBlocked: iBlockedThem, theyBlockedMe,
   });
 });
 

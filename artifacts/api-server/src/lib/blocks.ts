@@ -11,7 +11,7 @@
  * "show nobody" (fail-closed), never as "no blocks". This mirrors the contract
  * lib/mapTravelers already relies on: never leak when block state is uncertain.
  */
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js"; import { readBlockExclusions } from "./exclusionSet.js"; // census-telegraph §94 (T220c): the whole-list read, by key
 
 /**
  * Bidirectional blocked-user set for `userId`.
@@ -22,21 +22,21 @@ export async function fetchBlockedSet(
   sc: SupabaseClient,
   userId: string,
 ): Promise<Set<string> | null> {
+  // census-telegraph §94 (T220c): this was ONE range-less `.or()` read, and PostgREST cuts
+  // every answer at db-max-rows (1,000 hosted) with NO error, so a user with more block
+  // rows than that got a prefix: every block past the cut was simply not excluded. It is
+  // now the definition of record's whole-list read, lib/exclusionSet.ts readBlockExclusions:
+  // the same `.or()` read first, byte for byte (one round trip under the cap); an answer as
+  // long as the cap may have been cut, so it is read again by key, with counts.
+  //
+  // The contract is unchanged: a Set of every counter-party, or `null` when the list could
+  // not be read. `null` now also covers what this read let through as an answer: a cut
+  // read; an answer that is not a row list (`data ?? []` read it as "nobody is blocked");
+  // a row that does not name both parties (it added `undefined`); a missing client or id.
   try {
-    const { data, error } = await sc
-      .from("blocks")
-      .select("blocker_id, blocked_id")
-      .or(`blocker_id.eq.${userId},blocked_id.eq.${userId}`);
-    if (error) return null;
-    const set = new Set<string>();
-    for (const b of (data ?? []) as any[]) {
-      if (b.blocker_id === userId) set.add(b.blocked_id as string);
-      else set.add(b.blocker_id as string);
-    }
-    return set;
-  } catch {
-    return null;
-  }
+    const read = await readBlockExclusions(sc, userId); // never rejects: every failure is `read.ok === false`
+    return read.ok ? new Set(read.ids) : null;
+  } catch { return null; } // defence in depth, and blockReadCatchGuard's THE READERS rule: a thrown read is null
 }
 
 /**

@@ -10,7 +10,7 @@ import { navigateToProfile } from '../../src/lib/navigateToProfile.ts';
 import * as Linking from 'expo-linking';
 import {
   MoreVertical, Flag, Flag as FlagFill,
-  MapPin, MessageCircle, Pencil,
+  MapPin, MessageCircle, Pencil, BookmarkPlus,
 } from 'lucide-react-native';
 import { StampIcon } from '../../src/components/stamps/StampIcon';
 import { PortavaShareIcon } from '../../src/components/icons/PortavaShareIcon';
@@ -29,7 +29,7 @@ import { DisplayMediaImage, AvatarImage } from '../../src/components/ui/DisplayM
 import { color, space, radius, type as t, avatar } from '../../src/theme/tokens';
 import { emitCommentCount } from '../../src/lib/commentCountStore';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
-import { NavBarFiller } from '../../src/hooks/useNavBarCollapse';
+import { NavBarFiller } from '../../src/hooks/useNavBarCollapse'; import { useFeatureFlags } from '../../src/context/FeatureFlagsContext'; import { SaveOwnPostToMemorySheet, MEMORY_FROM_OWN_MEDIA_FLAG, canOfferSaveToMemory } from '../../src/features/memories/SaveOwnPostToMemorySheet'; // MD385; one line so no cited line moves
 
 const UNDO_WINDOW_MS = 5000;
 /** Author avatar diameter. AvatarImage sizes itself, so no style is needed. */
@@ -43,14 +43,14 @@ function PostOverflowSheet({
   onShare,
   onReport,
   onEdit,
-  onWrongPlace,
+  onWrongPlace, onSaveToMemory,
 }: {
   visible: boolean;
   onClose: () => void;
   onShare: () => void;
   onReport?: () => void;
   onEdit?: () => void;
-  onWrongPlace?: () => void;
+  onWrongPlace?: () => void; /** MD385: own post with media, flag on. */ onSaveToMemory?: () => void;
 }) {
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -70,7 +70,7 @@ function PostOverflowSheet({
           <Pressable style={ov.row} onPress={() => { onClose(); onShare(); }}>
             <PortavaShareIcon size={20} color={color.ink} />
             <Text style={ov.rowLabel}>Share post</Text>
-          </Pressable>
+          </Pressable>{onSaveToMemory && (<><View style={ov.divider} /><Pressable style={ov.row} onPress={() => { onClose(); onSaveToMemory(); }} testID="overflow-save-to-memory" accessibilityRole="button"><BookmarkPlus size={20} color={color.ink} /><Text style={ov.rowLabel}>Save to a Memory</Text></Pressable></>)}
           {onWrongPlace && (
             <>
               <View style={ov.divider} />
@@ -299,7 +299,7 @@ export default function PostDetail() {
 
   const isOwnPost = !!(userId && post?.author?.id === userId);
 
-  const handleReported = useCallback(() => {
+  const { isEnabled } = useFeatureFlags(); const [saveToMemoryOpen, setSaveToMemoryOpen] = useState(false); const canSaveToMemory = isEnabled(MEMORY_FROM_OWN_MEDIA_FLAG) && isOwnPost && canOfferSaveToMemory(post, userId); const handleReported = useCallback(() => { // MD385 (before this): own post, with media, flag on — nothing while off
     setReported(true);
     setUndoAvailable(true);
     if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
@@ -390,8 +390,8 @@ export default function PostDetail() {
             onShare={handleShare}
             onEdit={isOwnPost ? () => router.push(`/post/edit/${post.id}` as any) : undefined}
             onReport={!isOwnPost ? () => setReportOpen(true) : undefined}
-            onWrongPlace={!isOwnPost && !!post.locationName ? () => setWrongPlaceOpen(true) : undefined}
-          />
+            onWrongPlace={!isOwnPost && !!post.locationName ? () => setWrongPlaceOpen(true) : undefined} onSaveToMemory={canSaveToMemory ? () => setSaveToMemoryOpen(true) : undefined}
+          />{canSaveToMemory && userId ? <SaveOwnPostToMemorySheet visible={saveToMemoryOpen} post={post} viewerId={userId} onClose={() => setSaveToMemoryOpen(false)} /> : null}
           {!isOwnPost && (
             <ReportSheet
               visible={reportOpen}

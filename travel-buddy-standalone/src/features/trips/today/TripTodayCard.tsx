@@ -126,7 +126,7 @@ export function TripTodayCard({ tripId, load = fetchTripToday, onAttention, star
         <View style={[s.row, s.banner]} testID="trip-today-attention">
           <AlertTriangle size={16} color={color.signal} />
           <View style={{ flex: 1 }}>
-            <Text style={[s.title, { color: color.signal }]}>{banner.title}</Text>
+            <Text style={[s.title, { color: color.signalStrong }]}>{banner.title}</Text>
             <Text style={s.detail}>{banner.detail}</Text>
           </View>
         </View>
@@ -173,7 +173,7 @@ export function TripTodayCard({ tripId, load = fetchTripToday, onAttention, star
       {today.unresolvedActions.length > 0 ? (
         <View style={s.actions} testID="trip-today-actions">
           {today.unresolvedActions.map((u, i) => (
-            <Text key={`${u.kind}-${i}`} style={[s.detail, u.severity === 'critical' && { color: color.signal }]}>
+            <Text key={`${u.kind}-${i}`} style={[s.detail, u.severity === 'critical' && { color: color.signalStrong }]}>
               • {u.detail}
             </Text>
           ))}
@@ -194,9 +194,9 @@ export function TripTodayCard({ tripId, load = fetchTripToday, onAttention, star
 
 const s = StyleSheet.create({
   phase: { marginTop: space.sm, paddingTop: space.sm, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.haze },
-  phaseTitle: { ...t.stamp, color: color.signal, fontWeight: '700', letterSpacing: 0.5 },
+  phaseTitle: { ...t.stamp, color: color.signalStrong, fontWeight: '700', letterSpacing: 0.5 },
   navButton: { flexDirection: 'row', alignItems: 'center', gap: space.xs, marginTop: space.sm },
-  navText: { ...t.stamp, color: color.signal, fontWeight: '600' },
+  navText: { ...t.stamp, color: color.signalStrong, fontWeight: '600' },
   wrap: {
     marginHorizontal: space.lg,
     marginTop: space.md,
@@ -214,8 +214,8 @@ const s = StyleSheet.create({
   detail: { ...t.stamp, color: color.mute, marginTop: 2 },
   answers: { paddingHorizontal: space.lg, paddingBottom: space.sm, gap: space.xs },
   answerRow: { flexDirection: 'column' },
-  question: { ...t.stamp, color: color.faint },
+  question: { ...t.stamp, color: color.mute },
   answer: { ...t.small, color: color.ink },
   actions: { paddingHorizontal: space.lg, paddingBottom: space.sm },
-  sensing: { ...t.stamp, color: color.faint, paddingHorizontal: space.lg, paddingBottom: space.md },
+  sensing: { ...t.stamp, color: color.mute, paddingHorizontal: space.lg, paddingBottom: space.md },
 });

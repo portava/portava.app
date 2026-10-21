@@ -233,3 +233,18 @@ describe('the envelope parser and the legacy mapping', () => {
     expect(legacySourceTypeToObjectType(undefined)).toBeNull();
   });
 });
+
+// Independent verification (wave 5, pass 2): the per-card resolve answers an
+// UNREADABLE source as available:false with reason 'unknown'. That is a read
+// failure, not a revocation; the card keeps what it has (as the poller does).
+import { act as w5Act, waitFor as w5WaitFor } from '@testing-library/react-native';
+describe('§5.3 — an unreadable source is not drawn as removed', () => {
+  it('reason "unknown" leaves the post card as it was', async () => {
+    mockedResolve.mockResolvedValue(unavailable('POST', POST, 'unknown'));
+    await render(<PostCardMessage body={postBody} mine={false} threadId={THREAD} />);
+    await w5WaitFor(() => expect(mockedResolve).toHaveBeenCalled());
+    await w5Act(async () => { await Promise.resolve(); });
+    expect(screen.queryByTestId('post-card-revoked')).toBeNull();
+    expect(screen.queryByText('This content was removed')).toBeNull();
+  });
+});

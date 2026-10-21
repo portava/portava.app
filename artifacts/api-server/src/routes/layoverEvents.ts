@@ -116,29 +116,29 @@ router.post("/layover/events", asyncHandler(async (req, res) => {
       {},
       "layover event ingest called with LAYOVER_EVENT_PRODUCER_SECRET unset — refusing; an unset secret is a misconfiguration, not an open door",
     );
-    sendError(res, "degraded_unavailable", "This channel is not configured to accept events.");
+    sendError(res, "degraded_unavailable", "This channel is not configured to accept events.", { reason: "producer_secret_unset" });
     return;
   }
   if (!safeSecretEquals(req.get(PRODUCER_SECRET_HEADER), expected)) {
-    sendError(res, "unauthenticated", "Producer credential missing or incorrect.");
+    sendError(res, "unauthenticated", "Producer credential missing or incorrect.", { reason: "producer_credential_refused" });
     return;
   }
 
   const sc = getServiceClient();
   if (!sc) {
-    sendError(res, "degraded_unavailable", "Storage is unavailable, so this event was not accepted. Retry.");
+    sendError(res, "degraded_unavailable", "Storage is unavailable, so this event was not accepted. Retry.", { reason: "no_service_client" });
     return;
   }
 
   // ── gate 2: the capability flag, seeded FALSE by migration 2981 ────────────
   if (!(await isFlagEnabled(sc, "layover_event_ingest_enabled"))) {
-    sendError(res, "degraded_unavailable", "Event ingest is not open.");
+    sendError(res, "degraded_unavailable", "Event ingest is not open.", { reason: "ingest_closed" }); /* off, ABSENT (2981 unapplied) or unreadable: nothing is read past the flag and nothing is written */
     return;
   }
 
   const parsed = ingestSchema.safeParse(req.body);
   if (!parsed.success) {
-    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid event envelope");
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid event envelope", { reason: "invalid_envelope" });
     return;
   }
 
@@ -154,11 +154,11 @@ router.post("/layover/events", asyncHandler(async (req, res) => {
       sendError(
         res,
         "invalid_payload",
-        REJECTION_MESSAGE[result.reason] ?? `This event was refused: ${result.reason}.`,
+        `${REJECTION_MESSAGE[result.reason] ?? `This event was refused: ${result.reason}.`} (${result.detail})`, { reason: result.reason }, /* §23: the producer is told WHICH validator refused it, by name and by detail */
       );
       return;
     }
-    sendError(res, "db_error", result.message);
+    sendError(res, "db_error", result.message, { reason: "write_failed" });
     return;
   }
 

@@ -14,7 +14,7 @@
  */
 import { isSupabaseConfigured } from '../lib/supabase.ts';
 import { captureMessagingOwnerRequest, messagingOwnerToken, assertMessagingOwnerRequest, type MessagingOwnerRequest } from './messagingOwnerRequest.ts';
-import { freshToken as freshApiToken, isCurrentSessionToken } from './apiToken.ts'; import { noteTelegraphRequest } from '../features/telegraph/connection/connectionMonitor.ts'; import { networkDurationMs } from '../features/telegraph/connection/bandwidthSignal.ts'; // §30A.15: every answer (or none) feeds the connection banner; §17.4: the network share
+import { freshToken as freshApiToken, isCurrentSessionToken } from './apiToken.ts'; import { noteTelegraphRequest } from '../features/telegraph/connection/connectionMonitor.ts'; import { networkDurationMs } from '../features/telegraph/connection/bandwidthSignal.ts'; import { telegraphReadHeaders, type TelegraphReadSurface } from '../features/telegraph/negotiation/clientCapabilities.ts'; // §30A.15: every answer (or none) feeds the connection banner; §17.4: the network share · T431: the §30A.16 capability headers
 
 export type MessageVerdict = 'allowed' | 'requires_request' | 'denied';
 
@@ -297,14 +297,14 @@ async function matchesLanguageScope(scope: LanguageSettingsScope, token: string)
   return scope.isCurrent() && bound;
 }
 
-async function apiGet<T>(path: string, owner?: MessagingOwnerRequest, scope?: LanguageSettingsScope): Promise<MsgResult<T>> {
+async function apiGet<T>(path: string, owner?: MessagingOwnerRequest, scope?: LanguageSettingsScope, extraHeaders?: Record<string, string>): Promise<MsgResult<T>> {
   if (!isSupabaseConfigured || !apiBase()) return { ok: true, data: null };
   const token = owner ? await messagingOwnerToken(owner) : await freshToken();
   if (!token || (owner && !owner.isCurrent())) return { ok: false, data: null, errorKind: 'unauthenticated' };
   if (scope && (!await matchesLanguageScope(scope, token) || !scope.isCurrent())) return { ok: false, data: null, errorKind: 'unauthenticated' };
   try {
     const startedAt = Date.now(); const res = await fetch(`${apiBase()}${path}`, { // §17.4: timed for the bandwidth signal
-      headers: { Authorization: `Bearer ${token}` },
+      headers: { Authorization: `Bearer ${token}`, ...(extraHeaders ?? {}) }, // census-telegraph T431: the §30A.16 capability headers, on the reads that negotiate
     });
     if (owner && !owner.isCurrent()) return { ok: false, data: null, errorKind: 'unauthenticated' };
     noteTelegraphRequest(res.status >= 500 ? 'server' : 'ok', networkDurationMs(Date.now() - startedAt, res.headers?.get?.('server-timing') ?? null));
@@ -523,13 +523,13 @@ export async function syncCircleChat(
 
 export async function getThreadMessages(
   threadId: string,
-  before?: string,
+  before?: string, surface: TelegraphReadSurface = 'conversation', // T431: the screen that draws this page decides what the client can render
 ): Promise<MsgResult<{ messages: Message[]; threadId: string }>> {
   // T233: `withSequence=1` asks the server to label each message with its conversation sequence (the resume
   // cursor). A server without the capability ignores it and answers exactly as before.
   const qs = before ? `?before=${encodeURIComponent(before)}&withSequence=1` : '?withSequence=1';
   const res = await apiGet<{ messages: Message[]; threadId: string }>(
-    `/api/threads/${threadId}/messages${qs}`,
+    `/api/threads/${threadId}/messages${qs}`, undefined, undefined, telegraphReadHeaders(surface),
   );
   if (!res.ok || !res.data?.messages) return res;
 
@@ -546,7 +546,7 @@ export async function resumeThreadMessages(
   afterSequence: number,
 ): Promise<MsgResult<{ messages: Message[]; threadId: string; resume?: { afterSequence: number; nextSequence: number; hasMore: boolean } }>> {
   const res = await apiGet<{ messages: Message[]; threadId: string; resume?: { afterSequence: number; nextSequence: number; hasMore: boolean } }>(
-    `/api/threads/${threadId}/messages?afterSequence=${encodeURIComponent(String(afterSequence))}`,
+    `/api/threads/${threadId}/messages?afterSequence=${encodeURIComponent(String(afterSequence))}`, undefined, undefined, telegraphReadHeaders('conversation'), // resume is the conversation screen's (useMessaging)
   );
   if (!res.ok || !res.data?.messages) return res;
   return { ...res, data: { ...res.data, messages: await hydrateMessages(threadId, res.data.messages) } };

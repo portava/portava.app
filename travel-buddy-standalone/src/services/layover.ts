@@ -578,7 +578,7 @@ export interface LayoverOverview {
    * Optional for the same reason as `toolsConsulted`: an older server does not
    * send it, and absent must render as nothing rather than as `none`.
    */
-  reminder?: LayoverReminderDisposition;
+  reminder?: LayoverReminderDisposition; /** census-layover L148 (round 2) — the SERVER's §15.2 memory of this flight, AS SENT (`known` + state, or `unknown` when its ledger could not be read). Parsed by `components/layover/layoverDisruptionView.ts`; absent on an older server. */ disruption?: unknown; /** §20 — the snapshot id of THIS answer (`snapshotIdFor(sessionId, inputHash)`). Resolvable only when `persisted.state` says it was stored (census L189/L191). */ snapshotId?: string | null;
   /** §2.1 — which rules and which inputs produced `advice`/`window`. */
   certification: LayoverCertification;
   /** §2.1/§22 — how much of THIS airport went into those numbers. */
@@ -738,7 +738,7 @@ export interface LayoverRecommendation {
    * that has the candidate-feasibility contract; optional here only so an older
    * server degrades to "not measured" rather than to a crash.
    */
-  feasibility?: CandidateFeasibility; /** census L75 — the §9 ExperiencePrimitive for the card's KIND (typical, never this place's); see `LayoverExperience` at the end of this file. Absent from an older server. */ experience?: LayoverExperience;
+  feasibility?: CandidateFeasibility; /** census L75 — the §9 ExperiencePrimitive for the card's KIND (typical, never this place's); see `LayoverExperience` at the end of this file. Absent from an older server. */ experience?: LayoverExperience; /** census L296 (App C5) — the snapshot this card was returned with (`GET /:id/recommendations` → `snapshotId`); adding it to a plan names this, never a newer one. Absent from an older server. */ snapshotId?: string | null;
 }
 
 export interface LayoverSafetyResult {
@@ -1029,7 +1029,7 @@ export async function updateLayoverSession(
  * the SERVER's own sentence for it.
  */
 export type LayoverRecsResult =
-  | { ok: true; recommendations: LayoverRecommendation[]; /** census L43 — why landside ideas were withheld (re-entry), or that the check could not be made; null when neither. */ landsideSuppression: LayoverLandsideSuppression | null }
+  | { ok: true; recommendations: LayoverRecommendation[]; /** census L43 — why landside ideas were withheld (re-entry), or that the check could not be made; null when neither. */ landsideSuppression: LayoverLandsideSuppression | null; /** census L296 — the snapshot every card above was certified under; null from an older server. */ snapshotId: string | null }
   | { ok: false; message: string };
 
 /** What a failure says when the server said nothing at all (offline, unparseable). */
@@ -1069,9 +1069,9 @@ export async function getRecommendations(sessionId: string): Promise<LayoverRecs
     };
   }
   return {
-    ok: true, landsideSuppression: landsideSuppressionOf(json.landsideSuppression),
+    ok: true, landsideSuppression: landsideSuppressionOf(json.landsideSuppression), snapshotId: recommendationSnapshotOf(json.snapshotId),
     recommendations: Array.isArray(json.recommendations)
-      ? (json.recommendations as LayoverRecommendation[])
+      ? stampRecommendationSnapshot(json.recommendations as LayoverRecommendation[], recommendationSnapshotOf(json.snapshotId))
       : [],
   };
 }
@@ -1366,15 +1366,15 @@ export async function addPlanStop(sessionId: string, stop: NewStopInput): Promis
 
 export async function addStopFromRecommendation(
   sessionId: string,
-  recommendationId: string,
+  recommendationId: string, /** census L296 — the snapshot the card was returned with; omitted, the one the traveller pressed (`holdRecommendationSnapshot`). */ snapshotId?: string | null,
 ): Promise<StopsResponse | null> {
-  const res = await authedFetch(airportUrl('sessions', sessionId, 'stops', 'from-recommendation'), {
-    method: 'POST',
-    body: JSON.stringify({ recommendationId }),
-  });
-  if (!res.ok) return null;
-  return res.json();
+  const outcome = await addStopFromRecommendationOutcome(sessionId, recommendationId, snapshotId === undefined ? takeHeldRecommendationSnapshot(recommendationId) : snapshotId); /* census L296: a 409 marks the snapshot expired for LayoverRecsSection, which reloads the ideas — the add is never retried under another snapshot */
+  return outcome.ok ? outcome.stops : null;
 }
+/*
+ * census L296: the two-argument call and the `StopsResponse | null` answer are kept for app/layover/[id].tsx.
+ * `addStopFromRecommendationOutcome` (end of file) is the answer that tells "reload the ideas" from "refused".
+ */
 
 export async function updatePlanStop(
   sessionId: string,
@@ -2715,4 +2715,254 @@ export async function simulateMapBudget(sessionId: string, budgetMinutes: number
     ok: true, budgetMinutes, certifiedUsableMinutes: simRec.certifiedUsableMinutes,
     statement: simRec.statement, stops: stops as PlanStop[], planFit: json?.planFit as PlanFit,
   };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// census-layover L296 — Appendix C5 on the client: *"Never certify a
+// recommendation against a snapshot other than the one returned with it."*
+//
+// Appended at the TAIL so no cited line above moves.
+//
+// `GET /:id/recommendations` names the snapshot its cards were certified under,
+// and `getRecommendations` stamps it on every card, so the card the traveller
+// PRESSES carries the snapshot it was returned with. `LayoverRecsSection` holds
+// that snapshot at the press (`holdRecommendationSnapshot`) and the add sends it
+// — the PRESSED card's, never whichever response happened to land last.
+//
+// The server answers an add under any other snapshot with 409
+// `RECOMMENDATION_EXPIRED`. That marks the snapshot expired here; the section
+// showing it switches to its "refreshed — reload" state and reloads the ideas.
+// The add is NOT retried: retrying under the newer snapshot would certify a
+// card the traveller has not seen.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** A server `snapshotId`, or null when it sent none this code can read. */
+function recommendationSnapshotOf(v: unknown): string | null {
+  return typeof v === 'string' && /^snap:[0-9a-f]{32}$/.test(v) ? v : null;
+}
+
+const expiredRecommendationSnapshots = new Set<string>();
+const recommendationExpiryListeners = new Set<() => void>();
+function notifyRecommendationExpiry(): void {
+  for (const listener of [...recommendationExpiryListeners]) listener();
+}
+
+/**
+ * Every card carries the snapshot it was returned with. A snapshot the server
+ * serves AS CURRENT is current, so it stops being expired here.
+ */
+function stampRecommendationSnapshot(recs: LayoverRecommendation[], snapshotId: string | null): LayoverRecommendation[] {
+  if (snapshotId !== null && expiredRecommendationSnapshots.delete(snapshotId)) notifyRecommendationExpiry();
+  return recs.map((r) => ({ ...r, snapshotId }));
+}
+
+/** The snapshot of the card the traveller pressed, held from the press until its add is sent. */
+const heldRecommendationSnapshots = new Map<string, string | null>();
+
+export function holdRecommendationSnapshot(recommendationId: string, snapshotId: string | null | undefined): void {
+  heldRecommendationSnapshots.set(recommendationId, snapshotId ?? null);
+}
+
+function takeHeldRecommendationSnapshot(recommendationId: string): string | null {
+  const held = heldRecommendationSnapshots.get(recommendationId) ?? null;
+  heldRecommendationSnapshots.delete(recommendationId);
+  return held;
+}
+
+/** True once an add under `snapshotId` was refused RECOMMENDATION_EXPIRED, until the server serves it as current again. */
+export function isRecommendationSnapshotExpired(snapshotId: string | null | undefined): boolean {
+  return typeof snapshotId === 'string' && expiredRecommendationSnapshots.has(snapshotId);
+}
+
+export function subscribeRecommendationExpiry(listener: () => void): () => void {
+  recommendationExpiryListeners.add(listener);
+  return () => { recommendationExpiryListeners.delete(listener); };
+}
+
+/**
+ * An add's outcome. `expired` is the 409 `RECOMMENDATION_EXPIRED`: reload the
+ * ideas, never retry the add. `unavailable` is a 5xx or no answer (retryable);
+ * `refused` is any other refusal, in the server's own words.
+ */
+export type AddFromRecommendationOutcome =
+  | { ok: true; stops: StopsResponse }
+  | { ok: false; reason: 'expired' | 'unavailable' | 'refused'; message: string };
+
+const ADD_UNREACHABLE = 'Could not add this idea. Please try again.';
+
+export async function addStopFromRecommendationOutcome(
+  sessionId: string,
+  recommendationId: string,
+  snapshotId: string | null,
+): Promise<AddFromRecommendationOutcome> {
+  let res: Response;
+  try {
+    res = await authedFetch(airportUrl('sessions', sessionId, 'stops', 'from-recommendation'), {
+      method: 'POST',
+      body: JSON.stringify(snapshotId === null ? { recommendationId } : { recommendationId, snapshotId }),
+    });
+  } catch {
+    return { ok: false, reason: 'unavailable', message: ADD_UNREACHABLE };
+  }
+  let json: Record<string, unknown> = {};
+  try { json = await res.json(); } catch { /* the status decides */ }
+  if (res.ok) return { ok: true, stops: json as unknown as StopsResponse };
+  const message = typeof json.message === 'string' ? json.message : ADD_UNREACHABLE;
+  if (res.status === 409 && json.reason === 'RECOMMENDATION_EXPIRED') {
+    if (snapshotId !== null && !expiredRecommendationSnapshots.has(snapshotId)) {
+      expiredRecommendationSnapshots.add(snapshotId);
+      notifyRecommendationExpiry();
+    }
+    return { ok: false, reason: 'expired', message };
+  }
+  return { ok: false, reason: res.status >= 500 ? 'unavailable' : 'refused', message };
+}
+
+// ── census-layover L189 / L191 — Portava's record of its answers ─────────────
+//
+//   GET /api/airport/sessions/:id/decisions/:snapshotId/explain
+//   GET /api/airport/sessions/:id/decisions/replay?engineVersion=<v>
+//
+// The client callers for `LayoverDecisionService.explain(snapshotId)` and
+// `.replay(sessionId, engineVersion)`. Both RESOLVE in every case: the server's
+// named refusals (`feature_disabled`, `flag_unreadable`, `storage_unavailable`
+// while the ledger is unpressed; `replay_mismatch` / `not_replayable` for a row
+// that cannot be explained; `engine_version_not_running`) are carried through
+// as the codes they are, and nothing here invents an explanation or a count.
+
+/** §20's decision record as the server publishes it (layoverLedger `DecisionRecord`). Only the parts a surface reads are typed. */
+export interface LayoverDecisionRecordWire {
+  sessionId: string;
+  snapshotId: string;
+  engineVersion: string;
+  inputHash: string;
+  computedAt: string;
+  rulesApplied: string[];
+  reasonCodes: string[];
+  result: { verdict: string; hardReturnTime: string; usableMinutes: number; [k: string]: unknown };
+  [k: string]: unknown;
+}
+
+export interface LayoverSnapshotExplanation {
+  snapshotId: string;
+  sessionId: string;
+  decision: LayoverDecisionRecordWire;
+  reasons: string[];
+  unknowns: string[];
+  disclaimer: string;
+  bufferPercentile: string;
+  /** Always `replay_match`: a stored answer that does not reproduce is never explained. */
+  verifiedBy: string;
+}
+
+/** The ledger is not there to read. `reason` is the server's code. */
+export interface LayoverDecisionUnavailable { ok: false; kind: 'unavailable'; reason: string; retryable: boolean }
+/** The request did not get an answer about the record at all. */
+export interface LayoverDecisionFailed { ok: false; kind: 'gone' | 'failed' | 'unreachable' | 'disabled'; message: string; retryable: boolean }
+
+export type LayoverDecisionExplainRead =
+  | { ok: true; explanation: LayoverSnapshotExplanation }
+  | LayoverDecisionUnavailable
+  /** A stored answer exists and was NOT explained: it does not reproduce from its own inputs, or other rules made it. */
+  | { ok: false; kind: 'not_explained'; reason: string; detail: string[] }
+  | LayoverDecisionFailed;
+
+export interface LayoverReplayResultWire {
+  snapshotId: string;
+  status: 'match' | 'mismatch' | 'refused' | string;
+  refusal: string | null;
+  mismatchedFields: string[];
+}
+
+export interface LayoverReplaySummaryWire {
+  read: number;
+  replayed: number;
+  matched: number;
+  mismatched: number;
+  refused: number;
+  refusalsByReason: Record<string, number>;
+  results: LayoverReplayResultWire[];
+}
+
+export type LayoverDecisionReplayRead =
+  | { ok: true; engineVersion: string; summary: LayoverReplaySummaryWire; truncated: boolean }
+  | LayoverDecisionUnavailable
+  /** The answers were made by an engine this server does not run. */
+  | { ok: false; kind: 'not_replayed'; reason: string; runningEngineVersion: string | null }
+  | LayoverDecisionFailed;
+
+const DECISION_RECORD_UNREACHABLE = 'Could not reach Portava. Nothing was checked.';
+
+function stringList(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+}
+
+async function decisionRead(url: string): Promise<{ ok: true; status: number; json: Record<string, unknown> } | LayoverDecisionFailed> {
+  let res: Response;
+  try {
+    res = await authedFetch(url);
+  } catch {
+    return { ok: false, kind: 'unreachable', message: DECISION_RECORD_UNREACHABLE, retryable: true };
+  }
+  let json: Record<string, unknown> = {};
+  try { json = (await res.json()) ?? {}; } catch { /* the status decides */ }
+  const message = typeof json.message === 'string' ? json.message : 'Portava could not answer that just now.';
+  if (!res.ok) {
+    if (res.status === 404 || json.error === 'not_found') return { ok: false, kind: 'gone', message, retryable: false };
+    return { ok: false, kind: 'failed', message, retryable: json.retryable === true || res.status >= 500 };
+  }
+  if (json.featureEnabled === false) return { ok: false, kind: 'disabled', message: 'Layover mode is not available right now.', retryable: false };
+  return { ok: true, status: res.status, json };
+}
+
+function unavailableOf(json: Record<string, unknown>): LayoverDecisionUnavailable {
+  return { ok: false, kind: 'unavailable', reason: typeof json.reason === 'string' ? json.reason : 'unknown', retryable: json.retryable === true };
+}
+
+/** census L189 — explain ONE stored answer, by the snapshot id the overview published with it. */
+export async function explainLayoverDecision(sessionId: string, snapshotId: string): Promise<LayoverDecisionExplainRead> {
+  const read = await decisionRead(airportUrl('sessions', encodeURIComponent(sessionId), 'decisions', encodeURIComponent(snapshotId), 'explain'));
+  if (!read.ok) return read;
+  const { json } = read;
+  if (json.state === 'explained' && json.explanation && typeof json.explanation === 'object') {
+    const e = json.explanation as Record<string, unknown>;
+    return {
+      ok: true,
+      explanation: {
+        ...(e as unknown as LayoverSnapshotExplanation),
+        reasons: stringList(e.reasons),
+        unknowns: stringList(e.unknowns),
+      },
+    };
+  }
+  if (json.state === 'not_explained') {
+    return { ok: false, kind: 'not_explained', reason: typeof json.reason === 'string' ? json.reason : 'unknown', detail: stringList(json.detail) };
+  }
+  if (json.state === 'unavailable') return unavailableOf(json);
+  return { ok: false, kind: 'failed', message: 'Portava answered, but not with anything this version of the app can show.', retryable: false };
+}
+
+/** census L191 — re-run every stored answer of this layover under `engineVersion` and compare. */
+export async function replayLayoverDecisions(sessionId: string, engineVersion: string): Promise<LayoverDecisionReplayRead> {
+  const read = await decisionRead(`${airportUrl('sessions', encodeURIComponent(sessionId), 'decisions', 'replay')}?engineVersion=${encodeURIComponent(engineVersion)}`);
+  if (!read.ok) return read;
+  const { json } = read;
+  const s = json.summary as Record<string, unknown> | undefined;
+  if (json.state === 'replayed' && s && typeof s === 'object' && typeof s.read === 'number' && typeof s.matched === 'number') {
+    return {
+      ok: true,
+      engineVersion: typeof json.engineVersion === 'string' ? json.engineVersion : engineVersion,
+      summary: s as unknown as LayoverReplaySummaryWire,
+      truncated: json.truncated === true,
+    };
+  }
+  if (json.state === 'not_replayed') {
+    return {
+      ok: false, kind: 'not_replayed',
+      reason: typeof json.reason === 'string' ? json.reason : 'unknown',
+      runningEngineVersion: typeof json.runningEngineVersion === 'string' ? json.runningEngineVersion : null,
+    };
+  }
+  if (json.state === 'unavailable') return unavailableOf(json);
+  return { ok: false, kind: 'failed', message: 'Portava answered, but not with anything this version of the app can show.', retryable: false };
 }

@@ -482,3 +482,99 @@ function toCrewRow(crew: any, ownerId: string, sessionId: string): Record<string
     updated_at: now,
   };
 }
+
+// census-layover L294 (wave 5): `publishableUserIds` is a LayoverRead. A degraded
+// consent read has no `value`; crewMemberCards forwards its NAMED reason.
+describe("L294 — an unreadable sharing-preferences read withholds the cards and names the read", () => {
+  it("no card, degraded, and the reason is the store's own", async () => {
+    const now = new Date().toISOString();
+    const crewId = "crew-p";
+    stage({
+      crews: [{
+        id: crewId, city: "taoyuan", airport_ref: "TPE", created_by: USER_A,
+        created_session_id: SESSION_A, title: "Ramen", meeting_point_label: null,
+        status: "open", max_members: 6, expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+        created_at: now, updated_at: now,
+      }],
+      members: [
+        { crew_id: crewId, user_id: USER_A, session_id: SESSION_A, role: "owner", joined_at: now, left_at: null },
+        { crew_id: crewId, user_id: USER_B, session_id: SESSION_B, role: "member", joined_at: now, left_at: null },
+      ],
+      failures: { "location_preferences:select": { message: "relation unavailable" } },
+    });
+    const read = await call(A_TOKEN, "GET", crewUrl(SESSION_A));
+    assert.equal(read.status, 200, JSON.stringify(read.body));
+    assert.equal(read.body.members.length, 0, "an unreadable consent read publishes nobody");
+    assert.equal(read.body.degraded, true);
+    assert.ok(read.body.degradedReasons.includes("sharing_preferences_unreadable"), JSON.stringify(read.body.degradedReasons));
+  });
+});
+
+// census-layover L294 (wave 5): crewMemberCards is a LayoverRead. Its two
+// remaining degraded exits — an unreadable card read and a THROW — each
+// withhold every card and name the read. Only the CARD read is failed: the
+// account gate reads `profiles` too, with another select list.
+describe("L294 — the crew card's other degraded exits are disclosed, not passed off as a smaller crew", () => {
+  const CARD_SELECT = "id, handle, name, avatar_url";
+  const crewOf = (crewId: string) => {
+    const now = new Date().toISOString();
+    return {
+      crews: [{
+        id: crewId, city: "taoyuan", airport_ref: "TPE", created_by: USER_A,
+        created_session_id: SESSION_A, title: "Ramen", meeting_point_label: null,
+        status: "open", max_members: 6, expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+        created_at: now, updated_at: now,
+      }],
+      members: [
+        { crew_id: crewId, user_id: USER_A, session_id: SESSION_A, role: "owner", joined_at: now, left_at: null },
+        { crew_id: crewId, user_id: USER_B, session_id: SESSION_B, role: "member", joined_at: now, left_at: null },
+      ],
+    };
+  };
+  /** The staged client, with only the card read replaced. */
+  function cardReadIs(crewId: string, how: "error" | "throw") {
+    const tables = stage(crewOf(crewId));
+    const db = makeLayoverDb(tables, { users: { [A_TOKEN]: USER_A, [B_TOKEN]: USER_B } });
+    const failing = new Proxy(db, {
+      get(target, key, receiver) {
+        if (key !== "from") return Reflect.get(target, key, receiver);
+        return (table: string) => {
+          const q = target.from(table);
+          if (table !== "profiles") return q;
+          return new Proxy(q, {
+            get(qt, qk, qr) {
+              if (qk !== "select") return Reflect.get(qt, qk, qr);
+              return (cols?: string, o?: unknown) => {
+                if (cols !== CARD_SELECT) return qt.select(cols, o);
+                if (how === "throw") throw new Error("profiles exploded");
+                const err = { data: null, error: { message: "relation unavailable" } };
+                const resolved: Record<string, unknown> = { in: () => resolved, then: (f: (v: unknown) => unknown, r?: (e: unknown) => unknown) => Promise.resolve(err).then(f, r) };
+                return resolved;
+              };
+            },
+          });
+        };
+      },
+    });
+    _setTestClient(failing, true);
+  }
+
+  it("an unreadable card read: no card, degraded, member_cards_unreadable", async () => {
+    cardReadIs("crew-pr", "error");
+    const read = await call(A_TOKEN, "GET", crewUrl(SESSION_A));
+    assert.equal(read.status, 200, JSON.stringify(read.body));
+    assert.equal(read.body.members.length, 0);
+    assert.equal(read.body.degraded, true);
+    assert.deepEqual(read.body.degradedReasons, ["member_cards_unreadable"]);
+    assert.equal(read.body.crew.memberCount, 2);
+  });
+
+  it("a card read that THROWS: no card, degraded, member_cards_unreadable", async () => {
+    cardReadIs("crew-th", "throw");
+    const read = await call(A_TOKEN, "GET", crewUrl(SESSION_A));
+    assert.equal(read.status, 200, JSON.stringify(read.body));
+    assert.equal(read.body.members.length, 0);
+    assert.equal(read.body.degraded, true);
+    assert.deepEqual(read.body.degradedReasons, ["member_cards_unreadable"]);
+  });
+});

@@ -37,6 +37,7 @@ import { PlainBottomFiller } from '../../src/hooks/useBottomInset';
 import { useTelegraphRecipients } from '../../src/hooks/useTelegraphRecipients';
 import type { RecipientRow } from '../../src/platform/input-assistance/social/telegraphRecipients';
 import { openDirectThread } from '../../src/services/messaging';
+import { holdRecipientPick, recipientServed } from '../../src/features/telegraph/composer/composerTaskOutcome.ts';
 import { fallbackInitials } from '../../src/utils/identity';
 import { color, space, radius, type as t, avatar } from '../../src/theme/tokens';
 
@@ -67,6 +68,10 @@ export default function NewTelegraphScreen() {
       const res = await openDirectThread(r.userId);
       setOpeningId(null);
       if (res.ok && res.data?.threadId) {
+        // §45 G320: the pick served the first message sent in this thread; the
+        // thread screen reports it when that send answers (nothing without the
+        // account's outcome-learning consent).
+        holdRecipientPick(res.data.threadId, recipientServed(r.userId));
         router.replace(
           `/messages/${res.data.threadId}?threadType=direct&otherUserId=${encodeURIComponent(r.userId)}` as any,
         );
@@ -114,7 +119,7 @@ export default function NewTelegraphScreen() {
 
         {loading && recipients.length === 0 && (
           <View style={styles.loadingRow}>
-            <ActivityIndicator size="small" color={color.signal} />
+            <ActivityIndicator size="small" color={color.deep} />
           </View>
         )}
 
@@ -205,7 +210,7 @@ function RecipientRowView({
           </Text>
         )}
       </View>
-      {opening && <ActivityIndicator size="small" color={color.signal} />}
+      {opening && <ActivityIndicator size="small" color={color.deep} />}
     </Pressable>
   );
 }

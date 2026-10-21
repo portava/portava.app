@@ -16,6 +16,7 @@
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { evaluateAndAwardCriteria, evaluateCriteria } from "../lib/stamps/criteria/index.js";
+import { evidenceFor } from "./helpers/stampPresenceFixture.js";
 
 // ── Fixed IDs ─────────────────────────────────────────────────────────────────
 
@@ -33,6 +34,18 @@ interface FakeDB {
 }
 
 function makeFakeClient(db: FakeDB) {
+  // H4, wave 5 (stampPresenceView.ts): countries_visited counts a presence
+  // stamp only with the evidence its source names. The VISITED countries of
+  // `countryStamps` are completed trips, so each one's check-in is staged here,
+  // derived from whatever `db.user_stamps` holds when the read happens; the
+  // planned ones (`plannedStamps`) get none, as they never had any. HEAD's
+  // metric read no plan_checkins, so this is premise-neutral there.
+  if (!Object.prototype.hasOwnProperty.call(db, "plan_checkins")) {
+    Object.defineProperty(db, "plan_checkins", {
+      get: () => evidenceFor((db.user_stamps ?? []).filter((r: any) => String(r.id).startsWith("stamp-"))).plan_checkins,
+      enumerable: false,
+    });
+  }
   function buildChain(table: string) {
     const _filters: Array<(r: any) => boolean> = [];
     let _insert: any   = null;
@@ -186,6 +199,8 @@ function countryStamps(n: number): any[] {
     country:    code,
     city:       null,
     is_revoked: false,
+    source_type: "trips",
+    source_id:  `trip-${code}`,
     stamp_definitions: { slug: "first_trip_completed", evidences_presence: true },
   }));
 }

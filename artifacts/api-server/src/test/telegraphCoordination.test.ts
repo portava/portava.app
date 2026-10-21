@@ -2035,3 +2035,415 @@ describe("T107 — a ride join in a group refuses across a block; a replayed pro
     assert.equal(inserts(c).length, 0);
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// census-telegraph T155 — §12 `conversation_snapshots`, "rebuild/replay
+// checkpoints where useful" (migration 3998, services/telegraph/
+// conversationSnapshots.ts). WHERE USEFUL is the session read's cap: a thread
+// with more session-kind rows than SESSION_SCAN_LIMIT folds a prefix of the
+// evening. With the checkpoint the fold reads the checkpointed rows plus the
+// rows replayed after its cursor.
+// ══════════════════════════════════════════════════════════════════════════════
+
+import { readFileSync as t155Read } from "node:fs";
+import { pathToFileURL as t155Url } from "node:url";
+import {
+  SNAPSHOT_ROW_CAP as T155_CAP,
+  checkpointFrom as t155CheckpointFrom,
+  instantKey as t155InstantKey,
+  isAfterCursor as t155After,
+  readSessionRowsThroughCheckpoint as t155Read2,
+} from "../services/telegraph/conversationSnapshots.js";
+import { SESSION_SCAN_LIMIT as T155_SCAN } from "../routes/telegraphCoordination.js";
+
+const T155_SQL = t155Read(new URL("../migrations/3998_telegraph_conversation_snapshots.sql", import.meta.url), "utf8");
+
+/** Message ids are uuids in the database, and a checkpoint's cursor id must be one. */
+const t155Id = (i: number) => `15500000-0000-4000-8000-${String(i).padStart(12, "0")}`;
+
+/** A long evening: one session opened 1000 minutes ago and `n` transitions after it, oldest first. */
+function t155Evening(n: number): any[] {
+  const rows: Array<ReturnType<typeof sessionMsg> | ReturnType<typeof transitionMsg>> = [sessionMsg(SESSION, min(-1000))];
+  for (let i = 0; i < n; i++) {
+    const to = i % 2 === 0 ? "DISRUPTED" : "ACTIVE";
+    rows.push(transitionMsg(t155Id(i), SESSION, to, min(-999 + i)));
+  }
+  return rows;
+}
+
+/** The coordination fake, plus 3998: the table, the flag, and the writer modelled by MEANING. */
+function t155State(state: State, opts: { flag?: boolean; checkpoint?: any; snapshotError?: boolean; writer?: string } = {}) {
+  const c: any = useState(state);
+  c._db.feature_flags.push({ flag: "telegraph_conversation_snapshots_enabled", enabled: opts.flag === true });
+  c._db.conversation_snapshots = opts.checkpoint ? [opts.checkpoint] : [];
+  c._rpcCalls = [] as any[];
+  const baseFrom = c.from;
+  c._snapshotReads = 0;
+  c.from = (table: string) => {
+    if (table === "conversation_snapshots") {
+      c._snapshotReads += 1;
+      if (opts.snapshotError) {
+        const p: any = new Proxy({}, { get(_t, k) { if (k === "maybeSingle") return () => Promise.resolve({ data: null, error: { message: "relation does not exist", code: "42P01" } }); if (k === "then" || k === "catch" || k === "finally") return undefined; return () => p; } });
+        return p;
+      }
+    }
+    return baseFrom(table);
+  };
+  c.rpc = async (fn: string, args: any) => {
+    c._rpcCalls.push({ fn, args });
+    if (fn !== "telegraph_write_conversation_snapshot") return { data: null, error: { message: "rpc not modelled" } };
+    if (opts.writer) return opts.writer === "error" ? { data: null, error: { message: "boom" } } : { data: { outcome: opts.writer }, error: null };
+    if (!c._db.feature_flags.some((f: any) => f.flag === "telegraph_conversation_snapshots_enabled" && f.enabled === true)) return { data: { outcome: "disabled" }, error: null };
+    const live = (c._db.messages as any[])
+      .filter((m) => m.thread_id === args.p_thread_id && ["coordination_session", "coordination_transition"].includes(m.msg_type) && m.deleted_at == null)
+      .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at) || (a.id < b.id ? -1 : 1));
+    if (live.length > 2000) return { data: { outcome: "too_large", row_count: live.length }, error: null };
+    const last = live[live.length - 1];
+    c._db.conversation_snapshots = [{
+      thread_id: args.p_thread_id, projection: args.p_projection, projection_version: 1,
+      through_created_at: last.created_at, through_message_id: last.id, row_count: live.length,
+      rows: live.map((m) => ({ id: m.id, sender_id: m.sender_id, created_at: m.created_at, msg_type: m.msg_type, body: m.body })),
+    }];
+    return { data: { outcome: "written", row_count: live.length }, error: null };
+  };
+  return c;
+}
+
+describe("T155 — the coordination fold reads a §12 checkpoint where the session read is truncated", () => {
+  it("OFF (the seed): the read is the one before 3998 — capped, truncation stated, no checkpoint read or written", async () => {
+    const c = t155State({ extraMessages: t155Evening(T155_SCAN + 50) }, { flag: false });
+    const r = await get(`/threads/${THREAD}/coordination`, ALICE);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.sessionScanTruncated, true);
+    assert.equal(r.body.coordination.session, null, "the session row is older than the newest 200 session-kind rows");
+    assert.deepEqual(r.body.sessionSnapshot, { used: false, reason: "off", throughCreatedAt: null, checkpointRows: 0, writer: null });
+    assert.equal(c._snapshotReads, 0);
+    assert.deepEqual(c._rpcCalls, []);
+  });
+
+  it("ON: a truncated read checkpoints the thread once and folds the WHOLE evening", async () => {
+    const n = T155_SCAN + 50;
+    const c = t155State({ extraMessages: t155Evening(n) }, { flag: true });
+    const r = await get(`/threads/${THREAD}/coordination`, ALICE);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.sessionScanTruncated, false);
+    assert.equal(r.body.sessionSnapshot.used, true);
+    assert.equal(r.body.sessionSnapshot.writer, "written");
+    assert.equal(r.body.sessionSnapshot.checkpointRows, n + 1);
+    const s = r.body.coordination.session;
+    assert.ok(s, "the session opened before the newest 200 rows is back in the fold");
+    assert.equal(s.sessionId, SESSION);
+    assert.equal(s.transitions.length, n, "every transition, the earliest included");
+    assert.equal(s.transitions[0].messageId, t155Id(0));
+    assert.deepEqual(c._rpcCalls.map((x: any) => x.args), [{ p_thread_id: THREAD, p_projection: "coordination_sessions" }]);
+  });
+
+  it("ON, with a checkpoint: the rows after its cursor are REPLAYED onto it, and nothing is rewritten", async () => {
+    const all = t155Evening(30);
+    const checkpointed = all.slice(0, 21);
+    const last = checkpointed[checkpointed.length - 1];
+    const checkpoint = {
+      thread_id: THREAD, projection: "coordination_sessions", projection_version: 1,
+      through_created_at: last.created_at, through_message_id: last.id, row_count: checkpointed.length,
+      rows: checkpointed.map((m) => ({ id: m.id, sender_id: m.sender_id, created_at: m.created_at, msg_type: m.msg_type, body: m.body })),
+    };
+    // The tail lives only in `messages`; the checkpoint's own rows are removed from it, so a fold that did not
+    // read the checkpoint could not see them.
+    // A tombstoned transition after the cursor is not replayed, any more than the live read would read it.
+    const tombstone = { ...transitionMsg("15500000-0000-4000-8000-0000000009ff", SESSION, "CANCELLED", min(-100)), deleted_at: min(-99) };
+    const c = t155State({ extraMessages: [...all.slice(21), tombstone] }, { flag: true, checkpoint });
+    const r = await get(`/threads/${THREAD}/coordination`, ALICE);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.sessionSnapshot.used, true);
+    assert.equal(r.body.sessionSnapshot.writer, null);
+    assert.equal(r.body.sessionSnapshot.throughCreatedAt, last.created_at);
+    assert.equal(r.body.coordination.session.transitions.length, 30, "21 checkpointed (the session among them) + 9 replayed, once each");
+    assert.notEqual(r.body.coordination.session.state, "CANCELLED");
+    assert.deepEqual(c._rpcCalls, [], "an untruncated tail does not rewrite the checkpoint");
+  });
+
+  it("ON, with a checkpoint whose TAIL overflows the cap: the checkpoint is advanced once and the fold is whole again", async () => {
+    const all = t155Evening(20 + T155_SCAN + 30);
+    const checkpointed = all.slice(0, 21);
+    const last = checkpointed[checkpointed.length - 1];
+    const checkpoint = {
+      thread_id: THREAD, projection: "coordination_sessions", projection_version: 1,
+      through_created_at: last.created_at, through_message_id: last.id, row_count: checkpointed.length,
+      rows: checkpointed.map((m) => ({ id: m.id, sender_id: m.sender_id, created_at: m.created_at, msg_type: m.msg_type, body: m.body })),
+    };
+    const c = t155State({ extraMessages: all }, { flag: true, checkpoint });
+    const r = await get(`/threads/${THREAD}/coordination`, ALICE);
+    assert.equal(r.body.sessionSnapshot.used, true);
+    assert.equal(r.body.sessionSnapshot.writer, "written");
+    assert.equal(r.body.sessionSnapshot.checkpointRows, all.length);
+    assert.equal(r.body.sessionScanTruncated, false);
+    assert.equal(r.body.coordination.session.transitions.length, all.length - 1);
+    assert.equal(c._rpcCalls.length, 1);
+  });
+
+  it("ON, but nothing to checkpoint: an untruncated read is answered as before and writes nothing", async () => {
+    const c = t155State({ extraMessages: t155Evening(10) }, { flag: true });
+    const r = await get(`/threads/${THREAD}/coordination`, ALICE);
+    assert.equal(r.body.sessionSnapshot.reason, "not_needed");
+    assert.equal(r.body.coordination.session.transitions.length, 10);
+    assert.deepEqual(c._rpcCalls, []);
+  });
+
+  it("an UNREADABLE checkpoint falls back to the live read, truncation stated — never less than that read", async () => {
+    const c = t155State({ extraMessages: t155Evening(T155_SCAN + 50) }, { flag: true, snapshotError: true });
+    const r = await get(`/threads/${THREAD}/coordination`, ALICE);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.sessionSnapshot.used, false);
+    assert.equal(r.body.sessionSnapshot.reason, "unreadable");
+    assert.equal(r.body.sessionScanTruncated, true);
+    assert.deepEqual(c._rpcCalls, [], "a checkpoint that cannot be read is not overwritten blind");
+  });
+
+  it("a MALFORMED checkpoint is not used", async () => {
+    const bad = { thread_id: THREAD, projection: "coordination_sessions", through_created_at: min(-5), through_message_id: "00000000-0000-4000-8000-000000000001", row_count: 3, rows: [] };
+    t155State({ extraMessages: t155Evening(5) }, { flag: true, checkpoint: bad });
+    const r = await get(`/threads/${THREAD}/coordination`, ALICE);
+    assert.equal(r.body.sessionSnapshot.reason, "malformed");
+    assert.equal(r.body.coordination.session.transitions.length, 5);
+  });
+
+  it("a checkpoint whose tail overflows, and a writer that REFUSES to advance it: never a fold with a hole in the middle", async () => {
+    const all = t155Evening(20 + T155_SCAN + 30);
+    const checkpointed = all.slice(0, 21);
+    const last = checkpointed[checkpointed.length - 1];
+    const checkpoint = {
+      thread_id: THREAD, projection: "coordination_sessions", projection_version: 1,
+      through_created_at: last.created_at, through_message_id: last.id, row_count: checkpointed.length,
+      rows: checkpointed.map((m) => ({ id: m.id, sender_id: m.sender_id, created_at: m.created_at, msg_type: m.msg_type, body: m.body })),
+    };
+    t155State({ extraMessages: all }, { flag: true, checkpoint, writer: "too_large" });
+    const r = await get(`/threads/${THREAD}/coordination`, ALICE);
+    assert.equal(r.body.sessionSnapshot.used, false, "the old checkpoint plus the newest 200 would skip every row between them");
+    assert.equal(r.body.sessionSnapshot.reason, "not_written");
+    assert.equal(r.body.sessionScanTruncated, true);
+  });
+
+  for (const writer of ["too_large", "disabled", "error"]) {
+    it(`a writer that answers ${writer} leaves the live read's answer, truncation stated`, async () => {
+      t155State({ extraMessages: t155Evening(T155_SCAN + 50) }, { flag: true, writer });
+      const r = await get(`/threads/${THREAD}/coordination`, ALICE);
+      assert.equal(r.status, 200);
+      assert.equal(r.body.sessionSnapshot.used, false);
+      assert.equal(r.body.sessionSnapshot.reason, "not_written");
+      assert.equal(r.body.sessionSnapshot.writer, writer);
+      assert.equal(r.body.sessionScanTruncated, true);
+    });
+  }
+
+  it("the §14.3 window applies to checkpointed rows as it does to live ones (Q6 keeps a member's own)", async () => {
+    const members = [
+      { thread_id: THREAD, user_id: ALICE, left_at: null, visible_from_at: null, last_read_at: null },
+      // Bob's window opens between the session (-1000 min) and its first transition (-999 min).
+      { thread_id: THREAD, user_id: BOB, left_at: null, visible_from_at: min(-999.5), last_read_at: null },
+    ];
+    t155State({ extraMessages: t155Evening(T155_SCAN + 50), members, historyBound: true }, { flag: true });
+    const alice = await get(`/threads/${THREAD}/coordination`, ALICE);
+    assert.equal(alice.body.coordination.session?.sessionId, SESSION, "Alice opened it");
+    const bob = await get(`/threads/${THREAD}/coordination`, BOB);
+    assert.equal(bob.body.sessionSnapshot.used, true, "Bob reads the checkpoint Alice's read wrote");
+    assert.equal(bob.body.coordination.session, null, "Bob joined after the session was opened by somebody else");
+  });
+
+  it("the cursor is compared to the MICROSECOND, by (created_at, id)", () => {
+    const cp = { throughCreatedAt: "2026-10-17T12:00:00.123456+00:00", throughMessageId: "00000000-0000-4000-8000-000000000005" };
+    assert.ok(t155InstantKey("2026-10-17T12:00:00.123457+00:00") > t155InstantKey(cp.throughCreatedAt));
+    assert.equal(t155After({ created_at: "2026-10-17T12:00:00.123457+00:00", id: "00000000-0000-4000-8000-000000000001" }, cp), true);
+    assert.equal(t155After({ created_at: "2026-10-17T12:00:00.123455+00:00", id: "ffffffff-0000-4000-8000-000000000009" }, cp), false);
+    assert.equal(t155After({ created_at: cp.throughCreatedAt, id: "00000000-0000-4000-8000-000000000006" }, cp), true);
+    assert.equal(t155After({ created_at: cp.throughCreatedAt, id: cp.throughMessageId }, cp), false, "the cursor row itself is checkpointed, never replayed twice");
+    assert.equal(t155After({ created_at: "not a time", id: "x" }, cp), false);
+  });
+
+  it("a checkpoint must be well-formed to be used: a cursor that could become filter syntax, a count mismatch, a foreign kind", () => {
+    const row = (over: any = {}) => ({ through_created_at: min(-5), through_message_id: "00000000-0000-4000-8000-000000000001", row_count: 1,
+      rows: [{ id: "a", sender_id: ALICE, created_at: min(-6), msg_type: "coordination_session", body: "{}" }], ...over });
+    assert.notEqual(t155CheckpointFrom(row()), "malformed");
+    assert.equal(t155CheckpointFrom(row({ through_created_at: "2026-10-17T12:00:00Z,id.gt.0" })), "malformed");
+    assert.equal(t155CheckpointFrom(row({ through_message_id: "not-a-uuid" })), "malformed");
+    assert.equal(t155CheckpointFrom(row({ row_count: 2 })), "malformed");
+    assert.equal(t155CheckpointFrom(row({ rows: [{ id: "a", sender_id: ALICE, created_at: min(-6), msg_type: "text", body: "hi" }] })), "malformed");
+  });
+
+  it("an unreadable flag is NOT on: the live read runs and says why", async () => {
+    let lived = 0;
+    const client: any = { from: () => new Proxy({}, { get(_t, k) { if (k === "maybeSingle") return () => Promise.resolve({ data: null, error: { message: "flags down" } }); if (k === "then" || k === "catch" || k === "finally") return undefined; return () => client.from(); } }) };
+    const r = await t155Read2(client, { threadId: THREAD, visibleFrom: null, viewerId: ALICE, columns: "id", tailLimit: 10 },
+      async () => { lived += 1; return { ok: true, sessions: [], transitions: [], truncated: false }; });
+    assert.equal(lived, 1);
+    assert.ok(r.ok && r.snapshot.reason === "flag_unreadable");
+  });
+
+  it("the TS row cap and the migration's are one number", () => {
+    assert.equal(T155_CAP, 2000);
+    assert.match(T155_SQL, /CHECK \(row_count BETWEEN 1 AND 2000\)/);
+    assert.match(T155_SQL, /LIMIT 2001\) s;/);
+    assert.match(T155_SQL, /IF v_count > 2000 THEN/);
+  });
+});
+
+// ── 3998 executed (PGlite, as the repository's other SQL suites run it) ──────
+
+const T155_PGLITE = process.env.DISCOVERY_PGLITE_MODULE ?? new URL(import.meta.resolve("@electric-sql/pglite")).pathname; // a devDependency: the suite always executes
+
+describe("T155 — migration 3998 executed: the checkpoint, its writer and the triggers that keep it honest", { skip: !T155_PGLITE }, () => {
+  let db: any;
+  const A = "aaaaaaaa-0000-4000-8000-000000000001";
+  let thread = "";
+
+  before(async () => {
+    const { PGlite } = await import(t155Url(T155_PGLITE!).href);
+    db = new PGlite();
+    await db.exec(`
+      CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS;
+      ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
+      ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO anon, authenticated, service_role;
+      CREATE TABLE public.feature_flags (flag text PRIMARY KEY, enabled boolean NOT NULL DEFAULT false, description text);
+      CREATE TABLE public.message_threads (id uuid PRIMARY KEY DEFAULT gen_random_uuid());
+      CREATE TABLE public.messages (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        thread_id uuid NOT NULL REFERENCES public.message_threads(id) ON DELETE CASCADE,
+        sender_id uuid NOT NULL, body text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(),
+        deleted_at timestamptz, msg_type text NOT NULL DEFAULT 'text', translated_body_json jsonb);
+    `);
+    await db.exec(T155_SQL);
+  });
+
+  const count = async () => Number((await db.query("SELECT count(*)::int AS c FROM public.conversation_snapshots")).rows[0].c);
+  const write = async () => (await db.query("SELECT public.telegraph_write_conversation_snapshot($1, 'coordination_sessions') AS r", [thread])).rows[0].r;
+  const seed = async (n: number) => {
+    thread = (await db.query("INSERT INTO public.message_threads DEFAULT VALUES RETURNING id")).rows[0].id;
+    await db.query("INSERT INTO public.messages (thread_id, sender_id, body, created_at, msg_type) VALUES ($1, $2, '{}', now() - interval '10 hours', 'coordination_session')", [thread, A]);
+    for (let i = 0; i < n; i++) {
+      await db.query("INSERT INTO public.messages (thread_id, sender_id, body, created_at, msg_type) VALUES ($1, $2, $3, now() - ($4 || ' minutes')::interval, 'coordination_transition')", [thread, A, `{"i":${i}}`, String(500 - i)]);
+    }
+    await db.query("INSERT INTO public.messages (thread_id, sender_id, body, msg_type) VALUES ($1, $2, 'just chat', 'text')", [thread, A]);
+  };
+  const flag = (on: boolean) => db.query("UPDATE public.feature_flags SET enabled = $1 WHERE flag = 'telegraph_conversation_snapshots_enabled'", [on]);
+
+  it("the seed is OFF and the writer refuses while it is", async () => {
+    assert.equal((await db.query("SELECT enabled FROM public.feature_flags WHERE flag = 'telegraph_conversation_snapshots_enabled'")).rows[0].enabled, false);
+    await seed(3);
+    assert.deepEqual(await write(), { outcome: "disabled" });
+    assert.equal(await count(), 0);
+  });
+
+  it("ON: the checkpoint holds every live session-kind row, oldest first, and its cursor is the newest", async () => {
+    await flag(true);
+    await seed(5);
+    await db.query("UPDATE public.messages SET deleted_at = now() WHERE thread_id = $1 AND body = '{\"i\":0}'", [thread]);
+    const r = await write();
+    assert.equal(r.outcome, "written");
+    assert.equal(r.row_count, 5, "1 session + 4 live transitions; the tombstone and the chat are not the fold's input");
+    const row = (await db.query("SELECT * FROM public.conversation_snapshots WHERE thread_id = $1", [thread])).rows[0];
+    assert.equal(row.rows.length, 5);
+    assert.equal(row.rows[0].msg_type, "coordination_session");
+    assert.deepEqual(row.rows.slice(1).map((x: any) => x.body), ['{"i":1}', '{"i":2}', '{"i":3}', '{"i":4}']);
+    assert.equal(row.through_message_id, row.rows[4].id);
+  });
+
+  it("a translation write keeps the checkpoint; a NEW row after the cursor keeps it (it is the replayed tail)", async () => {
+    await seed(3); await write();
+    const mine = async () => Number((await db.query("SELECT count(*)::int c FROM public.conversation_snapshots WHERE thread_id = $1", [thread])).rows[0].c);
+    await db.query("UPDATE public.messages SET translated_body_json = '{}'::jsonb WHERE thread_id = $1", [thread]);
+    assert.equal(await mine(), 1);
+    await db.query("INSERT INTO public.messages (thread_id, sender_id, body, msg_type) VALUES ($1, $2, '{}', 'coordination_transition')", [thread, A]);
+    assert.equal(await mine(), 1);
+  });
+
+  for (const [label, change] of [
+    ["an edit of a checkpointed row's body", "UPDATE public.messages SET body = '{\"i\":99}' WHERE thread_id = $1 AND body = '{\"i\":1}'"],
+    ["a tombstone (unsend / delete-for-everyone)", "UPDATE public.messages SET deleted_at = now() WHERE thread_id = $1 AND body = '{\"i\":1}'"],
+    ["a hard delete (an account deletion's cascade over the sender's messages)", "DELETE FROM public.messages WHERE thread_id = $1 AND sender_id = '" + "aaaaaaaa-0000-4000-8000-000000000001" + "'"],
+    ["a row committed BEHIND the cursor", "INSERT INTO public.messages (thread_id, sender_id, body, created_at, msg_type) VALUES ($1, 'bbbbbbbb-0000-4000-8000-000000000002', '{}', now() - interval '20 hours', 'coordination_transition')"],
+  ] as const) {
+    it(`${label} deletes the checkpoint in the same transaction`, async () => {
+      await seed(3); await write();
+      const others = (await db.query("SELECT count(*)::int c FROM public.conversation_snapshots WHERE thread_id <> $1", [thread])).rows[0].c;
+      await db.query(change, [thread]);
+      assert.equal((await db.query("SELECT count(*)::int c FROM public.conversation_snapshots WHERE thread_id = $1", [thread])).rows[0].c, 0, label);
+      assert.equal((await db.query("SELECT count(*)::int c FROM public.conversation_snapshots WHERE thread_id <> $1", [thread])).rows[0].c, others, "another thread's checkpoint is untouched");
+    });
+  }
+
+  it("a session row MOVED into another thread clears that thread's checkpoint too", async () => {
+    await seed(3); await write();
+    const from = thread;
+    await seed(3); await write();
+    const to = thread;
+    await db.query("UPDATE public.messages SET thread_id = $2 WHERE id = (SELECT id FROM public.messages WHERE thread_id = $1 AND msg_type = 'coordination_session')", [from, to]);
+    for (const t of [from, to]) {
+      assert.equal((await db.query("SELECT count(*)::int c FROM public.conversation_snapshots WHERE thread_id = $1", [t])).rows[0].c, 0, t === to ? "the destination" : "the source");
+    }
+  });
+
+  it("the triggers run whatever the flag says", async () => {
+    await seed(3); await write();
+    await flag(false);
+    await db.query("UPDATE public.messages SET body = 'x' WHERE thread_id = $1 AND msg_type = 'coordination_session'", [thread]);
+    assert.equal((await db.query("SELECT count(*)::int c FROM public.conversation_snapshots WHERE thread_id = $1", [thread])).rows[0].c, 0);
+    await flag(true);
+  });
+
+  it("the thread's deletion takes its checkpoint; a thread with no session row has none", async () => {
+    await seed(2); await write();
+    await db.query("DELETE FROM public.message_threads WHERE id = $1", [thread]);
+    assert.equal((await db.query("SELECT count(*)::int c FROM public.conversation_snapshots WHERE thread_id = $1", [thread])).rows[0].c, 0);
+    thread = (await db.query("INSERT INTO public.message_threads DEFAULT VALUES RETURNING id")).rows[0].id;
+    assert.deepEqual(await write(), { outcome: "empty", row_count: 0 });
+  });
+
+  it("more than the cap is refused, and nothing is written", async () => {
+    thread = (await db.query("INSERT INTO public.message_threads DEFAULT VALUES RETURNING id")).rows[0].id;
+    await db.query(`INSERT INTO public.messages (thread_id, sender_id, body, created_at, msg_type)
+      SELECT $1, $2, '{}', now() - (g || ' seconds')::interval, 'coordination_transition' FROM generate_series(1, 2001) g`, [thread, A]);
+    const r = await write();
+    assert.equal(r.outcome, "too_large");
+    assert.equal((await db.query("SELECT count(*)::int c FROM public.conversation_snapshots WHERE thread_id = $1", [thread])).rows[0].c, 0);
+  });
+
+  it("TRUNCATE of messages removes every checkpoint", async () => {
+    await seed(2); await write();
+    assert.ok(await count() > 0);
+    await db.exec("TRUNCATE public.messages CASCADE");
+    assert.equal(await count(), 0);
+  });
+
+  it("service role reads only; no client role reads or writes; only service role runs the writer", async () => {
+    const priv = async (role: string, p: string) => (await db.query(`SELECT has_table_privilege($1, 'public.conversation_snapshots', $2) AS ok`, [role, p])).rows[0].ok;
+    assert.equal(await priv("service_role", "SELECT"), true);
+    for (const p of ["INSERT", "UPDATE", "DELETE"]) assert.equal(await priv("service_role", p), false, p);
+    for (const role of ["anon", "authenticated"]) for (const p of ["SELECT", "INSERT", "UPDATE", "DELETE"]) assert.equal(await priv(role, p), false, `${role} ${p}`);
+    const exec = async (role: string) => (await db.query(`SELECT has_function_privilege($1, 'public.telegraph_write_conversation_snapshot(uuid, text)', 'EXECUTE') AS ok`, [role])).rows[0].ok;
+    assert.equal(await exec("service_role"), true);
+    assert.equal(await exec("anon"), false);
+    assert.equal(await exec("authenticated"), false);
+    assert.equal((await db.query("SELECT relrowsecurity FROM pg_class WHERE oid = 'public.conversation_snapshots'::regclass")).rows[0].relrowsecurity, true);
+  });
+
+  it("the postconditions hold, and catch drift", async () => {
+    const post = T155_SQL.slice(T155_SQL.indexOf("DO $post$"), T155_SQL.indexOf("COMMIT;"));
+    await db.exec(post);
+    for (const drift of [
+      "ALTER TABLE public.conversation_snapshots ADD COLUMN extra text",
+      "ALTER TABLE public.conversation_snapshots DISABLE ROW LEVEL SECURITY",
+      "GRANT INSERT ON public.conversation_snapshots TO service_role",
+      "GRANT SELECT ON public.conversation_snapshots TO authenticated",
+      "DROP TRIGGER telegraph_conversation_snapshot_on_delete ON public.messages",
+      "ALTER TABLE public.messages DISABLE TRIGGER telegraph_conversation_snapshot_on_update",
+      "GRANT EXECUTE ON FUNCTION public.telegraph_write_conversation_snapshot(uuid, text) TO anon",
+    ]) {
+      await db.exec("BEGIN");
+      try {
+        await db.exec(drift);
+        await assert.rejects(db.exec(post), /3998:/, drift);
+      } finally {
+        await db.exec("ROLLBACK");
+      }
+    }
+  });
+});

@@ -39,7 +39,7 @@ async function collectSources(sc: any, parent: any, kind: "place" | "moment", vi
   if (!blocked) return { sources: [], error: true };
   if (kind === "moment") {
     const { data, error } = await sc.from("shared_moment_contributions")
-      .select("id, post_id, contributor_id, caption, created_at, posts(content, media_urls, media_thumbnail_url, media_type, visibility, status, post_status, publish_at, profiles(id, is_private))")
+      .select("id, post_id, contributor_id, caption, created_at, posts(content, media_urls, media_thumbnail_url, media_type, visibility, status, post_status, publish_at, profiles!author_id(id, is_private))")
       .eq("moment_id", parent.id).eq("status", "approved").order("created_at", { ascending: true }).order("id", { ascending: true });
     if (error) return { sources: [], error: true };
     const rows = ((data ?? []) as any[]).filter((row) => !blocked.has(row.contributor_id) && (!row.posts || isEligiblePlaceDayPost(row.posts)))
@@ -57,7 +57,7 @@ async function collectSources(sc: any, parent: any, kind: "place" | "moment", vi
   if (!parent.local_date || !parent.timezone) return { sources: [], error: true };
   const { start, end } = utcRangeForLocalDate(parent.local_date, parent.timezone);
   const { data, error } = await sc.from("posts")
-    .select("id, author_id, content, media_urls, media_thumbnail_url, media_type, created_at, visibility, status, post_status, publish_at, location_privacy_mode, profiles(id, is_private)") // census-media §43: the owner's mode, read below
+    .select("id, author_id, content, media_urls, media_thumbnail_url, media_type, created_at, visibility, status, post_status, publish_at, location_privacy_mode, profiles!author_id(id, is_private)") // census-media §43: the owner's mode, read below
     .eq("canonical_place_id", parent.place_id).gte("created_at", start).lt("created_at", end)
     .order("created_at", { ascending: true }).order("id", { ascending: true });
   if (error) return { sources: [], error: true };
@@ -148,7 +148,7 @@ router.post("/place-recaps/:id/remove", asyncHandler((req, res) => lifecycleActi
 router.get("/places/:placeId/recaps", asyncHandler(async (req, res) => {
   const ctx = await guard(req, res, "place"); if (!ctx) return;
   if (!uuid.safeParse(req.params.placeId).success) { sendError(res, "invalid_payload"); return; }
-  const { data, error } = await ctx.sc.from("live_place_recaps").select("id, place_id, status, created_at, current_version_id, live_place_recap_versions!inner(version_number, title, summary, published_at)")
+  const { data, error } = await ctx.sc.from("live_place_recaps").select("id, place_id, status, created_at, current_version_id, live_place_recap_versions!live_place_recap_versions_recap_id_fkey!inner(version_number, title, summary, published_at)")
     .eq("owner_id", ctx.userId).eq("place_id", req.params.placeId).neq("status", "removed").order("created_at", { ascending: false });
   if (error) { sendError(res, "db_error", error.message); return; } res.json({ recaps: data ?? [] });
 }));

@@ -25,7 +25,7 @@ import {
   type CallerContext,
   type VisibilityTier,
   type StampV2VisibilityTier,
-} from "./PassportPrivacyGuard.js";
+} from "./PassportPrivacyGuard.js"; import { readStampPresenceView, withPresencePlaces } from "./stampPresenceView.js";
 
 export const UNIFIED_FLAG = "stamp_unified_view_enabled";
 
@@ -84,7 +84,7 @@ export interface UnifiedStamp {
   /** v2 only: definition-derived. */
   name: string | null;
   rarity: string | null;
-  artworkUrl: string | null;
+  artworkUrl: string | null; /** H4 (v2 only): false when this is a presence stamp whose occurrence evidence does not hold (stampPresenceView.ts). */ presenceClaimHolds?: boolean;
 }
 
 /**
@@ -183,7 +183,7 @@ function pickDate(row: any): string | null {
  */
 interface HalfRead {
   stamps: UnifiedStamp[];
-  readFailed: boolean;
+  readFailed: boolean; /** H4 (wave 5): v2 rows whose place was withheld — they are no evidence of a place, so they dedupe by their own id, never against a GPS stamp. */ withheld?: Set<string>;
 }
 
 /** Read v2 achievement stamps (non-revoked), with definition + composited art. */
@@ -192,19 +192,19 @@ async function readV2(sc: any, userId: string): Promise<HalfRead> {
     const { data, error } = await sc
       .from("user_stamps")
       .select(
-        "id, stamp_definition_id, source_type, city, country, earned_at, is_revoked, visibility, catalog_id, " +
-        "stamp_definitions(name, rarity, stamp_type)",
+        "id, user_id, stamp_definition_id, source_type, source_id, city, country, earned_at, is_revoked, visibility, catalog_id, " +
+        "stamp_definitions(slug, name, rarity, stamp_type)",
       )
       .eq("user_id", userId)
       .eq("is_revoked", false);
     if (error || !Array.isArray(data)) return { stamps: [], readFailed: true };
 
-    const rows = data as any[];
+    const view = await readStampPresenceView(sc, data as any[]); const rows = withPresencePlaces(view, data as any[], ["city", "country"]); // H4: a v2 stamp's place only with occurrence evidence
     // Resolve composited artwork for the catalog ids in one batch.
     const catalogIds = [...new Set(rows.map((r) => r.catalog_id).filter((x): x is string => typeof x === "string"))];
-    const artMap = await readArtwork(sc, catalogIds);
+    const artMap = await readArtwork(sc, catalogIds); for (const r of rows) if (!view.mayShowPlace(r) && typeof r.catalog_id === "string" && artMap.placeScoped?.has(r.catalog_id)) r.catalog_id = null; // H4: no place-scoped art for a withheld place
 
-    return { readFailed: false, stamps: rows.map((r) => ({
+    return { readFailed: false, withheld: new Set(rows.filter((r) => !view.mayShowPlace(r)).map((r) => String(r.id))), stamps: rows.map((r) => ({
       source: "v2_achievement" as const,
       // v2 achievements are awarded only by StampAwardEngine via the service
       // role (never self-inserted), so they are canonical facts → verified (§12).
@@ -222,7 +222,7 @@ async function readV2(sc: any, userId: string): Promise<HalfRead> {
       earnedAt: pickDate(r),
       name: r.stamp_definitions?.name ?? null,
       rarity: r.stamp_definitions?.rarity ?? null,
-      artworkUrl: r.catalog_id ? (artMap.get(r.catalog_id) ?? null) : null,
+      artworkUrl: r.catalog_id ? (artMap.get(r.catalog_id) ?? null) : null, presenceClaimHolds: view.presenceClaimHolds(r),
     })) };
   } catch {
     // A PostgREST failure RESOLVES; reaching here means a genuine throw
@@ -269,8 +269,8 @@ async function readV1(sc: any, userId: string): Promise<HalfRead> {
 }
 
 /** Batch-resolve composited artwork (active version public_url) by catalog id. */
-async function readArtwork(sc: any, catalogIds: string[]): Promise<Map<string, string | null>> {
-  const map = new Map<string, string | null>();
+async function readArtwork(sc: any, catalogIds: string[]): Promise<Map<string, string | null> & { placeScoped?: Set<string> }> {
+  const map: Map<string, string | null> & { placeScoped?: Set<string> } = Object.assign(new Map<string, string | null>(), { placeScoped: new Set<string>() });
   if (catalogIds.length === 0) return map;
   try {
     const { data, error } = await sc
@@ -283,12 +283,12 @@ async function readArtwork(sc: any, catalogIds: string[]): Promise<Map<string, s
       // routes/stamps.ts:911 and routes/passport.ts:1019 already carry the same
       // fix and the same warning; this was the last site still on the dead hint.
       // Guarded by stampArtworkFkHint.test.ts.
-      .select("id, stamp_artwork_versions!fk_catalog_active_version(public_url)")
+      .select("id, city, country, stamp_artwork_versions!fk_catalog_active_version(public_url)")
       .in("id", catalogIds)
       .eq("status", "approved");
     if (error || !Array.isArray(data)) return map;
     for (const row of data as any[]) {
-      map.set(row.id, row.stamp_artwork_versions?.public_url ?? null);
+      map.set(row.id, row.stamp_artwork_versions?.public_url ?? null); if (row.city || row.country) map.placeScoped!.add(row.id);
     }
   } catch {
     // ignore — art is optional
@@ -323,7 +323,7 @@ export async function buildUnifiedStamps(sc: any, userId: string): Promise<Unifi
   const v1 = v1r.stamps;
 
   const byKey = new Map<string, UnifiedStamp>();
-  for (const s of v2) byKey.set(dedupKey(s), s);   // v2 first — wins ties
+  for (const s of v2) byKey.set(v2r.withheld?.has(String(s.userStampId)) && !s.catalogId ? `v2:${s.userStampId}` : dedupKey(s), s);   // v2 first — wins ties; H4: a withheld place is no place to dedupe on
   let dedupedFromV1 = 0;
   for (const s of v1) {
     const k = dedupKey(s);
@@ -357,7 +357,7 @@ export async function buildUnifiedStamps(sc: any, userId: string): Promise<Unifi
  * here rather than defaulted to public.
  */
 export function isUnifiedStampVisible(stamp: UnifiedStamp, callerCtx: CallerContext): boolean {
-  if (callerCtx === "owner") return true;
+  if (callerCtx === "owner") return true; if (stamp.presenceClaimHolds === false) return false; // H4: an unevidenced presence claim is not shown to someone else (stampPresenceView.ts)
   const tier = norm(stamp.visibility);
   if (!tier) return false; // absent tier → fail closed
   return stamp.source === "v2_achievement"

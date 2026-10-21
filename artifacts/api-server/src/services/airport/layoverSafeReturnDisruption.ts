@@ -66,7 +66,7 @@ export const LAYOVER_DISRUPTION_LEDGER_VERSION = "2026.09.14-1";
  */
 export const DISRUPTION_LEDGER_EVENT_TYPE = "session_updated";
 
-/** How far back a state read will look. Bounded so one session cannot page. */
+/** The most disruption-carrying rows one state read returns (pass 12 C6: a page of REPORTS, filtered server-side — never of edits). */
 export const DISRUPTION_LEDGER_SCAN_LIMIT = 50;
 
 export function isDisruptionState(v: unknown): v is DisruptionState {
@@ -118,14 +118,14 @@ export async function readDisruptionState(
   sessionId: string,
   userId: string,
 ): Promise<DisruptionStateRead> {
-  const { data, error } = await db
-    .from("layover_events")
-    .select("metadata, created_at, event_type")
-    .eq("session_id", sessionId)
-    .eq("user_id", userId)
-    .eq("event_type", DISRUPTION_LEDGER_EVENT_TYPE)
-    .order("created_at", { ascending: false })
-    .limit(DISRUPTION_LEDGER_SCAN_LIMIT);
+  const { data, error, exhausted } = await readDisruptionLedgerRows(db, sessionId, userId);
+  // Round 2 (layover lane A's finding): this read was ONE page of the newest DISRUPTION_LEDGER_SCAN_LIMIT
+  // `session_updated` rows. Window edits write that same event type, so about 25 edits after a report pushed
+  // the report out of view and the read said "nothing reported": a CONNECTION from a page boundary. Round 2 paged
+  // back; pass 12 C6 filters server-side (readDisruptionLedgerRows, appended): only rows CARRYING a disruption are
+  // read, newest first, in ONE read — no number of edits hides a report, and there is no page boundary to tie on;
+  // a FULL page holding no disruption record is stated unknown, never CONNECTION.
+  // (The scan loop below, its order and its other filters are unchanged.)
 
   if (error) {
     logger.warn(
@@ -158,7 +158,7 @@ export async function readDisruptionState(
     };
   }
 
-  return { ok: true, state: "CONNECTION", baselineDepartureTime: null, source: "default", recordedAt: null };
+  if (exhausted) { logger.warn({ sessionId, rows: DISRUPTION_LEDGER_SCAN_LIMIT }, "layover disruption ledger: a full page of rows carrying a disruption, none of them a record — refusing rather than assuming CONNECTION"); return { ok: false, message: "layover disruption history holds no readable record in its newest rows; the state cannot be established" }; } return { ok: true, state: "CONNECTION", baselineDepartureTime: null, source: "default", recordedAt: null };
 }
 
 export type DisruptionWrite = { ok: true; entry: DisruptionLedgerEntry } | { ok: false; message: string };
@@ -284,4 +284,35 @@ export function recoveryPosture(state: DisruptionState): RecoveryPosture {
     airlineContact: { available: false, reason: "no_airline_directory" },
     airportHelp: { available: false, reason: "no_airport_help_directory" },
   };
+}
+
+// ═══ Pass 12 C6: the disruption ledger is filtered server-side — one read, no paging ═══
+// Round 2 paged this read (up to 40 reads of 50 `session_updated` rows for a session whose newest rows carry no report —
+// on every overview load and 60 s refresh, the disruption route and the replan). The database now returns only the rows
+// that carry a disruption, so the newest report is the first row whatever the number of edits since it.
+
+/**
+ * The `session_updated` rows of one session that CARRY `metadata.disruption`, newest first, in ONE read of at most
+ * DISRUPTION_LEDGER_SCAN_LIMIT rows: PostgREST `metadata->disruption=not.is.null`, supabase-js
+ * `.not("metadata->disruption", "is", null)` (a window edit's row has no `disruption` key; `->` yields SQL NULL then).
+ * `exhausted` is a FULL page in which no row carries a disruption RECORD (an object): the newest report could lie
+ * beyond it, so the caller states the state unknown, never CONNECTION. The one writer (recordDisruptionState) always
+ * writes an object, so production does not reach it. A failed read is the read's error, exactly as before.
+ */
+async function readDisruptionLedgerRows(
+  db: SupabaseClient,
+  sessionId: string,
+  userId: string,
+): Promise<{ data: unknown[] | null; error: any; exhausted: boolean }> {
+  const q: any = db
+    .from("layover_events")
+    .select("metadata, created_at, event_type")
+    .eq("session_id", sessionId)
+    .eq("user_id", userId)
+    .eq("event_type", DISRUPTION_LEDGER_EVENT_TYPE);
+  const { data, error } = await q.not("metadata->disruption", "is", null).order("created_at", { ascending: false }).limit(DISRUPTION_LEDGER_SCAN_LIMIT);
+  if (error) return { data: null, error, exhausted: false };
+  const rows: unknown[] = Array.isArray(data) ? data : [];
+  const holdsRecord = rows.some((r: any) => r?.metadata?.disruption && typeof r.metadata.disruption === "object");
+  return { data: rows, error: null, exhausted: !holdsRecord && rows.length >= DISRUPTION_LEDGER_SCAN_LIMIT };
 }

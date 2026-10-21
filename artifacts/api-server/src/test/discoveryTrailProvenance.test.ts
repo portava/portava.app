@@ -517,3 +517,167 @@ describe("DC-17 — `readingProvenance` reaches the wire at both Trail URLs", ()
     );
   });
 });
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 2026-10-17 (wave 4) — the protected-zone rule on EVERY Trail momentum reading.
+//
+// The trend API's rule (lib/discoveryTrendProducerPrivacy, which
+// loadLocalMomentum, the rebuild scheduler and the candidate retrievals apply):
+// while ANY active protected zone exists no momentum is computed, and an
+// unreadable zone policy is never "no zones". TrailService computed momentum
+// over live rank_events — `trending_now` on both module paths, GET …/trending's
+// order and boolean, and DV-25's Trail momentum in the ranker's modifier — with
+// no zone read at all (wave-3 handback, "TrailService trending_now ... no zone
+// guard").
+//   TZ1–TZ3  getTrailModules' trending_now: active zone, unreadable policy, inactive zone
+//   TZ4      the flag-on module path (trailModulesExplored)
+//   TZ5–TZ6  trailTrending: no order, no boolean — unknown, never "not trending"
+//   TZ7      loadViewerTrailModifier: Trail momentum withheld is "no information" (unscaled)
+//   TZ8      the admin evidence names the reason
+//   TZ9–TZ10 the wire
+// Appended at the foot so no line above that a census cites moves.
+// ═════════════════════════════════════════════════════════════════════════════
+import { TRAIL_EXPLORATION_FLAG } from "../services/trails/trailExploration.js";
+import { trailTrendEvidence } from "../services/trails/trailAdmin.js";
+
+const ACTIVE_ZONE: Row = { id: "zone-1", active: true };
+/** A Trail with one place member whose Discovery saves surge in the last hour, at `now`. */
+const surging = (now: number, over: Record<string, Row[]> = {}): Record<string, Row[]> => ({
+  trails: [trail(T_A)],
+  content_trails: [member("m1")],
+  rank_events: Array.from({ length: 8 }, (_, i) => ({
+    id: `z-${i}`, item_id: PLACE_A, surface: "discovery", outcome: "save",
+    served_at: new Date(now - 3_600_000 - i).toISOString(), outcome_at: new Date(now - 3_600_000 - i).toISOString(),
+  })),
+  ...over,
+});
+const trendingNow = (r: { modules: Array<{ key: string; items: unknown[] }> }) => r.modules.find((m) => m.key === "trending_now");
+
+describe("2026-10-17 (wave 4) — no Trail momentum while a protected zone is active; an unreadable policy fails closed", () => {
+  it("TZ1. getTrailModules: with an active zone trending_now is empty, no reading is published, and the reason is named", async () => {
+    const open = await getTrailModules(db(surging(NOW)), T_A, { nowMs: NOW });
+    assert.equal(open.refusal, null);
+    assert.deepEqual(trendingNow(open)?.items.map((i: any) => i.sourceId), [PLACE_A], "control: with no zone the surging place is trending_now");
+    assert.ok(open.momentumProvenance, "control: and a reading was taken");
+    assert.equal((open as any).momentumWithheld, undefined, "control: nothing withheld");
+
+    const r = await getTrailModules(db(surging(NOW, { protected_zones: [ACTIVE_ZONE] })), T_A, { nowMs: NOW });
+    assert.equal(r.refusal, null, "a zone withholds a reading; it does not refuse the Trail");
+    assert.deepEqual(trendingNow(r)?.items, [], "no momentum while a protected zone is active");
+    assert.equal(r.momentumProvenance, null, "no reading entered the page, so none is published");
+    assert.equal((r as any).momentumWithheld, "protected_zone_filter_required");
+    assert.ok(r.modules.find((m) => m.key === "just_arrived")?.items.length, "the other modules are untouched");
+  });
+
+  it("TZ2. getTrailModules: an unreadable zone policy is never 'no zones' — trending_now is empty and the reason says unreadable", async () => {
+    const r = await getTrailModules(db(surging(NOW), ["protected_zones"]), T_A, { nowMs: NOW });
+    assert.equal(r.refusal, null);
+    assert.deepEqual(trendingNow(r)?.items, []);
+    assert.equal(r.momentumProvenance, null);
+    assert.equal((r as any).momentumWithheld, "protected_zone_policy_unreadable");
+  });
+
+  it("TZ3. an INACTIVE zone is no zone: the reading stands", async () => {
+    const r = await getTrailModules(db(surging(NOW, { protected_zones: [{ ...ACTIVE_ZONE, active: false }] })), T_A, { nowMs: NOW });
+    assert.deepEqual(trendingNow(r)?.items.map((i: any) => i.sourceId), [PLACE_A]);
+    assert.ok(r.momentumProvenance);
+    assert.equal((r as any).momentumWithheld, undefined);
+  });
+
+  it("TZ4. the flag-on path (discovery_trail_exploration_enabled): the same rule, both ways", async () => {
+    const flags = { feature_flags: [{ flag: TRAIL_EXPLORATION_FLAG, enabled: true }] };
+    const open = await getTrailModules(db(surging(NOW, flags)), T_A, { nowMs: NOW });
+    assert.ok(open.modules.some((m) => m.key === "hidden_gems"), "control: this IS the flag-on path");
+    assert.deepEqual(trendingNow(open)?.items.map((i: any) => i.sourceId), [PLACE_A], "control: trending_now carries the surge");
+    for (const [over, erroring, reason] of [
+      [{ ...flags, protected_zones: [ACTIVE_ZONE] }, [], "protected_zone_filter_required"],
+      [flags, ["protected_zones"], "protected_zone_policy_unreadable"],
+    ] satisfies Array<[Record<string, Row[]>, string[], string]>) {
+      const r = await getTrailModules(db(surging(NOW, over), [...erroring]), T_A, { nowMs: NOW });
+      assert.ok(r.modules.some((m) => m.key === "hidden_gems"), reason);
+      assert.deepEqual(trendingNow(r)?.items, [], reason);
+      assert.equal(r.momentumProvenance, null, reason);
+      assert.equal((r as any).momentumWithheld, reason);
+    }
+  });
+
+  it("TZ5. trailTrending with an active zone: no order, no boolean — unknown (momentumUnread), never a measured 'not trending'", async () => {
+    const open = await trailTrending(db(surging(NOW)), T_A, NOW);
+    assert.ok((open.momentum ?? 0) > 0, "control: the Trail is measured as trending with no zone");
+    assert.deepEqual(open.items.map((i) => i.sourceId), [PLACE_A], "control: and the surging place is listed");
+
+    const r = await trailTrending(db(surging(NOW, { protected_zones: [ACTIVE_ZONE] })), T_A, NOW);
+    assert.equal(r.refusal, null);
+    assert.equal(r.momentum, null, "no Trail momentum is computed");
+    assert.equal(r.momentumUnread, true, "the route serves this as unknown (null), never as a measured false");
+    assert.deepEqual(r.items, [], "no momentum-ordered list");
+    assert.equal(r.momentumProvenance, null);
+    assert.equal((r as any).momentumWithheld, "protected_zone_filter_required");
+  });
+
+  it("TZ6. trailTrending with an unreadable zone policy fails closed the same way", async () => {
+    const r = await trailTrending(db(surging(NOW), ["protected_zones"]), T_A, NOW);
+    assert.equal(r.momentum, null);
+    assert.equal(r.momentumUnread, true);
+    assert.deepEqual(r.items, []);
+    assert.equal(r.momentumProvenance, null);
+    assert.equal((r as any).momentumWithheld, "protected_zone_policy_unreadable");
+    // An empty Trail is still a measured false: there is no reading to withhold.
+    const empty = await trailTrending(db({ trails: [trail(T_A)], content_trails: [], protected_zones: [ACTIVE_ZONE] }), T_A, NOW);
+    assert.equal(empty.momentum, null);
+    assert.equal(empty.momentumUnread, undefined);
+  });
+
+  it("TZ7. loadViewerTrailModifier: with a zone active or unreadable, DV-25's Trail momentum is withheld — the affinity is the unscaled 'no information' one, not the measured one", async () => {
+    // A followed Trail whose members saw NO events: measured-and-flat momentum
+    // scales the affinity to the floor; no momentum information leaves it unscaled.
+    const seed = (over: Record<string, Row[]> = {}) => ({ trails: [trail(T_A)], trail_follows: [{ trail_id: T_A, user_id: USER }], content_trails: [member("m1")], ...over });
+    const measured = await loadViewerTrailModifier(db(seed()), USER, [PLACE_A], { nowMs: NOW });
+    const unscaled = await loadViewerTrailModifier(db(seed(), ["rank_events"]), USER, [PLACE_A], { nowMs: NOW });
+    assert.ok(measured.trailAffinity[PLACE_A]! > 0 && unscaled.trailAffinity[PLACE_A]! > 0);
+    assert.notEqual(measured.trailAffinity[PLACE_A], unscaled.trailAffinity[PLACE_A], "control: the momentum reading moves the affinity");
+
+    const zoned = await loadViewerTrailModifier(db(seed({ protected_zones: [ACTIVE_ZONE] })), USER, [PLACE_A], { nowMs: NOW });
+    const unread = await loadViewerTrailModifier(db(seed(), ["protected_zones"]), USER, [PLACE_A], { nowMs: NOW });
+    for (const r of [zoned, unread]) {
+      assert.equal(r.refusal, null, "a withheld input never refuses the modifier");
+      assert.deepEqual(r.followedTrailIds, [T_A]);
+      assert.equal(r.trailAffinity[PLACE_A], unscaled.trailAffinity[PLACE_A], "no momentum entered the affinity");
+    }
+  });
+
+  it("TZ8. the admin trend evidence names WHY the reading is absent", async () => {
+    const r = await trailTrendEvidence(db(surging(NOW, { protected_zones: [ACTIVE_ZONE] })), T_A, NOW);
+    assert.equal(r.ok, true);
+    const v = (r as any).value;
+    assert.equal(v.momentum, null);
+    assert.equal(v.momentumUnread, true);
+    assert.deepEqual(v.items, []);
+    assert.equal(v.momentumWithheld, "protected_zone_filter_required");
+    const open = await trailTrendEvidence(db(surging(NOW)), T_A, NOW);
+    assert.equal((open as any).value.momentumWithheld, undefined, "control: nothing withheld with no zone");
+  });
+
+  it("TZ9. GET …/trending with an active zone serves trending: null and no list — and the tripwire on the word still holds", async () => {
+    servedDb(surging(Date.now()));
+    const open = await get(`/v1/discovery/trails/${T_A}/trending`);
+    assert.equal(open.status, 200);
+    assert.equal(open.body.trending, true, "control: the surge is served as trending with no zone");
+
+    servedDb(surging(Date.now(), { protected_zones: [ACTIVE_ZONE] }));
+    const r = await get(`/v1/discovery/trails/${T_A}/trending`);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.trending, null, "withheld is unknown, never a measured false");
+    assert.deepEqual(r.body.items, []);
+    assert.equal(r.body.readingProvenance, null);
+    assert.ok(!JSON.stringify(r.body).includes("momentum"), "`11` §4's tripwire on /trending");
+  });
+
+  it("TZ10. GET …/modules with an unreadable zone policy serves an empty trending_now and no reading", async () => {
+    servedDb(surging(Date.now()), ["protected_zones"]);
+    const r = await get(`/v1/discovery/trails/${T_A}/modules`);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.modules.find((m: any) => m.key === "trending_now").items, []);
+    assert.equal(r.body.readingProvenance, null);
+  });
+});

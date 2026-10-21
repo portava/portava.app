@@ -8,7 +8,7 @@
 
 import { randomUUID } from "node:crypto";
 import { recordTrustEvent } from "../trust/TrustEventService.js";
-import { executeTripCommand, tripKernelClient } from "../../domain/trips/commands/tripKernel.js";
+import { executeTripCommand, tripKernelClient } from "../../domain/trips/commands/tripKernel.js"; import { reverseModeratedEventOnAppeal } from "../../lib/eventModerationClaim.js"; // the event case: through the transition authority (wave 5, honesty 3)
 
 export interface Appeal {
   id: string;
@@ -23,7 +23,7 @@ export interface ReversalApplied {
   ok: true;
   action: string;
   /** Absent means "the action name is the whole truth". */
-  restored?: true; /** This appeal's restoration had already happened (a replay): nothing new was written. */ replayed?: true;
+  restored?: true; /** This appeal's restoration had already happened (a replay): nothing new was written. */ replayed?: true; /** event: the hide was reversed but the event's STATE was KEPT (action `event_visibility_restored_state_kept`), and why — as its admin_restore row records it (wave 5). */ stateKept?: string;
 }
 
 /**
@@ -416,21 +416,21 @@ export async function resolveAppeal(
 
     // ── Moderated event/trip restoration ────────────────────────────────────
     // When a moderator removed an event or trip, appeal approval restores it
-    // to a safe draft/open state so the owner can review before re-publishing.
+    // (an event: to the state AND visibility its recorded moderation found, via the transition authority; a trip: see its case).
 
     case "event": {
-      const { data, error } = await sc
-        .from("events")
-        .update({ state: "open", updated_at: new Date().toISOString() })
-        .eq("id", target_id)
-        .eq("host_id", appellant_id)
-        .select("id");
-      if (error) return { ok: false, action: "noop", reason: `event restore failed: ${error.message}` };
+      // Through the transition authority (lib/eventLifecycle.ts decideEventModerationReversal; wave 5, honesty 3). It wrote
+      // `state: "open"` over EVERY state — publishing a draft, reopening a completed event, un-cancelling a host's own
+      // cancellation; and it never put a hidden event's visibility back. Now the newest RECORDED moderation is reversed, to the state and visibility it found (wave 5), or nothing is written.
+      const r = await reverseModeratedEventOnAppeal(sc, { eventId: target_id, hostId: appellant_id, actorId: appeal.moderator_id ?? null, appealId: appeal.id, note: appeal.resolution_note });
+      if (r.outcome === "failed") return { ok: false, action: "noop", reason: `event restore failed: ${r.message}` };
       // The `host_id` filter is authorization, and a failed authorization here
       // matched zero rows without an error — the appeal closed reporting
       // "event_restored" for an event the appellant does not host.
-      if (affectedRows(data) === 0) return matchedNothing(appeal, "event restore");
-      return { ok: true, action: "event_restored" };
+      if (r.outcome === "not_found") return matchedNothing(appeal, "event restore");
+      // No recorded moderation to reverse (the host cancelled it, or nothing moderated it), or a hide that never recorded the visibility it found (never guessed, never widened): a person must look.
+      if (r.outcome === "refused") return deferRestoration(appeal, r.message);
+      return r.stateKept ? { ok: true, action: "event_visibility_restored_state_kept", stateKept: r.stateKept } : { ok: true, action: "event_restored" }; // a KEPT state is not a full restore: the hide was reversed, the event's state was not (lib/eventModerationClaim.ts, foot; wave 5)
     }
 
     case "trip": {

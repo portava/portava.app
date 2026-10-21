@@ -28,9 +28,9 @@
  *     import { installInputTelemetryTransport } from '@/platform/input-assistance';
  *     setTelemetrySink(installInputTelemetryTransport().sink);
  *
- * Until that line exists, census G263 is still correctly BUILT-BUT-WRONG: the
- * events are produced and dropped. What changed is that there is now something
- * to attach, and a place for it to go.
+ * That line exists: `app/_layout.tsx`'s `InputTelemetrySetup` calls
+ * `installInputTelemetry` with this transport. Census G263 stays W only until
+ * rows are observed in production; the client half is attached.
  */
 import { freshToken as freshApiToken } from '../../../services/apiToken.ts';
 import {

@@ -2,7 +2,7 @@
  * LayoverRecsSection — time-aware recommendations with safety badges and
  * one-tap "Add to plan".
  */
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
 import { Compass, Plus, Check } from 'lucide-react-native';
 import { color, space, radius, type as t, avatar } from '../../theme/tokens.ts';
@@ -35,7 +35,7 @@ type Filter = 'all' | 'inside' | 'outside';
 export function LayoverRecsSection({
   recs, loading, error, onRetry, canPlan, addedRecIds, addingRecId, onAddToPlan, landsideSuppression = null,
 }: Props) {
-  const [filter, setFilter] = useState<Filter>('all');
+  const [filter, setFilter] = useState<Filter>('all'); const pairing = useRecsSnapshotPairing(recs, onRetry);
 
   const filtered = useMemo(() => {
     if (filter === 'inside')  return recs.filter((r) => r.insideAirport);
@@ -76,7 +76,7 @@ export function LayoverRecsSection({
         </Text>
       )}
 
-      {loading && <ActivityIndicator color={color.deep} style={{ marginVertical: space.lg }} />}
+      {loading && <ActivityIndicator color={color.deep} style={{ marginVertical: space.lg }} />}{!error && <RecsSnapshotNotice pairing={pairing} loading={loading} onRetry={onRetry} />}
 
       {/* THE REFUSAL, IN THE SERVER'S OWN WORDS. Not "nothing fits" — that is a
           finished answer about a city, and this is the absence of one. */}
@@ -142,14 +142,14 @@ export function LayoverRecsSection({
               ) : null}
               {rec.warningReason ? <Text style={styles.warning}>{rec.warningReason}</Text> : null}
             </View>
-            {canPlan && recId && rec.safetyRating !== 'not_recommended' && (
+            {canPlan && recId && rec.safetyRating !== 'not_recommended' && !pairing.expired && (
               added ? (
                 <View style={styles.addedBadge}><Check size={15} color={color.success} /></View>
               ) : (
                 <Pressable
                   style={styles.addBtn}
                   disabled={addingRecId === recId}
-                  onPress={() => onAddToPlan(recId)}
+                  onPress={() => { holdRecommendationSnapshot(recId, rec.snapshotId); onAddToPlan(recId); }}
                   accessibilityLabel={`Add ${rec.title} to plan`}
                 >
                   {addingRecId === recId
@@ -194,3 +194,88 @@ const styles = StyleSheet.create({
   addBtn:    { width: avatar.s34, height: avatar.s34, borderRadius: avatar.s34 / 2, borderWidth: 1.5, borderColor: color.deep, alignItems: 'center', justifyContent: 'center', marginTop: 4 },
   addedBadge:{ width: avatar.s34, height: avatar.s34, borderRadius: avatar.s34 / 2, backgroundColor: 'rgba(46,125,91,0.12)', alignItems: 'center', justifyContent: 'center', marginTop: 4 },
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// census-layover L296 — Appendix C5, the client half. Appended at the TAIL so
+// no cited line above moves; ESM hoists the import.
+//
+// Every card carries the snapshot it was returned with, and "Add to plan" holds
+// THAT snapshot for the add (`holdRecommendationSnapshot`). When the server
+// refuses the add with 409 RECOMMENDATION_EXPIRED — the ideas were regenerated
+// since this list was served — the list switches to a "refreshed — reload"
+// state: its Add controls go, and the ideas are reloaded through `onRetry`
+// exactly once for that snapshot. The add itself is never retried: the
+// traveller sees the current card before anything is added under it.
+// ═══════════════════════════════════════════════════════════════════════════
+import {
+  holdRecommendationSnapshot,
+  isRecommendationSnapshotExpired,
+  subscribeRecommendationExpiry,
+} from '../../services/layover.ts';
+
+interface RecsSnapshotPairing {
+  /** An add under the snapshot this list was served with was refused RECOMMENDATION_EXPIRED. */
+  expired: boolean;
+  /** This list arrived by the reload an expiry triggered. */
+  refreshed: boolean;
+}
+
+function useRecsSnapshotPairing(recs: LayoverRecommendation[], onRetry: () => void): RecsSnapshotPairing {
+  const snapshotId = recs.find((r) => typeof r.snapshotId === 'string')?.snapshotId ?? null;
+  const [expired, setExpired] = useState(() => isRecommendationSnapshotExpired(snapshotId));
+  // The expired snapshot a reload replaced, and the first snapshot that replaced
+  // it: the "refreshed" line is said about THAT list only, not every later one.
+  const [reload, setReload] = useState<{ from: string; to: string | null } | null>(null);
+  const reloadedFor = useRef<string | null>(null);
+
+  useEffect(() => {
+    const update = () => setExpired(isRecommendationSnapshotExpired(snapshotId));
+    update();
+    return subscribeRecommendationExpiry(update);
+  }, [snapshotId]);
+
+  // Refetch, once per expired snapshot. Not a retry of the add.
+  useEffect(() => {
+    if (!expired || snapshotId === null || reloadedFor.current === snapshotId) return;
+    reloadedFor.current = snapshotId;
+    setReload({ from: snapshotId, to: null });
+    onRetry();
+  }, [expired, snapshotId, onRetry]);
+
+  useEffect(() => {
+    if (reload && reload.to === null && snapshotId !== null && snapshotId !== reload.from) setReload({ from: reload.from, to: snapshotId });
+  }, [reload, snapshotId]);
+
+  return { expired, refreshed: !expired && reload !== null && reload.to !== null && reload.to === snapshotId };
+}
+
+function RecsSnapshotNotice({ pairing, loading, onRetry }: { pairing: RecsSnapshotPairing; loading: boolean; onRetry: () => void }) {
+  if (pairing.expired) {
+    return (
+      <View style={styles.errorBox} testID="layover-recs-expired">
+        <Text style={styles.errorText}>
+          These ideas were refreshed since you opened them, so nothing was added. Reload them and check the card before adding it.
+        </Text>
+        {!loading && (
+          <Pressable
+            style={styles.retryBtn}
+            onPress={onRetry}
+            accessibilityRole="button"
+            accessibilityLabel="Reload layover ideas"
+            testID="layover-recs-reload"
+          >
+            <Text style={styles.retryText}>Reload ideas</Text>
+          </Pressable>
+        )}
+      </View>
+    );
+  }
+  if (pairing.refreshed && !loading) {
+    return (
+      <Text style={styles.empty} testID="layover-recs-refreshed">
+        Your ideas were refreshed. Check the card, then add it again.
+      </Text>
+    );
+  }
+  return null;
+}

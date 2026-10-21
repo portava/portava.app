@@ -2939,7 +2939,7 @@ somebody measured it.
 > merges — which is the same fact this section's own paragraph states from the
 > other end.
 
-## `2998_story_retention.sql` — applied to `portava-ci` 2026-09-23, NOT to production
+## `2998_story_retention.sql` — applied to `portava-ci` 2026-09-23; applied to production by hand afterwards (corrected 2026-10-17, see Production)
 
 The owner-archive retention unit: `stories.deleted_at` with the trigger that
 freezes it, the `story_purge_queue` ledger, `job_health.last_success_at`, and
@@ -3004,7 +3004,7 @@ sanctioned CI project only.
 
 Production state, read 2026-09-23 00:14:40 UTC — `story_purge_queue` absent,
 `stories.deleted_at` absent, `job_health.last_success_at` absent; `stories`,
-`story_views`, `story_reactions` and `story_replies` all **0 rows**.
+`story_views`, `story_reactions` and `story_replies` all **0 rows**. **Correction (2026-10-17): this is no longer production's state.** 2998 was applied to production by hand afterwards (2026-09-25 per `artifacts/api-server/src/scripts/checkProductionDrift.ts`'s `story_purge_queue` note). Production's `schema_migration_ledger` holds a `manual` row for `2998_story_retention.sql` whose checksum is this file's sha256 (read-only, 2026-10-17), and a read-only catalog check on 2026-10-17 found `stories.deleted_at`, `story_purge_queue` and `job_health.last_success_at` all present. `production-applied-migrations.json` still has no row for it, so the column scan records the three names as a dated observation (`artifacts/api-server/src/test/fixtures/productionCatalogObservations.json`; `docs/ops/production-unapplied-schema-reads-20261017.md`).
 
 Deploying `main` ahead of this apply is safe, and the reason is narrower than
 "the job reports a failure" — it is an **order**. `enqueueDueStories` runs
@@ -5825,3 +5825,1223 @@ grant; until 3814 is applied to `portava-ci`, `check:authorization-contract` rep
 INSERT, UPDATE and DELETE on the four to both client roles (2490's state, never ALL or PUBLIC) and clears the ledger row.
 It refuses unless each table has RLS and its baseline policies, and unless `memory_items_public_read` still hides an
 `only_me` photo (3672) where the column exists. It re-opens every door above.
+
+## 2026-10-18 — `3901_telegraph_safety_notification_once_per_member.sql`, written and NOT applied anywhere (wave 5, migration-fixes lane)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3901_telegraph_safety_notification_once_per_member.sql` | **not applied** | **not applied** |
+
+**What it is.** census-telegraph T254 (§19 P0 safety). One partial unique index on `public.notifications`, with a
+comment: `notifications_safety_once_per_member_uniq`, UNIQUE (`user_id`, `metadata->>'causal_event_id'`) WHERE
+`source_type = 'thread_safety_alert'` AND the causal id IS NOT NULL. No table, column, row, grant, policy or flag.
+
+It closes the cross-instance double-tell. The safety layer decided "never told twice" by a read, so two API instances
+re-driving one help request inside the same ~100 ms both read "untold", both created a row, and the member was woken
+twice. With the index the second insert fails 23505 and `NotificationService.createDetailed` answers `insert_failed`.
+The code half then counts the member `already_told` once it sees the winner's row
+(`artifacts/api-server/src/services/telegraph/safetyNotifications.ts:776#async function classifyInsertFailures`).
+The code half is safe without the index: no insert conflicts, so that path is never taken.
+
+**Who it could break, re-verified.** Only a writer of a second `notifications` row with `source_type =
+'thread_safety_alert'` and the same (`user_id`, causal id). The safety layer is the only producer of that source type
+(`artifacts/api-server/src/services/telegraph/safetyNotifications.ts:97#SAFETY_NOTIFICATION_SOURCE`, written at
+`artifacts/api-server/src/services/telegraph/safetyNotifications.ts:268#sourceType: SAFETY_NOTIFICATION_SOURCE`). No other file in the API, the client trees or the chain names it, and
+no migration inserts into `notifications`. Every other producer's row falls outside the predicate, so no other insert
+can start failing. The API's other writers insert rows of other source types, delete rows (account deletion, the
+expiry purge), or set only `read_at` or `dismissed_at`; none rewrites a key column of an existing row. No client tree
+reads or writes `notifications` directly.
+
+**Precondition** refuses:
+- when `public.notifications` is missing, or lacks `user_id uuid`, `source_type text` or `metadata jsonb`;
+- while any (member, causal id) group of safety rows holds more than one row. It names one group and changes nothing:
+  it never deletes or merges;
+- when an index of that name exists with another definition.
+
+It accepts a second apply. **Postcondition** (re-runnable, after the COMMIT):
+- the index exists, valid and unique, keyed (`user_id`, causal id), with exactly that predicate;
+- no duplicate group exists;
+- the comment names T254.
+
+**Order.** 3901 is a gap number. It sorts at 3901, before 3930–3999, but portava-ci and production will apply it
+after 3999, because the applier applies pending files in filename order. The house rule for a gap number
+(`docs/ops/wave5-owner-decisions-20261018.md:70#new migrations do not need a band ruling`) is order independence: the
+file depends on nothing above it, and nothing above it alters or drops what it touches. The evidence:
+- 3901 depends only on the baseline `public.notifications`. No migration from 2093 onwards names that table in code
+  (the word appears in six of them, only in comments, flag descriptions and file paths).
+- No file sorting above 3901 (3902–3905, and 3930–3999) names `notifications`, `thread_safety_alert`,
+  `causal_event_id` or the index name in code. Checked by grep, and mechanically by the production packet's builder
+  (`prod-apply-packet-20261017/addendum-3901-3905/manifest.json` → `order.independence`).
+- Both orders were run on the packet's PGlite 0.5.8 replica (PostgreSQL 18.3 compiled to WASM, in-process; no server, nothing hosted). Applying the five after 3999 (production's order) and replaying
+  the chain with the five at their numeric position give the same catalog: 0 differences in 19,348 keys. 3901
+  changes the same 2 keys on both paths.
+
+Press it after the main packet and addendum-3996-3999; the packet's guard step enforces that order.
+
+**Table locks.** The applier wraps each file and its ledger row in one transaction, so the index cannot be built
+CONCURRENTLY (the applier refuses that form).
+- `CREATE INDEX` holds a SHARE lock on `public.notifications` from the build until the COMMIT. Reads continue. Every
+  INSERT, UPDATE and DELETE on `notifications` waits, including every new notification the API writes.
+- The build is one sequential scan of the whole table plus a sort of the matching safety rows. The wait therefore
+  grows with the table's total size, not with the number of safety rows.
+- The `$pre$` duplicate inspection is a second full scan just before the build, under ACCESS SHARE only.
+- On the replica's empty table the whole file took 9 ms. Production's row count is not known offline; the packet
+  README §6 (c) reads it, read-only, before the press. The packet sets `lock_timeout 5s`, so the file fails fast
+  instead of queueing behind a long transaction.
+
+**Proof.** `artifacts/api-server/src/test/telegraphSafetyOncePerMember.test.ts` (PGlite: the index's definition, the
+refused second row, nothing else refused, existing duplicates refused and kept) and
+`artifacts/api-server/src/test/db/telegraphSafetyOncePerMember.db.test.ts` (CI local-db). On the packet's PostgreSQL
+18.3 end-state replica, a second safety row fails 23505 naming the index; another member, another help request,
+another producer and a row with no causal id are all accepted.
+
+**Rollback:** `db/rollback/2026-10-18-3901-telegraph-safety-notification-once-per-member-rollback.sql`.
+- It drops the index and deletes 3901's ledger row. It refuses a same-named index that is not 3901's.
+- 3901 writes no row of its own; the ledger row is the applier's.
+- It re-opens the double-tell. No notification row is deleted.
+- DROP INDEX takes ACCESS EXCLUSIVE on `notifications` for the catalog change.
+- Proven: forward, rollback, then catalog and rows equal to before. Equal on a PGlite 16.4 fixture, and on the
+  PGlite 0.5.8 replica (PostgreSQL 18.3 in WASM) (0 differences in 19,344 keys). A second run is a no-op, and 3901 re-applies after it.
+
+## 2026-10-18 — `3902_place_best_of_updated_at_index.sql`, written and NOT applied anywhere (wave 5, migration-fixes lane)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3902_place_best_of_updated_at_index.sql` | **not applied** | **not applied** |
+
+**What it is.** census-highlights-memories, the place-collection refresh ruling. One plain btree index, with a comment:
+`place_best_of_updated_at_place_id_idx` ON `public.place_best_of (updated_at, place_id)`. It is the stale sweep's walk
+key (`artifacts/api-server/src/lib/places/placeCollectionsWorker.ts:835#export async function runStaleSweep`, pages
+read by `artifacts/api-server/src/lib/places/placeCollectionsWorker.ts:768#async function readOverduePage`).
+- The backlog count (`updated_at < cutoff`) becomes an index range scan.
+- Each keyset page reads in index order and stops at its LIMIT, instead of sorting every overdue row.
+- The lane's PGlite plans on 20,000 rows show a Bitmap Index Scan for the count, and an Index Only Scan with no Sort
+  for the first and next pages.
+
+No table, column, row, grant, policy or flag. No result changes.
+
+**Who it could break, re-verified.** No read or write can start failing: the index is not unique.
+- `place_best_of` is written only by the collections worker's upsert, on the service client (`.from("place_best_of")`
+  in `placeCollectionsWorker.ts`). It is read by the worker and by `lib/places/placeCollections.ts`.
+- RLS is on with no policy (`rlsDispositions.ts`: DENY_ALL_BY_DESIGN), so a client role reads no row whatever its
+  grants.
+- The costs are the build's lock (below) and one more btree entry per upserted row.
+
+**Precondition** refuses when `public.place_best_of` is missing or lacks `place_id uuid` and `updated_at timestamptz`,
+and when an index of that name exists with another definition. It accepts a second apply. **Postcondition**: a valid,
+non-unique btree on exactly (`updated_at`, `place_id`) with no predicate, whose comment names `runStaleSweep`.
+
+**Order.** A gap number, under the rule in the 3901 entry above.
+- It depends only on `public.place_best_of` (baseline; 2047).
+- Of the files from 2093 onwards, only 2293 (comments) and 3504 (client privileges) name `place_best_of`. Both sort
+  below 3902, and no file above it names the table.
+- The replica's two-path run gives 0 differences. 3902 changes the same 2 keys on both paths.
+
+**Table locks.** `CREATE INDEX` holds a SHARE lock on `public.place_best_of` from the build until the COMMIT. The
+worker's upserts wait; reads continue. The build scans and sorts the whole table, one row per precomputed place, so the
+wait is proportional to the table's size. On the replica's empty table the whole file took 3 ms. The packet README
+§6 (c) reads production's count, read-only, before the press.
+
+**Proof.** `artifacts/api-server/src/test/placeBestOfUpdatedAtIndexMigration.test.ts` (PGlite EXPLAIN before and after,
+same answers). On the PGlite 0.5.8 end-state replica (PostgreSQL 18.3 in WASM), the sweep's first-page query is served by a Bitmap Index Scan
+on the new index.
+
+**Rollback:** `db/rollback/2026-10-18-3902-place-best-of-updated-at-index-rollback.sql`.
+- It drops the index and deletes 3902's ledger row. It refuses a same-named index that is not 3902's.
+- Behaviour is unchanged; the sweep scans again.
+- DROP INDEX takes ACCESS EXCLUSIVE on `place_best_of` for the catalog change.
+- Proven the same way as 3901's rollback: catalog and rows equal to before.
+
+## 2026-10-18 — `3903_project_user_memory_block_check_of_record.sql`, written and NOT applied anywhere (wave 5, migration-fixes lane)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3903_project_user_memory_block_check_of_record.sql` | **not applied** | **not applied** |
+
+**What it is.** census-telegraph T220 §15 ("No subsystem may independently 'rediscover' a blocked relationship"), from
+independent verification pass 4's boundary note. It amends `public.project_user_memory(uuid, boolean)` (2963, as
+amended by 2965) in place.
+- The social lane read `public.blocks` inline twice: once in the `memory_events` insert, once in the
+  `memory_projections` insert.
+- Both reads become `NOT authz.is_blocked(p_user_id, uf.following_id)`, the definition of record. That is the baseline
+  `public.is_blocked` (`artifacts/api-server/baseline/20260819_baseline_structure.sql:1838#CREATE FUNCTION public.is_blocked`),
+  moved to `authz` by 2182.
+- The method is 2965's. The file reads the installed text with `pg_get_functiondef`, replaces the two predicates and
+  EXECUTEs the result as CREATE OR REPLACE.
+- It refuses unless masking the old predicate out of the old text, and the new call out of the new text, leaves the
+  same text, character for character.
+
+No table, column, row, grant, policy or flag.
+
+**Who it could break, re-verified.** No caller can observe a change.
+- The function is SECURITY INVOKER and only `service_role` may EXECUTE it (2193). `service_role` already read
+  `blocks` past RLS, so both forms exclude the same follows, in both directions.
+- Its callers are `project_all_memory` (2187), which the scheduler calls
+  (`artifacts/api-server/src/lib/memoryProjectionScheduler.ts:132#project_all_memory`), and
+  `project_user_memory_with_retraction` (2190, 2195, 3314). All run as `service_role`, and no client tree names the
+  function.
+- The cost: a SECURITY DEFINER function is not inlined, so the anti-join becomes one indexed probe of `blocks` per
+  followed account, for one user per call.
+
+**Precondition** refuses when the function is absent or overloaded; when `authz.is_blocked(uuid, uuid)` is absent or
+not SECURITY DEFINER; and when `service_role` cannot reach it. The `$mig$` block refuses unless the installed text
+holds exactly 2 inline predicates and 0 calls. Re-running is a no-op that says so. **Postcondition** checks:
+- exactly 2 calls in the code (comments stripped), and no read of `blocks`;
+- the signature, the four lanes, the flag gate and 2965's `_canon_saves WHERE true` delete are kept;
+- the function is still INVOKER, and its EXECUTE is still `service_role` only.
+
+**Production.** On 2026-10-17 the packet fingerprinted production's `project_user_memory`, read-only. It equals the
+definition the repo's 2963 + 2965 produce (`1f468c6f1a63` on both), so the `$mig$` count should find 2 and 0 there.
+
+**Order.** A gap number, under the rule in the 3901 entry.
+- It depends on 2963 + 2965 and on 2182, all below it.
+- No file above 3903 names `project_user_memory`; 3314, the last file to call it, sorts below.
+- No file above it alters `blocks` or redefines `is_blocked`. 3905 calls it in a policy; the packet builder reviewed
+  that hit.
+- The replica's two-path run gives 0 differences. 3903 changes the same 2 keys on both paths.
+
+**Table locks.** None on any table: CREATE OR REPLACE FUNCTION locks only the function's catalog row. The replica
+measured no relation lock.
+
+**Proof.** `artifacts/api-server/src/test/sqlBlockChecksOfRecordMigrations.test.ts` (PGlite: the projector's events
+and projections byte-identical before and after; the definition differs in two lines). On the PGlite 0.5.8 (PostgreSQL 18.3 in WASM)
+end-state replica, the projector still leaves out a followed account that blocked the user.
+
+**Rollback:** `db/rollback/2026-10-18-3903-project-user-memory-block-check-of-record-rollback.sql`, the inverse
+surgery.
+- It puts 2963's inline predicate, as 2965 left it, back in place of each call, then deletes 3903's ledger row.
+- It refuses unless the installed text is 3903's: exactly 2 calls of 3903's form, no other `authz.is_blocked`, no
+  inline read.
+- It refuses unless the result differs from the installed text in those two predicates only.
+- It refuses when `service_role` cannot SELECT `blocks`.
+- If the definition already reads `blocks` inline, it changes nothing.
+- Proven: `pg_get_functiondef` byte-identical to before, on PGlite 16.4 and on the PGlite 0.5.8 replica (PostgreSQL 18.3 in WASM).
+
+## 2026-10-18 — `3904_memory_public_feed_block_check_of_record.sql`, written and NOT applied anywhere (wave 5, migration-fixes lane)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3904_memory_public_feed_block_check_of_record.sql` | **not applied** | **not applied** |
+
+**What it is.** The same T220 §15 boundary. It amends `public.memory_public_feed(uuid, integer, timestamptz)` in place,
+by 2965's method. The function is 2338's
+(`artifacts/api-server/src/migrations/2338_memory_location_precision.sql:138#CREATE FUNCTION public.memory_public_feed`).
+- Its one inline read of `blocks` becomes `AND NOT authz.is_blocked(p_viewer, m.owner_id)`.
+- Everything else is carried: the other predicates, the columns, the ORDER BY, the LIMIT clamp, STABLE, INVOKER, the
+  pinned search_path, the `service_role`-only ACL and the comment.
+
+No table, column, row, grant, policy or flag.
+
+**Who it could break, re-verified.** No caller can observe a change.
+- It is `service_role` only (2338), and it already read `blocks` past RLS.
+- Its one caller is `GET /memories`, on the service client, and only while `memory_public_feed_projection_enabled` is
+  on (`artifacts/api-server/src/routes/memories.ts:648#memory_public_feed_projection_enabled`). 2338 seeded that flag
+  FALSE.
+- The cost: one indexed probe of `blocks` per public Memory the scan reaches before the LIMIT.
+
+**Precondition** refuses when the function is absent or overloaded, and when `authz.is_blocked` is absent, not
+SECURITY DEFINER, or unreachable for `service_role`. The `$mig$` block refuses unless the installed text holds exactly
+1 inline predicate and 0 calls. Re-running is a no-op. **Postcondition** checks:
+- exactly 1 call, and no read of `blocks`;
+- 2338's state, visibility, hidden-viewer, viewer and LIMIT predicates are present;
+- the function is STABLE and INVOKER, with `search_path=public, pg_temp`;
+- EXECUTE is `service_role` only.
+
+**⚠ Production's feed is drifted from 2338.** On 2026-10-17 the packet fingerprinted production's
+`memory_public_feed`, read-only: `91b5d7c40a75`. The repo's 2338 gives `e5f33a8b55cb` (the packet's
+`verify/logs/fidelity-C-ledgered-mismatches.json`; its README §12 counts about 20 such function bodies as hand drift).
+What differs is not known offline, so the press can go two ways:
+- The `$mig$` count finds no inline predicate it recognises and refuses. Nothing is applied and nothing is recorded.
+- It amends the function, and after the COMMIT the `$post$` finds one of 2338's other fragments, or its shape, missing.
+  The migration is then applied and recorded, and the run stops on a postcondition failure.
+
+Both are visible before the press. The packet's dry run runs each `$post$` inside its rolled-back transaction, and the
+packet README §6 (d) reads the same counts and fragments read-only. Capture the definition at that point: the rollback
+restores 2338's spelling of the predicate, which may not be production's.
+
+**Order.** A gap number, under the rule in the 3901 entry.
+- It depends on 2338 and 2182, both below it.
+- No file above it names `memory_public_feed` or `blocks`. Of the files above, only 3905 names `is_blocked`, and it
+  calls it.
+- No file above it alters `public.memories`. That matters because CREATE OR REPLACE re-validates a SQL body, so a
+  dropped column would make this file refuse.
+- The replica's two-path run gives 0 differences. 3904 changes the same 2 keys on both paths.
+
+**Table locks.** ACCESS SHARE on `public.memories`, taken because the body is re-validated, and nothing stronger. No
+write waits.
+
+**Proof.** `artifacts/api-server/src/test/sqlBlockChecksOfRecordMigrations.test.ts` (PGlite: eight call shapes return
+the same rows in the same order before and after). On the PGlite 0.5.8 end-state replica (PostgreSQL 18.3 in WASM), the feed still leaves out
+the Memories of an author who blocked the viewer.
+
+**Rollback:** `db/rollback/2026-10-18-3904-memory-public-feed-block-check-of-record-rollback.sql`, the inverse surgery.
+- It restores 2338's predicate byte for byte, line breaks and alignment included.
+- It refuses as 3903's rollback does, with 1 call in place of 2.
+- Proven byte-identical to the pre-3904 definition, on PGlite 16.4 and on the PGlite 0.5.8 replica (PostgreSQL 18.3 in WASM).
+- On production it restores 2338's spelling of the predicate (see the drift note above).
+
+## 2026-10-18 — `3905_post_media_public_select_block_check_of_record.sql`, written and NOT applied anywhere (wave 5, migration-fixes lane)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3905_post_media_public_select_block_check_of_record.sql` | **not applied** | **not applied** |
+
+**What it is.** The same T220 §15 boundary, and it closes a live defect. It drops `post_media_public_select` ON
+`public.post_media` and re-creates it with one conjunct changed. 2337 last re-created the policy
+(`artifacts/api-server/src/migrations/2337_trip_crew_rls_membership_convergence.sql:662#CREATE POLICY "post_media_public_select"`).
+- 2337's inline `NOT EXISTS (SELECT 1 FROM public.blocks b WHERE …)` becomes
+  `NOT authz.is_blocked(auth.uid(), post_media.user_id)`.
+- Everything else is 2337's text verbatim: the owner arm, ready and not rejected or flagged, the post's status, public
+  or trip-crew visibility through `authz.is_trip_crew`, FOR SELECT, PERMISSIVE, TO public, no WITH CHECK.
+
+No table, column, row, grant or flag.
+
+**The defect it closes.** A person the media's owner blocked could read the owner's public post media through
+PostgREST, because the policy's block test read `blocks` under blocks' own RLS.
+- A policy's subquery runs as the querying role, through the subqueried table's RLS.
+- `blocks` admits a reader only the rows they made
+  (`artifacts/api-server/baseline/20260819_baseline_structure.sql:26259#CREATE POLICY blocks_select_own` and
+  `artifacts/api-server/baseline/20260819_baseline_structure.sql:33560#CREATE POLICY users_view_own_blocks`).
+- So 2337's "the owner blocked the viewer" direction read no row and never bit. Only the block the viewer made did.
+- `authz.is_blocked` is SECURITY DEFINER and reads `blocks` as its owner, so both directions bite. It is the house's
+  policy form for this (2401, 3502).
+- The API reads `post_media` as `service_role` and was never affected.
+
+**Who it could break, re-verified.** The one client-visible change: a signed-in person the media's owner blocked no
+longer reads that media through PostgREST.
+- No client tree reads `post_media` directly: no `.from('post_media')`, embed, RPC, REST path or realtime channel in
+  `travel-buddy-standalone`, `src`, `app`, `packages`, `posts-ui` or `lib`. The API reads it on the service client.
+- No view and no policy on another table reads `post_media`. The two SECURITY INVOKER functions that read it (3981's
+  and 3982's) are `service_role` only.
+- Every client read of `post_media` now calls `authz.is_blocked`, so `anon` and `authenticated` must keep EXECUTE on
+  it and USAGE on `authz`. The precondition and the postcondition both check this.
+- The cost: one indexed definer call per candidate row, as on messages and highlights.
+
+**Precondition** refuses:
+- when `post_media`, `posts` or `blocks` is missing;
+- when `authz.is_trip_crew(uuid)` or `authz.is_blocked(uuid, uuid)` is absent;
+- when `is_blocked` is not SECURITY DEFINER, or its owner is subject to `blocks`' RLS;
+- when a client role cannot call `is_blocked`;
+- when the policy is missing, or is not (SELECT, PERMISSIVE, TO public, no WITH CHECK).
+
+The `$mig$` block re-states 2337's and 3905's texts on the policy with ALTER POLICY, inside the transaction. It refuses
+unless the installed policy deparses as one of them, and unless the two differ in the block conjunct only.
+**Postcondition** checks the shape above; exactly one `authz.is_blocked(auth.uid(), user_id)`; no read of `blocks`;
+every other arm present; and client EXECUTE on `is_blocked`.
+
+**Production.** 2337 reached production through Supabase MCP, with no ledger row (packet README §3.3). The packet's
+fingerprints did not sample this policy, so whether production's text deparses as 2337's is not known offline. If it
+does not, the `$mig$` block refuses and nothing changes; the dry run shows that first. Production's fingerprints of
+`is_blocked` and `is_trip_crew` equal the repo's.
+
+**Order.** A gap number, under the rule in the 3901 entry.
+- It depends on `post_media`, `posts` and `blocks` (baseline), `authz.is_trip_crew` (2334) and `authz.is_blocked`
+  (2182), all below it.
+- Above it, 3981 and 3982 name `post_media`. 3981 adds FKs to it from two new tables, a trigger on it and service-role
+  reads; 3982 adds a service-role read. 3972 and 3978 call `authz.is_trip_crew` in their own policies.
+- None of them touches `post_media`'s policies, its grants or the columns this policy reads, and none redefines
+  `is_trip_crew`. The packet builder refuses any statement that would.
+- The replica's two-path run gives 0 differences. 3905 changes the same 2 keys on both paths.
+
+**Table locks.** ALTER, DROP and CREATE POLICY take ACCESS EXCLUSIVE on `public.post_media` until the COMMIT (measured
+on the replica). Every read and write of `post_media` waits for the file. It is catalog work only, with no scan: the
+whole file took 9 ms on the replica.
+
+**Proof.**
+- `artifacts/api-server/src/test/sqlBlockChecksOfRecordMigrations.test.ts`: red on 2337, fixed after; every other
+  reader and block scenario unchanged.
+- `artifacts/api-server/src/test/db/postMediaBlockCheckOfRecord.db.test.ts`: CI local-db, on the real policies and
+  column grants.
+- On the PGlite 0.5.8 end-state replica (PostgreSQL 18.3 in WASM), with production's chain grants, reading as `authenticated`: the viewer the
+  owner blocked reads 0 rows; a stranger, the owner and `anon` read theirs.
+- With 2337's policy put back inside a savepoint, the blocked viewer reads the media again: the defect, reproduced.
+
+**Rollback:** `db/rollback/2026-10-18-3905-post-media-public-select-block-check-of-record-rollback.sql`.
+- It re-creates 2337's statement verbatim and deletes 3905's ledger row.
+- It refuses unless the installed policy deparses as 3905's. If it is already 2337's, it is re-created unchanged.
+- It refuses unless the policy's shape is right.
+- It refuses unless `anon` and `authenticated` can SELECT `blocks` and reach `authz.is_trip_crew`. 2337's inline read
+  runs as the reader, so without SELECT every client read of `post_media` would fail 42501.
+- **It re-opens the defect.** Proven on PGlite 16.4, where the blocked viewer reads the media again. On the
+  PGlite 0.5.8 replica (PostgreSQL 18.3 in WASM) the catalog returns exactly to its state before 3905.
+
+## 2026-10-18 — `3906_event_waitlist_seat_under_event_lock.sql`, written and NOT applied anywhere (wave 5, events waitlist race lane)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3906_event_waitlist_seat_under_event_lock.sql` | **not applied** | **not applied** |
+
+**What it is.** census-trust, the waitlist corrections' "Still open": two promotion passes in the same instant could
+each offer one person for one seat, and two accepts for the last seat could both be seated. Two new functions, each with
+a comment. No table, column, row, policy, grant on a table or flag.
+- `public.claim_waitlist_seat(p_event_id uuid, p_user_id uuid, p_offer_expires_at timestamptz) → text` locks the event
+  row (`FOR NO KEY UPDATE`). When `max_attendees` is set, it counts `going` RSVPs plus live offers under the lock, and
+  claims the named person's queue row only below `max_attendees`. It answers `claimed`, `no_seat`, `contended` or
+  `no_event`; only `claimed` writes.
+- `public.accept_waitlist_seat(p_event_id uuid, p_user_id uuid) → text` takes the same lock. It refuses an event that is
+  not live, a person not queued, without an offer or with a lapsed one, and a full event. Otherwise it upserts the
+  `going` RSVP and deletes the queue row, both or neither. Only `seated` writes.
+- Both are plpgsql, VOLATILE, SECURITY INVOKER, `SET search_path = pg_catalog`, EXECUTE for `service_role` only, and
+  refuse (25000) to run outside READ COMMITTED. Under a transaction snapshot the count taken after the lock could not
+  see the racer, so they refuse rather than decide without the guarantee.
+- The eligibility pick (blocks, bans, trust, age, private membership) stays in `routes/events.ts`. The functions decide
+  only whether a seat is free.
+
+The code half calls them only after a side-effect-free probe has seen them answer: the function itself, called with a
+nil event id, answers `no_event` and writes nothing
+(`artifacts/api-server/src/routes/events.ts:7416#async function lockedSeatFunctionVerdict`).
+- Missing (PGRST202 or 42883, `artifacts/api-server/src/routes/events.ts:7403#function isLockedSeatFunctionAbsent`),
+  or an unclear probe: today's statements run unchanged.
+- Present: the claim (`artifacts/api-server/src/routes/events.ts:7446#async function claimWaitlistSeatLocked`) and the
+  accept (`artifacts/api-server/src/routes/events.ts:7466#async function acceptWaitlistSeatLocked`) go through the
+  functions. A failed locked call holds the seat or answers 503, and never falls back to the unlocked statements,
+  because a lost answer may already have committed.
+- The verdict is memoised per process and per database URL
+  (`artifacts/api-server/src/routes/events.ts:7505#function lockedSeatMemoFor`), with schemaCapability's TTLs
+  (`artifacts/api-server/src/lib/capability/schemaCapability.ts:64#export const READY_TTL_MS` and
+  `artifacts/api-server/src/lib/capability/schemaCapability.ts:65#export const ABSENT_TTL_MS`).
+- **The probe's cost on production.** Until 3906 is applied, each API process sends at most one probe per function every
+  30 s; it fails PGRST202 (logged at info) and today's statements run. Within 30 s of applying it (no restart needed;
+  reload PostgREST's schema cache), the next probe answers and the locked functions are used. After that, one
+  successful probe per function per 5 min per process.
+
+**Who it could break, re-verified.** Nothing can break at the apply. What changes afterwards is the API's behaviour,
+once its probe sees the functions.
+- No function of either name exists anywhere else. Before this entry and its rollback, `git grep` found the two names
+  only in 3906, `routes/events.ts`, its three test files, the unapplied-schema ledger,
+  `checkFlagSchemaPrerequisites.ts`, the census acknowledgement file and census-trust.
+- No client can call either function: EXECUTE is revoked from PUBLIC, `anon` and `authenticated` and granted to
+  `service_role`. Supabase's default privileges would otherwise grant EXECUTE to both client roles at CREATE; the
+  replica's smoke shows they do on the chain, so the REVOKE is load-bearing.
+- The only client-tree access to these tables is one SELECT of the user's own `going` RSVPs
+  (`travel-buddy-standalone/app/profile/edit/who-can-see-me.tsx:88#.from('event_rsvps')`). It takes no row lock, and no
+  client tree calls either function.
+- At run time each locked call holds `FOR NO KEY UPDATE` on one event row until its transaction commits. That
+  serialises claims, accepts and every UPDATE or DELETE of the row: a cancel, a capacity edit, the route's own count
+  writes. It does not block the `FOR KEY SHARE` that an insert into `event_rsvps`, `event_waitlist` or another child
+  table takes for its FK, so an unrelated RSVP never waits behind a claim.
+- A cascade delete of a person's profile concurrent with that same person's accept can deadlock on the waitlist row
+  and the profile row. PostgreSQL detects it (40P01) and aborts one; the route then holds the seat or answers 503
+  (independent verification pass 12, owner note 3). Every other writer of these rows is a single statement and can
+  only wait.
+- Behaviour that changes on the press, through the API: a promotion with no free seat offers nobody; the second of two
+  accepts for the last seat answers 403 "This spot was filled…" and keeps its place in the queue; an offer that lapsed
+  between the route's check and the lock answers 403 expired.
+- Not serialised, as before: the sweeper still claims with its own unlocked UPDATE
+  (`artifacts/api-server/src/lib/eventWaitlistSweeper.ts:273#.update({ offer_expires_at: offerExpiresAt })`), and the
+  admissions that take a seat without the queue (POST /rsvp, the join-request approvals, PATCH attendee status) count
+  outside the lock.
+
+**Precondition** refuses, changing nothing:
+- when `public.events`, `public.event_rsvps` or `public.event_waitlist` is missing, or lacks a column the bodies use
+  with that type (`events.id`, `max_attendees`, `state`; `event_rsvps.event_id`, `user_id`, `status`, `updated_at`;
+  `event_waitlist.event_id`, `user_id`, `offer_expires_at`);
+- when `event_rsvps` has no unique key on exactly (`event_id`, `user_id`), which the accept's upsert needs;
+- when the labels `going`, `open`, `full` or `waitlist`, or the roles `service_role`, `anon` and `authenticated`, are
+  missing;
+- when `service_role` lacks a privilege the bodies use (SECURITY INVOKER: SELECT and UPDATE on `events`, since the row
+  lock needs UPDATE; SELECT, INSERT and UPDATE on `event_rsvps`; SELECT, UPDATE and DELETE on `event_waitlist`);
+- when a function of either name exists that 3906 did not make: another signature, or the same one without 3906's
+  comment.
+
+It accepts a second apply. **Postcondition** (after the COMMIT, assertion-only):
+- both functions exist with these signatures, return text, and are VOLATILE, SECURITY INVOKER, with
+  `search_path=pg_catalog`;
+- `anon`, `authenticated` and PUBLIC cannot EXECUTE them, and `service_role` can;
+- each body takes the event row lock, counts `going` under it and carries the isolation guard, and the claim counts
+  live offers;
+- each carries its 3906 comment;
+- both run: a nil event id answers `no_event` from each, writing nothing.
+
+**Order.** 3906 is a gap number, under the rule in the 3901 entry above (`docs/ops/wave5-owner-decisions-20261018.md`,
+the correction "new migrations do not need a band ruling"). It sorts at 3906, after 3901–3905 and before 3930–3999, so
+portava-ci and production will apply it after 3999. The applier's own ordering puts it at chain position 775 of 807;
+31 files sort above it (3974 is skipped by `ORDER_OVERRIDES.json`). The evidence:
+- 3906 depends only on baseline objects: the three tables, `event_rsvps_pkey`
+  (`artifacts/api-server/baseline/20260819_baseline_structure.sql:12816#ADD CONSTRAINT event_rsvps_pkey`), both enums,
+  the roles, and `service_role`'s grants on the three tables
+  (`artifacts/api-server/baseline/20260819_baseline_structure.sql:36100#GRANT ALL ON TABLE public.event_rsvps TO service_role`,
+  `artifacts/api-server/baseline/20260819_baseline_structure.sql:36136#GRANT ALL ON TABLE public.event_waitlist TO service_role`,
+  `artifacts/api-server/baseline/20260819_baseline_structure.sql:36145#GRANT ALL ON TABLE public.events TO service_role`).
+  It creates nothing another file names.
+- No file above 3906 names `event_rsvps`, `event_waitlist`, `public.events`, `max_attendees`, `offer_expires_at`,
+  either enum, either function or `event_rsvps_pkey`. None contains `ALL FUNCTIONS`, `DEFAULT PRIVILEGES`, `ALTER ROLE`,
+  `DROP OWNED`, `REASSIGN OWNED`, `DROP SCHEMA` or `default_transaction_isolation`. The bare word `events` above 3906
+  appears only in a comment (3930) and a message (3974). This was re-run by grep on `c7f6a34fe`; the output is
+  identical to the race lane's.
+- Twelve files above match a plain grep for a REVOKE naming `service_role`. Eight revoke from `service_role`, each only
+  on its own new objects: 3931 inside a `format()` loop over its five new tables, and 3989–3993, 3997 and 3998 on their
+  own tables, schemas, sequences and functions. The other four are a header comment (3996) and a `GRANT EXECUTE … TO
+  service_role` on their own functions whose names contain `revoke` (3983, 3986, 3987). The production packet's
+  builder checks the masked code mechanically and refuses any statement that would alter, drop or re-grant what 3906
+  reads (`prod-apply-packet-20261017/addendum-3906/manifest.json` → `order.independence`).
+- None of 3901–3905 names anything 3906 reads or creates.
+- Both orders were run on the packet's PGlite 0.5.8 replica (PostgreSQL 18.3 compiled to WASM, in-process; no server,
+  nothing hosted). Applying 3906 after 3999 (production's order) and replaying the chain with 3906 at its numeric
+  position give the same catalog: 0 differences in 19,354 keys. 3906 changes the same 6 keys on both paths.
+
+Press it after the main packet, addendum-3996-3999 and addendum-3901-3905; the packet's guard step (305g) enforces that
+order. It does not depend on 3901–3905. If one of them is held back on purpose, the guard refuses and names it, and the
+addendum README §6 gives the per-file dry run and the one-file command; the replica proves that case. After applying,
+reload PostgREST's schema cache. Until it is reloaded, the probe keeps failing PGRST202 and today's statements run.
+
+**Table locks.** None at the apply: CREATE FUNCTION, COMMENT, REVOKE and GRANT on functions lock no table, and the
+replica measured no relation lock for the body. The `$post$` runs after the COMMIT in its own short transaction. Its
+nil-id probe takes ROW SHARE on `events` and finds no row; ROW SHARE conflicts only with EXCLUSIVE and ACCESS
+EXCLUSIVE. There is no scan: the whole file took 10 ms on the replica, and no production table size matters.
+
+**Proof.**
+- `artifacts/api-server/src/test/eventWaitlistSeatLockMigration.test.ts` (24 cases on PGlite 16.4): claim and accept
+  semantics, both races in their worst order (today's statements: two offers and three going; 3906: one and one),
+  READ COMMITTED only, client roles refused, INVOKER proven, the probe writes nothing, re-apply, a load-bearing
+  `$post$` and the header rollback.
+- `artifacts/api-server/src/test/eventsWaitlistSeatLockRace.test.ts` (33 cases): the real router on PGlite with the
+  race forced, with the function absent and present.
+- `artifacts/api-server/src/test/db/eventWaitlistSeatLock.db.test.ts` (5 cases, CI local-db): its two lock-wait cases
+  need two real sessions, so CI is their first run.
+- On the packet's PGlite 0.5.8 replica, on the real chain's tables, keys, grants and default privileges, as
+  `service_role`: the probe answers `no_event` and writes nothing. With one seat free the first queued person is
+  `claimed`, and the second then gets `no_seat`. The first person's accept is `seated`, and a second live offer for the
+  last seat gets `no_seat`. `no_offer`, `not_queued`, `expired` and `not_live` write nothing. `anon` and
+  `authenticated` get 42501, REPEATABLE READ and SERIALIZABLE get 25000, and no user trigger exists on the three
+  tables. In rolled-back savepoints, today's statements in the race's order still make two offers for one seat and
+  three going in two seats: 30 of 30 checks.
+
+**Rollback:** `db/rollback/2026-10-18-3906-event-waitlist-seat-under-event-lock-rollback.sql`.
+- It drops both functions, deletes 3906's ledger row and sends `NOTIFY pgrst, 'reload schema'`, delivered at its COMMIT.
+  3906 writes no row of its own; the ledger row is the applier's.
+- It refuses, dropping nothing, unless the installed state is exactly 3906's. That rules out a foreign signature of
+  either name, one function without the other, and a definition that is not 3906's: body and comment by sha256,
+  argument names, plpgsql, VOLATILE, SECURITY INVOKER, not STRICT, `search_path=pg_catalog`. It also refuses unless
+  EXECUTE is `service_role` only and nothing depends on either function. With neither function present it changes
+  nothing, so a second run is a no-op.
+- **It re-opens the same-instant race.** No row of the three tables is touched: offers and seats taken under the lock
+  stay. `routes/events.ts` then reads the function as missing (42883, then PGRST202 once the cache reloads) and runs
+  today's statements.
+- DROP FUNCTION locks no table.
+- Proven on PGlite 16.4: forward, rollback, then catalog and rows equal to before (116 keys). The rollback's `$post$`
+  passes alone, a second run is a no-op, 3906 re-applies after it, and each of its 12 refusals fires with nothing
+  dropped and nothing notified.
+- Proven on the packet's PGlite 0.5.8 replica (PostgreSQL 18.3 compiled to WASM, in-process; no server, nothing
+  hosted): the catalog returns exactly to its state before 3906, 0 differences in 19,348 keys, and the re-apply is equal
+  to the end state.
+
+## 2026-10-17 — `3996_layover_crew_location_grants.sql`, written and NOT applied anywhere (wave 4, Layover crew/location lane)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3996_layover_crew_location_grants.sql` | **not applied** | **not applied** |
+
+This entry and the three after it were written on 2026-10-18, after the files. They describe the bytes at `93918cdf2`.
+Those are byte-identical to the production packet's copies in `prod-apply-packet-20261017/addendum-3996-3999/migrations/`
+(3996's sha256 is `9624cdfb7d41…`). The four files are on `claude/wave4-build-20261017`, not on main. If one is edited
+before it merges, the addendum must be rebuilt, because its ledger checksums are these bytes. "The addendum" below is
+the section `Addendum — migrations 3996–3999` of `prod-apply-packet-20261017/README.md`. The folder has no README of
+its own.
+
+**What it is.** census-layover L132, L158, L166, L203, L124 and L277 (server half): spec §14 L4, "temporary location —
+explicit, scoped, auto-expiring", for a layover crew. 2984 kept the crew tables free of coordinates on purpose. This is
+the grant store, in its own tables.
+- `layover_crew_location_controls` (`crew_id`, `user_id`): the separate precise-sharing switch,
+  `precise_sharing_enabled` DEFAULT FALSE. No row means off.
+- `layover_crew_location_grants` (`crew_id`, `user_id`): one current share per member, upserted in place. It holds a
+  precision (area, venue or exact), a purpose paired with it, a label, and `lat`/`lng` at venue or exact only. Its
+  `expires_at` is NOT NULL with no default, and a CHECK bounds it to 4 hours after `granted_at`.
+- Both tables FK (`crew_id`, `user_id`) to `layover_crew_members` ON DELETE CASCADE. The grant table also FKs
+  `session_id` to `layover_sessions`, cascading.
+- Four SECURITY INVOKER trigger functions, each with a pinned search_path and no client EXECUTE:
+  - a BEFORE INSERT/UPDATE guard on the grant: a live membership on the same session, a live crew, no share that
+    outlives the crew, and the precise switch on for an exact share;
+  - the switch going off deletes the member's exact share;
+  - a member leaving deletes their share and their switch
+    (`artifacts/api-server/src/migrations/3996_layover_crew_location_grants.sql:263#CREATE TRIGGER layover_crew_location_member_left`,
+    AFTER UPDATE OF `left_at` ON `layover_crew_members`);
+  - a crew disbanding deletes every share in it
+    (`artifacts/api-server/src/migrations/3996_layover_crew_location_grants.sql:282#CREATE TRIGGER layover_crew_location_crew_disbanded`,
+    AFTER UPDATE OF `status` ON `layover_crews`).
+- Both tables have RLS on, every client privilege revoked, the four DML verbs granted to `service_role`, and a
+  `service_role` policy.
+- `layover_events` gains `crew_location_shared` and `crew_location_stopped`. The `$vocab$` block rebuilds the
+  event_type CHECK as the union of the values already in it plus the two, by 2985's technique, so it composes with any
+  other lane's widening (`artifacts/api-server/src/migrations/3996_layover_crew_location_grants.sql:308#DO $vocab$`).
+- Flag `layover_crew_location_enabled`, seeded FALSE with ON CONFLICT DO NOTHING.
+
+**Who it could break, re-verified.** Nothing at the apply. The tables are new and empty, the CHECK is strictly wider,
+and the triggers write only the new tables.
+- The two triggers on existing tables are SECURITY INVOKER, so whoever updates `left_at` or `status` must hold DELETE on
+  the new tables. Only `service_role` writes the crew tables:
+  - 2984 revoked every client grant on them, with RLS on and no policy
+    (`artifacts/api-server/src/migrations/2984_layover_crews.sql:204#REVOKE ALL ON public.layover_crew_members FROM authenticated;`);
+  - no SQL function writes them: of the migrations, only 2984 and 3996 name them in code;
+  - the writers are the crew store's leave
+    (`artifacts/api-server/src/services/layover/LayoverCrewStore.ts:557#.update({ left_at: nowIso })`) and disband
+    (`artifacts/api-server/src/services/layover/LayoverCrewStore.ts:570#.update({ status: "disbanded", updated_at: nowIso })`,
+    and the same statement at line 379), on the service client;
+  - the packet's smoke drove both triggers as `service_role`.
+- Deletes now cascade into the new tables from the crew-expiry sweep
+  (`artifacts/api-server/src/lib/layoverCrewExpiryScheduler.ts:300#const del = await db.from(CREW_TABLE).delete().in("id", ids);`)
+  and from account deletion's membership step
+  (`artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1402#step(steps, "delete_layover_crew_memberships"`).
+- Only `routes/layoverCrewLocation.ts`, through `services/layover/LayoverCrewLocationStore.ts`, reads or writes the new
+  tables, and only behind the flag, except the owner's stop.
+
+**Without it.** With the flag off (the seed), the GET answers `available: false` and the POST and the PUT refuse
+`feature_disabled`. The owner's stop is never flag-gated
+(`artifacts/api-server/src/routes/layoverCrewLocation.ts:274#router.delete("/airport/sessions/:id/crew/location"`).
+Without the table its delete fails and it answers 503 `degraded_unavailable`. No client reaches it: the card renders
+nothing unless the read says available
+(`travel-buddy-standalone/src/components/layover/LayoverCrewLocationCard.tsx:133#if (!read.available) return null;`).
+
+**Deletion fate.** ERASED_BY_CASCADE, both tables
+(`artifacts/api-server/src/lib/deletionDispositions.ts:50#export const ERASED_BY_CASCADE`, and in POST_BASELINE_TABLES).
+They hang off `layover_crew_members` and `layover_sessions` ON DELETE CASCADE. The triggers also delete rows when a
+member leaves, a crew disbands or the switch goes off, and the route purges an ended share it reads.
+
+**Precondition** refuses when `layover_sessions` or `layover_events` (0127), `layover_crews` or `layover_crew_members`
+(2984), or `feature_flags` is missing, and when `layover_crew_members` lacks PRIMARY KEY (`crew_id`, `user_id`). The
+`$vocab$` block refuses when `layover_events` has no event_type CHECK that contains `session_created`, or when the list it
+extracts is empty. It skips itself when both new values are already present. A second apply is accepted.
+**Postcondition** (catalog only, inside the transaction):
+- both tables exist with RLS on, no client or PUBLIC privilege, and no policy for a role other than `service_role`;
+- the switch table has no coordinate column, and the grant table's are exactly `lat` and `lng`;
+- `expires_at` is NOT NULL with no default; the 4-hour bound, the no-coordinate-at-area CHECK and the membership FK
+  exist;
+- the four functions are SECURITY INVOKER with the pinned search_path and no client EXECUTE, and each trigger exists and
+  is enabled;
+- the event_type CHECK holds `crew_location_shared`, `crew_location_stopped` and `crew_left`;
+- the flag exists and is not on. Of the four files, only 3996 asserts its flag is FALSE.
+
+**Order.** Addendum step 297, position 797 in the applier's own order. 3996 depends on 0127, 2984 and 2985, all on
+production (addendum §A.2). Production's event_type CHECK fingerprint, `2e76e4b50971`, equals the replica's pre-3996
+value.
+- The main packet's 3620, 3621 and 3786 act on the same objects. 3621 adds a second CHECK on `layover_events`, but it
+  never mentions `event_type`, so the `$vocab$` lookup cannot pick it up. Only 2983, 2985 and 3996 rebuild the
+  event_type CHECK.
+- None of 3997–3999 names anything 3996 touches (grep of their code, comments stripped).
+- Press it after the main packet. The addendum's read-only guard, step `296g`, refuses until all 296 main-packet files
+  are recorded with their checksums. The later addenda's guards (`300g` before 3901–3905, `305g` before 3906) refuse
+  until 3996–3999 are recorded.
+
+**Table locks.** Measured on the packet's replica (`verify/logs/locks.json`), held until the COMMIT:
+- ACCESS EXCLUSIVE on `layover_events`, because the CHECK rebuild re-validates every row. Every read and write of
+  `layover_events` waits, including the API's audit writes.
+- SHARE ROW EXCLUSIVE on `layover_crew_members`, `layover_crews` and `layover_sessions`, for the FKs and the triggers.
+  Their writes wait; reads continue.
+- 64 ms on the replica's near-empty tables. The validation scan is the only row-proportional work; addendum §A.6 (c)
+  counts `layover_events` first. The packet sets `lock_timeout 5s`.
+
+**Proof.**
+- `artifacts/api-server/src/test/layoverCrewLocationMigration.test.ts` runs on PGlite 16.4, over 2984's real file and a
+  0127/2985 stand-in. It covers membership, the bounded window, the precise switch, every ending trigger, the cascades
+  and the postcondition's drift checks
+  (`artifacts/api-server/src/test/layoverCrewLocationMigration.test.ts:132#L203: a share needs a LIVE membership on the same session`,
+  `artifacts/api-server/src/test/layoverCrewLocationMigration.test.ts:207#the postcondition block rejects drift`).
+  census-layover's wave-4 crew-location section records 17/17 and 12 of 12 migration mutants killed, on 2026-10-17.
+- The packet's PGlite 0.5.8 replica (PostgreSQL 18.3 compiled to WASM, in-process; nothing hosted), replica D plus the
+  main packet's real run:
+  - the file applied in its own session, as `run-real.sh` sends it;
+  - its `$post$` passed inside the transaction, and again at the end state;
+  - it changed 58 catalog keys, identical key for key to a fresh canonical replay that includes 3996–3999;
+  - the end state differs from that replay in 0 of 17,123 keys.
+- The trigger smoke, as `service_role` in a rolled-back transaction, passed 11 of 11 for 3996:
+  - an area share is accepted;
+  - an exact share without the switch, and a share longer than 4 h, are refused;
+  - the switch going off deletes the exact share;
+  - the vocabulary admits `crew_location_shared` and still refuses an unknown value;
+  - a member leaving deletes their share, and disbanding the crew fires its trigger.
+- Not verified offline (addendum §A.9): PostgreSQL 17 against 18 (production is 17.6); PGlite runs as superuser; no
+  production data; and the production dry run itself.
+
+**Rollback:** `db/rollback/2026-10-18-3996-layover-crew-location-grants-rollback.sql`. It replaced the 2026-10-17 file that the file's header names; see "3996's rollback replaced (2026-10-18)".
+- It refuses while the flag is TRUE
+  (`db/rollback/2026-10-18-3996-layover-crew-location-grants-rollback.sql:135#ROLLBACK REFUSED (3996): layover_crew_location_enabled is TRUE`).
+- It also refuses while any `layover_events` row carries either new event type
+  (`db/rollback/2026-10-18-3996-layover-crew-location-grants-rollback.sql:357#layover_events carries % crew_location_* row(s)`).
+  Narrowing the CHECK under them would fail, and deleting audit rows is not a rollback's call. Once the feature has been
+  used, those rows block the rollback until they are gone.
+- Otherwise it drops the two triggers on the crew tables, both tables and the four functions. It narrows the
+  vocabulary back to every value but the two, then deletes the flag row and 3996's ledger row. Its `$post$` runs after
+  the COMMIT.
+- It destroys every live share and every precise switch. Both are short-lived by design. Turning the flag off is almost
+  always what is wanted instead.
+- Locks, measured by this docs lane on PGlite 0.2.17 (PostgreSQL 16.4) over minimal stand-in tables, not the chain:
+  ACCESS EXCLUSIVE on `layover_crew_members`, `layover_crews`, `layover_sessions` and `layover_events` until its COMMIT.
+  Unlike the forward file, it blocks their reads too. DROP TRIGGER alone takes that lock (`layover_crews`), and so does
+  dropping a foreign key to a table (`layover_sessions`). The CHECK rebuild re-validates every `layover_events` row.
+- Neither the packet (addendum §A.9) nor any repo test exercised the 2026-10-17 file. Its replacement was proven on the
+  packet's replica and on PostgreSQL 16.4 (see "3996's rollback replaced (2026-10-18)"); the CHECK returns byte for byte.
+
+## 2026-10-17 — `3997_memory_visibility_policies_and_shared_experiences.sql`, written and NOT applied anywhere (wave 4, Highlights/Memories H33 and H53)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3997_memory_visibility_policies_and_shared_experiences.sql` | **not applied** | **not applied** |
+
+Written 2026-10-18, as the 3996 entry says; the packet's copy has sha256 `bc49dfc7e7be…`, equal to the file.
+
+**What it is.** census-highlights-memories H33 and H53, both NOT-BUILT before it. Highlights/Memories spec §3.6, §5,
+§10, §25 and §28.7. It is additive: three tables, seven functions, three triggers and two flags seeded FALSE. No existing
+row is read or written.
+- `memory_visibility_policies` (`owner_id`, `audience`) is the owner's publication policy. It holds the finest location
+  precision at which any of the owner's Memories may be served to that audience (public, followers, trip_crew or
+  selected_people), on 2338's ladder. No row means no ceiling, which is today's behaviour. It composes stricter-wins with
+  `memories.location_precision` and the Hidden-Gem ceiling.
+- `memory_shared_experience_invitations` is the consent ledger. The host of a Memory may invite a person who holds an
+  APPROVED `memory_tags` row on it. A trigger enforces pending → accepted or declined, and accepted → left. A decline or
+  a leave is final for that Memory.
+- `memory_shared_experiences` is the shared object. Only `memory_shared_experience_respond` creates it, in the
+  transaction of the first acceptance. It is erased when no accepted participant remains (the dissolve trigger), when
+  the host ends it, when the host's Memory is deleted, or with the host's account. It owns no Memory; while accepted, a
+  participant may link one live Memory of their own.
+- Four RPCs (`_invite`, `_respond`, `_leave`, `_end`): SECURITY INVOKER, EXECUTE for `service_role` only. Invite and
+  accept check `memory_shared_experiences_enabled` in the SQL
+  (`artifacts/api-server/src/migrations/3997_memory_visibility_policies_and_shared_experiences.sql:329#IF p_accept IS NOT FALSE AND NOT EXISTS`).
+  Decline, leave and end never check it, so no switch traps anyone.
+- The three tables: RLS on with no policy, every privilege revoked (`service_role`'s included), then `service_role`
+  granted the four DML verbs. This is the 3990–3993 shape.
+- One trigger on an existing table
+  (`artifacts/api-server/src/migrations/3997_memory_visibility_policies_and_shared_experiences.sql:453#CREATE TRIGGER memory_shared_experience_memory_gone`):
+  AFTER UPDATE OF `state` ON `public.memories`, only when a Memory becomes `deleted` or `removed`. It erases a host
+  Memory's experience and invitations, and cuts a participant's link to it. Its function is SECURITY DEFINER, with a
+  pinned search_path and no client EXECUTE, because a writer of `memories` holds nothing on the new tables.
+- Flags `memory_visibility_policies_enabled` and `memory_shared_experiences_enabled`, seeded FALSE.
+
+**Who it could break, re-verified.** Nothing at the apply: the tables are new and empty, and the trigger writes only
+them.
+- The trigger fires on every soft delete of a Memory. The writers are the owner's delete
+  (`artifacts/api-server/src/routes/memories.ts:2091#.update({ state: "deleted"`), 2711's kernel delete
+  (`artifacts/api-server/src/migrations/2711_memory_kernel_execute.sql:396#UPDATE public.memories SET state = 'deleted'`)
+  and 3676's merge, for the Memories it absorbs
+  (`artifacts/api-server/src/migrations/3676_memory_graph_kernel.sql:311#UPDATE public.memories SET state = 'deleted'`).
+  No code in the repo sets `removed`. Each firing runs two DELETEs and one UPDATE on the new tables, which stay empty
+  until a flag is on.
+- Once H53 is on, a 3676 merge ends every shared experience hosted by a Memory it absorbs. The experience does not
+  follow the merge into the surviving Memory. No test covers that interaction.
+- Hard deletes now cascade too: an account's erasure (`auth.users`) into all three tables, and a Memory's hard delete
+  into its experience and invitations. A participant's own Memory is unlinked (SET NULL), never deleted.
+- Code: `routes/memoryVisibilityPolicies.ts`, `routes/memorySharedExperiences.ts`, their two services, and the
+  non-owner Memory read's ceiling. All are behind the flags, except the ways out.
+
+**Without it.** With the flags absent or off, no policy is read (today's behaviour exactly), and every way into a
+shared experience refuses.
+- With `memory_visibility_policies_enabled` on and the table absent, the policy read fails, and every non-owner read
+  clamps location to `hidden`
+  (`artifacts/api-server/src/services/memory/memoryVisibilityPolicies.ts:76#export async function readVisibilityPolicyGate`).
+- With `memory_shared_experiences_enabled` on, an unreadable store is a refusal, never "no shared experience". The
+  ungated exits read answers empty lists where 3997 is not applied
+  (`artifacts/api-server/src/test/memorySharedExperiences.pglite.test.ts:663#where 3997 is not applied there is nothing to leave`).
+
+**Deletion fate.** ERASED_BY_CASCADE, all three tables (`lib/deletionDispositions.ts`, and in POST_BASELINE_TABLES).
+The postcondition counts the seven cascades. census-highlights-memories §W4.2 says the tables still needed their
+entries there; they now have them.
+
+**Precondition** refuses when `auth.users`, `public.memories`, `public.memory_tags` or `public.feature_flags` is
+missing. **Postcondition** (from the catalog, inside the transaction):
+- each table exists with RLS on and no policy. Neither client role holds any of the seven table privileges, and
+  `service_role` holds the four DML verbs;
+- the precision-ladder CHECK exists, and so does the CHECK that keeps an experience link only while accepted;
+- there are exactly seven ON DELETE CASCADE foreign keys across the three tables, and the participant link is SET NULL;
+- the guard and dissolve triggers are installed and enabled;
+- the four RPCs are SECURITY INVOKER and executable by `service_role` only;
+- the `memories` trigger is installed, SECURITY DEFINER with a pinned search_path, and not client-executable;
+- both flag rows exist. Presence only: a row that already existed with `enabled = true` would stay true (addendum §A.3).
+  Its pre-press check (b) confirms none exists.
+
+**Order.** Addendum step 298, position 798. It depends on `auth.users`, `memories` and `memory_tags`, all in the
+baseline.
+- The main packet's 3676, 3813 and 3814 act on the same objects. The catalog allows either order: the replica's
+  commutation run reaches the same end state.
+- The guard still requires the main packet first. Production today grants `anon` and `authenticated` writes on
+  `memory_tags`, and 3813/3814 withdraw them. The consent ledger assumes `memory_tags` is written only by the server.
+- None of 3996, 3998 or 3999 names anything 3997 touches.
+
+**Table locks.**
+- Measured on the packet's replica: SHARE ROW EXCLUSIVE on `public.memories` until the COMMIT, for the FKs and the
+  trigger. Writes of `memories` wait; reads continue.
+- **And on `auth.users`, which the packet's lock table leaves out.** Its harness reads locks in `public` only. Adding a
+  foreign key takes SHARE ROW EXCLUSIVE on the referenced table, and 3997 adds four to `auth.users`. This docs lane
+  measured that lock on PGlite 0.2.17 (PostgreSQL 16.4) over a stand-in `auth.users`. So every INSERT, UPDATE and DELETE
+  on `auth.users` waits for the file: a sign-up, Supabase Auth's own writes to a user row, an account deletion.
+- 25 ms on the replica. No scan.
+
+**Proof.**
+- `artifacts/api-server/src/test/memorySharedExperiences.pglite.test.ts` applies 3997 to PGlite 16.4 and drives the
+  routes over it as `service_role`. It covers consent before any shared object, final declines, own-Memory links,
+  dissolution, a deleted host Memory
+  (`artifacts/api-server/src/test/memorySharedExperiences.pglite.test.ts:340#a deleted host Memory takes the experience with it`),
+  the account-erasure cascades and the flag-off ways out. census-highlights-memories §W4.2 records 21/21 and 24 of 24
+  H53 mutants killed (9 in the SQL) on 2026-10-17. The suite has grown since, with the flag-off exits.
+- The packet's PGlite 0.5.8 replica (PostgreSQL 18.3 compiled to WASM, in-process; nothing hosted): the file applied in
+  its own session; its `$post$` passed inside the transaction and at the end state; it changed 85 catalog keys,
+  identical to the fresh replay; the end state differs in 0 of 17,123 keys.
+- The smoke passed 8 of 8 for 3997: invite; accept, linking the participant's own Memory; leaving dissolves the
+  experience; a host Memory's soft delete erases its invitations.
+- Not verified offline: as for 3996.
+
+**Rollback.** **No rollback file exists.** The recipe is in the header
+(`artifacts/api-server/src/migrations/3997_memory_visibility_policies_and_shared_experiences.sql:77#Rollback (nothing else depends on these objects):`).
+It drops the three tables, six functions, the `memories` trigger and its function, and deletes the two flag rows.
+- It destroys every owner policy and the whole consent ledger, including who declined. A decline is final for that
+  Memory, so after a re-press that person could be asked again. Turning both flags off is almost always what is wanted.
+- Unlike a house rollback file, it has no refusal (a flag still on, rows present), no transaction and no `$post$`. It
+  does not delete 3997's ledger row either, so the applier would not re-apply 3997 afterwards.
+- Code after it: with the flag rows gone, no policy is consulted and the exits read is empty.
+- Locks, measured by this docs lane on PGlite 0.2.17 over stand-ins: ACCESS EXCLUSIVE on `auth.users` and
+  `public.memories`, from dropping the tables' foreign keys and the trigger. Every read of `auth.users` waits while it
+  runs.
+- On the stand-in fixture it ran to completion and left none of 3997's objects. Neither the packet nor any repo test
+  exercised it.
+- **Follow-up:** a `db/rollback/` file with the house refusals, a ledger delete and a `$post$`, proven.
+
+## 2026-10-17 — `3998_telegraph_conversation_snapshots.sql`, written and NOT applied anywhere (wave 4, Telegraph T155)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3998_telegraph_conversation_snapshots.sql` | **not applied** | **not applied** |
+
+Written 2026-10-18, as the 3996 entry says; the packet's copy has sha256 `33727329dabf…`, equal to the file.
+
+**What it is.** census-telegraph T155: Telegraph §12 `conversation_snapshots`, "rebuild/replay checkpoints where
+useful". The coordination view reads a thread's session-kind messages newest first, capped at SESSION_SCAN_LIMIT. A
+thread with more loses its oldest rows from the fold (`sessionScanTruncated: true`). The checkpoint is the fold's input
+through a (`created_at`, `id`) cursor, and the read replays only the rows after it, through the same projection.
+- `public.conversation_snapshots` (`thread_id`, `projection`) FKs `message_threads` ON DELETE CASCADE. `projection` can
+  only be `coordination_sessions`, at version 1. `row_count` is 1 to 2000 and equals the length of `rows`, a jsonb
+  array holding the id, sender, time, kind and body of each live session-kind message.
+- RLS is on and every privilege is revoked, `service_role`'s included. `service_role` is then granted SELECT only, with
+  a SELECT policy.
+- `telegraph_write_conversation_snapshot(uuid, text)` is the only writer: SECURITY DEFINER, pinned search_path,
+  EXECUTE for `service_role` only. It refuses unless `telegraph_conversation_snapshots_enabled` is TRUE, takes a
+  per-thread advisory lock, and answers `written`, `empty`, `too_large`, `disabled` or `unknown_projection`.
+- `telegraph_conversation_snapshot_invalidate()` (SECURITY DEFINER) runs four triggers on `public.messages`. None is
+  flag-gated:
+  - AFTER INSERT of a session-kind row at or before the cursor
+    (`artifacts/api-server/src/migrations/3998_telegraph_conversation_snapshots.sql:208#CREATE TRIGGER telegraph_conversation_snapshot_on_insert`);
+  - AFTER UPDATE OF `thread_id`, `sender_id`, `created_at`, `msg_type`, `body` or `deleted_at`, when one of them changed
+    on a session-kind row
+    (`artifacts/api-server/src/migrations/3998_telegraph_conversation_snapshots.sql:218#CREATE TRIGGER telegraph_conversation_snapshot_on_update`).
+    A translation write does not fire it;
+  - AFTER DELETE of a session-kind row
+    (`artifacts/api-server/src/migrations/3998_telegraph_conversation_snapshots.sql:228#CREATE TRIGGER telegraph_conversation_snapshot_on_delete`);
+  - AFTER TRUNCATE, which removes every checkpoint
+    (`artifacts/api-server/src/migrations/3998_telegraph_conversation_snapshots.sql:235#CREATE TRIGGER telegraph_conversation_snapshot_on_truncate`).
+  Each takes the writer's per-thread advisory lock and deletes in the same transaction as the change.
+- Flag `telegraph_conversation_snapshots_enabled`, seeded FALSE.
+
+**Who it could break, re-verified.** Nothing at the apply: the table is new and empty.
+- Every message INSERT, and every UPDATE of the six columns, now evaluates a trigger's WHEN clause. Only a session-kind
+  row (`coordination_session`, `coordination_transition`) runs the function. `msg_type` is text, so no enum label is
+  involved.
+- Session-kind writes to one thread now serialise on that thread's advisory lock, each waiting for the one before to
+  commit. With the flag on, they also wait behind the writer. The key is a 64-bit `hashtextextended` of
+  `conversation_snapshots:` and the thread id.
+- Deleting messages, account deletion's included, fires the delete trigger once for each session-kind row.
+- In code, only `services/telegraph/conversationSnapshots.ts` names the table, called from the coordination read
+  (`artifacts/api-server/src/routes/telegraphCoordination.ts:901#readSessionRowsSnapshotAware(client, threadId`).
+
+**Without it.** With the flag off (the seed), the read is the one before 3998, capped with the truncation stated, and
+nothing touches the table
+(`artifacts/api-server/src/services/telegraph/conversationSnapshots.ts:199#readFlagState(client, "telegraph_conversation_snapshots_enabled")`).
+With the flag on and the table absent, the checkpoint read fails and the live read answers, saying why
+(`artifacts/api-server/src/services/telegraph/conversationSnapshots.ts:216#if (cp === "unreadable" || cp === "malformed") return live(cp);`).
+
+**Deletion fate.** ERASED_BY_CASCADE (`lib/deletionDispositions.ts`). It has no person column of its own and cascades
+from `message_threads`. The triggers also delete a checkpoint with any change to a message it was built from, account
+deletion's message deletes included.
+
+**Precondition** refuses when `messages`, `message_threads` or `feature_flags` is missing, or when `messages` lacks any
+of `id`, `thread_id`, `sender_id`, `created_at`, `msg_type`, `body` and `deleted_at`. **Postcondition** (inside the
+transaction):
+- exactly the eight expected columns, with their types, all NOT NULL;
+- the cascading FK to `message_threads`, the validated row-count CHECK, and RLS on;
+- `service_role` holds SELECT only, no client role holds anything, and the service read policy exists;
+- the writer and the invalidation function are SECURITY DEFINER with the pinned search_path, and only `service_role` may
+  execute the writer;
+- all four triggers exist and are enabled on `messages`;
+- the flag row exists. Presence only, as for 3997.
+
+**Order.** Addendum step 299, position 799. It depends on `messages` and `message_threads`, both in the baseline. The
+main packet's 2810, 3000, 3654, 3665 and 3825 act on the same objects (addendum §A.2). None of 3996, 3997 or 3999 names
+anything 3998 touches. The guard requires the main packet first.
+
+**Table locks.** Measured on the packet's replica: SHARE ROW EXCLUSIVE on `messages` and `message_threads` until the
+COMMIT. Message sends and new threads wait; reads continue. 15 ms on the replica. No scan.
+
+**Proof.**
+- `artifacts/api-server/src/test/telegraphCoordination.test.ts` covers the flag-off read
+  (`artifacts/api-server/src/test/telegraphCoordination.test.ts:2113#OFF (the seed): the read is the one before 3998`).
+  A second suite there executes 3998 on PGlite
+  (`artifacts/api-server/src/test/telegraphCoordination.test.ts:2293#T155 — migration 3998 executed`). It covers every
+  invalidation path, a translation write that keeps the checkpoint, a row moved into another thread, the cap, TRUNCATE,
+  the privileges and the postcondition's drift checks. That suite is skipped without `DISCOVERY_PGLITE_MODULE`.
+  census-telegraph W4.3 records 154/154 with PGlite and 10 of 10 SQL mutants killed, on 2026-10-17.
+- The packet's PGlite 0.5.8 replica (PostgreSQL 18.3 compiled to WASM, in-process; nothing hosted): the file changed 32
+  catalog keys, identical to the fresh replay; its `$post$` passed in both places; the end state differs in 0 of
+  17,123 keys.
+- The smoke passed 16 of 16 for 3998:
+  - a text message leaves the checkpoint alone, and session messages fire the trigger;
+  - the writer writes;
+  - an edit, a backdated insert and a delete each invalidate the checkpoint, and a later insert keeps it;
+  - `service_role` cannot write the table directly (42501).
+
+**Rollback.** **None: no rollback file, and no recipe in the header.** 3998 is the only one of the four with neither.
+- A rollback would drop the four triggers on `messages`, both functions, the table and the flag row, and delete 3998's
+  ledger row. It would destroy only derived checkpoints, which the read rebuilds on demand. Afterwards the code reads
+  the absent table as unreadable and serves the live read.
+- Its locks were not measured. The rule measured for 3996's rollback says DROP TRIGGER takes ACCESS EXCLUSIVE, here on
+  `messages`, so every message read and send would wait while it runs. Dropping the table's FK would take ACCESS
+  EXCLUSIVE on `message_threads`.
+- Turning the flag off is what is wanted almost always. The triggers then go on deleting checkpoints that nothing
+  writes.
+- **Follow-up:** write `db/rollback/2026-10-17-3998-telegraph-conversation-snapshots-rollback.sql`, with the house
+  refusals, a ledger delete and a `$post$`, and prove it.
+
+## 2026-10-17 — `3999_memory_items_source_post.sql`, written and NOT applied anywhere (wave 5, memory/stamps/media lane)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3999_memory_items_source_post.sql` | **not applied** | **not applied** |
+
+Written 2026-10-18, as the 3996 entry says; the packet's copy has sha256 `e685064ccaff…`, equal to the file at
+`7a927022f` and at `93918cdf2`.
+
+**What it is.** census-media MD385, lead ruling D-26j: Media spec §44 "Memory / Postcard created" and §31, a Memory
+item made from the person's OWN post media, and only that. It is additive: one nullable column, its FK and two
+indexes, one guard function and its trigger, and one flag seeded FALSE. No existing row is read or written.
+- `memory_items.source_post_id uuid NULL REFERENCES posts(id) ON DELETE CASCADE`. NULL is every item added the old way,
+  by URL. NOT NULL marks an item made from that post's media by `POST /memories/:id/items/from-post`.
+- Two partial indexes: `memory_items_source_post_id_idx` on the link, and `memory_items_source_post_media_uniq`, UNIQUE
+  (`memory_id`, `source_post_id`, `media_url`), so a Memory holds one copy of one post photo.
+- `memory_items_source_post_guard()`: SECURITY INVOKER, pinned search_path, no client EXECUTE. Its trigger fires BEFORE
+  INSERT OR UPDATE OF `source_post_id`, `memory_id`, `media_url`
+  (`artifacts/api-server/src/migrations/3999_memory_items_source_post.sql:143#CREATE TRIGGER memory_items_source_post_guard`).
+  - A NULL link is never checked.
+  - An INSERT, or an UPDATE that changes the link or `media_url`, needs a post whose author owns the item's Memory, that
+    is live (`active`, `deleted_at` NULL), and that carries this `media_url`.
+  - An UPDATE that moves `memory_id` alone re-checks ownership only
+    (`artifacts/api-server/src/migrations/3999_memory_items_source_post.sql:129#Re-parenting (an UPDATE moving memory_id alone: 3676's split / merge) needs ownership only.`).
+    This is 7a927022f's narrowing, so 3676's split and merge are not blocked by a source post soft-deleted since.
+- Flag `memory_from_own_media_enabled`, seeded FALSE.
+
+**Who it could break, re-verified.** Nothing at the apply. Every existing row gets NULL, which the guard passes at
+once, and the FK validates trivially.
+- The guard fires on every INSERT into `memory_items` and every UPDATE of the three columns. Its writers are the API's
+  item inserts, 2711's ADD_MEDIA, and 3676's split
+  (`artifacts/api-server/src/migrations/3676_memory_graph_kernel.sql:337#UPDATE public.memory_items SET memory_id = v_new_id`)
+  and merge (`artifacts/api-server/src/migrations/3676_memory_graph_kernel.sql:236#UPDATE public.memory_items i`).
+- **Open, once the flag is on.** A 3676 merge of two of the owner's Memories that each hold a copy of the same post
+  photo fails 23505 on the one-copy index, because the merge does not de-duplicate items. census-media's 2026-10-17
+  correction reproduced it in PGlite and left the fix to the lead.
+- Hard-deleting a post, as account erasure does, now also deletes the items made from it. A soft delete keeps them.
+  Whether it should withdraw them is owner question MD385-Q1.
+- In code, only the from-post route
+  (`artifacts/api-server/src/routes/memories.ts:3938#if (row?.source_post_id !== postId) {`) and its schema probe name
+  the column. No other `memory_items` read selects it.
+
+**Without it.** With the flag off, the route refuses `feature_disabled` and reads nothing. With the flag on and the
+column absent, the probe answers that storage is absent
+(`artifacts/api-server/src/services/memory/memoryFromOwnMedia.ts:56#migration 3999 is not applied to this database`).
+The route then refuses `degraded_unavailable` and never writes an unlinked item.
+
+**Deletion fate.** `memory_items` keeps its fate. The new column adds a cascade from the source post's row.
+
+**Precondition** refuses when `memory_items`, `memories`, `posts` or `feature_flags` is missing; when `memory_items`
+lacks `id`, `memory_id` or `media_url`; when `posts` lacks `id`, `author_id`, `status`, `deleted_at` or `media_urls`; and
+when `source_post_id` exists with a type other than uuid. **Postcondition**: a nullable uuid column; the FK to `posts`
+with ON DELETE CASCADE; both indexes; the guard SECURITY INVOKER with the pinned search_path and not client-executable;
+the trigger installed and enabled; the flag row present (presence only, as for 3997).
+
+**Order.** Addendum step 300, position 800: the last slot of the 3000–3999 band. A later migration takes the next band.
+The gap numbers 3901–3906 sort before 3930 but are pressed after 3999; their entries above cover that.
+- It depends on `memory_items`, `memories` and `posts`, all in the baseline. The main packet's 3672, 3676, 3801 and 3814
+  act on the same objects.
+- The guard's reason: production grants `anon` and `authenticated` writes on `memory_items` until 3814 (main step 263).
+  Applied before it, the new column would be client-writable.
+- None of 3996–3998 names anything 3999 touches.
+
+**Table locks.** Measured on the packet's replica, held until the COMMIT:
+- ACCESS EXCLUSIVE on `memory_items` (ADD COLUMN, ADD CONSTRAINT), so every read and write of a Memory's items waits.
+- SHARE ROW EXCLUSIVE on `posts`, for the FK: post writes wait, reads continue.
+- The column is nullable with no default, a catalog-only change with no rewrite. The FK validation and the two index
+  builds each scan `memory_items`. Addendum §A.6 (c) counts it first.
+- 22 ms on the replica.
+
+**Proof.**
+- `artifacts/api-server/src/test/memoryFromOwnMedia.pglite.test.ts` runs 3999 in PGlite 16.4 with the route over it,
+  including the flag on without the column
+  (`artifacts/api-server/src/test/memoryFromOwnMedia.pglite.test.ts:344#flag ON over a database without 3999`).
+- A second suite in that file applies 3676 after 3999:
+  - `artifacts/api-server/src/test/memoryFromOwnMedia.pglite.test.ts:496#3676 SPLIT_MEMORY moves a linked item whose source post was soft-deleted`;
+  - `artifacts/api-server/src/test/memoryFromOwnMedia.pglite.test.ts:507#3676 MERGE_MEMORY absorbs a Memory holding a linked item whose source post is held`.
+- census-media's 2026-10-17 correction records 18/18 after the re-parenting fix, with 11 of 12 trigger mutants killed.
+  The survivor is equivalent.
+- The packet's PGlite 0.5.8 replica (PostgreSQL 18.3 compiled to WASM, in-process; nothing hosted): the file changed 10
+  catalog keys, identical to the fresh replay; its `$post$` passed in both places; the end state differs in 0 of
+  17,123 keys.
+- The smoke passed 7 of 7 for 3999:
+  - an item added by URL is unchanged;
+  - an item from the owner's own post media is accepted;
+  - foreign media, and someone else's Memory, are refused (23514);
+  - re-parenting within the owner's Memories after the post's soft delete is accepted, and into another user's Memory
+    is refused.
+- The wave-5 Fable gate judged 3999 SAFE TO APPLY before 7a927022f narrowed the trigger (addendum §A.3). The packet and
+  the smoke ran the narrowed form.
+
+**Rollback.** **No rollback file exists.** The recipe is in the header
+(`artifacts/api-server/src/migrations/3999_memory_items_source_post.sql:47#Rollback (nothing else depends on these objects):`).
+It drops the trigger, the function, both indexes and the column, whose FK goes with it, and deletes the flag row.
+- It destroys every source link. The items stay, as plain URL items, and no longer go with their post.
+- Like 3997's recipe, it has no refusal, no transaction, no `$post$` and no ledger delete.
+- Code after it: the probe answers that storage is absent, and with the flag row gone the route refuses
+  `feature_disabled`.
+- Locks, measured by this docs lane on PGlite 0.2.17 over stand-ins: ACCESS EXCLUSIVE on `memory_items` and `posts`
+  (DROP COLUMN, and the FK's removal).
+- On the stand-in fixture it ran to completion. Neither the packet nor any repo test exercised it.
+- **Follow-up:** a `db/rollback/` file with the house refusals, a ledger delete and a `$post$`, proven.
+
+## Rollback files for 3996–3999 (2026-10-18)
+
+Three new rollback files, and the first run of 3996's existing one on the chain. None was applied to portava-ci or
+production. Everything below was proven on PGlite only (no hosted database). The harness and its logs are in the lane's
+scratchpad, not in the repo.
+
+**The files, their locks and their data rule.** Each lock is held until the COMMIT and was measured on both engines.
+
+| File | ACCESS EXCLUSIVE on existing tables (reads blocked) | Data rule |
+|---|---|---|
+| `db/rollback/2026-10-18-3997-memory-visibility-policies-and-shared-experiences-rollback.sql` | `public.memories` and `auth.users`, so Memory reads and Supabase Auth's reads and writes of a user row wait | Refuses while any of its three tables holds a row |
+| `db/rollback/2026-10-18-3998-telegraph-conversation-snapshots-rollback.sql` | `public.messages` and `public.message_threads` | Refuses while `conversation_snapshots` holds a checkpoint. The rows are derived from `messages`; the header gives the one `DELETE` that clears them |
+| `db/rollback/2026-10-18-3999-memory-items-source-post-rollback.sql` | `public.memory_items` and `public.posts` | Refuses while any `memory_items.source_post_id` is set. The check reads a 3999 partial index, not the table |
+| `db/rollback/2026-10-18-3996-layover-crew-location-grants-rollback.sql` (replaced the 2026-10-17 file) | `layover_events`, `layover_crews`, `layover_crew_members` and `layover_sessions` | Refuses over the flag's audit history and over crew_location_* events; drops its own share and control rows by design, with a NOTICE (`db/rollback/2026-10-18-3996-layover-crew-location-grants-rollback.sql:52#IT DROPS THE ROWS OF ITS OWN TWO TABLES, BY DESIGN`) |
+
+Each also takes ACCESS EXCLUSIVE on the tables it drops (3999 drops none). Each strong lock is inherent to an exact undo: DROP TRIGGER,
+DROP INDEX and DROP COLUMN lock their own table, and removing a foreign key's RI triggers locks the referenced table.
+
+The three new files follow the house shape (3901–3906):
+- **Refusals.** Each refuses, changing nothing, unless the installed state is exactly the forward file's:
+  - a flag is TRUE;
+  - a flag has audit history (below);
+  - an object is missing, or a same-named function was added;
+  - the definition differs: 84 / 31 / 7 canonical rows, compared as the server deparses them with `search_path` pinned
+    to `pg_catalog`;
+  - an object the file did not make depends on its objects;
+  - the data rule above.
+- **The undo.** It drops the objects, deletes the flag row and the ledger row, and sends `NOTIFY pgrst`. A `$post$`
+  follows the COMMIT.
+- **Locks kept short.**
+  - Every check runs first, under ACCESS SHARE only.
+  - The strong-lock phase is catalog-only, with the hottest table locked last.
+  - `lock_timeout = 5s`, the packet's own setting
+    (`db/rollback/2026-10-18-3997-memory-visibility-policies-and-shared-experiences-rollback.sql:73#SET LOCAL lock_timeout = '5s';`).
+  - A second run takes no strong lock: only ROW SHARE / ROW EXCLUSIVE on `feature_flags` and the ledger.
+
+**The flag audit cascade (a refusal in all three new files).** `feature_flag_audit_log.flag` cascades from
+`feature_flags`
+(`artifacts/api-server/src/migrations/0118_feature_flag_audit_log.sql:8#REFERENCES feature_flags(flag) ON DELETE CASCADE`).
+The admin toggle writes an audit row on every on or off
+(`artifacts/api-server/src/migrations/2974_toggle_feature_flag_caller_guard.sql:203#INSERT INTO feature_flag_audit_log(flag`).
+So deleting a flag row silently erases who changed it and when. The new files refuse while that history exists
+(`db/rollback/2026-10-18-3997-memory-visibility-policies-and-shared-experiences-rollback.sql:128#public.feature_flag_audit_log holds % row(s)`).
+111 other rollback files delete a `feature_flags` row without considering it. They were not changed (not this lane).
+
+**Proof.**
+- **PGlite 0.2.17 (PostgreSQL 16.4).** A fixture mirrors the replica's shapes, plus 2984's real file. The forward is
+  the applier's own statement. Per file, in chain order:
+  - forward then rollback equals before: catalog and rows, 293 / 355 / 463 / 495 keys, 0 differences;
+  - the `$post$` passes on its own, and a second run changes nothing;
+  - the forward re-applies to the same state;
+  - the newest-first unwind returns each prior state;
+  - 74 of 74 refusals fire with their message and change nothing;
+  - each header's own way past its data refusal works.
+- **The packet's PGlite 0.5.8 replica (PostgreSQL 18.3).** A copy of `real-full-D` with the 3982 stand-in and seeded
+  rows. Each file is applied at its own chain position by the packet's real-run step, then:
+  - forward then rollback equals before: 24,997–25,233 keys, 0 differences;
+  - a second run changes nothing, the forward re-applies, and the newest-first unwind holds;
+  - 74 of 74 refusals fire.
+- **The 3906 end state** (3901–3906 on top). Each rollback is the exact inverse of its forward delta: 14 / 40 / 122 /
+  75 keys. The ledger rows for 3901–3906 stay.
+- The canonical rows are byte-identical on PostgreSQL 16.4 and 18.3. PostgreSQL 17 was not run.
+
+**3996's existing rollback, first run on the chain.**
+- Forward then rollback equals before: 0 differences in 24,997 keys. That includes the `layover_events` event_type
+  CHECK, restored byte for byte because 2985 left it sorted.
+- A second run is a no-op with no strong lock, the forward re-applies, and both of its refusals fire.
+- **Defect: unstated data loss.** Its flag delete
+  (line 64 of the removed 2026-10-17 file, `DELETE FROM public.feature_flags WHERE flag = 'layover_crew_location_enabled' AND enabled = FALSE;`)
+  cascades to the flag's audit history. On the replica, 2 audit rows became 0, with no refusal.
+- It also drops a populated grant and control without refusing
+  (line 35 of the removed 2026-10-17 file, `DROP TABLE IF EXISTS public.layover_crew_location_grants;`).
+  Its header states this loss, and the rows last at most 4 hours.
+- **Not fixed here.** A fix is a separate file. `rehearse-pending-apply.ts` runs a rollback only when exactly one file
+  matches its number
+  (`artifacts/api-server/scripts/local-db/rehearse-pending-apply.ts:588#const rb = available.filter(`), so the
+  fix should replace the 2026-10-17 file rather than sit beside it. Fixed by the replacement; see "3996's rollback
+  replaced (2026-10-18)".
+
+## 3996's rollback replaced (2026-10-18)
+
+`db/rollback/2026-10-18-3996-layover-crew-location-grants-rollback.sql` replaces the 2026-10-17 file, which is deleted in
+the same change. It was not applied to portava-ci or production. Everything below was proven on PGlite only.
+
+**Why it replaces the file instead of sitting beside it.** `rehearse-pending-apply.ts` runs a rollback only when
+exactly one `db/rollback/` file matches the number
+(`artifacts/api-server/scripts/local-db/rehearse-pending-apply.ts:588#const rb = available.filter(`). The new file is
+dated the day it was written, the `db/rollback/` convention.
+
+**What the removed file got wrong** (the defect recorded in "Rollback files for 3996–3999" above):
+- Its flag delete cascaded to the flag's audit history, with no refusal. On the replica, 2 audit rows became 0.
+- It checked no installed state beyond the flag and the event rows.
+- It set no `lock_timeout` and sent no `NOTIFY pgrst`.
+- Its `$post$` asserted neither the ledger row's removal nor the narrowed vocabulary.
+
+**What the new file does.** It follows the house shape of 3997–3999. It refuses, changing nothing:
+- while the flag is TRUE;
+- NEW: while `feature_flag_audit_log` holds a row for the flag
+  (`db/rollback/2026-10-18-3996-layover-crew-location-grants-rollback.sql:175#public.feature_flag_audit_log holds % row(s)`);
+- while `layover_events` holds a `crew_location_*` row. This is checked twice: once before any strong lock, and again
+  under the table's lock as the narrowed CHECK's own validation
+  (`db/rollback/2026-10-18-3996-layover-crew-location-grants-rollback.sql:402#a crew_location_* row was written to layover_events while this file ran`);
+- on a partial state, or when the event_type CHECK is not the validated `layover_events_event_type_check`;
+- when any of its 54 canonical rows differs, or when an object 3996 did not make depends on its objects.
+
+Otherwise it does the following:
+- drops both tables, the two triggers on the crew tables and the four functions;
+- narrows the vocabulary back;
+- deletes the flag row and the ledger row;
+- sends `NOTIFY pgrst`.
+
+A `$post$` follows the COMMIT. It also asserts the ledger row's removal and the narrowed vocabulary.
+
+**The data decision: shares and controls are dropped by design, and a NOTICE says how many**
+(`db/rollback/2026-10-18-3996-layover-crew-location-grants-rollback.sql:386#dropping % crew location share(s)`). The file
+does not refuse over them. Its header gives the reasons:
+- Every row is built to be deleted. A share is bounded to 4 hours and to its crew; a control lives for one
+  membership. The member leaving, the crew disbanding or expiring, the control going off, the route's purge and the
+  owner's stop each delete them, and neither table holds history.
+- The file runs only with the flag FALSE, and then nothing reads or writes either table.
+- The drop goes the private way: no share means not sharing, and no control means precise sharing is off, 3996's
+  default.
+- The record that shares happened is the `layover_events` rows. The file refuses over them and never deletes them.
+
+**Locks.** Measured on both engines; the table sets are identical. Each is held until the COMMIT.
+- ACCESS EXCLUSIVE on `layover_events`, `layover_crews`, `layover_crew_members` and `layover_sessions`, so reads of
+  those four are blocked. Also ACCESS EXCLUSIVE on its own two tables.
+- There is one scan: validating the narrowed CHECK over `layover_events`. It runs before the crew tables and
+  `layover_sessions` are locked.
+- `lock_timeout = 5s`
+  (`db/rollback/2026-10-18-3996-layover-crew-location-grants-rollback.sql:104#SET LOCAL lock_timeout = '5s';`).
+- A second run locks only `feature_flags` and the ledger.
+- The whole file took 51 ms on the replica (172 ms on a cold first run).
+
+**Proof.** The harness is in the lane's scratchpad, not in the repo.
+- **PGlite 0.5.8 (PostgreSQL 18.3), the packet's replica.** Each file runs at its chain position through the real-run
+  step.
+  - Forward then rollback equals before: 0 differences in 24,997 keys.
+  - The `$post$` passes on its own, and a second run equals before.
+  - The forward re-applies to the same state, and the 3999 → 3996 unwind holds.
+  - 41 of 41 refusals fire with their message and change nothing.
+- **The same replica, on committed rows.**
+  - With 2 audit rows, a share and a control in place, the file refuses, and all of those rows remain.
+  - For contrast, the removed file was run over the same state in a rolled-back transaction. It left 0 audit rows.
+  - After the audit rows are deleted deliberately, the file drops the share and the control, says so, and equals the
+    state before 3996.
+- **The 3906 end state.** The rollback's delta is the exact inverse of 3996's forward: 75 keys.
+- **PGlite 0.2.17 (PostgreSQL 16.4).**
+  - The 54 canonical rows are byte-identical to 18.3.
+  - The round trip, the second run, the re-apply and the unwind hold (293 keys).
+  - 41 of 41 refusals fire, and the three data paths hold on committed rows.
+- PostgreSQL 17 (production) was not run.
+
+**Repointed above.** The passages that described the removed file were edited in place when this section was
+committed: the "**Rollback:**" paragraph of 3996's section, the 3996 row of the table in "Rollback files for
+3996–3999", and that section's "3996's existing rollback" paragraph now name the 2026-10-18 file or quote the removed
+one by line.
+
+**Verified independently (2026-10-18).** A second reviewer re-ran the PostgreSQL 18.3 and 16.4 proofs and 11 cases
+of its own, and found one latent defect: the vocabulary rebuild read the CHECK's values with `[a-z_]+`, so a value a
+later file added with a digit or capital would have been dropped silently, against this file's own header. Every
+value on the chain today matches `[a-z_]+`, so nothing was reachable. Fixed: the rebuild now reads every quoted
+literal (`db/rollback/2026-10-18-3996-layover-crew-location-grants-rollback.sql:397#regexp_matches(v_def, '''((?:[^'']|'''')*)'''`),
+and the refusal's message no longer blames a concurrent write for a value no literal names. The header's lock list
+now names the ROW EXCLUSIVE lock the flag row's DELETE takes on `public.feature_flags`.
+
+3996's own header still names the old path
+(`artifacts/api-server/src/migrations/3996_layover_crew_location_grants.sql:81#-- Rollback:`). 3996 is checksummed into
+the ledger and the sealed packet, so its header is not edited. The sealed packet's README names the old path too.
+
+## 2026-10-18 — `3846_layover_compass_assistant_flag.sql`, written and NOT applied anywhere (Layover 165 program, lane B1-C)
+
+Seeds `layover_compass_assistant_enabled` FALSE: the §12 Layover Compass assistant (census-layover L100, L102–L113,
+L268), under the owner's directive of 2026-10-18. Flag only: no table, column, function or policy.
+
+- **Gap number.** It applies at 3846 on a fresh replay (local-db, beta) and after 3999 on portava-ci and production.
+  It is order-independent: it depends on nothing numbered above it, and nothing above it alters `feature_flags`' shape
+  or this flag (the file's header records the grep).
+- **Seed.** `INSERT … ON CONFLICT DO NOTHING`, FALSE. With the flag OFF, absent or unreadable, POST
+  /airport/sessions/:id/compass answers exactly as the certified-only door does today.
+- **Rollback:** `db/rollback/2026-10-18-3846-layover-compass-assistant-flag-rollback.sql`. It refuses while the flag
+  is TRUE and while `feature_flag_audit_log` holds history for it (0118's cascade would erase that history), then
+  deletes the flag row and 3846's ledger row. Proven by the lane on PGlite: forward, rollback, a second rollback and
+  a re-apply each leave the expected state, and every refusal fires.
+- **Press.** Apply 3846 (portava-ci, then production), then turn the flag ON. The assistant uses the AI integration
+  Compass already uses (`AI_INTEGRATIONS_OPENAI_BASE_URL`, `AI_INTEGRATIONS_OPENAI_API_KEY`); without it every
+  assisted answer falls back to the certified answer and names the reason.
+
+## 2026-10-18 — `3856_layover_routes_session_budget.sql`, written and NOT applied anywhere (Layover 165 program, lane B1-R1)
+
+The owner approved Google Routes for Layover on 2026-10-18 (decision R5: a layover's routed calls are charged to a
+layover-session scope with its own caps). One transaction, additive:
+- the flag `layover_routed_corridor_enabled`, seeded FALSE: the kill switch for every layover Routes call;
+- `public.routes_api_layover_session_usage` (calls one layover session has taken; cap 36) and
+  `public.routes_api_layover_user_daily_usage` (calls one person's layover sessions have taken per UTC day; cap 60):
+  RLS on, no policy, no client privilege, service_role SELECT only;
+- `public.routes_api_try_spend_layover(...)`, SECURITY DEFINER with a pinned search_path, EXECUTE for service_role
+  only. It locks day → session → user (Trips' 3973 takes day → trip → user, so every spender serialises on the day row
+  and no lock cycle exists) and increments all three counters or none. The day row is 3971's: one daily ceiling for the
+  Cloud bill. It refuses a session that is not the caller's.
+
+- **Gap number.** Applied at 3856 on a fresh replay and after 3999 on portava-ci and production. It depends at CREATE
+  time only on auth.users, layover_sessions (0127) and feature_flags (0118). Its one reference to a later file (3971's
+  routes_api_daily_usage) is inside the function body and guarded: until that table exists the function answers
+  'unavailable' and spends nothing. Nothing above 3856 touches what it creates (the header records the grep).
+- **Rollback:** `db/rollback/2026-10-18-3856-layover-routes-session-budget-rollback.sql`, proven by the lane on the
+  production-shaped replica (PostgreSQL 18.3): forward, rollback restores catalog and rows, a second rollback changes
+  nothing, the forward re-applies, and all seven refusals fire.
+- **Press.** Enable the Routes API on the project that owns `GOOGLE_MAPS_API_KEY`; set
+  `LAYOVER_ROUTED_CORRIDOR_ENABLED=true`, `ROUTES_API_DAILY_QUOTA` (≤ 500), `ROUTES_API_DAILY_BUDGET_USD` (≤ 10) and
+  `ROUTES_API_COST_PER_CALL_USD=0.01`; apply 3971 (if not yet), then 3856, and 2745 so routed rows persist; then turn
+  `layover_routed_corridor_enabled` ON.
+
+**Correction to the 3846 entry above (2026-10-18, independent verification).** "With the flag OFF, absent or unreadable,
+POST /airport/sessions/:id/compass answers exactly as the certified-only door does today" overstates it. The certified
+text is identical and no model is called, but each question makes one more `feature_flags` read, the response body
+carries two more fields (`planComparison`, `assistant`), and the question's event row carries three more keys. The
+verifier also proved 3846 and its rollback independently on PGlite (forward, idempotent re-apply, rollback, a no-op second
+rollback, and every refusal, including the refusal over audit history). The flag must stay FALSE until the assistant's
+flag-ON defects found by that verification are fixed (census-compass, "Correction (2026-10-18, independent verification of
+the Layover 165 assistant)").
+
+## 2026-10-18 — `3826_trip_kernel_flight_segments.sql`, `3827_layover_sessions_flight_connection.sql`, `3828_layover_sessions_active_snapshot.sql`, written and NOT applied anywhere (Layover 165 program, lane B1-F)
+
+- **3826** adds thirteen nullable flight columns (with ten CHECKs) to `trip_transport_segments` and extends the trip
+  kernel: ADD_TRANSPORT_SEGMENT stores the itinerary and stamps a flight `unknown`; RECORD_FLIGHT_STATUS (capability
+  `engine`) records a status, binds its source to the actor's role and refuses a stale observation. Seeds
+  `trip_flight_segments_enabled` FALSE.
+- **3827** links `layover_sessions` to its arrival and departure segments (ON DELETE SET NULL) and adds `state` (the
+  seventeen §4.1 values, TEXT + CHECK), `connection_type`, `detected_source` and `expires_at`, with partial indexes for
+  the flight fan-out. A BEFORE trigger derives the state on insert and from terminal statuses; a client role writing any
+  of these columns is refused 42501. Its `$pre$` refuses without 3826. Seeds `layover_flight_connections_enabled` FALSE.
+- **3828** adds `active_snapshot_id` (FK to `layover_certified_computations.snapshot_id`) and `confidence_band`, written
+  by one AFTER INSERT trigger on `layover_certified_computations` that moves the pointer only to a higher snapshot
+  version. No flag. Needs 2700, 2992 and 3623 first.
+- **Gap numbers.** Applied at their numbers on a fresh replay and after 3999 on portava-ci and production. The lane
+  replayed the chain both ways: 0 of 24,989 catalog and row keys differ, and the kernel function's md5 is the same. Nothing
+  numbered 3829–3999 alters these tables or adds a trigger to them.
+- **Rollbacks:** `db/rollback/2026-10-18-3826-trip-kernel-flight-segments-rollback.sql`,
+  `db/rollback/2026-10-18-3827-layover-sessions-flight-connection-rollback.sql`,
+  `db/rollback/2026-10-18-3828-layover-sessions-active-snapshot-rollback.sql`, in reverse order. 21 of 21 proofs on
+  PGlite: each restores catalog and rows exactly, a second run changes nothing, each forward re-applies, and every
+  refusal fires (a linked session, a stored state, a pointer, recorded flight facts, a flag that is TRUE or has audit
+  history — a flag row is never deleted while its history exists).
+- **Press.** 3826, then 3827; 3828 after 2700, 2992 and 3623. Then `trip_flight_segments_enabled` and
+  `layover_flight_connections_enabled` ON.

@@ -136,11 +136,11 @@ const LEGACY_SIDE = new Set([
   "test/memoryLifecycleLive.test.ts",
   "test/memoryProjectionLifecycleLive.test.ts",
   "test/liveFixtureEmails.test.ts",
-  "test/migrationDeployability.test.ts",
+  "test/migrationDeployability.test.ts", "migrations/3903_project_user_memory_block_check_of_record.sql", "test/sqlBlockChecksOfRecordMigrations.test.ts", // 3903 replaces project_user_memory, which inserts into memory_events; its test builds that log as a fixture
 ]);
 
 /** Files that touch the COMMAND kernel's log. */
-const KERNEL_SIDE = new Set([ "migrations/3990_memory_snapshots.sql", "migrations/3992_memory_import_batches.sql", "migrations/3993_owner_resurfacing_policy.sql", "test/MemorySnapshot.pglite.test.ts", "test/memoryImportBatches.pglite.test.ts", "test/memoryImportBatches.postgres.test.ts", "test/resurfacingPolicyCommand.test.ts", "test/resurfacingPolicy.native.test.ts", "test/memoryTimeCorrection.test.ts",
+const KERNEL_SIDE = new Set([ "test/memoryFromOwnMedia.pglite.test.ts" /* builds the command kernel log, memory_domain_events, as its fixture */, "migrations/3990_memory_snapshots.sql", "migrations/3992_memory_import_batches.sql", "migrations/3993_owner_resurfacing_policy.sql", "test/MemorySnapshot.pglite.test.ts", "test/memoryImportBatches.pglite.test.ts", "test/memoryImportBatches.postgres.test.ts", "test/resurfacingPolicyCommand.test.ts", "test/resurfacingPolicy.native.test.ts", "test/memoryTimeCorrection.test.ts",
   "migrations/2711_memory_kernel_execute.sql",
   "lib/memoryOutbox.ts",
   "test/memoryCommandKernelFake.ts",

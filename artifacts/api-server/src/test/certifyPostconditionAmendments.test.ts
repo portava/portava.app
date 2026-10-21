@@ -288,18 +288,18 @@ const pos = (f: string) => ORDER.indexOf(f);
 const reasserting = (a: PostconditionAmendment) => a.reassertedBy ?? [...new Set(a.drops.map((d) => d.supersededBy!))];
 
 describe("B. every declaration in lib/postconditionAmendments.ts", () => {
-  it("anti-vacuity: the 33 blocks and 52 statements measured on the 2026-10-14 rehearsal", () => {
-    assert.equal(POSTCONDITION_AMENDMENTS.length, 33);
-    assert.equal(POSTCONDITION_AMENDMENTS.reduce((n, a) => n + a.drops.length, 0), 52);
+  it("anti-vacuity: the 34 blocks and 53 statements (33/52 measured on the 2026-10-14 rehearsal, + 2786:96 superseded by 3826)", () => {
+    assert.equal(POSTCONDITION_AMENDMENTS.length, 34);
+    assert.equal(POSTCONDITION_AMENDMENTS.reduce((n, a) => n + a.drops.length, 0), 53);
   });
 
-  it("anti-vacuity for the count-pin rule (V-714 F4): it binds the 15 superseded kernel count statements", () => {
+  it("anti-vacuity for the count-pin rule (V-714 F4): it binds the 16 superseded kernel count statements (3826 superseded 2786's engine count)", () => {
     let n = 0;
     for (const a of POSTCONDITION_AMENDMENTS) {
       if (a.kind !== "superseded") continue;
       for (const d of a.drops) if (countedTokens(spanOf(sqlOf(a.file), d.lines)).size > 0) n++;
     }
-    assert.equal(n, 15);
+    assert.equal(n, 16);
   });
 
   it("V-714 F3: 2151:113/117 and 2158:38/40 pinned EXACTLY SELECT at table level, so their declarations re-assert NO client table-level privilege on both tables", () => {

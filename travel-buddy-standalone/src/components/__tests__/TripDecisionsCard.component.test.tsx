@@ -200,3 +200,67 @@ describe('TripDecisionsCard', () => {
     expect(toJSON()).toBeNull();
   });
 });
+
+// ── census-trips wave-5 follow-up: the card draws the board's goals ──
+describe('TripDecisionsCard — the trip\'s goals', () => {
+  const rec = {
+    decisionTaskId: 't1', kind: 'RECOMMEND' as const, proposalId: null,
+    reasons: ['SERVES_GOAL'], options: [],
+  };
+  const goal = (over: Partial<DecisionBoard['goals'][number]> = {}) => ({
+    id: 'g1', type: 'rest', priority: 'high', status: 'open', evidence: {}, scope: 'shared', ...over,
+  });
+
+  it('draws each goal in words, beside the recommendation it explains', async () => {
+    const { findByTestId, findByText } = await render(
+      <TripDecisionsCard tripId={TRIP_ID} load={loader(ok(board({
+        recommendations: [rec],
+        goals: [goal(), goal({ id: 'g2', type: 'budget', priority: 'low', scope: 'personal' })],
+      })))} />,
+    );
+    expect(await findByText(/serves a goal you set/)).toBeTruthy();
+    expect((await findByTestId('trip-goal-g1')).props.children).toBe('Rest · high priority');
+    expect((await findByTestId('trip-goal-g2')).props.children).toBe('Budget · low priority · just you');
+  });
+
+  it('a trip with goals and nothing pending still shows its goals, without claiming anything is waiting', async () => {
+    const { findByTestId, queryByText } = await render(
+      <TripDecisionsCard tripId={TRIP_ID} load={loader(ok(board({ goals: [goal({ status: 'met' })] })))} />,
+    );
+    expect((await findByTestId('trip-goal-g1')).props.children).toBe('Rest · high priority · met');
+    expect(queryByText(/What this trip is waiting on/)).toBeNull();
+  });
+
+  it('an EMPTY list the board carried is "No goals set yet" when the card is drawn', async () => {
+    const { findByTestId } = await render(
+      <TripDecisionsCard tripId={TRIP_ID} load={loader(ok(board({ recommendations: [rec], goals: [] })))} />,
+    );
+    expect(await findByTestId('trip-goals-none')).toBeTruthy();
+  });
+
+  it('a list the board did NOT carry is unreadable, never "no goals", even with nothing else on the card', async () => {
+    const b = board();
+    delete (b as Partial<DecisionBoard>).goals;
+    const { findByTestId, findByText, queryByTestId } = await render(<TripDecisionsCard tripId={TRIP_ID} load={loader(ok(b))} />);
+    expect(await findByTestId('trip-goals-unreadable')).toBeTruthy();
+    expect(await findByText(/isn't the same as having none/)).toBeTruthy();
+    expect(queryByTestId('trip-goals-none')).toBeNull();
+  });
+
+  it('a goal row that cannot be read is counted, not dropped', async () => {
+    const { findByTestId } = await render(
+      <TripDecisionsCard tripId={TRIP_ID} load={loader(ok(board({ goals: [goal(), { id: 'bad' } as never] })))} />,
+    );
+    expect(await findByTestId('trip-goal-g1')).toBeTruthy();
+    expect((await findByTestId('trip-goals-partly-unreadable')).props.children.join('')).toBe("1 goal couldn't be read.");
+  });
+
+  it('an unavailable board draws no goal state of its own: the card-level sentence covers it', async () => {
+    const { findByTestId, queryByTestId } = await render(
+      <TripDecisionsCard tripId={TRIP_ID} load={loader({ state: 'unavailable', detail: 'HTTP 503' })} />,
+    );
+    expect(await findByTestId('trip-decisions-unavailable')).toBeTruthy();
+    expect(queryByTestId('trip-goals')).toBeNull();
+    expect(queryByTestId('trip-goals-none')).toBeNull();
+  });
+});

@@ -16,11 +16,11 @@
  */
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { DisplayMediaImage } from '../../../components/ui/DisplayMediaImage.tsx';
+import { DisplayMediaImage } from '../../../components/ui/DisplayMediaImage.tsx'; import { messageTreeMediaOrNull } from '../media/messageTreeMedia.ts';
 import { space, radius, type as t } from '../../../theme/tokens.ts';
 import { useReducedMotionSetting } from '../../wall/hooks/useReducedMotionSetting.ts';
 import { useTelegraphPalette, type TelegraphPalette } from '../theme/telegraphTheme.ts';
-import { parseKindEnvelope, type EnvelopeKind } from './kindsApi.ts';
+import { parseKindEnvelope, type EnvelopeKind } from './kindsApi.ts'; import { TYPED_RENDERED_MSG_TYPES } from './renderedKinds.ts'; // census-telegraph T431: one list for this dispatch and the capability header
 import { VoiceMessagePlayer } from '../voice/VoiceMessagePlayer.tsx'; import { openMapsNavigation, type MapsPlace } from '../../../lib/maps.ts'; // §8.1 navigate — shares a line so nothing below moves
 const CARD_MAX_WIDTH = 280; // census-telegraph cites :33/:65/:129/:164 — the blank line that was here paid for the import above, so nothing below shifts.
 
@@ -58,8 +58,8 @@ export interface TypedMessageRendererProps {
 export function rendersTypedKind(msgType: string | null | undefined): boolean {
   if (typeof msgType !== 'string') return false;
   return [
-    'media_album', 'gif', 'location', 'action', 'announcement', 'safety', 'memory_note', 'voice',
-  ].includes(msgType.toLowerCase());
+    ...TYPED_RENDERED_MSG_TYPES, // renderedKinds.ts — the §30A.16 header declares from the same list
+  ].includes(msgType.toLowerCase() as (typeof TYPED_RENDERED_MSG_TYPES)[number]);
 }
 
 export function TypedMessageRenderer({
@@ -181,7 +181,7 @@ export function TypedMessageRenderer({
 
     case 'GIF': {
       const animated = isGifAnimated({ reduceMotion, dataSaver });
-      const uri = animated ? p.url : (p.stillUrl ?? p.url);
+      const uri = messageTreeMediaOrNull(animated ? p.url : (p.stillUrl ?? p.url)); // census T446: a provider's or sender's host is never fetched
       return (
         <View style={styles.wrap} testID="telegraph-kind-gif">
           <Text style={styles.kindWord}>GIF</Text>
@@ -207,7 +207,7 @@ export function TypedMessageRenderer({
     case 'VOICE':
       return (
         <VoiceMessagePlayer
-          url={p.url}
+          url={messageTreeMediaOrNull(p.url) ?? ''}
           durationSeconds={p.durationSeconds}
           waveform={p.waveform}
           mine={mine}
@@ -223,7 +223,7 @@ export function TypedMessageRenderer({
             {assets.slice(0, 4).map((a, i) => (
               <DisplayMediaImage
                 key={`${a.url}-${i}`}
-                uri={a.thumbnailUrl ?? a.url}
+                uri={messageTreeMediaOrNull(a.thumbnailUrl ?? a.url)}
                 width={110}
                 height={110}
                 alt={`Album item ${i + 1} of ${assets.length}`}

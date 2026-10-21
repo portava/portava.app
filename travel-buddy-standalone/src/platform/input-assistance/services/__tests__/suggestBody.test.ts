@@ -109,3 +109,55 @@ test('G150: a new Trip\'s window travels in the session context, unchanged', () 
   });
   assert.deepEqual(body.sessionContext, { surface: 'trip_create', startDate: '2026-03-15', endDate: '2026-03-25' });
 });
+
+// ── census G176 (wave-5 fix) — the viewer's position on the wire ─────────────
+//
+// The two callers with a granted position (GlobalPlacePicker, the search screen)
+// hand it to the hook as `sessionContext.lat/lng`. The route reads the position
+// from the TOP-LEVEL pair only, so this builder is where the two meet: a valid
+// pair is lifted, coarsened to 3 decimals, and removed from the session object.
+// MUTATIONS (each red alone, restored): no lift; no coarsening; the range or the
+// finiteness check dropped; the session forwarded with the pair still in it.
+test('G176: a supplied pair rides at the top level, coarsened to 3 decimals, and never inside the session', () => {
+  const body = buildSuggestBody({
+    context: 'place_picker', fieldId: 'place_picker', text: 'lantern', limit: 8,
+    sessionContext: { surface: 'event_create', tripId: 't-1', lat: 15.870012345, lng: 108.338049876 },
+  });
+  assert.equal(body.lat, 15.87);
+  assert.equal(body.lng, 108.338);
+  assert.deepEqual(body.sessionContext, { surface: 'event_create', tripId: 't-1' });
+  const wire = JSON.stringify(body);
+  assert.ok(!wire.includes('15.870012') && !wire.includes('108.33804'), 'the device fix never reaches the wire');
+});
+
+test('G176: no position supplied → no position keys, and the session is forwarded exactly as given', () => {
+  const session = { surface: 'search', tz: 'Asia/Ho_Chi_Minh' };
+  const body = buildSuggestBody({ context: 'global_search', fieldId: 'discovery.search', text: 'han', limit: 8, sessionContext: session });
+  assert.equal('lat' in body, false);
+  assert.equal('lng' in body, false);
+  assert.equal(body.sessionContext, session, 'byte-for-byte the pre-G176 body: the same object');
+  const bare = buildSuggestBody({ context: 'global_search', fieldId: 'discovery.search', text: 'han', limit: 8 });
+  assert.equal('lat' in bare, false);
+  assert.equal(bare.sessionContext, undefined);
+});
+
+test('G176: an unusable pair sends NO position — never half of one — and is still stripped from the session', () => {
+  const bad: Array<Record<string, unknown>> = [
+    { lat: 91, lng: 10 }, { lat: -91, lng: 10 }, { lat: 10, lng: 181 }, { lat: 10, lng: -181 },
+    { lat: Number.NaN, lng: 10 }, { lat: 10, lng: Number.POSITIVE_INFINITY }, { lat: 10 }, { lng: 10 },
+    { lat: '10', lng: '20' }, { lat: null, lng: 20 },
+  ];
+  for (const coords of bad) {
+    const body = buildSuggestBody({
+      context: 'place_picker', fieldId: 'place_picker', text: 'x', limit: 8,
+      sessionContext: { surface: 'event_create', ...(coords as object) },
+    });
+    assert.equal('lat' in body, false, JSON.stringify(coords));
+    assert.equal('lng' in body, false, JSON.stringify(coords));
+    assert.deepEqual(body.sessionContext, { surface: 'event_create' }, JSON.stringify(coords));
+  }
+  // The edges themselves are valid positions.
+  const edge = buildSuggestBody({ context: 'place_picker', fieldId: 'place_picker', text: 'x', limit: 8, sessionContext: { lat: -90, lng: 180 } });
+  assert.equal(edge.lat, -90);
+  assert.equal(edge.lng, 180);
+});

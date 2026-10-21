@@ -666,3 +666,147 @@ describe("certifyFeasibility — one response cannot say two things", () => {
     assert.equal(stay.windowOnly.rating, "airport_only");
   });
 });
+
+// ── census-layover L15: the Experience Compiler consumes the gate's answer ────
+//
+// §3: "Experience Compiler — owns executable plans from feasible actions; must
+// not own visa/entry legal truth." The census row (line 413) held L15 at W on
+// one sentence: nothing under routes/airport.ts or services/airport/ read
+// `entry_requirements` or `traveler_passports`, so entry truth had no owner.
+// It has one now — `layoverEntryGate.resolveLayoverEntry`, reading the corridor
+// through `lib/entryRequirements.readCorridor` — and this block pins the
+// boundary from both sides: (1) no compiler module reads the entry tables, the
+// corridor library or the entry flag itself, and (2) the compiler's plan
+// verdict moves with the gate's answer, which reaches it only inside the
+// certified record. Appended at the tail (ESM hoists the imports below) so no
+// line any census cites moves.
+
+import ts from "typescript";
+import { certifiedPlanFit } from "../services/airport/LayoverConstraints.js";
+
+/**
+ * The plan compiler, by file. The three the census row names (the plan fit,
+ * the stop routes, the recommendation producer) plus the modules those three
+ * call to turn feasible actions into a plan: the gated plan fit, the plan
+ * simulator, the per-stop map band, the crew branch solver and the experience
+ * primitive. `routes/airport.ts` is scanned WHOLE because the stop routes and
+ * `computePlanFit` live in it; it may hold the gate's import and nothing more.
+ */
+const L15_COMPILER_MODULES = [
+  "services/airport/LayoverPlanFit.ts",
+  "services/airport/LayoverRecommendationService.ts",
+  "routes/airport.ts",
+  "services/airport/LayoverConstraints.ts",
+  "routes/layoverSimulate.ts",
+  "services/airport/layoverMapBands.ts",
+  "services/airport/LayoverCrewService.ts",
+  "services/airport/layoverExperiencePrimitive.ts",
+] as const;
+
+/** Entry truth, by the names it can be reached under. */
+const L15_ENTRY_TABLES = new Set(["entry_requirements", "traveler_passports", "trip_traveler_passports"]);
+const L15_ENTRY_FLAG_LITERAL = "passport_entry_intelligence_enabled";
+const L15_CORRIDOR_LIB = /(^|\/)lib\/entryRequirements(\.js|\.ts)?$/;
+const L15_GATE_MODULE = /(^|\/)services\/airport\/layoverEntryGate(\.js|\.ts)?$|^\.\/layoverEntryGate(\.js|\.ts)?$/;
+
+/**
+ * What a module reaches entry truth through, read from its SYNTAX TREE rather
+ * than its text: comments here name these tables on purpose (this very file's
+ * header does), so a text grep would either fail on prose or be loosened until
+ * it missed code. String literals and import specifiers are the only ways a
+ * module can name a table, the flag or the library — a `.from(TABLE)` needs the
+ * literal somewhere in the module, and an imported constant needs the import.
+ */
+function l15EntryReach(rel: string): { tables: string[]; flag: boolean; corridorImports: string[]; gateImports: string[] } {
+  const file = join(HERE, "..", rel);
+  const sf = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const tables: string[] = []; let flag = false; const corridorImports: string[] = []; const gateImports: string[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
+      const spec = node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier) ? node.moduleSpecifier.text : null;
+      if (spec && L15_CORRIDOR_LIB.test(spec)) corridorImports.push(spec);
+      if (spec && L15_GATE_MODULE.test(spec)) gateImports.push(spec);
+    }
+    if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+      const arg = node.arguments[0];
+      if (arg && ts.isStringLiteralLike(arg) && L15_CORRIDOR_LIB.test(arg.text)) corridorImports.push(arg.text);
+    }
+    if (ts.isStringLiteralLike(node)) {
+      if (L15_ENTRY_TABLES.has(node.text)) tables.push(node.text);
+      if (node.text === L15_ENTRY_FLAG_LITERAL) flag = true;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return { tables, flag, corridorImports, gateImports };
+}
+
+describe("census-layover L15 — the Experience Compiler owns plans and holds no entry truth of its own", () => {
+  it("NON-VACUITY: the scanner sees entry truth where it really lives — in the gate and the corridor library", () => {
+    // Without this, every assertion below would pass against a scanner that
+    // sees nothing at all.
+    const gate = l15EntryReach("services/airport/layoverEntryGate.ts");
+    assert.ok(gate.tables.includes("traveler_passports"), "the gate's own passport read is invisible to the scanner");
+    assert.ok(gate.corridorImports.length > 0, "the gate's import of lib/entryRequirements is invisible to the scanner");
+    const lib = l15EntryReach("lib/entryRequirements.ts");
+    assert.ok(lib.tables.includes("entry_requirements"), "the corridor library's table read is invisible to the scanner");
+    assert.ok(lib.flag, "the corridor library's ENTRY_FLAG literal is invisible to the scanner");
+  });
+
+  for (const rel of L15_COMPILER_MODULES) {
+    it(`${rel} reads no entry table, no corridor library and no entry flag`, () => {
+      const r = l15EntryReach(rel);
+      assert.deepEqual(r.tables, [], `${rel} names an entry table directly (${r.tables.join(", ")}) — the compiler would own entry truth; take the gate's EntryEligibility instead`);
+      assert.deepEqual(r.corridorImports, [], `${rel} imports the corridor library (${r.corridorImports.join(", ")}) — only services/airport/layoverEntryGate.ts may`);
+      assert.equal(r.flag, false, `${rel} reads ${L15_ENTRY_FLAG_LITERAL} itself — whether entry intelligence is on is the gate's question`);
+    });
+  }
+
+  it("the two compiler modules that certify take entry FROM THE GATE, by name", () => {
+    // The other half of "must not own": the compiler does not go without entry
+    // either — it consumes the owner's answer. Both certification consumers
+    // import `resolveLayoverEntry` from the gate module and nowhere else.
+    for (const rel of ["routes/airport.ts", "services/airport/LayoverRecommendationService.ts"]) {
+      const sf = ts.createSourceFile(rel, readFileSync(join(HERE, "..", rel), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+      const from: string[] = [];
+      sf.forEachChild((n) => {
+        if (!ts.isImportDeclaration(n) || !ts.isStringLiteral(n.moduleSpecifier)) return;
+        const named = n.importClause?.namedBindings;
+        if (named && ts.isNamedImports(named) && named.elements.some((e) => (e.propertyName ?? e.name).text === "resolveLayoverEntry")) from.push(n.moduleSpecifier.text);
+      });
+      assert.equal(from.length, 1, `${rel} imports resolveLayoverEntry ${from.length} time(s)`);
+      assert.match(from[0]!, L15_GATE_MODULE, `${rel} takes resolveLayoverEntry from ${from[0]}, not from the gate`);
+    }
+  });
+
+  it("the plan verdict moves with the GATE's answer, and an airside plan needs none", () => {
+    // Behaviour, not syntax: the same roomy layover and the same landside stop,
+    // certified under the gate's three answers, produce three plan verdicts —
+    // and the compiler gets the answer only through the certified record it is
+    // handed. An airside plan crosses no border, so no answer moves it.
+    const NOW = Date.parse("2026-09-22T00:00:00Z");
+    const roomy11h: LayoverSession = {
+      ...session(11),
+      arrivalTime: new Date(NOW + 5 * 60_000).toISOString(),
+      departureTime: new Date(NOW + 11 * 3_600_000).toISOString(),
+      createdAt: new Date(NOW).toISOString(), updatedAt: new Date(NOW).toISOString(),
+    };
+    const unresolved: EntryEligibility = { state: "unresolved", reason: "no_data_for_corridor" };
+    const landside = [{ durationMin: 60, travelMin: 30, insideAirport: false }];
+    const airside = [{ durationMin: 60, travelMin: 0, insideAirport: true }];
+    const fitUnder = (entry: EntryEligibility | null, stops: typeof landside) =>
+      certifiedPlanFit(certifySessionFeasibility(AIRPORT, roomy11h, { nowMs: NOW, entry }), stops);
+
+    // Control: the clock alone fits the landside plan under every answer, so
+    // any difference below is the gate's and not the window's.
+    for (const e of [PERMITTED, REFUSED, unresolved, null]) assert.equal(fitUnder(e, landside).clockFit, "fits");
+
+    assert.equal(fitUnder(PERMITTED, landside).fit, "fits", "a confirmed corridor must let a fitting landside plan fit");
+    assert.equal(fitUnder(REFUSED, landside).fit, "blocked", "a refused corridor must block a landside plan whatever the clock says");
+    assert.equal(fitUnder(unresolved, landside).fit, "unconfirmed", "an unresolved corridor must not be certified as a fit");
+    assert.equal(fitUnder(null, landside).fit, "unconfirmed", "a caller that forgot to resolve entry must get the cautious answer");
+    for (const e of [PERMITTED, REFUSED, unresolved, null]) {
+      assert.equal(fitUnder(e, airside).fit, "fits", `an airside plan was judged on a border it does not cross (${e?.state ?? "null"})`);
+    }
+  });
+});

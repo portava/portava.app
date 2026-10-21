@@ -22,7 +22,7 @@ import { Router } from "express";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
-import { isFlagEnabled } from "../lib/featureFlags.js";
+import { isFlagEnabled } from "../lib/featureFlags.js"; import { readStampPresenceView } from "../services/passport/stampPresenceView.js";
 
 const FLAG = "stamp_admire_enabled";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -42,7 +42,7 @@ interface StampRow {
 async function loadStamp(sc: any, id: string): Promise<StampRow | null> {
   const { data, error } = await sc
     .from("user_stamps")
-    .select("id, user_id, visibility, is_revoked, city, country, title_override")
+    .select("id, user_id, visibility, is_revoked, city, country, title_override, source_type, source_id, stamp_definitions(slug, name)")
     .eq("id", id)
     .maybeSingle();
   if (error || !data) return null;
@@ -113,7 +113,7 @@ router.post("/stamps/:userStampId/admire", asyncHandler(async (req, res) => {
     try {
       const { NotificationService } = await import("../services/notifications/NotificationService.js");
       const { NotificationRouter } = await import("../services/notifications/NotificationRouter.js");
-      const label = stamp.title_override ?? stamp.city ?? stamp.country ?? "travel";
+      const place = (await readStampPresenceView(sc, [stamp as any])).place(stamp as any); const label = stamp.title_override ?? place.city ?? place.country ?? (((stamp as any).stamp_definitions?.name as string | undefined) || "travel"); // H4: "admired your <city> stamp" only for an evidenced presence stamp
       const notifSvc = new NotificationService(sc);
       const notifRouter = new NotificationRouter(sc);
       const row = await notifSvc.create({

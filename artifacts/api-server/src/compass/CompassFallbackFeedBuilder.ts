@@ -33,7 +33,7 @@ import type { CompassItem, CompassItemType, CompassProfile } from "./types.js";
 import { runSafetyFilterBatch }                              from "./CompassSafetyFilter.js";
 import { sanitizeItem }                                      from "./CompassPrivacyGuard.js";
 import { getFlags }                                          from "./flags.js";
-import { isPostPublished }                                   from "../lib/postVisibility.js";
+import { isPostPublished }                                   from "../lib/postVisibility.js"; import { readBlockDirections, readMuteExclusions } from "../lib/exclusionSet.js"; // census-telegraph T220 (+T220c: mutes); on this line so no cited line moves
 import { loadBoostLiftWithheld }                             from "./CompassFeedBuilder.js"; import { acceptedTripRows, acceptedMemberTrips } from "./CompassCurrentTrip.js"; import { buildTripCompassOwnedTripsProjection, type TripCompassTripSummary } from "../domain/trips/projections/TripCompassTripSummaryProjection.js"; import { buildTripCompassMemberTripsProjection } from "../domain/trips/projections/TripCompassMembershipProjection.js"; // CT-02
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -224,20 +224,20 @@ function applySafetyAndPrivacy(
  * was converted into a leak on exactly the DB-degradation path it guards.
  */
 async function loadBlockedIds(db: SupabaseClient, userId: string): Promise<Set<string>> {
-  const blocked = new Set<string>();
-  const [outgoingRes, incomingRes] = await Promise.all([
-    db.from("blocks").select("blocked_id").eq("blocker_id", userId),
-    db.from("blocks").select("blocker_id").eq("blocked_id",  userId),
-  ]);
-  if (outgoingRes.error || incomingRes.error) {
+  // census-telegraph T220: both directions through the shared reader, readBlockDirections —
+  // each read WHOLE by key (one range-less read per direction was cut at db-max-rows, and
+  // the blocks past the cut were served here) — and EVERY failure (a returned error, a
+  // thrown read, an answer that is not a row list, a row naming nobody) is `ok: false`.
+  const blocks = await readBlockDirections(db, userId);
+  if (!blocks.ok) {
     throw new Error(
       "CompassFallbackFeedBuilder: block-list load failed — failing closed: " +
-      (outgoingRes.error?.message ?? incomingRes.error?.message),
+      blocks.reason,
     );
   }
-  for (const r of ((outgoingRes.data as any[]) ?? [])) blocked.add(r.blocked_id as string);
-  for (const r of ((incomingRes.data as any[]) ?? [])) blocked.add(r.blocker_id as string);
-  return blocked;
+  // The same throw, so buildFallbackFeed degrades to the safety tools as it always did;
+  // and a block either way hides the person here: the union of the two directions.
+  return new Set<string>(blocks.ids);
 }
 
 // ── Category fetchers ─────────────────────────────────────────────────────────
@@ -783,7 +783,7 @@ export async function buildFallbackFeed(
 class MuteListUnavailableError extends Error {}
 
 /**
- * Load the ids the viewer has MUTED. THROWS if the read errors.
+ * Load the ids the viewer has MUTED. THROWS if the list cannot be read — any failure (T220c).
  *
  * This builder is reached by catching getCompassProfile's throw, and a failed
  * `user_mutes` read is one of the reads that makes it throw. The fallback then
@@ -796,9 +796,9 @@ class MuteListUnavailableError extends Error {}
  * empty ("nobody is muted") list.
  */
 async function loadMutedIds(db: SupabaseClient, userId: string): Promise<Set<string>> {
-  const { data, error } = await db.from("user_mutes").select("muted_id").eq("muter_id", userId);
-  if (error) {
-    throw new MuteListUnavailableError("CompassFallbackFeedBuilder: mute-list load failed — failing closed: " + error.message);
+  const read = await readMuteExclusions(db, userId); // census-telegraph T220c: whole, by key; never rejects — a returned error, a thrown read, a non-list answer and a row naming nobody are each !ok
+  if (!read.ok) {
+    throw new MuteListUnavailableError("CompassFallbackFeedBuilder: mute-list load failed — failing closed: " + read.reason);
   }
-  return new Set(((data as any[]) ?? []).map((r: any) => r.muted_id as string));
+  return new Set(read.ids); // (`data ?? []` read a non-list answer as "nobody muted"; a thrown read was named block_list_unavailable)
 }

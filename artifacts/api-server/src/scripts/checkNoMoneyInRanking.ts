@@ -278,6 +278,11 @@ export const ALLOWLIST: readonly AllowEntry[] = [
     why: "NOT MONEY TO PORTAVA. The `price.cover` live-claim FAMILY — what a venue charges at the door, as travellers report it. Its importance weight orders which missing FACTS are worth asking for; it is not an item's price and no one's payment changes it.",
   },
   {
+    file: "services/airport/LayoverCompassAssistant.ts",
+    identifier: "getTimeWallet",
+    why: "NOT MONEY. §12/§16's 'time wallet' is the traveller's MINUTES — the usable time left before the certified return deadline, read by the layover Compass tool of that name (restored behind layover_compass_assistant_enabled, owner decision 2026-10-18). No amount, price or payment is in it.",
+  },
+  {
     file: "lib/wallProjection.ts",
     identifier: "sponsored",
     why: "the disclosure source class. Reading it DOWNGRADES a claim to the `inferred` truth class and labels the card (`08` §6.1: a disclosed commercial relationship downgrades epistemic standing, it does not buy it). This is the enforcement, not a boost.",

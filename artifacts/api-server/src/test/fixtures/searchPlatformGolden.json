@@ -11498,6 +11498,18 @@
         "confidence": 0.85,
         "source": "canonical",
         "policyVersion": "input-2026-08",
+        "structuredValue": {
+          "entityType": "venue",
+          "venueId": "place-alice",
+          "venue": "zork place alice",
+          "cityId": null,
+          "city": "Lisbon",
+          "country": null,
+          "countryCode": null,
+          "lat": 38.72,
+          "lng": -9.13,
+          "timezone": "Europe/Lisbon"
+        },
         "subtitle": "culture",
         "destination": {
           "route": "/place/place-alice",
@@ -11521,6 +11533,18 @@
         "confidence": 0.85,
         "source": "canonical",
         "policyVersion": "input-2026-08",
+        "structuredValue": {
+          "entityType": "venue",
+          "venueId": "place-gus",
+          "venue": "zork place gus",
+          "cityId": null,
+          "city": "Lisbon",
+          "country": null,
+          "countryCode": null,
+          "lat": 38.74,
+          "lng": -9.13,
+          "timezone": "Europe/Lisbon"
+        },
         "subtitle": "culture",
         "destination": {
           "route": "/place/place-gus",
@@ -11544,6 +11568,18 @@
         "confidence": 0.85,
         "source": "canonical",
         "policyVersion": "input-2026-08",
+        "structuredValue": {
+          "entityType": "venue",
+          "venueId": "place-hal",
+          "venue": "zork place hal",
+          "cityId": null,
+          "city": "Lisbon",
+          "country": null,
+          "countryCode": null,
+          "lat": 38.75,
+          "lng": -9.13,
+          "timezone": "Europe/Lisbon"
+        },
         "subtitle": "food",
         "destination": {
           "route": "/place/place-hal",
@@ -11567,6 +11603,18 @@
         "confidence": 0.85,
         "source": "canonical",
         "policyVersion": "input-2026-08",
+        "structuredValue": {
+          "entityType": "venue",
+          "venueId": "place-venue",
+          "venue": "zork place venue",
+          "cityId": null,
+          "city": "Lisbon",
+          "country": null,
+          "countryCode": null,
+          "lat": 38.75,
+          "lng": -9.1,
+          "timezone": "Europe/Lisbon"
+        },
         "subtitle": "food",
         "destination": {
           "route": "/place/place-venue",
@@ -11587,6 +11635,7 @@
         "blocks",
         "user_privacy_settings",
         "discovery_places",
+        "feature_flags",
         "feature_flags",
         "discovery_places",
         "discovery_places",

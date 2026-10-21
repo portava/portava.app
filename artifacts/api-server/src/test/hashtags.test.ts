@@ -34,7 +34,7 @@ function makeClient(store: Record<string, Row[]> = {}, opts: { userId?: string }
     let _rows: Row[] = [...(store[table] ?? [])];
     let _single = false;
     let _maybeSingle = false;
-    let _countHead = false;
+    let _countExact = false; // T220d: `{ count: 'exact' }` alone is the rows AND the count, as PostgREST answers it; only `head: true` drops the rows
     let _headOnly = false;
     let _updatePatch: Row = {};
     let _isDelete = false;
@@ -48,7 +48,7 @@ function makeClient(store: Record<string, Row[]> = {}, opts: { userId?: string }
     const b: any = {
       select(cols?: string, opts2?: any) {
         if (opts2?.head) _headOnly = true;
-        if (opts2?.count === 'exact') _countHead = true;
+        if (opts2?.count === 'exact') _countExact = true;
         return b;
       },
       eq(col: string, val: unknown) { filters.push((r) => r[col] === val); return b; },
@@ -124,19 +124,19 @@ function makeClient(store: Record<string, Row[]> = {}, opts: { userId?: string }
             store[table] = (store[table] ?? []).filter((r) => !toRemove.has(r));
             _rows = [];
           }
-          const results = applyFilters(_rows);
-          if (_headOnly || _countHead) {
+          const results = applyFilters(_rows); const counted = _countExact ? { count: applyFilters(store[table] ?? []).length } : {}; // the exact count ignores limit/range
+          if (_headOnly) { // head: true — the count only, no rows
             resolve({ data: null, count: applyFilters(store[table] ?? []).length, error: null });
             return;
           }
           if (_single) {
             resolve(results.length > 0
-              ? { data: results[0], error: null }
+              ? { data: results[0], error: null, ...counted }
               : { data: null, error: { message: 'row not found' } });
             return;
           }
-          if (_maybeSingle) { resolve({ data: results[0] ?? null, error: null }); return; }
-          resolve({ data: results, error: null });
+          if (_maybeSingle) { resolve({ data: results[0] ?? null, error: null, ...counted }); return; }
+          resolve({ data: results, error: null, ...counted });
         } catch (e) { reject(e); }
       },
     };

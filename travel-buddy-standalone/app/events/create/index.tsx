@@ -57,7 +57,7 @@ import { color, space, radius, type as t, shadow, aspect, dot} from '../../../sr
 import { useCreationAssistance } from '../../../src/hooks/useCreationAssistance.ts'; import { useFeatureFlags } from '../../../src/context/FeatureFlagsContext';
 import {
   CreationAssist,
-  CREATION_FIELD_IDS,
+  CREATION_FIELD_IDS, reportServedTask, eventCreationServed,
   type DuplicateCandidate,
   StructuredValueChips,
   eventFormPatch,
@@ -171,7 +171,7 @@ export default function CreateEventScreen() {
   // Destination timezone (from the selected place, e.g. Asia/Manila for
   // Cebu) — falls back to the device timezone only until a location has
   // been picked in Step 3, so Step 2's date/time display isn't misleading.
-  const [locationTimezone, setLocationTimezone] = useState<string | null>(null);
+  const [locationTimezone, setLocationTimezone] = useState<string | null>(null); const outcomeServed = useRef({ location: false, title: false }); // §45 G320: which Input fields served this event
 
   // §20/§55 — as the event is titled, surface likely-existing Events/Places so
   // the user can confirm the intended entity instead of creating a duplicate, plus
@@ -194,7 +194,7 @@ export default function CreateEventScreen() {
     if (patch.endDateStr !== undefined) setEndDateStr(patch.endDateStr);
     if (patch.endTime !== undefined) setEndTime(patch.endTime);
     if (patch.maxAttendees !== undefined) setMaxAttendees(patch.maxAttendees);
-    scheduleSave();
+    outcomeServed.current.title = true; scheduleSave();
   }, [startDateStr, startTime, endDateStr, endTime]); // eslint-disable-line react-hooks/exhaustive-deps
   const handlePickExistingEvent = useCallback((c: DuplicateCandidate) => {
     // §55 "user confirms intended entity" — route to the existing record to
@@ -594,7 +594,7 @@ export default function CreateEventScreen() {
     setError(null);
     const payload = buildPayload();
     let eventId: string | undefined;
-
+    const served = eventCreationServed({ locationPicked: outcomeServed.current.location, structuredValueApplied: outcomeServed.current.title }); // §45 G320
     if (draftId) {
       const res = await publishDraft(draftId, { ...payload, publishNow: true });
       if (res.ok && res.data) {
@@ -604,21 +604,21 @@ export default function CreateEventScreen() {
         // drafts backend is unavailable — never for validation/business-rule
         // failures, which must surface to the user instead of being bypassed.
         const fallback = await createEvent({ ...payload, title: title.trim() || 'Untitled', publishNow: true });
-        if (!fallback.ok || !fallback.data) { setError(fallback.message ?? 'Failed to publish'); setSaving(false); return; }
+        if (!fallback.ok || !fallback.data) { setError(fallback.message ?? 'Failed to publish'); reportServedTask(served, 'event_created', false); setSaving(false); return; }
         eventId = fallback.data.id;
       } else {
-        setError(res.message ?? 'Failed to publish');
+        setError(res.message ?? 'Failed to publish'); reportServedTask(served, 'event_created', false);
         setSaving(false);
         return;
       }
     } else {
       const res = await createEvent({ ...payload, title: title.trim() || 'Untitled', publishNow: true });
-      if (!res.ok || !res.data) { setError(res.message ?? 'Failed to publish'); setSaving(false); return; }
+      if (!res.ok || !res.data) { setError(res.message ?? 'Failed to publish'); reportServedTask(served, 'event_created', false); setSaving(false); return; }
       eventId = res.data.id;
     }
 
     setSaving(false);
-    router.replace(`/event/${eventId}` as any);
+    reportServedTask(served, 'event_created', true); router.replace(`/event/${eventId}` as any); // §45 G320: a no-op without outcome-learning consent
   }
 
   function handleDiscard() {
@@ -1026,7 +1026,7 @@ export default function CreateEventScreen() {
                     if (place.lng != null) setLocationLng(place.lng);
                     if (place.timezone) setLocationTimezone(place.timezone);
                   }
-                  setLocationPickerVisible(false);
+                  setLocationPickerVisible(false); outcomeServed.current.location = true; // §45 G320: event.location served this event
                   scheduleSave();
                   if (hasConflict) {
                     Alert.alert(

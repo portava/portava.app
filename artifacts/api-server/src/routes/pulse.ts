@@ -39,7 +39,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http";
 import { nameVisibilitySet, presentedName } from "../lib/publicIdentity";
-import { getServiceClient } from "../lib/supabase";
+import { getServiceClient } from "../lib/supabase"; import { readBlockDirections } from "../lib/exclusionSet.js"; // census-telegraph T220; on this line so no cited line moves
 import { stampOverlayCol } from "../lib/postMediaOverlay";
 import { getDisplayTrustScores } from "../services/trust/TrustScoreService.js";
 import {
@@ -223,15 +223,15 @@ router.get("/pulse", async (req, res) => {
   let blockFetchFailed = false;
   const blockedSet = new Set<string>();
   try {
-    const [blockedRes, blockerRes] = await Promise.all([
-      sc.from("blocks").select("blocked_id").eq("blocker_id", user.id),
-      sc.from("blocks").select("blocker_id").eq("blocked_id", user.id),
-    ]);
-    if (blockedRes.error || blockerRes.error) {
+    // census-telegraph T220: both directions through the shared reader, readBlockDirections —
+    // each read WHOLE by key (a range-less read was cut at db-max-rows) — and every failure (a
+    // returned error, a thrown read, an answer that is not a row list, a row naming nobody) `!ok`.
+    const blocks = await readBlockDirections(sc, user.id);
+    if (!blocks.ok) {
       blockFetchFailed = true;
     } else {
-      for (const row of (blockedRes.data as any[]) ?? []) blockedSet.add(row.blocked_id as string);
-      for (const row of (blockerRes.data as any[]) ?? []) blockedSet.add(row.blocker_id as string);
+      for (const id of blocks.ids) blockedSet.add(id);
+      // (blocks.ids is both directions: everyone the viewer blocked and everyone who blocked them)
     }
   } catch {
     blockFetchFailed = true;
@@ -1136,24 +1136,24 @@ router.get("/pulse/live", async (req, res) => {
   const blockedSet = new Set<string>();
   let blockFetchFailed = false;
   try {
-    const [outRes, inRes] = await Promise.all([
-      sc.from("blocks").select("blocked_id").eq("blocker_id", user.id),
-      sc.from("blocks").select("blocker_id").eq("blocked_id", user.id),
-    ]);
-    if (outRes.error || inRes.error) {
+    // census-telegraph T220: both directions through the shared reader, readBlockDirections —
+    // each read WHOLE by key (a range-less read was cut at db-max-rows) — and every failure (a
+    // returned error, a thrown read, an answer that is not a row list, a row naming nobody) `!ok`.
+    const blocks = await readBlockDirections(sc, user.id);
+    if (!blocks.ok) {
       blockFetchFailed = true;
       req.log?.warn(
         {
           userId: user.id,
-          outCode: (outRes.error as any)?.code,
-          inCode: (inRes.error as any)?.code,
-          err: outRes.error ?? inRes.error,
+          // (one reader for both directions: its `reason` replaces outCode / inCode)
+          reason: blocks.reason,
+          err: blocks.reason,
         },
         "pulse/live: block-state read failed — returning an empty rail (fail-closed)",
       );
     } else {
-      for (const r of (outRes.data as any[]) ?? []) blockedSet.add(r.blocked_id as string);
-      for (const r of (inRes.data as any[]) ?? []) blockedSet.add(r.blocker_id as string);
+      for (const id of blocks.ids) blockedSet.add(id);
+      // (blocks.ids is both directions: everyone the viewer blocked and everyone who blocked them)
     }
   } catch (err) {
     blockFetchFailed = true;

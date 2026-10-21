@@ -279,7 +279,7 @@ function routerDb(opts: { quiet?: boolean; safetyOverride?: boolean; pushEnabled
     notification_preferences: [{
       user_id: USER, push_enabled: opts.pushEnabled ?? true, email_enabled: false, in_app_enabled: true, digests_enabled: false,
       safety_override: opts.safetyOverride ?? true,
-      quiet_hours_enabled: opts.quiet === true, quiet_start: "00:00", quiet_end: "23:59", timezone: "UTC",
+      quiet_hours_enabled: opts.quiet === true, quiet_start: "00:00", quiet_end: "00:00", timezone: "UTC",
       message_previews: true, location_previews: false,
     }],
     notification_devices: [{ user_id: USER, push_token: "ExponentPushToken[ios1]", ios_time_sensitive_capable: true }],

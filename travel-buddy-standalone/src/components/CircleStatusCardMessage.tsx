@@ -21,8 +21,8 @@
 import React from 'react';
 import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import { Users, MapPin, CheckCircle } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
-import { TG } from '../theme/telegraphTokens.ts';
+import { space, radius, type as t } from '../theme/tokens.ts';
+import { useTelegraphTheme, type TelegraphPalette } from '../features/telegraph/theme/telegraphTheme.ts';
 import { resolveCardRenderFromProps } from './CircleStatusCardMessage.logic';
 
 // ── Component ──────────────────────────────────────────────────────────────
@@ -47,6 +47,7 @@ export function CircleStatusCardMessage({
   isCircleMember,
   onPress,
 }: Props) {
+  const { palette, styles: card } = useTelegraphTheme(makeCardStyles);
   const isLoading = isCircleMember === null;
 
   const decision = resolveCardRenderFromProps(
@@ -62,7 +63,7 @@ export function CircleStatusCardMessage({
     isLoading ? (
       <ActivityIndicator
         size="small"
-        color={mine ? color.onInk + '99' : color.signal}
+        color={mine ? palette.sentText + '99' : palette.operational}
         style={card.spinner}
       />
     ) : (
@@ -76,7 +77,7 @@ export function CircleStatusCardMessage({
       <View style={[card.wrap, mine && card.wrapMine, isLoading && card.wrapLoading]}>
         <View style={card.header}>
           <View style={[card.badge, mine && card.badgeMine]}>
-            <Users size={10} color={color.onInk} />
+            <Users size={10} color={mine ? palette.sentText : palette.operationalOn} />
           </View>
           <Text style={[card.brand, mine && card.brandMine]}>CIRCLE</Text>
         </View>
@@ -84,7 +85,7 @@ export function CircleStatusCardMessage({
         {isLoading ? (
           <ActivityIndicator
             size="small"
-            color={mine ? color.onInk + '99' : color.signal}
+            color={mine ? palette.sentText + '99' : palette.operational}
             style={card.spinner}
           />
         ) : null}
@@ -98,7 +99,7 @@ export function CircleStatusCardMessage({
       <View style={[card.wrap, mine && card.wrapMine, isLoading && card.wrapLoading]}>
         <View style={card.header}>
           <View style={[card.badge, mine && card.badgeMine]}>
-            <Users size={10} color={color.onInk} />
+            <Users size={10} color={mine ? palette.sentText : palette.operationalOn} />
           </View>
           <Text style={[card.brand, mine && card.brandMine]}>CIRCLE</Text>
           <View style={[card.chip, mine && card.chipMine]}>
@@ -107,7 +108,7 @@ export function CircleStatusCardMessage({
         </View>
 
         <View style={card.row}>
-          <MapPin size={14} color={mine ? color.onInk + 'CC' : color.signal} />
+          <MapPin size={14} color={mine ? palette.sentText + 'CC' : palette.operational} />
           <Text style={[card.title, mine && card.titleMine]}>
             {decision.locationText ?? 'Meeting point updated'}
           </Text>
@@ -129,7 +130,7 @@ export function CircleStatusCardMessage({
     <View style={[card.wrap, mine && card.wrapMine, isLoading && card.wrapLoading]}>
       <View style={card.header}>
         <View style={[card.badge, mine && card.badgeMine]}>
-          <Users size={10} color={color.onInk} />
+          <Users size={10} color={mine ? palette.sentText : palette.operationalOn} />
         </View>
         <Text style={[card.brand, mine && card.brandMine]}>CIRCLE</Text>
         <View style={[card.chip, mine && card.chipMine]}>
@@ -138,7 +139,7 @@ export function CircleStatusCardMessage({
       </View>
 
       <View style={card.row}>
-        <CheckCircle size={14} color={mine ? color.onInk + 'CC' : '#22c55e'} />
+        <CheckCircle size={14} color={mine ? palette.sentText + 'CC' : '#22c55e'} />
         <Text style={[card.title, mine && card.titleMine]}>
           {decision.label}
         </Text>
@@ -157,20 +158,22 @@ export function CircleStatusCardMessage({
 
 // ── Styles ─────────────────────────────────────────────────────────────────
 
-const card = StyleSheet.create({
+// census T123/T124: the scheme's colours; a card the viewer SENT is a sent bubble
+// (it was vermilion), and the Circle mark and link are the operational teal.
+const makeCardStyles = (p: TelegraphPalette) => StyleSheet.create({
   wrap: {
-    backgroundColor: TG.surfaceRaised,
+    backgroundColor: p.surfaceRaised,
     borderRadius:    radius.lg,
     borderWidth:     1,
-    borderColor:     color.haze,
+    borderColor:     p.haze,
     borderBottomLeftRadius: 4,
     padding:  space.md,
     gap:      6,
     maxWidth: 280,
   },
   wrapMine: {
-    backgroundColor:      color.signal,
-    borderColor:          color.signal,
+    backgroundColor:      p.sentBubble,
+    borderColor:          p.sentBubble,
     borderBottomLeftRadius:  radius.lg,
     borderBottomRightRadius: 4,
   },
@@ -179,41 +182,41 @@ const card = StyleSheet.create({
 
   badge: {
     width: 18, height: 18, borderRadius: 5,
-    backgroundColor: color.signal,
+    backgroundColor: p.operational,
     alignItems: 'center', justifyContent: 'center',
   },
-  badgeMine: { backgroundColor: color.onInk + '33' },
+  badgeMine: { backgroundColor: p.sentText + '33' },
 
   brand: {
-    fontFamily: 'Courier', fontSize: 9, color: color.signal,
+    fontFamily: 'Courier', fontSize: 9, color: p.operational,
     letterSpacing: 1, flex: 1,
   },
-  brandMine: { color: color.onInk + 'BB' },
+  brandMine: { color: p.sentText + 'BB' },
 
   chip: {
     paddingHorizontal: 6, paddingVertical: 2,
-    borderRadius: 8, backgroundColor: color.haze,
+    borderRadius: 8, backgroundColor: p.haze,
   },
-  chipMine: { backgroundColor: color.onInk + '22' },
+  chipMine: { backgroundColor: p.sentText + '22' },
   chipText: {
     fontSize: 9, fontFamily: 'Courier', fontWeight: '700',
-    textTransform: 'uppercase', letterSpacing: 0.3, color: color.mute,
+    textTransform: 'uppercase', letterSpacing: 0.3, color: p.mute,
   },
-  chipTextMine: { color: color.onInk + 'CC' },
+  chipTextMine: { color: p.sentText + 'CC' },
 
   row: { flexDirection: 'row', alignItems: 'center', gap: 5 },
 
-  title: { color: color.ink, fontWeight: '700', fontSize: 13, lineHeight: 17, flex: 1 },
-  titleMine: { color: color.onInk },
+  title: { color: p.recvText, fontWeight: '700', fontSize: 13, lineHeight: 17, flex: 1 },
+  titleMine: { color: p.sentText },
 
-  body: { ...t.small, color: color.mute, fontStyle: 'italic' },
-  bodyMine: { color: color.onInk + 'AA' },
+  body: { ...t.small, color: p.mute, fontStyle: 'italic' },
+  bodyMine: { color: p.sentText + 'AA' },
 
-  meta: { ...t.small, color: color.mute, fontSize: 11 },
-  metaMine: { color: color.onInk + 'BB' },
+  meta: { ...t.small, color: p.mute, fontSize: 11 },
+  metaMine: { color: p.sentText + 'BB' },
 
-  link: { ...t.small, color: color.signal, fontSize: 11, fontWeight: '600', marginTop: 2 },
-  linkMine: { color: color.onInk + 'CC' },
+  link: { ...t.small, color: p.operational, fontSize: 11, fontWeight: '600', marginTop: 2 },
+  linkMine: { color: p.sentText + 'CC' },
 
   wrapLoading: { opacity: 0.55 },
   spinner: { alignSelf: 'flex-start', marginTop: 2 },

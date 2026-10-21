@@ -14,7 +14,7 @@ import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { Check, CheckCheck, CircleHelp, Moon } from 'lucide-react-native';
 
-import { color } from '../../../theme/tokens.ts';
+import { useTelegraphPalette } from '../theme/telegraphTheme.ts';
 import { ownMessageStatusLabel, type OwnMessageStatus } from './readState.ts';
 
 export function OwnMessageStatusRow({
@@ -24,10 +24,11 @@ export function OwnMessageStatusRow({
   status: OwnMessageStatus;
   isGroup: boolean;
 }) {
+  const palette = useTelegraphPalette();
   if (status.kind === 'sending' || status.kind === 'failed') return null;
   const label = ownMessageStatusLabel(status, { isGroup });
   const muted = status.kind === 'receipt_unavailable' || status.kind === 'recipient_offline';
-  const tint = muted ? color.mute : color.signal;
+  const tint = muted ? palette.mute : palette.operational; // census T124: a receipt is ordinary emphasis, not the attention colour
   const Icon =
     status.kind === 'seen' || status.kind === 'delivered' ? CheckCheck
       : status.kind === 'receipt_unavailable' ? CircleHelp

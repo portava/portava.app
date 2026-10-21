@@ -196,6 +196,30 @@ describe("resolveProfileVisibility — owner self-view", () => {
   });
 });
 
+// census-telegraph T220 (wave 5): the block check moved onto the shared pair
+// reader. Its FAILURE half had no case anywhere in the suite — answering an
+// unreadable `blocks` as "no block" survived every test that reaches this
+// function. A failed read is a throw ("Block check failed"), never "full".
+describe("resolveProfileVisibility — non-owner, blocks unreadable (T220)", () => {
+  const blocksClient = (blocks: Record<string, any>[], fail: boolean) => makeFailClosedClient({
+    rows: { profile_privacy_settings: [], user_friendships: [], blocks, user_account_states: [], user_follows: [] },
+    failOn: (ctx) => (fail && ctx.table === "blocks" ? READ_FAIL : null),
+  });
+
+  it("FAILURE: an unreadable blocks table throws — it is never read as 'no block'", async () => {
+    scenarios++;
+    await assert.rejects(resolveProfileVisibility(blocksClient([], true), VIEWER, OWNER, PUBLIC_ROW), /Block check failed/);
+  });
+
+  it("a block in either direction is 'blocked'", async () => {
+    scenarios++;
+    for (const row of [{ blocker_id: OWNER, blocked_id: VIEWER }, { blocker_id: VIEWER, blocked_id: OWNER }]) {
+      const r = await resolveProfileVisibility(blocksClient([row], false), VIEWER, OWNER, PUBLIC_ROW);
+      assert.equal(r.visibility, "blocked", JSON.stringify(row));
+    }
+  });
+});
+
 describe("vacuity", () => {
   it("exercised a non-zero number of scenarios", () => {
     assert.ok(scenarios >= 10, `expected >= 10 scenarios, ran ${scenarios}`);

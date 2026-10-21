@@ -30,7 +30,7 @@ import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { ShieldAlert, X } from 'lucide-react-native';
 
-import { color, radius, space, typography } from '../../../theme/tokens.ts';
+import { color, radius, space, typography } from '../../../theme/tokens.ts'; import { useTelegraphTheme, type TelegraphPalette } from '../theme/telegraphTheme.ts';
 import type { MessageSafetySignals, ScamFamily, SignalSeverity } from '../types/index.ts';
 
 /** What each family is, in one line a traveller can act on. */
@@ -71,11 +71,11 @@ const LINK_COPY: Record<string, string> = {
   NON_HTTPS: 'an unencrypted link',
 };
 
-const SEVERITY_STYLE: Record<SignalSeverity, { bg: string; border: string; fg: string }> = {
-  notice: { bg: '#F3F2EE', border: color.haze, fg: color.mute },
-  caution: { bg: '#FDF6E7', border: '#EBD9A8', fg: color.warn },
-  warning: { bg: '#FDEDEA', border: '#F4C4B8', fg: color.signalDim },
-};
+const severityStyle = (p: TelegraphPalette, dark = p.scheme === 'dark'): Record<SignalSeverity, { bg: string; border: string; fg: string }> => ({ // census T123/T124: each tone per scheme; a scam WARNING is safety, so the vermilion family, at a shade that reads as text (#C43B23 is the app's AA vermilion; the old #E5391C was 3.6:1)
+  notice: { bg: dark ? p.chipFill : '#F3F2EE', border: p.haze, fg: p.mute },
+  caution: { bg: dark ? '#3A3016' : '#FDF6E7', border: dark ? '#6B5A1E' : '#EBD9A8', fg: dark ? '#F2C66D' : color.warn },
+  warning: { bg: dark ? '#3A1F1F' : '#FDEDEA', border: dark ? '#6B2B2B' : '#F4C4B8', fg: dark ? '#FF8A73' : '#C43B23' },
+});
 
 export interface MessageSafetyBannerProps {
   messageId: string;
@@ -86,13 +86,14 @@ export interface MessageSafetyBannerProps {
 
 export function MessageSafetyBanner({ messageId, signals, onReport }: MessageSafetyBannerProps) {
   const [dismissed, setDismissed] = useState(false);
+  const { palette, styles: s } = useTelegraphTheme(makeStyles);
 
   if (!signals || dismissed) return null;
   const hasContent = (signals.scam?.length ?? 0) > 0 || (signals.links?.length ?? 0) > 0;
   if (!hasContent) return null;
 
   const severity: SignalSeverity = signals.severity ?? 'caution';
-  const tone = SEVERITY_STYLE[severity];
+  const tone = severityStyle(palette)[severity];
 
   const linkNotes = (signals.links ?? [])
     .flatMap((l) => l.findings.filter((f) => LINK_COPY[f]).map((f) => LINK_COPY[f]!))
@@ -119,7 +120,7 @@ export function MessageSafetyBanner({ messageId, signals, onReport }: MessageSaf
           onPress={() => setDismissed(true)}
           style={s.dismiss}
         >
-          <X size={13} color={color.mute} />
+          <X size={13} color={palette.mute} />
         </Pressable>
       </View>
 
@@ -150,7 +151,7 @@ export function MessageSafetyBanner({ messageId, signals, onReport }: MessageSaf
   );
 }
 
-const s = StyleSheet.create({
+const makeStyles = (p: TelegraphPalette) => StyleSheet.create({
   wrap: {
     borderWidth: 1,
     borderRadius: radius.sm,
@@ -163,7 +164,7 @@ const s = StyleSheet.create({
   headerRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   heading: { ...(typography.label as object), flex: 1 },
   dismiss: { padding: 2 },
-  advice: { ...(typography.caption as object), color: color.mute },
+  advice: { ...(typography.caption as object), color: p.mute },
   reportBtn: { alignSelf: 'flex-start', paddingTop: 2 },
   reportText: { ...(typography.caption as object), textDecorationLine: 'underline' },
 });

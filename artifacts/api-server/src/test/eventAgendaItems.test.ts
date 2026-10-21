@@ -446,14 +446,17 @@ describe("GET /api/events/:id/agenda-items — participant-scoped read", () => {
   it("FAILS CLOSED when event_rsvps cannot be read — an outage does not admit", async () => {
     // supabase-js RESOLVES on a database error, so the discarded `error` here
     // makes "this user has no RSVP" and "the RSVP table is unreadable" the same
-    // falsy value. It happens to deny; this pins that it keeps denying.
+    // falsy value. It happens to deny; this pins that it keeps denying — and,
+    // since census-trust wave 5 (event reads), that the denial says the check
+    // could not run (503 degraded_unavailable) instead of "not an attendee" (403).
     _setTestClient(
       makeFakeClient({ seedItems: SEED_ITEMS, rsvpUserId: ATTENDEE_ID, failTables: new Set(["event_rsvps"]) }),
       true,
     );
     const { status, body } = await getAgendaItems(port, EVENT_ID, ATTENDEE_ID);
-    assert.equal(body?.error, "forbidden", JSON.stringify(body));
-    assert.equal(status, 403);
+    assert.equal(body?.error, "degraded_unavailable", JSON.stringify(body));
+    assert.equal(status, 503);
+    assert.ok(!body.items, "an unread RSVP must not receive an items array at all");
   });
 
   it("REPORTS a failed list read instead of serving an empty agenda", async () => {

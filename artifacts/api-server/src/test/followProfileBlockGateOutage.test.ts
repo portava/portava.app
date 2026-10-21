@@ -123,7 +123,7 @@ function makeClient(o: Opts) {
     }
     function resolveList() {
       if (fail.has(table)) return { data: null, error: DB_ERROR };
-      return { data: [], error: null };
+      return { data: table === "blocks" && resolveCount().count ? [{ blocker_id: get("blocker_id") }] : [], error: null }; // T220 part 2: the passport now reads each direction as a `.limit(1)` row list (readPairDirections) — the same block state, as rows
     }
     function resolveCount() {
       // A FAILED count resolves as { count: null, error } — this is the shape

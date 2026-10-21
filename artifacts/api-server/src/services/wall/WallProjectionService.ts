@@ -43,7 +43,7 @@ import type {
 } from "../../lib/wallProjection.js";
 import { decidePostReadable } from "../../lib/postVisibility.js";
 import { isFlagEnabled } from "../../lib/featureFlags.js";
-import { logger } from "../../lib/logger.js";
+import { logger } from "../../lib/logger.js"; import { readBlockExclusions } from "../../lib/exclusionSet.js";
 import {
   gatherContextThread,
   DEFAULT_CONTEXT_THREAD_POLICY,
@@ -174,24 +174,24 @@ async function loadBlockedAuthorIds(
   const unique = [...new Set(authorIds)].filter((id) => id && id !== viewerId);
   if (!sc || unique.length === 0) return new Set();
   try {
-    const list = unique.join(",");
-    const { data, error } = await sc
-      .from("blocks")
-      .select("blocker_id, blocked_id")
-      .or(
-        `and(blocker_id.eq.${viewerId},blocked_id.in.(${list})),` +
-          `and(blocked_id.eq.${viewerId},blocker_id.in.(${list}))`,
-      );
-    if (error) {
-      logger.warn({ err: error }, "wallProjection: blocks read failed — failing closed");
+    // census-telegraph T220: the shared reader, scoped to these authors — one
+    // `.in()` read per direction, chunked at BLOCK_AMONG_CHUNK:
+    const read = await readBlockExclusions(sc, viewerId, { among: unique });
+    // where this was ONE `.or()` carrying both `in.(…)` author lists inline, a
+    // URL that grew with the page. The answer is the same set: every
+    // counter-party of a block row between the viewer and an author here, either
+    // way (the loop that stood here built it from `blocker_id` / `blocked_id`).
+    //
+    // Every failure — a returned error, a thrown read, an answer that is not a
+    // row list, a row that names no counter-party — is `ok: false`, and drops
+    // every author that could be blocked, as the error did. The catch below
+    // still answers anything else this block throws the same way.
+    if (!read.ok) {
+      logger.warn({ err: read.reason }, "wallProjection: blocks read failed — failing closed");
       return new Set(unique); // fail closed: drop every author that could be blocked
     }
-    const blocked = new Set<string>();
-    for (const row of (data as any[]) ?? []) {
-      if (row.blocker_id === viewerId) blocked.add(String(row.blocked_id));
-      else blocked.add(String(row.blocker_id));
-    }
-    return blocked;
+    // (`among` scopes the read, so the set names only authors in `unique`.)
+    return new Set(read.ids);
   } catch (err) {
     logger.warn({ err }, "wallProjection: blocks read threw — failing closed");
     return new Set(unique);

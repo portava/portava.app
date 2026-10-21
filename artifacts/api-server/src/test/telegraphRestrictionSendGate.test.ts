@@ -818,7 +818,7 @@ describe("6. POST /highlights/:id/reply runs the six gates on the DM it resolves
     const r = await reply();
     assert.equal(r.status, 200, r.raw);
     assert.equal(dmsWithD(c).length, 1);
-    assert.equal(repliesFromA(c).length, 1);
+    assert.equal(repliesFromA(c).length, 1); const ctx = c._store.messages!.filter((m) => m.sender_id === A && m.msg_type === "highlight_reply"); assert.equal(ctx.length, 1); assert.deepEqual(JSON.parse(String(ctx[0]!.body)), { type: "highlight_reply", highlightId: HIGHLIGHT }, "census T409 (wave 5): the context row carries its reference in the body"); assert.equal(ctx[0]!.subtype ?? null, null, "…and not the Highlight's id in the discriminator column (§29)");
   });
 
   it("6.2 a messaging-restricted replier cannot open a NEW conversation — and the thread it created is removed", async () => {

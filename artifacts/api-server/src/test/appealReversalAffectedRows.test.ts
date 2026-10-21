@@ -75,8 +75,8 @@ function makeClient(tables: Record<string, Row[]>): Spec & { client: any } {
       then(onF: any, onR: any) { return run().then(onF, onR); },
     };
     const match = () => src(table).filter((r) => preds.every((p) => p(r)));
-    async function run(): Promise<{ data: any; error: any }> {
-      if (verb === "select") { const m = match(); return { data: single ? (m[0] ?? null) : m, error: null }; }
+    async function run(): Promise<{ data: any; error: any; count?: number }> {
+      if (verb === "select") { const m = match(); return { data: single ? (m[0] ?? null) : m, error: null, count: m.length }; } // count: the exact count a { count } read asks for (range is a no-op here, so every row is one page)
       if (verb === "insert") {
         const rows = Array.isArray(payload) ? payload : [payload];
         src(table).push(...rows);
@@ -105,7 +105,7 @@ function appealOf(targetType: string, appellant = OWNER) {
  * so the ownership filter matches nothing and NOTHING is reversed.
  */
 const CONTENT_CASES: Array<{
-  targetType: string; table: string; ownerCol: string; row: Row; restoredAction: string; assertRestored: (r: Row) => void;
+  targetType: string; table: string; ownerCol: string; row: Row; restoredAction: string; assertRestored: (r: Row) => void; extra?: Record<string, Row[]>;
 }> = [
   {
     targetType: "post", table: "posts", ownerCol: "author_id",
@@ -126,8 +126,8 @@ const CONTENT_CASES: Array<{
     assertRestored: (r) => assert.equal(r.deleted_at, null),
   },
   {
-    targetType: "event", table: "events", ownerCol: "host_id",
-    row: { id: TARGET, state: "removed" },
+    targetType: "event", table: "events", ownerCol: "host_id", // wave 5, honesty 3: through the transition authority, which reverses the newest RECORDED moderation (here a cancel from open)
+    row: { id: TARGET, state: "cancelled" }, extra: { event_activity_log: [{ id: "eeeeeeee-0000-0000-0000-000000000005", event_id: TARGET, action: "admin_cancel", metadata: { from_state: "open", to_state: "cancelled" }, created_at: "2026-01-01T00:00:00Z" }] }, // was "removed": no event_state has that label, and the raw `state: "open"` write took it anyway
     restoredAction: "event_restored",
     assertRestored: (r) => assert.equal(r.state, "open"),
   },
@@ -142,7 +142,7 @@ const CONTENT_CASES: Array<{
 describe("resolveAppeal — the ownership filter must not fail silently", () => {
   for (const c of CONTENT_CASES) {
     it(`${c.targetType}: a target owned by someone else is a noop, never ${c.restoredAction}`, async () => {
-      const s = makeClient({ [c.table]: [{ ...c.row, [c.ownerCol]: OTHER }] });
+      const s = makeClient({ ...(c.extra ?? {}), [c.table]: [{ ...c.row, [c.ownerCol]: OTHER }] });
       const r = await resolveAppeal(s.client, appealOf(c.targetType));
 
       assert.equal(r.ok, false, `${c.targetType}: nothing was reversed, so the appeal must not approve`);
@@ -154,14 +154,14 @@ describe("resolveAppeal — the ownership filter must not fail silently", () => 
     });
 
     it(`${c.targetType}: a missing target is a noop, never ${c.restoredAction}`, async () => {
-      const s = makeClient({ [c.table]: [] });
+      const s = makeClient({ ...(c.extra ?? {}), [c.table]: [] });
       const r = await resolveAppeal(s.client, appealOf(c.targetType));
       assert.equal(r.ok, false);
       assert.equal(r.action, "noop");
     });
 
     it(`${c.targetType}: the appellant's own target really is restored`, async () => {
-      const s = makeClient({ [c.table]: [{ ...c.row, [c.ownerCol]: OWNER }] });
+      const s = makeClient({ ...(c.extra ?? {}), [c.table]: [{ ...c.row, [c.ownerCol]: OWNER }] });
       const r = await resolveAppeal(s.client, appealOf(c.targetType));
       assert.equal(r.ok, true, `expected a restore; got ${JSON.stringify(r)}`);
       assert.equal(r.action, c.restoredAction);

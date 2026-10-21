@@ -332,3 +332,59 @@ describe("2026-10-17 privacy gate on 3988 — the momentum run's age bound and z
     assert.ok(g.report.generated > 0, "the other sources still generate");
   });
 });
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 2026-10-17 (wave 4) — the retrievals read the PRODUCT's corpus, as the trend
+// API does. `place_momentum.source_surface` (3410) names the corpus a row was
+// computed over: 'discovery' is lib/discoveryLocalMomentum's, and NULL is 2892's
+// all-surfaces function — "not the product's reading" (3410's column comment).
+// The trend API filters BOTH its reads on 'discovery'
+// (lib/discoveryTrendExplanation readTrendSnapshot); the retrievals' newest-run
+// read and its body read filtered on nothing, so a newer run over another
+// corpus became the candidates' reading (wave-3 handback, "The retrievals' head
+// read has no source_surface filter").
+//   SS1  a NEWER run over another corpus does not displace the product's run
+//   SS2  a store with no 'discovery' run has no reading at all
+//   SS3  a row of another corpus sharing the run's instant is not a claim
+//   SS4  both reads name the filter
+// Appended at the foot so no line above that a census cites moves.
+// ═════════════════════════════════════════════════════════════════════════════
+const otherCorpusRow = (placeId: string, state: string, computedAt: unknown): Row =>
+  ({ place_id: placeId, trend_state: state, recent_rate: 50, computed_at: computedAt, recent_unique_travelers: 20, window_unique_travelers: 20, source_surface: null });
+
+describe("2026-10-17 (wave 4) — the momentum retrievals read only source_surface = 'discovery', as the trend API does", () => {
+  it("SS1. a newer, current run computed over another corpus does not displace the product's run", async () => {
+    const w = world();
+    const newer = new Date(NOW - 30_000).toISOString();   // newer than world()'s run, and current
+    w["place_momentum"]!.push(otherCorpusRow(`db/${P.STALE_RUN}`, "trending", newer), otherCorpusRow(`db/${P.NIGHTLIFE}`, "emerging", newer));
+    const sc = makeFakeCandidateDb(w);
+    assert.deepEqual((await retrieveTrendingLocal(ctxOf(sc))).ids, [`db/${P.TRENDING}`, "node/101"]);
+    assert.deepEqual((await retrieveEmergingDiscoveries(ctxOf(sc))).ids, [`db/${P.EMERGING}`]);
+  });
+
+  it("SS2. with no 'discovery' run at all there is no reading: nothing is a candidate, and nothing failed", async () => {
+    const w = world();
+    w["place_momentum"] = w["place_momentum"]!.map((r) => ({ ...r, source_surface: null }));
+    const sc = makeFakeCandidateDb(w);
+    for (const r of [await retrieveTrendingLocal(ctxOf(sc)), await retrieveEmergingDiscoveries(ctxOf(sc))]) {
+      assert.equal(r.status, "ok", r.source);
+      assert.deepEqual(r.ids, [], r.source);
+    }
+  });
+
+  it("SS3. a row of another corpus that shares the product run's instant is not a claim of that run", async () => {
+    const w = world();
+    const run = w["place_momentum"]![0]!["computed_at"];
+    w["place_momentum"]!.push(otherCorpusRow(`db/${P.STALE_RUN}`, "trending", run));
+    const sc = makeFakeCandidateDb(w);
+    assert.deepEqual((await retrieveTrendingLocal(ctxOf(sc))).ids, [`db/${P.TRENDING}`, "node/101"]);
+  });
+
+  it("SS4. both place_momentum reads — the newest run and its rows — filter on source_surface", async () => {
+    const sc = db();
+    await retrieveTrendingLocal(ctxOf(sc));
+    const reads = sc.reads.filter((r) => r.table === "place_momentum");
+    assert.equal(reads.length, 2, "the head read and the body read");
+    for (const r of reads) assert.ok(r.ops.includes("eq(source_surface)"), r.ops.join(" "));
+  });
+});

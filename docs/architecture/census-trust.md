@@ -4715,3 +4715,1221 @@ a token failure, whereas the corrected UI retains Retry for the same intent.
 The other 33 original probes pass. These overlapping counts are not unique
 requirements, device acceptance or a production-readiness claim. Native evidence
 uses disposable local PostgreSQL 17.11 only; hosted Linux CI remains unobserved.
+
+## Row moves — 2026-10-17 build and fix (wave 4)
+
+*Measured on branch `claude/wave4-build-20261017` at `40db3ff94` plus uncommitted wave-4 work. No database was
+read or written, no flag was touched, no provider was called. `head_commit` is not re-declared. **ONE ROW MOVES:
+TV-7c, N → W.** No legal text was written: every sentence the row rests on was already in the tree, and the one
+change made here is a test.*
+
+| id | was | now | the evidence |
+|---|---|---|---|
+| TV-7c the identity-check data flow, documented in the privacy surface | N | **W** | **Built, and mounted.** A Settings → Privacy entry (`travel-buddy-standalone/app/settings/index.tsx:552#accessibilityLabel="Privacy information"`, `travel-buddy-standalone/app/settings/index.tsx:555#router.push('/settings/privacy-policy')`; route `travel-buddy-standalone/src/navigation/portavaRoutes.ts:1985#'settings-privacy-policy'`) opens a screen (`travel-buddy-standalone/app/settings/privacy-policy.tsx:22#export default function PrivacyInformationScreen()`) that documents V-7's data flow end to end: the session and the provider's hosted flow (`travel-buddy-standalone/app/settings/privacy-policy.tsx:46#How an identity check works`); what the check never stores and what it keeps, rendered from the schema-tested lists TV-2b already grades C (`travel-buddy-standalone/app/settings/privacy-policy.tsx:61#VERIFICATION_NEVER_STORED.map(`, `travel-buddy-standalone/app/settings/privacy-policy.tsx:69#VERIFICATION_KEPT.map(`); the erasure ORDER TV-7a grades C (`travel-buddy-standalone/app/settings/privacy-policy.tsx:79#Account deletion includes asking the verification service to delete its copy before` — the code is `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:997#const r = await requestProviderDeletionForUser(sc, userId);` before `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1010#"delete_identity_verifications"`); and the 90-day purge TV-7b grades C (`travel-buddy-standalone/app/settings/privacy-policy.tsx:84#The documented cleanup targets failed or expired checks older than 90 days` — `artifacts/api-server/src/services/identityVerification/retention.ts:31#export const PURGEABLE_STATUSES` and `artifacts/api-server/src/services/identityVerification/retention.ts:34#export const VERIFICATION_RETENTION_DAYS = 90;`). **Pinned:** 9 mounted cases in `travel-buddy-standalone/app/settings/__tests__/privacyPolicy.component.test.tsx:32#describe('TV-7c — limited privacy information, not a published policy'` and 3 on the Settings entry in `travel-buddy-standalone/app/settings/__tests__/privacyPolicy.settingsLink.component.test.tsx:55#describe('TV-7c — Settings privacy information entry'` (12/12 jest, run here), plus `travel-buddy-standalone/src/lib/__tests__/verificationDisclosure.test.ts` (10/10) holding both lists to the schema. Mutation-checked here: dropping the kept-list section turns 1 case red; unwiring the Settings entry turns 3 red; rewriting the erasure sentence to drop the order turned **nothing** red, so a case pinning it was added (`travel-buddy-standalone/app/settings/__tests__/privacyPolicy.component.test.tsx:119#describe('TV-7c — the stated erasure order of the identity-check data flow'`), red on that mutant, green on the tree. **Why W and not C — what remains is the owner's:** the surface says first that it is NOT the privacy policy (`travel-buddy-standalone/app/settings/privacy-policy.tsx:38#Not an approved privacy policy`). The requirement places the data flow IN the privacy policy, and no approved policy exists: `privacy-policy-draft.md` is a draft for legal review with unfilled company, contact, address, date and vendor fields, and no policy URL is configured (§40.4). The provider is unnamed on purpose and its privacy link is absent, because D-PROVIDER's account is not live (TV-6a). One operational column is not named on the screen: `provider_mode` (3930: `test`/`live`/`local_mock`), which is not personal data. OWNER DECISION: the reviewed policy text or its published URL, which then carries or links this section. That closes the row with a client change of a link. |
+
+### Headline, restated from the rows
+
+| BUILT-AND-CORRECT | **90** |
+|---|---|
+| BUILT-BUT-WRONG | **15** |
+| NOT-BUILT | **1** |
+| CANNOT-VERIFY | **2** |
+
+90 + 15 + 1 + 2 = 108. CONSTRUCTED 97.2 % (105 / 108) · CORRECT 83.3 % (90 / 108). The one NOT-BUILT row is
+TV-6a (D-PROVIDER: the Sumsub account, keys, webhook secret and per-market coverage; owner-held).
+
+### Correction (2026-10-17, wave 5) — reviews reviewer embed
+
+*Measured on branch `claude/wave4-build-20261017` against the working tree. `head_commit` is not re-declared. The fix
+is uncommitted and not deployed, so production keeps the defect below until it ships. **NO ROW MOVES.***
+
+**What was broken, in production.** The three review lists — `GET /trips/:id/reviews`, `GET /places/:id/reviews` and
+`GET /users/:id/reviews` — selected `profiles!reviewer_id(...)` from `reviews`. The only foreign key on
+`public.reviews` is `reviews_reviewer_id_fkey`, and it runs to `auth.users`, not `public.profiles`. The lead read this
+from the production catalog, read-only, on 2026-10-17, and migration 0067 and the 2026-08-19 baseline agree. PostgREST
+had no relationship to follow, so it answered PGRST200, and each list answered `db_error` on every call. The embed
+is present at the 2026-07-15 import. No suite could see it: fixtures carried a pretend `profiles` object on each
+review row, and since the wave-W embed guard, the doubles let this one embed through a one-entry ledger,
+`KNOWN_UNBACKED_EMBEDS`.
+
+**What that means for earlier sections.** §27.2's block filter and its fail-closed aggregates were right in the code,
+but no production request reached them, because the reviews read failed first. §40.1 says the identity badge is
+"served on … reviews (trip, place and host)". The code serves it, but no production response carried it. TV-2c was
+`W` for other reasons, and it stays `W`.
+
+**What changed, with no migration.** Each list reads its reviews with no embed. Then ONE batched `.in("id", ids)` read
+of `public.profiles` finds the reviewers of the rows being served, and the route joins them in code
+(`artifacts/api-server/src/routes/reviews.ts:302#const reviewers = await readReviewerProfiles(sc, rows);`,
+`artifacts/api-server/src/routes/reviews.ts:379#const reviewers = await readReviewerProfiles(sc, rows);`,
+`artifacts/api-server/src/routes/reviews.ts:516#const reviewers = await readReviewerProfiles(sc, page.map((p) => p.r));`,
+helper `artifacts/api-server/src/routes/reviews.ts:1072#async function readReviewerProfiles(`). `profiles.id` is the
+auth user id (`profiles_id_fkey` → `auth.users`), so `reviewer_id` is the profile key. The reviewer object keeps
+exactly the embed's fields: id, handle, displayName (under the universal display-name rule), avatarUrl,
+verificationLevel, and identityBadge when its flag is on. The host list cuts its page from the raw rows first, so its
+batch holds at most `limit` ids. Its event reviews, whose embed was keyed, join the same batch, so one standing rule
+covers the whole merged list.
+
+**Two decisions (routine, recorded here).**
+- *Standing.* A review whose reviewer is not `active` (deactivated, pending_deletion or deleted) is withheld from the
+  list, anonymous reviews included (`artifacts/api-server/src/routes/reviews.ts:1084#if ((p.account_status ?? "active") !== "active") continue;`).
+  A reviewer with no profile row is standing-unknown and withheld too. This is the allowlist the other lists of people
+  already apply: engagement likes, follows search and suggestions, and the discovery community byline. The aggregate
+  stays over every published review, as §27.2 decided for blocks. Bans and suspensions (`user_account_states`) are
+  not read here, and no other list of people reads them either.
+- *Failure.* An unreadable profile read is a 503 `degraded_unavailable`, the same answer as an unreadable block list.
+  It is never a list of reviews with blank reviewers, and never a list whose authors' standing went unread.
+
+**The ledger is empty.** `KNOWN_UNBACKED_EMBEDS` held only this entry. Every double now refuses the old embed (PGRST200),
+and the guard suite pins the ledger empty and the embed unissued. census-layover's L295 paragraph on the "one-entry
+ledger" describes the state before this fix.
+
+**Tests.** `artifacts/api-server/src/test/reviewsReviewerTwoStepRead.test.ts:194#it("answers 200 with the shape it was written to return, naming only live columns"`
+(20 cases): each list on the schema-strict double, with live columns and the embed guard on; the exact reviewer key
+set, with no other profile column in the response; a failed batch answering 503 on every list, signed in and out; the
+standing cases; and both doubles refusing the old select. The four suites that drive these lists
+(`reviews.test.ts`, `placeReviews.test.ts`, `identityVerifiedBadges.test.ts`, `tmSocialListGuards.test.ts`) now seed
+`profiles` rows instead of pretend embeds; with the guard suite they run 127/127 green. With the ledger empty, the
+pre-fix route turns 19 of the 43 new-suite and guard cases red. Nine mutants were each killed and then restored by sha256: the embed restored on each
+of the three reads, the batch turned into one read per reviewer, the profile read dropped, a failed read answered as
+"no reviewers", the standing check dropped, `account_status` left out of the select, and the host batch made to omit
+event reviewers.
+
+Rows: none move. Headline unchanged: 90 / 15 / 1 / 2 of 108.
+
+### Correction (2026-10-17, wave 5) — admin appeals queue: the appellant embed never resolved in production
+
+*Measured on branch `claude/wave4-build-20261017` against the working tree. `head_commit` is not re-declared. The fix
+is uncommitted and not deployed, so production keeps the defect below until it ships. **NO ROW MOVES.***
+
+**What was broken, in production.** The admin queue `GET /api/appeals` selected
+`profiles!appellant_id(handle, display_name, avatar_url)` from `appeals`. The only foreign key on
+`public.appeals.appellant_id` is `appeals_appellant_id_fkey`, and it runs to `auth.users`, not `public.profiles`. The
+lead read this from the production catalog, read-only, on 2026-10-17; migration 0070 and the 2026-08-19 baseline agree.
+PostgREST answered PGRST200, so the queue answered `db_error` on every call: no admin could list appeals. The
+appellant-facing doors (`POST /api/appeals`, `GET /api/appeals/me`, `GET /api/appeals/me/restrictions`) and the
+restoration queue never embedded and were not affected. No Trust row rests on the admin list, so none moves.
+
+**What changed, with no migration.** The page of appeals is read with no embed
+(`artifacts/api-server/src/routes/appeals.ts:204#.select("id, appellant_id, target_type, target_id, reason, evidence_url, state, moderator_id, resolution_note, created_at, updated_at")`). Then ONE
+batched `.in("id", ids)` read of `public.profiles` finds that page's appellants
+(`artifacts/api-server/src/routes/appeals.ts:215#const appellants = await readAppellantProfiles(sc, (data as any[]) ?? []);`,
+helper `artifacts/api-server/src/routes/appeals.ts:694#async function readAppellantProfiles(`). The appellant object is
+unchanged: handle, displayName, avatarUrl.
+
+**Two decisions (routine, recorded here).**
+- *Standing: none applied.* This is an admin queue, and the admin user surfaces (`GET /admin/users`,
+  `/admin/users/:id/moderation-summary`) read a profile whatever its `account_status`. A deactivated, pending-deletion
+  or deleted account's appeal is still owed a decision, so it stays listed with its appellant's handle. An appellant
+  with no profile row is listed with null fields, as the embed rendered a missing row. This differs on purpose from the
+  people-list rule the review lists apply.
+- *Failure.* An unreadable profile batch answers `db_error`, as an unreadable appeals page does, never a queue of
+  nameless appellants.
+
+**Tests.** `artifacts/api-server/src/test/appealsAppellantTwoStepRead.test.ts:137#it("answers 200 with the shape it was written to return, naming only live columns"`
+(10 cases: shape and live columns on the schema-strict double, the state filter and page window, the empty queue, the
+non-admin refusal, all three non-active states, a missing profile row, the failed batch with its healthy twin, and both
+doubles refusing the old select). Red first: 8 of 10 red on the pre-fix route. Four mutants killed and restored by
+sha256: the embed put back (10 red, including the static scan below), the batch dropped, a failed batch answered as
+"no appellants", one read per appellant.
+
+**A static scan now covers every select.** `artifacts/api-server/src/test/selectEmbedForeignKeyScan.test.ts` reads
+every `.select(` under `artifacts/api-server/src` (5,258 resolved; 121 that embed) with
+`artifacts/api-server/src/test/helpers/selectEmbedScan.ts` and checks each embed against the declared keys. It found
+exactly this defect, `route_plan_members → profiles` (census-trips) and `posts → discovery_places` (census-discovery),
+and fails on any new one. Its two other ledgers are reported in the wave-5 handback.
+
+Rows: none move. Headline unchanged: 90 / 15 / 1 / 2 of 108.
+
+### Correction (2026-10-17, wave 5) — event-page reviews: the reviewer-standing rule the other review lists apply
+
+*Same branch and tree. Committed on this branch; undeployed. **NO ROW MOVES.***
+
+**The divergence.** The review-list correction above (reviews reviewer embed) withholds a review whose reviewer is not
+`active`, and the host's merged list applies that rule to event reviews too. `GET /api/events/:id/reviews` applied
+none: its embed was keyed (`event_reviews_reviewer_id_fkey` → profiles) and it read no `account_status`. A
+deactivated reviewer's event review therefore showed on the event page and was withheld from the host's list.
+
+**What changed.** The event page reads its page of `event_reviews` with no embed, then the reviewers in ONE batched
+read with `account_status`
+(`artifacts/api-server/src/routes/events.ts:4547#readEventReviewerProfiles(sc, (reviews as any[]) ?? []);`),
+and withholds a row whose reviewer is not in good standing
+(`artifacts/api-server/src/routes/events.ts:7116#async function readEventReviewerProfiles(`, whose standing check is `account_status ?? "active"`): the same
+rule, anonymous reviews included, a missing profile row withheld, a NULL status read as active. The reviewer object
+keeps its four fields and `account_status` never leaves the route. An unreadable batch is 503
+`degraded_unavailable`, as on the other review lists. Withheld rows shorten the page, as on the trip and place lists.
+
+**Not changed here.** The event page's list still applies no block filter, unlike the trip, place and host lists
+(§27.2). That is recorded, not fixed.
+
+**Tests.** `artifacts/api-server/src/test/eventReviewsReviewerStanding.test.ts:150#it("answers 200 with the shape it was written to return, naming only live columns"`
+(7 cases). Red first: 6 of 7 red on the pre-fix route (the seventh is the NULL-status control). Four mutants killed:
+the standing check dropped, `account_status` left out of the select, a failed batch answered as "no reviewers",
+rows left unfiltered.
+
+Rows: none move. Headline unchanged: 90 / 15 / 1 / 2 of 108.
+
+### Correction (2026-10-17, wave 5) — booking reviews: rent_buddy_bookings.buddy_user_id does not exist in production
+
+*Measured on branch `claude/wave4-build-20261017` against the working tree. `head_commit` is not re-declared. The fix
+is uncommitted and not deployed, so production keeps the defect below until it ships. **NO ROW MOVES.***
+
+**What was broken, in production.** `POST /api/reviews` with `entityType: "rent_buddy_booking"` checked eligibility with
+`.or(traveler_id.eq.U,buddy_user_id.eq.U)`. `rent_buddy_bookings` has no `buddy_user_id`. No SQL in the repository
+declares it, and the 2026-09-22 production capture does not have it. The buddy column is `buddy_id`, and it references
+`rent_buddy_profiles(id)`, not a user. PostgREST failed the read with 42703, and the result read as "no booking". Both
+the traveller and the buddy were refused with `403 review_not_eligible`. `rent_buddy_enabled` is FALSE in production, so
+few users were reached. No row of this census grades booking-review eligibility: its review rows grade the review lists'
+reviewer reads and block filters. So no row moves.
+
+**What changed, with no migration.** Eligibility is now two reads. The first reads the completed booking's
+`traveler_id` and `buddy_id`
+(`artifacts/api-server/src/routes/reviews.ts:127#await sc.from("rent_buddy_bookings").select("id, status, traveler_id, buddy_id")`).
+For a caller who is not the traveller, the second reads the buddy profile's `user_id`
+(`artifacts/api-server/src/routes/reviews.ts:132#await sc.from("rent_buddy_profiles").select("user_id")`). A read that
+fails means not eligible, as it does for every entity type in the check. The edit is line-neutral, so no citation into
+the route moves.
+
+**How it was found.** `artifacts/api-server/src/test/schemaColumnProductionScan.test.ts` (class A: declared by no SQL;
+an `.or()` column).
+
+**Tests.** `artifacts/api-server/src/test/reviewsRentBuddyBookingEligibility.test.ts:109#it("the buddy — the user who owns the booking's buddy profile — may review it (201)"`
+(6 cases on schemaStrictSupabase). Red first: 5 of 6 are red on the pre-fix route; the stranger control passes. Four
+mutants were killed, each restored and checked by sha256: the old column put back in the select, the buddy compared
+by profile id, the completed filter dropped, and the traveller refused.
+
+- NOT-GRADED: artifacts/api-server/src/test/reviewsRentBuddyBookingEligibility.test.ts — this correction's own test; no Trust row rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/schemaColumnProductionScan.test.ts — the repository-wide scan that found the defect; no Trust row rests on it.
+
+Rows: none move. Headline unchanged: 90 / 15 / 1 / 2 of 108.
+
+### Correction (2026-10-17, wave 5) — Rent-a-Buddy earnings summary and fee editor: rent_buddy_fee_rules.platform_fee_basis_points does not exist in production
+
+*Same branch and tree. Committed on this branch; undeployed. **NO ROW MOVES.***
+
+**What was broken, in production.** Migration 3601 adds `rent_buddy_fee_rules.platform_fee_basis_points`. It is held
+for production (owner hold D-OWNER1004-14), and the 2026-10-17 apply packet excludes it. The fee resolver selects only
+that column, so every production read of the schedule fails with 42703. Refusing is right, because the rate cannot be
+known there. But the answers were wrong:
+- `GET /api/rent-a-buddy/me/earnings/summary` has no `rent_buddy_enabled` check, and it answered `500 db_error` to
+  every user with an active buddy profile;
+- `PATCH /api/rent-a-buddy/admin/fee-rules` answered `500 db_error`.
+
+No row of this census grades either route. This correction is recorded here because this census watches
+`routes/rentABuddyMarketplace.ts`.
+
+**What changed, with no migration.** The resolver marks a read that failed for that column
+(`artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts:556#export function isFeeScheduleSchemaAbsent(`). Both routes
+now answer `503 degraded_unavailable` and state the reason
+(`artifacts/api-server/src/routes/rentABuddyMarketplace.ts:2199#return feeSchedule.schemaAbsent ? sendError(res, 'degraded_unavailable', FEE_SCHEDULE_NOT_DEPLOYED)`,
+`artifacts/api-server/src/routes/rentABuddyMarketplace.ts:2832#isFeeScheduleSchemaAbsent(feeErr) ? sendError(res, 'degraded_unavailable', FEE_SCHEDULE_NOT_DEPLOYED_ADMIN)`).
+No rate is invented and nothing is written. Any other read failure is still a 500. Both route edits are line-neutral,
+so no citation into the route file moves. Both answers clear when 3601 is applied. Two other readers of the column
+are behind `rent_buddy_enabled` = FALSE and are unchanged: the dashboard summary in `routes/rentABuddy.ts` and the
+earnings ledger.
+
+**Tests.** `artifacts/api-server/src/test/rentBuddyFeeScheduleNotDeployed.test.ts:151#it("answers 503 degraded_unavailable with the reason, and publishes no fee or earnings figure"`
+(6 cases on schemaStrictSupabase). Its `rent_buddy_fee_rules` is the live schema's and lacks the column, so the 42703
+comes from the real schema. Red first: both 503 cases are red on the pre-fix routes. Four mutants were killed, each
+restored and checked by sha256: either route put back to 500, the marker never set, and the marker set for any
+missing column.
+
+- NOT-GRADED: artifacts/api-server/src/test/rentBuddyFeeScheduleNotDeployed.test.ts — this correction's own test; no Trust row rests on it.
+- NOT-GRADED: artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts — the fee resolver, cited for the marker; no Trust row grades fees, and census-layover is the census that watches this file.
+
+Rows: none move. Headline unchanged: 90 / 15 / 1 / 2 of 108.
+
+### Correction (2026-10-18, wave 5) — admin user detail: openReports is never 0 from nothing
+
+GET /admin/users rendered `openReports: count ?? 0` from an inline HEAD count; it now reads `artifacts/api-server/src/lib/moderationCounts.ts:39#export async function countOpenReportsAgainst(` (`artifacts/api-server/src/routes/admin.ts:1393#countOpenReportsAgainst(sc, userId).then((r) =>`, line-neutral), so a count-less, failed or thrown answer refuses the record naming openReports, as the route already did for its other moderation facts — `artifacts/api-server/src/test/adminUserDetailOpenReports.test.ts:192#describe("the admin user detail: a count-less, failed or thrown openReports read refuses the record — never 0"` (25 cases, 8 red before, 12 mutants killed). Rows: none move. Headline unchanged: 90 / 15 / 1 / 2 of 108.
+
+### Correction (2026-10-18, wave 5) — report status: 'open' reports were invisible to the admin resolve routes
+
+*Same branch and tree. Committed on this branch; undeployed. **NO ROW MOVES.***
+
+**What was broken.** `public.reports.status` is text with default `'open'` and no CHECK (production catalog, read
+2026-10-18; the table held no rows). Every intake files the default: POST /reports and the thread, message and post
+reports. Four admin reads asked only for `'pending'`: the reported-trips queue, trip report-resolve, the
+reported-events queue and the event moderate route's report close. Only POST /reviews/:id/report wrote `'pending'`, a
+word from the never-applied docs/sql/0071 design (migration 0063, which created the live table, declares open |
+reviewed | resolved | dismissed). So no report filed through /reports reached those four reads: trip report-resolve
+answered `resolvedCount: 0` for every trip, and hiding an event closed none of its reports. Around them:
+- dismiss read only `'open'`, so it refused every in_review report the admin client offers to dismiss, and every review report;
+- resolve read anything but `'resolved'`, so a dismissed report could be re-resolved;
+- the moderation-action `report_resolved` side effect and hide-content moved a report whatever its status, so a closed
+  report was re-resolved or reopened;
+- adminMedia's flag on a report wrote `'reviewed'`, which no admin screen lists, so a flagged report left every queue;
+- both legacy list routes answered `total: count ?? 0`, and the reported-events queue ignored its events-read error,
+  so a failed read became a TypeError in the filter and a bare 500.
+
+**The decision: one vocabulary, no new state.**
+`artifacts/api-server/src/lib/moderationCounts.ts:85#export const LEGACY_REPORT_STATUSES = ["open", "in_review", "resolved", "dismissed"] as const;`
+These are the four words the admin client already speaks
+(`travel-buddy-standalone/src/services/reportsAdmin.ts:46#const ALL_STATUSES = ['open', 'in_review', 'resolved', 'dismissed'] as const;`).
+`open` is what production stores by default and what every intake writes. `in_review` is what hide-content wrote and
+what the admin client lists and acts on. `'pending'` was a stray synonym of `open`: no definition of the live table
+names it, and the admin client never lists it. So reviews now file `'open'`
+(`artifacts/api-server/src/routes/reviews.ts:900#status:       "open", // the intake word`), and adminMedia's flag
+writes `'in_review'` (`artifacts/api-server/src/routes/adminMedia.ts:926#in_review"; // was "reviewed"`). An
+unresolved report is open or in_review
+(`artifacts/api-server/src/lib/moderationCounts.ts:87#export const UNRESOLVED_REPORT_STATUSES`). No alias is read for
+`'pending'` or `'reviewed'`: production held no reports row, and no migration number was available to normalise one
+on another database.
+
+**What changed, with no migration.** Every routes/admin.ts edit is line-neutral, so no citation into the file moved.
+- Every reader that means "unresolved" reads that list: the trip queue
+  (`artifacts/api-server/src/routes/admin.ts:2640#.in("status", UNRESOLVED_REPORT_STATUSES) // open or in_review (lib/moderationCounts.ts)`),
+  trip report-resolve (`artifacts/api-server/src/routes/admin.ts:2766#.in("status", UNRESOLVED_REPORT_STATUSES) // was eq 'pending'`),
+  the events queue (`artifacts/api-server/src/routes/admin.ts:2880#.in("status", UNRESOLVED_REPORT_STATUSES) // was eq 'pending'`),
+  the event moderate close (`artifacts/api-server/src/routes/admin.ts:3023#.in("status", UNRESOLVED_REPORT_STATUSES) // was eq 'pending'`),
+  the user detail's openReports (`artifacts/api-server/src/lib/moderationCounts.ts:42#.in("status", UNRESOLVED_REPORT_STATUSES)`)
+  and Telegraph's send tier (`artifacts/api-server/src/domain/telegraph/policies/sendRateLimit.ts:195#.in("status", UNRESOLVED_REPORT_STATUSES)`).
+- Every transition moves only an unresolved report, checked at the read and again at the write: resolve
+  (`artifacts/api-server/src/routes/admin.ts:2232#.in("status", UNRESOLVED_REPORT_STATUSES) // open or in_review`),
+  dismiss (`artifacts/api-server/src/routes/admin.ts:2311#.in("status", UNRESOLVED_REPORT_STATUSES) // open or in_review`),
+  hide-content (`artifacts/api-server/src/routes/admin.ts:2499#.eq("id", req.params.id).in("status", UNRESOLVED_REPORT_STATUSES).select("id");`),
+  the moderation-action side effect (`artifacts/api-server/src/routes/admin.ts:1293#.eq("id", target_ref_id).in("status", UNRESOLVED_REPORT_STATUSES)`)
+  and adminMedia (`artifacts/api-server/src/routes/adminMedia.ts:943#if (!(UNRESOLVED_REPORT_STATUSES as readonly string[]).includes(currentStatus)) {`).
+  A report closed between the read and the write is a 409, not an overwrite. hide-content answers the status the row
+  holds, and the side effect answers `already_closed`.
+- Counts are measured. trip report-resolve refuses a write that answers no rows to count
+  (`artifacts/api-server/src/routes/admin.ts:2771#resolvedCount: updated.length`). The event moderate route returns
+  `reportsResolved`, which is null when the close failed, instead of swallowing the failure. Both legacy list routes
+  refuse a page whose total is not an exact count
+  (`artifacts/api-server/src/lib/moderationCounts.ts:95#export function exactListCount(`,
+  `artifacts/api-server/src/routes/admin.ts:2141#const total = exactListCount(count, data);`,
+  `artifacts/api-server/src/routes/admin.ts:2195#const total = exactListCount(count, data);`). GET /admin/reports
+  refuses, by name, a status outside the vocabulary
+  (`artifacts/api-server/src/routes/admin.ts:2184#if (!(LEGACY_REPORT_STATUSES as readonly string[]).includes(status))`).
+- The two ignored reads now refuse: the events queue
+  (`artifacts/api-server/src/routes/admin.ts:2892#if (evErr || !Array.isArray(events))`) and, the same class, the trips
+  queue (`artifacts/api-server/src/routes/admin.ts:2657#if (tripsErr) { sendError(res, "db_error", tripsErr.message); return; }`).
+
+**Tests.** `artifacts/api-server/src/test/legacyReportStatusLifecycle.test.ts:212#describe("a trip report filed through POST /reports reaches the trip queue and trip report-resolve"`
+has 34 cases on schemaStrictSupabase. The double is given the live column defaults of `reports`, because the default
+is the defect. Red first on c9c7933db: 26 red, and the 8 controls green. 22 mutants were killed, each restored and
+checked by sha256. A source scan in the same file fails if any `reports` statement writes or filters a status outside
+the vocabulary, or filters on one literal status. Four existing suites pinned the old words and were corrected.
+adminEventModeration seeded `'pending'` reports; with `'open'` seeds, its three resolve cases are red on c9c7933db.
+mutationAffectedRows also seeded `'pending'`. adminMediaModerateAudit's fake had no `.in`. adminUserDetailOpenReports
+now pins the new filter.
+
+**Not changed, recorded.** Row 4 of docs/architecture/trust-unproduced-vocabulary.md says resolve "accepts anything not
+resolved". It now accepts only open and in_review. Hide then uphold is still legal (in_review → resolved); that is what
+§6 of the trustEmitterWiring suite pins, and it passes. That record is pinned to its commit and is not edited.
+
+- NOT-GRADED: artifacts/api-server/src/domain/telegraph/policies/sendRateLimit.ts — Telegraph's send tier, cited for the one reports read this correction changed; census-telegraph grades the send limit, and no Trust row rests on it.
+
+Rows: none move. TV-4a is graded on `moderation_reports` (§35), not on the legacy table, and no row of this census
+grades the legacy trip or event queues. Headline unchanged: 90 / 15 / 1 / 2 of 108.
+
+### Correction (2026-10-18, wave 5) — admin moderation surfaces: no zero or empty list from a failed read
+
+*Same branch and tree. Committed on this branch; undeployed. **NO ROW MOVES.***
+
+**What was broken.** The two corrections above closed the user detail's openReports and the two legacy report lists,
+and listed the rest of the class. Every route below already refused a RETURNED error. Each one still rendered a read
+it could not measure as an empty queue or a zero:
+- adminMedia's five lists, the trust review queue, the place-image queue and reports list, the place-mismatch list and
+  GET /me/reports answered `total: count ?? 0`. gaming-flags answered `total: (data ?? []).length`, the page's length;
+- adminMedia's Reported and Wrong Place tabs matched `status` exactly and defaulted to `'open'`. The admin client asked
+  for `'open'` too, so every in_review report was in no media tab. A word no report carries answered an empty tab;
+- enrichment reads were unchecked. A failed thumbnail read showed a reported post with no media. A failed pending-report
+  read showed `reportCount: 0`. A failed user-report read showed no reports. A failed place-mismatch cursor read served
+  page 1 again as the next page;
+- the Compass dashboard folded every `Promise.allSettled` element to `[]` or `0`. So a failed read showed zero abuse
+  flags and zero safety-filter fires. The abuse-flags and safety-filters routes answered `data ?? []`;
+- failedModerationReads (the user detail, the summary and the moderation-summary) refused a returned error only. So a
+  no-error answer with no list rendered a clean record. The profile read's error, and the user detail's account lookup,
+  answered 404 "User not found";
+- the reported-trips and reported-events queues DROPPED a report whose trip or event no longer exists, and the trips
+  queue read every report with no limit;
+- trip report-resolve and the event moderate route's report close wrote no audit row and no reviewed_by. The legacy
+  resolve and dismiss, and adminMedia's moderate on a report, wrote the audit row BEFORE the guarded update. So a report
+  someone closed in between answered 409 having already recorded an action that never happened;
+- POST /admin/trips/:tripId/hide discarded its update and its audit insert, and answered a failed trip read with 404.
+  The event moderate route answered a failed event read with 404.
+
+**The convention, per route.** None of these routes has an explicit "unknown" field, and each already refuses with
+db_error. So a list or count it cannot measure is refused the same way, naming what could not be read. A status outside
+the vocabulary is a 400 that names it. Nothing falls open on moderation or safety data.
+
+**What changed, with no migration.** Every edit to a route file is line-neutral, so no citation into those files moved.
+- Totals are measured: `artifacts/api-server/src/lib/moderationCounts.ts:95#export function exactListCount(count: unknown, rows: unknown, offset = 0)`
+  now checks a page past the first, and `artifacts/api-server/src/lib/moderationCounts.ts:128#export function listTotalRefusal(`
+  names the refusal. It is used by adminMedia (`artifacts/api-server/src/routes/adminMedia.ts:247#const total = exactListCount(count, data, offset);`),
+  the trust review queue (`artifacts/api-server/src/routes/trust-admin.ts:141#const total = exactListCount(count, data, (page - 1) * limit);`),
+  gaming-flags, which now counts exactly (`artifacts/api-server/src/routes/trust-admin.ts:531#.select("id, user_id, review_type, status, metadata, created_at", { count: "exact" })`),
+  place images (`artifacts/api-server/src/routes/adminPlaceImages.ts:77#const total = exactListCount(count, visuals, offset);`),
+  place mismatch (`artifacts/api-server/src/routes/adminPlaceMismatch.ts:67#const total = exactListCount(count, data);`)
+  and GET /me/reports (`artifacts/api-server/src/routes/reports.ts:289#const total = exactListCount(count, data, offset);`).
+- The media tabs read the unresolved set by default
+  (`artifacts/api-server/src/lib/moderationCounts.ts:120#export function parseLegacyReportStatusFilter(`,
+  `artifacts/api-server/src/routes/adminMedia.ts:233#const status = parseLegacyReportStatusFilter(req.query.status);`),
+  and the client tabs ask for that default (`travel-buddy-standalone/app/admin/media/index.tsx:290#const res = await getMediaReported({ limit: 50 });`).
+- Enrichment reads are checked and named: primaryMedia (`artifacts/api-server/src/routes/adminMedia.ts:260#if (mediaErr || !Array.isArray(media))`),
+  reportCount (`artifacts/api-server/src/routes/adminPlaceImages.ts:91#if (repCountErr || !Array.isArray(repRows))`),
+  userReports (`artifacts/api-server/src/routes/adminPlaceImages.ts:247#if (userRepErr || !Array.isArray(repRows))`)
+  and the mismatch cursor (`artifacts/api-server/src/routes/adminPlaceMismatch.ts:58#if (pivotErr)`), which is a 400 when
+  it names no report.
+- The Compass dashboard names every unreadable section and refuses
+  (`artifacts/api-server/src/routes/adminCompass.ts:245#const unreadable: string[] = [];`,
+  `artifacts/api-server/src/routes/adminCompass.ts:379#if (unreadable.length > 0)`;
+  `artifacts/api-server/src/lib/moderationCounts.ts:142#export function settledRows(`).
+- failedModerationReads requires a list from a list read and a count from a count read
+  (`artifacts/api-server/src/routes/admin.ts:1557#.filter(([, r]) => !r || Boolean((r as { error?: unknown }).error) ||`).
+  A failed profile read is db_error (`artifacts/api-server/src/routes/admin.ts:1501#if ((profileRes as { error?: { message?: string } | null }).error)`).
+- The queues show a report on a deleted parent, marked missing
+  (`artifacts/api-server/src/routes/admin.ts:2666#tripId: id, tripMissing: !tripMap[id],`,
+  `artifacts/api-server/src/routes/admin.ts:2904#eventMissing: !ev`). The trips queue pages like /admin/reports and states
+  its total (`artifacts/api-server/src/routes/admin.ts:2635#const page = Math.max(1, Number(req.query.page) || 1);`).
+- Every route that moves a legacy report now CLAIMS it first, then audits it, and undoes the claim if the audit fails
+  (`artifacts/api-server/src/lib/legacyReportClose.ts:90#export async function moveLegacyReport(`). The claim is
+  guarded on the status read (`artifacts/api-server/src/lib/legacyReportClose.ts:106#.eq("status", from)`). The undo is
+  guarded on this request's own stamp (`artifacts/api-server/src/lib/legacyReportClose.ts:150#.eq("reviewed_at", now)`).
+  A failed undo is named. The callers are resolve (`artifacts/api-server/src/routes/admin.ts:2250#const moveR = await moveLegacyReport(sc, req, reportRow as LegacyReportRow, {`),
+  dismiss (`artifacts/api-server/src/routes/admin.ts:2329#const moveR = await moveLegacyReport(`), adminMedia
+  (`artifacts/api-server/src/routes/adminMedia.ts:962#const moveR = await moveLegacyReport(`), trip report-resolve,
+  which now writes its `reason` (`artifacts/api-server/src/routes/admin.ts:2769#const moved = await moveLegacyReports(`),
+  and the event close (`artifacts/api-server/src/routes/admin.ts:3024#const closed = openErr`).
+- Trip hide checks its read, its write and its audit row (`artifacts/api-server/src/routes/admin.ts:2698#if (tripReadErr)`,
+  `artifacts/api-server/src/routes/admin.ts:2726#const legacyHide = kernelHidden`,
+  `artifacts/api-server/src/routes/admin.ts:2734#if (hideAuditErr)`). The audit row names the trip. The event route's
+  failed read is a 503 (`artifacts/api-server/src/routes/admin.ts:2953#if (evReadErr)`).
+
+**Tests.** `artifacts/api-server/src/test/adminListHonesty.test.ts:252#describe("adminMedia: the Reported and Wrong Place tabs list every UNRESOLVED report`
+(59 cases) and `artifacts/api-server/src/test/legacyReportClaimThenAudit.test.ts:164#describe("the single-report routes CLAIM the report first, then audit it"`
+(32 cases) run on schemaStrictSupabase. Red first on 4140b5ad8 sources: 67 red, 17 controls green, 3 NEW STATE cases
+red (the audit-and-undo-fail state the old order could not reach, now named), and 4 units of the new module green.
+52 mutants were killed, each restored and checked by sha256. Three existing suites pinned the old shapes and were
+corrected. legacyReportStatusLifecycle pinned the queues and trip report-resolve bodies. adminEventModeration counted one
+moderation_actions row where hide now writes one per closed report. The reports.test fake answered an awaited
+`.update().select()` with the rows as they were, not as updated.
+
+- NOT-GRADED: artifacts/api-server/src/routes/adminPlaceImages.ts — census-media's place-image review queue, cited for its list totals and enrichment reads; no Trust row rests on it.
+- NOT-GRADED: artifacts/api-server/src/routes/adminPlaceMismatch.ts — the wrong-place report queue, cited for its total and cursor read; no Trust row rests on it.
+- NOT-GRADED: artifacts/api-server/src/routes/adminCompass.ts — the Compass ops dashboard, cited for its abuse and safety-filter sections; no Trust row rests on it.
+- NOT-GRADED: artifacts/api-server/src/routes/reports.ts — the report intake and GET /me/reports, cited for that list's total; no Trust row rests on it.
+- NOT-GRADED: travel-buddy-standalone/app/admin/media/index.tsx — the admin media tabs, cited for the status they ask for; no Trust row rests on them.
+
+Rows: none move. TV-4a is graded on `moderation_reports` (§35), and none of these surfaces acts on that table. C5 reads
+the trust review queue; it stays C, and its total is now measured as well. No row of this census grades the legacy
+report queues, the media tabs or the Compass dashboard. Headline unchanged: 90 / 15 / 1 / 2 of 108.
+
+### Correction (2026-10-18, wave 5) — admin moderation surfaces, the remaining seven
+
+*Same branch and tree. Committed on this branch; undeployed. **NO ROW MOVES.***
+
+**What was broken.** The correction above listed seven more defects of the same class and left them. Each one let an
+admin queue lose an item, report a page's length as a total, or report an action as done when it was not recorded:
+1. GET /admin/venues/reported read the newest `limit` discovery places with a `discovery_place_reports(count)` embed. It
+   then DROPPED every row whose count was not above 0. A venue whose embed answered without a count read as "0 reports"
+   and vanished from the moderation queue. A reported venue older than the newest `limit` places was never in the queue
+   at all, because the limit ran first. `total` was the page's length.
+2. adminMedia's parsePagination, and the place-image queue and reports lists, read `Math.max(1, Number(query.page ?? 1))`.
+   `?page=abc` is NaN, and NaN survives Math.max. The list served `.range(NaN, NaN)`: an empty page with `page: null`.
+   The trust review queue took `?limit=-5` as a negative page size.
+3. The place-image queue applied `has_reports` AFTER paging. `total` counted the unfiltered queue, and a filtered page
+   came back short or empty. A reported image on a later unfiltered page was on no filtered page a moderator could reach.
+4. The Compass dashboard took totals and breakdowns from the length of unbounded reads. PostgREST's row cap cuts such a
+   read with no sign, so past the cap the abuse, safety-filter, notification, feedback and cache numbers were
+   undercounts. City demand tallied a 500-row sample, and `newUserExposure.count` was a 20-row page's length.
+   GET /admin/compass/safety-filters answered `total` as its page's length.
+5. The event moderate route's `event_<action>` moderation_actions insert failed OPEN: a warning, then `200 { ok: true }`.
+   So an event could be hidden, cancelled or removed with no row in the global audit trail. Its patch was unguarded,
+   so an action that lost a race overwrote another admin's decision. Nothing read its row count, so an event deleted
+   mid-request answered 200.
+6. Place-mismatch resolve cleared the post's place first, then wrote an unguarded status update. Two resolves both
+   "won", and an accept could clear a post whose report then read rejected.
+7. GET /admin/trust/reviews matched `?status=` and `?type=` exactly, with no validation. A word no review carries
+   answered an empty queue.
+
+**The convention, per route.** Each route already refused a returned error with db_error. So a list or count it cannot
+measure is refused the same way, naming what could not be read. A filter word outside the column's vocabulary is a 400
+that names the parameter. A malformed `?page` or `?limit` takes the house default, as admin.ts /admin/reports does: a
+value that is not a positive whole number is the default, and the answer names the page it served. A reversible action
+is claimed, then audited, then undone if the audit cannot be written, in lib/legacyReportClose.ts's order.
+
+**What changed, with no migration.** Every edit to a route file is line-neutral except at a file's end:
+adminPlaceImages.ts gains a helper after its last handler, and adminPlaceMismatch.ts's last handler grows by three lines.
+No line that any citation names moved. The fixture unappliedSchemaReads.json had its admin.ts line numbers updated in
+its prose.
+- The venue queue starts from the REPORTS
+  (`artifacts/api-server/src/lib/reportedVenueQueue.ts:72#export async function readReportedVenueQueue(`). Every report
+  row is read and grouped by place, so a venue's count is its report rows
+  (`artifacts/api-server/src/lib/reportedVenueQueue.ts:87#g.reportCount++;`). A place removed mid-read is kept, flagged
+  (`artifacts/api-server/src/lib/reportedVenueQueue.ts:131#venueMissing: true as const`). A failed read refuses the page
+  (`artifacts/api-server/src/routes/admin.ts:464#if (!queue.ok)`), and `total` counts every reported venue
+  (`artifacts/api-server/src/routes/admin.ts:471#const total = queue.venues.length;`).
+- One reader pages past the row cap
+  (`artifacts/api-server/src/lib/moderationCounts.ts:185#export async function readEveryRow(`). It refuses, never
+  shortens, when the count falls mid-read
+  (`artifacts/api-server/src/lib/moderationCounts.ts:203#if (r!.data.length === 0 && rows.length < c)`).
+- `?page` and `?limit` use the house default
+  (`artifacts/api-server/src/lib/moderationCounts.ts:225#export function parseListPage(`): in adminMedia
+  (`artifacts/api-server/src/routes/adminMedia.ts:174#return parseListPage(query, 20, 100);`), in the place-image queue
+  and reports list (`artifacts/api-server/src/routes/adminPlaceImages.ts:50#parseListPage(req.query, 20, 100)`,
+  `artifacts/api-server/src/routes/adminPlaceImages.ts:130#parseListPage(req.query, 20, 100)`), and in the trust review
+  queue (`artifacts/api-server/src/routes/trust-admin.ts:120#parseListPage(req.query, 50, 100)`).
+- `has_reports` chooses the page and the total before paging
+  (`artifacts/api-server/src/routes/adminPlaceImages.ts:76#await queuePageFilteredByReports(`,
+  `artifacts/api-server/src/routes/adminPlaceImages.ts:702#async function queuePageFilteredByReports(`). It is keyed on
+  the image's (url, place) pair, as reportCount is
+  (`artifacts/api-server/src/routes/adminPlaceImages.ts:732#reported.has(`).
+- The Compass dashboard reads every row of each section it tallies
+  (`artifacts/api-server/src/routes/adminCompass.ts:115#const everyRow = (build: () => any, key: string) => readEveryRow(`).
+  `newUserExposure.count` is the exact count
+  (`artifacts/api-server/src/routes/adminCompass.ts:346#const newUserCount = exactListCount(settledCount(newUsersRes), newUserRows)`).
+  The safety-filters route measures its total and reasons over every matching log
+  (`artifacts/api-server/src/routes/adminCompass.ts:973#const every = await readEveryRow(`,
+  `artifacts/api-server/src/routes/adminCompass.ts:978#total: every.data.length`).
+- The event moderate route claims, audits, then undoes
+  (`artifacts/api-server/src/lib/eventModerationClaim.ts:90#export async function applyEventModeration(`). The claim is
+  guarded on each column it writes (`artifacts/api-server/src/lib/eventModerationClaim.ts:101#q = guard(q, c, prior[c]);`),
+  and zero rows is a conflict with nothing written
+  (`artifacts/api-server/src/lib/eventModerationClaim.ts:113#if (claimed.length === 0)`). The audit row is required
+  (`artifacts/api-server/src/lib/eventModerationClaim.ts:169#const r = await opts.writeAudit();`). The undo is guarded
+  on this request's own stamp (`artifacts/api-server/src/lib/eventModerationClaim.ts:125#.eq("updated_at", opts.now)`),
+  and it removes the activity row this request wrote
+  (`artifacts/api-server/src/lib/eventModerationClaim.ts:140#.from("event_activity_log").delete()`). The route still
+  writes both audit rows with literal bodies (`artifacts/api-server/src/routes/admin.ts:3006#writeAudit: () => sc.from("moderation_actions").insert({`).
+  It answers 409 or a named 500 (`artifacts/api-server/src/routes/admin.ts:3014#if (moveE.outcome === "conflict")`,
+  `artifacts/api-server/src/routes/admin.ts:3015#if (moveE.outcome === "failed")`).
+- Place-mismatch resolve claims the report first, guarded on the status it read
+  (`artifacts/api-server/src/routes/adminPlaceMismatch.ts:137#.eq("status", (report as any).status)`). Zero rows is a
+  409 with the post untouched (`artifacts/api-server/src/routes/adminPlaceMismatch.ts:141#if (claimed.length === 0)`).
+  A post that cannot be cleared undoes the claim, guarded on this request's stamp
+  (`artifacts/api-server/src/routes/adminPlaceMismatch.ts:155#.eq("resolved_at", now)`).
+- The trust review queue refuses an unknown status or type by name
+  (`artifacts/api-server/src/routes/trust-admin.ts:123#parseVocabularyFilter(req.query.status, "status", TRUST_REVIEW_STATUSES)`,
+  `artifacts/api-server/src/lib/moderationCounts.ts:248#export const TRUST_REVIEW_STATUSES`). The vocabularies are the
+  columns' CHECK constraints in the 2026-08-19 baseline, and no later migration alters them.
+
+**Tests.** `artifacts/api-server/src/test/adminModerationRemainingSeven.test.ts:254#describe("1. GET /admin/venues/reported`
+runs 51 cases on schemaStrictSupabase. It adds a row cap that cuts every list answer as PostgREST's max-rows does,
+while `count` stays the whole match. The suite was run red first against the 99fe25cf3 route sources, with the new lib
+code in place. 32 cases were red. Two NEW STATE cases were red too: an undo that fails, and an undo that must not
+overwrite a later write, which the old order could not reach. 10 controls and 7 units of the new readers and the new
+module were green, and every label held. 43 mutants were each applied alone, restored from a repo-relative backup and
+checked by sha256. 41 were killed (two by a test that never finished: the guards they remove are what stop a read
+from looping). The other two are equivalent: readEveryRow never answers no error with no list, so dropping that second
+check changes nothing. Three
+existing suites pinned the old shapes and were corrected. adminEventModeration pinned the fail-open as a 200. The
+postWrongPlace fake answered an awaited `.update().select()` with no rows. adminCompassAbuseFlagsWindow ran the
+dashboard on a double with no `.range`; that file is line-neutral, so its census-compass anchor holds.
+
+What this does not prove: the venue queue's old read cannot run on the double. Its `.gt("discovery_place_reports.count", 0)`
+filter is read as a column of discovery_places (42703). Whether PostgREST accepts a filter on an aggregate embed was not
+measured. So the old statement's answer is staged as PostgREST would give it under the most charitable reading. The
+double compares `null` with `eq` as equal, so the claim's `.is(col, null)` guard for a null column is not proven here.
+Nothing here ran against a live PostgREST.
+
+Rows: none move. TV-4a is graded on `moderation_reports` (§35), and none of these surfaces acts on that table. C5 reads
+the trust review queue. It stays C; its filter words are now validated as well. No row of this census grades the venue
+queue, the place-image queue, the Compass dashboard, the event moderate route's own audit row or place-mismatch resolve.
+Headline unchanged: 90 / 15 / 1 / 2 of 108.
+
+### Correction (2026-10-18, wave 5, honesty 3) — events.state: a moderator's change goes through the transition authority
+
+*Same branch and tree. Committed on this branch; undeployed. **NO ROW MOVES.***
+
+**Why it is recorded here.** No census grades the events lifecycle as rows. census-discovery says it grades none of
+routes/events.ts's routes; census-trips and census-media declare routes/events.ts graded elsewhere; census-telegraph
+watches it only for the shared-rail cancellation notice (T264), which reads `events.state` and does not write it.
+This census watches routes/events.ts, routes/admin.ts, lib/eventModerationClaim.ts and
+services/appeals/resolveAppeal.ts, and carries every earlier correction to the event moderate route. So the
+correction is here.
+
+**What was broken.** lib/eventLifecycle.ts's EVENT_STATE_TRANSITIONS is the one answer to "may this event go from A
+to B", and every host route writes through writeEventState, which asks it. Two writers did not ask:
+1. PATCH /admin/events/:eventId/moderate put `state` straight into its claim. `cancel` wrote `cancelled` over a
+   `completed` event and over an `archived` one. `restore` wrote `open` over every cancelled or archived event,
+   including the host's own cancellations, and a moderator-cancelled draft came back published.
+2. An approved event appeal wrote `state: "open"` over every state.
+
+A moderator's cancel also told no attendee; the host's cancel pushes "Event cancelled" to the going and maybe RSVPs.
+
+**What changed, with no migration.** The edits to admin.ts, eventModerationClaim.ts (top 175 lines) and
+resolveAppeal.ts are line-neutral; new code is appended at the files' ends.
+- `cancel` and `remove` are put to decideEventTransition unchanged
+  (`artifacts/api-server/src/lib/eventModerationClaim.ts:242#const d = decideEventTransition(ev.state, intent.to);`).
+  A refusal is a 409 `invalid_state_transition` with nothing written. An event already in the target state is no state
+  change; the action still applies its other columns and is audited.
+- `restore` is the one move a host may never make, so it is a moderator-only arrow in the authority
+  (`artifacts/api-server/src/lib/eventLifecycle.ts:493#export function decideEventModerationReversal(`). It reverses
+  only the newest RECORDED moderation, back to the state that moderation found
+  (`artifacts/api-server/src/lib/eventLifecycle.ts:513#return { allowed: true, from: cur, to: from as EventState, moderatorOnly: true };`),
+  and only while the event still holds the state the record left it in
+  (`artifacts/api-server/src/lib/eventLifecycle.ts:505#recorded.to_state !== cur`). Its targets are derived from
+  the table, never restated (`artifacts/api-server/src/lib/eventLifecycle.ts:484#export function eventModerationReversalTargets(`).
+  The host's table is unchanged: a host still cannot leave `cancelled` (except to archive) or `archived`.
+- Why the newest record is enough: from `cancelled` a host can only archive, and from `archived` nothing moves. So no
+  host path leaves one of these states and returns to it. Every moderation-side state change writes a record, so a
+  record whose `to_state` is the current state means nothing has moved the event since.
+- The record is the moderation's own event_activity_log row. When the state changed, its metadata carries
+  `from_state` / `to_state` (`artifacts/api-server/src/lib/eventModerationClaim.ts:162#await opts.writeActivity(stateChangeOf(changes, prior));`).
+  It is written in the claim, audit, undo order. The read pages past the row cap and passes over rows that changed
+  no state (`artifacts/api-server/src/lib/eventModerationClaim.ts:275#m.from_state !== m.to_state`). event_activity_log.metadata
+  is jsonb, and its (event_id, created_at DESC) index serves the read.
+- The claim takes `state` only as an allowed decision taken from the state this request read. A raw `state` change
+  is refused (`artifacts/api-server/src/lib/eventModerationClaim.ts:209#hasOwnProperty.call(opts.changes, "state")`),
+  as is a decision taken from another state (`artifacts/api-server/src/lib/eventModerationClaim.ts:214#d.from !== String(ev.state ?? "")`).
+  The claim stays conditional on that state, as writeEventState's UPDATE is.
+- The route hands an intent to the authority and patches no state
+  (`artifacts/api-server/src/routes/admin.ts:3001#const decidedE = await decideModeratedEventState(sc, ev as ModeratedEventRow, stateIntent);`).
+  The answer names the change (`artifacts/api-server/src/routes/admin.ts:3027#state: { from: decidedE.decision.from, to: decidedE.decision.to }`).
+- The appeal goes through the same reversal
+  (`artifacts/api-server/src/services/appeals/resolveAppeal.ts:425#const r = await reverseModeratedEventOnAppeal(sc,`).
+  With no recorded moderation to reverse, the restoration is deferred to a person
+  (`artifacts/api-server/src/services/appeals/resolveAppeal.ts:432#return deferRestoration(appeal, r.message);`).
+  The reversal is recorded as `admin_restore` with `via: "appeal"`, and it is undone if that record cannot be written.
+- A change to `cancelled` pushes "Event cancelled" to the going and maybe attendees, as the host's does, only after
+  the change and both audit rows stand (`artifacts/api-server/src/lib/eventModerationClaim.ts:174#if (changes.state === "cancelled") notifyAttendeesOfModeratedCancel(sc, req, ev);`).
+  Every read it makes is checked and paged. The host-cancel trust charge is not emitted, because a moderator's cancel
+  is not the host's act.
+
+**The one exception.** The undo writes `prior` back over the claim
+(`artifacts/api-server/src/lib/eventModerationClaim.ts:125#.eq("updated_at", opts.now)`). It is compensation, not a
+transition. It runs only when this request's own audit row failed. It is guarded on the values this request wrote and
+on its own stamp, so a later writer's change is never undone. No side effect has fired by then.
+
+**Proof.** `artifacts/api-server/src/test/eventModerationStateAuthority.test.ts:280#describe("B. structural`
+scans every `.from("events")` chain under src/ (181 chains, 33 writes). Comments and string contents are blanked
+first. The only writes that can set `state` are three listed writers that ask the authority (writeEventState, the
+start scheduler, the moderation claim), the one exception, and three patches it proves state-free. A fourth writer,
+or a state key anywhere else, fails it. No migration or baseline function UPDATEs `events.state`.
+The suite has 31 cases. On the 929b2599b sources, with the new tests in place, 24 cases were red and 7 controls were
+green. The appeal and moderation route cases run on schemaStrictSupabase
+(`artifacts/api-server/src/test/helpers/adminModerationDouble.ts:37#export function installModerationDouble(`).
+35 mutants, each applied alone, were restored from a repo-relative backup and checked by sha256. All 35 were
+killed. 33 of them are also killed with the structural cases skipped, so no guard rests only on a source-text
+assertion. Two of the 35 add a new bypass elsewhere (a state key in admin.ts's hide-content write, a spread in
+events.ts's close-rsvps write); the structural scan kills both.
+Two existing suites pinned the old behaviour and were corrected:
+- appealReversalAffectedRows seeded an event with `state: "removed"`, which is no event_state label; the raw write
+  accepted it. Its fake now answers `count` to a read.
+- adminModerationRemainingSeven's readEveryRow "fell" case now expects the count-once refusal; see the next correction.
+
+**What this does not prove or change.**
+- `restore` still sets visibility `public`, whatever the event's visibility was before the hide. A `friends_only` or
+  `circle` event comes back public. An appeal does not restore visibility at all.
+- `remove` from a live state tells nobody, as the host's archive tells nobody.
+- lib/stateMachines/registry.ts does not list the moderator-only arrows; it did not list the raw writes they replace
+  either. Its evidence rule needs the target state written literally in the writer's code, and the reversal's target
+  is computed. Registering them needs a decision on the registry's shape.
+- A moderated event from before this change has no record, so its restore is refused. Production was not measured.
+- The double sorts on one order key, so fixture ids sort as their times do. Nothing here ran against a live PostgREST.
+
+Rows: none move. No row of this census grades `events.state` transitions, the moderate route's state, or an appeal's
+event restoration (TRV2-10 is the owner's reversal-policy question about trust effects). Headline unchanged:
+90 / 15 / 1 / 2 of 108.
+
+- NOT-GRADED: artifacts/api-server/src/lib/eventLifecycle.ts — the event transition authority, cited for the moderator-only reversal this pass adds to it; no Trust row grades the events lifecycle.
+
+### Correction (2026-10-18, wave 5, honesty 3) — the place-image reports filter, the reportCount read, and a count asked once
+
+*Same branch and tree. Committed on this branch; undeployed. **NO ROW MOVES.***
+
+The "remaining seven" correction listed three more items on these lists and left them.
+1. GET /admin/place-images/reports matched `?status=` exactly and unvalidated. A word no report carries answered an
+   empty list, and a repeated `?status` reached the filter as an array. It is now validated against the column's CHECK
+   vocabulary plus the route's `all`, and anything else is a 400 naming `status`
+   (`artifacts/api-server/src/routes/adminPlaceImages.ts:132#parseVocabularyFilter(req.query.status, "status", PLACE_IMAGE_REPORT_STATUS_FILTERS)`,
+   `artifacts/api-server/src/lib/moderationCounts.ts:273#export const PLACE_IMAGE_REPORT_STATUSES`). An empty
+   `?status=` is the default, `pending`; it had matched the empty string.
+2. The place-image queue's reportCount read was not paged. The page bounds its images (at most 100), not their
+   reports. place_image_reports has no unique reporter and image key, and POST /places/:id/image-report never
+   dedups, so one image's pending reports are unbounded. Past PostgREST's db-max-rows (1000 hosted) the read was cut
+   with no sign and reportCount undercounted. It is now paged
+   (`artifacts/api-server/src/routes/adminPlaceImages.ts:86#await readEveryRow((from, to, count) => sc`).
+3. readEveryRow asked for `count=exact` on every page. The first page now asks, and the count is passed through: no
+   later page asks for it or is read for one
+   (`artifacts/api-server/src/lib/moderationCounts.ts:196#expected === null ? "exact" : undefined`). Every caller
+   passes the count to its select. The cut detection still refuses rather than shortens: a fall shows as the pages
+   running out short of the count (`artifacts/api-server/src/lib/moderationCounts.ts:203#if (r!.data.length === 0 && rows.length < c)`).
+   One case is stronger than before. A row removed behind the read position shifted a later page past a row, and the
+   old per-page count fell by exactly what that page lost, so the old read answered a set missing a live row. Rows
+   added mid-read that a later page answers are kept, as before.
+
+**Repoint.** The "remaining seven" correction cited line 201 of lib/moderationCounts.ts as where a fall mid-read
+is refused. Line 201 is now the first page's own-count check, so that citation now points at line 203, which holds
+the refusal its prose describes. Its words are unchanged.
+
+**Tests.** `artifacts/api-server/src/test/adminModerationListsCountOnce.test.ts:118#describe("2. GET /admin/place-images/reports`
+has 19 cases on the same double. On the 929b2599b sources, 13 were red and 6 controls were green. The count is
+counted per statement: the venue queue, the place-image reportCount read, each tallied Compass section and the
+safety-filter totals each ask once under a 2-row cap.
+14 mutants, each applied alone, were restored from a repo-relative backup and checked by sha256. All 14 were
+killed. One was killed by a hang: it removes the empty-page refusal, which is also what ends a read that runs
+short of its count.
+adminModerationRemainingSeven's "one that falls is refused" case pinned the per-page count's message. It now expects
+the count-once refusal, on the same line.
+
+Rows: none move. C5 reads the trust review queue and is not touched here. No row of this census grades the
+place-image lists or readEveryRow. Headline unchanged: 90 / 15 / 1 / 2 of 108.
+
+### Correction (2026-10-18, wave 5) — moderator restore never widens an event's visibility
+
+*Same branch and tree. Committed on this branch; undeployed. **NO ROW MOVES.***
+
+**Why it is recorded here.** The honesty-3 correction above listed it as not changed: `restore` set visibility `public`
+whatever the event held before the hide, and an approved appeal never restored visibility at all. This census
+watches the moderate route, lib/eventModerationClaim.ts and services/appeals/resolveAppeal.ts, so the fix is here.
+The same pass fixes the host cancel push's attendee read, which that correction also listed (routes/events.ts).
+
+**What was broken (privacy).** `hide` writes visibility `invite_only`; `remove` writes `invite_only` and archives.
+`restore` wrote `public` over every event. So:
+- a `friends_only` or `circle` event, hidden and then restored, came back public, to every feed and search;
+- an event a moderator only cancelled (visibility untouched) came back public on its restore;
+- a host's own `invite_only` event came back public;
+- an approved appeal of a hidden event left it hidden, and an appeal of a removed event reopened it hidden.
+
+**What changed, with no migration.** The edits to admin.ts, eventModerationClaim.ts (above its appended code) and
+resolveAppeal.ts are line-neutral.
+- The record. Every action that writes visibility records, on its own event_activity_log row, the value it found and
+  the value it wrote: `from_visibility` / `to_visibility`, equal when nothing changed
+  (`artifacts/api-server/src/lib/eventModerationClaim.ts:450#{ from_visibility: prior.visibility, to_visibility: changes.visibility }`).
+  It goes beside the state record, in the same claim, audit, undo order
+  (`artifacts/api-server/src/lib/eventModerationClaim.ts:221#...visibilityRecordOf(changes, prior)`).
+  The column is jsonb.
+- The route's restore no longer writes a literal
+  (`artifacts/api-server/src/routes/admin.ts:2970#// visibility: back ONLY to what the recorded hide / remove found`).
+  It asks `decideRestoredEventVisibility` and writes only its decision
+  (`artifacts/api-server/src/routes/admin.ts:3002#if (decidedV?.decision) changes.visibility = decidedV.decision.to;`).
+  The answer names the change (`artifacts/api-server/src/routes/admin.ts:3027#visibility: { from: decidedV.decision.from, to: decidedV.decision.to }`).
+- The reversal. The newest visibility moderation decides, read paged and newest first; a row that changed nothing is
+  passed over (`artifacts/api-server/src/lib/eventModerationClaim.ts:481#if (m.from_visibility !== m.to_visibility)`).
+  - A recorded hide or remove whose value the event still holds goes back to exactly the value it found
+    (`artifacts/api-server/src/lib/eventModerationClaim.ts:499#if (recorded.to === cur) return { kind: "reverse", from: cur, to: recorded.from };`).
+  - Nothing to reverse (no moderation changed the visibility, or the newest one is a restore) leaves the visibility
+    as it is (`artifacts/api-server/src/lib/eventModerationClaim.ts:497#if (recorded.action === "admin_restore")`).
+  - Only an event reading `invite_only`, the one value hide and remove write, can hold a hide to reverse. Any other
+    value is the host's own and is not read (`artifacts/api-server/src/lib/eventModerationClaim.ts:518#if (ev.visibility !== EVENT_HIDDEN_VISIBILITY)`).
+- No record. A hide or remove whose row does not record what it found (it predates the record) is refused, 409
+  `invalid_state_transition`, with nothing written
+  (`artifacts/api-server/src/lib/eventModerationClaim.ts:523#if (d.kind === "unknown") return { ok: false, code: "invalid_state_transition"`).
+  The prior value cannot be known, and any guess can only widen. So the event keeps `invite_only`. Of
+  event_visibility's labels (`artifacts/api-server/baseline/20260819_baseline_structure.sql:189#CREATE TYPE public.event_visibility AS ENUM (`:
+  public, friends_only, invite_only) it is the most restrictive. No feed or search reads it (they read `public` and
+  `friends_only`), and the public-read policy admits `public` only. The API's `circle` and `trip` are not stored
+  (census-discovery §64.10).
+- The appeal reverses the same two records through the same deciders
+  (`artifacts/api-server/src/lib/eventModerationClaim.ts:379#const vis = await decideRestoredEventVisibility(sc, ev);`,
+  `artifacts/api-server/src/lib/eventModerationClaim.ts:385#changes: vis.decision ? { visibility: vis.decision.to } : {}`).
+  A hide with no record, or nothing to reverse, is deferred to a person with nothing written
+  (`artifacts/api-server/src/lib/eventModerationClaim.ts:381#if (!stateDecision && !vis.decision) {`). A read failure
+  holds the appeal (noop). The reversal row carries both records, `via: "appeal"`.
+
+**The host cancel push (routes/events.ts).** getAttendeeRecipients feeds the host's cancel push (POST /events/:id/cancel
+and DELETE /events/:id), and also the postpone, details-updated and pinned-update pushes. It read the going and maybe
+RSVPs, then their push tokens, unpaged, keeping `data` only.
+- Past db-max-rows (1000 hosted) the read was cut, and the attendees past it were never told.
+- A failed read became "nobody is going". Nobody was told, and nothing said so.
+
+Both reads now go through readEveryRow, ordered on a unique key
+(`artifacts/api-server/src/routes/events.ts:773#const rsvps = await readEveryRow((from, to, count) => sc`). The token
+read takes chunks of 100 ids. A failed read throws
+(`artifacts/api-server/src/routes/events.ts:778#if (rsvps.error || !rsvps.data) throw new Error(`)
+into the caller's own catch, which logs it at WARN with the event id. That is the house fan-out convention, the one the circle routes'
+logCircleFanoutFailure follows: a failed recipients read raises and is logged. The details-updated push's bare
+catch now logs (`artifacts/api-server/src/routes/events.ts:2635#"event-updated push notify failed"`). The host cancel's
+log was labelled "admin-cancel"; it now says what it is
+(`artifacts/api-server/src/routes/events.ts:4795#"event-cancelled push notify failed"`). The cancel itself is written and
+answered exactly as before, and the push stays fire-and-forget.
+
+**Tests.** `artifacts/api-server/src/test/eventModerationVisibilityRestore.test.ts:170#describe("B. PATCH /admin/events/:eventId/moderate — restore never widens"`
+has 23 cases on the moderation double: the decision, the route and the appeal. Friends-only and circle events,
+hidden then restored, come back friends-only and circle. An event with no record never becomes public. The appeal
+does the same.
+`artifacts/api-server/src/test/eventAttendeePushRecipients.test.ts:139#describe("A. the host's cancel push reads every going / maybe attendee, past the row cap"`
+has 12 cases over the real events router. Under a row cap every attendee is told, and each token read names at
+most 100 ids. A failed RSVP or token read is logged at WARN through all five doors, and nobody is told.
+On the 6f0eea215 sources, with the new tests in place, 30 cases were red for the stated reasons and 5 controls were
+green. 26 mutants, each applied alone, were restored from a repo-relative backup and checked by sha256; all 26 were
+killed.
+Two existing cases pinned the old behaviour and were corrected on the same line:
+- adminEventModeration's audit-failure case for `restore` now expects "nothing was applied". A restore of that
+  suite's open, public, unmoderated event changes nothing.
+- eventModerationStateAuthority's "removed completed event" case now seeds a remove that recorded its visibility.
+  One that did not is refused (above).
+
+**What this does not prove or change.**
+- A host may change visibility through PATCH /events/:id, which writes no record. A host who moved a hidden event
+  away from `invite_only` and back is not seen, and its restore puts back the host's own value from before the hide.
+  Nothing stops a host from un-hiding a moderator-hidden event that way; that is a separate gap.
+- A hide or remove from before this change has no record, so its restore is refused. Production was not measured.
+- `circle` and `trip` cannot be stored (census-discovery §64.10). The cases prove that a restore puts back whatever
+  value was recorded; they do not make those values storable.
+- countCommittedAttendees (the host-cancel trust charge) still reads RSVPs unpaged. It decides "at least one", so a
+  cut read cannot change its answer.
+- Nothing here ran against a live PostgREST.
+
+Rows: none move. No row of this census grades the moderate route's visibility, an appeal's event restoration
+(TRV2-10 is the owner's question about trust effects), or the cancel push. Headline unchanged: 90 / 15 / 1 / 2 of 108.
+
+### Correction (2026-10-18, wave 5) — a host cannot undo a moderator's hide
+
+*Same branch and tree. Committed on this branch; undeployed. **NO ROW MOVES.***
+
+**Why it is recorded here.** The correction above listed it as not changed: a host could change an event's visibility
+through PATCH /events/:id with no guard and no record, so a moderator's hide lasted only until the host undid it. This
+census watches the moderate route and lib/eventModerationClaim.ts, so the fix is here. The same pass fixes the event
+reads that answered "not found" or "not allowed" when they failed (the two host cancel routes and getEventRole), which
+that correction also listed.
+
+**What was broken (safety).**
+- `hide` writes visibility `invite_only`; `remove` also archives. The host's PATCH /events/:id wrote any other
+  visibility straight back, and recorded nothing. POST /events/:id/link-circle did the same with `setCircleVisibility`.
+  A removed (archived) event could be widened the same way.
+- A report's hide-content hid an event with a raw update that wrote no event_activity_log row. Nothing could tell
+  that the hide held, and no restore could reverse it.
+- From `cancelled` the transition authority lets a host archive. Archiving a moderator-cancelled event made the cancel
+  irreversible: the restore and the appeal refuse a record the event no longer holds.
+- getEventRole discarded both of its reads' errors, so a failed read was "no role": a 403. DELETE /events/:id and
+  POST /events/:id/cancel discarded the event read's error, so a failed read was a 404. PATCH's own event read and the
+  archive route's read did the same.
+
+**What changed, with no migration.** The edits to routes/events.ts (7139 lines before and after) and routes/admin.ts
+(3747 before and after) are line-neutral. lib/eventModerationClaim.ts and lib/eventViewAccess.ts are appended to; their
+cited lines are unchanged. lib/http.ts adds one code on its existing lines.
+- The hold. While the newest moderation of a column still holds, the host may not write that column: 409
+  `event_under_moderation`, with nothing written
+  (`artifacts/api-server/src/lib/eventModerationClaim.ts:611#export async function refuseHostWriteUnderModeration(`).
+  A moderator's restore or an approved appeal (each writes an `admin_restore` row) releases it. Whether a moderation
+  holds is read from the moderation record, never from a column the host can write. The read is paged and newest first
+  (`artifacts/api-server/src/lib/eventModerationClaim.ts:587#export async function readEventModerationHold(`).
+  - Visibility: the newest admin_hide, admin_remove or admin_restore row decides
+    (`artifacts/api-server/src/lib/eventModerationClaim.ts:577#visibility = action === "admin_restore" ? null : action;`).
+    A hide that changed nothing (the host had already chosen `invite_only`) still holds; passed over, as the restore's
+    reader passes it, it would let the host widen the event the moment after it was hidden. A hide that recorded
+    nothing (it predates the record) holds too. The host's own rows are not read.
+  - State: the newest recorded moderation state change decides, which is the record the restore reverses
+    (`artifacts/api-server/src/lib/eventModerationClaim.ts:580#state = action === "admin_restore" ? null : action;`).
+    A cancel or remove holds. Only a cancelled or archived event can be under one, so a write from any other state
+    reads nothing (`artifacts/api-server/src/lib/eventModerationClaim.ts:612#const state = write.stateFrom !== null`).
+  - A record that cannot be read refuses the write, 503
+    (`artifacts/api-server/src/lib/eventModerationClaim.ts:615#if (!read.ok) return { ok: false, code: "degraded_unavailable"`).
+- Where it is asked. Every host write of a moderated column asks first:
+  - PATCH /events/:id, before its state write and before any other write
+    (`artifacts/api-server/src/routes/events.ts:2557#const held = await refuseHostWriteUnderModeration(sc, id,`);
+  - POST /events/:id/link-circle with `setCircleVisibility`
+    (`artifacts/api-server/src/routes/events.ts:6527#refuseHostWriteUnderModeration(sc, id, { visibility: true, stateFrom: null })`);
+  - POST /events/:id/archive (`artifacts/api-server/src/routes/events.ts:5016#archHold = await refuseHostWriteUnderModeration(`).
+  Every other host write to `events` sets counters, RSVP closure, the chat thread or a cover image, none of them a
+  column a moderation sets. Every writeEventState call that can leave `cancelled` is PATCH or archive; syncEventState
+  starts only from open, full or waitlist. The new suite's structural section pins both lists.
+- The host's own change. On an event that nothing holds, the visibility write is conditional on the visibility the
+  host read. Unless the same request wrote state, it is also conditional on the `updated_at` read, which a moderator's
+  claim stamps. A hide that lands between the hold read and the write therefore wins, and the host gets 409 `conflict`
+  (`artifacts/api-server/src/routes/events.ts:2614#visGuard && (error as any).code === "PGRST116"`).
+  The change is recorded: a `visibility_changed` row with from and to
+  (`artifacts/api-server/src/routes/events.ts:2616#recordHostVisibilityChange(sc, { eventId: id, actorId: user.id`).
+  The restore's reader reads that row as the host's own value since, and never reverses past it
+  (`artifacts/api-server/src/lib/eventModerationClaim.ts:496#if (recorded.action === EVENT_HOST_VISIBILITY_ACTIVITY)`).
+  This closes the case the correction above stated: a host who moved a hidden event away from `invite_only` and back.
+- The report's hide. hide-content's event branch is now the moderate route's hide. It is claimed, recorded
+  (`admin_hide`, from and to, `via: "report"`), and undone if the record cannot be written
+  (`artifacts/api-server/src/routes/admin.ts:2454#applyEventModeration(sc, req, hEv as ModeratedEventRow`).
+- Failed reads. getEventRole now throws EventAccessUnavailableError. The global error handler answers it 503
+  `degraded_unavailable`, the device TripAccessUnavailableError uses
+  (`artifacts/api-server/src/routes/events.ts:252#throw new EventAccessUnavailableError("events", evErr)`,
+  `artifacts/api-server/src/routes/events.ts:260#throw new EventAccessUnavailableError("event_roles", rErr)`).
+  The two cancel routes, PATCH and archive answer a failed event read with 503 `degraded_unavailable`, nothing written
+  (`artifacts/api-server/src/routes/events.ts:2730#evErr } = await sc.from("events").select("title, state, starts_at")`,
+  `artifacts/api-server/src/routes/events.ts:4763#evErr } = await sc.from("events").select("title, state, starts_at")`). An event that is
+  not there answers as before. UNCHECKED_READS_ALLOWLIST.json loses getEventRole's two entries, which are fixed.
+
+**Tests.** `artifacts/api-server/src/test/eventHostModerationHold.test.ts:195#describe("B. PATCH /events/:id — a moderator's hide holds the host off"`
+is one suite of 42 cases over the real admin and events routers, the real global error handler, and the moderation
+double:
+- A: the hold, pure;
+- B and B2: PATCH and archive, including a hide that changed nothing, an unrecorded hide, a remove, a cancel, a
+  release by restore and by an approved appeal, an unreadable record, two races, and a read past the row cap;
+- C: link-circle; D: hide-content; E: the failed reads;
+- F: the structural lists.
+On the cf5a3c6cd sources, with the new suite in place, 33 cases were red for the stated reasons and 9 controls were
+green; the label check found 0 violations. 33 mutants, each applied alone, were restored from a repo-relative backup
+and checked by sha256; all 33 were killed. No existing case had to change.
+
+**Behaviour changes.**
+- PATCH /events/:id (visibility or state), POST /events/:id/link-circle (`setCircleVisibility`) and POST
+  /events/:id/archive answer 409 `event_under_moderation` while a moderation of that column holds. A new error code,
+  409, in lib/http.ts.
+- A host's own visibility change writes a `visibility_changed` activity row. One that loses a race is 409 `conflict`.
+- hide-content on an event writes an `admin_hide` row. When that row cannot be written, the hide is undone and the
+  answer is 500 `db_error`; it used to stand unrecorded. A failed event read there is 503.
+- A failed getEventRole read is 503 on every route that uses it (about 45); it was a 403.
+
+**What this does not prove or change.**
+- Every hide or remove from before the visibility record (cf5a3c6cd), which is every one in production today, holds the
+  host off, and its restore is refused (the correction above). Such an event stays `invite_only` until a person acts:
+  no route releases it. Production was not measured.
+- A hide-content on an event from before this change wrote no row, so it does not hold, and the host can still widen it.
+- A PATCH that changes state and visibility together is conditional on the visibility read but not on `updated_at`,
+  because its own state write stamps that. A hide that changed nothing, landing in that instant, is not seen. When that
+  write loses its race, the state change already stands.
+- A host may still cancel or archive a hidden event; the hide holds visibility only. A restore of a host-cancelled event
+  is refused whole, so that event's hide cannot then be restored by the route either. It stays cancelled and hidden.
+- When the host's `visibility_changed` row cannot be written, the failure is logged and the change stands unrecorded.
+  No decision rests on that row: the hold reads moderation rows only, and every hide records what it found.
+- 41 other event-row reads in routes/events.ts still discard their error, among them publish, postpone and complete.
+- `circle` and `trip` cannot be stored (census-discovery §64.10), so link-circle's visibility write still fails there.
+- Nothing here ran against a live PostgREST.
+
+Rows: none move. No row of this census grades a host's write of a moderated column, the report's hide, or these reads;
+§30.3's "every getEventRole caller grants on a positive role only" still holds. Headline unchanged: 90 / 15 / 1 / 2 of
+108.
+
+### Correction (2026-10-18, wave 5) — event reads: a failed read is never not-found, not-allowed or a default
+
+*Same branch and tree. Committed on this branch; undeployed. **NO ROW MOVES.***
+
+**What was broken.** supabase-js resolves on a database error, so `const { data: ev } = await …maybeSingle()` and then
+`if (!ev) 404` answered "Event not found" for a read that never answered. routes/events.ts held 152 reads that bound
+`data` only (checkUncheckedSupabaseReads, judged at every tier: 149 out of its enforced scope, 3 ledgered), and eleven
+more places bound the error and then folded it into the negative answer. The correction above named 41 of them; the
+whole file is covered here. A read that failed became:
+- 404 "Event not found" on publish, postpone, complete, rsvp, join, the drafts, the share-link preview, the detail, the
+  reviews, reminders, add-to-trip, telegraph-thread and the rest (49 sites);
+- 403 on the participant gates — "you must have a Going RSVP", "only open to circle / trip members", "requires host
+  approval", "for verified users only", and a gate's own "temporarily unavailable" sent as `forbidden` (21 sites, plus
+  the folds below);
+- an event silently missing from a list: an unread friendship, block, eligibility or view-access input dropped it from
+  the feed, city, nearby, search, circles, near-trip and following lists;
+- a wrong default stated as fact: `myRsvp: null`, `isSaved: false`, `goingCount: 0`, `waitlistCount: 0`, "not checked
+  in", `event: null` on an invite;
+- a WRITE from nothing: `waitlist_count` stamped 0 over the real queue (waitlist accept, waitlist leave, the ban, block-
+  user), `avg_rating` / `review_count` rewritten from no ratings, and a first-event trust bonus (+10, deduped for ~11
+  years) awarded to a veteran host whose prior events could not be read;
+- at waitlist accept, the worst: the join gate's unread request read as "not approved", and the refusal DELETED the
+  user's queue place and offered their seat to the next person.
+
+**The rule, by class.** Every read in the file is now one of three
+(`artifacts/api-server/src/routes/events.ts:7148#Every read in this file now falls in one of three classes`):
+- (a) an authorization or existence gate — 79 sites and the folds: refused with EventAccessUnavailableError, which the
+  global handler answers 503 `degraded_unavailable`, retryable, logged at error. Never 404, never 403, never "allowed",
+  and nothing is written after it.
+- (b) data the response states as fact — 34 sites: refused the same way (23), or, for a list route's PRIMARY read, 500
+  `db_error` as that route's sibling reads already answer (11).
+- (c) best-effort side data — 39 sites (names and avatars, ranking signals, push tokens, fire-and-forget fan-out, the
+  live-count refresh, the feed's saved flag): it degrades and is LOGGED; it never widens access, never claims success, and never writes a value
+  derived from the failed read. An unread recount leaves the stored count alone; the feed serves the stored
+  `going_count`, never 0, and an unread saved state as `isSaved: null` (unknown, never false), keeping the feed (lead
+  ruling: a bookmark is side data).
+
+**The folds.**
+- isBlocked answered "blocked" when `blocks` could not be read. It now reads lib/exclusionSet's three-state pair read
+  and refuses (`artifacts/api-server/src/routes/events.ts:338#if (!pair.ok) throw new EventAccessUnavailableError("blocks", pair.reason)`).
+- checkEventEligibility (exported; mapSearch, collections, the call gateway and the sweeper ask it too) never throws.
+  Its unread staff role and unread block are now `unavailable`, and every `unavailable` refusal carries
+  `degraded_unavailable` instead of `forbidden`, so each route that sends `errorCode` answers 503
+  (`artifacts/api-server/src/routes/events.ts:687#if (staffErr) return { ok: false, errorCode: "degraded_unavailable"`).
+  Its callers outside this file still read `!ok` as "not eligible", as before.
+- The six list loops and the detail no longer drop an event, or 404, on an `unavailable` eligibility.
+- canViewEvent folds readEventViewAccess's `unavailable` into `false`. It stays exported unchanged for the other surfaces
+  that ask it; the four route sites here ask viewableOrThrow
+  (`artifacts/api-server/src/routes/events.ts:7165#async function viewableOrThrow(`).
+- isTripEventMember, isGoingAttendee and isCircleMember answered "not a member" on an unread row; each now refuses.
+- The waitlist join's own trust and age gates sent "temporarily unavailable" as 403; now 503.
+- chat/join answered 404 "Event chat not found" when it lost the thread claim and the winning thread could not be read;
+  that case is now 503.
+
+**Item 3: a host may cancel a hidden event; the restore no longer sticks on it.** Whether the hold should also stop a
+host's own cancel is an open owner ruling (docs/ops/wave5-owner-decisions-20261018.md §2), so the host keeps that power:
+a host may always stop their own event, the hide holds visibility only, and cancelling undoes no moderation (a
+moderator's cancel already holds the state; a moderator's remove leaves nothing a host can move). The defect was the
+restore. It read no recorded moderation state change on the cancelled event — the host made it — and refused WHOLE,
+so the hide it could reverse was never reversed: cancelled and hidden for good, the hold never released, by the route
+or by an appeal.
+- The rule. A restore reverses what a moderation RECORDED. A state that no recorded moderation put there (or that
+  something moved since) is the host's: it is KEPT, the answer says why (`stateKept`), and the visibility is still
+  reversed. Nothing to reverse at all is refused exactly as before, with the state's own message; an unreadable record
+  still refuses
+  (`artifacts/api-server/src/lib/eventModerationClaim.ts:252#return keepHostStateOnRestore({ ok: false, code: "invalid_state_transition"`).
+  The route and the appeal both take it.
+- Why it is safe. It never widens: the visibility part is decideRestoredEventVisibility, unchanged — back to exactly
+  what the recorded hide found (a friends-only event comes back friends-only), never past a host's later recorded
+  change, refused for a hide that recorded nothing. It never moves the state. It never releases a moderator's STATE
+  hold: its `admin_restore` row records no state change, and the hold reads only state changes, so a recorded cancel
+  or remove still holds. A moderator's own recorded cancel or remove is reversed exactly as before.
+- For the owner: (1) should the hold also stop a host's cancel of a hidden event (today: allowed)? (2) the rule above
+  is a restore-semantics change: a restore of a host-cancelled, moderator-hidden event now answers 200 with the hide
+  reversed and `stateKept`, where it answered 409.
+
+**What changed, with no migration.** routes/events.ts: 244 lines edited in place and 30 appended, line-neutral (7139 lines before;
+the helpers and this rule's comment appended at the foot, so no cited line moves). routes/admin.ts: two lines, line-
+neutral. lib/eventModerationClaim.ts: eight lines in place (:228 :237 :252 :338 :373 :377 :382 :389) and an appendix. UNCHECKED_READS_ALLOWLIST.json loses the
+three routes/events.ts entries (shrink-only); SILENT_SUPABASE_READS_BASELINE.json loses routes/events.ts S2 (8) and
+S4 (2), which check:silent-supabase-reads demanded. Two existing cases pinned the old answers and were updated:
+eventAgendaItems (an unread RSVP is now 503, still no items) and eventsFailClosedAuthorization (an unread blocks table
+is `unavailable`, still not ok).
+
+**Tests.** `artifacts/api-server/src/test/eventFailedReads.test.ts:275#describe("A. the feed, the city / nearby / search`
+is one suite of 134 cases over the real events and admin routers, the real global error handler, and the schema-strict
+double with a real `.or()`, `.range()` and read faults: at least one case per route touched (74 routes), each class's
+answer, the item-3 restore, checkEventEligibility, and four structural pins (no read in the file ignores its error at
+any tier; no route asks canViewEvent; no list loop drops an unavailable verdict; no fold is back). On the 54abd5f2e
+sources, 123 cases were red for the stated reasons and 11 controls green; the label check found 0 violations.
+118 mutants, each applied alone (backed up at its repo-relative path, restored, sha256-checked), were all killed
+by at least one behavioural case, and so were 6 more on the saved-state lines after the lead's ruling. One (the city
+list's friendship read) was first killed only by a structural pin; a case was added and it is now killed
+behaviourally.
+
+**Behaviour changes.** Every route above answers 503 `degraded_unavailable` (retryable) where it answered 404 / 403 /
+an empty or defaulted body on a failed read; the list routes' primary reads answer 500 `db_error`. The feed refuses
+when the viewer's RSVP or queue place cannot be read (it used to default them); an unreadable saved state is
+`isSaved: null` and the feed is kept. The client's feed item type admits that null, and no client screen reads the
+feed's `isSaved` — the events tab draws its bookmarks from GET /events/saved — pinned by
+`travel-buddy-standalone/src/services/__tests__/eventsFeedIsSavedUnknown.component.test.ts:38#never becomes a bookmark claim`. A removed attendee whose
+event chat could not be read answers `{ ok: true, chatRemoved: false }` (a 503 would invite a retry that offers the
+freed seat twice); a ban whose chat could not be read answers 503 "the ban was recorded". Restore: as item 3.
+
+**What this does not prove or change.**
+- Capability-flag reads (isFlagEnabled: events_enabled, events_waitlist_enabled, events_chat_enabled) still read an
+  unread flag as off; their polarity is check:flag-polarity's, not this file's. events_trust_gates_enabled is already
+  three-state.
+- lib/publicIdentity nameVisibilitySet and the verified-badge read still fall back to "no name / no badge" without a
+  log; both hide, never widen.
+- The writes these routes make without reading their result (the unchecked deletes and upserts) are
+  check:silent-supabase-writes territory and are unchanged.
+- The legacy-hide limits of the correction above stand: a hide from before the record is still refused by restore.
+- Nothing here ran against a live PostgREST.
+
+Rows: none move. No row of this census grades these reads; §30.3 ("every getEventRole caller grants on a positive role
+only") and §30.6's `unavailable` still hold — an unread input still grants nothing. Headline unchanged: 90 / 15 / 1 / 2
+of 108.
+
+### Correction (2026-10-18, wave 5, follow-ups) — a kept state is recorded; an unreadable waitlist flag holds the seat; the promoted person is told
+
+*Same branch and tree. Committed on this branch; undeployed. **NO ROW MOVES.** It closes three items the event-reads
+correction above left open, after the independent verification pass on c37a4d7e1.*
+
+**A kept state was recorded as a full restore.** A restore that reversed a moderator's hide and kept the host's own
+state said so in the route's HTTP answer only. The `admin_restore` activity row (appeal and route), the route's
+`event_restore` moderation_actions row and the appeal itself all read as a full restore of an event still cancelled by
+its host. Now every one of those records carries `state_kept` in its jsonb metadata, written by `stateKeptRecordOf`
+(lib/eventModerationClaim.ts:697), never as `from_state` / `to_state`, so the record releases no moderator's STATE hold
+and is never what a later restore reverses. An approved appeal closes as `event_visibility_restored_state_kept`
+(services/appeals/resolveAppeal.ts:433); a full restore still closes exactly as `event_restored`. The appellant's
+notice (routes/appeals.ts:403-404) no longer says "the action has been reversed" of a cancellation that stands. It says
+the event is visible again and its status was not changed, with or without a moderator's note. Its metadata carries
+`stateKept` (:410). Tests: `artifacts/api-server/src/test/eventRestoreStateKeptRecord.test.ts`, 17 cases, 9 red on the
+old code, 8 controls; 13 mutants, all killed.
+
+**An unreadable waitlist flag gave the freed seat to a walk-in.** `isFlagEnabled` answers false on a read error, so
+DELETE /rsvp, POST /leave and DELETE /attendees skipped promotion when `events_waitlist_enabled` could not be read, and
+`syncEventState` then reopened the event to walk-ins ahead of the queue: a failed read became a write. Now the three
+doors read the flag through `readWaitlistFlagForFreedSeat` (routes/events.ts:7200, on top of the existing four-state
+`readFlagState`): on promotes, off and a missing row behave as before, and an unreadable flag promotes nobody and HOLDS
+the seat. `syncEventState` takes the hold and leaves the state as it was, logged at warn (routes/events.ts:561). The
+leave itself still succeeds.
+
+**A promoted person was told by one push.** A push that found no token, or failed to read one, left the person holding
+an offer they never learned of; it lapsed in 24 hours. Promotion now writes a durable in-app notice through the
+existing notifications path (`notifyWaitlistOffer`, routes/events.ts:7231) only after the offer is claimed. The notice
+expires with the offer and carries no event title. A failed notice never undoes or repeats the offer. The push now
+opens the event.
+
+**Silent hides log.** `nameVisibilitySet` (lib/publicIdentity.ts) and `readVerifiedBadges`
+(services/identityVerification/verifiedBadges.ts) hid a name or badge on a failed read without a word. They now log
+it; their answers are unchanged.
+
+Tests: `eventsWaitlistHeldSeatAndOfferNotice.test.ts` (23) and `identityHideFailureLogs.test.ts` (9), 13 red on the
+old code; 15 mutants, all killed. The 41 event, appeal, waitlist and identity suites: 1096 / 1096 on the integrated
+tree.
+
+**Still open, stated:** a held seat has no guaranteed release to the queue: the next ordinary state sync opens it to
+walk-ins. The sweeper's promotions (lib/eventWaitlistSweeper.ts) still tell nobody and do not read
+`events_waitlist_enabled`. With the flag ON, a promotion whose eligibility read or offer write failed still reopens the
+seat. Several routes free a seat without promoting anyone: a going → maybe change, PATCH attendee status, a ban,
+block-user, and an offer holder leaving the queue. DELETE /attendees promotes even when the removed person was not
+going.
+
+Rows: none move. Headline unchanged: 90 / 15 / 1 / 2 of 108.
+
+### Correction (2026-10-18, wave 5, follow-up B2) — a freed seat goes to the queue on every path; the sweeper tells, and reads its flag
+
+*Same branch and tree. Committed on this branch; undeployed. **NO ROW MOVES.** It closes the "Still open" paragraph of
+the correction above, and Fable pass 8's C2 and C3.*
+
+**One catch-up step, before any reopen.** `syncEventState` (routes/events.ts:562, in place) now offers a free seat to
+the QUEUE before the reopen at :574-581 can give it to walk-ins. Those lines are byte-identical, and
+lib/stateMachines/registry.ts still quotes them. The step is `offerFreedSeatToQueue` (routes/events.ts:7294, appended).
+It runs only on a pass that could reopen: going < max, state full or waitlist.
+- Flag unreadable: the seat is held, logged at warn.
+- Flag off or absent: exactly as before.
+- Flag on, with a live offer: nothing is written.
+- Flag on otherwise: `promoteNextWaitlisted`. Promoted or contended counts as reserved; an empty or stranded queue
+  reopens as before; a failed read or write HOLDS the seat (`freedSeatAfterPromotion`, :7318).
+
+One offer is made at a time, never two for one seat, so a capacity raise of N is offered a seat at a time. The three
+leave doors still make their own offer and pass `"offered"`, so their sync never offers the same seat twice.
+
+Every seat-freeing path is now covered:
+- an RSVP from going to maybe;
+- PATCH attendee status;
+- the ban;
+- block-user;
+- DELETE /waitlist, which did not sync before;
+- PATCH /events/:id `maxAttendees`, which did not sync before;
+- a seat held on an earlier pass;
+- waitlist accept with several free seats;
+- account-deletion cascades, at the next sync.
+
+**DELETE /attendees** reads the removed person's prior status first. A failed read is 503 and removes nothing. It offers
+or holds a seat only for a going seat; a removed "maybe" frees none.
+
+**The sweeper** (lib/eventWaitlistSweeper.ts) reads `events_waitlist_enabled` once per pass through `readFlagState`.
+- On: promotes as before, and now tells the promoted person through `notifyWaitlistOffer`.
+- Off or absent: expires the lapsed offer and promotes nobody (`held` counted).
+- Unreadable: the same, plus `unreadable` is counted, so the pass is not clean.
+
+**The verified-badge flag** is read with `readFlagState`. An unknown answer logs a warning; the answer (no badge) is
+unchanged.
+
+Tests:
+- `artifacts/api-server/src/test/eventsWaitlistFreedSeatToQueue.test.ts`: 44 cases.
+- `artifacts/api-server/src/test/verifiedBadgeFlagUnreadableLog.test.ts`: 6 cases.
+- HS5 (Fable's C2), added to eventsWaitlistHeldSeatAndOfferNotice.test.ts; it alone kills the surviving mutant M11.
+- HS2 now expects no state write. It had pinned the reopen this correction removes.
+- The sweeper suite's fixture answers the flag ON. It had no flag rows, so the sweeper now promoted nobody.
+
+Red-first: 36 of 74 fail on the old code (the 35 new cases and HS2). 24 mutants, all killed. The builder's enumerated 33-file set (its handback): 1151 / 1151; the independent verifier's 58 registered suites: 1575 / 1575.
+
+**Still open, stated:**
+- Two passes in the same instant can each offer one person for one seat. Waitlist accept's capacity check does NOT stop a double
+  seat (corrected 2026-10-18: two accepts in the same instant can both be seated; 3906 closes it, unapplied), and its spot-filled branch then offered the next person a seat that does not exist (closed by B3).
+- The accept route's three re-offer branches ignore the flag.
+- Join-request approvals and PATCH status `{going}` admit on the live count, without regard to a held or offered seat.
+- The sweeper sends an in-app notice, but no push.
+- No reconciling sweep exists for a held seat on an event that never syncs again.
+
+Rows: none move. Headline unchanged: 90 / 15 / 1 / 2 of 108.
+
+### Correction (2026-10-18, wave 5, follow-up B3) — accept re-offers read the flag; approvals respect a reserved seat; the spot-filled loop is gone
+
+*Same branch and tree. Committed on this branch; undeployed. **NO ROW MOVES.** It closes three items of follow-up B2's
+"Still open" list above.*
+
+**The spot-filled loop.** When POST /waitlist/accept found the spot already filled, it withdrew the accepter's offer and
+re-offered. The accepter keeps their queue position, so the re-offer usually went back to the same person: a new
+in-app notice and push on every tap. It now syncs instead (routes/events.ts:3339, in place), and the catch-up offers a
+seat only when one is really free. The 403 the accepter gets is unchanged and is now true: the offer is withdrawn, they
+keep their place, and nobody is re-offered. The withdraw write used to discard its error, leaving the offer standing
+under that same 403; a failed write now answers 503 (`sendSpotFilledOfferStands`, appended at :7344).
+
+**The accept route's three re-offer branches** (expired, visibility-refused, spot-filled) now go through
+`syncEventState`'s flag-aware catch-up:
+- flag unreadable: the seat is held;
+- flag off or absent: nobody is promoted;
+- flag on: the queue head is offered only when a seat is really free.
+A failed delete of a lapsed row now offers nobody. The sweeper releases that seat once; before, the route and the
+sweeper could each offer it.
+
+**Host approvals** (the two join-request approvals, :3609 and :5235, in place) treat the event as full when going ≥ max
+or the state is full or waitlist (`freeSeatHeldForQueue`, appended at :7367). A seat held for the queue, or reserved by a
+live offer, is no longer given to a host's pick: the requester joins the back of the queue, or answers
+`approved_pending_capacity` when the event's own waitlist is off. An open event with room seats them as before.
+
+Tests: `artifacts/api-server/src/test/eventsWaitlistAcceptAndHostSeat.test.ts`, 31 cases, 23 red on the old code;
+14 mutants, all killed. 93 event, waitlist and sweeper files: 2724 / 2724.
+
+**Still open, stated:**
+- **The two-passes race** has no code-only fix: a guard across two tables in the claim's own statement is beyond
+  PostgREST's filters. It needs a database function that locks the event row and counts going plus live offers before
+  claiming, which is a migration. Fix 1 bounds it: the second accepter is told the spot was filled, and nobody else is
+  offered.
+- **PATCH /attendees/:userId/status `{going}`** has no capacity check and no eligibility gate. Whether a host may seat
+  someone past capacity, or ahead of the queue, is owner question Q-B3-1. Today's behaviour is pinned as stated, not
+  endorsed.
+- On an `open` event, an expired or refused offer no longer offers the next queued person (the catch-up runs only on
+  full or waitlist).
+
+Rows: none move. Headline unchanged: 90 / 15 / 1 / 2 of 108.
+
+### Correction (2026-10-18, wave 5, waitlist race) — one seat, one offer, one accept, under the event row's lock (3906, unapplied)
+
+*Same branch and tree. Committed on this branch; the migration is unapplied everywhere. **NO ROW MOVES.** It closes, on
+the press, the first "Still open" bullet of both follow-up B2 and B3 for the route paths.*
+
+**The race, reproduced.** Two promotion passes in the same instant could each offer one person for one seat, and two
+accepts for the last seat could both be seated. B2's sentence that accept's capacity check stops a double seat was wrong
+under concurrency, and is corrected above. A test drives the real router on PGlite and forces the worst interleaving:
+without 3906, it gets two offers and three going in two seats.
+
+**The fix.** `artifacts/api-server/src/migrations/3906_event_waitlist_seat_under_event_lock.sql` adds two functions:
+- `claim_waitlist_seat(p_event_id, p_user_id, p_offer_expires_at)` locks the event row (`FOR NO KEY UPDATE`, which
+  serialises every update of the row but not the foreign-key lock an RSVP insert takes). It then counts going RSVPs plus
+  live offers against `max_attendees`, and only below that claims the named person's queue row.
+- `accept_waitlist_seat(p_event_id, p_user_id)` takes the same lock and seats the person only if a seat is free.
+
+Both are SECURITY INVOKER, with search_path pinned to `pg_catalog`, execute for service_role only, and they refuse to run
+outside READ COMMITTED (the house's locked-decision shape: 3415 `trail_propose`, 3977 `trail_review_decide`).
+
+`routes/events.ts` uses them only after a probe has seen them answer. A missing function (PGRST202 / 42883), or an
+unclear probe, runs today's statements unchanged. A present function whose call fails holds the seat (claim) or answers
+503 (accept), never falling back to the unlocked path, because a lost answer may already have committed. The migration
+is order-independent of the 32 files above it; the grep evidence is in the lane's handback.
+
+Tests:
+- `artifacts/api-server/src/test/eventsWaitlistSeatLockRace.test.ts` (33 after pass 12);
+- `artifacts/api-server/src/test/eventWaitlistSeatLockMigration.test.ts` (24);
+- `artifacts/api-server/src/test/db/eventWaitlistSeatLock.db.test.ts` (5, for CI's local-db job; its two lock-wait cases
+  need two real sessions, so CI is their first run).
+
+20 of 48 are red on the old routes, and all 24 migration cases are red with 3906 emptied. 35 mutants, all killed. The
+unapplied-schema ledger records the probe as fail-soft.
+
+**Pass 12.** The probe's verdict is process-wide, per database URL (events.ts:7505; pinned with clients built by getServiceClient()). A resolved non-envelope is a failed call: before this, it answered 500 after an RSVP was already removed (events.ts:7434; six new cases: three, each for a resolved undefined and a resolved null). The locked accept's `no_seat` is the answer, with no unlocked recount (mutant P5 now killed). The schema-capability memo shared the same per-request lifetime and held every probing client strongly (a leak). It is now per database URL too, with nothing holding a client (`artifacts/api-server/src/test/schemaCapabilityMemoPerUrl.test.ts`, 5 cases, 2 red on the old code).
+
+**On the press,** a promotion with no free seat stops offering anyone. The sweeper's own claim now takes the same lock
+(closed on the press; correction below).
+
+Rows: none move. Headline unchanged: 90 / 15 / 1 / 2 of 108.
+
+### Correction (2026-10-18, wave 5, sweeper lock) — the sweeper's claim takes the same lock (3906, unapplied)
+
+*Same branch and tree. Committed on this branch; the migration is unapplied everywhere. **NO ROW MOVES.** It closes, on
+the press, the sweeper half of the waitlist race above.*
+
+**The defect, wider than stated.** The sweeper offered a lapsed offer's seat with its own unlocked UPDATE, which counts
+nothing. A route's catch-up treats a lapsed offer as no offer. So a route that had already offered the seat to the queue
+head was followed by a sweeper pass that deleted the lapsed row and offered the same seat to the next person. That needs
+no concurrency: one after the other gives two offers for one seat too. The tests reproduce it through the real router
+and the real sweeper on PGlite, in sequence and in two forced interleavings. Each gives two offers without the lock. With
+3906 present but today's sweeper, each still gives two: the route's lock cannot see an unlocked claim.
+
+**The fix.** When 3906 is established, the sweeper claims each pick through `claim_waitlist_seat`, one person per call,
+in queue order (`artifacts/api-server/src/lib/eventWaitlistSweeper.ts:389#async function promoteUnderEventLock(`, through
+`artifacts/api-server/src/routes/events.ts:7537#export async function claimWaitlistSeatForSweeper(`). It uses the routes' own probe and process-wide memo: a route's verdict serves the sweeper, and the
+other way round. Each answer:
+- claimed: the person is offered and told (in-app, as before).
+- no free seat, or the row was not claimable: nothing is written. This counts as `contended` (neither stranded nor a
+  failure), and the next pick is tried.
+- the event is gone: stranded.
+- a failed call (an error, a lost answer, a throw, a non-envelope): the seat is HELD, and `failed` and `held` count it.
+  Nobody further is offered, and the unlocked UPDATE never runs after it.
+- a call answering PGRST202 / 42883 ran nothing: that pick and the rest use today's UPDATE.
+The flag still decides first:
+- off or absent: the offer is expired and nobody is promoted;
+- unreadable: the same, and the pass is counted.
+With the function absent (production today), the sweeper's statements are byte-identical to before (statement trace
+over six scenes). The probe is the only addition: at most once per process per 30 s, shared with the routes.
+
+Tests:
+- `artifacts/api-server/src/test/eventsWaitlistSeatLockRace.test.ts`: 58 (25 new, from :703);
+- `artifacts/api-server/src/test/eventWaitlistSweeper.test.ts`: 18 (2 new, :444).
+23 of the 27 new cases are red on the old sweeper (19 on behaviour alone). The 4 that pass are the three anti-vacuity
+cases and one control. 17 mutants, all killed. 66 event, waitlist, scheduler and ledger files: 2051 / 2051 before,
+2078 / 2078 after.
+
+**Still open:**
+- Admissions that take a seat without the queue count outside the lock (Q-B3-1).
+- A seat a failed sweeper claim holds waits for that event's next sync; no reconciling sweep exists (as stated in B2).
+- The sweeper's notice is in-app only, with no push (unchanged).
+
+Rows: none move. Headline unchanged: 90 / 15 / 1 / 2 of 108.
+
+3906's own header (lines 70–74) still says the sweeper claims unlocked. It is left as it is, because editing the migration
+would change the checksum the production addendum records for its copy.
+
+Rows: none move. Headline unchanged: 90 / 15 / 1 / 2 of 108.

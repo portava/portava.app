@@ -3,23 +3,23 @@
  * census L100  — "Compass is an orchestrator and explainer: … invokes
  *                 deterministic tools"
  *
- * ── RESTATED 2026-10-09 UNDER LEAD RULING L-CL02d ───────────────────────────
- * This suite used to prove that `POST /api/airport/sessions/:id/compass` offered
- * the twelve §12 tool declarations to a model, ran what the model chose through
- * `runLayoverTool`, fed the results back, and refused the three ways a tool loop
- * speaks with false confidence (an unreadable shortlist read as `[]`, an
- * unreadable plan read as "fits", an invented tool name thrown as a 500).
+ * ── RESTATED 2026-10-18: OWNER DECISION (supersedes L-CL02a/c/d on this door) ──
+ * Sections 1–4 below were L-CL02d's "no model, no tool" pins. Their scenarios
+ * are unchanged and still pass, because they run with the new flag
+ * `layover_compass_assistant_enabled` ABSENT — its production seed is FALSE
+ * (3846) — and with the flag off the door is exactly the certified-only door
+ * L-CL02d left: no model, no tool, none of the five list tables read.
  *
- * L-CL02a made every live-layover question certified-only; L-CL02c made any
- * session whose departure is ahead live; and a certified explicit `yes` needs a
- * departure ahead — so the model branch was unreachable, and L-CL02d deleted it,
- * the tool loop and the twelve tools from this door. The SAME scenarios are kept
- * here as the statement that is now true: whatever a model would have asked for
- * (each tool, an invented tool, unparseable arguments, an endless tool loop) and
- * whatever the tables hold or fail to hold, the route asks NO model, runs NO
- * tool, reads none of the lists a tool would have read, and answers with the
- * certified text + airport facts. Census L102–L113 and L100 are `W` for this
- * reason (census-layover §56.3).
+ * WHAT CHANGED (stated per assertion in the handback): the titles of sections
+ * 1–4 now say "flag OFF"; nothing they assert was weakened. Section 5 is new:
+ * with the flag ON the same route offers the twelve §12 declarations, runs what
+ * the model chooses through LayoverCompassAssistant, refuses an unreadable
+ * shortlist / plan as a named reason (not [] / "fits"), refuses an invented
+ * tool by name, bounds an endless tool loop, keeps the certified text first,
+ * withdraws adversarial prose (census-compass CL-02) and falls back to the
+ * certified answer on an outage. Census L100, L102–L113 and L268 rest on
+ * section 5 (BUILT, flag seeded FALSE: not C until the owner's press);
+ * census-layover §56.3's L-CL02d reason is superseded.
  *
  * Run: node --import tsx/esm --test src/services/airport/__tests__/layoverCompassToolLoop.test.ts
  */
@@ -41,7 +41,7 @@ const USER_ID = "user-1";
 const SESSION_ID = "session-compass";
 const HOUR = 3_600_000;
 
-/** The twelve tool names the deleted loop offered; kept here only as the scenarios' vocabulary. */
+/** The twelve §12 tool names; sections 1–4 use them as the scenarios' vocabulary (flag OFF: none runs). */
 const FORMER_TOOLS = [
   "getLayoverContext", "getConnectionState", "getTimeWallet", "getSafeEnvelope", "getReachableExperiences",
   "simulatePlan", "getReturnContract", "getAirportState", "getCrewCandidates", "requestConstraintClarification",
@@ -117,10 +117,10 @@ function stage(opts: { failures?: Record<string, { message: string }>; entry?: "
   _setTestClient(db, true);
   return { tables, reads };
 }
-/** The tables the deleted tool loop read; L-CL02b/L-CL02d: this door reads none of them. */
+/** The tables the tools read; L-CL02b: with the flag OFF this door reads none of them. */
 const LIST_TABLES = ["layover_recommendations", "layover_plan_stops", "layover_crews", "layover_crew_members", "layover_checkpoints"];
 
-/** A model double that records every request and replays a script — here, to prove it is never asked. */
+/** A model double that records every request and replays a script — flag OFF: to prove it is never asked. */
 function scriptedModel(turns: Array<{ content?: string; tool_calls?: any[] }>) {
   const seen: any[] = [];
   let i = 0;
@@ -168,7 +168,7 @@ async function ask(question: string, m: ReturnType<typeof scriptedModel>) {
 
 // ── 1. Every status, every clock: no model, no tool, certified text ─────────
 
-describe("L-CL02d — the layover door asks no model and runs no tool, for every session", () => {
+describe("L-CL02d — the layover door asks no model and runs no tool, for every session — with the assistant flag OFF (the seed)", () => {
   for (const status of ["active", "returning", "some_future_status", "completed", "cancelled", "expired"]) {
     it(`status ${status}, departure ahead, certified yes: 0 completions, 0 tools, the certified yes text`, async () => {
       stage({ status });
@@ -198,7 +198,7 @@ describe("L-CL02d — the layover door asks no model and runs no tool, for every
 
 // ── 2. Each former tool scenario: the model would have called it; nothing runs ──
 
-describe("L102–L113 (former tool scenarios) — whatever tool a model would choose, none runs and none is offered", () => {
+describe("L102–L113 (former tool scenarios) — flag OFF: whatever tool a model would choose, none runs and none is offered", () => {
   for (const tool of FORMER_TOOLS) {
     it(`${tool}: no completion, no tool message, no tool in toolsConsulted`, async () => {
       stage();
@@ -233,7 +233,7 @@ describe("L102–L113 (former tool scenarios) — whatever tool a model would ch
 
 // ── 3. Least data touched: no list a tool would have read is read (L-CL02b, F1) ──
 
-describe("L-CL02b/L-CL02d — no recommendation, plan-stop, crew or checkpoint read, for ANY session", () => {
+describe("L-CL02b/L-CL02d — flag OFF: no recommendation, plan-stop, crew or checkpoint read, for ANY session", () => {
   const now = Date.now();
   const worlds: Array<[string, { status: string; departure?: string }]> = [
     ["active", { status: "active" }],
@@ -260,7 +260,7 @@ describe("L-CL02b/L-CL02d — no recommendation, plan-stop, crew or checkpoint r
 
 // ── 4. The event: always certified_only/false; liveLayover by L-CL02c (F2) ────
 
-describe("compass_question_asked records certified_only / no model for EVERY status, and liveLayover by L-CL02c", () => {
+describe("compass_question_asked records certified_only / no model for EVERY status (flag OFF), and liveLayover by L-CL02c", () => {
   const now = Date.now();
   const cases: Array<[string, { status: string; departure?: string | null }, boolean]> = [
     ["active", { status: "active" }, true],
@@ -321,5 +321,140 @@ describe("V-R9 — the route hands the certification its own clock (a wrong cloc
     const r = await post(`/api/airport/sessions/${SESSION_ID}/compass`, { question: "Can I leave the airport?" });
     assert.equal(r.status, 503, JSON.stringify(r.body));
     assert.equal(r.body.code ?? r.body.error, "degraded_unavailable", JSON.stringify(r.body));
+  });
+});
+
+
+// ── 5. Owner decision 2026-10-18: flag ON — the assistant on the live route ──
+//
+// Appended at the foot so no cited line above moves. Census L100, L102–L113,
+// L268 (the tools are offered, chosen and run; plans are compared from the
+// certified record; clarification and OpportunityEvents reach the model through
+// the tools) and census-compass CL-02 (hard safety is not overridden by prose).
+import { _resetRateLimit } from "../../../lib/rateLimit.js";
+import { LAYOVER_TOOL_NAMES } from "../LayoverCompassAssistant.js";
+
+/** `stage`, with the assistant flag ON (its production seed is FALSE: 3846). */
+function stageOn(opts: Parameters<typeof stage>[0] = {}) {
+  const s = stage(opts);
+  s.tables.feature_flags.push({ flag: "layover_compass_assistant_enabled", enabled: true });
+  _resetRateLimit();
+  return s;
+}
+async function askOn(question: string, m: ReturnType<typeof scriptedModel>) {
+  _setTestOpenAI(m.client);
+  const r = await post(`/api/airport/sessions/${SESSION_ID}/compass`, { question });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  return r;
+}
+const replyJson = (reply: string, compare: Array<{ planRef: string; why: string }> = []) => JSON.stringify({ reply, compare, clarify: null });
+const toolResults = (req: any) => req.messages.filter((x: any) => x.role === "tool").map((x: any) => JSON.parse(x.content));
+
+describe("flag ON (owner decision 2026-10-18) — L100 / L102–L113 / L268 on the live route, with CL-02 held", () => {
+  it("the twelve §12 declarations travel on the request; the model's choice runs; what it reads is the certified record", async () => {
+    stageOn();
+    const m = scriptedModel([
+      { tool_calls: [call("c1", "getReturnContract", { sessionId: SESSION_ID }), call("c2", "getTimeWallet", { sessionId: SESSION_ID })] },
+      { content: replyJson("The lounge offers a calm spot to recharge.") },
+    ]);
+    const r = await askOn("What should I do here?", m);
+    assert.equal(m.seen.length, 2);
+    assert.deepEqual(m.seen[0].tools.map((t: any) => t.function.name), [...LAYOVER_TOOL_NAMES]);
+    const [contract, wallet] = toolResults(m.seen[1]);
+    assert.equal(contract.data.hardReturnTime, r.body.hardReturnTime, "the deadline the model read is the response's own certified field");
+    assert.equal(wallet.data.usableMinutes, Number(/about (\d+) minutes of usable time/.exec(r.body.answer)![1]));
+    assert.deepEqual(r.body.toolsConsulted, ["getReturnContract", "getTimeWallet"]);
+    assert.equal(r.body.modelConsulted, true);
+    assert.deepEqual(r.body.assistant, { enabled: true, status: "answered", fallbackReason: null, model: "gpt-5-mini" });
+    assert.match(r.body.answer, YES_LEAD, "the certified text leads");
+    assert.match(r.body.answer, /You're at Taiwan Taoyuan International Airport \(TPE\).* The lounge offers a calm spot to recharge\.$/);
+    assert.deepEqual(r.body.modelProse, { mode: "confined", droppedSentences: 0 });
+  });
+
+  it("an UNREADABLE shortlist and plan reach the model as named refusals — never [] and never 'fits'", async () => {
+    stageOn({ failures: { "layover_recommendations:select": { message: "boom" }, "layover_plan_stops:select": { message: "boom" } } });
+    const m = scriptedModel([
+      { tool_calls: [call("c1", "getReachableExperiences", { sessionId: SESSION_ID }), call("c2", "simulatePlan", { sessionId: SESSION_ID, candidateSet: null })] },
+      { content: replyJson("The lounge offers a calm spot to recharge.") },
+    ]);
+    const r = await askOn("What should I do?", m);
+    assert.deepEqual(toolResults(m.seen[1]).map((x: any) => [x.ok, x.reason]), [[false, "layover_recommendations_unreadable"], [false, "layover_plan_stops_unreadable"]]);
+    assert.deepEqual(r.body.toolsConsulted, []);
+    assert.match(r.body.answer, YES_LEAD);
+  });
+
+  it("the comparison is the server's certified fit of the persisted card, not the model's claim", async () => {
+    stageOn();
+    const m = scriptedModel([{ content: replyJson("", [{ planRef: "rec:r-1", why: "A tasty pick." }, { planRef: "rec:made-up", why: "A lovely choice." }]) }]);
+    const r = await askOn("Compare my options", m);
+    assert.deepEqual(r.body.planComparison.map((l: any) => [l.planRef, l.available, l.status]), [["rec:r-1", false, "not certified: nobody has measured how long it takes"]]);
+    assert.match(r.body.answer, /Comparing your options: Night market dumplings — not certified: nobody has measured how long it takes\./);
+  });
+
+  it("an invented tool and unparseable arguments are refused by name; an endless tool loop is bounded; neither is a 500", async () => {
+    stageOn();
+    const m1 = scriptedModel([{ tool_calls: [call("c1", "bookMeAFlight", {}), call("c2", "getTimeWallet", "{not json")] }, { content: replyJson("The lounge offers a calm spot to recharge.") }]);
+    await askOn("Anything?", m1);
+    assert.deepEqual(toolResults(m1.seen[1]).map((x: any) => x.reason), ["unknown_tool:bookMeAFlight", "malformed_tool_arguments"]);
+    stageOn();
+    const m2 = scriptedModel([{ tool_calls: [call("c1", "getTimeWallet", { sessionId: SESSION_ID })] }]);
+    const r2 = await askOn("Plan my layover", m2);
+    assert.equal(m2.seen.length, 5, "four tool rounds, then one forced tool-less round");
+    assert.match(r2.body.answer, YES_LEAD);
+    assert.equal(r2.body.assistant.status, "fallback");
+  });
+
+  it("CL-02: on a not-yes layover, prose claiming entry and urging the traveller out is withdrawn and REPORTED; the certified text is the whole answer", async () => {
+    stageOn({ entry: "unverified" });
+    const m = scriptedModel([{ content: replyJson("You won't need a visa, so head into the city. The cathedral is a short cab away.") }]);
+    const r = await askOn("Can I leave the airport?", m);
+    assert.equal(r.body.certification.verdict, "entry_unverified");
+    assert.match(r.body.answer, /^Leaving the airport has not been confirmed as possible on this layover/);
+    assert.doesNotMatch(r.body.answer, /visa|cathedral|head into/i);
+    assert.ok(r.body.boundaryViolations.some((v: any) => v.kind === "entry_status_asserted"));
+    assert.ok(r.body.boundaryViolations.some((v: any) => v.kind === "risk_band_widened"));
+    assert.equal(r.body.assistant.fallbackReason, "boundary_violation");
+    assert.equal(r.body.modelProse.mode, "certified_only");
+  });
+
+  it("CL-02: on the explicit yes, a later deadline in words and a wider window are withdrawn and reported", async () => {
+    stageOn();
+    const m = scriptedModel([{ content: replyJson("No rush — be back by quarter to midnight, you have the whole evening.") }]);
+    const r = await askOn("When do I need to be back?", m);
+    assert.match(r.body.answer, YES_LEAD);
+    assert.doesNotMatch(r.body.answer, /quarter to|whole evening|No rush/);
+    assert.ok(r.body.boundaryViolations.length > 0);
+  });
+
+  it("fail closed: a model outage is a 200 with the certified answer and the reason", async () => {
+    stageOn();
+    _setTestOpenAI({ chat: { completions: { create: async () => { throw new Error("upstream 503"); } } } } as any);
+    const r = await post(`/api/airport/sessions/${SESSION_ID}/compass`, { question: "What should I do?" });
+    assert.equal(r.status, 200);
+    assert.match(r.body.answer, YES_LEAD);
+    assert.deepEqual([r.body.assistant.status, r.body.assistant.fallbackReason], ["fallback", "model_error"]);
+  });
+
+  it("the compass_question_asked event records the assistant's status and the tools it consulted", async () => {
+    const { tables } = stageOn();
+    await askOn("What now?", scriptedModel([{ tool_calls: [call("c1", "explainDecision", { sessionId: SESSION_ID, snapshotId: null, recommendationId: null })] }, { content: replyJson("The lounge offers a calm spot to recharge.") }]));
+    const e = tables.layover_events.find((x: any) => x.event_type === "compass_question_asked");
+    assert.deepEqual([e.metadata.assistant, e.metadata.assistantFallback, e.metadata.toolsConsulted, e.metadata.modelConsulted], ["answered", null, ["explainDecision"], true]);
+  });
+
+  it("the crew roster is read only when the model asks for it (least data touched)", async () => {
+    const { reads } = stageOn();
+    await askOn("What now?", scriptedModel([{ content: replyJson("The lounge offers a calm spot to recharge.") }]));
+    assert.equal(reads.layover_crews ?? 0, 0);
+    assert.equal(reads.layover_crew_members ?? 0, 0);
+    assert.equal(reads.layover_checkpoints ?? 0, 0);
+  });
+
+  it("flag OFF again: the same request asks no model (the seed's posture)", async () => {
+    stage();
+    const m = scriptedModel([{ content: replyJson("The lounge offers a calm spot to recharge.") }]);
+    const r = await ask("What should I do here?", m);
+    assert.deepEqual(r.body.assistant, { enabled: false, status: "off", fallbackReason: null, model: null });
+    assert.deepEqual(r.body.planComparison, []);
   });
 });

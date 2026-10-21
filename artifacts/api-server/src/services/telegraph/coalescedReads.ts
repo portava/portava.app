@@ -200,7 +200,7 @@ export function coalescingClient<C extends object>(real: C, stats: CoalescingSta
     } catch (err) {
       answer = { data: null, error: err ?? { message: "coalesced read threw" } };
     }
-    const rows = Array.isArray(answer.data) ? (answer.data as Array<Record<string, unknown>>) : [];
+    if (!answer.error && !Array.isArray(answer.data)) answer = { data: null, error: { message: "coalesced read answered something other than a row list" } }; const rows = Array.isArray(answer.data) ? (answer.data as Array<Record<string, unknown>>) : []; // census-telegraph T220: a batch with no row list fails EVERY caller, as an error does — `[]` read as "no row", which for `blocks` is "not blocked"
     for (const r of g.reqs) {
       if (answer.error) {
         r.waiter.resolve({ data: null, error: answer.error, count: null });

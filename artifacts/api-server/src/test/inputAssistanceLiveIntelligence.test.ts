@@ -367,3 +367,132 @@ describe("enrichSuggestionsWithLive — attaches live state only from the gated 
     assert.equal(out.freshness?.label, "Getting busier");
   });
 });
+
+// ═════════════════════════════════════════════════════════════════════════════
+// §20 "Closed or unavailable where current operating status is relevant"
+// (census G123, wave 4, 2026-10-17).
+//
+// THE SOURCE. A place's current open/closed state reaches the suggestion path
+// only as a Live Intelligence `closure.state` claim — read through the same
+// gated `readLiveClaimEnvelopes` the freshness label uses, so every gate above
+// (flag chain, kill switch, pilot switch, per-scope promotion, k-anonymity,
+// expiry, privacy eligibility) applies unchanged. No other source exists for a
+// `discovery_places` row: it carries no hours column, and FSQ's `open_now` is a
+// static ingest-time value (lead ruling D-67).
+//
+// THE RULE. intelContracts rules `closure.state` NEVER a live label ("capture
+// it, score it, show the count — never label it live"), so a closure claim is a
+// RANKING input only: in a field where the current operating state matters
+// (global search — "where can I go"), a place a current claim says is
+// temporarily closed or closed for a private event is demoted by the task
+// feasibility demotion; it is never labelled, and never boosted. Before this a
+// closure claim fell through `buildFreshnessState` to the generic "Recently
+// confirmed" label AND the freshness boost — a shut place promoted.
+//
+// NOT ACTED ON: 'open' (nothing to demote), 'permanently_closed' (structural;
+// intelContracts.STRUCTURAL_CLOSURE_STATES needs an official or corroborated
+// source, which this capture path is not), a MATERIALLY conflicted claim
+// ("Reports differ"), and any field where the current state is not the point
+// (a venue picked for a future event, a place shared in a message).
+// ═════════════════════════════════════════════════════════════════════════════
+import { OPERATING_STATUS_CONTEXTS, CURRENT_CLOSURE_STATES, closedNow } from "../lib/inputAssistance/operatingStatus.js";
+import { INFEASIBLE_DEMOTION } from "../lib/inputAssistance/rankingSignals.js";
+
+function closureRow(subjectId: string, state: string, over: Record<string, unknown> = {}) {
+  return {
+    id: `snap-closure-${subjectId}-${state}`,
+    subject_id: subjectId,
+    zone_id: null,
+    claim_type: "closure.state",
+    value: { state },
+    confidence: 0.8,
+    source_count: 20,
+    observed_at: FOUR_MIN_AGO,
+    expires_at: FUTURE,
+    privacy_eligible: true,
+    ...over,
+  };
+}
+const CLOSURE_PROMOTED = ["|crowd.level", "|crowd.trajectory", "|closure.state"];
+const EVENT_LOCATION = resolvePolicy("event_location") as InputFieldPolicy; // allowLiveContext true, a picker
+
+describe("§20 G123 — a place a current closure claim says is shut", () => {
+  it("temporarily_closed: demoted by INFEASIBLE_DEMOTION in global search, with NO label and NO boost", async () => {
+    const sc = makeLiveClient({ promoted: CLOSURE_PROMOTED, rows: [closureRow(PLACE_LIVE, "temporarily_closed")] });
+    const [out] = await enrichSuggestionsWithLive(sc, [placeSuggestion("a", PLACE_LIVE, 0.6)], enrichOpts(GLOBAL_SEARCH));
+    assert.equal(out.freshness, undefined, "closure.state is never a live label (intelContracts ruling 'never')");
+    assert.ok(Math.abs((out.confidence ?? 0) - (0.6 - INFEASIBLE_DEMOTION)) < 1e-9, `demoted, not boosted (got ${out.confidence})`);
+  });
+
+  it("closed_for_private_event: demoted the same way", async () => {
+    const sc = makeLiveClient({ promoted: CLOSURE_PROMOTED, rows: [closureRow(PLACE_LIVE, "closed_for_private_event")] });
+    const [out] = await enrichSuggestionsWithLive(sc, [placeSuggestion("a", PLACE_LIVE, 0.6)], enrichOpts(GLOBAL_SEARCH));
+    assert.equal(out.freshness, undefined);
+    assert.ok(Math.abs((out.confidence ?? 0) - (0.6 - INFEASIBLE_DEMOTION)) < 1e-9);
+  });
+
+  it("an 'open' closure claim: no demotion, and still no live label or boost", async () => {
+    const sc = makeLiveClient({ promoted: CLOSURE_PROMOTED, rows: [closureRow(PLACE_LIVE, "open")] });
+    const [out] = await enrichSuggestionsWithLive(sc, [placeSuggestion("a", PLACE_LIVE, 0.6)], enrichOpts(GLOBAL_SEARCH));
+    assert.equal(out.freshness, undefined, "an open closure claim is not a 'Recently confirmed' badge either");
+    assert.equal(out.confidence, 0.6);
+  });
+
+  it("permanently_closed is not acted on: a structural claim needs an official source", async () => {
+    const sc = makeLiveClient({ promoted: CLOSURE_PROMOTED, rows: [closureRow(PLACE_LIVE, "permanently_closed")] });
+    const [out] = await enrichSuggestionsWithLive(sc, [placeSuggestion("a", PLACE_LIVE, 0.6)], enrichOpts(GLOBAL_SEARCH));
+    assert.equal(out.freshness, undefined);
+    assert.equal(out.confidence, 0.6);
+    assert.equal(CURRENT_CLOSURE_STATES.has("permanently_closed"), false);
+  });
+
+  it("a MATERIALLY conflicted closure claim ('Reports differ') demotes nothing", async () => {
+    const sc = makeLiveClient({ promoted: CLOSURE_PROMOTED, rows: [closureRow(PLACE_LIVE, "temporarily_closed", { conflict_state: "material" })] });
+    const [out] = await enrichSuggestionsWithLive(sc, [placeSuggestion("a", PLACE_LIVE, 0.6)], enrichOpts(GLOBAL_SEARCH));
+    assert.equal(out.confidence, 0.6);
+    assert.equal(out.freshness, undefined);
+  });
+
+  it("relevance: in a venue picker (event_location) the same claim neither demotes nor labels", async () => {
+    assert.equal(EVENT_LOCATION.allowLiveContext, true, "premise: the picker does read live context");
+    const sc = makeLiveClient({ promoted: CLOSURE_PROMOTED, rows: [closureRow(PLACE_LIVE, "temporarily_closed")] });
+    const [out] = await enrichSuggestionsWithLive(sc, [placeSuggestion("a", PLACE_LIVE, 0.6)], enrichOpts(EVENT_LOCATION, "event_location"));
+    assert.equal(out.confidence, 0.6, "a venue picked for a future event is not shut by a 6-hour closure");
+    assert.equal(out.freshness, undefined);
+  });
+
+  it("a shut place loses its crowd label too: the operating state outranks a crowd reading", async () => {
+    const sc = makeLiveClient({
+      promoted: CLOSURE_PROMOTED,
+      rows: [closureRow(PLACE_LIVE, "temporarily_closed"), trajectoryRow(PLACE_LIVE)],
+    });
+    const [out] = await enrichSuggestionsWithLive(sc, [placeSuggestion("a", PLACE_LIVE, 0.6)], enrichOpts(GLOBAL_SEARCH));
+    assert.equal(out.freshness, undefined, "no 'Getting busier' on a place the best current report says is shut");
+    assert.ok(Math.abs((out.confidence ?? 0) - (0.6 - INFEASIBLE_DEMOTION)) < 1e-9);
+  });
+
+  it("with live off, a written closure claim does nothing — and is never read", async () => {
+    const sc = makeLiveClient({ flag: false, promoted: CLOSURE_PROMOTED, rows: [closureRow(PLACE_LIVE, "temporarily_closed")] });
+    const [out] = await enrichSuggestionsWithLive(sc, [placeSuggestion("a", PLACE_LIVE, 0.6)], enrichOpts(GLOBAL_SEARCH));
+    assert.equal(out.confidence, 0.6);
+    assert.equal(sc.counts.snapshotReads, 0);
+  });
+
+  it("closedNow: the BEST current closure envelope decides", () => {
+    const env = (state: string, over: Record<string, unknown> = {}): any => ({
+      id: `e-${state}`, claimType: "closure.state", value: { state }, confidence: 0.8,
+      band: "live", sourceClass: "firsthand_unverified", sourceCountBucket: "few",
+      observedAt: FOUR_MIN_AGO, validUntil: FUTURE, state: "live", conflictState: "none", conflict: null, ...over,
+    });
+    assert.equal(closedNow([env("temporarily_closed")]), true);
+    assert.equal(closedNow([env("open"), env("temporarily_closed")]), false, "the best (first) envelope is open");
+    assert.equal(closedNow([env("closed_for_private_event", { value: "closed_for_private_event" })]), true, "a scalar value reads the same");
+    assert.equal(closedNow([env("temporarily_closed", { conflictState: "material" })]), false);
+    assert.equal(closedNow([]), false);
+    assert.equal(closedNow([{ ...env("busy"), claimType: "crowd.level" }]), false);
+  });
+
+  it("the fields where the current operating state is relevant are exactly global search", () => {
+    assert.deepEqual([...OPERATING_STATUS_CONTEXTS], ["global_search"]);
+  });
+});

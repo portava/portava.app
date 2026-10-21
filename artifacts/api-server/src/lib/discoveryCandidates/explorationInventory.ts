@@ -233,14 +233,14 @@ export async function loadInventoryBuckets(
 
   // emerging_place — the latest place_momentum run's claim, only while that run is current and no protected zone is active.
   try {
-    const head = await sc.from("place_momentum").select("computed_at").order("computed_at", { ascending: false }).limit(1);
+    const head = await sc.from("place_momentum").select("computed_at").eq("source_surface", "discovery").order("computed_at", { ascending: false }).limit(1);  // 2026-10-17 (wave 4): the product's corpus only, as the trend API reads (3410)
     if (head.error) throw new Error("place_momentum.head");
     const run = ((head.data ?? []) as any[])[0]?.computed_at;
     if (typeof run === "string" && run && momentumRunIsCurrent(run, opts.nowMs) && (await momentumZonePass(sc))) {  // 2026-10-17 privacy gate on 3988: the trend API's age bound, then the zone pass (retrievals.ts, foot)
       const ids = [...new Set([...list, ...dbUuids])];
       const { data, error } = await sc.from("place_momentum")
         .select("place_id, trend_state")
-        .eq("computed_at", run)
+        .eq("computed_at", run).eq("source_surface", "discovery")
         .in("place_id", ids)
         .in("trend_state", ["emerging", "rediscovered"])
         .order("place_id", { ascending: true });

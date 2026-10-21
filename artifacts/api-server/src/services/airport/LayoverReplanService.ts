@@ -44,13 +44,13 @@
  * mismatch refuses with `inputs_diverged` and publishes nothing.
  *
  * ── WHAT IS STILL NOT BUILT, SO NOBODY READS THIS AS FINISHED ────────────────
- *   - §11.1 step 4: no snapshot is persisted. `snapshotId` in the DecisionRecord
- *     below is `null` with a named reason; `layover_certified_computations`
- *     (2700) is written and unapplied.
- *   - Step 6 DECIDES and nothing applies the decision server-side:
- *     `layover_recommendations` has no snapshot column to invalidate against
- *     (census L64), so `staleCertification` is empty on every real call and only
- *     `noLongerFeasible` can fire.
+ *   - §11.1 step 4: no snapshot is persisted WHILE `layover_decision_persistence_enabled`
+ *     is off — production today (2700/2992/3792 unapplied), where `snapshotId` below is
+ *     `null` with a named reason. ON, `recordReplanDecision` stores it and cites it (foot).
+ *   - Step 6 DECIDES, and is applied server-side only WHILE `layover_recommendation_
+ *     snapshot_enabled` is on (3623, unapplied): the stale and no-longer-feasible cards
+ *     lose their snapshot citation (foot). `staleCertification` stays empty on every
+ *     real call — the route holds no cards — and only `noLongerFeasible` can fire.
  *   - Step 2 is handed ONE session — the edited one. There is no airport fanout
  *     because there is no airport-subject producer and no index for one.
  *   - The only event types reachable from here are the two flight ones. The
@@ -78,7 +78,7 @@ import {
 // L47's classifier. One rule for "nobody stated this leg", not a fourth copy.
 import { statedDurationMin, statedTravelMin } from "./LayoverPlanFit.js";
 import { emitLayoverEvent } from "./LayoverSessionService.js";
-import { logger } from "../../lib/logger.js";
+import { logger } from "../../lib/logger.js"; import { readFlagState, isMissingSchemaError } from "../../lib/capability/schemaCapability.js"; import { persistDecision, type PersistRefusal } from "../layover/LayoverDecisionStore.js"; import { snapshotIdFor } from "./layoverLedger.js"; import type { LayoverFeasibilityRecord } from "./LayoverFeasibility.js"; // census L207/L44 (lane 5): the foot of this file
 
 /**
  * The `source` every envelope minted here carries. A traveller editing their
@@ -239,15 +239,15 @@ export function windowChangeEvent(
 /**
  * §20 `DecisionRecord`, as far as this tree can honestly fill it in.
  *
- * NINE of the spec's ten members carry a real value. `snapshotId` is `null`
- * with `snapshotUnavailableReason`, because §11.1 step 4 is not built and
- * 2700 is unapplied — a content hash renamed `snapshotId` would be a
- * substitution, and the census scores this row on the missing member.
+ * NINE of the spec's ten members carry a real value until the snapshot is STORED:
+ * `snapshotId` is `null` with `snapshotUnavailableReason` while persistence is off
+ * (2700/2992 unapplied in production) — a content hash renamed `snapshotId` would be a
+ * substitution. Once stored, it cites the ledger row and the reason is absent (foot).
  */
 export interface LayoverDecisionRecord {
   sessionId: string;
-  snapshotId: null;
-  snapshotUnavailableReason: "no_snapshot_storage";
+  snapshotId: string | null;
+  snapshotUnavailableReason?: ReplanSnapshotUnavailableReason;
   engineVersion: string;
   inputHash: string;
   inputFacts: Array<{ node: string; before: string | number | null; after: string | number | null }>;
@@ -284,8 +284,8 @@ export interface ReplanPublication {
   disruptionState: ReplanOutcome["disruptionState"];
   certification: ReturnType<typeof certificationHeader>;
   reasonCodes: LayoverReasonCode[];
-  snapshotPersisted: false;
-  snapshotUnavailableReason: "no_snapshot_storage";
+  snapshotPersisted: boolean; /** The stored snapshot, present exactly when `snapshotPersisted` (census L207). */ snapshotId?: string;
+  snapshotUnavailableReason?: ReplanSnapshotUnavailableReason; /** census L44: step 6 as applied; absent while 3623's flag is off or absent. */ invalidationApplied?: ReplanInvalidationApplied;
   /** §20 `replan_rate` numerator/denominator for THIS call. */
   counts: { impacted: number; replanned: number; skipped: number; notifications: number };
 }
@@ -476,7 +476,7 @@ export function replanForWindowChange(args: {
     computedAt: new Date(args.nowMs).toISOString(),
   };
 
-  return { ran: true, publication, decision, raw };
+  REPLAN_CERTIFIED_RECORDS.set(decision, outcome.after); return { ran: true, publication, decision, raw };
 }
 
 /**
@@ -502,7 +502,7 @@ export async function recordReplanDecision(
   decision: LayoverDecisionRecord,
 ): Promise<void> {
   try {
-    await emitLayoverEvent(db, decision.sessionId, userId, "session_updated", {
+    await settleReplanSnapshot(db, userId, publication, decision); await emitLayoverEvent(db, decision.sessionId, userId, "session_updated", {
       replan: publication,
       decision,
     });
@@ -541,4 +541,437 @@ export function candidatesFromStops(stops: Array<Record<string, unknown>>): Repl
       insideAirport: shape.insideAirport,
     };
   });
+}
+
+// ── census L207 / L44 — the replan's snapshot stored and cited; step 6 applied ─
+//
+// Appended at the foot so no line above moves (this file is cited by line).
+// Reached from `recordReplanDecision`, which `PATCH /api/airport/sessions/:id`
+// already calls (routes/airport.ts `replanAfterSessionEdit`), so nothing in the
+// route changed and the press alone switches both halves on.
+//
+// PRODUCTION TODAY — both flags absent, 2700/2992/3623/3792 unapplied — this
+// reads two `feature_flags` rows and nothing else: no ledger read, no write, and
+// the decision and publication are byte-identical to what they were.
+
+/**
+ * The certified record each published decision was computed from, held BESIDE
+ * the decision rather than inside it: the decision is serialised into
+ * `layover_events.metadata`, and a 40-field record riding along would change the
+ * ledger row on every replan. Weak, so a decision nobody records is collected.
+ */
+const REPLAN_CERTIFIED_RECORDS = new WeakMap<LayoverDecisionRecord, LayoverFeasibilityRecord>();
+
+/** Why the replan's record cites no snapshot. Exactly one, and it is published. */
+export type ReplanSnapshotUnavailableReason =
+  /** `layover_decision_persistence_enabled` is off or absent — production today. */
+  | "no_snapshot_storage"
+  /** The flag row could not be read. Not "off": nothing was stored because nothing could be established. */
+  | "persistence_flag_unreadable"
+  /** A decision this module did not produce — there is no certified record to store. */
+  | "no_certified_record"
+  /** `persistDecision`'s own refusal, verbatim. */
+  | PersistRefusal;
+
+export type ReplanInvalidationApplied =
+  | {
+      applied: true;
+      /**
+       * The identity of the computation this replan certified; every card citing
+       * another one is stale. It names a STORED row only when the publication's
+       * `snapshotPersisted` is true — nothing here writes it anywhere.
+       */
+      currentSnapshotId: string;
+      /** The cards whose citation was cleared, and the snapshot each had cited. */
+      uncited: Array<{ recommendationId: string; citedSnapshotId: string; why: Array<"stale_certification" | "no_longer_feasible"> }>;
+    }
+  | {
+      applied: false;
+      reason: "flag_unreadable" | "storage_unavailable" | "read_failed" | "write_failed";
+      /** On `write_failed` only: the cards whose citation WAS cleared before the refusal. Never hidden. */
+      uncitedBeforeFailure?: string[];
+    };
+
+/**
+ * Runs inside `recordReplanDecision`, BEFORE the ledger row is written, so the
+ * row records what was stored and what was applied. Never throws: a replan's
+ * bookkeeping must not fail the edit the traveller already committed.
+ */
+async function settleReplanSnapshot(
+  db: SupabaseClient,
+  userId: string,
+  publication: ReplanPublication,
+  decision: LayoverDecisionRecord,
+): Promise<void> {
+  try {
+    await storeReplanSnapshot(db, userId, publication, decision);
+    await applyReplanInvalidation(db, publication, decision);
+  } catch (err) {
+    logger.warn({ err, sessionId: decision.sessionId }, "layover replan snapshot/invalidation bookkeeping threw (non-fatal)");
+  }
+}
+
+function snapshotUnavailable(publication: ReplanPublication, decision: LayoverDecisionRecord, reason: ReplanSnapshotUnavailableReason): void {
+  decision.snapshotId = null;
+  decision.snapshotUnavailableReason = reason;
+  publication.snapshotPersisted = false;
+  publication.snapshotUnavailableReason = reason;
+}
+
+/**
+ * census L207 — §11.1 step 4 and §20's tenth member. With
+ * `layover_decision_persistence_enabled` ON the replan's certified record is
+ * stored through `persistDecision` — the one §20 writer, the same row `/safety`
+ * and `/overview` write — and the decision cites the snapshot that row holds.
+ * The id is cited only when `persistDecision` confirmed the parent row exists
+ * (`recorded`, `already_recorded`, `write_unconfirmed`), never on a refusal.
+ */
+async function storeReplanSnapshot(
+  db: SupabaseClient,
+  userId: string,
+  publication: ReplanPublication,
+  decision: LayoverDecisionRecord,
+): Promise<void> {
+  const flag = await readFlagState(db, "layover_decision_persistence_enabled");
+  if (flag === "off" || flag === "absent") return;
+  if (flag === "unreadable") return snapshotUnavailable(publication, decision, "persistence_flag_unreadable");
+
+  const record = REPLAN_CERTIFIED_RECORDS.get(decision);
+  if (!record) return snapshotUnavailable(publication, decision, "no_certified_record");
+
+  const persisted = await persistDecision(db, userId, decision.sessionId, record);
+  if (!persisted.ok) return snapshotUnavailable(publication, decision, persisted.reason);
+
+  decision.snapshotId = persisted.snapshotId;
+  delete decision.snapshotUnavailableReason;
+  publication.snapshotPersisted = true;
+  publication.snapshotId = persisted.snapshotId;
+  delete publication.snapshotUnavailableReason;
+}
+
+/**
+ * census L44 / L97 — §11.1 step 6 APPLIED, not only decided.
+ *
+ * The only invalidation marker this schema has is 3623's citation,
+ * `layover_recommendations.snapshot_id`: a card that cites a snapshot claims it
+ * was certified under that snapshot. A card is invalidated by CLEARING that
+ * claim. Not deleted — L97 records that destroying a card loses its id for every
+ * client holding it — and not `status = 'hidden'`, which is the admin
+ * moderation state (`USER_HIDDEN_RECOMMENDATION_STATUS`) and survives
+ * regeneration by design. The next certification re-stamps the card it still
+ * stands behind.
+ *
+ * Which cards: every card of the session that cites a snapshot OTHER than the
+ * one this replan certified (stale — App C5), and every cited card a plan stop
+ * that no longer fits came from (`noLongerFeasible`, through the stop's
+ * `recommendation_id`). Each clear is a compare-and-set on the citation it read,
+ * so a card re-certified between the read and the write is left alone.
+ *
+ * OFF or absent (production today): nothing is read, nothing written, nothing
+ * published. Unreadable: nothing written, and the publication says why.
+ */
+async function applyReplanInvalidation(
+  db: SupabaseClient,
+  publication: ReplanPublication,
+  decision: LayoverDecisionRecord,
+): Promise<void> {
+  const flag = await readFlagState(db, "layover_recommendation_snapshot_enabled");
+  if (flag === "off" || flag === "absent") return;
+  if (flag === "unreadable") {
+    publication.invalidationApplied = { applied: false, reason: "flag_unreadable" };
+    return;
+  }
+
+  const sessionId = decision.sessionId;
+  const currentSnapshotId = snapshotIdFor(sessionId, decision.inputHash);
+
+  const held = await db.from("layover_recommendations").select("id,snapshot_id").eq("session_id", sessionId);
+  if (held.error) {
+    logger.warn({ err: held.error.message, sessionId }, "replan invalidation: held cards unreadable — nothing invalidated");
+    publication.invalidationApplied = { applied: false, reason: isMissingSchemaError(held.error) ? "storage_unavailable" : "read_failed" };
+    return;
+  }
+
+  const infeasibleCards = new Set<string>();
+  const lostStops = publication.invalidation.noLongerFeasible;
+  if (lostStops.length > 0) {
+    const stops = await db.from("layover_plan_stops").select("id,recommendation_id").eq("session_id", sessionId).in("id", lostStops);
+    if (stops.error) {
+      logger.warn({ err: stops.error.message, sessionId }, "replan invalidation: plan stops unreadable — nothing invalidated");
+      publication.invalidationApplied = { applied: false, reason: "read_failed" };
+      return;
+    }
+    for (const s of (stops.data ?? []) as Array<{ recommendation_id: unknown }>) {
+      if (typeof s.recommendation_id === "string" && s.recommendation_id.length > 0) infeasibleCards.add(s.recommendation_id);
+    }
+  }
+
+  const uncited: Extract<ReplanInvalidationApplied, { applied: true }>["uncited"] = [];
+  for (const r of (held.data ?? []) as Array<{ id: unknown; snapshot_id: unknown }>) {
+    if (typeof r.id !== "string" || typeof r.snapshot_id !== "string" || r.snapshot_id.length === 0) continue;
+    const why: Array<"stale_certification" | "no_longer_feasible"> = [];
+    if (r.snapshot_id !== currentSnapshotId) why.push("stale_certification");
+    if (infeasibleCards.has(r.id)) why.push("no_longer_feasible");
+    if (why.length > 0) uncited.push({ recommendationId: r.id, citedSnapshotId: r.snapshot_id, why });
+  }
+
+  const byCitation = new Map<string, string[]>();
+  for (const u of uncited) byCitation.set(u.citedSnapshotId, [...(byCitation.get(u.citedSnapshotId) ?? []), u.recommendationId]);
+  const cleared: string[] = [];
+  for (const [cited, ids] of byCitation) {
+    const { error } = await db
+      .from("layover_recommendations")
+      .update({ snapshot_id: null })
+      .eq("session_id", sessionId)
+      .eq("snapshot_id", cited)
+      .in("id", ids);
+    if (error) {
+      logger.warn({ err: error.message, sessionId }, "replan invalidation: citation clear refused — stale cards keep their citation");
+      publication.invalidationApplied = { applied: false, reason: "write_failed", uncitedBeforeFailure: cleared };
+      return;
+    }
+    cleared.push(...ids);
+  }
+  publication.invalidationApplied = { applied: true, currentSnapshotId, uncited };
+}
+
+// ── census L207, layover round 2 lane B — the EXTERNAL-event replan cites its snapshot too ─
+//
+// Appended at the foot so no line above moves (this file is cited by line).
+// The traveller's PATCH replan (above) builds a §20 DecisionRecord and
+// `recordReplanDecision` stores its certified record through `persistDecision`
+// and cites the stored snapshot. The external-event replan
+// (`LayoverExternalReplanPort.replanExternalEvent`, once per airport group,
+// after `handleEvent`) built NO record and cited nothing — pass 10's C10. It
+// now goes through the SAME `recordReplanDecision`: the same ten members, the
+// same WeakMap hand-off to `storeReplanSnapshot`, the same `persistDecision`,
+// the same step-6 application (`applyReplanInvalidation`, behind 3623's flag)
+// and the same ledger row.
+//
+// INERT UNTIL THE PRESS, and inert in a stronger sense than the PATCH path:
+// that path already wrote its ledger row before lane 5, so "inert" there meant
+// "byte-identical". This path wrote nothing, so while
+// `layover_decision_persistence_enabled` is off or absent (production today,
+// 2700/2992/3792 unapplied) it reads that ONE flag row and returns — no record
+// built, nothing written, and the port's report carries no new key. Unreadable
+// is not off: nothing is written either, and the reason is NAMED. And the whole
+// path is closed before it reaches here: the drain reads
+// `layover_event_ingest_enabled` (2981 unapplied) first.
+
+/** Version of THIS wiring's decisions: which external outcome becomes which record. */
+export const LAYOVER_EXTERNAL_REPLAN_WIRING_VERSION = "2026.10.18-1";
+
+/** One replanned session's citation, as the external path settled it. */
+export interface ExternalReplanCitation {
+  sessionId: string;
+  snapshotPersisted: boolean;
+  /** The stored snapshot the session's record cites; null with a named reason otherwise. */
+  snapshotId: string | null;
+  snapshotUnavailableReason?: ReplanSnapshotUnavailableReason | "owner_unknown";
+}
+
+export type ExternalReplanSettlement =
+  /** Persistence is not ON: no record was built and nothing written. `sessions` names who went uncited. */
+  | { recorded: false; reason: "no_snapshot_storage" | "persistence_flag_unreadable"; sessions: string[] }
+  /** Persistence ON: one §20 record per replanned session, through `recordReplanDecision`. */
+  | { recorded: true; citations: ExternalReplanCitation[] };
+
+/**
+ * Settle every replanned session of ONE `handleEvent` result: build its §20
+ * record and record it — store the snapshot, cite it, apply step 6, write the
+ * ledger row — exactly as the PATCH path does. Null when nothing was replanned
+ * (no flag is read for a result that has nothing to cite).
+ *
+ * `owners` is the session → `user_id` map the port read with the sessions; a
+ * session with no owner cannot be written to anybody's ledger and is NAMED
+ * (`owner_unknown`), never attributed to someone else.
+ *
+ * Never throws: `recordReplanDecision` is non-fatal by contract, and the
+ * consumer has already stamped the event processed.
+ */
+export async function recordExternalReplanDecisions(
+  db: SupabaseClient,
+  result: HandleEventResult,
+  owners: Record<string, string>,
+  nowMs: number,
+): Promise<ExternalReplanSettlement | null> {
+  if (result.replanned.length === 0) return null;
+  const sessions = result.replanned.map((o) => o.sessionId);
+  const flag = await readFlagState(db, "layover_decision_persistence_enabled");
+  if (flag === "off" || flag === "absent") return { recorded: false, reason: "no_snapshot_storage", sessions };
+  if (flag === "unreadable") {
+    logger.warn({ eventId: result.event.eventId, sessions }, "external replan: persistence flag unreadable — no decision recorded, no snapshot cited");
+    return { recorded: false, reason: "persistence_flag_unreadable", sessions };
+  }
+
+  const citations: ExternalReplanCitation[] = [];
+  for (const outcome of result.replanned) {
+    const owner = owners[outcome.sessionId];
+    if (typeof owner !== "string" || owner.length === 0) {
+      citations.push({ sessionId: outcome.sessionId, snapshotPersisted: false, snapshotId: null, snapshotUnavailableReason: "owner_unknown" });
+      continue;
+    }
+    const { publication, decision } = externalReplanRecord(result, outcome, nowMs);
+    await recordReplanDecision(db, owner, publication, decision);
+    citations.push({
+      sessionId: decision.sessionId,
+      snapshotPersisted: publication.snapshotPersisted,
+      snapshotId: decision.snapshotId,
+      ...(decision.snapshotUnavailableReason ? { snapshotUnavailableReason: decision.snapshotUnavailableReason } : {}),
+    });
+  }
+  return { recorded: true, citations };
+}
+
+/**
+ * The §20 record and the publication for one EXTERNAL outcome — the same two
+ * shapes `replanForWindowChange` builds for a traveller's edit (a test pins the
+ * key sets equal), with three differences that are facts about the producer:
+ *   - `wiringVersion` is this path's own;
+ *   - `inputFacts` are the event's affected constraint nodes, read off the two
+ *     certified records' own `inputs` — an external event can move a live term,
+ *     which a window edit never does, so the PATCH helper's three window fields
+ *     would drop exactly the fact the decision was made on;
+ *   - `sourceRefs` name the producer's `source:eventId` and the stable key.
+ * The certified record is registered for `storeReplanSnapshot` exactly as above.
+ */
+function externalReplanRecord(
+  result: HandleEventResult,
+  outcome: ReplanOutcome,
+  nowMs: number,
+): { publication: ReplanPublication; decision: LayoverDecisionRecord } {
+  const event = result.event;
+  const reasonCodes = [...new Set<LayoverReasonCode>([...(outcome.opportunity?.reasonCodes ?? []), ...invalidationReasonCodes(outcome.invalidation)])];
+  const rulesApplied = [
+    "11.1.1 normalize+dedupe",
+    "11.1.2 impacted sessions",
+    "11.1.3 affected constraint nodes",
+    "11.1.5 diff action universe",
+    "11.1.6 invalidate recommendations",
+    outcome.opportunity ? "11.1.7 opportunity emitted" : "11.1.7 no material change",
+    outcome.notify.notify ? "11.1.8 notify" : "11.1.8 no notification",
+  ];
+  const publication: ReplanPublication = {
+    wiringVersion: LAYOVER_EXTERNAL_REPLAN_WIRING_VERSION,
+    replannerVersion: LAYOVER_REPLANNER_VERSION,
+    event: {
+      eventId: event.eventId,
+      eventType: event.eventType,
+      occurredAt: event.occurredAt,
+      receivedAt: event.receivedAt,
+      source: event.source,
+      dedupKey: event.dedupKey,
+      confidence: event.confidence,
+    },
+    diff: outcome.diff,
+    invalidation: outcome.invalidation,
+    opportunity: outcome.opportunity ? { why: outcome.opportunity.why, reasonCodes: outcome.opportunity.reasonCodes } : null,
+    notify: outcome.notify,
+    disruptionState: outcome.disruptionState,
+    certification: certificationHeader(outcome.after),
+    reasonCodes,
+    snapshotPersisted: false,
+    snapshotUnavailableReason: "no_snapshot_storage",
+    counts: { impacted: result.impacted, replanned: result.replanned.length, skipped: result.skipped.length, notifications: result.notifications },
+  };
+  const decision: LayoverDecisionRecord = {
+    sessionId: outcome.sessionId,
+    snapshotId: null,
+    snapshotUnavailableReason: "no_snapshot_storage",
+    engineVersion: outcome.after.engineVersion,
+    inputHash: outcome.after.inputHash,
+    inputFacts: externalInputFacts(outcome),
+    sourceRefs: [`${event.source}:${event.eventId}`, `dedupKey:${event.dedupKey}`],
+    rulesApplied,
+    result: {
+      verdict: outcome.after.verdict,
+      tier: outcome.after.envelope.tier,
+      returnState: outcome.after.envelope.returnState,
+      usableMinutes: outcome.after.envelope.usableMinutes,
+      hardReturnTime: outcome.after.deadline.hardReturnTime.toISOString(),
+    },
+    reasonCodes: [...new Set<LayoverReasonCode>([...outcome.after.reasonCodes, ...reasonCodes])],
+    computedAt: new Date(nowMs).toISOString(),
+  };
+  REPLAN_CERTIFIED_RECORDS.set(decision, outcome.after);
+  return { publication, decision };
+}
+
+/** Each affected node whose value moved, before → after, read off the certified inputs themselves. */
+function externalInputFacts(outcome: ReplanOutcome): LayoverDecisionRecord["inputFacts"] {
+  const read = (record: LayoverFeasibilityRecord, node: string): string | number | null => {
+    const [root, leaf] = node.split(".") as [string, string];
+    const holder = root === "session" ? record.inputs.session : root === "liveConditions" ? record.inputs.liveConditions : null;
+    const v = holder ? (holder as unknown as Record<string, unknown>)[leaf] : null;
+    return typeof v === "string" || typeof v === "number" ? v : null;
+  };
+  const facts: LayoverDecisionRecord["inputFacts"] = [];
+  for (const node of outcome.affectedNodes) {
+    const before = read(outcome.before, node);
+    const after = read(outcome.after, node);
+    if (before !== after) facts.push({ node, before, after });
+  }
+  return facts;
+}
+
+// ── census L44, lane B1-P (2026-10-18) — the traveller-REPORTED disruption settles its snapshot too ─
+//
+// Appended at the foot so no line above moves (this file is cited by line).
+// §5's `* → DISRUPTED` has three inputs on this tree: the window edit (PATCH
+// /airport/sessions/:id, `replanAfterSessionEdit` → `recordReplanDecision`), the
+// external event (`recordExternalReplanDecisions`), and the traveller's own
+// report (POST /airport/sessions/:id/disruption, R22). The first two store the
+// re-certified record and invalidate the cards certified under the superseded
+// snapshot; the third re-certified (`recomputeForDisruption`) and stopped there,
+// so a pressed database kept every card citing the snapshot the disruption had
+// just superseded (measured on the real chain, test/db/layoverPressedSnapshot S11).
+//
+// This runs the SAME two steps — `storeReplanSnapshot` (persistDecision behind
+// `layover_decision_persistence_enabled`) and `applyReplanInvalidation` (the
+// compare-and-set citation clear behind `layover_recommendation_snapshot_enabled`)
+// — on the disruption's re-certified record, and records what it did in the
+// ledger. It invalidates on STALE CERTIFICATION only: the disruption route
+// computes no per-stop fit, so `noLongerFeasible` is empty here.
+//
+// OFF or ABSENT on both flags (production today): the two flag rows are read and
+// nothing else — no write, no ledger row, `null` returned, and the route adds no
+// key, so its response is byte-identical to before.
+
+export interface DisruptionSnapshotSettlement {
+  snapshotPersisted: boolean;
+  snapshotId?: string;
+  snapshotUnavailableReason?: ReplanSnapshotUnavailableReason;
+  invalidationApplied?: ReplanInvalidationApplied;
+}
+
+export async function settleDisruptionRecompute(
+  db: SupabaseClient,
+  userId: string,
+  sessionId: string,
+  record: LayoverFeasibilityRecord,
+): Promise<DisruptionSnapshotSettlement | null> {
+  const [persistence, stamping] = await Promise.all([
+    readFlagState(db, "layover_decision_persistence_enabled"),
+    readFlagState(db, "layover_recommendation_snapshot_enabled"),
+  ]);
+  const dark = (s: string) => s === "off" || s === "absent";
+  if (dark(persistence) && dark(stamping)) return null;
+
+  const publication = { snapshotPersisted: false, invalidation: { noLongerFeasible: [] } } as unknown as ReplanPublication;
+  const decision = { sessionId, inputHash: record.inputHash, snapshotId: null } as unknown as LayoverDecisionRecord;
+  REPLAN_CERTIFIED_RECORDS.set(decision, record);
+  await settleReplanSnapshot(db, userId, publication, decision);
+
+  const settlement: DisruptionSnapshotSettlement = {
+    snapshotPersisted: publication.snapshotPersisted,
+    ...(publication.snapshotId ? { snapshotId: publication.snapshotId } : {}),
+    ...(publication.snapshotUnavailableReason ? { snapshotUnavailableReason: publication.snapshotUnavailableReason } : {}),
+    ...(publication.invalidationApplied ? { invalidationApplied: publication.invalidationApplied } : {}),
+  };
+  try {
+    await emitLayoverEvent(db, sessionId, userId, "session_updated", { disruptionSnapshot: settlement });
+  } catch (err) {
+    logger.warn({ err, sessionId }, "disruption snapshot settlement: ledger write failed (non-fatal)");
+  }
+  return settlement;
 }

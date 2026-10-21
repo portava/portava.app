@@ -34,10 +34,10 @@ import { router } from 'expo-router';
 import { MapPin, MessageCircle, ExternalLink } from 'lucide-react-native';
 import { StampIcon } from './stamps/StampIcon.tsx';
 import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
-import { DisplayMediaImage } from './ui/DisplayMediaImage.tsx';
+import { DisplayMediaImage } from './ui/DisplayMediaImage.tsx'; import { messageTreeMediaOrNull } from '../features/telegraph/media/messageTreeMedia.ts';
 import { Avatar } from './ui/Avatar.tsx';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
-import { TG } from '../theme/telegraphTokens.ts';
+import { space, radius, type as t } from '../theme/tokens.ts';
+import { useTelegraphTheme, type TelegraphPalette } from '../features/telegraph/theme/telegraphTheme.ts';
 import { useShareRevocation, revokedLabel } from '../features/telegraph/sharing/useShareRevocation.ts'; import type { SharedCardTruth } from '../features/telegraph/sharing/shareApi.ts';
 import { legacyCardMode, REFERENCE_COPY } from '../features/telegraph/sharing/legacyCardView.ts';
 
@@ -85,8 +85,8 @@ interface Props {
   threadId?: string | null;
   messageId?: string | null; /** census-telegraph T448: the server's truth for this card (the message's `card`). Present ⇒ no request of the card's own. */ serverCard?: SharedCardTruth | null;
 }
-
 export function PostCardMessage({ body, mine, threadId = null, messageId = null, serverCard = null }: Props) {
+  const { palette, styles: card } = useTelegraphTheme(makeCardStyles);
   const payload = parsePayload(body);
   const revocation = useShareRevocation(
     threadId,
@@ -97,7 +97,7 @@ export function PostCardMessage({ body, mine, threadId = null, messageId = null,
   if (revocation.state === 'unavailable') {
     return (
       <View style={[card.wrap, card.wrapRevoked, mine && card.wrapMine]} testID="post-card-revoked">
-        <Text style={[card.fallback, mine && { color: color.onInk + 'AA' }]}>
+        <Text style={[card.fallback, mine && { color: palette.sentText + 'AA' }]}>
           {revokedLabel(revocation.reason)}
         </Text>
       </View>
@@ -107,7 +107,7 @@ export function PostCardMessage({ body, mine, threadId = null, messageId = null,
   if (!payload) {
     return (
       <View style={[card.wrap, mine && card.wrapMine]}>
-        <Text style={[card.fallback, mine && { color: color.onInk + 'AA' }]}>Shared post</Text>
+        <Text style={[card.fallback, mine && { color: palette.sentText + 'AA' }]}>Shared post</Text>
       </View>
     );
   }
@@ -115,7 +115,7 @@ export function PostCardMessage({ body, mine, threadId = null, messageId = null,
   if (mode === 'loading') {
     return (
       <View style={[card.wrap, mine && card.wrapMine]} testID="post-card-loading">
-        <Text style={[card.fallback, mine && { color: color.onInk + 'AA' }]}>Loading…</Text>
+        <Text style={[card.fallback, mine && { color: palette.sentText + 'AA' }]}>Loading…</Text>
       </View>
     );
   }
@@ -125,14 +125,14 @@ export function PostCardMessage({ body, mine, threadId = null, messageId = null,
   if (mode === 'reference') {
     return (
       <View style={[card.wrap, mine && card.wrapMine]} testID="post-card-reference">
-        <Text style={[card.brandLabel, mine && { color: color.onInk + 'BB' }]}>POST</Text>
+        <Text style={[card.brandLabel, mine && { color: palette.sentText + 'BB' }]}>POST</Text>
         {payload.caption ? (
           <Text style={[card.caption, mine && card.captionMine]} numberOfLines={2}>"{payload.caption}"</Text>
         ) : null}
-        <Text style={[card.fallback, mine && { color: color.onInk + 'AA' }]}>{REFERENCE_COPY}</Text>
+        <Text style={[card.fallback, mine && { color: palette.sentText + 'AA' }]}>{REFERENCE_COPY}</Text>
         <View style={card.actions}>
           <Pressable style={card.actionBtn} onPress={openPostRef} testID="post-card-view">
-            <ExternalLink size={11} color={mine ? color.onInk : color.signal} />
+            <ExternalLink size={11} color={mine ? palette.sentText : palette.operational} />
             <Text style={[card.actionLabel, mine && card.actionLabelMine]}>View Post</Text>
           </Pressable>
         </View>
@@ -144,22 +144,23 @@ export function PostCardMessage({ body, mine, threadId = null, messageId = null,
   if (live) {
     const p = live.projection;
     const handle = p.subtitle && p.subtitle.startsWith('@') ? p.subtitle.slice(1) : null;
+    const image = messageTreeMediaOrNull(p.imageUrl); // census T446: storage or nothing
     return (
       <View style={[card.wrap, mine && card.wrapMine]} testID="post-card-live">
         <View style={card.header}>
           <View style={card.brandBadge}>
-            <ExternalLink size={11} color={color.onInk} />
+            <ExternalLink size={11} color={palette.operationalOn} />
           </View>
-          <Text style={[card.brandLabel, mine && { color: color.onInk + 'BB' }]}>POST</Text>
+          <Text style={[card.brandLabel, mine && { color: palette.sentText + 'BB' }]}>POST</Text>
         </View>
         {handle ? (
           <UserIdentityLink userId="" handle={handle} testID="post-card-author-identity">
             <Text style={[card.authorName, mine && card.authorNameMine]} numberOfLines={1}>@{handle}</Text>
           </UserIdentityLink>
         ) : null}
-        {p.imageUrl ? (
+        {image ? (
           <DisplayMediaImage
-            uri={p.imageUrl}
+            uri={image}
             width={CARD_MAX_WIDTH}
             height={THUMBNAIL_HEIGHT}
             resizeMode="cover"
@@ -173,7 +174,7 @@ export function PostCardMessage({ body, mine, threadId = null, messageId = null,
         ) : null}
         <View style={card.actions}>
           <Pressable style={card.actionBtn} onPress={() => router.push(p.deepLink as Href)} testID="post-card-view">
-            <ExternalLink size={11} color={mine ? color.onInk : color.signal} />
+            <ExternalLink size={11} color={mine ? palette.sentText : palette.operational} />
             <Text style={[card.actionLabel, mine && card.actionLabelMine]}>View Post</Text>
           </Pressable>
         </View>
@@ -183,6 +184,9 @@ export function PostCardMessage({ body, mine, threadId = null, messageId = null,
 
   // `legacy`: no thread to resolve in — the pre-§5 card, unchanged.
   const loc = locationLabel(payload);
+  // census T446: the sender serialised these URLs; only Portava storage is fetched.
+  const authorAvatar = messageTreeMediaOrNull(payload.authorAvatar);
+  const thumbnail = messageTreeMediaOrNull(payload.thumbnail);
   const authorLabel =
     payload.authorName ||
     (payload.authorHandle ? `@${payload.authorHandle}` : 'A traveler');
@@ -195,9 +199,9 @@ export function PostCardMessage({ body, mine, threadId = null, messageId = null,
       {/* Header — brand + author */}
       <View style={card.header}>
         <View style={card.brandBadge}>
-          <ExternalLink size={11} color={color.onInk} />
+          <ExternalLink size={11} color={palette.operationalOn} />
         </View>
-        <Text style={[card.brandLabel, mine && { color: color.onInk + 'BB' }]}>POST</Text>
+        <Text style={[card.brandLabel, mine && { color: palette.sentText + 'BB' }]}>POST</Text>
       </View>
 
       {/* Author row — tappable identity */}
@@ -210,7 +214,7 @@ export function PostCardMessage({ body, mine, threadId = null, messageId = null,
           {/* Avatar hydrates the private-bucket URL and degrades to initials.
               The bare <Image> here rendered an empty circle on every shared
               post once profile-media went private. */}
-          <Avatar uri={payload.authorAvatar} name={authorLabel} kind="person" size={AVATAR_SIZE} />
+          <Avatar uri={authorAvatar} name={authorLabel} kind="person" size={AVATAR_SIZE} />
           <View style={{ flex: 1 }}>
             <Text style={[card.authorName, mine && card.authorNameMine]} numberOfLines={1}>
               {authorLabel}
@@ -226,9 +230,9 @@ export function PostCardMessage({ body, mine, threadId = null, messageId = null,
 
       {/* Thumbnail — the shared post's own media, so a post-media reference
           that needs hydrating and a visible state when it cannot be shown. */}
-      {payload.thumbnail ? (
+      {thumbnail ? (
         <DisplayMediaImage
-          uri={payload.thumbnail}
+          uri={thumbnail}
           width={CARD_MAX_WIDTH}
           height={THUMBNAIL_HEIGHT}
           resizeMode="cover"
@@ -248,19 +252,19 @@ export function PostCardMessage({ body, mine, threadId = null, messageId = null,
       <View style={card.metaRow}>
         {loc ? (
           <>
-            <MapPin size={11} color={mine ? color.onInk + 'AA' : color.mute} />
+            <MapPin size={11} color={mine ? palette.sentText + 'AA' : palette.mute} />
             <Text style={[card.meta, mine && card.metaMine]} numberOfLines={1}>{loc}</Text>
           </>
         ) : null}
         {typeof payload.likeCount === 'number' ? (
           <View style={card.count}>
-            <StampIcon size={10} color={mine ? color.onInk + 'AA' : color.mute} />
+            <StampIcon size={10} color={mine ? palette.sentText + 'AA' : palette.mute} />
             <Text style={[card.meta, mine && card.metaMine]}>{payload.likeCount}</Text>
           </View>
         ) : null}
         {typeof payload.commentCount === 'number' ? (
           <View style={card.count}>
-            <MessageCircle size={10} color={mine ? color.onInk + 'AA' : color.mute} />
+            <MessageCircle size={10} color={mine ? palette.sentText + 'AA' : palette.mute} />
             <Text style={[card.meta, mine && card.metaMine]}>{payload.commentCount}</Text>
           </View>
         ) : null}
@@ -276,7 +280,7 @@ export function PostCardMessage({ body, mine, threadId = null, messageId = null,
       {/* Action */}
       <View style={card.actions}>
         <Pressable style={card.actionBtn} onPress={openPost}>
-          <ExternalLink size={11} color={mine ? color.onInk : color.signal} />
+          <ExternalLink size={11} color={mine ? palette.sentText : palette.operational} />
           <Text style={[card.actionLabel, mine && card.actionLabelMine]}>View Post</Text>
         </Pressable>
       </View>
@@ -284,20 +288,22 @@ export function PostCardMessage({ body, mine, threadId = null, messageId = null,
   );
 }
 
-const card = StyleSheet.create({
+// census T123/T124: the scheme's colours; a card the viewer SENT is a sent bubble
+// (it was vermilion), and the Post mark and View Post are the operational teal.
+const makeCardStyles = (p: TelegraphPalette) => StyleSheet.create({
   wrap: {
-    backgroundColor: TG.surfaceRaised,
+    backgroundColor: p.surfaceRaised,
     borderRadius: radius.lg,
     borderWidth: 1,
-    borderColor: TG.recvBorder,
+    borderColor: p.recvBorder,
     borderBottomLeftRadius: 4,
     padding: space.md,
     gap: 6,
     maxWidth: CARD_MAX_WIDTH,
   },
   wrapMine: {
-    backgroundColor: color.signal,
-    borderColor: color.signal,
+    backgroundColor: p.sentBubble,
+    borderColor: p.sentBubble,
     borderBottomLeftRadius: radius.lg,
     borderBottomRightRadius: 4,
   },
@@ -306,33 +312,33 @@ const card = StyleSheet.create({
     borderStyle: 'dashed',
     backgroundColor: 'transparent',
   },
-  fallback: { ...t.small, color: color.mute, fontStyle: 'italic' },
+  fallback: { ...t.small, color: p.mute, fontStyle: 'italic' },
 
   header: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  brandBadge: { width: 18, height: 18, borderRadius: 5, backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center' },
-  brandLabel: { ...t.stamp, fontFamily: 'Courier', fontSize: 9, color: color.signal, letterSpacing: 1, flex: 1 },
+  brandBadge: { width: 18, height: 18, borderRadius: 5, backgroundColor: p.operational, alignItems: 'center', justifyContent: 'center' },
+  brandLabel: { ...t.stamp, fontFamily: 'Courier', fontSize: 9, color: p.operational, letterSpacing: 1, flex: 1 },
 
   authorRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
-  authorName: { ...t.bodyStrong, color: color.ink, fontWeight: '700', fontSize: 13 },
-  authorNameMine: { color: color.onInk },
-  authorHandle: { ...t.small, color: color.mute, fontSize: 11 },
-  authorHandleMine: { color: color.onInk + 'BB' },
+  authorName: { ...t.bodyStrong, color: p.recvText, fontWeight: '700', fontSize: 13 },
+  authorNameMine: { color: p.sentText },
+  authorHandle: { ...t.small, color: p.mute, fontSize: 11 },
+  authorHandleMine: { color: p.sentText + 'BB' },
 
-  thumbnail: { width: '100%', borderRadius: radius.sm, backgroundColor: color.haze },
+  thumbnail: { width: '100%', borderRadius: radius.sm, backgroundColor: p.haze },
 
-  snippet: { ...t.small, color: color.ink, fontSize: 13, lineHeight: 17 },
-  snippetMine: { color: color.onInk },
+  snippet: { ...t.small, color: p.recvText, fontSize: 13, lineHeight: 17 },
+  snippetMine: { color: p.sentText },
 
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 4, flexWrap: 'wrap' },
-  meta: { ...t.small, color: color.mute, fontSize: 11 },
-  metaMine: { color: color.onInk + 'BB' },
+  meta: { ...t.small, color: p.mute, fontSize: 11 },
+  metaMine: { color: p.sentText + 'BB' },
   count: { flexDirection: 'row', alignItems: 'center', gap: 2, marginLeft: 4 },
 
-  caption: { ...t.small, color: color.faint, fontSize: 11, fontStyle: 'italic', lineHeight: 15 },
-  captionMine: { color: color.onInk + '99' },
+  caption: { ...t.small, color: p.faint, fontSize: 11, fontStyle: 'italic', lineHeight: 15 },
+  captionMine: { color: p.sentText + '99' },
 
-  actions: { flexDirection: 'row', alignItems: 'center', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.haze, marginTop: 2, paddingTop: 6 },
+  actions: { flexDirection: 'row', alignItems: 'center', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: p.haze, marginTop: 2, paddingTop: 6 },
   actionBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 3, paddingVertical: 4 },
-  actionLabel: { ...t.small, color: color.signal, fontWeight: '700', fontSize: 10 },
-  actionLabelMine: { color: color.onInk },
+  actionLabel: { ...t.small, color: p.operational, fontWeight: '700', fontSize: 10 },
+  actionLabelMine: { color: p.sentText },
 });

@@ -59,7 +59,7 @@ export type MediaEventType =
   | "media_plan"
   | "media_contribution"
   | "media_correction"
-  | "media_arrival" | "visual_opportunity_open" | "gem_open" | "invite_sent" | "experience_complete" | "contribution_submit" | "contribution_accept" | "postcard_create";
+  | "media_arrival" | "visual_opportunity_open" | "gem_open" | "invite_sent" | "experience_complete" | "contribution_submit" | "contribution_accept" | "postcard_create" | "memory_create";
 
 /**
  * The eight §45 north-star events, as a runtime list.
@@ -228,7 +228,7 @@ export const MEDIA_SERVER_OUTCOME_SIGNAL_TYPES: readonly MediaEventType[] = [
   "experience_complete",
   "contribution_submit",
   "contribution_accept",
-  "postcard_create",
+  "postcard_create", "memory_create",
 ];
 
 /** The §45 transitions that make an arrival or a completion ATTRIBUTABLE to Media. */
@@ -389,9 +389,9 @@ export function recordMediaInviteIfAttributable(
  * §44 "Memory / Postcard created" — recorded by the Postcard writer at the
  * moment the passport_postcards row is written. A Postcard IS a posts row, so
  * its id is the media id: this is media becoming Passport's narrative (§29).
- * The Memory half has NO producer and no name: a Memory is created without
- * media (POST /memories takes none), so a creation event there would not be a
- * media outcome, and a name with no producer is only a name.
+ * The Memory half is recordMemoryCreatedFromMediaSignal (end of this file): a
+ * Memory item made from the caller's OWN post (MD385, D-26j). A Memory created
+ * without media (POST /memories takes none) records nothing here.
  */
 export function recordPostcardCreatedSignal(sc: any, q: { userId: string; postId: string }): void {
   recordMediaEvent("postcard_create", { viewer_id: q.userId, media_id: q.postId, post_id: q.postId, surface: "passport" }, sc);
@@ -415,4 +415,16 @@ export function recordExperienceCompletionIfAttributable(
       surface: "route_plan",
     }, sc);
   })().catch(() => {});
+}
+
+/**
+ * §44 "Memory / Postcard created", the MEMORY half (census-media MD385, ruling
+ * D-26j). Recorded by POST /memories/:id/items/from-post at the moment a
+ * Memory item is made from the caller's OWN post: the media id is the post id,
+ * as for a Postcard. Server-only (MEDIA_SERVER_OUTCOME_SIGNAL_TYPES), so no
+ * client can claim it. No Memory id, text, title or place is in the payload
+ * (ALLOWED_PAYLOAD_KEYS would drop a memory id anyway).
+ */
+export function recordMemoryCreatedFromMediaSignal(sc: any, q: { userId: string; postId: string }): void {
+  recordMediaEvent("memory_create", { viewer_id: q.userId, media_id: q.postId, post_id: q.postId, surface: "memory" }, sc);
 }

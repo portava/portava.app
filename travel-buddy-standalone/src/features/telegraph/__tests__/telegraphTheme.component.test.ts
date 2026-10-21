@@ -11,9 +11,9 @@
  * the operational accent is teal/cyan and is NOT the app-wide vermilion, and
  * that ordinary body text clears WCAG AA on both surfaces (arithmetic over the
  * real token values, so changing a token moves this test). It does NOT claim
- * every Telegraph screen has adopted it — `src/theme/telegraphTokens.ts`'s
- * static light `TG` is still what the inbox and the conversation shell import,
- * and the census row says so.
+ * how modules use it: telegraphPaletteRatchet.component.test.ts holds every
+ * Telegraph module to the palette (census T123/T124), and
+ * telegraphDarkScheme.component.test.tsx renders them in both schemes.
  *
  * SHOWN RED before commit: with `DARK.operational` set to `color.signal`, the
  * "operational is teal, not the app's attention colour" test fails; with the
@@ -23,7 +23,7 @@
 import {
   TELEGRAPH_PALETTES,
   statusLabelFor,
-  telegraphPalette,
+  telegraphPalette, themedStyles,
   type TelegraphPalette,
 } from '../theme/telegraphTheme.ts';
 import { color } from '../../../theme/tokens.ts';
@@ -51,7 +51,7 @@ function contrast(a: string, b: string): number {
 const KEYS: Array<keyof TelegraphPalette> = [
   'scheme', 'surface', 'surfaceRaised', 'sentBubble', 'sentText', 'sentTextMute',
   'recvBubble', 'recvBorder', 'recvText', 'mute', 'hairline', 'chipFill',
-  'operational', 'operationalOn', 'attention', 'attentionOn',
+  'operational', 'operationalOn', 'attention', 'attentionOn', 'haze', 'faint', 'success', // the last three: census T123
 ];
 
 describe('§11.1 — Telegraph supports both Portava themes', () => {
@@ -131,5 +131,42 @@ describe('§11.3 — status is a word, and body text is readable on both surface
   it('the secondary/mute text clears the AA large-text floor (3:1) on both surfaces', () => {
     expect(contrast(TELEGRAPH_PALETTES.light.mute, TELEGRAPH_PALETTES.light.surface)).toBeGreaterThanOrEqual(3);
     expect(contrast(TELEGRAPH_PALETTES.dark.mute, TELEGRAPH_PALETTES.dark.surface)).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe('census T123 — the keys the migration added, and the per-scheme sheet', () => {
+  it('the added light keys ARE the tokens they replace, so a migrated light screen draws what it drew', () => {
+    const light = TELEGRAPH_PALETTES.light;
+    expect(light.haze).toBe(color.haze);
+    expect(light.faint).toBe(color.faint);
+    expect(light.success).toBe(color.success);
+    expect(light.recvText).toBe(color.ink);
+    expect(light.mute).toBe(color.mute);
+    expect(light.operational).toBe(color.deep);
+  });
+
+  it('dark: tertiary text, the success mark and the operational accent clear 3:1 on both dark surfaces; on-accent text clears AA in both schemes', () => {
+    const d = TELEGRAPH_PALETTES.dark;
+    for (const fg of [d.faint, d.success, d.operational]) {
+      expect(contrast(fg, d.surface)).toBeGreaterThanOrEqual(3);
+      expect(contrast(fg, d.surfaceRaised)).toBeGreaterThanOrEqual(3);
+    }
+    for (const scheme of ['light', 'dark'] as const) {
+      const p = TELEGRAPH_PALETTES[scheme];
+      expect(contrast(p.operationalOn, p.operational)).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(p.recvText, p.surfaceRaised)).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it("a module's sheet is built once per scheme and never shared between schemes (themedStyles)", () => {
+    let built = 0;
+    const make = (p: TelegraphPalette) => { built += 1; return { root: { backgroundColor: p.surface } }; };
+    const a = themedStyles(make, TELEGRAPH_PALETTES.light);
+    const b = themedStyles(make, TELEGRAPH_PALETTES.light);
+    const c = themedStyles(make, TELEGRAPH_PALETTES.dark);
+    expect(a).toBe(b);
+    expect(c).not.toBe(a);
+    expect(c.root.backgroundColor).toBe(TELEGRAPH_PALETTES.dark.surface);
+    expect(built).toBe(2);
   });
 });

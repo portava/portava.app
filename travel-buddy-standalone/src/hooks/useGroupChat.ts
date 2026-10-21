@@ -130,7 +130,7 @@ export function useGroupChat(
         // members get a forbidden error handled above.
         memberAccess: 'active',
       };
-      const msgRes = await getThreadMessages(d.threadId);
+      const msgRes = await getThreadMessages(d.threadId, undefined, 'group_chat'); // census-telegraph T431: GroupChatScreen draws only shared cards as themselves
       // DV-83: a first page that could not be read is NOT an empty chat. It
       // used to open as 'active' with no messages, which told a member their
       // trip chat was silent when the read had simply failed.
@@ -160,7 +160,7 @@ export function useGroupChat(
   const silentRefresh = useCallback(async () => {
     const tid = threadIdRef.current;
     if (!tid) return;
-    const res = await getThreadMessages(tid);
+    const res = await getThreadMessages(tid, undefined, 'group_chat');
     // The server re-authorizes every read. A member removed while this screen
     // was open (or while the device was away) is told so, rather than left
     // looking at a conversation they are no longer in.
@@ -360,7 +360,7 @@ export function useGroupChat(
     loadingOlderRef.current = true;
     try {
       const oldest = messages[0];
-      const res = await getThreadMessages(thread.id, oldest.createdAt);
+      const res = await getThreadMessages(thread.id, oldest.createdAt, 'group_chat');
       if (res.ok && res.data) {
         const older = [...(res.data.messages ?? [])].reverse();
         setMessages((prev) => {

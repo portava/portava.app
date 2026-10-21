@@ -149,7 +149,7 @@ export const TRIP_KERNEL_EXTENSION_CODES = [
   "TRIP_MEETING_NOT_FOUND", "TRIP_MEETING_NOT_PARTICIPANT", "TRIP_MEETING_PARTICIPANT_NOT_CREW", "TRIP_MEETING_INVALID_TRANSITION",
   // §11.3 regroup: §14.3 recommended nothing the crew could meet at (routes/tripMeetingCheckpoints).
   "TRIP_MEETING_NO_CANDIDATE",
-  "TRIP_TRANSPORT_NOT_FOUND", "TRIP_TRANSPORT_INVALID_TRANSITION",
+  "TRIP_TRANSPORT_NOT_FOUND", "TRIP_TRANSPORT_INVALID_TRANSITION", "TRIP_FLIGHT_STATUS_STALE", // 3826: RECORD_FLIGHT_STATUS refuses an observation older than the one the flight holds
   // §23 long-stay recurrences (2798). Object identity and two POLICY refusals:
   // a timezone tzdata does not know (no CHECK can ask), and a rule spanning
   // more than 400 days (the write-time half of "no bloated itinerary model").

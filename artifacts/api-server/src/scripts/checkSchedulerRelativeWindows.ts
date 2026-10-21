@@ -348,6 +348,19 @@ export const ALLOWLIST: readonly AllowEntry[] = [
       "establishable — ZOMBIE_TOKEN_SWEEP_LOOKBACK_DAYS is an environment variable (default 7 days) — which is " +
       "why this is an entry and not a wider-than-gap classification.",
   },
+  {
+    key: 'lib/safetySignalRedriveScheduler.ts::runSafetySignalRedrivePass::messages.gte("created_at")',
+    kind: "governed",
+    requires: ["SAFETY_REDRIVE_WINDOW_MS", "dueIndexFor(nowMs - createdMs)", "if (entry.settled) continue;"],
+    reason:
+      "The window is the help-request re-drive's DEADLINE, not a span consumed once (Fable pass 3 §1.1): a " +
+      "§6.2/§9.1 safety row is re-attempted only until it is 15 minutes old, by policy. Nothing is marked or " +
+      "acked per window — every row inside it is re-read on EVERY pass and its due point recomputed from its own " +
+      "created_at — so a gap shorter than the window loses nothing (the next pass makes the missed attempt, " +
+      "collapsed into one). A gap LONGER than the window forfeits the attempts that fell inside it and the " +
+      "give-up ERROR (no pass saw the last point); the rows themselves stay in public.messages, and the first " +
+      "attempt is the door's own, in the request. Stated in safetyNotifications.ts's re-drive block and the handback.",
+  },
 
   // ── known defects: a real relative window nobody has fixed ────────────────
   {

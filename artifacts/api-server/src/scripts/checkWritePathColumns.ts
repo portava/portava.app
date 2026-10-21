@@ -290,6 +290,20 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   ["src/routes/telegraphLifecycle.ts|select|select list not statically resolvable", 1],
   ["src/routes/telegraphMemory.ts|insert|payload not statically resolvable", 1],
   ["src/routes/telegraphMemory.ts|select|select list not statically resolvable", 2], ["src/services/telegraph/inboxReads.ts|select|dynamic table name", 1], ["src/services/telegraph/inboxReads.ts|select|select list not statically resolvable", 3], // inboxReads (TELEGRAPH lane 2026-10-03): bounded/chunked/paged readers whose table+columns are their callers' literals in routes/messaging.ts ('thread_id, sender_id, created_at', 'user_id, thread_id', PROFILE_PUBLIC); one line so cited lines below hold
+  // #764 (2026-10-20), the same two shapes as the entries above, owner-approved:
+  //   contextKernel.ts — `.select(membershipSelect("user_id, left_at", boundOn))`
+  //     on message_thread_members, the helper conversationCapabilityPolicy.ts
+  //     uses above. It returns exactly "user_id, left_at" or "user_id, left_at,
+  //     visible_from_at" (groupChatHistoryBound.ts VISIBLE_FROM_COLUMN), and BOTH
+  //     strings are selected as literals on that table in scanned routes and
+  //     services, so every column it can send is checked live on every run.
+  //   conversationSnapshots.ts — readTail's `.select(input.columns)` on messages.
+  //     Its one caller, routes/telegraphCoordination.ts readSessionRowsSnapshotAware,
+  //     passes COORD_COLUMNS, a same-file literal that file also selects directly
+  //     (five sites), so those columns are checked there. A NEW caller with a new
+  //     list would not be — the cost of a reader that takes its projection.
+  ["src/services/telegraph/contextKernel.ts|select|select list not statically resolvable", 1],
+  ["src/services/telegraph/conversationSnapshots.ts|select|select list not statically resolvable", 1],
   // ── Creator ledger: the row MAPPERS (07 §2 / 09 §7.2) ────────────────────
   // `services/creators/CreatorAttributionService.ts` hands supabase a NAME at
   // two sites, because both payloads come from mappers in
@@ -358,6 +372,27 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   // fails, which is the intended tripwire.
   ["src/routes/rentABuddy.ts|select|select list not statically resolvable", 4],
   ["src/routes/rentABuddyMarketplace.ts|select|select list not statically resolvable", 3],
+
+  // ── select(LEGACY_REPORT_CLOSE_READ) — one constant, verified at a twin ─────
+  //
+  // #764 (2026-10-20), owner-approved. The four legacy report closes in
+  // admin.ts (resolve, dismiss, the trip and event moderation closes) and the
+  // one in adminMedia.ts read the row through the imported
+  // lib/legacyReportClose.ts LEGACY_REPORT_CLOSE_READ, because the claim guard
+  // and the undo in moveLegacyReport need exactly that row; one name, not five
+  // copies of it. The import is why the extractor cannot see them, as with
+  // BUDDY_PUBLIC_COLUMNS above.
+  //
+  // The risk is the same one — a phantom column failing the whole read — and
+  // it is covered the same way, by a different arrangement: every one of the
+  // constant's seven columns is also selected as a LITERAL on reports in
+  // adminMedia.ts's two report-list reads, so each is checked live on every
+  // run. Unlike buddyMapRead, legacyReportClose.ts does not select through its
+  // own constant, so that cover is a coincidence of two lists, and it is
+  // pinned in src/test/legacyReportClaimThenAudit.test.ts: a column added to
+  // the constant and to no literal list turns it red.
+  ["src/routes/admin.ts|select|select list not statically resolvable", 4],
+  ["src/routes/adminMedia.ts|select|select list not statically resolvable", 1],
 
   // ── Insert/upsert payloads built at runtime ───────────────────────────────
   // FIVE sites, and the count moved from 2 to 5 without one new blind spot

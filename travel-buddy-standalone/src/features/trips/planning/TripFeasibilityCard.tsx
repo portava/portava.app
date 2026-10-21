@@ -107,7 +107,7 @@ export function TripFeasibilityCard({ tripId, load = fetchTripFeasibility }: Pro
       <View style={s.row}>
         <Icon size={16} color={iconColor} />
         <View style={{ flex: 1 }}>
-          <Text style={[s.title, infeasible && { color: color.signal }]}>
+          <Text style={[s.title, infeasible && { color: color.signalStrong }]}>
             {feasibilityHeadline(report)}
           </Text>
 

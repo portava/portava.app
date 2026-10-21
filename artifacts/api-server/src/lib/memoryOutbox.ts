@@ -284,3 +284,57 @@ export async function readUnpublishedOutbox(
   }
   return { ok: true, rows: data as MemoryOutboxRow[] };
 }
+
+/**
+ * Read ONE event's privacy-filtered payload — §23, "Search/index workers
+ * consume privacy-filtered event payloads where possible rather than raw entire
+ * rows" (census H203). The claim function (2994's memory_outbox_claim) returns
+ * ids only, so a worker that wants to know WHAT happened asks here, through the
+ * event store's one application boundary (rule 4 of check:memory-table-ownership),
+ * and never by reading the Memory's row.
+ *
+ * Three answers, none of them a guess:
+ *   ok                       the payload, and it carries none of
+ *                            FORBIDDEN_EVENT_PAYLOAD_KEYS at any depth
+ *   payload_unavailable      the read failed (supabase-js resolves on an error)
+ *   payload_absent           no event with that id — retrying cannot change it
+ *   payload_not_privacy_filtered
+ *                            the stored payload carries a forbidden key: the
+ *                            worker REFUSES to consume it rather than learn a
+ *                            title or a coordinate by subscribing
+ */
+export type EventPayloadRead =
+  | { ok: true; payload: MemoryDomainEventPayload }
+  | { ok: false; reason: "payload_unavailable" | "payload_absent" | "payload_not_privacy_filtered"; detail: string };
+
+export async function readEventPayload(sc: any, eventId: string): Promise<EventPayloadRead> {
+  if (typeof eventId !== "string" || eventId.length === 0) {
+    return { ok: false, reason: "payload_absent", detail: "the claimed row carries no event id" };
+  }
+  const { data, error } = await sc.from(MEMORY_EVENT_TABLE).select("event_id, payload_json").eq("event_id", eventId).maybeSingle();
+  if (error) return { ok: false, reason: "payload_unavailable", detail: error.message ?? String(error) };
+  if (!data) return { ok: false, reason: "payload_absent", detail: `no event ${eventId}` };
+  const payload = (data as { payload_json?: unknown }).payload_json;
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return { ok: false, reason: "payload_unavailable", detail: "the event's payload is not an object" };
+  }
+  if (!eventPayloadIsPrivacyFiltered(payload)) {
+    return { ok: false, reason: "payload_not_privacy_filtered", detail: "the event's payload carries a forbidden key; it is not consumed" };
+  }
+  return { ok: true, payload: payload as MemoryDomainEventPayload };
+}
+
+/**
+ * MAY the Memory have left an audience it had? Yes when the payload STATES an
+ * audience that is not `public`, or a lifecycle state that is not ACTIVE. That
+ * is conservative on purpose: "friends_only" may be a widening from "only_me",
+ * and re-deriving after a widening costs work, never privacy. A payload that
+ * states neither (an edit, a correction) says nothing about the audience.
+ */
+export function payloadMayNarrowAudience(payload: MemoryDomainEventPayload): boolean {
+  const visibility = (payload as { visibility?: unknown }).visibility;
+  const toState = (payload as { to_state?: unknown }).to_state;
+  if (typeof visibility === "string" && visibility !== "public") return true;
+  if (typeof toState === "string" && toState !== "ACTIVE") return true;
+  return false;
+}

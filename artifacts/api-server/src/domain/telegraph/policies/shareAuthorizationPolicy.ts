@@ -234,7 +234,7 @@ export const TELEGRAPH_SHARE_PRODUCERS: readonly ShareProducerDeclaration[] = [
     note: "Written by routes/circle.ts into the circle's own thread; circle membership is the audience." },
   { literal: "highlight_reply", column: "msg_type", family: "AUDIENCE_SCOPED", sourceDomain: "highlights",
     authorizedBy: null,
-    note: "A reply to a Highlight the sender could already see. Declared AUDIENCE_SCOPED because a private Highlight's reply must not become a share of the Highlight." },
+    note: "A reply to a Highlight the sender could already see. Declared AUDIENCE_SCOPED because a private Highlight's reply must not become a share of the Highlight. census-telegraph T409 (wave 5): the row now carries its reference in the body and resolves through §5's HIGHLIGHT family per viewer (sharedCardTruth.ts highlightReplyCard), so a viewer the Highlight is not visible to is served it as unavailable; the dynamic `subtype: id` declaration that stood for the §29 finding is removed with the code it recorded." },
   { literal: "discovery_card", column: "subtype", family: "PUBLIC", sourceDomain: "discovery", authorizedBy: null,
     note: "Place / gem card. Public discovery surface." },
   { literal: "post_card", column: "subtype", family: "PUBLIC", sourceDomain: "posts", authorizedBy: null,
@@ -629,23 +629,6 @@ export const TELEGRAPH_DYNAMIC_SHARE_PRODUCERS: readonly DynamicShareProducer[] 
       "its two callers. The same value is also written INSIDE the body JSON, so " +
       "the discriminator is duplicated — which is why 'arrived' and 'meeting_point' " +
       "appear in the client's parser and nowhere in a literal server assignment.",
-  },
-  {
-    file: "artifacts/api-server/src/routes/highlights.ts",
-    expression: "subtype: id",
-    family: "AUDIENCE_SCOPED",
-    sourceDomain: "highlights",
-    produces: [],
-    writesMessages: true,
-    note:
-      "A FINDING, not a classification. The subtype column — the discriminator a " +
-      "renderer dispatches on — is set to the HIGHLIGHT'S ID. That is an identifier " +
-      "in a vocabulary field: it can never match a renderer case, and it puts a " +
-      "highlights-domain id into a messaging-domain discriminator, which is the " +
-      "shape §29's 'no semantic ID substitution across domains' forbids. The row " +
-      "still renders, because msg_type is the real discriminator here " +
-      "('highlight_reply'), so nothing is visibly broken — which is why it has " +
-      "survived. Recorded so it is a decision rather than an accident.",
   },
   {
     file: "artifacts/api-server/src/routes/rentABuddy.ts",

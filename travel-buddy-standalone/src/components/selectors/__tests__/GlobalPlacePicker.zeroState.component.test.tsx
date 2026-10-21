@@ -68,7 +68,7 @@ jest.mock('../../../platform/input-assistance/services/selectionRecorder.ts', ()
 }));
 // NOTE: exhaustive-by-design stub — provider search is out of scope; the empty field never queries it.
 jest.mock('../../../hooks/usePlaceSearch.ts', () => ({
-  usePlaceSearch: () => ({ results: [], loading: false, error: null }),
+  usePlaceSearch: () => ({ results: mockPlaceSearch.current, loading: false, error: null }),
   fetchPlacesFromApi: jest.fn(),
 }));
 // NOTE: exhaustive-by-design stub — Google autocomplete is out of scope here.
@@ -76,7 +76,7 @@ jest.mock('../../../hooks/useGooglePlacesAutocomplete.ts', () => ({
   useGooglePlacesAutocomplete: () => ({ places: [], loading: false }),
   fetchGooglePlaceDetails: jest.fn(),
 }));
-const mockLocalRecents: { current: any[] } = { current: [] };
+const mockLocalRecents: { current: any[] } = { current: [] }; const mockPlaceSearch: { current: any[] } = { current: [] }; // census G222 (wave 4): the provider search stub answers [] for every case but the provider-dedup one
 // NOTE: exhaustive-by-design stub — the picker's own /api/me/recent-places list.
 jest.mock('../../../hooks/useRecentPlaces.ts', () => ({
   useRecentPlaces: () => ({ recents: mockLocalRecents.current, saveRecent: jest.fn() }),
@@ -197,7 +197,7 @@ beforeEach(() => {
   setDiscoveryViewerFromSession(_TEST_ACCOUNT);
   mockRequest.mockReset();
   mockRecord.mockReset();
-  mockLocalRecents.current = [];
+  mockLocalRecents.current = []; mockPlaceSearch.current = [];
   sharedSuggestionCache.clear();
   detachLocalRecents();
   clearLocalZeroState();
@@ -372,5 +372,88 @@ describe('census G159 — the paste surface is only on a field that takes one pl
     await r.rerender(picker(props));
     expect(r.getByTestId('place-paste')).toBeTruthy();
     expect(r.queryByTestId('paste-input')).toBeNull();
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// census G222 / G237 / G153 (wave 4, 2026-10-17) — the provider rows the SERVER
+// federated (lib/inputAssistance/providerFederation.ts) reach the picker as
+// `source: 'provider'` rows: listed in their own section after the canonical
+// matches, with the dataset's required attribution, each its own choice, and
+// resolved canonically like any provider place when picked.
+// ═════════════════════════════════════════════════════════════════════════════
+import { resolveCanonicalPlace } from '../../../lib/location/resolveCanonical.ts';
+
+const canonPlace: InputSuggestion = {
+  id: 'event_location:places:p-sky36', type: 'entity', context: 'event_location', label: 'Sky36',
+  entityType: 'place', entityId: 'p-sky36', action: { type: 'open_entity', entityType: 'place', entityId: 'p-sky36' },
+  confidence: 0.85, source: 'canonical', policyVersion: 'input-2026-08',
+} as InputSuggestion;
+/** `providerFederation.ts#projectProviderCandidate`, field for field. */
+function providerRow(fsqId: string, name: string): InputSuggestion {
+  const place = {
+    id: `foursquare-${fsqId}`, type: 'place', name, displayName: `${name}, Da Nang`, country: null, countryCode: 'VN',
+    region: 'Da Nang', city: 'Da Nang', district: null, lat: 16.07, lng: 108.22, timezone: 'Asia/Ho_Chi_Minh',
+    source: 'foursquare', address: '12 Bach Dang', postalCode: null, formattedAddress: '12 Bach Dang',
+  };
+  return {
+    id: `event_location:provider:fsq_os_places:${fsqId}`, type: 'entity', context: 'event_location', label: name,
+    subtitle: 'Da Nang, VN', entityType: 'place', action: { type: 'set_structured_value', value: place }, structuredValue: place,
+    confidence: 0.7, source: 'provider', attribution: 'Powered by Foursquare', policyVersion: 'input-2026-08',
+  } as InputSuggestion;
+}
+
+describe('census G222 — the server\'s provider rows in the picker', () => {
+  const props = { assistContext: 'event_location' as const, usedFor: 'event_location' };
+  async function typed(rows: InputSuggestion[], text = 'sky') {
+    mockRequest.mockImplementation((req: any) => Promise.resolve(served(req.text === text ? rows : [])));
+    const r = await render(picker(props));
+    await act(async () => { fireEvent.changeText(r.getByPlaceholderText('Search cities, hotels, landmarks…'), text); });
+    return r;
+  }
+
+  it('provider rows are listed after the canonical matches, in their own section, with the attribution', async () => {
+    const r = await typed([canonPlace, providerRow('fsq-1', 'Skyline Bar')]);
+    await waitFor(() => expect(r.getByText('Skyline Bar')).toBeTruthy());
+    expect(r.getByTestId('place-provider-attribution')).toBeTruthy();
+    expect(r.getByText('Powered by Foursquare')).toBeTruthy();
+    // Tree order of the five texts (getAllByText walks the rendered tree depth-first).
+    const order = r.getAllByText(/^(Best matches|Sky36|More places|Skyline Bar|Powered by Foursquare)$/).map((n: any) => n.props.children);
+    expect(order).toEqual(['Best matches', 'Sky36', 'More places', 'Skyline Bar', 'Powered by Foursquare']);
+  });
+
+  it('with no provider row there is no provider section and no attribution', async () => {
+    const r = await typed([canonPlace]);
+    await waitFor(() => expect(r.getByText('Sky36')).toBeTruthy());
+    expect(r.queryByText('More places')).toBeNull();
+    expect(r.queryByTestId('place-provider-attribution')).toBeNull();
+  });
+
+  it('two provider venues that share a name are both offered — each is its own choice', async () => {
+    const r = await typed([providerRow('fsq-1', 'Highlands Coffee'), providerRow('fsq-2', 'Highlands Coffee')], 'highlands');
+    await waitFor(() => expect(r.getAllByText('Highlands Coffee').length).toBe(2));
+  });
+
+  it('the device\'s own provider row for the SAME record is not listed a second time', async () => {
+    mockPlaceSearch.current = [{
+      id: 'foursquare-fsq-1', type: 'place', name: 'Skyline Bar (Foursquare)', displayName: 'Skyline Bar, Da Nang', country: 'Vietnam',
+      countryCode: 'VN', region: null, city: 'Da Nang', district: null, lat: 16.07, lng: 108.22, timezone: null, source: 'foursquare',
+    }];
+    const r = await typed([providerRow('fsq-1', 'Skyline Bar')]);
+    await waitFor(() => expect(r.getByText('Skyline Bar')).toBeTruthy());
+    expect(r.queryByText('Skyline Bar (Foursquare)')).toBeNull();
+  });
+
+  it('picking a provider row resolves it canonically, as the Foursquare place it is', async () => {
+    const onSelect = jest.fn();
+    mockRequest.mockImplementation((req: any) => Promise.resolve(served(req.text === 'sky' ? [providerRow('fsq-1', 'Skyline Bar')] : [])));
+    const r = await render(picker({ ...props, onSelect }));
+    await act(async () => { fireEvent.changeText(r.getByPlaceholderText('Search cities, hotels, landmarks…'), 'sky'); });
+    await waitFor(() => expect(r.getByText('Skyline Bar')).toBeTruthy());
+    await act(async () => { fireEvent.press(r.getByText('Skyline Bar')); });
+    await waitFor(() => expect(onSelect).toHaveBeenCalledTimes(1));
+    const resolvedWith = (resolveCanonicalPlace as jest.Mock).mock.calls.at(-1)?.[0];
+    expect(resolvedWith).toMatchObject({ id: 'foursquare-fsq-1', source: 'foursquare', name: 'Skyline Bar', lat: 16.07 });
+    expect(onSelect.mock.calls[0][0]).toMatchObject({ name: 'Skyline Bar' });
   });
 });

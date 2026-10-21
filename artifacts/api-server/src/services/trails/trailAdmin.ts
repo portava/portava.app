@@ -139,7 +139,7 @@ export async function trailTrendEvidence(sc: any, trailId: string, nowMs = Date.
     value: {
       trailId,
       momentum: reading.momentum,
-      momentumUnread: reading.momentumUnread === true,
+      momentumUnread: reading.momentumUnread === true, ...(reading.momentumWithheld ? { momentumWithheld: reading.momentumWithheld } : {}), // 2026-10-17 (wave 4): why no reading — the protected-zone rule, not an outage
       items: reading.items,
       readingProvenance: reading.momentumProvenance,
       reviews: (data ?? []) as unknown[],

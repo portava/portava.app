@@ -40,7 +40,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { resolveMetric } from "../lib/stamps/criteria/metrics.js";
 import { evaluateCriteria } from "../lib/stamps/criteria/evaluator.js";
-import { makePassportDb } from "./helpers/fakePassportDb.js";
+import { makePassportDb as makeRawPassportDb } from "./helpers/fakePassportDb.js"; import { withEarnedPresenceEvidence } from "./helpers/stampPresenceFixture.js"; const makePassportDb = (t: Record<string, any[]>) => makeRawPassportDb(withEarnedPresenceEvidence(t)); // H4, wave 5 (stampPresenceView.ts): a presence stamp staged as earned carries its evidence; HEAD read none
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

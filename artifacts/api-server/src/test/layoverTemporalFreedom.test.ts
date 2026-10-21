@@ -239,7 +239,7 @@ describe("§7.2 — a layover with no window says by how much", () => {
     assert.equal(w.usableMinutes, 0);
     assert.equal(w.freedomWindow, null);
     assert.ok(w.temporalConflict, "a layover with no window must state the conflict");
-    assert.equal(w.temporalConflict!.reason, "TRIP_TEMPORAL_CONFLICT");
+    assert.equal(w.temporalConflict!.reason, "TEMPORAL_CONFLICT");
     assert.equal(w.temporalConflict!.kind, "NO_TIME_TO_TRAVEL");
     assert.deepEqual(
       w.temporalConflict!.commitmentIds,
@@ -379,7 +379,7 @@ describe("§7 / developer rule 14 — the generalised engine stays airport-free"
     src.split("\n").filter((l) => /^\s*import\b/.test(l) || /^\s*}\s*from\s+"/.test(l) || /\bfrom\s+"/.test(l));
 
   it("the generalised engine imports nothing from services/airport", () => {
-    const lines = importLines(read("../domain/trips/invariants/TripFreedomEngine.ts"));
+    const lines = importLines(read("../domain/temporal/TemporalFreedomEngine.ts"));
     for (const l of lines) {
       assert.ok(
         !/services\/airport/.test(l),
@@ -443,12 +443,12 @@ describe("census-layover L57 — the layover's commitments carry spec §7's eigh
   });
 
   it("the window's confidence is the COMMITMENTS' — a HIGH zero hop between them certifies nothing", async () => {
-    const { computeFreedomWindows } = await import("../domain/trips/invariants/TripFreedomEngine.js");
+    const { computeFreedomWindows } = await import("../domain/temporal/TemporalFreedomEngine.js");
     for (const band of ["MEDIUM", "LOW", "INSUFFICIENT"] as const) {
       const commitments = layoverCommitments({ ...ctx, confidence: band });
       const w = computeFreedomWindows({
         commitments, hops: [{ travelMinutes: 0, confidence: "HIGH", routed: false, unknownReason: null }],
-        participants: [], tripStart: null, tripEnd: null,
+        participants: [], horizonStart: null, horizonEnd: null,
       }).windows.find((x) => x.position === "between")!;
       assert.equal(w.confidence, band, `a ${band} buffer cannot become HIGH because the hop is a fact`);
       assert.equal(w.certified, false);
@@ -460,13 +460,78 @@ describe("census-layover L57 — the layover's commitments carry spec §7's eigh
   });
 
   it("NO_LATE_ARRIVAL keeps a tolerance off the outbound flight even when one is supplied", async () => {
-    const { computeFreedomWindows } = await import("../domain/trips/invariants/TripFreedomEngine.js");
+    const { computeFreedomWindows } = await import("../domain/temporal/TemporalFreedomEngine.js");
     const [arrival, departure] = layoverCommitments(ctx);
     const loosened = [arrival!, { ...departure!, latenessToleranceMinutes: 25 }];
     const w = computeFreedomWindows({
       commitments: loosened, hops: [{ travelMinutes: 0, confidence: "HIGH", routed: false, unknownReason: null }],
-      participants: [], tripStart: null, tripEnd: null,
+      participants: [], horizonStart: null, horizonEnd: null,
     }).windows.find((x) => x.position === "between")!;
     assert.equal(Date.parse(w.endsAt), ctx.cutoffMs - ctx.returnBufferMin * MIN, "cutoff − buffer, with no 25 minutes the aircraft never grants");
+  });
+});
+
+// ── census-layover L13 / L59: the layover adapts the generalised engine DIRECTLY, and the airport stays here ──
+//
+// L13: the engine is its own package and the layover imports THAT package, not
+// Trips' adapter of it. L59 (§7 "Keep airport-specific logic in the Layover
+// adapter, not in the generalized engine"): every airport fact — why a flight
+// does not wait, the exit delay, the cutoff, the return buffer — is stated in
+// this adapter and arrives at the engine as a generic commitment; the engine's
+// answer comes back changed by nothing but the wire label the layover envelope
+// has always carried.
+describe("census-layover L13/L59 — the layover adapter imports the engine package itself; the airport stays in the adapter", () => {
+  const read = (p: string) => readFileSync(new URL(p, import.meta.url).pathname, "utf8");
+  const importLines = (src: string) =>
+    src.split("\n").filter((l) => /^\s*import\b/.test(l) || /^\s*}\s*from\s+"/.test(l) || /\bfrom\s+"/.test(l));
+  const ctx: LayoverFreedomContext = {
+    arrivalMs: Date.UTC(2026, 4, 12, 3, 0, 0),
+    departureMs: Date.UTC(2026, 4, 12, 3, 0, 0) + 2 * HOUR,
+    cutoffMs: Date.UTC(2026, 4, 12, 3, 0, 0) + 2 * HOUR - 30 * MIN,
+    exitDelayMin: 65,
+    returnBufferMin: 185,
+    airportPoint: null,
+    airportPlaceId: "TPE",
+    confidence: "LOW",
+  };
+
+  it("imports the generalised engine from domain/temporal, and nothing from Trips' package", () => {
+    const lines = importLines(read("../services/airport/LayoverTemporalFreedom.ts"));
+    assert.ok(lines.some((l) => l.includes('"../../domain/temporal/TemporalFreedomEngine.js"')), "the layover must adapt the engine package itself");
+    assert.ok(!lines.some((l) => l.includes("domain/trips")), `the layover reached the engine through Trips: ${lines.filter((l) => l.includes("domain/trips")).join(" | ")}`);
+  });
+
+  it("the airport's reasons are declared in this adapter and appear nowhere in the engine", () => {
+    const adapter = read("../services/airport/LayoverTemporalFreedom.ts");
+    const engine = read("../domain/temporal/TemporalFreedomEngine.ts");
+    for (const name of ["INBOUND_DOES_NOT_WAIT", "OUTBOUND_DOES_NOT_WAIT"]) {
+      assert.match(adapter, new RegExp(`const ${name}: CommitmentHardConstraint = \\{`), `${name} must be stated in the layover adapter`);
+      assert.ok(!engine.includes(name), `${name} leaked into the engine`);
+    }
+    assert.ok(!/(?<![a-z])(airport|layover|flight|aircraft|boarding|cutoff)/i.test(engine), "the generalised engine carries an airport assumption");
+    const [arrival, departure] = layoverCommitments(ctx);
+    assert.match(departure!.hardConstraints[0]!.detail, /aircraft does not wait/, "the reason is the adapter's own words");
+    assert.match(arrival!.hardConstraints[0]!.detail, /inbound flight/);
+  });
+
+  it("the layover's window is the engine's untouched, and its conflict is the engine's with only the wire label changed", async () => {
+    const engine = await import("../domain/temporal/TemporalFreedomEngine.js");
+    let conflicts = 0; let windows = 0;
+    for (let gapMin = 30; gapMin <= 10 * 60; gapMin += 15) {
+      for (const confidence of ["MEDIUM", "LOW"] as const) {
+        const c2: LayoverFreedomContext = { ...ctx, confidence, departureMs: ctx.arrivalMs + gapMin * MIN, cutoffMs: ctx.arrivalMs + (gapMin - 30) * MIN };
+        const direct = engine.computeFreedomWindows({
+          commitments: layoverCommitments(c2), hops: [{ travelMinutes: 0, confidence: "HIGH", routed: false, unknownReason: null }],
+          participants: [], horizonStart: null, horizonEnd: null,
+        });
+        const built = buildFreedomWindow(c2);
+        assert.equal(JSON.stringify(built.window), JSON.stringify(direct.windows.find((w) => w.position === "between") ?? null));
+        const want = direct.conflicts[0] ? { ...direct.conflicts[0], reason: "TEMPORAL_CONFLICT" } : null;
+        assert.equal(JSON.stringify(built.conflict), JSON.stringify(want), `gap ${gapMin}: the layover's conflict is not the engine's`);
+        if (built.conflict) { conflicts += 1; assert.equal(direct.conflicts[0]!.reason, "TEMPORAL_CONFLICT"); }
+        if (built.window) windows += 1;
+      }
+    }
+    assert.ok(conflicts >= 10 && windows >= 10, `both outcomes must be exercised (${conflicts} conflicts, ${windows} windows)`);
   });
 });

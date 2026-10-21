@@ -182,7 +182,7 @@ describe("PATCH /admin/users/:userId/moderation-action — report_resolved", () 
 
   it("an existing report really is resolved", async () => {
     const db = install({
-      reports: [{ id: REPORT_ID, status: "pending", reviewed_by: null }],
+      reports: [{ id: REPORT_ID, status: "open", reviewed_by: null }], // "open": what every intake files; "pending" is a word no filed report carries (wave 5)
       moderation_actions: [],
     });
 
@@ -204,7 +204,7 @@ describe("PATCH /admin/users/:userId/moderation-action — report_resolved", () 
 describe("POST /admin/reports/:id/hide-content", () => {
   it("a report whose post no longer exists reports contentHidden:false", async () => {
     install({
-      reports: [{ id: REPORT_ID, target_type: "post", target_id: POST_ID, status: "pending" }],
+      reports: [{ id: REPORT_ID, target_type: "post", target_id: POST_ID, status: "open" }],
       posts: [], // hard-deleted since the report was filed
       moderation_actions: [],
     });
@@ -221,7 +221,7 @@ describe("POST /admin/reports/:id/hide-content", () => {
 
   it("an existing post is hidden and reported as hidden", async () => {
     const db = install({
-      reports: [{ id: REPORT_ID, target_type: "post", target_id: POST_ID, status: "pending" }],
+      reports: [{ id: REPORT_ID, target_type: "post", target_id: POST_ID, status: "open" }],
       posts: [{ id: POST_ID, author_id: TARGET_ID, post_status: "active" }],
       moderation_actions: [],
       trust_events: [],

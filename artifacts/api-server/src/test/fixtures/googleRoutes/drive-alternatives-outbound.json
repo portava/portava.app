@@ -1,0 +1,141 @@
+{
+  "routes": [
+    {
+      "distanceMeters": 14600,
+      "duration": "1500s",
+      "staticDuration": "1260s",
+      "legs": [
+        {
+          "steps": [
+            {
+              "distanceMeters": 700,
+              "staticDuration": "120s",
+              "travelMode": "DRIVE",
+              "navigationInstruction": {
+                "maneuver": "DEPART"
+              }
+            },
+            {
+              "distanceMeters": 7400,
+              "staticDuration": "520s",
+              "travelMode": "DRIVE",
+              "navigationInstruction": {
+                "maneuver": "RAMP_RIGHT"
+              }
+            },
+            {
+              "distanceMeters": 5200,
+              "staticDuration": "430s",
+              "travelMode": "DRIVE",
+              "navigationInstruction": {
+                "maneuver": "MERGE"
+              }
+            },
+            {
+              "distanceMeters": 1300,
+              "staticDuration": "190s",
+              "travelMode": "DRIVE",
+              "navigationInstruction": {
+                "maneuver": "STRAIGHT"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "distanceMeters": 14200,
+      "duration": "1260s",
+      "staticDuration": "1080s",
+      "legs": [
+        {
+          "steps": [
+            {
+              "distanceMeters": 600,
+              "staticDuration": "95s",
+              "travelMode": "DRIVE",
+              "navigationInstruction": {
+                "maneuver": "DEPART"
+              }
+            },
+            {
+              "distanceMeters": 6100,
+              "staticDuration": "410s",
+              "travelMode": "DRIVE",
+              "navigationInstruction": {
+                "maneuver": "RAMP_RIGHT"
+              }
+            },
+            {
+              "distanceMeters": 5900,
+              "staticDuration": "380s",
+              "travelMode": "DRIVE",
+              "navigationInstruction": {
+                "maneuver": "MERGE"
+              }
+            },
+            {
+              "distanceMeters": 1600,
+              "staticDuration": "195s",
+              "travelMode": "DRIVE",
+              "navigationInstruction": {
+                "maneuver": "STRAIGHT"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "distanceMeters": 16400,
+      "duration": "1680s",
+      "staticDuration": "1490s",
+      "legs": [
+        {
+          "steps": [
+            {
+              "distanceMeters": 800,
+              "staticDuration": "140s",
+              "travelMode": "DRIVE",
+              "navigationInstruction": {
+                "maneuver": "DEPART"
+              }
+            },
+            {
+              "distanceMeters": 8100,
+              "staticDuration": "610s",
+              "travelMode": "DRIVE",
+              "navigationInstruction": {
+                "maneuver": "RAMP_RIGHT"
+              }
+            },
+            {
+              "distanceMeters": 6000,
+              "staticDuration": "500s",
+              "travelMode": "DRIVE",
+              "navigationInstruction": {
+                "maneuver": "MERGE"
+              }
+            },
+            {
+              "distanceMeters": 1200,
+              "staticDuration": "180s",
+              "travelMode": "DRIVE",
+              "navigationInstruction": {
+                "maneuver": "STRAIGHT"
+              }
+            },
+            {
+              "distanceMeters": 300,
+              "staticDuration": "60s",
+              "travelMode": "DRIVE",
+              "navigationInstruction": {
+                "maneuver": "TURN_LEFT"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

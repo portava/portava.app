@@ -136,8 +136,8 @@ $reassert$;`;
  * postcondition re-pins the families that did not move, nor the range-check,
  * engine-command and branch counts (verifier V-714 F4: "touches the object" is
  * not "re-asserts the count"). This pins every count those statements pinned,
- * at its CHAIN-END value, measured 2026-10-14 on the whole-chain replay (after
- * 2786, the last transform). A transform that legitimately moves one of these
+ * at its CHAIN-END value, including 3826's RECORD_FLIGHT_STATUS engine command
+ * and branch (the continuation of 2786's four commands and 72 branches). A transform that legitimately moves one of these
  * counts must update this block in the same change: the amendments db test
  * runs it at the chain end on every PR.
  */
@@ -164,12 +164,12 @@ BEGIN
     RAISE EXCEPTION 'RE-ASSERTION FAILED (trip kernel counts at the chain end): expected 3 trip-level range checks, found %', n;
   END IF;
   n := (length(d) - length(replace(d, 'THEN ''engine''', ''))) / length('THEN ''engine''');
-  IF n <> 4 THEN
-    RAISE EXCEPTION 'RE-ASSERTION FAILED (trip kernel counts at the chain end): expected 4 engine-capability commands, found %', n;
+  IF n <> 5 THEN
+    RAISE EXCEPTION 'RE-ASSERTION FAILED (trip kernel counts at the chain end): expected 5 engine-capability commands, found %', n;
   END IF;
   n := (length(d) - length(replace(d, E'\\n      WHEN ''', ''))) / length(E'\\n      WHEN ''');
-  IF n <> 72 THEN
-    RAISE EXCEPTION 'RE-ASSERTION FAILED (trip kernel counts at the chain end): expected 72 command branches, found %', n;
+  IF n <> 73 THEN
+    RAISE EXCEPTION 'RE-ASSERTION FAILED (trip kernel counts at the chain end): expected 73 command branches, found %', n;
   END IF;
 END
 $reassert$;`;
@@ -180,7 +180,7 @@ const KERNEL_COUNTS_WHY =
   "point in the chain (\"expected 3 stage-family assignments\", \"the 2 pre-existing trip-level range checks\", " +
   "\"N command branches after this no-branch migration\"). The named transform added to that count on purpose; " +
   "its own postcondition (amended here in turn where a still later transform moved its counts) asserts the kernel " +
-  "it installed, ending at 2786's; KERNEL_COUNTS_REASSERT re-pins every dropped count at its chain-end value.";
+  "it installed, with 3826 adding the flight-status engine command; KERNEL_COUNTS_REASSERT re-pins every dropped count at its chain-end value.";
 
 export const POSTCONDITION_AMENDMENTS: readonly PostconditionAmendment[] = [
   {
@@ -470,6 +470,15 @@ $reassert$;`,
     drops: [{ lines: [251, 252], failsWith: "2785: expected 3 engine-capability commands, found", supersededBy: "2786_trip_kernel_opportunity_events.sql" }],
     reassert: KERNEL_COUNTS_REASSERT,
     why: "2786 added RECORD_OPPORTUNITY_CHANGE, a fourth engine-capability command (Trips §13.3). " + KERNEL_COUNTS_WHY,
+  },
+  {
+    file: "2786_trip_kernel_opportunity_events.sql",
+    blockLine: 96,
+    blockSha256: "a04e352c47ab82c2",
+    kind: "superseded",
+    drops: [{ lines: [106, 107], failsWith: "2786: expected 4 engine-capability commands, found", supersededBy: "3826_trip_kernel_flight_segments.sql" }],
+    reassert: KERNEL_COUNTS_REASSERT,
+    why: "3826 added RECORD_FLIGHT_STATUS, a fifth engine-capability command (Layover §3, census-layover L11). " + KERNEL_COUNTS_WHY,
   },
   {
     file: "2798_trip_kernel_recurrence_family.sql",

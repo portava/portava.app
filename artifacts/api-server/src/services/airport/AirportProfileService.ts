@@ -7,7 +7,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../../lib/logger.js";
-import { safeOrIlikeValue } from "../../lib/postgrestFilter.js";
+import { safeOrIlikeValue } from "../../lib/postgrestFilter.js"; import { readValue, readDegraded, matchRead, type LayoverRead } from "../layover/layoverRead.js";
 
 const logger = rootLogger.child({ service: "AirportProfileService" });
 
@@ -180,27 +180,27 @@ function normaliseTerminalInfo(raw: unknown): Record<string, unknown> | null {
  * one-line projections of the records below. Nothing about their behaviour
  * moves; what is new is that a caller may now ASK.
  */
-export interface AirportLookup {
+export interface AirportAnswer {
   airport: AirportProfile | null;
-  /** TRUE only when `airport_profiles` could not be READ. Not "not found". */
-  degraded: boolean;
-  /** Named so a route can disclose it. Empty unless `degraded`. */
-  degradedReasons: string[];
-  /** TRUE when the answer came from the static dataset rather than the table. */
+  /** TRUE when the answer came from the static dataset rather than the table — a PROVENANCE, not a read failure: an
+  *  uncurated airport read cleanly is a static READ; an unreadable table is a DEGRADED read whose fallback is static. */
   fromStatic: boolean;
 }
+/** census L294: DEGRADED only when `airport_profiles` could not be READ (not "not found"), with `airport_profiles_unreadable`. */
+export type AirportLookup = LayoverRead<AirportAnswer>;
 
-export interface AirportLookupList {
+
+export interface AirportAnswerList {
   airports: AirportProfile[];
-  degraded: boolean;
-  degradedReasons: string[];
   fromStatic: boolean;
 }
+/** census L294: as `AirportLookup`, for the search. */
+export type AirportLookupList = LayoverRead<AirportAnswerList>;
 
 const AIRPORT_PROFILES_UNREADABLE = "airport_profiles_unreadable";
 
-function degradedReasonsFor(unreadable: boolean, where: StaleFallbackSite): string[] { // called ONLY on the static-fallback return of each resolver
-  emitStaleFallback("static_dataset", where, unreadable); return unreadable ? [AIRPORT_PROFILES_UNREADABLE] : []; // census L215: the ladder emits when it fires
+function staticAnswer<T>(value: T, unreadable: boolean, where: StaleFallbackSite): LayoverRead<T> { // called ONLY on the static-fallback return of each resolver
+  emitStaleFallback("static_dataset", where, unreadable); return unreadable ? readDegraded(value, [AIRPORT_PROFILES_UNREADABLE]) : readValue(value); // census L215: the ladder emits when it fires; L294: an outage's static answer is a FALLBACK
 }
 
 /** Resolve by IATA code (e.g. "TPE", "NRT"). Case-insensitive. */
@@ -216,7 +216,7 @@ export async function lookupByIata(
       .ilike("iata_code", iataCode.trim())
       .maybeSingle();
     if (error) { noteFallback("resolveByIata", error); unreadable = true; }
-    if (data) return { airport: rowToProfile(data), degraded: false, degradedReasons: [], fromStatic: false };
+    if (data) return readValue({ airport: rowToProfile(data), fromStatic: false });
   } catch (err) {
     // NOT dead code the way a supabase-js catch is: `.ilike` on a malformed
     // code and `rowToProfile` on a malformed row both throw synchronously.
@@ -225,19 +225,19 @@ export async function lookupByIata(
   }
   // Static fallback
   const s = resolveStaticByIata(iataCode);
-  return {
-    airport: s ? staticToProfile(s) : null,
-    degraded: unreadable,
-    degradedReasons: degradedReasonsFor(unreadable, "lookupByIata"),
-    fromStatic: true,
-  };
+  return staticAnswer(
+    { airport: s ? staticToProfile(s) : null, fromStatic: true },
+    unreadable,
+    "lookupByIata",
+  );
+  // ↑ DEGRADED (a fallback) only when the table could not be read; a clean miss is a READ static answer.
 }
 
 export async function resolveByIata(
   db: SupabaseClient,
   iataCode: string,
 ): Promise<AirportProfile | null> {
-  return (await lookupByIata(db, iataCode)).airport;
+  return matchRead(await lookupByIata(db, iataCode), { read: (a) => a.airport, degraded: (f) => f.airport }); // the legacy projection takes the fallback KNOWINGLY; airport.test.ts binds this signature
 }
 
 /** Resolve by nearest GPS coordinate within maxDistanceKm. */
@@ -274,7 +274,7 @@ export async function lookupByGps(
         }
       }
       if (closest) {
-        return { airport: rowToProfile(closest), degraded: false, degradedReasons: [], fromStatic: false };
+        return readValue({ airport: rowToProfile(closest), fromStatic: false });
       }
     }
   } catch (err) {
@@ -282,12 +282,12 @@ export async function lookupByGps(
     unreadable = true;
   }
   const s = resolveStaticByGps(lat, lng);
-  return {
-    airport: s ? staticToProfile(s) : null,
-    degraded: unreadable,
-    degradedReasons: degradedReasonsFor(unreadable, "lookupByGps"),
-    fromStatic: true,
-  };
+  return staticAnswer(
+    { airport: s ? staticToProfile(s) : null, fromStatic: true },
+    unreadable,
+    "lookupByGps",
+  );
+  // ↑ as lookupByIata.
 }
 
 export async function resolveByGps(
@@ -296,7 +296,7 @@ export async function resolveByGps(
   lng: number,
   maxDistanceKm = 50,
 ): Promise<AirportProfile | null> {
-  return (await lookupByGps(db, lat, lng, maxDistanceKm)).airport;
+  return matchRead(await lookupByGps(db, lat, lng, maxDistanceKm), { read: (a) => a.airport, degraded: (f) => f.airport }); // legacy projection, as resolveByIata
 }
 
 /** Resolve by city name search. Returns the first match. */
@@ -313,26 +313,26 @@ export async function lookupByCity(
       .limit(1)
       .maybeSingle();
     if (error) { noteFallback("resolveByCity", error); unreadable = true; }
-    if (data) return { airport: rowToProfile(data), degraded: false, degradedReasons: [], fromStatic: false };
+    if (data) return readValue({ airport: rowToProfile(data), fromStatic: false });
   } catch (err) {
     noteFallback("resolveByCity", err);
     unreadable = true;
   }
   // Static fallback
   const s = resolveStaticByCity(city);
-  return {
-    airport: s ? staticToProfile(s) : null,
-    degraded: unreadable,
-    degradedReasons: degradedReasonsFor(unreadable, "lookupByCity"),
-    fromStatic: true,
-  };
+  return staticAnswer(
+    { airport: s ? staticToProfile(s) : null, fromStatic: true },
+    unreadable,
+    "lookupByCity",
+  );
+  // ↑ as lookupByIata.
 }
 
 export async function resolveByCity(
   db: SupabaseClient,
   city: string,
 ): Promise<AirportProfile | null> {
-  return (await lookupByCity(db, city)).airport;
+  return matchRead(await lookupByCity(db, city), { read: (a) => a.airport, degraded: (f) => f.airport }); // legacy projection, as resolveByIata
 }
 
 /** Search airports by query (IATA, city, name). Returns up to 10 results. */
@@ -341,7 +341,7 @@ export async function lookupAirports(
   query: string,
 ): Promise<AirportLookupList> {
   const q = query.trim();
-  if (!q) return { airports: [], degraded: false, degradedReasons: [], fromStatic: false };
+  if (!q) return readValue({ airports: [], fromStatic: false });
   // The .or() argument is a filter EXPRESSION: an unescaped `,` in `q` ends the
   // current predicate and starts a caller-chosen one, and a bare `%` turns the
   // prefix search into a full scan. `q` arrives from a z.string().max(100) with
@@ -360,26 +360,26 @@ export async function lookupAirports(
     if (error) { noteFallback("searchAirports", error); unreadable = true; }
     // If DB has results, use them
     if (data && data.length > 0) {
-      return { airports: data.map(rowToProfile), degraded: false, degradedReasons: [], fromStatic: false };
+      return readValue({ airports: data.map(rowToProfile), fromStatic: false });
     }
   } catch (err) {
     noteFallback("searchAirports", err);
     unreadable = true;
   }
   // Static fallback — always available even with empty DB
-  return {
-    airports: searchStaticAirports(q, 10).map(staticToProfile),
-    degraded: unreadable,
-    degradedReasons: degradedReasonsFor(unreadable, "lookupAirports"),
-    fromStatic: true,
-  };
+  return staticAnswer(
+    { airports: searchStaticAirports(q, 10).map(staticToProfile), fromStatic: true },
+    unreadable,
+    "lookupAirports",
+  );
+  // ↑ as lookupByIata.
 }
 
 export async function searchAirports(
   db: SupabaseClient,
   query: string,
 ): Promise<AirportProfile[]> {
-  return (await lookupAirports(db, query)).airports;
+  return matchRead(await lookupAirports(db, query), { read: (a) => a.airports, degraded: (f) => f.airports }); // legacy projection, as resolveByIata
 }
 
 /** Build a minimal fallback profile when the airport is not in the DB. */

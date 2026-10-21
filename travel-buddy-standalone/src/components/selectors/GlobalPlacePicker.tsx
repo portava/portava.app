@@ -285,7 +285,7 @@ export function GlobalPlacePicker({
     for (const s of gatewaySuggestions) {
       const p = suggestionToPlace(s);
       if (!p) continue;
-      const key = foldForMatch(p.canonicalId ?? p.name);
+      const key = s.source === 'provider' ? `provider:${p.id}` : foldForMatch(p.canonicalId ?? p.name); // census G222: two provider venues may share a name — each record is its own choice
       if (!key || seen.has(key)) continue;
       seen.add(key);
       out.push(p);
@@ -491,7 +491,7 @@ export function GlobalPlacePicker({
     | { kind: 'place'; place: Place; icon: 'pin' | 'clock' | 'near' }
     | { kind: 'custom' } | { kind: 'zero-action'; id: string; label: string; subtitle: string | null; act: 'pin' | 'add' }
     | { kind: 'area'; id: string; area: ApproximateAreaPick; subtitle: string }
-    | { kind: 'google-attribution' }
+    | { kind: 'google-attribution' } | { kind: 'provider-attribution'; text: string }
     | { kind: 'error' };
 
   const items: ListItem[] = []; let zeroActionAt = -1; // G90: where the empty field's action rows go (after the gateway's own sections)
@@ -552,15 +552,15 @@ export function GlobalPlacePicker({
     // Additive canonical section (Phase 2): gateway matches render first, and
     // provider rows that duplicate them (by folded name) are dropped so a city
     // is not listed twice. Empty when the caller did not opt in.
-    const gatewayRows = assistContext ? gatewayPlaces : [];
-    const gatewayNames = new Set(gatewayRows.map((p) => foldForMatch(p.name)));
-    if (searchError && !searching && selection.rows.length === 0 && gatewayRows.length === 0) {
+    const gatewayAll = assistContext ? gatewayPlaces : []; const isProviderRow = (p: Place) => gatewayById.get(p.id)?.source === 'provider'; const gatewayRows = gatewayAll.filter((p) => !isProviderRow(p)); const providerRows = gatewayAll.filter(isProviderRow); // census G222: the server's federated provider rows get their own, attributed section
+    const gatewayNames = new Set(gatewayRows.map((p) => foldForMatch(p.name))); const gatewayProviderIds = new Set(providerRows.map((p) => p.id));
+    if (searchError && !searching && selection.rows.length === 0 && gatewayRows.length === 0 && providerRows.length === 0) {
       items.push({ kind: 'error' });
     }
     if (gatewayRows.length > 0) {
       items.push({ kind: 'section', label: 'Best matches' });
       gatewayRows.forEach((p) => items.push({ kind: 'place', place: p, icon: 'pin' }));
-    }
+    } items.push(...providerSectionItems(providerRows, gatewayById)); // census G222/G237: after the canonical matches, never mixed into them
     // G136 — "Use approximate area", only for a caller that consumes it.
     const areas = assistContext && onApproximateArea
       ? gatewaySuggestions.flatMap((sg) => {
@@ -574,7 +574,7 @@ export function GlobalPlacePicker({
     }
     if (selection.showGoogleAttribution) items.push({ kind: 'google-attribution' });
     selection.rows
-      .filter((p) => !gatewayNames.has(foldForMatch(p.name)))
+      .filter((p) => !gatewayNames.has(foldForMatch(p.name)) && !gatewayProviderIds.has(p.id)) // the same provider record (e.g. foursquare-<id>) is listed once
       .forEach((p) => items.push({ kind: 'place', place: p, icon: 'pin' }));
     if (showCustom) items.push({ kind: 'custom' });
   }
@@ -681,7 +681,7 @@ export function GlobalPlacePicker({
               if (item.kind === 'zero-action') return `zero-${item.id}`;
               if (item.kind === 'area') return `area-${item.id}`;
               if (item.kind === 'error') return 'error';
-              if (item.kind === 'google-attribution') return 'google-attribution';
+              if (item.kind === 'google-attribution') return 'google-attribution'; if (item.kind === 'provider-attribution') return `provider-attribution-${item.text}`;
               if (item.kind === 'section') return `section-${item.label}`;
               return `${item.icon}-${item.place.id}`;
             }}
@@ -697,7 +697,7 @@ export function GlobalPlacePicker({
                   </View>
                 );
               }
-              if (item.kind === 'google-attribution') {
+              if (item.kind === 'provider-attribution') return (<View style={s.googleAttrib} testID="place-provider-attribution"><Text style={s.googleAttribText}>{item.text}</Text></View>); if (item.kind === 'google-attribution') {
                 return (
                   <View style={s.googleAttrib}>
                     <Text style={s.googleAttribText}>Suggestions powered by Google</Text>
@@ -934,3 +934,22 @@ const s = StyleSheet.create({
   },
   retryText: { ...t.small, color: color.signalStrong, fontWeight: '700' },
 });
+
+/**
+ * census G222 / G237 (wave 4) — the provider rows the SERVER federated
+ * (lib/inputAssistance/providerFederation.ts): their own section after the
+ * canonical "Best matches", in the server's order (which never favours a source
+ * for being integrated first), then each source's required attribution, once.
+ */
+function providerSectionItems(
+  rows: readonly Place[],
+  byId: ReadonlyMap<string, InputSuggestion>,
+): Array<{ kind: 'section'; label: string } | { kind: 'place'; place: Place; icon: 'pin' } | { kind: 'provider-attribution'; text: string }> {
+  if (rows.length === 0) return [];
+  const attributions = [...new Set(rows.map((p) => byId.get(p.id)?.attribution).filter((a): a is string => typeof a === 'string' && a.trim().length > 0))];
+  return [
+    { kind: 'section', label: 'More places' },
+    ...rows.map((place) => ({ kind: 'place' as const, place, icon: 'pin' as const })),
+    ...attributions.map((text) => ({ kind: 'provider-attribution' as const, text })),
+  ];
+}

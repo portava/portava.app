@@ -122,7 +122,7 @@ export const LOCATION_PURPOSES: readonly LocationPurpose[] = [
     retentionNote: "Bounded by the SESSION, not a clock: rows end when the session ends (ended_at/expires_at). A session that never ends is a defect, not a retention policy.",
     visibility: "Only the crew/circle the traveler shared with, at the precision they chose (circle_visibility_settings.visibility_mode: status_only | approximate_area | venue_checkin | precise_live).",
     deletionBehavior: "Deleted with the account.",
-    tables: ["location_sessions", "user_locations", "trip_crew_location_sessions", "trip_crew_location_events"],
+    tables: ["location_sessions", "user_locations", "trip_crew_location_sessions", "trip_crew_location_events", "layover_crew_location_grants"],
     requiresSeparateControl: true,
     jurisdictionNote: "Sharing precise location with other people is the highest-sensitivity capability here; consent is versioned (circle_visibility_settings.consent_version) and default-off.",
   },

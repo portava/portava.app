@@ -122,7 +122,7 @@ describe('useGroupChat — catch-up on reconnect (TEL-F10)', () => {
 
     await waitFor(() => expect(result.current.messages.map((m) => m.id)).toEqual(['m-1', 'm-2']));
     expect(mockGetThreadMessages).toHaveBeenCalledTimes(2);
-    expect(mockGetThreadMessages).toHaveBeenLastCalledWith('t-1');
+    expect(mockGetThreadMessages).toHaveBeenLastCalledWith('t-1', undefined, 'group_chat'); // T431: the group chat's capability claim
   });
 
   it('re-reads the thread when the app returns to the foreground', async () => {

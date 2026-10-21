@@ -47,7 +47,7 @@
  */
 
 /** Tables AccountDeletionService clears today. */
-export const ERASED_BY_CASCADE: readonly string[] = [ "memory_snapshots", "memory_video_segments", "memory_video_segment_operations", "memory_import_batches", "memory_import_batch_items", "memory_resurfacing_policy_heads",
+export const ERASED_BY_CASCADE: readonly string[] = [ "layover_crew_location_grants", "layover_crew_location_controls", "memory_visibility_policies", "memory_shared_experiences", "memory_shared_experience_invitations", "conversation_snapshots", "memory_snapshots", "memory_video_segments", "memory_video_segment_operations", "memory_import_batches", "memory_import_batch_items", "memory_resurfacing_policy_heads", // wave 4 2026-10-17: 3996 (crew location: FKs to layover_crew_members/layover_sessions ON DELETE CASCADE), 3997 (memory visibility policies + shared experiences: auth.users/memories ON DELETE CASCADE), 3998 (conversation_snapshots: message_threads ON DELETE CASCADE, and its message triggers invalidate a snapshot when a message is changed or erased)
   // PENDING BASELINE RECAPTURE — do not add the string yet.
   //   "phone_verification_challenges" (migration 2142) holds a phone number and
   //   a hashed live credential, and IS already deleted explicitly by
@@ -911,7 +911,7 @@ export const DENOMINATOR_CORRECTION_BACKLOG: readonly string[] = [
  *     is DERIVED_USER_LINKED by hand registration — in scope, with no schema
  *     evidence either way, which is what these five now are.
  */
-export const POST_BASELINE_TABLES: readonly string[] = [ "memory_snapshots", "memory_video_segments", "memory_video_segment_operations", "memory_import_batches", "memory_import_batch_items", "memory_resurfacing_policy_heads",
+export const POST_BASELINE_TABLES: readonly string[] = [ "layover_crew_location_grants", "layover_crew_location_controls", "memory_visibility_policies", "memory_shared_experiences", "memory_shared_experience_invitations", "conversation_snapshots", "memory_snapshots", "memory_video_segments", "memory_video_segment_operations", "memory_import_batches", "memory_import_batch_items", "memory_resurfacing_policy_heads",
   // Derived memory, added by migrations 2183-2191 (post-baseline).
   "memory_projections",
   "memory_events",

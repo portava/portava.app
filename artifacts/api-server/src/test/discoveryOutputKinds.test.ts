@@ -100,7 +100,7 @@ describe("DC-01 — Trails, Shared Moments and emerging discoveries, ranked by P
 
   it("K4. emerging discoveries: the latest run's claims, under the route's eligibility, with their trend state", async () => {
     const w = world(); w["feature_flags"] = [flagRow("discovery_output_kinds_enabled", true)];
-    w["place_momentum"]!.push({ place_id: `db/${P.BLOCKED}`, trend_state: "rediscovered", recent_rate: 99, computed_at: w["place_momentum"]![0]!["computed_at"], recent_unique_travelers: 20, window_unique_travelers: 20 });  // ≥ k: refused by ELIGIBILITY, not by the disclosure floor
+    w["place_momentum"]!.push({ place_id: `db/${P.BLOCKED}`, trend_state: "rediscovered", recent_rate: 99, computed_at: w["place_momentum"]![0]!["computed_at"], recent_unique_travelers: 20, window_unique_travelers: 20, source_surface: "discovery" });  // ≥ k: refused by ELIGIBILITY, not by the disclosure floor
     const r = await rankEmergingForViewer(makeFakeCandidateDb(w), viewer(), { nowMs: NOW });
     assert.equal(r.status, "ranked");
     assert.deepEqual(r.items.map((x) => [x.place.id, x.trendState]), [[`db/${P.EMERGING}`, "emerging"]], "the blocked author's rediscovered place is refused");

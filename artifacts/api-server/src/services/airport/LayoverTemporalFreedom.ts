@@ -5,10 +5,10 @@
  * ── WHY THIS FILE IS AN ADAPTER AND NOT AN ENGINE ───────────────────────────
  * census-layover L56/L57/L178 all read "Absent" / "no generic engine", and that
  * was measured against `services/airport/`. It is false about the repository:
- * `domain/trips/invariants/TripFreedomEngine.ts` IS the generalised engine the
+ * `domain/temporal/TemporalFreedomEngine.ts` IS the generalised engine the
  * layover spec §7 describes — the same `FreedomWindow`, the same commitment
  * ordering, the same "a window is a LOWER BOUND on free time" rule — built for
- * the Trips spec's own §7.3 and imported here without one line of it changing.
+ * the Trips spec's own §7.3, now a package of its own that Trips adapts too.
  *
  * The layover spec says what to do about that in its own words:
  *
@@ -82,9 +82,9 @@ import {
   type FreedomWindow,
   type HopTravel,
   type TemporalConflict,
-} from "../../domain/trips/invariants/TripFreedomEngine.js";
+} from "../../domain/temporal/TemporalFreedomEngine.js";
 import type { TravelConfidence } from "../../lib/travelEstimate.js";
-import type { GeoPoint } from "../../domain/trips/contracts/TravelTimeProvider.js";
+import type { TemporalPoint as GeoPoint } from "../../domain/temporal/TemporalFreedomEngine.js";
 
 const MS_PER_MIN = 60_000;
 
@@ -139,7 +139,7 @@ export interface LayoverFreedomResult {
   /** The single between-commitments window, or `null` when it does not exist. */
   window: FreedomWindow | null;
   /** §7.2 — why there is no window. `null` when there is one. */
-  conflict: TemporalConflict | null;
+  conflict: LayoverWireConflict | null;
   /** The two commitments, exactly as the generalised engine read them. */
   commitments: EngineCommitment[];
 }
@@ -221,13 +221,13 @@ export function buildFreedomWindow(ctx: LayoverFreedomContext): LayoverFreedomRe
     hops: [samePlaceHop("HIGH")],
     participants: [],
     // No window before the inbound flight and none after the outbound: a
-    // layover is the gap BETWEEN them and nothing else. Passing trip bounds
+    // layover is the gap BETWEEN them and nothing else. Passing horizon bounds
     // would invent two windows this surface has no answer for.
-    tripStart: null,
-    tripEnd: null,
+    horizonStart: null,
+    horizonEnd: null,
   });
   const between = result.windows.find((w) => w.position === "between") ?? null;
-  const conflict = result.conflicts[0] ?? null;
+  const conflict = result.conflicts[0] ? layoverWireConflict(result.conflicts[0]) : null;
   return { window: between, conflict, commitments };
 }
 
@@ -324,3 +324,26 @@ const OUTBOUND_DOES_NOT_WAIT: CommitmentHardConstraint = {
   kind: "NO_LATE_ARRIVAL",
   detail: "an aircraft does not wait: boarding closes at the cutoff",
 };
+
+/**
+ * census-layover L59 — the layover's conflict, as the layover envelope has
+ * always published it.
+ *
+ * The engine's conflict is context-free (`TEMPORAL_CONFLICT`). The layover
+ * envelope has carried `temporalConflict.reason: "TRIP_TEMPORAL_CONFLICT"` on
+ * its wire since this adapter was built (`serializeEnvelope` in
+ * `routes/airport.ts` spreads the envelope), because the engine it adapted then
+ * lived in Trips' package and emitted Trips' reason; `LayoverSafetyEngine`
+ * typed the field with the Trips adapter's `TemporalConflict`. The move
+ * of the engine into its own package changed no byte on any wire; the label
+ * was then renamed to the engine's own reason (wave 5, layover lane 4, P1),
+ * so a layover traveller is no longer handed a trip-shaped conflict
+ * (census-layover L59). No client reads the field. It stays a named constant
+ * so the wire label is stated in the layover's own adapter, beside the
+ * type-only import in `LayoverSafetyEngine.ts` and the pinned tests.
+ */
+export const LAYOVER_WIRE_CONFLICT_REASON = "TEMPORAL_CONFLICT" as const;
+export type LayoverWireConflict = Omit<TemporalConflict, "reason"> & { reason: typeof LAYOVER_WIRE_CONFLICT_REASON };
+function layoverWireConflict(c: TemporalConflict): LayoverWireConflict {
+  return { ...c, reason: LAYOVER_WIRE_CONFLICT_REASON };
+}

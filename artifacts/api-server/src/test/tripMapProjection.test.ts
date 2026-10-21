@@ -625,3 +625,93 @@ describe("§14.1 safety / logistics points — Safe Return at the plan it guards
     assert.match(r.body.safetyLogisticsReading, /not assembled/);
   });
 });
+
+// ── census-trips wave-5 follow-up: a CITY-anchored stage reaches the map at its city's centre, marked coarse ──
+//
+// TripStructureComposer anchors every stage it issues by canonical CITY
+// (`city_id`), and this layer read only `place_id`: such a stage was on the
+// spine card and silently absent here. It is now drawn at its
+// `canonical_locations` centre with `meta.precision: "city_centre"`, and a stage
+// with no position is listed in `stagesNotDrawn` — never fabricated, never silent.
+describe("§14.1 stage — city-anchored stages (census-trips wave-5 follow-up)", () => {
+  const CITY_LISBON = "cccccccc-cccc-4ccc-8ccc-ccccccccccc1";
+  const CITY_NOWHERE = "cccccccc-cccc-4ccc-8ccc-ccccccccccc2";
+  const COUNTRY_PT = "cccccccc-cccc-4ccc-8ccc-ccccccccccc3";
+  const stage = (o: Row) => ({ trip_id: TRIP_ID, stage_type: "city", state: "planned", place_id: null, city_id: null, ...o });
+  const canon = [
+    { id: CITY_LISBON, kind: "city", lat: 38.7223, lng: -9.1393 },
+    { id: CITY_NOWHERE, kind: "city", lat: null, lng: null },
+    { id: COUNTRY_PT, kind: "country", lat: 39.4, lng: -8.2 },
+  ];
+
+  it("a city-anchored stage is drawn at its canonical city's centre, and says it is coarse", async () => {
+    install({ trip_stages: [stage({ id: "s1", sequence: 1, city_id: CITY_LISBON })], canonical_locations: canon });
+    const r = await get();
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.stage.status, "ok");
+    assert.deepEqual(r.body.stage.items, [{
+      id: "s1", kind: "stage", lat: 38.7223, lng: -9.1393, label: "city",
+      meta: { state: "planned", sequence: 1, anchor: "city", precision: "city_centre" },
+    }]);
+    assert.deepEqual(r.body.stagesNotDrawn, []);
+    assert.match(r.body.stageReading, /1 stage\(s\) on the map; 1 of them at their city's centre, not an exact spot/);
+  });
+
+  it("never fabricates a position: a city with no centre, a city with no row, a country and an anchorless stage are LISTED, not drawn", async () => {
+    install({
+      trip_stages: [
+        stage({ id: "s1", sequence: 1, city_id: CITY_NOWHERE }),
+        stage({ id: "s2", sequence: 2, city_id: "cccccccc-cccc-4ccc-8ccc-cccccccccc99" }),
+        stage({ id: "s3", sequence: 3, city_id: COUNTRY_PT }),
+        stage({ id: "s4", sequence: 4 }),
+        stage({ id: "s5", sequence: 5, place_id: PLACE_A }),
+      ],
+      canonical_locations: canon,
+      places: [{ id: PLACE_A, latitude: null, longitude: null }],
+    });
+    const r = await get();
+    assert.equal(r.body.stage.status, "ok", "an anchor with no position is not a read failure");
+    assert.deepEqual(r.body.stage.items, []);
+    assert.deepEqual(r.body.stagesNotDrawn.map((s: { id: string; reason: string }) => [s.id, s.reason]), [
+      ["s1", "city_has_no_position"], ["s2", "city_has_no_position"], ["s3", "anchor_is_not_a_city"],
+      ["s4", "no_anchor"], ["s5", "place_has_no_position"],
+    ]);
+    assert.equal(r.body.stagesNotDrawn[0].sequence, 1);
+    assert.match(r.body.stageReading, /0 stage\(s\) on the map; 5 not drawn/);
+  });
+
+  it("place- and city-anchored stages share the layer; a place stage is unchanged", async () => {
+    install({
+      trip_stages: [stage({ id: "s1", sequence: 1, place_id: PLACE_A }), stage({ id: "s2", sequence: 2, city_id: CITY_LISBON })],
+      canonical_locations: canon,
+      places: [{ id: PLACE_A, latitude: 38.71, longitude: -9.13 }],
+    });
+    const r = await get();
+    const byId = Object.fromEntries(r.body.stage.items.map((p: { id: string }) => [p.id, p]));
+    assert.deepEqual(byId.s1.meta, { state: "planned", sequence: 1 });
+    assert.equal(byId.s1.lat, 38.71);
+    assert.equal(byId.s2.meta.precision, "city_centre");
+  });
+
+  it("an unreadable canonical_locations is an UNREAD layer, never a set of unplaced stages", async () => {
+    install({ trip_stages: [stage({ id: "s1", sequence: 1, city_id: CITY_LISBON })], canonical_locations: canon }, ["canonical_locations"]);
+    const r = await get();
+    assert.equal(r.body.stage.status, "unread");
+    assert.match(r.body.stage.reason, /cities these stages are anchored to/);
+    assert.deepEqual(r.body.stagesNotDrawn, []);
+    assert.match(r.body.stageReading, /not assembled/);
+  });
+
+  it("no city ids, no canonical read", async () => {
+    install({ trip_stages: [stage({ id: "s1", sequence: 1, place_id: PLACE_A })], places: [{ id: PLACE_A, latitude: 1, longitude: 2 }] }, ["canonical_locations"]);
+    const r = await get();
+    assert.equal(r.body.stage.status, "ok", "a place-only trip never touches canonical_locations, so its failure cannot hide the layer");
+  });
+});
+
+describe("§14.1 stage — the route selects the city anchor (this file's fake returns whole rows, so a column dropped from the select would pass every case above)", () => {
+  it("trip_stages is read WITH city_id", () => {
+    const route = readFileSync(new URL("../server/trips/readRoutes/tripMapProjection.ts", import.meta.url), "utf8");
+    assert.match(route, /from\("trip_stages"\)\s*\.select\("[^"]*\bcity_id\b[^"]*"\)/);
+  });
+});

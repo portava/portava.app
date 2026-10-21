@@ -23,7 +23,7 @@ import { requireUser, isAcceptedTripMember, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js"; import { refuseRetainedTripWrite, retainedAccessOf } from "../lib/tripRetainedRecordGuard.js"; import { refuseTripActionIfRestricted } from "../lib/tripTrustGate.js";
 import { isKillSwitchEngaged, killSwitchStateUnknown, KILL_SWITCH_UNKNOWN_MESSAGE } from '../lib/featureFlags.js';
 import { enrichSpans } from "../lib/enrichSpans.js";
-import { sendPushWithRetry } from "../lib/pushWithRetry.js";
+import { notifyPlanTimeConfirmed } from "../services/notifications/planNotifications.js"; // census-telegraph T397: the confirm-time notification goes through the ledger (it was a sendPushWithRetry outside it)
 import {
   getAgeEligibilityReason,
   formatAgeLimitLabel,
@@ -973,14 +973,14 @@ router.post("/meetups/:meetupId/confirm-time", async (req, res) => {
     (meetup as any).location_name as string | null,
   ).catch(() => {});
 
-  // Push-notify all Going/Maybe RSVPs (excluding the confirmer). Best-effort:
-  // a push failure must never fail the confirm-time response.
-  pushMeetupTimeConfirmed(
+  // Notify all Going/Maybe RSVPs (excluding the confirmer). Best-effort:
+  // a notification failure must never fail the confirm-time response.
+  notifyMeetupTimeConfirmed(
     meetupId,
     (meetup as any).title as string,
     user.id,
-    startsAt,
-  ).catch((err) => req.log.warn({ err }, "confirm-time push dispatch"));
+    startsAt, (updated as any)?.starts_at, // T397: the STORED start is the causal id's version
+  ).catch((err) => req.log.warn({ err }, "confirm-time notification dispatch"));
 
   res.json({ startsAt, status: "confirmed", meetupId, meetup: toCamelMeetup(updated) });
 });
@@ -1017,14 +1017,14 @@ function toCamelMeetup(m: any) {
   };
 }
 
-// Push-notify every Going/Maybe RSVP (excluding the confirmer) that the meetup
-// time was locked in. Best-effort: never throws — all errors are logged by the
-// caller. Users without an expo_push_token are silently skipped by sendPushNotification.
-async function pushMeetupTimeConfirmed(
+// Notify every Going/Maybe RSVP (excluding the confirmer) that the meetup
+// time was locked in. Best-effort: errors are logged by the caller; the push is
+// NotificationRouter's (planNotifications.ts), which reads the tokens itself.
+async function notifyMeetupTimeConfirmed(
   meetupId: string,
   meetupTitle: string,
   confirmerId: string,
-  startsAt: string,
+  startsAt: string, storedStartsAt: unknown,
 ): Promise<void> {
   const sc = getServiceClient();
   if (!sc) return;
@@ -1045,8 +1045,8 @@ async function pushMeetupTimeConfirmed(
   );
   if (recipientIds.length === 0) return;
 
-  const [{ data: tokenRows }, { data: confirmerProfile }] = await Promise.all([
-    sc.from("profiles").select("id, expo_push_token").in("id", recipientIds),
+  const [{ data: confirmerProfile }] = await Promise.all([
+    // (no token read here: the router reads each recipient's devices — T397)
     sc.from("profiles").select("name, handle").eq("id", confirmerId).maybeSingle(),
   ]);
 
@@ -1061,16 +1061,16 @@ async function pushMeetupTimeConfirmed(
 
   const when = formatMeetupWhen(startsAt);
 
-  const recipients = (tokenRows ?? []).map((r: any) => ({
-    userId: r.id as string,
-    tokens: [r.expo_push_token as string | null],
-  }));
-
-  await sendPushWithRetry(sc, recipients, {
-    title: `${confirmerName} confirmed a meetup time`,
-    body: `${meetupTitle} — ${when}`,
-    data: { screen: "meetup", meetupId },
+  // census-telegraph T397 — through the notification ledger, carrying the
+  // change's causal id (PLAN:<id>@confirmed:<start>), so Compass Sense's report
+  // of this same confirmation ("Your meetup is confirmed") is refused as a
+  // duplicate. The push is the router's now: tokens, the RSVP's preferences and
+  // quiet hours, the delivery log, the tap target /meetup/:id. Same words.
+  await notifyPlanTimeConfirmed(sc, {
+    meetupId, actorId: confirmerId, actorLabel: confirmerName, recipientIds,
+    meetupTitle, when, storedStartsAt,
   });
+  // (was: sendPushWithRetry to the RSVPs holding a token — no row, no dedupe)
 }
 
 // Format a meetup starts_at (local naive ISO like "2026-06-25T18:00:00") into a

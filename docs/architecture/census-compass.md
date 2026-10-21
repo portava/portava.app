@@ -3193,7 +3193,7 @@ from prose. `artifacts/api-server/src/test/intentModes.test.ts` 10 cases; the mo
 
 ### 26.6 CT-03 — Sense consumes the Temporal Freedom gap
 
-`artifacts/api-server/src/domain/trips/invariants/TripFreedomEngine.ts:380#export function freeGapFromPlan` is the engine's answer and
+`artifacts/api-server/src/domain/temporal/TemporalFreedomEngine.ts:452#export function freeGapFromPlan` is the engine's answer and
 `artifacts/api-server/src/compass/CompassSenseEngine.ts:483#const gap = freeGapFromPlan(` consumes it; the independent derivation is gone.
 `artifacts/api-server/src/test/tripFreedomGap.test.ts` 5 cases; M1 (items already started counted) and M2 (Sense deriving the gap
 itself again) both red. **Moves W → C.**
@@ -6006,3 +6006,134 @@ Every consumer passes each projection through the §19.1 consumer rule before it
 127 + 11 + 1 + 2 = 141.
 
 - NOT-GRADED: artifacts/api-server/src/migrations/20260728_compass_autopilot.sql — the wave-3 limits cite it only to name where the exempt Autopilot store comes from; CT-01 grades that store's write path, and no row here rests on the migration.
+
+### Correction (2026-10-17, wave 5) — admin Compass dashboard: compass_abuse_flags.created_at does not exist in production
+
+*Measured on branch `claude/wave4-build-20261017` against the working tree. `head_commit` is not re-declared. The fix
+is uncommitted and not deployed, so production keeps the defect below until it ships. **NO ROW MOVES.***
+
+**What was broken, in production.** `GET /api/admin/compass/dashboard` read `compass_abuse_flags` with
+`.gte("created_at", thirtyDaysAgo)`. That table has no `created_at`: its time column is `detected_at` (the 2026-08-19
+production baseline, the 2026-09-22 production capture, and no migration adds one). PostgREST failed the read with
+42703 on every call, the dashboard read the resolved `{ data: null, error }` as "no rows", and its `abuse` block was
+`{ total: 0, bySeverity: {}, byStatus: {} }` whatever `CompassAbuseDefenseEngine` had recorded. An operator looking at
+the dashboard saw no abuse. No row grades the dashboard's abuse block (the surface table above counts
+`adminCompass.ts` as a route file and grades none of its figures), so none moves. The list route
+`GET /api/admin/compass/abuse-flags` always read `detected_at` and was not affected.
+
+**What changed, with no migration.** The dashboard filters on `detected_at`
+(`artifacts/api-server/src/routes/adminCompass.ts:138#.gte("detected_at", thirtyDaysAgo),`).
+
+**How it was found.** `artifacts/api-server/src/test/schemaColumnProductionScan.test.ts` grades every column, filter
+column, write key, table and `.rpc()` name under `src/` against the production capture; this was class A (declared by
+no SQL in the repository). The admin dashboard's existing drift guard checks only its `posts` and `events` reads.
+
+**Tests.** `artifacts/api-server/src/test/adminCompassAbuseFlagsWindow.test.ts:98#it("counts the three flags inside the window, by severity and by status"`
+(3 cases on schemaStrictSupabase, which answers 42703 for a column the live schema lacks). Red first: with
+`created_at` restored, 2 of 3 are red; with the window filter dropped, 2 of 3 are red. Both mutants were restored
+byte-identically (`cmp`).
+
+- NOT-GRADED: artifacts/api-server/src/test/adminCompassAbuseFlagsWindow.test.ts — this correction's own test; no Compass row rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/schemaColumnProductionScan.test.ts — the repository-wide scan that found the defect; no Compass row rests on it.
+
+### Correction (2026-10-18, Layover 165 program) — CL-05 was C on code #656 removed; the twelve tools are rebuilt behind a FALSE flag
+
+*Measured on branch `claude/wave4-build-20261017`; uncommitted at this writing, committed with this section.
+`head_commit` is not re-declared.*
+
+**A false green.** §24.3 graded CL-05 ("§12 Twelve layover tools") C because the twelve tools were offered, chosen and
+run. #656 (lead ruling L-CL02d, certified-only by construction) then removed them from the layover door, and no later
+section regraded the row: at this branch's last commit no source file under `artifacts/api-server/src` declares
+`getLayoverContext`. CL-05 has been C on code that no longer existed.
+
+**What changed.** The owner's directive of 2026-10-18 puts the AI layover assistant in scope with the model and approved
+tool execution, and supersedes L-CL02a/c/d on the layover door. The twelve tools are rebuilt in
+`artifacts/api-server/src/services/airport/LayoverCompassAssistant.ts:1306#export async function answerLayoverQuestionWithAssistant(`
+and run on POST /airport/sessions/:id/compass, behind `layover_compass_assistant_enabled`, seeded FALSE by
+`artifacts/api-server/src/migrations/3846_layover_compass_assistant_flag.sql` and applied nowhere. Under the flag rule
+(a row whose only production path is behind a FALSE flag or an unapplied migration is not C) CL-05 is W until that press.
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| CL-05 | C | **W** | the twelve tools exist again and are offered, chosen and run (`artifacts/api-server/src/services/airport/__tests__/layoverCompassToolLoop.test.ts:354#it("the twelve §12 declarations travel on the request`), but only behind `layover_compass_assistant_enabled` (FALSE, 3846 unapplied). C on the press: 3846 applied and the flag ON. |
+
+**CL-02 stays C, with new evidence for the layover door.** Flag OFF, absent or unreadable (the seed): the door is the
+certified-only door, unchanged. Flag ON, four layers each fail closed: the certified text always leads
+(`artifacts/api-server/src/services/airport/LayoverCompassAssistant.ts:1429#const parts = [base.answer];`); one hit of the
+hardened envelope detector, which catches all eight §54.2 widenings, withdraws ALL model prose
+(`artifacts/api-server/src/services/airport/LayoverCompassAssistant.ts:1388#if (!detected.ok) {`, over
+`artifacts/api-server/src/services/airport/LayoverCompassAssistant.ts:952#export function enforceCompassEnvelope(`); a
+closed-vocabulary gate admits a model sentence only if every word is on a reviewed list
+(`artifacts/api-server/src/services/airport/LayoverCompassAssistant.ts:1132#export function admitModelSentence(`); and the
+response carries none of the withheld words
+(`artifacts/api-server/src/services/airport/LayoverCompassAssistant.ts:1453#export function withheld(`). Tests: 31
+adversarial texts, §54.2's eight across six certified states
+(`artifacts/api-server/src/services/airport/__tests__/layoverCompassAssistant.test.ts:527#describe("CL-02 through the assisted answer`),
+and two route cases
+(`artifacts/api-server/src/services/airport/__tests__/layoverCompassToolLoop.test.ts:407#it("CL-02: on a not-yes layover`,
+`artifacts/api-server/src/services/airport/__tests__/layoverCompassToolLoop.test.ts:420#it("CL-02: on the explicit yes`).
+Residuals, stated: the detector is lexical (it decides only whether ALL prose is dropped; the allowlist gate is what
+admits, and an unknown word is withheld); /compass/ask, the general chat, is unchanged and stays certified-only on a live
+layover.
+
+### Headline
+
+| figure | after wave 3 | after 2026-10-18 |
+|---|---:|---:|
+| Denominator | 141 | **141** |
+| BUILT-AND-CORRECT | 127 | **126** |
+| BUILT-BUT-WRONG | 11 | **12** |
+| NOT-BUILT | 1 | **1** |
+| CANNOT-VERIFY | 2 | **2** |
+
+126 + 12 + 1 + 2 = 141.
+
+### Correction (2026-10-18, independent verification of the Layover 165 assistant) — CL-04 C → W; two overstatements withdrawn
+
+*Measured at `f87a92e3f` by an independent verifier (Fable), with adversarial inputs of its own; recorded on branch
+`claude/wave4-build-20261017`. `head_commit` is not re-declared.*
+
+**CL-04 was C on a clause no live layover reaches.** §27.3 graded CL-04 ("§25 Compass row: tool access to certified
+context, proactive OpportunityEvents, explanation/clarification") C with all four clauses passing. Its "tool access to
+certified context" clause rested on the GENERAL chat's `get_layover_snapshot` tool. On any live layover the general chat
+answers certified-only and uses no tool (L-CL02a/c,
+`artifacts/api-server/src/routes/compass.ts:1540#if (liveLayover !== null) {`), and the layover door's tools exist only
+behind `layover_compass_assistant_enabled` (FALSE, 3846 unapplied). Census-layover grades the same §25 obligation, L268, W
+for exactly this reason. One obligation cannot be C here and W there.
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| CL-04 | C | **W** | tool access to certified context is unreachable on any live layover: the general chat answers certified-only there, and the layover door's tools are behind a FALSE flag (3846 unapplied). C on the same press as L268: 3846 applied and the flag ON. |
+
+**Withdrawn: "unchanged" for the flag-OFF door.** The correction above says that with the flag OFF, absent or unreadable
+the door is "the certified-only door, unchanged". Measured against the commit before it, the certified TEXT is identical
+and no model is called, but each question now makes one more `feature_flags` read (6 → 7), the response body carries two
+more fields (`planComparison`, `assistant`), and the question's event row carries three more keys. Nothing a traveller is
+told changes.
+
+**CL-02 stays C, because production runs the certified-only door, but the flag-ON evidence has holes.** The verifier ran
+29 adversarial model outputs of its own; 22 were blocked (times written as words or in other formats, fullwidth digits,
+look-alike letters, negation, a coordinate echoed from a tool, a smuggled comparison). Seven were not:
+- on a layover whose corridor is refused, a landside card whose title is made only of allowed words was named and endorsed
+  by the model ("… is the best pick for you."), and a comparison note published it beside the refusal;
+- a control character from the model counted as a masked certified name and reached the traveller;
+- reassurance built only from allowed words passed ("You have much more than you think, so enjoy the food.").
+Four of the verifier's own mutants of the admission rules and of the opportunities read's owner scope survived the
+suites. **The flag must not be turned ON until these are fixed and tested**; the fix is scheduled in the Layover 165
+program (docs/ops/layover-165-remediation-progress.md).
+
+Annotation notes, no grade moves: CL-06's citation of `nextClarifyingQuestion` is marked "removed by #656" but the
+function still exists; CL-07's cited `enforceCompassEnvelope` line is now an airport fixture, and the new contract tests
+are not yet cited for it.
+
+### Headline
+
+| figure | after 2026-10-18 | after the independent verification |
+|---|---:|---:|
+| Denominator | 141 | **141** |
+| BUILT-AND-CORRECT | 126 | **125** |
+| BUILT-BUT-WRONG | 12 | **13** |
+| NOT-BUILT | 1 | **1** |
+| CANNOT-VERIFY | 2 | **2** |
+
+125 + 13 + 1 + 2 = 141.

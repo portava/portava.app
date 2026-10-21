@@ -40,7 +40,7 @@ export function TripRescueEntry({ tripId, attentionMode, request = requestRescue
       <View style={s.row}>
         <LifeBuoy size={16} color={color.signal} />
         <View style={{ flex: 1 }}>
-          <Text style={[s.title, { color: color.signal }]}>Need help right now?</Text>
+          <Text style={[s.title, { color: color.signalStrong }]}>Need help right now?</Text>
           <Text style={s.detail}>Name the problem and get a plan: who does what, and where to escalate.</Text>
         </View>
       </View>
@@ -92,5 +92,5 @@ const s = StyleSheet.create({
   plan: { paddingHorizontal: space.lg, paddingBottom: space.md, gap: space.xs },
   planTitle: { ...t.small, fontWeight: '600', color: color.ink },
   step: { ...t.small, color: color.ink },
-  who: { ...t.stamp, color: color.faint },
+  who: { ...t.stamp, color: color.mute },
 });

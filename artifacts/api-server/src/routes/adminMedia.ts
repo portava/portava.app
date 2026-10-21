@@ -18,7 +18,7 @@
  *
  * Schema notes (live DB):
  *   reports: target_type, target_id, reason_code, reason_detail, moderation_notes,
- *            reviewed_by, reviewed_at — status: open|reviewed|resolved|dismissed
+ *            reviewed_by, reviewed_at — status: open|in_review|resolved|dismissed (lib/moderationCounts.ts)
  *   hidden_gems: status enum = pending|active|hidden|merged
  *                (no reviewed_by/reviewed_at/review_notes columns)
  *   posts: post_status column (not moderation_status); pending_safety_review for flagging
@@ -32,7 +32,7 @@ import { sendError } from "../lib/http.js";
 import { requireAdmin } from "../lib/requireAdmin.js";
 import { resolveStoragePath } from "../lib/storagePath.js";
 import { resolveContentOwnerDetailed, type ContentOwnerOutcome } from "../lib/contentOwner.js";
-import { logModerationAction, auditReportAction, checkContentReportLink, reportLinkColumnId } from "../lib/moderationAudit.js";
+import { logModerationAction, checkContentReportLink, reportLinkColumnId } from "../lib/moderationAudit.js"; import { UNRESOLVED_REPORT_STATUSES, exactListCount, listTotalRefusal, parseLegacyReportStatusFilter, parseListPage } from "../lib/moderationCounts.js"; import { moveLegacyReport, LEGACY_REPORT_CLOSE_READ } from "../lib/legacyReportClose.js";
 import { affectedRows } from "../lib/affectedRows.js"; import { applyCanonicalModerationDecision, type CanonicalModerationOutcome } from "../services/media/MediaModerationService.js";
 
 const router = Router();
@@ -169,9 +169,9 @@ async function fetchBounded(url: string, maxBytes: number): Promise<Buffer> {
 // ── Pagination helper ─────────────────────────────────────────────────────────
 
 function parsePagination(query: any): { page: number; limit: number; offset: number } {
-  const page  = Math.max(1, Number(query.page  ?? 1));
-  const limit = Math.min(100, Math.max(1, Number(query.limit ?? 20)));
-  return { page, limit, offset: (page - 1) * limit };
+  // wave 5: `Number("abc")` is NaN and NaN survived Math.max, so ?page=abc served `.range(NaN, NaN)` — an empty page reading as "nothing here", page: null.
+  // A page or limit that is not a positive whole number is the default (the house rule, lib/moderationCounts.ts parseListPage); `pagination` names what was served.
+  return parseListPage(query, 20, 100);
 }
 
 // ── GET /admin/media/processing-failures ─────────────────────────────────────
@@ -201,28 +201,28 @@ router.get("/admin/media/processing-failures", asyncHandler(async (req, res) => 
     .order("created_at", { ascending: false })
     .range(offset, offset + limit - 1);
 
-  if (error) { sendError(res, "db_error", error.message); return; }
-
-  const rows: any[] = data ?? [];
+  if (error) { sendError(res, "db_error", error.message); return; } const total = exactListCount(count, data, offset); // never `count ?? 0`: the tab pages on it (wave 5)
+  if (total === null) { sendError(res, "db_error", listTotalRefusal("processing-failures"), { exposeDetail: true }); return; }
+  const rows: any[] = data as any[];
   const postIds = [...new Set(rows.map((r) => r.post_id).filter(Boolean))];
 
   let postMap: Record<string, { author_id: string; has_video: boolean; visibility: string }> = {};
   if (postIds.length > 0) {
-    const { data: posts } = await sc
+    const { data: posts, error: postsErr } = await sc
       .from("posts")
       .select("id, author_id, has_video, visibility")
       .in("id", postIds);
-    for (const p of posts ?? []) postMap[p.id] = p;
+    if (postsErr || !Array.isArray(posts)) { sendError(res, "db_error", `The items' posts could not be read (post): ${postsErr?.message ?? "no rows answered"}. A null post would read as "no post". Retry.`, { exposeDetail: true }); return; } for (const p of posts) postMap[p.id] = p;
   }
 
   res.json({
     items: rows.map((r) => ({ ...r, post: postMap[r.post_id] ?? null })),
-    pagination: { page, limit, total: count ?? 0, hasMore: (count ?? 0) > offset + limit },
+    pagination: { page, limit, total, hasMore: total > offset + limit },
   });
 }));
 
 // ── GET /admin/media/reported ─────────────────────────────────────────────────
-// Uses the unified reports table: target_type = 'post', status = 'open'
+// Uses the unified reports table: target_type = 'post'; status = the UNRESOLVED set (open + in_review) unless asked
 
 router.get("/admin/media/reported", asyncHandler(async (req, res) => {
   const admin = await requireAdmin(req, res);
@@ -230,41 +230,41 @@ router.get("/admin/media/reported", asyncHandler(async (req, res) => {
   const { sc } = admin;
 
   const { page, limit, offset } = parsePagination(req.query);
-  const status = (req.query.status as string) ?? "open";
-
+  const status = parseLegacyReportStatusFilter(req.query.status); // default UNRESOLVED: an exact 'open' default hid every in_review (flagged / content-hidden) report from this tab
+  if (!status.ok) { sendError(res, "invalid_payload", status.message); return; } // a word no report carries is refused by name, never answered with an empty queue
   let query = sc
     .from("reports")
     .select("id, reporter_id, target_type, target_id, reason_code, reason_detail, moderation_notes, severity, status, reviewed_by, reviewed_at, created_at, updated_at", { count: "exact" })
     .eq("target_type", "post");
 
-  if (status !== "all") query = query.eq("status", status);
+  if (status.statuses) query = query.in("status", status.statuses);
 
   query = query
     .order("created_at", { ascending: false })
     .range(offset, offset + limit - 1);
 
   const { data, error, count } = await query;
-  if (error) { sendError(res, "db_error", error.message); return; }
-
-  const rows: any[] = data ?? [];
+  if (error) { sendError(res, "db_error", error.message); return; } const total = exactListCount(count, data, offset); // never `count ?? 0`
+  if (total === null) { sendError(res, "db_error", listTotalRefusal("reported posts"), { exposeDetail: true }); return; }
+  const rows: any[] = data as any[];
 
   // Enrich with primary media thumbnail
   const postIds = [...new Set(rows.map((r) => r.target_id).filter(Boolean))];
   let mediaMap: Record<string, { media_type: string; public_url: string | null; thumbnail_url: string | null }> = {};
   if (postIds.length > 0) {
-    const { data: media } = await sc
+    const { data: media, error: mediaErr } = await sc
       .from("post_media")
       .select("post_id, media_type, public_url, thumbnail_url")
       .in("post_id", postIds)
       .eq("sort_order", 0);
-    for (const m of media ?? []) {
+    if (mediaErr || !Array.isArray(media)) { sendError(res, "db_error", `The reported posts' media could not be read (primaryMedia): ${mediaErr?.message ?? "no rows answered"}. A null primaryMedia would read as "no media". Retry.`, { exposeDetail: true }); return; } for (const m of media) {
       if (!mediaMap[m.post_id]) mediaMap[m.post_id] = m;
     }
   }
 
   res.json({
     items: rows.map((r) => ({ ...r, primaryMedia: mediaMap[r.target_id] ?? null })),
-    pagination: { page, limit, total: count ?? 0, hasMore: (count ?? 0) > offset + limit },
+    pagination: { page, limit, total, hasMore: total > offset + limit },
   });
 }));
 
@@ -277,25 +277,25 @@ router.get("/admin/media/wrong-place", asyncHandler(async (req, res) => {
   const { sc } = admin;
 
   const { page, limit, offset } = parsePagination(req.query);
-  const status = (req.query.status as string) ?? "open";
-
+  const status = parseLegacyReportStatusFilter(req.query.status); // default UNRESOLVED (open + in_review), as /admin/media/reported
+  if (!status.ok) { sendError(res, "invalid_payload", status.message); return; }
   let query = sc
     .from("reports")
     .select("id, reporter_id, target_type, target_id, reason_code, reason_detail, moderation_notes, severity, status, reviewed_by, reviewed_at, created_at, updated_at", { count: "exact" })
     .eq("target_type", "hidden_gem");
 
-  if (status !== "all") query = query.eq("status", status);
+  if (status.statuses) query = query.in("status", status.statuses);
 
   query = query
     .order("created_at", { ascending: false })
     .range(offset, offset + limit - 1);
 
   const { data, error, count } = await query;
-  if (error) { sendError(res, "db_error", error.message); return; }
-
+  if (error) { sendError(res, "db_error", error.message); return; } const total = exactListCount(count, data, offset); // never `count ?? 0`
+  if (total === null) { sendError(res, "db_error", listTotalRefusal("wrong-place reports"), { exposeDetail: true }); return; }
   res.json({
-    items: (data as any[]) ?? [],
-    pagination: { page, limit, total: count ?? 0, hasMore: (count ?? 0) > offset + limit },
+    items: data,
+    pagination: { page, limit, total, hasMore: total > offset + limit },
   });
 }));
 
@@ -319,11 +319,11 @@ router.get("/admin/media/gems-pending", asyncHandler(async (req, res) => {
     .order("created_at", { ascending: false })
     .range(offset, offset + limit - 1);
 
-  if (error) { sendError(res, "db_error", error.message); return; }
-
+  if (error) { sendError(res, "db_error", error.message); return; } const total = exactListCount(count, data, offset); // never `count ?? 0`
+  if (total === null) { sendError(res, "db_error", listTotalRefusal("pending gems"), { exposeDetail: true }); return; }
   res.json({
-    items: (data as any[]) ?? [],
-    pagination: { page, limit, total: count ?? 0, hasMore: (count ?? 0) > offset + limit },
+    items: data,
+    pagination: { page, limit, total, hasMore: total > offset + limit },
   });
 }));
 
@@ -347,11 +347,11 @@ router.get("/admin/media/ai-provenance", asyncHandler(async (req, res) => {
     .order("created_at", { ascending: false })
     .range(offset, offset + limit - 1);
 
-  if (error) { sendError(res, "db_error", error.message); return; }
-
+  if (error) { sendError(res, "db_error", error.message); return; } const total = exactListCount(count, data, offset); // never `count ?? 0`
+  if (total === null) { sendError(res, "db_error", listTotalRefusal("AI-provenance"), { exposeDetail: true }); return; }
   res.json({
-    items: (data as any[]) ?? [],
-    pagination: { page, limit, total: count ?? 0, hasMore: (count ?? 0) > offset + limit },
+    items: data,
+    pagination: { page, limit, total, hasMore: total > offset + limit },
   });
 }));
 
@@ -919,65 +919,65 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
     }
 
   } else if (target === "report") {
-    // reports status: open | reviewed | resolved | dismissed
+    // reports status: the one legacy vocabulary (lib/moderationCounts.ts) — open | in_review | resolved | dismissed
     const newStatus =
       action === "approve" ? "resolved" :
       action === "reject"  ? "dismissed" :
-      "reviewed";
+      "in_review"; // was "reviewed" — a word no admin screen lists, so a flagged report vanished from every queue
 
     // Fetch first: the audit row names the reported content's OWNER (which needs
-    // target_type/target_id), and a status guard needs the current status.
+    // target_type/target_id), the status guard needs the current status, and an undo needs the reviewer fields as read.
     const { data: reportRow, error: fetchErr } = await sc
       .from("reports")
-      .select("id, target_type, target_id, status")
+      .select(LEGACY_REPORT_CLOSE_READ)
       .eq("id", id)
       .maybeSingle();
 
     if (fetchErr) { sendError(res, "db_error", fetchErr.message); return; }
     if (!reportRow) { res.status(404).json({ error: "not_found", message: "Report not found" }); return; }
 
-    // Status guard: resolved/dismissed are terminal. Without this a resolved
-    // report could be flipped back to 'reviewed' (or re-resolved), rewriting a
-    // closed decision with no trace.
+    // Status guard: only an UNRESOLVED report (open / in_review) moves. Without this
+    // a resolved report could be flipped back to 'in_review' (or re-resolved),
+    // rewriting a closed decision with no trace.
     const currentStatus = (reportRow as any).status as string;
-    if (currentStatus === "resolved" || currentStatus === "dismissed") {
+    if (!(UNRESOLVED_REPORT_STATUSES as readonly string[]).includes(currentStatus)) {
       sendError(res, "conflict", `Report is already ${currentStatus}; it cannot be re-moderated`);
       return;
     }
 
-    // Audit against the reported content's OWNER (fail-closed), exactly as the
-    // routes/admin.ts report resolve/dismiss paths do.
+    // CLAIM the report, THEN audit it against the reported content's OWNER, then
+    // undo the claim if the audit row cannot be written (lib/legacyReportClose.ts) —
+    // the order routes/admin.ts's report resolve/dismiss now use too.
     const reportActionType =
       action === "approve" ? "report_resolved" :
       action === "reject"  ? "report_dismissed" :
       "report_reviewed";
-    const auditR = await auditReportAction(sc, req, {
-      reportId:   id,
-      targetType: (reportRow as any).target_type as string,
-      targetId:   (reportRow as any).target_id as string,
+    // WHY CLAIM FIRST (wave 5, 2026-10-18): this used to write the audit row and
+    // THEN the guarded update, so a report someone closed between the read and the
+    // write answered 409 having already recorded an action that never happened (the
+    // 409 said so: "its audit row was already written"). Now a report that moved
+    // first is a 409 with NOTHING written; a failed audit restores the report to the
+    // status and reviewer it held when read; and a failed restore says the report
+    // reads moved with no audit row, so a human can fix it.
+    const moveR = await moveLegacyReport(sc, req, reportRow as any, {
+      to:          newStatus,
       adminUserId: userId,
-      actionType: reportActionType,
-      reason:     reason ?? null,
+      notes:       reason ?? null,
+      actionType:  reportActionType,
+      now,
     });
-    if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
-    auditOutcome = auditR.audit;
+    if (moveR.outcome === "conflict") { sendError(res, "conflict", moveR.message); return; }
+    if (moveR.outcome === "failed") { sendError(res, "db_error", moveR.message, { exposeDetail: true }); return; }
+    auditOutcome = moveR.audit;
 
-    const { data: updated, error } = await sc
-      .from("reports")
-      .update({
-        status:           newStatus,
-        reviewed_by:      userId,
-        reviewed_at:      now,
-        moderation_notes: reason ?? null,
-      })
-      .eq("id", id)
-      .select("id");
-
-    if (error) { sendError(res, "db_error", error.message); return; }
-    if (!updated || (updated as any[]).length === 0) {
-      res.status(404).json({ error: "not_found", message: "Report not found" });
-      return;
-    }
+    // `auditOutcome` is the claimed report's audit: recorded, or one of
+    // auditReportAction's two skips (no accountable owner; owner lookup could
+    // not run). A skip is not a failure: the report row itself names its
+    // reviewer (reviewed_by / reviewed_at), and the answer says which it was.
+    //
+    // The claim moves the report out of the status this request READ, and only
+    // that one (open or in_review), so the guard above is also held at the
+    // write: a concurrent close is never overwritten.
   }
 
   // `audit` is additive and is the whole point of the change above: an operator

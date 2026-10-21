@@ -27,7 +27,7 @@ import type { InputSuggestion } from '../types/inputSuggestion.ts';
 /** A badge to render on a suggestion row, and to announce to a screen reader. */
 export interface SuggestionBadge {
   /** Stable key for `React.key` and for tests. */
-  id: 'official' | 'verified' | 'protected' | 'approximate' | 'in_trip' | 'saved';
+  id: 'official' | 'verified' | 'protected' | 'approximate' | 'in_trip' | 'saved' | 'full' | 'waitlist'; // §28 G177: an event's availability
   /** The user-facing word. */
   label: string;
 }
@@ -37,7 +37,7 @@ export interface SuggestionBadge {
  * that carries none of the fields — the common case, and the one that must stay
  * visually identical to the pre-Phase-9 row.
  */
-export function suggestionBadges(s: Pick<InputSuggestion, 'verified' | 'official' | 'locationPrecision'> & Partial<Pick<InputSuggestion, 'relationship'>>): SuggestionBadge[] {
+export function suggestionBadges(s: Pick<InputSuggestion, 'verified' | 'official' | 'locationPrecision'> & Partial<Pick<InputSuggestion, 'relationship' | 'availability'>>): SuggestionBadge[] {
   const out: SuggestionBadge[] = [];
   if (s.official === true) out.push({ id: 'official', label: 'Official' });
   if (s.verified === true) out.push({ id: 'verified', label: 'Verified' });
@@ -45,7 +45,7 @@ export function suggestionBadges(s: Pick<InputSuggestion, 'verified' | 'official
   // centroid is APPROXIMATE. Saying which is the point of §20's "protection /
   // status labels" row — before this, both rendered identically.
   if (s.locationPrecision === 'hidden') out.push({ id: 'protected', label: 'Protected location' });
-  else if (s.locationPrecision === 'approximate') out.push({ id: 'approximate', label: 'Approx. location' }); const rel = relationshipBadge(s.relationship); if (rel) out.push(rel); // §20 G179 — the viewer's own relationship, last
+  else if (s.locationPrecision === 'approximate') out.push({ id: 'approximate', label: 'Approx. location' }); const avail = availabilityBadge(s.availability); if (avail) out.push(avail); const rel = relationshipBadge(s.relationship); if (rel) out.push(rel); // §28 G177 availability, then §20 G179 — the viewer's own relationship, last
   return out;
 }
 
@@ -87,5 +87,19 @@ export function rowSubtitle(s: Pick<InputSuggestion, 'subtitle' | 'distanceBand'
 export function relationshipBadge(rel: unknown): SuggestionBadge | null {
   if (rel === 'in_trip') return { id: 'in_trip', label: 'In your Trip' };
   if (rel === 'saved') return { id: 'saved', label: 'Saved' };
+  return null;
+}
+
+/**
+ * §28 "Open/closed or availability state where valid" (census G177): the words
+ * for an EVENT's current availability (`lib/inputAssistance/operatingStatus.ts`
+ * projects it only from the state the RSVP capacity writer keeps current). A
+ * value this build cannot name renders NOTHING — and there is deliberately no
+ * "Open": an absent key is the open case, and no row is labelled open on a
+ * guess.
+ */
+export function availabilityBadge(value: unknown): SuggestionBadge | null {
+  if (value === 'full') return { id: 'full', label: 'Full' };
+  if (value === 'waitlist') return { id: 'waitlist', label: 'Waitlist open' };
   return null;
 }

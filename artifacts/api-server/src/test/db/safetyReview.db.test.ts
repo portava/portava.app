@@ -105,7 +105,7 @@ function psqlSupabase(): any {
           // shape goes through the same CTE and the adapter stays uniform.
           const script =
             `SET LOCAL ROLE service_role;\n` +
-            `WITH w AS (${sql}) SELECT COALESCE(json_agg(t), '[]'::json)::text FROM w t;`;
+            `WITH w AS (${sql}) SELECT COALESCE(json_agg(t.*), '[]'::json)::text FROM w t;`;
           const r = psql(script, { single: true });
           if (r.status !== 0) {
             // PostgREST resolves on a database error; so does supabase-js. The

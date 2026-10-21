@@ -161,14 +161,15 @@ export async function getCityPlaces(
         "fsq_id", "name", "latitude", "longitude", "category", "fsq_primary_label",
         "address", "locality", "region", "postcode", "country",
         "confidence", "dataset_date",
-        // Extended fields (present when available from the enriched dataset)
-        "tel", "website", "rating", "price", "stats", "photos", "hours",
-        "features", "amenities", "photo_url",
+        // ONLY fsq_places' own columns (0184; the production capture). This list also named tel, website, rating, price, stats,
+        // photos, hours, features, amenities and photo_url, which no SQL ever declared: the read failed 42703 and every city
+        // answered no places (wave 5, 2026-10-17). The open dataset has none of them, so rowToPlace answers those fields null / [].
       ].join(", "))
       .eq("city_key", q.cityKey)
       .limit(Math.min(Math.max(q.limit ?? 200, 1), 1000));
     if (q.category) query = query.eq("category", q.category);
     const { data, error } = await query;
+    if (error) logger.error({ err: error, cityKey: q.cityKey }, "fsq_places read failed — answering no places"); // a dead column hid here for months
     if (error || !Array.isArray(data)) return empty;
     const places = (data as any[]).map(rowToPlace);
     return { places, attribution: FSQ_ATTRIBUTION, datasetDate: places[0]?.datasetDate ?? null };
@@ -191,3 +192,6 @@ export async function getCityCategoryCounts(sc: any, cityKey: string): Promise<R
   }
   return out;
 }
+
+// At the foot so no cited line above moves (lib/fsq/fsqPlaces.ts:12 and :133 are cited by line).
+import { logger } from "../logger.js";

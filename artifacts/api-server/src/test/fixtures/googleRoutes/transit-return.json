@@ -1,0 +1,146 @@
+{
+  "routes": [
+    {
+      "distanceMeters": 29310,
+      "duration": "2460s",
+      "staticDuration": "2460s",
+      "legs": [
+        {
+          "steps": [
+            {
+              "distanceMeters": 220,
+              "staticDuration": "180s",
+              "travelMode": "WALK",
+              "navigationInstruction": {
+                "maneuver": "DEPART"
+              }
+            },
+            {
+              "distanceMeters": 140,
+              "staticDuration": "120s",
+              "travelMode": "WALK",
+              "navigationInstruction": {
+                "maneuver": "TURN_LEFT"
+              }
+            },
+            {
+              "distanceMeters": 21000,
+              "staticDuration": "1260s",
+              "travelMode": "TRANSIT",
+              "transitDetails": {
+                "stopCount": 1,
+                "stopDetails": {
+                  "arrivalStop": {
+                    "name": "Taoyuan HSR Station"
+                  },
+                  "departureStop": {
+                    "name": "Taoyuan Station"
+                  }
+                }
+              }
+            },
+            {
+              "distanceMeters": 260,
+              "staticDuration": "240s",
+              "travelMode": "WALK",
+              "navigationInstruction": {
+                "maneuver": "STRAIGHT"
+              }
+            },
+            {
+              "distanceMeters": 7600,
+              "staticDuration": "540s",
+              "travelMode": "TRANSIT",
+              "transitDetails": {
+                "stopCount": 6,
+                "stopDetails": {
+                  "arrivalStop": {
+                    "name": "Airport Terminal 1"
+                  },
+                  "departureStop": {
+                    "name": "Taoyuan HSR Station"
+                  }
+                }
+              }
+            },
+            {
+              "distanceMeters": 90,
+              "staticDuration": "120s",
+              "travelMode": "WALK",
+              "navigationInstruction": {
+                "maneuver": "TURN_RIGHT"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "distanceMeters": 28130,
+      "duration": "2820s",
+      "staticDuration": "2700s",
+      "legs": [
+        {
+          "steps": [
+            {
+              "distanceMeters": 380,
+              "staticDuration": "300s",
+              "travelMode": "WALK",
+              "navigationInstruction": {
+                "maneuver": "DEPART"
+              }
+            },
+            {
+              "distanceMeters": 19800,
+              "staticDuration": "1500s",
+              "travelMode": "TRANSIT",
+              "transitDetails": {
+                "stopCount": 4,
+                "stopDetails": {
+                  "arrivalStop": {
+                    "name": "Taoyuan HSR Station"
+                  },
+                  "departureStop": {
+                    "name": "Zhongli Station"
+                  }
+                }
+              }
+            },
+            {
+              "distanceMeters": 260,
+              "staticDuration": "240s",
+              "travelMode": "WALK",
+              "navigationInstruction": {
+                "maneuver": "STRAIGHT"
+              }
+            },
+            {
+              "distanceMeters": 7600,
+              "staticDuration": "540s",
+              "travelMode": "TRANSIT",
+              "transitDetails": {
+                "stopCount": 6,
+                "stopDetails": {
+                  "arrivalStop": {
+                    "name": "Airport Terminal 1"
+                  },
+                  "departureStop": {
+                    "name": "Taoyuan HSR Station"
+                  }
+                }
+              }
+            },
+            {
+              "distanceMeters": 90,
+              "staticDuration": "120s",
+              "travelMode": "WALK",
+              "navigationInstruction": {
+                "maneuver": "TURN_RIGHT"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

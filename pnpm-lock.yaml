@@ -214,7 +214,7 @@ importers:
         version: 2.8.6
       drizzle-orm:
         specifier: 'catalog:'
-        version: 0.41.0(@opentelemetry/api@1.9.1)(@types/pg@8.20.0)(pg@8.22.0)
+        version: 0.41.0(@electric-sql/pglite@0.2.17)(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(pg@8.16.3)
       express:
         specifier: ^5.2.1
         version: 5.2.1
@@ -264,12 +264,18 @@ importers:
       '@types/node':
         specifier: 'catalog:'
         version: 22.20.0
+      '@types/pg':
+        specifier: 8.15.6
+        version: 8.15.6
       esbuild:
         specifier: 0.27.3
         version: 0.27.3
       esbuild-plugin-pino:
         specifier: ^2.3.3
         version: 2.3.3(esbuild@0.27.3)(pino-pretty@13.1.3)(pino@9.14.0)(thread-stream@3.1.0)
+      pg:
+        specifier: 8.16.3
+        version: 8.16.3
       pino-pretty:
         specifier: ^13.1.3
         version: 13.1.3
@@ -488,10 +494,10 @@ importers:
     dependencies:
       drizzle-orm:
         specifier: 'catalog:'
-        version: 0.41.0(@opentelemetry/api@1.9.1)(@types/pg@8.20.0)(pg@8.22.0)
+        version: 0.41.0(@electric-sql/pglite@0.2.17)(@opentelemetry/api@1.9.1)(@types/pg@8.20.0)(pg@8.22.0)
       drizzle-zod:
         specifier: ^0.8.3
-        version: 0.8.3(drizzle-orm@0.41.0(@opentelemetry/api@1.9.1)(@types/pg@8.20.0)(pg@8.22.0))(zod@3.25.76)
+        version: 0.8.3(drizzle-orm@0.41.0(@electric-sql/pglite@0.2.17)(@opentelemetry/api@1.9.1)(@types/pg@8.20.0)(pg@8.22.0))(zod@3.25.76)
       pg:
         specifier: ^8.20.0
         version: 8.22.0
@@ -2825,6 +2831,9 @@ packages:
   '@types/pg-pool@2.0.6':
     resolution: {integrity: sha512-TaAUE5rq2VQYxab5Ts7WZhKNmuN78Q6PiFonTDdpbx8a1H0M1vhy3rhiMjl+e2iHmogyMw7jZF4FrE6eJUy5HQ==}
 
+  '@types/pg@8.15.6':
+    resolution: {integrity: sha512-NoaMtzhxOrubeL/7UZuNTrejB4MPAJ0RpxZqXQf2qXuVlTPuG6Y8p4u9dKRaue4yjmC7ZhzVO2/Yyyn25znrPQ==}
+
   '@types/pg@8.20.0':
     resolution: {integrity: sha512-bEPFOaMAHTEP1EzpvHTbmwR8UsFyHSKsRisLIHVMXnpNefSbGA1bD6CVy+qKjGSqmZqNqBDV2azOBo8TgkcVow==}
 
@@ -4091,6 +4100,15 @@ packages:
   pg-types@2.2.0:
     resolution: {integrity: sha512-qTAAlrEsl8s4OiEQY69wDvcMIdQN6wdz5ojQiOy6YRMuynxenON0O5oCpJI6lshc6scgAY8qvJ2On/p+CXY0GA==}
     engines: {node: '>=4'}
+
+  pg@8.16.3:
+    resolution: {integrity: sha512-enxc1h0jA/aq5oSDMvqyW3q89ra6XIIDZgCX9vkMrnz5DFTw/Ny3Li2lFQ+pt3L6MCgm/5o2o8HW9hiJji+xvw==}
+    engines: {node: '>= 16.0.0'}
+    peerDependencies:
+      pg-native: '>=3.0.1'
+    peerDependenciesMeta:
+      pg-native:
+        optional: true
 
   pg@8.22.0:
     resolution: {integrity: sha512-8wih1vVIBMxoUM2oB4soJsD9tDnDpLv4OXBJ+EJzFsvycD+lfyIreC2gGHq78f8jbLLt+bvlPTFdFZfJkOuzAA==}
@@ -6877,6 +6895,12 @@ snapshots:
     dependencies:
       '@types/pg': 8.20.0
 
+  '@types/pg@8.15.6':
+    dependencies:
+      '@types/node': 22.20.0
+      pg-protocol: 1.15.0
+      pg-types: 2.2.0
+
   '@types/pg@8.20.0':
     dependencies:
       '@types/node': 22.20.0
@@ -7270,15 +7294,23 @@ snapshots:
       esbuild: 0.25.12
       tsx: 4.22.4
 
-  drizzle-orm@0.41.0(@opentelemetry/api@1.9.1)(@types/pg@8.20.0)(pg@8.22.0):
+  drizzle-orm@0.41.0(@electric-sql/pglite@0.2.17)(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(pg@8.16.3):
     optionalDependencies:
+      '@electric-sql/pglite': 0.2.17
+      '@opentelemetry/api': 1.9.1
+      '@types/pg': 8.15.6
+      pg: 8.16.3
+
+  drizzle-orm@0.41.0(@electric-sql/pglite@0.2.17)(@opentelemetry/api@1.9.1)(@types/pg@8.20.0)(pg@8.22.0):
+    optionalDependencies:
+      '@electric-sql/pglite': 0.2.17
       '@opentelemetry/api': 1.9.1
       '@types/pg': 8.20.0
       pg: 8.22.0
 
-  drizzle-zod@0.8.3(drizzle-orm@0.41.0(@opentelemetry/api@1.9.1)(@types/pg@8.20.0)(pg@8.22.0))(zod@3.25.76):
+  drizzle-zod@0.8.3(drizzle-orm@0.41.0(@electric-sql/pglite@0.2.17)(@opentelemetry/api@1.9.1)(@types/pg@8.20.0)(pg@8.22.0))(zod@3.25.76):
     dependencies:
-      drizzle-orm: 0.41.0(@opentelemetry/api@1.9.1)(@types/pg@8.20.0)(pg@8.22.0)
+      drizzle-orm: 0.41.0(@electric-sql/pglite@0.2.17)(@opentelemetry/api@1.9.1)(@types/pg@8.20.0)(pg@8.22.0)
       zod: 3.25.76
 
   dunder-proto@1.0.1:
@@ -8133,6 +8165,10 @@ snapshots:
 
   pg-int8@1.0.1: {}
 
+  pg-pool@3.14.0(pg@8.16.3):
+    dependencies:
+      pg: 8.16.3
+
   pg-pool@3.14.0(pg@8.22.0):
     dependencies:
       pg: 8.22.0
@@ -8146,6 +8182,16 @@ snapshots:
       postgres-bytea: 1.0.1
       postgres-date: 1.0.7
       postgres-interval: 1.2.0
+
+  pg@8.16.3:
+    dependencies:
+      pg-connection-string: 2.14.0
+      pg-pool: 3.14.0(pg@8.16.3)
+      pg-protocol: 1.15.0
+      pg-types: 2.2.0
+      pgpass: 1.0.5
+    optionalDependencies:
+      pg-cloudflare: 1.4.0
 
   pg@8.22.0:
     dependencies:

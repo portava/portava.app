@@ -120,7 +120,7 @@ export const MAX_ABSENT_SYMBOLS = 0;
  * tree as MAX_DEAD_TARGETS above: the guard printed "34 < 35 — LOWER
  * MAX_MISPLACED_SYMBOLS to 34", and a ceiling above the measured count keeps
  * nothing. Tightening, never loosening. */
-export const MAX_MISPLACED_SYMBOLS = 34;
+export const MAX_MISPLACED_SYMBOLS = 33; // RATCHETED 2026-10-18 34 -> 33 (wave 5: the guard printed "33 < 34")
 
 /** How far from the cited line the symbol may be and still count as "there". */
 const WINDOW = 2;

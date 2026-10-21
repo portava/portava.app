@@ -134,7 +134,7 @@ export function suggestionToPlace(s: InputSuggestion): Place | null {
     district: null,
     lat: null,
     lng: null,
-    timezone: null,
+    timezone: boundTimezone(s), // the zone the row's own city binding states, else null (census-trips wave 5 follow-up)
     source: 'canonical',
     canonicalId,
     confidence: typeof s.confidence === 'number' ? s.confidence : undefined,
@@ -275,4 +275,31 @@ export function approximateAreaOf(s: InputSuggestion | null | undefined): Approx
   if (!cityId || !city) return null;
   const str = (x: unknown) => (typeof x === 'string' && x.trim() ? x.trim() : null);
   return { cityId, city, country: str(v.country), countryCode: str(v.countryCode), timezone: str(v.timezone) };
+}
+
+// ── The time zone a gateway CITY row's own binding states (census-trips wave-5 follow-up, G109) ──
+//
+// A canonical city row arrives with `structuredValue: { entityType: 'city',
+// cityId, city, country, countryCode, lat, lng, timezone }`: the server derives
+// the zone from the canonical centroid (`cityBinding`, tz-lookup) or sends null.
+// That binding is not an embedded Place (it has no `name`), so the row reaches
+// the minimal builder above, which used to drop the zone. This reads it back,
+// and nothing else:
+//   - only for a CITY row bound to THAT city (`cityId` is the row's `entityId`);
+//     a binding for another entity says nothing about this one;
+//   - only a string shaped like an IANA zone name. A null, blank or malformed
+//     value is null — never derived from the label, the subtitle or the phone.
+// The binding's coordinates and country are not carried here: this follow-up
+// was scoped to the zone, and the picker's canonical short-circuit means those
+// still arrive null for a gateway city row (named in the census, not changed).
+const IANA_ZONE = /^(?:UTC|[A-Za-z][A-Za-z0-9_+-]*(?:\/[A-Za-z0-9_+-]+)+)$/;
+
+function boundTimezone(s: InputSuggestion): string | null {
+  if (s.entityType !== 'city') return null;
+  const v = s.structuredValue as Record<string, unknown> | null | undefined;
+  if (!v || typeof v !== 'object' || v.entityType !== 'city') return null;
+  const cityId = typeof v.cityId === 'string' ? v.cityId.trim() : '';
+  if (!cityId || cityId !== clean(s.entityId ?? null)) return null;
+  const tz = typeof v.timezone === 'string' ? v.timezone.trim() : '';
+  return IANA_ZONE.test(tz) ? tz : null;
 }

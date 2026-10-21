@@ -14,6 +14,7 @@ import { render, screen } from '@testing-library/react-native';
 
 import { OwnMessageStatusRow } from '../lifecycle/OwnMessageStatusRow.tsx';
 import { color } from '../../../theme/tokens.ts';
+import { TELEGRAPH_PALETTES } from '../theme/telegraphTheme.ts';
 
 function textColor(label: string): string | undefined {
   const node = screen.getByText(label);
@@ -29,9 +30,10 @@ describe('OwnMessageStatusRow', () => {
     expect(screen.getByText('Seen by 3')).toBeTruthy();
   });
 
-  it('Delivered is drawn as a confirmed state', async () => {
+  it('Delivered is drawn as a confirmed state — the operational teal, not the attention vermilion (census T124)', async () => {
     await render(<OwnMessageStatusRow status={{ kind: 'delivered' }} isGroup={false} />);
-    expect(textColor('Delivered')).toBe(color.signal);
+    expect(textColor('Delivered')).toBe(TELEGRAPH_PALETTES.light.operational);
+    expect(textColor('Delivered')).not.toBe(color.signal);
   });
 
   it('THE POINT: an unknown read status is MUTED and never says a bare "Sent"', async () => {

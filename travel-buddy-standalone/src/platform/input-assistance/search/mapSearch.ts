@@ -23,6 +23,7 @@
  */
 import type { UnifiedSearchResultLike } from '../../../features/map/search/searchAdapter.ts';
 import type { SuggestRefusal } from '../types/inputSuggestion.ts';
+import { suggestOrigin } from '../services/suggestBody.ts';
 
 /** The field id the server serves as a search page. Must match searchPage.ts. */
 export const MAP_SEARCH_FIELD_ID = 'map.search';
@@ -53,7 +54,7 @@ export interface MapSearchOpts {
   tz?: string;
 }
 
-/** The POST body. `lat`/`lng` ride at the top level, where the route reads them. */
+/** The POST body. `lat`/`lng` ride at the top level, where the route reads them, at 3 decimals (suggestBody.ts). */
 export function buildMapSearchBody(query: string, opts: MapSearchOpts = {}): Record<string, unknown> {
   const body: Record<string, unknown> = {
     context: 'global_search',
@@ -61,8 +62,8 @@ export function buildMapSearchBody(query: string, opts: MapSearchOpts = {}): Rec
     text: query,
     sessionContext: { surface: 'map' },
   };
-  if (opts.lat != null && Number.isFinite(opts.lat)) body.lat = opts.lat;
-  if (opts.lng != null && Number.isFinite(opts.lng)) body.lng = opts.lng;
+  const origin = suggestOrigin(opts.lat, opts.lng); // both halves or neither; the device fix never leaves the device
+  if (origin) { body.lat = origin.lat; body.lng = origin.lng; }
   if (typeof opts.city === 'string' && opts.city.trim().length > 0) body.city = opts.city.trim();
   if (typeof opts.tz === 'string' && opts.tz.trim().length > 0) body.tz = opts.tz.trim();
   return body;

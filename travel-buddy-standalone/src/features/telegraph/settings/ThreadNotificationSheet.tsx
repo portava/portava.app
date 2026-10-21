@@ -13,7 +13,7 @@
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
-import { color, radius, space, type as t } from '../../../theme/tokens.ts';
+import { radius, space, type as t } from '../../../theme/tokens.ts'; import { useTelegraphTheme, type TelegraphPalette } from '../theme/telegraphTheme.ts';
 import {
   LEVEL_COPY,
   SAFETY_COPY,
@@ -35,6 +35,7 @@ export interface ThreadNotificationSheetProps {
 type Load = { status: 'loading' } | { status: 'error'; message: string } | { status: 'ready'; policy: ThreadNotificationPolicy };
 
 export function ThreadNotificationSheet({ visible, threadId, onClose, onChanged }: ThreadNotificationSheetProps) {
+  const { palette, styles } = useTelegraphTheme(makeStyles);
   const [load, setLoad] = useState<Load>({ status: 'loading' });
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -70,7 +71,7 @@ export function ThreadNotificationSheet({ visible, threadId, onClose, onChanged 
       <View style={styles.sheet} testID="thread-notification-sheet">
         <Text style={styles.title} accessibilityRole="header">Notifications for this conversation</Text>
         {load.status === 'loading' ? (
-          <ActivityIndicator testID="thread-notification-loading" />
+          <ActivityIndicator testID="thread-notification-loading" color={palette.operational} />
         ) : load.status === 'error' ? (
           <View testID="thread-notification-error">
             <Text style={styles.error}>{load.message}</Text>
@@ -128,21 +129,21 @@ export function ThreadNotificationSheet({ visible, threadId, onClose, onChanged 
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (p: TelegraphPalette) => StyleSheet.create({ // census T123/T124: the scheme's palette; Try again is ordinary emphasis (teal)
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.3)' },
-  sheet: { backgroundColor: color.paper, padding: space.lg, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg, gap: space.sm },
-  title: { ...t.bodyStrong, color: color.ink },
+  sheet: { backgroundColor: p.surface, padding: space.lg, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg, gap: space.sm },
+  title: { ...t.bodyStrong, color: p.recvText },
   row: { paddingVertical: space.sm, minHeight: 44 },
   rowSelected: { opacity: 1 },
-  rowLabel: { ...t.body, color: color.ink },
-  rowSub: { ...t.small, color: color.mute },
+  rowLabel: { ...t.body, color: p.recvText },
+  rowSub: { ...t.small, color: p.mute },
   tempRow: { flexDirection: 'row', flexWrap: 'wrap', gap: space.xs, marginTop: space.xs },
-  chip: { paddingHorizontal: space.sm, paddingVertical: space.xs, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, minHeight: 44, justifyContent: 'center' },
-  chipLabel: { ...t.small, color: color.ink },
-  error: { ...t.small, color: color.ink, fontWeight: '600' },
+  chip: { paddingHorizontal: space.sm, paddingVertical: space.xs, borderRadius: radius.md, borderWidth: 1, borderColor: p.haze, minHeight: 44, justifyContent: 'center' },
+  chipLabel: { ...t.small, color: p.recvText },
+  error: { ...t.small, color: p.recvText, fontWeight: '600' },
   retry: { paddingVertical: space.xs, minHeight: 44, justifyContent: 'center' },
-  retryLabel: { ...t.small, color: color.signal, fontWeight: '700' },
-  safety: { ...t.small, color: color.mute, marginTop: space.sm },
+  retryLabel: { ...t.small, color: p.operational, fontWeight: '700' },
+  safety: { ...t.small, color: p.mute, marginTop: space.sm },
 });
 
 export default ThreadNotificationSheet;

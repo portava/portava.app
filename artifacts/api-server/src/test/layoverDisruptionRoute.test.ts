@@ -380,3 +380,45 @@ describe("§15.2 — PATCH /sessions/:id no longer resets the disruption state",
     assert.equal(r.body.replan.disruptionStateUnavailableReason, "ledger_unreadable");
   });
 });
+
+// Independent verification pass 10, C3: the wire's recompute must be the recompute's OWN answer. Its mutant S24 (the route
+// publishing recomputedNotAppended:false) survived every case above, which checked only that the field is a boolean.
+describe("§15.2 — the published recompute is internally true (pass 10, C3)", () => {
+  it("usableMinutesDelta is after − before, and recomputedNotAppended is exactly 'the window did not move by the schedule delta'", async () => {
+    stage();
+    const r = await post({ kind: "delay", newDepartureTime: new Date(NOW + 10 * HOUR).toISOString() });
+    assert.equal(r.status, 200);
+    const rc = r.body.recompute;
+    assert.ok(rc, "a moved departure must publish a recompute");
+    assert.equal(rc.usableMinutesDelta, rc.after.usableMinutes - rc.before.usableMinutes);
+    assert.equal(rc.recomputedNotAppended, rc.usableMinutesDelta !== rc.scheduleDeltaMinutes);
+  });
+});
+
+// Independent verification pass 11, C1: the case above is a sanity pin; S24 survives it (its fixture's engine answer is
+// false: a plain delay moves the window by exactly the schedule delta). This case stages the inputs of
+// `layoverSafeReturnAbort.test.ts:397`, where the engine's answer is TRUE (the delay pushes the return into the time-of-day
+// band, so the window grows by LESS than the delay), and drives them through the route with the route's Date pinned to that
+// suite's instant. A route publishing a constant `false` (S24) fails here; so does one that appends the delay.
+describe("§15.2 — the published recompute carries the engine's TRUE answer (pass 11, C1)", () => {
+  it("a delay into the time-of-day band publishes recomputedNotAppended: true, and the window did not move by the delta", async (t) => {
+    const AT = Date.UTC(2026, 8, 8, 6, 0, 0); // layoverSafeReturnAbort.test.ts:56 — 14:00 in Asia/Taipei
+    t.mock.timers.enable({ apis: ["Date"], now: AT });
+    const tb = stage();
+    // layoverSafeReturnAbort.test.ts:368-377: arrival now, departure four hours later, international, no immigration, no bags.
+    Object.assign(tb.layover_sessions[0], {
+      arrival_time: new Date(AT).toISOString(),
+      departure_time: new Date(AT + 4 * HOUR).toISOString(),
+      boarding_time: null, flight_type: "international", immigration_required: false, checked_bags: false,
+      wants_to_leave: true,
+    });
+    // :391 — the departure moves 120 minutes later.
+    const r = await post({ kind: "delay", newDepartureTime: new Date(AT + 4 * HOUR + 120 * 60_000).toISOString() });
+    assert.equal(r.status, 200);
+    const rc = r.body.recompute;
+    assert.ok(rc, "a moved departure must publish a recompute");
+    assert.equal(rc.scheduleDeltaMinutes, 120);
+    assert.equal(rc.recomputedNotAppended, true);
+    assert.notEqual(rc.usableMinutesDelta, rc.scheduleDeltaMinutes);
+  });
+});

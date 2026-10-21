@@ -376,7 +376,7 @@ export default function MemoryDetailScreen() {
           </View>
 
           {/* Like / save / share (HM-F09, HM-F13), people (HM-F12), own history (HM-F11) */}
-          {userId && isOwner && memory.id === id ? <MemoryResurfacingControl ownerId={userId} memoryId={id} /> : null}
+          {userId && isOwner && memory.id === id ? <MemoryResurfacingControl ownerId={userId} memoryId={id} /> : null}{userId && memory.id === id ? <RememberTogetherPanel memoryId={id} viewerId={userId} /> : null}
           <MemorySocialBar memory={memory} isOwner={isOwner} />
           {/* §14 Executable Memories: Do this again / Add to trip / Take me back, compiled against the world now */}
           <MemoryActionBar memoryId={memory.id} autoAction={isAutoAction(requestedAction) ? requestedAction : null} />
@@ -496,3 +496,4 @@ import type { MemoryWithParticipants } from '../../src/services/memorySocial.ts'
 import { MemoryActionBar, isAutoAction } from '../../src/features/memories/actions/MemoryActionBar.tsx';
 import { MemoryVideoSegments } from '../../src/features/memories/MemoryVideoSegments.tsx';
 import { MemoryResurfacingControl } from '../../src/features/memories/MemoryResurfacingControl.tsx';
+import { RememberTogetherPanel } from '../../src/features/memories/RememberTogetherPanel.tsx'; // §5 (census H53): appended so no cited line moves

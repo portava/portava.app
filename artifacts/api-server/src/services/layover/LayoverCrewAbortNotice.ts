@@ -307,8 +307,8 @@ export async function tellCrewOfAbort(
     // are independent: each one alone keeps a crewmate off the list. (The
     // traveller's own gate ran first, above, and includes Ghost Mode.)
     const sharing = await publishableUserIds(db, otherIds);
-    if (sharing.degraded) return untold("sharing_preferences_unreadable");
-    const allowed = new Set(sharing.allowed);
+    if (sharing.kind === "degraded") return untold("sharing_preferences_unreadable");
+    const allowed = new Set(sharing.value.allowed);
     const recipients = own.others.filter((m) => !blocked.ids.has(m.userId) && allowed.has(m.userId));
     if (recipients.length === 0) return untold("no_crewmate_to_tell");
 

@@ -236,7 +236,7 @@ function makeProductionSchemaClient(seed: Record<string, Row[]>, users: Record<s
         filters.push((r) => typeof r[col] === "string" && r[col].toLowerCase().includes(needle));
         return b;
       },
-      not(col: string) { note([col], `not("${col}")`); return b; },
+      not(col: string) { note([col.split(/->>?/)[0]], `not("${col}")`); return b; }, // a JSON-path filter names its column, not the path (as production's intel schedulers already filter)
       or() { return b; },
       order(col: string, o: any = {}) { note([col], `order("${col}")`); order = { col, asc: o.ascending !== false }; return b; },
       limit(n: number) { limitN = n; return b; },

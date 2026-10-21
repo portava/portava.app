@@ -63,7 +63,7 @@ export interface ProposalTally {
 export interface DecisionBoard {
   tripId: string;
   asOf: string;
-  goals: Array<{ id: string; type: string; priority: string; status: string; evidence: unknown }>;
+  goals: Array<{ id: string; type: string; priority: string; status: string; evidence: unknown; /** 2783, served since TR139: 'shared' or 'personal' (the viewer's own). */ scope?: string; weight?: number | null }>;
   decisionTasks: Array<{
     id: string; type: string; deadlineAt: string | null; consequence: string | null;
     assignedUserId: string | null; status: string;

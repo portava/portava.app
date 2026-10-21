@@ -117,47 +117,62 @@ after(() => new Promise<void>((resolve) => server.close(() => resolve())));
 // ── The lookups themselves ───────────────────────────────────────────────────
 
 describe("an unreadable airport_profiles is not 'we have never curated this airport'", () => {
+  // census L294 (wave 5): the lookups are LayoverRead<AirportAnswer>. A degraded
+  // read's static answer is its FALLBACK — there is no `value` to take it from.
   it("lookupByIata: a failed read is DEGRADED, and names the table", async () => {
     const r = await lookupByIata(db(UNREADABLE) as any, "TPE");
-    assert.equal(r.degraded, true, "a read that failed must not answer like a read that found nothing");
-    assert.deepEqual(r.degradedReasons, ["airport_profiles_unreadable"]);
+    assert.equal(r.kind, "degraded", "a read that failed must not answer like a read that found nothing");
+    if (r.kind !== "degraded") return;
+    assert.deepEqual(r.reasons, ["airport_profiles_unreadable"]);
+    assert.equal("value" in r, false, "the static answer is not reachable as a measured value");
     // The static answer is still SERVED — refusing the whole lookup would take
     // the airport picker away entirely. It is the silence that was wrong.
-    assert.ok(r.airport, "the static dataset still answers; it is just no longer passed off as the curated row");
-    assert.equal(r.fromStatic, true);
+    assert.ok(r.fallback.airport, "the static dataset still answers; it is just no longer passed off as the curated row");
+    assert.equal(r.fallback.fromStatic, true);
   });
 
   it("lookupByIata: a curated row is neither degraded nor static", async () => {
     const r = await lookupByIata(db() as any, "TPE");
-    assert.equal(r.degraded, false);
-    assert.deepEqual(r.degradedReasons, []);
-    assert.equal(r.fromStatic, false);
-    assert.ok(r.airport?.id, "a curated row carries its id");
+    assert.equal(r.kind, "read");
+    if (r.kind !== "read") return;
+    assert.equal(r.value.fromStatic, false);
+    assert.ok(r.value.airport?.id, "a curated row carries its id");
   });
 
   it("lookupByIata: an airport that is genuinely not curated is STATIC but NOT degraded", async () => {
     // A clean read that matched nothing. This is the §22 L0 tier — a designed
     // state — and calling it degraded would make the flag meaningless.
     const r = await lookupByIata(db({}, []) as any, "TPE");
-    assert.equal(r.degraded, false, "a successful read that found nothing is a measurement");
-    assert.deepEqual(r.degradedReasons, []);
-    assert.equal(r.fromStatic, true, "…and the answer is still honestly marked as coming from the static set");
+    assert.equal(r.kind, "read", "a successful read that found nothing is a measurement");
+    if (r.kind !== "read") return;
+    assert.equal(r.value.fromStatic, true, "…and the answer is still honestly marked as coming from the static set");
   });
 
   it("lookupByCity and lookupByGps degrade on the same failure", async () => {
     const c = await lookupByCity(db(UNREADABLE) as any, "Taoyuan");
-    assert.equal(c.degraded, true);
-    assert.deepEqual(c.degradedReasons, ["airport_profiles_unreadable"]);
+    assert.deepEqual(c.kind === "degraded" ? c.reasons : c, ["airport_profiles_unreadable"]);
     const g = await lookupByGps(db(UNREADABLE) as any, 25.07, 121.23);
-    assert.equal(g.degraded, true);
-    assert.deepEqual(g.degradedReasons, ["airport_profiles_unreadable"]);
+    assert.deepEqual(g.kind === "degraded" ? g.reasons : g, ["airport_profiles_unreadable"]);
   });
 
   it("lookupAirports: a failed search degrades and still serves the static matches", async () => {
     const r = await lookupAirports(db(UNREADABLE) as any, "Taoyuan");
-    assert.equal(r.degraded, true);
-    assert.deepEqual(r.degradedReasons, ["airport_profiles_unreadable"]);
-    assert.ok(Array.isArray(r.airports));
+    assert.equal(r.kind, "degraded");
+    if (r.kind !== "degraded") return;
+    assert.deepEqual(r.reasons, ["airport_profiles_unreadable"]);
+    assert.ok(Array.isArray(r.fallback.airports));
+    assert.equal(r.fallback.fromStatic, true);
+  });
+
+  it("the legacy resolveBy* projections still answer the static FALLBACK under an outage (unchanged; airport.test.ts binds them)", async () => {
+    const a = await resolveByIata(db(UNREADABLE) as never, "TPE");
+    assert.equal(a?.iataCode, "TPE", "the projection takes the fallback knowingly, as it always did");
+    const c = await resolveByCity(db(UNREADABLE) as never, "Taipei"); // the static set names TPE's city Taipei
+    assert.ok(c, "resolveByCity, likewise");
+  });
+
+  it("lookupAirports: an empty query is a READ empty list, not degraded", async () => {
+    assert.deepEqual(await lookupAirports(db(UNREADABLE) as never, "   "), { kind: "read", value: { airports: [], fromStatic: false } });
   });
 
   it("the old resolvers keep their exact shape — src/test/airport.test.ts binds them", async () => {

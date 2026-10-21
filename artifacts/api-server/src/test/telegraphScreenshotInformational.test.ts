@@ -266,3 +266,208 @@ describe("T408 hardening — the trees, read whole", () => {
     }
   });
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * WAVE 5 (2026-10-17) — census-telegraph T408: an ALLOWLIST of approved copy.
+ * The latest statement keeps T408 W because the copy check is a keyword
+ * pattern a paraphrase passes ("No one can capture this chat", "Snapshots are
+ * blocked in this conversation", "This chat is capture-protected"). At a
+ * detection site, copy is now an exact allowlist; elsewhere, a wider
+ * claim-shaped net with a closed reviewed list.
+ * ════════════════════════════════════════════════════════════════════════ */
+
+const w5 = await import("../domain/telegraph/policies/screenshotSignal.js");
+const { TEMPLATES } = await import("../services/notifications/NotificationTemplateService.js");
+const VERIFIER_PARAPHRASES = ["No one can capture this chat", "Snapshots are blocked in this conversation", "This chat is capture-protected"];
+
+/** Every claim-shaped user-facing string in `files`, collapsed. */
+function claimsIn(files: readonly string[], prepare: (code: string) => string = (code) => code): Array<{ file: string; text: string }> {
+  const out: Array<{ file: string; text: string }> = [];
+  for (const f of files) {
+    const raw = readFileSync(f, "utf8");
+    const code = prepare(/\.(?:json|html|hbs|ejs|txt|xml|plist)$/.test(f) ? raw : stripComments(raw));
+    for (const t of userFacingStrings(code)) if (w5.claimsCaptureProtection(t)) out.push({ file: relative(REPO, f), text: collapse(t) });
+  }
+  return out;
+}
+
+describe("T408 wave 5 — at a detection site, copy is an exact allowlist (any wording not on it is red)", () => {
+  it("the three paraphrases the verifier named passed BOTH old checks; at a site, each is unapproved copy", () => {
+    for (const s of VERIFIER_PARAPHRASES) {
+      assert.equal(isScreenshotGuarantee(s), false, `the old deny-list now catches "${s}" — this case pins the gap`);
+      assert.equal(mentionsScreenCapture(s), false, `the old mention pattern now catches "${s}" — this case pins the gap`);
+      const site = `import * as SC from "expo-screen-capture";\nexport function Banner() { SC.addScreenshotListener(() => undefined); return <Text>${s}</Text>; }`;
+      assert.deepEqual(w5.unapprovedSiteCopy(site), [s], s);
+    }
+  });
+
+  it("a site that shows only approved sentences is clean; specifiers and identifiers are not copy", () => {
+    const [took, informational] = w5.APPROVED_SCREEN_CAPTURE_COPY.map((c) => c.text);
+    const site = `import * as SC from "expo-screen-capture"; import { x } from "../lib/y";\nconst a = "${took}"; const b = '${informational}'; const k = "took_screenshot"; style={{ align: "flex-start" }}`;
+    assert.deepEqual(w5.unapprovedSiteCopy(site), []);
+    assert.deepEqual(w5.unapprovedSiteCopy(`const t = "Protected";`), ["Protected"], "a one-word claim is copy too");
+  });
+
+  it("every approved sentence is informational: not a guarantee, by the deny-list or by a reviewer's reason", () => {
+    assert.ok(w5.APPROVED_SCREEN_CAPTURE_COPY.length > 0);
+    const keys = new Set<string>();
+    for (const c of w5.APPROVED_SCREEN_CAPTURE_COPY) {
+      assert.equal(isScreenshotGuarantee(c.text), false, c.text);
+      assert.ok(c.why.length > 40, `${c.key}: a reason, not a label`);
+      assert.ok(!keys.has(c.key), `${c.key} twice`);
+      keys.add(c.key);
+    }
+  });
+
+  it("every declared site (none today) shows only approved copy", () => {
+    for (const s of SCREENSHOT_SIGNAL_SITES) {
+      assert.deepEqual(w5.unapprovedSiteCopy(stripComments(readFileSync(join(REPO, s.file), "utf8"))), [], `${s.file} shows copy that is not approved`);
+    }
+  });
+});
+
+describe("T408 wave 5 — everywhere else, a wider net with a closed reviewed list", () => {
+  it("the claim shape catches the verifier's paraphrases and their kin, and not the signal itself", () => {
+    for (const s of [...VERIFIER_PARAPHRASES, "Messages here can't be copied", "We stop screenshots", "Screen recording is off for this chat", "Your chats are secure from capture"]) {
+      assert.equal(w5.claimsCaptureProtection(s), true, s);
+    }
+    for (const s of ["Alex took a screenshot", "A transferred screenshot is not a ticket.", "Copy link", "Blocked users"]) {
+      assert.equal(w5.claimsCaptureProtection(s), false, s);
+    }
+  });
+
+  it("every claim-shaped string in the client's shipped copy, the rendered notification templates and the API's route messages is reviewed, and every reviewed one is still there", () => {
+    const params = { actor: "Alex", name: "Alex", preview: "See you at 8", act: "is on the way", threadId: "t", title: "Dinner", location: "Pier", tripTitle: "Hue" };
+    const found = [
+      ...claimsIn(SHIPPED_CLIENT), ...claimsIn(serverFiles.filter((f) => f.includes("/src/routes/")), withoutLogCalls),
+      ...TEMPLATES.flatMap((t) => [t.title(params), t.body(params)].filter((x) => w5.claimsCaptureProtection(x)).map((x) => ({ file: `template:${t.eventType}`, text: collapse(x) }))),
+    ];
+    const reviewed = new Map(w5.REVIEWED_CLAIM_SHAPED_COPY.map((r) => [r.text, r]));
+    const unreviewed = found.filter((f) => !reviewed.has(f.text)).map((f) => `${f.file}: ${f.text}`);
+    assert.deepEqual(unreviewed, [], "§30A.9: a string pairing a protection word with a copying word must be reviewed onto REVIEWED_CLAIM_SHAPED_COPY with why it is not a promise that capture is stopped");
+    const seen = new Set(found.map((f) => f.text));
+    for (const r of w5.REVIEWED_CLAIM_SHAPED_COPY) {
+      assert.ok(seen.has(r.text), `"${r.text}" is reviewed and no longer appears — remove it`);
+      assert.equal(isScreenshotGuarantee(r.text), false, r.text);
+      assert.ok(r.why.length > 30, r.text);
+    }
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * PASS 13 (2026-10-18) — the API's route messages are copy too. A route's
+ * message reaches a client card verbatim: the layover disruption card shows the
+ * server's sentence, the closeout card shows `reason: detail`, the map
+ * contribution sheet shows a refusal's detail. So the claim-shaped case above
+ * reads src/routes with the client's copy, closed both ways on the same
+ * REVIEWED_CLAIM_SHAPED_COPY.
+ *
+ * A logger call is not copy: its arguments go to the log, never on the wire. A
+ * route file is therefore read with every logger call's argument list dropped
+ * (`withoutLogCalls`). The cases below pin that the drop is exactly the call —
+ * never a `toast.error`, never past its own closing parenthesis.
+ * ════════════════════════════════════════════════════════════════════════ */
+
+/** A call on a logger: console.*, `<x>Logger.*`, `logger.*`, `log.*`, `req.log.*`, at log/trace…fatal. */
+function logCallPattern(): RegExp {
+  return /\b(?:console|[A-Za-z_$][\w$]*Logger|logger|log)\s*\.\s*(?:trace|debug|info|warn|error|fatal|log)\s*\(/g;
+}
+
+/** The index of the bracket closing the one just before `i`, skipping string and template literals; -1 if none. */
+function closingBracket(code: string, i: number, open: string, close: string): number {
+  for (let depth = 1; i < code.length; i++) {
+    const c = code[i]!;
+    if (c === '"' || c === "'" || c === "`") { i = endOfLiteral(code, i); if (i < 0) return -1; continue; }
+    if (c === open) depth++;
+    else if (c === close && --depth === 0) return i;
+  }
+  return -1;
+}
+
+/** The index of the quote ending the literal that opens at `i` (a template's `${…}` is skipped as code); -1 if none. */
+function endOfLiteral(code: string, i: number): number {
+  const q = code[i]!;
+  for (i++; i < code.length; i++) {
+    const c = code[i]!;
+    if (c === "\\") { i++; continue; }
+    if (c === q) return i;
+    if (q === "`" && c === "$" && code[i + 1] === "{") { i = closingBracket(code, i + 2, "{", "}"); if (i < 0) return -1; continue; }
+    if (q !== "`" && c === "\n") return i;
+  }
+  return -1;
+}
+
+/** Each logger call's argument list, as [after its `(`, at its `)`]; `)` is -1 when the call does not close. */
+function logCallArgs(code: string): Array<[number, number]> {
+  const spans: Array<[number, number]> = [];
+  let from = 0;
+  for (const m of code.matchAll(logCallPattern())) {
+    if (m.index! < from) continue;
+    const open = m.index! + m[0].length;
+    const close = closingBracket(code, open, "(", ")");
+    spans.push([open, close]);
+    if (close >= 0) from = close;
+  }
+  return spans;
+}
+
+/** `code` with every logger call's arguments replaced by `{}` — no copy reads `{}`. A call that does not close is left as it is. */
+function withoutLogCalls(code: string): string {
+  let out = "";
+  let from = 0;
+  for (const [open, close] of logCallArgs(code)) {
+    if (close < 0) continue;
+    out += code.slice(from, open) + "{}";
+    from = close;
+  }
+  return out + code.slice(from);
+}
+
+/** A call that writes the response. A logger call's arguments never contain one, so a drop that does has run past its call. */
+const WRITES_THE_RESPONSE = /\bsendError\s*\(|\bsendTripRefusal\s*\(|\bres\s*\.\s*(?:status|json|send|end|write)\s*\(|\brouter\s*\./;
+
+describe("T408 pass 13 — the API's route messages are copy; its log lines are not", () => {
+  it("a logger call's message is dropped in every idiom the routes use; a message sent on the wire, and a toast, are kept", () => {
+    const code = [
+      "req.log.error(",
+      "  { blockerId, residual },",
+      "  \"block recorded, but social-edge cleanup FAILED\",",
+      ");",
+      "wishlistLogger.warn({ err }, \"save record upsert failed (non-blocking)\");",
+      "logger.info(`snapshot ${f(\")\")} cannot be recorded`, { a: (1) });",
+      "console.warn('screenshots are blocked (debug)');",
+      "sendError(res, \"conflict\", \"This queue cannot record an action on it.\");",
+      "res.status(503).json({ detail: `${FLAG} is off: an outcome is recorded only through the kernel` });",
+      "toast.error(\"Screenshots are blocked here\");",
+    ].join("\n");
+    const claims = (c: string) => stringLiterals(c).filter((s) => w5.claimsCaptureProtection(s));
+    assert.equal(claims(code).length, 7, "the synthetic input is claim-shaped seven times before the drop");
+    assert.deepEqual(claims(withoutLogCalls(code)), [
+      "This queue cannot record an action on it.",
+      "${FLAG} is off: an outcome is recorded only through the kernel",
+      "Screenshots are blocked here",
+    ]);
+    assert.equal(withoutLogCalls("log.warn(\"a (b\"); sendError(res, \"c\");"), "log.warn({}); sendError(res, \"c\");", "a parenthesis inside a string does not end the call");
+    assert.equal(withoutLogCalls("logger.error(\"never closed"), "logger.error(\"never closed", "a call that does not close is left to be read");
+  });
+
+  it("on the real routes, every logger call closes, and no dropped argument list writes the response", () => {
+    const routeFiles = serverFiles.filter((f) => f.includes("/src/routes/"));
+    assert.ok(routeFiles.length > 200, `route files: ${routeFiles.length}`);
+    let calls = 0;
+    const overreach: string[] = [];
+    for (const f of routeFiles) {
+      const code = stripComments(readFileSync(f, "utf8"));
+      for (const [open, close] of logCallArgs(code)) {
+        calls++;
+        if (close < 0) overreach.push(`${relative(REPO, f)}: a logger call at ${open} does not close`);
+        else if (WRITES_THE_RESPONSE.test(code.slice(open, close))) overreach.push(`${relative(REPO, f)}: ${collapse(code.slice(open, close)).slice(0, 140)}`);
+      }
+    }
+    assert.ok(calls > 1000, `logger calls read: ${calls}`);
+    assert.deepEqual(overreach, []);
+    const kept = new Set(claimsIn(routeFiles, withoutLogCalls).map((c) => `${c.file}: ${c.text}`));
+    const dropped = claimsIn(routeFiles).filter((c) => !kept.has(`${c.file}: ${c.text}`));
+    assert.ok(dropped.length > 0, "the drop removes no claim-shaped log line on the real tree — the case would be vacuous");
+  });
+});

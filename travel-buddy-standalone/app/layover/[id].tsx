@@ -58,7 +58,7 @@ import { LayoverPlanSection } from '../../src/components/layover/LayoverPlanSect
 import { LayoverRecsSection } from '../../src/components/layover/LayoverRecsSection';
 import { LayoverMapCard } from '../../src/components/layover/LayoverMapCard';
 import { LayoverPeopleSection } from '../../src/components/layover/LayoverPeopleSection';
-import { LayoverCrewSection } from '../../src/components/layover/LayoverCrewSection';
+import { LayoverCrewSection } from '../../src/components/layover/LayoverCrewSection'; import { LayoverCrewLocationCard } from '../../src/components/layover/LayoverCrewLocationCard'; import type { CrewLocationRead } from '../../src/services/layoverCrewLocation'; // census-layover L132/L124 (on this line so no line below moves)
 import { LayoverDiscoveryCard } from '../../src/components/layover/LayoverDiscoveryCard';
 import { LayoverSafeReturnCard } from '../../src/components/layover/LayoverSafeReturnCard';
 import { LayoverEndSheet } from '../../src/components/layover/LayoverEndSheet'; import { endLayoverToast } from '../../src/components/layover/layoverEndToast';
@@ -161,7 +161,7 @@ export default function LayoverDashboardScreen() {
     degraded: true, degradedReasons: ['not_yet_read'], withheld: [],
   });
   const [buddies, setBuddies] = useState<LayoverBuddiesAnswer | null>(null); // L273/L294: the answer, null until read
-  const [shareBusy, setShareBusy] = useState(false);
+  const [shareBusy, setShareBusy] = useState(false); const [crewLoc, setCrewLoc] = useState<CrewLocationRead | null>(null); // census-layover L124 — the crew location card's last read; the map draws crewmates only from an available, in-crew one
   const [addingRecId, setAddingRecId] = useState<string | null>(null);
   const [reminderBusy, setReminderBusy] = useState(false);
   const [endBusy, setEndBusy] = useState(false);
@@ -414,7 +414,7 @@ export default function LayoverDashboardScreen() {
     try {
       const res = await addStopFromRecommendation(id, recId);
       if (res) { onStopsChanged(res); showToast('Added to your plan'); }
-      else showToast('Could not add — plans may be full');
+      else showToast('Could not add this idea. Check the ideas list and try again.'); // census L296: a refused add is a refreshed list, an outage or a refusal, never "plans may be full"
     } finally {
       setAddingRecId(null);
     }
@@ -685,7 +685,7 @@ export default function LayoverDashboardScreen() {
       ? describeDeadline(cachedDeadlineAsBundle(cached), cached.hardReturnTime, nowMs)
       : null;
     return (
-      <View style={styles.centerFill} testID="layover-load-error">
+      <ScrollView style={styles.failureScroll} contentContainerStyle={styles.failureContent} testID="layover-load-error">
         <Stack.Screen options={{ headerShown: false }} />
         <Text style={styles.centerTitle}>
           {gone ? 'This layover is no longer here' : "Couldn't load this layover"}
@@ -713,7 +713,7 @@ export default function LayoverDashboardScreen() {
         {/* census L151/L233 — where they were going, which airport they have to
             be back at, and how far the certified envelope reached. Captioned
             last-certified by the card itself, through the one staleness rule. */}
-        <LayoverOfflinePlanCard plan={plan} replan={replanDecision} nowMs={nowMs} />
+        <LayoverOfflinePlanCard plan={plan} replan={replanDecision} nowMs={nowMs} />{plan ? <View style={styles.offlineMap}><LayoverMapCard cached={plan} cachedReturn={cached} nowMs={nowMs} /></View> : null}{/* census-layover L126 — §13 offline state: the MAP card itself, drawn from the cached plan with its last-certified instant and stale badge */}
         {retryable && (
           <Pressable style={styles.retryBtn} onPress={() => load()} testID="layover-load-retry">
             <Text style={styles.retryBtnText}>Try again</Text>
@@ -722,7 +722,7 @@ export default function LayoverDashboardScreen() {
         <Pressable style={styles.backLink} onPress={() => router.back()}>
           <Text style={styles.backLinkText}>Go back</Text>
         </Pressable>
-      </View>
+      </ScrollView>
     );
   }
 
@@ -854,7 +854,7 @@ export default function LayoverDashboardScreen() {
           window={win}
           airport={airport}
           airportIntelligence={overview.airportIntelligence ?? null}
-        /><LayoverConstraintsCard sessionId={session.id} canEdit={!!canEdit} refreshKey={dataEpoch} onChanged={() => load(true)} creationNotice={typeof constraintsAtStart === 'string' ? constraintsAtStart : null} />{/* §4/§5/§12.1 (census L22, L35, L49): the declared bags and connection, and the one question when the answer could change the verdict. */}
+        /><LayoverDecisionRecordCard sessionId={session.id} snapshotId={overview.snapshotId} persisted={overview.persisted} engineVersion={overview.certification?.engineVersion ?? advice.engineVersion ?? null} timezone={airport.timezone} /><LayoverConstraintsCard sessionId={session.id} canEdit={!!canEdit} refreshKey={dataEpoch} onChanged={() => load(true)} creationNotice={typeof constraintsAtStart === 'string' ? constraintsAtStart : null} />{/* §4/§5/§12.1 (census L22, L35, L49): the declared bags and connection, and the one question when the answer could change the verdict. */}
         {/* The one §11 event producer this tree has: the traveller. A flight
             time the gate agent just announced is a fact no feed here carries,
             and the server runs the whole §11.1 pipeline over it. */}
@@ -863,7 +863,7 @@ export default function LayoverDashboardScreen() {
           canEdit={!!canEdit}
           onChanged={() => load(true)}
           onError={showToast}
-        />
+        /><LayoverDisruptionCard sessionId={session.id} canReport={session.status === 'active' || session.status === 'returning'} timezone={airport.timezone} departureLocal={localTimes?.departureDay && localTimes?.departureLocal ? `${localTimes.departureDay} ${localTimes.departureLocal}` : null} onReported={() => load(true)} serverDisruption={overview.disruption} />{/* census-layover L148/L149/L231 — §15.2: the traveller reports a delay or cancellation; the card shows the server's state and recompute, and the screen re-reads */}
         <AirportEssentialsCard countryCode={airport.countryCode} countryName={airport.country !== 'Unknown' ? airport.country : undefined} />
 
         {/* §10 L82 — the traveller observation channel's submission surface.
@@ -943,7 +943,7 @@ export default function LayoverDashboardScreen() {
               airportReturn={airportReturn}
               envelope={overview.safeEnvelope ?? null} envelopeGate={overview.safeEnvelopeGate ?? null}
               candidateFeasibility={candidateFeasibility}
-              offline={overview.offlineBundle ?? null}
+              offline={overview.offlineBundle ?? null} crewLocations={crewLoc && crewLoc.ok && crewLoc.available && crewLoc.inCrew ? crewLoc.crewmates : null} /* census-layover L124: the SAME read the crew location card landed; feature off, no crew or a failed read is null */
               nowMs={nowMs} budgetChips={overview.mapBudgetChips ?? null} sessionId={id ?? null} /* census-layover L118: the server-offered time-budget chips; each press is a server simulation */
             />
             {/* The overview's `othersInCity` is a SECOND count, from the
@@ -998,7 +998,7 @@ export default function LayoverDashboardScreen() {
               sessionId={session.id}
               timezone={airport.timezone}
               refreshKey={dataEpoch}
-            />
+            /><LayoverCrewLocationCard sessionId={session.id} timezone={airport.timezone} refreshKey={dataEpoch} onRead={setCrewLoc} />{/* census-layover L132 — §14 L4 temporary location. A SIBLING of the crew section, never inside it (its own read would join the section's fetches); it draws nothing unless the server says the feature is on and this traveller is in a crew */}
           </View>
         )}
       </ScrollView>
@@ -1134,7 +1134,7 @@ const styles = StyleSheet.create({
   topTitle:  { ...t.heading, color: color.ink },
   body:      { padding: space.lg, gap: space.md },
 
-  centerFill:{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paper, padding: space.xl, gap: space.sm },
+  centerFill:{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paper, padding: space.xl, gap: space.sm }, failureScroll: { flex: 1, backgroundColor: color.paper }, failureContent: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', padding: space.xl, gap: space.sm }, offlineMap: { alignSelf: 'stretch', marginTop: space.sm }, /* census-layover L126: the failure screen scrolls, because the offline map makes it taller than a phone */
   centerTitle:{ ...t.heading, color: color.ink },
   centerText:{ ...t.small, color: color.mute, textAlign: 'center' },
   retryBtn:  { backgroundColor: color.ink, borderRadius: radius.md, paddingHorizontal: space.xl, paddingVertical: space.md, marginTop: space.md },
@@ -1181,3 +1181,7 @@ const styles = StyleSheet.create({
 // LP-2: NOT the composer. The composer reaches the photo picker and L168's guard forbids that from this surface;
 // the postcard is handed to Passport by route, with the layover id only.
 import { layoverPostcardOffered, layoverPostcardHref } from '../../src/components/layover/layoverPostcard';
+// census-layover L148/L149/L231 — §15.2 disruption reporting. Imported at the TAIL so no cited line moves; ESM hoists imports.
+import { LayoverDisruptionCard } from '../../src/components/layover/LayoverDisruptionCard';
+// census-layover L189/L191 — Portava's stored record of the answer, explained and re-checked. Imported at the TAIL so no cited line moves; ESM hoists imports.
+import { LayoverDecisionRecordCard } from '../../src/components/layover/LayoverDecisionRecordCard';

@@ -15207,13 +15207,13 @@ kept everywhere, as mapPublicPost keeps them.
   is unchanged; the filter is at
   `artifacts/api-server/src/routes/placeLiving.ts:635#const formattedPosts = posts.filter((p: any) => !postPlaceWithheldFrom(p, timelineViewer?.user.id))`).
 - **The Place Day feed** SELECTs the mode
-  (`artifacts/api-server/src/routes/placeDays.ts:102#publish_at, location_privacy_mode, published_at, profiles(id, is_private)")`)
+  (`artifacts/api-server/src/routes/placeDays.ts:102#publish_at, location_privacy_mode, published_at, profiles!author_id(id, is_private)")`)
   and skips another author's withheld post before paging
   (`artifacts/api-server/src/routes/placeDays.ts:114#let visible = chunk.filter((p) => !blocked.has(p.author_id) && isEligiblePlaceDayPost(p)); visible = visible.filter`).
   The sequence a viewer can page through is the old sequence minus those posts,
   in the same order (C6 walks every page).
 - **Place Day recaps** SELECT the mode
-  (`artifacts/api-server/src/routes/placeRecaps.ts:60#publish_at, location_privacy_mode, profiles(id, is_private)")`)
+  (`artifacts/api-server/src/routes/placeRecaps.ts:60#publish_at, location_privacy_mode, profiles!author_id(id, is_private)")`)
   and never copy another author's withheld post into a recap: the eligibility
   line lane Q cited is unchanged
   (`artifacts/api-server/src/routes/placeRecaps.ts:64#const candidates = ((data ?? []) as any[]).filter((post) => !blocked.has(post.author_id) && isEligiblePlaceDayPost(post));`),
@@ -17324,3 +17324,267 @@ FFmpeg toolchain, pgvector, and a native build. All five also wait on vendor rul
 - a caption track served before the creator publishes it;
 - an index that outlives its media or its consent;
 - an encoder that returns a file over its bitrate ceiling or not smaller than the source.
+
+## 54. Row moves — 2026-10-17 build and fix (wave 5, memory/stamps/media): MD385 is built up to its migration. NO ROW MOVES
+
+Measured on branch `claude/wave4-build-20261017` on 2026-10-17, against the working tree. `head_commit` is not
+re-declared. Every row not named here is unchanged. This section records construction for one W row whose
+verdict does not move: the migration it needs is written and applied nowhere, so rule A.2 holds it at W.
+
+### 54.1 What is built for MD385 (ruling D-26j: a Memory from one's OWN media only)
+
+- **Storage, migration 3999 (applied nowhere).** `memory_items.source_post_id` is added as a nullable uuid
+  (`artifacts/api-server/src/migrations/3999_memory_items_source_post.sql:89#ALTER TABLE public.memory_items ADD COLUMN IF NOT EXISTS source_post_id uuid;`).
+  It references the post and cascades with the post row
+  (`artifacts/api-server/src/migrations/3999_memory_items_source_post.sql:98#FOREIGN KEY (source_post_id) REFERENCES public.posts(id) ON DELETE CASCADE;`).
+  A guard trigger accepts a link only to a live post whose author owns the Memory, and only with that post's own
+  media (`artifacts/api-server/src/migrations/3999_memory_items_source_post.sql:128#AND p.author_id = m.owner_id`).
+  One copy of one post photo per Memory
+  (`artifacts/api-server/src/migrations/3999_memory_items_source_post.sql:107#CREATE UNIQUE INDEX IF NOT EXISTS memory_items_source_post_media_uniq`).
+  The flag is seeded FALSE
+  (`artifacts/api-server/src/migrations/3999_memory_items_source_post.sql:150#('memory_from_own_media_enabled', false,`).
+- **The action.** `POST /memories/:id/items/from-post`
+  (`artifacts/api-server/src/routes/memories.ts:3860#router.post("/memories/:id/items/from-post"`). The server checks,
+  in order: the flag, then the column by name (the schema-marker probe), so absent storage is refused and never
+  written around (`artifacts/api-server/src/services/memory/memoryFromOwnMedia.ts:47#export async function gateMemoryFromOwnMedia(`);
+  that the Memory is the caller's; and that the post is the caller's own live post. Someone else's post, a missing
+  post and a deleted post are one answer, `not_found`
+  (`artifacts/api-server/src/services/memory/memoryFromOwnMedia.ts:92#if (!post || post.author_id !== input.viewerId)`).
+  The media is picked by index from the post's own `media_urls`. The client never supplies a URL, and the body is
+  `.strict()`. With the Memory kernel on, 2711's ADD_MEDIA writes no link, so the route links the item after the
+  write, or removes it and refuses. An unlinked copy is never left behind
+  (`artifacts/api-server/src/routes/memories.ts:3938#if (row?.source_post_id !== postId) {`).
+- **The §44 producer.** `memory_create` is recorded at the moment the item is written, keyed by the post id, as
+  `postcard_create` is (`artifacts/api-server/src/lib/mediaAnalytics.ts:428#export function recordMemoryCreatedFromMediaSignal(`).
+  It is server-only, on `MEDIA_SERVER_OUTCOME_SIGNAL_TYPES`, and carries no Memory id, title or place.
+- **Withdrawal, stated rather than decided.** Erasing the source post row erases the copies made from it. A post
+  its author soft-deletes keeps its copies in that author's own Memories. Whether a soft delete or a moderation
+  hold on the source should also withdraw the copy is an open owner question, **MD385-Q1**.
+
+**TESTED:** `artifacts/api-server/src/test/memoryFromOwnMedia.pglite.test.ts`, 11/11, runs 3999 in PGlite and the
+route over it (`artifacts/api-server/src/test/memoryFromOwnMedia.pglite.test.ts:244#the database accepts a link only to the Memory owner's own live post`,
+`artifacts/api-server/src/test/memoryFromOwnMedia.pglite.test.ts:295#someone else's post is refused, as not_found`,
+`artifacts/api-server/src/test/memoryFromOwnMedia.pglite.test.ts:328#kernel on, and the link cannot be written`,
+`artifacts/api-server/src/test/memoryFromOwnMedia.pglite.test.ts:344#flag ON over a database without 3999`).
+Sixteen mutants were run, each restored byte-identically and checked by sha256. Fifteen were killed. They
+cover: dropping the storage probe, the author check, the live-post check, the trigger's author, status and
+media clauses, the cascade, the kernel-path link, the undo, `.strict()`, the flag seed, the EXECUTE revoke,
+the signal, the flag gate and the unique index. The one survivor deletes only the log line of a failed undo,
+so it is equivalent by construction. The cascade, revoke and seed mutants are also killed by 3999's own
+postcondition. These are local runs on PGlite with a stub of 2711's two arms. They are not evidence about a
+hosted database.
+
+### 54.2 Row moves
+
+| ID | Was | Now | Evidence |
+| --- | --- | --- | --- |
+| MD385 | **W** | **W** | **Built up to its migration, not moved.** D-26j's own-media scope is enforced twice, in the route and by 3999's trigger. The §44 Memory half now has a producer (§54.1). **Why W, not C:** 3999 is applied nowhere (A.2), and `memory_from_own_media_enabled` is seeded FALSE. MD385-Q1 (whether a soft delete or a moderation hold withdraws the copy) is open. No client control calls the route yet. The lead registers the test file. |
+
+### 54.3 Examined and not moved
+
+- **The image ladder has no production producer.** `enqueueConfiguredImageVariants`
+  (`artifacts/api-server/src/lib/media/imageVariants/bridge.ts:31#subject.bucket !== "post-media"`) is called
+  only by tests. No upload path enqueues an image, so no generation is ever published, even with
+  `MEDIA_IMAGE_VARIANTS_ENABLED` set and both 3980 flags on. The rows that grade the ladder are already W on
+  3980 being applied nowhere. This is recorded as a finding for whoever wires the post-moderation hook, and no
+  verdict here moves on it. census-highlights-memories H182 now selects the ladder's renditions on the Memory
+  read path (that census, wave 5). It inherits this gap.
+
+### 54.4 Headline, restated from the rows
+
+`check:census-integrity` recounted after this section.
+
+| Measure | §53.5 | **§54.4** |
+| --- | ---: | ---: |
+| Denominator | 450 | **450** |
+| BUILT-AND-CORRECT | 415 | **415** |
+| BUILT-BUT-WRONG | 35 | **35** |
+| NOT-BUILT | 0 | **0** |
+| CANNOT-VERIFY | 0 | **0** |
+| CONSTRUCTED% | 100.0 % | **100.0 %** (450 / 450) |
+| CORRECT% raw | 92.2 % | **92.2 %** (415 / 450) |
+
+## 55. Row moves — 2026-10-17 build and fix (wave 5, stamps/memory follow-ups): MD385 gets its client entry, and §54.3 is corrected. NO ROW MOVES
+
+Measured on branch `claude/wave4-build-20261017` on 2026-10-17, against the working tree. `head_commit` is not
+re-declared. Every row not named here is unchanged.
+
+### 55.1 What is built for MD385 on the client
+
+- **The service.** `saveOwnPostMediaToMemory` calls `POST /memories/:id/items/from-post` with the post id and the
+  media INDEX. The client never sends a URL
+  (`travel-buddy-standalone/src/services/memoryFromPost.ts:103#body: JSON.stringify({ postId: input.postId, mediaIndex`).
+  It carries a §19 idempotency key. Every server answer becomes a sentence: switched off, not found (the server's
+  one answer for not-yours, missing and deleted), not your Memory, no such media, already in the Memory,
+  unavailable, offline, failed. Only the last three offer Try again. `saveOwnPostToMemory` copies every media item
+  of the post in order, stops at once on a final refusal, and reports how many made it when it stops part-way.
+- **The sheet.** The person picks one of their OWN Memories or makes a new private one titled from the post. A list
+  that could not load says so, with Try again, and the new-Memory path still works. A copy that stopped part-way
+  says "2 of 3 saved", never "saved" (`travel-buddy-standalone/src/features/memories/SaveOwnPostToMemorySheet.tsx`).
+- **The entry.** The post detail overflow offers "Save to a Memory" only on the viewer's own post with media, and
+  only while `memory_from_own_media_enabled` is on. The flag is read through `FeatureFlagsContext` like every
+  other client flag, and it is seeded FALSE, so nothing shows
+  (`travel-buddy-standalone/app/post/[id].tsx:302#const { isEnabled } = useFeatureFlags();`). The server remains
+  the guard. The screen only decides what to offer.
+- **Tested:** 29 client cases in three suites
+  (`travel-buddy-standalone/app/post/__tests__/PostDetail.saveToMemory.component.test.tsx:98#flag OFF (the seeded default): nothing shows`,
+  `travel-buddy-standalone/src/features/memories/__tests__/SaveOwnPostToMemory.component.test.tsx:122#a copy that stopped part-way says how many made it`,
+  `travel-buddy-standalone/src/services/__tests__/memoryFromPost.component.test.ts:34#names the post and the media index`).
+  Red at HEAD's screen: the flag-on own-post case fails. 12 mutants, each restored and checked by sha256, all
+  killed. They cover the flag ignored, the author ignored, the media ignored, a URL sent, feature_disabled read
+  as forbidden, a copy that continues past a refusal, a partial copy reported as saved, another person's Memories
+  offered, Try again offered on a final refusal, a new Memory that is not private, a failed new Memory that still
+  copies, and a 409 counted as a failure. These are jest runs. They are not evidence about a device.
+
+### 55.2 Row moves
+
+| ID | Was | Now | Evidence |
+| --- | --- | --- | --- |
+| MD385 | **W** | **W** | **The client entry §54.2 said was missing is built (§55.1), and the verdict does not move.** D-26j's own-media scope is now offered only on one's own post and is still enforced by the route and by 3999's trigger. **Why W, not C:** 3999 is applied nowhere (A.2). `memory_from_own_media_enabled` is seeded FALSE, so the entry shows nowhere. MD385-Q1 (whether a soft delete or a moderation hold on the source withdraws the copy) is open. The lead registers the server test file, as §54.2 says. |
+
+### 55.3 Correction to §54.3: the image ladder HAS a production producer
+
+§54.3 said `enqueueConfiguredImageVariants` *"is called only by tests. No upload path enqueues an image."* That was
+false when it was written. `POST /api/media/upload` runs `runMediaVendorIngest` once the canonical row is recorded
+(`artifacts/api-server/src/routes/posts.ts:286#runMediaVendorIngest(sc,`). That stage calls
+`enqueueConfiguredImageVariants` for an image whose source generation is approved
+(`artifacts/api-server/src/lib/media/vendors/mediaVendorStages.ts:183#await enqueueConfiguredImageVariants(sc`). With
+the moderation stage off, that is the upload's own version. The call came in with `e1e097cfe`, an ancestor of the
+commit that recorded §54.3. It is fire-and-forget, and it reaches only uploads made while the switch and both 3980
+flags are on.
+
+This pass also enqueues where a Memory photo is STORED. That covers an older upload, a post photo copied in by
+MD385, and an upload whose own enqueue failed. It sits behind the same switch and flags, and it is idempotent per
+asset generation (census-highlights-memories H182, §W5F.1). No verdict here moves on either: the rows that grade
+the ladder are W on 3980 being applied nowhere, and that is unchanged.
+
+### 55.4 Headline, restated from the rows
+
+`check:census-integrity` recounted after this section.
+
+| Measure | §54.4 | **§55.4** |
+| --- | ---: | ---: |
+| Denominator | 450 | **450** |
+| BUILT-AND-CORRECT | 415 | **415** |
+| BUILT-BUT-WRONG | 35 | **35** |
+| NOT-BUILT | 0 | **0** |
+| CANNOT-VERIFY | 0 | **0** |
+| CONSTRUCTED% | 100.0 % | **100.0 %** (450 / 450) |
+| CORRECT% raw | 92.2 % | **92.2 %** (415 / 450) |
+
+### Correction (2026-10-17, wave 5) — the Place Day feed, Place Day and Moment recaps, the recap list and the Shared Moment feed: ambiguous embed never resolved in production
+
+**The production fact.** The lead read the production catalog on 2026-10-17 (read-only). `public.posts` has three
+foreign keys to `public.profiles`: `posts_author_id_fkey` (author_id), `posts_created_by_fkey` (created_by) and
+`posts_updated_by_fkey` (updated_by). `public.live_place_recaps` and `public.live_place_recap_versions` key each other
+both ways: `live_place_recaps_current_version_fk` and `live_place_recap_versions_recap_id_fkey`. PostgREST refuses an
+unhinted embed across either pair (PGRST201). Five reads this census cites (§42.6 (3), §43.2, §50.3, §50.7) were such
+embeds, so none of them ever answered in production. No error was swallowed: each route turned it into `db_error`.
+- The Place Day feed, `GET /places/:id/place-days/:date/feed`, always failed
+  (`artifacts/api-server/src/routes/placeDays.ts:102#profiles!author_id(id, is_private)`).
+- No Place Day recap or Moment recap could be created or regenerated. `collectSources` answered "could not be
+  verified" (`artifacts/api-server/src/routes/placeRecaps.ts:60#profiles!author_id(id, is_private)`,
+  `artifacts/api-server/src/routes/placeRecaps.ts:42#profiles!author_id(id, is_private))`).
+- The place's recap list, `GET /places/:placeId/recaps`, always failed
+  (`artifacts/api-server/src/routes/placeRecaps.ts:151#live_place_recap_versions!live_place_recap_versions_recap_id_fkey!inner(`).
+- The Shared Moment feed, `GET /shared-moments/:id/feed`, always failed
+  (`artifacts/api-server/src/routes/sharedMoments.ts:314#profiles!author_id(id, is_private))`).
+
+§43.2 says the Place Day feed "SELECTs the mode" and skips another author's withheld post, and that Place Day recaps
+never copy one. §50.7 lists the Place Day feed among the readers given the 24-hour window. All three describe code
+that never got past its read in production. It narrowed nothing there and disclosed nothing: a read that fails
+shows no place.
+
+**The fix.** One hint per read, on the same line, so no cited line moves. `profiles!author_id(...)`: every caller
+hands that profile to `excludePrivateAuthorPosts` as the author's privacy. `live_place_recap_versions!live_place_recap_versions_recap_id_fkey!inner(...)`:
+the list of versions the client sorts by version number; the current-version key would answer one object. §43.2's
+two anchors at `placeDays.ts:102` and `placeRecaps.ts:60` are repointed to the hinted text, and their claims are
+unchanged. The test doubles now refuse an ambiguous embed, as PostgREST does
+(`artifacts/api-server/src/test/helpers/migrationForeignKeys.ts`). The scan's ambiguous-embed ledger is empty
+(`artifacts/api-server/src/test/selectEmbedForeignKeyScan.test.ts`). `artifacts/api-server/src/test/ambiguousEmbedHints.test.ts`
+drives each route on the schema-strict double, which joins flat seeded tables along the key the hint names.
+10 of 10 source mutants are killed: each read unhinted, or hinted to `created_by`, `updated_by` or the
+current-version key. These are local runs on fakes, not evidence about a deployment.
+
+**No row moves.** `placeDays.ts` and `placeRecaps.ts` are NOT-GRADED here (§42.10). MD79 (`C`) lists the Place Day
+feed among seven readers given the window (§50.7). That reader never answered, so nobody saw a place through it,
+the author included. That is less than the ruling allows, never more, which §50.9 already accepts for the four
+closed readers. The row rests on the disclosure ending and on the author bypass on the two `routes/posts.ts` feeds,
+and neither depends on this read. MD222 rests on the media context graph and the People lens's
+`shared_moment_memberships` read, not on the contribution feed. MD100 rests on the invite endpoint, which embeds
+nothing.
+
+- NOT-GRADED: artifacts/api-server/src/test/helpers/migrationForeignKeys.ts — the test doubles' embed guard, cited above as the evidence that the doubles now refuse an ambiguous embed; test machinery, and no row rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/selectEmbedForeignKeyScan.test.ts — the static embed scan whose ambiguous-embed ledger is now empty; test machinery, and no row rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/ambiguousEmbedHints.test.ts — the route tests for this correction, which moves no row.
+
+### Correction (2026-10-17, wave 5) — 3999's own-media trigger no longer blocks re-parenting
+
+**The defect.** An independent verifier found this, and it is confirmed here. 3999's guard fires on an UPDATE of
+`memory_id`, and it demanded a live source post on every such UPDATE. 3676's split moves items by changing `memory_id`
+alone (`artifacts/api-server/src/migrations/3676_memory_graph_kernel.sql:337#UPDATE public.memory_items SET memory_id = v_new_id WHERE memory_id = v_memory_id AND id = ANY (v_items);`),
+and so does its merge (`artifacts/api-server/src/migrations/3676_memory_graph_kernel.sql:236#UPDATE public.memory_items i`).
+A split or merge of the owner's own Memory therefore raised D-26j whenever a moved item's source post had been
+soft-deleted or held since it was linked. Both migrations are applied nowhere, so nothing failed in a deployment.
+Before the fix, PGlite ran the real 3676 after 3999, and three new tests failed on that raise: the direct
+re-parent, the split and the merge.
+
+**The fix, in 3999 only, line-neutral.** An INSERT keeps the full check, as does an UPDATE that changes
+`source_post_id` or `media_url`: the post must be the owner's own, live, and the media must be that post's. An UPDATE that changes
+neither re-checks ownership only
+(`artifacts/api-server/src/migrations/3999_memory_items_source_post.sql:129#Re-parenting (an UPDATE moving memory_id alone: 3676's split / merge) needs ownership only.`).
+Both paths share the ownership clause
+(`artifacts/api-server/src/migrations/3999_memory_items_source_post.sql:128#AND p.author_id = m.owner_id`), so a
+move into someone else's Memory is still refused. 3676 never makes that move. Before its first write, it refuses
+any Memory the actor does not own
+(`artifacts/api-server/src/migrations/3676_memory_graph_kernel.sql:207#owner_id IS DISTINCT FROM v_actor`), and a
+split's new Memory copies the source row, owner included. A NULL link is never checked. If both columns change at
+once, the full check applies. No cited line moved, and §54.1's five anchors hold.
+
+**TESTED:** `artifacts/api-server/src/test/memoryFromOwnMedia.pglite.test.ts`, now 18/18. A second suite applies
+3676 after 3999 in PGlite and drives its real `memory_graph_kernel_execute`
+(`artifacts/api-server/src/test/memoryFromOwnMedia.pglite.test.ts:496#3676 SPLIT_MEMORY moves a linked item whose source post was soft-deleted`,
+`artifacts/api-server/src/test/memoryFromOwnMedia.pglite.test.ts:507#3676 MERGE_MEMORY absorbs a Memory holding a linked item whose source post is held`,
+`artifacts/api-server/src/test/memoryFromOwnMedia.pglite.test.ts:456#re-parenting into another owner's Memory is still refused`,
+`artifacts/api-server/src/test/memoryFromOwnMedia.pglite.test.ts:466#a new or re-pointed link still needs the owner's own live post and its own media`).
+Twelve trigger mutants were run, each restored and checked by sha256, and eleven were killed. The survivor drops
+the `TG_OP = 'UPDATE'` guard, which is equivalent by construction: OLD is NULL on INSERT. These are local PGlite runs
+over a schema subset, not evidence about a hosted database.
+
+**Open, not fixed here.** A 3676 merge of two of the owner's Memories that each hold a copy of the same post photo
+still raises 23505 on 3999's one-copy-per-Memory index (§54.1), because the merge does not de-duplicate items. This
+was reproduced in PGlite. The fix belongs either to 3676's merge or to the index, so it is the lead's call.
+
+**No row moves.** MD385 stays W, because 3999 is applied nowhere (A.2).
+
+- NOT-GRADED: artifacts/api-server/src/migrations/3676_memory_graph_kernel.sql — the Memory merge/split kernel (census-highlights-memories), cited as the writer whose re-parenting this correction unblocks; no media row rests on it.
+
+### Correction (2026-10-18, wave 5 migration lane) — post_media_public_select's block check was one-way; 3905 re-creates it
+
+*Branch `claude/wave4-build-20261017`; the migration is unapplied everywhere. **NO ROW MOVES.***
+
+The policy's block test read `public.blocks` through `blocks`' own row-level security, which shows a reader only the
+blocks they made. So someone the media's owner had blocked could still read the owner's ready, public media through
+PostgREST. Only a block made BY the reader was enforced. In-process PostgreSQL 16.4 (PGlite) shows this under 2337's policy.
+
+`artifacts/api-server/src/migrations/3905_post_media_public_select_block_check_of_record.sql` re-creates the policy with
+`NOT authz.is_blocked(auth.uid(), post_media.user_id)`, which tests both directions. Everything else in the policy is
+byte-identical. Before writing, its precondition proves on the database itself that the installed policy is exactly 2337's
+(or already 3905's). Tests:
+- `artifacts/api-server/src/test/sqlBlockChecksOfRecordMigrations.test.ts`;
+- `artifacts/api-server/src/test/db/postMediaBlockCheckOfRecord.db.test.ts`, which runs on CI's local-db job.
+
+**RULING (independent verification pass 11): MD9 stays C.** Its words and its evidence (`routes/mediaWorld.ts:18-33`,
+`projectCandidatesProtected`) are the API's projection path, which is correct. A direct PostgREST read bypasses projection
+and is this census's separate surface (§42.6 (5); §44.7 item 1, which proposed exactly 3905's shape). No shipped screen
+reads `post_media` directly (the client's direct reads are profiles, user_follows, trip_members, trips,
+rent_buddy_packages, rent_buddy_fee_rules, event_rsvps and circles). But the table is exposed to `anon` and
+`authenticated` with SELECT and a `TO public` policy, so anyone holding the publishable key shipped in the app, or any
+user JWT, reads it today, and the owner's block does not bite. Production carries the one-way check until the owner
+applies 3905, after the 20261017 packet and its 3996–3999 addendum.
+
+A row for §44.18.6's reader table, recorded here so no line above moves:
+
+| Reader | What it serves | Honoured the block before | Now |
+| --- | --- | --- | --- |
+| Direct PostgREST reads of `post_media` | every ready, public row the policy admits, including rows whose OWNER blocked the reader (the policy's `blocks` subquery ran under `blocks`' own RLS) | no | **fixed on branch by 3905, not merged, not deployed; the viewer's own block was always honoured** |

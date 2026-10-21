@@ -41,7 +41,7 @@ import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEng
 import { getActiveCapsResult, getCapForUser } from "../services/trust/TrustCapService.js";
 import type { RestrictionType } from "../services/trust/TrustRestrictionService.js";
 
-import { requireAdmin } from "../lib/requireAdmin.js";
+import { requireAdmin } from "../lib/requireAdmin.js"; import { exactListCount, listTotalRefusal, parseListPage, parseVocabularyFilter, TRUST_REVIEW_STATUSES, TRUST_REVIEW_TYPES } from "../lib/moderationCounts.js";
 import {
   getTrustMaintenanceStatus,
   MAINTENANCE_INTERVAL_MS,
@@ -117,10 +117,10 @@ router.get("/admin/trust/reviews", async (req, res) => {
   if (!admin) return;
   const { sc } = admin;
 
-  const page       = Math.max(1, Number(req.query.page) || 1);
-  const limit      = Math.min(100, Number(req.query.limit) || 50);
-  const type       = (req.query.type as string) || null;
-  const status     = (req.query.status as string) || null;
+  const { page, limit } = parseListPage(req.query, 50, 100); // wave 5: ?limit=-5 was -5 (Math.min alone), a negative page size and a nonsense range
+  // (a page or limit that is not a positive whole number is the default — the house rule; `page` in the answer names what was served)
+  const typeF      = parseVocabularyFilter(req.query.type, "type", TRUST_REVIEW_TYPES); if (!typeF.ok) { sendError(res, "invalid_payload", typeF.message); return; } const type = typeF.value; // wave 5: a word no review carries answered an EMPTY queue
+  const statusF    = parseVocabularyFilter(req.query.status, "status", TRUST_REVIEW_STATUSES); if (!statusF.ok) { sendError(res, "invalid_payload", statusF.message); return; } const status = statusF.value; // refused by name (400), never `{ reviews: [], total: 0 }`
   const assignedTo = (req.query.assigned_to as string) || null;
 
   let query = sc
@@ -138,9 +138,9 @@ router.get("/admin/trust/reviews", async (req, res) => {
   if (assignedTo) query = query.eq("assigned_to", assignedTo);
 
   const { data, error, count } = await query;
-  if (error) { sendError(res, "db_error", error.message); return; }
-  void logAdminAccess(sc, admin.userId, "profile", "list", "view", accessReason(req));
-  res.json({ reviews: data ?? [], total: count ?? 0, page });
+  if (error) { sendError(res, "db_error", error.message); return; } const total = exactListCount(count, data, (page - 1) * limit); // never `count ?? 0` (wave 5): a count-less page read as an empty review queue
+  if (total === null) { sendError(res, "db_error", listTotalRefusal("trust review queue"), { exposeDetail: true }); return; } void logAdminAccess(sc, admin.userId, "profile", "list", "view", accessReason(req));
+  res.json({ reviews: data, total, page });
 });
 
 // ── GET /admin/trust/events/pending ──────────────────────────────────────────
@@ -526,17 +526,17 @@ router.get("/admin/trust/gaming-flags", async (req, res) => {
 
   const limit = Math.min(100, Number(req.query.limit) || 50);
 
-  const { data, error } = await sc
+  const { data, error, count } = await sc
     .from("trust_reviews")
-    .select("id, user_id, review_type, status, metadata, created_at")
+    .select("id, user_id, review_type, status, metadata, created_at", { count: "exact" }) // `total` is the queue's size, measured (wave 5): it was this page's length, and 0 from a non-list answer
     .eq("review_type", "gaming_suspected")
     .in("status", ["open", "in_progress"])
     .order("created_at", { ascending: false })
     .limit(limit);
-
-  if (error) { sendError(res, "db_error", error.message); return; }
+  if (error) { sendError(res, "db_error", error.message); return; } const total = exactListCount(count, data);
+  if (total === null) { sendError(res, "db_error", listTotalRefusal("gaming-flag"), { exposeDetail: true }); return; }
   void logAdminAccess(sc, admin.userId, "profile", "list", "view", accessReason(req));
-  res.json({ flags: data ?? [], total: (data ?? []).length });
+  res.json({ flags: data, total });
 });
 
 // ── POST /admin/trust/gaming-flags/:id/mark-reviewed ────────────────────────

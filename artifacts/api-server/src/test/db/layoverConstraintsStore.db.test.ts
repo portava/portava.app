@@ -71,7 +71,7 @@ function psqlClient(): any {
       let limit = "";
       let insert: Record<string, unknown> | null = null;
       const select = () =>
-        `SELECT COALESCE(json_agg(t), '[]'::json)::text FROM (SELECT ${cols} FROM public.${ident(table)}${where.length ? ` WHERE ${where.join(" AND ")}` : ""}${order}${limit}) t;`;
+        `SELECT COALESCE(json_agg(t.*), '[]'::json)::text FROM (SELECT ${cols} FROM public.${ident(table)}${where.length ? ` WHERE ${where.join(" AND ")}` : ""}${order}${limit}) t;`;
       const list = () => {
         if (insert) {
           const keys = Object.keys(insert).map(ident).join(", ");

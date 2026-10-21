@@ -133,7 +133,7 @@ describe("GET /api/wall/moments", () => {
     const state = world([ON], {
       intel_state_snapshots: [snapshot(PLACE_ID, { value: { level: "unsafe_density" } })],
       intel_state_snapshot_versions: [version(PLACE_ID, "packed", -30), version(PLACE_ID, "unsafe_density", -6)],
-      notification_preferences: [{ user_id: VIEWER, push_enabled: true, quiet_hours_enabled: true, quiet_start: "00:00", quiet_end: "23:59", timezone: "UTC" }],
+      notification_preferences: [{ user_id: VIEWER, push_enabled: true, quiet_hours_enabled: true, quiet_start: "00:00", quiet_end: "00:00", timezone: "UTC" }],
     });
     const r = await get(state, `subjectIds=${PLACE_ID}&relevance=saved`);
     assert.equal(r.body.viewer?.available, false, "quiet hours");

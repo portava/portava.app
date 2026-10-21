@@ -28,8 +28,8 @@ import {
   StyleSheet,
 } from 'react-native';
 import { Compass, MapPin } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../theme/tokens.ts';
-import { TG } from '../theme/telegraphTokens.ts';
+import { space, radius, type as t } from '../theme/tokens.ts';
+import { useTelegraphTheme, type TelegraphPalette } from '../features/telegraph/theme/telegraphTheme.ts';
 import { useShareRevocation, revokedLabel } from '../features/telegraph/sharing/useShareRevocation.ts';
 import { compassCardRef, normalizeLegacySourceId, SHARED_CARD_UNVERIFIABLE_COPY, type SharedCardTruth } from '../features/telegraph/sharing/shareApi.ts';
 import { legacyCardMode, objectKindLabel } from '../features/telegraph/sharing/legacyCardView.ts';
@@ -66,6 +66,7 @@ interface Props {
 }
 
 export function CompassCardMessage({ body, mine, threadId = null, messageId = null, serverCard = null }: Props) {
+  const { palette, styles: card } = useTelegraphTheme(makeCardStyles);
   const raw = parseRaw(body);
   const named = compassCardRef(raw as { id?: unknown; cardType?: unknown } | null);
   const ref = named && normalizeLegacySourceId(named.objectId) ? { ...named, objectId: normalizeLegacySourceId(named.objectId)! } : null; // F1: only a uuid is resolved
@@ -96,7 +97,7 @@ export function CompassCardMessage({ body, mine, threadId = null, messageId = nu
       <View style={[card.wrap, mine && card.wrapMine]} testID="compass-card-reference">
         <View style={card.header}>
           <View style={card.compassBadge}>
-            <Compass size={11} color={color.onInk} />
+            <Compass size={11} color={palette.operationalOn} />
           </View>
           <Text style={[card.brandLabel, mine && card.brandLabelMine]}>COMPASS</Text>
         </View>
@@ -113,7 +114,7 @@ export function CompassCardMessage({ body, mine, threadId = null, messageId = nu
       {/* Header */}
       <View style={card.header}>
         <View style={card.compassBadge}>
-          <Compass size={11} color={color.onInk} />
+          <Compass size={11} color={palette.operationalOn} />
         </View>
         <Text style={[card.brandLabel, mine && card.brandLabelMine]}>COMPASS</Text>
         <View style={[card.chip, mine && card.chipMine]}>
@@ -128,7 +129,7 @@ export function CompassCardMessage({ body, mine, threadId = null, messageId = nu
 
       {p.subtitle ? (
         <View style={card.locRow}>
-          <MapPin size={11} color={mine ? color.onInk + 'AA' : color.mute} />
+          <MapPin size={11} color={mine ? palette.sentText + 'AA' : palette.mute} />
           <Text style={[card.loc, mine && card.locMine]} numberOfLines={1}>{p.subtitle}</Text>
         </View>
       ) : null}
@@ -136,20 +137,23 @@ export function CompassCardMessage({ body, mine, threadId = null, messageId = nu
   );
 }
 
-const card = StyleSheet.create({
+// census T123/T124: every colour is the scheme's. A card the viewer SENT is a sent
+// bubble (it was vermilion — the attention colour — for an ordinary message), and
+// the Compass mark is the operational teal.
+const makeCardStyles = (p: TelegraphPalette) => StyleSheet.create({
   wrap: {
-    backgroundColor: TG.surfaceRaised,
+    backgroundColor: p.surfaceRaised,
     borderRadius: radius.lg,
     borderWidth: 1,
-    borderColor: TG.recvBorder,
+    borderColor: p.recvBorder,
     borderBottomLeftRadius: 4,
     padding: space.md,
     gap: 6,
     maxWidth: 280,
   },
   wrapMine: {
-    backgroundColor: color.signal,
-    borderColor: color.signal,
+    backgroundColor: p.sentBubble,
+    borderColor: p.sentBubble,
     borderBottomLeftRadius: radius.lg,
     borderBottomRightRadius: 4,
   },
@@ -158,29 +162,29 @@ const card = StyleSheet.create({
     borderStyle: 'dashed',
     backgroundColor: 'transparent',
   },
-  fallback: { ...t.small, color: color.mute, fontStyle: 'italic' },
-  fallbackMine: { color: color.onInk + 'AA' },
+  fallback: { ...t.small, color: p.mute, fontStyle: 'italic' },
+  fallbackMine: { color: p.sentText + 'AA' },
 
   header: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   compassBadge: {
     width: 18, height: 18, borderRadius: 5,
-    backgroundColor: color.signal,
+    backgroundColor: p.operational,
     alignItems: 'center', justifyContent: 'center',
   },
   brandLabel: {
-    fontFamily: 'Courier', fontSize: 9, color: color.signal,
+    fontFamily: 'Courier', fontSize: 9, color: p.operational,
     letterSpacing: 1, flex: 1,
   },
-  brandLabelMine: { color: color.onInk + 'BB' },
-  chip: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8, backgroundColor: color.haze },
-  chipMine: { backgroundColor: color.onInk + '22' },
-  chipText: { fontSize: 9, fontFamily: 'Courier', fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.3, color: color.mute },
-  chipTextMine: { color: color.onInk + 'CC' },
+  brandLabelMine: { color: p.sentText + 'BB' },
+  chip: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8, backgroundColor: p.haze },
+  chipMine: { backgroundColor: p.sentText + '22' },
+  chipText: { fontSize: 9, fontFamily: 'Courier', fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.3, color: p.mute },
+  chipTextMine: { color: p.sentText + 'CC' },
 
-  title: { color: color.ink, fontWeight: '700', fontSize: 14, lineHeight: 18 },
-  titleMine: { color: color.onInk },
+  title: { color: p.recvText, fontWeight: '700', fontSize: 14, lineHeight: 18 },
+  titleMine: { color: p.sentText },
 
   locRow: { flexDirection: 'row', alignItems: 'center', gap: 3 },
-  loc: { ...t.small, color: color.mute, fontSize: 11, flex: 1 },
-  locMine: { color: color.onInk + 'BB' },
+  loc: { ...t.small, color: p.mute, fontSize: 11, flex: 1 },
+  locMine: { color: p.sentText + 'BB' },
 });

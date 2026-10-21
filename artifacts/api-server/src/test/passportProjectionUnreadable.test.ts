@@ -73,7 +73,10 @@ const SELF_RESOLUTION: ViewerResolution = {
 
 /** A stamp row that a healthy read WOULD have returned. */
 const A_STAMP = {
-  id: "s1", user_id: OWNER, stamp_definition_id: "d1", source_type: "system",
+  // H4, wave 5: a completion stamp names its trip as source, and its place
+  // counts only with that trip's check-in (stampPresenceView.ts) — staged as
+  // A_ARRIVAL beside every client that is meant to count it. HEAD read neither.
+  id: "s1", user_id: OWNER, stamp_definition_id: "d1", source_type: "trips", source_id: "trip-hanoi",
   city: "Hanoi", country: "VN", earned_at: "2026-01-01T00:00:00Z",
   is_revoked: false, visibility: "public", catalog_id: null,
   // A stamp that EVIDENCES PRESENCE (migration 2970): this fixture's job is to
@@ -82,6 +85,7 @@ const A_STAMP = {
   // only when a trip actually reaches status 'completed'.
   stamp_definitions: { name: "First Journey Complete", rarity: "common", stamp_type: "trip", category: "trip", slug: "first_trip_completed", evidences_presence: true },
 };
+const A_ARRIVAL = { user_id: OWNER, trip_id: "trip-hanoi", status: "arrived", checked_in_at: "2026-01-01T10:00:00Z" };
 const A_MEMORY = {
   id: "m1", user_id: OWNER, status: "active", title: "Hanoi", city: "Hanoi",
   country: "VN", category: "trip", visibility: "public", earned_at: "2026-01-01T00:00:00Z",
@@ -89,7 +93,7 @@ const A_MEMORY = {
 
 test("1. buildStats: a failed user_stamps read is NOT 'this traveller has been nowhere'", async () => {
   const broken = makeFailClosedClient({
-    rows: { user_stamps: [A_STAMP] },       // would have counted 1 country
+    rows: { user_stamps: [A_STAMP], plan_checkins: [A_ARRIVAL] },       // would have counted 1 country
     failOn: (c) => (c.table === "user_stamps" ? { message: "boom", code: "57P01" } : null),
   });
   const healthyEmpty = makeFailClosedClient({ rows: { user_stamps: [] } });
@@ -106,7 +110,7 @@ test("1. buildStats: a failed user_stamps read is NOT 'this traveller has been n
   assert.equal(none.readFailed, false, "an empty shelf is a real, truthful zero");
 
   // And the control: a healthy read that finds something still says readFailed:false.
-  const healthy = makeFailClosedClient({ rows: { user_stamps: [A_STAMP] } });
+  const healthy = makeFailClosedClient({ rows: { user_stamps: [A_STAMP], plan_checkins: [A_ARRIVAL] } });
   const good = await buildStats(healthy, OWNER);
   assert.equal(good.readFailed, false);
   assert.equal(good.countries, 1, "the fixture would have produced a non-zero count");
@@ -159,7 +163,7 @@ function projectionClient(failTables: string[]) {
   return makeFailClosedClient({
     rows: {
       profiles: [{ id: OWNER, handle: "o", verified: true }],
-      user_stamps: [A_STAMP],
+      user_stamps: [A_STAMP], plan_checkins: [A_ARRIVAL],
       passport_stamps: [],
       passport_memories: [A_MEMORY],
     },

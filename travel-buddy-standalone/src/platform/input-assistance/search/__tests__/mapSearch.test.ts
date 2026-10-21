@@ -23,6 +23,7 @@ import {
   parseMapSearchRefusal,
 } from '../mapSearch.ts';
 import { parseSuggestBody } from '../../services/suggestResponse.ts';
+import { suggestOrigin } from '../../services/suggestBody.ts';
 import { toMapSearchResults } from '../../../../features/map/search/searchAdapter.ts';
 
 const row = (id: string, serverType: string, title: string, metadata: Record<string, unknown> | null) => ({
@@ -51,6 +52,25 @@ test('B1: the body names the map.search field of global_search and puts the posi
 test('B2: an absent or non-finite position is omitted, never sent as null or NaN', () => {
   const b = buildMapSearchBody('kopi', { lat: Number.NaN, city: '  ' });
   assert.ok(!('lat' in b) && !('lng' in b) && !('city' in b));
+});
+
+test('B3: the device fix leaves the device at 3 decimals (~110 m), the same rule as the suggest body', () => {
+  const fix = { lat: 1.3521234567, lng: 103.8198765432 };
+  const b = buildMapSearchBody('kopi', fix);
+  assert.equal(b.lat, 1.352);
+  assert.equal(b.lng, 103.82);
+  assert.deepEqual({ lat: b.lat, lng: b.lng }, suggestOrigin(fix.lat, fix.lng));
+  assert.ok(!JSON.stringify(b).includes('1.3521234567') && !JSON.stringify(b).includes('103.8198765432'));
+  const south = buildMapSearchBody('kopi', { lat: -33.8688197, lng: 151.2092955 });
+  assert.equal(south.lat, -33.869);
+  assert.equal(south.lng, 151.209);
+});
+
+test('B4: both halves or neither — half a pair or an impossible pair sends no position at all', () => {
+  for (const opts of [{ lat: 1.3 }, { lng: 103.8 }, { lat: 91, lng: 103.8 }, { lat: 1.3, lng: 181 }, { lat: 1.3, lng: Number.POSITIVE_INFINITY }]) {
+    const b = buildMapSearchBody('kopi', opts);
+    assert.ok(!('lat' in b) && !('lng' in b), JSON.stringify(opts));
+  }
 });
 
 test('R1: rows come from mapResult, in order; a row without one is not a search-page row', () => {

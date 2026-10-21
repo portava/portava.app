@@ -79,7 +79,7 @@
  * row is still an estimate, and no payout exists. See `09_Payment_Architecture.md`
  * §1.3.
  */
-import { isFlagEnabled } from "./featureFlags.js";
+import { isFlagEnabled } from "./featureFlags.js"; import { isMissingColumnError } from "./capability/schemaCapability.js";
 
 /** The schedule of record. One row per `buddy_level`. */
 export const FEE_SCHEDULE_TABLE = "rent_buddy_fee_rules";
@@ -126,7 +126,7 @@ export interface FeeScheduleRule {
 export type FeeScheduleResolution =
   | { status: "resolved"; buddyLevel: string; rule: FeeScheduleRule }
   | { status: "no_such_level"; buddyLevel: string }
-  | { status: "read_failed"; buddyLevel: string; message: string };
+  | { status: "read_failed"; buddyLevel: string; message: string; schemaAbsent?: true }; // schemaAbsent: this database has not run 3601 (foot of file)
 
 /** The level a profile with no `buddy_level` set is treated as. Matches the column default. */
 export const DEFAULT_BUDDY_LEVEL = "new";
@@ -323,9 +323,9 @@ export async function resolveFeeSchedule(
     return {
       status: "read_failed",
       buddyLevel: level,
-      // A database that has not run 3601 lands here (42703: column
-      // platform_fee_basis_points does not exist). That is the intended
-      // outcome — see the module header's deploy-ordering note.
+      // A database that has not run 3601 lands here (42703: column platform_fee_basis_points
+      // does not exist) and says so, so a caller can answer "not deployed" rather than a 500 (foot of file).
+      ...(isFeeScheduleSchemaAbsent(error) ? { schemaAbsent: true as const } : {}),
       message: `${FEE_SCHEDULE_TABLE} read failed: ${error.message ?? String(error)}`,
     };
   }
@@ -537,3 +537,31 @@ export function _setEstimateCommissionRulesForTest(rules: readonly CommissionRul
 function estimateCommissionRules(): readonly CommissionRule[] {
   return estimateRulesForTest !== null && mockIdentityPermitted(process.env) ? estimateRulesForTest : COMMISSION_RULES;
 }
+
+// ── A database that has not run 3601 (wave 5, 2026-10-17) ───────────────────
+//
+// 3601 is HELD for production (owner hold D-OWNER1004-14; the 2026-10-17 apply
+// packet excludes it and 3602), so production's rent_buddy_fee_rules has no
+// `platform_fee_basis_points` and every read of the schedule fails 42703. That
+// refusal is right — the rate is unknowable there — but it reached the buddy as
+// a 500 "db_error" (GET /rent-a-buddy/me/earnings/summary, for any user with an
+// active buddy profile; no rent_buddy_enabled check) and the operator as a 500
+// (PATCH /rent-a-buddy/admin/fee-rules). Both now answer 503
+// degraded_unavailable with the reason stated. No rate is invented: the column
+// is still the only thing priced from, and nothing reads the legacy percent.
+// Found by test/schemaColumnProductionScan.test.ts; proven in
+// test/rentBuddyFeeScheduleNotDeployed.test.ts on schemaStrictSupabase.
+
+/** True only for the error a database without 3601's column gives (42703 / PGRST204 naming it). */
+export function isFeeScheduleSchemaAbsent(error: unknown): boolean {
+  return isMissingColumnError(error) && String((error as any)?.message ?? "").includes("platform_fee_basis_points");
+}
+
+/** What a buddy is told when the schedule's column is not in this database. */
+export const FEE_SCHEDULE_NOT_DEPLOYED =
+  "Earnings cannot be estimated yet: the commission schedule they are calculated from is not available on this server.";
+
+/** What an operator is told when the editor's column is not in this database. Nothing was written. */
+export const FEE_SCHEDULE_NOT_DEPLOYED_ADMIN =
+  "The commission schedule cannot be edited: this database does not have rent_buddy_fee_rules.platform_fee_basis_points " +
+  "(migration 3601, held by the owner). Nothing was saved.";

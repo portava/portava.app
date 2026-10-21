@@ -5,10 +5,12 @@
  * Source:           artifacts/api-server/src/routes/admin.ts (~line 1657)
  *
  * Invariants tested:
- *  1. hide / cancel / remove  → resolve pending reports for THAT event only;
+ *  1. hide / cancel / remove  → resolve the OPEN reports for THAT event only;
  *                               reports for other events are untouched
  *  2. restore / feature / unfeature / warn_host  → do NOT resolve any reports
- *  3. Every action writes event_activity_log (fail-closed) + moderation_actions
+ *  3. Every action writes event_activity_log + moderation_actions, BOTH required (wave 5,
+ *     2026-10-18: claim -> audit -> undo, lib/eventModerationClaim.ts — the
+ *     moderation_actions row failed OPEN, a warn and 200, until then)
  *  4. Non-admin callers get 403; unknown action gets 400
  *
  * Run: node --import tsx/esm --test src/test/adminEventModeration.test.ts
@@ -27,9 +29,9 @@ const NON_ADMIN_ID  = "aaaaaaaa-0000-0000-0001-000000000002";
 const HOST_USER_ID  = "aaaaaaaa-0000-0000-0001-000000000003";
 const EVENT_ID_A    = "00000000-0000-0000-0001-000000000001"; // event being moderated
 const EVENT_ID_B    = "00000000-0000-0000-0001-000000000002"; // unrelated event — must stay untouched
-const REPORT_A1     = "00000000-0000-0000-0002-000000000001"; // pending report for EVENT_A
-const REPORT_A2     = "00000000-0000-0000-0002-000000000002"; // second pending report for EVENT_A
-const REPORT_B1     = "00000000-0000-0000-0002-000000000003"; // pending report for EVENT_B
+const REPORT_A1     = "00000000-0000-0000-0002-000000000001"; // open report for EVENT_A
+const REPORT_A2     = "00000000-0000-0000-0002-000000000002"; // second open report for EVENT_A
+const REPORT_B1     = "00000000-0000-0000-0002-000000000003"; // open report for EVENT_B
 
 // ── Test server (shared for all tests) ────────────────────────────────────────
 let server: http.Server;
@@ -123,9 +125,11 @@ function makeModerationClient(opts: {
       updated_at: new Date().toISOString(),
     }],
     reports: [
-      { id: REPORT_A1, target_type: "event", target_id: EVENT_ID_A, status: "pending" },
-      { id: REPORT_A2, target_type: "event", target_id: EVENT_ID_A, status: "pending" },
-      { id: REPORT_B1, target_type: "event", target_id: EVENT_ID_B, status: "pending" },
+      // 'open' is what every intake files (the column default). These were 'pending' — a word no
+      // filed report carries — so the suite pinned the route's own dead filter (wave 5, 2026-10-18).
+      { id: REPORT_A1, target_type: "event", target_id: EVENT_ID_A, status: "open" },
+      { id: REPORT_A2, target_type: "event", target_id: EVENT_ID_A, status: "open" },
+      { id: REPORT_B1, target_type: "event", target_id: EVENT_ID_B, status: "open" },
     ],
     event_activity_log: [],
     moderation_actions: [],
@@ -136,6 +140,7 @@ function makeModerationClient(opts: {
     // as in db[tableName] — mutations via Object.assign() are visible in _db.
     let filtered = rows;
     let pendingUpdate: Record<string, any> | null = null;
+    let pendingDelete = false;
 
     const b: any = {
       select: () => b,
@@ -145,11 +150,14 @@ function makeModerationClient(opts: {
           // When activityInsertError is set, do NOT persist the rows and return an error
           // so the route's fail-closed guard fires and aborts without mutating the event.
           if (activityInsertError) {
-            return {
+            const failing: any = {
+              select: () => failing, // the route asks the insert for its id (wave 5)
               then: (resolve: any) =>
                 Promise.resolve({ data: null, error: { message: "event_activity_log insert failed" } }).then(resolve),
             };
+            return failing;
           }
+          for (const r of newRows) r.id ??= `activity-${(db[tableName] ?? []).length + 1}`; // a row answers its id, as the table's default would
           db[tableName] = [...(db[tableName] ?? []), ...newRows];
           captureActivity.push(...newRows);
         } else if (tableName === "moderation_actions") {
@@ -170,8 +178,14 @@ function makeModerationClient(opts: {
         return b;
       },
       update: (data: Record<string, any>) => { pendingUpdate = data; return b; },
+      delete: () => { pendingDelete = true; return b; },
+      is: (col: string, val: any) => { filtered = filtered.filter((r: any) => (val === null ? r[col] == null : r[col] === val)); return b; },
       eq: (col: string, val: any) => {
         filtered = filtered.filter((r: any) => r[col] === val);
+        return b;
+      },
+      in: (col: string, vals: any[]) => {
+        filtered = filtered.filter((r: any) => vals.includes(r[col]));
         return b;
       },
       order:   () => b,
@@ -187,6 +201,11 @@ function makeModerationClient(opts: {
           // Apply update in-place to the actual db row objects
           for (const row of filtered) Object.assign(row, pendingUpdate);
           pendingUpdate = null;
+        }
+        if (pendingDelete) {
+          db[tableName] = (db[tableName] ?? []).filter((r: any) => !filtered.includes(r));
+          if (tableName === "event_activity_log") for (const r of filtered) { const i = captureActivity.indexOf(r); if (i >= 0) captureActivity.splice(i, 1); }
+          pendingDelete = false;
         }
         return Promise.resolve({ data: filtered, error: null }).then(resolve, reject);
       },
@@ -212,7 +231,7 @@ function setClient(client: ReturnType<typeof makeModerationClient>) {
 
 describe("PATCH /admin/events/:eventId/moderate — hide/cancel/remove resolve reports", () => {
   for (const action of ["hide", "cancel", "remove"] as const) {
-    it(`'${action}': resolves pending reports for that event only; other events' reports stay pending`, async () => {
+    it(`'${action}': resolves the open reports for that event only; other events' reports stay open`, async () => {
       const captureActivity: any[] = [];
       const captureModerationActions: any[] = [];
       const client = makeModerationClient({ captureActivity, captureModerationActions });
@@ -228,6 +247,7 @@ describe("PATCH /admin/events/:eventId/moderate — hide/cancel/remove resolve r
       assert.equal(body.ok, true);
       assert.equal(body.action, action);
       assert.equal(body.eventId, EVENT_ID_A);
+      assert.equal(body.reportsResolved, 2, "the answer counts the reports it closed");
 
       // Reports for EVENT_A must be resolved
       const evAReports = client._db.reports.filter((r: any) => r.target_id === EVENT_ID_A);
@@ -236,15 +256,15 @@ describe("PATCH /admin/events/:eventId/moderate — hide/cancel/remove resolve r
         assert.equal(
           r.status, "resolved",
           `Report ${r.id} for EVENT_A must be resolved after '${action}'`,
-        );
+        ); assert.equal(r.reviewed_by, ADMIN_USER_ID, "wave 5: the close names its reviewer, as the report resolve routes do");
       }
 
-      // Report for EVENT_B must remain pending — scoping is correct
+      // Report for EVENT_B must remain open — scoping is correct
       const evBReports = client._db.reports.filter((r: any) => r.target_id === EVENT_ID_B);
       assert.equal(evBReports.length, 1, "EVENT_B must have exactly 1 seeded report");
       assert.equal(
-        evBReports[0].status, "pending",
-        `Report for EVENT_B must remain pending after '${action}' on EVENT_A`,
+        evBReports[0].status, "open",
+        `Report for EVENT_B must remain open after '${action}' on EVENT_A`,
       );
 
       // Audit: event_activity_log row written
@@ -252,9 +272,9 @@ describe("PATCH /admin/events/:eventId/moderate — hide/cancel/remove resolve r
       assert.equal(captureActivity[0].action, `admin_${action}`);
       assert.equal(captureActivity[0].event_id, EVENT_ID_A);
 
-      // Audit: moderation_actions row written
-      assert.equal(captureModerationActions.length, 1, "moderation_actions must have exactly 1 insert");
-      assert.equal(captureModerationActions[0].action_type, `event_${action}`);
+      // Audit: the event action's row, then ONE report_resolved row per report it closed (wave 5: each report claimed, then audited — it was closed with no audit row)
+      assert.deepEqual(captureModerationActions.map((m: any) => m.action_type), [`event_${action}`, "report_resolved", "report_resolved"]);
+      assert.deepEqual(captureModerationActions.slice(1).map((m: any) => [m.target_user_id, m.metadata?.report_id]), [[HOST_USER_ID, REPORT_A1], [HOST_USER_ID, REPORT_A2]], "each audit row names the host and the report it closed");
     });
   }
 });
@@ -263,7 +283,7 @@ describe("PATCH /admin/events/:eventId/moderate — hide/cancel/remove resolve r
 
 describe("PATCH /admin/events/:eventId/moderate — restore/feature/warn_host do NOT resolve reports", () => {
   for (const action of ["restore", "feature", "unfeature", "warn_host"] as const) {
-    it(`'${action}': all pending reports remain pending`, async () => {
+    it(`'${action}': all open reports remain open`, async () => {
       const captureActivity: any[] = [];
       const captureModerationActions: any[] = [];
       const client = makeModerationClient({ captureActivity, captureModerationActions });
@@ -277,11 +297,11 @@ describe("PATCH /admin/events/:eventId/moderate — restore/feature/warn_host do
 
       assert.equal(status, 200, `Expected 200 for '${action}', got ${status}: ${JSON.stringify(body)}`);
 
-      // All reports (both events) must still be pending
+      // All reports (both events) must still be open
       for (const report of client._db.reports) {
         assert.equal(
-          report.status, "pending",
-          `Report ${report.id} must remain pending after '${action}'`,
+          report.status, "open",
+          `Report ${report.id} must remain open after '${action}'`,
         );
       }
 
@@ -319,8 +339,8 @@ describe("PATCH /admin/events/:eventId/moderate — audit trail is always writte
       assert.equal(captureActivity[0].event_id,  EVENT_ID_A);
       assert.equal(captureActivity[0].actor_id,  ADMIN_USER_ID);
 
-      // moderation_actions
-      assert.equal(captureModerationActions.length, 1);
+      // moderation_actions — the event action's own row (hide/cancel/remove add one report_resolved row per closed report after it)
+      assert.equal(captureModerationActions.filter((m: any) => m.action_type === `event_${action}`).length, 1);
       assert.equal(captureModerationActions[0].action_type,  `event_${action}`);
       assert.equal(captureModerationActions[0].performed_by, ADMIN_USER_ID);
       assert.equal(
@@ -447,12 +467,12 @@ describe("PATCH /admin/events/:eventId/moderate — event_activity_log insert fa
       );
       assert.ok(
         evAReports.length > 0,
-        `Expected seeded pending reports for EVENT_ID_A to be present for '${action}'`,
+        `Expected seeded open reports for EVENT_ID_A to be present for '${action}'`,
       );
       for (const report of evAReports) {
         assert.equal(
-          report.status, "pending",
-          `Report ${report.id} for EVENT_ID_A must still be pending after failed event_activity_log insert for '${action}'`,
+          report.status, "open",
+          `Report ${report.id} for EVENT_ID_A must still be open after failed event_activity_log insert for '${action}'`,
         );
       }
 
@@ -467,8 +487,8 @@ describe("PATCH /admin/events/:eventId/moderate — event_activity_log insert fa
         `EVENT_B must have exactly 1 seeded report for '${action}'`,
       );
       assert.equal(
-        evBReports[0].status, "pending",
-        `Report for EVENT_B must remain pending after '${action}' targets EVENT_A (scoping check)`,
+        evBReports[0].status, "open",
+        `Report for EVENT_B must remain open after '${action}' targets EVENT_A (scoping check)`,
       );
     });
   }
@@ -511,55 +531,45 @@ describe("PATCH /admin/events/:eventId/moderate — event_activity_log insert fa
       );
       assert.ok(
         evAReports.length > 0,
-        `Expected seeded pending reports for EVENT_ID_A to be present for '${action}'`,
+        `Expected seeded open reports for EVENT_ID_A to be present for '${action}'`,
       );
       for (const report of evAReports) {
         assert.equal(
-          report.status, "pending",
-          `Report ${report.id} for EVENT_ID_A must still be pending after failed event_activity_log insert for '${action}'`,
+          report.status, "open",
+          `Report ${report.id} for EVENT_ID_A must still be open after failed event_activity_log insert for '${action}'`,
         );
       }
     });
   }
 });
 
-// ── Audit fail-open: moderation_actions insert failure must not surface as 500 ──
+// ── The event_<action> audit row is REQUIRED (wave 5): a failed insert undoes the action ──
+// It was fail-open: the insert failing was a warn, and the answer `200 { ok: true }` for an event hidden with
+// no row in the global moderation audit trail. Now the event is restored to what it held when read, the
+// activity row this request wrote is removed, no report is closed, and the 500 says so.
 
-describe("PATCH /admin/events/:eventId/moderate — moderation_actions insert failure is fail-open", () => {
-  it("still returns 200 with ok:true when the moderation_actions insert fails", async () => {
-    const captureActivity: any[] = [];
-    const captureModerationActions: any[] = [];
-    const client = makeModerationClient({
-      captureActivity,
-      captureModerationActions,
-      modInsertError: true,
+describe("PATCH /admin/events/:eventId/moderate — a moderation_actions insert failure undoes the action and says so", () => {
+  for (const action of ["hide", "cancel", "remove", "restore", "feature", "unfeature", "warn_host"] as const) {
+    it(`'${action}': 500 naming the audit failure; the event reads as it did, no activity row stands, no report closed`, async () => {
+      const captureActivity: any[] = [];
+      const captureModerationActions: any[] = [];
+      const client = makeModerationClient({ captureActivity, captureModerationActions, modInsertError: true });
+      setClient(client);
+      const before = { ...client._db.events[0] };
+
+      const { status, body } = await req("PATCH", `/admin/events/${EVENT_ID_A}/moderate`, { action, reason: "audit-required test" });
+
+      assert.equal(status, 500, `an action with no audit row is not a success — got ${status}: ${JSON.stringify(body)}`);
+      assert.equal(body.error, "db_error");
+      assert.match(body.message, /The moderation audit row could not be written \(moderation_actions insert failed\)/);
+      assert.match(body.message, action === "warn_host" || action === "restore" ? /nothing was applied\. Nothing was recorded\./ : /the event was restored to what it held when read\. Nothing was recorded\./); // restore of this open, PUBLIC, unmoderated event changes nothing (wave 5: it wrote "public" over every event); its undo with a change is in eventModerationVisibilityRestore.test.ts
+      const after = client._db.events[0];
+      for (const col of ["state", "visibility", "featured"]) assert.equal(after[col], before[col], `events.${col} is restored`);
+      assert.equal(captureModerationActions.length, 1, "the event's audit row was attempted once; no report_resolved row follows a failed action");
+      assert.equal(captureModerationActions[0].action_type, `event_${action}`);
+      assert.equal(captureActivity.length, 0, "the activity row written for an action that did not stand was removed");
+      assert.equal(client._db.event_activity_log.length, 0);
+      assert.ok(client._db.reports.every((r: any) => r.status === "open"), "no report is closed by an action that was undone");
     });
-    setClient(client);
-
-    const { status, body } = await req(
-      "PATCH",
-      `/admin/events/${EVENT_ID_A}/moderate`,
-      { action: "hide", reason: "audit-fail-open test" },
-    );
-
-    assert.equal(
-      status, 200,
-      `moderation_actions insert failure must not surface as a 500 — got ${status}: ${JSON.stringify(body)}`,
-    );
-    assert.equal(body.ok, true, "response body should still have ok: true");
-    assert.equal(
-      body.error, undefined,
-      `fail-open response must not carry an error field — got: ${JSON.stringify(body.error)}`,
-    );
-    assert.equal(body.action, "hide");
-    assert.equal(body.eventId, EVENT_ID_A);
-
-    // The insert was still attempted — the route must not have skipped it.
-    assert.equal(
-      captureModerationActions.length, 1,
-      "the moderation_actions insert must have been attempted even though it failed",
-    );
-    assert.equal(captureModerationActions[0].action_type, "event_hide");
-    assert.equal(captureModerationActions[0].performed_by, ADMIN_USER_ID);
-  });
+  }
 });
