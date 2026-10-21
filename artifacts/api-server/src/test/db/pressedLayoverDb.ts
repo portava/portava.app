@@ -360,6 +360,8 @@ export interface PressedDb {
   explain(sql: string): Promise<string>;
   /** Does relation public.<name> exist? */
   hasTable(name: string): Promise<boolean>;
+  /** psql backend: this handle's own isolated database, for a second, concurrent connection (contention tests); null on PGlite. */
+  databaseUrl: string | null;
   close(): Promise<void>;
 }
 
@@ -373,6 +375,7 @@ export async function openPressedLayoverDb(opts: { without?: readonly string[] }
   const flagsTouched = new Map<string, { enabled: boolean; metadata: unknown } | "absent">();
   let engine: BridgeEngine & { exec(sql: string): Promise<void>; close(): Promise<void> };
   let report: ReplayReport | null = null;
+  let databaseUrl: string | null = null;
   const prelude = (role: string, claims: Record<string, unknown>) =>
     `SET LOCAL ROLE ${role}; SET LOCAL TIME ZONE 'UTC'; SELECT set_config('request.jwt.claims', ${lit(JSON.stringify(claims))}, true), set_config('request.jwt.claim.role', ${lit(String(claims["role"] ?? ""))}, true), set_config('request.jwt.claim.sub', ${lit(String(claims["sub"] ?? ""))}, true);`;
 
@@ -411,7 +414,7 @@ export async function openPressedLayoverDb(opts: { without?: readonly string[] }
       key: async (version) => cacheKey(version, without, await chainOrder()),
       replay: (db, version, major) => replayInto("", without, {db, version, major}),
     });
-    engine = isolated.engine; report = isolated.report;
+    engine = isolated.engine; report = isolated.report; databaseUrl = isolated.url;
   }
 
   const url = `http://pressed-layover-${process.pid}-${++instanceSeq}.invalid`;
@@ -422,6 +425,7 @@ export async function openPressedLayoverDb(opts: { without?: readonly string[] }
   const handle: PressedDb = {
     backend: PRESSED_BACKEND,
     report,
+    databaseUrl,
     client: bridge.client,
     bridge,
     tokens,

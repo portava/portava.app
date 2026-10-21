@@ -110,8 +110,14 @@ describe("B2-RECS-A canonical snapshot real-schema proof", { skip: PRESSED_SKIP_
   it("3873/3896 rollbacks refuse to erase an expectation or remove immutability from stored evidence", async () => {
     await db.setFlag("layover_canonical_snapshot_enabled", false);
     try {
-      for (const [file, reason] of [["2026-10-18-3873-layover-active-snapshot-compare-and-swap-rollback.sql", /expectation data/], ["2026-10-18-3896-layover-certified-computations-immutable-rollback.sql", /computation data/]] as const) {
-        try { await assert.rejects(db.exec(readFileSync(new URL(`../../../../../db/rollback/${file}`, import.meta.url), "utf8")), reason); }
+      const rollback = (file: string) => readFileSync(new URL(`../../../../../db/rollback/${file}`, import.meta.url), "utf8");
+      // 3908 (route fan-out) depends on 3873's compare-and-swap schema and has no rollback of its own, so 3873 refuses for it FIRST.
+      try { await assert.rejects(db.exec(rollback("2026-10-18-3873-layover-active-snapshot-compare-and-swap-rollback.sql")), /later migration 3908 still depends/); }
+      finally { await db.exec("ROLLBACK"); }
+      // With 3908's objects gone (in this transaction, undone by the ROLLBACK), the data refusals are what stand in the way.
+      const without3908 = "BEGIN; DROP TABLE public.layover_route_work, public.layover_route_dispatches CASCADE; DO $d$ DECLARE f regprocedure; BEGIN FOR f IN SELECT oid::regprocedure FROM pg_proc WHERE pronamespace = 'public'::regnamespace AND proname IN ('layover_route_fanout_ready','layover_route_watch_state','layover_route_fanout_claim','layover_route_fanout_retry','layover_route_fanout_settle') LOOP EXECUTE format('DROP FUNCTION %s', f); END LOOP; END $d$;";
+      for (const [file, reason, setup] of [["2026-10-18-3873-layover-active-snapshot-compare-and-swap-rollback.sql", /expectation data/, without3908], ["2026-10-18-3896-layover-certified-computations-immutable-rollback.sql", /computation data/, ""]] as const) {
+        try { if (setup) await db.exec(setup); await assert.rejects(db.exec(rollback(file)), reason); }
         finally { await db.exec("ROLLBACK"); }
       }
     } finally { await db.setFlag("layover_canonical_snapshot_enabled", true); }
@@ -163,17 +169,18 @@ describe("B2-RECS-A canonical snapshot real-schema proof", { skip: PRESSED_SKIP_
 
   if (PRESSED_BACKEND === "psql") it("L264 PostgreSQL: two separate connections contend for the lock; the stale writer loses", async () => {
     const a = await active();
+    const types = new Map((await db.query<{ column_name: string; udt_name: string }>(`SELECT column_name, udt_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'layover_certified_computations'`)).map((c) => [c.column_name, c.udt_name]));
     const insert = (clock: number) => {
       const record = replayFeasibility({ ...a.record.inputs, nowMs: clock });
       const row = { ...certifiedComputationRowFor(owner.id, sid, record), expected_active_version: a.version };
       const entries = Object.entries(row).filter(([, value]) => value !== undefined);
-      return `INSERT INTO public.layover_certified_computations (${entries.map(([key]) => `"${key}"`).join(",")}) VALUES (${entries.map(([, value]) => value === null ? "NULL" : typeof value === "object" ? `${lit(JSON.stringify(value))}::jsonb` : lit(String(value))).join(",")});`;
+      return `INSERT INTO public.layover_certified_computations (${entries.map(([key]) => `"${key}"`).join(",")}) VALUES (${entries.map(([key, value]) => value === null ? "NULL" : types.get(key) === "_text" && Array.isArray(value) ? `ARRAY[${value.map((v) => lit(String(v))).join(",")}]::text[]` : typeof value === "object" ? `${lit(JSON.stringify(value))}::jsonb` : lit(String(value))).join(",")});`;
     };
     let ready!: () => void;
     const signalled = new Promise<void>((resolve) => { ready = resolve; });
-    const first = concurrentPsql(`BEGIN; ${insert(now + 600_000)} SELECT 'writer_ready'; SELECT pg_sleep(0.4); COMMIT;`, ready);
+    const first = concurrentPsql(db.databaseUrl!, `BEGIN; ${insert(now + 600_000)} SELECT 'writer_ready'; SELECT pg_sleep(0.4); COMMIT;`, ready);
     await signalled;
-    const second = concurrentPsql(`BEGIN; ${insert(now + 540_000)} COMMIT;`);
+    const second = concurrentPsql(db.databaseUrl!, `BEGIN; ${insert(now + 540_000)} COMMIT;`);
     const [winner, loser] = await Promise.all([first, second]);
     assert.equal(winner.code, 0, winner.stderr);
     assert.notEqual(loser.code, 0); assert.match(loser.stderr, /LY409.*stale_snapshot_write/s);
@@ -181,9 +188,10 @@ describe("B2-RECS-A canonical snapshot real-schema proof", { skip: PRESSED_SKIP_
   });
 });
 
-function concurrentPsql(sql: string, ready?: () => void): Promise<{ code: number | null; stderr: string }> {
+/** A second connection to the handle's OWN database: the isolated clone, not LOCAL_DB_URL's base database. */
+function concurrentPsql(url: string, sql: string, ready?: () => void): Promise<{ code: number | null; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn("psql", ["-X", "-q", "-At", "-v", "ON_ERROR_STOP=1", process.env.LOCAL_DB_URL!], { stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn("psql", ["-X", "-q", "-At", "-v", "ON_ERROR_STOP=1", url], { stdio: ["pipe", "pipe", "pipe"] });
     let stderr = "", stdout = "";
     const timeout = setTimeout(() => { child.kill(); ready?.(); reject(new Error("local PostgreSQL contention test timed out")); }, 15_000);
     child.stdout.on("data", (chunk) => { stdout += String(chunk); if (stdout.includes("writer_ready")) ready?.(); });

@@ -45,7 +45,7 @@ const identifier = (name: string): string => {
 };
 const last = (result: QueryResult | QueryResult[]): QueryResult => Array.isArray(result) ? result[result.length - 1]! : result;
 
-export async function openIsolatedPressedPostgres(options: Options): Promise<{engine: Engine; report: ReplayReport}> {
+export async function openIsolatedPressedPostgres(options: Options): Promise<{engine: Engine; report: ReplayReport; url: string}> {
   const server = pressedPostgresServer(options.url);
   const connection = (database: string) => pressedPostgresConnection(server.toString(),database);
   const admin = new Client({connectionString: connection("postgres")});
@@ -127,7 +127,7 @@ export async function openIsolatedPressedPostgres(options: Options): Promise<{en
         finally { await admin.end(); }
       }),
     };
-    return {engine, report};
+    return {engine, report, url: connection(name)};
   } catch (error) {
     try { await client?.end(); if (workName) await admin.query(`DROP DATABASE IF EXISTS ${identifier(workName)}`); }
     finally { await admin.end(); }
