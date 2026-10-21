@@ -276,7 +276,7 @@ const ALLOWLIST = new Set([
   // built inside format() so the auditor never sees a name for it.
   "function:intel_append_only_stmt",
   "trigger:intel_attributions.intel_attributions_no_update_delete_stmt",
-  "trigger:intel_historical_patterns.intel_historical_patterns_no_update_delete_stmt",
+  "trigger:intel_historical_patterns.intel_historical_patterns_no_update_delete_stmt", "trigger:public.layover_service_write_audit", // 3890 builds `CREATE TRIGGER layover_service_write_audit … ON public.%I` inside format(), once per layover_* table, only when layover_service_write_audit_enabled is switched on (layover_install_service_write_audit); at apply none exists, and the scan reads the `public.` prefix as a table. Like 2276's format() trigger, there is no static name to audit.
   // 0035_plan_geofences.sql claims a single broad policy, FOR ALL, granting any
   // trip member full control. Live CI instead carries the four granular policies
   // from reconciliation-staging/2100_plan_geofences_policy_convergence.sql
