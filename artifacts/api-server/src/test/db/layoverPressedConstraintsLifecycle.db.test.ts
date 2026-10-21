@@ -23,7 +23,7 @@ import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { PRESSED_SKIP_REASON, PRESS_ARM, applyPress, openForPress, type PressedDb, type PressedUser } from "./pressedLayoverDb.js";
-import { productionBaseFlags, seedConfirmedCorridor, startPressedLayoverApp, startSession, type PressedApp } from "./pressedLayoverApp.js";
+import { productionBaseFlags, seedConfirmedCorridor, seedCuratedAirport, startPressedLayoverApp, startSession, type PressedApp } from "./pressedLayoverApp.js";
 
 const PRESS = {
   migrations: ["2700", "2992", "3623", "3792", "3640", "3632"],
@@ -48,7 +48,7 @@ describe("B1-P constraints / lifecycle / checkpoints / outcomes (P2, P3)", { ski
     ana = await db.seedUser("ana");
     bob = await db.seedUser("bob");
     cy = await db.seedUser("cy");
-    for (const u of [ana, bob, cy]) await seedConfirmedCorridor(db, u.id, "US", "SG");
+    for (const u of [ana, bob, cy]) await seedConfirmedCorridor(db, u.id, "US", "SG"); await seedCuratedAirport(app, db, "SIN"); // 3874 + the 2026-10-18 maturity decision: landside opens only at a curated airport
   });
   after(async () => { await app?.close(); await db?.close(); });
 

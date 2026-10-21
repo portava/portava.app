@@ -20,7 +20,7 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { PRESSED_SKIP_REASON, PRESS_ARM, applyPress, openForPress, type PressedDb, type PressedUser } from "./pressedLayoverDb.js";
-import { productionBaseFlags, seedConfirmedCorridor, startPressedLayoverApp, startSession, type PressedApp } from "./pressedLayoverApp.js";
+import { productionBaseFlags, seedConfirmedCorridor, seedCuratedAirport, startPressedLayoverApp, startSession, type PressedApp } from "./pressedLayoverApp.js";
 
 const PRESS = { migrations: [] as string[], flags: { layover_stable_recommendation_ids_enabled: true } } as const;
 
@@ -45,7 +45,7 @@ describe("B1-P stable recommendation ids (P4)", { skip: PRESSED_SKIP_REASON }, (
     app = await startPressedLayoverApp(db);
     ana = await db.seedUser("ana");
     bob = await db.seedUser("bob");
-    await seedConfirmedCorridor(db, ana.id);
+    await seedConfirmedCorridor(db, ana.id); await seedCuratedAirport(app, db, "SIN"); // 3874 + the 2026-10-18 maturity decision: landside opens only at a curated airport
     // one place inside a ten-hour layover's reach, one 300 km away (outside any envelope Changi can certify)
     await db.exec(`INSERT INTO public.discovery_places (city, name, place_type, status, lat, lng) VALUES
       ('Singapore', 'Marina Bay Walk', 'attraction', 'active', 1.2834, 103.8607),

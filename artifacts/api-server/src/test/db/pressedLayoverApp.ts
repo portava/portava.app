@@ -111,3 +111,52 @@ export async function seedConfirmedCorridor(db: PressedDb, userId: string, passp
 }
 
 import { layoverServiceAuditContext } from '../../lib/layoverServiceAudit.js';
+
+/**
+ * An airport curated through the real workflow (propose → validate → publish) for its timing, topology
+ * and transport facts. 3874 DERIVES `airport_profiles.verified` from exactly those three published facts
+ * (a bare `verified = true` lands in legacy_verified and reaches nothing), and the owner's 2026-10-18
+ * decision keeps landside CLOSED (`airport_maturity_limited`) below §22's curated L1 threshold in every
+ * flag state. A case that needs a landside-open layover seeds this first; values are the same fixture
+ * policy layoverPressedSnapshot S8 and layoverMapPersistence publish.
+ */
+export async function seedCuratedAirport(app: PressedApp, db: PressedDb, iata = "SIN"): Promise<void> {
+  const { proposeCuratedFact, validateProposedFact, publishValidatedFact } = await import("../../services/airport/airportCuration.js");
+  const curator = await db.seedUser(`airport_curator_${iata.toLowerCase()}`);
+  const find = () => db.query<{ id: string }>(`SELECT id FROM public.airport_profiles WHERE iata_code = '${iata.replace(/[^A-Z]/g, "")}'`);
+  // No row yet: the first session at an airport writes it (upsertAirportProfile, from the static dataset), exactly as a traveller's would.
+  let [airport] = await find();
+  if (!airport) { await startSession(app, curator, { iata }); [airport] = await find(); }
+  if (!airport) throw new Error(`seedCuratedAirport: no airport_profiles row for ${iata}`);
+  const facts = [
+    ["terminal_topology", { terminals: [{ id: "T1", name: "Terminal 1" }, { id: "T2", name: "Terminal 2" }], gates: [{ terminalId: "T1", label: "A1" }], checkpoints: [{ id: "security", terminalId: "T1", kind: "security" }], walkingLinks: [{ fromTerminalId: "T1", toTerminalId: "T2", minutes: 12, mode: "train" }] }],
+    ["ground_transport", { modes: [{ mode: "rail", name: "Fixture rail", toCity: "City centre", journeyMinutes: { min: 25, max: 35 }, terminalIds: ["T1"] }] }],
+    ["timing_assumptions", { domesticBufferMin: 60, domesticBufferMax: 90, internationalBufferMin: 120, internationalBufferMax: 180, immigrationExtraMin: 30, checkedBagsExtraMin: 15, trafficExtraMin: 20, rationale: "Explicit integration-test timing policy" }],
+  ] as const;
+  for (const [kind, value] of facts) {
+    const proposed = await proposeCuratedFact(db.client, { airportId: airport.id, kind, value, source: { kind: kind === "timing_assumptions" ? "curator_judgment" : "official_airport", note: "Integration-test fixture only", url: "https://example.test/airport", title: "Integration-test airport", retrievedAt: new Date().toISOString() }, proposedVia: "admin", proposedBy: curator.id }, Date.now());
+    if (!proposed.ok) throw new Error(`seedCuratedAirport: propose ${kind}: ${JSON.stringify(proposed)}`);
+    const validated = await validateProposedFact(db.client, proposed.fact.id, curator.id, Date.now());
+    if (!validated.ok) throw new Error(`seedCuratedAirport: validate ${kind}: ${JSON.stringify(validated)}`);
+    const published = await publishValidatedFact(db.client, proposed.fact.id, curator.id);
+    if (!published.ok) throw new Error(`seedCuratedAirport: publish ${kind}: ${JSON.stringify(published)}`);
+  }
+  const [row] = await db.query<{ verified: boolean }>(`SELECT verified FROM public.airport_profiles WHERE id = '${airport.id}'`);
+  if (row?.verified !== true) throw new Error(`seedCuratedAirport: ${iata} is not verified after publishing all three facts`);
+}
+
+/**
+ * L273 (B2-BUDDY): the layover buddies list serves a profile only when its OWNER is a verified layover
+ * specialist — a current LIVE-mode adult identity verification and an identity verification_level, a
+ * verified payout recipient with charges enabled, and no hosting restriction
+ * (LayoverBuddyBooking.ts verifiedLayoverSpecialists), beside `layover_buddy_specialist_enabled`. This
+ * stages exactly the rows layoverBuddySpecialist.db.test.ts `identity()` + `buddy()` write; the suite
+ * still inserts the rent_buddy_profiles row itself and declares the `layover` category on it.
+ */
+export async function seedVerifiedLayoverSpecialist(db: PressedDb, user: PressedUser): Promise<void> {
+  await db.exec(
+    `UPDATE public.profiles SET verification_level='id_verified', date_of_birth='1990-01-01', phone_verified_at=now() WHERE id='${user.id}';` +
+    `INSERT INTO public.identity_verifications(user_id, provider, provider_session_id, provider_mode, status, is_over_18, document_country, verified_at) VALUES ('${user.id}', 'stripe', 'fixture-${user.id}', 'live', 'verified', true, 'US', now());` +
+    `WITH party AS (INSERT INTO public.payment_parties(kind, profile_id) VALUES ('user', '${user.id}') RETURNING id) INSERT INTO public.rent_buddy_payment_recipients(party_id, provider, recipient_ref, country, settlement_currency, onboarding, charges_enabled, payouts_enabled, livemode) SELECT id, 'stripe', 'fixture-${user.id}', 'SG', 'SGD', 'verified', true, true, false FROM party;`,
+  );
+}
