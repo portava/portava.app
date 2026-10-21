@@ -846,7 +846,7 @@ export default function LayoverDashboardScreen() {
             ) : null}
           </View>
         ) : null}
-        {/* §2.1/§22 (census L9, L250): the card says which rung of the fallback
+        <LayoverReentryCard reentry={overview.reentry} timezone={airport.timezone} nowMs={nowMs} />{/* census L43: back at the airport, gate context replaces exploration. §2.1/§22 (census L9, L250): the card says which rung of the fallback
             ladder these minutes came off. The server derives it from the
             certified record; this screen only forwards it. */}
         <CanILeaveCard
@@ -854,7 +854,7 @@ export default function LayoverDashboardScreen() {
           window={win}
           airport={airport}
           airportIntelligence={overview.airportIntelligence ?? null}
-        /><LayoverTimingEvidenceCard estimates={overview.estimates} /><LayoverDecisionRecordCard sessionId={session.id} snapshotId={overview.snapshotId} persisted={overview.persisted} engineVersion={overview.certification?.engineVersion ?? advice.engineVersion ?? null} timezone={airport.timezone} /><LayoverConstraintsCard sessionId={session.id} canEdit={!!canEdit} refreshKey={dataEpoch} onChanged={() => load(true)} creationNotice={typeof constraintsAtStart === 'string' ? constraintsAtStart : null} />{/* §4/§5/§12.1 (census L22, L35, L49): the declared bags and connection, and the one question when the answer could change the verdict. */}
+        /><LayoverAnswerChangesCard sessionId={session.id} snapshotId={overview.snapshotId} persisted={overview.persisted} timezone={airport.timezone} />{/* census L190: what changed since the answer this traveller last acknowledged */}<LayoverTimingEvidenceCard estimates={overview.estimates} /><LayoverDecisionRecordCard sessionId={session.id} snapshotId={overview.snapshotId} persisted={overview.persisted} engineVersion={overview.certification?.engineVersion ?? advice.engineVersion ?? null} timezone={airport.timezone} /><LayoverConstraintsCard sessionId={session.id} canEdit={!!canEdit} refreshKey={dataEpoch} onChanged={() => load(true)} creationNotice={typeof constraintsAtStart === 'string' ? constraintsAtStart : null} />{/* §4/§5/§12.1 (census L22, L35, L49): the declared bags and connection, and the one question when the answer could change the verdict. */}
         {/* The one §11 event producer this tree has: the traveller. A flight
             time the gate agent just announced is a fact no feed here carries,
             and the server runs the whole §11.1 pipeline over it. */}
@@ -1193,3 +1193,5 @@ import { LayoverCachedExperience } from '../../src/components/layover/LayoverCac
 import { LayoverObjectiveIntentCard } from '../../src/components/layover/LayoverObjectiveIntentCard.tsx';
 import { LayoverTimingEvidenceCard } from '../../src/components/layover/LayoverTimingEvidenceCard.tsx';
 import { LayoverCurrentPositionCard } from '../../src/components/layover/LayoverCurrentPositionCard.tsx';
+import { LayoverAnswerChangesCard } from '../../src/components/layover/LayoverAnswerChangesCard.tsx';
+import { LayoverReentryCard } from '../../src/components/layover/LayoverReentryCard.tsx';

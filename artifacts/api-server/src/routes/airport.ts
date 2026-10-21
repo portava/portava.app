@@ -2291,7 +2291,7 @@ router.get("/airport/sessions/:id/overview", async (req, res) => {
     // posture the client should take now, and a bundle that carries its own
     // certifiedAt/staleAfter/inputHash so an offline client can say how old its
     // answer is instead of presenting a stale deadline as current.
-    safeReturn: safeReturnPosture(record), safeReturnProduct: await layoverSafeReturnProductState(sc,user.id,session.id), crewAbortNotice: await crewAbortNoticeCapability(sc, user.id, session.id, nowMs, session.tripId ?? null), buddyAbortNotice: await buddyAbortNoticeCapability(sc,user.id,session.id,nowMs), disruption: await overviewDisruption(sc, session.id, user.id), // census-layover L144: whether "tell my crew" may be OFFERED at the abort (flag + a live crew joined with this session); L148 (round 2): `disruption` is the SERVER's §15.2 memory from the ledger POST /:id/disruption writes, `unknown` when unreadable (foot of this file)
+    ...(await reentryContextFor(sc, session, record, nowMs)), safeReturn: safeReturnPosture(record), safeReturnProduct: await layoverSafeReturnProductState(sc,user.id,session.id), crewAbortNotice: await crewAbortNoticeCapability(sc, user.id, session.id, nowMs, session.tripId ?? null), buddyAbortNotice: await buddyAbortNoticeCapability(sc,user.id,session.id,nowMs), disruption: await overviewDisruption(sc, session.id, user.id), // census-layover L144: whether "tell my crew" may be OFFERED at the abort (flag + a live crew joined with this session); L148 (round 2): `disruption` is the SERVER's §15.2 memory from the ledger POST /:id/disruption writes, `unknown` when unreadable (foot of this file)
     // §8 — the same outer edge, from the same certified window. The dashboard's
     // copy: a traveller who sees fewer landside cards than a city has places
     // can read the bound that removed them.
@@ -2301,7 +2301,7 @@ router.get("/airport/sessions/:id/overview", async (req, res) => {
       airport,
       record,
       hardReturnLocal: formatLocalTime(tz, record.deadline.hardReturnTime),
-      stops, crew: await activeCrewForUser(sc, user.id, new Date(nowMs).toISOString()), // §48 L154: the owner's OWN crew; a failed read is "crew_unreadable", not "no crew"
+      stops, crew: await activeCrewForUser(sc, user.id, new Date(nowMs).toISOString()), flight: await readDepartureFlight(sc, session), // census L153: the onward flight's last recorded observation; §48 L154: the owner's OWN crew; a failed read is "crew_unreadable", not "no crew"
     }),
     returnReminderAt: session.returnReminderAt, returnAlertPolicy: returnAlertPolicy(), // census L18/L99/L41: the §15 rung each phone-scheduled alert fires at, and the materiality threshold, as data (additive; sends nothing)
     // §24 L265 — the material-change threshold, published on the read the
@@ -5092,7 +5092,7 @@ export async function mapBandedStops(sc: any, airport: AirportProfile, record: L
 // `{ state: "not_stored" }`. A snapshot of another session is a 404, exactly
 // like a missing one; an unreadable or unreplayable row is a 503, never a diff.
 
-import { diffSnapshots } from "../services/layover/LayoverDecisionService.js";
+import { diffSnapshotsForTraveller } from "../services/layover/LayoverDecisionService.js"; // `changes`: what a traveller is told changed (the app's "since your last answer" card)
 
 const SNAPSHOT_ID_RE = /^snap:[0-9a-f]{32}$/;
 
@@ -5113,8 +5113,8 @@ router.get("/airport/sessions/:id/decisions/diff", async (req, res) => {
   const session = await ownedSessionOr(res, sc, req.params.id, auth.user.id);
   if (!session) return;
 
-  const out = await diffSnapshots(sc, session.id, from, to);
-  if (out.ok) { res.json({ featureEnabled: true, state: "stored", diff: out.diff }); return; }
+  const out = await diffSnapshotsForTraveller(sc, session.id, from, to);
+  if (out.ok) { res.json({ featureEnabled: true, state: "stored", diff: out.diff, changes: out.changes }); return; }
   if (out.reason === "persistence_disabled") { res.json({ featureEnabled: true, state: "not_stored", reason: "persistence_disabled" }); return; }
   if (out.reason === "not_found") { sendError(res, "not_found", "Snapshot not found"); return; }
   sendError(res, "degraded_unavailable", "Your layover's decision history could not be read. Please try again.");
@@ -5986,3 +5986,6 @@ import { airportTopologyGeometry } from '../services/airport/airportTopologyGeom
 import { buddyAbortNoticeRequest, buddyAbortNoticeCapability } from '../services/layover/LayoverBuddyAbortNotice.js';
 import layoverCurrentPositionRouter from './layoverCurrentPosition.js';
 router.use(layoverCurrentPositionRouter);
+
+// census-layover L153 / L43 — the onward flight (offline bundle) and the re-entry gate/security refresh. Imported at the TAIL so no cited line above moves; ESM hoists it.
+import { readDepartureFlight, reentryContextFor } from "../services/airport/LayoverDepartureFlight.js";

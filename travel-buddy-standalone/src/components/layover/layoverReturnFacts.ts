@@ -284,7 +284,7 @@ export function statusCapabilityNote(
 const OFFLINE_REASON_TEXT: Record<OfflineUnavailableReason, string> = {
   no_routing_provider: 'no route was cached with it',
   no_envelope_geometry: 'no map area was cached with it',
-  no_flight_feed: 'no confirmed flight status was cached with it',
+  no_flight_feed: 'no confirmed flight status was cached with it', not_linked_to_a_trip_flight: 'this layover is not linked to a flight on your trip', no_flight_observation: 'no update had been recorded for your flight', flight_unreadable: 'your flight could not be read when this was saved', // §16 L153
   no_crew_storage: 'none was cached with this layover',
   crew_not_read: 'none was cached with this layover',
   not_in_crew: 'you were not in a crew when this was saved',

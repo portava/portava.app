@@ -1111,4 +1111,17 @@ export const GUARDS: readonly GuardEntry[] = [
     // printed first because that is the direction that strands a traveller.
     reach: { kind: "check-all", script: "check:layover-decision-diff" },
   },
+  // census-layover L218 — appended at the END for the same reason as the entry above.
+  {
+    checker: "src/scripts/checkLayoverCertification.ts",
+    responsibility:
+      "Layover's §21 certification stays complete (five proof classes, the seven §6.1 hard invariants, the fifteen " +
+      "§21.1 scenarios), every proof cites a real test a real runner executes, its dependencies are real, its document " +
+      "is its data, and the unproved set can only shrink (census-layover L218).",
+    reach: {
+      kind: "test-control",
+      test: "src/test/layoverCertification.test.ts",
+      seams: ["LAYOVER_CERTIFICATION_DOC"],
+    },
+  },
 ];

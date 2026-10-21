@@ -310,7 +310,7 @@ export interface ReturnContract {
 export type OfflineUnavailableReason =
   | 'no_routing_provider'
   | 'no_envelope_geometry'
-  | 'no_flight_feed'
+  | 'no_flight_feed' | 'not_linked_to_a_trip_flight' | 'no_flight_observation' | 'flight_unreadable' // §16 L153: the onward flight as Trips recorded it
   | 'no_crew_storage' | 'crew_not_read' | 'not_in_crew' | 'no_meeting_point_set' | 'crew_unreadable' // §48 L154; the first is what pre-§48 cached bundles carry
   | 'no_phrase_catalogue' // what bundles cached before §16 L155 carry
   | 'language_not_in_catalogue' | 'plan_stays_airside'; // §16 L155 (lane R, 2026-10-07)
@@ -353,7 +353,7 @@ export interface LayoverOfflineBundle {
   };
   mapGeometry: OfflineCapability<never>;
   route: OfflineCapability<never>;
-  flightStatus: OfflineCapability<never>;
+  flightStatus: OfflineCapability<LayoverOfflineFlightStatus>; /** §16 L153 — the onward flight's last recorded observation, or why there is none. */
   /**
    * §16 L154 — the crew meeting point, cached for offline.
    *
@@ -596,7 +596,7 @@ export interface LayoverOverview { estimates?: unknown;
    */
   safeEnvelope: LayoverSafeEnvelope | null; /** The landside gate `safeEnvelope` was published under: WITHHELD (null, `withheld: "landside_closed"`) when closed; not to be called "safe" unless `status === "open"`. ABSENT on a server that predates it — which a client must read as not-open. */ safeEnvelopeGate?: LayoverSafeEnvelopeGate | null;
   returnReminderAt: string | null; /** wave W (census L18/L41/L99) — the §15 rung each phone-scheduled return alert fires at, and the server's materiality threshold. Optional: an older server sends none, and the alerts fall back. */ returnAlertPolicy?: LayoverReturnAlertPolicy | null;
-  localTimes: LayoverLocalTimes; /** §20 — the decision store's state. `{ state: 'not_stored', reason: 'persistence_disabled' }` means 2992's write gate is OFF (census L30's checkpoints sit behind it). Optional: an older server sends none. */ persisted?: { state: string; reason?: string; unwritten?: string[] } | null;
+  reentry?: LayoverReentryContext; /** census L43 — present only after a re-entry check-in (or when check-ins could not be read). */ localTimes: LayoverLocalTimes; /** §20 — the decision store's state. `{ state: 'not_stored', reason: 'persistence_disabled' }` means 2992's write gate is OFF (census L30's checkpoints sit behind it). Optional: an older server sends none. */ persisted?: { state: string; reason?: string; unwritten?: string[] } | null;
 }
 
 export interface PresenceTraveler {
@@ -2984,3 +2984,121 @@ export async function getLayoverSafeReturnProduct(sessionId:string):Promise<Layo
   if (!res.ok) throw new Error('Safe Return could not be checked.');
   return await res.json() as LayoverSafeReturnProductState;
 }
+
+// ── census-layover L190 — "what changed since the last answer" ───────────────
+//
+//   GET /api/airport/sessions/:id/decisions/diff?from=<snapshotId>&to=<snapshotId>
+//
+// The client caller for `LayoverDecisionService.diff(previousSnapshotId,
+// nextSnapshotId)`. `changes` is the server's list of what a traveller is told
+// moved between two STORED answers (verdict, return state, the be-back-by time
+// with the minutes it moved, usable time only when the clock does not explain
+// it, confidence); the reason codes come from `diff`. Every refusal resolves as
+// the code it is: nothing here compares two answers itself or invents a value.
+
+export type LayoverChangeField = 'verdict' | 'returnState' | 'hardReturnTime' | 'usableMinutes' | 'confidence';
+
+export interface LayoverAnswerChange {
+  field: LayoverChangeField | string;
+  previous: string | number;
+  next: string | number;
+  /** `hardReturnTime` only: whole minutes the deadline moved, negative = earlier. */
+  minutesMoved?: number;
+}
+
+export type LayoverAnswerChangesRead =
+  | { ok: true; previousSnapshotId: string; nextSnapshotId: string; changes: LayoverAnswerChange[]; reasonCodesAdded: string[]; reasonCodesRemoved: string[] }
+  /** The ledger did not store answers (persistence off): there is nothing to compare. */
+  | LayoverDecisionUnavailable
+  | LayoverDecisionFailed;
+
+function answerChangesOf(v: unknown): LayoverAnswerChange[] | null {
+  if (!Array.isArray(v)) return null;
+  const out: LayoverAnswerChange[] = [];
+  for (const c of v) {
+    if (!c || typeof c !== 'object') return null;
+    const o = c as Record<string, unknown>;
+    const scalar = (x: unknown) => typeof x === 'string' || (typeof x === 'number' && Number.isFinite(x));
+    if (typeof o.field !== 'string' || !scalar(o.previous) || !scalar(o.next)) return null;
+    out.push({
+      field: o.field, previous: o.previous as string | number, next: o.next as string | number,
+      ...(typeof o.minutesMoved === 'number' && Number.isFinite(o.minutesMoved) ? { minutesMoved: o.minutesMoved } : {}),
+    });
+  }
+  return out;
+}
+
+/** census L190 — what changed between the answer the traveller last saw (`from`) and the one on screen (`to`). */
+export async function getLayoverAnswerChanges(sessionId: string, from: string, to: string): Promise<LayoverAnswerChangesRead> {
+  const url = `${airportUrl('sessions', encodeURIComponent(sessionId), 'decisions', 'diff')}?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+  const read = await decisionRead(url);
+  if (!read.ok) return read;
+  const { json } = read;
+  if (json.state === 'not_stored') return unavailableOf(json);
+  const diff = json.diff as Record<string, unknown> | undefined;
+  const changes = answerChangesOf(json.changes);
+  if (json.state === 'stored' && diff && typeof diff === 'object' && changes) {
+    return {
+      ok: true,
+      previousSnapshotId: typeof diff.previousSnapshotId === 'string' ? diff.previousSnapshotId : from,
+      nextSnapshotId: typeof diff.nextSnapshotId === 'string' ? diff.nextSnapshotId : to,
+      changes,
+      reasonCodesAdded: stringList(diff.reasonCodesAdded),
+      reasonCodesRemoved: stringList(diff.reasonCodesRemoved),
+    };
+  }
+  return { ok: false, kind: 'failed', message: 'Portava answered, but not with anything this version of the app can show.', retryable: false };
+}
+
+// ── census-layover L153 / L43 — the onward flight, as Trips last recorded it ──
+//
+// Served by `LayoverDepartureFlight.ts` (api-server). The values are the last
+// RECORDED OBSERVATION of the traveller's onward flight (the traveller's own
+// report or an approved feed's, 3826's RECORD_FLIGHT_STATUS), each with who
+// recorded it and when. `staleAfter` is the server's: the bundle TTL from the
+// OBSERVATION instant, never renewed. Nothing here re-derives a flight status.
+
+/** §16 L153 — the offline bundle's flight/gate values. */
+export interface LayoverOfflineFlightStatus {
+  designator: string | null;
+  departureAirport: string | null;
+  scheduledDepartureAt: string | null;
+  estimatedDepartureAt: string | null;
+  terminal: string | null;
+  gate: string | null;
+  status: string;
+  /** 'traveller' or 'feed'. */
+  source: string;
+  observedAt: string;
+  staleAfter: string;
+}
+
+export interface LayoverDepartureFlightObservation {
+  segmentId: string;
+  designator: string | null;
+  departureAirport: string | null;
+  scheduledDepartureAt: string | null;
+  estimatedDepartureAt: string | null;
+  terminal: string | null;
+  gate: string | null;
+  status: string;
+  source: string;
+  observedAt: string;
+  staleAfter: string;
+}
+
+export type LayoverDepartureFlightRead =
+  | { state: 'off' }
+  | { state: 'not_linked' }
+  | { state: 'not_observed'; segmentId: string }
+  | { state: 'unreadable'; reason: string }
+  | { state: 'observed'; flight: LayoverDepartureFlightObservation };
+
+export type LayoverReentrySecurity =
+  | { state: 'live'; extraMinutes: number; observedAt: string | null; expiresAt: string | null }
+  | { state: 'no_live_reading' };
+
+/** census L43 — RETURNING → AIRPORT_REENTERED: the gate and security, refreshed at this request. */
+export type LayoverReentryContext =
+  | { state: 'reentered'; reportedAt: string; refreshedAt: string; flight: LayoverDepartureFlightRead; security: LayoverReentrySecurity }
+  | { state: 'unknown'; reason: string };
