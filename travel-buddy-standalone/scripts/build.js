@@ -130,7 +130,7 @@ function getExpoPublicReplId() {
 async function startMetro(expoPublicDomain, expoPublicReplId) {
   const isRunning = await checkMetroHealth();
   if (isRunning) {
-    console.log("Metro already running");
+    exitWithError("A Metro server is already running on :8081. Its environment (EXPO_PUBLIC_API_BASE_URL, EXPO_PUBLIC_SUPABASE_*) cannot be confirmed, so it is not reused. Stop it and run the build again.");
     return;
   }
 
@@ -548,6 +548,7 @@ async function main() {
   });
 
   const manifests = await Promise.race([downloadPromise, timeoutPromise]);
+  verifyBundleWiring(timestamp, process.env.EXPO_PUBLIC_API_BASE_URL || baseUrl);
 
   console.log("Processing assets...");
   const assets = extractAssets(timestamp);
@@ -576,6 +577,25 @@ async function main() {
     metroProcess.kill();
   }
   process.exit(0);
+}
+
+// The finished bundles must carry this build's client wiring: a bundle Metro built with another environment would
+// ship a client that cannot reach the API or sign in. Checked on the files Expo Go downloads, before anything is
+// declared complete. The key is compared, never printed.
+function verifyBundleWiring(timestamp, apiBaseUrl) {
+  const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
+  const key = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+  if (key && /[^\x20-\x7e]/.test(key)) {
+    exitWithError("EXPO_PUBLIC_SUPABASE_ANON_KEY contains a non-ASCII character, so no request can carry it. Check the Replit Secret of that name against .replit [userenv.shared].");
+  }
+  for (const platform of ["ios", "android"]) {
+    const file = path.join(projectRoot, "static-build", timestamp, "_expo", "static", "js", platform, "bundle.js");
+    const bundle = fs.readFileSync(file, "utf8");
+    if (!bundle.includes(apiBaseUrl)) exitWithError(`${platform} bundle does not contain EXPO_PUBLIC_API_BASE_URL ${apiBaseUrl}.`);
+    if (supabaseUrl && !bundle.includes(supabaseUrl)) exitWithError(`${platform} bundle does not contain EXPO_PUBLIC_SUPABASE_URL ${supabaseUrl}.`);
+    if (key && !bundle.includes(key)) exitWithError(`${platform} bundle does not contain this build's EXPO_PUBLIC_SUPABASE_ANON_KEY (compared, not printed).`);
+    console.log(`${platform} bundle wiring verified: API base ${apiBaseUrl}${supabaseUrl ? `, Supabase ${supabaseUrl}` : ""}${key ? ", publishable key present" : ""}`);
+  }
 }
 
 main().catch((error) => {
