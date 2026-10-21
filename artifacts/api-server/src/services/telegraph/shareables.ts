@@ -47,7 +47,7 @@ import { applyHistoryWindow, historyBoundEnabled, visibleFromOf } from "../group
 import { decideHighlightViewAccess } from "../../routes/highlights.js";
 import { checkEventEligibility } from "../../routes/events.js"; import { readEventViewAccess } from "../../lib/eventViewAccess.js";
 import { isFlagEnabled } from "../../lib/featureFlags.js"; import { storageImageOrNull } from "./messageTreeImages.js"; // census-telegraph T446 (B58 TM-1): on this line so no cited line moves
-import { absenceDisclosure } from "../../lib/privacy/absenceDisclosure.js";
+import { absenceDisclosure } from "../../lib/privacy/absenceDisclosure.js"; import { actionsWhileLive } from "./actionLiveness.js"; // census-telegraph T320/T411; on this line so no cited line moves
 import { nameVisibilitySet, presentedName, resolveHandle } from "../../lib/publicIdentity.js";
 import { resolveAccountRestriction } from "../../lib/accountStateGate.js";
 import {
@@ -1407,7 +1407,7 @@ export function shareableFor(
     },
     async getAvailableActions(viewerId, _conversationId) {
       const r = await load(viewerId);
-      return r.state.available ? conversationActions : [];
+      return r.state.available ? actionsWhileLive(objectType, r.state.status, conversationActions) : []; // T320/T411: the object's CURRENT status narrows what it offers
     },
     getDeepLink() {
       return deepLinkFor(objectType, objectId);

@@ -23,7 +23,7 @@ import { getDecayedWeights } from "./CompassSearchDecayService.js";
 
 import { getTrustProfileResult } from "../services/trust/TrustScoreService.js";
 // census-compass CT-02 — the ONE membership seam; this file had the fourth copy.
-import { resolveMemberTripIds, SELECTION_TRIP_ROLES } from "./CompassCurrentTrip.js";
+import { resolveMemberTripIds, SELECTION_TRIP_ROLES, acceptedTripRows } from "./CompassCurrentTrip.js"; import { buildTripCompassOwnedTripsProjection, buildTripCompassTripsByIdProjection } from "../domain/trips/projections/TripCompassTripSummaryProjection.js";
 const CACHE_TTL_MS = 2 * 60 * 1_000; // 2 minutes
 const FUTURE_WINDOW_48H_MS = 48 * 60 * 60 * 1_000;
 
@@ -71,14 +71,14 @@ async function buildProfile(
 
   // Step 2: fetch owned trips + member trips in parallel
   const [ownedTripsRes, memberTripsRes, ...otherResults] = await Promise.allSettled([
-    db.from("trips")
-      .select("id, start_date, end_date, status")
-      .eq("owner_id", userId),
-    memberTripIds.length > 0
-      ? db.from("trips")
-          .select("id, start_date, end_date, status")
-          .in("id", memberTripIds)
-      : Promise.resolve({ data: [], error: null }),
+    // CT-02: owned trips and member trips come from Trips' typed trip-row
+    // projection — every status, which is this profile's question — instead of
+    // two raw `trips` reads. Each row's §19.1 envelope is checked below.
+    buildTripCompassOwnedTripsProjection(db, userId),
+    // An empty member-id list reads nothing (the projection answers it empty),
+    // exactly as the `Promise.resolve` that stood here did.
+    buildTripCompassTripsByIdProjection(db, userId, memberTripIds),
+    // (Both run in parallel with the reads below, as the raw reads did.)
     // All other reads
     db.from("profiles")
       .select("spoken_languages, default_language, budget_style, travel_styles, travel_group_style, travel_pace")
@@ -142,15 +142,15 @@ async function buildProfile(
   ] = otherResults;
 
   // ── Trips aggregation ──────────────────────────────────────────────────────
-  const ownedTrips  = ownedTripsRes.status  === "fulfilled" ? ((ownedTripsRes.value.data as any[]) ?? []) : [];
-  const memberTrips = memberTripsRes.status === "fulfilled" ? ((memberTripsRes.value.data as any[]) ?? []) : [];
+  const ownedTrips  = ownedTripsRes.status  === "fulfilled" ? (acceptedTripRows(ownedTripsRes.value) ?? []) : [];
+  const memberTrips = memberTripsRes.status === "fulfilled" ? (acceptedTripRows(memberTripsRes.value) ?? []) : [];
   // Same rule one level down: `allSettled` makes a REJECTED promise visible and
   // says nothing about a RESOLVED `{ data: null, error }`, which is how a
   // PostgREST failure actually arrives.
   const tripsReadFailed =
     tripStateUnread ||
-    ownedTripsRes.status  === "rejected" || (ownedTripsRes.status  === "fulfilled" && (ownedTripsRes.value  as any).error) ||
-    memberTripsRes.status === "rejected" || (memberTripsRes.status === "fulfilled" && (memberTripsRes.value as any).error);
+    ownedTripsRes.status  === "rejected" || (ownedTripsRes.status  === "fulfilled" && acceptedTripRows(ownedTripsRes.value)  === null) ||
+    memberTripsRes.status === "rejected" || (memberTripsRes.status === "fulfilled" && acceptedTripRows(memberTripsRes.value) === null);
   // Deduplicate by id (a user can appear as owner in trip_members too)
   const tripMap = new Map<string, any>();
   for (const t of [...ownedTrips, ...memberTrips]) tripMap.set(t.id, t);
@@ -161,8 +161,8 @@ async function buildProfile(
   let hasFutureTripScheduled = false;
 
   for (const t of trips) {
-    const start = t.start_date ? new Date(t.start_date).getTime() : null;
-    const end   = t.end_date   ? new Date(t.end_date).getTime()   : null;
+    const start = t.startDate ? new Date(t.startDate).getTime() : null;
+    const end   = t.endDate   ? new Date(t.endDate).getTime()   : null;
     if (start !== null && end !== null && nowMs >= start && nowMs <= end) {
       hasActiveTrip = true;
     }

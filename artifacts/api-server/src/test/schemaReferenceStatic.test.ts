@@ -347,3 +347,25 @@ describe("static schema-reference check — cannot be starved", () => {
     assert.ok(pkg.scripts["check:schema-references"], "the static check is not registered");
   });
 });
+
+// A select list built by concatenating an imported constant is only PARTIALLY
+// resolvable: the extractor follows no import, so the site is marked `unresolved`
+// and neither check:schema-references (static) nor check:write-path-columns (live)
+// verifies its columns. The live check reports such a site as a NEW blind spot, but
+// it runs only in the credential-bearing check:all job -- on PR #763 that report sat
+// behind the stack's own migration reds (run 39042377200,
+// src/routes/tripDecisions.ts:134). The read is the decision surface's TR139
+// privacy filter input, so the columns it names are exactly the ones that matter.
+describe("the decision surface's trip_goals read is statically checkable", () => {
+  it("is fully resolved and names the visibility columns goalsVisibleTo reads", () => {
+    const { sites } = extractSchemaReferences(API_ROOT, [resolve(API_ROOT, "src/routes")]);
+    const goalReads = sites.filter((s) => s.file === "src/routes/tripDecisions.ts" && s.table === "trip_goals");
+    assert.ok(goalReads.length > 0, "the trip_goals read in routes/tripDecisions.ts was not extracted at all");
+    for (const s of goalReads) {
+      assert.equal(s.unresolved, false, `tripDecisions.ts:${s.line} ${s.method} on trip_goals is only partially resolvable`);
+      for (const c of ["scope", "owner_user_id", "weight"]) {
+        assert.ok(s.columns.includes(c), `tripDecisions.ts:${s.line} does not name trip_goals.${c}`);
+      }
+    }
+  });
+});

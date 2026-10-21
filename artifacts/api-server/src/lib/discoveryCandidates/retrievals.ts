@@ -240,7 +240,7 @@ export function retrieveSavedSimilar(ctx: RetrievalContext): Promise<RetrievalOu
   });
 }
 
-// ── trending local / emerging discoveries (place_momentum's latest run) ──────
+// ── trending local / emerging discoveries (place_momentum's latest run, if current and no zone is active: foot of file) ──
 
 function latestMomentumRun(ctx: RetrievalContext): Promise<string | null> {
   return memo(ctx, "place_momentum.head", async () => {
@@ -261,22 +261,22 @@ export const TREND_STATES_FOR_SOURCE = {
 } as const;
 
 export async function momentumPlaceIds(
-  ctx: RetrievalContext, states: readonly string[], limit: number, read: string,
-): Promise<Array<{ id: string; state: string }>> {
+  ctx: RetrievalContext, states: readonly string[], limit: number, read: string, disclosure = false,
+): Promise<MomentumClaim[]> {
   const run = await latestMomentumRun(ctx);
-  if (!run) return [];
+  if (!run || !(await usableMomentumRun(ctx, run))) return [];  // 2026-10-17 privacy gate on 3988: the trend API's age bound, then the zone pass (foot of file)
   const data = await rows(read, ctx.sc
     .from("place_momentum")
-    .select("place_id, trend_state, recent_rate, computed_at")
+    .select(disclosure ? "place_id, trend_state, recent_rate, computed_at, recent_unique_travelers, window_unique_travelers" : "place_id, trend_state, recent_rate, computed_at")
     .eq("computed_at", run)
     .in("trend_state", [...states])
     .order("recent_rate", { ascending: false })
     .order("place_id", { ascending: true })
     .limit(limit));
-  const out: Array<{ id: string; state: string }> = [];
+  const out: MomentumClaim[] = [];
   for (const r of data) {
     const id = servedPlaceId(r.place_id);
-    if (id) out.push({ id, state: String(r.trend_state) });
+    if (id) out.push(disclosure ? { id, state: String(r.trend_state), placeId: String(r.place_id), recentTravelers: r.recent_unique_travelers ?? null, windowTravelers: r.window_unique_travelers ?? null } : { id, state: String(r.trend_state) });
   }
   return out;
 }
@@ -404,3 +404,62 @@ export function retrieveCircleContext(ctx: RetrievalContext): Promise<RetrievalO
     return ok("social_circle", rankGraphPlaces(byPlace, new Set()));
   });
 }
+
+// ── 2026-10-17: the momentum run's age bound and zone pass ───────────────────
+//
+// The independent privacy gate on 3988 (PASS-WITH-CONDITIONS, recorded in
+// docs/verification/discovery-remaining-20261016.md) found the momentum-derived
+// reads — trending_local, emerging_discoveries, the emerging-discoveries output
+// kind (outputKinds.ts) and the exploration inventory's emerging_place bucket
+// (explorationInventory.ts) — using the newest place_momentum run however old
+// it was and whatever the zone policy said. 3988 filters a rebuild's
+// contributions only while a zone is active, and the rebuild scheduler refuses
+// to run at all while one is; NEITHER rebuilds nor purges a run stored before
+// the zone was switched on, so that run kept naming places indefinitely. Both
+// rules below are ones the rest of Discovery already applies; neither is a new
+// number:
+//
+//   AGE    a run is used only while the trend API would serve it: computed no
+//          more than TREND_SNAPSHOT_MAX_AGE_MS ago and not in the future
+//          (lib/discoveryTrendExplanation isCurrentRun — same constant, same
+//          comparison). An older run is no run, never "the best we have".
+//   ZONES  while ANY active protected zone exists no run is used: the global
+//          guard lib/discoveryLocalMomentum.loadLocalMomentum and the rebuild
+//          scheduler apply (lib/discoveryTrendProducerPrivacy). An unreadable
+//          zone policy is a FAILED read named `protected_zones`, never "no
+//          zones" (lib/protectedZoneStore rule 1).
+//
+// The constant is imported from its source, as discoveryTrendRebuildScheduler
+// does: lib/discoveryTrendExplanation imports discoveryPde, which reaches this
+// module, so importing that file here would close an import cycle.
+import { MOMENTUM_CACHE_TTL_MS as TREND_SNAPSHOT_MAX_AGE_MS } from "../discoveryLocalMomentum.js";
+import { unfilteredTrendBlockReason } from "../discoveryTrendProducerPrivacy.js";
+
+/** Is a run computed at `computedAt` current at `nowMs`? The trend API's isCurrentRun, on the same bound. */
+export function momentumRunIsCurrent(computedAt: string, nowMs: number): boolean {
+  const at = Date.parse(computedAt);
+  if (!Number.isFinite(at)) return false;
+  const age = nowMs - at;
+  return age >= 0 && age <= TREND_SNAPSHOT_MAX_AGE_MS;
+}
+
+/** True when no active protected zone exists, false while one does; an unreadable policy throws ReadFailed("protected_zones"). */
+export async function momentumZonePass(sc: any): Promise<boolean> {
+  const block = await unfilteredTrendBlockReason(sc);
+  if (block === "protected_zone_policy_unreadable") throw new ReadFailed("protected_zones");
+  return block === null;
+}
+
+/** May this request use the run computed at `run`? Age first (no read), then the zone policy, read once per request. */
+function usableMomentumRun(ctx: RetrievalContext, run: string): boolean | Promise<boolean> {
+  if (!momentumRunIsCurrent(run, ctx.nowMs)) return false;
+  return memo(ctx, "protected_zones.momentum", () => momentumZonePass(ctx.sc));
+}
+
+/**
+ * One claim of the run. The STORED place id and the traveller counts are read
+ * only when the caller asked for `disclosure`: the emerging-discoveries kind
+ * serves the state, so it must apply the trend API's disclosure rules
+ * (outputKinds.ts, foot); a candidate retrieval never serves it.
+ */
+export interface MomentumClaim { id: string; state: string; placeId?: string; recentTravelers?: number | null; windowTravelers?: number | null }

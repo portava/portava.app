@@ -11081,7 +11081,7 @@ own sub-records inherit too:
 
 **Fix round (verifier F1–F3, 2026-10-12).** Readers that never went through the one rule and derived a hidden plan's
 time or existence now apply it: the Compass Sense free-block and weather nudges
-(`artifacts/api-server/src/compass/CompassSenseEngine.ts:371#const rows = senseRows("trip_plan_items", data, error);`),
+(`artifacts/api-server/src/compass/CompassSenseEngine.ts:367#const built = await buildTripCompassDayPlanProjection(sc, tripId, viewerId, today);`),
 the Compass context's "Tomorrow: N planned item(s)", the decision-urgency plan counts (`routes/tripDecisions.ts`),
 the §3.1 lifecycle's completed-plan count (`routes/trips-expansion.ts`), and the daily brief's `isStale` (only plans
 the viewer may see move it). Trip READINESS is persisted per trip and served to every member, so it counts only
@@ -11277,3 +11277,154 @@ cases, with no failures or skips. The two new tests are registered and watched.
 Compass CT-02 and all Trips verdicts remain unchanged; no schema or hosted activation.
 
 - NOT-GRADED: artifacts/api-server/src/compass/CompassTripContext.ts — §99/§100 cite Compass's consumer of the Trips typed disruption-plan and crew-handle producers; NO ROW MOVES on it, and census-compass grades it.
+
+## §101 — 2026-10-17: re-grade of every N and W row after the integration batch (PR #762). NO ROW MOVES
+
+The integration batch (commit `e1e097cfe`) changed several Trips areas and re-measured no verdict (§98 to
+§100 are citation/claim passes). This pass re-measured all 3 `N` and 128 `W` rows
+(`CENSUS_INTEGRITY_DUMP=N,W`) against that tree. A row moves only when every clause of its requirement is
+now met; none is.
+
+**The batch applied no migration and flipped no flag.** 3720, 3727, 3768, 3970, 3972, 3973 and 3979 are
+still absent from the production-applied migration ledger. Both `trip_kernel_enabled` and
+`trip_operational_projections_enabled` are still seeded FALSE. No row whose last statement rests on one of
+those changed.
+
+What the batch changed, and why no `W` row moves:
+- **Seven typed Compass projections and their consumers** (roster, crew handles, day count, disruption plan,
+  range, saved ideas, Today). The rows they serve are already `C`: TR5, TR360 and TR200–TR212, including
+  TR207. TR213, TR376, TR401 and TR402 stay `W`: the decision table is written and read only while
+  `trip_operational_projections_enabled` is on, so on every deployment the ledger is the per-process ring.
+  Compass CT-02 is graded in census-compass.
+- **Plan-item selection and anchor-grant reads now refuse non-canonical or malformed rows** instead of
+  coercing them. This hardens a reader that already existed. TR116 stays `W` (3727 and 3720 are unapplied,
+  and the client still never writes `privacyScope`). TR256 stays `W` (3970 and 3972 are unapplied, and
+  §31.3.1's anchor condition stands). TR280 stays `C`.
+- **The decision route drains the risk register by id with a ceiling and refuses a capped prefix** (§98).
+  This is a read-side refusal. It does not touch the storage or writer that TR22 and TR84–TR86 are graded
+  on, and it does not settle the question recorded below.
+- **The risk triggers no longer count cancelled transport as a crew-transport mismatch.** TR144 and TR146
+  stay `C`. TR150 stays `W` (BOTH): transport, budget and the meeting point still take a stated party.
+- **Trip-visibility events now require exactly-accepted membership, and the Trip Heartbeat card shows
+  availability.** No row in this census grades either one. Event visibility belongs to the events surface,
+  and the heartbeat card is graded in census-compass.
+
+The 3 `N` rows:
+- **TR176 and TR178** stay `N`. The client still has no Bluetooth dependency and nothing produces or stores
+  relay metadata. The locate-friends precision ladder names a `peer_relay` rung, but no producer fires it.
+- **TR340** stays `N`. The offline bundle still lists map tiles as not carried, because tiles are a client
+  licence the server does not hold.
+
+**Recorded, not graded: a premise for later re-derivation.** §68.1 fact 2 and §73.1 hold the rows on the
+2760-chain tables at `W` on the two flags: *"every one of those tables is still read by nothing"*. The
+`/trips/:tripId/commands` endpoint states that `trip_kernel_enabled` does NOT gate it. It issues every
+family that has no legacy writer (stage, leg, commitment, goal, decision task, risk and others) regardless
+of the flag, and refuses only the plan and participant cutover families. The `/trips/:tripId/structure`
+read takes no flag either. The ledger lists 2760–2796 as applied to production. So for those families, the
+blocker these rows state (for example TR78's *"no database has 2764"*) is not the reason they would stay
+`W`. What the deployed production build runs is still unknown (the Trips production-activation runbook,
+§4). These rows need a row-by-row re-derivation with that evidence. This pass moves none of them.
+
+Tests run on this tree for the changed areas (focused, not a full suite): two API node runs.
+- **Run 1, 384 / 384:** the seven projection suites, risk-trigger lifecycle, Today projection, event-view
+  access, plus the two Layover metrics suites.
+- **Run 2, 617 / 617:** anchor-grant read boundary, private-anchor lifecycle, plan-visibility ruling,
+  decisions route, and the eight Compass trip-consumer suites.
+
+Both runs: 0 failed, 0 skipped.
+
+Headline unchanged: **320 C · 128 W · 3 N** over 451.
+
+## Row moves — 2026-10-17 fixes (wave 2)
+
+Measured on branch `claude/census-regrade-20261017` (stacked on PR #762) on 2026-10-17, against the working tree. `head_commit` is not re-declared. Every row not named here is unchanged. Six rows move `W → C`: two on code fixes in this lane's files (TR153, TR139), one on a fix plus a re-read (TR84), and three on the re-derivation §101 recorded and asked for (TR78, TR79, TR81). Four `W` rows are restated `W` with their true remaining gap (TR22, TR85, TR86, TR138).
+
+**What the three re-derived rows rest on, and what they do not.** §101 recorded that `POST /trips/:tripId/commands` issues the families with no legacy writer whatever `trip_kernel_enabled` says (`artifacts/api-server/src/server/trips/commandRoute.ts:23#THE FLAG DOES NOT GATE THIS, AND THAT IS NOT AN OVERSIGHT`), that `GET /trips/:tripId/structure` takes no flag, and that the production ledger lists 2760–2796. All three are re-read here, and two of them are now pinned by tests that put BOTH Trips flags in the fake database as FALSE (production's state) and go red when a flag gate is added (mutation below). So §68.1 fact 2's *"every one of those tables is still read by nothing"* is false for `trip_stages`, `trip_legs`, `trip_commitments`, `trip_goals`, `trip_decision_tasks` and `trip_risks`. The C bar used is this census's own: a kernel behaviour proven live on merged code (§39.7, TR417, TR49, TR57), with the schema the row was held on now applied to production. **Nothing here is a production-runtime claim.** The runbook says the running API build is unknown (`docs/TRIPS-PRODUCTION-ACTIVATION.md:105#API version is therefore unknown to me, and no Trips flag should be enabled`), and `docs/ops/runtime-evidence-20261004.md:24#Nothing is serving there.` found no build serving at the production origin. No C row in this census carries production realization, and these do not either.
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| TR153 `TripProposal` contract | W | **C** | **Code fix: the one proposal writer that runs with the kernel flag off now writes the contract.** §75.4 built the contract and its two server writers (`artifacts/api-server/src/server/trips/readRoutes/tripProjections.ts:551#payload_json: proposalContractPayload(`, `artifacts/api-server/src/compass/CompassTools.ts:1557#payload_json: proposalContractPayload(`), but both run only under `trip_kernel_enabled`. `POST /trips/:tripId/commands` issues CREATE_PROPOSAL whatever the flag says (`artifacts/api-server/src/server/trips/commandRoute.ts:80#"CREATE_PROPOSAL", "VOTE_ON_PROPOSAL"`) and passed a caller's `payload_json` through verbatim, so `affectedObjects` could be stored as a string or under a sixth spelling. The door now validates the three payload fields and re-writes them under their one key through the same writer (`artifacts/api-server/src/server/trips/commandRoute.ts:179#const proposalDoor = type === "CREATE_PROPOSAL" ? proposalCommandPayload(body.payload) : null;`, `artifacts/api-server/src/domain/trips/contracts/TripProposalContract.ts:250#export function proposalCommandPayload(raw: unknown): ProposalCommandPayload {`, `artifacts/api-server/src/domain/trips/contracts/TripProposalContract.ts:275#return { ok: true, payload: { ...raw, payload_json: proposalContractPayload(change, fields) } };`); a malformed field is refused 400 before the kernel. All eight fields: `type`, `status` and `expiresAt` are 2763 columns, `decisionRule` and `proposedBy` are 2774 columns written by 2775 (`proposedBy` is always the actor), and the other three are documented payload keys. All four migrations are applied to production (`artifacts/api-server/src/lib/capability/production-applied-migrations.json:319#2763_trip_presence_proposals_snapshots_outcomes`, `:363#2774_trip_proposal_governance`, `:367#2775_trip_kernel_proposal_governance_and_apply`). The one reader serves all eight (`artifacts/api-server/src/routes/tripDecisions.ts:246#const contracts = new Map(`, `artifacts/api-server/src/routes/tripDecisions.ts:331#rationale: c.rationale,`, `artifacts/api-server/src/routes/tripDecisions.ts:332#impactSummary: c.impactSummary,`). **The client half is fixed too:** the app's board type now carries the three fields (`travel-buddy-standalone/src/features/trips/planning/tripDecisions.ts:77#affectedObjects?: string[]; rationale?: string`), and the ballot shows why and what it changes (`travel-buddy-standalone/src/features/trips/planning/TripBallotsCard.tsx:113#ballot-why-`, `:114#ballot-impact-`). Its title also read `payload.rationale`, which the server lifts out of `payload`, so that branch never fired (`travel-buddy-standalone/src/features/trips/planning/tripBallots.ts:101#const v = k === 'rationale' ? (p.rationale ?? payload[k]) : payload[k];`). Tests: `artifacts/api-server/src/test/tripCommandsEndpoint.test.ts:250#describe("CREATE_PROPOSAL: §9.3's contract fields, canonical at the door (TR153)"`, `travel-buddy-standalone/src/features/trips/planning/__tests__/tripBallots.test.ts:80#a proposal with no title or summary is described by the rationale the server serves beside the payload`, `travel-buddy-standalone/src/features/trips/planning/__tests__/TripBallotsCard.component.test.tsx:84#rationale and impact summary`. |
+| TR139 goals personal or shared, weighted, without forcing shared priorities | W | **C** | **Code fix: a personal goal is its owner's alone on every reader, not only under RLS.** 2783 gives `scope`, `owner_user_id` and `weight` (`artifacts/api-server/src/migrations/2783_trip_goal_scope_and_member_permissions_version.sql:41#ADD COLUMN scope`, `artifacts/api-server/src/migrations/2783_trip_goal_scope_and_member_permissions_version.sql:43#ADD COLUMN weight`), owner-only RLS (`artifacts/api-server/src/migrations/2783_trip_goal_scope_and_member_permissions_version.sql:53#USING (authz.is_trip_crew(trip_id) AND (scope = 'shared' OR owner_user_id = auth.uid()));`) and owner-only edits in the kernel (`artifacts/api-server/src/migrations/2783_trip_goal_scope_and_member_permissions_version.sql:91#'reason', 'TRIP_AUTH_NOT_CREATOR'`). 2783 is applied to production (`artifacts/api-server/src/lib/capability/production-applied-migrations.json:399#2783_trip_goal_scope_and_member_permissions_version`). RLS does not reach the server, and every `trip_goals` reader uses the service client. The decision surface served every member's personal goals to the whole crew and argued their recommendations from them, and the pulse and opportunity projections weighed them for every viewer. All three now apply the policy, from one module (`artifacts/api-server/src/domain/trips/policies/tripGoalVisibility.ts:34#export function goalVisibleTo(row: GoalVisibilityRow, viewerId: string | null): boolean {`, `artifacts/api-server/src/domain/trips/policies/tripGoalVisibility.ts:36#if (row.scope !== "personal") return false;`): `artifacts/api-server/src/routes/tripDecisions.ts:134#const goalRows = goalsVisibleTo(`, `artifacts/api-server/src/domain/trips/projections/TripPulseProjection.ts:198#goalsVisibleTo(goalsR.rows, viewerId)`, `artifacts/api-server/src/domain/trips/projections/TripOpportunityProjection.ts:329#goalsVisibleTo((goalRows ?? []) as any[], viewerId)`. Scope and weight are served (`artifacts/api-server/src/routes/tripDecisions.ts:292#scope: g.scope, weight: g.weight ?? null,`). An unread or unknown scope is withheld. Tests: `artifacts/api-server/src/test/tripDecisionsRoute.test.ts:640#each member is served the shared goals and their OWN personal goals`, `artifacts/api-server/src/test/tripDecisionsRoute.test.ts:651#a recommendation is not argued from another member's personal goal`, `artifacts/api-server/src/test/tripPulseProjection.test.ts:247#2783 — the pulse reads the viewer's goals`, `artifacts/api-server/src/test/tripOpportunityProjection.test.ts:386#2783 — opportunities read the viewer's goals`. The kernel half runs on a real schema in CI's local-db tier (`artifacts/api-server/src/test/db/tripLedgerGoalsReservations.db.test.ts:61#const personal = ok(alice, { type: "ADD_GOAL"`, `artifacts/api-server/src/test/db/tripLedgerGoalsReservations.db.test.ts:66#the owner of the TRIP read alice's personal goal`). That tier was not run here: there is no PostgreSQL in this environment. |
+| TR84 `trip_goals` | W | **C** | §5.1's key columns (`artifacts/api-server/src/migrations/2762_trip_goals_decisions_risks.sql:45#CREATE TABLE public.trip_goals (`). The writer is 2766, issued with the flag off (`artifacts/api-server/src/server/trips/commandRoute.ts:74#"ADD_GOAL", "UPDATE_GOAL", "REMOVE_GOAL",`). Both are applied to production (`artifacts/api-server/src/lib/capability/production-applied-migrations.json:315#2762_trip_goals_decisions_risks`, `:331#2766_trip_kernel_goal_decision_risk_families`). The reader is unflagged (`artifacts/api-server/src/routes/tripDecisions.ts:102#router.get("/trips/:tripId/decisions"`), and since TR139's fix it applies 2783's owner-only rule. The card is mounted for any signed-in member (`travel-buddy-standalone/app/trip/[id].tsx:613#<TripDecisionsCard tripId={trip.id} />`). The stated blocker, *"2762 … portava-ci only"* (§68.2), is false. Tests: `artifacts/api-server/src/test/tripCommandsEndpoint.test.ts:236#reaches trip_kernel_execute while trip_kernel_enabled is FALSE`, `artifacts/api-server/src/test/tripDecisionsRoute.test.ts:607#goals, decision tasks and risks are read and served`, plus TR139's tests and the local-db ADD_GOAL test. |
+| TR78 `trip_stages` | W | **C** | The one stated blocker, *"no database has 2764"*, is false. 2760 and 2764 are applied to production (`artifacts/api-server/src/lib/capability/production-applied-migrations.json:307#2760_trip_stages`, `:323#2764_trip_kernel_stage_family`). ADD_STAGE and START_STAGE were executed against production's kernel in the runbook's rolled-back probes (`docs/TRIPS-PRODUCTION-ACTIVATION.md:77#happy path`, `:85#lifecycle`). The live tier writes and reads two stages on portava-ci (`artifacts/api-server/src/test/tripKernelLive.test.ts:164#type: "ADD_STAGE", idempotencyKey: key("stage-1")`, `artifacts/api-server/src/test/tripKernelLive.test.ts:305#trip_stages: 2, trip_legs: 1, trip_commitments: 1`). The writer is issued with the flag off (`artifacts/api-server/src/server/trips/commandRoute.ts:70#"ADD_STAGE", "UPDATE_STAGE", "REMOVE_STAGE",`), and the reader takes no flag and selects §5.1's columns (`artifacts/api-server/src/routes/tripStructure.ts:110#.select("id, stage_type, place_id, city_id, timezone, starts_at, ends_at, state, sequence")`). Both are registered unconditionally (`artifacts/api-server/src/routes/index.ts:177#router.use(tripStructureRouter);`, `:180#router.use(tripCommandsRouter);`), and the screen is mounted for any signed-in member (`travel-buddy-standalone/app/trip/[id].tsx:620#<TripStageSpineCard tripId={trip.id} />`). Pins, both flags FALSE: `artifacts/api-server/src/test/tripStructureRoute.test.ts:487#trip_stages is read and served, with its legs and commitments joined`, `artifacts/api-server/src/test/tripCommandsEndpoint.test.ts:236#reaches trip_kernel_execute while trip_kernel_enabled is FALSE`. |
+| TR79 `trip_legs` | W | **C** | As TR78: the table has §5.1's columns (`artifacts/api-server/src/migrations/2761_trip_legs_and_commitments.sql:60#CREATE TABLE public.trip_legs (`), and 2761 and 2765 are applied to production (`artifacts/api-server/src/lib/capability/production-applied-migrations.json:311#2761_trip_legs_and_commitments`, `:327#2765_trip_kernel_leg_and_commitment_families`). The writer is issued with the flag off (`artifacts/api-server/src/server/trips/commandRoute.ts:71#"ADD_LEG", "UPDATE_LEG", "REMOVE_LEG",`), the live tier writes one leg (`artifacts/api-server/src/test/tripKernelLive.test.ts:305#trip_legs: 1`), the reader is unflagged (`artifacts/api-server/src/routes/tripStructure.ts:113#.select("id, from_stage_id, to_stage_id, leg_type, starts_at, ends_at, source_ref")`), and the spine card draws each stage's outbound legs. Same pins as TR78. |
+| TR81 `trip_commitments` | W | **C** | As TR78: the table has §5.1's columns (`artifacts/api-server/src/migrations/2761_trip_legs_and_commitments.sql:92#CREATE TABLE public.trip_commitments (`), with the same production ledger lines as TR79. The writer is issued with the flag off (`artifacts/api-server/src/server/trips/commandRoute.ts:72#"ADD_COMMITMENT", "UPDATE_COMMITMENT", "REMOVE_COMMITMENT",`), the live tier writes one commitment (`artifacts/api-server/src/test/tripKernelLive.test.ts:305#trip_commitments: 1`), and the unflagged reader serves every §5.1 column (`artifacts/api-server/src/routes/tripStructure.ts:116#.select("id, stage_id, type, starts_at, required_arrival_at, place_id, lateness_tolerance, prep_duration, flexibility, confidence, source_ref")`). The spine card counts them per stage. The feasibility read is flagged, and this row does not rest on it. Same pins as TR78. |
+| TR85 `trip_decision_tasks` | W | W | **Restated.** *"portava-ci only"* (§68.2) is false: 2762 and 2766 are applied to production (as TR84). The writer is issued with the flag off (`artifacts/api-server/src/server/trips/commandRoute.ts:75#"ADD_DECISION_TASK", "UPDATE_DECISION_TASK", "REMOVE_DECISION_TASK",`), and the reader is unflagged and pinned (`artifacts/api-server/src/test/tripDecisionsRoute.test.ts:607#goals, decision tasks and risks are read and served`). **Still W:** no test executes ADD_DECISION_TASK against a database carrying the real chain. The live tier and the local-db tier never issue it, and the bare-PostgreSQL harness's goal, decision-task and risk probe prints its rows and asserts nothing. That is §29.3's evidence rule. A local-db case for this family closes it, and it needs PostgreSQL, which this environment does not have. |
+| TR86 `trip_risks` | W | W | **Restated**, the same as TR85: applied to production, issued with the flag off (`artifacts/api-server/src/server/trips/commandRoute.ts:76#"ADD_RISK", "UPDATE_RISK", "REMOVE_RISK",`), and read and propagated unflagged (`artifacts/api-server/src/routes/tripDecisions.ts:362#elementRisks: [...elementRisks.values()],`, pinned by the same test). Still W for the same missing execution of ADD_RISK on a real schema. |
+| TR22 `TripRisk` | W | W | **Restated**, as TR86: the object's table, writer and reader are applied and unflagged. Its writer has never been executed by a test against a real schema. |
+| TR138 `TripGoal` contract | W | W | **Restated.** *"No database has 2783"* is false (`artifacts/api-server/src/lib/capability/production-applied-migrations.json:399#2783_trip_goal_scope_and_member_permissions_version`), and `scope` is now SERVED (TR139). **Still W:** §8.1's vocabularies are not the table's. `type` is rest/budget/experience/social/logistics/safety/other against §8.1's NIGHTLIFE…CUSTOM, `priority` is low/normal/high against 0..1 (2783's `weight` is the 0..1), and `status` is open/met/abandoned against UNSERVED/PARTIAL/SATISFIED/DROPPED (`artifacts/api-server/src/migrations/2762_trip_goals_decisions_risks.sql:56#trip_goals_priority_known`). This needs a migration. |
+
+### Tests and mutation proofs, run for this section on 2026-10-17
+
+All API runs were `node --import tsx/esm --test` with `TZ=UTC` and a dummy Supabase URL, on fakes. They are not evidence about a hosted database, a device or a deployment.
+
+| what | result |
+| --- | --- |
+| TR153, server. New HTTP cases written before the fix (`tripCommandsEndpoint.test.ts`) | red: 24/31, the 7 contract cases failing. After the fix: 43/43 with `tripProposalContract.test.ts`. Final file: 34/34 |
+| TR153, server mutants (sha256 restored after each) | 5/5 killed. Both files reverted: 8 fail. Door not called: 8 fail. Non-array `affected_objects` accepted: 2 fail. Payload validated but not re-written: 2 fail. Disagreeing spellings accepted: 1 fail |
+| TR153, client (`tripBallots.test.ts` node; `TripBallotsCard.component.test.tsx` jest) | red: 7/8 and 6/7. Green: 8/8 and 7/7. Reverting `tripBallots.ts` gives 1 fail, and reverting `TripBallotsCard.tsx` gives 1 fail |
+| TR139 / TR84, the goal rule (decisions route, pulse and opportunity suites) | red: 120/124, the 4 new cases failing. Green: 124/124. 4/4 mutants killed: all three readers reverted (4 fail), the rule admitting every row (4 fail), any personal goal admitted (4 fail), an unread scope treated as shared (3 fail) |
+| Flag-off pins (TR78, TR79, TR81, TR84 to TR86, TR22) | Green before and after: they pin existing behaviour. Mutant: a `trip_kernel_enabled` gate added to the structure route, the decisions route and the commands route. Every pin goes red (the six command cases, the structure pin and the decisions pin; 95 failures across the three files). Restored byte-identically |
+| Neighbours: every `src/test/trip*.test.ts`, plus every suite that imports a changed Trips module (146 files) | First run: 3683/3685. The 2 failures: `tripKernelLive.test.ts`, a live suite refused by `ciSupabaseGuard` without credentials, as designed; and the phase-0 inventory, which needed the new policy module listed. The inventory was regenerated (`check:trip-write-path-inventory` PASSED) |
+| Final run after every edit: the same set without the live-only suite, plus the 57 Layover/engine neighbours of census-layover L57 (187 files) | 4831/4831, 0 skipped |
+
+### Headline
+
+| bucket | was (§101) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 320 | 322 |
+| BUILT-BUT-WRONG | 128 | 126 |
+| NOT-BUILT | 3 | 3 |
+| CANNOT-VERIFY | 0 | 0 |
+| total | 451 | 451 |
+
+**2 moves stand, W → C: TR153, TR139.** TR84, TR78, TR79 and TR81 are restated back to W by the lead ruling below. 451 = 322 C / 126 W / 3 N / 0 X. CORRECT% is 322 / 451 = 71.4 %.
+
+### Lead ruling — TR78, TR79, TR81, TR84 restated W (2026-10-17, after independent verification)
+
+The independent verifier (Fable, 2026-10-17) confirmed the rows above are right that their old blockers were false: 2760–2766 reached the production ledger on 2026-09-17, and the commands writer and `/structure` reader are unflagged. It also found the material fact the rows omit: **no product surface issues `ADD_STAGE`, `ADD_LEG`, `ADD_COMMITMENT` or `ADD_GOAL`** — the app's only `issueTripCommand` callers are `travel-buddy-standalone/src/features/trips/planning/tripPresence.ts` and `tripBallots.ts` — so every production trip's stages, legs, commitments and goals stay empty and the §5.1 writer has never run in the product; the live-tier evidence is §39's, not re-run. The lead rules that a TABLE row is BUILT-AND-CORRECT only when the product can populate it. All four stand at W; what closes each is a mounted product surface that issues its command (and, for TR84, the §8.1 vocabularies TR138 still lacks).
+
+| id | was | now | remaining gap |
+| --- | --- | --- | --- |
+| TR78 `trip_stages` | C | **W** | No product surface issues `ADD_STAGE`; the table is empty in every production trip. |
+| TR79 `trip_legs` | C | **W** | No product surface issues `ADD_LEG`. |
+| TR81 `trip_commitments` | C | **W** | No product surface issues `ADD_COMMITMENT`. |
+| TR84 `trip_goals` | C | **W** | No product surface issues `ADD_GOAL`; TR139's privacy fix stands on its own row. |
+
+## Row moves — 2026-10-17 fixes (wave 3)
+
+Measured on branch `claude/census-regrade-20261017` (stacked on PR #762) on 2026-10-17, against the working tree. `head_commit` is not re-declared. **No row moves.** Four rows are restated `W` with one remaining gap: a CI run. Three more were re-derived and held, each on a blocker named below. Trips also gained the typed projections that move census-compass CT-02. That row is graded there, and every Trips row they serve (TR5, TR360, TR200–TR212) was already `C`.
+
+### TR85, TR86, TR21, TR22: both gaps closed in code; one CI run outstanding
+
+The lead's ruling on wave 2 says what closes a §5.1 table row: *a mounted product surface that issues its command*. Wave 2 recorded that no test executed ADD_DECISION_TASK or ADD_RISK against the real chain. Both gaps are now closed in code:
+
+- **The product surface.** The trip screen mounts a composer for any signed-in viewer — the kernel refuses a non-crew writer — (`travel-buddy-standalone/app/trip/[id].tsx:613#<TripDecisionComposer tripId={trip.id`}). It issues ADD_DECISION_TASK by 2762's task type, with an optional consequence (`travel-buddy-standalone/src/features/trips/planning/tripDecisionEntries.ts:84#export async function addDecisionTask(`). It issues ADD_RISK by likelihood and impact, with an optional trigger note (`travel-buddy-standalone/src/features/trips/planning/tripDecisionEntries.ts:99#export async function addRisk(`). Both go through `POST /trips/:tripId/commands`, which issues these families whatever `trip_kernel_enabled` says (`artifacts/api-server/src/server/trips/commandRoute.ts:75#"ADD_DECISION_TASK", "UPDATE_DECISION_TASK", "REMOVE_DECISION_TASK",`). The vocabularies are 2762's CHECKs (`travel-buddy-standalone/src/features/trips/planning/tripDecisionEntries.ts:31#export const DECISION_TASK_TYPES`). "Added" is shown only on the kernel's word, and a retry re-sends the same key. When an entry is added, the decisions card re-reads (`travel-buddy-standalone/app/trip/[id].tsx:613#<React.Fragment key={`decisions-${decisionsKey}`}>`). Tests: `travel-buddy-standalone/src/features/trips/planning/__tests__/tripDecisionEntries.test.ts:26#it('a decision task is ADD_DECISION_TASK` (node 6/6) and `travel-buddy-standalone/src/features/trips/planning/__tests__/TripDecisionComposer.component.test.tsx:13#it('adds a decision task by its type and consequence` (jest 4/4). Red first: neither file could load before the module and component existed. Mutants, each restored by sha256: the wrong command type (1 fail); `onAdded` called on a refusal (1 fail); a retry minting a new key (1 fail).
+- **Real-schema execution.** `artifacts/api-server/src/test/db/tripDecisionTasksAndRisks.db.test.ts:26#describe("2766 decision-task and risk families on the real chain` runs both families through `trip_kernel_execute` on the replayed chain. It covers every column and default, the event at the next aggregate version, TRIP_ASSIGNEE_NOT_CREW, the vocabularies, update and remove, NOT_FOUND, a stranger refused TRIP_AUTH_NOT_CREW, 2762's RLS (crew read, stranger reads nothing, no direct client write changes either table), and the reader's exact select lists. **It has NOT been run.** This machine has no PostgreSQL with PostGIS, and the suite skips without `LOCAL_DB_URL`. It runs in CI's kernel-SQL job (`scripts/local-db/run-tests.sh`, which refuses skipped > 0). Here it was only loaded (it skips cleanly). The kernel branches it asserts were read in 2766 (`artifacts/api-server/src/migrations/2766_trip_kernel_goal_decision_risk_families.sql:169#WHEN 'ADD_DECISION_TASK' THEN`).
+
+| id | was | now | remaining gap |
+| --- | --- | --- | --- |
+| TR85 `trip_decision_tasks` | W | W | **Pending CI only.** The product surface now issues ADD_DECISION_TASK, and the local-db suite above executes it. Once that suite passes in CI's kernel-SQL job, every clause the row and the lead's ruling name is met. Not moved on unexecuted evidence. |
+| TR86 `trip_risks` | W | W | **Pending CI only**, as TR85: ADD_RISK is now issued by the product, and the same suite executes it on the real chain. |
+| TR21 `TripDecisionTask` | W | W | **Pending CI only**, as TR85: the object's table, writer, product surface and reader are in place. Execution on the real schema waits on the CI run. |
+| TR22 `TripRisk` | W | W | **Pending CI only**, as TR86. |
+
+### Re-derived and held (no verdict change)
+
+- **TR87 `trip_presence` and TR23 `TripPresence` are held on 3741, an unapplied production migration.** The product does populate the table. The crew card issues SET_PRESENCE through the unflagged command endpoint (`travel-buddy-standalone/src/features/trips/crew/tripPresence.ts:137#type: 'SET_PRESENCE',`), and the card is mounted for signed-in members. 2763, 2767, 2768, 2776 and 2777 are in the production ledger. But the client-readable view over the table is owner-privileged in production. 3741 records that every signed-in user can read every trip's presence rows, `private` ones included, through it (`artifacts/api-server/src/migrations/3741_trip_presence_current_security_invoker.sql:19#signed-in user could read every trip_presence row of every trip through`), and 3741 is absent from `production-applied-migrations.json`. Grading the table correct while the product writes rows into that leak would be the overstatement. These rows move when 3741 is applied.
+- **TR88 `trip_proposals` is held on a flag.** The product votes and decides through the unflagged endpoint, but it creates a proposal only through the replan card's kernel-only path (`travel-buddy-standalone/src/features/trips/opportunities/TripReplanCard.tsx:11#the crew votes on (CREATE_PROPOSAL, kernel only)`). With `trip_kernel_enabled` seeded FALSE, no product surface populates the table.
+- **TR91 `trip_outcomes` is held on the same flag.** The closeout card's door refuses while `trip_kernel_enabled` is off (`artifacts/api-server/src/routes/tripPostTrip.ts:84#if (!(await isTripKernelEnabled(ctx.sc))) {`). TR83 `trip_plan_participants` has no product surface that issues JOIN_PLAN.
+
+### Headline
+
+| bucket | was (wave 2, after the lead ruling) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 322 | 322 |
+| BUILT-BUT-WRONG | 126 | 126 |
+| NOT-BUILT | 3 | 3 |
+| CANNOT-VERIFY | 0 | 0 |
+| total | 451 | 451 |
+
+No row moved. 451 = 322 C / 126 W / 3 N / 0 X.
+
+- NOT-GRADED: artifacts/api-server/src/migrations/3741_trip_presence_current_security_invoker.sql — the wave-3 section cites it as the unapplied blocker that holds TR87 and TR23; no verdict here rests on what it does.

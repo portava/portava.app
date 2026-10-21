@@ -8,10 +8,10 @@
  * a cited artifact has been deleted, or if the set of cases that do NOT reach
  * their expectation grows.
  *
- * Three cases do not reach their expectation today and say so out loud:
+ * Two cases do not reach their expectation today and say so out loud (RLS-10 was the third):
  *   RLS-03 flag_gated — the §14.3 history bound is built and seeded OFF.
  *   RLS-09 divergent  — the gate is immediate, the propagation is not.
- *   RLS-10 divergent  — one action re-derives, every rendered action does not.
+ *   RLS-10 ENFORCED 2026-10-17 (census-telegraph T320) — every booking-only action follows the booking.
  * Their assertions are written against TODAY'S behaviour, so closing the gap
  * turns this suite red and forces the matrix to be updated with it.
  *
@@ -628,7 +628,7 @@ describe("RLS-09 — trip member loses trip membership → capabilities downgrad
 
 // ── RLS-10 ────────────────────────────────────────────────────────────────────
 
-describe("RLS-10 — buddy booking cancelled → booking-only actions disabled (divergent)", () => {
+describe("RLS-10 — buddy booking cancelled → booking-only actions disabled (enforced)", () => {
   it("a cancelled booking is not call-eligible; the live statuses still are", () => {
     assert.equal(isRabBookingCallEligible({ status: "cancelled" }), false);
     assert.equal(isRabBookingCallEligible({ status: "refunded" }), false);
@@ -648,17 +648,17 @@ describe("RLS-10 — buddy booking cancelled → booking-only actions disabled (
     );
   });
 
-  it("the rendered booking card re-checks NOTHING — the divergence, asserted against the component", async () => {
-    const { readFileSync } = await import("node:fs");
-    const { resolve } = await import("node:path");
-    const src = readFileSync(
-      resolve(process.cwd(), "../../travel-buddy-standalone/src/components/rentabuddy/BookingMilestoneMessage.tsx"),
-      "utf8",
-    );
-    assert.equal(/\bfetch\s*\(/.test(src), false,
-      "EXPECTED BY §26: booking-only actions disabled immediately. ACTUAL: the card " +
-      "performs no fetch, so its buttons render from a frozen payload.");
-    assert.equal(/useEffect\s*\(/.test(src), false, "and no effect re-resolves the booking");
+  it("ENFORCED: every booking-only action follows the booking — card and rail actions, canCall, and the open thread", async () => {
+    const { readFileSync } = await import("node:fs"); const { resolve } = await import("node:path"); const { actionsWhileLive } = await import("../services/telegraph/actionLiveness.js");
+    assert.deepEqual(actionsWhileLive("BOOKING", "cancelled", ["MEET_HERE", "SHARE_LOCATION", "CHECK_IN_SAFE"]), [], "a cancelled booking's card and rail item offer nothing");
+    const policy = readFileSync(resolve(process.cwd(), "src/domain/telegraph/policies/conversationCapabilityPolicy.ts"), "utf8");
+    assert.match(policy, /else if \(!bookingCallable\) deny\(d, "canCall", "TELEGRAPH_POLICY_BOOKING_NOT_ACTIVE"\)/, "canCall asks the booking (behaviour: telegraphConversationCapabilities.test.ts T320)");
+    const screen = readFileSync(resolve(process.cwd(), "../../travel-buddy-standalone/app/messages/[id].tsx"), "utf8");
+    assert.match(screen, /\}, \[threadType, contextId, bookingTransitionKey\]\);/, "the open thread re-reads the booking when its transition card arrives");
+    const banner = readFileSync(resolve(process.cwd(), "../../travel-buddy-standalone/src/components/rentabuddy/BookingMilestoneMessage.tsx"), "utf8");
+    assert.equal(/\b(Pressable|onPress|TouchableOpacity|router\.)/.test(banner), false,
+      "the milestone banner records a transition and offers no action — there is nothing on it to disable");
+    assert.equal(TELEGRAPH_RLS_MATRIX.find((c) => c.id === "RLS-10")?.status, "enforced");
   });
 });
 

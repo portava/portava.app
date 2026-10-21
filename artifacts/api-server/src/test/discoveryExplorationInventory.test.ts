@@ -169,3 +169,55 @@ describe("DV-53 — the four bucket reads", () => {
     assert.ok(!r.buckets.get(`db/${P.EMERGING}`)?.includes("emerging_place"));
   });
 });
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 2026-10-17 — the independent privacy gate on 3988 (PASS-WITH-CONDITIONS):
+// the emerging_place bucket reads the newest place_momentum run, and a run
+// stored before a protected zone was switched on is neither rebuilt nor purged
+// when it is. The bucket now uses a run only while the trend API would serve it
+// (isCurrentRun) and only while no active protected zone exists; an unreadable
+// zone policy is a named failed read (docs/verification/discovery-remaining-20261016.md).
+// Appended at the foot so no line above that a census cites moves.
+// ═════════════════════════════════════════════════════════════════════════════
+import { TREND_SNAPSHOT_MAX_AGE_MS, isCurrentRun } from "../lib/discoveryTrendExplanation.js";
+import type { Row } from "./helpers/fakeCandidateDb.js";
+
+function inventoryWorldWithRunAgo(agoMs: number): Record<string, Row[]> {
+  const w = world();
+  const latest = w["place_momentum"]![0]!["computed_at"];
+  const at = new Date(NOW - agoMs).toISOString();
+  w["place_momentum"] = w["place_momentum"]!.map((r) => (r["computed_at"] === latest ? { ...r, computed_at: at } : r));
+  return w;
+}
+const INVENTORY_IDS = [`db/${P.EMERGING}`, `db/${P.TRAIL_MEMBER}`];
+
+describe("2026-10-17 privacy gate on 3988 — emerging_place's run: age bound and zone pass", () => {
+  it("I1. at every age around the trend API's bound, emerging_place agrees with isCurrentRun; a stale or future run is no run", async () => {
+    const ages = [-1, 0, TREND_SNAPSHOT_MAX_AGE_MS, TREND_SNAPSHOT_MAX_AGE_MS + 1, 2 * TREND_SNAPSHOT_MAX_AGE_MS];
+    for (const ago of ages) {
+      const api = isCurrentRun({ computedAt: new Date(NOW - ago).toISOString(), modelVersion: "", featureVersion: null, priorMs: null }, NOW);
+      const r = await loadInventoryBuckets(makeFakeCandidateDb(inventoryWorldWithRunAgo(ago)), INVENTORY_IDS, { nowMs: NOW });
+      assert.deepEqual(r.failedReads, [], `age ${ago}`);
+      assert.equal(!!r.buckets.get(`db/${P.EMERGING}`)?.includes("emerging_place"), api, `age ${ago}`);
+      assert.ok(r.buckets.get(`db/${P.TRAIL_MEMBER}`)?.includes("new_trail"), `age ${ago}: the other buckets still read`);
+    }
+  });
+
+  it("I2. while ANY active protected zone exists the bucket is empty, not failed; an inactive zone is no zone", async () => {
+    const w = world(); w["protected_zones"] = [{ id: "zone-1", active: true }];
+    const r = await loadInventoryBuckets(makeFakeCandidateDb(w), INVENTORY_IDS, { nowMs: NOW });
+    assert.deepEqual(r.failedReads, []);
+    assert.ok(!r.buckets.get(`db/${P.EMERGING}`)?.includes("emerging_place"));
+    assert.ok(r.buckets.get(`db/${P.TRAIL_MEMBER}`)?.includes("new_trail"));
+    const off = world(); off["protected_zones"] = [{ id: "zone-1", active: false }];
+    const o = await loadInventoryBuckets(makeFakeCandidateDb(off), INVENTORY_IDS, { nowMs: NOW });
+    assert.ok(o.buckets.get(`db/${P.EMERGING}`)?.includes("emerging_place"), "control: an inactive zone withholds nothing");
+  });
+
+  it("I3. an unreadable zone policy is named in failedReads and leaves only emerging_place empty", async () => {
+    const r = await loadInventoryBuckets(makeFakeCandidateDb(world(), { erroring: ["protected_zones"] }), INVENTORY_IDS, { nowMs: NOW });
+    assert.deepEqual(r.failedReads, ["protected_zones"]);
+    assert.ok(!r.buckets.get(`db/${P.EMERGING}`)?.includes("emerging_place"));
+    assert.ok(r.buckets.get(`db/${P.TRAIL_MEMBER}`)?.includes("new_trail"));
+  });
+});

@@ -38,7 +38,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { isBlockedBetween } from "../../../lib/blockGuard.js";
+import { isBlockedBetween } from "../../../lib/blockGuard.js"; import { isRabBookingCallEligible } from "../../../lib/calls/callGatewayAdapter.js"; // census-telegraph T320
 import { isAcceptedTripMember } from "../../../lib/http.js"; import { CREW_LIVE_SHARE_PURPOSE, admitSharesForPurpose } from "../../../lib/locationSharePurpose.js"; // 3753: INPUT 8 reads the crew live share only
 import { logger as rootLogger } from "../../../lib/logger.js";
 import { getRestrictionState } from "../../../services/trust/TrustRestrictionService.js";
@@ -219,15 +219,15 @@ export async function resolveConversationCapabilities(
   inputsRead.push("tripCrewMembership");
 
   // ── INPUT 7: booking state ───────────────────────────────────────────────
-  let bookingStatus: string | null = null;
+  let bookingStatus: string | null = null; let bookingCallable = true; // T320: in a booking's own thread a call follows the booking — the call gateway's rule, isRabBookingCallEligible
   {
     const { data: booking, error: bookingErr } = await sc
       .from("rent_buddy_bookings")
-      .select("id, status, buddy_id, traveler_id")
+      .select("id, status, buddy_id, traveler_id, stay_connected_traveler, stay_connected_buddy")
       .eq("telegraph_thread_id", conversationId)
       .maybeSingle();
     if (bookingErr) { markDegraded("TELEGRAPH_DEGRADED_SCHEMA_ABSENT"); }
-    else if (booking) { bookingStatus = String((booking as any).status ?? ""); }
+    else if (booking) { bookingStatus = String((booking as any).status ?? ""); bookingCallable = isRabBookingCallEligible(booking as any); }
   }
   inputsRead.push("bookingState");
 
@@ -296,7 +296,7 @@ export async function resolveConversationCapabilities(
   const callTrust = decideRestrictedCapability("canCall", restriction); // the table: no term of its own (D-24)
   if (!d.capabilities.canSendMessage) deny(d, "canCall", d.reasons.canSendMessage ?? "TELEGRAPH_AUTH_NOT_MEMBER");
   else if (!callTrust.allowed) deny(d, "canCall", callTrust.reason);
-  else if (ageRestricted) deny(d, "canCall", "TELEGRAPH_POLICY_RECIPIENT_PRIVACY");
+  else if (ageRestricted) deny(d, "canCall", "TELEGRAPH_POLICY_RECIPIENT_PRIVACY"); else if (!bookingCallable) deny(d, "canCall", "TELEGRAPH_POLICY_BOOKING_NOT_ACTIVE"); // T320: a cancelled booking's call is refused at the gateway; the capability now says so
   else grant(d, "canCall");
 
   // canCreatePlan — a trip thread needs accepted crew; every other thread type

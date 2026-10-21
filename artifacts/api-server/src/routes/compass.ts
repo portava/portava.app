@@ -183,7 +183,7 @@ import { buildCompassContext as buildLocationCompassContext } from "../services/
 import { buildCompassMediaContext, formatMediaContextLines } from "../compass/CompassMediaContext.js";
 import { resolveViewer as resolveMediaViewer } from "../services/media/MediaProjectionService.js";
 import { checkCompassActionRestriction, sendCompassRestrictionRefusal } from "../compass/CompassRestrictionGate.js";
-import { findVisibleSourcedPlanItem } from "../server/trips/privateAnchorShares.js"; // D-65 duplicate guard: lane C's one rule for every add-to-plan door
+import { findVisibleSourcedPlanItem } from "../server/trips/privateAnchorShares.js"; import { acceptedTripRows } from "../compass/CompassCurrentTrip.js"; import { buildTripCompassOwnedTripsProjection, buildTripCompassTripsByOwnersProjection, buildTripCompassTripSummaryProjection } from "../domain/trips/projections/TripCompassTripSummaryProjection.js"; import { buildTripCompassTripMemberIdsProjection } from "../domain/trips/projections/TripCompassMembershipProjection.js"; import { acceptTripProjection, TRIP_PROJECTION_SCHEMA_VERSION } from "../domain/trips/contracts/TripProjectionEnvelope.js"; // D-65 duplicate guard: lane C's one rule for every add-to-plan door; census-compass CT-02: Compass reads Trips through its typed projections (these imports are on this line so no cited line moves)
 
 const router = Router();
 
@@ -3947,35 +3947,35 @@ router.get("/compass/recommendations", async (req, res) => {
       const destOverlapSet = new Set<string>();
       if (travCandidateIds.length > 0) {
         const nowStr = new Date(nowMs).toISOString().slice(0, 10);
-        const { data: aliceTripRows } = await sc
-          .from("trips")
-          .select("destination_city")
-          .eq("owner_id", user.id)
-          .in("status", ["upcoming", "active"])
-          .gte("end_date", nowStr);
+        // census-compass CT-02: the viewer's own trips come from Trips' typed trip-row
+        // projection. Unread stays what it always was here: no overlap signal (the
+        // raw read bound no error, so a failure already meant an empty set).
+        const aliceTripRows = acceptedTripRows(await buildTripCompassOwnedTripsProjection(sc, user.id, {
+          statuses: ["upcoming", "active"], endingOnOrAfter: nowStr,
+        })) ?? [];
         const aliceDestinations = new Set<string>(
-          ((aliceTripRows ?? []) as any[])
-            .map((t: any) => (t.destination_city as string)?.toLowerCase().trim())
+          aliceTripRows
+            .map((t) => t.destinationCity?.toLowerCase().trim() ?? "")
             .filter(Boolean),
         );
         if (aliceDestinations.size > 0) {
-          const { data: travTripRows } = await sc
-            .from("trips")
-            .select("owner_id, destination_city")
-            .in("owner_id", travCandidateIds)
-            .in("status", ["upcoming", "active"])
+          const travTripRows = acceptedTripRows(await buildTripCompassTripsByOwnersProjection(sc, user.id, travCandidateIds, {
+            statuses: ["upcoming", "active"],
             // `trip_visibility` is an ENUM: public | buddies | invite | private.
             // "friends" is NOT a label (that is `event_visibility`'s
             // `friends_only`, a different enum on a different table — see
             // mapSearch.ts:88, which is correct). Postgres rejects an unknown
-            // enum literal outright (22P02), so this read failed WHOLE and the
-            // traveller destination-overlap match signal has always been inert.
-            .in("visibility", ["public", "buddies"])
-            .gte("end_date", nowStr);
-          for (const t of (travTripRows ?? []) as any[]) {
-            const dest = (t.destination_city as string)?.toLowerCase().trim();
-            if (dest && aliceDestinations.has(dest)) destOverlapSet.add(t.owner_id);
+            // enum literal outright (22P02), so this read once failed WHOLE and the
+            // traveller destination-overlap match signal was inert. Trips now
+            // refuses an unknown label before it reads (TRIP_VISIBILITY_LABELS).
+            visibilities: ["public", "buddies"],
+            endingOnOrAfter: nowStr,
+          })) ?? [];
+          for (const t of travTripRows) {
+            const dest = t.destinationCity?.toLowerCase().trim();
+            if (dest && aliceDestinations.has(dest)) destOverlapSet.add(t.ownerId as string);
           }
+          // (A trip the projection could not read, or whose envelope it refused, adds no overlap.)
         }
       }
 
@@ -4312,13 +4312,13 @@ router.get("/compass/recommendations", async (req, res) => {
       // authored by or attended by a trip member (surface them first in the ranked list).
       if (tripId) {
         try {
-          const { data: memberRows } = await sc
-            .from("trip_members")
-            .select("user_id")
-            .eq("trip_id", tripId);
-
+          // census-compass CT-02: the trip's member ids from Trips' projection — every
+          // membership row, as this signal always read them; unread is no signal.
+          const members = await buildTripCompassTripMemberIdsProjection(sc, tripId);
           const memberSet = new Set<string>(
-            ((memberRows ?? []) as any[]).map((r: any) => r.user_id as string),
+            members.ok && acceptTripProjection(members.projection, {
+              acceptedSchemaVersion: TRIP_PROJECTION_SCHEMA_VERSION, metric: "TripCompassTripMemberIdsProjection",
+            }).accepted ? members.projection.memberIds : [],
           );
 
           if (memberSet.size > 0) {
@@ -4835,12 +4835,12 @@ router.get("/compass/telegraph", async (req, res) => {
     tripId = (threadRow as any)?.trip_id ?? null;
 
     if (tripId) {
-      const { data: tripRow } = await sc
-        .from("trips")
-        .select("destination_city")
-        .eq("id", tripId)
-        .maybeSingle();
-      cityContext = (tripRow as any)?.destination_city ?? null;
+      // census-compass CT-02: the trip's destination from Trips' typed trip projection;
+      // unread or refused is no trip city, as the unbound raw read was.
+      const tripRead = await buildTripCompassTripSummaryProjection(sc, tripId);
+      cityContext = tripRead.ok && acceptTripProjection(tripRead.projection, {
+        acceptedSchemaVersion: TRIP_PROJECTION_SCHEMA_VERSION, metric: "TripCompassTripSummaryProjection",
+      }).accepted ? tripRead.projection.trip?.destinationCity ?? null : null;
     }
 
     // Fallback: use viewer's Compass profile city, or participants' cities

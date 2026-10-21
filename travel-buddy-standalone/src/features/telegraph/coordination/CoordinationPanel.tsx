@@ -413,11 +413,11 @@ export function CoordinationPanel({
         <Pressable
           testID="telegraph-coordination-share-location"
           accessibilityRole="button"
-          accessibilityLabel="Share a place with this conversation"
+          accessibilityLabel="Share where you are with this conversation, for a limited time"
           onPress={onShareLocation}
           style={styles.chip}
         >
-          <Text style={styles.chipText}>Share a place</Text>
+          <Text style={styles.chipText}>Share where you are</Text>
         </Pressable>
       ) : null}
 

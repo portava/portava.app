@@ -10804,7 +10804,10 @@
         "feature_flags",
         "feature_flags",
         "feature_flags",
-        "feature_flags"
+        "feature_flags",
+        "profiles",
+        "discovery_places",
+        "discovery_places"
       ],
       "selects": [
         {
@@ -10998,6 +11001,18 @@
         {
           "table": "user_friendships",
           "cols": "user_a"
+        },
+        {
+          "table": "profiles",
+          "cols": "id, handle"
+        },
+        {
+          "table": "discovery_places",
+          "cols": "id, city, verified"
+        },
+        {
+          "table": "discovery_places",
+          "cols": "id, name, city, submitted_by"
         }
       ],
       "ors": [
@@ -11044,6 +11059,10 @@
         {
           "table": "profiles",
           "expr": "name.ilike.%zork%,handle.ilike.%zork%,username.ilike.%zork%"
+        },
+        {
+          "table": "profiles",
+          "expr": "verified.eq.true,is_official.eq.true"
         }
       ],
       "ilikes": [
@@ -11568,7 +11587,12 @@
         "blocks",
         "user_privacy_settings",
         "discovery_places",
-        "feature_flags"
+        "feature_flags",
+        "discovery_places",
+        "discovery_places",
+        "discovery_places",
+        "discovery_places",
+        "discovery_places"
       ],
       "selects": [
         {
@@ -11606,6 +11630,26 @@
         {
           "table": "discovery_places",
           "cols": "id, name, city, blurb, image_url, header_image_source, image_source_type, image_accuracy_status, category, primary_category, lat, lng, canonical_location_id, created_at, submitted_by"
+        },
+        {
+          "table": "discovery_places",
+          "cols": "id, city, verified"
+        },
+        {
+          "table": "discovery_places",
+          "cols": "id, name, city, submitted_by"
+        },
+        {
+          "table": "discovery_places",
+          "cols": "id, name, city, submitted_by"
+        },
+        {
+          "table": "discovery_places",
+          "cols": "id, name, city, submitted_by"
+        },
+        {
+          "table": "discovery_places",
+          "cols": "id, name, city, submitted_by"
         }
       ],
       "ors": [

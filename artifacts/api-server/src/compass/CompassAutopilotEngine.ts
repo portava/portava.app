@@ -25,7 +25,7 @@ import { getWeatherContext, type DailyWeather } from "../lib/weatherCache.js";
 import { tripKernelClient, executeTripCommand, planCommandTypeForPatch } from "../domain/trips/commands/tripKernel.js";
 import { COMPASS_AUTOPILOT_ALGORITHM_VERSION } from "./CompassAlgorithmVersion.js";
 import { recordOpportunityCompletion } from "../domain/trips/services/tripOpportunityMetrics.js";
-import { PLAN_ITEM_PRIVACY_COLUMNS, planItemAccessFor, withholdPrivatePlanItems } from "./planItemAccess.js";
+import { buildTripCompassPlanProjection } from "../domain/trips/projections/TripCompassPlanProjection.js"; import { buildTripCompassTripSummaryProjection, type TripCompassTripSummary } from "../domain/trips/projections/TripCompassTripSummaryProjection.js"; import { acceptTripProjection, TRIP_PROJECTION_SCHEMA_VERSION } from "../domain/trips/contracts/TripProjectionEnvelope.js"; // CT-02
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -310,22 +310,22 @@ export type PlanItemsRead =
   | { status: "unread"; reason: string };
 
 export async function fetchPlanItems(sc: SupabaseClient, tripId: string, viewerId: string): Promise<PlanItemsRead> {
-  try {
-    const { data, error } = await sc
-      .from("trip_plan_items")
-      .select("id, title, category, status, lock_type, day_date, starts_at, ends_at, location_name, lat, lng, source_type, source_id, sort_order, creator_id, location_is_private, privacy_scope" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`)
-      .eq("trip_id", tripId)
-      .is("removed_at", null)
-      .neq("status", "cancelled");
-    if (error) return { status: "unread", reason: "trip_plan_items could not be read" };
-    // OD-TRIP-3 (compass/planItemAccess.ts): another member's private item keeps
-    // its slot (id, time, lock type) and loses its place and name — so no
-    // conflict, travel time or proposal text can be derived from where it is.
-    const visible = withholdPrivatePlanItems((data ?? []) as any[], await planItemAccessFor(sc, tripId, viewerId));
-    return { status: "ok", items: visible.map(toPlanItem) };
-  } catch {
+  // CT-02: Trips' whole-plan projection (live: not removed, not cancelled), not a
+  // raw `trip_plan_items` read. OD-TRIP-3 is applied there, through the one
+  // grant-aware loader: another member's private item keeps its slot (id, time,
+  // lock type) and loses its place and name — so no conflict, travel time or
+  // proposal text can be derived from where it is.
+  const built = await buildTripCompassPlanProjection(sc, tripId, viewerId);
+  // Unread, never empty: an errored or non-array read, or a refused §19.1
+  // envelope, ends every detector's universe; it is not a healthy plan.
+  if (!built.ok || !acceptTripProjection(built.projection, {
+    acceptedSchemaVersion: TRIP_PROJECTION_SCHEMA_VERSION, metric: "TripCompassPlanProjection",
+  }).accepted) {
     return { status: "unread", reason: "trip_plan_items could not be read" };
   }
+  return { status: "ok", items: built.projection.rows.map(toPlanItem) };
+  // (No try/catch: the projection settles its own read failures into `ok: false`,
+  // which the branch above reports as unread.)
 }
 
 // ── Monitors / conflict detection ─────────────────────────────────────────────
@@ -672,11 +672,11 @@ export async function runAutopilotCheck(
   const unreadSources: string[] = [];
   const settingsRead = await getAutopilotSettings(sc, tripId, userId);
   const itemsRead = await fetchPlanItems(sc, tripId, userId);
-  const { data: trip, error: tripErr } = await sc
-    .from("trips")
-    .select("id, destination_city, start_date, end_date")
-    .eq("id", tripId)
-    .maybeSingle();
+  // CT-02: the trip row is Trips' typed projection (readAutopilotTrip, at the end
+  // of this file), not a raw `trips` read. An unavailable projection or a refused
+  // §19.1 envelope is "could not be read", exactly as a returned error was.
+  const { trip, tripErr } = await readAutopilotTrip(sc, tripId);
+  // (A trip that does not exist is `trip: null` with no error, as before.)
   if (tripErr) unreadSources.push("trips");
   if (settingsRead.status === "unread") unreadSources.push("trip_autopilot_settings");
 
@@ -696,9 +696,9 @@ export async function runAutopilotCheck(
   ];
   const weather = await detectWeatherClashes(
     items,
-    ((trip as any)?.destination_city as string | null) ?? null,
-    ((trip as any)?.start_date as string | null) ?? null,
-    ((trip as any)?.end_date as string | null) ?? null,
+    trip?.destinationCity ?? null,
+    trip?.startDate ?? null,
+    trip?.endDate ?? null,
   );
   issues.push(...weather.issues);
 
@@ -809,11 +809,11 @@ export async function revalidateProposalEvidence(
   } else if (type === "social_change") {
     present = (await detectSocialChanges(sc, items)).some((i) => i.dedupeKey === key);
   } else {
-    const { data: trip, error: tripErr } = await sc
-      .from("trips")
-      .select("id, destination_city, start_date, end_date")
-      .eq("id", proposal.trip_id)
-      .maybeSingle();
+    // CT-02: Trips' typed trip projection, as at the other two trip reads here;
+    // unavailable or refused is `tripErr`, the "could not be read" branch below.
+    const { trip, tripErr } = await readAutopilotTrip(sc, proposal.trip_id);
+    // A trip that does not exist is `trip: null`: no destination, no forecast,
+    // so the clash cannot hold — as before.
     // The OUTCOME was already fail-closed and stays so — nothing is applied on
     // evidence that could not be re-read. What was wrong was the SENTENCE: an
     // unbound error made this indistinguishable from a forecast that had
@@ -829,9 +829,9 @@ export async function revalidateProposalEvidence(
     }
     const weather = await detectWeatherClashes(
       items,
-      ((trip as any)?.destination_city as string | null) ?? null,
-      ((trip as any)?.start_date as string | null) ?? null,
-      ((trip as any)?.end_date as string | null) ?? null,
+      trip?.destinationCity ?? null,
+      trip?.startDate ?? null,
+      trip?.endDate ?? null,
     );
     present = weather.issues.some((i) => i.dedupeKey === key);
   }
@@ -995,11 +995,11 @@ export async function computeHeartbeat(
 ): Promise<TripHeartbeat> {
   const nowMs = opts.nowMs ?? Date.now();
   const unreadSources: string[] = [];
-  const { data: trip, error: tripErr } = await sc
-    .from("trips")
-    .select("id, destination_city, start_date, end_date")
-    .eq("id", tripId)
-    .maybeSingle();
+  // CT-02: Trips' typed trip projection (readAutopilotTrip, at the end of this
+  // file), not a raw `trips` read; unavailable or refused is "could not be read".
+  const { trip, tripErr } = await readAutopilotTrip(sc, tripId);
+  // (A trip that does not exist is `trip: null` with no error, as before; the
+  // Heartbeat then reasons without a destination.)
   if (tripErr) unreadSources.push("trips");
   const itemsRead = await fetchPlanItems(sc, tripId, userId);
 
@@ -1027,9 +1027,9 @@ export async function computeHeartbeat(
   ];
   const weather = await detectWeatherClashes(
     items,
-    ((trip as any)?.destination_city as string | null) ?? null,
-    ((trip as any)?.start_date as string | null) ?? null,
-    ((trip as any)?.end_date as string | null) ?? null,
+    trip?.destinationCity ?? null,
+    trip?.startDate ?? null,
+    trip?.endDate ?? null,
   );
   issues.push(...weather.issues);
 
@@ -1087,4 +1087,23 @@ export async function computeHeartbeat(
       : null,
     unreadSources,
   };
+}
+
+/**
+ * The trip row the Autopilot reasons about (destination and dates for the weather
+ * detector), from Trips' typed trip projection — census-compass CT-02. `tripErr`
+ * is true when the projection was unavailable OR its §19.1 envelope was refused:
+ * the same "the trip could not be read" every caller here already handles. A trip
+ * that does not exist is `trip: null` with `tripErr: false`, as a raw read's
+ * `maybeSingle()` answered before.
+ */
+async function readAutopilotTrip(
+  sc: SupabaseClient,
+  tripId: string,
+): Promise<{ trip: TripCompassTripSummary | null; tripErr: boolean }> {
+  const built = await buildTripCompassTripSummaryProjection(sc, tripId);
+  if (!built.ok || !acceptTripProjection(built.projection, {
+    acceptedSchemaVersion: TRIP_PROJECTION_SCHEMA_VERSION, metric: "TripCompassTripSummaryProjection",
+  }).accepted) return { trip: null, tripErr: true };
+  return { trip: built.projection.trip, tripErr: false };
 }

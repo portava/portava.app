@@ -50,7 +50,7 @@ import {
 import { recordTripDecision, persistTripDecision, TRIP_ENGINE_VERSIONS } from "../services/TripDecisionLedger.js";
 import { estimateTransportReliability, type ReliabilityEstimate } from "../services/tripTransportReliability.js";
 import { withholdPrivatePlanItems, PLAN_ITEM_PRIVACY_COLUMNS } from "../policies/privateAnchorAccess.js";
-import { planItemAccessFor } from "../../../server/trips/privateAnchorShares.js";
+import { planItemAccessFor } from "../../../server/trips/privateAnchorShares.js"; import { goalsVisibleTo } from "../policies/tripGoalVisibility.js";
 
 const log = logger.child({ mod: "tripPulseProjection" });
 
@@ -173,7 +173,7 @@ export async function buildTripPulseProjection(
   if ("refused" in commitmentsR) return commitmentsR.refused;
   const transportR = await read<any>("trip_transport_segments", sc.from("trip_transport_segments").select("id, mode, state, planned_departure_at, reliability").eq("trip_id", tripId));
   if ("refused" in transportR) return transportR.refused;
-  const goalsR = await read<any>("trip_goals", sc.from("trip_goals").select("type, scope, status").eq("trip_id", tripId));
+  const goalsR = await read<any>("trip_goals", sc.from("trip_goals").select("type, scope, status, owner_user_id").eq("trip_id", tripId));
   if ("refused" in goalsR) return goalsR.refused;
   const membersR = await read<any>("trip_members", sc.from("trip_members").select("user_id, status").eq("trip_id", tripId));
   if ("refused" in membersR) return membersR.refused;
@@ -195,7 +195,7 @@ export async function buildTripPulseProjection(
     // 2782's numeric(4,3) arrives as a string through PostgREST; a stated value is a number here or null.
     reliability: t.reliability == null ? null : Number.isFinite(Number(t.reliability)) ? Number(t.reliability) : null,
   }));
-  const goals = goalsR.rows.map((g) => ({ type: String(g.type ?? ""), scope: String(g.scope ?? "shared"), status: String(g.status ?? "open") }));
+  const goals = goalsVisibleTo(goalsR.rows, viewerId).map((g) => ({ type: String(g.type ?? ""), scope: String(g.scope ?? "shared"), status: String(g.status ?? "open") })); // 2783: the viewer's goals, shared and their own personal ones (census-trips TR139)
   const memberIds = membersR.rows.filter((m) => m.status == null || m.status === "accepted").map((m) => String(m.user_id));
 
   // 3. Sources.

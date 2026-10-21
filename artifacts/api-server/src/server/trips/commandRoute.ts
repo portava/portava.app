@@ -51,7 +51,7 @@ import { requireUser, requireTripMember, sendError } from "../../lib/http.js";
 import { getServiceClient } from "../../lib/supabase.js"; import { planItemAccessFor } from "./privateAnchorShares.js"; import { canSeePlanItemLocation, planScopeAdmitsViewer, PLAN_ITEM_PRIVACY_COLUMNS, WITHHELD_PLAN_TITLE } from "../../domain/trips/policies/privateAnchorAccess.js"; // verifier L4
 import { logger } from "../../lib/logger.js";
 import { asyncHandler } from "../../lib/asyncHandler.js";
-import { executeTripCommand, type TripCommandType } from "../../domain/trips/commands/tripKernel.js"; import { refuseTripActionIfRestricted, refuseIfRetainedRecordOnly } from "../../lib/tripTrustGate.js";
+import { executeTripCommand, type TripCommandType } from "../../domain/trips/commands/tripKernel.js"; import { refuseTripActionIfRestricted, refuseIfRetainedRecordOnly } from "../../lib/tripTrustGate.js"; import { proposalCommandPayload } from "../../domain/trips/contracts/TripProposalContract.js";
 
 const router = Router();
 const log = logger.child({ mod: "tripCommands" });
@@ -176,7 +176,7 @@ router.post("/trips/:tripId/commands", asyncHandler(async (req, res) => {
     return;
   }
 
-  const payload = body.payload;
+  const proposalDoor = type === "CREATE_PROPOSAL" ? proposalCommandPayload(body.payload) : null; if (proposalDoor && !proposalDoor.ok) { sendError(res, "invalid_payload", proposalDoor.message); return; } const payload = proposalDoor ? proposalDoor.payload : body.payload; // census-trips TR153: §9.3's payload fields, one key each, at the one proposal door the kernel flag does not close
   if (payload !== undefined && (typeof payload !== "object" || payload === null || Array.isArray(payload))) {
     sendError(res, "invalid_payload", "payload must be an object");
     return;

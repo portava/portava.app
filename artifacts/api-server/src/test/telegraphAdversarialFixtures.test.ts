@@ -33,7 +33,7 @@
  *     reopens the window — failed the lock-order assertion (28/29); putting a
  *     direct `.from("messages").update(...)` back into the lifecycle route
  *     failed the one-call assertion (28/29).
- *   - F-01/F-03/F-07/F-09/F-12 are the DIVERGENT ones (F-12 was briefly marked enforced on 2026-10-05) and went red the other way
+ *   - F-01/F-03/F-07/F-12 are the DIVERGENT ones (F-09 was one until 2026-10-17, T320; F-12 was briefly marked enforced on 2026-10-05) and went red the other way
  *     round: each was first written asserting the spec's required outcome and
  *     observed to fail on today's tree, and the assertion was then rewritten
  *     against the real outcome with the requirement quoted in the message.
@@ -549,14 +549,14 @@ describe("F-09 — buddy booking cancelled during coordination", () => {
       "a dispute deliberately keeps messaging and calling, which is a stated policy");
   });
 
-  it("the booking card rendered into the thread re-checks nothing — the divergence", () => {
-    const src = readFileSync(
-      resolve(process.cwd(), "../../travel-buddy-standalone/src/components/rentabuddy/BookingMilestoneMessage.tsx"),
-      "utf8",
-    );
-    assert.equal(/\bfetch\s*\(/.test(src), false,
-      "EXPECTED: booking-only actions disabled immediately. ACTUAL: the card performs no fetch.");
-    assert.equal(/useEffect\s*\(/.test(src), false, "and no effect re-resolves the booking state");
+  it("ENFORCED (census-telegraph T320, 2026-10-17): the thread's booking-only controls follow the booking, not a card", async () => {
+    const screen = readFileSync(resolve(process.cwd(), "../../travel-buddy-standalone/app/messages/[id].tsx"), "utf8");
+    assert.match(screen, /\}, \[threadType, contextId, bookingTransitionKey\]\);/,
+      "the cancellation's own booking card arriving in the open thread re-reads the booking, so the call controls drop");
+    const banner = readFileSync(resolve(process.cwd(), "../../travel-buddy-standalone/src/components/rentabuddy/BookingMilestoneMessage.tsx"), "utf8");
+    assert.equal(/\b(Pressable|onPress|TouchableOpacity|router\.)/.test(banner), false, "the milestone banner offers no action to outlive the booking");
+    const { actionsWhileLive } = await import("../services/telegraph/actionLiveness.js");
+    assert.deepEqual(actionsWhileLive("BOOKING", "cancelled", ["CHECK_IN_SAFE"]), []);
   });
 });
 

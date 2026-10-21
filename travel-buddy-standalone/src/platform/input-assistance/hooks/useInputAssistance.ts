@@ -320,7 +320,7 @@ export function useInputAssistance(
 
         if (res.ok) {
           const finalized = finalizeSuggestions(res.suggestions, policy.maxSuggestions);
-          if (res.refusal) { /* §80: an outage (refused or partial) is never cached */ } else if (cacheable) sharedSuggestionCache.set(cacheKey, finalized);
+          if (res.refusal) { /* §80: an outage (refused or partial) is never cached */ } else if (cacheable && !finalized.some((s) => s.type === 'ai_suggestion')) sharedSuggestionCache.set(cacheKey, finalized); // G203: an AI row is never cached, so no exact-text hit can replay one without the network
           setSuggestions(trimmed.length === 0 && res.refusal && local ? finalizeSuggestions([...finalized, ...local], policy.maxSuggestions) : finalized); setRefusal(res.refusal ?? null); setAnsweredText(trimmed); // VERIFY-D2e F5: an EMPTY field's outage answer is "unreadable", never "empty" — the kept rows stay on screen after what could be read
           setUnavailable(false);
           setLoading(false);

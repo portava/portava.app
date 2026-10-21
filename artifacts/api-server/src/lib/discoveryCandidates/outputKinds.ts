@@ -47,7 +47,7 @@ import { loadSharedMomentCandidates } from "../../services/wall/WallCandidateLoa
 import { fetchBlockedSet } from "../blocks.js";
 import { inactiveSubmitterIds, submitterInGoodStanding } from "../discoveryCacheEligibility.js";
 import { loadPipelineFlags, PIPELINE_FLAGS_OFF } from "./pipelineFlags.js";
-import { cityPrefixOf, momentumPlaceIds, IN_LIST_CAP, type RetrievalContext } from "./retrievals.js";
+import { cityPrefixOf, momentumPlaceIds, IN_LIST_CAP, type RetrievalContext, type MomentumClaim } from "./retrievals.js";
 import { materialiseCandidates, type MaterialisedPlace } from "./materialize.js";
 
 /** `01` §4, in its own order, with where each kind is ranked at this tree. */
@@ -159,9 +159,10 @@ export async function rankEmergingForViewer(
   const cityPrefix = cityPrefixOf(viewer.city);
   if (!cityPrefix) return { kind: "emerging_discoveries", status: "empty", rankedBy: "none", items: [] };
   const ctx: RetrievalContext = { sc, userId: viewer.userId, cityPrefix, followedIds: viewer.followedIds, viewedPlaceIds: [], nowMs, memo: new Map() };
-  let found: Array<{ id: string; state: string }>;
-  try { found = await momentumPlaceIds(ctx, ["emerging", "rediscovered"], IN_LIST_CAP, "place_momentum.emerging"); }
-  catch { return { kind: "emerging_discoveries", status: "unavailable", rankedBy: "none", items: [], unavailable: "place_momentum" }; }
+  let found: MomentumClaim[];
+  try { found = await momentumPlaceIds(ctx, ["emerging", "rediscovered"], IN_LIST_CAP, "place_momentum.emerging", true); }
+  catch (e) { return { kind: "emerging_discoveries", status: "unavailable", rankedBy: "none", items: [], unavailable: e instanceof Error && e.message === "protected_zones" ? "protected_zones" : "place_momentum" }; }  // 2026-10-17: an unreadable zone policy (retrievals.ts momentumZonePass) is named
+  found = await disclosedTrendClaims(sc, found);  // 2026-10-17: a SERVED trend state is a disclosure — the trend API's k floor and trend reviews (foot of file)
   if (found.length === 0) return { kind: "emerging_discoveries", status: "empty", rankedBy: "pde", items: [] };
   const admitted = opts.category && opts.category !== "for_you" ? new Set([opts.category]) : null;
   const mat = await materialiseCandidates(sc, found.map((f) => f.id), { viewerId: viewer.userId, cityPrefix, admitted });
@@ -170,4 +171,28 @@ export async function rankEmergingForViewer(
   const rows = [...mat.rows.values()].map((p) => ({ place: p as PdePlace, item: { place: p, trendState: state.get(p.id) ?? "emerging" } }));
   if (rows.length === 0) return { kind: "emerging_discoveries", status: "empty", rankedBy: "pde", items: [] };
   return { kind: "emerging_discoveries", status: "ranked", rankedBy: "pde", items: await rankMapped(sc, viewer, rows, nowMs) };
+}
+
+// ── 2026-10-17: the emerging kind's served trend state, under the trend API's disclosure rules ──
+//
+// `trendState` is SERVED (routes/discoveryOutputKinds.ts spreads each item into
+// the response), so it is a disclosure of a trend reading, and the trend API
+// already decides when one may be disclosed. Two rules, by the trend API's own
+// functions rather than a second copy that could drift loose:
+//   • ≥ k travellers in BOTH windows (mayDiscloseTrend, k = D-OWNER1004-2's 15).
+//     A row without counts (written before 3410) is never disclosed.
+//   • H-W10T-1 (§93): a place under a `suppressed` trend review is no claim, and
+//     an unread review withholds (applyPlaceTrendReviewsToRows).
+// Neither module reaches this one, so the imports close no cycle.
+import { mayDiscloseTrend } from "../discoveryTrendExplanation.js";
+import { applyPlaceTrendReviewsToRows } from "../discoveryTrendState.js";
+
+async function disclosedTrendClaims(sc: any, found: readonly MomentumClaim[]): Promise<MomentumClaim[]> {
+  const floored = found.filter((f) => typeof f.placeId === "string" && mayDiscloseTrend({
+    place_id: f.placeId, trend_state: f.state, recent_unique_travelers: f.recentTravelers ?? null, window_unique_travelers: f.windowTravelers ?? null,
+  }));
+  if (floored.length === 0) return [];
+  const reviewed = await applyPlaceTrendReviewsToRows(sc, floored.map((f) => ({ place_id: f.placeId!, trend_state: f.state })));
+  const kept = new Set(reviewed.filter((r) => r.trend_state !== "unknown").map((r) => r.place_id));
+  return floored.filter((f) => kept.has(f.placeId!));
 }

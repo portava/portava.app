@@ -34,7 +34,7 @@ import { runSafetyFilterBatch }                              from "./CompassSafe
 import { sanitizeItem }                                      from "./CompassPrivacyGuard.js";
 import { getFlags }                                          from "./flags.js";
 import { isPostPublished }                                   from "../lib/postVisibility.js";
-import { loadBoostLiftWithheld }                             from "./CompassFeedBuilder.js";
+import { loadBoostLiftWithheld }                             from "./CompassFeedBuilder.js"; import { acceptedTripRows, acceptedMemberTrips } from "./CompassCurrentTrip.js"; import { buildTripCompassOwnedTripsProjection, type TripCompassTripSummary } from "../domain/trips/projections/TripCompassTripSummaryProjection.js"; import { buildTripCompassMemberTripsProjection } from "../domain/trips/projections/TripCompassMembershipProjection.js"; // CT-02
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -291,47 +291,45 @@ async function fetchActiveTrips(
   blockedIds: Set<string>,
 ): Promise<TripSection> {
   try {
-    // Fetch both trips the user owns AND trips where they are a member,
-    // then deduplicate so a user's own trip isn't shown twice.
+    // Both trips the user owns AND trips where they are a member, then
+    // deduplicated so a user's own trip isn't shown twice.
+    //
+    // census-compass CT-02: both halves are Trips projections now, not raw reads.
+    // The owned half is the trip-row projection with this section's predicate
+    // (`active` / `upcoming`, CompassSocialEngine's pair; `in_progress` is not a
+    // `trip_status` label and once made PostgREST reject this read 22P02), capped
+    // at five. The member half is the member-trips projection — the membership
+    // rows joined to their trips, unfiltered by role or status and capped at five
+    // rows, exactly the join this function issued itself.
     const [ownedRes, memberRes] = await Promise.allSettled([
-      db.from("trips")
-        .select("id, destination_city, start_date, end_date, status, owner_id")
-        // `in_progress` is not a `trip_status` label (draft | planning |
-        // upcoming | active | completed | cancelled | archived), so PostgREST
-        // rejected this read 22P02 and the fallback feed never carried a trip.
-        // `["active","upcoming"]` is CompassSocialEngine:296's predicate verbatim.
-        .in("status", ["active", "upcoming"])
-        .eq("owner_id", userId)
-        .limit(5),
-      db.from("trip_members")
-        .select("trip_id, trips(id, destination_city, start_date, end_date, status, owner_id)")
-        .eq("user_id", userId)
-        .limit(5),
+      buildTripCompassOwnedTripsProjection(db, userId, { statuses: ["active", "upcoming"], limit: 5 }),
+      buildTripCompassMemberTripsProjection(db, userId, { limit: 5 }),
     ]);
 
-    // census-compass CT-02 / the master read rule. `allSettled` sees a
-    // REJECTED promise; a PostgREST failure RESOLVES as
-    // `{ data: null, error }`, so `.data ?? []` turned "the trips could not be
-    // read" into "this user has no trips" and the fallback feed — the surface
-    // that exists FOR the degraded case — quietly dropped the user's own trip
-    // from it. A fallback that degrades silently is a fallback with no floor.
-    const ownedErr = ownedRes.status === "rejected" || (ownedRes.status === "fulfilled" && (ownedRes.value as any).error);
-    const memberErr = memberRes.status === "rejected" || (memberRes.status === "fulfilled" && (memberRes.value as any).error);
+    // The master read rule. A PostgREST failure RESOLVES as `{ data: null, error }`,
+    // and `.data ?? []` once turned "the trips could not be read" into "this user
+    // has no trips": the fallback feed — the surface that exists FOR the degraded
+    // case — quietly dropped the user's own trip. A half is now unread when its
+    // projection is unavailable (an error, a non-array body, a malformed row) OR
+    // any §19.1 envelope in it is refused; a fallback that degrades silently is a
+    // fallback with no floor.
+    const owned = ownedRes.status === "fulfilled" ? acceptedTripRows(ownedRes.value) : null;
+    const member = memberRes.status === "fulfilled" ? acceptedMemberTrips(memberRes.value) : null;
+    const ownedErr = owned === null;
+    const memberErr = member === null;
     if (ownedErr && memberErr) return { items: [], unread: true };
 
-    const ownedRows: any[] = !ownedErr && ownedRes.status === "fulfilled"
-      ? ((ownedRes.value as any).data as any[] ?? []) : [];
+    const ownedRows: TripCompassTripSummary[] = owned ?? [];
 
-    const memberRows: any[] = !memberErr && memberRes.status === "fulfilled"
-      ? ((memberRes.value as any).data as any[] ?? [])
-          .map((r: any) => r.trips)
-          .filter(Boolean)
-      : [];
+    // A membership row whose join served no trip contributes nothing, as before.
+    const memberRows: TripCompassTripSummary[] = (member ?? [])
+      .map((m) => m.trip)
+      .filter((t): t is TripCompassTripSummary => t !== null);
 
     const seen = new Set<string>();
-    const allTrips: any[] = [];
+    const allTrips: TripCompassTripSummary[] = [];
     for (const r of [...ownedRows, ...memberRows]) {
-      const id = r.id as string;
+      const id = r.id;
       if (!id || seen.has(id)) continue;
       seen.add(id);
       allTrips.push(r);
@@ -342,17 +340,19 @@ async function fetchActiveTrips(
       // list below is missing trips and nothing in it says so.
       unread: Boolean(ownedErr || memberErr),
       items: allTrips
-        .filter((r: any) => !blockedIds.has(r.owner_id as string))
+        .filter((r) => !blockedIds.has(r.ownerId as string))
         .slice(0, 5)
-        .map((r: any): FallbackItem => ({
-          id:       r.id as string,
+        .map((r): FallbackItem => ({
+          id:       r.id,
           type:     "trip",
           category: "active_trip",
-          title:    (r.destination_city as string) ?? "Active Trip",
-          authorId: r.owner_id as string,
-          data:     { startDate: r.start_date, endDate: r.end_date, status: r.status },
+          title:    r.destinationCity ?? "Active Trip",
+          authorId: r.ownerId as string,
+          data:     { startDate: r.startDate, endDate: r.endDate, status: r.status },
         })),
     };
+    // (The projections settle their own read failures; this catch is for the
+    // shaping above, and it is unread, never empty.)
   } catch { return { items: [], unread: true }; }
 }
 
@@ -363,30 +363,30 @@ async function fetchSavedTrips(
 ): Promise<TripSection> {
   try {
     const today = new Date().toISOString().slice(0, 10);
-    const { data, error } = await db
-      .from("trip_members")
-      .select("trip_id, trips(id, destination_city, start_date, status, owner_id)")
-      .eq("user_id", userId)
-      .limit(5);
-    // The `catch` below could not see this: supabase-js RESOLVES on a database
-    // error, so an unreadable membership table returned `[]` — no saved trips —
-    // with nothing distinguishing it from a user who has none. Throwing routes
-    // it into the same `catch` the author intended for a failure.
-    if (error) return { items: [], unread: true };
+    // census-compass CT-02: the membership rows joined to their trips come from
+    // Trips' member-trips projection — the same unfiltered, five-row join this
+    // function issued itself — not a raw `trip_members` read.
+    const member = acceptedMemberTrips(await buildTripCompassMemberTripsProjection(db, userId, { limit: 5 }));
+    // supabase-js RESOLVES on a database error, so an unreadable membership table
+    // once returned `[]` — no saved trips — with nothing distinguishing it from a
+    // user who has none. An unavailable projection, or a refused §19.1 envelope,
+    // is unread here.
+    if (member === null) return { items: [], unread: true };
+    // A readable list is filtered here: not cancelled, starting today or later.
     return {
       unread: false,
-      items: ((data as any[]) ?? [])
-        .map((r: any) => r.trips)
-        .filter(Boolean)
-        .filter((t: any) => t.status !== "cancelled" && (t.start_date ?? "") >= today)
-        .filter((t: any) => !blockedIds.has(t.owner_id as string))
-        .map((t: any): FallbackItem => ({
-          id:       t.id as string,
+      items: member
+        .map((m) => m.trip)
+        .filter((t): t is TripCompassTripSummary => t !== null)
+        .filter((t) => t.status !== "cancelled" && (t.startDate ?? "") >= today)
+        .filter((t) => !blockedIds.has(t.ownerId as string))
+        .map((t): FallbackItem => ({
+          id:       t.id,
           type:     "trip",
           category: "saved_trip",
-          title:    (t.destination_city as string) ?? "Upcoming Trip",
-          authorId: t.owner_id as string,
-          data:     { startDate: t.start_date, status: t.status },
+          title:    t.destinationCity ?? "Upcoming Trip",
+          authorId: t.ownerId as string,
+          data:     { startDate: t.startDate, status: t.status },
         })),
     };
   } catch { return { items: [], unread: true }; }

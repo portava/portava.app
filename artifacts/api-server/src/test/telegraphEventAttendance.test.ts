@@ -4,6 +4,8 @@ import { createServer } from "node:http";
 import express from "express";
 import { _clearTestClient, _setTestClient } from "../lib/http.js";
 import router from "../routes/telegraphSharedContext.js";
+// Namespace import, so a tree WITHOUT the T264 gate fails case by case rather than at import.
+import * as eventAttendance from "../services/telegraph/eventAttendance.js";
 
 const VIEWER = "aaaaaaaa-0000-4000-8000-000000000001";
 const MEMBER = "bbbbbbbb-0000-4000-8000-000000000002";
@@ -363,5 +365,203 @@ describe("T264 event attendance on the real Telegraph shared-context route", () 
     const result = await read(database);
     assert.equal(result.status, 403);
     assert.equal(result.reads.includes("event_rsvps"), false);
+  });
+});
+
+// ── census-telegraph T264: the minimal authorized cancellation notice ─────────
+//
+// THE DEFECT (2026-10-16 restatement, closure report "next exact work"): the
+// canonical event loader withholds a cancelled event from everyone but its host,
+// so the rail OMITS it, and an ordinary attendee's rail has nothing whose status
+// can change — "called off while you were away" is never promoted to them. The
+// card must stay withheld (title, timing, place, host, attendance and actions are
+// the event's, and a cancelled event is not shown). What an attendee may be told
+// is the one fact that is theirs: the event THEY were attending, by the id their
+// own rail already held, was cancelled — and only when they could have seen it
+// had it not been, only while the cancellation is still news, and never across a
+// block. An unreadable gate is INCOMPLETE, not a notice and not silence.
+describe("T264 — an attendee is told their shared event was cancelled: its id and the word, nothing else", () => {
+  const NOTICE = { objectType: "EVENT", objectId: EVENT, status: "cancelled" };
+  function cancelled(change: (d: Record<string, Row[]>) => void = () => {}) {
+    const database = fixture();
+    database.events[0].state = "cancelled";
+    change(database);
+    return database;
+  }
+
+  it("an attendee's cancelled shared event arrives as a notice; the card stays withheld and nothing of the event leaks", async () => {
+    const database = cancelled();
+    const result = await read(database);
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.body.cancellations, [NOTICE]);
+    assert.equal(result.event, undefined, "the event itself is still not in the projection");
+    assert.equal(result.body.incomplete, false);
+    const text = JSON.stringify(result.body);
+    for (const leak of ["Rooftop music", database.events[0].starts_at, OUTSIDER, "JOIN_PLAN", "MEET_HERE", "@member", "public"]) {
+      assert.equal(text.includes(leak), false, `the notice carried "${leak}"`);
+    }
+    assert.equal(result.reads.includes("event_rsvps"), false, "a notice reads no attendance");
+  });
+
+  it("a live event carries no notice", async () => {
+    const result = await read(fixture());
+    assert.ok(result.event);
+    assert.deepEqual(result.body.cancellations, []);
+  });
+
+  it("the host still gets the card (status cancelled), not a notice", async () => {
+    const database = cancelled((d) => { d.events[0].host_id = VIEWER; });
+    const result = await read(database);
+    assert.equal(result.event.status, "cancelled");
+    assert.deepEqual(result.body.cancellations, []);
+  });
+
+  const withheld: Array<[string, (d: Record<string, Row[]>) => void]> = [
+    ["the host blocked the viewer", (d) => { d.blocks = [{ blocker_id: OUTSIDER, blocked_id: VIEWER }]; }],
+    ["the viewer blocked the host", (d) => { d.blocks = [{ blocker_id: VIEWER, blocked_id: OUTSIDER }]; }],
+    ["the viewer is banned from the event", (d) => { d.event_roles = [{ event_id: EVENT, user_id: VIEWER, role: "banned" }]; }],
+    ["the viewer could not have seen it (a trip event, no accepted membership)", (d) => {
+      d.events[0].visibility = "trip"; d.events[0].trip_id = TRIP; d.trip_members = [{ trip_id: TRIP, user_id: VIEWER, role: "member", status: "removed" }];
+    }],
+    ["it is a draft, not a cancellation", (d) => { d.events[0].state = "draft"; }],
+    ["its scheduled time has passed", (d) => {
+      d.events[0].starts_at = new Date(Date.now() - 3 * 86400000).toISOString();
+      d.events[0].ends_at = new Date(Date.now() - 3 * 86400000 + 7200000).toISOString();
+    }],
+    ["nobody else in the conversation was attending", (d) => { d.event_attendees = d.event_attendees.filter((r) => r.user_id !== MEMBER); }],
+    ["the viewer was not attending", (d) => { d.event_attendees = d.event_attendees.filter((r) => r.user_id !== VIEWER); }],
+  ];
+  for (const [label, change] of withheld) {
+    it(`no notice when ${label}`, async () => {
+      const database = cancelled(change);
+      const result = await read(database);
+      assert.equal(result.status, 200);
+      assert.deepEqual(result.body.cancellations, []);
+      assert.equal(JSON.stringify(result.body).includes(EVENT), false, "not even the id");
+    });
+  }
+
+  for (const failure of ["resolved", "thrown"]) {
+    it(`an unreadable visibility gate (${failure} trip_members) is incomplete, not a notice`, async () => {
+      const database = cancelled((d) => {
+        d.events[0].visibility = "trip"; d.events[0].trip_id = TRIP; d.trip_members = [{ trip_id: TRIP, user_id: VIEWER, role: "member", status: "accepted" }];
+      });
+      const result = await read(database, failure === "resolved" ? "trip_members" : undefined, failure === "thrown" ? "trip_members" : undefined);
+      assert.equal(result.status, 200);
+      assert.deepEqual(result.body.cancellations, []);
+      assert.equal(result.body.incomplete, true);
+    });
+  }
+
+  it("an accepted trip member of a cancelled trip event is told", async () => {
+    const database = cancelled((d) => {
+      d.events[0].visibility = "trip"; d.events[0].trip_id = TRIP; d.trip_members = [{ trip_id: TRIP, user_id: VIEWER, role: "member", status: "accepted" }];
+    });
+    assert.deepEqual((await read(database)).body.cancellations, [NOTICE]);
+  });
+
+  it("re-checked on every read: a block placed after the cancellation withdraws the notice", async () => {
+    const database = cancelled();
+    assert.deepEqual((await read(database)).body.cancellations, [NOTICE]);
+    database.blocks = [{ blocker_id: OUTSIDER, blocked_id: VIEWER }];
+    assert.deepEqual((await read(database)).body.cancellations, []);
+  });
+});
+
+// The gate itself, called directly, so each of its own checks is shown to
+// refuse — not merely the checks the rail's resolver happens to run first. Its
+// block read is the shared fail-closed helper (lib/blockGuard), whose `.or(and…)`
+// filter this small fake understands.
+describe("T264 — readEventCancellation, gate by gate", () => {
+  function gateClient(db: Record<string, Row[]>, failing?: string) {
+    return {
+      from(table: string) {
+        const filters: Array<(row: Row) => boolean> = [];
+        const result = (single: boolean) => {
+          if (table === failing) return { data: null, error: { message: "injected read failure" } };
+          const rows = (db[table] ?? []).filter((row) => filters.every((f) => f(row)));
+          return { data: single ? rows[0] ?? null : rows, error: null };
+        };
+        const q: any = {
+          select() { return q; },
+          eq(c: string, v: unknown) { filters.push((r) => r[c] === v); return q; },
+          in(c: string, vs: unknown[]) { filters.push((r) => vs.includes(r[c])); return q; },
+          limit() { return q; },
+          or(expr: string) {
+            const groups = [...expr.matchAll(/and\(([^)]*)\)/g)].map((m) => m[1].split(",").map((p) => p.split(".eq.")));
+            filters.push((r) => groups.some((g) => g.every(([c, v]) => r[c] === v)));
+            return q;
+          },
+          maybeSingle: async () => result(true),
+          then(res: (v: unknown) => unknown, rej: (e: unknown) => unknown) { return Promise.resolve().then(() => result(false)).then(res, rej); },
+        };
+        return q;
+      },
+    };
+  }
+  const base = () => ({
+    events: [{ id: EVENT, host_id: OUTSIDER, title: "Rooftop music", state: "cancelled", visibility: "public", starts_at: new Date(Date.now() + 86400000).toISOString(), ends_at: null }],
+    event_attendees: [{ event_id: EVENT, user_id: VIEWER }],
+    event_roles: [], blocks: [], feature_flags: [], trip_members: [],
+  } as Record<string, Row[]>);
+  const gate = (db: Record<string, Row[]>, failing?: string) =>
+    (eventAttendance as Record<string, any>).readEventCancellation(gateClient(db, failing) as any, EVENT, VIEWER, Date.now());
+
+  it("an attendee of a cancelled event they could see: cancelled", async () => {
+    assert.equal(await gate(base()), "cancelled");
+  });
+  it("not an attendee: withheld", async () => {
+    const db = base(); db.event_attendees = [];
+    assert.equal(await gate(db), "withheld");
+  });
+  for (const [blocker, blocked] of [[OUTSIDER, VIEWER], [VIEWER, OUTSIDER]]) {
+    it(`a block ${blocker === VIEWER ? "by the viewer" : "by the host"}: withheld`, async () => {
+      const db = base(); db.blocks = [{ blocker_id: blocker, blocked_id: blocked }];
+      assert.equal(await gate(db), "withheld");
+    });
+  }
+  it("an unreadable blocks table denies (the shared helper fails closed): withheld", async () => {
+    assert.equal(await gate(base(), "blocks"), "withheld");
+  });
+  // Event staff skip checkEventEligibility's own block check (and a co-host passes the visibility
+  // read by role), so for them this gate's block read is the only one: "blocking overrides all
+  // other relationships" holds for the notice as it does for the card.
+  it("a co-host the host blocked, or whose blocks read fails: withheld", async () => {
+    const staff = base(); staff.event_roles = [{ event_id: EVENT, user_id: VIEWER, role: "co_host" }];
+    assert.equal(await gate(staff), "cancelled", "the control: an unblocked co-host who attended is told");
+    staff.blocks = [{ blocker_id: OUTSIDER, blocked_id: VIEWER }];
+    assert.equal(await gate(staff), "withheld");
+    staff.blocks = [];
+    assert.equal(await gate(staff, "blocks"), "withheld");
+  });
+  it("not cancelled, or the viewer is the host: withheld", async () => {
+    const live = base(); live.events[0].state = "open";
+    assert.equal(await gate(live), "withheld");
+    const host = base(); host.events[0].host_id = VIEWER;
+    assert.equal(await gate(host), "withheld");
+  });
+  it("its time has passed — by its end, or six hours after a start with no end: withheld", async () => {
+    const ended = base(); ended.events[0].ends_at = new Date(Date.now() - 60000).toISOString();
+    assert.equal(await gate(ended), "withheld");
+    const started = base(); started.events[0].starts_at = new Date(Date.now() - 7 * 3600000).toISOString();
+    assert.equal(await gate(started), "withheld");
+    const recent = base(); recent.events[0].starts_at = new Date(Date.now() - 5 * 3600000).toISOString();
+    assert.equal(await gate(recent), "cancelled", "still news inside the six-hour window");
+  });
+  it("a ban: withheld; an unreadable ban: unavailable", async () => {
+    const banned = base(); banned.event_roles = [{ event_id: EVENT, user_id: VIEWER, role: "banned" }];
+    assert.equal(await gate(banned), "withheld");
+    assert.equal(await gate(base(), "event_roles"), "unavailable");
+  });
+  it("visibility as if not cancelled: a trip event needs accepted membership; an unreadable one is unavailable", async () => {
+    const trip = base(); trip.events[0].visibility = "trip"; trip.events[0].trip_id = TRIP;
+    assert.equal(await gate(trip), "withheld");
+    trip.trip_members = [{ trip_id: TRIP, user_id: VIEWER, role: "member", status: "accepted" }];
+    assert.equal(await gate(trip), "cancelled");
+    assert.equal(await gate(trip, "trip_members"), "unavailable");
+  });
+  it("an unreadable event or attendee row is unavailable, never a notice", async () => {
+    assert.equal(await gate(base(), "events"), "unavailable");
+    assert.equal(await gate(base(), "event_attendees"), "unavailable");
   });
 });

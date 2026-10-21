@@ -98,7 +98,7 @@ export function canOfferDecision(p: BoardProposal, isOwner: boolean): boolean {
 export function proposalTitle(p: BoardProposal): string {
   const payload = (p.payload ?? {}) as Record<string, unknown>;
   for (const k of ['title', 'summary', 'rationale']) {
-    const v = payload[k];
+    const v = k === 'rationale' ? (p.rationale ?? payload[k]) : payload[k]; // TR153: the server lifts `rationale` out of the payload
     if (typeof v === 'string' && v.trim()) return v.trim();
   }
   const words = p.type.replace(/_/g, ' ');

@@ -44,7 +44,7 @@ import { makeConfidence, type Confidence } from "../lib/liveIntelligence.js";
 import { isQuietHours } from "./CompassNotificationEngine.js";
 import { getWeatherContext } from "../lib/weatherCache.js";
 import { NotificationService } from "../services/notifications/NotificationService.js";
-import { freeGapFromPlan } from "../domain/trips/invariants/TripFreedomEngine.js"; import { PLAN_ITEM_PRIVACY_COLUMNS, planItemAccessFor, withholdPrivatePlanItems } from "./planItemAccess.js";
+import { freeGapFromPlan } from "../domain/trips/invariants/TripFreedomEngine.js"; import { buildTripCompassDayPlanProjection } from "../domain/trips/projections/TripCompassPlanProjection.js"; import { acceptTripProjection, TRIP_PROJECTION_SCHEMA_VERSION } from "../domain/trips/contracts/TripProjectionEnvelope.js";
 import { NotificationRouter } from "../services/notifications/NotificationRouter.js";
 import { fetchUserTimezone, localHourFor, nowUtcInstant } from "../lib/localTime.js";
 import { resolveCurrentTrip } from "./CompassCurrentTrip.js";
@@ -362,18 +362,18 @@ async function fetchTodayPlanItems(
   tripId: string,
   today: string, viewerId: string, // census-trips §96 (OD-1012-PRIV-5): whose read this is — a plan its scope keeps from them is not their plan, time included
 ): Promise<Array<{ id: string; starts_at: string | null }>> {
-  try {
-    const { data, error } = await sc
-      .from("trip_plan_items")
-      .select("id, starts_at, status, day_date, removed_at, creator_id, location_is_private, privacy_scope" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`)
-      .eq("trip_id", tripId)
-      .eq("day_date", today);
-    const rows = senseRows("trip_plan_items", data, error); const visible = rows.length === 0 ? rows : withholdPrivatePlanItems(rows as any[], await planItemAccessFor(sc, tripId, viewerId)); return visible // §96: hidden plans dropped; a crew plan at a private place keeps its time (OD-TRIP-3)
-      .filter((i) => i.status !== "cancelled" && i.removed_at == null)
-      .map((i) => ({ id: String(i.id), starts_at: (i.starts_at as string | null) ?? null }));
-  } catch (err) {
-    throw err; // DV-83: never `return []` over a failed read — evaluateSenseSignals marks the source unread
-  }
+  // CT-02: Trips' uncapped day projection, not a raw `trip_plan_items` read. §96: a
+  // plan its scope hides from this viewer is dropped; a crew plan at a private place
+  const built = await buildTripCompassDayPlanProjection(sc, tripId, viewerId, today); // keeps its time (OD-TRIP-3)
+  // DV-83: never `return []` over a failed read — throw, and evaluateSenseSignals
+  // marks the source unread. A refused §19.1 envelope is the same failure.
+  if (!built.ok || !acceptTripProjection(built.projection, {
+    acceptedSchemaVersion: TRIP_PROJECTION_SCHEMA_VERSION, metric: "TripCompassDayPlanProjection",
+  }).accepted) throw new SenseReadError("trip_plan_items", built.ok ? "the day plan projection was refused" : built.reason);
+  return built.projection.items // not cancelled, not removed: Trips filters exactly as this function did
+    .map((i) => ({ id: i.id, starts_at: i.startsAt }));
+  // (No try/catch: the projection settles its own read failures into `ok: false`,
+  // which the line above turns into the throw DV-83 requires.)
 }
 
 /**

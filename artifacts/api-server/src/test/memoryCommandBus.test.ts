@@ -409,10 +409,10 @@ describe("§24 memory_command_rejected_total counts by reason", () => {
 // is the shape of claim this census exists to catch — in the file that cites
 // the census.
 //
-// `projectionName` stays null and H223 stays BUILT-BUT-WRONG because of it: a
-// command log has no projection, and the projection log that would carry the
-// eighth field is services/memoryProjections/derivativeRegistry.ts, whose
-// storage is migration 2730 — written, unapplied, never run outside a test.
+// `projectionName` stays null on THIS line: a command log has no projection.
+// The eighth field is carried by the projection log
+// (services/memoryProjections/projectionLog.ts), pinned by the §24 cases in
+// test/memoryNarrowingReprojection.test.ts (census H223).
 describe("§24 failure class — the category of a refusal, not its reason code", () => {
   it("is null for anything that was not a refusal", () => {
     assert.equal(failureClassOf({ outcome: "accepted", reason: undefined }), null);

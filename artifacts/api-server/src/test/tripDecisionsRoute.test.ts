@@ -125,7 +125,7 @@ const crew = [{ trip_id: TRIP_ID, user_id: OWNER_ID, status: "accepted", role: "
 const base = { trips: [{ id: TRIP_ID, owner_id: OWNER_ID }], trip_members: crew };
 
 const goal = (o: Row = {}) => ({
-  id: "g1", trip_id: TRIP_ID, type: "experience", priority: "normal",
+  id: "g1", trip_id: TRIP_ID, type: "experience", priority: "normal", scope: "shared", owner_user_id: null, // 2783: scope is NOT NULL DEFAULT 'shared' on every real row
   status: "open", evidence_json: {}, ...o,
 });
 const dtask = (o: Row = {}) => ({
@@ -597,5 +597,64 @@ describe("the route is reachable", () => {
       "the route constructs a recommendation kind of its own");
     assert.ok(!/INSUFFICIENT_BASIS/.test(route.replace(/\/\*[\s\S]*?\*\//g, "")),
       "the route mentions a recommendation kind outside its header comment");
+  });
+});
+
+// census-trips TR84, TR85, TR86, TR22: the decision surface reads trip_goals,
+// trip_decision_tasks and trip_risks with BOTH Trips flags FALSE — production's
+// state. Neither flag gates this read; a gate added here goes red.
+describe("served with trip_kernel_enabled and trip_operational_projections_enabled both FALSE", () => {
+  it("goals, decision tasks and risks are read and served, and the risk reaches its plan element", async () => {
+    install({
+      feature_flags: [
+        { flag: "trip_kernel_enabled", enabled: false },
+        { flag: "trip_operational_projections_enabled", enabled: false },
+      ],
+      trip_goals: [goal({ id: "g1" })],
+      trip_decision_tasks: [dtask({ id: "t1" })],
+      trip_risks: [risk({ id: "r1", impact: "high", trigger_json: { affects: ["pl1"] } })],
+      trip_proposals: [],
+    });
+    const r = await get();
+    assert.equal(r.status, 200, JSON.stringify(r.body).slice(0, 300));
+    assert.deepEqual(r.body.goals.map((g: any) => g.id), ["g1"]);
+    assert.deepEqual(r.body.decisionTasks.map((t: any) => t.id), ["t1"]);
+    assert.deepEqual(r.body.risks.map((x: any) => [x.id, x.impact]), [["r1", "high"]]);
+    assert.equal(r.body.recommendations.length, 1, "one recommendation per pending decision task");
+    assert.deepEqual(r.body.elementRisks, [{ elementId: "pl1", riskIds: ["r1"], worstImpact: "high", worstLikelihood: "medium" }]);
+  });
+});
+
+// census-trips TR139 / TR84 (2783): a personal goal is readable by its owner
+// only — `trip_goals_select_scoped`. This route reads with the SERVICE client,
+// so RLS does not apply here and the route must apply the same rule itself.
+describe("2783 — a personal goal is its owner's alone, on this service-role read too", () => {
+  const crew2 = [...crew, { trip_id: TRIP_ID, user_id: OTHER_ID, status: "accepted", role: "member" }];
+  const goals = () => [
+    goal({ id: "g-shared", weight: 0.4 }),
+    goal({ id: "g-owner", scope: "personal", owner_user_id: OWNER_ID, weight: 0.9 }),
+    goal({ id: "g-other", scope: "personal", owner_user_id: OTHER_ID }),
+    goal({ id: "g-unread", scope: undefined }),
+  ];
+
+  it("each member is served the shared goals and their OWN personal goals — never another member's, never an unread scope", async () => {
+    install({ trip_members: crew2, trip_goals: goals(), trip_decision_tasks: [], trip_risks: [], trip_proposals: [] });
+    const o = await get();
+    assert.equal(o.status, 200, JSON.stringify(o.body).slice(0, 300));
+    assert.deepEqual(o.body.goals.map((g: any) => [g.id, g.scope, g.weight]).sort(), [["g-owner", "personal", 0.9], ["g-shared", "shared", 0.4]]);
+    const m = await get("other-token");
+    assert.equal(m.status, 200, JSON.stringify(m.body).slice(0, 300));
+    assert.deepEqual(m.body.goals.map((g: any) => [g.id, g.scope]).sort(), [["g-other", "personal"], ["g-shared", "shared"]]);
+    assert.ok(!JSON.stringify(m.body).includes("g-owner"), "the owner's personal goal reached another member");
+  });
+
+  it("a recommendation is not argued from another member's personal goal", async () => {
+    const proposals = [prop({ id: "p1", payload_json: { decision_task_id: "t1", serves_goal_ids: ["g-owner"], feasibility_verdict: "FEASIBLE_UNVERIFIED" } })];
+    install({ trip_members: crew2, trip_goals: goals(), trip_decision_tasks: [dtask({ id: "t1" })], trip_risks: [], trip_proposals: proposals });
+    const o = await get();
+    assert.ok(o.body.recommendations[0].reasons.includes("SERVES_GOAL"), "the owner's own goal counts for the owner");
+    const m = await get("other-token");
+    assert.equal(m.status, 200);
+    assert.ok(!m.body.recommendations[0].reasons.includes("SERVES_GOAL"), "another member's personal goal argued a recommendation to them");
   });
 });

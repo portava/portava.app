@@ -56,7 +56,7 @@ import { getNearbyVenues, type NearbyVenue } from "../lib/venuesService.js";
 import { resolvePrivacyVerdict, type TelegraphChatPrivacyVerdict } from "../services/telegraphChatSuggestions.js";
 import { resolveConversationCapabilities } from "../domain/telegraph/policies/conversationCapabilityPolicy.js";
 import type { ConversationCapabilities } from "../domain/telegraph/contracts/conversationCapabilities.js";
-import { searchConversations } from "../services/telegraphSearch.js";
+import { searchConversations } from "../services/telegraphSearch.js"; import { readViewerCatchUp } from "../services/telegraph/catchUp.js"; // census-telegraph T267
 import {
   applyHistoryWindow,
   historyBoundEnabled,
@@ -110,7 +110,7 @@ interface Gate {
    * apply half a rule. Always the authenticated caller this gate just proved
    * ACTIVE membership for — never a conversationId-style value out of `args`.
    */
-  viewerId: string;
+  viewerId: string; /** census-telegraph T267: the caller's own read marker (`last_read_at`), for the catch-up getConversationContext carries. */ lastReadAt: string | null;
 }
 
 function refuse(reason: string, degraded = false): TelegraphToolRefusal {
@@ -157,7 +157,7 @@ export async function gateConversation(
     .from("message_thread_members")
     // Conditional, so a build carrying this code never names a column a
     // database that has not run 2400 would reject with 42703.
-    .select(membershipSelect("user_id, left_at", boundOn))
+    .select(membershipSelect("user_id, left_at, last_read_at", boundOn))
     .eq("thread_id", conversationId)
     .eq("user_id", userId)
     .maybeSingle();
@@ -190,7 +190,7 @@ export async function gateConversation(
     capabilities: caps.capabilities,
     memberIds: ((roster as any[]) ?? []).map((r) => String(r.user_id)),
     visibleFrom: visibleFromOf(mine as any, boundOn),
-    viewerId: userId,
+    viewerId: userId, lastReadAt: typeof (mine as any).last_read_at === "string" ? (mine as any).last_read_at : null,
   };
 }
 
@@ -253,7 +253,7 @@ export async function telegraphGetConversationContext(
   // over one failed non-essential read would trade a false answer for no answer
   // when a true partial one is available. `telegraph_search_conversation`
   // already returns `degraded` beside real hits for the same reason.
-  const recentObjectsUnreadable = Boolean(error);
+  const recentObjectsUnreadable = Boolean(error); const catchUp = await readViewerCatchUp(sc, { threadId: gate.conversationId, viewerId: gate.viewerId, visibleFrom: gate.visibleFrom, lastReadAt: gate.lastReadAt }, Date.now()); // census-telegraph T267: §20's catch-up, for THIS caller, through the gate above
   if (error) {
     log.warn(
       { err: error, conversationId: gate.conversationId },
@@ -279,7 +279,7 @@ export async function telegraphGetConversationContext(
           .filter((r) => withinWindow(r.created_at, gate.visibleFrom,
                                       { senderId: r.sender_id, viewerId: gate.viewerId }))
           .map((r) => String(r.subtype)),
-    recentObjectsUnreadable,
+    recentObjectsUnreadable, catchUp: catchUp.ok ? { ...catchUp.projection, scanned: catchUp.scanned, truncated: catchUp.truncated } : null, catchUpUnreadable: !catchUp.ok, catchUpNote: catchUp.ok ? "What this participant missed since they last read: counts and typed items only (decisions, commitments, coordination moves, shared objects, what awaits them, safety mode) — never message prose. When truncated is true, it is a floor." : "The catch-up COULD NOT BE READ — it is null, which is not \"nothing happened\". Say you could not check; do not tell the participant they missed nothing.",
     note: recentObjectsUnreadable
       ? "Approximate context only. No coordinates, no live location, no message prose. " +
         "The list of shared objects COULD NOT BE READ — it is null, which is not empty. " +
@@ -633,7 +633,7 @@ export const TELEGRAPH_COMPASS_TOOL_DEFINITIONS = [
     function: {
       name: "telegraph_get_conversation_context",
       description:
-        "Telegraph §18.3 getConversationContext. What this conversation is, how many participants, what it is allowed to do, and which kinds of shared objects are in it. Returns no message text and no location.",
+        "Telegraph §18.3 getConversationContext. What this conversation is, how many participants, what it is allowed to do, which kinds of shared objects are in it, and the participant's catch-up (§20: what they missed since they last read — counts and typed items only). Returns no message text and no location.",
       parameters: { type: "object" as const, properties: { ...CONVERSATION_ARG }, required: ["conversationId"], additionalProperties: false },
     },
   },

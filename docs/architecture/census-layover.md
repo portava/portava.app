@@ -12132,3 +12132,85 @@ exercise the same bounded contract. Parent's combined Sensing/Layover run passes
 are not unique requirements. This is client operation ownership, not cancellation
 of a write already accepted by the server, an atomic read/write snapshot or a
 new Layover policy. No row, schema, flag, production state or `head_commit` moves.
+
+## §80 — 2026-10-17: re-grade of every N and W row after the integration batch (PR #762). NO ROW MOVES
+
+The integration batch (commit `e1e097cfe`) changed four Layover areas and re-measured no verdict
+(§78 and §79 record two of them as citation/claim passes). This pass re-measured all 52 `N` and
+159 `W` rows (`CENSUS_INTEGRITY_DUMP=N,W`) against that tree. A row moves only when every clause of
+its requirement is now met; none is. Nothing below reverses an earlier ruling.
+
+What the batch changed, and why no row it touches moves:
+- **Plan-section draft preservation** (a failed add keeps the draft; stale completions cannot clear a
+  newer draft). L74 asks for executable experiences carrying time, return, risk and failure information;
+  this is client request ownership and does not change what a recommendation carries. L74 stays `W`,
+  as its builder and its independent acceptance both state.
+- **Constraints-card operation ownership** (§79). L22, L35, L172 and the six §58.2 rows (L222, L224,
+  L229, L279, L283, L284) rest on `layover_constraints` (2992, behind 3640's flag). The
+  production-applied migration ledger still lists none of 2700, 2992, 3623, 3640 or 3900; only 2860 of
+  this family is there. H24 and lead ruling WAVE-1 hold: L22 and the §58.2 six stay `N`, and L35 and L172
+  stay `W`.
+- **Airport-conditions card read failure** (an offline or undecodable read now reaches the existing
+  unavailable/retry state instead of an endless spinner). No row grades that card's read lifecycle. The
+  traveller-observation channel it reads stays where §53.2 put it: L82, L196 and L276 are `W` on the
+  production apply. Nothing moves.
+- **Admin metrics counted windows** (§78: exact counts, truncation disclosed, unreadable windows refused,
+  malformed generation metadata refused). L208, L212, L214, L215 and L216 stay `W`: the platform exporter
+  exists and nothing binds it (OQ-8, §59.3's rule). L209, L210, L211, L213 and L217 stay `N` on H24. The
+  decision-store reader and writers use the same unapplied storage, so L23, L24, L25, L64, L95, L190, L193
+  and L261 stay `N`.
+
+The other `N` rows, re-checked against the tree:
+- **Crew precision and location** (L124, L132, L158, L166, L203, L277): no migration or code for a
+  layover location grant store exists on this tree (the subject of #569). Unchanged.
+- **L131**: unchanged ruling (§55.4): the shared crew chat waits on a Telegraph crew thread. The Telegraph
+  `LAYOVER_PLAN` shareable predates the batch (#637); it shares a plan card into an existing thread and
+  does not form a crew chat.
+- **L27 / L129**: 3900 is still absent from the production-applied ledger, and its flag is seeded FALSE.
+- **Routes, flights and recovery** (L62, L72, L142, L145, L152, L153, L169): the degraded-state contract still
+  publishes the route as unavailable with no routing provider and flight status as unavailable with no
+  flight feed. No recovery directory exists, no connection detection exists, and the return leg still uses a
+  static time-of-day factor.
+- **Entry permission** (L49, L230): still the owner's `layover_entry_forbid_landside_enabled` decision
+  (§58.4). Unchanged.
+- L10, L30, L32, L43, L159, L160, L161, L173, L218, L244, L245, L248, L274 and L296 keep their last
+  stated reasons. None of the batch's files touches them.
+
+Tests run on this tree for the changed areas (focused, not a full suite):
+- **App (jest):** the constraints-card lifecycle, plan-section write-failure and airport-conditions
+  read-failure suites, 3 suites, **86 / 86**.
+- **API (node):** one 12-file run that includes the admin-metrics and counted-window suites, **384 / 384**,
+  0 skipped.
+
+Headline unchanged: **C=85 W=159 N=52 X=0** over 296.
+
+## Row moves — 2026-10-17 fixes (wave 2)
+
+Measured on branch `claude/census-regrade-20261017` (stacked on PR #762) on 2026-10-17, against the working tree. `head_commit` is not re-declared. Every row not named here is unchanged. One row moves `W → C` on a code fix. §23.3 had put it in bucket (d), *"blocked on a file another lane owns"*. That lane is now this one, because the Trips and Layover lanes were worked together in this pass.
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L57 `Commitment` | W | **C** | **The stated gap is closed.** §18 held L57 at W on one sentence: *"`hardConstraints` and `confidence` live on the WINDOW in this engine rather than on the commitment, and widening `EngineCommitment` is the Trips lane's decision"*. The generalised engine's commitment now carries both (`artifacts/api-server/src/domain/trips/invariants/TripFreedomEngine.ts:481#hardConstraints: readonly CommitmentHardConstraint[];`, `artifacts/api-server/src/domain/trips/invariants/TripFreedomEngine.ts:483#confidence: TravelConfidence | null;`), in a generic vocabulary that names no airport (`artifacts/api-server/src/domain/trips/invariants/TripFreedomEngine.ts:467#export const COMMITMENT_HARD_CONSTRAINT_KINDS = [`). The engine READS both. A commitment's confidence caps every window it bounds (`artifacts/api-server/src/domain/trips/invariants/TripFreedomEngine.ts:287#commitmentBoundConfidence(hop.confidence, prev, next)`, `artifacts/api-server/src/domain/trips/invariants/TripFreedomEngine.ts:344#commitmentBoundConfidence("LOW", last)`). NO_LATE_ARRIVAL keeps a lateness tolerance from ever being spent: in the window's end (`artifacts/api-server/src/domain/trips/invariants/TripFreedomEngine.ts:266#spendableToleranceMinutes(next)`), in the before-first window (`artifacts/api-server/src/domain/trips/invariants/TripFreedomEngine.ts:238#spendableToleranceMinutes(first)`) and in when the traveller is released (`artifacts/api-server/src/domain/trips/invariants/TripFreedomEngine.ts:198#spendableToleranceMinutes(c)`). Both layover commitments carry all eight of spec §7's members on every certification (`artifacts/api-server/src/services/airport/LayoverTemporalFreedom.ts:181#hardConstraints: [INBOUND_DOES_NOT_WAIT], confidence: ctx.confidence,`, `artifacts/api-server/src/services/airport/LayoverTemporalFreedom.ts:192#hardConstraints: [OUTBOUND_DOES_NOT_WAIT], confidence: ctx.confidence,`). The airport reason stays in the adapter (`artifacts/api-server/src/services/airport/LayoverTemporalFreedom.ts:323#const OUTBOUND_DOES_NOT_WAIT: CommitmentHardConstraint = {`). The window's confidence now comes from the commitments, not from the same-airport hop, which is a fact and is HIGH (`artifacts/api-server/src/services/airport/LayoverTemporalFreedom.ts:221#hops: [samePlaceHop("HIGH")],`). The commitment envelope reads the departure commitment's confidence (`artifacts/api-server/src/services/airport/LayoverTemporalFreedom.ts:282#confidence: commitmentBoundConfidence(hop.confidence, departure!),`). **No number a traveller sees moved:** the window equals `hardReturnTime` to the millisecond across the existing sweep, and the Trips decision-diff golden is byte-identical. The Trips adapter states no constraint and no confidence for its rows (`trip_commitments` stores a 0..1 number, not a band), and the engine then computes exactly as before. Tests: `artifacts/api-server/src/test/layoverTemporalFreedom.test.ts:422#census-layover L57 — the layover's commitments carry spec §7's eight members`, `artifacts/api-server/src/test/tripFreedomEngine.test.ts:269#census-layover L57 — a commitment's own hardConstraints and confidence`. |
+
+### Tests and mutation proofs, run for this section on 2026-10-17
+
+All runs were `node --import tsx/esm --test` with `TZ=UTC`, on fakes, with no clock and no network.
+
+| what | result |
+| --- | --- |
+| New cases written before the fix (`layoverTemporalFreedom.test.ts`, `tripFreedomEngine.test.ts`) | red: 18/22 pass, with the 3 layover cases failing and `tripFreedomEngine.test.ts` failing to load (the vocabulary it imports did not exist). Green after the fix: 41/41 |
+| Every production change reverted (all four files restored to their originals; final tests kept) | red: 18/22 again. Restored byte-identically (sha256 rechecked) |
+| Targeted mutants | 4/4 killed. The engine ignores a commitment's confidence: 4 fail. The engine spends a NO_LATE_ARRIVAL tolerance: 2 fail. The adapter drops both members: 6 fail. The adapter states HIGH on its commitments: 5 fail |
+| Neighbours: every suite that imports the engine, the adapter, the Trips freedom projection, the replay corpus or the safety engine (57 files, including the Trips decision-diff golden and the layover scenario matrices) | 1394/1394 |
+
+### Headline
+
+| bucket | was (§80) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 85 | 86 |
+| BUILT-BUT-WRONG | 159 | 158 |
+| NOT-BUILT | 52 | 52 |
+| CANNOT-VERIFY | 0 | 0 |
+| total | 296 | 296 |
+
+**1 move: L57 W → C.** 296 = 86 C / 158 W / 52 N / 0 X. CORRECT% is 86 / 296 = 29.1 %.

@@ -18,7 +18,7 @@
  */
 import React, { useState } from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
-import { DestinationListEditor, type DestinationEntry } from '../../../../components/trip/DestinationListEditor.tsx';
+import { DestinationListEditor, type DestinationEntry } from '../../../../components/trip/DestinationListEditor.tsx'; import { PasteReviewSheet } from '../PasteReviewSheet.tsx';
 
 // NOTE: exhaustive — the real token helper reaches the Supabase client.
 jest.mock('../../../../services/apiToken.ts', () => ({ freshToken: async () => 'tok' }));
@@ -180,4 +180,41 @@ test('creating a Trip: confirmed stops join the draft and nothing is sent', asyn
   await waitFor(() => expect(screen.queryByTestId('paste-review-sheet')).toBeNull());
   expect(destinationPosts()).toHaveLength(0);
   expect(screen.getAllByTestId(/^remove-dest-/)).toHaveLength(2);
+});
+
+// ── census G159 (2026-10-17): the one-place mode the Event location mounts ────
+test('G159 one-place mode: one radio pick, handed to the field; a refusal keeps the review open', async () => {
+  const picks: string[] = [];
+  let accept = false;
+  const onClose = jest.fn();
+  await render(
+    <PasteReviewSheet
+      visible context="event_location" fieldId="event.location" noun="place" onClose={onClose}
+      onPick={async (c) => { picks.push(c.id); return accept; }}
+    />,
+  );
+  await fireEvent.changeText(screen.getByTestId('paste-input'), 'Da Nang\nHoi An');
+  await fireEvent.press(screen.getByTestId('paste-extract'));
+  await screen.findByTestId('paste-item-0');
+  const state = (id: string) => screen.getByTestId(id).props.accessibilityState;
+  expect(screen.getByTestId('paste-candidate-0-0').props.accessibilityRole).toBe('radio');
+  // Two complete answers, but a one-place field pre-ticks only the first.
+  expect(state('paste-candidate-0-0')).toEqual({ checked: true });
+  expect(state('paste-candidate-1-0')).toEqual({ checked: false });
+  // Picking another replaces it.
+  await fireEvent.press(screen.getByTestId('paste-candidate-1-0'));
+  expect(state('paste-candidate-0-0')).toEqual({ checked: false });
+  expect(state('paste-candidate-1-0')).toEqual({ checked: true });
+  // The field refuses: the review stays, and says so.
+  await fireEvent.press(screen.getByTestId('paste-confirm'));
+  await screen.findByText('That place couldn’t be used. Try again.');
+  expect(picks).toEqual(['c-ha']);
+  expect(onClose).not.toHaveBeenCalled();
+  // The field takes it: the review closes.
+  accept = true;
+  await fireEvent.press(screen.getByTestId('paste-confirm'));
+  await waitFor(() => expect(onClose).toHaveBeenCalled());
+  expect(picks).toEqual(['c-ha', 'c-ha']);
+  // The review itself writes nothing; only the extract was asked.
+  expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([`POST ${ORIGIN}/api/input-assistance/extract`]);
 });

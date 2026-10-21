@@ -74,7 +74,7 @@ export interface DecisionBoard {
   }>;
   proposals: Array<{
     id: string; type: string; status: string; decisionRule: string;
-    proposedBy: string | null; expiresAt: string | null; payload: unknown;
+    proposedBy: string | null; expiresAt: string | null; payload: unknown; /** §9.3 (census-trips TR153): served beside `payload`, lifted out of it. */ affectedObjects?: string[]; rationale?: string | null; impactSummary?: string | null;
     /** NULL means the tally could not be COMPUTED. Never render it as no votes. */
     tally: ProposalTally | null;
     /**

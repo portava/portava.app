@@ -69,7 +69,7 @@ import {
   type LayerItem,
 } from "./layers.js";
 import { projectSafetyMode, type SafetyMode } from "./safetyMode.js";
-import { TELEGRAPH_SHARE_PRODUCERS } from "../../domain/telegraph/policies/shareAuthorizationPolicy.js";
+import { TELEGRAPH_SHARE_PRODUCERS } from "../../domain/telegraph/policies/shareAuthorizationPolicy.js"; import { applyHistoryWindow, withinWindow } from "../groupChatHistoryBound.js"; import { withholdLocationAcrossBlocks } from "./locationAcrossBlocks.js"; // census-telegraph T267 (readViewerCatchUp, at the foot); one line so the cited lines below keep their numbers
 
 // ── input ────────────────────────────────────────────────────────────────────
 
@@ -347,4 +347,65 @@ export function projectCatchUp(input: CatchUpInput): CatchUpProjection {
     safetyChangedWhileAway,
     inferredFromProse: false,
   };
+}
+
+// ── census-telegraph T267: the catch-up, read for ONE viewer ─────────────────
+//
+// §20's Compass row is "Authorized thread context, meeting/recommendation tools,
+// catch-up". GET /threads/:id/catch-up (routes/telegraphCoordination.ts) is the
+// catch-up's server half; Compass reaches it through getConversationContext
+// (compass/TelegraphConversationTools.ts), whose gate has already proved the
+// caller's ACTIVE membership, privacy verdict and capabilities and handed over
+// the caller's own §14.3 window and read marker. This is the read that route
+// performs, under the same bounds, for that one caller: the same columns, the
+// same scan cap, tombstones excluded, the window applied IN the query and again
+// per row, and a location sent across a block withheld before any projection
+// sees it. Then `projectCatchUp` — the one projection; nothing here re-derives
+// it. An unreadable `messages` is `ok: false`: "nothing happened while you were
+// away" is never produced by a failed read.
+
+/** The route's own cap (routes/telegraphCoordination.ts CATCH_UP_SCAN_LIMIT), pinned equal by test. */
+export const VIEWER_CATCH_UP_SCAN_LIMIT = 400;
+
+const VIEWER_CATCH_UP_COLUMNS = "id, sender_id, created_at, deleted_at, msg_type, subtype, body";
+
+export type ViewerCatchUpRead =
+  | { ok: true; projection: CatchUpProjection; scanned: number; truncated: boolean }
+  | { ok: false };
+
+export async function readViewerCatchUp(
+  client: any,
+  input: { threadId: string; viewerId: string; visibleFrom: string | null; lastReadAt: string | null },
+  nowMs: number,
+): Promise<ViewerCatchUpRead> {
+  try {
+    let q = client
+      .from("messages")
+      .select(VIEWER_CATCH_UP_COLUMNS)
+      .eq("thread_id", input.threadId)
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false })
+      .limit(VIEWER_CATCH_UP_SCAN_LIMIT);
+    q = applyHistoryWindow(q, input.visibleFrom, input.viewerId);
+    const { data, error } = await q;
+    if (error || !Array.isArray(data)) return { ok: false };
+    const shown = (await withholdLocationAcrossBlocks(client, input.viewerId, data as CatchUpInputRow[])).rows;
+    const rows = shown.filter((r) =>
+      withinWindow(r.created_at, input.visibleFrom, { senderId: r.sender_id, viewerId: input.viewerId }));
+    return {
+      ok: true,
+      projection: projectCatchUp({
+        threadId: input.threadId,
+        viewerId: input.viewerId,
+        rows,
+        lastReadAt: input.lastReadAt,
+        windowFrom: input.visibleFrom,
+        nowMs,
+      }),
+      scanned: rows.length,
+      truncated: rows.length >= VIEWER_CATCH_UP_SCAN_LIMIT,
+    };
+  } catch {
+    return { ok: false };
+  }
 }

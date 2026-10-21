@@ -360,7 +360,7 @@ async function rebuildForEvent(
 
     let result: Awaited<ReturnType<typeof rebuildProjection>>;
     try {
-      result = await rebuildProjection(sc, projectionId, scope, now);
+      result = await rebuildProjection(sc, projectionId, scope, now, { trace: { memoryId: row.memory_id, eventId: row.event_id, reason: row.type } }); // §24 (H223): the event that caused it, on the projection log line
     } catch (err) {
       // Our own code threw. Distinct from a refusal, and retryable.
       failed += 1;

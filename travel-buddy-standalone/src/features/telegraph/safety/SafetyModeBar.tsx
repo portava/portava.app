@@ -153,7 +153,7 @@ export function SafetyModeBar({
         if (onBlockOrReport) controls.push(<Chip key={id} id={id} label="Block or report" styles={styles} onPress={onBlockOrReport} />);
         break;
       case 'LOCATION_SCOPE':
-        if (onLocationScope) controls.push(<Chip key={id} id={id} label="Share a place" styles={styles} onPress={onLocationScope} />);
+        if (onLocationScope) controls.push(<Chip key={id} id={id} label="Share where you are" styles={styles} onPress={onLocationScope} />); // T106: opens the time-limited scope sheet
         break;
       default:
         // Unknown to this build: skipped, never guessed at.

@@ -70,3 +70,38 @@ describe('thread controls — each acts on what the server answered', () => {
     expect(dm).toMatch(/useState\(muted === '1'\)/);
   });
 });
+
+// ── census-telegraph T320: "Buddy booking cancelled → booking-only actions disabled immediately" ──
+//
+// The booking thread read the booking ONCE, on mount: the call buttons (gated on its status) and
+// the booking header's Safety / Add Time stayed up after a cancellation until the screen was left
+// and reopened. Every status transition writes a booking card into this very thread
+// (routes/rentABuddy.ts emitBookingCard, including "cancelled"), so the open thread hears it: the
+// newest booking transition is a key the booking read, the header and the rail depend on.
+describe('T320 — the open booking thread re-reads the booking when its transition card arrives', () => {
+  // Loaded per call, so a tree without the module fails case by case rather than starving the file.
+  const key = (msgs: Array<Record<string, unknown>>) => {
+    let mod: any = {};
+    try { mod = require('../booking/bookingTransition.ts'); } catch { /* absent: the call below fails the case */ }
+    return mod.latestBookingTransitionKey(msgs);
+  };
+
+  it('the key is the NEWEST booking transition — a booking card or a Rent-a-Buddy milestone — and nothing else', () => {
+    expect(key([])).toBeNull();
+    expect(key([{ id: 'a', msgType: 'text' }, { id: 'b', msgType: 'system', subtype: 'call_missed' }])).toBeNull();
+    expect(key([
+      { id: 'c1', msgType: 'booking_card', subtype: 'booking_status_confirmed' },
+      { id: 't', msgType: 'text' },
+      { id: 'c2', msgType: 'booking_card', subtype: 'booking_status_cancelled' },
+      { id: 't2', msgType: 'text' },
+    ])).toBe('c2');
+    expect(key([{ id: 'c1', msgType: 'booking_card' }, { id: 'm1', msgType: 'system', subtype: 'rent_buddy_extra_time' }])).toBe('m1');
+  });
+
+  it('the booking read, the booking header and the rail all depend on it', () => {
+    expect(dm).toContain('const bookingTransitionKey = latestBookingTransitionKey(messages);');
+    expect(dm).toContain('}, [threadType, contextId, bookingTransitionKey]);');
+    expect(dm).toMatch(/<RentABuddyThreadHeader\s+key=\{bookingTransitionKey \?\? 'booking'\}/);
+    expect(dm).toContain("<SharedContextRail threadId={id} key={bookingTransitionKey ?? 'rail'} scrolled={railCollapsed} />");
+  });
+});

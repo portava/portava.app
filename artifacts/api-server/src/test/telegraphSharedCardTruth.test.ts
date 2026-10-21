@@ -564,3 +564,61 @@ describe("two viewers, one process — the truth is the VIEWER's, never a shared
     assert.equal(blockedAfter.get(r.id)?.state, "unavailable");
   });
 });
+
+// ── census-telegraph T320 / T411: a BOOKING card's actions are its CURRENT capabilities ──────
+//
+// The booking loader serves a cancelled booking to its two parties (its current status is the
+// news), and the BOOKING family's actions — MEET_HERE, SHARE_LOCATION, CHECK_IN_SAFE — were handed
+// out with it whatever the status: a cancelled booking's card "offered" a check-in. Action buttons
+// are derived from current capabilities (§30A.10), so they follow the booking: only while it is
+// operational (the statuses the booking domain itself admits an add-time in, routes/rentABuddy.ts),
+// and never on anything cancelled.
+describe("T320 / T411 — a booking card offers booking-only actions only while the booking is operational", () => {
+  const BK = "44444444-0000-4000-8000-0000000000aa";
+  function bookingClient(status: string) {
+    const row = { id: BK, buddy_id: SENDER, traveler_id: VIEWER, city: "Hanoi", category: "Food tour", booking_date: "2026-11-01", status, updated_at: null };
+    return {
+      from(table: string) {
+        const q: any = {
+          select: () => q, eq: () => q,
+          maybeSingle: async () => ({ data: table === "rent_buddy_bookings" ? row : null, error: null }),
+        };
+        return q;
+      },
+    } as any;
+  }
+  const actionsFor = async (status: string) => {
+    const { shareableFor } = await import("../services/telegraph/shareables.js");
+    const s = shareableFor(bookingClient(status), "BOOKING", BK)!;
+    return { state: await s.getCurrentState(VIEWER), actions: await s.getAvailableActions(VIEWER, "t") };
+  };
+
+  for (const status of ["confirmed", "scheduled", "in_progress"]) {
+    it(`a ${status} booking offers its booking-only actions`, async () => {
+      const r = await actionsFor(status);
+      assert.equal(r.state.available, true);
+      assert.deepEqual(r.actions, ["MEET_HERE", "SHARE_LOCATION", "CHECK_IN_SAFE"]);
+    });
+  }
+  for (const status of ["cancelled", "refunded", "completed", "pending", "expired", "disputed", "no_show_pending"]) {
+    it(`a ${status} booking is still shown to its party, and offers none`, async () => {
+      const r = await actionsFor(status);
+      assert.equal(r.state.available, true, "the party still sees the booking's current status");
+      assert.deepEqual(r.actions, []);
+    });
+  }
+  it("through the card reader: the cancelled booking's card carries its current status and no actions", async () => {
+    const t = await truthFor(row("booking_card", "booking_status_confirmed", snapshotBody("booking_card", {})));
+    assert.equal(t?.state, "live");
+    assert.equal(t?.state === "live" && t.status, "cancelled");
+    assert.deepEqual(t?.state === "live" ? t.actions : null, []);
+  });
+  it("the operational set is the booking domain's own (routes/rentABuddy.ts add-time allow-list)", async () => {
+    const { BOOKING_OPERATIONAL_STATUSES } = await import("../services/telegraph/actionLiveness.js");
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync(new URL("../routes/rentABuddy.ts", import.meta.url), "utf8");
+    const m = /const addTimeAllowedStatuses = \[([^\]]*)\];/.exec(src);
+    assert.ok(m, "the booking domain's allow-list moved — re-read this pin");
+    assert.deepEqual([...BOOKING_OPERATIONAL_STATUSES].sort(), m![1].match(/"([a-z_]+)"/g)!.map((q) => q.slice(1, -1)).sort());
+  });
+});

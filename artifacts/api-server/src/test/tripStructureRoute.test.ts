@@ -479,3 +479,25 @@ describe("the route is reachable", () => {
     assert.match(index, /router\.use\(tripStructureRouter\)/);
   });
 });
+
+// census-trips TR78: the stage spine is read and served with BOTH Trips flags
+// FALSE — production's state. Neither flag gates this read; a gate added here
+// goes red.
+describe("served with trip_kernel_enabled and trip_operational_projections_enabled both FALSE", () => {
+  it("trip_stages is read and served, with its legs and commitments joined", async () => {
+    install({
+      ...empty,
+      feature_flags: [
+        { flag: "trip_kernel_enabled", enabled: false },
+        { flag: "trip_operational_projections_enabled", enabled: false },
+      ],
+      trip_stages: [stage({ id: "s1", sequence: 1 }), stage({ id: "s2", sequence: 2, city_id: "c2" })],
+      trip_legs: [leg({ id: "l1", from_stage_id: "s1", to_stage_id: "s2" })],
+      trip_commitments: [commitment({ id: "c1", stage_id: "s2" })],
+    });
+    const r = await get();
+    assert.equal(r.status, 200, JSON.stringify(r.body).slice(0, 300));
+    assert.deepEqual(r.body.stages.map((s: any) => [s.id, s.sequence, s.legsFrom, s.legsTo, s.commitmentIds]),
+      [["s1", 1, ["l1"], [], []], ["s2", 2, [], ["l1"], ["c1"]]]);
+  });
+});

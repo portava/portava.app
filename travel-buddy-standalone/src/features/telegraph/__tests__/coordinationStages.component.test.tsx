@@ -137,11 +137,15 @@ describe('T106 — Active: next step and optional location scope', () => {
     );
     await fireEvent.press(screen.getByTestId('telegraph-coordination-share-location'));
     expect(onShareLocation).toHaveBeenCalledTimes(1);
-    // Verifier F7: the sheet it opens sends a place (label, precision) with no
-    // expiry and no position, so the control must not promise a live,
-    // time-limited location share.
-    expect(screen.getByText('Share a place')).toBeTruthy();
-    expect(screen.queryByLabelText(/limited time/i)).toBeNull();
+    // Verifier F7 ANSWERED (census-telegraph T106, 2026-10-17): the control used to
+    // open the place sheet, which sends a pin (label, precision, no expiry), so it was
+    // relabelled "Share a place". The screen now opens the SCOPE sheet from here
+    // (typedCompose.component.test.tsx, T106: a scoped share with an expiry ≤ the
+    // server ceiling and a registry purpose; the screen wiring is pinned there too),
+    // so the control says what it does — and only because it does it.
+    expect(screen.getByText('Share where you are')).toBeTruthy();
+    expect(screen.getByLabelText('Share where you are with this conversation, for a limited time')).toBeTruthy();
+    expect(screen.queryByText('Share a place')).toBeNull();
 
     await rerender(<CoordinationPanel threadId="t1" initialResponse={response()} />);
     expect(screen.queryByTestId('telegraph-coordination-share-location')).toBeNull();
@@ -364,6 +368,6 @@ describe('the conversation screen hands the panel what its controls need', () =>
   it('mounts the panel with the viewer, the recap opener and the location sheet opener', () => {
     expect(mount).toContain('viewerId={userId');
     expect(mount).toMatch(/onOpenRecap=\{threadRecap\.available \? \(\) => setShowRecap\(true\) : undefined\}/);
-    expect(mount).toContain("onShareLocation={() => setTypedCompose('LOCATION')}");
+    expect(mount).toContain("onShareLocation={() => setTypedCompose('LOCATION_SCOPE')}"); // census-telegraph T106: the time-limited SCOPE sheet, not the place sheet
   });
 });

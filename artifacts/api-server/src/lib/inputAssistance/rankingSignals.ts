@@ -376,16 +376,16 @@ export function applyTripFit(base: number, inTripCity: boolean): number {
 // first, which is the whole of the user-facing harm; removing the other row
 // would be a moderation verdict reached from a search result set.
 //
-// ── WHAT THIS DOES NOT COVER, STATED SO IT IS NOT MISTAKEN FOR COVERAGE ──────
+// ── WHAT THIS PURE TERM CANNOT SEE, AND WHERE THAT IS COVERED (G233) ─────────
 //
 // 1. An impersonating account that appears WITHOUT its target in the same
-//    answer is untouched — there is no verified twin to compare against, and
-//    no global handle index is consulted.
-// 2. BUSINESSES are not covered at all. `verified` / `isOfficial` exist only on
-//    `profiles` (`routes/discoverySearch.ts:706-707`); a `places` /
-//    `hidden_gems` row carries no verification flag of any kind, so there is no
-//    genuine-listing signal for a venue to be impersonated AGAINST.
-// Both are why census G233 stays BUILT-BUT-WRONG rather than moving.
+//    answer: this pure term cannot see it. The gateway hands it `indexed` —
+//    the rows impersonationIndex.ts found a genuine twin for OUTSIDE the answer
+//    (census G233, 2026-10-17), so the copy is demoted all the same, once.
+// 2. BUSINESSES: a venue row carries no flag here either. impersonationIndex.ts
+//    reads `discovery_places.verified` and marks an unverified listing whose
+//    name folds to a verified one's in the same city; the demotion is this one.
+// What this term alone still decides is the within-answer person rule below.
 
 /** Confidence removed from an unverified row that collides with a verified twin. */
 export const IMPERSONATION_DEMOTION = 0.25;
@@ -398,11 +398,11 @@ const IMPERSONABLE_ENTITY_TYPES: ReadonlySet<string> = new Set(['user', 'buddy']
  *
  * Lower-cased; the leading `@` and every separator dropped; the digits that
  * stand in for letters mapped back (`0`→o, `1`/`!`→l, `3`→e, `4`→a, `5`→s,
- * `7`→t, `8`→b); `rn` folded to `m`; runs of a repeated letter collapsed to
- * one. Returns `''` for anything too short to be a handle, which never matches.
+ * `7`→t, `8`→b); a Cyrillic/Greek letter drawn like a Latin one mapped to it
+ * (LOOKALIKE_LETTERS, G233); `rn` → `m`; repeated runs collapsed. `''` if too short.
  */
 export function handleSignature(handle: string | null | undefined): string {
-  const raw = (handle ?? '').trim().toLowerCase().replace(/^@+/, '');
+  const raw = foldLookalikeLetters((handle ?? '').trim().toLowerCase()).replace(/^@+/, '');
   if (!raw) return '';
   const mapped = raw
     .replace(/[^a-z0-9]/g, '')
@@ -439,9 +439,9 @@ export function applyImpersonationRisk<
     subtitle?: string;
     confidence?: number;
     verified?: boolean;
-    official?: boolean;
+    official?: boolean; id?: string;
   },
->(rows: readonly T[]): T[] {
+>(rows: readonly T[], indexed?: ReadonlySet<string>): T[] { // G233: `indexed` = row ids impersonationIndex.ts found a twin for
   // The signatures a GENUINE (verified or official) person row occupies.
   const genuine = new Set<string>();
   for (const r of rows) {
@@ -449,13 +449,13 @@ export function applyImpersonationRisk<
     const sig = handleSignature(rowHandle(r));
     if (sig) genuine.add(sig);
   }
-  if (genuine.size === 0) return rows as T[];
+  if (genuine.size === 0 && !indexed?.size) return rows as T[];
 
   let changed = false;
   const out = rows.map((r) => {
     if (r.verified === true || r.official === true) return r;
     const sig = handleSignature(rowHandle(r));
-    if (!sig || !genuine.has(sig)) return r;
+    if (!(sig && genuine.has(sig)) && !(r.id !== undefined && indexed?.has(r.id))) return r;
     changed = true;
     return { ...r, confidence: Math.max(0, (r.confidence ?? 0) - IMPERSONATION_DEMOTION) };
   });
@@ -599,4 +599,35 @@ export const RELATIONSHIP_FIT_BOOST = 0.05;
 export function applyRelationshipFit(base: number, isFollowing: boolean): number {
   if (!isFollowing) return base;
   return Math.max(base, Math.min(base + RELATIONSHIP_FIT_BOOST, SIGNAL_CEILING));
+}
+
+// ── §36 Impersonation (census G233, 2026-10-17): letters drawn like Latin ones ──
+//
+// The textbook confusable is not a digit: it is a Cyrillic, Greek or Armenian
+// letter that renders like its Latin twin (`@portava` spelled with a Cyrillic o). The
+// fold above used to DROP such a letter, so the copy never met the account it
+// copies. Each lower-case lookalike below maps to the Latin letter it is drawn
+// as; upper-case ones reach it through `toLowerCase`. A letter that only looks
+// Latin in one case and something else in the other is mapped by its lower-case
+// face, because handles are lower case.
+
+/** Lower-case letters of other scripts drawn like a Latin letter, and that letter. */
+export const LOOKALIKE_LETTERS: Readonly<Record<string, string>> = {
+  // Cyrillic
+  '\u0430': 'a', '\u0432': 'b', '\u0435': 'e', '\u0451': 'e', '\u043a': 'k', '\u043c': 'm',
+  '\u043d': 'h', '\u043e': 'o', '\u0440': 'p', '\u0441': 'c', '\u0442': 't', '\u0443': 'y',
+  '\u0445': 'x', '\u044c': 'b', '\u0455': 's', '\u0456': 'i', '\u0457': 'i', '\u0458': 'j',
+  '\u04af': 'y', '\u04bb': 'h', '\u04cf': 'l', '\u0501': 'd', '\u051b': 'q', '\u051d': 'w',
+  // Greek
+  '\u03b1': 'a', '\u03b2': 'b', '\u03b3': 'y', '\u03b5': 'e', '\u03b6': 'z', '\u03b7': 'n',
+  '\u03b9': 'i', '\u03ba': 'k', '\u03bd': 'v', '\u03bf': 'o', '\u03c1': 'p', '\u03c4': 't',
+  '\u03c5': 'u', '\u03c7': 'x', '\u03f2': 'c', '\u03f3': 'j',
+  // Armenian, and Latin letters outside a-z
+  '\u0585': 'o', '\u057d': 'u', '\u0131': 'i', '\u0251': 'a', '\u0261': 'g', '\u026a': 'i',
+};
+
+function foldLookalikeLetters(s: string): string {
+  let out = '';
+  for (const ch of s) out += LOOKALIKE_LETTERS[ch] ?? ch;
+  return out;
 }

@@ -195,7 +195,7 @@ function validDate(d: Date | null): d is Date {
 export function leaveAt(c: EngineCommitment): Date | null {
   const end = validDate(c.endsAt) ? c.endsAt : (validDate(c.startsAt) ? c.startsAt : null);
   const dl = deadlineOf(c);
-  const latestArrival = validDate(dl) ? new Date(dl.getTime() + c.latenessToleranceMinutes * MS_PER_MIN) : null;
+  const latestArrival = validDate(dl) ? new Date(dl.getTime() + spendableToleranceMinutes(c) * MS_PER_MIN) : null;
   if (!end && !latestArrival) return null;
   if (!end) return latestArrival;
   if (!latestArrival) return end;
@@ -235,7 +235,7 @@ export function computeFreedomWindows(inputs: FreedomInputs): FreedomResult {
   if (ordered.length > 0 && validDate(inputs.tripStart)) {
     const first = ordered[0]!;
     const deadline = deadlineOf(first)!;
-    const endMs = deadline.getTime() + first.latenessToleranceMinutes * MS_PER_MIN - first.prepMinutes * MS_PER_MIN;
+    const endMs = deadline.getTime() + spendableToleranceMinutes(first) * MS_PER_MIN - first.prepMinutes * MS_PER_MIN;
     if (endMs > inputs.tripStart.getTime()) {
       push({
         position: "before_first",
@@ -263,7 +263,7 @@ export function computeFreedomWindows(inputs: FreedomInputs): FreedomResult {
     const begins = leaveAt(prev);
     if (!begins) continue; // cannot happen for a placed commitment; typed defensively
     const deadline = deadlineOf(next)!;
-    const latestArrivalMs = deadline.getTime() + next.latenessToleranceMinutes * MS_PER_MIN;
+    const latestArrivalMs = deadline.getTime() + spendableToleranceMinutes(next) * MS_PER_MIN;
 
     const constraints: HardConstraint[] = [];
     if (!validDate(prev.endsAt)) constraints.push({ kind: "PREVIOUS_END_UNKNOWN", commitmentId: prev.id, detail: `${prev.type} has no end time; the window begins at its start` });
@@ -284,7 +284,7 @@ export function computeFreedomWindows(inputs: FreedomInputs): FreedomResult {
       continue;
     }
 
-    let confidence: TravelConfidence = hop.confidence;
+    let confidence: TravelConfidence = commitmentBoundConfidence(hop.confidence, prev, next);
     let reservedMinutes: number | null;
     let endMs: number;
     if (hop.travelMinutes === null) {
@@ -341,7 +341,7 @@ export function computeFreedomWindows(inputs: FreedomInputs): FreedomResult {
           { kind: "NO_DESTINATION", commitmentId: null, detail: "nothing follows this window before the trip ends" },
           ...(!validDate(last.endsAt) ? [{ kind: "PREVIOUS_END_UNKNOWN" as const, commitmentId: last.id, detail: `${last.type} has no end time; the window begins at its start` }] : []),
         ],
-        confidence: "LOW",
+        confidence: commitmentBoundConfidence("LOW", last),
         reservedMinutes: 0,
         afterCommitmentId: last.id, beforeCommitmentId: null,
       });
@@ -433,5 +433,65 @@ export function detectPlanOverlaps(items: readonly PlanForOverlap[]): TemporalCo
       }
     }
   }
+  return out;
+}
+
+// ── Layover spec §7 `Commitment.hardConstraints` and `.confidence` (census-layover L57) ──
+//
+// The Layover spec §7 names eight members on `Commitment { type, startsAt,
+// requiredArrivalAt, location, preparationTime, latenessTolerance,
+// hardConstraints, confidence }`. Six were on `EngineCommitment` from the start;
+// the last two lived only on the WINDOW. They are declared here, on the
+// commitment, by interface merging (the declaration above stays the one the
+// census cites), and the engine READS both:
+//
+//   confidence       a commitment's own certainty about its terms (its deadline,
+//                    its preparation). It caps every window it bounds: the
+//                    window is the WORSE of the hop's confidence and each end's.
+//                    `null` means the adapter states none — the Trips rows store
+//                    a 0..1 number, not a band, and no band is invented for it
+//                    here — and a null end leaves the hop's confidence as it was.
+//   hardConstraints  what the commitment will not bend on, in the engine's own
+//                    generic vocabulary. NO_LATE_ARRIVAL is the one the engine
+//                    enforces: a departure that does not wait never has a
+//                    lateness tolerance spent on it, whatever number a caller
+//                    put in `latenessToleranceMinutes` — in the window's end, in
+//                    the overlap test and in when the traveller is released.
+//
+// The vocabulary names no airport. "An aircraft does not wait" is the Layover
+// adapter's reason for declaring NO_LATE_ARRIVAL; a train, a ferry or a
+// ticketed start declare the same kind for their own reasons (spec §7: keep
+// airport-specific logic in the adapter, not in the engine).
+
+/** Spec §7 Commitment.hardConstraints — the generic kinds the engine enforces. */
+export const COMMITMENT_HARD_CONSTRAINT_KINDS = [
+  /** The commitment does not wait for a late arrival: its lateness tolerance is never spent. */
+  "NO_LATE_ARRIVAL",
+] as const;
+export type CommitmentHardConstraintKind = (typeof COMMITMENT_HARD_CONSTRAINT_KINDS)[number];
+
+export interface CommitmentHardConstraint {
+  kind: CommitmentHardConstraintKind;
+  /** Why this commitment declares it, in the adapter's own words. */
+  detail: string;
+}
+
+export interface EngineCommitment {
+  /** Spec §7 Commitment.hardConstraints. Empty: the commitment declares none. */
+  hardConstraints: readonly CommitmentHardConstraint[];
+  /** Spec §7 Commitment.confidence. `null`: the adapter states none. */
+  confidence: TravelConfidence | null;
+}
+
+/** The lateness tolerance the engine may actually spend on `c`: none when it declares NO_LATE_ARRIVAL. */
+export function spendableToleranceMinutes(c: EngineCommitment): number {
+  const strict = (c.hardConstraints ?? []).some((h) => h.kind === "NO_LATE_ARRIVAL");
+  return strict ? 0 : c.latenessToleranceMinutes;
+}
+
+/** `base` lowered to the worst confidence any bounding commitment states; an unstated one changes nothing. */
+export function commitmentBoundConfidence(base: TravelConfidence, ...bounds: readonly EngineCommitment[]): TravelConfidence {
+  let out = base;
+  for (const c of bounds) if (c.confidence != null) out = worstTravelConfidence(out, c.confidence);
   return out;
 }

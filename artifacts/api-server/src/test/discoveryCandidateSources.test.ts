@@ -234,3 +234,101 @@ describe("M — a generated row is the route's row", () => {
     assert.deepEqual([...ours].sort(), [...routeKeys].sort());
   });
 });
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 2026-10-17 — the independent privacy gate on 3988 (PASS-WITH-CONDITIONS)
+// asked, before any protected zone is activated while trend lists are ON, that
+// the candidate retrievals stop reading the newest place_momentum run with no
+// age bound and no zone pass: a run stored BEFORE a zone was switched on is
+// neither rebuilt nor purged when it is (docs/verification/discovery-remaining-20261016.md).
+//   Z1–Z3  AGE — a run is used only while the trend API would serve it
+//          (lib/discoveryTrendExplanation isCurrentRun, TREND_SNAPSHOT_MAX_AGE_MS).
+//   Z4–Z6  ZONES — while ANY active protected zone exists no run is used (the
+//          global guard loadLocalMomentum and the rebuild scheduler apply); an
+//          unreadable zone policy is a FAILED read, never "no zones".
+//   Z7     the generation stage the served path runs.
+// Appended at the foot so no line above that a census cites moves.
+// ═════════════════════════════════════════════════════════════════════════════
+import { TREND_SNAPSHOT_MAX_AGE_MS, isCurrentRun } from "../lib/discoveryTrendExplanation.js";
+import type { Row } from "./helpers/fakeCandidateDb.js";
+
+/** world() with its LATEST momentum run moved to `agoMs` before NOW (negative = in the future); the older run stays older. */
+function worldWithRunAgo(agoMs: number): Record<string, Row[]> {
+  const w = world();
+  const latest = w["place_momentum"]![0]!["computed_at"];
+  const at = new Date(NOW - agoMs).toISOString();
+  w["place_momentum"] = w["place_momentum"]!.map((r) => (r["computed_at"] === latest ? { ...r, computed_at: at } : r));
+  return w;
+}
+const ACTIVE_ZONE: Row = { id: "zone-1", active: true };
+
+describe("2026-10-17 privacy gate on 3988 — the momentum run's age bound and zone pass", () => {
+  it("Z1. a run older than the trend API's stale-snapshot bound is no run: neither trend source names a place, and no older run stands in", async () => {
+    const sc = makeFakeCandidateDb(worldWithRunAgo(TREND_SNAPSHOT_MAX_AGE_MS + 1));
+    const t = await retrieveTrendingLocal(ctxOf(sc));
+    const e = await retrieveEmergingDiscoveries(ctxOf(sc));
+    assert.equal(t.status, "ok"); assert.deepEqual(t.ids, []);
+    assert.equal(e.status, "ok"); assert.deepEqual(e.ids, []);
+  });
+
+  it("Z2. a run dated in the future is not current either", async () => {
+    const sc = makeFakeCandidateDb(worldWithRunAgo(-60_000));
+    assert.deepEqual((await retrieveTrendingLocal(ctxOf(sc))).ids, []);
+    assert.deepEqual((await retrieveEmergingDiscoveries(ctxOf(sc))).ids, []);
+  });
+
+  it("Z3. the bound IS the trend API's: at every age around it the retrieval agrees with isCurrentRun", async () => {
+    const ages = [-1, 0, 60_000, TREND_SNAPSHOT_MAX_AGE_MS - 1, TREND_SNAPSHOT_MAX_AGE_MS, TREND_SNAPSHOT_MAX_AGE_MS + 1, 2 * TREND_SNAPSHOT_MAX_AGE_MS];
+    let current = 0;
+    for (const ago of ages) {
+      const computedAt = new Date(NOW - ago).toISOString();
+      const api = isCurrentRun({ computedAt, modelVersion: "", featureVersion: null, priorMs: null }, NOW);
+      const t = await retrieveTrendingLocal(ctxOf(makeFakeCandidateDb(worldWithRunAgo(ago))));
+      assert.equal(t.status, "ok", `age ${ago}`);
+      assert.equal(t.ids.length > 0, api, `age ${ago}: the retrieval and the trend API disagree`);
+      if (api) { current++; assert.deepEqual(t.ids, [`db/${P.TRENDING}`, "node/101"], `age ${ago}`); }
+    }
+    assert.equal(current, 4, "both sides of the bound were exercised");
+  });
+
+  it("Z4. while ANY active protected zone exists, no momentum claim is a candidate — the guard loadLocalMomentum and the rebuild scheduler apply", async () => {
+    const w = world(); w["protected_zones"] = [ACTIVE_ZONE];
+    const sc = makeFakeCandidateDb(w);
+    const t = await retrieveTrendingLocal(ctxOf(sc));
+    const e = await retrieveEmergingDiscoveries(ctxOf(sc));
+    assert.equal(t.status, "ok"); assert.deepEqual(t.ids, []);
+    assert.equal(e.status, "ok"); assert.deepEqual(e.ids, []);
+    assert.ok(sc.reads.some((r) => r.table === "protected_zones" && r.ops.includes("eq(active)")), "the active-zone policy was asked");
+  });
+
+  it("Z5. an inactive zone is no zone: the current run's claims stand", async () => {
+    const w = world(); w["protected_zones"] = [{ ...ACTIVE_ZONE, active: false }];
+    const sc = makeFakeCandidateDb(w);
+    assert.deepEqual((await retrieveTrendingLocal(ctxOf(sc))).ids, [`db/${P.TRENDING}`, "node/101"]);
+    assert.deepEqual((await retrieveEmergingDiscoveries(ctxOf(sc))).ids, [`db/${P.EMERGING}`]);
+  });
+
+  it("Z6. an unreadable zone policy is a FAILED read, named on the source — never 'no zones'", async () => {
+    const sc = db({ erroring: ["protected_zones"] });
+    for (const r of [await retrieveTrendingLocal(ctxOf(sc)), await retrieveEmergingDiscoveries(ctxOf(sc))]) {
+      assert.equal(r.status, "read_failed", r.source);
+      assert.equal(r.failedRead, "protected_zones", r.source);
+      assert.deepEqual(r.ids, [], r.source);
+    }
+  });
+
+  it("Z7. generation (the served path's stage): with a zone active the trend sources add nothing and the others still run", async () => {
+    const open = await generateCandidates(db(), pool(), viewer(), { nowMs: NOW, category: "food", circle: false });
+    assert.ok((open.report.sources.trending_local?.retrieved ?? 0) > 0, "control: with no zone the trend source retrieves");
+    assert.ok(open.sourcesById.get(`db/${P.TRENDING}`)?.includes("trending_local"), "control: and names the trending place");
+    const w = world(); w["protected_zones"] = [ACTIVE_ZONE];
+    const g = await generateCandidates(makeFakeCandidateDb(w), pool(), viewer(), { nowMs: NOW, category: "food", circle: false });
+    for (const s of ["trending_local", "emerging_discoveries"] as const) {
+      assert.equal(g.report.sources[s]?.status, "ok", s);
+      assert.equal(g.report.sources[s]?.retrieved, 0, s);
+    }
+    for (const [id, srcs] of g.sourcesById) assert.ok(!srcs.includes("trending_local") && !srcs.includes("emerging_discoveries"), id);
+    assert.equal(g.report.sources.followed_creators?.status, "ok");
+    assert.ok(g.report.generated > 0, "the other sources still generate");
+  });
+});

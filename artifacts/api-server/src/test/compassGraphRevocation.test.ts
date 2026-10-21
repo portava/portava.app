@@ -471,6 +471,18 @@ describe("DV-51 guards — bounded, positive, fail-visible, weight-neutral, idem
         assert.match(src, /circles: \(db: SupabaseClient\) => circleSourceRows\(db\),/, "circles: the reconcile no longer reads through the shared read");
         continue;
       }
+      if (table === "trips") {
+        // CT-02: one literal site, Trips-owned (domain/trips/projections/TripGraphSourceProjection.ts),
+        // shared by the build and the reconcile — so they cannot select or filter differently.
+        assert.equal(hits.length, 0, "trips: the engine reads `trips` itself again instead of through Trips' source read");
+        const tripsSource = readFileSync(new URL("../domain/trips/projections/TripGraphSourceProjection.ts", import.meta.url), "utf8");
+        const shared = [...tripsSource.matchAll(re)];
+        assert.equal(shared.length, 1, "trips: Trips' source read is not exactly one literal");
+        assert.equal(shared[0]![2].trim(), "", "trips: the shared read gained a predicate the build does not apply");
+        assert.match(buildBody, /await tripGraphSourceRows\(db\)\s*\.limit\(BUILD_LIMIT\)/, "trips: the build no longer reads through the shared read");
+        assert.match(src, /trips: \(db: SupabaseClient\) => tripGraphSourceRows\(db\),/, "trips: the reconcile no longer reads through the shared read");
+        continue;
+      }
       const build = hits.find((m) => (m.index ?? 0) < reconcileAt);
       const mine = hits.find((m) => (m.index ?? 0) > reconcileAt);
       assert.ok(build && mine, `${table}: a read is missing on one side`);

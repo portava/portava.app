@@ -16,7 +16,7 @@ import assert from "node:assert/strict";
 
 import {
   computeFreedomWindows, detectPlanOverlaps, leaveAt, orderCommitments,
-  HARD_CONSTRAINT_KINDS, TEMPORAL_CONFLICT_KINDS,
+  HARD_CONSTRAINT_KINDS, TEMPORAL_CONFLICT_KINDS, COMMITMENT_HARD_CONSTRAINT_KINDS,
   type EngineCommitment, type HopTravel,
 } from "../domain/trips/invariants/TripFreedomEngine.js";
 import { checkFeasibility } from "../domain/trips/invariants/TripFeasibilityEngine.js";
@@ -29,7 +29,7 @@ const Q: GeoPoint = { lat: 48.9, lng: 2.4 };
 function c(id: string, o: Partial<EngineCommitment> = {}): EngineCommitment {
   return {
     id, type: "event", startsAt: null, requiredArrivalAt: null, endsAt: null,
-    place: { placeId: `place-${id}`, point: P }, flexibility: "flexible", prepMinutes: 0, latenessToleranceMinutes: 0, ...o,
+    place: { placeId: `place-${id}`, point: P }, flexibility: "flexible", prepMinutes: 0, latenessToleranceMinutes: 0, hardConstraints: [], confidence: null, ...o,
   };
 }
 const hop = (travelMinutes: number | null, o: Partial<HopTravel> = {}): HopTravel =>
@@ -255,5 +255,67 @@ describe("§22.4 an earlier hard commitment cannot increase the preceding free w
       if (!conflicted) checked += 1;
     }
     assert.ok(checked >= 25, `only ${checked} conflict-free rounds exercised the property`);
+  });
+});
+
+// ── census-layover L57: spec §7's `Commitment` carries its own hardConstraints and confidence ──
+//
+// The Layover spec §7 names eight members on `Commitment { type, startsAt,
+// requiredArrivalAt, location, preparationTime, latenessTolerance,
+// hardConstraints, confidence }`. Until L57 the engine held the last two only
+// on the WINDOW. They are now the commitment's, and the engine READS both: a
+// commitment's confidence caps every window it bounds, and a commitment that
+// declares NO_LATE_ARRIVAL never has a lateness tolerance spent on it.
+describe("census-layover L57 — a commitment's own hardConstraints and confidence", () => {
+  it("the vocabulary is the engine's, generic, and names no airport", () => {
+    assert.deepEqual([...COMMITMENT_HARD_CONSTRAINT_KINDS], ["NO_LATE_ARRIVAL"]);
+  });
+
+  it("a commitment's stated confidence caps the window it bounds — the worse of the hop's and each end's", () => {
+    const A = c("A", { startsAt: T("10:00"), endsAt: T("11:00"), place: { placeId: "pA", point: P } });
+    const B = c("B", { requiredArrivalAt: T("14:00"), place: { placeId: "pB", point: Q } });
+    const hi = hop(30, { confidence: "HIGH", routed: true });
+    // Nothing stated on either end: the hop decides, exactly as before L57.
+    assert.equal(run([A, B], [hi]).windows[0]!.confidence, "HIGH");
+    assert.equal(run([A, B], [hi]).windows[0]!.certified, true);
+    for (const [prevConf, nextConf, want] of [
+      ["MEDIUM", null, "MEDIUM"], [null, "LOW", "LOW"], ["LOW", "MEDIUM", "LOW"], ["HIGH", "INSUFFICIENT", "INSUFFICIENT"],
+    ] as const) {
+      const w = run([{ ...A, confidence: prevConf }, { ...B, confidence: nextConf }], [hi]).windows[0]!;
+      assert.equal(w.confidence, want, `prev ${prevConf} / next ${nextConf}`);
+      assert.equal(w.certified, false, "a window bounded by a commitment that is not HIGH is never certified");
+    }
+  });
+
+  it("the window after the last commitment takes that commitment's confidence when it is worse than LOW", () => {
+    const A = c("A", { startsAt: T("10:00"), endsAt: T("11:00"), confidence: "INSUFFICIENT" });
+    const last = run([A], [], { tripEnd: T("20:00") }).windows.find((w) => w.position === "after_last")!;
+    assert.equal(last.confidence, "INSUFFICIENT");
+    const plain = run([c("A", { startsAt: T("10:00"), endsAt: T("11:00") })], [], { tripEnd: T("20:00") }).windows.find((w) => w.position === "after_last")!;
+    assert.equal(plain.confidence, "LOW", "unstated: unchanged");
+  });
+
+  it("NO_LATE_ARRIVAL: the engine never spends a lateness tolerance the commitment does not grant", () => {
+    const A = c("A", { startsAt: T("10:00"), endsAt: T("11:00") });
+    const lenient = c("B", { requiredArrivalAt: T("14:00"), latenessToleranceMinutes: 20 });
+    const strict = { ...lenient, hardConstraints: [{ kind: "NO_LATE_ARRIVAL" as const, detail: "a departure does not wait" }] };
+    assert.equal(run([A, lenient], [hop(30)]).windows[0]!.endsAt, T("13:50").toISOString(), "14:00 + 20 tolerance − 30 travel");
+    assert.equal(run([A, strict], [hop(30)]).windows[0]!.endsAt, T("13:30").toISOString(), "14:00 − 30 travel: the 20 is not there to spend");
+    // ...and the same rule decides when the traveller is RELEASED from it.
+    const done = c("D", { requiredArrivalAt: T("09:00"), latenessToleranceMinutes: 30, hardConstraints: [{ kind: "NO_LATE_ARRIVAL", detail: "x" }] });
+    assert.equal(leaveAt(done)!.toISOString(), T("09:00").toISOString());
+    assert.equal(leaveAt({ ...done, hardConstraints: [] })!.toISOString(), T("09:30").toISOString());
+    // ...and whether two commitments overlap at all.
+    const tight = c("E", { requiredArrivalAt: T("11:10"), latenessToleranceMinutes: 0 });
+    const prev = c("P", { startsAt: T("10:00"), endsAt: T("11:15") });
+    assert.equal(run([prev, { ...tight, latenessToleranceMinutes: 10 }], [hop(0)]).conflicts.length, 0, "11:10 + 10 tolerance = 11:20, after the 11:15 release: a window");
+    assert.equal(run([prev, { ...tight, latenessToleranceMinutes: 10, hardConstraints: [{ kind: "NO_LATE_ARRIVAL", detail: "x" }] }], [hop(0)]).conflicts[0]?.kind, "OVERLAP");
+  });
+
+  it("a commitment that declares no hardConstraints and no confidence (the Trips rows) is computed exactly as before", () => {
+    const A = c("A", { startsAt: T("10:00"), endsAt: T("11:00") });
+    const B = c("B", { requiredArrivalAt: T("14:00"), latenessToleranceMinutes: 20 });
+    const stated = run([{ ...A, hardConstraints: [], confidence: null }, { ...B, hardConstraints: [], confidence: null }], [hop(30)]);
+    assert.deepEqual(stated, run([A, B], [hop(30)]));
   });
 });

@@ -203,21 +203,21 @@ export const TELEGRAPH_RLS_MATRIX: readonly RlsMatrixCase[] = [
     censusRow: "T320",
     requirement: "Buddy booking cancelled → booking-only actions disabled",
     expected: "DISABLE_IMMEDIATELY",
-    status: "divergent",
+    status: "enforced",
     enforcedBy: [
-      "src/lib/calls/callGatewayAdapter.ts",
-      "travel-buddy-standalone/src/components/rentabuddy/BookingMilestoneMessage.tsx",
+      "src/lib/calls/callGatewayAdapter.ts", "src/services/telegraph/actionLiveness.ts", "src/domain/telegraph/policies/conversationCapabilityPolicy.ts",
+      "travel-buddy-standalone/app/messages/[id].tsx",
     ],
     note:
-      "Correct for the one action that re-derives, wrong for every action that " +
-      "renders. isRabBookingCallEligible is evaluated from the booking row at call " +
-      "START, and 'cancelled' is not in RAB_CALL_ELIGIBLE_STATUSES, so the next " +
-      "start attempt is refused — the live call is deliberately allowed to ride " +
-      "out, which is a stated policy, not an oversight. Every OTHER booking action " +
-      "is markup over a frozen payload: BookingMilestoneMessage contains no fetch, " +
-      "no effect and no capability read, so its buttons outlive the booking state " +
-      "they were rendered from. To reach `enforced`: §30A.10's action capability " +
-      "registry (T410) must supply the card's buttons at render time.",
+      "ENFORCED 2026-10-17 (census-telegraph T320). The call gateway refuses the next " +
+      "start from the booking row (isRabBookingCallEligible; a live call rides out by " +
+      "stated policy), and §14.1's canCall in the booking's thread now asks the SAME " +
+      "function, so no capability read offers that call. A booking's card and rail item " +
+      "offer MEET_HERE / SHARE_LOCATION / CHECK_IN_SAFE only while the booking is " +
+      "operational (actionsWhileLive), never on a cancelled one. The open thread re-reads " +
+      "the booking when the cancellation's own booking card arrives (bookingTransitionKey), " +
+      "so its call controls, booking header and rail drop on that read. The milestone " +
+      "banner (BookingMilestoneMessage) is a record of a transition and offers no action.",
   },
 ];
 

@@ -12057,7 +12057,7 @@ Listed in 67.10, after the last edit.
 
 ### 67.6 Findings recorded, not graded
 
-- **The user's "delete" of a trip archives it, and the host's "delete" of an event cancels it** (`artifacts/api-server/src/routes/trips-expansion.ts:857#Trip Kernel path (ARCHIVE_TRIP, contract v2).`, `artifacts/api-server/src/routes/events.ts:2739#const delWrite = await writeEventState(sc, id, priorState, "cancelled");`). The build reads trips and events with no status filter (`artifacts/api-server/src/compass/CompassGraphEngine.ts:758#.select("id, owner_id, destination_city, start_date, end_date, destination_lat, destination_lng")`), so an archived trip or a cancelled event still supports its edges, and §67 keeps them. Whether those states are revocations is an eligibility rule for the Trips and Events owners. It is not decided here.
+- **The user's "delete" of a trip archives it, and the host's "delete" of an event cancels it** (`artifacts/api-server/src/routes/trips-expansion.ts:857#Trip Kernel path (ARCHIVE_TRIP, contract v2).`, `artifacts/api-server/src/routes/events.ts:2739#const delWrite = await writeEventState(sc, id, priorState, "cancelled");`). The build reads trips and events with no status filter (`artifacts/api-server/src/domain/trips/projections/TripGraphSourceProjection.ts:57#.select("id, owner_id, destination_city, start_date, end_date, destination_lat, destination_lng")`), so an archived trip or a cancelled event still supports its edges, and §67 keeps them. Whether those states are revocations is an eligibility rule for the Trips and Events owners. It is not decided here.
 - **An un-save deletes no `rank_events` row.** A `behavior:save` edge records that a save happened, and it stays while the log row does. Whether the graph should follow current save state is not specified anywhere this lane read.
 - **The reads that build the graph are capped at 1000 in production**, by db-max-rows, below `BUILD_LIMIT`. The same is true of the world-model fold's `limit(20000)` reads and `reconcileExperienceNodes`' node read. So the stored weights count a truncated subset. This lane changes no weight, and the reconcile's own reads are paged under the cap.
 - **Before §67, a deleted or narrowed Memory still counted** in the rhythm gate's distinct-actor count and in its city's rhythm sample, because `active_in` and the rhythm edges do not touch the experience node. census-compass CH-03 and census-highlights-memories H237 are C on the sweep. Both criteria now hold on more of the substrate. They are not re-graded here, and the freshness ledger carries the argument to both.
@@ -17317,3 +17317,84 @@ This supersedes §128's initial branch-protection approval hold only.
 CONSTRUCTED 186 / 188 = **98.9 %**. CORRECT 103 / 188 = **54.8 %**.
 The GitHub enforcement is live; this local census and its generated ledger remain
 uncommitted. No other requirement changes verdict.
+
+## §130 — Row moves, 2026-10-17: re-grade after the integration batch (PR #762); no row changes bucket
+
+Measured on `claude/census-regrade-20261017` at `e1e097cfe`, the commit that integrated the 2026-10-15/16 main-app
+correctness batch. That commit's acknowledgement says no Discovery verdict was re-measured. This section does that.
+It changes no code, test, flag, migration or database.
+
+**Method.** The 85 open rows (83 `W`, 2 `N`) were listed with `CENSUS_INTEGRITY_DUMP=N,W`, and each row's latest
+statement was read. 84 of the 85 latest statements carry `IMPLEMENTATION-COMPLETE; awaits:` or
+`AWAITS OWNER APPROVAL:`. The 85th, A11 (§128), names an unset flag and a missing production read. Each batch change was mapped to the rows it bears on, using the 2026-10-16
+handbacks and `docs/verification/discovery-remaining-20261016.md`, whose closure matrix gives every one of the 83
+`W` rows an activation or evidence gate. The suites named below were re-run on this tree.
+
+### 130.1 Each batch change, the rows it bears on, and why none moves
+
+| batch change | rows | why the row stays |
+| --- | --- | --- |
+| Trend producers exclude protected-zone and unlocatable contributions (migration 3988). Local momentum now fails closed while any active protected zone exists or the zone policy cannot be read (`artifacts/api-server/src/lib/discoveryLocalMomentum.ts:238#if (await unfilteredTrendBlockReason(sc)) {`). | DV-28, DV-29, DV-30, DV-31, DV-32, DV-33, DV-34, DC-06, DC-07, DC-17, DC-21 | 3988 is applied nowhere hosted. The global zone guard stays until policy changes and snapshot invalidation are certified. Q11(b) retention is unanswered, the trend flags are FALSE, and no fresh production run exists. Suites: 3988 on PGlite 10/10; local momentum 32/32; trending lists 35/35; trend ops 21/21. |
+| The creator-attribution producer scans with a durable bounded cursor (migration 3989). | DV-56 (and DV-63, DV-67 downstream) | The cursor fixes backlog starvation, but the row waits on W10D-B0, B1 and B10, and 3989 is unapplied. Suites: producers 29/29; 3989 on PGlite 8/8. |
+| Shared-moment output checks the submitter's standing; the candidate-projection flag cache is keyed by client. | DC-01, A03, DC-22 | All wait on `discovery_output_kinds_enabled` or `discovery_candidate_projection_enabled` and a production page. Output kinds 6/6. |
+| Buddy payment, identity, KYC and hosting eligibility behind the launch gate (`artifacts/api-server/src/lib/discoveryPeopleBuddy.ts:394#if (!(await isFlagEnabled(sc, "discovery_buddy_launch_gate_enabled"))) return { ok: true, ineligible };`). | B03 | Already restated by §128 on this code. The gate is seeded FALSE and payments are test-mode only. Eligibility 18/18; payments 11/11. |
+| Serve-log rows get a deterministic exposure key from their recommendation token; a replay of that key settles as a duplicate. | DV-37, DV-40, DV-06, DV-02, DV-47 | This closes the replay boundary the serve log's own comment disclosed, for new provenance-bearing rows. It does not touch the production evidence and release floor these rows wait on. Retry identity 23/23. |
+| Trails: bounded report reads, de-duplicated declared edges, archived Trails dropped from follows, ownership-checked detach. | DV-21, DV-22, DV-24, DC-04, DC-05, DC-20, DV-74 | All are `IMPLEMENTATION-COMPLETE; awaits:` production applies and flags. These repairs change none of those awaits. |
+| Community byline: no-store, viewer-varied responses, and stale in-flight replies rejected on the client. | C19 | Still waits on 3490, `discovery_community_byline_canonical_enabled` and the client release floor. |
+| Availability owner read, Passport availability read repair, recent-place owner, canonical-resolver owner. | none here | No Discovery row cites those files. The last two are graded in census-input-intelligence (§50–§52). |
+
+The two `N` rows, DV-61 and DV-62, are commercial decisions (W10D-B9, W10D-B8). The batch does not touch them.
+
+### 130.2 `C` rows whose cited files the batch changed
+
+These rows were re-read against the changed code: A02, A08, A09, A19, C03, C14, C16, C17, C18, C22, C25, C30, C31,
+C33, DV-04, DV-07, DV-11, DV-20, DV-25, DV-36, DV-38, DV-39, DV-73, DSV2-04, DSV2-06, DSV2-12, DC-02, DC-03, DC-08,
+DC-25 and DC-29. The changes in those files tighten behaviour; they remove nothing those rows claim:
+
+- two response headers on `GET /discovery/community`;
+- a deterministic serve-row key;
+- a client-keyed flag cache;
+- bounded Trail reads, with archived Trails and out-of-rotation members kept out of follows and the confidence
+  module;
+- the momentum guard.
+
+None of them falsifies a claim a `C` row makes, and no `C` row is restated.
+
+One observation is recorded and not graded. DV-25 rests on the momentum kernel's direction, and the kernel is
+unchanged. But the new guard returns empty momentum everywhere while any active protected zone exists. In an
+environment that has one, no behaviour reaches any momentum until a zone-aware filter replaces the guard. This is
+the owner's protected-zone ruling (D-OWNER1004-2) applied fail-closed. This tree holds no evidence of an active zone
+in production.
+
+### 130.3 A sentence in §50.2 is now false
+
+§50.2's first defect says the edit to the client's Discovery service "is line-neutral through" line 1134, "so the
+census's anchors at" lines 700 and 1134 "still hold". That is no longer true. The integration batch inserted lines
+into `travel-buddy-standalone/src/services/discovery.ts` at its hunks `@@ -484,9 +484,12 @@` and
+`@@ -1032,9 +1035,10 @@`. Every later line moved by three, and then by four. The integrator repointed the
+anchored citations past those hunks. For example, the viewer-scoped page fetch is now
+`travel-buddy-standalone/src/services/discovery.ts:771#const res = await fetch(`; before the batch it was three
+lines earlier. Only the anchored citations, which check:doc-citations verifies, should be relied on. The
+sentence's bare line numbers should not.
+
+### 130.4 Scope note
+
+- Watched: artifacts/api-server/src/lib/eventViewAccess.ts — now in this census's freshness scope (CENSUS_SCOPE, added by PR #762's CI fix), so the NOT-GRADED declaration is withdrawn; the reason it was cited stands: §64.2 quotes the Events route's own visibility rule, which the integration batch moved from the route into this helper, as the reference Discovery's event reads were compared with; no Discovery verdict row cites it.
+
+`artifacts/api-server/src/test/discoveryPeopleBuddyPayments.test.ts` is cited on §128's B03 verdict row, so it is
+graded and cannot be declared not graded. It is still unwatched. Adding it to this census's `CENSUS_SCOPE` in
+`artifacts/api-server/src/scripts/checkCensusFreshness.ts` is outside this section's file set, and is left to the
+integrator.
+
+### 130.5 Headline, restated from the rows
+
+No row changes bucket.
+
+| bucket | count |
+|---|---|
+| BUILT-AND-CORRECT | **103** |
+| BUILT-BUT-WRONG | **83** |
+| NOT-BUILT | **2** |
+| CANNOT-VERIFY | **0** |
+
+CONSTRUCTED 186 / 188 = **98.9 %**. CORRECT 103 / 188 = **54.8 %**. These equal §129.1's counts.

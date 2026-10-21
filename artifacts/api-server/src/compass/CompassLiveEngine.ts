@@ -42,7 +42,7 @@ import { NotificationRouter } from "../services/notifications/NotificationRouter
 import { RealtimeActivityService } from "../services/notifications/RealtimeActivityService.js";
 import { fetchUserTimezone, localHourFor, nowUtcInstant } from "../lib/localTime.js";
 import { resolveCurrentTrip } from "./CompassCurrentTrip.js";
-import { PLAN_ITEM_PRIVACY_COLUMNS, planItemAccessFor, withholdPrivatePlanItems } from "./planItemAccess.js";
+import { buildTripCompassDayPlanProjection } from "../domain/trips/projections/TripCompassPlanProjection.js"; import { acceptTripProjection, TRIP_PROJECTION_SCHEMA_VERSION } from "../domain/trips/contracts/TripProjectionEnvelope.js"; // CT-02: the plan read is Trips'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -266,33 +266,33 @@ async function fetchTodayPlan(
   today: string,
   viewerId: string,
 ): Promise<TodayPlanRead> {
-  try {
-    const { data, error } = await sc
-      .from("trip_plan_items")
-      .select("id, title, starts_at, status, day_date, removed_at, creator_id, location_is_private, privacy_scope" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`)
-      .eq("trip_id", tripId)
-      .eq("day_date", today);
-    // `const { data }` with no `error` bound, and a `catch` that could never
-    // fire because supabase-js RESOLVES on a database error. An unreadable plan
-    // was an empty day.
-    if (error) return { status: "unread" };
-    // OD-TRIP-3 (compass/planItemAccess.ts): another member's private item is
-    // "Private plan" here — the live context still knows the slot is taken.
-    const access = await planItemAccessFor(sc, tripId, viewerId);
-    return {
-      status: "ok",
-      items: withholdPrivatePlanItems((data ?? []) as any[], access)
-        .filter((i) => i.status !== "cancelled" && i.removed_at == null)
-        .map((i) => ({
-          id: String(i.id),
-          title: String(i.title ?? "Plan item"),
-          startsAt: (i.starts_at as string | null) ?? null,
-        }))
-        .sort((a, b) => String(a.startsAt ?? "").localeCompare(String(b.startsAt ?? ""))),
-    };
-  } catch {
+  // CT-02: the day's plan is Trips' uncapped day projection, not a raw read of
+  // `trip_plan_items`. It applies OD-TRIP-3 through the one grant-aware loader —
+  // another member's private item is "Private plan" here, so the live context
+  // still knows the slot is taken — and drops cancelled and removed items, as
+  // this function did itself before.
+  const built = await buildTripCompassDayPlanProjection(sc, tripId, viewerId, today);
+  // An unreadable plan is `unread`, never an empty day (the defect this function
+  // once had: an unbound `error` and a `catch` that could never fire). The
+  // projection refuses an errored or non-array read; its envelope must pass the
+  // §19.1 consumer rule before a single item is used.
+  if (!built.ok || !acceptTripProjection(built.projection, {
+    acceptedSchemaVersion: TRIP_PROJECTION_SCHEMA_VERSION, metric: "TripCompassDayPlanProjection",
+  }).accepted) {
     return { status: "unread" };
   }
+  return {
+    status: "ok",
+    items: built.projection.items
+      .map((i) => ({
+        id: i.id,
+        title: i.title ?? "Plan item",
+        startsAt: i.startsAt,
+      }))
+      // Earliest first; an untimed item sorts first, as before.
+      .sort((a, b) => String(a.startsAt ?? "").localeCompare(String(b.startsAt ?? ""))),
+  };
+  // (No try/catch: the projection settles every read failure into `ok: false`.)
 }
 
 /**

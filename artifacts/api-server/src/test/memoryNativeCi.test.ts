@@ -41,7 +41,7 @@ async function invoke(options: FixtureOptions = {}) {
     const original = await readFile(preparation, "utf8");
     assert.equal(original.split(officialChecksum).length, 2, "fixture substitution must change only the literal digest, not verification logic");
     const source = original.replace(officialChecksum, createHash("sha256").update(syntheticArchive).digest("hex"))
-      .replace("configure: 90_000", options.failure === "configure-timeout" ? "configure: 1_000" : "configure: 90_000");
+      .replace("configure: 90_000", options.failure === "configure-timeout" ? "configure: 4_000" : "configure: 90_000"); // 4s, not 1s: under load the stub's own Node start-up used the whole second and was killed before it could record that configure ran
     const entry = join(directory, "prepare.mjs");
     await writeFile(entry, source);
     const stub = `#!${process.execPath}
@@ -69,7 +69,7 @@ if (name === 'curl') {
   chmodSync(join(source, 'configure'), 0o700);
 } else if (name === 'configure') {
   if (options.failure === 'configure') process.exit(9);
-  if (options.failure === 'configure-timeout') await new Promise(resolve => setTimeout(resolve, 5000));
+  if (options.failure === 'configure-timeout') await new Promise(resolve => setTimeout(resolve, 10000));
   writeFileSync('.prefix', args.find(value => value.startsWith('--prefix=')).slice('--prefix='.length));
 } else if (name === 'make') {
   const install = args.includes('install');

@@ -41,7 +41,7 @@ import { nameVisibilitySet } from "../lib/publicIdentity.js";
 // census-compass CT-02 — "stop duplicating Trip semantics". `activeContexts`
 // used to re-derive the membership union with its own role list; it now takes
 // it from the ONE seam, where that role list is a named constant.
-import { resolveMemberTripIds, SOCIAL_CONTEXT_TRIP_ROLES } from "./CompassCurrentTrip.js";
+import { resolveMemberTripIds, SOCIAL_CONTEXT_TRIP_ROLES, acceptedTripRows } from "./CompassCurrentTrip.js"; import { buildTripCompassTripsByIdProjection } from "../domain/trips/projections/TripCompassTripSummaryProjection.js";
 import { wrapUgc } from "./CompassStructuredContext.js";
 // The ONE place a date of birth becomes an age a gate may act on. This file
 // used to carry its own `ageFromDob()` and is the ninth gate that copy fed;
@@ -399,14 +399,14 @@ async function activeContexts(sc: SupabaseClient, userId: string): Promise<Activ
     if (membership.status === "unread") {
       unread.push("trip_members");
     } else if (membership.tripIds.length > 0) {
-      const { data: trips, error: tripsErr } = await sc
-        .from("trips")
-        .select("id, title, destination_city, status")
-        .in("id", membership.tripIds)
-        .in("status", ["active", "upcoming"]);
-      if (tripsErr) unread.push("trips");
-      else for (const t of ((trips ?? []) as any[]).slice(0, 3)) {
-        out.push({ type: "trip", id: t.id, title: String(t.title ?? t.destination_city ?? "Trip") });
+      const trips = acceptedTripRows( // CT-02: Trips' typed trip rows; every §19.1 envelope accepted
+        await buildTripCompassTripsByIdProjection(sc, userId, membership.tripIds, { statuses: ["active", "upcoming"] }),
+      );
+      // An unavailable projection or a refused envelope is "trips could not be
+      // read", as a returned error was; a readable empty list is no such trips.
+      if (trips === null) unread.push("trips");
+      else for (const t of trips.slice(0, 3)) {
+        out.push({ type: "trip", id: t.id, title: String(t.title ?? t.destinationCity ?? "Trip") });
       }
     }
   } catch { unread.push("trip_members"); }
