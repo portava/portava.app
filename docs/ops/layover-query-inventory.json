@@ -21016,7 +21016,7 @@
       "via": null,
       "table": "layover_recommendations",
       "variants": [
-        "id,rec_key,snapshot_id,rec_type,title,place_id,inside_airport,safety_rating,travel_time_min,activity_time_min,return_buffer_min,hard_return_time,warning_reason,sort_order,recommendation_status,status_reason,risk_band,confidence,utility_score,expires_at,plan_json,superseded_at"
+        "id, rec_key, snapshot_id, rec_type, title, place_id, inside_airport, safety_rating, travel_time_min, activity_time_min, return_buffer_min, hard_return_time, warning_reason, sort_order, recommendation_status, status_reason, risk_band, confidence, utility_score, expires_at, plan_json, superseded_at"
       ]
     },
     {
