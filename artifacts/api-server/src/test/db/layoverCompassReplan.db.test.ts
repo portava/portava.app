@@ -37,7 +37,7 @@ describe("L112 explicit Compass replan on the actual migrated schema and API", {
     const [after] = await db.query(`SELECT departure_time FROM public.layover_sessions WHERE id='${sid}'`); assert.deepEqual(after, before);
     const [stored] = await db.query(`SELECT status,kind,result FROM public.layover_compass_actions WHERE id='${action.id}'`);
     assert.equal(stored.status, "proposed"); assert.equal(stored.result, null);
-    assert.doesNotMatch(JSON.stringify(action), /delayMinutes|300|newDepartureTime/);
+    const leak = /delayMinutes|newDepartureTime|(?<![0-9A-Za-z-])300(?![0-9A-Za-z])/; assert.doesNotMatch('{"id":"65300bf1-bc61-445a-965a-f988a8432761"}', leak); assert.match('{"minutes":300}', leak); assert.match('{"delayMinutes":null}', leak); assert.doesNotMatch(JSON.stringify(action), leak); // 300 only as a value: a random id can hold the digits "300" (CI's 65300bf1… did), the model's hypothetical delay cannot
   });
   it("requires explicit approval and owner; a model cannot add execution parameters", async () => {
     for (const body of [{ actionId: action.id }, { actionId: action.id, confirmed: false }, { actionId: action.id, confirmed: true, delayMinutes: 500 }]) {
