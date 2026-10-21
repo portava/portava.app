@@ -295,11 +295,11 @@ export type SupersessionOutcome =
     };
 
 /** The card's decision evidence copied into the history row: the certified columns, as written. */
-const EVIDENCE_COLUMNS = [
-  "id", "rec_key", "snapshot_id", "rec_type", "title", "place_id", "inside_airport", "safety_rating", "travel_time_min",
-  "activity_time_min", "return_buffer_min", "hard_return_time", "warning_reason", "sort_order", "recommendation_status",
-  "status_reason", "risk_band", "confidence", "utility_score", "expires_at", "plan_json", "superseded_at",
-] as const;
+const EVIDENCE_SELECT = // one literal list, so check:write-path-columns and check:schema-references read the select
+  "id, rec_key, snapshot_id, rec_type, title, place_id, inside_airport, safety_rating, travel_time_min, " +
+  "activity_time_min, return_buffer_min, hard_return_time, warning_reason, sort_order, recommendation_status, " +
+  "status_reason, risk_band, confidence, utility_score, expires_at, plan_json, superseded_at";
+const EVIDENCE_COLUMNS = EVIDENCE_SELECT.split(", ");
 
 export interface SupersedeArgs {
   sessionId: string;
@@ -319,7 +319,7 @@ export async function supersedeCards(db: SupabaseClient, args: SupersedeArgs): P
   const { sessionId, currentSnapshotId } = args;
   const nowIso = args.nowIso ?? new Date().toISOString();
   try {
-    const held = await db.from("layover_recommendations").select(EVIDENCE_COLUMNS.join(",")).eq("session_id", sessionId);
+    const held = await db.from("layover_recommendations").select(EVIDENCE_SELECT).eq("session_id", sessionId);
     if (held.error) {
       logger.warn({ err: held.error.message, sessionId }, "supersession: held cards unreadable — nothing superseded");
       return { applied: false, reason: isMissingSchemaError(held.error) ? "storage_unavailable" : "read_failed" };
