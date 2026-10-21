@@ -62,10 +62,10 @@ describe("B2-BUDDY L272 Safe Return product integration", { skip: PRESSED_SKIP_R
       const {u,s}=await context(); const c=await create(u,s.id); assert.equal(c.status,201,JSON.stringify(c.body)); const id=c.body.session.id;
       assert.equal((await call(`/sessions/${id}/start`,u)).status,200);
       const before=Date.parse(c.body.session.timerEndAt);
-      await db.exec(`UPDATE public.layover_sessions SET departure_time=departure_time-interval '30 minutes' WHERE id='${s.id}'`);
+      await db.exec(`UPDATE public.layover_sessions SET departure_time=departure_time-interval '2 hours' WHERE id='${s.id}'`); // 2 h, not 30 min: the ramped time-of-day + return-transport buffer may rise up to 1 min per min (about 32 min in all here), so only a move longer than that always yields a strictly tighter certificate
       const safety=await app.call("GET",`/api/airport/sessions/${s.id}/safety`,u); assert.equal(safety.status,200,safety.raw);
       const row=(await db.query<any>(`SELECT l.certified_deadline,s.timer_end_at FROM public.layover_safe_return_links l JOIN public.safe_return_sessions s ON s.id=l.safe_return_session_id WHERE s.id='${id}'`))[0];
-      assert.ok(new Date(row.certified_deadline).getTime()<=before-1800000,'earlier cutoff cannot loosen the return deadline; a crossed time band may tighten it further'); assert.equal(new Date(row.certified_deadline).getTime(),Date.parse(safety.body.hardReturnTime)); assert.equal(new Date(row.timer_end_at).getTime(),new Date(row.certified_deadline).getTime());
+      assert.ok(new Date(row.certified_deadline).getTime()<=before-3600000,'a cutoff 2 h earlier certifies a deadline at least 1 h earlier at any hour (L53: the deadline is non-decreasing in the cutoff and the buffer is 1-Lipschitz, so a crossed band can absorb at most its own range)'); assert.equal(new Date(row.certified_deadline).getTime(),Date.parse(safety.body.hardReturnTime)); assert.equal(new Date(row.timer_end_at).getTime(),new Date(row.certified_deadline).getTime());
       await assert.rejects(db.asUser(u.id,`SELECT * FROM public.layover_safe_return_links`));
     } finally {await db.setFlags({layover_canonical_snapshot_enabled:false});}
   });
