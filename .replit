@@ -157,6 +157,8 @@ QA_ACCOUNT_EMAIL = "arxaitrading@gmail.com"
 # travel-buddy.io domains retired 2026-08-05 (Portava rebrand) — only the live
 # origin remains. The api-server app.ts fallback list is defense-in-depth only.
 ALLOWED_ORIGINS = "https://portava.replit.app"
+# The published Expo bundle builds every /api URL from this (no fallback); production's live origin is rumazi.com.
+EXPO_PUBLIC_API_BASE_URL = "https://rumazi.com"
 
 [nix]
 channel = "stable-25_05"

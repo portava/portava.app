@@ -81,7 +81,7 @@ export function useLocationPreferences(): UseLocationPreferencesResult {
 
     setIsLoading(true);
     try {
-      const base = (process.env as any).EXPO_PUBLIC_API_BASE_URL ?? '';
+      const base = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
       const res = await fetch(`${base}/api/me/location-preferences`, {
         headers: { Authorization: `Bearer ${token}` },
       });

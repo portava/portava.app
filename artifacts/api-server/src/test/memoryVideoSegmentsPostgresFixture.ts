@@ -47,7 +47,7 @@ export class VideoSegmentNativeSession {
     });
     this.process.stderr.on("data", (chunk: string) => { this.errors = (this.errors + chunk).slice(-32000); });
     this.process.on("error", error => this.fail(error));
-    this.process.on("exit", (code, signal) => this.fail(new Error(`psql exited ${code ?? signal}: ${this.errors}`)));
+    this.process.on("close", (code, signal) => this.fail(new Error(`psql exited ${code ?? signal}: ${this.errors}`))); // "close", not "exit": "exit" can fire before stderr is drained, and a refusal then reads as `psql exited 3: ` with no SQLSTATE
   }
 
   private fail(error: Error) {
@@ -76,7 +76,7 @@ export class VideoSegmentNativeSession {
     if (this.process.exitCode !== null || this.process.signalCode !== null) return;
     await new Promise<void>(resolve => {
       const timer = setTimeout(() => this.process.kill("SIGKILL"), 1000);
-      this.process.once("exit", () => { clearTimeout(timer); resolve(); });
+      this.process.once("close", () => { clearTimeout(timer); resolve(); });
       this.process.stdin.end("\\q\n");
     });
   }
