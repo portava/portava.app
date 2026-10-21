@@ -321,7 +321,7 @@ export function fromSites(code: string, consts: ReadonlyMap<string, string> = st
   const out: FromSite[] = [];
   const re = /([A-Za-z0-9_$\])!]*)\.from\s*(?:<[^()]*?>)?\s*\(\s*(?:\(\s*)*(?:(["'`])([A-Za-z0-9_-]+)\2(?=\s*\))|([A-Za-z_$][A-Za-z0-9_$.]*)(?:\[\s*["'`]([A-Za-z0-9_$]+)["'`]\s*\])?(?=\s*\))|(`[^`]*`)(?=\s*\))|([^\s)][^)]*|))/g; // §64: `NAME["key"]` reads as NAME.key; a template with an interpolation is an UNRESOLVED read. §67 (V-T3 F1): `.from (`, `.from<T>(`, `.from((…))`; ANY other argument is UNRESOLVED
   for (const m of code.matchAll(re)) {
-    const receiver = (m[1] ?? "").replace(/.*\./, "");
+    const receiver = (m[1] ?? "").replace(/.*\./, "").replace(/^!+/, ""); // a LEADING `!` is logical NOT (`!Array.from(xs)`), never part of a receiver; a trailing one (`db!.from`) is TypeScript's non-null assertion and stays
     if (NON_DB_FROM_RECEIVER.test(receiver)) continue;
     const end = (m.index ?? 0) + m[0].length;
     if (m[3]) { out.push({ table: m[3], expr: null, end }); continue; }
