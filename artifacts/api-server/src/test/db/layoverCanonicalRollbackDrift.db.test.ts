@@ -1,5 +1,5 @@
 /** Independent destructive refusal proofs, confined to isolated migrated database clones. */
-import { test } from "node:test";
+import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { PRESSED_SKIP_REASON, openPressedLayoverDb } from "./pressedLayoverDb.js";
@@ -11,7 +11,7 @@ const definitions = [
   { number: "3897", migration: "3897_layover_compass_replan_actions.sql", rollback: "2026-10-18-3897-layover-compass-replan-actions-rollback.sql", flag: "layover_compass_replan_enabled", functions: ["layover_compass_action_guard()", "claim_layover_compass_replan(uuid,uuid,uuid)"], table: "layover_compass_actions", column: "expected_snapshot_id", triggerTable: "layover_compass_actions", trigger: "layover_compass_action_guard", parentTable: null, parentColumn: null },
 ] as const;
 for (const d of definitions) for (const order of ["sorted-gap", "after-3999"] as const) {
- test(`${d.number}: ${order} full catalog/all rows, immutable evidence and changed-object refusals`, { skip: PRESSED_SKIP_REASON }, async () => {
+ describe(`${d.number}: ${order} full catalog/all rows, immutable evidence and changed-object refusals`, { skip: PRESSED_SKIP_REASON }, ()=>{it(`${d.number}: ${order} full catalog/all rows, immutable evidence and changed-object refusals`, async () => {
   const db = await openPressedLayoverDb({ without: [...(["3871", "3873"].includes(d.number) ? ["3908"] : []), ...(order === "after-3999" ? [d.number] : [])] });
   const forward = readFileSync(new URL(`../../migrations/${d.migration}`, import.meta.url), "utf8");
   const rollback = readFileSync(new URL(`../../../../../db/rollback/${d.rollback}`, import.meta.url), "utf8");
@@ -67,5 +67,5 @@ for (const d of definitions) for (const order of ["sorted-gap", "after-3999"] as
    await db.exec(forward); await db.exec(rollback); assert.deepEqual(await migratedCatalogAndRows(db), baseline, "reapply restores exact predecessor");
    console.log(`${d.number}/${order}: ${controls} changed-object refusals, complete catalog/rows, repeat/reapply`);
   } finally { await db.close(); }
- });
+ });});
 }

@@ -1,6 +1,6 @@
 import { migratedCatalogAndRows } from "./migratedCatalogSnapshot.js";
 /** 3898 full-chain rollback, data preservation and definition drift proofs. */
-import { before, after, describe, it, test } from "node:test";
+import { before, after, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -93,7 +93,7 @@ describe("L15 3898 rollback on a fresh isolated migrated schema", { skip: PRESSE
 });
 
 // Persist the independent whole-catalog proofs so CI exercises both installation orders.
-for(const order of ['sorted-gap','after-3999'] as const)test('3898 full catalog rollback '+order,{skip:PRESSED_SKIP_REASON},async()=>{
+for(const order of ['sorted-gap','after-3999'] as const)describe('3898 full catalog rollback '+order,{skip:PRESSED_SKIP_REASON},()=>{it('3898 full catalog rollback '+order,async()=>{
  const db=await openPressedLayoverDb({without:order==='after-3999'?['3898']:[]});
  try{
  if(order==='sorted-gap')await db.exec(rollback);const u=await db.seedUser('full_rollback3898');const baseline=await migratedCatalogAndRows(db);
@@ -117,4 +117,4 @@ for(const order of ['sorted-gap','after-3999'] as const)test('3898 full catalog 
  await db.exec(rollback);assert.deepEqual(await migratedCatalogAndRows(db),baseline,'full catalog/all nonledger rows');await db.exec(rollback);assert.deepEqual(await migratedCatalogAndRows(db),baseline,'repeat inert');await db.exec(forward);await db.exec(rollback);assert.deepEqual(await migratedCatalogAndRows(db),baseline,'reapply then rollback');
  console.log(order,'full catalog + every nonledger row equal; repeat/reapply; 13 refusals');
  }finally{await db.close();}
-});
+});});

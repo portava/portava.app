@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { openPressedLayoverDb, PRESSED_SKIP_REASON } from './pressedLayoverDb.js';
 import { proposeCuratedFact, validateProposedFact, publishValidatedFact } from '../../services/airport/airportCuration.js';
@@ -9,15 +9,15 @@ import { readActivityCommitments } from '../../services/airport/layoverActivityC
 import { getCandidates, compile } from '../../services/airport/LayoverExperienceService.js';
 import { productionBaseFlags, startPressedLayoverApp, startSession, seedConfirmedCorridor } from './pressedLayoverApp.js';
 import { bothDirections, measured, unmeasured, type RouteCorridorProvider } from '../../lib/providers/routeCorridorProvider.js';
-test('sourced timing and activity schemas apply in the full migrated database', {skip:PRESSED_SKIP_REASON}, async()=>{
+describe('sourced timing and activity schemas apply in the full migrated database', {skip:PRESSED_SKIP_REASON}, ()=>{it('sourced timing and activity schemas apply in the full migrated database', async()=>{
   const db=await openPressedLayoverDb();
   try {
     const [r]=await db.query<{ready:boolean}>("SELECT EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid='public.airport_profiles'::regclass AND attname='curated_timing_evidence' AND NOT attisdropped) AS ready");
     assert.equal(r?.ready,true);
     const [f]=await db.query<{enabled:boolean}>("SELECT enabled FROM public.feature_flags WHERE flag='layover_activity_commitment_enabled'");assert.equal(f?.enabled,false);
   }finally{await db.close();}
-});
-test('published observed timing reaches every row mapper and actual certification; direct projection forgery is refused',{skip:PRESSED_SKIP_REASON},async()=>{
+});});
+describe('published observed timing reaches every row mapper and actual certification; direct projection forgery is refused',{skip:PRESSED_SKIP_REASON},()=>{it('published observed timing reaches every row mapper and actual certification; direct projection forgery is refused',async()=>{
  const db=await openPressedLayoverDb();try{
   const curator=await db.seedUser('timing_curator'),now=Date.now(),iso=(n:number)=>new Date(n).toISOString(); await db.exec("INSERT INTO public.airport_profiles(iata_code,name,city,country,country_code,timezone,lat,lng) VALUES('SIN','Timing fixture','Singapore','Singapore','SG','UTC',1.3,103.9)");
   const [row]=await db.query<Record<string,unknown>>("SELECT * FROM public.airport_profiles WHERE iata_code='SIN'");assert.ok(row);
@@ -34,9 +34,9 @@ test('published observed timing reaches every row mapper and actual certificatio
   await assert.rejects(db.exec("UPDATE public.airport_profiles SET curated_timing_evidence='{}' WHERE iata_code='SIN'"),/not directly writable/);
   const expired=airportRowToProfile({...published,curated_timing_evidence:{...(published.curated_timing_evidence as object),evidence:{...timing.timingEvidence,expiresAt:iso(now-1)}}});assert.equal(expired.timingEvidenceUnavailable,true);assert.ok(certifySessionFeasibility(expired,session,{nowMs:now}).landsideGate.closedBy.includes('timing_evidence_unavailable'));
  }finally{await db.close();}
-});
+});});
 const provider:RouteCorridorProvider={id:'fixture-sourced-activity',routed:true,async corridor(q){return {ok:true,value:{from:q.from!,to:q.to!,departAt:q.departAt.toISOString(),routes:[0,1].map(()=>({legs:[{mode:q.mode??'drive',minutes:12,distanceMeters:1000,interruptibility:'interruptible' as const,transferPointId:null}],totalMinutes:12,transferCount:0})),independentRouteCount:2,reliability:measured({spreadMinutes:0,optionCount:2},'LIVE','MEDIUM',['fixture']),queueFriction:unmeasured('no feed'),weather:unmeasured('no feed'),airportReentryMinutes:unmeasured('no feed'),observedAt:new Date().toISOString(),expiresAt:new Date(Date.now()+300000).toISOString(),sourceClass:'LIVE',confidence:'MEDIUM',sourceRefs:['fixture']}};},bidirectional(q){return bothDirections(provider,q);}};
-test('actual generation and compilation require sourced activity commitment and include its minimum plus exit delay',{skip:PRESSED_SKIP_REASON},async()=>{
+describe('actual generation and compilation require sourced activity commitment and include its minimum plus exit delay',{skip:PRESSED_SKIP_REASON},()=>{it('actual generation and compilation require sourced activity commitment and include its minimum plus exit delay',async()=>{
  const db=await openPressedLayoverDb();let app:Awaited<ReturnType<typeof startPressedLayoverApp>>|undefined;try{
   await productionBaseFlags(db);await db.setFlags({layover_stable_recommendation_ids_enabled:true,layover_objective_evidence_enabled:true,layover_activity_commitment_enabled:true,layover_place_dwell_enabled:true,layover_decision_persistence_enabled:true,layover_canonical_snapshot_enabled:true,layover_recommendation_snapshot_enabled:true,layover_recommendation_status_enabled:true});
   const owner=await db.seedUser('activity_owner'),curator=await db.seedUser('activity_curator');await seedConfirmedCorridor(db,owner.id);app=await startPressedLayoverApp(db);const sid=(await startSession(app,owner,{wantsToLeave:true})).id;
@@ -58,7 +58,7 @@ test('actual generation and compilation require sourced activity commitment and 
   assert.ok(p.ok);assert.ok(card.contract?.snapshotId);if(p.ok)await assertTransientCurrentPosition(db,app,owner,sid,card.id,card.contract.snapshotId,p.fact.id);
   const gone=await compile(db.client,owner.id,sid,[card.id],{corridorProvider:provider});assert.equal(gone.ok,false,'stored card cannot bypass freshly withdrawn commitment');
  }finally{await app?.close();await db.close();}
-});
+});});
 import {randomUUID} from 'node:crypto';
 import {LAYOVER_RETURN_CORRIDOR_PROVIDER} from '../../services/airport/LayoverReturnCorridor.js';
 async function assertTransientCurrentPosition(db:Awaited<ReturnType<typeof openPressedLayoverDb>>,app:Awaited<ReturnType<typeof startPressedLayoverApp>>,owner:Awaited<ReturnType<Awaited<ReturnType<typeof openPressedLayoverDb>>['seedUser']>>,sid:string,candidateId:string,snapshotId:string,factId:string){

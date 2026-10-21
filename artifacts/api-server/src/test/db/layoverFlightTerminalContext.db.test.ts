@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { openPressedLayoverDb, PRESSED_SKIP_REASON, type PressedDb } from './pressedLayoverDb.js';
@@ -29,7 +29,7 @@ function flightReadClient(db:PressedDb,fail=false){
  const client=new Proxy(db.client,{get(target,key){if(key==='from')return (table:string)=>{const builder=target.from(table);if(table!=='trip_transport_segments')return builder;reads++;if(!fail)return builder;const wrap=(q:any):any=>new Proxy(q,{get(target,k){if(k==='then')return (resolve:(x:unknown)=>unknown)=>Promise.resolve(resolve({data:null,error:{code:'42501',message:'injected flight read denied'}}));const value=target[k];return typeof value==='function'?(...args:unknown[])=>wrap(value.apply(target,args)):value;}});return wrap(builder);};const v=target[key];return typeof v==='function'?v.bind(target):v;}});
  return {client,reads:()=>reads};
 }
-test('owned connection terminal projection reaches creation and all readers; missing, unowned and unreadable stay unknown; OFF makes no flight read',{skip:PRESSED_SKIP_REASON},async()=>{
+describe('owned connection terminal projection reaches creation and all readers; missing, unowned and unreadable stay unknown; OFF makes no flight read',{skip:PRESSED_SKIP_REASON},()=>{it('owned connection terminal projection reaches creation and all readers; missing, unowned and unreadable stay unknown; OFF makes no flight read',async()=>{
  const db=await openPressedLayoverDb();try{
   const f=await fixture(db);assert.equal(f.session.arrivalTerminalId,'T1');assert.equal(f.session.departureTerminalId,'T2');
   const again=await startConnectionSession(db.client,{userId:f.owner.id,tripId:f.tripId,arrivalSegmentId:f.arrivalId,departureSegmentId:f.departureId,nowMs:f.now});assert.ok(again.ok);if(again.ok){assert.equal(again.existed,true);assert.equal(again.session.arrivalTerminalId,'T1');}
@@ -41,8 +41,8 @@ test('owned connection terminal projection reaches creation and all readers; mis
   await db.exec(`UPDATE public.trip_transport_segments SET created_by='${f.other.id}' WHERE id='${f.departureId}'`);const unowned=await getSession(db.client,f.session.id,f.owner.id);assert.ok(unowned.ok);if(unowned.ok){assert.equal(unowned.session?.arrivalTerminalId,'T1');assert.equal(unowned.session?.departureTerminalId,null);}
   for(const state of [false,'absent'] as const){await db.setFlag('layover_flight_connections_enabled',state);const off=flightReadClient(db),result=await getSession(off.client,f.session.id,f.owner.id);assert.ok(result.ok);if(result.ok){assert.equal(Object.hasOwn(result.session!,'arrivalTerminalId'),false);assert.equal(Object.hasOwn(result.session!,'departureTerminalId'),false);}assert.equal(off.reads(),0);}
  }finally{await db.close();}
-});
-test('terminal-only kernel observation changes immutable canonical identity and invalidates mismatched scoped timing; withdrawal is unknown',{skip:PRESSED_SKIP_REASON},async()=>{
+});});
+describe('terminal-only kernel observation changes immutable canonical identity and invalidates mismatched scoped timing; withdrawal is unknown',{skip:PRESSED_SKIP_REASON},()=>{it('terminal-only kernel observation changes immutable canonical identity and invalidates mismatched scoped timing; withdrawal is unknown',async()=>{
  const db=await openPressedLayoverDb();try{
   const f=await fixture(db);const [airport]=await db.query<Record<string,unknown>>(`SELECT * FROM public.airport_profiles WHERE id='${f.session.airportId}'`);assert.ok(airport);
   const timing={domesticBufferMin:60,domesticBufferMax:90,internationalBufferMin:120,internationalBufferMax:180,immigrationExtraMin:30,checkedBagsExtraMin:15,trafficExtraMin:20,rationale:'Observed terminal-specific processing floor',timingEvidence:{context:{flightType:'international',immigrationRequired:true,checkedBags:true,arrivalTerminalId:'T1',departureTerminalId:'T2'},observedAt:f.iso(f.now-60000),expiresAt:f.iso(f.now+3600000),confidence:'MEDIUM',sourceRefs:['https://example.test/terminal-timing'],stages:[{stage:'deplane',samplesMinutes:Array(20).fill(35)},{stage:'security_reentry',samplesMinutes:Array(20).fill(190)}],journeys:[]}};
@@ -61,4 +61,4 @@ test('terminal-only kernel observation changes immutable canonical identity and 
   await applyFlightStatusUpdate(db.client,{source:'traveller',actorUserId:f.owner.id,segmentId:f.departureId,observedAt:f.iso(f.now+2000),observation:{departureTerminal:null}},{nowMs:f.now+2000});
   const withdrawn=await getSession(db.client,f.session.id,f.owner.id);assert.ok(withdrawn.ok&&withdrawn.session);if(withdrawn.ok&&withdrawn.session){assert.equal(withdrawn.session.departureTerminalId,null);const record=await consumerLayoverRecord(db.client,profile,withdrawn.session,f.now+2000);assert.ok(record?.landsideGate.closedBy.includes('timing_evidence_unavailable'));}
  }finally{await db.close();}
-});
+});});

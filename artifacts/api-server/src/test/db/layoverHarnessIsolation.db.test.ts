@@ -1,11 +1,11 @@
-import { test } from "node:test";
+import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { openPressedLayoverDb, PRESSED_SKIP_REASON, PRESSED_BACKEND } from "./pressedLayoverDb.js";
 import { POSTCONDITION_AMENDMENTS } from "../../scripts/lib/postconditionAmendments.js";
 import { openIsolatedPressedPostgres } from './pressedPostgres.js';
 import { randomUUID } from 'node:crypto';
 
-test("pressed handles isolate committed changes and retain explicit transaction rollback", {skip: PRESSED_SKIP_REASON}, async () => {
+describe("pressed handles isolate committed changes and retain explicit transaction rollback", {skip: PRESSED_SKIP_REASON}, ()=>{it("pressed handles isolate committed changes and retain explicit transaction rollback", async () => {
   const first = await openPressedLayoverDb();
   const second = await openPressedLayoverDb();
   try {
@@ -34,8 +34,8 @@ test("pressed handles isolate committed changes and retain explicit transaction 
     await assert.rejects(first.exec(assertion), /expected 5 engine-capability commands, found 4/);
     await second.exec(assertion);
   } finally { await first.close(); await second.close(); }
-});
-test('an omitted certified store removes its explicit dependency closure and preserves unrelated later features',{skip:PRESSED_SKIP_REASON},async()=>{
+});});
+describe('an omitted certified store removes its explicit dependency closure and preserves unrelated later features',{skip:PRESSED_SKIP_REASON},()=>{it('an omitted certified store removes its explicit dependency closure and preserves unrelated later features',async()=>{
  const db=await openPressedLayoverDb({without:['2700']});
  try{
   assert.equal(await db.hasTable('layover_certified_computations'),false);assert.equal(await db.hasTable('layover_experience_plans'),false);
@@ -43,8 +43,8 @@ test('an omitted certified store removes its explicit dependency closure and pre
   assert.ok(db.report?.variantExcluded.some(f=>f.startsWith('3898_')&&f.includes('dependency omitted:')));
   assert.ok(db.report?.variantExcluded.every(f=>f.includes('(dependency omitted:')));
  }finally{await db.close();}
-});
-test('different cold PostgreSQL template keys serialize cluster-wide role initialization',{skip:PRESSED_SKIP_REASON},async t=>{
+});});
+describe('different cold PostgreSQL template keys serialize cluster-wide role initialization',{skip:PRESSED_SKIP_REASON},()=>{it('different cold PostgreSQL template keys serialize cluster-wide role initialization',async t=>{
  if(PRESSED_BACKEND!=='psql'){t.diagnostic('Cluster-global role concurrency is exercised on the PostgreSQL backend; PGlite owns separate clusters.');return;}
  const role=`pressed_probe_${randomUUID().replaceAll('-','')}`;let active=0,peak=0;
  const options={url:process.env['LOCAL_DB_URL']!,without:[],prelude:()=>'',key:async()=>randomUUID().replaceAll('-','').slice(0,24),replay:async(db:{exec(sql:string):Promise<unknown>},version:string)=>{
@@ -56,4 +56,4 @@ test('different cold PostgreSQL template keys serialize cluster-wide role initia
  const opened=results.flatMap(r=>r.status==='fulfilled'?[r.value]:[]);
  try{for(const r of results)assert.equal(r.status,'fulfilled',r.status==='rejected'?String(r.reason):'');assert.equal(peak,1,'different templates must not concurrently run cluster role DDL');}
  finally{if(opened[0])await opened[0].engine.exec(`DROP ROLE IF EXISTS ${role}`);for(const result of opened)await result.engine.close();}
-});
+});});

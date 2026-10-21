@@ -7,7 +7,7 @@ import { migratedCatalogAndRows } from './migratedCatalogSnapshot.js';
 const forward=readFileSync(new URL('../../migrations/3890_layover_service_write_audit.sql',import.meta.url),'utf8');
 const rollback=readFileSync(new URL('../../../../../db/rollback/2026-10-18-3890-layover-service-write-audit-rollback.sql',import.meta.url),'utf8');
 const names=['layover_capture_service_write()','layover_install_service_write_audit()','layover_service_audit_activation()','layover_expire_service_write_audit(integer)','layover_service_audit_erase_actor()'];
-for (const order of ['sorted-gap','after-3999'] as const) it(`3890 whole catalog and every non-ledger row roundtrip: ${order}`, { skip: PRESSED_SKIP_REASON }, async () => {
+for (const order of ['sorted-gap','after-3999'] as const) describe(`3890 whole catalog and every non-ledger row roundtrip: ${order}`, { skip: PRESSED_SKIP_REASON }, ()=>{it(`3890 whole catalog and every non-ledger row roundtrip: ${order}`, async () => {
  const isolated=await openPressedLayoverDb({without:order==='after-3999'?['3890']:[]});
  try {
   if(order==='sorted-gap')await isolated.exec(rollback);
@@ -20,7 +20,7 @@ for (const order of ['sorted-gap','after-3999'] as const) it(`3890 whole catalog
   await isolated.exec(rollback);assert.deepEqual(await migratedCatalogAndRows(isolated),baseline);
   await isolated.exec(forward);await isolated.exec(rollback);assert.deepEqual(await migratedCatalogAndRows(isolated),baseline);
  } finally { await isolated.close(); }
-});
+});});
 let db:PressedDb;
 async function catalog(){return {
  columns:await db.query(`SELECT table_name,column_name,data_type,is_nullable,column_default FROM information_schema.columns WHERE table_schema='public' AND table_name='layover_service_write_audit' ORDER BY 1,2`),

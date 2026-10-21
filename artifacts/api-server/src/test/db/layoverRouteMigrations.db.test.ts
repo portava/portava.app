@@ -1,5 +1,5 @@
 /** 3895 and 3908 full-catalog rollbacks: both installation orders, every refusal leaves catalog and rows unchanged, no-op and reapply. */
-import { test } from 'node:test';
+import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { PRESSED_SKIP_REASON, openPressedLayoverDb } from './pressedLayoverDb.js';
@@ -9,7 +9,7 @@ const forward=readFileSync(new URL('../../migrations/3908_layover_route_fanout.s
 const rollback=readFileSync(new URL('../../../../../db/rollback/2026-10-19-3908-layover-route-fanout-rollback.sql',import.meta.url),'utf8');
 const routeForward=readFileSync(new URL('../../migrations/3895_layover_route_subject_index.sql',import.meta.url),'utf8');
 const routeRollback=readFileSync(new URL('../../../../../db/rollback/2026-10-18-3895-layover-route-subject-index-rollback.sql',import.meta.url),'utf8');
-for(const order of ['sorted-gap','after-3999'] as const)test('3908 full catalog rollback '+order,{skip:PRESSED_SKIP_REASON},async()=>{
+for(const order of ['sorted-gap','after-3999'] as const)describe('3908 full catalog rollback '+order,{skip:PRESSED_SKIP_REASON},()=>{it('3908 full catalog rollback '+order,async()=>{
  const db=await openPressedLayoverDb({without:order==='after-3999'?['3908']:[]});
  try{
   if(order==='sorted-gap')await db.exec(rollback);
@@ -35,8 +35,8 @@ for(const order of ['sorted-gap','after-3999'] as const)test('3908 full catalog 
   await db.exec(rollback);assert.deepEqual(await migratedCatalogAndRows(db),baseline,'second run is a no-op');
   await db.exec(forward);await db.exec(rollback);assert.deepEqual(await migratedCatalogAndRows(db),baseline,'reapply roundtrip');
  }finally{await db.close();}
-});
-for(const order of ['sorted-gap','after-3999'] as const)test('3895 full catalog rollback '+order,{skip:PRESSED_SKIP_REASON},async()=>{
+});});
+for(const order of ['sorted-gap','after-3999'] as const)describe('3895 full catalog rollback '+order,{skip:PRESSED_SKIP_REASON},()=>{it('3895 full catalog rollback '+order,async()=>{
  // 3908 depends on 3895 and is proven above; it is omitted here so 3895 is the newest route object.
  const db=await openPressedLayoverDb({without:order==='after-3999'?['3895','3908']:['3908']});
  try{
@@ -61,4 +61,4 @@ for(const order of ['sorted-gap','after-3999'] as const)test('3895 full catalog 
   await db.exec(routeRollback);assert.deepEqual(await migratedCatalogAndRows(db),baseline,'second run is a no-op');
   await db.exec(routeForward);await db.exec(routeRollback);assert.deepEqual(await migratedCatalogAndRows(db),baseline,'reapply roundtrip');
  }finally{await db.close();}
-});
+});});

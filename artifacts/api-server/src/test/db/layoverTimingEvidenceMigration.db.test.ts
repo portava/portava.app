@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { openPressedLayoverDb, PRESSED_SKIP_REASON } from './pressedLayoverDb.js';
@@ -7,7 +7,7 @@ const migration=(name:string)=>readFileSync(new URL(`../../migrations/${name}`,i
 const rollback=(name:string)=>readFileSync(new URL(`../../../../../db/rollback/${name}`,import.meta.url),'utf8');
 const f1=migration('3881_airport_sourced_timing.sql'),f2=migration('3907_layover_activity_commitment.sql');
 const b1=rollback('2026-10-19-3881-airport-sourced-timing-rollback.sql'),b2=rollback('2026-10-19-3907-layover-activity-commitment-rollback.sql');
-for(const order of ['sorted-gap','after-3999'] as const)test(`3881/3907 ${order}: entire catalog and all rows, repeat/reapply and changed-object refusals`,{skip:PRESSED_SKIP_REASON},async()=>{
+for(const order of ['sorted-gap','after-3999'] as const)describe(`3881/3907 ${order}: entire catalog and all rows, repeat/reapply and changed-object refusals`,{skip:PRESSED_SKIP_REASON},()=>{it(`3881/3907 ${order}: entire catalog and all rows, repeat/reapply and changed-object refusals`,async()=>{
   const db=await openPressedLayoverDb({without:order==='after-3999'?['3881','3907']:[]});
   try{
     if(order==='sorted-gap'){await db.exec(b2);await db.exec(b1);}
@@ -50,4 +50,4 @@ for(const order of ['sorted-gap','after-3999'] as const)test(`3881/3907 ${order}
     // After3907 restores the original kind check,3899's full fingerprint accepts its predecessor again.
     await db.exec(rollback('2026-10-18-3899-layover-objective-evidence-rollback.sql'));assert.equal((await db.query<{name:string|null}>("SELECT to_regclass('public.layover_objective_facts')::text AS name"))[0]?.name,null);
   }finally{await db.close();}
-});
+});});
