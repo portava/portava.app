@@ -154,7 +154,7 @@ async function startMetro(expoPublicDomain, expoPublicReplId) {
       "start",
       "--no-dev",
       "--minify",
-      "--localhost",
+      "--localhost", "--clear", // reset Metro's transform cache (default: <tmpdir>/metro-cache, which clearMetroCache does not reach): EXPO_PUBLIC_* values are inlined at transform time, so a cached transform keeps an earlier build's values
     ],
     {
       stdio: ["ignore", "pipe", "pipe"],
