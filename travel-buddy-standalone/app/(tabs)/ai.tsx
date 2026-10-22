@@ -19,7 +19,7 @@ import { usePlanPicker } from '../../src/components/PlanPickerController';
 import { CompassHome } from '../../src/components/compass/CompassHome';
 import { CompassLive } from '../../src/components/compass/CompassLive';
 import { useLocationContext } from '../../src/context/LocationContext';
-import { useAiWritingAssist } from '../../src/hooks/useAiWritingAssist.ts';
+import { useAiWritingAssist } from '../../src/hooks/useAiWritingAssist.ts'; import { useFeatureFlags } from '../../src/context/FeatureFlagsContext.tsx';
 import {
   CompassStarters,
   AiWritingAssist,
@@ -57,7 +57,7 @@ export default function AiChat() {
   // Phase 7 (§22/§56): opt-in AI continuation for the compass prompt. Until the
   // user taps "Improve with AI" nothing is requested; the deterministic starters
   // below are shown without any opt-in and are unaffected by the AI flag.
-  const [aiOptIn, setAiOptIn]       = useState(false);
+  const [aiOptIn, setAiOptIn]       = useState(false); const aiWritingOn = useFeatureFlags().isEnabled('compass_ai_writing_enabled'); // no "Improve with AI" while the server's AI-writing flag is off — it could only ever answer nothing
   const promptAssist = useAiWritingAssist({
     context: 'compass_prompt',
     fieldId: COMPASS_FIELD_IDS.compassPrompt,
@@ -415,7 +415,7 @@ export default function AiChat() {
             />
           ) : null}
 
-          {input.trim().length >= 1 ? (
+          {input.trim().length >= 1 && aiWritingOn ? (
             aiOptIn ? (
               <View style={styles.aiZone}>
                 <AiWritingAssist

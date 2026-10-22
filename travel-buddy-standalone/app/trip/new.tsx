@@ -30,7 +30,7 @@ import { CreationAssist, AiWritingAssist, CREATION_FIELD_IDS, reportServedTask, 
 // "Suggest with AI", nothing is auto-applied (tap-to-insert into the editable
 // field), and the whole surface degrades to nothing when the AI flag is off.
 import { useAiWritingAssist } from '../../src/hooks/useAiWritingAssist.ts';
-import { useStampToast } from '../../src/components/stamps/StampEarnedToast';
+import { useStampToast } from '../../src/components/stamps/StampEarnedToast'; import { useFeatureFlags } from '../../src/context/FeatureFlagsContext.tsx';
 import { uploadMedia, type PickedMedia } from '../../src/services/media.ts';
 import { useMediaPicker } from '../../src/hooks/useMediaPicker.ts';
 
@@ -76,7 +76,7 @@ export default function NewTrip() {
 
   // §22 — OPT-IN AI title suggestions. Off until the traveler taps the button;
   // the coarse (city-level) draft feeds the model, never coordinates (§29).
-  const [titleAiOptIn, setTitleAiOptIn] = useState(false); const aiTitleInserted = useRef<string | null>(null); // §45 G320: the AI proposal accepted into the title
+  const [titleAiOptIn, setTitleAiOptIn] = useState(false); const aiTitleInserted = useRef<string | null>(null); const aiWritingOn = useFeatureFlags().isEnabled('compass_ai_writing_enabled'); // §45 G320: the AI proposal accepted into the title; the AI title button exists only while the server's AI-writing flag is on (off in production 2026-10-22: tapping it drafted nothing and the control vanished)
   const titleAi = useAiWritingAssist({
     context: 'trip_title',
     fieldId: CREATION_FIELD_IDS.tripTitle,
@@ -372,14 +372,18 @@ export default function NewTrip() {
         <CreationAssist duplicates={titleAssist.duplicates} validation={titleAssist.validation} />
         {/* §22 — opt-in, tap-to-insert AI title suggestions (secondary to the
             §23 validation above; nothing auto-applied, degrades to nothing when off). */}
-        {title.trim().length >= 1 ? (
+        {title.trim().length >= 1 && aiWritingOn ? (
           titleAiOptIn ? (
+            <>
             <AiWritingAssist
               proposals={titleAi.proposals}
               loading={titleAi.loading}
               heading="AI title ideas"
               onInsert={(p) => { aiTitleInserted.current = p.insertText; setTitle(p.insertText); }}
             />
+            {/* As the Compass tab does: an empty answer says so instead of the control silently vanishing. */}
+            {!titleAi.loading && titleAi.proposals.length === 0 ? <Text style={styles.aiTitleNote}>No AI suggestion right now.</Text> : null}
+            </>
           ) : (
             <Pressable
               onPress={() => setTitleAiOptIn(true)}
@@ -593,6 +597,7 @@ const styles = StyleSheet.create({
     marginTop: space.xs,
   },
   aiTitleBtnText: { ...t.small, fontWeight: '700', color: color.signal },
+  aiTitleNote: { ...t.small, color: color.mute, marginTop: space.xs },
   destinationHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: space.sm },
   multiCityRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   multiCityLabel: { ...t.small, color: color.mute, fontWeight: '600' },
