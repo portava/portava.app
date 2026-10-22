@@ -23,7 +23,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | B1-C assistant | 14 | 0 | 0 | 14 | 0 | 0 | 0 |
 | B1-F flight data | 6 | 0 | 0 | 6 | 0 | 0 | 0 |
-| B1-P pressed-state verification | 58 | 0 | 0 | 56 | 0 | 0 | 2 |
+| B1-P pressed-state verification | 58 | 0 | 0 | 52 | 0 | 4 | 2 |
 | B1-R1 routing (server) | 12 | 0 | 1 | 10 | 0 | 0 | 1 |
 | B2-BUDDY Rent-a-Buddy specialist/Safe Return | 2 | 0 | 0 | 2 | 0 | 0 | 0 |
 | B2-CREW crew/consent/sensing/rides | 8 | 0 | 0 | 7 | 0 | 0 | 1 |
@@ -33,7 +33,7 @@ Owner directive of 2026-10-18: correct all 165 built-but-wrong Layover requireme
 | B2-PLATFORM metrics/audit/real-schema/typed reads | 9 | 0 | 2 | 7 | 0 | 0 | 0 |
 | B2-RECS recommendations/snapshots/contracts | 14 | 0 | 0 | 14 | 0 | 0 | 0 |
 | B3-ENGINE lifecycle/timing/engine refactor/phrases | 8 | 0 | 1 | 6 | 0 | 0 | 1 |
-| **Total** | **165** | **0** | **5** | **142** | **0** | **0** | **18** |
+| **Total** | **165** | **0** | **5** | **138** | **0** | **4** | **18** |
 
 ## Checkpoint (resumable; updated after every batch)
 
@@ -196,7 +196,7 @@ Last updated 2026-10-19 during the Codex continuation of Claude's usage-limited 
 - **Required correction:** Canonical persisted snapshot selection, guarded compare-and-swap publication, immutable decision history and recommendation supersession are connected; failed history refuses regeneration and stale candidates cannot overwrite a newer version.
 - **Migration:** 3871 + 3873 + 3896 and existing 2700/2992/3623/3828 dependencies · **Tests:** 196 targeted tests; 8 canonical migrated tests; rollback catalog/row round trips, repeat/reapply and refusal cases; pressed-final 17/17 · **Production dependency:** owner migration/flag press
 - **Evidence:** scratchpad/l165-b2-recsa-handback.txt. PGlite interleaving proved; real two-connection PostgreSQL contention branch awaits CI evidence. Full surface identifier matrix and independent mutants remain open.
-- **Status:** BUILT (canonical snapshot and history batch; independent verification and production press pending)
+- **Status:** VERIFIED PASS (production-verified 2026-10-22 after release 9d3dc5d0: migrations applied, gate ON, writer route mounted, pressed suites green on CI local-db run 39693275815; writer reachable, 0 rows observed; census-layover §81, ledger final section)
 
 ### L21 — layover_sessions (id, user_id, trip_id, airport_place_id, arrival/departure_segment_id, state, connection_type, detected_source, started_at, expires_at, active_snapshot_id, confidence_band)
 - **Original requirement:** layover_sessions (id, user_id, trip_id, airport_place_id, arrival/departure_segment_id, state, connection_type, detected_source, started_at, expires_at, active_snapshot_id, confidence_band) (the census body row quotes the spec; the full wording is at the row's census line).
@@ -274,7 +274,7 @@ Last updated 2026-10-19 during the Codex continuation of Claude's usage-limited 
 - **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
 - **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) snap:67, :123 · **Production dependency:** owner press: P1
 - **Evidence:** lane B1-P handback §2: risk band persisted on layover_return_plans in the spec vocabulary (LOW/MODERATE/HIGH/UNSAFE); the CHECK refuses others
-- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
+- **Status:** BUILT (pressed in production 2026-10-22; production verification found HIGH has no producer on any stored band, so the census keeps W; owner question OQ-L36-1, census-layover §81)
 
 ### L37 — ConfidenceBand = HIGH | MEDIUM | LOW | INSUFFICIENT
 - **Original requirement:** ConfidenceBand = HIGH | MEDIUM | LOW | INSUFFICIENT (verbatim from the original specification).
@@ -287,7 +287,7 @@ Last updated 2026-10-19 during the Codex continuation of Claude's usage-limited 
 - **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
 - **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) snap:67 · **Production dependency:** owner press: P1
 - **Evidence:** lane B1-P handback §2: the confidence band is a stored decision column equal to the published certification (3828, lane B1-F, also copies it to layover_sessions.confidence_band)
-- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
+- **Status:** BUILT (pressed in production 2026-10-22; production verification found every stored decision is LOW or INSUFFICIENT, so neither MEDIUM nor HIGH is produced on a decision and the census keeps W; owner question OQ-L37-1, census-layover §81)
 
 ### L38 — RecommendationStatus = ELIGIBLE | TIGHT | BLOCKED | STALE | EXPIRED
 - **Original requirement:** RecommendationStatus = ELIGIBLE | TIGHT | BLOCKED | STALE | EXPIRED (verbatim from the original specification).
@@ -1509,7 +1509,7 @@ Last updated 2026-10-19 during the Codex continuation of Claude's usage-limited 
 - **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
 - **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) cl:145 · **Production dependency:** owner press: as L174
 - **Evidence:** lane B1-P handback §2: the outcomes table populated by the close
-- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
+- **Status:** VERIFIED PASS (production-verified 2026-10-22 after release 9d3dc5d0: migrations applied, gate ON, writer route mounted, pressed suites green on CI local-db run 39693275815; writer reachable, 0 rows observed; census-layover §81, ledger final section)
 
 ### L196 — 5. Create presence/crew tables with restrictive policies and expiration jobs
 - **Original requirement:** 5. Create presence/crew tables with restrictive policies and expiration jobs (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1535,7 +1535,7 @@ Last updated 2026-10-19 during the Codex continuation of Claude's usage-limited 
 - **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
 - **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) crowd:84 · **Production dependency:** owner press: 3513
 - **Evidence:** lane B1-P handback §2: the observation table is populated by the product surface (de-identified handle, channel source_ref, class TTL)
-- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
+- **Status:** VERIFIED PASS (production-verified 2026-10-22 after release 9d3dc5d0: migrations applied, gate ON, writer route mounted, pressed suites green on CI local-db run 39693275815; writer reachable, 0 rows observed; census-layover §81, ledger final section)
 
 ### L198 — 7. Indexes for active-session lookup, session event ordering, unexpired presence, snapshot versioning and impacted-session event fanout
 - **Original requirement:** 7. Indexes for active-session lookup, session event ordering, unexpired presence, snapshot versioning and impacted-session event fanout (the census body row quotes the spec; the full wording is at the row's census line).
@@ -1561,7 +1561,7 @@ Last updated 2026-10-19 during the Codex continuation of Claude's usage-limited 
 - **Required correction:** Proven pressed on the real migrated chain through the real router; red with the flag off / migration absent.
 - **Migration:** none new (existing unapplied chain) · **Tests:** pressed-state suites (src/test/db/layoverPressed*.db.test.ts) wb:95, :107 · **Production dependency:** owner press: 3620 (194) — owner decision L199-b. No flag
 - **Evidence:** lane B1-P handback §2: the authorization contract on the chain for all four tables + 3620's own $post$ re-run
-- **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
+- **Status:** VERIFIED PASS (production-verified 2026-10-22 after release 9d3dc5d0: migrations applied, gate ON, writer route mounted, pressed suites green on CI local-db run 39693275815; writer reachable, 0 rows observed; census-layover §81, ledger final section)
 
 ### L200 — Users may read/write their own session inputs within allowed fields
 - **Original requirement:** Users may read/write their own session inputs within allowed fields (the census body row quotes the spec; the full wording is at the row's census line).
@@ -2213,3 +2213,20 @@ Last updated 2026-10-19 during the Codex continuation of Claude's usage-limited 
 - **Evidence:** lane B1-P handback §2: Add to plan certified against the card's own snapshot; stale → 409 RECOMMENDATION_EXPIRED, nothing written
 - **Status:** BUILT (proven pressed on the real chain by B1-P; independent verification pending; awaits the press)
 
+## Production verification, 2026-10-22 (appended; no line above moved)
+
+Release `9d3dc5d0` has been live on rumazi.com since 2026-10-22T04:39Z. Production `ajrurzioarfkagpuxfnb` has applied the pressed chain. That is 2700, 2992, 3513, 3620, 3623, 3792, 3827/3828, 3871, 3873, 3896 and 3900, all on 2026-10-21; 2860 had been applied since 2026-09-16. The eight flags are ON: `layover_decision_persistence_enabled` and seven others, switched between 04:40:37Z and 04:42:37Z through `toggle_feature_flag_with_audit`. Two independent verifiers agreed on what follows. The census records it in `docs/architecture/census-layover.md` §81, and [the ledger](layover-165-final-verification.md) records it in its final section, with implementation, activation and external evidence kept apart.
+
+- **VERIFIED PASS** for L20, L195, L197 and L199. Their status lines above and the Summary counts were updated in place. Every one is "writer reachable", not "rows observed": their tables hold 0 rows on production.
+- **Still BUILT, with findings for the owner:**
+  - L36: HIGH has no producer.
+  - L37: no stored decision reaches MEDIUM or HIGH.
+- **Unchanged here:**
+  - L198 is a catalog PASS and still conditional, which is the owner's call.
+  - L192 fails as worded: there are no PostgreSQL enum types.
+- **Outside the 165:**
+  - L30 moves N → C.
+  - L23, L24 and L32 move N → W in the census. Their storage is applied and written, but members they enumerate are never produced.
+  - L25 stays N: `safe_envelope_ref` and `candidate_set_version` are absent.
+- **Census headline:** 86 C / 164 W / 46 N / 0 X over 296.
+- **Not re-verified by this pass.** The other B1-P rows whose recorded production dependency was this press still read "awaits the press". Their press is now done, but no verifier has re-checked them. Their status lines are left as they were.
