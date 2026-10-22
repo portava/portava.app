@@ -80,12 +80,16 @@ describe('eas.json beta profile', () => {
       assert.equal(store.environment, beta.environment);
     });
 
-    it("both beta profiles pin an empty Sentry DSN (or an allowlisted beta one), so no EAS environment's DSN is inlined", async () => {
-      const { BETA_SENTRY_DSNS } = await import('../../lib/deploymentConsistency.ts');
+    it("both beta profiles pin a no-op Sentry DSN (or an allowlisted beta one), so no EAS environment's DSN is inlined", async () => {
+      // 'none', not '': eas.json rejects an empty env value ("is not allowed to be empty"), and that made EVERY eas command
+      // fail for every profile (eas-cli 14.7.1 and @expo/eas-json 25.3.0, 2026-10-22). sentryDsnFor('beta', 'none') is
+      // undefined, so Sentry stays a no-op exactly as the empty string did.
+      const { BETA_SENTRY_DSNS, sentryDsnFor } = await import('../../lib/deploymentConsistency.ts');
       for (const p of [beta, store]) {
         const dsn = p.env?.EXPO_PUBLIC_SENTRY_DSN;
         assert.ok(dsn !== undefined, 'EXPO_PUBLIC_SENTRY_DSN must be named in the profile');
-        assert.ok(dsn === '' || BETA_SENTRY_DSNS.includes(dsn), `not an allowlisted beta DSN: ${dsn}`);
+        assert.ok(dsn === 'none' || BETA_SENTRY_DSNS.includes(dsn), `not an allowlisted beta DSN: ${dsn}`);
+        if (dsn === 'none') assert.equal(sentryDsnFor(p.env?.EXPO_PUBLIC_DEPLOYMENT_ENV, dsn), undefined);
       }
     });
 
