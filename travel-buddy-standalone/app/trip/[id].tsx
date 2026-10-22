@@ -62,7 +62,7 @@ import { useStampToast } from '../../src/components/stamps/StampEarnedToast';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 import { usePlainBottomInset } from '../../src/hooks/useBottomInset';
 import { deriveTripDisplayStatus } from '../../src/lib/tripStatus';
-import { canonicalUrl } from '../../src/constants/canonicalUrl';
+import { canonicalUrl } from '../../src/constants/canonicalUrl'; import { useFeatureFlags } from '../../src/context/FeatureFlagsContext.tsx';
 
 function TripDetailScreen() {
   // `focus` lets another route deep-link into a section of this screen rather
@@ -170,7 +170,7 @@ function TripDetailScreen() {
   // the offset is measured against the fully rendered page, and latched so a
   // re-render (or the user scrolling away) does not yank them back.
   const planSectionY = useRef<number>(0);
-  const focusHandled = useRef(false);
+  const focusHandled = useRef(false); const sectionY = useRef<Record<string, number>>({}); const { isEnabled: flagOn } = useFeatureFlags(); const readinessFix = (category: string) => { const y = category === 'plan' || category === 'stay' || category === 'transport' ? planSectionY.current : sectionY.current[category]; if (y != null) pageScrollRef.current?.scrollTo({ y: Math.max(0, y - 16), animated: true }); }; // a readiness row scrolls to the section where that category is added (stay / transport: the plan's Add)
   useEffect(() => {
     if (focus !== 'plan' || !realTrip || focusHandled.current) return;
     focusHandled.current = true;
@@ -538,7 +538,7 @@ function TripDetailScreen() {
 
         {/* ── Before you go — entry/visa + country essentials, always visible ── */}
         {live && trip.id ? (
-          <BeforeYouGoSection tripId={trip.id} />
+          <View onLayout={(e: LayoutChangeEvent) => { sectionY.current.entry = e.nativeEvent.layout.y; }}><BeforeYouGoSection tripId={trip.id} /></View>
         ) : null}
 
         {/* ── Trip notes ── */}
@@ -587,7 +587,7 @@ function TripDetailScreen() {
 
         {/* ── Trip Readiness — renders nothing when flag is off (null response) ── */}
         {live && trip.id ? (
-          <TripReadinessCard tripId={trip.id} refresh={readinessRefresh} onSummary={setReadinessRead} />
+          <TripReadinessCard tripId={trip.id} refresh={readinessRefresh} onSummary={setReadinessRead} onFix={readinessFix} unavailable={{ ...(flagOn('reservation_import_enabled') ? {} : { reservations: 'Optional — reservations cannot be added in the app yet.' }), ...(realTrip && (userId === realTrip.ownerId || memberRole === 'co_host') ? {} : { budget: 'Only the trip owner or a co-host can set the budget.' }) }} />
         ) : null}
 
         {/* ── §7 schedule feasibility ──────────────────────────────────────
@@ -687,7 +687,7 @@ function TripDetailScreen() {
         ) : null}
 
         <SavedIdeas ideas={[]} tripId={trip.id} />
-        <TripSavedPlacesSection tripId={trip.id} />{live && trip.id ? <TripSharedContentSection tripId={trip.id} isHost={realTrip.ownerId === userId || memberRole === 'co_host'} /> : null}
+        <TripSavedPlacesSection tripId={trip.id} />{live && trip.id ? <View onLayout={(e: LayoutChangeEvent) => { sectionY.current.documents = e.nativeEvent.layout.y; }}><TripSharedContentSection tripId={trip.id} isHost={realTrip.ownerId === userId || memberRole === 'co_host'} /></View> : null}
 
         {live && trip.id ? (
           <NeighborhoodMatchSection tripId={trip.id} />
@@ -844,13 +844,13 @@ function TripDetailScreen() {
           />
         ) : null}
         {live && trip.id ? (
-          <TripBudgetSection
+          <View onLayout={(e: LayoutChangeEvent) => { sectionY.current.budget = e.nativeEvent.layout.y; }}><TripBudgetSection
             tripId={trip.id}
             isOwnerOrCohost={realTrip
               ? userId === realTrip.ownerId || memberRole === 'co_host'
               : false}
             isOwner={realTrip ? userId === realTrip.ownerId || memberRole === 'co_host' : false}
-          />
+          /></View>
         ) : null}
         {live && trip.id ? (
           <ReviewsSection
