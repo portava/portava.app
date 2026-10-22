@@ -28,7 +28,6 @@
 import {
   applyHistoryWindow,
   historyBoundEnabled,
-  membershipSelect,
   visibleFromOf,
   withinWindow,
 } from "../groupChatHistoryBound.js";
@@ -58,7 +57,7 @@ export async function replyQuoteForSender(
     if (boundOn) {
       const { data: membership, error: membershipErr } = await sc
         .from("message_thread_members")
-        .select(membershipSelect("user_id", true))
+        .select("user_id, visible_from_at") // = membershipSelect("user_id", true), written out so check:write-path-columns verifies both columns live (a computed list is a blind spot)
         .eq("thread_id", threadId)
         .eq("user_id", viewerId)
         .maybeSingle();
