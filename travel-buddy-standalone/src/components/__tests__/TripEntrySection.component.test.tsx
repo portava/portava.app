@@ -68,7 +68,7 @@ const SELF_VISA_FREE: import('../../services/entryRequirements.ts').TripEntryTra
   passportSelected: true,
   passportCountry: 'US',
   status: 'VISA-FREE',
-  requirement: { allowedStayDays: 90, sourceUrl: 'https://example.gov/entry' },
+  requirement: { allowed_stay_days: 90, official_source_url: 'https://example.gov/entry' }, // the raw entry_requirements row, as GET /trips/:id/entry-requirements sends it (was camelCase keys the server never sends)
   lastVerifiedAt: '2026-01-15T00:00:00Z',
   unknownReason: null,
 };

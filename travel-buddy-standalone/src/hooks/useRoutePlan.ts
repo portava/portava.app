@@ -3,6 +3,7 @@
  * For trip-linked plans, also fetches group member progress.
  */
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { AppState } from 'react-native';
 import {
   fetchRoutePlan,
   fetchRoutePlanMembers,
@@ -38,6 +39,12 @@ export interface UseRoutePlanResult {
 }
 
 export function useRoutePlan({ planId, pollingEnabled = true }: UseRoutePlanOptions): UseRoutePlanResult {
+  // Both polls (10 s plan, 30 s members) used to keep running with the app in the background (2026-10-22 hunt).
+  const [appActive, setAppActive] = useState(AppState.currentState !== 'background');
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (st) => setAppActive(st === 'active'));
+    return () => sub.remove();
+  }, []);
   const [plan, setPlan]               = useState<FullRoutePlan | null>(null);
   const [loading, setLoading]         = useState(false);
   const [error, setError]             = useState<string | null>(null);
@@ -82,21 +89,21 @@ export function useRoutePlan({ planId, pollingEnabled = true }: UseRoutePlanOpti
   }, [plan?.plan.tripId, loadMembers]);
 
   useEffect(() => {
-    if (!pollingEnabled || !planId) return;
+    if (!pollingEnabled || !planId || !appActive) return;
     timerRef.current = setInterval(() => load(true), POLL_INTERVAL_MS);
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [load, planId, pollingEnabled]);
+  }, [load, planId, pollingEnabled, appActive]);
 
   // Poll member progress less frequently
   useEffect(() => {
-    if (!pollingEnabled || !planId || !plan?.plan.tripId) return;
+    if (!pollingEnabled || !planId || !plan?.plan.tripId || !appActive) return;
     membersRef.current = setInterval(loadMembers, MEMBERS_POLL_MS);
     return () => {
       if (membersRef.current) clearInterval(membersRef.current);
     };
-  }, [loadMembers, planId, pollingEnabled, plan?.plan.tripId]);
+  }, [loadMembers, planId, pollingEnabled, plan?.plan.tripId, appActive]);
 
   const patchStop = useCallback(async (stopId: string, payload: PatchStopPayload) => {
     if (!planId) return;

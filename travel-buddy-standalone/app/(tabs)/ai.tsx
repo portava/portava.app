@@ -19,7 +19,7 @@ import { usePlanPicker } from '../../src/components/PlanPickerController';
 import { CompassHome } from '../../src/components/compass/CompassHome';
 import { CompassLive } from '../../src/components/compass/CompassLive';
 import { useLocationContext } from '../../src/context/LocationContext';
-import { useAiWritingAssist } from '../../src/hooks/useAiWritingAssist.ts'; import { useFeatureFlags } from '../../src/context/FeatureFlagsContext.tsx';
+import { useAiWritingAssist } from '../../src/hooks/useAiWritingAssist.ts'; import { useFeatureFlags } from '../../src/context/FeatureFlagsContext.tsx'; import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 import {
   CompassStarters,
   AiWritingAssist,
@@ -546,6 +546,11 @@ function RecCard({
   proposalStates: Record<string, 'confirmed' | 'declined' | 'busy' | 'expired'>;
   onAddPlaceToPlan: (place: CompassUiPlace) => void;
 }) {
+  // "Find Buddy" opens Rent a Buddy, which is served only while
+  // rent_buddy_enabled is on (off in production, 2026-10-22): the chip led to
+  // the "COMING SOON" gate. While it is off the chip is not drawn.
+  const rentABuddyOn = useRentABuddyFlag().enabled;
+  const quickActions = (rec.quickActions ?? []).filter((a) => a.actionType !== 'findBuddy' || rentABuddyOn);
   return (
     <View style={styles.rec}>
       <View style={styles.aiHead}>
@@ -600,9 +605,9 @@ function RecCard({
         );
       })}
 
-      {(rec.quickActions ?? []).length > 0 ? (
+      {quickActions.length > 0 ? (
         <View style={styles.actions}>
-          {(rec.quickActions ?? []).map((a) => (
+          {quickActions.map((a) => (
             <Pressable
               key={a.actionType}
               style={styles.actionBtn}

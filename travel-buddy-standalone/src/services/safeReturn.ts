@@ -129,7 +129,7 @@ export async function createSession(opts: {
   planItemId?: string | null;
   tripId?: string | null;
   contacts?: SafeReturnContactInput[];
-}): Promise<{ ok: boolean; session?: SafeReturnSession; error?: string }> {
+}): Promise<{ ok: boolean; session?: SafeReturnSession; error?: string; warnings?: string[]; message?: string }> { // warnings: e.g. 'trusted_contacts_not_saved' — the timer runs but nobody will be alerted
   return apiFetch('/api/me/safe-return/sessions', {
     method: 'POST',
     body: JSON.stringify(opts),
@@ -140,9 +140,9 @@ export async function startSession(sessionId: string): Promise<{ ok: boolean; se
   return apiFetch(`/api/me/safe-return/sessions/${sessionId}/start`, { method: 'POST' });
 }
 
-export async function getActiveSession(): Promise<{ session: SafeReturnSession | null; featureEnabled?: boolean }> {
-  const data = await apiFetch('/api/me/safe-return/sessions/active');
-  return { session: data?.session ?? null, featureEnabled: data?.featureEnabled };
+export async function getActiveSession(): Promise<{ session: SafeReturnSession | null; featureEnabled?: boolean; unavailable?: true }> { // unavailable: the read FAILED (503 degraded_unavailable, network) — callers keep what they last knew
+  const data = await apiRead<{ session?: SafeReturnSession | null; featureEnabled?: boolean }>('/api/me/safe-return/sessions/active'); // was apiFetch, which handed a 503 body back as `{ session: null }`:
+  return data ? { session: data.session ?? null, featureEnabled: data.featureEnabled } : { session: null, unavailable: true }; // "you have no Safe Return running" while a timer was running
 }
 
 export async function extendTimer(sessionId: string, minutes: number): Promise<{ ok: boolean; session?: SafeReturnSession; error?: string }> {
@@ -199,9 +199,9 @@ export async function stopLiveShare(sessionId: string, shareId: string): Promise
   });
 }
 
-export async function getHistory(limit = 20): Promise<{ sessions: SafeReturnSession[]; featureEnabled?: boolean }> {
-  const data = await apiFetch(`/api/me/safe-return/history?limit=${limit}`);
-  return { sessions: data?.sessions ?? [], featureEnabled: data?.featureEnabled };
+export async function getHistory(limit = 20): Promise<{ sessions: SafeReturnSession[]; featureEnabled?: boolean; unavailable?: true }> { // unavailable: the history could not be read — NOT "you have never used Safe Return"
+  const data = await apiRead<{ sessions?: SafeReturnSession[]; featureEnabled?: boolean }>(`/api/me/safe-return/history?limit=${limit}`);
+  return data ? { sessions: data.sessions ?? [], featureEnabled: data.featureEnabled } : { sessions: [], unavailable: true };
 }
 
 /**

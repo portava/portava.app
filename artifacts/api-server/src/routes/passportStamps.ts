@@ -47,7 +47,7 @@ import { recordContribution } from "../services/passport/PassportContributionSer
 import type { VisibilityTier, CallerContext } from "../services/passport/PassportPrivacyGuard.js";
 import { filterStamps, filterMemories } from "../services/passport/PassportPrivacyGuard.js";
 
-import { requireAdmin } from "../lib/requireAdmin.js";
+import { requireAdmin } from "../lib/requireAdmin.js"; import { storedMediaRef } from "../lib/storedMediaRef.js";
 
 const router = Router();
 
@@ -81,7 +81,7 @@ const patchStampSchema = z.object({
   visibility: VISIBILITY,
 });
 
-const createMemorySchema = z.object({
+export const createMemorySchema = z.object({
   title: z.string().min(1).max(200),
   description: z.string().max(1000).nullable().optional(),
   country: z.string().max(100).optional(),
@@ -89,17 +89,17 @@ const createMemorySchema = z.object({
   neighborhood: z.string().max(100).optional(),
   category: z.string().max(80).optional(),
   visibility: VISIBILITY.optional().default("private"),
-  photoUrl: z.string().url().nullable().optional(),
+  photoUrl: storedMediaRef.nullable().optional(), // the bare post-media/<path> POST /media/upload returns: z.url() refused it, so a picked photo 400'd the whole save
   mediaType: z.enum(["image", "video"]).nullable().optional(),
 });
 
-const patchMemorySchema = z.object({
+export const patchMemorySchema = z.object({
   title: z.string().min(1).max(200).optional(),
   description: z.string().max(1000).nullable().optional(),
   city: z.string().max(100).nullable().optional(),
   country: z.string().max(100).nullable().optional(),
   visibility: VISIBILITY.optional(),
-  photoUrl: z.string().url().nullable().optional(),
+  photoUrl: storedMediaRef.nullable().optional(), // the bare post-media/<path> POST /media/upload returns: z.url() refused it, so a picked photo 400'd the whole save
   mediaType: z.enum(["image", "video"]).nullable().optional(),
 });
 

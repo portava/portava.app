@@ -9,7 +9,7 @@ import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { RouteBuilderSheet } from '../../src/components/RouteBuilderSheet';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, Pressable,
-  ActivityIndicator, Alert, Modal, TextInput, FlatList, Image,
+  ActivityIndicator, Alert, Modal, TextInput, FlatList,
 } from 'react-native';
 import { CachedImage } from '../../src/components/CachedImage';
 import { resolveHeaderImage } from '../../src/lib/visuals/resolveHeaderImage';
@@ -384,9 +384,9 @@ export default function GemDetailScreen() {
             { entityType: 'hidden_gem', category: gem.category ?? undefined, fallbackUrlFor: fallbackUriFor },
           );
           if (!resolved?.url) return null;
-          return gem.imageUrl ? (
-            <Image source={{ uri: resolved.url }} style={styles.coverImage} resizeMode="cover" />
-          ) : (
+          return (
+            // The gem's own photo is a storage ref in a PRIVATE bucket (the bare post-media/<path> the upload returns): only
+            // CachedImage signs it. A plain <Image> drew a blank cover for every uploaded gem photo; the list card always used this.
             <CachedImage source={{ uri: resolved.url }} style={styles.coverImage} resizeMode="cover" />
           );
         })()}

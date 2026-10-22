@@ -251,9 +251,9 @@ export function WatchItemOverlay({
         pointerEvents="none"
       />
 
-      {/* ── Create button — top-right corner ──────────────────────── */}
+      {/* ── Create button — top-right, BELOW the overlay header, level with the mode selector. At insets.top + 12 it sat under the header bar (zIndex 20), which took every tap: the button could be seen and never pressed. */}
       <Pressable
-        style={[s.createBtn, { top: insets.top + 12 }]}
+        style={[s.createBtn, { top: getOverlayHeaderTotalHeight(insets.top) + space.md }]}
         onPress={handleCreate}
         accessibilityRole="button"
         accessibilityLabel={isGemsMode ? 'Add a Gem' : 'Create a post'}

@@ -27,7 +27,7 @@ import {
   type CompassSensePresence,
 } from '../src/services/compass';
 import { useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
-import { PlainBottomFiller } from '../src/hooks/useBottomInset'; import { SenseNudgesPanel } from '../src/features/live/SenseNudgesPanel';
+import { PlainBottomFiller } from '../src/hooks/useBottomInset'; import { SenseNudgesPanel } from '../src/features/live/SenseNudgesPanel'; import { useRentABuddyFlag } from '../src/hooks/useRentABuddyFlag';
 
 // ── Option constants ──────────────────────────────────────────────────────────
 
@@ -246,6 +246,10 @@ export default function CompassPreferencesScreen() {
   const { prefs, loading, saving, update } = useCompassPreferences();
   const [boostExpanded, setBoostExpanded] = useState(false);
   const navBarScrollHandler = useNavBarScrollHandler();
+  // The Rent a Buddy section (discoverable toggle, "Edit Buddy profile &
+  // pricing") is shown only while rent_buddy_enabled is on (off in production,
+  // 2026-10-22): its link opened the (rent-a-buddy) "COMING SOON" gate.
+  const rentABuddyOn = useRentABuddyFlag().enabled;
 
   const toggle = useCallback(
     async (key: keyof import('../src/services/compass').CompassPreferences, value: unknown) => {
@@ -463,20 +467,22 @@ export default function CompassPreferencesScreen() {
         </Section>
 
         {/* ── Rent a Buddy ── */}
-        <Section title="Rent a Buddy" Icon={Users}>
-          <ToggleRow
-            label="Show my Buddy profile in recommendations"
-            sub="Compass will suggest you as a Buddy to compatible travelers"
-            value={buddyDiscoverable}
-            onChange={(v) => toggle('rent_buddy_discoverable', v)}
-          />
-          <Pressable
-            style={s.linkRow}
-            onPress={() => router.push('/(rent-a-buddy)/buddy-dashboard' as any)}
-          >
-            <Text style={s.linkLabel}>Edit Buddy profile & pricing →</Text>
-          </Pressable>
-        </Section>
+        {rentABuddyOn ? (
+          <Section title="Rent a Buddy" Icon={Users}>
+            <ToggleRow
+              label="Show my Buddy profile in recommendations"
+              sub="Compass will suggest you as a Buddy to compatible travelers"
+              value={buddyDiscoverable}
+              onChange={(v) => toggle('rent_buddy_discoverable', v)}
+            />
+            <Pressable
+              style={s.linkRow}
+              onPress={() => router.push('/(rent-a-buddy)/buddy-dashboard' as any)}
+            >
+              <Text style={s.linkLabel}>Edit Buddy profile & pricing →</Text>
+            </Pressable>
+          </Section>
+        ) : null}
 
         {/* ── Notification Preferences ── */}
         <Section title="Notification Preferences" Icon={Bell}>

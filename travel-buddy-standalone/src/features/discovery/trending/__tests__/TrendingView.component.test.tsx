@@ -69,3 +69,10 @@ it('the Discovery tab links carry the city into both screens', async () => {
   await fireEvent.press(screen.getByTestId('discovery-link-trending'));
   expect(onNavigate).toHaveBeenCalledWith('/trending?destination=Lisbon');
 });
+
+// NOTE: intentionally exhaustive — the Discovery tab's Trending chip exists only while both trending flags are on
+// (both are off in production); the last case is about the chip's link, so they are on here. The gate itself:
+// DiscoveryExploreLinks.trendingGate.component.test.tsx.
+jest.mock('../../../../context/FeatureFlagsContext', () => ({
+  useFeatureFlags: () => ({ isEnabled: (k: string) => k === 'discovery_trending_api_enabled' || k === 'discovery_trend_lists_enabled', loading: false }),
+}));

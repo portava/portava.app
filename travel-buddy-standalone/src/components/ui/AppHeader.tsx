@@ -309,7 +309,7 @@ export function AppHeader({
         style={[s.overlayOuter, { paddingTop: Math.max(insets.top, 54), backgroundColor: overlayTint !== undefined && !transparent ? overlayTint : overlayBg }]}
         pointerEvents="box-none"
       >
-        <View style={s.bar}>
+        <View style={s.bar} pointerEvents="box-none">{/* the bar floats over the feed, so only its own buttons take touches: a plain bar swallowed every tap in its 44pt band, and what sat under it (the Watch feed's Create button, the Media tab's World pill) could be seen but never pressed */}
           {centeredTitle('#fff')}
           <View style={s.barLeft}>
             {onBack && (

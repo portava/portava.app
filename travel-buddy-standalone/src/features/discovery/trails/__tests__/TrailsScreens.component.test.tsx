@@ -185,3 +185,9 @@ describe('TrailCreateForm', () => {
     expect(onCreated).not.toHaveBeenCalled();
   });
 });
+
+// NOTE: intentionally exhaustive — "Start a Trail" is offered only while `trail_creation_enabled` is on (it is off in
+// production); the browser cases here offer it, so the flag is on. The gate itself: TrailsBrowser.creationGate.
+jest.mock('../../../../context/FeatureFlagsContext', () => ({
+  useFeatureFlags: () => ({ isEnabled: (k: string) => k === 'trail_creation_enabled', loading: false }),
+}));

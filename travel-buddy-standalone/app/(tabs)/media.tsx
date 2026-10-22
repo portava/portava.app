@@ -126,7 +126,7 @@ function MediaScreenInner() {
       {/* ── Overlay header for immersive modes (Watch / Gems) ───────── */}
       {isImmersive && selectedMode !== 'world' && (
         <AppHeader
-          variant="overlay" overlayTint="rgba(17,17,15,0.58)"
+          variant="overlay" overlayTint="rgba(17,17,15,0.58)" rightActions={isEnabled('MEDIA_WORLD_SHELL_ENABLED') && !enabledModes.some(({ key }) => key === 'world') ? [{ icon: <Globe size={20} color="#fff" strokeWidth={2.2} />, onPress: () => router.push('/media-world'), accessibilityLabel: 'Open the World media shell' }] : undefined /* the World entry lives IN this header in Watch / Gems: as a floating pill at insets.top + 8 it was drawn under this tint */}
           title={selectedMode === 'watch' ? 'Watch' : 'Gems'}
         />
       )}
@@ -186,21 +186,21 @@ function MediaScreenInner() {
           (/media-world). Hidden unless MEDIA_WORLD_SHELL_ENABLED is on, so
           this tab's default behaviour is completely unchanged when the flag
           is absent (fail-soft isEnabled → false). Additive: the Watch/Grid/
-          Gems surface below is untouched. */}
-      {isEnabled('MEDIA_WORLD_SHELL_ENABLED') && !enabledModes.some(({ key }) => key === 'world') && (
+          Gems surface below is untouched. In Watch / Gems the overlay header carries it as a Globe action instead. */}
+      {isEnabled('MEDIA_WORLD_SHELL_ENABLED') && !enabledModes.some(({ key }) => key === 'world') && !isImmersive && (
         <Pressable
           style={[
             styles.worldEntryBtn,
             { top: insets.top + 8 },
-            !isImmersive && styles.worldEntryBtnLight,
+            styles.worldEntryBtnLight,
           ]}
           onPress={() => router.push('/media-world')}
           accessibilityRole="button"
           accessibilityLabel="Open the World media shell"
           hitSlop={8}
         >
-          <Globe size={15} color={isImmersive ? '#fff' : color.ink} strokeWidth={2.2} />
-          <Text style={[styles.worldEntryText, { color: isImmersive ? '#fff' : color.ink }]}>World</Text>
+          <Globe size={15} color={color.ink} strokeWidth={2.2} />
+          <Text style={[styles.worldEntryText, { color: color.ink }]}>World</Text>
         </Pressable>
       )}
 

@@ -302,19 +302,19 @@ function LongPressActionSheet({
             </Pressable>
           )}
 
-          {mine && (
+          {mine && threadId && ( /* The traveller was offered "Delete for me — others will still see it", but DELETE /messages/:id (groupChat.ts) redacts the shared row for EVERYONE and there is no per-user hide on the server. The row now says what it does, under Unsend's sender-only guard. */
             <Pressable
-              style={las.row}
+              style={las.row} testID="telegraph-delete-for-everyone"
               onPress={() => {
                 onClose();
-                Alert.alert('Delete message', 'Remove this message for you? Others will still see it.', [
+                Alert.alert('Delete for everyone', 'Delete this message for everyone in this conversation? It disappears from their screens too, and they will see that a message was deleted.', [
                   { text: 'Cancel', style: 'cancel' },
-                  { text: 'Delete', style: 'destructive', onPress: () => onDeleteForMe(message.id) },
+                  { text: 'Delete for everyone', style: 'destructive', onPress: () => onDeleteForMe(message.id) },
                 ]);
               }}
             >
               <Trash2 size={18} color="#EF4444" />
-              <Text style={[las.rowLabel, { color: '#EF4444' }]}>Delete for me</Text>
+              <Text style={[las.rowLabel, { color: '#EF4444' }]}>Delete for everyone</Text>
             </Pressable>
           )}
         </View>
@@ -1660,7 +1660,7 @@ export default function TelegraphThread() { const { palette, styles } = useTeleg
 
   // Handle delete for me from the action sheet
   const handleDeleteForMe = useCallback(async (msgId: string) => {
-    await deleteMessage(msgId);
+    const deleted = await deleteMessage(msgId); if (!deleted.ok) Alert.alert('Not deleted', deleted.message ?? 'That message could not be deleted. Everyone in this conversation can still see it.'); // a refused delete used to close the sheet in silence, as if it had worked
     reload();
   }, [reload]);
 

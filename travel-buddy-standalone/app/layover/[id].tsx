@@ -202,9 +202,9 @@ export default function LayoverDashboardScreen() {
     sessionStatus,
     returnState: certifiedReturnState,
   });
-  const refreshIntervalMs = cadence.intervalMs; const [appActive, setAppActive] = useState(AppState.currentState !== 'background'); useEffect(() => { const sub = AppState.addEventListener('change', (st) => setAppActive(st === 'active')); return () => sub.remove(); }, []); // every silent re-read certifies and writes three rows: none while Portava is in the background
+  const refreshIntervalMs = cadence.intervalMs; const [appActive, setAppActive] = useState(AppState.currentState !== 'background'); const resumedFromBackground = useRef(false); useEffect(() => { const sub = AppState.addEventListener('change', (st) => { if (st === 'background') resumedFromBackground.current = true; setAppActive(st === 'active'); }); return () => sub.remove(); }, []); // every silent re-read certifies and writes three rows: none while Portava is in the background
   useEffect(() => {
-    if (!id || sessionStatus !== 'active' || refreshIntervalMs == null || !appActive) return;
+    if (!id || sessionStatus !== 'active' || refreshIntervalMs == null || !appActive) return; if (resumedFromBackground.current) { resumedFromBackground.current = false; void getLayoverOverview(id).catch(() => null).then((read) => { if (read?.ok) setOverview(read.overview); }); } // back from the background: re-read NOW, once — the verdict on screen is as old as the time away, and the interval's first tick is a whole cadence later
     const timer = setInterval(async () => {
       // A silent refresh KEEPS the last certified overview when the read fails
       // — it must never blank the screen a traveller is acting on. What it must
@@ -306,7 +306,7 @@ export default function LayoverDashboardScreen() {
             usableMinutes: ovRead.overview.window.usableMinutes,
             departureTime: ovRead.overview.session.departureTime,
             boardingTime: ovRead.overview.session.boardingTime ?? null,
-          }, recRes.ok && (!ovRead.overview.snapshotId || ovRead.overview.snapshotId === recRes.snapshotId) ? routedMapForPlan(buildRoutedMapData(recRes.snapshotId, recRes.routedEnvelope, recRes.recommendations), ovRead.overview.stops.map(s => s.recommendationId)) : null,
+          }, recRes.ok && (!comparableOverviewSnapshotId(ovRead.overview) || comparableOverviewSnapshotId(ovRead.overview) === recRes.snapshotId) ? routedMapForPlan(buildRoutedMapData(recRes.snapshotId, recRes.routedEnvelope, recRes.recommendations), ovRead.overview.stops.map(s => s.recommendationId)) : null,
         );
         if (ovRead.overview.share.enabled) loadPresence(id);
         setBuddies(buddyRes); // the WHOLE answer — a failed read or a gate refusal is not `[]` (census §48)
@@ -359,7 +359,7 @@ export default function LayoverDashboardScreen() {
 
   // The abort cancels landside stops and may flip the session status, so the
   // screen must re-read rather than keep rendering the plan it just cleared.
-  const reloadAfterAbort = useCallback(() => { void load(true); }, [load]); const refreshRoutedMap = useCallback(() => { setNowMs(Date.now()); return load(true, false); }, [load]); useRoutedMapRefresh(id, routedMap, overview?.snapshotId, refreshRoutedMap, nowMs);
+  const reloadAfterAbort = useCallback(() => { void load(true); }, [load]); const refreshRoutedMap = useCallback(() => { setNowMs(Date.now()); return load(true, false); }, [load]); useRoutedMapRefresh(id, routedMap, comparableOverviewSnapshotId(overview), refreshRoutedMap, nowMs);
   const returnAbort = useSafeReturnAbort(id, reloadAfterAbort);
 
   const canEdit = overview?.session.status === 'active';
@@ -942,7 +942,7 @@ export default function LayoverDashboardScreen() {
               stops={stops}
               airportReturn={airportReturn}
               envelope={overview.safeEnvelope ?? null} envelopeGate={overview.safeEnvelopeGate ?? null}
-              candidateFeasibility={candidateFeasibility} routedMap={routedMap} currentSnapshotId={overview.snapshotId}
+              candidateFeasibility={candidateFeasibility} routedMap={routedMap} currentSnapshotId={comparableOverviewSnapshotId(overview)}
               offline={overview.offlineBundle ?? null} crewLocations={crewLoc && crewLoc.ok && crewLoc.available && crewLoc.inCrew ? crewLoc.crewmates : null} /* census-layover L124: the SAME read the crew location card landed; feature off, no crew or a failed read is null */
               nowMs={nowMs} budgetChips={overview.mapBudgetChips ?? null} sessionId={id ?? null} /* census-layover L118: the server-offered time-budget chips; each press is a server simulation */
             />
@@ -1186,7 +1186,7 @@ import { LayoverDisruptionCard } from '../../src/components/layover/LayoverDisru
 // census-layover L189/L191 — Portava's stored record of the answer, explained and re-checked. Imported at the TAIL so no cited line moves; ESM hoists imports.
 import { LayoverDecisionRecordCard } from '../../src/components/layover/LayoverDecisionRecordCard';
 
-import { buildRoutedMapData, routedMapForPlan, type RoutedMapData } from '../../src/lib/layoverRoutedMap.ts';
+import { buildRoutedMapData, routedMapForPlan, comparableOverviewSnapshotId, type RoutedMapData } from '../../src/lib/layoverRoutedMap.ts';
 import { useRoutedMapRefresh } from '../../src/components/layover/useRoutedMapRefresh.ts';
 import { LayoverCachedAbortRoute } from '../../src/components/layover/LayoverCachedAbortRoute.tsx';
 import { LayoverCachedExperience } from '../../src/components/layover/LayoverCachedExperience.tsx';

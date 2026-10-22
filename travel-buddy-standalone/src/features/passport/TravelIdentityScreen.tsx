@@ -43,6 +43,7 @@ import {
   Fingerprint,
 } from 'lucide-react-native';
 import { color, space, radius, type as t, avatar, icon, dot } from '../../theme/tokens.ts';
+import { useFeatureFlags } from '../../context/FeatureFlagsContext.tsx';
 import {
   useTravelIdentity,
   type UseTravelIdentityResult,
@@ -322,7 +323,13 @@ export default function TravelIdentityScreen({
   const hook: UseTravelIdentityResult = useTravelIdentity(targetUserId);
   const persist = persistTravelDna ?? putTravelDna;
   // Owner's own view (no target) is editable; a viewer projection is read-only.
-  const editable = !(typeof targetUserId === 'string' && targetUserId.trim().length > 0);
+  const isOwner = !(typeof targetUserId === 'string' && targetUserId.trim().length > 0);
+  // The server stores a Show/Hide/Not-Me choice only while
+  // passport_travel_dna_enabled is on (off in production, 2026-10-22): the
+  // controls were drawn anyway and every tap reverted with "Couldn't save that
+  // change". Without the flag the owner sees the readings, read-only.
+  const dnaWritesOn = useFeatureFlags().isEnabled('passport_travel_dna_enabled');
+  const editable = isOwner && dnaWritesOn;
 
   const identity = identityOverride ?? hook.identity;
   const loading = identityOverride ? false : hook.loading;
@@ -444,7 +451,9 @@ export default function TravelIdentityScreen({
               <Text style={s.explainerText}>
                 {editable
                   ? 'These readings are inferred, never certain. Every one shows why it was inferred, and you can Show, Hide or mark it “Not me”.'
-                  : 'These readings are inferred, never certain — each one shows why. This traveler controls which are shown.'}
+                  : isOwner
+                    ? 'These readings are inferred, never certain — each one shows why. Choosing which are shown isn’t available yet.'
+                    : 'These readings are inferred, never certain — each one shows why. This traveler controls which are shown.'}
               </Text>
             </View>
 

@@ -13,7 +13,7 @@ import { color, space } from '../../../theme/tokens.ts';
 import { ds } from '../shared/discoveryStyles.ts';
 import { listTrails, listMyTrails, type Trail } from './trailsApi.ts';
 import { lifecycleNote, reviewNote, isUnderReview } from './trailModel.ts';
-import type { ApiRead } from '../shared/discoveryApi.ts';
+import type { ApiRead } from '../shared/discoveryApi.ts'; import { useFeatureFlags } from '../../../context/FeatureFlagsContext.tsx';
 
 interface Props {
   initialDestination?: string | null;
@@ -24,7 +24,7 @@ interface Props {
 }
 
 export function TrailsBrowser({ initialDestination = null, onOpen, onCreate, load = listTrails, loadMine = listMyTrails }: Props) {
-  const [q, setQ] = useState('');
+  const [q, setQ] = useState(''); const creationOn = useFeatureFlags().isEnabled('trail_creation_enabled'); // lead ruling D-66: with trail_creation_enabled off (production, 2026-10-22) "Start a Trail" opened a form the server refuses (feature_disabled), so it is not offered
   const [destination, setDestination] = useState(initialDestination ?? '');
   const [read, setRead] = useState<ApiRead<Trail[]> | undefined>(undefined);
   // Lead ruling D-66: the person's own Trails under review are in no public list; they are shown here, to them.
@@ -55,9 +55,9 @@ export function TrailsBrowser({ initialDestination = null, onOpen, onCreate, loa
         <Pressable style={ds.ghost} onPress={() => { void run(q, destination); }} accessibilityRole="button" testID="trails-search-go">
           <Text style={ds.ghostText}>Search</Text>
         </Pressable>
-        <Pressable style={ds.ghost} onPress={() => onCreate(destination.trim() || null)} accessibilityRole="button" testID="trails-create">
+        {creationOn ? <Pressable style={ds.ghost} onPress={() => onCreate(destination.trim() || null)} accessibilityRole="button" testID="trails-create">
           <Text style={ds.ghostText}>Start a Trail</Text>
-        </Pressable>
+        </Pressable> : null}
       </View>
 
       {mine?.state === 'unavailable' ? (
@@ -93,7 +93,7 @@ export function TrailsBrowser({ initialDestination = null, onOpen, onCreate, loa
         </View>
       ) : read.data.length === 0 ? (
         <Text style={ds.notice} testID="trails-empty">
-          {q.trim() || destination.trim() ? 'No Trails match. You can start one.' : 'No Trails yet. You can start one.'}
+          {(q.trim() || destination.trim() ? 'No Trails match.' : 'No Trails yet.') + (creationOn ? ' You can start one.' : '')}
         </Text>
       ) : (
         <View style={ds.card}>

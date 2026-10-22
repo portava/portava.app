@@ -174,13 +174,13 @@ router.post("/me/location-state", async (req, res) => {
   const body = req.body ?? {};
   const source = sanitizeText(body.source, 32);
   const permissionStatus = sanitizeText(body.permissionStatus, 32);
-  const manualCity = sanitizeText(body.manualCity);
-  const manualCountry = sanitizeText(body.manualCountry);
+  const manualCity = hasBodyKey(body, "manualCity") ? sanitizeText(body.manualCity) : undefined; // presence-based: sanitizeText never answers undefined, so a save WITHOUT this key wrote null and every GPS save erased the traveller's manual city
+  const manualCountry = hasBodyKey(body, "manualCountry") ? sanitizeText(body.manualCountry) : undefined;
 
   // Coords — only accept if both lat+lng are valid
   let lat: number | null = null;
   let lng: number | null = null;
-  let accuracyMeters: number | null = null;
+  let accuracyMeters: number | null = null; const clearCoords = hasBodyKey(body, "coords") && body.coords === null; // GPS denied: the client sends coords: null, and the stored fix used to survive it
   if (body.coords) {
     const rawLat = Number(body.coords.lat);
     const rawLng = Number(body.coords.lng);
@@ -193,12 +193,12 @@ router.post("/me/location-state", async (req, res) => {
   }
 
   // Place
-  const place = body.place ?? {};
-  const city = sanitizeText(place.city);
-  const district = sanitizeText(place.district);
-  const country = sanitizeText(place.country);
-  const countryCode = sanitizeText(place.countryCode, 8);
-  const formatted = sanitizeText(place.formatted, 256);
+  const placeGiven = hasBodyKey(body, "place"); const place = placeGiven && body.place && typeof body.place === "object" ? body.place : {}; // a save that carries no place leaves the stored one alone (it used to blank it); place: null clears it
+  const city = placeGiven ? sanitizeText(place.city) : undefined;
+  const district = placeGiven ? sanitizeText(place.district) : undefined;
+  const country = placeGiven ? sanitizeText(place.country) : undefined;
+  const countryCode = placeGiven ? sanitizeText(place.countryCode, 8) : undefined;
+  const formatted = placeGiven ? sanitizeText(place.formatted, 256) : undefined;
 
   // ONE clock read for this handler. `now` stamps the location row and `nowMs`
   // opens the precise-share binding's TTL; taking them from two separate reads
@@ -213,7 +213,7 @@ router.post("/me/location-state", async (req, res) => {
     updated_at: now,
   };
 
-  if (permissionStatus) patch.permission_status = permissionStatus;
+  if (permissionStatus) patch.permission_status = permissionStatus; if (clearCoords) { patch.lat = null; patch.lng = null; patch.accuracy_meters = null; }
   if (source) patch.source = source;
   // Trips spec §18.3 — presence is "the newest valid observation with
   // expiry/confidence; never simple last-write-wins across stale devices"
@@ -256,7 +256,7 @@ router.post("/me/location-state", async (req, res) => {
     patch.manual_city = manualCity;
     patch.manual_country = manualCountry ?? null;
     if (manualCity) patch.manual_selected_at = now;
-  }
+  } else if (lat != null && !staleObservation && source?.startsWith("gps")) { patch.manual_city = null; patch.manual_country = null; } // a written GPS fix replaces a manual city as the client's own state does, even from a client that does not say so: the published web bundle and the installed iPhone build send no manualCity key on a GPS save, and a surviving manual_city is restored first on every relaunch
 
   const { error } = await sc
     .from("user_location_state")
@@ -283,7 +283,7 @@ router.post("/me/location-state", async (req, res) => {
   // holds the other device's fix and the other device is still the one that
   // published it.
   let preciseDeviceBound = false;
-  let preciseDeviceReason = "no_fix";
+  let preciseDeviceReason = "no_fix"; if (clearCoords) clearPreciseShare(user.id); // the row now holds no fix, so no device stays bound to one
   if (!staleObservation && lat != null) {
     const bindingDeviceId = presentedDeviceId(req.headers as unknown as Record<string, unknown>);
     const bindingState = flagSc
@@ -691,3 +691,10 @@ router.get("/me/circle-locations", async (req, res) => {
 });
 
 export default router;
+
+// ── POST /me/location-state: which keys the body actually carries ─────────────
+// Declared at the tail so no cited line above moves. An ABSENT key leaves the
+// stored column alone; a PRESENT one (null included) is written.
+function hasBodyKey(body: unknown, key: string): boolean {
+  return body !== null && typeof body === "object" && Object.prototype.hasOwnProperty.call(body, key);
+}

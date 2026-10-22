@@ -12,7 +12,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
+  ActivityIndicator, KeyboardAvoidingView, Platform,
   Modal,
   Pressable,
   ScrollView,
@@ -364,7 +364,7 @@ export function ImportSheet({
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onDismiss}>
-      <View style={sh.overlay}>
+      <KeyboardAvoidingView style={sh.overlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined /* the keyboard rose over this bottom sheet and hid "Extract reservations"; a multiline box has no return key to dismiss it */}>
         <View style={sh.sheet}>
           {/* Header */}
           <View style={sh.header}>
@@ -376,8 +376,11 @@ export function ImportSheet({
             </Pressable>
           </View>
 
+          {/* Both bodies are content-sized (the review list shrinking only past the sheet's 85% cap). `flex: 1` (basis 0)
+              inside this content-sized sheet laid out to 0pt on iOS: "Paste a confirmation" opened as a bare title with
+              no text box and no Extract button, and the review step showed no reservations to confirm. */}
           {step === 'paste' ? (
-            <View style={{ flex: 1 }}>
+            <ScrollView style={sh.pasteBody} keyboardShouldPersistTaps="handled">
               <Text style={sh.hint}>
                 Paste a confirmation email, booking summary, or text message below. We'll extract the reservation details for you to review.
               </Text>
@@ -423,9 +426,9 @@ export function ImportSheet({
                   <Text style={sh.submitText}>Extract reservations</Text>
                 </Pressable>
               )}
-            </View>
+            </ScrollView>
           ) : (
-            <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: space.xl }}>
+            <ScrollView style={sh.reviewList} contentContainerStyle={{ paddingBottom: space.xl }}>
               {allDone ? (
                 <View style={sh.allDoneBox}>
                   <Check size={22} color={color.success} />
@@ -448,7 +451,7 @@ export function ImportSheet({
             </ScrollView>
           )}
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -716,6 +719,7 @@ const sh = StyleSheet.create({
     paddingBottom: space.xxxl,
     paddingTop: space.lg,
   },
+  reviewList: { flexGrow: 0, flexShrink: 1 }, pasteBody: { flexGrow: 0, flexShrink: 1 },
   header: {
     flexDirection: 'row',
     alignItems: 'center',

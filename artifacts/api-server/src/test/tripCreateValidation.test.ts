@@ -167,18 +167,17 @@ describe("TR51 — POST /trips rejects a malformed body with 400, not a database
     assert.equal(r.body.error, "invalid_payload");
   });
 
-  it("PINNED AS CURRENT BEHAVIOUR: a javascript: cover URL is ACCEPTED by z.url()", async () => {
-    // Not an endorsement — a finding, pinned so closing it is a deliberate diff
-    // rather than a side effect. zod's .url() accepts any well-formed URI,
-    // `javascript:` included, and this schema mirrors PatchTripSchema exactly so
-    // that a client able to PATCH a field can create with it. Restricting the
-    // scheme to http/https is the right fix and belongs on BOTH endpoints at
-    // once; doing it here alone would make create stricter than patch and leave
-    // the same value reachable through the other door. Recorded in census-trips
-    // §38. When it is closed, this test flips and that is the point of it.
+  it("CLOSED 2026-10-22: a javascript: cover URL is REFUSED — on create and on patch alike", async () => {
+    // This test pinned the census-trips §38 gap: z.url() accepted any well-formed
+    // URI, `javascript:` included. Both CreateTripSchema and PatchTripSchema now
+    // take lib/storedMediaRef (an https URL or an app storage ref, the bare
+    // `post-media/<path>` POST /media/upload returns, which z.url() refused —
+    // so a picked cover photo 400'd the whole trip). Closed on BOTH doors in one
+    // diff, which is the condition this test was written to enforce.
     const r = await post({ title: "Cebu", destinationCity: "Cebu City", coverUrl: "javascript:alert(1)" });
-    assert.ok(r.status < 400,
-      "z.url() has started rejecting javascript: — good; update this test and PatchTripSchema together");
+    assert.equal(r.status, 400, "a javascript: cover must be refused");
+    const { PatchTripSchema } = await import("../routes/trips.js");
+    assert.equal(PatchTripSchema.safeParse({ coverUrl: "javascript:alert(1)" }).success, false, "and refused through the other door too");
   });
 
   it("the pre-existing date-order rule still fires, and still as invalid_payload", async () => {

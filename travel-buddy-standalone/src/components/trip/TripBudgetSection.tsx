@@ -62,9 +62,13 @@ function formatCurrency(amount: number, currency = 'USD'): string {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency, maximumFractionDigits: 0 }).format(amount);
 }
 
+// Exactly the server's BASELINE_CATEGORIES (domain/trips/services/tripBudgetIntel.ts), which
+// POST /trips/:tripId/budget/sandbox validates `protectedCategories` against. The sheet offered
+// accommodation / shopping / misc, so protecting one of them failed the whole scenario with
+// "Could not run scenario".
 const PROTECTED_CATEGORY_OPTIONS = [
-  'accommodation', 'food', 'transport', 'activities', 'shopping', 'misc',
-];
+  'lodging', 'food', 'transport', 'activities', 'nightlife', 'other',
+] as const;
 
 // ---------------------------------------------------------------------------
 // Sub-components
@@ -140,7 +144,15 @@ function WhatIfSandboxSheet({ tripId, visible, onClose }: SandboxSheetProps) {
     setError(null);
     setResult(null);
     const params: Parameters<typeof runBudgetSandbox>[1] = {};
-    const ed = parseFloat(extraDays);
+    // extraDays is a whole number from -90 to 90 on the server (z.number().int().min(-90).max(90)); "1.5" used
+    // to be sent as 1.5, refused, and shown as "Could not run scenario". Say what is wrong instead of sending it.
+    const edText = extraDays.trim();
+    const ed = edText === '' ? NaN : Number(edText);
+    if (edText !== '' && (!Number.isInteger(ed) || Math.abs(ed) > 90)) {
+      setLoading(false);
+      setError('Extra days must be a whole number from -90 to 90, e.g. 2 or -1.');
+      return;
+    }
     const do_ = parseFloat(dailyOverride);
     const bd = parseFloat(budgetDelta);
     if (!isNaN(ed) && ed !== 0) params.extraDays = ed;

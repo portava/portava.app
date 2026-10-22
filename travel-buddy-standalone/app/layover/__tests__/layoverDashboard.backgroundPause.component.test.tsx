@@ -210,3 +210,37 @@ describe('the overview re-read pauses in the background', () => {
     expect(reads.mock.calls.length).toBeGreaterThan(1);
   });
 });
+
+describe('back from the background, the overview is re-read at once', () => {
+  it('one immediate re-read on background → active, before any interval tick', async () => {
+    await mountWith('RETURN_NOW');
+    expect(reads).toHaveBeenCalledTimes(1);
+    await act(async () => { sendAppState('background'); });
+    await advance(600_000); // ten minutes away: the verdict on screen is ten minutes old
+    expect(reads).toHaveBeenCalledTimes(1);
+    await act(async () => { sendAppState('active'); });
+    await advance(0);
+    expect(reads).toHaveBeenCalledTimes(2);
+    await advance(1_000); // and only once — the interval then takes over at its cadence
+    expect(reads).toHaveBeenCalledTimes(2);
+  });
+
+  it('a brief inactive (Control Center, a banner) is not a return from the background: no extra read', async () => {
+    await mountWith('RETURN_NOW');
+    await act(async () => { sendAppState('inactive'); });
+    await act(async () => { sendAppState('active'); });
+    await advance(0);
+    expect(reads).toHaveBeenCalledTimes(1);
+  });
+
+  it('each return from the background re-reads once', async () => {
+    await mountWith('RETURN_NOW');
+    for (const n of [2, 3]) {
+      await act(async () => { sendAppState('background'); });
+      await advance(60_000);
+      await act(async () => { sendAppState('active'); });
+      await advance(0);
+      expect(reads).toHaveBeenCalledTimes(n);
+    }
+  });
+});

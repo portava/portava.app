@@ -236,3 +236,33 @@ describe('useNotificationStream.connect — freshToken throws', () => {
     );
   });
 });
+
+// ── Reconnect policy (2026-10-22 refresh-loop hunt) ─────────────────────────
+// The stream reconnected every 5 s forever; a revoked or signed-out session (401 / 403) asked again twelve times a
+// minute for as long as the app stayed open, and a flapping network never backed off.
+import { nextStreamReconnectDelay, grownReconnectDelay, STREAM_RECONNECT_BASE_MS, STREAM_RECONNECT_MAX_MS } from '../notificationStreamUtils.ts';
+
+describe('notification stream reconnect policy', () => {
+  it('an auth refusal (401 / 403) stops reconnecting until the next foreground', () => {
+    assert.equal(nextStreamReconnectDelay(STREAM_RECONNECT_BASE_MS, 401), null);
+    assert.equal(nextStreamReconnectDelay(STREAM_RECONNECT_BASE_MS, 403), null);
+  });
+
+  it('a failing stream backs off 5 s → 10 → 20 … and never beyond 5 minutes', () => {
+    let delay = STREAM_RECONNECT_BASE_MS;
+    const waits: number[] = [];
+    for (let i = 0; i < 9; i++) {
+      const d = nextStreamReconnectDelay(delay, 0)!;
+      waits.push(d);
+      delay = grownReconnectDelay(d);
+    }
+    assert.deepEqual(waits.slice(0, 4), [5_000, 10_000, 20_000, 40_000]);
+    assert.equal(Math.max(...waits), STREAM_RECONNECT_MAX_MS);
+    // twelve attempts a minute became: at most 6 in the first 5 minutes, then one per 5 minutes
+    assert.ok(waits.slice(0, 6).reduce((a, b) => a + b, 0) >= 300_000);
+  });
+
+  it('a normal end of a healthy stream (200, backoff reset by data) reconnects promptly', () => {
+    assert.equal(nextStreamReconnectDelay(STREAM_RECONNECT_BASE_MS, 200), STREAM_RECONNECT_BASE_MS);
+  });
+});

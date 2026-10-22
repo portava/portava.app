@@ -162,9 +162,14 @@ export default function SafetyHistoryScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [featureEnabled, setFeatureEnabled] = useState(true);
   const [setupVisible, setSetupVisible] = useState(false);
+  // The history could not be read (503 / network). It used to arrive as an empty list and the traveller was
+  // told "No Safe Return history yet" — a claim about their record that a failed read cannot make.
+  const [loadFailed, setLoadFailed] = useState(false);
 
   const load = useCallback(async () => {
     const result = await getHistory(50);
+    if (result.unavailable) { setLoadFailed(true); return; }
+    setLoadFailed(false);
     setSessions(result.sessions);
     if (result.featureEnabled === false) setFeatureEnabled(false);
   }, []);
@@ -200,6 +205,17 @@ export default function SafetyHistoryScreen() {
             alerted automatically. It will be available in a future update. Stay tuned!
           </Text>
         </View>
+      ) : loadFailed && sessions.length === 0 ? (
+        <View style={styles.center} testID="safety-history-unavailable">
+          <AlertCircle size={36} color={color.mute} />
+          <Text style={styles.emptyTitle}>Couldn't load your Safe Return history</Text>
+          <Text style={styles.emptyBody}>
+            Your sessions are not lost — we could not reach them just now. Please try again.
+          </Text>
+          <Pressable style={styles.startBtn} onPress={() => { setLoading(true); load().then(() => setLoading(false)); }}>
+            <Text style={styles.startBtnText}>Try again</Text>
+          </Pressable>
+        </View>
       ) : sessions.length === 0 ? (
         <View style={styles.center}>
           <Shield size={36} color={color.mute} />
@@ -223,6 +239,9 @@ export default function SafetyHistoryScreen() {
           <Text style={styles.privacy}>
             🔒 Only you can see this history. Sessions older than 90 days are automatically removed.
           </Text>
+          {loadFailed ? (
+            <Text style={styles.emptyBody}>Couldn't refresh — this is the history from before.</Text>
+          ) : null}
 
           {/* Summary chips */}
           <View style={styles.summaryRow}>

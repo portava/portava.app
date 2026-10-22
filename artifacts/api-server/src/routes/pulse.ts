@@ -63,10 +63,10 @@ const TAB_VISIBILITY: Record<PulseTab, string[] | null> = {
   airport:      null,                                                       // airport city filter from query param
 };
 
-const pulseQuerySchema = z.object({
+export const pulseQuerySchema = z.object({
   tab:    z.enum(VALID_TABS).optional().default("all"),
   limit:  z.coerce.number().int().min(1).max(50).optional().default(20),
-  before: z.string().datetime().optional(),
+  before: z.string().datetime({ offset: true }).optional(), // the cursor is the last post's createdAt, which Postgres answers as +00:00: without offset: true every "load more" was a 400 and page 2 never loaded
   // airport tab: filter by airport city
   airportCity: z.string().max(100).optional(),
   // location context — used to fill in place recommendation cards when posts are thin
@@ -329,7 +329,7 @@ router.get("/pulse", async (req, res) => {
   // post_media is canonical for storage-backed media; posts.media_urls holds
   // external references only (ruled 2026-08-12). One query per page, then a
   // pure merge — see lib/postMediaResolve.ts.
-  const mediaByPost = await resolveMediaForPosts(sc, rows as any[]);
+  const mediaByPost = await resolveMediaForPosts(sc, rows as any[]); const pulseFailed = new FailedSources(req.log, "pulse feed"); const engagementByPost = await loadPostEngagement(sc, rows.map((r: any) => r.id as string), user.id, pulseFailed); // the Pulse card read likeCount/commentCount/likedByMe and none were sent, so every post showed 0 likes, 0 comments and an unliked heart
 
   // Shape responses — NEVER include exact coords. census-media §42: the owner's location mode is applied to the SERVED page at res.json below, after ranking, so the set and order of posts are exactly what they were
   const posts = rows.map((row: any) => {
@@ -374,7 +374,7 @@ router.get("/pulse", async (req, res) => {
       spanTags:         spans.tags,
       spanHashtags:     spans.hashtagUsages,
       // Bookmark state for the authenticated viewer
-      savedByMe: savedSet.has(row.id as string),
+      savedByMe: savedSet.has(row.id as string), ...pulseEngagementOf(engagementByPost, row.id as string), // the same exact counts as the global feed (lib/postCounters); null = could not be read, named in failedSources
       // Featured-by-Portava badge category — null when post has not been featured
       featuredByPortava: featuredPulseMap.get(row.id as string) ?? null,
       // Canonical place ID — used by the place-affinity boost in scoreCandidate
@@ -909,7 +909,7 @@ router.get("/pulse", async (req, res) => {
   } catch { /* non-fatal — place cards degrade gracefully */ }
 
   // perf-trim: rankedCandidates stripped — not rendered by any client component; internal ranking state only
-  res.json({ posts: pulsePostsForViewer(rows, orderedPosts, user.id), total: orderedPosts.length, tab, prompts, placeCards, sessionId }); // census-media §42: a post whose place mapPublicPost withholds reaches a non-owner as city and country only (pulsePostsForViewer, at the foot of this file)
+  res.json({ posts: pulsePostsForViewer(rows, orderedPosts, user.id), total: orderedPosts.length, tab, prompts, placeCards, sessionId, ...pulseFailed.body() }); // census-media §42: a post whose place mapPublicPost withholds reaches a non-owner as city and country only (pulsePostsForViewer, at the foot of this file)
 
   // ── Impressions: the SERVED page ────────────────────────────────────────────
   // Logged HERE, after res.json, because `orderedPosts` is only final here: the
@@ -2034,3 +2034,13 @@ import { surfaceObjectiveOptions } from "../lib/discoveryRankDesigns.js";
 // census-media §50.14 (verifier N2). Declared at the tail so no cited line moves.
 import { updatedAtForViewer } from "../lib/postLocationDisclosureLifetime.js";
 
+// Pulse post engagement (likeCount / commentCount / likedByMe), read by the
+// client's pulsePostToFeedItem. Declared at the tail so no cited line moves.
+import { loadPostEngagement, UNKNOWN_POST_ENGAGEMENT, type PostEngagement } from "../lib/postCounters.js";
+import { FailedSources } from "../lib/feedReads.js";
+
+/** The three engagement fields one Pulse post carries; an id missing from the map reads as unknown (null), never 0/false. */
+function pulseEngagementOf(byPost: ReadonlyMap<string, PostEngagement>, postId: string): { likeCount: number | null; commentCount: number | null; likedByMe: boolean | null } {
+  const eng = byPost.get(postId) ?? UNKNOWN_POST_ENGAGEMENT;
+  return { likeCount: eng.likeCount, commentCount: eng.commentCount, likedByMe: eng.likedByMe };
+}

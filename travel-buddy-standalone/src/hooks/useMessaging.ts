@@ -217,11 +217,11 @@ export function useMyThreads() {
     setRefreshing(false);
   }, [clearSnapshot, saveSnapshot]);
 
-  const silentPoll = useCallback(async () => {
+  const lastInboxSigRef = useRef<string | null>(null); const silentPoll = useCallback(async () => {
     if (appStateRef.current !== 'active') return;
     const res = await getMyThreads();
     if (res.ok && res.data) {
-      const threads: ThreadSummary[] = (res.data as any).threads ?? [];
+      const threads: ThreadSummary[] = (res.data as any).threads ?? []; const sig = JSON.stringify(threads); if (sig === lastInboxSigRef.current) return; lastInboxSigRef.current = sig; // unchanged inbox: no re-render and no AsyncStorage write (this polls every 7 s, app-wide)
       setData(threads);
       saveSnapshot(threads);
     }

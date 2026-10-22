@@ -31,3 +31,24 @@ test('client map uses server bands and never imports or recreates the feasibilit
     assert.doesNotMatch(source, /bandCandidate|judgeRoutedCandidate|conservativeReturnMinutes\s*\(|outboundMinutes\s*\+|slackMinutes\s*[<>]/);
   }
 });
+
+// ── Which overview snapshot the routed map may be compared with (2026-10-22) ──
+// With layover_canonical_snapshot_enabled off (production) both ids are new on every read, so comparing them always
+// said "superseded": the map was dropped and the panel read "The plan has changed" with the return route hidden.
+import { comparableOverviewSnapshotId } from '../layoverRoutedMap.ts';
+
+test('canonical snapshot off (production): no comparison — an older server that does not say counts as off', () => {
+  assert.equal(comparableOverviewSnapshotId({ snapshotId: 'snap:overview-read-2', snapshotComparable: false }), null);
+  assert.equal(comparableOverviewSnapshotId({ snapshotId: 'snap:overview-read-2' }), null);
+  assert.equal(comparableOverviewSnapshotId(null), null);
+});
+
+test('canonical snapshot on: the id is compared as before', () => {
+  assert.equal(comparableOverviewSnapshotId({ snapshotId: SNAP, snapshotComparable: true }), SNAP);
+});
+
+test('end to end through routedMapState: per-read ids are "superseded" only when comparable', () => {
+  const routed = { snapshotId: `snap:${'b'.repeat(32)}`, cards: [], envelope: null };
+  assert.notEqual(routedMapState(routed, comparableOverviewSnapshotId({ snapshotId: SNAP, snapshotComparable: false }), NOW), 'superseded');
+  assert.equal(routedMapState(routed, comparableOverviewSnapshotId({ snapshotId: SNAP, snapshotComparable: true }), NOW), 'superseded');
+});

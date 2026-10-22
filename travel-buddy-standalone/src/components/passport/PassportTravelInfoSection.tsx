@@ -40,8 +40,8 @@ function normalizeStatus(raw: string): StatusKey {
   if (up === 'VISA_ON_ARRIVAL' || up === 'VISA ON ARRIVAL') return 'VISA ON ARRIVAL';
   if (up === 'EVISA' || up === 'E_VISA' || up === 'E-VISA') return 'EVISA';
   if (up === 'VISA_REQUIRED' || up === 'VISA REQUIRED') return 'VISA REQUIRED';
-  if (up === 'ADDITIONAL_APPROVAL' || up === 'ADDITIONAL APPROVAL') return 'ADDITIONAL APPROVAL';
-  if (up === 'RESTRICTED') return 'RESTRICTED';
+  if (up === 'SPECIAL_AUTHORIZATION' || up === 'ADDITIONAL_APPROVAL' || up === 'ADDITIONAL APPROVAL') return 'ADDITIONAL APPROVAL'; // the server's enum (entryRequirements.ts corridor schema) says special_authorization — it used to fall through to a grey UNKNOWN
+  if (up === 'ENTRY_RESTRICTED' || up === 'RESTRICTED') return 'RESTRICTED'; // entry_restricted: a traveller barred from entry was shown UNKNOWN
   return 'UNKNOWN';
 }
 

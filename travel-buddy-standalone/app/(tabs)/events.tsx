@@ -18,7 +18,7 @@ import { FEED_FOCUS_TTL_MS } from '../../src/hooks/usePosts';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   Plus, CalendarX, MapPin, Navigation, ChevronRight,
-  Bookmark, Users, FileEdit, Bell, Filter, Check, X,
+  Bookmark, Users, FileEdit, Bell, Filter, X,
 } from 'lucide-react-native';
 import {
   listEvents, listMyEvents, listFollowingEvents, listCircleEvents, getSavedEvents, getMyDrafts, getMyEventInvites,
@@ -128,9 +128,8 @@ function EventsTabScreen() {
   const [cityInput, setCityInput]             = useState('');
   const [cityFilter, setCityFilter]           = useState('');
   const [radiusKm, setRadiusKm]               = useState(25);
-  const [freeOnly, setFreeOnly]               = useState(false);
-  const [verifiedHostOnly, setVerifiedHostOnly] = useState(false);
-  const [capacityAvailable, setCapacityAvailable] = useState(false);
+  // No "Free" / "Verified host" / "Spots available" filters: GET /events never read free,
+  // verifiedHostOnly or capacityAvailable, so those chips lit up and filtered nothing.
 
   // ── Near-me location request ───────────────────────────────────────────────
   const [nearMeRequested, setNearMeRequested] = useState(false);
@@ -168,15 +167,12 @@ function EventsTabScreen() {
 
   const activeFilters =
     (category !== 'All' ? 1 : 0) +
-    (freeOnly ? 1 : 0) +
-    (verifiedHostOnly ? 1 : 0) +
-    (capacityAvailable ? 1 : 0) +
     (datePreset !== 'all' ? 1 : 0) +
     (cityFilter ? 1 : 0);
 
   // Keep the always-current filter key in sync on every render so the focus
   // callback can read it via ref without needing all filter values in its closure.
-  currentFiltersKeyRef.current = [configured, isAuthed, category, datePreset, cityFilter, freeOnly, verifiedHostOnly, capacityAvailable].join('|');
+  currentFiltersKeyRef.current = [configured, isAuthed, category, datePreset, cityFilter].join('|');
 
   const load = useCallback(async (isRefresh = false) => {
     if (!configured || !isAuthed) { setLoading(false); return; }
@@ -191,9 +187,6 @@ function EventsTabScreen() {
     const sharedFilters = {
       category: cat,
       city,
-      free: freeOnly || undefined,
-      verifiedHostOnly: verifiedHostOnly || undefined,
-      capacityAvailable: capacityAvailable || undefined,
     };
 
     // When a specific preset is active, fetch only one range (avoid duplicate sections)
@@ -258,7 +251,7 @@ function EventsTabScreen() {
     // Category discovery rows — only when no category filter and no date preset
     if (datePreset === 'all' && category === 'All') {
       const catResults = await Promise.all(
-        FEATURED_CATEGORIES.map((c) => listEvents({ category: c, free: freeOnly || undefined, city, limit: 8 })),
+        FEATURED_CATEGORIES.map((c) => listEvents({ category: c, city, limit: 8 })),
       );
       const rows: Record<string, EventListItem[]> = {};
       FEATURED_CATEGORIES.forEach((c, i) => {
@@ -286,7 +279,7 @@ function EventsTabScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [configured, isAuthed, category, datePreset, cityFilter, freeOnly, verifiedHostOnly, capacityAvailable]);
+  }, [configured, isAuthed, category, datePreset, cityFilter]);
 
   // Focus-driven refresh: skip when data is still fresh AND filters haven't
   // changed since the last load. Filter changes always bypass the TTL so the
@@ -577,38 +570,15 @@ function EventsTabScreen() {
             ))}
           </ScrollView>
 
-          {/* Toggle filters */}
+          {/* Toggle filters. "Free", "Verified host" and "Spots available" were here and showed as active
+              while the server ignored all three (GET /events reads none of them) — removed until it does. */}
           <View style={styles.toggleRow}>
-            <Pressable
-              style={[styles.toggleChip, freeOnly && styles.toggleChipActive]}
-              onPress={() => setFreeOnly((v) => !v)}
-            >
-              {freeOnly && <Check size={12} color={color.onInk} />}
-              <Text style={[styles.toggleChipText, freeOnly && styles.toggleChipTextActive]}>Free</Text>
-            </Pressable>
-            <Pressable
-              style={[styles.toggleChip, verifiedHostOnly && styles.toggleChipActive]}
-              onPress={() => setVerifiedHostOnly((v) => !v)}
-            >
-              {verifiedHostOnly && <Check size={12} color={color.onInk} />}
-              <Text style={[styles.toggleChipText, verifiedHostOnly && styles.toggleChipTextActive]}>Verified host</Text>
-            </Pressable>
-            <Pressable
-              style={[styles.toggleChip, capacityAvailable && styles.toggleChipActive]}
-              onPress={() => setCapacityAvailable((v) => !v)}
-            >
-              {capacityAvailable && <Check size={12} color={color.onInk} />}
-              <Text style={[styles.toggleChipText, capacityAvailable && styles.toggleChipTextActive]}>Spots available</Text>
-            </Pressable>
             {activeFilters > 0 && (
               <Pressable
                 style={styles.clearFilters}
                 onPress={() => {
                   setCategory('All');
                   setDatePreset('all');
-                  setFreeOnly(false);
-                  setVerifiedHostOnly(false);
-                  setCapacityAvailable(false);
                   clearCityFilter();
                 }}
               >
@@ -970,10 +940,6 @@ const styles = StyleSheet.create({
   activeCityText:     { ...t.stamp, color: color.signal, fontWeight: '600' },
 
   toggleRow:          { flexDirection: 'row', paddingHorizontal: space.lg, gap: space.sm, alignItems: 'center', paddingBottom: space.sm, flexWrap: 'wrap' },
-  toggleChip:         { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 12, paddingVertical: 6, borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze },
-  toggleChipActive:   { backgroundColor: color.signal, borderColor: color.signal },
-  toggleChipText:     { ...t.small, color: color.mute, fontWeight: '600' },
-  toggleChipTextActive: { color: color.onInk },
   clearFilters:       { marginLeft: 'auto' as any, paddingHorizontal: 12, paddingVertical: 6 },
   clearFiltersText:   { ...t.small, color: color.signal, fontWeight: '600' },
 

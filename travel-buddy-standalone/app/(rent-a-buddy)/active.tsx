@@ -81,7 +81,7 @@ function ContactPickerModal({
               ))}
             </View>
           )}
-          <Pressable style={[modal.cancelBtn, { marginTop: space.md }]} onPress={onClose}>
+          <Pressable style={[modal.stackBtn, { marginTop: space.md }]} onPress={onClose}>
             <Text style={modal.cancelBtnText}>Cancel</Text>
           </Pressable>
         </View>
@@ -159,7 +159,7 @@ function EmergencyPhraseModal({ prompt, options, onChoose, onClose }: {
         <View style={modal.sheet} testID="emergency-phrase-sheet">
           <Text style={modal.title}>{prompt}</Text>
           {options.map((o) => (
-            <Pressable key={o.id} style={modal.cancelBtn} onPress={() => onChoose(o.id)} testID={`phrase-option-${o.id}`}>
+            <Pressable key={o.id} style={modal.stackBtn} onPress={() => onChoose(o.id)} testID={`phrase-option-${o.id}`}>
               <Text style={modal.cancelBtnText}>{o.label}</Text>
             </Pressable>
           ))}
@@ -784,6 +784,9 @@ const modal = StyleSheet.create({
   stepVal: { ...t.title, color: color.ink, minWidth: 100, textAlign: 'center' },
   actions: { flexDirection: 'row', gap: space.md, marginTop: space.sm },
   cancelBtn: { flex: 1, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, padding: space.md, alignItems: 'center' },
+  // cancelBtn for a COLUMN of buttons. `flex: 1` shares a row's width, but stacked in a content-sized sheet it is a 0pt
+  // basis: the emergency phrase's options (and the contact picker's Cancel) drew as 26pt slivers with their labels overhanging.
+  stackBtn: { borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, padding: space.md, alignItems: 'center' },
   cancelBtnText: { ...t.bodyStrong, color: color.ink },
   addBtn: { flex: 1, borderRadius: radius.md, backgroundColor: color.ink, padding: space.md, alignItems: 'center' },
   addBtnText: { ...t.bodyStrong, color: color.onInk },

@@ -346,3 +346,76 @@ describe("the contested-path ratchet", () => {
     }
   });
 });
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * THE REAL MOUNT ORDER — one path, two mounted routers, and WHICH one answers
+ *
+ * The block above unit-tests findDuplicatePaths; nothing in this file ran it over
+ * the repository's own routes/index.ts. It would not have helped on its own
+ * either: GET /trips/:tripId/chat and GET /circles/:circleId/chat sit on the
+ * ratchet as KNOWN contested paths, and which router answers them matters —
+ * routes/messaging.ts's flat answer sends the client through the thread reader
+ * (media, reply quotes, identity withheld across blocks); routes/groupChat.ts's
+ * nested page has none of those, and mounting it first (2026-10-22, reverted)
+ * blanked them. A ratchet entry may count a dead handler; it may not hide the
+ * wrong handler winning.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+import { ratchetOrderViolations } from "../scripts/checkRouteShadowing.js";
+
+async function realMountedRouters(): Promise<{ mounted: MountedRouterLike[]; read: (n: string) => string | undefined }> {
+  const { readFileSync } = await import("node:fs");
+  const { resolve, dirname } = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  const SRC = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const indexSource = readFileSync(resolve(SRC, "routes/index.ts"), "utf8");
+  const imports = parseRouterImports(indexSource);
+  const { mounts, prefixed } = parseMountOrder(indexSource);
+  assert.deepEqual(prefixed, [], "a prefixed mount would make this comparison pass for the wrong reason");
+  const mounted: MountedRouterLike[] = [];
+  mounts.forEach((ident, order) => { const name = imports.get(ident); if (name) mounted.push({ name, order }); });
+  assert.ok(mounted.length > 40, `only ${mounted.length} mounted routers resolved — the parse is broken, not clean`);
+  const read = (n: string) => { try { return readFileSync(resolve(SRC, n), "utf8"); } catch { return undefined; } };
+  return { mounted, read };
+}
+type MountedRouterLike = { name: string; order: number };
+
+describe("the real repository — one path, two mounted routers", () => {
+  it("every cross-router duplicate is declared (in order) or on the ratchet — nothing new", async () => {
+    const { mounted, read } = await realMountedRouters();
+    const contested = findDuplicatePaths(mounted, read);
+    const ratcheted = new Set(CONTESTED_PATH_RATCHET.map((r) => `${r.method} ${normalisePath(r.path)}`));
+    const unexplained = contested.filter((d) => !ratcheted.has(`${d.method} ${d.path}`));
+    assert.deepEqual(unexplained.map((d) => `${d.method.toUpperCase()} ${d.path} ← ${d.registrations.map((r) => r.name).join(", ")}`), []);
+  });
+
+  it("a ratcheted path with a `live` router is answered by THAT router", async () => {
+    const { mounted, read } = await realMountedRouters();
+    assert.deepEqual(ratchetOrderViolations(findDuplicatePaths(mounted, read)), []);
+  });
+
+  it("GET /trips/:tripId/chat and /circles/:circleId/chat are answered by routes/messaging.ts — the door whose members read through the thread reader", async () => {
+    const { mounted, read } = await realMountedRouters();
+    for (const path of ["/trips/:tripId/chat", "/circles/:circleId/chat"]) {
+      // Contested or not, the FIRST mounted router registering it is the one Express runs.
+      const registering = [...mounted].sort((a, b) => a.order - b.order).filter((m) =>
+        extractRoutes(read(m.name) ?? "").some((r) => r.method === "get" && normalisePath(r.path) === normalisePath(path)));
+      assert.ok(registering.length > 0, `nothing mounted registers GET ${path}`);
+      assert.equal(registering[0]!.name, "routes/messaging.ts", `GET ${path} is answered by ${registering[0]!.name}`);
+    }
+  });
+});
+
+describe("ratchetOrderViolations()", () => {
+  it("names a ratcheted pair whose live router is mounted second", () => {
+    const entry = CONTESTED_PATH_RATCHET.find((r) => r.live)!;
+    const other = entry.live === "routes/a.ts" ? "routes/b.ts" : "routes/a.ts";
+    const finding = { method: entry.method, path: normalisePath(entry.path), registrations: [
+      { name: other, order: 0, line: 1 },
+      { name: entry.live!, order: 1, line: 1 },
+    ] };
+    assert.deepEqual(ratchetOrderViolations([finding]).map((v) => v.first), [other]);
+    finding.registrations.reverse().forEach((r, i) => { r.order = i; });
+    assert.deepEqual(ratchetOrderViolations([finding]), []);
+  });
+});

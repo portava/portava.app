@@ -3,7 +3,7 @@
  *
  *   - the questions render in the spec's words with the two answers
  *   - an answer posts through the recorder and shows "recorded" only on the server's 201
- *   - a refusal by name (TRIP_KERNEL_UNAVAILABLE) shows "Not recorded" — never a tick
+ *   - a refusal by name (TRIP_KERNEL_UNAVAILABLE) shows "Not recorded", in words — never a tick, never the code
  *   - unavailable says so; off renders nothing
  *
  * Run with: pnpm test:component
@@ -45,12 +45,12 @@ describe('TripCloseoutCard', () => {
     expect(record).toHaveBeenCalledWith(TRIP_ID, 'p1', 'skipped');
     expect(getByText('No, skipped it — recorded')).toBeTruthy();
   });
-  it('a refusal by name is "Not recorded" with the reason — never a tick', async () => {
+  it('a refusal by name is "Not recorded" in the traveller\'s words — never a tick, never the code', async () => {
     const record = recorder({ state: 'refused', reason: 'TRIP_KERNEL_UNAVAILABLE', detail: 'trip_kernel_enabled is off: an outcome is recorded only through the kernel' });
     const { findByTestId, getByText, queryByTestId } = await render(<TripCloseoutCard tripId={TRIP_ID} load={loader({ state: 'ok', closeout: closeout() })} record={record} />);
     fireEvent.press(await findByTestId('trip-closeout-answer-p1-completed'));
     await findByTestId('trip-closeout-not-recorded-p1');
-    expect(getByText(/Not recorded — TRIP_KERNEL_UNAVAILABLE: trip_kernel_enabled is off/)).toBeTruthy();
+    expect(getByText("Not recorded — answers can't be saved yet.")).toBeTruthy();
     expect(queryByTestId('trip-closeout-recorded-p1')).toBeNull();
   });
   it('unavailable says nothing was asked; off renders nothing', async () => {
@@ -62,3 +62,10 @@ describe('TripCloseoutCard', () => {
     expect(off.toJSON()).toBeNull();
   });
 });
+
+// NOTE: intentionally exhaustive — the card is asked only while `trip_kernel_enabled` is on (it is off in
+// production); these cases are about a deployment with the kernel, so it is on here. The gate itself:
+// TripCloseoutCard.kernelGate.component.test.tsx.
+jest.mock('../../../../context/FeatureFlagsContext', () => ({
+  useFeatureFlags: () => ({ isEnabled: (k: string) => k === 'trip_kernel_enabled', loading: false }),
+}));

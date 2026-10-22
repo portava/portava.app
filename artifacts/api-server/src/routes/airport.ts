@@ -2278,7 +2278,7 @@ router.get("/airport/sessions/:id/overview", async (req, res) => {
       engineVersion: record.engineVersion,
     },
     certification: certificationHeader(record), landsideGate: record.landsideGate, layoverState: layoverStateOf(record, session.status, stops.some((s: { insideAirport?: boolean }) => s.insideAirport !== true)), ...(await overviewLifecycle(sc, session.id, session.status, record, stops.some((s: { insideAirport?: boolean }) => s.insideAirport !== true), nowMs)), // census L39/L40: the §5 graph beside the projection (shadow-logged; published only under layover_lifecycle_machine_enabled) — §5 the guard and §4.1 the state it decides, from the same record
-    estimates:     record.estimates, snapshotId: snapshotIdFor(session.id, record.inputHash), persisted: persisted.ok ? { state: persisted.state, unwritten: persisted.unwritten } : { state: "not_stored" as const, reason: persisted.reason }, // §20 — the SAME three-valued shape GET /:id/safety publishes; "stored", "off" and "could not store" are different facts and a client showing one thing for all three repeats §23.1 a layer up
+    estimates:     record.estimates, snapshotId: snapshotIdFor(session.id, record.inputHash), snapshotComparable: canonicalOutcomeOf(record)?.canonical === true /* only a record the canonical door served or stored keeps its id across reads (both canonical flags on AND no refusal); otherwise this id is new per GET and comparing it to the routed answer's says nothing (2026-10-22: the routed map read "plan has changed" forever) */, persisted: persisted.ok ? { state: persisted.state, unwritten: persisted.unwritten } : { state: "not_stored" as const, reason: persisted.reason }, // §20 — the SAME three-valued shape GET /:id/safety publishes; "stored", "off" and "could not store" are different facts and a client showing one thing for all three repeats §23.1 a layer up
     // The dashboard's copy of the §2.1/§22 disclosure — see GET /:id/safety.
     airportIntelligence: airportIntelligence(record),
     stops: await mapBandedStops(sc, airport, record, stops), // census L67: bandPlanStops, plus the §13 map band under layover_map_bands_enabled
@@ -5989,3 +5989,4 @@ router.use(layoverCurrentPositionRouter);
 
 // census-layover L153 / L43 — the onward flight (offline bundle) and the re-entry gate/security refresh. Imported at the TAIL so no cited line above moves; ESM hoists it.
 import { readDepartureFlight, reentryContextFor } from "../services/airport/LayoverDepartureFlight.js";
+import { canonicalOutcomeOf } from "../services/layover/LayoverActiveSnapshot.js";

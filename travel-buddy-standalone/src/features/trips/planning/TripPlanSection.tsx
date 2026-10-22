@@ -418,7 +418,7 @@ export function TripPlanSection({
     setSafeReturnSetupOpen(false);
     setSafeReturnSetupItem(null);
     getActiveSession()
-      .then((r) => setActiveSafeReturnSession(r.session))
+      .then((r) => { if (!r.unavailable) setActiveSafeReturnSession(r.session); }) // a failed read is not "no session"
       .catch(() => {});
   }, []);
 
@@ -429,7 +429,7 @@ export function TripPlanSection({
     async function pollSession() {
       try {
         const r = await getActiveSession();
-        if (cancelled) return;
+        if (cancelled || r.unavailable) return; // a 503 used to clear the running session's card until the next poll
         setActiveSafeReturnSession(r.session ?? null);
         if (r.session?.status === 'missed') setShowMissedPrompt(true);
       } catch { /* advisory — silently ignore */ }

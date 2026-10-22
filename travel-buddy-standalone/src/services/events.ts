@@ -225,9 +225,9 @@ export interface ListEventsParams {
   nearLat?: number;
   nearLng?: number;
   nearRadiusKm?: number;
-  free?: boolean;
-  verifiedHostOnly?: boolean;
-  capacityAvailable?: boolean;
+  // free / verifiedHostOnly / capacityAvailable are gone: GET /events (server events.ts) never read them,
+  // so the Events tab's "Free", "Verified host" and "Spots available" chips showed as active and filtered
+  // nothing. They come back as params only when the server implements them.
   page?: number;
   limit?: number;
 }
@@ -235,18 +235,18 @@ export interface ListEventsParams {
 export async function listEvents(
   params: ListEventsParams = {},
 ): Promise<ApiResult<{ events: EventListItem[]; page: number; limit: number }>> {
-  const qs = new URLSearchParams();
+  if (params.nearLat != null && params.nearLng != null) return listEventsNear(params); const qs = new URLSearchParams(); // near-me → GET /events/nearby (below): GET /events reads no location, so "Near me" and the map's events layer were shown the global feed
   if (params.state)           qs.set('state', params.state);
   if (params.city)            qs.set('city', params.city);
   if (params.category)        qs.set('category', params.category);
   if (params.dateFrom)        qs.set('dateFrom', params.dateFrom);
   if (params.dateTo)          qs.set('dateTo', params.dateTo);
-  if (params.nearLat != null) qs.set('nearLat', String(params.nearLat));
-  if (params.nearLng != null) qs.set('nearLng', String(params.nearLng));
-  if (params.nearRadiusKm)        qs.set('nearRadiusKm', String(params.nearRadiusKm));
-  if (params.free)                qs.set('free', '1');
-  if (params.verifiedHostOnly)    qs.set('verifiedHostOnly', '1');
-  if (params.capacityAvailable)   qs.set('capacityAvailable', '1');
+  // GET /events reads state, city, category, dateFrom, dateTo, page and limit — nothing else
+  // (artifacts/api-server/src/routes/events.ts, the GET /events handler). nearLat / nearLng /
+  // nearRadiusKm used to be appended here and dropped by the server; a read with a location now
+  // returns above, via listEventsNear. free / verifiedHostOnly / capacityAvailable were appended
+  // here too and read by nobody — see ListEventsParams.
+  // GET /events/nearby has its own params (lat, lng, radiusKm) and its own windowing: listEventsNear.
   if (params.page)            qs.set('page', String(params.page));
   if (params.limit)           qs.set('limit', String(params.limit));
   const q = qs.toString();
@@ -643,7 +643,7 @@ export interface EventReminder {
 export async function getEventReminders(
   eventId: string,
 ): Promise<ApiResult<{ reminders: EventReminder[] }>> {
-  return apiCall(`/api/events/${eventId}/reminders`);
+  const r = await apiCall<{ reminders?: Record<string, unknown>[] }>(`/api/events/${eventId}/reminders`); return r.ok ? { ok: true, data: { reminders: (r.data?.reminders ?? []).map(normalizeEventReminder) } } : { ok: false, message: r.message }; // raw event_reminders rows (remind_at): the event screen read remindAt and showed "Invalid Date"
 }
 
 export async function createEventReminder(
@@ -651,10 +651,10 @@ export async function createEventReminder(
   remindAt: string,
   note?: string,
 ): Promise<ApiResult<EventReminder>> {
-  return apiCall(`/api/events/${eventId}/reminders`, {
+  const created = await apiCall<Record<string, unknown>>(`/api/events/${eventId}/reminders`, {
     method: 'POST',
     body: JSON.stringify({ remindAt, ...(note ? { note } : {}) }),
-  });
+  }); return created.ok ? { ok: true, data: created.data ? normalizeEventReminder(created.data) : undefined } : { ok: false, message: created.message }; // the 201 is the raw row too
 }
 
 export async function deleteEventReminder(
@@ -957,3 +957,72 @@ export async function previewSharedEvent(
   return r.ok && r.data?.event ? { ok: true, data: { ...r.data, event: normalizeEventSummary(r.data.event) } } : r;
 }
 
+// ── Events near a point (GET /events/nearby) ─────────────────────────────────
+//
+// The route that reads a location. It takes lat, lng, radiusKm (server clamps
+// to 1–200, default 50), page and limit (≤ 50) — and NOTHING else: no date,
+// state, city or category filter. It orders by starts_at ascending from the
+// beginning of time, so a finished event nearby sorts ahead of tonight's.
+//
+// So the window the caller asked for is applied here: an event is kept when it
+// overlaps [dateFrom, dateTo] — dateFrom defaults to NOW (an event that has
+// already ended is not "near me"), dateTo to open-ended. Pages are walked
+// forward (ascending starts_at makes "past the window" a stopping point) until
+// `limit` events are kept, a short page ends the list, or NEARBY_MAX_PAGES.
+// A failed page fails the whole read: a partial list would be shown as all
+// there is.
+const NEARBY_PAGE_SIZE = 50;
+const NEARBY_MAX_PAGES = 4;
+
+async function listEventsNear(
+  params: ListEventsParams,
+): Promise<ApiResult<{ events: EventListItem[]; page: number; limit: number }>> {
+  const want = Math.min(50, Math.max(1, params.limit ?? 20));
+  const from = params.dateFrom ? Date.parse(params.dateFrom) : Date.now();
+  const to = params.dateTo ? Date.parse(params.dateTo) : Number.POSITIVE_INFINITY;
+  const kept: EventListItem[] = [];
+  for (let page = 1; page <= NEARBY_MAX_PAGES; page++) {
+    const qs = new URLSearchParams({
+      lat: String(params.nearLat),
+      lng: String(params.nearLng),
+      page: String(page),
+      limit: String(NEARBY_PAGE_SIZE),
+    });
+    if (params.nearRadiusKm) qs.set('radiusKm', String(params.nearRadiusKm));
+    const r = await apiCall<{ events?: EventListItem[] }>(`/api/events/nearby?${qs.toString()}`);
+    if (!r.ok) return { ok: false, message: r.message };
+    const rows = r.data?.events ?? [];
+    let pastWindow = false;
+    for (const ev of rows) {
+      const start = ev.startsAt ? Date.parse(ev.startsAt) : NaN;
+      if (Number.isNaN(start)) continue; // undated: no "when" to place in the window
+      if (start > to) { pastWindow = true; break; }
+      const end = ev.endsAt ? Date.parse(ev.endsAt) : start;
+      if ((Number.isNaN(end) ? start : end) < from) continue; // already over
+      kept.push(ev);
+      if (kept.length >= want) break;
+    }
+    if (pastWindow || kept.length >= want || rows.length < NEARBY_PAGE_SIZE) break;
+  }
+  return { ok: true, data: { events: kept, page: 1, limit: want } };
+}
+
+// ── Reminder rows → EventReminder ────────────────────────────────────────────
+//
+// GET and POST /events/:id/reminders answer raw `event_reminders` rows —
+// `remind_at`, `event_id`, `user_id`, `created_at` (server events.ts: select("*")
+// and `res.status(201).json(reminder)`). The event screen reads `remindAt`; off a
+// raw row that was undefined and "Reminder set for Invalid Date". Either casing
+// is accepted, so a server that starts answering camelCase keeps working.
+function normalizeEventReminder(row: Record<string, unknown>): EventReminder {
+  const pick = (camel: string, snake: string): unknown => row[camel] ?? row[snake];
+  return {
+    id: String(row.id ?? ''),
+    eventId: String(pick('eventId', 'event_id') ?? ''),
+    userId: String(pick('userId', 'user_id') ?? ''),
+    remindAt: String(pick('remindAt', 'remind_at') ?? ''),
+    note: typeof row.note === 'string' ? row.note : null,
+    sent: row.sent === true,
+    createdAt: String(pick('createdAt', 'created_at') ?? ''),
+  };
+}

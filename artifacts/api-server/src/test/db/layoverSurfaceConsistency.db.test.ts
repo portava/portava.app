@@ -22,7 +22,7 @@ describe('L6/L50 migrated all-consumer consistency', { skip: PRESSED_SKIP_REASON
  after(async()=>{Date.now=realNow;await app?.close();await db?.close();});
  it('overview, safety, plan/map, Compass and generated experiences share one canonical identity across later requests',async()=>{
   const overview=await app.call('GET',endpoint('overview'),owner);assert.equal(overview.status,200,overview.raw);
-  snapshotId=overview.body.snapshotId;inputHash=overview.body.certification.inputHash;assert.ok(snapshotId&&inputHash);
+  snapshotId=overview.body.snapshotId;inputHash=overview.body.certification.inputHash;assert.ok(snapshotId&&inputHash);assert.equal(overview.body.snapshotComparable,true,'a canonical overview says its id can be compared — the client keys routed-map refreshes on it');
   for(const [method,suffix,body] of [['GET','safety',undefined],['GET','stops',undefined],['POST','compass',{question:'Can I leave the airport?'}]] as const){
    now+=100;const r=await app.call(method,endpoint(suffix),owner,body);assert.equal(r.status,200,r.raw);assert.equal(r.body.certification.inputHash,inputHash,suffix);
    if(r.body.snapshotId)assert.equal(r.body.snapshotId,snapshotId,suffix);
