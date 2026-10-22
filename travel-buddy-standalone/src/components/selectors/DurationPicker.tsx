@@ -171,7 +171,8 @@ const s = StyleSheet.create({
   title: { ...t.heading, color: color.ink, flex: 1 },
   closeBtn: { padding: 4 },
   current: { ...t.small, color: color.signal, fontWeight: '600', paddingHorizontal: space.xl, paddingBottom: space.sm },
-  scroll: { flex: 1 },
+  // Content-sized, shrinking only past the sheet's maxHeight — `flex: 1` laid the list out to 0pt (see GlobalTimePicker).
+  scroll: { flexGrow: 0, flexShrink: 1 },
   list: { paddingHorizontal: space.xl, paddingBottom: space.lg },
   row: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',

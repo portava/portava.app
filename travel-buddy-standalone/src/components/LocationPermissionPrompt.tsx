@@ -53,6 +53,11 @@ export function LocationPermissionPrompt() {
               : 'Unlock nearby travelers, stamps, postcards, and local discovery.'}
           </Text>
 
+          {/* Why the last attempt failed (timeout, no signal, permission) — it used to fail silently back to the button. */}
+          {!isLoading && locationState.userMessage ? (
+            <Text style={s.failure} accessibilityRole="alert">{locationState.userMessage}</Text>
+          ) : null}
+
           {/* Buttons */}
           <View style={s.actions}>
             {!isDenied && (
@@ -122,6 +127,12 @@ const s = StyleSheet.create({
   body: {
     ...t.body,
     color: color.mute,
+    textAlign: 'center',
+    marginBottom: space.sm,
+  },
+  failure: {
+    ...t.small,
+    color: color.ink,
     textAlign: 'center',
     marginBottom: space.sm,
   },

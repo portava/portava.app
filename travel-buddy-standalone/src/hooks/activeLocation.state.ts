@@ -268,3 +268,32 @@ export function buildAccountChangeState(prev: ActiveLocationState): ActiveLocati
 export function accountChanged(held: string | null, next: string | null): boolean {
   return held !== next;
 }
+
+/**
+ * The Place a SAVED location state restores to on launch.
+ *
+ * GET /api/me/location-state returns the place WITHOUT an id — `{ city, district, country, countryCode, formatted }`
+ * (artifacts/api-server/src/routes/location.ts) — while a full Place or a legacy LocationPlace carries one. The restore
+ * used to require an id, so a city found by GPS fell back to EMPTY_PLACE while `ok` stayed true (the coords exist):
+ * home asked for a city again on every relaunch, and only a manual city (which has its own field) survived. Absent
+ * id / name / displayName / lat / lng are derived; anything the saved place carries wins.
+ */
+export function savedPlaceFromApi(
+  saved: Partial<Place> & { formatted?: string | null },
+  coords: { lat: number; lng: number } | null | undefined,
+): Place {
+  const { formatted, ...fields } = saved;
+  const city = fields.city ?? null;
+  const country = fields.country ?? null;
+  const name = fields.name || city || country || '';
+  return {
+    ...EMPTY_PLACE,
+    ...fields,
+    id: fields.id || `last-${name.toLowerCase().replace(/\s+/g, '-')}`,
+    name,
+    displayName: fields.displayName || formatted || (city && country ? `${city}, ${country}` : name),
+    lat: fields.lat ?? coords?.lat ?? null,
+    lng: fields.lng ?? coords?.lng ?? null,
+    source: 'recent',
+  };
+}
