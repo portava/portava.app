@@ -2625,7 +2625,7 @@ function FullScreenMapScreenInner() {
         // Gated inside DiscoveryMapView on the SDK's userInteraction flag, so a
         // programmatic easeTo (recenter, carousel, focus) never lands here.
         onUserPan={() => dispatchMapEvent({ type: 'USER_PANNED' })}
-        filterRowOffset={mapTopControlsBottom(insets.top) /* the free space starts under MapTopControls' card, not under the chips: at chips + 8 the All / Picks / Venues row drew at 180pt, behind the card (166–218pt) */}
+        filterRowOffset={mapTopControlsBottom(insets.top) /* the free space starts under MapTopControls' card, not under the chips: at chips + 8 the All / Picks / Venues row drew at 180pt, behind the card (166–218pt) */} topInset={mapTopControlsBottom(insets.top) /* and the map's legend and travelers buttons with it: with no topInset they sat at 14 / 58pt, behind the status bar and MapHeader */}
         onLongPressMap={handleMapLongPress}
       />
 
@@ -3575,10 +3575,10 @@ const MAP_NOTICE_RUNG = 26;
  * Where the map's notices start: under the whole floating stack — MapHeader, the filter chips, and MapTopControls'
  * card (its space.sm drop plus a 44pt button row in space.xs padding) — with a space.sm gap. At a fixed top 0 / 26 /
  * 52 the "Using city location" banner sat behind the status bar and the Dynamic Island, and the passport / circle pill
- * under the map header (zIndex 30), so the traveller could read neither. DiscoveryMapView's own filter row now hangs under the card too, so the notices start under that row.
+ * under the map header (zIndex 30), so the traveller could read neither. DiscoveryMapView's own controls (filter row, legend and travelers buttons) now hang under the card too, so the notices start under the lowest of them.
  */
 function mapNoticeTop(safeAreaTop: number): number {
-  return mapTopControlsBottom(safeAreaTop) + DISCOVERY_FILTER_ROW_TOP + DISCOVERY_FILTER_ROW_HEIGHT + space.sm;
+  return mapTopControlsBottom(safeAreaTop) + DISCOVERY_TRAVELERS_BTN_TOP + avatar.s36 + space.sm;
 }
 
 /** The bottom of the floating stack: MapHeader, the filter chips, and MapTopControls' card (its space.sm drop plus a 44pt
@@ -3587,7 +3587,7 @@ function mapTopControlsBottom(safeAreaTop: number): number {
   return mapHeaderStackOffset(safeAreaTop) + MAP_FILTER_CHIPS_HEIGHT + space.sm + avatar.s44 + 2 * space.xs;
 }
 
-/** DiscoveryMapView's All / Picks / Venues row: drawn 14pt below its filterRowOffset (s.filterRow), 36pt tall — 3pt of
- *  padding around a button of 7pt padding and a 13pt label. Always rendered, so the notices always clear it. */
-const DISCOVERY_FILTER_ROW_TOP = 14;
-const DISCOVERY_FILTER_ROW_HEIGHT = 36;
+/** DiscoveryMapView's controls hang from the topInset /map gives it (mapTopControlsBottom): the All / Picks / Venues row
+ *  and the legend button 14pt below it, the travelers button 58pt below it (s.travelersBtn), avatar.s36 tall — the
+ *  lowest of them. They are always rendered, so the notices always clear them. */
+const DISCOVERY_TRAVELERS_BTN_TOP = 58;
