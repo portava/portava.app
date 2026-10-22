@@ -6,7 +6,7 @@
  * - GET / without expo-platform → landing page HTML
  * Everything else falls through to static file serving from ./static-build/.
  *
- * Zero external dependencies — uses only Node.js built-ins (http, fs, path).
+ * Node.js built-ins (http, fs, path), plus `qrcode`, loaded only when /qr-code.png is first asked for.
  */
 
 const http = require("http");
@@ -70,14 +70,14 @@ function serveLandingPage(req, res, landingPageTemplate, appName) {
   const protocol = forwardedProto || "https";
   const host = req.headers["x-forwarded-host"] || req.headers["host"];
   const baseUrl = `${protocol}://${host}`;
-  const expsUrl = `${host}`;
+  const assetPrefix = basePath || ""; // the page's own script and QR are served beside it (serveLandingScript / serveQrCode, at the foot)
 
   const html = landingPageTemplate
-    .replace(/BASE_URL_PLACEHOLDER/g, baseUrl)
-    .replace(/EXPS_URL_PLACEHOLDER/g, expsUrl)
-    .replace(/APP_NAME_PLACEHOLDER/g, appName);
+    .replace(/BASE_URL_PLACEHOLDER/g, () => escapeHtml(baseUrl)).replace(/ASSET_PREFIX_PLACEHOLDER/g, () => escapeHtml(assetPrefix))
+    .replace(/(IOS|ANDROID)_INSTALL_PLACEHOLDER/g, (_, os) => installBlock(os === "IOS" ? "ios" : "android")) // Expo Go cannot run this SDK 54 app: the native build is the install path (installBlock, at the foot)
+    .replace(/APP_NAME_PLACEHOLDER/g, () => escapeHtml(appName));
 
-  res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+  res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" });
   res.end(html);
 }
 
@@ -380,7 +380,7 @@ function serveStaticFile(urlPath, res) {
   res.end(content);
 }
 
-function createRequestHandler(landingPageTemplate, appName) {
+function createRequestHandler(landingPageTemplate, appName, renderQrPng = renderLandingQrPng) {
   return (req, res) => {
   const url = new URL(req.url || "/", `http://${req.headers.host}`);
   let pathname = url.pathname;
@@ -391,7 +391,7 @@ function createRequestHandler(landingPageTemplate, appName) {
 
   // Association files must resolve before any basePath/static handling — Apple
   // and Google fetch them at the domain root with no redirects allowed.
-  if (req.method === "GET" || req.method === "HEAD") {
+  if (req.method === "GET" || req.method === "HEAD") { if (pathname === "/landing-page.js") return serveLandingScript(req, res); if (pathname === "/qr-code.png") return serveQrCode(req, res, renderQrPng); // the landing page's own assets: helmet's CSP allows script-src 'self' only, so no inline script and no CDN QR library
     const wellKnown = url.pathname; // deliberately pre-basePath
     if (wellKnown === "/.well-known/apple-app-site-association") {
       return serveAppleAppSiteAssociation(res);
@@ -442,6 +442,74 @@ module.exports = {
   serveAppleAppSiteAssociation,
   serveAssetLinks,
 };
+
+// ── Landing page: the supported install path, its script and its QR ──────────
+//
+// Expo Go cannot open Portava: the App Store's Expo Go runs one SDK (57 on
+// 2026-10-22), Portava is SDK 54, and MapLibre needs a native build anyway. So
+// the page sends people to the native build instead. Its links come from the
+// deployment (committed in .replit [userenv.production]) and only https links
+// on the stores and Expo's build pages are accepted, so a typo can never send
+// a traveller somewhere else; with no link set, the page says so plainly.
+
+const LANDING_SCRIPT_PATH = path.resolve(__dirname, "templates", "landing-page.js");
+const INSTALL_LINKS = {
+  ios: { env: "PORTAVA_IOS_INSTALL_URL", hosts: { "testflight.apple.com": "Open the Portava invite in TestFlight", "apps.apple.com": "Get Portava on the App Store", "expo.dev": "Install the Portava iPhone build" },
+    pending: "The iPhone invite link isn't open yet. If you've been invited, the email from TestFlight has your link." },
+  android: { env: "PORTAVA_ANDROID_INSTALL_URL", hosts: { "play.google.com": "Get Portava on Google Play", "expo.dev": "Install the Portava Android build" },
+    pending: "Portava for Android isn't available to install yet." },
+};
+
+/** The configured install link for `os`, or null when it is unset or not an https link on an allowed host. */
+function installLink(os) {
+  const spec = INSTALL_LINKS[os];
+  const raw = (process.env[spec.env] || "").trim();
+  if (!raw) return null;
+  try {
+    const u = new URL(raw);
+    return u.protocol === "https:" && !u.username && !u.password && Object.hasOwn(spec.hosts, u.hostname) ? { href: u.href, label: spec.hosts[u.hostname] } : null;
+  } catch {
+    return null;
+  }
+}
+
+function installBlock(os) {
+  const link = installLink(os);
+  if (!link) return `<p class="install-pending">${escapeHtml(INSTALL_LINKS[os].pending)}</p>`;
+  return `<a class="store-button primary" href="${escapeHtml(link.href)}" rel="noopener">${escapeHtml(link.label)}</a>`;
+}
+
+function serveLandingScript(req, res) {
+  const script = fs.readFileSync(LANDING_SCRIPT_PATH);
+  res.writeHead(200, { "content-type": "application/javascript; charset=utf-8", "cache-control": "public, max-age=300", "x-content-type-options": "nosniff" });
+  res.end(req.method === "HEAD" ? undefined : script);
+}
+
+/** The QR opens THIS page on a phone (which then shows that phone's install path) — never an exps:// Expo Go link. */
+function serveQrCode(req, res, renderQrPng) {
+  const host = req.headers["x-forwarded-host"] || req.headers["host"];
+  if (typeof renderQrPng !== "function" || !host) {
+    res.writeHead(503, { "cache-control": "no-store" });
+    res.end("QR code unavailable");
+    return;
+  }
+  Promise.resolve()
+    .then(() => renderQrPng(`https://${host}${basePath}/`))
+    .then((png) => {
+      res.writeHead(200, { "content-type": "image/png", "cache-control": "no-store", "x-content-type-options": "nosniff" });
+      res.end(req.method === "HEAD" ? undefined : png);
+    })
+    .catch(() => {
+      res.writeHead(500, { "cache-control": "no-store" });
+      res.end("QR code unavailable");
+    });
+}
+
+function renderLandingQrPng(data) {
+  return require("qrcode").toBuffer(data, { errorCorrectionLevel: "H", margin: 2, width: 400 });
+}
+
+module.exports.installLink = installLink;
 
 if (require.main === module) {
   const landingPageTemplate = fs.readFileSync(TEMPLATE_PATH, "utf-8");
