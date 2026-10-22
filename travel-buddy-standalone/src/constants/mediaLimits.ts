@@ -26,5 +26,5 @@ export const VIDEO_MAX_DURATION_SECONDS = {
 
 export type VideoSurface = keyof typeof VIDEO_MAX_DURATION_SECONDS;
 
-export const ACCEPTED_VIDEO_TYPES = ['video/mp4'] as const;
+export const ACCEPTED_VIDEO_TYPES = ['video/mp4', 'video/quicktime'] as const; // the iPhone camera always records .mov, and the server stores QuickTime (lib/mediaPipeline.ts ALLOWED_MEDIA_MIME) — rejecting it made every recording "Unsupported" (owner's iPhone, 2026-10-22)
 export const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const;

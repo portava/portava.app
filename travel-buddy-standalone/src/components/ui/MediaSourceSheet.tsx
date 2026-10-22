@@ -33,7 +33,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { Camera, ImageIcon, X } from 'lucide-react-native';
 import { color, space, radius, type as t, avatar } from '../../theme/tokens.ts';
 import { VideoStoryTrimSheet } from './VideoStoryTrimSheet.tsx';
-import { CAPTURE_QUALITY } from '../../constants/mediaLimits.ts';
+import { CAPTURE_QUALITY } from '../../constants/mediaLimits.ts'; import { COMPATIBLE_LIBRARY_OPTIONS, normalizeForUpload } from '../../lib/media/normalizeUpload.ts';
 
 export interface MediaSourceSheetProps {
   visible: boolean;
@@ -150,9 +150,9 @@ export function MediaSourceSheet({
         allowsEditing: effectiveAllowsEditing,
         aspect: effectiveAllowsEditing ? aspect : undefined,
       });
-      setBusy(null);
-      if (result.canceled || !result.assets?.[0]) return;
-      deliverAsset(result.assets[0]);
+      const picked = result.canceled || !result.assets?.[0] ? null : await normalizeForUpload(result.assets[0]); setBusy(null); // re-encoded (HEIC → JPEG, oversize → fitted) while the sheet still shows busy
+      if (!picked) return;
+      deliverAsset(picked);
     } catch {
       setBusy(null);
     }
@@ -193,16 +193,16 @@ export function MediaSourceSheet({
       const mediaTypes: ImagePicker.MediaType[] = allowsVideo
         ? ['images', 'videos']
         : ['images'];
-      const result = await ImagePicker.launchImageLibraryAsync({
+      const result = await ImagePicker.launchImageLibraryAsync({ ...COMPATIBLE_LIBRARY_OPTIONS, // JPEG not HEIC, H.264 MP4 not HEVC, aspect ratio kept
         mediaTypes,
         allowsEditing: effectiveAllowsEditing,
         aspect: effectiveAllowsEditing ? aspect : undefined,
         quality: CAPTURE_QUALITY,
         videoMaxDuration: allowsVideo ? videoMaxDuration : undefined,
       });
-      setBusy(null);
-      if (result.canceled || !result.assets?.[0]) return;
-      deliverAsset(result.assets[0]);
+      const picked = result.canceled || !result.assets?.[0] ? null : await normalizeForUpload(result.assets[0]); setBusy(null); // re-encoded (HEIC → JPEG, oversize → fitted) while the sheet still shows busy
+      if (!picked) return;
+      deliverAsset(picked);
     } catch {
       setBusy(null);
     }

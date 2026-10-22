@@ -27,7 +27,7 @@ import { uploadIdFor, abandonMessageMediaUpload } from '../services/media/messag
 import { deviceResumableTransport } from '../services/media/uploadHttp.ts';
 import type { PickedMedia } from '../services/media.ts';
 import { useMediaComposer } from './useMediaComposer.ts';
-import { CAPTURE_QUALITY } from '../constants/mediaLimits.ts';
+import { CAPTURE_QUALITY } from '../constants/mediaLimits.ts'; import { COMPATIBLE_LIBRARY_OPTIONS, normalizeForUpload } from '../lib/media/normalizeUpload.ts';
 
 export type PickerUploadState = 'idle' | 'picking' | 'previewing' | 'uploading' | 'done' | 'failed';
 
@@ -171,14 +171,14 @@ export function useMessageMediaPicker(): UseMessageMediaPickerReturn {
       return;
     }
     setState('picking');
-    const result = await ImagePicker.launchImageLibraryAsync({
+    const result = await ImagePicker.launchImageLibraryAsync({ ...COMPATIBLE_LIBRARY_OPTIONS, // JPEG not HEIC, H.264 MP4 not HEVC, aspect ratio kept
       mediaTypes: ['images'],
       allowsEditing: false,
       quality: CAPTURE_QUALITY,
     });
     setState((s) => (s === 'picking' ? 'idle' : s));
     if (!result.canceled && result.assets[0]) {
-      mediaComposer.onPickResult(result.assets[0]);
+      mediaComposer.onPickResult(await normalizeForUpload(result.assets[0])); // uploadable before validation (lib/media/normalizeUpload)
     }
   }, [mediaComposer.onPickResult]);
 
@@ -203,7 +203,7 @@ export function useMessageMediaPicker(): UseMessageMediaPickerReturn {
     });
     setState((s) => (s === 'picking' ? 'idle' : s));
     if (!result.canceled && result.assets[0]) {
-      mediaComposer.onPickResult(result.assets[0]);
+      mediaComposer.onPickResult(await normalizeForUpload(result.assets[0])); // uploadable before validation (lib/media/normalizeUpload)
     }
   }, [mediaComposer.onPickResult]);
 
@@ -221,7 +221,7 @@ export function useMessageMediaPicker(): UseMessageMediaPickerReturn {
       return;
     }
     setState('picking');
-    const result = await ImagePicker.launchImageLibraryAsync({
+    const result = await ImagePicker.launchImageLibraryAsync({ ...COMPATIBLE_LIBRARY_OPTIONS, // JPEG not HEIC, H.264 MP4 not HEVC, aspect ratio kept
       mediaTypes: ['videos'],
       allowsEditing: false,
       // Deliberately NOT CAPTURE_QUALITY: for video, expo-image-picker's
@@ -233,7 +233,7 @@ export function useMessageMediaPicker(): UseMessageMediaPickerReturn {
     });
     setState((s) => (s === 'picking' ? 'idle' : s));
     if (!result.canceled && result.assets[0]) {
-      mediaComposer.onPickResult(result.assets[0]);
+      mediaComposer.onPickResult(await normalizeForUpload(result.assets[0])); // uploadable before validation (lib/media/normalizeUpload)
     }
   }, [mediaComposer.onPickResult]);
 
