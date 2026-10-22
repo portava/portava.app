@@ -88,4 +88,10 @@ describe('eas.json production-backed profiles', () => {
     assert.equal(eas.build.production.autoIncrement, true);
     assert.equal(eas.build.preview.distribution, 'internal');
   });
+
+  it('build numbers are counted by EAS, not by whichever checkout ran the build', () => {
+    // With the default (local) source, autoIncrement rewrites app.json in the building checkout only: a build from Replit
+    // and one from a laptop would both upload buildNumber 3, and App Store Connect refuses the second.
+    assert.equal((eas as unknown as { cli?: { appVersionSource?: string } }).cli?.appVersionSource, 'remote');
+  });
 });
