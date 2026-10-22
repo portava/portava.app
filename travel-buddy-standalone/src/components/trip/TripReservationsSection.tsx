@@ -12,7 +12,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator, KeyboardAvoidingView, Platform,
+  ActivityIndicator,
   Modal,
   Pressable,
   ScrollView,
@@ -43,6 +43,7 @@ import {
   type TripReservation,
 } from '../../services/tripIntel.ts';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { KeyboardSafeScrollView } from '../ui/KeyboardSafeView.tsx';
 
 // ── Type icon map ─────────────────────────────────────────────────────────────
 
@@ -364,7 +365,7 @@ export function ImportSheet({
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onDismiss}>
-      <KeyboardAvoidingView style={sh.overlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined /* the keyboard rose over this bottom sheet and hid "Extract reservations"; a multiline box has no return key to dismiss it */}>
+      <KeyboardSafeScrollView style={sh.overlay /* the keyboard rose over this bottom sheet and hid "Extract reservations"; a multiline box has no return key to dismiss it. The sheet keeps its own paste ScrollView, so this is the bare wrapper. */}>
         <View style={sh.sheet}>
           {/* Header */}
           <View style={sh.header}>
@@ -451,7 +452,7 @@ export function ImportSheet({
             </ScrollView>
           )}
         </View>
-      </KeyboardAvoidingView>
+      </KeyboardSafeScrollView>
     </Modal>
   );
 }

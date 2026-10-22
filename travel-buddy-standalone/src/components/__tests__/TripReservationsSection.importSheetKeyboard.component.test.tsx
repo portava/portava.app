@@ -3,9 +3,9 @@
  *
  * The sheet sits at the bottom of a transparent Modal. Focusing the multiline text box raised the iOS keyboard over the
  * bottom of the sheet, hiding "Extract reservations", and a multiline box has no return key that dismisses the keyboard,
- * so the traveller could paste a confirmation and then not submit it. The overlay is now a KeyboardAvoidingView
- * (padding on iOS, as TripBudgetSection's sheets do) and the paste body a shrinkable ScrollView whose taps land while
- * the keyboard is up.
+ * so the traveller could paste a confirmation and then not submit it. The overlay is now the house KeyboardSafeScrollView
+ * (a KeyboardAvoidingView, padding on iOS — raw ones are refused by scripts/check-keyboard-avoiding-view.mjs) and the
+ * paste body a shrinkable ScrollView whose taps land while the keyboard is up.
  *
  * Jest computes no keyboard or layout, so this pins the structure and props that decide it.
  */
@@ -44,7 +44,7 @@ function enclosingScrollView(node: any): any {
 }
 
 describe('ImportSheet — keyboard', () => {
-  it('the whole sheet sits inside a KeyboardAvoidingView that pads on iOS', async () => {
+  it('the whole sheet sits inside a keyboard-avoiding view that pads on iOS', async () => {
     await render(<ImportSheet tripId="trip-1" visible onDismiss={() => {}} onImported={() => {}} />);
     const kav = screen.getByTestId('keyboard-avoiding') as any;
     expect(kav.props.behavior).toBe('padding');
