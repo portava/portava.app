@@ -49,7 +49,7 @@ interface TripReadinessCardProps {
    * to the legacy `trips.progress` column, and on `unavailable` it may not —
    * that fallback is how a failed read used to become a 0% progress ring.
    */
-  onSummary?: (read: ReadinessRead) => void;
+  onSummary?: (read: ReadinessRead) => void; /** Opens where a category is added (owner's iPhone, 2026-10-22: the card listed stay, transport, budget, entry, documents and reservations as missing and none of them led anywhere). */ onFix?: (category: string) => void; /** Categories this traveller cannot add here, with the reason shown instead of a CTA. */ unavailable?: Readonly<Record<string, string>>;
 }
 
 // The seven standard readiness categories (display order + labels)
@@ -126,16 +126,16 @@ function CriticalItemRow({ item }: { item: ReadinessItem }) {
   return content;
 }
 
-function CategoryRow({ label, status, because }: { label: string; status: ItemStatus | null; because: string | null }) {
-  return (
+function CategoryRow({ label, status, because, onFix, note }: { label: string; status: ItemStatus | null; because: string | null; onFix?: () => void; note?: string | null }) {
+  const row = (
     <View style={s.catRow}>
       <StatusIcon status={status} />
       <View style={{ flex: 1 }}>
         <Text style={s.catLabel}>{label}</Text>
-        {because ? <Text style={s.catBecause} testID={`readiness-because-${label.toLowerCase()}`}>{because}</Text> : null}
-      </View>
-    </View>
-  );
+        {because ? <Text style={s.catBecause} testID={`readiness-because-${label.toLowerCase()}`}>{because}</Text> : null}{note ? <Text style={s.catBecause} testID={`readiness-note-${label.toLowerCase()}`}>{note}</Text> : null}
+      </View>{onFix ? <Text style={s.criticalCta}>Add →</Text> : null}
+    </View>);
+  return onFix ? <Pressable onPress={onFix} accessibilityRole="button" accessibilityLabel={`${label}: add it`} testID={`readiness-row-${label.toLowerCase()}`}>{row}</Pressable> : row;
 }
 
 /**
@@ -178,7 +178,7 @@ function ExplanationHeader({
   );
 }
 
-export function TripReadinessCard({ tripId, refresh = false, onSummary }: TripReadinessCardProps) {
+export function TripReadinessCard({ tripId, refresh = false, onSummary, onFix, unavailable }: TripReadinessCardProps) {
   const [read, setRead] = useState<ReadinessRead | undefined>(undefined); // undefined = loading
   const [loading, setLoading] = useState(true);
 
@@ -275,7 +275,10 @@ export function TripReadinessCard({ tripId, refresh = false, onSummary }: TripRe
             ? worstStatus(items)
             : summaryStatus ?? null;
           const because = summary.explanation?.byCategory.find((c) => c.category === key)?.because ?? null;
-          return <CategoryRow key={key} label={label} status={status} because={because} />;
+          // A row that says something is missing leads to where it is added; one this traveller cannot add says why.
+          const note = unavailable?.[key] ?? null;
+          const fixable = !!onFix && !note && (status === 'incomplete' || status === 'action_needed');
+          return <CategoryRow key={key} label={label} status={status} because={because} note={note} onFix={fixable ? () => onFix(key) : undefined} />;
         })}
       </View>
     </View>

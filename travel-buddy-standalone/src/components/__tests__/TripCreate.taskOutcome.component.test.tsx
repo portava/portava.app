@@ -222,3 +222,10 @@ describe('Create trip — the task its Input fields served (G320)', () => {
     expect(outcomes().map((e) => e.fieldId)).toEqual([]);
   });
 });
+
+// NOTE: intentionally exhaustive — the AI title button exists only while the server's AI-writing flag is on (it is
+// off in production); T6 is about an accepted AI title, so the flag is on here. The gate: TripCreate.aiWritingGate.
+// (Appended at the foot — jest.mock is hoisted — so the lines census-input-intelligence.md cites keep their numbers.)
+jest.mock('../../context/FeatureFlagsContext', () => ({
+  useFeatureFlags: () => ({ isEnabled: (k: string) => k === 'compass_ai_writing_enabled' }),
+}));

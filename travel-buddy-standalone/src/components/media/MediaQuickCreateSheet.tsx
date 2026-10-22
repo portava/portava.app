@@ -5,7 +5,7 @@
  *   - The viewer is in Gems mode, OR showGemEntry is explicitly passed as true
  *   - The MEDIA_HIDDEN_GEMS_CREATE_ENABLED feature flag is on
  *
- * Tapping a standard option routes to /create (which opens the UnifiedPostComposer).
+ * A standard option opens the screen CreateHubSheet opens for it (none yet → "Soon").
  * Tapping "Add a Gem" routes to /media/add-gem.
  */
 import React from 'react';
@@ -31,7 +31,7 @@ import {
   X,
 } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow, avatar } from '../../theme/tokens.ts';
-import { useFeatureFlags } from '../../context/FeatureFlagsContext.tsx';
+import { useFeatureFlags } from '../../context/FeatureFlagsContext.tsx'; import { createHubRouteFor } from '../create/CreateHubSheet.tsx'; // the hub's route table — on this line so line 128 (cited) does not move
 
 // ── Entry definitions ──────────────────────────────────────────────────────────
 
@@ -41,7 +41,7 @@ interface QuickEntry {
   sublabel: string;
   icon: React.ComponentType<{ size: number; color: string; strokeWidth?: number }>;
   iconColor: string;
-  /** When set, navigate to this route. When null, close sheet and push /create. */
+  /** Own route. When unset, the Create hub's route for this id; none → "Soon". */
   route?: string;
 }
 
@@ -128,15 +128,17 @@ export function MediaQuickCreateSheet({
   const gemEnabled = isEnabled('MEDIA_HIDDEN_GEMS_CREATE_ENABLED');
   const showGem = showGemEntry && gemEnabled;
 
-  function handleStandardEntry() {
+  // On the owner's iPhone (2026-10-22) Story, Memory, Event, Trip, Plan and
+  // Group activity all opened /create — the camera — because the standard
+  // rows shared one handler that never looked at which row was tapped. Each
+  // row now opens what the Create hub opens for the same id (routeFor), and a
+  // row with no live screen is "Soon" there and here: it is disabled rather
+  // than falling back to /create.
+  function handleEntry(entry: QuickEntry) {
+    const target = routeFor(entry);
+    if (!target) return; // coming soon — row is not tappable
     onClose();
     // Small delay so the modal animation plays cleanly before navigating.
-    setTimeout(() => router.push('/create'), 80);
-  }
-
-  function handleEntry(entry: QuickEntry) {
-    onClose();
-    const target = entry.route ?? '/create';
     setTimeout(() => router.push(target as any), 80);
   }
 
@@ -180,7 +182,8 @@ export function MediaQuickCreateSheet({
             <EntryRow
               key={entry.id}
               entry={entry}
-              onPress={handleStandardEntry}
+              onPress={() => handleEntry(entry)}
+              comingSoon={!routeFor(entry)}
             />
           ))}
         </ScrollView>
@@ -189,34 +192,63 @@ export function MediaQuickCreateSheet({
   );
 }
 
+// ── Routing ───────────────────────────────────────────────────────────────────
+
+/**
+ * Where a row goes: its own route (Add a Gem → /media/add-gem), otherwise the
+ * route CreateHubSheet gives the same id — the hub's table is the one source,
+ * so the two create menus cannot send one label to two screens. Undefined
+ * means no live screen yet (Plan; Group activity has no hub entry at all).
+ */
+function routeFor(entry: QuickEntry): string | undefined {
+  return entry.route ?? createHubRouteFor(entry.id);
+}
+
 // ── EntryRow ──────────────────────────────────────────────────────────────────
 
 interface EntryRowProps {
   entry: QuickEntry;
   onPress: () => void;
   highlight?: boolean;
+  /** No live destination yet — rendered disabled with a "Soon" badge, as in CreateHubSheet. */
+  comingSoon?: boolean;
 }
 
-function EntryRow({ entry, onPress, highlight }: EntryRowProps) {
+function EntryRow({ entry, onPress, highlight, comingSoon = false }: EntryRowProps) {
   const IconComponent = entry.icon;
   return (
     <Pressable
       style={({ pressed }) => [
         styles.row,
         highlight && styles.rowHighlight,
-        pressed && styles.rowPressed,
+        comingSoon && styles.rowDisabled,
+        !comingSoon && pressed && styles.rowPressed,
       ]}
-      onPress={onPress}
+      onPress={comingSoon ? undefined : onPress}
       accessibilityRole="button"
       accessibilityLabel={entry.label}
+      accessibilityState={{ disabled: comingSoon }}
     >
       <View style={[styles.iconWrap, { backgroundColor: `${entry.iconColor}18` }]}>
         <IconComponent size={20} color={entry.iconColor} strokeWidth={1.8} />
       </View>
       <View style={styles.rowText}>
-        <Text style={[styles.rowLabel, highlight && styles.rowLabelHighlight]}>
-          {entry.label}
-        </Text>
+        <View style={styles.rowLabelRow}>
+          <Text
+            style={[
+              styles.rowLabel,
+              highlight && styles.rowLabelHighlight,
+              comingSoon && styles.rowLabelMuted,
+            ]}
+          >
+            {entry.label}
+          </Text>
+          {comingSoon && (
+            <View style={styles.soonBadge}>
+              <Text style={styles.soonText}>Soon</Text>
+            </View>
+          )}
+        </View>
         <Text style={styles.rowSub} numberOfLines={1}>
           {entry.sublabel}
         </Text>
@@ -286,6 +318,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#10B98130',
   },
+  rowDisabled: {
+    opacity: 0.55,
+  },
   rowPressed: {
     backgroundColor: color.haze,
   },
@@ -300,6 +335,11 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: 2,
   },
+  rowLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
   rowLabel: {
     ...t.bodyStrong,
     color: color.ink,
@@ -307,8 +347,26 @@ const styles = StyleSheet.create({
   rowLabelHighlight: {
     color: '#065F46',
   },
+  rowLabelMuted: {
+    color: color.mute,
+  },
   rowSub: {
     ...t.small,
     color: color.mute,
+  },
+  // "Soon" badge — same look as CreateHubSheet's, so a not-yet-live entry reads the same in both menus.
+  soonBadge: {
+    backgroundColor: color.paperRaised,
+    borderWidth: 1,
+    borderColor: color.haze,
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+  },
+  soonText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: color.mute,
+    letterSpacing: 0.3,
   },
 });

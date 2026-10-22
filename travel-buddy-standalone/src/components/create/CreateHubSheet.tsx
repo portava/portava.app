@@ -137,6 +137,16 @@ const CONTRIBUTE_ENTRIES: HubEntry[] = [
   },
 ];
 
+/**
+ * The hub's route for an entry id — undefined when the hub shows that entry as
+ * "Soon" or has no such entry. MediaQuickCreateSheet (the Media tab's create
+ * menu) resolves its rows through this: on the owner's iPhone (2026-10-22) its
+ * own copy sent every row to /create, so the table now lives in one place.
+ */
+export function createHubRouteFor(id: string): string | undefined {
+  return [...SHARE_ENTRIES, ...PLAN_ENTRIES, ...CONTRIBUTE_ENTRIES].find((e) => e.id === id)?.route;
+}
+
 // ── Props ──────────────────────────────────────────────────────────────────────
 
 export interface CreateHubSheetProps {

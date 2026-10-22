@@ -420,7 +420,7 @@ function RootLayoutApp() { // the app; RootLayout (at the foot) renders it only 
                       >
                         <Stack.Screen name="(tabs)" />
                         <Stack.Screen name="(auth)" />
-                        <Stack.Screen name="create" />
+                        <Stack.Screen name="create" options={{ presentation: 'fullScreenModal', gestureEnabled: false }} />{/* owner's iPhone 2026-10-22: as a card, an edge-swipe dismissed the composer and silently lost a captured photo/video; a full-screen modal with no gesture leaves its own X (which asks before discarding) as the only way out */}
                         <Stack.Screen name="notifications" options={{ presentation: 'modal' }} />
                         <Stack.Screen name="compass-preferences" options={{ presentation: 'card' }} />
                         <Stack.Screen name="compass-memories" options={{ presentation: 'card' }} />
@@ -429,7 +429,7 @@ function RootLayoutApp() { // the app; RootLayout (at the foot) renders it only 
                         <Stack.Screen name="intel/quick-signal" options={{ presentation: 'modal' }} />
                         <Stack.Screen name="intel/trail" options={{ presentation: 'modal' }} />
                         <Stack.Screen name="intel/moment" options={{ presentation: 'modal' }} />
-                        <Stack.Screen name="settings/intel-prompts" options={{ presentation: 'card' }} />
+                        <Stack.Screen name="settings/intel-prompts" options={{ presentation: 'card' }} /><Stack.Screen name="media/add-gem" options={{ presentation: 'transparentModal', animation: 'slide_from_bottom', contentStyle: { backgroundColor: 'transparent' } }} />{/* owner's iPhone 2026-10-22: unregistered, add-gem pushed as an opaque card and a grey band showed above its sheet instead of the Media tab; a transparent modal keeps the tab visible under the dimmed backdrop. Shares this line so no cited line moves */}
                       </Stack>
                       {/* Root-level call UI — overlays any screen, survives navigation */}
                       <CallSurface /><CompactPlaybackHost />{/* §6.3 T62: the one thread-video player — after the Stack, outside every list */}

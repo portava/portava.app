@@ -144,7 +144,7 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
     setShowCityPicker(true);
   }, []);
 
-  const closeCityPicker = useCallback(() => setShowCityPicker(false), []);
+  const closeCityPicker = useCallback(() => setShowCityPicker(false), []); useEffect(() => { if (showPermissionPrompt && locationState.ok) setShowPermissionPrompt(false); }, [showPermissionPrompt, locationState.ok]); // a fix that lands while the sheet is up closes it — only "Not now" and "Choose City Manually" did, so Enable Location detected the city and left the traveller in front of the same sheet (owner's iPhone, 2026-10-22)
 
   return (
     <LocationContext.Provider

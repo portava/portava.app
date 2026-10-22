@@ -250,7 +250,9 @@ const s = StyleSheet.create({
     paddingHorizontal: space.xl, paddingBottom: space.md,
   },
   currentText: { ...t.bodyStrong, color: color.signal },
-  scroll: { flex: 1 },
+  // Content-sized, shrinking only past the sheet's maxHeight. `flex: 1` (basis 0) inside this content-sized sheet laid
+  // out to 0pt on iOS: the sheet opened as a bare title with no presets and no "Custom…" — no time could be picked.
+  scroll: { flexGrow: 0, flexShrink: 1 },
   list: { paddingHorizontal: space.xl, paddingBottom: space.lg },
   row: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',

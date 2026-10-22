@@ -23,7 +23,7 @@ import type { PulseFilter, PostCategory } from '../types/models.ts';
 import { color, space, radius, type as t, shadow, layout, avatar, icon } from '../theme/tokens.ts';
 import { usePostActions } from '../hooks/usePosts.ts';
 import type { PostVisibility, LocationPrivacyMode } from '../services/posts.ts';
-import { CAPTURE_QUALITY } from '../constants/mediaLimits.ts';
+import { CAPTURE_QUALITY } from '../constants/mediaLimits.ts'; import { normalizeForUpload } from '../lib/media/normalizeUpload.ts';
 import { uploadMedia, validateMedia, type PickedMedia } from '../services/media.ts';
 import { useSession } from '../context/SessionContext.tsx';
 import type { Place } from '../lib/location/placeTypes.ts';
@@ -272,7 +272,7 @@ export function UnifiedPostComposer({
           videoMaxDuration: 60,
         });
         if (result.canceled || !result.assets?.[0]) return;
-        const asset = result.assets[0];
+        const asset = await normalizeForUpload(result.assets[0]); // HEIC → JPEG, oversize photos fitted, the camera's .mov labelled QuickTime
         const mime = asset.mimeType ?? (asset.type === 'video' ? 'video/mp4' : 'image/jpeg');
         const picked: PickedMedia = {
           uri: asset.uri,
@@ -629,7 +629,7 @@ export function UnifiedPostComposer({
                   <Pressable style={uc.mediaPicker} onPress={openPickerSheet} disabled={submitting}>
                     {media ? (
                       <View style={uc.mediaPreviewWrap}>
-                        <Image source={{ uri: media.uri }} style={uc.mediaPreview} resizeMode="cover" />
+                        {media.type === 'video' ? (<View style={[uc.mediaPreview, uc.videoPreview]} accessibilityLabel="Video attached"><VideoIcon size={28} color="#fff" /><Text style={uc.videoPreviewText}>{media.duration ? `Video · ${Math.round(media.duration)}s` : 'Video'}</Text></View>) : <Image source={{ uri: media.uri }} style={uc.mediaPreview} resizeMode="cover" />}{/* an <Image> cannot draw a video: the preview was blank */}
                         <Pressable style={uc.mediaRemove} onPress={() => setMedia(null)} hitSlop={8}>
                           <X size={14} color="#fff" />
                         </Pressable>
@@ -941,6 +941,8 @@ const uc = StyleSheet.create({
   mediaEmptySub: { ...t.small, fontSize: 10, color: color.faint },
   mediaPreviewWrap: { flex: 1 },
   mediaPreview: { width: '100%', height: '100%' },
+  videoPreview: { backgroundColor: '#11110F', alignItems: 'center', justifyContent: 'center', gap: 6 },
+  videoPreviewText: { color: '#fff', fontSize: 13, fontWeight: '600' },
   mediaRemove: {
     position: 'absolute', top: 6, right: 6,
     width: icon.s24, height: icon.s24, borderRadius: icon.s24 / 2,

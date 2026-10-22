@@ -21,7 +21,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator,
-  RefreshControl,
+  RefreshControl, AppState,
 } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -202,9 +202,9 @@ export default function LayoverDashboardScreen() {
     sessionStatus,
     returnState: certifiedReturnState,
   });
-  const refreshIntervalMs = cadence.intervalMs;
+  const refreshIntervalMs = cadence.intervalMs; const [appActive, setAppActive] = useState(AppState.currentState !== 'background'); useEffect(() => { const sub = AppState.addEventListener('change', (st) => setAppActive(st === 'active')); return () => sub.remove(); }, []); // every silent re-read certifies and writes three rows: none while Portava is in the background
   useEffect(() => {
-    if (!id || sessionStatus !== 'active' || refreshIntervalMs == null) return;
+    if (!id || sessionStatus !== 'active' || refreshIntervalMs == null || !appActive) return;
     const timer = setInterval(async () => {
       // A silent refresh KEEPS the last certified overview when the read fails
       // — it must never blank the screen a traveller is acting on. What it must
@@ -215,7 +215,7 @@ export default function LayoverDashboardScreen() {
       if (read?.ok) setOverview(read.overview);
     }, refreshIntervalMs);
     return () => clearInterval(timer);
-  }, [id, sessionStatus, refreshIntervalMs]);
+  }, [id, sessionStatus, refreshIntervalMs, appActive]);
 
   // §15.1's abort, lifted out of `LayoverSafeReturnCard` so that more than one
   // control can fire it (census L42, L123). Declared here, above every early
@@ -272,7 +272,7 @@ export default function LayoverDashboardScreen() {
    * the belt to that braces: a future read added to this `Promise.all` cannot
    * silently reintroduce the hang.
    */
-  const load = useCallback(async (isRefresh = false) => {
+  const load = useCallback(async (isRefresh = false, reloadCards = true) => {
     if (!id) return;
     if (!isRefresh) setLoading(true);
     setLoadFailure(null);
@@ -351,7 +351,7 @@ export default function LayoverDashboardScreen() {
     } finally {
       setLoading(false);
       setRefreshing(false);
-      setDataEpoch((n) => n + 1);
+      if (reloadCards) setDataEpoch((n) => n + 1); // the automatic routed-map refresh re-reads the overview only, not the eight cards keyed on dataEpoch
     }
   }, [id, loadPresence]);
 
@@ -359,7 +359,7 @@ export default function LayoverDashboardScreen() {
 
   // The abort cancels landside stops and may flip the session status, so the
   // screen must re-read rather than keep rendering the plan it just cleared.
-  const reloadAfterAbort = useCallback(() => { void load(true); }, [load]); const refreshRoutedMap = useCallback(() => { setNowMs(Date.now()); return load(true); }, [load]); useRoutedMapRefresh(id, routedMap, overview?.snapshotId, refreshRoutedMap, nowMs);
+  const reloadAfterAbort = useCallback(() => { void load(true); }, [load]); const refreshRoutedMap = useCallback(() => { setNowMs(Date.now()); return load(true, false); }, [load]); useRoutedMapRefresh(id, routedMap, overview?.snapshotId, refreshRoutedMap, nowMs);
   const returnAbort = useSafeReturnAbort(id, reloadAfterAbort);
 
   const canEdit = overview?.session.status === 'active';

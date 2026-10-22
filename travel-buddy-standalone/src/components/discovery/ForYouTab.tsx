@@ -347,7 +347,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
           fallbackLng={lng}
           userLat={userLat}
           userLng={userLng}
-          fallbackZoom={fallbackZoom}
+          fallbackZoom={fallbackZoom} topInset={listTopInset ?? 0} /* the map's filter row, legend and travelers buttons start below Discover's floating tab row instead of under it */
         />
         <PlaceDetailSheet
           place={detail}

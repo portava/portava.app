@@ -19,6 +19,7 @@ import { useCallback } from 'react';
 import { Alert, Linking, Platform } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { CAPTURE_QUALITY } from '../constants/mediaLimits.ts';
+import { COMPATIBLE_LIBRARY_OPTIONS, normalizeAllForUpload } from '../lib/media/normalizeUpload.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -216,13 +217,15 @@ export function useMediaPicker(): UseMediaPickerReturn {
             quality,
             videoMaxDuration,
           });
-          resolve(result.canceled ? null : result.assets);
+          // Every pick leaves here uploadable: HEIC → JPEG, oversize photos fitted without distortion, .mov labelled QuickTime.
+          resolve(result.canceled ? null : await normalizeAllForUpload(result.assets));
         };
 
         const launchLibrary = async () => {
           const ok = await requestLibrary();
           if (!ok) { resolve(null); return; }
           const result = await ImagePicker.launchImageLibraryAsync({
+            ...COMPATIBLE_LIBRARY_OPTIONS, // JPEG not HEIC, H.264 MP4 not HEVC — from iOS itself, aspect ratio kept
             mediaTypes,
             allowsEditing,
             aspect,
@@ -231,7 +234,8 @@ export function useMediaPicker(): UseMediaPickerReturn {
             selectionLimit,
             videoMaxDuration,
           });
-          resolve(result.canceled ? null : result.assets);
+          // Every pick leaves here uploadable: HEIC → JPEG, oversize photos fitted without distortion, .mov labelled QuickTime.
+          resolve(result.canceled ? null : await normalizeAllForUpload(result.assets));
         };
 
         Alert.alert(title, undefined, [

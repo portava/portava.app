@@ -1012,6 +1012,10 @@ function DiscoveryHubScreen() {
             </View>
           )}
 
+          {/* Map view is the map: the banner and the strips below float over it (nothing pads a map the way
+              listTopInset pads the list), so on a signed-in phone ~290pt of opaque cards covered the map and
+              its controls. They stay in list view. */}
+          {viewMode !== 'map' && (<>
           {/* ── Featured by Portava entry point ── */}
           <Pressable
             style={styles.featuredBanner}
@@ -1060,6 +1064,7 @@ function DiscoveryHubScreen() {
               ))}
             </ScrollView>
           )}
+          </>)}
 
         </View>
       </View>

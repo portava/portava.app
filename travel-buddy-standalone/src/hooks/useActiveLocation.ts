@@ -17,7 +17,7 @@ import { getCurrentGps, reverseGeocodeToPlace, checkLocationPermission } from '.
 import type { Place } from '../lib/location/placeTypes.ts';
 import { isSupabaseConfigured } from '../lib/supabase.ts';
 import { onAuthChange } from '../services/auth.ts';
-import { buildManualCityState, buildManualCityPayload, buildGpsState, buildGpsRevokedState, shouldRestorePersistedState } from './activeLocation.state';
+import { buildManualCityState, buildManualCityPayload, buildGpsState, buildGpsRevokedState, shouldRestorePersistedState, savedPlaceFromApi } from './activeLocation.state';
 import {
   DEVICE_ID_HEADER,
   EMPTY_PLACE,
@@ -203,11 +203,11 @@ async function loadLocationFromApi(): Promise<ActiveLocationState | null> {
         timezone: null,
         source: 'manual',
       };
-    } else if (d.place && d.place.id) {
-      // Persisted place snapshot — may be a full Place or a legacy LocationPlace
+    } else if (d.place && (d.place.id || d.place.city || d.place.country)) {
+      // Persisted place snapshot: a full Place, a legacy LocationPlace, or GET /me/location-state's id-less
+      // { city, district, country, countryCode, formatted } — which the old `d.place.id` test dropped on every launch.
       place = {
-        ...EMPTY_PLACE,
-        ...(d.place as Partial<Place>),
+        ...savedPlaceFromApi(d.place, d.coords),
         source: 'recent',
       };
     } else {
