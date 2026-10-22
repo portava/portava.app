@@ -37,3 +37,20 @@ test('route_stale and snapshot replacement refresh immediately; unmount cancels 
   await act(async () => { jest.advanceTimersByTime(180001); });
   expect(refresh).toHaveBeenCalledTimes(2);
 });
+test('an overview that certifies a NEW snapshot on every read refreshes once, not forever (2026-10-22 loop)', async () => {
+  // Production with the canonical snapshot off: the routed answer keeps one snapshot, every overview read mints
+  // another. The old key held the overview's id, so each refresh made a new key and refreshed again.
+  const refresh = jest.fn(async () => undefined);
+  const data = sample(NOW + 600000);
+  const view = await render(<Harness data={data} refresh={refresh} current={`snap:${'1'.repeat(32)}`} />);
+  expect(refresh).toHaveBeenCalledTimes(1);
+  for (const d of '23456789') {
+    await view.rerender(<Harness data={{ ...data }} refresh={refresh} current={`snap:${d.repeat(32)}`} />);
+    await act(async () => {});
+  }
+  expect(refresh).toHaveBeenCalledTimes(1);
+  // A NEW routed answer is a new question: it may refresh once more if it is mismatched too.
+  await view.rerender(<Harness data={{ ...sample(NOW + 600000), snapshotId: `snap:${'c'.repeat(32)}` }} refresh={refresh} current={`snap:${'9'.repeat(32)}`} />);
+  await act(async () => {});
+  expect(refresh).toHaveBeenCalledTimes(2);
+});
