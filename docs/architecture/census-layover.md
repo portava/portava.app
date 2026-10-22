@@ -12768,3 +12768,206 @@ MAP now has tested source geometry and transient Google-map display paths, with 
 The booked Buddy half of L144 now requires an unticked choice on each abort, an owned current accepted booking, both-direction block checks and current sharing permission. Five concurrent retries create one generic in-app notice; no location or timing is disclosed. Local proof is12 migrated cases,37 client cases,111 adjacent cases and7 killed mutations. L205 independent review reproduced a service builder retaining old actor headers after its worker scope ended; headers now clear or overwrite on every execution. The36-case audit/retention proof includes23 foreign HTTP probes, six concurrent actors, activation atomicity and actual deletion. The strengthened3898/3899 rollback proof passed16 cases; the audit rollback proof passed9. These findings update the local engineering state without claiming deployed behavior.
 
 The earlier L78 statements that seven objective terms are unknown by construction describe the historical implementation. The current sourced producer/intent contract is described in the preceding continuation section. Current route watches now survive snapshot changes and recommendation compaction, but bounded durable continuation for more than200 affected sessions is still being built. The PostgreSQL verification driver is also under independent review; no final all-green PostgreSQL/CI result is claimed. The165 original W rows and their original acceptance criteria remain unchanged.
+
+## §81 — 2026-10-22: production verification after release 9d3dc5d0. EIGHT ROWS MOVE
+
+*Branch `claude/census-prod-verified-20261022`, cut from `main` at `9d3dc5d0d`. `head_commit` is not re-declared. No
+product code changed; one census scope entry and its acknowledgement were added (§81.7). This pass records production evidence on which two independent verifiers agreed, and re-reads every writer
+it cites at `9d3dc5d0d`. Every row not named here is unchanged.*
+
+**Read this first.** No traveller has used Layover since the deploy. Every table these rows grade has **0 rows** in
+production. Every `C` below means **"writer reachable"**: the storage is applied, the gate is open and the route is
+mounted. It does **not** mean "rows observed". This census has never required an observed journey for `C` (wave 5,
+pass 10 admits production state as the reachability half only), and this pass does not change that.
+
+### 81.1 Production state, measured
+
+Production `ajrurzioarfkagpuxfnb`. Release `9d3dc5d0d` (#766) has been live on rumazi.com since 2026-10-22T04:39Z.
+Commit lineage: `df8866780` is an ancestor of `9d3dc5d0d`, and the diff between them touches nothing under the API's
+routes, services, lib, migrations or domain directories. So the server code read for this pass is the code that shipped.
+
+**Migrations.** These are rows of production's own `public.schema_migration_ledger`. It holds 779 rows, and the last was
+applied 2026-10-21 17:49:13Z.
+
+| Migration | Applied (UTC) |
+| --- | --- |
+| 0127 | 2026-09-15 (a backfilled row) |
+| 2860 | 2026-09-16 |
+| 2700 | 2026-10-21 17:03:06 |
+| 2992 | 2026-10-21 17:08:08 |
+| 3513 | 2026-10-21 17:22:52 |
+| 3620 | 2026-10-21 17:23:46 |
+| 3623 | 2026-10-21 17:24:14 |
+| 3792 | 2026-10-21 17:33:22 |
+| 3900 | 2026-10-21 17:36:10 |
+| 3827 / 3828 | 2026-10-21 17:44:55 / 17:45:05 |
+| 3871 | 2026-10-21 17:45:39 |
+| 3873 | 2026-10-21 17:46:07 |
+| 3896 | 2026-10-21 17:48:19 |
+
+**Flags.**
+- **Turned ON** between 04:40:37Z and 04:42:37Z on 2026-10-22, through `toggle_feature_flag_with_audit` (an audited
+  operator change):
+  - `layover_decision_persistence_enabled`;
+  - `layover_recommendation_snapshot_enabled`;
+  - `layover_stable_recommendation_ids_enabled`;
+  - `layover_presence_ladder_enabled`;
+  - `layover_map_bands_enabled`;
+  - `layover_map_budget_chips_enabled`;
+  - `layover_safe_return_status_enabled`;
+  - `layover_discovery_mode_enabled`.
+- **Already TRUE:** `layover_crowd_reports_enabled` (since 2026-10-21, seeded by 3513), `airport_mode_enabled` and
+  `layover_safety_engine_enabled`.
+- **Still FALSE:** `layover_canonical_snapshot_enabled`, `layover_recommendation_status_enabled`,
+  `layover_constraints_enabled`, `layover_event_ingest_enabled`, `layover_lifecycle_machine_enabled`,
+  `layover_crew_location_enabled` and `rent_buddy_enabled`.
+
+**Routes.** These are unauthenticated probes to `https://rumazi.com/api/airport/sessions/<uuid>/…`. Auth runs per route,
+so a 401 shows the route is mounted, and an unknown path answers 404.
+- These answer **401**: `overview`, `safety`, `checkpoints` (GET and POST), `DELETE /:id`, `observations`,
+  `recommendations` and `decisions/replay`.
+- A nonexistent path answers **404**.
+- On the old fork, `checkpoints`, `observations` and `decisions/replay` answered 404 (measured 2026-10-21).
+- Re-probed while this section was written: `checkpoints`, `observations` and `decisions/replay` answered 401, and a
+  nonexistent path answered 404.
+
+**The live build.**
+- `/api/healthz` answers 200 with `X-Portava-Build: sha256:3d6f0dbf11dfc6ba519560c767eb09b0fa7fcb3bc7c3268088697d05c26dc644`.
+  This was re-read while this section was written.
+- The iOS manifest's `createdAt` is 2026-10-22T04:26:45Z.
+- Its bundle contains `LANDSIDE_EXIT`, `/observations`, `submissionToken`, `layover-end` and `rumazi.com`.
+
+**CI on `9d3dc5d0d`.**
+- Run 39693275815 concluded `success`.
+- That includes the job `api-server · kernel SQL executed on a throwaway database`. This is the local-db job on
+  `postgis/postgis:16-3.4` that runs `test:db-local`, and with it the pressed-state suites.
+- Re-read with `gh run view` while this section was written.
+
+**The write boundary.**
+- 3620's postcondition block was re-run read-only on production: **86 of 86** conditions held.
+- The repository's contract evaluator, fed production's catalog, reports **0 violations**. Its non-vacuity control reports
+  **2**.
+- `authenticated` and `anon` hold no INSERT, UPDATE or DELETE privilege, at table or column level, on any `layover*`
+  table, on `airport_fact_observations` or on `airport_profiles`.
+
+**Traffic.**
+- These tables have **0 rows**: `layover_certified_computations`, `layover_time_budgets`, `layover_return_plans`,
+  `layover_checkpoints`, `layover_outcomes`, `layover_crews`, `layover_crew_members` and `airport_fact_observations`.
+- `layover_sessions` has 5 rows, none active. The newest is from 2026-08-09, and the newest event from 2026-08-12.
+
+**Where this evidence is.** It is in the verifiers' evidence file (evidence.md, sections "Production state these verdicts
+rest on" and "POST-DEPLOY RE-CHECK") and their 296-row classification (classification.tsv). Both are in the lead's session
+scratchpad and are **not committed**; see §81.6.
+
+### 81.2 The rules this pass applies, and none it changes
+
+- **Last statement wins** (`check:census-integrity`). A row is `C` when its code is read correct at a cited `file:line`,
+  and when its only production path is not behind a FALSE flag or an unapplied migration (wave 5, pass 10).
+- **H24 / lead ruling WAVE-1.** Storage that exists only in an unapplied migration grades `N`. That reason is discharged
+  for every table below: production has applied 2700, 2860, 2992, 3513, 3620, 3623, 3792 and 3896.
+- **§26.2.** A row that names a table and no columns scores the table's existence, together with L197's table ruling
+  that a product surface must be able to populate it. A row that ENUMERATES members scores the members.
+- **L116's precedent.** A member that is spelled and never produced is `W`.
+- **Grading.** The first verifier proposed `C` for L23, L24, L32, L36 and L37, and disclosed their unproduced members. The
+  lead graded those rows under §26.2's member rule and L116's precedent instead. They are recorded that way below.
+
+### 81.3 Rows
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L199 | W | **C** | §19 step 8: *"Migration postconditions and authorization-contract tests for every client-writable table."* **The stated blocker is gone.** The tracker held this row on *"applying 3620 is owner decision L199-b, applied nowhere"*, and 3620 has been applied since 17:23:46Z. **Postconditions:** 3620's block (`artifacts/api-server/src/migrations/3620_layover_client_write_boundary.sql:106-157#DO $post$`) was re-run read-only on production, with every `RAISE` condition rewritten as a boolean, over the four tables 0127 had left client-writable. 86 of 86 held. **Contract tests:** the repository's evaluator (`artifacts/api-server/src/security/authorizationContract.ts:47#export function evaluateContract(`) was fed production's table grants, column grants and policies for the seven contracted layover tables, and it reports 0 violations. A copy with one live UPDATE grant added and one policy dropped reports 2, one naming each change, so the comparison is not vacuous. CI enforces the same contract through `check:authorization-contract`. **Every client-writable table:** on production, `authenticated` holds SELECT only and `anon` holds nothing on every layover table, so no layover table is client-writable now. Each table that was carries 3620's postconditions and a contract entry. 0127 still has no postcondition block of its own; 3620 is the postcondition for its tables. **Reachability:** the requirement IS the boundary, PostgREST enforces it, and it has no flag. |
+| L20 | W | **C** | **The one reason B1-P gave is closed.** It said *"the parent `layover_certified_computations` row has no UPDATE trigger. Needs one migration."* 3896 is that migration, applied 17:48:19Z. Its trigger (`artifacts/api-server/src/migrations/3896_layover_certified_computations_immutable.sql:90#CREATE TRIGGER layover_certified_computations_immutable`) raises 55000 on every UPDATE. **Immutable children:** 2992's triggers are on the three child tables (`artifacts/api-server/src/migrations/2992_layover_decision_record_and_operational_tables.sql:537#CREATE TRIGGER layover_time_budgets_immutable`, `artifacts/api-server/src/migrations/2992_layover_decision_record_and_operational_tables.sql:613#CREATE TRIGGER layover_return_plans_immutable`, `artifacts/api-server/src/migrations/2992_layover_decision_record_and_operational_tables.sql:453#CREATE TRIGGER layover_constraints_immutable`). **Versioned:** each snapshot's version comes from 3623's BEFORE INSERT trigger (`artifacts/api-server/src/migrations/3623_layover_snapshot_version_and_recommendation_snapshot.sql:105#CREATE TRIGGER layover_certcomp_snapshot_version`), with `(session_id, snapshot_version)` unique. All four triggers are enabled on production. **Normalised:** the outputs are typed columns with CHECKs. The jsonb columns hold the inputs and their provenance. **Writer:** GET /overview and GET /safety both certify through `evaluate()` (`artifacts/api-server/src/routes/airport.ts:2242#evaluateLayoverFeasibility(sc, user.id, session.id, { nowMs`, `artifacts/api-server/src/routes/airport.ts:1089#const ev = await evaluateLayoverFeasibility(`). `evaluate()` stores through `persistDecision` (`artifacts/api-server/src/services/airport/LayoverFeasibilityService.ts:149#const persisted = await persistDecision(db, userId, sessionId, record);`), gated only by `layover_decision_persistence_enabled`, which is ON. Both routes are mounted (401). **The verifier's caveat, kept:** the decision read path replays `inputs` to check the typed columns. This census reads that as provenance used for verification, not as a JSON source of truth. |
+| L195 | W | **C** | *"4. Create recommendations + outcome tables."* **The stated blocker, "outcomes no", is gone.** `layover_outcomes` is 2992, applied 17:08:08Z. **Writers:** `layover_recommendations` is written by GET /recommendations (`artifacts/api-server/src/services/airport/LayoverRecommendationService.ts:797#const { error: insError } = await db.from("layover_recommendations").insert(rows);`). That writer is live under `layover_safety_engine_enabled` (TRUE; 30 rows, written before the deploy). `layover_outcomes` is written by `recordLayoverOutcome` (`artifacts/api-server/src/services/layover/LayoverOutcomeStore.ts:116#export async function recordLayoverOutcome(`) on DELETE /airport/sessions/:id (`artifacts/api-server/src/routes/airport.ts:4048#const outcomeRecord = await recordLayoverOutcome(`). That route is mounted (401), and its only gate is persistence (`artifacts/api-server/src/services/layover/LayoverOutcomeStore.ts:121#if (!(await isFlagEnabled(db, "layover_decision_persistence_enabled"))) {`), which is ON. The row names two tables and no columns (§26.2). The outcome table's unproduced members are L32's finding below, not this row's. |
+| L197 | W | **C** | **This row's own words were "C on the press of 3513", and 3513 is applied** (17:22:52Z; `layover_crowd_reports_enabled` TRUE). **Table:** `airport_fact_observations` (2860) represents TTL and provenance. It carries `observed_at` and `expires_at` (with an expiry index and an `expires_at > observed_at` CHECK), an observer kind, id, trust and source reference, a unique submission token and a CHECK over §10's five fact classes. **Writer:** POST /airport/sessions/:id/observations is now mounted (401). It refuses only when the crowd gate is closed (`artifacts/api-server/src/routes/airport.ts:2830#if (await crowdReportsClosed(sc, res)) return;`), and that gate is open. L197's table ruling (*"needs a product surface that populates the table"*) is met. **0 rows: no report has been submitted.** |
+| L30 | N | **C** | *"`layover_checkpoints`"*. The row names the table and no columns, so existence with a reachable writer is the bar (§26.2; L197's table ruling). **H24 is discharged:** 2992 is applied, and the table carries its type, source and confidence CHECKs and `UNIQUE (session_id, dedup_key)`. **Writer:** POST /airport/sessions/:id/checkpoints (`artifacts/api-server/src/routes/airport.ts:4592#router.post("/airport/sessions/:id/checkpoints"`) is mounted (401; it answered 404 on the old fork). It is gated by `airport_mode_enabled` (TRUE). Inside `recordTravellerCheckpoint` (`artifacts/api-server/src/services/layover/LayoverCheckpointStore.ts:144#export async function recordTravellerCheckpoint(`) the only gate is persistence (`artifacts/api-server/src/services/layover/LayoverCheckpointStore.ts:154#if (!(await isFlagEnabled(db, "layover_decision_persistence_enabled")))`), which is ON. Checkpoints are traveller-reported only, and nothing is fabricated. **0 rows: no checkpoint has been reported.** |
+| L23 | N | **W** | **H24 is discharged:** 2992 is applied, all eleven columns exist, and there is one row per snapshot. The writer is `timeBudgetRowFor` (`artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:291-332#export function timeBudgetRowFor(`), reached through `persistDecision` with persistence ON. **But the row enumerates eleven members, and 8 of them are NULL by construction on every production path.** Seven are literal nulls: deplane, immigration and baggage (`artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:303-305#deplane_min: null,`), and security, transfer, contingency and boarding (`artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:322-325#security_min: null,`). The eighth, `outbound_min`, is NULL whenever no landside probe was certified (`artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:314#outbound_min: record.estimates.outboundTravel?.valueMinutes ?? null,`). `evaluate()` certifies none (`artifacts/api-server/src/services/airport/LayoverFeasibilityService.ts:124-127#const record = (await consumerLayoverRecord(`), and no non-test caller supplies a `landsideProbe` at all. Only `exit_min` (the four-term lump), `return_min` and `usable_minutes` are produced. Members that are spelled and never produced make this `W` (§26.2's member rule; L116). Producing the missing terms is L46's work. |
+| L24 | N | **W** | **H24 is discharged:** 2992 is applied, and all six members exist with their CHECKs (`recommended <= hard`, `latest_activity <= recommended`, the risk and confidence vocabularies) and an immutability trigger. The writer `returnPlanRowFor` (`artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:345-365#export function returnPlanRowFor(`) is reachable with persistence ON. **But two of the six members are never produced as the spec means them.** `latest_activity_departure_at` is the literal null (`artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:359#latest_activity_departure_at: null,`). `recommended_return_by` is `hard_return_by` by construction (`artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:355#recommended_return_by: hard,`), so the spec's distinct recommended return is never produced. `W` under the same member rule. |
+| L32 | N | **W** | **H24 is discharged:** 2992 is applied, and all nine members exist with their CHECKs. The writer `recordLayoverOutcome` is reachable on DELETE /airport/sessions/:id with persistence ON (see L195). **But five of the nine members are never produced.** Four are the literal null on every write: `completed_experience`, `met_people_count`, `comfort_rating` and `plan_change_reason` (`artifacts/api-server/src/services/layover/LayoverOutcomeStore.ts:91-110#export function layoverOutcomeRow(`). `anonymization_state` has no writer anywhere in the tree. The row does not send it, so 2992's default (`artifacts/api-server/src/migrations/2992_layover_decision_record_and_operational_tables.sql:718#anonymization_state`) is the only value it can hold. Unlike L30, this row enumerates its members, so §26.2's member rule applies. §17.6's sentence *"the table is still absent, which is the only thing the row scores"* was about absence, and it does not exempt the members once the table exists. `W`. |
+
+### 81.4 Rows that do not move, re-measured on production
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L36 | W | W | **The press the 2026-10-18 reason named is done**: 2700 and 2992 are applied, persistence is ON, and the four-member CHECK is on `layover_return_plans.risk_band` and on the recommendation column. **New finding: `HIGH` has no producer.** `riskBandFor` (`artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:198-238#export function riskBandFor(`) returns UNSAFE, LOW, MODERATE or null and never HIGH. It is the only writer of the return plan's band (`artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:360#risk_band: riskBandFor(record),`). The recommendation band's writer, `classifyCard` (`artifacts/api-server/src/services/layover/LayoverRecommendationStatus.ts:113#export function classifyCard(`), is behind `layover_recommendation_status_enabled` (`artifacts/api-server/src/services/layover/LayoverRecommendationStatus.ts:63#export const RECOMMENDATION_STATUS_FLAG`), which is FALSE. It would not produce HIGH either: its own bands are LOW, MODERATE and UNSAFE, combined with `riskBandFor` by taking the worse (`artifacts/api-server/src/services/layover/LayoverRecommendationStatus.ts:91#const worse =`). So one member of four is spelled and never stored (L116). `W`, pending owner question OQ-L36-1 (§81.5). Not graded here: two HIGH sites that compute in memory on routed paths (`artifacts/api-server/src/services/airport/LayoverExperienceService.ts`, `artifacts/api-server/src/services/airport/LayoverCurrentPosition.ts`) and store no band. |
+| L37 | W | W | **The press is done, and the stored decision this row lacked is now written.** The four-member CHECK is on five production columns. **New finding: neither `HIGH` nor `MEDIUM` is produced on a stored decision.** The decision's confidence (`artifacts/api-server/src/services/airport/LayoverFeasibility.ts:721#confidence: gated.insufficient ?`) is the minimum over a set (`artifacts/api-server/src/services/airport/LayoverFeasibility.ts:704-712#const confidenceOver = [`). That set always holds two constant-LOW terms: the time-of-day ramp (`artifacts/api-server/src/services/airport/LayoverFeasibility.ts:560-563#timeOfDayExtra: pointEstimate(`) and the exit delay (`artifacts/api-server/src/services/airport/LayoverFeasibility.ts:697-700#exitDelay: pointEstimate(`). So every stored decision is LOW or INSUFFICIENT, on production and on any deployment of this tree. MEDIUM exists only on single estimates: a routed travel source (`artifacts/api-server/src/services/airport/LayoverFeasibility.ts:531#routed ?`), a verified airport (`artifacts/api-server/src/services/airport/LayoverFeasibility.ts:545#const rowConf: EstimateConfidence = a.verified ?`) or live conditions (`artifacts/api-server/src/services/airport/LayoverFeasibility.ts:599#...pointEstimate(minutes,`). None of these can lift the minimum while the two LOW terms are in the set. Production also has none of the three today: Routes is dark and 0 airports are verified. Separately, a traveller checkpoint is stored at the constant MEDIUM (`artifacts/api-server/src/services/layover/LayoverCheckpointStore.ts:166#confidence: "MEDIUM",`). So on production MEDIUM can appear on a checkpoint row, never on a decision. HIGH appears on no stored column of this family. `W`, pending owner question OQ-L37-1 (§81.5). |
+| L198 | W | W | **Catalog PASS, still CONDITIONAL. This is the owner's call.** All five index families are on production: active-session lookup (`layover_sessions_user_status_idx`); event ordering (`layover_events_named_session_idx`, `layover_events_user_idx`); unexpired presence (`layover_presence_expiry_idx`); snapshot versioning (`layover_certcomp_session_version_uidx`); and the impacted-session fanout (`layover_sessions_airport_active_idx`, `layover_route_subjects_route_idx`). The fanout index's consumers are the external-event fanout (`layover_event_ingest_enabled`, FALSE) and the route fanout (`layover_route_fanout_enabled`, FALSE). Extending the L197 table ruling to indexes holds this row at W. Reading §19 step 7 as a catalog step makes it C. OQ-L198-1. |
+| L25 | N | N | **FAIL as worded.** `layover_certified_computations` is the tree's `layover_snapshots`, and on production it carries version, input hash, computed-at, engine version, sources and reason codes. **No column holds `safe_envelope_ref` or `candidate_set_version`**, and no non-test source names either; the only mention is 2992's header comment. Not promotable, flag or no flag. §60.2's *"the one L25 member it lacked was a per-session version"* overstates the coverage. |
+| L192 | W | W | **FAIL as worded.** `pg_type` holds **0** layover enum types. The vocabularies are TEXT plus CHECK, which follows the tracker's recorded owner directive (*"Use TEXT with complete CHECK vocabularies"*), and `layover_sessions` has RLS with its owner policy. But the row says *"enum types"*. Also, the `state`, `connection_type` and `detected_source` columns are written only behind `layover_lifecycle_machine_enabled` and `layover_flight_connections_enabled`, which are FALSE. Not promotable on the original words. |
+
+### 81.5 Owner questions this pass raises
+
+- **OQ-L36-1.** Should the engine produce HIGH, or are its three outcomes (LOW, MODERATE and UNSAFE, plus "not assessed")
+  a complete mapping of the spec's four bands? If they are, the row needs that ruling recorded before it can be `C`. If not,
+  HIGH needs a producer that the census can cite.
+- **OQ-L37-1.** The stored decision is pinned at LOW by two terms that are LOW by declaration. Should a decision ever reach
+  MEDIUM or HIGH, and from what? Today no airport is verified and Routes is dark, so even a fold without those two terms
+  would be LOW on production.
+- **OQ-L198-1.** Is §19 step 7 a catalog step, or does an index need a reachable consumer, as L197's table ruling requires
+  of a table?
+
+### 81.6 What this pass did not do, stated
+
+- **The repository's recorded production state was NOT refreshed.**
+  - The committed snapshot that `artifacts/api-server/src/lib/capability/snapshots/current.ts` names (the 2026-09-22
+    capture) predates every migration in §81.1 after 2860.
+  - So does `artifacts/api-server/src/lib/capability/production-applied-migrations.json`: 129 entries, the newest 2971
+    from 2026-09-22. It lists none of 2700, 2992, 3513, 3620, 3623, 3792, 3896 or 3900.
+  - Earlier sections read production state from those two files. This one reads it from live read-only queries by two
+    independent verifiers. That evidence is not committed, so another reader cannot re-run it from this tree.
+- **A census pin now describes a state production has left.**
+  - The L181/L197 block of `artifacts/api-server/src/test/layoverCensusPins.test.ts` asserts that 3513 is NOT applied and that both observation routes refuse.
+  - It reads the stale ledger and snapshot above, so it still passes.
+  - The day those files are refreshed it goes red, and its own message says to re-derive L181, L197 and L82 then. L197 is
+    re-derived here.
+- **Rows whose press is now discharged, and which this pass did NOT move.**
+  - The census wrote *"C on the press of 3513"* for L84, L85, L86, L87, L88, L89, L181, L251 and L252. That press is done.
+  - The first verifier also lists 30 `W` rows and 4 `N` rows whose blockers are only the deploy and the eight flags.
+  - None of them is among the rows the two verifiers agreed on. Proving them needs a signed-in traveller, and their tracker
+    status is still "independent verification pending". They keep their last statements. A later pass must take them up
+    one at a time; their being pressed does not make them `C`.
+- **`C` rows that were unreachable on the old fork are reachable now. No grade changes.**
+  - Crew: L28 and L29 (POST /crew and POST /crew/:crewId/join), L133 and L232 (GET /crew), L185, L186 and L188 (join,
+    create and leave).
+  - Abort: L146 (POST /return-now). With `layover_safe_return_status_enabled` now TRUE, the abort writes `returning`.
+  - Disruption: L148, L149 and L231 (POST /disruption).
+  - Each route answers 401 on production, and each is gated by `airport_mode_enabled` (TRUE).
+  - L201 is re-confirmed. After the deploy there is no client write grant on any layover table. In the 2026-10-21 probe,
+    21 write attempts made as the session owner were all refused with 42501.
+- **A stale sentence outside this document.** The `$pinnedAsMeasured` note in
+  `artifacts/api-server/src/security/authorization-contract.json` still ends *"3620 is applied to no database"*. Production
+  has applied it since 2026-10-21. The JSON was not edited by this pass.
+
+### 81.7 Guards run on this branch
+
+All runs are the api-server package scripts, against the working tree, before commit:
+- `check:census-integrity` recomputes 296 rows as 86 C / 164 W / 46 N / 0 X;
+- `check:census-freshness`, `check:census-scope-coverage`, `check:census-row-move-labels` and
+  `check:census-policy-citations`;
+- `check:doc-citations`, `check:citation-targets` and `check:citation-symbols`.
+
+All pass. No guard, ceiling or floor was changed.
+
+One watch was added. L20's row cites
+`artifacts/api-server/src/migrations/3896_layover_certified_computations_immutable.sql`, so `check:census-scope-coverage`
+refused it as unwatched. It is now in census-layover's `CENSUS_SCOPE` (line-neutral). census-layover's acknowledgement
+names it under `review20261022prod`, since the file was added after `head_commit`. It is re-measured here, not argued
+harmless.
+
+### Headline
+
+| bucket | was (wave 5, pass 10) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 81 | 86 |
+| BUILT-BUT-WRONG | 165 | 164 |
+| NOT-BUILT | 50 | 46 |
+| CANNOT-VERIFY | 0 | 0 |
+| total | 296 | 296 |
+
+**Eight moves.**
+- Four rows move W → C: L199, L20, L195 and L197.
+- One row moves N → C: L30.
+- Three rows move N → W: L23, L24 and L32.
+
+296 = 86 C / 164 W / 46 N / 0 X. CORRECT% is 86 / 296 = 29.1 %. CONSTRUCTED% is 250 / 296 = 84.5 %.
+
+**Every one of the five new `C` rows is "writer reachable", not "rows observed".** Their tables hold 0 rows on production.
