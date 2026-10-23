@@ -50,13 +50,13 @@ export async function fetchDailyBrief(
     const res = await authedFetch(`/api/trips/${tripId}/daily-brief${qs}`);
     const data = await res.json();
     if (res.ok) {
-      if (data.weatherSummary) {
+      if (data?.brief?.weatherSummary) { // the server nests it: { access, brief: { weatherSummary } } — data.weatherSummary never existed, so nothing was saved and the fallback never showed
         // Persist the latest summary so it survives Open-Meteo downtime
-        getStorage()?.setItem(weatherKey(tripId), data.weatherSummary).catch(() => {});
-      } else {
+        getStorage()?.setItem(weatherKey(tripId), data.brief.weatherSummary).catch(() => {});
+      } else if (data?.brief) { // only a brief can carry a restored summary (access denied answers brief: null)
         // Open-Meteo unavailable — restore last known summary (best-effort)
         const cached = await getStorage()?.getItem(weatherKey(tripId));
-        if (cached) data.weatherSummary = cached;
+        if (cached) data.brief.weatherSummary = cached; // where DailyBriefCard reads it (brief.weatherSummary)
       }
     }
     return { ok: res.ok, data };

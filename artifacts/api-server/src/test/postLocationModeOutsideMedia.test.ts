@@ -148,7 +148,7 @@ function pulseShape(row: Record<string, any>, viewerIsOwner: boolean): Record<st
     media: [],
     spanTags: [],
     spanHashtags: [],
-    savedByMe: false,
+    savedByMe: false, likeCount: 0, commentCount: 0, likedByMe: false, // the engagement Pulse serves since 2026-10-22 (pulseCursorAndEngagement.test.ts); this fake has no stamps or comments
     featuredByPortava: null,
     canonical_place_id: row.canonical_place_id,
   };

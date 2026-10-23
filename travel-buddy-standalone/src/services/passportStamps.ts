@@ -299,11 +299,28 @@ export async function getUserStampsByUsername(
   return { ok: true, data: ((res.data as any)?.stamps ?? []).map(mapStamp) };
 }
 
+/**
+ * The visibilities a stamp's owner can SET — exactly the server's enum
+ * (`VISIBILITY` in artifacts/api-server/src/routes/stamps.ts). `StampVisibility`
+ * above is wider because it also describes legacy rows; offering its other
+ * values (`circle_only`, `trip_crew`) asked the server for something it refuses.
+ */
+export type SettableStampVisibility = 'public' | 'friends_only' | 'private';
+
+/**
+ * PATCH /stamps/:userStampId/visibility — the route that owns `user_stamps`.
+ *
+ * This used to PATCH `/me/passport/stamps/:id`, which updates the legacy
+ * `passport_stamps` table. Every id this app holds comes from GET /stamps/me
+ * (`user_stamps`), so the update matched no row, the server answered 404, and
+ * the stamps screen ignored the failure: the traveller tapped a visibility and
+ * nothing changed, with no word as to why.
+ */
 export async function updateStampVisibility(
   stampId: string,
-  visibility: StampVisibility,
+  visibility: SettableStampVisibility,
 ): Promise<ApiResult<void>> {
-  const res = await apiPatch<void>(`/me/passport/stamps/${stampId}`, { visibility });
+  const res = await apiPatch<void>(`/stamps/${encodeURIComponent(stampId)}/visibility`, { visibility });
   return res;
 }
 

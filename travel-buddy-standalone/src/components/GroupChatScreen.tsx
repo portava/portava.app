@@ -433,9 +433,9 @@ interface Props {
   type: 'trip' | 'circle';
   id: string;
   title?: string;
-  memberLabel?: string;
+  memberLabel?: string; /** Drawn under the header, INSIDE the keyboard wrapper (trip chat: the daily brief). A card above this screen pushed the wrapper down, so its keyboard padding came up short by the card's height and the composer stayed under the keyboard. */ banner?: React.ReactNode;
 }
-export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
+export function GroupChatScreen({ type, id, title, memberLabel, banner }: Props) {
   const { palette, styles } = useTelegraphTheme(makeStyles);
   // Mute state for the header toggle — persisted via the existing
   // muteThread service (beta-audit: replaces the 'coming soon' stub).
@@ -660,7 +660,7 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
   if (state === 'loading') {
     return (
       <View style={styles.screen}>
-        {Header}
+        {Header}{banner}
         <View style={styles.center}>
           <ActivityIndicator color={palette.operational} />
         </View>
@@ -671,7 +671,7 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
   if (state === 'pending_invite') {
     return (
       <View style={styles.screen}>
-        {Header}
+        {Header}{banner}
         <View style={styles.center}>
           <Text style={styles.stateIcon}>✉️</Text>
           <Text style={styles.stateTitle}>Invite Pending</Text>
@@ -684,7 +684,7 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
   if (state === 'no_access') {
     return (
       <View style={styles.screen}>
-        {Header}
+        {Header}{banner}
         <View style={styles.center}>
           <Text style={styles.stateIcon}>🔒</Text>
           <Text style={styles.stateTitle}>No longer a member</Text>
@@ -697,7 +697,7 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
   if (state === 'error') {
     return (
       <View style={styles.screen}>
-        {Header}
+        {Header}{banner}
         <View style={styles.center}>
           <Text style={styles.stateNote}>{errorMessage ?? "Couldn't load chat. Try again."}</Text>
           <Pressable style={styles.retryBtn} onPress={reload}>
@@ -710,7 +710,7 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
 
   return (
     <KeyboardSafeScrollView style={styles.screen}>
-      {Header}
+      {Header}{banner}{/* under the header, inside the wrapper: the wrapper starts at y=0, so its keyboard padding is the whole overlap */}
 
       {/* Quick-action bar — context-sensitive shortcuts */}
       <View style={styles.quickBar}>

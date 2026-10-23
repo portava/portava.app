@@ -17,7 +17,7 @@ import { getCurrentGps, reverseGeocodeToPlace, checkLocationPermission } from '.
 import type { Place } from '../lib/location/placeTypes.ts';
 import { isSupabaseConfigured } from '../lib/supabase.ts';
 import { onAuthChange } from '../services/auth.ts';
-import { buildManualCityState, buildManualCityPayload, buildGpsState, buildGpsRevokedState, shouldRestorePersistedState, savedPlaceFromApi } from './activeLocation.state';
+import { buildManualCityState, buildManualCityPayload, buildGpsState, buildGpsRevokedState, shouldRestorePersistedState, savedPlaceFromApi, buildGpsSavePayload } from './activeLocation.state';
 import {
   DEVICE_ID_HEADER,
   EMPTY_PLACE,
@@ -346,12 +346,7 @@ export function useActiveLocation(): UseActiveLocationResult {
       if (!mountedRef.current) return;
       setLocationState(next);
 
-      await saveLocationToApi({
-        source: next.source,
-        permissionStatus: 'granted',
-        coords: { lat: gps.lat, lng: gps.lng, accuracyMeters: gps.accuracyMeters },
-        place: next.place,
-      });
+      await saveLocationToApi(buildGpsSavePayload(next, gps));
     } finally {
       if (mountedRef.current) setIsLoading(false);
     }

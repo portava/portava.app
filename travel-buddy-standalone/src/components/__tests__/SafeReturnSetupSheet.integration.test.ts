@@ -1745,3 +1745,35 @@ describe('SafeReturnSetupSheet — startCheckedOpenEffect timeout race (Android 
       'isLive() must be false after cancel() — this is the guard the linger callback uses');
   });
 });
+
+// ── The server's `trusted_contacts_not_saved` warning (case E) ────────────────
+//
+// POST /me/safe-return/sessions can answer 201 with
+// `warnings: ['trusted_contacts_not_saved']` — the session is real and its timer
+// runs, but nobody the traveller chose will be alerted. runHandleStart used to
+// report that as a plain 'started', and the sheet said nothing. RED before this
+// change: 1 failed (the outcome was 'started').
+describe('SafeReturnSetupSheet integration — contacts that were not saved', () => {
+  it("still starts the session, but reports 'startedContactsNotSaved' so the sheet tells the traveller", async () => {
+    let started = 0;
+    let closed = 0;
+    const outcome = await runHandleStart({
+      createSession: async () => ({ ok: true, session: { id: 'sess-w' }, warnings: ['trusted_contacts_not_saved'] }),
+      startSession: async (id) => ({ ok: true, session: { id } }),
+      onStarted: () => { started += 1; },
+      onClose: () => { closed += 1; },
+    });
+    assert.equal(outcome, 'startedContactsNotSaved');
+    assert.equal(started, 1, 'the timer IS running — onStarted still fires');
+    assert.equal(closed, 1);
+  });
+
+  it("an unrelated warning is still a plain 'started'", async () => {
+    const outcome = await runHandleStart({
+      createSession: async () => ({ ok: true, session: { id: 'sess-x' }, warnings: ['something_else'] }),
+      startSession: async (id) => ({ ok: true, session: { id } }),
+      onClose: () => {},
+    });
+    assert.equal(outcome, 'started');
+  });
+});

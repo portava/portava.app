@@ -852,3 +852,42 @@ describe("T376 backpressure — explicit 429 semantics on resume", () => {
     assert.deepEqual(resumeSummary([], 9, 3), { scanned: 0, hasMore: false, nextSequence: 9 });
   });
 });
+
+// ── The reply quote in the sender's own 201 (2026-10-22) ────────────────────────
+// The send response carried `replyToId` and no `replyToBody`. The client swaps
+// its optimistic bubble (which showed the quote) for the server's message, so a
+// reply's quote vanished from the sender's own screen until the next poll. The
+// quote is built under the thread reader's rules (services/telegraph/replyQuote.ts):
+// a message outside the sender's §14.3 window is not quoted back to them.
+describe("the reply quote in the sender's own send response", () => {
+  it("a reply's 201 carries the quoted body, as the thread read would", async () => {
+    const target = seedReplyTarget();
+    const r = await call("POST", `/threads/${DM}/messages`, ME, { body: "yes", replyToId: target.id });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.equal(r.body.replyToId, target.id);
+    assert.equal(r.body.replyToBody, "quoted message");
+    assert.ok("replyToSenderName" in r.body, "the reader's field set, so the bubble can name who is quoted");
+  });
+
+  it("a message that is not a reply carries no quote fields at all", async () => {
+    const r = await call("POST", `/threads/${DM}/messages`, ME, { body: "plain" });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.equal(r.body.replyToId, null);
+    assert.equal("replyToBody" in r.body, false);
+  });
+
+  it("a quoted message from before the sender's history window is NOT quoted back (§14.3)", async () => {
+    state.flags = { telegraph_history_bound_enabled: true };
+    const target = seedReplyTarget(GROUP); // OTHER's message, created 2026-10-16
+    const me = state.members.find((m) => m.thread_id === GROUP && m.user_id === ME)!;
+    me.visible_from_at = "2026-10-18T00:00:00.000Z"; // ME joined after it
+    const r = await call("POST", `/threads/${GROUP}/messages`, ME, { body: "yes", replyToId: target.id });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.equal(r.body.replyToBody, null, "a pre-window body must not ride out in the send response");
+    // Control: the same reply from inside the window is quoted, so the null above is the window's.
+    me.visible_from_at = "2026-10-15T00:00:00.000Z";
+    const inside = await call("POST", `/threads/${GROUP}/messages`, ME, { body: "yes again", replyToId: target.id });
+    assert.equal(inside.status, 201, JSON.stringify(inside.body));
+    assert.equal(inside.body.replyToBody, "quoted message");
+  });
+});

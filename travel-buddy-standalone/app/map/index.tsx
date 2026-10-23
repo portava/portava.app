@@ -2625,7 +2625,7 @@ function FullScreenMapScreenInner() {
         // Gated inside DiscoveryMapView on the SDK's userInteraction flag, so a
         // programmatic easeTo (recenter, carousel, focus) never lands here.
         onUserPan={() => dispatchMapEvent({ type: 'USER_PANNED' })}
-        filterRowOffset={mapHeaderStackOffset(insets.top) + MAP_FILTER_CHIPS_HEIGHT + 8}
+        filterRowOffset={mapTopControlsBottom(insets.top) /* the free space starts under MapTopControls' card, not under the chips: at chips + 8 the All / Picks / Venues row drew at 180pt, behind the card (166–218pt) */}
         onLongPressMap={handleMapLongPress}
       />
 
@@ -2710,23 +2710,23 @@ function FullScreenMapScreenInner() {
       />
 
       {/* City-location banner — shown when location permission is denied but
-          city/destination coords are available so the map still renders. */}
+          city/destination coords are available so the map still renders. Every notice here hangs under the floating header stack (mapNoticeTop — what the traveller saw before is there). */}
       {showCityLocationBanner ? (
-        <View style={s.cityBanner} pointerEvents="none">
+        <View style={[s.cityBanner, { top: mapNoticeTop(insets.top) }]} pointerEvents="none">
           <AlertTriangle size={12} color="#fff" />
           <Text style={s.cityBannerText}>
             Using city location — enable location for better results
           </Text>
         </View>
       ) : null}
-      {legacyPlacesActive && placesPartial && places.length > 0 ? (<View style={[s.cityBanner, showCityLocationBanner ? { top: 26 } : null]} pointerEvents="none" testID="map-places-partial"><AlertTriangle size={12} color="#fff" /><Text style={s.cityBannerText}>{listPartialNotice('places')}</Text></View>) : null}
+      {legacyPlacesActive && placesPartial && places.length > 0 ? (<View style={[s.cityBanner, { top: mapNoticeTop(insets.top) + (showCityLocationBanner ? MAP_NOTICE_RUNG : 0) }]} pointerEvents="none" testID="map-places-partial"><AlertTriangle size={12} color="#fff" /><Text style={s.cityBannerText}>{listPartialNotice('places')}</Text></View>) : null}
       {/* Passport mode banner */}
       {mode === 'passport' ? (
-        <View style={s.modeBanner} pointerEvents="none">
+        <View style={[s.modeBanner, { top: mapNoticeTop(insets.top) + 2 * MAP_NOTICE_RUNG }]} pointerEvents="none">
           <Text style={s.modeBannerText}>🗺 Passport map · your travel stamps</Text>
         </View>
       ) : mode === 'circle' ? (
-        <View style={s.modeBanner} pointerEvents="none">
+        <View style={[s.modeBanner, { top: mapNoticeTop(insets.top) + 2 * MAP_NOTICE_RUNG }]} pointerEvents="none">
           <Text style={s.modeBannerText}>👥 Circle map · friends nearby</Text>
         </View>
       ) : null}
@@ -3495,7 +3495,6 @@ const s = StyleSheet.create({
     position: 'absolute',
     left: 0,
     right: 0,
-    top: 0,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -3514,7 +3513,6 @@ const s = StyleSheet.create({
   modeBanner: {
     position: 'absolute',
     alignSelf: 'center',
-    top: 52,
     zIndex: 15,
     backgroundColor: 'rgba(10,61,74,0.82)',
     borderRadius: radius.pill,
@@ -3568,3 +3566,28 @@ const s = StyleSheet.create({
     justifyContent: 'center',
   },
 });
+
+/** One notice strip's height (paddingVertical 6 around an 11pt line): the partial-results notice drops one rung under the
+ *  city-location banner, and the passport / circle pill two. */
+const MAP_NOTICE_RUNG = 26;
+
+/**
+ * Where the map's notices start: under the whole floating stack — MapHeader, the filter chips, and MapTopControls'
+ * card (its space.sm drop plus a 44pt button row in space.xs padding) — with a space.sm gap. At a fixed top 0 / 26 /
+ * 52 the "Using city location" banner sat behind the status bar and the Dynamic Island, and the passport / circle pill
+ * under the map header (zIndex 30), so the traveller could read neither. DiscoveryMapView's own filter row now hangs under the card too, so the notices start under that row.
+ */
+function mapNoticeTop(safeAreaTop: number): number {
+  return mapTopControlsBottom(safeAreaTop) + DISCOVERY_FILTER_ROW_TOP + DISCOVERY_FILTER_ROW_HEIGHT + space.sm;
+}
+
+/** The bottom of the floating stack: MapHeader, the filter chips, and MapTopControls' card (its space.sm drop plus a 44pt
+ *  button row in space.xs padding). DiscoveryMapView's filter row is placed from here (its filterRowOffset). */
+function mapTopControlsBottom(safeAreaTop: number): number {
+  return mapHeaderStackOffset(safeAreaTop) + MAP_FILTER_CHIPS_HEIGHT + space.sm + avatar.s44 + 2 * space.xs;
+}
+
+/** DiscoveryMapView's All / Picks / Venues row: drawn 14pt below its filterRowOffset (s.filterRow), 36pt tall — 3pt of
+ *  padding around a button of 7pt padding and a 13pt label. Always rendered, so the notices always clear it. */
+const DISCOVERY_FILTER_ROW_TOP = 14;
+const DISCOVERY_FILTER_ROW_HEIGHT = 36;

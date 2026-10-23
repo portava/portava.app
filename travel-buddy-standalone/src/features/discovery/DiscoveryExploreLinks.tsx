@@ -8,6 +8,7 @@ import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Route as RouteIcon, TrendingUp } from 'lucide-react-native';
 
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { useFeatureFlags } from '../../context/FeatureFlagsContext.tsx';
 
 export function exploreHref(screen: 'trails' | 'trending', city: string | null | undefined): string {
   const base = screen === 'trails' ? '/trails' : '/trending';
@@ -15,16 +16,23 @@ export function exploreHref(screen: 'trails' | 'trending', city: string | null |
 }
 
 export function DiscoveryExploreLinks({ city, onNavigate }: { city: string | null | undefined; onNavigate: (href: string) => void }) {
+  // Every list the Trending screen reads (routes/discoveryTrending.ts) needs
+  // BOTH flags; with either off (both are off in production, 2026-10-22) the
+  // chip led only to "Trending isn't available yet." — so it is not offered.
+  const { isEnabled } = useFeatureFlags();
+  const trendingOn = isEnabled('discovery_trending_api_enabled') && isEnabled('discovery_trend_lists_enabled');
   return (
     <View style={s.row} pointerEvents="auto" testID="discovery-explore-links">
       <Pressable style={s.chip} onPress={() => onNavigate(exploreHref('trails', city))} accessibilityRole="link" accessibilityLabel="Browse Trails" testID="discovery-link-trails">
         <RouteIcon size={12} color={color.deep} />
         <Text style={s.text}>Trails</Text>
       </Pressable>
-      <Pressable style={s.chip} onPress={() => onNavigate(exploreHref('trending', city))} accessibilityRole="link" accessibilityLabel="See what is trending" testID="discovery-link-trending">
-        <TrendingUp size={12} color={color.deep} />
-        <Text style={s.text}>Trending</Text>
-      </Pressable>
+      {trendingOn ? (
+        <Pressable style={s.chip} onPress={() => onNavigate(exploreHref('trending', city))} accessibilityRole="link" accessibilityLabel="See what is trending" testID="discovery-link-trending">
+          <TrendingUp size={12} color={color.deep} />
+          <Text style={s.text}>Trending</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }

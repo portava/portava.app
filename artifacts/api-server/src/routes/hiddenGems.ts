@@ -84,7 +84,7 @@ import {
   batchDeriveGemProjections,
   deriveGemProjection,
 } from "../services/hiddenGems/HiddenGemContributionService.js";
-import { GEM_CONTRIBUTION_TYPES } from "../lib/hiddenGemState.js";
+import { GEM_CONTRIBUTION_TYPES } from "../lib/hiddenGemState.js"; import { storedMediaRef } from "../lib/storedMediaRef.js";
 import { logDiscoveryServe, DiscoveryServePoint } from "../lib/discoveryServeLog.js";  import { stampServedRecommendations, exposureForResponse, serveClockOf } from "../lib/discoveryRecommendationRecord.js";  // census-discovery §48 — serve point 11's response carries the ids its serve-log rows do
 
 import { isAdmin } from "../lib/requireAdmin.js";  import { layoverGemWindow, gemsUnderLayoverMode, certifiedWindowKeys, LAYOVER_WINDOW_UNREADABLE_MESSAGE } from "../lib/discoveryLayoverGems.js";  // census-discovery §56 (A13/A14): the layover window is the certified snapshot's
@@ -127,7 +127,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const VALID_CROWD_LEVELS = ["quiet", "moderate", "busy", "very_busy"] as const;
 const VALID_VISIBILITIES = ["public", "circle_only", "private"] as const;
 
-const submitSchema = z.object({
+export const submitSchema = z.object({
   name: z.string().min(1).max(200),
   category: z.enum(VALID_CATEGORIES),
   city: z.string().min(1).max(100),
@@ -145,7 +145,7 @@ const submitSchema = z.object({
   layoverSafe: z.boolean().optional(),
   minimumLayoverMinutes: z.number().int().min(0).max(1440).optional().nullable(),
   sensitivityLevel: z.enum(VALID_SENSITIVITY).optional(),
-  imageUrl: z.string().url().max(2048).optional().nullable(),
+  imageUrl: storedMediaRef.optional().nullable(), // the bare post-media/<path> POST /media/upload returns: z.url() refused it, so a picked photo 400'd the whole save
   // ── Fields required by the dedicated "Add a Gem" creation flow ──────────────
   /**
    * canonicalPlaceId — UUID of the verified place from the places table.

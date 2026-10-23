@@ -17,7 +17,7 @@ import { color, space, radius, type as t, shadow } from '../../../theme/tokens.t
 import {
   fetchTripCloseout, answerCloseoutQuestion, closeoutSummary, ANSWER_LABEL,
   type CloseoutRead, type CloseoutAnswer, type AnswerResult,
-} from './tripCloseout.ts';
+} from './tripCloseout.ts'; import { useFeatureFlags } from '../../../context/FeatureFlagsContext.tsx';
 
 interface Props {
   tripId: string;
@@ -29,6 +29,12 @@ interface Props {
 type Outcome = { answer: CloseoutAnswer; result: AnswerResult };
 
 export function TripCloseoutCard({ tripId, load = fetchTripCloseout, record = answerCloseoutQuestion }: Props) {
+  // An answer is RECORD_OUTCOME through the kernel, and POST /closeout/answers
+  // refuses every one with 503 while `trip_kernel_enabled` is off (it is off in
+  // production, 2026-10-22): a completed trip showed "Yes, made it / No, skipped
+  // it" and every tap printed the raw reason code and the flag's name. The card
+  // is asked only while the kernel can record what the traveller answers.
+  const kernelOn = useFeatureFlags().isEnabled('trip_kernel_enabled');
   const [read, setRead] = useState<CloseoutRead | undefined>(undefined);
   const [outcomes, setOutcomes] = useState<Record<string, Outcome | 'pending'>>({});
 
@@ -37,7 +43,7 @@ export function TripCloseoutCard({ tripId, load = fetchTripCloseout, record = an
     try { setRead(await load(tripId)); }
     catch (e: any) { setRead({ state: 'unavailable', detail: String(e?.message ?? 'unexpected error') }); }
   }, [tripId, load]);
-  useEffect(() => { void run(); }, [run]);
+  useEffect(() => { if (kernelOn) void run(); }, [run, kernelOn]);
 
   const answer = useCallback(async (planId: string, a: CloseoutAnswer) => {
     setOutcomes((o) => ({ ...o, [planId]: 'pending' }));
@@ -45,6 +51,7 @@ export function TripCloseoutCard({ tripId, load = fetchTripCloseout, record = an
     setOutcomes((o) => ({ ...o, [planId]: { answer: a, result } }));
   }, [tripId, record]);
 
+  if (!kernelOn) return null;
   if (read === undefined) {
     return <View style={s.wrap} testID="trip-closeout-loading"><ActivityIndicator size="small" color={color.signal} style={{ margin: space.lg }} /></View>;
   }
@@ -95,7 +102,7 @@ export function TripCloseoutCard({ tripId, load = fetchTripCloseout, record = an
               </View>
             ) : (
               <Text style={[s.detail, { color: color.signalStrong }]} testID={`trip-closeout-not-recorded-${q.planId}`}>
-                Not recorded — {o.result.state === 'refused' ? `${o.result.reason}: ${o.result.detail}` : o.result.detail}
+                Not recorded — {notRecordedCopy(o.result)}
               </Text>
             )}
           </View>
@@ -103,6 +110,17 @@ export function TripCloseoutCard({ tripId, load = fetchTripCloseout, record = an
       })}
     </View>
   );
+}
+
+/**
+ * Why an answer was not recorded, in the traveller's words. The server's
+ * reason code and detail (which names the flag) are for the log, never the
+ * screen.
+ */
+function notRecordedCopy(result: Exclude<AnswerResult, { state: 'recorded' }>): string {
+  if (result.state === 'refused' && result.reason === 'TRIP_KERNEL_UNAVAILABLE') return "answers can't be saved yet.";
+  if (result.state === 'refused' && result.reason === 'TRIP_AUTH_NOT_CREW') return "only the trip's crew can answer this.";
+  return "your answer couldn't be saved right now.";
 }
 
 const s = StyleSheet.create({

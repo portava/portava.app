@@ -48,8 +48,8 @@ function normalizeStatus(raw: string): StatusKey {
   if (up === 'VISA_ON_ARRIVAL' || up === 'VISA ON ARRIVAL') return 'VISA ON ARRIVAL';
   if (up === 'EVISA' || up === 'E_VISA' || up === 'E-VISA') return 'EVISA';
   if (up === 'VISA_REQUIRED' || up === 'VISA REQUIRED') return 'VISA REQUIRED';
-  if (up === 'ADDITIONAL_APPROVAL' || up === 'ADDITIONAL APPROVAL') return 'ADDITIONAL APPROVAL';
-  if (up === 'RESTRICTED') return 'RESTRICTED';
+  if (up === 'SPECIAL_AUTHORIZATION' || up === 'ADDITIONAL_APPROVAL' || up === 'ADDITIONAL APPROVAL') return 'ADDITIONAL APPROVAL'; // the server's enum (entryRequirements.ts corridor schema) says special_authorization — it used to fall through to a grey UNKNOWN
+  if (up === 'ENTRY_RESTRICTED' || up === 'RESTRICTED') return 'RESTRICTED'; // entry_restricted: a traveller barred from entry was shown UNKNOWN
   return 'UNKNOWN';
 }
 
@@ -174,8 +174,10 @@ function CallerStatusCard({
   disclaimer: string;
 }) {
   const req = traveler.requirement as Record<string, unknown> | null | undefined;
-  const allowedStayDays = typeof req?.allowedStayDays === 'number' ? req.allowedStayDays : null;
-  const sourceUrl = typeof req?.sourceUrl === 'string' ? req.sourceUrl : null;
+  // `requirement` is the raw entry_requirements row (snake_case). The card read allowedStayDays / sourceUrl,
+  // which the server never sends, so the allowed stay and the official-source link were never shown.
+  const allowedStayDays = typeof req?.allowed_stay_days === 'number' ? req.allowed_stay_days : null;
+  const sourceUrl = typeof req?.official_source_url === 'string' ? req.official_source_url : null;
   const lastVerified = traveler.lastVerifiedAt
     ? new Date(traveler.lastVerifiedAt).toLocaleDateString(undefined, {
         year: 'numeric', month: 'short', day: 'numeric',
@@ -257,15 +259,19 @@ export function TripEntrySection({ tripId, onLoad }: TripEntrySectionProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [settingPassport, setSettingPassport] = useState(false);
   const reportedRef = React.useRef(false);
+  // onLoad lives in a ref, so the fetch depends on tripId only. BeforeYouGoSection passes it inline, and with
+  // it in `load`'s deps every re-render of the trip screen re-fetched the entry requirements.
+  const onLoadRef = React.useRef(onLoad);
+  onLoadRef.current = onLoad;
 
   const load = useCallback(async () => {
     const data = await fetchTripEntryRequirements(tripId);
     setEntryData(data); // null = feature off; object = have data
     if (!reportedRef.current) {
       reportedRef.current = true;
-      onLoad?.(data !== null && data !== undefined);
+      onLoadRef.current?.(data !== null && data !== undefined);
     }
-  }, [tripId, onLoad]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tripId]);
 
   useEffect(() => {
     load();

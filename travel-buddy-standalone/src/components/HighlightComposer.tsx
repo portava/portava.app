@@ -261,8 +261,11 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
             </Pressable>
           </View>
 
+          {/* Content-sized, shrinking only past the sheet's 90% cap. `flex: 1` (basis 0) inside this content-sized
+              sheet laid out to 0pt on iOS: "New Highlight" opened as a title and a disabled Share button with no
+              media picker, caption or place — no highlight could be created. */}
           <ScrollView
-            style={{ flex: 1 }}
+            style={s.form}
             contentContainerStyle={s.scroll}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
@@ -450,6 +453,7 @@ const s = StyleSheet.create({
   head: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: space.lg, paddingVertical: 10 },
   headTitle: { ...t.heading, color: color.ink, flex: 1 },
   closeBtn: { width: avatar.s32, height: avatar.s32, borderRadius: avatar.s32 / 2, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze },
+  form: { flexGrow: 0, flexShrink: 1 },
   scroll: { paddingHorizontal: space.lg, paddingBottom: space.lg, gap: space.md },
   field: { gap: 6 },
   fieldLabel: { fontFamily: 'Courier', fontSize: 10, fontWeight: '700', color: color.mute, letterSpacing: 0.8, textTransform: 'uppercase' },

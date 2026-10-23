@@ -23,7 +23,7 @@ import {
 import { getDeviceTimezone } from '../services/pushTokenService.ts';
 import { freshToken } from '../services/apiToken.ts';
 import { showNotificationToast } from '../components/NotificationToast.tsx';
-import { _connectOnce } from './notificationStreamUtils.ts';
+import { _connectOnce, STREAM_RECONNECT_BASE_MS, nextStreamReconnectDelay, grownReconnectDelay } from './notificationStreamUtils.ts';
 import { emitNotificationEvent, subscribeNotificationEvents } from '../services/notificationEvents.ts';
 
 // Poll intervals are relaxed because the SSE-fed notification event bus
@@ -31,7 +31,6 @@ import { emitNotificationEvent, subscribeNotificationEvents } from '../services/
 // slow safety net for missed events.
 const UNREAD_POLL_MS = 60_000;
 const NOTIF_POLL_MS  = 120_000;
-const SSE_RECONNECT_MS = 5_000;
 
 // ── useNotifications ──────────────────────────────────────────────────────────
 
@@ -236,6 +235,7 @@ export function useNotificationStream() {
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeRef = useRef(true);
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+  const backoffRef = useRef(STREAM_RECONNECT_BASE_MS);
 
   const connect = useCallback(async () => {
     if (!activeRef.current) return;
@@ -260,6 +260,7 @@ export function useNotificationStream() {
     xhr.onprogress = () => {
       const text = xhr.responseText;
       const newChunk = text.slice(parsedIdxRef.current);
+      if (newChunk) backoffRef.current = STREAM_RECONNECT_BASE_MS; // a stream that delivers is healthy: its next reconnect is prompt
       parsedIdxRef.current = text.length;
       const lines = newChunk.split('\n');
       let eventName = '';
@@ -283,18 +284,27 @@ export function useNotificationStream() {
       }
     };
 
+    // Connection ended or failed — reconnect with backoff; a 401 / 403 waits for the next foreground instead of
+    // re-asking every 5 s forever (notificationStreamUtils.nextStreamReconnectDelay).
+    // RN's XHR fires BOTH onreadystatechange(4) and onerror on a network failure: schedule once per connection, or the
+    // ladder runs 10 → 40 → 160 s instead of 5 → 10 → 20 s (verifier, 2026-10-22).
+    let scheduled = false;
+    const scheduleReconnect = (httpStatus: number) => {
+      if (!activeRef.current || scheduled) return;
+      scheduled = true;
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+      const delay = nextStreamReconnectDelay(backoffRef.current, httpStatus);
+      if (delay == null) return;
+      backoffRef.current = grownReconnectDelay(delay);
+      reconnectTimerRef.current = setTimeout(connect, delay);
+    };
+
     xhr.onreadystatechange = () => {
-      if (xhr.readyState === 4 && activeRef.current) {
-        // Connection ended — schedule reconnect
-        if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
-        reconnectTimerRef.current = setTimeout(connect, SSE_RECONNECT_MS);
-      }
+      if (xhr.readyState === 4) scheduleReconnect(xhr.status);
     };
 
     xhr.onerror = () => {
-      if (!activeRef.current) return;
-      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
-      reconnectTimerRef.current = setTimeout(connect, SSE_RECONNECT_MS);
+      scheduleReconnect(0);
     };
 
     xhr.send();
@@ -307,6 +317,7 @@ export function useNotificationStream() {
     const sub = AppState.addEventListener('change', (next: AppStateStatus) => {
       appStateRef.current = next;
       if (next === 'active') {
+        backoffRef.current = STREAM_RECONNECT_BASE_MS;
         connect();
       } else {
         xhrRef.current?.abort();

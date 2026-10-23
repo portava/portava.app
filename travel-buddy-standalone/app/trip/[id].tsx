@@ -209,7 +209,7 @@ function TripDetailScreen() {
     async function pollSafeReturn() {
       try {
         const r = await getActiveSession();
-        if (cancelled) return;
+        if (cancelled || r.unavailable) return; // a failed read keeps the card the traveller sees — it used to remove a running Safe Return
         const sess = r.session ?? null;
         // Only surface sessions tied to this trip (or sessions with no trip context)
         const relevant = sess && (sess.tripId === id || sess.tripId === null) ? sess : null;

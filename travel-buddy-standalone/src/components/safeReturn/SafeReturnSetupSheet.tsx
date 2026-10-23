@@ -268,6 +268,14 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
         Alert.alert('Error', 'Could not set up Safe Return. Please try again.');
       } else if (outcome === 'startFailed') {
         Alert.alert('Error', 'Session created but could not be started.');
+      } else if (outcome === 'startedContactsNotSaved') {
+        // The server's `trusted_contacts_not_saved` warning used to be dropped: the traveller believed the people
+        // they chose would be alerted if the timer ran out, and none would be. The sheet has already closed
+        // (runHandleStart), so the alert waits out the dismissal — an alert raised mid-dismissal can be lost on iOS.
+        setTimeout(() => Alert.alert(
+          'Your contacts were NOT saved',
+          'Your Safe Return timer is running, but we could not save your trusted contacts. They will not be alerted if you miss your check-in — please add them again.',
+        ), 400);
       }
       // 'started' → onStarted + onClose already fired inside runHandleStart
     } finally {

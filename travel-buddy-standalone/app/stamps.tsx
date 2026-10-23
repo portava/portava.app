@@ -6,7 +6,7 @@ import { AppHeader } from '../src/components/ui/AppHeader';
 import { PulseFilterRail } from '../src/components/PulseFilterRail';
 import { StampArtwork } from '../src/components/StampArtwork';
 import { getMyPassportStamps, updateStampVisibility } from '../src/services/passportStamps';
-import type { PassportStampNew, StampVisibility } from '../src/services/passportStamps';
+import type { PassportStampNew, SettableStampVisibility } from '../src/services/passportStamps';
 import type { PassportStamp } from '../src/types/models';
 import { color, space, radius, type as t, avatar } from '../src/theme/tokens';
 import { useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
@@ -71,7 +71,7 @@ export default function StampsPage() {
   const [loading, setLoading]     = useState(true);
   const [filter, setFilter]       = useState('All');
   const [selected, setSelected]   = useState<PassportStampNew | null>(null);
-  const [visUpdating, setVisUpdating] = useState(false);
+  const [visUpdating, setVisUpdating] = useState(false); const [visError, setVisError] = useState<string | null>(null); // a refused save is said in the sheet
   const [refreshing, setRefreshing] = useState(false);
 
   const navBarScrollHandler = useNavBarScrollHandler();
@@ -94,14 +94,14 @@ export default function StampsPage() {
     ? stamps.filter((s) => s.stampType === active.kind)
     : stamps;
 
-  async function handleVisChange(stampId: string, vis: StampVisibility) {
-    setVisUpdating(true);
+  async function handleVisChange(stampId: string, vis: SettableStampVisibility) {
+    setVisUpdating(true); setVisError(null);
     const res = await updateStampVisibility(stampId, vis);
     setVisUpdating(false);
     if (res.ok) {
       setStamps((prev) => prev.map((s) => s.id === stampId ? { ...s, visibility: vis } : s));
       setSelected((prev) => prev?.id === stampId ? { ...prev, visibility: vis } : prev);
-    }
+    } else setVisError('Not saved — this stamp keeps its current visibility. Please try again.'); // the traveller used to tap and see nothing happen
   }
 
   return (
@@ -139,7 +139,7 @@ export default function StampsPage() {
             return (
               <View key={s.id} style={styles.cell}>
                 <View style={styles.stampContainer}>
-                  <StampArtwork stamp={leg} size={90} rotate={((i % 3) - 1) * 4} onPress={() => setSelected(s)} />
+                  <StampArtwork stamp={leg} size={90} rotate={((i % 3) - 1) * 4} onPress={() => { setVisError(null); setSelected(s); }} />
                 </View>
                 <View style={styles.textContainer}>
                   <Text style={styles.cellName} numberOfLines={1}>{leg.label}</Text>
@@ -228,9 +228,13 @@ export default function StampsPage() {
                 {/* Visibility */}
                 {!selected.isRevoked && (
                   <>
-                    <Text style={styles.rowKey}>Visibility</Text>
+                    {/* Not `rowKey`: its `flex: 1` (meant for the label/value rows) is a zero flex-basis here, in a
+                        content-sized column, and collapsed this label to 0pt — the buttons had no heading. */}
+                    <Text style={styles.visLabel}>Visibility</Text>
+                    {/* Only what PATCH /stamps/:id/visibility accepts (public | friends_only | private). The sheet
+                        used to offer "Circle" (`circle_only`), which the server refuses. */}
                     <View style={styles.visRow}>
-                      {(['public', 'circle_only', 'private'] as StampVisibility[]).map((v) => (
+                      {(['public', 'friends_only', 'private'] as SettableStampVisibility[]).map((v) => (
                         <Pressable
                           key={v}
                           style={[styles.visBtn, selected.visibility === v && styles.visBtnActive]}
@@ -238,11 +242,12 @@ export default function StampsPage() {
                           disabled={visUpdating}
                         >
                           <Text style={[styles.visBtnText, selected.visibility === v && styles.visBtnTextActive]}>
-                            {v === 'circle_only' ? 'Circle' : v.charAt(0).toUpperCase() + v.slice(1)}
+                            {v === 'friends_only' ? 'Friends' : v.charAt(0).toUpperCase() + v.slice(1)}
                           </Text>
                         </Pressable>
                       ))}
                     </View>
+                    {visError ? <Text style={styles.visError} accessibilityRole="alert">{visError}</Text> : null}
                   </>
                 )}
               </View>
@@ -279,6 +284,8 @@ const styles = StyleSheet.create({
   desc:        { ...t.body, color: color.mute, textAlign: 'center', fontStyle: 'italic' },
   revokedBanner:     { backgroundColor: '#FEE2E2', borderRadius: radius.md, padding: space.sm, alignItems: 'center' },
   revokedBannerText: { ...t.small, color: '#DC2626', fontWeight: '600' },
+  visLabel:    { ...t.small, color: color.mute, fontWeight: '600' },
+  visError:    { ...t.small, color: '#DC2626', fontWeight: '600' },
   visRow:      { flexDirection: 'row', gap: space.sm },
   visBtn:      { flex: 1, alignItems: 'center', paddingVertical: space.sm, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paper },
   visBtnActive:     { borderColor: color.signal, backgroundColor: '#FFF0F3' },

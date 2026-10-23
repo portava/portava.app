@@ -94,7 +94,7 @@ const BASE = (() => {
   return d.endsWith('/') ? d.slice(0, -1) : d;
 })();
 
-const POLL_INTERVAL_MS = 2500;
+const POLL_INTERVAL_MS = 2500; export const POLL_MAX_ATTEMPTS = 72; export const POLL_MAX_CONSECUTIVE_FAILURES = 5; // ≤3 min per job: a stuck job used to be polled every 2.5 s forever, errors included
 const POLL_STATUSES = new Set<GenerationStatus>(['queued', 'generating']);
 
 interface ApiResult<T> {
@@ -175,11 +175,11 @@ export function useVisualGeneration(
 
   const startPolling = useCallback((visualId: string) => {
     if (pollRef.current) clearInterval(pollRef.current);
-    pollRef.current = setInterval(async () => {
-      if (!mountedRef.current) { if (pollRef.current) clearInterval(pollRef.current); return; }
+    let polls = 0; let failures = 0; pollRef.current = setInterval(async () => {
+      if (!mountedRef.current) { if (pollRef.current) clearInterval(pollRef.current); return; } if (++polls > POLL_MAX_ATTEMPTS || failures >= POLL_MAX_CONSECUTIVE_FAILURES) { if (pollRef.current) clearInterval(pollRef.current); pollRef.current = null; setError('This image is taking longer than expected. Check back in a little while.'); return; }
       const res = await apiReq<{ visual: Record<string, unknown> }>('GET', `/api/visuals/${visualId}`);
       if (!mountedRef.current) return;
-      if (!res.ok || !res.data?.visual) return;
+      if (!res.ok || !res.data?.visual) { failures++; return; } failures = 0;
       const v = parseVisualRow(res.data.visual);
       setGeneratedVisual(v);
       setStatus(v.status);

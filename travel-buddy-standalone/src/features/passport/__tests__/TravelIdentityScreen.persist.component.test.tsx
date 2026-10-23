@@ -191,3 +191,10 @@ describe('TravelIdentityScreen — Travel-DNA persistence (F6)', () => {
     expect(screen.queryByText(/Hidden from your Passport/i)).toBeNull();
   });
 });
+
+// NOTE: intentionally exhaustive — the Show/Hide/Not-Me controls exist only while `passport_travel_dna_enabled` is on
+// (it is off in production); these cases are about the controls, so it is on here. The gate itself:
+// TravelIdentityScreen.dnaFlagGate.component.test.tsx.
+jest.mock('../../../context/FeatureFlagsContext', () => ({
+  useFeatureFlags: () => ({ isEnabled: (k: string) => k === 'passport_travel_dna_enabled', loading: false }),
+}));

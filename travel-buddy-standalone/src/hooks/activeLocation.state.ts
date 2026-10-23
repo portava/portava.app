@@ -297,3 +297,24 @@ export function savedPlaceFromApi(
     source: 'recent',
   };
 }
+
+/**
+ * The PATCH a successful GPS fix saves. A GPS fix REPLACES a manual city (buildGpsState discards the previous place),
+ * so the save says so explicitly with `manualCity: null`. It used to rely on a server bug: POST /me/location-state
+ * wrote null into manual_city on EVERY save because its sanitiser never returned undefined. With the server now writing
+ * only the fields a request sends (2026-10-22), a GPS fix that left the manual city in place would restore the old city
+ * over the GPS one on the next launch.
+ */
+export function buildGpsSavePayload(
+  next: { source: string; place: unknown },
+  gps: { lat: number | null; lng: number | null; accuracyMeters: number | null },
+): { source: string; permissionStatus: 'granted'; coords: { lat: number | null; lng: number | null; accuracyMeters: number | null }; place: unknown; manualCity: null; manualCountry: null } {
+  return {
+    source: next.source,
+    permissionStatus: 'granted',
+    coords: { lat: gps.lat, lng: gps.lng, accuracyMeters: gps.accuracyMeters },
+    place: next.place,
+    manualCity: null,
+    manualCountry: null,
+  };
+}

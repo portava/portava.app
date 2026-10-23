@@ -558,7 +558,7 @@ export interface LayoverReminderDisposition {
   rung: { level: string; priority: string; label: string };
 }
 
-export interface LayoverOverview { estimates?: unknown;
+export interface LayoverOverview { estimates?: unknown; /** True only while the server's snapshot is canonical (stable across reads); absent from an older server = false. Compare this overview's snapshotId with the routed answer's ONLY when true. */ snapshotComparable?: boolean;
   session: LayoverSession;
   airport: PublicAirport;
   window: LayoverWindow;

@@ -207,7 +207,7 @@ test('actual Event location uses the existing Input HTTP contract, not private d
     title: 'Existing event', description: 'Private event notes', startsAt: '2030-06-07T20:00:00.000Z',
     locationName: 'Canonical Sky36, Da Nang', locationLat: 16.07, locationLng: 108.22,
     timezone: 'Asia/Ho_Chi_Minh', city: 'Da Nang', country: 'Vietnam',
-    joinMode: 'open', rsvpOptions: ['going', 'maybe', 'interested', 'cant_go'],
+    rsvpOptions: ['going', 'maybe', 'interested', 'cant_go'], // no joinMode: the server never had one (see create.joinModeHonesty)
     visibility: 'invite_only', circleId: 'private-circle', tripId: 'private-trip',
     priceType: 'free', showHeaderPublicly: false,
   });

@@ -121,3 +121,16 @@ export function routedMapForStorage(raw: unknown): RoutedMapData | null {
   const envelope = null; // Legacy contours have no licensing provenance either. Keep the separate owned straight-line bound.
   return { ...data, envelope, cards: data.cards.map(c => ({ ...c, routing: { ...c.routing, geometry: { outbound: null, returnLeg: null } } })) };
 }
+
+/**
+ * The overview snapshot id the routed map may be compared with, or null for "do not compare".
+ *
+ * Only a CANONICAL snapshot is the same across reads. With layover_canonical_snapshot_enabled off (production,
+ * 2026-10-22) the overview certifies a new snapshot on every GET and the recommendations GET regenerates with Date.now()
+ * in its input hash, so the two ids never match: the routed map was dropped, then shown as "The plan has changed.
+ * Refresh to see routes…" with the return route hidden, permanently. The server says whether its snapshot is canonical
+ * (`snapshotComparable`); an older server that does not say is treated as "not comparable".
+ */
+export function comparableOverviewSnapshotId(overview: { snapshotId?: string | null; snapshotComparable?: boolean } | null | undefined): string | null {
+  return overview?.snapshotComparable === true && overview.snapshotId ? overview.snapshotId : null;
+}

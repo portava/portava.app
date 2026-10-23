@@ -267,26 +267,36 @@ export const DECLARED_SHARED_PATHS: ReadonlyArray<{
 export const CONTESTED_PATH_RATCHET: ReadonlyArray<{
   method: string;
   path: string;
+  /**
+   * When set, the router that MUST be mounted first — the handler that answers.
+   * Checked (ratchetOrderViolations): a ratchet entry counts a known dead handler,
+   * it must not also hide the WRONG handler winning.
+   */
+  live?: string;
   dead: string;
   needs: string;
 }> = [
   {
     method: "get",
     path: "/trips/:tripId/chat",
-    dead: "routes/groupChat.ts — reached only if routes/messaging.ts stops registering it",
+    live: "routes/messaging.ts",
+    dead: "routes/groupChat.ts — reached only if routes/messaging.ts stops registering it or is mounted after it",
     needs:
-      "A choice of response shape. messaging.ts answers " +
-      "{ threadId, threadType, title, tripId, circleOwnerId }; groupChat.ts answers " +
-      "{ thread: {...}, messages: [...] }. They are not interchangeable, so whichever " +
-      "is retired breaks its clients. The dead handler is the one carrying the §20.7 " +
-      "fix that tells a person holding a live invite `pending_invite` rather than the " +
-      "`not_member` dead end, and that fix has never run.",
+      "Closing groupChat.ts's projection gap before it may answer. messaging.ts answers the flat " +
+      "{ threadId, threadType, title, tripId, circleOwnerId } and the client reads page 1 through " +
+      "the thread reader (media, reply quotes, §45d.3 identity withholding across blocks); since " +
+      "2026-10-22 it also tells a person holding a pending invite so (403 forbidden, " +
+      "reason pending_invite), which useGroupChat shows as \"accept the invite\". groupChat.ts answers " +
+      "{ thread, messages } from fetchMessagesForThread, which selects no media or reply columns and " +
+      "withholds no identity — mounting it first (tried 2026-10-22, reverted) blanked media and " +
+      "reply quotes on open and showed a blocked sender's handle.",
   },
   {
     method: "get",
     path: "/circles/:circleOwnerId/chat",
-    dead: "routes/groupChat.ts — same pair, same two routers, same choice",
-    needs: "The same response-shape decision as the trips path above.",
+    live: "routes/messaging.ts",
+    dead: "routes/groupChat.ts — same pair, same two routers, same projection gap",
+    needs: "The same projection gap as the trips path above, for the circle chat.",
   },
   {
     method: "get",
@@ -301,6 +311,24 @@ export const CONTESTED_PATH_RATCHET: ReadonlyArray<{
       "because unsend is what this change is for.",
   },
 ];
+
+/**
+ * Ratchet entries that name a `live` router whose path is NOT won by it: the
+ * first mounted registration is some other router. Pure, so the test can run it
+ * against the real mount order.
+ */
+export function ratchetOrderViolations(
+  contested: readonly DuplicateFinding[],
+): Array<{ method: string; path: string; live: string; first: string }> {
+  const out: Array<{ method: string; path: string; live: string; first: string }> = [];
+  for (const r of CONTESTED_PATH_RATCHET) {
+    if (!r.live) continue;
+    const d = contested.find((c) => c.method === r.method && c.path === normalisePath(r.path));
+    const first = d ? [...d.registrations].sort((a, b) => a.order - b.order)[0]?.name : undefined;
+    if (d && first !== r.live) out.push({ method: r.method, path: r.path, live: r.live, first: first ?? "(none)" });
+  }
+  return out;
+}
 
 /** `import x from "./y";` → x ↦ "routes/y.ts", resolved against `src/`. */
 export function parseRouterImports(indexSource: string): Map<string, string> {
@@ -483,6 +511,15 @@ function main(): void {
       `longer contested: ${stale.join(", ")}. Delete the entr${stale.length === 1 ? "y" : "ies"} ` +
       "in the change that fixed them.",
     );
+    process.exit(1);
+  }
+
+  const wrongWinner = ratchetOrderViolations(contested);
+  if (wrongWinner.length > 0) {
+    console.error("✖ check-route-shadowing FAILED — a ratcheted path is answered by the wrong router\n");
+    for (const v of wrongWinner) {
+      console.error(`  ${v.method.toUpperCase()} ${v.path}: ${v.first} is mounted first; ${v.live} must be.`);
+    }
     process.exit(1);
   }
 

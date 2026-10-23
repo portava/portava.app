@@ -54,3 +54,16 @@ describe('savedPlaceFromApi', () => {
     assert.equal(place.source, 'recent');
   });
 });
+
+import { buildGpsSavePayload } from '../activeLocation.state.ts';
+
+describe('buildGpsSavePayload — a GPS fix replaces a manual city on the server too', () => {
+  it('clears manualCity / manualCountry explicitly (the server now writes only the fields a request sends)', () => {
+    const p = buildGpsSavePayload({ source: 'gps_fresh', place: { city: 'Da Nang' } }, { lat: 16.05, lng: 108.2, accuracyMeters: 12 });
+    assert.equal(p.manualCity, null);
+    assert.equal(p.manualCountry, null);
+    assert.ok('manualCity' in p && 'manualCountry' in p, 'the keys are present, so a presence-based server clears them');
+    assert.deepEqual(p.coords, { lat: 16.05, lng: 108.2, accuracyMeters: 12 });
+    assert.equal(p.permissionStatus, 'granted');
+  });
+});

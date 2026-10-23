@@ -38,6 +38,9 @@ export function useSafeReturnActive(enabled: boolean = true): SafeReturnActive {
     getActiveSession()
       .then((r) => {
         if (!mounted.current) return;
+        // A failed read (503, network) is UNKNOWN — keep the last known value, exactly as a throw does. It used
+        // to arrive as `session: null` and switch the capture prompts back on during a live Safe Return.
+        if (r.unavailable) return;
         const s = r.session;
         setActive(!!s && (s.status === 'active' || s.status === 'missed'));
       })

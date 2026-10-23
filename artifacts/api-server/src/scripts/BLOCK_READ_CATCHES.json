@@ -475,6 +475,17 @@
       "fingerprint": "813da59d872ec6f0",
       "closedBy": "answers-unreadable",
       "why": "A thrown block read while deciding whether an attendee may be told an event was cancelled lands in readEventCancellation’s catch, which answers \"unavailable\": no cancellation notice is issued, and a refusal is never read as \"not blocked\" (census-telegraph T264, wave 2 2026-10-17)."
+    },
+    {
+      "key": "services/telegraph/replyQuote.ts::replyQuoteForSender::catch#1",
+      "kind": "catch",
+      "reads": [
+        "identityWithheldAcrossBlocks",
+        "withholdLocationAcrossBlocks"
+      ],
+      "fingerprint": "50e4838c5d8c05a0",
+      "closedBy": "withholds",
+      "why": "The reply quote in the sender's own 201 (POST /threads/:id/messages, added 2026-10-22). Any throw in the quote build — the two block-scoped helpers included — answers { replyContext: 'unavailable' }: no quoted body and no quoted sender name are served, the message itself is already written and acknowledged. Both helpers answer their own unreadable value (withhold) without throwing, so this catch is reached only by a throw they do not model."
     }
   ]
 }

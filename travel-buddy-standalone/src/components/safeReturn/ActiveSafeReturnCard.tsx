@@ -28,7 +28,7 @@ import {
   getSessionContacts,
   type SafeReturnSession,
 } from '../../services/safeReturn.ts';
-import { EmergencyHelpSheet } from './EmergencyHelpSheet.tsx';
+import { EmergencyHelpSheet } from './EmergencyHelpSheet.tsx'; import { liveShareNoticeCopy } from '../../lib/liveShareRecipient.ts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -143,7 +143,7 @@ export function ActiveSafeReturnCard({ session, onSessionEnded, onSessionUpdated
       const contact = eligible[0]!;
       const r = await startLiveShare(session.id, { recipientContactId: contact.id });
       if (r.ok) {
-        Alert.alert('Sharing started', `Your approximate area is now visible to ${contact.contactName ?? 'your contact'} for 1 hour.`);
+        const notice = liveShareNoticeCopy(r, contact.contactName ?? 'Your contact'); if (notice) Alert.alert('Contact not notified', notice); else Alert.alert('Sharing started', `Your approximate area is now visible to ${contact.contactName ?? 'your contact'} for 1 hour.`); // TRUST-F10: `recipientNotified: false` used to read as "now visible to Ana" — never imply a contact was told
       } else {
         Alert.alert('Error', 'Could not start location share. Please try again.');
       }
@@ -159,7 +159,7 @@ export function ActiveSafeReturnCard({ session, onSessionEnded, onSessionUpdated
           text: c.contactName ?? 'Contact',
           onPress: async () => {
             const r = await startLiveShare(session.id, { recipientContactId: c.id });
-            if (!r.ok) Alert.alert('Error', 'Could not start location share.');
+            if (!r.ok) Alert.alert('Error', 'Could not start location share.'); else { const notice = liveShareNoticeCopy(r, c.contactName ?? 'Your contact'); if (notice) Alert.alert('Contact not notified', notice); } // this branch said nothing on success
           },
         })),
         { text: 'Cancel', style: 'cancel' },

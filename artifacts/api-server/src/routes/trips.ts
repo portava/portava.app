@@ -37,7 +37,7 @@ import { placelessAward, TRIP_CREATION_STAMP_LOCATION_TEXT } from "../services/p
 import { buildConsumerProjection } from "../services/passport/PassportConsumerProjections.js";
 import { nameVisibilitySet, sanitizeIdentity, nameVisibleFor } from "../lib/publicIdentity";
 import { truncateDisplayName } from "../lib/displayName.js";
-import { readBlockExclusions, isExcluded, sendExclusionsUnavailable } from "../lib/exclusionSet.js";
+import { readBlockExclusions, isExcluded, sendExclusionsUnavailable } from "../lib/exclusionSet.js"; import { storedMediaRef } from "../lib/storedMediaRef.js";
 
 const router = Router(); router.use(tripRetainedRecordWriteGuard()); // census-trips §85.2 (verifier R3): routes/index.ts mounts this router FIRST among the trip routers, so this guard refuses a retained-record-only member's write on every /trips/:tripId router after it
 
@@ -798,14 +798,14 @@ const TripStatusEnum = ["draft", "upcoming", "active", "planning", "completed", 
  * Every field is optional: a trip with no title or city is a DRAFT, which
  * computeTripStatus below depends on and which the client relies on.
  */
-const CreateTripSchema = z.object({
+export const CreateTripSchema = z.object({
   title:              z.string().min(1).max(200).optional(),
   destinationCity:    z.string().max(100).optional(),
   destinationCountry: z.string().max(100).nullable().optional(),
   startDate:          z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   endDate:            z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   visibility:         z.enum(["public", "private", "buddies", "invite"]).optional(),
-  coverUrl:           z.string().url().nullable().optional(),
+  coverUrl:           storedMediaRef.nullable().optional(), // the bare post-media/<path> POST /media/upload returns: z.url() refused it, so a picked photo 400'd the whole save
   coverMediaType:     z.enum(["image", "video"]).nullable().optional(),
   coverImageWidth:    z.number().int().positive().nullable().optional(),
   coverImageHeight:   z.number().int().positive().nullable().optional(),
@@ -813,7 +813,7 @@ const CreateTripSchema = z.object({
   showHeaderPublicly: z.boolean().optional(),
 });
 
-const PatchTripSchema = z.object({
+export const PatchTripSchema = z.object({
   // Plan edit settings
   planEditPermission: z.enum(PlanEditPermissionEnum).optional(),
   planEditors:        z.array(z.string().regex(UUID_RE)).optional(),
@@ -833,7 +833,7 @@ const PatchTripSchema = z.object({
   timezone:                z.string().nullable().optional(),
   travelStyle:             z.string().nullable().optional(),
   openToMeet:              z.boolean().optional(),
-  coverUrl:                z.string().url().nullable().optional(),
+  coverUrl:                storedMediaRef.nullable().optional(), // the bare post-media/<path> POST /media/upload returns: z.url() refused it, so a picked photo 400'd the whole save
   coverMediaType:          z.enum(['image', 'video']).nullable().optional(),
   coverImageWidth:         z.number().int().positive().nullable().optional(),
   coverImageHeight:        z.number().int().positive().nullable().optional(),

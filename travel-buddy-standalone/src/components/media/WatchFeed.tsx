@@ -27,8 +27,8 @@ import { MediaCommentSheet } from './MediaCommentSheet.tsx';
 import { MediaMoreMenu } from './MediaMoreMenu.tsx';
 import { WhyThisSheet } from './WhyThisSheet.tsx';
 import type { WatchFeedType } from '../../types/media.ts';
-import { color, type as t, space } from '../../theme/tokens.ts';
-import { useSession } from '../../context/SessionContext.tsx';
+import { color, type as t, space } from '../../theme/tokens.ts'; import { getOverlayHeaderTotalHeight } from '../ui/AppHeader.tsx';
+import { useSession } from '../../context/SessionContext.tsx'; import { useFeatureFlags } from '../../context/FeatureFlagsContext.tsx'; import { useSafeAreaInsets } from 'react-native-safe-area-context';
 // SessionContextValue exposes `userId` (string | null), not `user`
 
 // ── Empty / error state components ───────────────────────────────────────────
@@ -145,6 +145,17 @@ export function WatchFeed() {
   const feed = useWatchFeed();
   const session = useSession();
   const currentUserId = session?.userId ?? undefined;
+  const insets = useSafeAreaInsets();
+  // The Following feed is served only while MEDIA_FOLLOWING_ENABLED is on (off
+  // in production, 2026-10-22): the toggle offered it anyway, the server
+  // refused with feature_disabled, and the error screen had no way back to
+  // For You. With the flag off there is nothing to toggle between, so no
+  // toggle; a selection left on Following is moved back to For You.
+  const followingOn = useFeatureFlags().isEnabled('MEDIA_FOLLOWING_ENABLED');
+  useEffect(() => {
+    if (!followingOn && feed.feedType === 'following') feed.setFeedType('for_you');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [followingOn, feed.feedType]);
 
   // ── Interaction hooks (optimistic, API-backed) ──────────────────────────
   const saveHook = useMediaSave();
@@ -189,6 +200,19 @@ export function WatchFeed() {
     [feed],
   );
 
+  // The toggle sits below the media tab's overlay header and its mode selector
+  // (app/(tabs)/media.tsx), cleared the way GemsFeed clears its filter bar. At
+  // `top: 0` it sat at 12–44pt: behind the Dynamic Island and under the header.
+  const toggleBar = followingOn ? (
+    <View
+      style={[s.toggleBar, { top: getOverlayHeaderTotalHeight(insets.top) + 4 + MODE_SELECTOR_HEIGHT + TOGGLE_GAP }]}
+      pointerEvents="box-none"
+      testID="watch-feed-toggle-bar"
+    >
+      <FeedToggle feedType={feed.feedType} onChange={handleFeedTypeChange} />
+    </View>
+  ) : null;
+
   // ── Item removed (e.g. from more-menu delete/block/hide) ────────────────
   // Feed will pick this up on next refresh; for now the item stays visible
   // until the user pulls to refresh. (Full filtering is a follow-up.)
@@ -214,21 +238,26 @@ export function WatchFeed() {
       feed.error.toLowerCase().includes('network') ||
       feed.error.toLowerCase().includes('failed to fetch');
 
+    // The toggle stays on the error screen: a feed that failed is not a dead
+    // end while the other feed is a tap away.
     return (
-      <EmptyState
-        icon={
-          isOffline
-            ? <WifiOff size={48} color={color.onInkMute} />
-            : <Frown size={48} color={color.onInkMute} />
-        }
-        title={isOffline ? 'You\'re offline' : 'Something went wrong'}
-        subtitle={
-          isOffline
-            ? 'Check your connection and try again.'
-            : 'We couldn\'t load the feed right now.'
-        }
-        action={{ label: 'Retry', onPress: () => feed.loadFeed() }}
-      />
+      <View style={{ flex: 1, backgroundColor: color.ink }}>
+        {toggleBar}
+        <EmptyState
+          icon={
+            isOffline
+              ? <WifiOff size={48} color={color.onInkMute} />
+              : <Frown size={48} color={color.onInkMute} />
+          }
+          title={isOffline ? 'You\'re offline' : 'Something went wrong'}
+          subtitle={
+            isOffline
+              ? 'Check your connection and try again.'
+              : 'We couldn\'t load the feed right now.'
+          }
+          action={{ label: 'Retry', onPress: () => feed.loadFeed() }}
+        />
+      </View>
     );
   }
 
@@ -237,9 +266,7 @@ export function WatchFeed() {
   if (!feed.loading && feed.items.length === 0) {
     return (
       <View style={{ flex: 1, backgroundColor: color.ink }}>
-        <View style={s.toggleBar}>
-          <FeedToggle feedType={feed.feedType} onChange={handleFeedTypeChange} />
-        </View>
+        {toggleBar}
         <EmptyState
           icon={<Film size={48} color={color.onInkMute} />}
           title={
@@ -273,10 +300,8 @@ export function WatchFeed() {
         savedSet={saveHook.savedSet}
       />
 
-      {/* Feed type toggle — floated top-center */}
-      <View style={s.toggleBar} pointerEvents="box-none">
-        <FeedToggle feedType={feed.feedType} onChange={handleFeedTypeChange} />
-      </View>
+      {/* Feed type toggle — floated top-center, below the overlay header */}
+      {toggleBar}
 
       {/* ── Comment sheet ──────────────────────────────────────────────── */}
       <MediaCommentSheet
@@ -322,6 +347,10 @@ export function WatchFeed() {
 
 // ── Styles ─────────────────────────────────────────────────────────────────
 
+/** media.tsx's mode selector pill (it sits 4pt below the overlay header), and the gap under it — GemsFeed's values. */
+const MODE_SELECTOR_HEIGHT = 44;
+const TOGGLE_GAP = 8;
+
 const s = StyleSheet.create({
   root: {
     flex: 1,
@@ -334,12 +363,10 @@ const s = StyleSheet.create({
     backgroundColor: color.ink,
   },
   toggleBar: {
-    position: 'absolute',
-    top: 0,
+    position: 'absolute', // `top` is inset-aware, set where it is drawn
     left: 0,
     right: 0,
     alignItems: 'center',
-    paddingTop: 12,
     paddingBottom: 8,
     zIndex: 30,
   },

@@ -21,6 +21,13 @@
  *      → neither callback fires
  *      → outcome: 'startFailed'
  *
+ *   E) createSession succeeds WITH `warnings: ['trusted_contacts_not_saved']`
+ *      and startSession succeeds
+ *      → onStarted + onClose fire (the timer IS running)
+ *      → outcome: 'startedContactsNotSaved' — the caller must tell the
+ *        traveller that the people they chose will NOT be alerted. This used to
+ *        be reported as a plain 'started'.
+ *
  * Deliberately dependency-free (no React, no React Native, no Supabase)
  * so it can be imported by node:test + tsx/esm with no shimming.
  *
@@ -37,7 +44,8 @@ export type HandleStartOutcome =
   | 'started'      // onStarted + onClose already fired
   | 'conflict'     // createSession: another session is active
   | 'createFailed' // createSession: server / network error
-  | 'startFailed'; // createSession ok but startSession failed
+  | 'startFailed'  // createSession ok but startSession failed
+  | 'startedContactsNotSaved'; // started, but the server could not save the trusted contacts — nobody will be alerted
 
 export interface HandleStartDeps {
   /** Calls the real createSession service with already-assembled parameters. */
@@ -45,6 +53,8 @@ export interface HandleStartDeps {
     ok: boolean;
     session?: { id: string };
     error?: string;
+    /** POST /me/safe-return/sessions — e.g. 'trusted_contacts_not_saved' on a 201. */
+    warnings?: string[];
   }>;
   /** Calls the real startSession service. */
   startSession: (id: string) => Promise<{
@@ -77,7 +87,7 @@ export async function runHandleStart(deps: HandleStartDeps): Promise<HandleStart
   if (started.ok && started.session) {
     deps.onStarted?.(started.session.id);
     deps.onClose();
-    return 'started';
+    return created.warnings?.includes('trusted_contacts_not_saved') ? 'startedContactsNotSaved' : 'started';
   }
 
   return 'startFailed';

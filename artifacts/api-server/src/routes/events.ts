@@ -792,7 +792,7 @@ async function getAttendeeRecipients(
 
 // ── Schemas ───────────────────────────────────────────────────────────────────
 
-const CreateEventSchema = z.object({
+export const CreateEventSchema = z.object({
   title:           z.string().min(1).max(200),
   description:     z.string().max(2000).optional(),
   locationName:    z.string().max(300).optional(),
@@ -800,7 +800,7 @@ const CreateEventSchema = z.object({
   locationLng:     z.number().optional(),
   startsAt:        z.string().optional(),
   endsAt:          z.string().optional(),
-  coverUrl:        z.string().url().optional().nullable(),
+  coverUrl:        storedMediaRef.optional().nullable(), // the bare post-media/<path> POST /media/upload returns: z.url() refused it, so a picked photo 400'd the whole save
   coverMediaType:  z.enum(["image", "video"]).optional().nullable(),
   coverImageWidth:  z.number().int().positive().optional().nullable(),
   coverImageHeight: z.number().int().positive().optional().nullable(),
@@ -821,10 +821,10 @@ const CreateEventSchema = z.object({
   city:               z.string().max(100).optional(),
   country:            z.string().max(100).optional(),
   publishNow:         z.boolean().optional(),
-  showHeaderPublicly: z.boolean().optional(),
+  showHeaderPublicly: z.boolean().optional(), safetyNotes: z.string().max(1000).optional().nullable(), // the create sheet's "Safety notes": zod stripped the key, so a host's notes never reached events.safety_notes (joinMode stays stripped: no join-mode semantics exist server-side)
 });
 
-const UpdateEventSchema = z.object({
+export const UpdateEventSchema = z.object({
   title:           z.string().min(1).max(200).optional(),
   description:     z.string().max(2000).nullable().optional(),
   locationName:    z.string().max(300).nullable().optional(),
@@ -832,7 +832,7 @@ const UpdateEventSchema = z.object({
   locationLng:     z.number().nullable().optional(),
   startsAt:        z.string().nullable().optional(),
   endsAt:          z.string().nullable().optional(),
-  coverUrl:        z.string().url().nullable().optional(),
+  coverUrl:        storedMediaRef.nullable().optional(), // the bare post-media/<path> POST /media/upload returns: z.url() refused it, so a picked photo 400'd the whole save
   coverMediaType:  z.enum(["image", "video"]).nullable().optional(),
   coverImageWidth:  z.number().int().positive().nullable().optional(),
   coverImageHeight: z.number().int().positive().nullable().optional(),
@@ -853,7 +853,7 @@ const UpdateEventSchema = z.object({
   category:           z.string().max(60).nullable().optional(),
   city:               z.string().max(100).nullable().optional(),
   country:            z.string().max(100).nullable().optional(),
-  showHeaderPublicly: z.boolean().optional(),
+  showHeaderPublicly: z.boolean().optional(), safetyNotes: z.string().max(1000).nullable().optional(), // edit: null clears the notes
 });
 
 const RsvpSchema = z.object({
@@ -945,7 +945,7 @@ router.post("/events", async (req, res) => {
       city:                 b.city ?? null,
       country:              b.country ?? null,
       // Public events always show header publicly; respect client preference for non-public.
-      show_header_publicly: b.showHeaderPublicly ?? (b.visibility === "public"),
+      show_header_publicly: b.showHeaderPublicly ?? (b.visibility === "public"), safety_notes: b.safetyNotes?.trim() || null,
     })
     .select("*")
     .single();
@@ -2180,7 +2180,7 @@ router.post("/events/drafts/:draftId/publish", async (req, res) => {
     rsvp_options:     b.rsvpOptions ?? ["going","maybe","interested","cant_go"],
     category:         b.category ?? null,
     city:             b.city ?? null,
-    country:          b.country ?? null,
+    country:          b.country ?? null, safety_notes: b.safetyNotes?.trim() || null, // the draft carries the host's safety notes; they used to be stripped at publish
   }).select("*").single();
 
   if (error) { req.log.error({ err: error }, "publish draft"); sendError(res, "db_error", error.message); return; }
@@ -2607,7 +2607,7 @@ router.patch("/events/:id", async (req, res) => {
   if (b.category        !== undefined) patch.category         = b.category;
   if (b.city               !== undefined) patch.city                = b.city;
   if (b.country            !== undefined) patch.country             = b.country;
-  if (b.showHeaderPublicly !== undefined) patch.show_header_publicly = b.showHeaderPublicly;
+  if (b.showHeaderPublicly !== undefined) patch.show_header_publicly = b.showHeaderPublicly; if (b.safetyNotes !== undefined) patch.safety_notes = b.safetyNotes?.trim() || null;
 
   const visGuard: HostVisibilityGuard | null = visTo !== null ? { from: (current as any).visibility, ...(stateChanges ? {} : { updatedAt: (current as any).updated_at }) } : null; const { data: updated, error } = await guardHostVisibilityWrite(sc // a visibility change is conditional on what was read: a moderator's hide (it stamps updated_at) landing since the hold read wins
     .from("events").update(patch).eq("id", id), visGuard).select("*").single();
@@ -5798,7 +5798,7 @@ router.post("/events/:id/posts", async (req, res) => {
 
   const parsed = z.object({
     body:      z.string().min(1).max(2000),
-    mediaUrls: z.array(z.string().url().refine((u) => Boolean(appStorageUrlInfo(u)), "mediaUrls must be uploaded app media URLs (use /api/media/upload first)")).max(10).default([]), // same storage-ref check as POST /events/:id/media (TM-create)
+    mediaUrls: z.array(z.string().min(1).max(2048).refine((u) => Boolean(appStorageUrlInfo(u)), "mediaUrls must be uploaded app media URLs (use /api/media/upload first)")).max(10).default([]), // same storage-ref check as POST /events/:id/media (TM-create); z.url() ran first and refused the bare post-media/<path> the upload returns, so no photo could ever be attached
     pinned:    z.boolean().default(false),
   }).safeParse(req.body);
   if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; } { const refusal = postMediaHoldRefusal(await postMediaModerationHold(sc, parsed.data.mediaUrls)); if (refusal) { sendError(res, refusal.code, refusal.message); return; } } // census-media MD269 (a), lead ruling D-82: an event post is refused, and nothing written, while the moderation stage holds any of its media
@@ -7392,7 +7392,7 @@ function freeSeatHeldForQueue(ev: any): boolean {
 // A locked call that answers PGRST202 / 42883 ran nothing (the function is gone, or the schema cache is stale): the
 // verdict becomes `missing` and today's statements run. Still not serialised (stated): the admissions that take a seat
 // without the queue count outside the lock. The sweeper's claim takes it (claimWaitlistSeatForSweeper, end of file).
-import { READY_TTL_MS as LOCKED_SEAT_READY_TTL_MS, ABSENT_TTL_MS as LOCKED_SEAT_ABSENT_TTL_MS } from "../lib/capability/schemaCapability.js";
+import { READY_TTL_MS as LOCKED_SEAT_READY_TTL_MS, ABSENT_TTL_MS as LOCKED_SEAT_ABSENT_TTL_MS } from "../lib/capability/schemaCapability.js"; import { storedMediaRef } from "../lib/storedMediaRef.js"; // the cover-url field CreateEventSchema/UpdateEventSchema share with trips, gems and memories
 
 type LockedSeatFunction = "claim_waitlist_seat" | "accept_waitlist_seat";
 type LockedSeatVerdict = "ready" | "missing" | "unknown";

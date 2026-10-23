@@ -255,3 +255,38 @@ describe("C. verifier M3 D82-1 — a data: URI is refused on the event and admin
     });
   }
 });
+
+// ── 2026-10-22: the bare ref POST /media/upload returns ─────────────────────────
+// POST /media/upload answers `post-media/<path>`, not a URL. This route ran z.string().url() BEFORE its
+// appStorageUrlInfo gate, so the ref the upload had just returned was refused with a 400 and no photo could ever be
+// attached to an event post (POST /events/:id/media had already been fixed the same way). The gate itself stays: this
+// route takes app storage only, never an arbitrary https URL.
+describe("A2. POST /events/:id/posts — the upload's own bare ref", () => {
+  const post = (c: any, mediaUrls: string[]) => serve(eventsRouter, c).then(async (s) => {
+    try { return await send(s.base, "POST", `/api/events/${EVENT}/posts`, "tok-host", { body: "see you there", mediaUrls }); } finally { s.close(); }
+  });
+
+  it("stage OFF: post-media/<path> is accepted and stored as sent", async () => {
+    const c = fakeClient({ stageOn: false });
+    const r = await post(c, [`post-media/${CLEAR_PATH}`]);
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.equal(wrote(c, "event_posts"), 1);
+    assert.deepEqual(c.writes.find((w: any) => w.table === "event_posts").row.media_urls, [`post-media/${CLEAR_PATH}`]);
+  });
+
+  it("stage ON: the hold still bites on the bare form (accepting it opened no bypass)", async () => {
+    const c = fakeClient({ stageOn: true });
+    const r = await post(c, [`post-media/${HELD_PATH}`]);
+    assert.equal(r.status, 409, JSON.stringify(r.body));
+    assert.equal(wrote(c, "event_posts"), 0);
+  });
+
+  it("the gate stays: a foreign https URL and a bare word are still refused", async () => {
+    for (const bad of ["https://example.com/a.jpg", "not-a-ref"]) {
+      const c = fakeClient({ stageOn: false });
+      const r = await post(c, [bad]);
+      assert.equal(r.status, 400, `${bad}: ${JSON.stringify(r.body)}`);
+      assert.equal(wrote(c, "event_posts"), 0);
+    }
+  });
+});

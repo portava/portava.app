@@ -46,7 +46,7 @@ export function LayoverSessionProvider({ children }: { children: React.ReactNode
       // true` set by useState is sufficient for the first-mount case.
       getActiveLayoverSession()
         .then((res) => {
-          if (!alive) return;
+          if (!alive) return; if (res === null) { setState((prev) => (prev.loading ? { ...prev, loading: false } : prev)); return; } // null = the read FAILED (getActiveLayoverSession: any non-2xx, e.g. a 503) — keep the layover already shown; it used to vanish as "no layover"
           const newSession = res?.session ?? null;
           const newAirport = res?.airport;
           // Use a functional updater that returns the previous state object when
@@ -65,12 +65,9 @@ export function LayoverSessionProvider({ children }: { children: React.ReactNode
           });
         })
         .catch(() => {
-          if (alive) setState((prev) => {
-            if (prev.session === null && prev.airport === undefined && prev.loading === false) {
-              return prev;
-            }
-            return { session: null, airport: undefined, loading: false };
-          });
+          // A THROWN read (no signal, airplane mode — authedFetch does not catch) is a failed read like `null` above:
+          // keep the layover the traveller is on, only stop loading. It used to clear it (verifier, 2026-10-22).
+          if (alive) setState((prev) => (prev.loading ? { ...prev, loading: false } : prev));
         });
       return () => { alive = false; };
     }, []),

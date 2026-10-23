@@ -110,7 +110,7 @@ const RSVP_OPTION_KEYS: { key: EventRsvpStatus; label: string; desc: string }[] 
   { key: 'cant_go',    label: "Can't go",  desc: 'Attendee declines but stays connected' },
 ];
 
-type JoinMode = 'open' | 'approval' | 'invite_only';
+// (JoinMode removed — the server has no join_mode; who may join is the Privacy step's visibility. See the Capacity step.)
 
 export default function CreateEventScreen() {
   const { pickMedia } = useMediaPicker();
@@ -204,7 +204,7 @@ export default function CreateEventScreen() {
 
   // ── Step 4: Capacity ────────────────────────────────────────────────────────
   const [maxAttendees, setMaxAttendees] = useState('');
-  const [joinMode, setJoinMode] = useState<JoinMode>('open');
+  // No join-mode state: POST/PATCH /events strip `joinMode`, and approval is enforced only for visibility 'invite_only' (events.ts RSVP gate).
   const [waitlistEnabled, setWaitlistEnabled] = useState(true);
   const [chatEnabled, setChatEnabled] = useState(true);
   const [rsvpOptions, setRsvpOptions] = useState<EventRsvpStatus[]>(['going', 'maybe', 'interested', 'cant_go']);
@@ -462,7 +462,7 @@ export default function CreateEventScreen() {
       city: city.trim() || undefined,
       country: country.trim() || undefined,
       maxAttendees: maxAttendees ? parseInt(maxAttendees) : undefined,
-      joinMode,
+      // joinMode is not sent — the server never stored it, so "Request to join" published an open event.
       rsvpOptions,
       ageMin: ageMin ? parseInt(ageMin) : undefined,
       ageMax: ageMax ? parseInt(ageMax) : undefined,
@@ -1089,24 +1089,12 @@ export default function CreateEventScreen() {
                 maxLength={6}
               />
 
-              <Text style={styles.label}>How can people join?</Text>
-              {([
-                { key: 'open', label: 'Open RSVP', desc: 'Anyone can RSVP immediately' },
-                { key: 'approval', label: 'Request to join', desc: 'You approve each attendee' },
-                { key: 'invite_only', label: 'Invite only', desc: 'Only people you invite can join' },
-              ] as { key: JoinMode; label: string; desc: string }[]).map((opt) => (
-                <Pressable
-                  key={opt.key}
-                  style={[styles.optRow, joinMode === opt.key && styles.optRowActive]}
-                  onPress={() => { setJoinMode(opt.key); scheduleSave(); }}
-                >
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.optLabel, joinMode === opt.key && styles.optLabelActive]}>{opt.label}</Text>
-                    <Text style={styles.optDesc}>{opt.desc}</Text>
-                  </View>
-                  {joinMode === opt.key && <View style={styles.optDot} />}
-                </Pressable>
-              ))}
+              {/* The traveller was offered "How can people join?" (Open RSVP / Request to join / Invite only), but the
+                  server has no join mode: it dropped the choice and published every event as open RSVP. The only
+                  approval the server enforces is visibility 'invite_only' (events.ts RSVP gate), chosen in Privacy. */}
+              <Text style={styles.optDesc} testID="event-create-approval-hint">
+                Want to approve each attendee? Choose "Invite only" in the Privacy step.
+              </Text>
 
               <View style={styles.toggleRow}>
                 <View style={{ flex: 1 }}>

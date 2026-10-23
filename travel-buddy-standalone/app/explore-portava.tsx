@@ -6,7 +6,7 @@
  *
  * Sections: Social · Discover · Travel · Create · Passport · Services · Account
  */
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   View, Text, SectionList, Pressable, StyleSheet, Alert,
 } from 'react-native';
@@ -36,7 +36,7 @@ import { AppHeader } from '../src/components/ui/AppHeader';
 import { CreateHubSheet } from '../src/components/create/CreateHubSheet';
 import { useSession } from '../src/context/SessionContext';
 import { color, space, radius, type as t } from '../src/theme/tokens';
-import { useBottomInset } from '../src/hooks/useBottomInset';
+import { useBottomInset } from '../src/hooks/useBottomInset'; import { useRentABuddyFlag } from '../src/hooks/useRentABuddyFlag';
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -289,6 +289,14 @@ export default function ExplorePortavaScreen() {
   const { signOut } = useSession();
   const bottomInset = useBottomInset();
   const [createHubOpen, setCreateHubOpen] = useState(false);
+  // Rent a Buddy is served only while rent_buddy_enabled is on (off in
+  // production, 2026-10-22): the row opened nothing but the (rent-a-buddy)
+  // layout's "COMING SOON" gate, so it is not listed until the flag is on.
+  const rentABuddyOn = useRentABuddyFlag().enabled;
+  const sections = useMemo(
+    () => (rentABuddyOn ? SECTIONS : SECTIONS.map((sec) => ({ ...sec, data: sec.data.filter((item) => item.key !== 'rent-buddy') }))),
+    [rentABuddyOn],
+  );
 
   const handleItemPress = useCallback((item: DirectoryItem) => {
     if (item.disabled) return;
@@ -326,7 +334,7 @@ export default function ExplorePortavaScreen() {
       />
 
       <SectionList
-        sections={SECTIONS}
+        sections={sections}
         keyExtractor={(item) => item.key}
         renderSectionHeader={({ section }) => (
           <SectionHeader title={section.title} />

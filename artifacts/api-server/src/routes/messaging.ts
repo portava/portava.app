@@ -112,7 +112,7 @@ const MESSAGE_PRIVACY_VALUES = [
 ] as const;
 
 const LANGUAGE_CODES = [
-  'en', 'es', 'fr', 'de', 'ja', 'ko', 'zh', 'pt', 'it', 'ru',
+  'en', 'es', 'fr', 'de', 'ja', 'ko', 'zh', 'zh-TW', 'pt', 'it', 'ru', // zh-TW: profile.ts and the translator support it; missing here, choosing Chinese (Traditional) for messages was a 400
   'ar', 'th', 'vi', 'id', 'tl', 'sv', 'nl', 'pl', 'tr', 'hi',
 ] as const;
 
@@ -3188,7 +3188,7 @@ router.post('/threads/:threadId/messages', async (req, res) => {
     msgType: m.msg_type ?? 'text',
     subtype: m.subtype ?? null,
     clientId,
-    replyToId: replyToId ?? null,
+    replyToId: replyToId ?? null, ...(replyToId ? await replyQuoteForSender(sc, { threadId, viewerId: user.id, replyToId, log: req.log }) : {}), // the quote the sender's optimistic bubble showed: the 201 replaced it without one, so a reply's quote vanished from the sender's own message
   });
 
   // Realtime: notify other active members a new message landed, and bump the
@@ -3949,7 +3949,7 @@ router.get('/trips/:tripId/chat', async (req, res) => {
 
   if (tripMembershipErr) { refuseUnreadableAccess(req, res, 'trip_members', { err: tripMembershipErr, tripId, userId: user.id }); return; }
   if (!tripMembership) {
-    sendError(res, 'forbidden', 'You must be an accepted trip member to access the trip chat');
+    const { data: invited, error: invitedErr } = await sc.from('trip_members').select('role').eq('trip_id', tripId).eq('user_id', user.id).eq('role', 'invited').maybeSingle(); if (invitedErr) { refuseUnreadableAccess(req, res, 'trip_members', { err: invitedErr, tripId, userId: user.id }); return; } if (invited) { res.status(403).json({ error: 'forbidden', reason: 'pending_invite', message: 'Your invite is pending. Accept the invite to join this chat.' }); return; } sendError(res, 'forbidden', 'You must be an accepted trip member to access the trip chat'); // §20.7: a live invite is not "No longer a member" — useGroupChat shows its accept-the-invite state for a forbidden whose message names the invite (an unknown error code would read as a server error)
     return;
   }
 
@@ -4019,7 +4019,7 @@ router.get('/circles/:circleOwnerId/chat', async (req, res) => {
 
     if (circleMembershipErr) { refuseUnreadableAccess(req, res, 'circle_memberships', { err: circleMembershipErr, circleOwnerId, userId: user.id }); return; }
     if (!circleMembership) {
-      sendError(res, 'forbidden', 'You must be a member of this circle to access the circle chat');
+      const { data: invited, error: invitedErr } = await sc.from('circle_invites').select('id').eq('owner_id', circleOwnerId).eq('recipient_id', user.id).eq('status', 'pending').maybeSingle(); if (invitedErr) { refuseUnreadableAccess(req, res, 'circle_invites', { err: invitedErr, circleOwnerId, userId: user.id }); return; } if (invited) { res.status(403).json({ error: 'forbidden', reason: 'pending_invite', message: 'Your invite is pending. Accept the invite to join this chat.' }); return; } sendError(res, 'forbidden', 'You must be a member of this circle to access the circle chat'); // §20.7, as the trip chat above
       return;
     }
   }
@@ -4485,3 +4485,7 @@ function messageReportReasonCode(raw: unknown): ReportReasonCode | null {
   if (typeof raw !== 'string') return null;
   return (REPORT_REASON_CODES as readonly string[]).includes(raw) ? (raw as ReportReasonCode) : null;
 }
+
+// POST /threads/:threadId/messages — the reply quote in the sender's own 201,
+// built under the thread reader's rules. Declared at the tail so no cited line moves.
+import { replyQuoteForSender } from '../services/telegraph/replyQuote.js';
