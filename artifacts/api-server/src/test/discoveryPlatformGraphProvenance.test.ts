@@ -119,8 +119,8 @@ describe("DC-17 — the platform path's graph reading records its own four facts
   it("W1 WIRED: loadGraphReadingProvenance answers the platform record ON, and the old answer OFF", async () => {
     assert.equal((await loadGraphReadingProvenance(client({ flag: true }), reading())).status, "recorded");
     assert.deepEqual(await loadGraphReadingProvenance(client({ flag: false }), reading()), { status: "platform_producer" });
-    // A reading with no named source is still the old answer, flag or not.
-    assert.deepEqual(await loadGraphReadingProvenance(client({ flag: true }), reading({ source: null })), { status: "platform_producer" });
+    // census-discovery §131: a reading that names no store is `source_unknown`, flag or not — never the platform's answer.
+    assert.deepEqual(await loadGraphReadingProvenance(client({ flag: true }), reading({ source: null })), { status: "source_unknown" });
   });
 
   it("V1 the versions are pinned to the code they name, and the cap to the engine's", () => {
@@ -142,5 +142,70 @@ describe("DC-17 — the platform path's graph reading records its own four facts
     assert.match(engine, new RegExp(`const PLATFORM_COVERAGE_READ_LIMIT = ${PLATFORM_COVERAGE_READ_CAP};`));
     assert.match(engine, /\.select\("city, zone_id, claim_family, coverage_state, current_confidence, score, computed_at, expires_at"\)/,
       "the governing read's projection moved: re-align lib/discoveryPlatformGraphProvenance.ts");
+  });
+});
+
+// ── census-discovery §131 (lane DISCOVERY, 2026-10-23): a reading with NO store is not the platform's ──
+//
+// Production, read 2026-10-23: all 140 signed-in impressions served after the
+// flag flip (Đà Nẵng) stored `graphSource: null`, `graphTier: null`,
+// `graphDepth: null` and `graphProvenance: { status: "platform_producer" }`.
+// `compass_city_confidence` has no `da nang` row and the platform store had no
+// cell, so `getCityConfidence` answered null — "neither store had anything"
+// (compass/CompassGraphEngine.ts) — and the record then claimed the PLATFORM's
+// coverage store answered. It did not. N1, N2 and N4 (and W1's third
+// assertion) are red at `18bf93ca7`; N3, N5 and N6 hold either way.
+import { getCityConfidence } from "../compass/CompassGraphEngine.js";
+import { graphReadingOf } from "../lib/discoveryPde.js";
+import { inertModifiers } from "../lib/discoveryModifiers.js";
+
+/** Both stores empty: compass_city_confidence has no row, intel_coverage_snapshots no cell. */
+function emptyStores() {
+  const reads: string[] = [];
+  return {
+    reads,
+    from(table: string) {
+      reads.push(table);
+      const q: any = {
+        select: () => q, eq: () => q, ilike: () => q, gt: () => q, limit: () => q,
+        maybeSingle: async () => ({ data: null, error: null }),
+        then: (res: any) => res({ data: [], error: null }),
+      };
+      return q;
+    },
+  };
+}
+const modifiersOver = (cityConfidence: any) => ({ ...inertModifiers("flag_off"), enabled: true, reason: "flag_on" as const, cityConfidence, momentumScale: 0.5, explorationBudgetPct: 25 });
+
+describe("§131 — a graph reading that names no store records source_unknown, never platform_producer", () => {
+  it("N1 the production path: no row in either store ⇒ null confidence ⇒ the record says source_unknown", async () => {
+    const conf = await getCityConfidence(emptyStores() as any, "Đà Nẵng", NOW);
+    assert.equal(conf, null, "precondition: with both stores empty the loader answers null");
+    const r = graphReadingOf(modifiersOver(conf) as any);
+    assert.equal(r.source, null);
+    assert.deepEqual(await loadGraphReadingProvenance(client({ flag: true }), r), { status: "source_unknown" });
+    assert.deepEqual(await loadGraphReadingProvenance(client({ flag: false }), r), { status: "source_unknown" });
+  });
+  it("N2 a record built before CPV2-12 (a depth, no source) names no store either", async () => {
+    const r = graphReadingOf(modifiersOver({ city: "da nang", depthScore: 12, tier: "thin", signals: {}, computedAt: NEWEST }) as any);
+    assert.equal(r.source, null);
+    assert.equal((await loadGraphReadingProvenance(client({ flag: true }), r)).status, "source_unknown");
+  });
+  it("N3 a sourceless reading reads nothing to reach its answer", async () => {
+    const sc = client({ flag: true });
+    await loadGraphReadingProvenance(sc, reading({ source: null }));
+    assert.deepEqual(sc.reads, []);
+  });
+  it("N4 the claim 'the platform's coverage store answered' is made only for a platform_coverage reading", async () => {
+    for (const source of [null, undefined, "", "compass_city_confidence"] as any[]) {
+      const status = (await loadGraphReadingProvenance(client({ flag: false }), reading({ source }))).status;
+      assert.notEqual(status, "platform_producer", `source=${JSON.stringify(source)} claimed the platform`);
+    }
+  });
+  it("N5 control: a platform_coverage reading with 3490 OFF is still platform_producer (the platform did answer)", async () => {
+    assert.deepEqual(await loadGraphReadingProvenance(client({ flag: false }), reading()), { status: "platform_producer" });
+  });
+  it("N6 control: a compass_graph reading still takes the Compass path (no row ⇒ reading_moved)", async () => {
+    assert.deepEqual(await loadGraphReadingProvenance(emptyStores() as any, reading({ source: "compass_graph" })), { status: "reading_moved" });
   });
 });
