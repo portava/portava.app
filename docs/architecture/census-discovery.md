@@ -17480,3 +17480,156 @@ citation into `routes/tags.ts` moves.
 
 - NOT-GRADED: artifacts/api-server/src/test/tagSuggestionsTripEntities.test.ts — this correction's own test; no Discovery row rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/schemaColumnProductionScan.test.ts — the repository-wide scan that found the defect; no Discovery row rests on it.
+
+## §131 — 2026-10-23: production after the activation — twelve rows move W → C, two are restated, and a served graph reading that named no store claimed the platform
+
+*Lane DISCOVERY (census drive 2026-10-23), branch `claude/census-disc-b1-20261023` from `18bf93ca7`. Production
+`ajrurzioarfkagpuxfnb` and `portava-ci` `hwokxgbmezheskbzskfr` were read with SELECT and catalog queries only, between
+2026-10-23 20:30Z and 21:10Z. `https://rumazi.com/api/…` was read with unauthenticated GETs only. Nothing was written to
+either database, no flag was changed, nothing was deployed. `head_commit` is not re-declared.*
+
+**Method.** All 85 open rows (83 `W`, 2 `N`) were triaged against what production holds today. A row moves only when
+every clause of its latest `IMPLEMENTATION-COMPLETE; awaits:` statement is met by a production fact read here, and the
+fact is not vacuous under §11.2 rule 1. A row whose stated closure evidence now exists but proves less than its
+criterion stays `W` and is restated (A01, DV-54).
+
+### 131.1 Production state, measured
+
+- **Flags.** Every flag the twelve moved rows name is TRUE. All but two were set on 2026-10-23 at 10:02:06Z through
+  the audited flag path; `discovery_serve_log_enabled` has been TRUE since 2026-08-14 and
+  `discovery_serve_log_retention_enabled` since 2026-10-21.
+  `DISCOVERY_ENGINE_MODE` is `{"mode":"pde","cohort":{"kind":"all"}}` since 10:02:21Z. Still FALSE:
+  `discovery_stop_enforcement_enabled`, `creator_attribution_enabled`, `discovery_buddy_launch_gate_enabled`,
+  `discovery_circle_candidates_enabled`, `layover_routed_corridor_enabled`.
+- **Migrations, by checksum.** Production's `schema_migration_ledger` holds 829 rows: 420 `manual` rows with a real
+  sha256 and 409 `backfill` sentinel rows. For each of the 18 two-digit bands, md5 over the ordered
+  `filename sha256` pairs of the 420 equals the same digest computed from this tree's files (`18bf93ca7`): 420 of 420
+  applied bodies equal the repository bytes. The 455 checksummed rows on `portava-ci` equal them as well. Every file
+  the twelve rows name is among the 420.
+- **Order.** All 73 files of the Discovery apply set (`docs/ops/discovery-portava-ci-apply-plan.md` §8.1) are `manual`
+  rows in production, and each reached `portava-ci` first (per-file `applied_at`). Over every production `manual` row
+  from 2255 up (394 rows), 386 reached `portava-ci` first with the same checksum. Six (2750, 2760–2763, 2767) are on
+  `portava-ci` as `manual` rows without a checksum, dated 2026-09-08/09, before production's 2026-09-16. Two, both
+  outside the Discovery set, reached production first: `2965` (2026-09-21, 31 minutes ahead) and `2976` (2 h 25 min ahead).
+- **Backfill rows.** 358 date from the ledger's creation (2026-09-15 04:55Z), 50 from the owner-requested backfill of
+  2026-10-23 (22 notes say every object was verified in the live catalog, 28 that every policy was fingerprinted), and
+  one is 3974's skip row. No backfilled file has been modified in git after its row was recorded. 51 of them have more than one commit (edits or renames), all
+  before 2026-09-15. When production ran them is unrecorded, so their applied bytes cannot be compared, only their objects.
+- **The build.** `GET /api/healthz` answers 200 with `X-Portava-Build: sha256:adce7250…`. The iOS update manifest at
+  `/manifest` has `createdAt` 2026-10-23T07:12:04Z. Neither names a commit, so a served behaviour below is attributed
+  to the code that writes it, not to a sha.
+
+### 131.2 Row moves
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-02 | W | **C** | Production `rank_events` holds 640 `surface='discovery'` impression and tap rows written by `GET /discovery` serve points through `artifacts/api-server/src/lib/discoveryServeLog.ts:368#export async function logDiscoveryServe(`: 32 serves (`features.route = 'GET /discovery'`; serve point 5 ×2, serve point 6 ×30) from 2026-10-22 15:19Z to 2026-10-23 10:58Z, every one signed in (`user_id` set), so the client sent the viewer token. The 13 rows of 2026-08-15 (serve point 9) are not counted. Read-only, 2026-10-23. |
+| DV-47 | W | **C** | Every one of those 640 rows has `features.rankedInRequest = true` (`artifacts/api-server/src/lib/discoveryServeLog.ts:415#rankedInRequest: RANKED_IN_REQUEST.has(servePoint),`); 600 carry `modelVersion = 'portava-rank-pde-2026-09'` (serve point 6, 140 of them with `engineMode = 'pde'` after the flip) and 40 `compass-discovery-2026-09` (serve point 5). Each has a `position` and a `recommendation_id`, so the order served is the order logged. |
+| DV-06 | W | **C** | `public.recommendations` (3376, `artifacts/api-server/src/migrations/3376_discovery_recommendations_per_request.sql:101#CREATE TABLE IF NOT EXISTS public.recommendations (`; checksum equal) holds 5,694 rows at 21:09Z: 5,592 `viewer_class = 'anonymous'`, 2,553 with `served_count = 0` (anonymous and signed-in), written by `artifacts/api-server/src/lib/discoveryServeLog.ts:698#export async function logDiscoveryServeRequest(`. W10D-A2 was answered by the owner on 2026-09-30 for this database: 3376 approved with `discovery_serve_log_enabled` ON and a 30-day testing retention (`artifacts/api-server/src/migrations/3501_discovery_recommendations_retention.sql:13#THE DECISION (owner, 2026-09-30`; `docs/ops/retention-policy.md`). That retention runs: `discovery_serve_log_retention_enabled` TRUE with `keep_days` 30, and `GET /api/healthz/schedulers` reports `discoveryServeLogRetention` healthy, last pass 2026-10-23 20:41:49Z, cutoff 2026-09-23. A production launch still needs its own retention decision (3376's header); that is not this row's criterion. |
+| DV-40 | W | **C** | One anonymous production `GET /api/discovery?destination=Da Nang&category=all&radiusKm=10&page=1&intentMode=quiet` (answered 2026-10-23 20:41:04Z) served 20 places, each with a distinct `recommendationId`. It wrote exactly one `recommendations` row, `UDakL-rEMpKRyR3f2X4eUv` (serve point 6, `viewer_class` anonymous, `served_count` 20), whose `item_ids` are the 20 served ids in served order, with `route`, `model_version`, `context_hash`, `session_id`, `surface`, `privacy_class` and `retention_tier` set. W10D-A2: as DV-06. |
+| DV-53 | W | **C** | 28 production impressions served 2026-10-23 10:58:47–48Z carry `features.explorationReserve = 'low_exposure'`, placed by `artifacts/api-server/src/lib/discoveryCandidates/explorationInventory.ts:96#export function allocateReservedInventory` with 3481 applied and `discovery_exploration_inventory_enabled` TRUE; all 140 rows of those serves carry `explorationBudgetPct`. The new-creator, emerging-place and new-Trail buckets placed nothing: production holds no Trail and no claimed trend, so those buckets had no eligible member. That is an absence of inventory, not of the reservation. |
+| DV-18 | W | **C** | The 140 signed-in impressions served after the flip carry `features.tripMatch` (≈ 0.184, the term fired) and `features.reasonCodes` containing `trip_match` (100 with `nearby_now, saved_similar, trip_match`; 40 with `nearby_now, trip_match`). The 498 earlier rows, served with the term off, carry no `trip_match`. 3453 applied, `discovery_trip_match_enabled` and `discovery_candidate_projection_enabled` TRUE. The nine codes and their fixed text are §78's (`artifacts/api-server/src/test/discoveryRankTrip.test.ts:99#every one of the nine codes now has a producer`). |
+| DV-44 | W | **C** | `2893_rank_events_retire_writerless_surfaces.sql` is applied (2026-10-21, checksum `5f9427a4…` equal). Production's `rank_events_surface_check` is `CHECK (surface = ANY (ARRAY['pulse','discovery','events','compass','live_pulse','living_page','watch_feed','wall']))`, validated, exactly the eight the writer proof locates (`artifacts/api-server/src/test/discoverySurfaceWriterProof.test.ts:77#it("P1. production admits 15`), and the seven writerless labels are gone. Every surface written since (discovery, pulse, compass, live_pulse, wall, living_page) is admitted. |
+| DV-37 | W | **C** | 3420 is applied (checksum equal) and production carries `rank_event_outcome_receipts_pkey PRIMARY KEY (user_id, client_event_id)` (`artifacts/api-server/src/migrations/3420_rank_events_outcome_receipts.sql:115#CONSTRAINT rank_event_outcome_receipts_pkey PRIMARY KEY (user_id, client_event_id)`), so one client event id can land once per viewer. Every outcome written on `surface = 'discovery'`, ever, is keyed: two taps (2026-10-22 15:19Z, serve points 5 and 6), each with `outcome_client_event_id` set and exactly one receipt. The only keyless outcomes in production are 16 Pulse rows from July 2026, before 3420 existed. So the client in use is the keyed build. No production retry has happened; the once-only property is the database key, not an observed retry. |
+| DV-32 | W | **C** | 3475–3477 are applied (checksums equal) and `discovery_trend_normalised_enabled` is TRUE. Production `place_momentum` holds 22,140 rows over 123 scheduler runs (the newest 2026-10-23 20:40Z), every one `model_version = 'discovery-trend-state-v2'` with per-window independence groups stored. The largest `recent_groups` is 1, and no row makes a claim: what activity there is comes from one cluster, and v2 needs three (`artifacts/api-server/src/lib/discoveryTrendNormalised.ts:134#export const TREND_V2_MIN_GROUPS = 3;`). That is the row's criterion holding on production data: no single actor or metric moves a state. |
+| DV-76 | W | **C** | 3422 is applied (checksum equal). Production grants on `public.tags`: `anon` and `authenticated` hold SELECT only — no INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES or TRIGGER (`has_table_privilege`), and no column-level write privilege exists; `service_role` keeps all. The four policies are unchanged (`tags_insert`, `tags_read_own`, `tags_select`, `tags_service_all`), as `artifacts/api-server/src/migrations/3422_tags_client_write_boundary.sql:159#REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER` asserts. 3468 (`approval_required`) is applied too. That was the row's one remaining clause. |
+| DC-13 | W | **C** | 3452 is applied and `discovery_feature_families_enabled` is TRUE. All 140 post-flip ranked impressions carry `features.negativeFeedback` and `features.explorationValue` beside the other family terms (`artifacts/api-server/src/lib/discoveryRecommendationRecord.ts:584#negativeFeedback: "derived_ranking_signal"`). The value is 0 on every row, and that is a measurement: production holds no `dismiss`, `hide` or `not_interested` outcome on `surface = 'discovery'`, so the viewer had dismissed nothing. |
+| DC-18 | W | **C** | Its two awaits are met. The CI rehearsal record is DC-26's (§128). The operator read of applied-body checksums is §131.1: 420 of 420 checksummed production rows equal the repository bytes, and so do 455 of 455 on `portava-ci`. No backfilled file changed after its row was recorded. Every file of the Discovery apply set reached `portava-ci` before production. New migration per behaviour already passed. The pre-ledger history (51 files edited before 2026-09-15) and the two non-Discovery production-first files (2965, 2976) are recorded in §131.1. They fall outside this row's set and are reported to DV-70 and the integrator. |
+
+### 131.3 Rows restated — the evidence they named exists, and proves less than the row asks
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| A01 | W | **W** | **The closure read this row named now exists, and it proves less than the row asks.** Two anonymous production `GET /api/discovery` responses carry `meta.liveRank` with `readable: true, windowSize: 60, demoted: 0`: one at 20:41:04Z with `intentMode=quiet` (mode `quiet`), one at 21:01:39Z without (mode `explore`). They come from the cold path (`artifacts/api-server/src/routes/discovery.ts:2291#const coldLiveRanked = await withDiscoveryLiveRank(`), with 2850 applied and `discovery_live_rank_enabled` TRUE. But production holds no Live state at all: `intel_live_promoted_scopes` has 0 rows and `intel_state_snapshots` has 0. `readable: true` over an empty allowlist proves the path runs on the deployed build. It does not show any row ranked by live ExperienceState, forecast, friction or safety, so by §11.2 rule 1 the row stays `W`. IMPLEMENTATION-COMPLETE; awaits: a Sensing producer publishing Live state in production (census-sensing) + one production `GET /discovery` response with `meta.liveRank.readable` true in which at least one served row was live-graded (`meta.liveRank.demoted` > 0, or a non-null `discoveryCandidate.whyNow`). |
+| DV-54 | W | **W** | **The evidence key this row named cannot show the axes. Corrected, and the row becomes code-blocked.** The previous statement awaited "one production ranked request carrying `trailIds` or `servedCount`". The stored `features.servedCount` is DV-06's per-request denominator, written on every signed-in exposure (`artifacts/api-server/src/lib/discoveryServeLog.ts:431#servedCount: items.length,`). It is not the history axis's per-candidate count (`artifacts/api-server/src/lib/discoveryRankDesigns.ts:167#for (const [id, n] of history?.servedCount ?? [])`), which is never stored. Production shows it: 638 discovery impressions carry `servedCount`, 498 of them served before `discovery_diversity_axes_enabled` went TRUE. `trailIds` is stored by no serve path at all. So no production row could show the six axes acting, whatever production did. Activation is otherwise complete: 3454, 3455 and 3456 are applied (checksums equal), and `discovery_diversity_axes_enabled`, `discovery_for_you_pde_enabled` and `discovery_cache_a_ranked_enabled` are TRUE. **BUILDABLE:** record, per served row, which axis penalties the re-rank applied, as `record_metadata`. Then: one production signed-in serve whose stored record shows an axis acting. |
+
+### 131.4 Evidence produced for rows that stay `W`
+
+- **Trend rows** (DV-28, DV-29, DV-30, DV-31, DV-33, DV-34, DC-06, DC-07, DC-21; DC-17's scheduler leg). The scheduler
+  writes v2 runs (§131.2, DV-32). Every row is `trend_state = 'unknown'` and `lifecycle_state = 'unknown'`, with
+  `time_of_day_factor = peer_factor = 1.000`, `driver` null and no `area_momentum` row. These are the neutral
+  "no reading" values, so DV-28's and DC-06's literal clauses ("non-null") are met only vacuously. All of them still wait
+  on question 11(b), which `docs/architecture/discovery-decision-register.md` D-OWNER1004-1 names for exactly these
+  rows. DV-34 also waits on AR-W11A-2. The scheduler is ON in production without 11(b) answered;
+  `discovery_trend_snapshot_retention_enabled` is TRUE with `keep_days` null, which deletes nothing.
+- **DV-52.** 47 `ranking_debug_samples` rows on `surface = 'discovery'`, each with a non-null `content_type`, the newest
+  2026-10-23 10:59:25Z. `RANKING_EXPERIMENT_ENABLED` is TRUE with no stated window. AR-W11A-3 (a bounded window, and
+  how long viewer-keyed samples are kept) is unanswered, so the row stays `W`.
+- **C19.** `GET /api/discovery/community?city=Miami` (anonymous, 2026-10-23) serves the canonical shape: the one served
+  submitter has `name: null`, `displayName: null` and `handle` set, and no `submittedBy.name` starts with `@`. The
+  response is `Cache-Control: private, no-store` and `Vary: Origin, Authorization`. The client half, the shipped
+  bundle's resolver, was not read: the manifest's bundle is served from another host. The row stays `W` on that clause.
+- **DV-42.** The server half is shown: `intentMode=quiet` came back as `meta.liveRank.mode = 'quiet'`, and the default
+  without one is `explore`. No production request has yet carried a mode chosen in the client's selector.
+- **DV-12, DC-11.** `discovery_engagement_integrity_enabled` is TRUE in production, but D-W10-R2-A1 step 4's data-use
+  confirmation is not on record. The six §78 design flags went on together, not one per week as D-W10-R2-A1 step 3
+  recommends.
+- **DV-41, DV-78.** `discovery_dwell_telemetry_enabled` is TRUE in production. D-OWNER1004-3 keeps dwell OFF until the
+  privacy notice is approved. No dwell row exists yet (`rank_events.dwell_ms` is null everywhere).
+- **DC-14, DC-27.** The mode went straight to `pde` for every viewer, so Phase F gate 1 (shadow) never ran and
+  `discovery_shadow_serves` is empty. DC-14 needs shadow rows. DC-27's "rehearse → checks → shadow → cohort → observe →
+  expand, in that order" cannot now be met as written; that is the owner's to re-scope.
+- **Empty stores** that keep rows `W` whatever the code does: no Trail (`trails`, `content_trails`, `trail_relations`,
+  `trail_member_exposures`, `place_cooccurrence` all 0), no creator-ledger row, no `layover_place_dwell` row, no active
+  `protected_zones` row, no `at_place` edge in `compass_graph_edges`, and no layover activity since the flip.
+
+### 131.5 What was built: a served graph reading with no store no longer claims the platform's
+
+**The defect, in production.** All 140 post-flip impressions (Đà Nẵng) stored `graphSource: null`, `graphTier: null`,
+`graphDepth: null` and `graphProvenance: { status: "platform_producer" }`. `compass_city_confidence` has no `da nang` row,
+and `intel_coverage_snapshots` holds no row at all, so `getCityConfidence`
+(`artifacts/api-server/src/compass/CompassGraphEngine.ts:1720#export async function getCityConfidence(`) answered null:
+"neither store had anything". `loadGraphReadingProvenance` then sent every reading that was not `compass_graph`, null
+included, to the platform branch. `platform_producer` means "the platform's coverage store answered", so the record
+claimed an answer that never happened. No order moves on it, because provenance is never read back. But DC-17 grades
+exactly this record.
+
+**The fix, line-neutral.** A reading that names no store is `source_unknown`
+(`artifacts/api-server/src/lib/discoveryCandidates/graphReadingProvenance.ts:41#platformGraphReadingProvenance(sc, reading)`,
+the same line). A `platform_coverage` reading still takes the platform path, and with 3490 OFF it is still
+`platform_producer`. A `compass_graph` reading is unchanged.
+
+**Tests.** `artifacts/api-server/src/test/discoveryPlatformGraphProvenance.test.ts:181#it("N1 the production path` (N1–N6),
+plus W1's third assertion, which pinned the old answer and now pins `source_unknown`. At `18bf93ca7`, 4 of the 15
+cases in the file are red (W1, N1, N2, N4); N3, N5 and N6 hold either way. Two mutants were killed. Restoring
+`{ status: "platform_producer" }` turns 4 red. Answering `source_unknown` only for `null`, so that `""` or a stray
+string still claims the platform, turns N4 red. Each mutant was restored to sha256 `ab45e5ac53199144…`. The neighbour
+suites `discoveryPipelineStages`, `discoveryIntegrationHooks` and `discoveryServedGraphReading` pass with this file:
+82 of 82.
+
+**No row moves.** DC-17 still needs `recorded` on both producer paths, served in production. That needs a city with a
+reading, plus 11(b).
+
+### 131.6 Findings for the integrator, not graded here
+
+1. Two migrations outside the Discovery set, 2965 and 2976, were applied to production before `portava-ci`, on
+   2026-09-21 (§131.1).
+2. `docs/ops/retention-policy.md` and `3501_*` cite "census-discovery §120" for the owner's 2026-09-30 decision. This
+   file has no §120. The decision's words survive only in those two places.
+3. `tag_permission_consent_copy_enabled` is TRUE in production. §95 recorded it as staying FALSE pending D-W10S2-9. It
+   is not a criterion of DV-76.
+4. The blockers in `src/scripts/buildDiscoveryLedger.ts` still say `PRODUCTION_ROLLOUT` for rows whose rollout is now
+   done. The ledger was regenerated with them unchanged, because a blocker is a hand judgement, and this section's own
+   table is the current one.
+
+### 131.7 What would turn this red
+
+- A production checksum that stops equalling the repository bytes for any file the moved rows name. The 420-row parity
+  is a digest per band and can be re-run with one `SELECT` per database.
+- `UDakL-rEMpKRyR3f2X4eUv` is a `recommendations` row and is purged after 30 days. DV-40's evidence is the query, not
+  that row: any anonymous `GET /api/discovery` writes one row whose `item_ids` equal the page.
+- A keyless Discovery outcome in production would reopen DV-37's "client in use is keyed" sentence, though not the database key.
+- `graphReadingProvenance.ts:41` answering `platform_producer` for a sourceless reading again turns N1, N2 and N4 red.
+
+### 131.8 Headline, restated from the rows
+
+| bucket | count |
+|---|---|
+| BUILT-AND-CORRECT | **115** |
+| BUILT-BUT-WRONG | **71** |
+| NOT-BUILT | **2** |
+| CANNOT-VERIFY | **0** |
+
+CONSTRUCTED 186 / 188 = **98.9 %**. CORRECT 115 / 188 = **61.2 %**. Twelve rows moved `W` → `C` (DV-02, DV-06, DV-18,
+DV-32, DV-37, DV-40, DV-44, DV-47, DV-53, DV-76, DC-13, DC-18); A01 and DV-54 are restated and stay `W`. These are local
+records on an unmerged branch.
