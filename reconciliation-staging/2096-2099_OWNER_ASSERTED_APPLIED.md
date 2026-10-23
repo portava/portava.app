@@ -80,3 +80,17 @@ helper functions, the verdict trigger, and four post_media policies. The objects
 As this record asked, it is now a real migration at the next free canonical prefix rather than a backfilled 2098:
 `artifacts/api-server/src/migrations/3909_post_media_moderation_design_codified.sql`. Its text is the baseline's, it is a
 strict no-op on production, and it converges portava-ci. 2096, 2097 and 2099 are unchanged by this note.
+
+## 2096, 2097, 2099 — verified live and resolved (2026-10-23)
+
+Each was confirmed on production read-only on 2026-10-23:
+
+- **2096 and 2099 are codified** by
+  `artifacts/api-server/src/migrations/3910_reviews_and_compass_memories_2096_2099_codified.sql`, which is a strict no-op on
+  production and converges portava-ci:
+  - 2096: RLS on `compass_memories`.
+  - 2099: "Public reads published public reviews" replaces 0067's unscoped read. Production's two reviews policies carry
+    2099's own stamp, so the file `2099_D4-reviews-anonymity.sql` did exist outside this repository.
+- **2097 needs nothing.** Production's and portava-ci's profiles column grants are identical, so the chain already carries it.
+
+All four of 2096-2099 are now accounted for.

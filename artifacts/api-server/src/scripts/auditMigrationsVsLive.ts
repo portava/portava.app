@@ -550,8 +550,8 @@ const ALLOWLIST = new Set([
   //
   // 0067_reviews.sql "Public read published reviews" (USING state='published')
   // → baseline "Public reads published public reviews" (state='published' AND
-  // visibility='public'), asserted by out-of-band 2099_D4-reviews-anonymity.
-  // Delete if the baseline stops carrying that replacement or a later
+  // visibility='public'), asserted by out-of-band 2099_D4-reviews-anonymity and codified by 3910, which
+  // drops the old name everywhere. Delete if the baseline stops carrying that replacement or a later
   // migration re-creates the old policy.
   "policy:reviews.public read published reviews",
   // 0068_stories.sql "Public read active non-expired stories" (any active
