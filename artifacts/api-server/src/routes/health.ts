@@ -75,21 +75,21 @@ router.get("/healthz/cleanup", asyncHandler(async (_req, res) => {
 }));
 
 router.get("/healthz/delayed-publish", asyncHandler(async (_req, res) => {
-  const { publisherStatus, lastRunAt } = await queryPublisherHealth();
+  const { publisherStatus, lastRunAt, lastSuccessAt } = await queryPublisherHealth();
 
   if (publisherStatus === "critical") {
     logger.error(
-      { lastRunAt },
+      { lastRunAt, lastSuccessAt },
       "delayedPublishHealthCheck: publisher job is critically overdue",
     );
   } else if (publisherStatus === "overdue") {
     logger.warn(
-      { lastRunAt },
+      { lastRunAt, lastSuccessAt },
       "delayedPublishHealthCheck: publisher job has not run within the expected window",
     );
   }
 
-  res.json({ publisherStatus, lastRunAt });
+  res.json({ publisherStatus, lastRunAt, lastSuccessAt });
 }));
 
 /**
