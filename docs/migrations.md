@@ -7045,3 +7045,50 @@ the Layover 165 assistant)").
   history — a flag row is never deleted while its history exists).
 - **Press.** 3826, then 3827; 3828 after 2700, 2992 and 3623. Then `trip_flight_segments_enabled` and
   `layover_flight_connections_enabled` ON.
+
+## 2026-10-23 — `3909_post_media_moderation_design_codified.sql`, written and NOT applied anywhere (production's 2098 codified)
+
+**What it is.** Production's post_media moderation design, as a migration. The owner applied it as "2098" through the
+Supabase SQL editor in mid-August 2026, and no file ever created it
+(`reconciliation-staging/2096-2099_OWNER_ASSERTED_APPLIED.md`). It consists of:
+
+- `post_media_moderation_ledger`
+- `post_media_path_is_owned(text, uuid)` and `post_media_path_is_moderated(text, uuid)`
+- `post_media_record_moderation_verdict()` with its trigger
+- the owner insert/update/delete policies, and `post_media_service_role_all`
+
+They replace 0103's FOR ALL `post_media_owner_write`. Production and the 2026-08-19 baseline carried them. portava-ci,
+which replays the chain from 0001, did not.
+
+**The text.** Every definition is the baseline's, byte for byte. Each object's privileges are production's, read
+2026-10-23. Restoring the dump under Supabase's default privileges leaves anon and authenticated able to execute all three
+functions and write the ledger, which is what the local-db harness carried.
+
+**By starting shape:**
+
+- **Production.** Every object exists and matches, so nothing is created, granted or dropped. Read-only on 2026-10-23,
+  every guard in the body evaluated to "skip" and the postconditions held.
+- **portava-ci.** Creates the objects, sets production's privileges and drops `post_media_owner_write`. Rehearsed on
+  2026-10-23 on portava-ci itself in a transaction that ended in a deliberate error and rolled back. The postconditions held
+  and the database is unchanged.
+- **The local-db harness.** Only the over-granted privileges narrow. Every oid is unchanged, and a second run changes nothing.
+
+The postconditions fingerprint each object (body, settings, privileges, predicates, comment) against production's values,
+and require post_media's policy set to be exactly production's five.
+
+**Not in scope.** post_media's client UPDATE column grants. 2098 revoked them on production. The tree keeps 2158's 12
+descriptor columns, which 3365 narrowed but did not remove, and `moderation_status` is not among them. Removing them would
+also make 3365's rollback refuse.
+
+**Rollback.** None at the schema level. On production 3909 changes nothing; elsewhere, undoing it would re-open the gap 2098
+closed. Deleting its ledger row is the whole rollback.
+
+**Proofs.** `src/test/db/postMediaModerationDesign3909.db.test.ts`, M0–M4:
+
+- **M0, M1:** on the replayed chain the postconditions hold, and re-running the body rewrites no catalog row.
+- **M2:** on portava-ci's shape the body creates 2098 and drops 0103's policy.
+- **M3:** a rejected key is ledgered and cannot be re-attached.
+- **M4:** the helper answers only about the caller's own keys and refuses anon.
+
+`authorization-contract.json` lists the five policies. Until 3909 is applied to portava-ci, `check:authorization-contract`
+reports that database's `post_media_owner_write`.

@@ -12,7 +12,7 @@
  * feed_storage_path, feed_url and stamp_overlay are all server-derived (the media
  * pipeline + moderation run as service-role). 2158 grants authenticated column
  * INSERT/UPDATE on the descriptor columns only. Ownership: user_id = auth.uid()
- * AND the parent post is owned by the caller.
+ * AND the parent post is owned by the caller, and (3909, production's 2098) every storage key is the caller's.
  *
  * Live-DB suite: kept out of the curated npm test list; run by the live-DB job.
  * Run: node --import tsx/esm --test src/test/postMediaModerationBoundary.test.ts
@@ -70,7 +70,7 @@ before(async () => {
   postId = await seedPost(ownerId);
   strangerPostId = await seedPost(strangerId);
   const { data, error } = await adminClient().from(TABLE)
-    .insert({ post_id: postId, user_id: ownerId, media_type: "image", mime_type: "image/jpeg", public_url: "orig", moderation_status: "pending", processing_status: "pending" })
+    .insert({ post_id: postId, user_id: ownerId, media_type: "image", mime_type: "image/jpeg", storage_path: `${ownerId}/pmmb-orig.jpg`, public_url: "orig", moderation_status: "pending", processing_status: "pending" })
     .select("id").single();
   if (error) throw new Error(`fixture: could not seed media: ${error.message}`);
   mediaId = (data as any).id;
@@ -114,12 +114,12 @@ describe("post_media moderation boundary", { skip: !CREDS_AVAILABLE }, () => {
   });
   it("owner CAN insert own media, but cannot forge moderation/processing", async () => {
     const uc = userClient(ownerToken);
-    const { data, error } = await uc.from(TABLE).insert({ post_id: postId, user_id: ownerId, media_type: "image", mime_type: "image/png", public_url: "u2" }).select("id, moderation_status, processing_status").single();
+    const { data, error } = await uc.from(TABLE).insert({ post_id: postId, user_id: ownerId, media_type: "image", mime_type: "image/png", storage_path: `${ownerId}/pmmb-u2.png`, public_url: "u2" }).select("id, moderation_status, processing_status").single();
     assert.ifError(error);
     assert.notEqual((data as any)?.moderation_status, "approved", "self-inserted media must not be pre-approved");
     assert.notEqual((data as any)?.processing_status, "ready", "self-inserted media must not be pre-ready");
     await adminClient().from(TABLE).delete().eq("id", (data as any).id);
-    const { error: fErr } = await uc.from(TABLE).insert({ post_id: postId, user_id: ownerId, media_type: "image", mime_type: "image/png", moderation_status: "approved" });
+    const { error: fErr } = await uc.from(TABLE).insert({ post_id: postId, user_id: ownerId, media_type: "image", mime_type: "image/png", storage_path: `${ownerId}/pmmb-forge.png`, moderation_status: "approved" });
     assertDenied(fErr, "insert-forge moderation_status");
   });
   it("owner cannot attach media to another user's post (impersonation)", async () => {

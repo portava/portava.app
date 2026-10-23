@@ -70,3 +70,13 @@ history. This session is flagging that tension for the packet owner to
 resolve, not resolving it — the correct fix (moving the buffer, or
 committing 2096-2099 first and moving the buffer above them, or something
 else) depends on facts only the owner can confirm.
+
+## 2098 — verified live and codified (2026-10-23)
+
+The live shape was confirmed on production on 2026-10-23. It is a single batch, catalog oids 52849–52869: the ledger, three
+helper functions, the verdict trigger, and four post_media policies. The objects' own comments say "D3" and name
+"migration 2098", and every object is in `artifacts/api-server/baseline/20260819_baseline_structure.sql`.
+
+As this record asked, it is now a real migration at the next free canonical prefix rather than a backfilled 2098:
+`artifacts/api-server/src/migrations/3909_post_media_moderation_design_codified.sql`. Its text is the baseline's, it is a
+strict no-op on production, and it converges portava-ci. 2096, 2097 and 2099 are unchanged by this note.
