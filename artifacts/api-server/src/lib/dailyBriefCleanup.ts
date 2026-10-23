@@ -17,6 +17,7 @@
 import { getServiceClient, isServiceClientReady } from "./supabase.js";
 import { logger } from "./logger.js";
 import { purgeExpiredSuggestionSeen } from "./suggestionSeenCleanup.js";
+import { onceMoreOnTransportFailure } from "./transportRetry.js";
 
 // ---------------------------------------------------------------------------
 // Test-only client injection — lets unit tests drive queryCleanupHealth with
@@ -213,10 +214,11 @@ export async function purgeOldBriefs(opts?: {
   // ── Step 1: run the purge — this is the authoritative result ────────────────
   let purgeResult: { deleted: number | null; error: unknown };
   try {
-    const { error, count } = await client
+    // A dropped socket after an Autoscale thaw is retried once; a database error is not (lib/transportRetry.ts).
+    const { error, count } = await onceMoreOnTransportFailure(() => client
       .from("daily_briefs")
       .delete({ count: "exact" })
-      .lt("brief_date", cutoffDate);
+      .lt("brief_date", cutoffDate));
 
     if (error) {
       recordError(error);
