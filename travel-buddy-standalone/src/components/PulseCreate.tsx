@@ -387,7 +387,7 @@ export function UnifiedPostComposer({
     const closeOnce = createOnceGuard(onClose);
 
     try {
-      let mediaUrl: string | null = null;
+      let mediaUrl: string | null = null; let mediaThumbnailUrl: string | null = null;
       let mediaType: string | undefined = undefined;
       if (media) {
         const up = await uploadMedia(media);
@@ -398,7 +398,7 @@ export function UnifiedPostComposer({
           setError,
         });
         if (!outcome.continue) return;
-        mediaUrl = outcome.url;
+        mediaUrl = outcome.url; mediaThumbnailUrl = outcome.thumbnailUrl;
         mediaType = outcome.mediaType ?? undefined;
       }
 
@@ -423,7 +423,7 @@ export function UnifiedPostComposer({
       const res = await create({
         content,
         visibility: vis,
-        mediaUrls: mediaUrl ? [mediaUrl] : [],
+        mediaUrls: mediaUrl ? [mediaUrl] : [], ...(mediaThumbnailUrl ? { mediaThumbnailUrl } : {}), // the video's poster, so the post has a still to show
         ...(mediaType ? { mediaType } : {}),
         addToPassport: autoPassport || addToPassport,
         ...locationFields,
