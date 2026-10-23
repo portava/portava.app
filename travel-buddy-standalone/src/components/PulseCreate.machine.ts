@@ -154,7 +154,7 @@ export function createComposerDismissHandlers(onClose: () => void): ComposerDism
 
 /** Shape returned by the `create()` service call in handleSubmit(). */
 export interface CreateResult {
-  ok: boolean;
+  ok: boolean; data?: { postStatus?: string | null } | null; // the created post, when the server says how it was stored
   errorKind?: string;
   message?: string;
 }
@@ -165,7 +165,7 @@ export interface CreateResult {
  */
 export interface SubmitResultHandlers {
   /** Called before onClose() when the post was created successfully. */
-  onSuccess?: () => void;
+  onSuccess?: () => void; /** The post was created but the server is HOLDING it (post after I leave, a chosen time, a safety review): say so, or it looks lost. */ onHeld?: (postStatus: string) => void;
   /** Closes the composer sheet. Called on success AND on unauthenticated error. */
   onClose: () => void;
   /** Clears the session when the server returns unauthenticated. */
@@ -217,7 +217,7 @@ export async function handleSubmitResult(
 ): Promise<void> {
   if (result.ok) {
     handlers.onSuccess?.();
-    handlers.onClose();
+    handlers.onClose(); const held = result.data?.postStatus; if (typeof held === 'string' && held.startsWith('pending_')) handlers.onHeld?.(held);
     return;
   }
 
