@@ -7092,3 +7092,40 @@ closed. Deleting its ledger row is the whole rollback.
 
 `authorization-contract.json` lists the five policies. Until 3909 is applied to portava-ci, `check:authorization-contract`
 reports that database's `post_media_owner_write`.
+
+## 2026-10-23 — `3910_reviews_and_compass_memories_2096_2099_codified.sql`, written and NOT applied anywhere (production's 2096 and 2099 codified)
+
+Two more of the owner's August 2026 SQL-editor migrations
+(`reconciliation-staging/2096-2099_OWNER_ASSERTED_APPLIED.md`), after 3909 codified 2098.
+
+- **2096:** RLS on `compass_memories`. Production has it on, with no policy and no client privilege (deny-all).
+  portava-ci had it off. 2161's REVOKE kept that from being a hole, but one future GRANT would have exposed every user's
+  private Compass memories.
+- **2099:** "Public reads published public reviews" (state published AND visibility public) replaces 0067's "Public read
+  published reviews" (any published review). Under 0067's policy, anon on portava-ci read reviews their authors published
+  as `anonymous`. The policy text is the baseline's. 2099's comment stamp is not copied, because it records production's
+  pre-state.
+- **2097:** a column-limited grant on profiles. It needs nothing: production and portava-ci hold identical profiles column
+  grants.
+
+**By starting shape:**
+
+- **Production.** A strict no-op. Read-only on 2026-10-23, every guard evaluated to "skip" and the postconditions held.
+- **portava-ci.** Rehearsed on 2026-10-23 in a transaction that ended in a deliberate error and rolled back. RLS was
+  enabled, the policies converged and the postconditions held.
+- **The local-db harness.** A no-op: no oid or xmin changed across two runs.
+
+**Proofs.** `src/test/db/reviewsCompassMemories3910.db.test.ts`, R0–R3:
+
+- **R0, R1:** the postconditions hold, and re-running the body is a strict no-op.
+- **R2:** on portava-ci's shape the body converges.
+- **R3:** red before, anon reads the anonymous review under 0067; after, anon reads only the public one and the author
+  still reads both.
+
+Mutants seen red: an RLS guard that always fires fails R1, and an off-by-one fingerprint fails R0 and R2.
+
+**Not codified.** production's `profiles_select` also requires `account_status <> 'deleted'`. That predicate is absent from
+the baseline and from every migration, with no Supabase history. It was added out of band after 2026-08-19, and whether
+deleted accounts' tombstone profiles should be unreadable is an owner decision.
+
+**Rollback.** None at the schema level; deleting the ledger row is the whole rollback.
