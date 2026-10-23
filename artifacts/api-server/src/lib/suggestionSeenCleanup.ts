@@ -24,6 +24,7 @@
 
 import { getServiceClient, isServiceClientReady } from "./supabase.js";
 import { logger } from "./logger.js";
+import { onceMoreOnTransportFailure } from "./transportRetry.js";
 
 // ---------------------------------------------------------------------------
 // Status tracking
@@ -78,17 +79,11 @@ export async function purgeExpiredSuggestionSeen(opts?: {
   const now = new Date().toISOString();
 
   try {
-    const purge = () => client
+    // A dropped socket after an Autoscale thaw is retried once; a database error is not (lib/transportRetry.ts).
+    const { error, count } = await onceMoreOnTransportFailure(() => client
       .from("user_suggestion_seen")
       .delete({ count: "exact" })
-      .lt("expires_at", now);
-    let { error, count, status } = await purge();
-    // Status 0 is "no HTTP answer at all": supabase-js reports a dropped socket as `TypeError: fetch failed`, status 0.
-    // An Autoscale container freezes its event loop while idle, and the first request after a thaw can land on a pooled
-    // socket that died meanwhile. Production, 2026-10-22: one pass's DELETE never reached the database (absent from the
-    // edge log), overwrote a successful pass from 27 s earlier, and the job read "failing" until the next run a day
-    // later. The DELETE is idempotent, so a transport failure is retried ONCE; a PostgREST error is not retried.
-    if (error && !status) ({ error, count, status } = await purge());
+      .lt("expires_at", now));
 
     if (error) {
       logger.warn(
