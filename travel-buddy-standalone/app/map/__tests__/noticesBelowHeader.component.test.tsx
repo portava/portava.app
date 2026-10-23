@@ -8,7 +8,7 @@
  *
  * The stack is MapHeader (insets.top + 52, then an 8 gap: mapHeaderStackOffset), the filter chips
  * (MAP_FILTER_CHIPS_HEIGHT) and MapTopControls' card (space.sm drop, a 44pt button row in space.xs padding). The map's
- * own All / Picks / Venues row hangs under the card (14pt, 36pt tall); the notices start a space.sm under it and keep their 26pt ladder.
+ * own controls hang under the card (filter row and legend at 14pt, travelers button at 58pt, 36pt tall); the notices start a space.sm under the lowest and keep their 26pt ladder.
  */
 import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react-native';
@@ -100,7 +100,7 @@ jest.mock('../../../src/services/discovery', () => ({
 // NOTE: intentionally exhaustive — MapLibre native modules are not available under Jest.
 jest.mock('../../../src/components/discovery/DiscoveryMapView', () => {
   const { View } = require('react-native');
-  return { DiscoveryMapView: ({ filterRowOffset }: { filterRowOffset?: number }) => <View testID="map-view" {...{ filterRowOffset }} /> };
+  return { DiscoveryMapView: ({ filterRowOffset, topInset }: { filterRowOffset?: number; topInset?: number }) => <View testID="map-view" {...{ filterRowOffset, topInset }} /> };
 });
 // NOTE: intentionally exhaustive — UI chrome that imports Reanimated / native camera internals.
 jest.mock('../../../src/components/map/MapTopControls', () => ({ MapTopControls: () => null }));
@@ -140,7 +140,7 @@ it('city banner, partial notice and mode pill all start under the header stack, 
     expect(top).toBeGreaterThanOrEqual(headerOffset);
     expect(top).toBeGreaterThanOrEqual(stackBottom);
   }
-  expect(screen.getByTestId('map-view').props.filterRowOffset).toBe(stackBottom); expect(city).toBe(stackBottom + 14 + 36 + space.sm); // the filter row is placed under the card (it sat behind it at 180pt), the notices under the row
+  expect(screen.getByTestId('map-view').props.filterRowOffset).toBe(stackBottom); expect(screen.getByTestId('map-view').props.topInset).toBe(stackBottom); expect(city).toBe(stackBottom + 58 + 36 + space.sm); // the map's own controls hang under the card (the filter row sat behind it at 180pt; legend / travelers at 14 / 58pt behind the status bar and header), the notices under the lowest (travelers, 58 + 36)
   expect(partial).toBe(city + 26);
   expect(mode).toBe(city + 52);
 });
