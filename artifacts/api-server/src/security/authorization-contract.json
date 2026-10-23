@@ -181,13 +181,16 @@
       ]
     },
     "post_media": {
-      "note": "2158 — media self-moderation. descriptor cols (urls/dimensions/sort) editable; moderation_status/processing_status/phash/dedup_processed/canonical_place_id/feed_*/stamp_overlay server-owned. post_id+user_id INSERT-only. 3363 (census-media §44): the table-level client SELECT is REVOKED; clients read 23 named columns by column grant, never the place copies.",
+      "note": "2158 — media self-moderation. descriptor cols (urls/dimensions/sort) editable; moderation_status/processing_status/phash/dedup_processed/canonical_place_id/feed_*/stamp_overlay server-owned. post_id+user_id INSERT-only. 3363 (census-media §44): the table-level client SELECT is REVOKED; clients read 23 named columns by column grant, never the place copies. 3909 (2098, production's D3 split): 0103's FOR ALL post_media_owner_write is replaced by owner insert/update/delete TO authenticated (storage-key ownership + moderation-ledger pins) and post_media_service_role_all; 3909 is applied to no database by its PR, so until it is the CI database still carries post_media_owner_write and this check says so there.",
       "tableGrants": {},
       "insertCols": { "authenticated": ["duration_seconds","file_size_bytes","height","media_type","mime_type","post_id","public_url","sort_order","storage_bucket","storage_path","thumbnail_storage_path","thumbnail_url","user_id","width"] },
       "updateCols": { "authenticated": ["duration_seconds","file_size_bytes","height","media_type","mime_type","public_url","sort_order","storage_bucket","storage_path","thumbnail_storage_path","thumbnail_url","width"] },
       "policies": [
-        { "name": "post_media_owner_write", "cmd": "ALL", "permissive": true, "roles": ["public"] },
-        { "name": "post_media_public_select", "cmd": "SELECT", "permissive": true, "roles": ["public"] }
+        { "name": "post_media_owner_insert", "cmd": "INSERT", "permissive": true, "roles": ["authenticated"] },
+        { "name": "post_media_owner_update", "cmd": "UPDATE", "permissive": true, "roles": ["authenticated"] },
+        { "name": "post_media_owner_delete", "cmd": "DELETE", "permissive": true, "roles": ["authenticated"] },
+        { "name": "post_media_public_select", "cmd": "SELECT", "permissive": true, "roles": ["public"] },
+        { "name": "post_media_service_role_all", "cmd": "ALL", "permissive": true, "roles": ["service_role"] }
       ]
     },
     "geo_zones": {

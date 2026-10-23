@@ -561,9 +561,9 @@ const ALLOWLIST = new Set([
   "policy:stories.public read active non-expired stories",
   // 0103_post_media.sql post_media_owner_write (FOR ALL, role public) → baseline
   // D3 split post_media_owner_insert / _update / _delete (TO authenticated,
-  // storage-key + moderation pins) plus post_media_service_role_all. Delete if
-  // the baseline stops carrying the split or a later migration re-creates
-  // post_media_owner_write.
+  // storage-key + moderation pins) plus post_media_service_role_all; 3909 codifies the split and drops
+  // the old name everywhere. Delete if the baseline stops carrying the split or a later migration
+  // re-creates post_media_owner_write.
   "policy:post_media.post_media_owner_write",
 
 ]);
