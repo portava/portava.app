@@ -452,3 +452,47 @@ describe("G — queryCleanupHealth", () => {
     assert.equal(result.lastRunAt, null);
   });
 });
+
+// ── 2026-10-22: a dropped socket after an Autoscale thaw is retried once ──────────
+// Production read dailyBriefCleanup "failing" for a day: its DELETE got no HTTP answer (supabase-js status 0) and
+// never reached the database, while other requests did. lib/transportRetry.ts retries exactly that case once.
+describe("purgeOldBriefs — transport failure (status 0)", () => {
+  function scriptedClient(briefAnswers: Array<{ error: unknown; count: number | null; status: number }>) {
+    let briefCalls = 0;
+    return {
+      briefCalls: () => briefCalls,
+      from(table: string) {
+        const isBriefs = table === "daily_briefs";
+        const b: any = {
+          delete() { return b; },
+          lt() { return b; },
+          then(onF: any, onR: any) {
+            if (!isBriefs) return Promise.resolve({ count: 0, error: null, status: 204 }).then(onF, onR);
+            const a = briefAnswers[briefCalls]; briefCalls += 1;
+            assert.ok(a, `unexpected daily_briefs DELETE #${briefCalls}`);
+            return Promise.resolve(a).then(onF, onR);
+          },
+        };
+        return b;
+      },
+    };
+  }
+  const DROPPED = { error: { message: "TypeError: fetch failed", code: "" }, count: null, status: 0 };
+
+  it("a dropped socket then a success records a SUCCESSFUL pass with the retry's count", async () => {
+    const c = scriptedClient([DROPPED, { error: null, count: 3, status: 204 }]);
+    const r = await purgeOldBriefs({ client: c });
+    assert.equal(c.briefCalls(), 2);
+    assert.deepEqual(r, { deleted: 3, error: null });
+    assert.equal(getCleanupStatus().lastOutcome, "success");
+    assert.equal(getCleanupStatus().consecutiveFailures, 0);
+  });
+
+  it("a database error (an HTTP answer) is not retried and is recorded as the failure it is", async () => {
+    const c = scriptedClient([{ error: { message: "permission denied", code: "42501" }, count: null, status: 403 }]);
+    const r = await purgeOldBriefs({ client: c });
+    assert.equal(c.briefCalls(), 1);
+    assert.equal(r.deleted, null);
+    assert.equal(getCleanupStatus().lastOutcome, "error");
+  });
+});
