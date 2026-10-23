@@ -588,3 +588,60 @@ describe("R1c — §94 (R-X3-1): a generated row is served with the request's di
     });
   }
 });
+
+// ── census-discovery §132: what a SERVED page proves on its own rows ─────────
+//
+// S1  DV-54: with 3454 ON (its seeded metadata), every served row on serve
+//     points 1 and 6 STORES `diversityAxes` — the six axes' penalties, its
+//     score rank and its served rank — and the DV-39 screen does not refuse
+//     it; with 3454 OFF, no row stores the key
+// S2  DC-11 / DV-55: with the integrity, outcome-learning and cold-start
+//     stages ON, every served row stores `pdeStages` carrying each stage's
+//     status and counts, and no id; with every §85 flag OFF, no row stores
+//     the key
+const DIVERSITY_SEEDED = { placePenalty: 0.35, geoPenalty: 0.15, trailPenalty: 0.25, historyPenalty: 0.15, historyMaxServes: 3, historyWindowDays: 7 };
+const AXES = ["creator", "contentType", "place", "geography", "trail", "history"] as const;
+
+describe("§132 S — a served page's rows record what the re-rank and the §85 stages did", () => {
+  for (const [name, path] of [["serve point 1 (Cache A, pde)", CACHE_A_PATH], ["serve point 6 (cold fetch)", COLD_PATH]] as const) {
+    it(`S1 ${name}: 3454 ON — every served row stores diversityAxes with all six axes`, async () => {
+      const s = await serve(path, [flag("discovery_diversity_axes_enabled", true, DIVERSITY_SEEDED)]);
+      assertServed(name, s);
+      for (const r of s.rows) {
+        const d = r.features["diversityAxes"] as Record<string, number> | undefined;
+        assert.ok(d, `${r.item_id}: ${JSON.stringify(r.features).slice(0, 400)}`);
+        for (const k of [...AXES, "total", "scoreRank", "diversifiedRank", "window"]) assert.equal(typeof d[k], "number", `${r.item_id}.${k}`);
+        assert.ok(Math.abs(d.total - AXES.reduce((n, k) => n + d[k]!, 0)) < 1e-9, `${r.item_id}: total is the six summed`);
+        assert.ok(!((r.features["privacyRefused"] as string[] | undefined) ?? []).includes("diversityAxes"), "the DV-39 screen keeps it");
+      }
+      assert.ok(s.rows.some((r) => (r.features["diversityAxes"] as any).total > 0), "precondition: some served row was charged by an axis");
+    });
+    it(`S1 ${name}: 3454 OFF — the same serve stores no diversityAxes`, async () => {
+      const s = await serve(path, [flag("discovery_diversity_axes_enabled", false, DIVERSITY_SEEDED)]);
+      assertServed(name, s);
+      for (const r of s.rows) assert.ok(!("diversityAxes" in r.features), r.item_id);
+    });
+  }
+
+  for (const [name, path] of [["serve point 1 (Cache A, pde)", CACHE_A_PATH], ["serve point 6 (cold fetch)", COLD_PATH]] as const) it(`S2 ${name}: the §85 stages ON — every served row stores pdeStages with each stage's status, counts only`, async () => {
+    const s = await serve(path, [
+      flag("discovery_integrity_stage_enabled", true), flag("discovery_outcome_learning_enabled", true), flag("discovery_cold_start_enabled", true),
+    ]);
+    assertServed(name, s);
+    for (const r of s.rows) {
+      const p = r.features["pdeStages"] as Record<string, any> | undefined;
+      assert.ok(p, `${r.item_id}: ${JSON.stringify(r.features).slice(0, 400)}`);
+      assert.equal(typeof p.integrity?.status, "string", `${r.item_id}: integrity`);
+      assert.ok(!["detector_absent"].includes(p.integrity.status), `${r.item_id}: the integrity stage has a registered detector (${p.integrity.status})`);
+      assert.equal(typeof p.outcomeLearning?.status, "string", `${r.item_id}: outcomeLearning`);
+      assert.equal(typeof p.coldStart?.applied, "boolean", `${r.item_id}: coldStart`);
+      assert.ok(!/[0-9a-f]{8}-[0-9a-f]{4}-/i.test(JSON.stringify(p)) && !JSON.stringify(p).includes("node/"), `${r.item_id}: no id travels in the summary`);
+      assert.ok(!((r.features["privacyRefused"] as string[] | undefined) ?? []).includes("pdeStages"), "the DV-39 screen keeps it");
+    }
+  });
+  it("S2 serve point 6: every §85 flag OFF — no row stores pdeStages", async () => {
+    const s = await serve(COLD_PATH, []);
+    assertServed("serve point 6", s);
+    for (const r of s.rows) assert.ok(!("pdeStages" in r.features), r.item_id);
+  });
+});

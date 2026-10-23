@@ -534,10 +534,22 @@ export const PDE_ITEM_PIPELINE_KEYS = ["candidateSources", "explorationReserve",
 
 export function pdeItemPipelineFeatures(scored: object): Record<string, unknown> {
   const r = PDE_ITEM_PIPELINE.get(scored);
-  if (!r) return {};
+  if (!r) return diversityAxesFeature(scored);   // census-discovery §132 (DV-54): the re-rank's record needs no §85 stage
   return {
     ...(r.candidateSources ? { candidateSources: [...r.candidateSources] } : {}),
     ...(r.explorationReserve ? { explorationReserve: r.explorationReserve } : {}),
-    ...(r.graphReadingProvenance ? { graphReadingProvenance: { ...r.graphReadingProvenance } } : {}),
+    ...(r.graphReadingProvenance ? { graphReadingProvenance: { ...r.graphReadingProvenance } } : {}), ...diversityAxesFeature(scored),   // §132 DV-54
   };
+}
+
+// ── census-discovery §132 (DV-54): the diversity re-rank's own record ────────
+// `diversityAxes` is what each of the six axes charged this row when the
+// re-rank chose it (lib/portavaRank.ts diversityAxisEvidence). It exists only
+// when the options asked (3454 ON, through diversityOptionsFrom). Absent, this
+// adds no key. Classified `record_metadata`.
+import { diversityAxisEvidence } from "./portavaRank.js";
+
+export function diversityAxesFeature(scored: object): Record<string, unknown> {
+  const e = diversityAxisEvidence(scored);
+  return e ? { diversityAxes: { ...e } } : {};
 }

@@ -1922,7 +1922,7 @@ router.get("/discovery", async (req, res) => {
         void logImpression(servedScored, callerUserId, "discovery", exposure.sessionId, {
           servePoint, route: "GET /discovery", rankedInRequest: true,
           destination: destination!, category, cacheLevel,
-          engineMode: engineMode.mode, modeReason: engineMode.reason, ...servedGraphReadingFeatures(pdeServedStages),  // §63 DV-52 (b) — the graph reading this order came from; no key at all with the modifiers off
+          engineMode: engineMode.mode, modeReason: engineMode.reason, ...servedGraphReadingFeatures(pdeServedStages), ...servedPipelineStageFeatures(pdeServedStages),  // §63 DV-52 (b) — the graph reading this order came from; no key at all with the modifiers off
         }, servedPageClock(exposure, slice));  // §48 DV-40/46 — the SAME exposure the response was stamped with, and the served positions
       } else {
         void logDiscoveryServe(getServiceClient(), {
@@ -2311,7 +2311,7 @@ router.get("/discovery", async (req, res) => {
         category,
         cacheLevel:      "miss",
         engineMode:      engineMode.mode,
-        modeReason:      engineMode.reason, ...servedGraphReadingFeatures(coldServedStages),  // §63 DV-52 (b) — as serve points 1/2/3
+        modeReason:      engineMode.reason, ...servedGraphReadingFeatures(coldServedStages), ...servedPipelineStageFeatures(coldServedStages),  // §63 DV-52 (b) — as serve points 1/2/3
       }, servedPageClock(exposure, slice));  // §48 DV-40/46 — the SAME exposure the response was stamped with
     } else { void logDiscoveryServe(getServiceClient(), { userId: callerUserId ?? "", servePoint: DiscoveryServePoint.COLD_FETCH_LEGACY_RANK, items: slice, ...serveClockOf(exposure), context: { destination: destination ?? "", category, cacheLevel: "miss", engineMode: engineMode.mode, modeReason: engineMode.reason, rankedInRequest: false } }); }  // §48 — anonymous ⇒ the per-request row only; signed-in with NO scores (a ranker that returned nothing) ⇒ item rows marked rankedInRequest:false, where before this line it wrote nothing and the ids on the response joined to no row
     const totalMs = Date.now() - t0;
@@ -4645,3 +4645,33 @@ function overpassAnswerFailed(data: unknown): boolean {
 
 // The one reading of an Overpass body. At the foot so no cited line moves; ESM hoists imports.
 import { overpassBodyUnfinished } from "../lib/overpassAnswer.js";
+
+// ── census-discovery §132 (DC-11, DV-55): a SERVED run says which §85 stages ran ──
+//
+// DC-11 and DV-55 grade stages that only shadow rows recorded
+// (`discovery_shadow_serves.pde_stages`). With `DISCOVERY_ENGINE_MODE` at
+// `pde`, no shadow row is written, so a served page could never show its
+// integrity, outcome-learning or cold-start stage. This copies a summary of
+// the served call's §85 stages onto each served impression, next to the graph
+// reading (`servedGraphReadingFeatures`), AFTER the page is sent. It holds
+// statuses and counts only, never an id, a tag or a position: each field is
+// picked by name, so a report that grows a field cannot leak it here. With
+// every §85 flag off, `stages` has none of these keys and this returns no key
+// at all. Classified `record_metadata` (lib/discoveryRecommendationRecord.ts).
+export function servedPipelineStageFeatures(
+  stages: PdeStages | null | undefined,
+): Record<string, string | number | boolean> {
+  if (!stages) return {};
+  const s: Record<string, unknown> = {};
+  const g = stages.candidateGeneration;
+  if (g) s.candidateGeneration = { generated: g.generated, ...(g.skipped ? { skipped: g.skipped } : {}), failedReads: g.materialiseFailedReads.length };
+  const c = stages.coldStart;
+  if (c) s.coldStart = { cold: c.cold, applied: c.applied, seeded: { onboarding: c.seeded.onboarding, tripContext: c.seeded.tripContext }, local: c.local, degraded: [...c.degraded] };
+  const l = stages.outcomeLearning;
+  if (l) s.outcomeLearning = { status: l.status, modelVersion: l.modelVersion, rowsRead: l.rowsRead, itemsWithEvidence: l.itemsWithEvidence, moved: l.moved };
+  const e = stages.explorationInventory;
+  if (e) s.explorationInventory = { status: e.status, budgetPct: e.budgetPct, slotCount: e.slotCount, placed: e.placed, moved: e.moved, failedReads: e.failedReads.length };
+  const i = stages.integrity;
+  if (i) s.integrity = { status: i.status, discounted: i.discounted, withheld: i.withheld };
+  return (Object.keys(s).length > 0 ? { pdeStages: s } : {}) as unknown as Record<string, string | number | boolean>;
+}

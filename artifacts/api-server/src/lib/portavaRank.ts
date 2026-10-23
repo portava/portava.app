@@ -538,7 +538,7 @@ export function rankCandidates<T extends RankCandidate>(
 ): ScoredCandidate<T>[] {
   const scored = rescoreForObjective(candidates.map((c) => scoreCandidate(c, ctx, opts.weights ?? DEFAULT_WEIGHTS, opts.publisherBoost ?? false)), opts);   // §78 DV-09: same array when no objective
   const diversified = opts.diversity === false ? scored.sort((a, b) => b.score - a.score)
-    : diversify(scored, objectiveDiversity(opts));   // §78: `opts.diversity ?? {}` unless an objective adds penalties
+    : diversifyRecordingAxes(scored, objectiveDiversity(opts));   // §78: `opts.diversity ?? {}` unless an objective adds penalties · census-discovery §132 (DV-54): the same order as `diversify`, and each pick's per-axis penalty recorded when the options ask
   return opts.exploration === false ? diversified
     : injectExploration(diversified, ctx, opts.exploration ?? {});
 }
@@ -1092,4 +1092,92 @@ function historyRepetitionPenalty(c: RankCandidate, pen: ResolvedDiversityPenalt
   const n = c.servedCount;
   if (typeof n !== 'number' || !Number.isFinite(n) || n <= 0) return 0;
   return pen.history * Math.min(n, pen.historyMaxServes ?? 3);
+}
+
+// ── census-discovery §132 (DV-54): what the re-rank DID, per served row ──────
+//
+// DV-54 grades diversity "enforced" on six axes, and until now nothing a
+// served row stored could show it. The stored `servedCount` is DV-06's
+// per-request denominator, not the history axis's per-candidate count, and
+// `trailIds` was stored by no serve path. So a production row could not say
+// whether any axis acted, whatever the ranker did.
+//
+// `diversifyRecordingAxes` returns exactly `diversify`'s order (the call is
+// unchanged), and then, ONLY when the options carry `recordAxisEvidence: true`,
+// records for each pick the penalty every axis charged it when it was chosen.
+// The penalty is reproduced against the same window `diversify` used: the
+// `window` picks before it. The record also holds the row's rank in pure score
+// order and the rank the re-rank gave it. Only Discovery's design path asks
+// (lib/discoveryRankDiversity.ts `diversityOptionsFrom`, i.e. 3454 ON), so with
+// 3454 OFF nothing is recorded and every byte is what it was. Provenance only:
+// nothing reads the record back into a score or an order.
+//
+// Appended at the foot, and line 541 edited in place, because anchored
+// citations point into this file by line.
+
+export interface DiversityOptions {
+  /** §132 DV-54: record each pick's per-axis penalty (diversityAxisEvidence). Off unless set. */
+  recordAxisEvidence?: boolean;
+}
+
+/** One served row's diversity record. Every penalty is what that axis charged the row at its pick. */
+export interface DiversityAxisEvidence {
+  /** The re-rank window, in picks. */
+  window: number;
+  /** 0-based rank in pure score order, before the re-rank. */
+  scoreRank: number;
+  /** 0-based rank the re-rank gave it (before exploration, which may move it again). */
+  diversifiedRank: number;
+  creator: number;
+  contentType: number;
+  place: number;
+  geography: number;
+  trail: number;
+  history: number;
+  /** The sum of the six: what `diversify` subtracted from the row's score at its pick. */
+  total: number;
+}
+
+const DIVERSITY_AXIS_EVIDENCE = new WeakMap<object, DiversityAxisEvidence>();
+
+/** The diversity record of one scored row, or undefined when the re-rank was not asked to record. */
+export function diversityAxisEvidence(scored: object): DiversityAxisEvidence | undefined {
+  return DIVERSITY_AXIS_EVIDENCE.get(scored);
+}
+
+/**
+ * The six axes' penalties for `c` following `recent`. This mirrors
+ * `repetitionPenalty` clause by clause, plus `historyRepetitionPenalty`. A test
+ * pins `creator + contentType + place + geography + trail` against
+ * `repetitionPenalty` summed over the window, so an axis added there and not
+ * here fails.
+ */
+export function diversityAxisPenalties(
+  c: RankCandidate, recent: readonly RankCandidate[], pen: ResolvedDiversityPenalties,
+): Omit<DiversityAxisEvidence, "window" | "scoreRank" | "diversifiedRank"> {
+  let creator = 0, contentType = 0, place = 0, geography = 0, trail = 0;
+  for (const r of recent) {
+    if (c.authorId && r.authorId === c.authorId) creator += pen.author;
+    if (r.kind === c.kind) contentType += pen.kind;
+    if (c.placeId && r.placeId === c.placeId) place += pen.place;
+    if (neighborhoodMatches(c.neighborhood, r.neighborhood)) geography += pen.geo;
+    trail += trailRepetitionPenalty(c, r, pen);
+  }
+  const history = historyRepetitionPenalty(c, pen);
+  return { creator, contentType, place, geography, trail, history, total: creator + contentType + place + geography + trail + history };
+}
+
+/** `diversify`, unchanged, plus the per-pick record when `opts.recordAxisEvidence` is true. */
+function diversifyRecordingAxes<T extends RankCandidate>(scored: ScoredCandidate<T>[], opts: DiversityOptions): ScoredCandidate<T>[] {
+  const out = diversify(scored, opts);
+  if (opts.recordAxisEvidence !== true) return out;
+  const pen = resolveDiversityPenalties(opts);
+  const window = Math.max(1, opts.window ?? 3);
+  const byScore = [...scored].sort((a, b) => b.score - a.score);   // diversify's own pool order (stable)
+  const scoreRank = new Map<object, number>(byScore.map((s, i) => [s, i]));
+  for (let i = 0; i < out.length; i++) {
+    const recent = out.slice(Math.max(0, i - window), i).map((s) => s.candidate);
+    DIVERSITY_AXIS_EVIDENCE.set(out[i], { window, scoreRank: scoreRank.get(out[i]) ?? i, diversifiedRank: i, ...diversityAxisPenalties(out[i].candidate, recent, pen) });
+  }
+  return out;
 }
