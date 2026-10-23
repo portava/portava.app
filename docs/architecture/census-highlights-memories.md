@@ -9633,3 +9633,215 @@ sweep's walk key. On in-process PostgreSQL 16.4 (PGlite) with 20k rows and a 5% 
 to a Bitmap Index Scan, and the first and next pages from a Seq Scan plus Sort to an Index Only Scan with no Sort. Answers
 are identical (`artifacts/api-server/src/test/placeBestOfUpdatedAtIndexMigration.test.ts`). The index builds with the table
 locked against writes. Press order: after the 20261017 packet and its 3996–3999 addendum. No row moves.
+
+## §CA — 2026-10-23 (census drive, lane HIGHLIGHTS & MEMORIES, batch 1): rule A.2 is discharged on production, and 21 rows move W → C on production evidence and a new real-PostgreSQL suite
+
+*Measured on branch `claude/census-hm-b1-20261023`, cut from `main` at `18bf93ca7`. `head_commit` is not re-declared.
+No product code changed. This section adds one database suite and its PostgREST-shaped bridge, records production
+evidence read on 2026-10-23 (read-only), and re-grades the rows below. Every row not named here is unchanged.*
+
+**Read this first.** Production has had no Memory or Highlight traffic since the flags below were turned on: the four
+kernel tables hold 0 rows, and no Memory has been created since 2026-07-07. Every `C` below therefore means **"the
+writer is reachable on the shipped build"**: the storage is applied and identical to this tree, the gate is open, the
+route is mounted, and the real services, run on that storage, do what the row asks. It does **not** mean "rows observed".
+That is census-layover §81's standard, applied here for the first time.
+
+### §CA.1 Production state, measured (read-only, 2026-10-23)
+
+- **Storage.** `public.schema_migration_ledger` on `ajrurzioarfkagpuxfnb` has 829 rows; the newest was applied
+  2026-10-23 13:28Z. Every migration in this tree numbered 2183 to 3999 is in it, except the held 2481/3601/3602 and the
+  two "codify production" files 3909/3910. For this census that means 2320 (2026-10-21 17:01:20Z), 2710/2711
+  (2026-09-15), 2730 (2026-09-15), 2993/2994/3001 (2026-10-21 17:08–17:09Z), 3670–3677 (17:26–17:28Z), 3725/3726, 3803,
+  3813/3814 (17:33–17:34Z) and 3990–3997. **Rule A.2 ("code built, storage unapplied") no longer holds any row in this
+  census.** The repository's own record, `artifacts/api-server/src/lib/capability/production-applied-migrations.json`,
+  and the committed schema snapshot were NOT refreshed and still describe 2026-09-22 (see §CA.6).
+- **The catalog is the tree's.** A local replay of the whole chain (`artifacts/api-server/scripts/local-db/up.sh`,
+  PostgreSQL 17.11) was compared with production object by object. All **42** `memor*` / `highlight*` tables have
+  identical columns and defaults, constraints, triggers, RLS policies and `anon` / `authenticated` / `service_role`
+  grants. All **72** matching functions are identical: 66 byte for byte, and 6 legacy projection functions
+  (`memory_public_feed`, `memory_retrieve`, `memory_feedback_apply_state`, `memory_reset_for_user`,
+  `memory_sweep_expired`, `record_intent_memory`) once SQL comments and whitespace are removed. Their SECURITY DEFINER
+  flags and EXECUTE grants are identical. `discovery_trend_post_groups_v2` (3726's body) is byte-identical.
+- **Flags.** Every Memory and Highlight flag is TRUE. All were switched together at 2026-10-23 10:02:06Z
+  (`feature_flag_audit_log`), including `memory_kernel_enabled`, `memory_deletion_redrive_enabled`,
+  `memory_resurfacing_policy_enabled`, `highlight_expiry_events_enabled`, `highlights_feed_bounded_enabled` and
+  `discovery_trend_post_convergence_enabled`. So §W2.3 item 1's caution (a flag-held row may not move while its flag is
+  FALSE) is satisfied for every row below.
+- **The shipped build.** Production runs `bfc8142c5` (#775). `/api/healthz/delayed-publish` answers the `lastSuccessAt`
+  key #775 added, and the iOS manifest's `createdAt` is 2026-10-23T07:12:04Z, after #775 (07:02Z) and before #776
+  (10:18Z). `git diff bfc8142c5 18bf93ca7` touches no API route, service or lib file and no Memory or Highlight client
+  file, so every product file cited below is the code that shipped. The released iOS bundle (`rumazi.com`) carries the controls'
+  strings ("Keep out of recaps", `resurfacing-controls`), the recap route, `/archive`, `/pin` and `save-to-highlight`.
+- **Routes.** Unauthenticated probes to `https://rumazi.com/api/…` answer **401** (mounted, auth runs per route) for
+  `DELETE` and `PATCH /memories/:id`, `GET`/`POST /memories/:id/corrections`, `GET`/`PUT`/`DELETE
+  /memories/:id/resurfacing-controls[/:control]`, `GET /trips/:id/memories/recap`, `POST /highlights`, `POST`/`DELETE
+  /highlights/:id/pin`, `POST`/`DELETE /highlights/:id/archive`, `POST /stories/:id/save-to-highlight` and
+  `GET /highlights/resurfacing-controls`. An unknown path under `/memories/:id/` answers **404**.
+- **The two producers that run on a clock are running.** `/api/healthz/schedulers` reports `memoryDeletionRedrive`
+  healthy at 2026-10-23T20:44:49Z ("last pass: considered 0, resolved 0, still failing 0, moot 0, needs an operator 0,
+  unreadable 0" — the detail the pass prints only when its flag read ON and `memory_deletion_dead_letters` was read) and
+  `highlightExpiryEvents` healthy at 21:02:49Z ("emitted 0 in 1 batch(es)"). Both have a `job_health` row, created
+  10:02Z and 10:34Z.
+- **Traffic.** `memory_command_receipts`, `memory_command_audit`, `memory_domain_events` and `memory_event_outbox`
+  each hold **0 rows**. `memories` holds 80 rows, the newest from 2026-07-07; `highlights` 24, the newest 03:55Z on
+  2026-10-23, before the flip.
+
+### §CA.2 The new evidence: the real services on the real chain
+
+`artifacts/api-server/src/test/db/memoryOwnerControls.db.test.ts` runs the PRODUCTION service functions — not fakes —
+on the full migration chain, as `service_role`, through `artifacts/api-server/src/test/db/memoryPostgrestBridge.ts`, a
+PostgREST-shaped client over psql that throws on any call shape it does not model and formats each value for its
+column's real type. Every trigger the chain installs on `memories` runs (the graph mirror, the snapshot, video-segment
+and import-batch revokers, the keep-private guard). Flags are answered in memory with production's values; the
+harness's flag rows are never written. It is a `src/test/db/` suite, so CI's `test:db-local` job runs it.
+
+| group | cases | what the cases execute |
+| --- | --- | --- |
+| K | 4 | `dispatchMemoryCommand` → the real `memory_kernel_execute`: a CREATE and a DELETE each write the row, the receipt, the audit row, the event and the outbox row; a stranger's DELETE is refused with an audit row and no event; a replay of the DELETE's key is one effect; the event log refuses UPDATE even to `service_role` |
+| D | 3 | `runMemoryDeletionLifecycle` on a deleted Memory with a correction and a kept-candidate evidence link: all five states `done`, both purged, the episode retired; a step that keeps failing is retried three times and dead-lettered as a ROW (letters 1, then 2); `runMemoryDeletionRedrivePass` is a no-op with its flag OFF and resolves the letter with it ON; `service_role` cannot DELETE a letter, and the letter cascades with its Memory |
+| C | 5 | `placeCorrectionsForPatch` + `recordPlaceCorrections` as the PATCH route records them; `placesForViewer` shows a non-owner the ASSERTED place while the stored row still names the rejected one, and the owner the stored row; a rejected place is never shown; `aggregateMemoryRows` drops the disputed Memory; corrections are append-only and refused on a deleted Memory; no client role can reach them |
+| R | 4 | KEEP_PRIVATE_FOREVER refused on a non-`only_me` Memory and, while set, the Memory cannot be widened; a control is never edited in place and an off-vocabulary control is refused; `excludedMemories` (Compass and the graph) and `canUseForPersonalization` read the stored controls; `rebuildProjection("TripMemoryProjection")` leaves out a Memory marked DO_NOT_INCLUDE_IN_RECAPS and writes a real registry row |
+| H | 5 | CREATE / PIN / UNPIN / HIDE / UNHIDE_HIGHLIGHT through the real `highlight_create_execute` and `highlight_kernel_execute`, each with its event; a replayed create is one Highlight; a stranger's PIN is refused; `runHighlightExpiryPass` emits `highlight.expired` once for an expired Highlight and never for a pinned one, and nothing with its flag OFF |
+
+**Run:** 21 of 21 pass (local chain, PostgreSQL 17.11, 2026-10-23). **Red first, by mutation** — each mutant applied,
+the suite run, the file restored with `git checkout` and its sha256 re-checked, or the SQL object restored and
+re-verified. 12 TypeScript mutants: 11 killed, 1 equivalent. 6 SQL mutants: 5 killed, 1 equivalent. Both equivalents
+are explained in the table, and the first is killed once its twin guard is removed too:
+
+| mutant | result |
+| --- | --- |
+| dispatch never uses the kernel | K1–K4 and H1–H5 red (9) |
+| the lifecycle writes no dead letter | D2 red |
+| non-owner reads skip the corrections | C2, C3 red |
+| the assertion is not merged over the stored reference (`mergeByPrecedence` bypassed) | C2 red |
+| the aggregate ignores disputed places | C3 red |
+| a control never excludes a reader | R3 red |
+| personalization ignores the controls | R3 red |
+| the trip recap ignores the recap controls | R4 red |
+| the redrive never counts a resolution | D2 red |
+| the deletion's corrections purge deletes nothing | D1, D2 red |
+| the expiry pass never calls its producer | H5 red |
+| SQL: the widening guard on `memories` off; the only_me guard on the preferences off; the corrections erasure guard off; DELETE granted on dead letters; the event log's append-only trigger off | R1, R1, C4, D3, K4 red respectively |
+| the rejected reference is not stripped (`correctedPlaceRef`) | **survived** — equivalent: lead ruling H-17's second walker drops the same reference; with both off, C3 is red |
+| SQL: `highlight_expiry_emit` without its `pinned_at IS NULL` filter | **survived** — equivalent: a pinned Highlight's log already ends in PINNED, and the function emits only when the log's last word is ACTIVE |
+
+**Other runs for this section, 2026-10-23:** `memoryCorrections` 93/93, `memoryReaderGuard` 37/37,
+`memoryResurfacingControls` 19/19, `memoryDeletionEvidencePurge` 280/280, `memoryDeletionRedriveSchedulerTiming` 14/14,
+`memoryNarrowingReprojection` 28/28, `highlightLifecycleEvents` 17/17, `highlightsApiUnhideBoundary` 9/9,
+`resurfacingPolicyCommand` 25/25, `memoryCommandBus` 60/60, `memoryOutbox` 21/21; `resurfacingPolicy.native.test.ts`
+20/20 on a fresh PostgreSQL 17.11 cluster (run directly with `LC_ALL` set: the `run-memory-native-tests.mjs` wrapper
+drops `LC_ALL` from its child's environment, and Homebrew's PostgreSQL refuses to start without it on macOS — a
+local-harness limit, not a finding about the code). CI (live DB) on `18bf93ca7`, run 40017008632: the
+`memory-kernel-transaction` suite ran 17 tests against the real `memory_kernel_execute` on `portava-ci`, 17 passing,
+0 skipped. These are local and CI runs; they are evidence about the code and the catalog, and §CA.1 is the evidence
+about production.
+
+### §CA.3 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| H52 | W | **C** | §5's deletion lifecycle. **The stated blockers are gone:** §AF.2 held it on "2320 and 3670 are unapplied"; both are applied and identical to the tree (§CA.1). The five states (`artifacts/api-server/src/services/memory/memoryDeletionLifecycle.ts:70#export const MEMORY_DELETION_STEPS = [`) run after every owner delete (`artifacts/api-server/src/routes/memories.ts:2124#const deletionReport = await runMemoryDeletionLifecycle(sc, {`; the route answers 401 on production). On the real stores all five end `done`, the deleted Memory's correction and its kept-candidate evidence are purged, and the episode is retired with its place, city and significance cleared (`artifacts/api-server/src/test/db/memoryOwnerControls.db.test.ts:182#D1 all five states run on a deleted Memory`). No flag gates the lifecycle |
+| H193 | W | **C** | Observable, retryable, dead-lettered. **The stated blockers are gone:** 3670 is applied and `memory_deletion_redrive_enabled` is TRUE. A step that keeps failing is retried three times and written as a confirmed row (`artifacts/api-server/src/services/memory/memoryDeletionLifecycle.ts:351#const written = await recordDeadLetter(sc, report, now);`, table `artifacts/api-server/src/migrations/3670_memory_deletion_dead_letters.sql:66#CREATE TABLE IF NOT EXISTS public.memory_deletion_dead_letters (`); a repeat bumps the count; the redrive (`artifacts/api-server/src/lib/memoryDeletionRedriveScheduler.ts:68#export async function runMemoryDeletionRedrivePass(`) finishes the purge and stamps the letter resolved; a letter cannot be deleted, even by `service_role` (`artifacts/api-server/src/test/db/memoryOwnerControls.db.test.ts:210#D2 a step that keeps failing is retried`, `artifacts/api-server/src/test/db/memoryOwnerControls.db.test.ts:237#D3 a dead letter is stamped, never removed`). **On production the redrive is running:** `/healthz/schedulers` reports it healthy with the detail it prints only after reading the letters table with its flag ON, and its `job_health` row exists (§CA.1) |
+| H133 | W | **C** | `DELETE_MEMORY`. Its reason was "a soft delete. §21's five-step deletion lifecycle does not exist" — the lifecycle is H52 above, and the command now crosses the kernel on production: `memory_kernel_enabled` is TRUE, the route dispatches it (`artifacts/api-server/src/routes/memories.ts:2068#commandType: "DELETE_MEMORY",`), and on the real `memory_kernel_execute` it writes the soft delete, the receipt, the audit row, the event and the outbox row together; a stranger is refused with an audit row and no event; a replay of the key is one effect (`artifacts/api-server/src/test/db/memoryOwnerControls.db.test.ts:154#K3 the owner's DELETE_MEMORY soft-deletes`, `artifacts/api-server/src/test/db/memoryOwnerControls.db.test.ts:141#K2 a stranger's DELETE_MEMORY is refused`). The only other Memory removal is account erasure, which is not this command |
+| H153 | W | **C** | `memory.deleted`. Its reason was "Never emitted". It is mapped from DELETE_MEMORY (`artifacts/api-server/src/lib/memoryCommandBus.ts:447#DELETE_MEMORY: "memory.deleted",`) and emitted with its outbox row in the deleting transaction, at the next sequence of the Memory's stream (K3, above) |
+| H28 | W | **C** | `memory_corrections`. **The stated blocker is gone:** 3673 is applied (`artifacts/api-server/src/migrations/3673_memory_corrections.sql:60#CREATE TABLE IF NOT EXISTS public.memory_corrections (`). Writers: the owner's PATCH (`artifacts/api-server/src/routes/memories.ts:1893#const placeCorrections = placeCorrectionsForPatch(existing, d);`) and the correction route (`artifacts/api-server/src/routes/memoryCorrections.ts:76#router.post("/memories/:id/corrections"`), both through `artifacts/api-server/src/services/memory/memoryCorrections.ts:310#export async function recordPlaceCorrections(`; readers: every non-owner read (H-16), Compass, the graph and the aggregate. On the real table the two writers' rows land, are append-only, are refused on a deleted Memory, and are unreachable by any client role (`artifacts/api-server/src/test/db/memoryOwnerControls.db.test.ts:250#C1 an owner's edit from place A to B`, `artifacts/api-server/src/test/db/memoryOwnerControls.db.test.ts:283#C4 corrections are append-only`). **Limit:** `place` is the one corrected field the table holds (its CHECK says so); time is corrected through the owner editor (§BO.1) |
+| H47 | W | **C** | §4's precedence. Its reasons were "governs no stored fact" (§A.3) and that it needs the evidence/candidate stores (§D.1). The ordering is one function (`artifacts/api-server/src/services/memoryProjections/evidence.ts:90#export function precedenceRank(`) applied in one place (`artifacts/api-server/src/services/memoryProjections/evidence.ts:412#export function mergeByPrecedence(`), and it now decides a stored fact on production: the owner's correction against the Memory's stored reference (`artifacts/api-server/src/services/memory/memoryCorrections.ts:171#export function correctedPlaceRef(`). Bypassing the merge reds the real-store case (`artifacts/api-server/src/test/db/memoryOwnerControls.db.test.ts:259#C2 a non-owner is shown the ASSERTED place`). **Limit:** production supplies two of the six ranks (correction over assertion); the rest of the ladder is proved by the unit suites |
+| H48 | W | **C** | A lower-confidence inference never overwrites a correction. **The stated blockers are gone:** 3673 and 3813 are applied. Every non-owner read goes through the corrections (`artifacts/api-server/src/services/memory/memoryCorrections.ts:638#export async function placesForViewer<`), and on the real store a non-owner is shown the asserted place while the row still names the old one (C2). Compass, the graph and the aggregate read the same corrections (§BE.2); 3674's graph trigger revokes a corrected place's edges; and after 3813 no client role can read the stored row past them (§CA.1's grants) |
+| H49 | W | **C** | A negative constraint is durable. **The stated blockers are gone:** 3673, 3725, 3726 and 3813 are applied, and production's `discovery_trend_post_groups_v2` is 3726's body byte for byte. A rejection is an append-only row; a rejected place is never shown to anyone else while the stored row still names it; the aggregate drops the disputed Memory, as OD-1012-PRIV-3's second half rules (`artifacts/api-server/src/services/memory/memoryReaderGuard.ts:294#export async function aggregateMemoryRows`; `artifacts/api-server/src/test/db/memoryOwnerControls.db.test.ts:270#C3 a rejected place is never shown`) |
+| H73 | W | **C** | A correction beats automatic entity resolution. As H48, plus lead ruling H-17: a reference whose automatic match reaches a rejected place is dropped whole (`artifacts/api-server/src/services/memory/memoryCorrections.ts:812#async function dropReferencesReachingRejectedPlaces<`). With both the strip and that walker disabled, C3 is red (§CA.2) |
+| H242 | W | **C** | The §25 invariant. §AO.6 held it on "3673 is unapplied" and noted that the certification fixture exercises `evidence.ts` directly, "not the store". 3673 is applied, and C2 now exercises the store: a correction in `memory_corrections` outranks the stored reference through `mergeByPrecedence`, and bypassing the merge reds it |
+| H36 | W | **C** | `memory_resurfacing_preferences`. **The stated blocker is gone:** 3671 is applied (`artifacts/api-server/src/migrations/3671_memory_resurfacing_preferences.sql:48#CREATE TABLE IF NOT EXISTS public.memory_resurfacing_preferences (`). Writer: the owner's controls (`artifacts/api-server/src/routes/memoryResurfacingControls.ts:67#router.put("/memories/:id/resurfacing-controls/:control"`), through SET_RESURFACING_POLICY on production (H146). Readers that fail closed: the reader guard (`artifacts/api-server/src/services/memory/memoryReaderGuard.ts:82#export async function excludedMemories`) and the recap (H88). On the real table: KEEP_PRIVATE_FOREVER is refused on a non-`only_me` Memory and blocks widening while set; a control is never edited in place; an off-vocabulary control is refused; no client role reaches it; Compass and the graph drop a DO_NOT_RESURFACE Memory (`artifacts/api-server/src/test/db/memoryOwnerControls.db.test.ts:300#R1 KEEP_PRIVATE_FOREVER is refused`, `artifacts/api-server/src/test/db/memoryOwnerControls.db.test.ts:319#R3 the readers consult the stored controls`). The client panel ships (§CA.1) |
+| H88 | W | **C** | `DO_NOT_INCLUDE_IN_RECAPS`. **The stated blocker is gone:** 3671 is applied. The trip recap admits a Memory only when no recap-suppressing control is on (`artifacts/api-server/src/services/memoryProjections/projectionRegistry.ts:327#recapAdmits(input, m.id)`), and on the real chain `rebuildProjection` leaves the marked Memory out and writes a real registry row (`artifacts/api-server/src/test/db/memoryOwnerControls.db.test.ts:334#R4 the trip recap leaves out a Memory`). §AK.2: the §5 recaps resurface no scrapbook Memory at all, by design |
+| H146 | W | **C** | `SET_RESURFACING_POLICY`. **The stated blockers are gone:** 3993 and 3671 are applied, and `memory_resurfacing_policy_enabled` and `memory_kernel_enabled` are TRUE. The command routes to its own transactional function (`artifacts/api-server/src/lib/memoryCommandBus.ts:403#t === "SET_RESURFACING_POLICY" ? "memory_resurfacing_policy_execute"`, `artifacts/api-server/src/migrations/3993_owner_resurfacing_policy.sql:87#CREATE OR REPLACE FUNCTION public.memory_resurfacing_policy_execute(p_command jsonb)`), production's copy is identical, and `resurfacingPolicy.native.test.ts` runs 20/20 on a fresh PostgreSQL 17.11 (preference, owner event, receipt, outbox and audit together; failure injection rolls everything back; concurrent keys). **The two limits §BP named are not this row's requirement:** the sequence orders commands rather than giving whole-policy optimistic concurrency (concurrent-edit semantics are H178's, held on owner decision D-C1), and the client's retry key lives in memory, so a retry after a restart is a new command that re-states the same control |
+| H210 | W | **C** | `canUseForPersonalization(userId, memoryId)`. **The stated blocker is gone:** 3671 is applied. It exists, fails closed on an unreadable read (`artifacts/api-server/src/services/memory/memoryReaderGuard.ts:119#export async function canUseForPersonalization`), and on the real table answers false for RETAIN_BUT_DO_NOT_PERSONALIZE and true for an unmarked Memory (R3; the "personalization ignores the controls" mutant reds it). Every personalization path applies the same rule in batch (§BE.2) |
+| H142 | W | **C** | `PIN_HIGHLIGHT`. Its reason was "Built and OFF": `memory_kernel_enabled` is TRUE and 2993 is applied. The route (`artifacts/api-server/src/routes/highlights.ts:1685#router.post("/highlights/:id/pin"`) crosses the real `highlight_kernel_execute`, which sets `pinned_at` and emits `highlight.pinned`; a stranger's PIN is refused with no event (`artifacts/api-server/src/test/db/memoryOwnerControls.db.test.ts:379#H2 PIN and UNPIN cross the kernel`, `artifacts/api-server/src/test/db/memoryOwnerControls.db.test.ts:395#H4 a stranger's PIN is refused`) |
+| H143 | W | **C** | `UNPIN_HIGHLIGHT`. As H142 (`artifacts/api-server/src/routes/highlights.ts:1739#router.delete("/highlights/:id/pin"`); it clears `pinned_at` and emits `highlight.pinned` (`artifacts/api-server/src/lib/memoryCommandBus.ts:468#UNPIN_HIGHLIGHT: "highlight.pinned",`) |
+| H145 | W | **C** | `HIDE_HIGHLIGHT`. Its reason was "Same gate". The archive (`artifacts/api-server/src/routes/highlights.ts:2281#router.post("/highlights/:id/archive"`) crosses the kernel and writes only `archived_at`, never the terminal `deleted_at`; its inverse is UNHIDE_HIGHLIGHT (3001, applied), and both emit `highlight.hidden` (`artifacts/api-server/src/test/db/memoryOwnerControls.db.test.ts:387#H3 HIDE and UNHIDE cross the kernel`) |
+| H155 | W | **C** | `highlight.created`. **The stated blockers are gone:** 2993 and 3677 are applied and the kernel is ON. Both real create paths issue CREATE_HIGHLIGHT (`artifacts/api-server/src/routes/highlights.ts:970#commandType: "CREATE_HIGHLIGHT",`, `artifacts/api-server/src/routes/stories.ts:916#commandType: "CREATE_HIGHLIGHT",`), and on the real `highlight_create_execute` the Highlight and `highlight.created` (sequence 1) are written in one transaction; a replayed create is one Highlight (`artifacts/api-server/src/test/db/memoryOwnerControls.db.test.ts:363#H1 CREATE_HIGHLIGHT writes the Highlight`). No other writer inserts a Highlight: the two direct inserts are the flag-OFF arms of those dispatches |
+| H157 | W | **C** | `highlight.expired`. **The stated blockers are gone:** 3677 is applied and both flags are TRUE. The clock producer (`artifacts/api-server/src/lib/highlightExpiryEventScheduler.ts:76#db.rpc(HIGHLIGHT_EXPIRY_FN`) runs on production (healthy, `job_health`, §CA.1), and on the real function it emits the event once for an expired Highlight and never for a pinned one (`artifacts/api-server/src/test/db/memoryOwnerControls.db.test.ts:404#H5 the clock producer emits highlight.expired ONCE`). **Limit, by design (§BB.1):** a Highlight made before the kernel was on has no stream and never gets the event |
+| H158 | W | **C** | `highlight.pinned`. Its reason was "never been EMITTED, because emission is the kernel's, and 2993 is unapplied": both are discharged, and PIN and UNPIN each emit it (`artifacts/api-server/src/lib/memoryCommandBus.ts:467#PIN_HIGHLIGHT: "highlight.pinned",`; H2) |
+| H159 | W | **C** | `highlight.hidden`. Same measurement on the hide half: HIDE and UNHIDE each emit it (`artifacts/api-server/src/lib/memoryCommandBus.ts:472#HIDE_HIGHLIGHT: "highlight.hidden", UNHIDE_HIGHLIGHT: "highlight.hidden",`; H3) |
+
+### §CA.4 Rows read, reason restated, NOT moved
+
+This table RESTATES no verdict. The `standing` column is spelled out (§V's convention), and each id is named
+individually.
+
+**The §6/§7 episode spine has no production input.** 2320 is applied and the candidate routes carry no flag, so rule
+A.2 no longer holds these rows — and it is not why they stay W. The detector reads only captures with a capture time
+(`artifacts/api-server/src/services/memory/episodeCandidates.ts:290#.gte("captured_at", win.from)`). The server takes a
+capture time only from an image's own bytes (`artifacts/api-server/src/routes/posts.ts:157#sniffed.kind === "image" ? capturedAtFromImageBytes(rawBody) : null;`),
+and the shipped app re-encodes every photo on the device before upload, which strips its EXIF
+(`travel-buddy-standalone/src/lib/media/normalizeUpload.core.ts:16#Re-encoding also strips EXIF, including GPS`). On
+production, 0 of the 11 `media_assets` rows has a `captured_at`. So no photo the app can upload ever reaches the
+detector, and a guarantee that has never had an opportunity to hold has not held (A.2's second rule).
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H7 | BUILT-BUT-WRONG | 2320 is applied (the "one blocker left" §AC.3 named is gone). W: the evidence normalizer's only production input, a timed capture, is never produced by the shipped app (above) |
+| H8 | BUILT-BUT-WRONG | As H7: `detectEpisodes` runs on production and is never given a capture |
+| H9 | BUILT-BUT-WRONG | As H7 |
+| H18 | BUILT-BUT-WRONG | As H7, and §3.2's record is incomplete: `memory_episodes` has no `trip_id`, no `event_id` and no `confidence_band` |
+| H19 | BUILT-BUT-WRONG | As H7, and §3.3's record is incomplete: `memory_evidence` has no `memory_id` (a kept candidate links through a `source_table = 'memories'` row), no `assertion_type`, no `assertion_json` and no `expires_at` |
+| H23 | BUILT-BUT-WRONG | The table is applied and identical to the tree; its one writer never receives an input on production (above) |
+| H24 | BUILT-BUT-WRONG | As H23 |
+| H54 | BUILT-BUT-WRONG | As H7 |
+| H55 | BUILT-BUT-WRONG | As H7 |
+| H56 | BUILT-BUT-WRONG | As H7, and its own reason stands: an eligibility rejection is returned in the detect report and stored nowhere |
+| H57 | BUILT-BUT-WRONG | As H7; the one production source is CAMERA_CAPTURE, so the model's per-source distinctions are never exercised there |
+| H58 | BUILT-BUT-WRONG | As H7 |
+| H59 | BUILT-BUT-WRONG | As H7; the one producer carries time and trip only, so seven of the nine boundary features have no production input |
+| H60 | BUILT-BUT-WRONG | As H7 |
+| H61 | BUILT-BUT-WRONG | As H7, and its own reason stands: the stored `detection_reason` is 2320's `media_cluster`, and §7's reason codes are not persisted |
+| H63 | BUILT-BUT-WRONG | As H7; on Keep the score uses two of §8's inputs (`later_user_promotion`, `user_caption`) |
+| H179 | BUILT-BUT-WRONG | As H7 |
+| H238 | BUILT-BUT-WRONG | As H7 |
+| H156 | BUILT-BUT-WRONG | The storage and flags are discharged and the event is emitted in the creating transaction (H1 above). W: it is emitted at creation, marked `published_at_creation`, and that mapping is proposed ruling HR-1 (§BB.1), which no ruling has settled |
+| H87 | BUILT-BUT-WRONG | 3671 is applied (the stated blocker). W: the owner's own Compass asking is excluded too (W-HM-PRIV-1's default), and §BF.4 records that half of OD-1012-PRIV-3 ("preserving permitted private search") as open |
+| H187 | BUILT-BUT-WRONG | As H87: §21's "retain + search privately" turns on that open half |
+| H92 | BUILT-BUT-WRONG | As H87 |
+| H188 | BUILT-BUT-WRONG | As H87 |
+
+**Found, not fixed here (batch 2): the §17 boundary has holes now that the kernel is ON.** Each is a canonical write
+outside `memory_kernel_execute`, so it lands with no receipt, no event and no outbox row:
+- `routes/telegraphMemory.ts` creates a Memory draft by a direct insert (`artifacts/api-server/src/routes/telegraphMemory.ts:147#.insert(row)`), never CREATE_MEMORY (H130, H147, H160).
+- `POST /memories` and `POST /trips/:tripId/memory` insert the tagged people after the kernel's transaction (`artifacts/api-server/src/routes/memories.ts:567#const { error: tagErr } = await sc.from("memory_tags").insert(tagRows);`, `artifacts/api-server/src/routes/memories.ts:2841#const { error: tagErr } = await sc.from("memory_tags").insert(tagRows);`) — 2711's CREATE takes no participants (H138, H160).
+- A Memory's type and its occurrence-time place name are written after the kernel by a direct update (`artifacts/api-server/src/services/memory/memoryCanonicalFields.ts:360#.from("memories")`), because 2711's INSERT and UPDATE do not read those keys (H40, H149, H160).
+
+These rows are unchanged here; batch 2 closes the writes (one migration in 3911–3919 redefining
+`memory_kernel_execute`) before any §17 command or event row is graded on production.
+
+### §CA.5 What this section does not claim
+
+- **No row observed in production.** §CA.1's traffic counts are zero. Every `C` above is "writer reachable on the
+  shipped build", the census-layover §81 standard.
+- **The suites run against the chain, not against production.** §CA.1's object-by-object comparison is what ties the
+  two; it was made on 2026-10-23 and is not re-run by any check.
+- **No client device was driven.** The client half rests on the released bundle carrying the controls and the routes.
+
+### §CA.6 What would turn this red
+
+- A migration that changes one of the 42 tables or 72 functions on production without the same change in the tree, or
+  the reverse — §CA.1's comparison would no longer hold.
+- Any Memory or Highlight flag in §CA.1 switched OFF: the rows that rest on it return to W (§W2.3 item 1).
+- A reader of a Memory's place, controls or deletion state that bypasses `placesForViewer`, the reader guard or the
+  lifecycle.
+- `artifacts/api-server/src/test/highlightsMemoriesDeployedStorage.test.ts` reads the 2026-09-15 snapshot and
+  `production-applied-migrations.json`, neither refreshed here; it asserts flags OFF that production now has ON. It still
+  passes against those files. The day they are refreshed it goes red, and its message says to re-derive the rows it
+  pins — this section is that re-derivation.
+
+### §CA.7 Headline
+
+| bucket | was (§W5F.4) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 74 | 95 |
+| BUILT-BUT-WRONG | 187 | 166 |
+| NOT-BUILT | 3 | 3 |
+| CANNOT-VERIFY | 2 | 2 |
+| total | 266 | 266 |
+
+**21 moves, all W → C.** 266 = 95 C / 166 W / 3 N / 2 X. CONSTRUCTED% is unchanged at (95 + 166) / 266 = 98.1 %.
+CORRECT% is 95 / 266 = 35.7 %.
+
+- NOT-GRADED: artifacts/api-server/scripts/run-memory-native-tests.mjs — §CA.2 names the native-suite wrapper only for a local-harness limit (it drops LC_ALL); no row rests on it.
