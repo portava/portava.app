@@ -141,10 +141,11 @@ describe("L159 — deleting is the owner's press: layover_checkpoint_expiry_enab
     });
   }
 
-  it("an unreadable flag is OFF (fail-closed): nothing is deleted", async () => {
+  it("an unreadable flag is OFF (fail-closed): refused `disabled`, NOTHING is issued against layover_checkpoints, and the row stays", async () => {
     const t: Record<string, any[]> = pressed({ layover_checkpoints: [checkpoint("c-expired", -600)] });
-    const out = await runLayoverCheckpointExpirySweep({ client: makeLayoverDb(t, { failures: { "feature_flags:select": { message: "down" } } }), now: NOW });
-    assert.equal(out.reason, "disabled");
+    const { db, ops } = recorded(t, { failures: { "feature_flags:select": { message: "down" } } });
+    const out = await runLayoverCheckpointExpirySweep({ client: db, now: NOW });
+    assert.deepEqual(out, { outcome: "refused", reason: "disabled", deleted: 0, complete: false }); assert.deepEqual(ops, ["feature_flags:select"], "the failed flag read, and no probe, read or delete on the table");
     assert.equal(t.layover_checkpoints.length, 1);
   });
 

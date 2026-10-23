@@ -13019,7 +13019,7 @@ production as it stands after that change.
   5099) is that line. So the code read here is the code that has run since 2026-10-22 or later. The iOS manifest is dated
   2026-10-23T07:12:04Z; its bundle, fetched through rumazi.com, carries #771's `snapshotComparable`, the constraints card's
   `Bags: ` chips and all four baggage modes.
-- **Catalog.** All 15 layover triggers in production run a function whose `prosrc` md5 equals the same function on a
+- **Catalog.** 15 of the 26 layover triggers in production (the independent verifier then matched all 26, and all 41 layover functions) run a function whose `prosrc` md5 equals the same function on a
   database built from this tree's chain (13 distinct functions: the crew-location guard and its three ending triggers, the certified-computation
   immutability, version, CAS and active-tracking triggers, the snapshot-row immutability trigger, the session
   active-snapshot and connection guards, the recommendation route watch and the crew-plan membership trigger).
@@ -13122,7 +13122,7 @@ reason given in the row.
 - **PostgreSQL 17** (local, `scripts/local-db/up.sh` on port 54354). Run 1, twelve existing suites: pressed crew location,
   snapshot, constraints store, constraints lifecycle, presence, presence scope, flight connections, canonical snapshot,
   surface consistency, dashboard vocabulary, stable ids and write boundary. **121 / 121**, 0 skipped. The two new suites:
-  **6 / 6** and **2 / 2**.
+  **6 / 6** and **4 / 4**.
 - **Mutants.** Each was applied, the named test was run, and the file was restored byte-identically (sha256 checked).
   - Killed by its own assertion: M2, M3, M4, M5b, M6, M8, M9, M10, M11, C1–C7 and K1–K4. C1–C7 cover the boundary
     `.lt`, no DELETE, an unbounded DELETE, unwired, gated on the persistence flag, the wrong table, and the retention

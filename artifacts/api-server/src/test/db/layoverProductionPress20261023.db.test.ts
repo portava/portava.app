@@ -159,6 +159,32 @@ describe("§82 — production's 2026-10-23 flag state, on the migrated chain", {
     );
   });
 
+  it("L203 — the guard trigger itself: a membership row that EXISTS (so the FK holds) is still refused unless it is live, on its own session, and exact has the control", async () => {
+    const ua = await db.seedUser("guard_a"), ub = await db.seedUser("guard_b");
+    const a = (await startSession(app, ua, { iata: "SIN" }, { departsInH: 9 })).id;
+    const aOther = (await startSession(app, ua, { iata: "SIN" }, { departsInH: 9 })).id;
+    const b = (await startSession(app, ub, { iata: "SIN" }, { departsInH: 9 })).id;
+    const c = await app.call("POST", `/api/airport/sessions/${b}/crew`, ub, { title: "guard crew" });
+    assert.equal(c.status, 200, c.raw);
+    const crewId = c.body.crew.id as string;
+    const j = await app.call("POST", `/api/airport/sessions/${a}/crew/${crewId}/join`, ua);
+    assert.equal(j.status, 200, j.raw);
+    const insert = (session: string, precision: "area" | "exact") => db.exec(
+      `INSERT INTO public.layover_crew_location_grants (crew_id, user_id, session_id, purpose, precision, label, lat, lng, granted_at, expires_at)
+         VALUES ('${crewId}', '${ua.id}', '${session}', '${precision === "exact" ? "live_session_sharing" : "presence_in_context"}', '${precision}', 'Gate B4',
+                 ${precision === "exact" ? "1.3644, 103.9915" : "NULL, NULL"}, now(), now() + interval '1 hour')`);
+    const byGuard = (why: RegExp) => (e: any) => e?.code === "23514" && /^3996: /.test(String(e?.message ?? "")) && why.test(String(e?.message ?? ""));
+    // control: every FK and CHECK is satisfied, and a live member on their own session may share
+    await insert(a, "area");
+    await db.exec(`DELETE FROM public.layover_crew_location_grants WHERE crew_id = '${crewId}' AND user_id = '${ua.id}'`);
+    await assert.rejects(insert(aOther, "area"), byGuard(/session the member joined with/), "another of the member's own sessions (a valid session FK) must be refused");
+    await assert.rejects(insert(a, "exact"), byGuard(/precise-sharing control/), "exact with no control row must be refused");
+    const l = await app.call("POST", `/api/airport/sessions/${a}/crew/leave`, ua);
+    assert.equal(l.status, 200, l.raw);
+    assert.equal((await db.query<any>(`SELECT 1 FROM public.layover_crew_members WHERE crew_id = '${crewId}' AND user_id = '${ua.id}' AND left_at IS NOT NULL`)).length, 1, "the left membership row still exists, so the FK alone would admit the insert");
+    await assert.rejects(insert(a, "area"), byGuard(/LIVE crew membership/), "a member who left must be refused");
+  });
+
   it("L196 (held W) — the restrictive tables hold, and with presence intents OFF the writer refuses and writes nothing", async () => {
     const sid = (await startSession(app, ana, { iata: "SIN" }, { departsInH: 9 })).id;
     const sh = await app.call("PATCH", `/api/airport/sessions/${sid}/share`, ana, { enabled: true });
