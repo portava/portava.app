@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, Pressable, Modal, ScrollView, StyleSheet, TextInput,
-  Image, ActivityIndicator, Switch, Platform,
+  Image, ActivityIndicator, Switch, Platform, Alert,
 } from 'react-native';
 import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
 // (KeyboardSafeScrollView is the bare KAV wrapper — the composer page brings
@@ -435,7 +435,7 @@ export function UnifiedPostComposer({
 
       await handleSubmitResult(res, {
         onSuccess,
-        onClose: closeOnce,
+        onClose: closeOnce, onHeld: notifyHeldPost, // a post with a live location is held until you leave, and the sheet just closed: on the owner's iPhone camera posts "never showed" (2026-10-23)
         signOut,
         navigate: router.replace as (path: string) => void,
         setError,
@@ -1005,3 +1005,16 @@ const uc = StyleSheet.create({
   submitBtnDisabled: { opacity: 0.45 },
   submitText: { ...t.bodyStrong, color: color.onInk, fontSize: 15 },
 });
+
+/** A created post the server is holding: say so, and where it is, instead of closing as if it were live. */
+function notifyHeldPost(postStatus: string): void {
+  const why =
+    postStatus === 'pending_location_exit' ? "To keep your live location private, it goes live once you've left this spot."
+    : postStatus === 'pending_delay' ? 'It goes live at the time it was set to.'
+    : postStatus === 'pending_safety_review' ? 'It goes live once a quick safety check is done.'
+    : 'It will go live shortly.';
+  Alert.alert('Posted — not live yet', why, [
+    { text: 'View pending posts', onPress: () => router.push('/pending-posts' as never) },
+    { text: 'OK', style: 'cancel' },
+  ]);
+}
