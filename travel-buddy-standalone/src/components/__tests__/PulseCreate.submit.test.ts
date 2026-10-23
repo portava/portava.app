@@ -1143,3 +1143,19 @@ describe('submit success — the server holds the post', () => {
     assert.deepEqual(calls, ['close']);
   });
 });
+
+// ── 2026-10-23: the upload's poster rides along to the post ─────────────────────
+// uploadMedia stores a video's poster and returns it as thumbnailUrl; handleUploadResult dropped it, so every camera
+// video was posted with media_thumbnail_url NULL and only its .mov to draw.
+describe('handleUploadResult — the poster is carried', () => {
+  const handlers = { onClose: () => {}, signOut: async () => {}, navigate: () => {}, setError: () => {} };
+  it('a video upload with a poster hands the poster on', async () => {
+    const out = await handleUploadResult({ ok: true, url: 'post-media/u-1/1.mov', mediaType: 'video/quicktime', thumbnailUrl: 'post-media/u-1/1.mov.poster.jpg' }, handlers);
+    assert.deepEqual(out, { continue: true, url: 'post-media/u-1/1.mov', mediaType: 'video/quicktime', thumbnailUrl: 'post-media/u-1/1.mov.poster.jpg' });
+  });
+  it('an upload without one hands on null, not undefined', async () => {
+    const out = await handleUploadResult({ ok: true, url: 'post-media/u-1/1.jpg', mediaType: 'image/jpeg' }, handlers);
+    assert.deepEqual(out, { continue: true, url: 'post-media/u-1/1.jpg', mediaType: 'image/jpeg', thumbnailUrl: null });
+  });
+});
+

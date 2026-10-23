@@ -371,3 +371,47 @@ describe('batchSignUrls', () => {
     assert.equal(signCallCount, 0, 'recently-promoted entry should still be in cache after eviction');
   });
 });
+
+// ── 2026-10-23: Supabase's image transform answers 400 for a video ───────────────
+// Production edge log: GET /storage/v1/render/image/sign/post-media/<owner>/1792727980484.mov → 400, again and again.
+// A transform is asked for stills only; a video in the same call is signed plainly.
+describe('batchSignUrls — videos are never sent to the image transform', () => {
+  const VIDEO = 'post-media/u-1/1792727980484.mov';
+  const PHOTO = 'post-media/u-1/1792727701590.jpg';
+  beforeEach(() => {
+    _origFetch = globalThis.fetch;
+    _origApiBase = process.env.EXPO_PUBLIC_API_BASE_URL;
+    process.env.EXPO_PUBLIC_API_BASE_URL = API_BASE;
+    _resetBatchSignCache();
+    _setTestSignTokenProvider(async () => TOKEN);
+  });
+  afterEach(() => {
+    globalThis.fetch = _origFetch;
+    process.env.EXPO_PUBLIC_API_BASE_URL = _origApiBase;
+    _resetBatchSignCache();
+    _setTestSignTokenProvider(null);
+  });
+
+  it('one call with a video and a photo: the photo carries the transform, the video does not', async () => {
+    const bodies: any[] = [];
+    stubFlagFetch(true, (body) => { bodies.push(body); return Object.fromEntries(body.urls.map((u: string) => [u, `${u}?signed`])); });
+    const out = await batchSignUrls([VIDEO, PHOTO], { width: 400, quality: 80 });
+    assert.equal(out.get(VIDEO), `${VIDEO}?signed`);
+    assert.equal(out.get(PHOTO), `${PHOTO}?signed`);
+    const forVideo = bodies.find((b) => b.urls.includes(VIDEO));
+    const forPhoto = bodies.find((b) => b.urls.includes(PHOTO));
+    assert.ok(forVideo && forPhoto, JSON.stringify(bodies));
+    assert.equal('transform' in forVideo, false, `a video must not be transformed: ${JSON.stringify(forVideo)}`);
+    assert.deepEqual(forPhoto.transform, { width: 400, quality: 80 });
+    assert.equal(forPhoto.urls.includes(VIDEO), false);
+  });
+
+  it('without a transform, nothing changes: one request for everything', async () => {
+    const bodies: any[] = [];
+    stubFlagFetch(true, (body) => { bodies.push(body); return Object.fromEntries(body.urls.map((u: string) => [u, u])); });
+    await batchSignUrls([VIDEO, PHOTO]);
+    assert.equal(bodies.length, 1);
+    assert.deepEqual(bodies[0].urls.sort(), [PHOTO, VIDEO].sort());
+  });
+});
+

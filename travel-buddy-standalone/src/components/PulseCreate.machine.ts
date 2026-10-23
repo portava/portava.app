@@ -242,6 +242,8 @@ export interface MediaUploadResult {
   ok: boolean;
   url: string | null;
   mediaType: string | null;
+  /** The video's poster (or a photo's thumbnail) the upload stored; null when it made none. */
+  thumbnailUrl?: string | null;
   errorKind?: string;
   message?: string;
 }
@@ -261,7 +263,7 @@ export interface UploadResultHandlers {
 /** Discriminated union returned by handleUploadResult. */
 export type UploadOutcome =
   | { continue: false }
-  | { continue: true; url: string; mediaType: string | null };
+  | { continue: true; url: string; mediaType: string | null; thumbnailUrl: string | null };
 
 /**
  * Handles the result of an uploadMedia() call inside handleSubmit().
@@ -306,7 +308,8 @@ export async function handleUploadResult(
   handlers: UploadResultHandlers,
 ): Promise<UploadOutcome> {
   if (result.ok && result.url) {
-    return { continue: true, url: result.url, mediaType: result.mediaType };
+    // The poster rides along to the post: dropping it left every camera video with only its .mov to draw (2026-10-23).
+    return { continue: true, url: result.url, mediaType: result.mediaType, thumbnailUrl: result.thumbnailUrl ?? null };
   }
 
   if (result.errorKind === 'unauthenticated') {

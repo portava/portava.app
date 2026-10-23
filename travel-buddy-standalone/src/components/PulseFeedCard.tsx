@@ -266,8 +266,14 @@ function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: Puls
   // /api/media/sign call (45-min cache) rather than one redirect per image.
   // When the private-bucket flag is OFF this resolves immediately with the
   // original URL (zero network overhead).
-  const rawMediaUrl: string | undefined =
-    item.media?.[0]?.thumbnail_url ?? item.media?.[0]?.url ?? item.mediaUrl ?? undefined;
+  // A post whose only media is a video FILE (no media row says so) is still a video: drawing its .mov in an <Image>
+  // failed, and the card fell back to text — the owner's camera videos showed no picture (2026-10-23).
+  const firstMediaUrl = item.media?.[0]?.url ?? item.mediaUrl ?? undefined;
+  const showsVideo = item.media?.[0]?.media_type === 'video' || (!item.media?.[0] && isVideoRef(firstMediaUrl));
+  const videoPoster = item.media?.[0]?.thumbnail_url ?? derivedVideoPosterRef(firstMediaUrl);
+  const rawMediaUrl: string | undefined = showsVideo
+    ? undefined
+    : (item.media?.[0]?.thumbnail_url ?? firstMediaUrl);
   const [signedMediaUrl, setSignedMediaUrl] = useState<string | undefined>(rawMediaUrl);
 
   useEffect(() => {
@@ -402,10 +408,10 @@ function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: Puls
       <PostCardStampBurst ref={burstRef} />
       {/* ── Immersive media frame ── */}
       <View style={[s.postMedia, { height: mediaHeight }]}>
-        {item.media?.[0]?.media_type === 'video' ? (
+        {showsVideo ? (
           <VideoThumbnail
-            posterUri={item.media[0].thumbnail_url ?? null}
-            duration={item.media[0].duration_seconds ?? undefined}
+            posterUri={videoPoster ?? null}
+            duration={item.media?.[0]?.duration_seconds ?? undefined}
             style={StyleSheet.absoluteFill}
           />
         ) : (
@@ -1089,3 +1095,4 @@ const rab = StyleSheet.create({
   ctaOutline: { flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderColor: '#E53935', borderRadius: radius.sm, paddingHorizontal: space.md, paddingVertical: 8 },
   ctaOutlineText: { ...t.small, fontWeight: '800', color: '#E53935', fontSize: 12 },
 });
+import { isVideoRef, derivedVideoPosterRef } from '../lib/media/videoPosterRef.ts';

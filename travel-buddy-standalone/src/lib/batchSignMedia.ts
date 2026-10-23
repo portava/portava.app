@@ -163,7 +163,7 @@ export async function batchSignUrls(
   transform?: { width?: number; quality?: number },
 ): Promise<Map<string, string>> {
   const result = new Map<string, string>();
-  if (urls.length === 0) return result;
+  if (urls.length === 0) return result; if (transform && urls.some(isVideoRef)) { const [videos, stills] = await Promise.all([batchSignUrls(urls.filter(isVideoRef)), batchSignUrls(urls.filter((u) => !isVideoRef(u)), transform)]); return new Map([...videos, ...stills]); } // Supabase's image transform answers 400 for a video: sign videos plainly
 
   const now = Date.now();
 
@@ -279,3 +279,4 @@ function noteSignOutcome(url: string, outcome: 'signed' | 'denied' | 'unreachabl
 export function lastSignOutcome(url: string): 'signed' | 'denied' | 'unreachable' | null {
   return _lastOutcome.get(url) ?? null;
 }
+import { isVideoRef } from './media/videoPosterRef.ts';
