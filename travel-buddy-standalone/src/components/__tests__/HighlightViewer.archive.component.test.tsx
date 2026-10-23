@@ -102,6 +102,7 @@ jest.mock('../ui/KeyboardSafeView.tsx', () => {
 });
 
 const mockArchive = jest.fn();
+const mockUnarchive = jest.fn();
 const mockDelete = jest.fn();
 jest.mock('../../services/highlights.ts', () => ({
   ...jest.requireActual('../../services/highlights.ts'),
@@ -111,6 +112,7 @@ jest.mock('../../services/highlights.ts', () => ({
   reportHighlight: async () => ({ ok: false, data: null }),
   deleteHighlight: (...a: unknown[]) => mockDelete(...a),
   archiveHighlight: (...a: unknown[]) => mockArchive(...a),
+  unarchiveHighlight: (...a: unknown[]) => mockUnarchive(...a),
 }));
 
 jest.mock('../../services/messaging.ts', () => ({
@@ -229,5 +231,56 @@ describe('HighlightViewer — §21 archive', () => {
     // Closing on a failed write would tell the owner it was archived.
     expect(onClose).not.toHaveBeenCalled();
     expect(screen.getByTestId('highlight-archive')).toBeTruthy();
+  });
+});
+
+// ── 2026-10-23: an archive says what it did, and can be undone ────────────────────
+// On the owner's iPhone a highlight was archived 11 s after it was opened and simply vanished: the viewer dropped it
+// without a word, one icon away from Delete. Archive stays unconfirmed (it is reversible), but now says where the
+// highlight went and offers Undo, which restores it through the unarchive route.
+describe('HighlightViewer — archive notice and Undo', () => {
+  let alertSpy: jest.SpyInstance;
+  beforeEach(() => {
+    mockArchive.mockReset(); mockUnarchive.mockReset(); mockDelete.mockReset();
+    alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+  });
+  afterEach(() => { alertSpy.mockRestore(); });
+
+  type Btn = { text: string; onPress?: () => void };
+  const archivedNotice = () => alertSpy.mock.calls.find((c) => c[0] === 'Highlight archived');
+
+  it('a successful archive tells the owner where it went, with Undo', async () => {
+    mockArchive.mockResolvedValue({ ok: true, data: { id: HID, archivedAt: '2026-10-23T03:57:53.000Z' } });
+    await render(<HighlightViewer visible highlights={[highlight()]} currentUserId={OWNER} onClose={() => {}} />);
+    await fireEvent.press(await screen.findByTestId('highlight-archive'));
+    await waitFor(() => expect(archivedNotice()).toBeTruthy());
+    const [, message, buttons] = archivedNotice()!;
+    expect(String(message)).toMatch(/Archived highlights/);
+    expect((buttons as Btn[]).map((b) => b.text)).toEqual(['Undo', 'OK']);
+  });
+
+  it('Undo restores it through the unarchive route and tells the surface behind to re-read', async () => {
+    mockArchive.mockResolvedValue({ ok: true, data: { id: HID, archivedAt: '2026-10-23T03:57:53.000Z' } });
+    mockUnarchive.mockResolvedValue({ ok: true, data: { id: HID, archivedAt: null } });
+    const onDeleted = jest.fn();
+    await render(<HighlightViewer visible highlights={[highlight()]} currentUserId={OWNER} onClose={() => {}} onDeleted={onDeleted} />);
+    await fireEvent.press(await screen.findByTestId('highlight-archive'));
+    await waitFor(() => expect(archivedNotice()).toBeTruthy());
+    expect(onDeleted).toHaveBeenCalledTimes(1);
+    const undo = (archivedNotice()![2] as Btn[]).find((b) => b.text === 'Undo')!;
+    undo.onPress!();
+    await waitFor(() => expect(mockUnarchive).toHaveBeenCalledWith(HID));
+    await waitFor(() => expect(onDeleted).toHaveBeenCalledTimes(2));
+    expect(mockDelete).not.toHaveBeenCalled();
+  });
+
+  it('a refused Undo says so instead of pretending', async () => {
+    mockArchive.mockResolvedValue({ ok: true, data: { id: HID, archivedAt: '2026-10-23T03:57:53.000Z' } });
+    mockUnarchive.mockResolvedValue({ ok: false, data: null, errorKind: 'db_error' });
+    await render(<HighlightViewer visible highlights={[highlight()]} currentUserId={OWNER} onClose={() => {}} />);
+    await fireEvent.press(await screen.findByTestId('highlight-archive'));
+    await waitFor(() => expect(archivedNotice()).toBeTruthy());
+    (archivedNotice()![2] as Btn[]).find((b) => b.text === 'Undo')!.onPress!();
+    await waitFor(() => expect(alertSpy.mock.calls.some((c) => c[0] === 'Could not undo')).toBe(true));
   });
 });

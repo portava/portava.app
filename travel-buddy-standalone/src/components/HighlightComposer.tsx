@@ -142,6 +142,16 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
     setIsVideo(asVideo);
     setVideoDuration(durationSec);
     setFileSize(a.fileSize ?? null);
+    if (asVideo) {
+      // Videos skip the filter editor, as PulseCreate's always have. A video is only relabelled after the pick, so the
+      // editor's full-screen Modal was presented in the same tick that the camera and the source sheet were dismissing,
+      // and the phone froze on a just-recorded video (owner's iPhone, 2026-10-23). The editor's preview is also an
+      // <Image>, which cannot show a video, and its video "filter" is metadata only.
+      setMediaUri(a.uri);
+      setFilterId('original');
+      setFilterIntensity(100);
+      return;
+    }
     setFilterEditorAsset(a);
     setFilterEditorOpen(true);
   }

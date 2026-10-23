@@ -48,7 +48,7 @@ import {
   // are different operations and must remain separate in both data model and
   // UX." The server has had the archive routes and no caller; the viewer had
   // Delete and nothing else, so the UX half of that sentence was unmet.
-  archiveHighlight,
+  archiveHighlight, unarchiveHighlight,
 } from '../services/highlights.ts';
 import { markHighlightsViewed } from '../services/messaging.ts';
 import { markViewed, invalidateHighlightCache } from '../hooks/useHighlightRingState.ts';
@@ -314,7 +314,7 @@ export function HighlightViewer({
       Alert.alert('Could not archive', result.message ?? 'Please try again.');
       return;
     }
-    dropCurrentFromViewer(id, ownerId);
+    dropCurrentFromViewer(id, ownerId); Alert.alert('Highlight archived', "It's off your rings and kept in Archived highlights.", [{ text: 'Undo', onPress: () => { void unarchiveHighlight(id).then((r) => { if (r.ok) { invalidateHighlightCache(ownerId); onDeleted?.(); } else { Alert.alert('Could not undo', r.message ?? 'You can restore it from Archived highlights.'); } }); } }, { text: 'OK', style: 'cancel' }]); // an archive left without a word, one icon from Delete: the owner's highlight just vanished (owner's iPhone, 2026-10-23, archived 11 s after it was opened)
   }
 
   function goNext() {

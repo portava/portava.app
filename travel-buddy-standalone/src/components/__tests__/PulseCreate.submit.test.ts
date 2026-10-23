@@ -1098,3 +1098,48 @@ describe('category gate — validateCategoryGate allows submit when any category
     }
   });
 });
+
+// ── 2026-10-23: a created post the server is HOLDING is announced, not closed silently ─
+// A post with a live location defaults to "post after I leave" (pending_location_exit); the sheet closed exactly as for
+// a live post, so on the owner's iPhone camera posts "never showed". handleSubmitResult now calls onHeld for any
+// pending_* status the created post carries, after the sheet closes.
+describe('submit success — the server holds the post', () => {
+  const base = () => {
+    const calls: string[] = [];
+    return {
+      calls,
+      handlers: {
+        onSuccess: () => { calls.push('success'); },
+        onClose: () => { calls.push('close'); },
+        onHeld: (s: string) => { calls.push(`held:${s}`); },
+        signOut: async () => { calls.push('signOut'); },
+        navigate: (p: string) => { calls.push(`nav:${p}`); },
+        setError: (m: string) => { calls.push(`error:${m}`); },
+      },
+    };
+  };
+
+  for (const status of ['pending_location_exit', 'pending_delay', 'pending_safety_review']) {
+    it(`${status}: onHeld is told, after the sheet closes`, async () => {
+      const b = base();
+      await handleSubmitResult({ ok: true, data: { postStatus: status } }, b.handlers);
+      assert.deepEqual(b.calls, ['success', 'close', `held:${status}`]);
+    });
+  }
+
+  it('a published post (or no status) is not announced as held', async () => {
+    for (const data of [{ postStatus: 'published' }, { postStatus: null }, null, undefined]) {
+      const b = base();
+      await handleSubmitResult({ ok: true, data }, b.handlers);
+      assert.deepEqual(b.calls, ['success', 'close'], JSON.stringify(data));
+    }
+  });
+
+  it('without an onHeld handler a held post still closes the sheet (older callers)', async () => {
+    const calls: string[] = [];
+    await handleSubmitResult({ ok: true, data: { postStatus: 'pending_location_exit' } }, {
+      onClose: () => { calls.push('close'); }, signOut: async () => {}, navigate: () => {}, setError: () => {},
+    });
+    assert.deepEqual(calls, ['close']);
+  });
+});
