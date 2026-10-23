@@ -13066,7 +13066,7 @@ reason given in the row.
 | L129 | N | **W** | "5 open to food": intent counts are disclosed only at five or more (`artifacts/api-server/src/services/layover/LayoverPresenceStore.ts:251#export const PRESENCE_INTENT_MIN_K = 5;`, lead ruling D-PRESENCE-K), over 3900's table. The flag went back OFF at 21:55:57Z because k is the owner's decision (§52.1). `C` on that decision, the flag back ON, and the owner's signed-in retest with five travellers present. |
 | L132 | N | **W** | Explicit (the owner's own POST), scoped (crew, purpose, precision) and auto-expiring (at most 4 h: `artifacts/api-server/src/migrations/3996_layover_crew_location_grants.sql:148#CHECK (expires_at > granted_at AND expires_at <= granted_at + interval '4 hours'),`). Applied, with the route mounted and the flag ON. `C` on the owner's signed-in retest. |
 | L158 | N | **W** | Exact shares are session-scoped and deleted when the member leaves, the crew disbands or the control goes off (`artifacts/api-server/src/test/layoverCrewLocationMigration.test.ts:178#await t.test("L158: leaving the crew deletes the share and forgets the control"`). Applied, flag ON. `C` on the owner's signed-in retest. |
-| L159 | N | **W** | Built in this section (§82.4). Check-ins were hidden at `expires_at` and never deleted. They now leave storage at that same instant. NEEDS-RELEASE: `C` once the build is deployed, verified read-only by `count(*) FROM layover_checkpoints WHERE expires_at < now() - interval '1 hour'` staying 0 once check-ins exist. |
+| L159 | N | **W** | Built in this section (§82.4). Check-ins were hidden at `expires_at` and never deleted. Once the owner presses retention, they leave storage at that same instant. `expires_at` is a read horizon that no ruling sets as a retention period, so deletion sits behind `layover_checkpoint_expiry_enabled` (3950, seeded FALSE; `artifacts/api-server/src/lib/layoverCheckpointExpirySweep.ts:139#if (!(await isFlagEnabled(db, "layover_checkpoint_expiry_enabled"))) return refused("disabled");`). `C` needs three things: the release; 3950 applied; and the owner's retention decision (OD-1012-LAY-3) with the flag ON. Then verify read-only by `count(*) FROM layover_checkpoints WHERE expires_at < now() - interval '1 hour'` staying 0 once check-ins exist. |
 | L166 | N | **W** | Its own table, with no row meaning off (`artifacts/api-server/src/migrations/3996_layover_crew_location_grants.sql:111#CREATE TABLE IF NOT EXISTS public.layover_crew_location_controls (`), its own route (`artifacts/api-server/src/routes/layoverCrewLocation.ts:285#router.put("/airport/sessions/:id/crew/location/precise-control"`), mounted (401), and turning it off deletes the exact share. The live iOS bundle carries the control. `C` on the owner's signed-in retest. |
 | L173 | N | **W** | `recordCheckpoint` is POST /checkpoints (`artifacts/api-server/src/routes/airport.ts:4592#router.post("/airport/sessions/:id/checkpoints"`) through `artifacts/api-server/src/services/layover/LayoverCheckpointStore.ts:144#export async function recordTravellerCheckpoint(`. L30 is `C` on the same writer. This row is the operation, so it is the verifiers' bucket A. `C` on the owner's signed-in retest. |
 | L190 | N | **W** | The diff route (`artifacts/api-server/src/routes/airport.ts:5099#router.get("/airport/sessions/:id/decisions/diff"`) reads stored decisions, which production now holds, and it has a client caller (`travel-buddy-standalone/app/layover/[id].tsx:857#<LayoverAnswerChangesCard sessionId={session.id}`). Lead ruling GRADING's two conditions (storage, a caller) are met. `C` on the owner's signed-in retest. |
@@ -13085,15 +13085,26 @@ reason given in the row.
 ### 82.4 What was built
 
 1. **L159, the checkpoint expiry phase.** `artifacts/api-server/src/lib/layoverCheckpointExpirySweep.ts` deletes
-   `layover_checkpoints` rows at their own `expires_at` (the writer's departure + 6 h). It runs as the presence expiry
-   scheduler's second phase (one in-place edit and a tail import in `lib/layoverPresenceExpiryScheduler.ts`), so
-   `index.ts` and `lib/schedulerCoverage.ts` do not change. It has no flag, by the presence sweep's rule: retention is not
-   the write flag's to switch off. It is schema-gated, batched (200), four-way in its result and never rejects. The cutoff
-   is the exact complement of the reader's `expires_at > now`, so deleting changes no answer. Tests:
-   `artifacts/api-server/src/test/layoverCheckpointExpirySweep.test.ts` (13; the wiring case was red before the wiring)
-   and `artifacts/api-server/src/test/db/layoverCheckpointExpiry.db.test.ts` (2, PostgreSQL). The second test runs the
-   real POST /checkpoints, ages one row past its expiry and sweeps. The expired row is gone, the live one stays, and GET
-   /checkpoints is byte-identical before and after.
+   `layover_checkpoints` rows at their own `expires_at`, **but only once the owner presses retention.**
+   - **What `expires_at` is:** the writer stamps max(now, scheduled departure) + 6 h
+     (`CHECKPOINT_VISIBLE_AFTER_DEPARTURE_MIN`, `services/layover/LayoverCheckpointStore.ts`). That is the readers'
+     visibility horizon, and 2992 calls it "a filter, not a retention promise".
+   - **What sets it as a retention period:** nothing. Spec §17 says only "short-lived operational + bounded diagnostics".
+     OD-1012-LAY-3 asked for a proposal, and `docs/ops/layover-retention-proposal-L261-20261012.md` is unapproved. So the
+     phase deletes nothing unless `layover_checkpoint_expiry_enabled` is ON: migration 3950 seeds it FALSE, and it is read
+     fail-closed, with no statement issued against the table while OFF. Deleting production rows is therefore the owner's
+     press, never a side effect of the deploy.
+   - **How it runs:** as the presence expiry scheduler's second phase (one in-place edit and a tail import in
+     `lib/layoverPresenceExpiryScheduler.ts`), so `index.ts` and `lib/schedulerCoverage.ts` do not change. The write flag
+     (persistence) does not gate it. It is schema-gated, batched (200), four-way in its result, and never rejects. The
+     cutoff is the exact complement of the readers' `expires_at > now`, so deleting changes no answer.
+   - **Already on production with no such press:** the presence and crew sweeps also delete at their own `expires_at`
+     with no flag. Both shipped before this section. Tests:
+   `artifacts/api-server/src/test/layoverCheckpointExpirySweep.test.ts` (18; the wiring case was red before the wiring)
+   and `artifacts/api-server/src/test/db/layoverCheckpointExpiry.db.test.ts` (4, PostgreSQL). The second test checks
+   that 3950 seeds the flag FALSE. With the flag ON, it runs the real POST /checkpoints, ages one row past its expiry and
+   sweeps: the expired row is gone, the live one stays, and GET /checkpoints is byte-identical before and after. With the
+   flag OFF, the expired row stays.
 2. **The client half of the served RecommendationStatus (L38, L50, L97).** Since `layover_recommendation_status_enabled`
    went ON, GET /recommendations keeps cards the server certified as BLOCKED, STALE, EXPIRED or SUPERSEDED. It serves them
    with `available: false` and a fixed sentence, and POST /stops/from-recommendation refuses them with 409
@@ -13113,10 +13124,11 @@ reason given in the row.
   surface consistency, dashboard vocabulary, stable ids and write boundary. **121 / 121**, 0 skipped. The two new suites:
   **6 / 6** and **2 / 2**.
 - **Mutants.** Each was applied, the named test was run, and the file was restored byte-identically (sha256 checked).
-  - Killed by its own assertion: M2, M3, M4, M5b, M6, M8, M9, M10, M11, C1–C6 and K1–K4. C1–C6 cover the boundary
-    `.lt`, no DELETE, an unbounded DELETE, unwired, flag-gated and the wrong table. K1–K4 cover the client: Add shown,
+  - Killed by its own assertion: M2, M3, M4, M5b, M6, M8, M9, M10, M11, C1–C7 and K1–K4. C1–C7 cover the boundary
+    `.lt`, no DELETE, an unbounded DELETE, unwired, gated on the persistence flag, the wrong table, and the retention
+    flag's check removed. K1–K4 cover the client: Add shown,
     no reason, an invented reason, and an available card hidden.
-  - Refused by the migration's own postcondition, so the chain does not build: M1 and M7.
+  - Refused by the migration's own postcondition, so the chain does not build: M1, M7 and C8 (3950 seeded ON).
   - Survived, and the test was then tightened: M5.
 
 ### 82.6 What this pass did not do, stated

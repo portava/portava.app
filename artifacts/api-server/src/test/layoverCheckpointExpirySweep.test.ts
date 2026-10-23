@@ -59,12 +59,19 @@ function recorded(t: Record<string, any[]>, opts: Parameters<typeof makeLayoverD
 
 const ABSENT = { code: "PGRST205", message: "Could not find the table 'public.layover_checkpoints' in the schema cache" };
 
+/** The owner's press: `layover_checkpoint_expiry_enabled` (3950, seeded FALSE). ON unless a case says otherwise. */
+const FLAG = "layover_checkpoint_expiry_enabled";
+function pressed(t: Record<string, any[]>, enabled: boolean | null = true): Record<string, any[]> {
+  t.feature_flags = enabled === null ? [] : [{ flag: FLAG, enabled }];
+  return t;
+}
+
 describe("L159 — 2992 applied: an expired check-in leaves storage at its own expires_at", () => {
   it("deletes every row whose expiry has passed (the boundary included) and keeps every live one", async () => {
     const t: Record<string, any[]> = {
       layover_checkpoints: [checkpoint("c-old", -600), checkpoint("c-expired", -1), checkpoint("c-boundary", 0), checkpoint("c-live", 1), checkpoint("c-live-long", 600)],
     };
-    const out = await runLayoverCheckpointExpirySweep({ client: makeLayoverDb(t), now: NOW });
+    const out = await runLayoverCheckpointExpirySweep({ client: makeLayoverDb(pressed(t)), now: NOW });
     assert.deepEqual(out, { outcome: "swept", reason: null, deleted: 3, complete: true });
     assert.deepEqual(t.layover_checkpoints.map((r) => r.id).sort(), ["c-live", "c-live-long"]);
   });
@@ -73,12 +80,12 @@ describe("L159 — 2992 applied: an expired check-in leaves storage at its own e
     const src = readFileSync(new URL("../services/layover/LayoverCheckpointStore.ts", import.meta.url), "utf8");
     assert.match(src, /\.gt\("expires_at", new Date\(nowMs\)\.toISOString\(\)\)/, "the reader's filter this sweep complements");
     const t: Record<string, any[]> = { layover_checkpoints: [checkpoint("c-boundary", 0)] };
-    await runLayoverCheckpointExpirySweep({ client: makeLayoverDb(t), now: NOW });
+    await runLayoverCheckpointExpirySweep({ client: makeLayoverDb(pressed(t)), now: NOW });
     assert.equal(t.layover_checkpoints.length, 0);
   });
 
   it("nothing due is `idle` — a measurement — and no DELETE is issued", async () => {
-    const t: Record<string, any[]> = { layover_checkpoints: [checkpoint("c-live", 30)] };
+    const t: Record<string, any[]> = pressed({ layover_checkpoints: [checkpoint("c-live", 30)] });
     const { db, ops } = recorded(t);
     const out = await runLayoverCheckpointExpirySweep({ client: db, now: NOW });
     assert.deepEqual(out, { outcome: "idle", reason: null, deleted: 0, complete: true });
@@ -88,21 +95,22 @@ describe("L159 — 2992 applied: an expired check-in leaves storage at its own e
 
   it("bounded: a full batch deletes only the oldest-expiring rows and reports complete: false", async () => {
     const t: Record<string, any[]> = { layover_checkpoints: [checkpoint("b", -20), checkpoint("a", -30), checkpoint("c", -10)] };
-    const out = await runLayoverCheckpointExpirySweep({ client: makeLayoverDb(t), now: NOW, batchSize: 2 });
+    const out = await runLayoverCheckpointExpirySweep({ client: makeLayoverDb(pressed(t)), now: NOW, batchSize: 2 });
     assert.deepEqual(out, { outcome: "swept", reason: null, deleted: 2, complete: false });
     assert.deepEqual(t.layover_checkpoints.map((r) => r.id), ["c"]);
   });
 
   it("only the checkpoint table is touched, by key: no event per deleted row, no session read", async () => {
-    const t: Record<string, any[]> = { layover_checkpoints: [checkpoint("c-expired", -5)], layover_events: [], layover_sessions: [] };
+    const t: Record<string, any[]> = pressed({ layover_checkpoints: [checkpoint("c-expired", -5)], layover_events: [], layover_sessions: [] });
     const { db, ops } = recorded(t);
     await runLayoverCheckpointExpirySweep({ client: db, now: NOW });
-    assert.ok(ops.every((o) => o.startsWith("layover_checkpoints:")), ops.join(","));
+    assert.deepEqual(ops[0], "feature_flags:select", "the press is read first");
+    assert.ok(ops.slice(1).every((o) => o.startsWith("layover_checkpoints:")), ops.join(","));
     assert.equal(t.layover_events.length, 0);
   });
 
   it("a row whose expiry moved forward between the read and the DELETE is no longer due and stays", async () => {
-    const t: Record<string, any[]> = { layover_checkpoints: [checkpoint("c-moved", -5)] };
+    const t: Record<string, any[]> = pressed({ layover_checkpoints: [checkpoint("c-moved", -5)] });
     const inner = makeLayoverDb(t) as any;
     const racing = {
       ...inner,
@@ -119,19 +127,53 @@ describe("L159 — 2992 applied: an expired check-in leaves storage at its own e
   });
 });
 
+describe("L159 — deleting is the owner's press: layover_checkpoint_expiry_enabled (3950, seeded FALSE)", () => {
+  beforeEach(() => _resetLayoverCheckpointExpiryFailureState());
+
+  for (const [label, enabled] of [["OFF", false], ["absent", null]] as const) {
+    it(`flag ${label}: refused \`disabled\`, NOTHING is issued against layover_checkpoints, and an expired row stays`, async () => {
+      const t: Record<string, any[]> = pressed({ layover_checkpoints: [checkpoint("c-expired", -600)] }, enabled);
+      const { db, ops } = recorded(t);
+      const out = await runLayoverCheckpointExpirySweep({ client: db, now: NOW });
+      assert.deepEqual(out, { outcome: "refused", reason: "disabled", deleted: 0, complete: false });
+      assert.deepEqual(ops, ["feature_flags:select"], "the flag read, and no statement on the table");
+      assert.equal(t.layover_checkpoints.length, 1);
+    });
+  }
+
+  it("an unreadable flag is OFF (fail-closed): nothing is deleted", async () => {
+    const t: Record<string, any[]> = pressed({ layover_checkpoints: [checkpoint("c-expired", -600)] });
+    const out = await runLayoverCheckpointExpirySweep({ client: makeLayoverDb(t, { failures: { "feature_flags:select": { message: "down" } } }), now: NOW });
+    assert.equal(out.reason, "disabled");
+    assert.equal(t.layover_checkpoints.length, 1);
+  });
+
+  it("an un-pressed tick is the resting state, never a failure", async () => {
+    for (let i = 0; i < 4; i++) await runLayoverCheckpointExpiryTick({ client: makeLayoverDb(pressed({ layover_checkpoints: [] }, false)), now: NOW });
+    assert.deepEqual(layoverCheckpointExpiryFailureState(), { consecutiveFailures: 0, lastError: null });
+  });
+
+  it("3950 seeds the flag FALSE and asserts it ships OFF", () => {
+    const sql = readFileSync(new URL("../migrations/3950_layover_checkpoint_expiry_flag.sql", import.meta.url), "utf8");
+    assert.match(sql, /'layover_checkpoint_expiry_enabled',\s*false,/);
+    assert.match(sql, /ON CONFLICT \(flag\) DO NOTHING/);
+    assert.match(sql, /POSTCONDITION FAILED \(3950\): layover_checkpoint_expiry_enabled is ON/);
+  });
+});
+
 describe("L159 — 2992 unapplied: inert, and not a failure", () => {
   beforeEach(() => _resetLayoverCheckpointExpiryFailureState());
 
   it("the probe answers absent and NOTHING beyond the probe is issued", async () => {
-    const { db, ops } = recorded({}, { failures: { "layover_checkpoints:select": ABSENT } });
+    const { db, ops } = recorded(pressed({}), { failures: { "layover_checkpoints:select": ABSENT } });
     const out = await runLayoverCheckpointExpirySweep({ client: db, now: NOW });
     assert.deepEqual(out, { outcome: "refused", reason: "table_absent", deleted: 0, complete: false });
-    assert.deepEqual(ops, ["layover_checkpoints:select"], "one probe, no due-row read, no DELETE");
+    assert.deepEqual(ops, ["feature_flags:select", "layover_checkpoints:select"], "the press, one probe, no due-row read, no DELETE");
   });
 
   it("ticks over an absent table neither escalate nor clear the failure ledger", async () => {
     for (let i = 0; i < 4; i++) {
-      await runLayoverCheckpointExpiryTick({ client: makeLayoverDb({}, { failures: { "layover_checkpoints:select": ABSENT } }), now: NOW });
+      await runLayoverCheckpointExpiryTick({ client: makeLayoverDb(pressed({}), { failures: { "layover_checkpoints:select": ABSENT } }), now: NOW });
     }
     assert.deepEqual(layoverCheckpointExpiryFailureState(), { consecutiveFailures: 0, lastError: null });
   });
@@ -147,7 +189,7 @@ describe("L159 — failures are failures, never a quiet zero", () => {
   beforeEach(() => _resetLayoverCheckpointExpiryFailureState());
 
   it("the probe passes and the due-row read fails: read_failed, nothing deleted, counted", async () => {
-    const t: Record<string, any[]> = { layover_checkpoints: [checkpoint("c-expired", -5)] };
+    const t: Record<string, any[]> = pressed({ layover_checkpoints: [checkpoint("c-expired", -5)] });
     const inner = makeLayoverDb(t) as any;
     let selects = 0;
     const db = {
@@ -157,7 +199,7 @@ describe("L159 — failures are failures, never a quiet zero", () => {
         const sel = b.select;
         b.select = (...a: any[]) => {
           selects += 1;
-          if (selects === 2) return makeLayoverDb({}, { failures: { "layover_checkpoints:select": { message: "down" } } }).from("layover_checkpoints").select(...a);
+          if (name === "layover_checkpoints" && selects === 3) return makeLayoverDb({}, { failures: { "layover_checkpoints:select": { message: "down" } } }).from("layover_checkpoints").select(...a);
           return sel(...a);
         };
         return b;
@@ -170,7 +212,7 @@ describe("L159 — failures are failures, never a quiet zero", () => {
   });
 
   it("the DELETE is refused: delete_failed, the rows stay, counted; a later clean pass resets the ledger", async () => {
-    const t: Record<string, any[]> = { layover_checkpoints: [checkpoint("c-expired", -5)] };
+    const t: Record<string, any[]> = pressed({ layover_checkpoints: [checkpoint("c-expired", -5)] });
     const out = await runLayoverCheckpointExpiryTick({ client: makeLayoverDb(t, { failures: { "layover_checkpoints:delete": { message: "denied" } } }), now: NOW });
     assert.deepEqual(out, { outcome: "failed", reason: "delete_failed", deleted: 0, complete: false });
     assert.equal(t.layover_checkpoints.length, 1);

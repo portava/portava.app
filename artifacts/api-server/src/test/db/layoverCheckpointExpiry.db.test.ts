@@ -11,8 +11,10 @@
  *   E2 deleting it changes NO answer: GET /checkpoints returns byte-identical
  *      bodies before and after the pass, because the reader already hid it;
  *   E3 the pass is bounded and idempotent: the second pass is `idle`;
- *   E4 retention is not gated on the write flag: with persistence OFF an
- *      expired row is still removed (a flag must not be a way to keep data).
+ *   E4 retention is not gated on the WRITE flag: with persistence OFF an
+ *      expired row is still removed once retention is pressed;
+ *   E5 deleting is the owner's press: with `layover_checkpoint_expiry_enabled`
+ *      (3950) at its seed, FALSE, an expired row stays and nothing is deleted.
  *
  * Run: LOCAL_DB_URL=… node --import tsx/esm --test src/test/db/layoverCheckpointExpiry.db.test.ts
  */
@@ -24,8 +26,8 @@ import { productionBaseFlags, startPressedLayoverApp, startSession, type Pressed
 import { runLayoverCheckpointExpirySweep } from "../../lib/layoverCheckpointExpirySweep.js";
 
 const PRESS = {
-  migrations: ["2700", "2992"],
-  flags: { layover_decision_persistence_enabled: true },
+  migrations: ["2700", "2992", "3950"],
+  flags: { layover_decision_persistence_enabled: true, layover_checkpoint_expiry_enabled: true },
 } as const;
 
 let db: PressedDb;
@@ -37,14 +39,20 @@ const report = (u: PressedUser, sid: string, type: string) =>
   app.call("POST", `/api/airport/sessions/${sid}/checkpoints`, u, { type, operationId: `op-${randomUUID()}` });
 
 describe("L159 checkpoint expiry on the migrated chain", { skip: PRESSED_SKIP_REASON }, () => {
+  let seeded: boolean | "absent" = "absent";
   before(async () => {
     db = await openForPress(PRESS, "pressed");
+    seeded = await db.flag("layover_checkpoint_expiry_enabled");
     await productionBaseFlags(db);
     await applyPress(db, PRESS, "pressed");
     app = await startPressedLayoverApp(db);
     ana = await db.seedUser("ana-checkpoints");
   });
   after(async () => { await app?.close(); await db?.close(); });
+
+  it("E0 3950 seeds layover_checkpoint_expiry_enabled FALSE: deleting is the owner's press", () => {
+    assert.equal(seeded, false);
+  });
 
   it("E1-E3 an expired check-in leaves 2992's table, a live one stays, no answer changes, and a second pass is idle", async () => {
     const sid = (await startSession(app, ana, { iata: "SIN" }, { departsInH: 6 })).id;
@@ -89,6 +97,21 @@ describe("L159 checkpoint expiry on the migrated chain", { skip: PRESSED_SKIP_RE
       assert.equal((await rowsOf(sid)).length, 0);
     } finally {
       await db.setFlag("layover_decision_persistence_enabled", true);
+    }
+  });
+
+  it("E5 retention not pressed: with layover_checkpoint_expiry_enabled FALSE an expired check-in stays, and nothing is deleted", async () => {
+    const sid = (await startSession(app, ana, { iata: "SIN" }, { departsInH: 5 })).id;
+    const exit = await report(ana, sid, "LANDSIDE_EXIT");
+    assert.equal(exit.status, 201, exit.raw);
+    await db.exec(`UPDATE public.layover_checkpoints SET expires_at = now() - interval '1 minute' WHERE session_id = '${sid}'`);
+    await db.setFlag("layover_checkpoint_expiry_enabled", false);
+    try {
+      const pass = await runLayoverCheckpointExpirySweep({ client: db.client, now: new Date() });
+      assert.deepEqual(pass, { outcome: "refused", reason: "disabled", deleted: 0, complete: false });
+      assert.equal((await rowsOf(sid)).length, 1, "the expired row is still stored");
+    } finally {
+      await db.setFlag("layover_checkpoint_expiry_enabled", true);
     }
   });
 });

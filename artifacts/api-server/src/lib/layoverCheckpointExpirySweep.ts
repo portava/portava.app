@@ -27,13 +27,24 @@
  * writer already stamps on every row. A grace window would only lengthen the
  * life of data nothing can read.
  *
- * ── WHY NO FEATURE FLAG ─────────────────────────────────────────────────────
- * `layover_decision_persistence_enabled` governs whether checkpoints are
- * WRITTEN and READ. It must not govern their retention: turning persistence
- * off after travellers reported check-ins would otherwise keep those rows
- * forever. With persistence off nothing new is written, so a pass finds only
- * what was written while it was on. The gate is the schema (2992): where the
- * table is absent the pass is one probe and nothing else.
+ * ── WHAT `expires_at` IS, AND WHY DELETING IS AN OWNER PRESS ───────────────
+ * `expires_at` is stamped by the writer as max(now, scheduled departure) +
+ * CHECKPOINT_VISIBLE_AFTER_DEPARTURE_MIN (6 h): a READ horizon. 2992 calls it
+ * "a filter, not a retention promise", and NO spec line, owner ruling or lead
+ * ruling sets it as a retention period. Spec §17 says only "short-lived
+ * operational + bounded diagnostics"; OD-1012-LAY-3 asked for a retention
+ * proposal, and docs/ops/layover-retention-proposal-L261-20261012.md (which
+ * recommends deleting live operational data at its own `expires_at`) is a
+ * PROPOSAL the owner has not approved. So this phase deletes nothing unless
+ * its own flag, `layover_checkpoint_expiry_enabled` (migration 3950, seeded
+ * FALSE), is ON: deleting production rows is the owner's press, never a side
+ * effect of a deploy. OFF, absent or unreadable (`isFlagEnabled`, fail-closed):
+ * no statement at all is issued against `layover_checkpoints`.
+ *
+ * `layover_decision_persistence_enabled` does NOT gate it either way: that flag
+ * governs whether checkpoints are WRITTEN and READ, and turning it off must not
+ * be a way to keep rows the owner has chosen to bound. The schema (2992) is the
+ * second gate: where the table is absent the pass is one probe and nothing else.
  *
  * ── WHERE IT RUNS ───────────────────────────────────────────────────────────
  * On the presence expiry scheduler's own tick (one more phase of the same
@@ -51,6 +62,10 @@
 import { logger } from "./logger.js";
 import { getServiceClient } from "./supabase.js";
 import { auditedLayoverClient, withLayoverSystemAudit } from "./layoverServiceAudit.js";
+import { isFlagEnabled } from "./featureFlags.js";
+
+/** Seeded FALSE by migration 3950. Spelled as a literal at its reader for check:flag-polarity. */
+export const LAYOVER_CHECKPOINT_EXPIRY_FLAG = "layover_checkpoint_expiry_enabled";
 
 function parseEnvInt(raw: string | undefined, def: number, max: number): number {
   const v = raw !== undefined ? parseInt(raw, 10) : NaN;
@@ -69,6 +84,8 @@ export type LayoverCheckpointExpiryOutcome = "swept" | "idle" | "refused" | "fai
 export type LayoverCheckpointExpiryReason =
   /** The process holds no service-role client. */
   | "no_client"
+  /** `layover_checkpoint_expiry_enabled` is OFF, absent or unreadable: the owner has not pressed retention. Nothing is issued. */
+  | "disabled"
   /** 2992 is not applied to this database — no statement beyond the probe was issued. */
   | "table_absent"
   /** The bounded due-row read was refused. Nothing was deleted. */
@@ -118,6 +135,8 @@ async function runLayoverCheckpointExpirySweepImpl(
   const db = auditedLayoverClient("client" in opts && opts.client !== undefined ? opts.client : getServiceClient());
   if (!db) return refused("no_client");
 
+  // The owner's press (see the header). Before the probe, so OFF issues no statement against the table at all.
+  if (!(await isFlagEnabled(db, "layover_checkpoint_expiry_enabled"))) return refused("disabled");
   if (!(await checkpointTablePresent(db))) return refused("table_absent");
 
   const limit = opts.batchSize ?? LAYOVER_CHECKPOINT_EXPIRY_BATCH_SIZE;
@@ -170,8 +189,8 @@ export function runLayoverCheckpointExpirySweep(
 }
 
 /**
- * CONSECUTIVE FAILED SWEEPS. `table_absent` is NOT a failure (a database that
- * has not run 2992 has nothing to sweep). `no_client` IS counted.
+ * CONSECUTIVE FAILED SWEEPS. `disabled` and `table_absent` are NOT failures
+ * (retention not pressed; a database that has not run 2992). `no_client` IS counted.
  */
 let _consecutiveFailures = 0;
 let _lastError: string | null = null;
