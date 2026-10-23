@@ -12971,3 +12971,182 @@ harmless.
 296 = 86 C / 164 W / 46 N / 0 X. CORRECT% is 86 / 296 = 29.1 %. CONSTRUCTED% is 250 / 296 = 84.5 %.
 
 **Every one of the five new `C` rows is "writer reachable", not "rows observed".** Their tables hold 0 rows on production.
+
+## §82 — 2026-10-23 (census drive, lane LAYOVER): the 2026-10-23 production press, re-derived on production's catalog. FIVE ROWS MOVE TO C, TWENTY-THREE N → W
+
+*Branch `claude/census-lay-b1-20261023`, cut from `main` at `18bf93ca7`. `head_commit` is not re-declared. Every row not
+named here is unchanged. This pass reads production read-only and builds two things (§82.4); it applies, flips and
+deploys nothing.*
+
+**Read this first.** On 2026-10-23 at 10:02:06Z the owner switched most layover flags on in production at once. §81.6
+named the rule this pass keeps: a press that is done does not by itself make a row `C`. A row moves to `C` here only when
+its requirement is a fact production's own catalog shows (a table, a column, a CHECK, a trigger, a grant), its writer
+is mounted and ungated in production, and a test drives that writer on the migrated chain under production's exact flag
+state. Rows whose requirement is behaviour only a signed-in traveller can exhibit stay `W`: their remaining dependency is
+the owner's signed-in retest, named row by row in the lane's triage. No traveller has used Layover since the flag press,
+so every `C` below is "writer reachable", with the one exception stated at L193. At 21:55:57Z, while this section was
+being written, the lead turned two of the 10:02Z flags back OFF against open owner questions (§82.1). This section grades
+production as it stands after that change.
+
+### 82.1 Production state, measured read-only on 2026-10-23 (~20:40Z)
+
+- **Ledger.** `public.schema_migration_ledger` holds 829 rows, the last applied 2026-10-23 13:28:20Z. Of every migration
+  in this tree numbered 2600 or above, only 3601 and 3602 (held) and 3909 and 3910 (not layover) are absent.
+- **Flags.** ON since 10:02:06Z: `layover_canonical_snapshot_enabled`, `layover_compass_assistant_enabled`,
+  `layover_compass_replan_enabled`, `layover_constraints_enabled`,
+  `layover_crew_location_enabled`, `layover_crew_split_plans_enabled`, `layover_experience_execution_enabled`,
+  `layover_flight_connections_enabled`, `layover_lifecycle_machine_enabled`, `layover_live_intersection_enabled`,
+  `layover_live_signals_enabled`, `layover_mutual_discovery_enabled`, `layover_objective_evidence_enabled`,
+  `layover_place_dwell_enabled`, `layover_recommendation_status_enabled`,
+  `layover_safe_return_product_enabled`, `layover_snapshot_consumers_enabled`, `trip_flight_segments_enabled`;
+  `layover_ranking_mode` is `on` for cohort `all` (10:02:21Z). §81's eight stay ON. Still FALSE:
+  `layover_activity_commitment_enabled`, `layover_buddy_specialist_enabled`, `layover_entry_forbid_landside_enabled`,
+  `layover_event_ingest_enabled`, `layover_events_post_session_pseudonymisation_enabled`, `layover_maturity_gate_enabled`,
+  `layover_route_fanout_enabled`, `layover_route_subjects_enabled`, `layover_routed_corridor_enabled`,
+  `layover_service_write_audit_enabled`, `layover_snapshot_compaction_enabled`, `rent_buddy_enabled`,
+  `trip_routes_api_enabled`, `wall_rab_integration_enabled`. **Turned back OFF at 21:55:57Z by the lead:**
+  `layover_crew_abort_notify_enabled` (OQ-3 is unanswered) and `layover_presence_intents_enabled` (§52.1: the value of k
+  is the owner's decision). Both were ON from 10:02:06Z to 21:55:57Z.
+- **Routes.** Unauthenticated GETs/PUTs/POSTs to `https://rumazi.com/api/airport/sessions/<uuid>/…` answer **401** for
+  `overview`, `constraints` (GET and PUT), `crew`, `crew/location` (GET and POST), `crew/location/precise-control`,
+  `presence`, `presence/intents`, `recommendations`, `checkpoints`, `observations`, `decisions/diff`, `decisions/replay`,
+  `decisions/<id>/explain`, `experiences`, `simulate`, `compass`, `compass/replan`, `return-now` and `disruption`; an unknown
+  path answers 404; `POST /api/layover/events` answers 503.
+- **The live build.** `/api/healthz` reports `X-Portava-Build sha256:adce7250…`, which differs from §81's `3d6f0dbf…`, so
+  the API was redeployed after release 9d3dc5d0d. Every server file this section cites is byte-identical between
+  9d3dc5d0d and `18bf93ca7` (`git diff --quiet`), except `routes/airport.ts`. That file differs by one in-place field on
+  GET /overview (`snapshotComparable`, #771) and a tail import, and neither of the two lines cited from it below (4592,
+  5099) is that line. So the code read here is the code that has run since 2026-10-22 or later. The iOS manifest is dated
+  2026-10-23T07:12:04Z; its bundle, fetched through rumazi.com, carries #771's `snapshotComparable`, the constraints card's
+  `Bags: ` chips and all four baggage modes.
+- **Catalog.** All 15 layover triggers in production run a function whose `prosrc` md5 equals the same function on a
+  database built from this tree's chain (13 distinct functions: the crew-location guard and its three ending triggers, the certified-computation
+  immutability, version, CAS and active-tracking triggers, the snapshot-row immutability trigger, the session
+  active-snapshot and connection guards, the recommendation route watch and the crew-plan membership trigger).
+  `anon` and `authenticated` hold no grant on `layover_presence`, `layover_crews`, `layover_crew_members`,
+  `layover_crew_location_grants` or `layover_crew_location_controls`, and no column-level write grant on any layover table.
+- **Traffic.** `layover_sessions` has 6 rows, the newest 2026-10-22 15:45Z. That session stored 150 certified
+  computations, 150 time budgets and 150 return plans between 15:45:43Z and 15:49:56Z, before the canonical door was on;
+  the 150 differ only in `nowMs`. `layover_constraints`, `layover_presence`, `layover_checkpoints`, `layover_outcomes`,
+  `layover_crews` and `layover_crew_location_grants` hold 0 rows. Nothing has been written since the 10:02Z flag press.
+
+**The flag-state proof.** `artifacts/api-server/src/test/db/layoverProductionPress20261023.db.test.ts` sets the 55
+airport/layover flags to exactly the values above (`artifacts/api-server/src/test/db/layoverProductionPress20261023.db.test.ts:39#export const PRODUCTION_FLAGS_20261023`)
+and drives the real router on the full migrated chain. Run on a local PostgreSQL 17 cluster built by
+`scripts/local-db/up.sh`: 6 / 6, 0 skipped. Its mutants are in §82.5.
+
+### 82.2 Rows that move to `C`
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L193 | N | **C** | §19 step 2: *"Create constraints, snapshots, time budgets and return plans."* The row names four tables and no columns, so it scores existence plus a reachable writer (§26.2; L195's precedent in §81). **All four are applied:** `layover_constraints` (`artifacts/api-server/src/migrations/2992_layover_decision_record_and_operational_tables.sql:384#CREATE TABLE IF NOT EXISTS layover_constraints (`), `layover_time_budgets` (`artifacts/api-server/src/migrations/2992_layover_decision_record_and_operational_tables.sql:486#CREATE TABLE IF NOT EXISTS layover_time_budgets (`), `layover_return_plans` (`artifacts/api-server/src/migrations/2992_layover_decision_record_and_operational_tables.sql:550#CREATE TABLE IF NOT EXISTS layover_return_plans (`) and the tree's snapshot table (`artifacts/api-server/src/migrations/2700_layover_certified_feasibility.sql:120#CREATE TABLE IF NOT EXISTS layover_certified_computations (`). **Writers:** `persistDecision` writes the snapshot and both children (`artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:482#.insert(timeBudgetRowFor(snapshotId, sessionId, record));`), and **on production it did**: 150 snapshots, 150 time budgets and 150 return plans from a real session on 2026-10-22. The constraints writer is the traveller's PUT (`artifacts/api-server/src/routes/layoverConstraints.ts:122#router.put("/airport/sessions/:id/constraints"`) through `insertConstraintVersion` (`artifacts/api-server/src/services/layover/LayoverConstraintStore.ts:312#export async function insertConstraintVersion(`), mounted (401) and open since `layover_constraints_enabled` went ON. The stated reason (*"none of their tables exists in production"*) is false. Pinned: the flag-state suite's L35/L193 case writes all four tables from the traveller's own calls. Mutant M3 (no time-budget insert) is killed. The members of each table are other rows' findings (L22, L23, L24, L25), not this one's. |
+| L203 | N | **C** | §19.1: *"Crew membership/location rows require membership and explicit permission."* A boundary, graded under §1's prohibition rule: a concrete artifact makes the violation unrepresentable. **Membership:** the grant table's composite FK to the membership (`artifacts/api-server/src/migrations/3996_layover_crew_location_grants.sql:137#CONSTRAINT layover_crew_location_grants_membership_fk`) plus the guard that refuses a member who has left, a share from another session, a dead crew and an exact share without the control (`artifacts/api-server/src/migrations/3996_layover_crew_location_grants.sql:184#RAISE EXCEPTION '3996: a crew location share needs a LIVE crew membership`). Both are in production, with the guard's body byte-identical to the tree's (md5 `172095ef…`). **Explicit permission:** no client role holds any privilege on the store (`artifacts/api-server/src/migrations/3996_layover_crew_location_grants.sql:296#REVOKE ALL ON public.layover_crew_location_grants FROM PUBLIC, anon, authenticated;`; production: none), so the only writer is the owner's own POST (`artifacts/api-server/src/routes/layoverCrewLocation.ts:261#const written = await upsertCrewGrant(sc, { crewId: crew.value.crew.id, userId, sessionId: session.id }, plan.grant);`), mounted (401) and ungated since `layover_crew_location_enabled` went ON. Membership itself is the traveller's own join (L185, `C`). The stated reason (H24, 3996 unapplied) is false. Pinned: `artifacts/api-server/src/test/layoverCrewLocationMigration.test.ts:132#await t.test("L203: a share needs a LIVE membership on the same session"` (PGlite, 17/17) and the flag-state suite's L203 case on PostgreSQL. Mutant M2 (guard disabled) is killed. Mutant M1 (FK dropped) breaks 3996's own postcondition, so the chain does not build. |
+| L35 | W | **C** | `BaggageMode = CHECKED_THROUGH \| COLLECT_RECHECK \| CARRY_ON_ONLY \| UNKNOWN`. A named enum, graded as L36 and L37 were in §81: does the vocabulary exist, and is every member produced? **Vocabulary:** exactly the four, with UNKNOWN the default, on production (`artifacts/api-server/src/migrations/2992_layover_decision_record_and_operational_tables.sql:411#CHECK (baggage_mode IN ('CHECKED_THROUGH','COLLECT_RECHECK','CARRY_ON_ONLY','UNKNOWN')),`, the column `NOT NULL DEFAULT 'UNKNOWN'`). **Every member produced:** each is what a traveller declares (`artifacts/api-server/src/routes/layoverConstraints.ts:59#baggageMode: z.enum(BAGGAGE_MODES).optional(),`, `artifacts/api-server/src/services/airport/LayoverConstraints.ts:96#export const BAGGAGE_MODES = ["CHECKED_THROUGH", "COLLECT_RECHECK", "CARRY_ON_ONLY", "UNKNOWN"] as const;`), stored as declared (`artifacts/api-server/src/services/layover/LayoverConstraintStore.ts:328#baggage_mode: row.set.baggageMode,`), and offered as four chips in the app (`travel-buddy-standalone/src/components/layover/layoverConstraintFacts.ts:39#export const BAGGAGE_MODE_ORDER: BaggageMode[] = ['CARRY_ON_ONLY', 'CHECKED_THROUGH', 'COLLECT_RECHECK', 'UNKNOWN'];`), which the live iOS bundle carries. UNKNOWN is never the optimistic reading (`artifacts/api-server/src/test/layoverConstraintGate.test.ts:275#it("UNKNOWN is never the optimistic reading: it costs what collect-and-recheck costs"`). The W reason (a boolean destroys UNKNOWN) is gone: the declared mode replaces the boolean in the arithmetic. Pinned: the flag-state suite stores each of the four as declared, and UNKNOWN for a traveller who did not say. Mutant M4 (a constant stored) is killed. |
+| L26 | W | **C** | `layover_recommendations` (snapshot_id, candidate_type, status, plan_json, utility_score, risk_band, confidence, expires_at). The row enumerates members, so every member must be produced (§26.2). **All eight exist on production:** 3871's columns (`artifacts/api-server/src/migrations/3871_layover_recommendation_status_and_supersession.sql:129#ADD COLUMN plan_json`), `snapshot_id` with its FK to a stored snapshot (3623), and `rec_type` as candidate_type. **All eight are written by the generator** on every card (`artifacts/api-server/src/services/airport/LayoverRecommendationService.ts:713#...travelTimeProvenanceColumn(source), ...stamp.column, ...stamp.spec(`; `artifacts/api-server/src/services/layover/LayoverRecommendationStatus.ts:173#export function recommendationSpecColumns(input: SpecColumnsInput): Record<string, unknown> {`). `layover_recommendation_status_enabled` and `layover_recommendation_snapshot_enabled` are both ON, and GET /recommendations is mounted (401). Production's 4 cards generated since 2026-10-22, before the status flag, already carry `snapshot_id`. Pinned: the flag-state suite's L26 case requires all eight on every generated row, with the snapshot a stored one. Mutants M5b (utility NULL), M8 (expiry NULL) and M9 (risk NULL) are killed. The first draft of that case let a NULL utility pass, because `Number(null)` is finite; mutant M5 survived it, and the assertion was tightened. |
+| L21 | W | **C** | `layover_sessions` (id, user_id, trip_id, airport_place_id, arrival/departure_segment_id, state, connection_type, detected_source, started_at, expires_at, active_snapshot_id, confidence_band). Every member is on production (3827, 3828) and has a producer on a live path. The server stamps state, source and expiry on every session (`artifacts/api-server/src/migrations/3827_layover_sessions_flight_connection.sql:188#NEW.state := 'DETECTED';`, `artifacts/api-server/src/migrations/3827_layover_sessions_flight_connection.sql:193#NEW.detected_source := 'manual';`, `artifacts/api-server/src/migrations/3827_layover_sessions_flight_connection.sql:198#NEW.expires_at := NEW.departure_time;`). A session created from a trip connection carries both segments, the connection type and `trip_itinerary` (`artifacts/api-server/src/services/airport/LayoverSessionService.ts:721#function connectionInsertColumns(c: LayoverConnectionInput`), now that `trip_flight_segments_enabled` and `layover_flight_connections_enabled` are ON. The active snapshot and its band follow the newest stored computation (`artifacts/api-server/src/migrations/3828_layover_sessions_active_snapshot.sql:100#SET active_snapshot_id = NEW.snapshot_id,`). Production's 2026-10-22 session already carries `state`, `detected_source`, `expires_at`, `active_snapshot_id` and `confidence_band`. `started_at` is `created_at` and `airport_place_id` is `airport_id` (0127), as recorded. Pinned: `artifacts/api-server/src/test/db/layoverFlightConnections.db.test.ts:192#it("P4 L21 L267 — the segments are passed into session creation: a DETECTED session linked to both, idempotent per connection"` and the flag-state suite's L21 case. Mutants M6 (expiry not stamped) and M10 (band not tracked) are killed. That `confidence_band` only ever holds LOW or INSUFFICIENT is L37's finding, not this row's. |
+
+### 82.2a A row re-derived and held
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L196 | W | W | §19 step 5: *"Create presence/crew tables with restrictive policies and expiration jobs."* Graded `C` in the first draft of this section, and **withdrawn**: the 2026-10-18 statement made its press *"3900 plus `layover_presence_intents_enabled`, so the table is populated"*, and that flag went back OFF at 21:55:57Z. Everything else holds and is recorded so the next pass does not re-measure it. **Tables:** `layover_presence` (`artifacts/api-server/src/migrations/3900_layover_presence.sql:70#CREATE TABLE IF NOT EXISTS public.layover_presence (`), the crew tables (2984) and the crew-location store (3996), all applied. **Restrictive policies:** RLS on with no client grant (`artifacts/api-server/src/migrations/3900_layover_presence.sql:91#ALTER TABLE public.layover_presence ENABLE ROW LEVEL SECURITY;`); production holds no `anon`/`authenticated` privilege on any of the five tables, and the crew-location store's only policy is service-role. **Expiration jobs:** the presence and crew sweeps start at boot (`artifacts/api-server/src/index.ts:169#startLayoverCrewExpiryScheduler(); startLayoverAuditRetentionScheduler(); startLayoverPresenceExpiryScheduler();`). Pinned: the flag-state suite's L196 case asserts that the writer refuses and nothing is written while the flag is OFF; also `artifacts/api-server/src/test/layoverPresenceExpirySweep.test.ts` and `artifacts/api-server/src/test/db/layoverPressedPresence.db.test.ts`. Mutant M11 (the sweep deletes nothing) is killed. Mutant M7 (a SELECT grant) breaks 3900's own postcondition. `C` on the owner's decision on k (§52.1) and the flag turned back ON. The sweeps leave no trace (`lib/schedulerCoverage.ts`), so that grade will rest on the job the deployed process starts, not on its uptime. |
+
+### 82.3 Rows that move N → W: built and reachable, `C` still owed
+
+Each stated `N` reason below is false at this commit and on production. None of these rows reaches `C` here, for the
+reason given in the row.
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L22 | N | **W** | The table is applied with every member (`artifacts/api-server/src/migrations/2992_layover_decision_record_and_operational_tables.sql:384#CREATE TABLE IF NOT EXISTS layover_constraints (`), and its writer is open (L193). Member rule: the writer stores baggage mode, recheck, airport change, entry state and critical unknowns (`artifacts/api-server/src/services/layover/LayoverConstraintStore.ts:312#export async function insertConstraintVersion(`). It never writes terminals, immigration/customs, mobility profile, buffer profile or minimum boarding buffer: the route declares three fields (`artifacts/api-server/src/routes/layoverConstraints.ts:59#baggageMode: z.enum(BAGGAGE_MODES).optional(),`) and refuses the rest. `C` on producers for those members. The two profiles first need an owner ruling on what they change in the arithmetic. |
+| L27 | N | **W** | The table is applied with all six members, and its writer is the traveller's PUT /presence/intents, which is closed again since `layover_presence_intents_enabled` went back OFF at 21:55:57Z (the owner's decision on k, §52.1). Member rule: `precise_location_enabled` is pinned FALSE by CHECK (`artifacts/api-server/src/migrations/3900_layover_presence.sql:80#CHECK (precise_location_enabled = FALSE)`). The precise control lives on 3996's crew layer instead (L166). `C` needs the owner's decision on k with the flag back ON, and an owner ruling that the crew-layer control satisfies §4's presence member (or a producer here). |
+| L64 | N | **W** | Every generated card is stamped with the stored snapshot it was certified under (`artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:768#export async function recommendationSnapshotStamp(`), behind `layover_recommendation_snapshot_enabled` (ON since 2026-10-22). Production's 4 cards since then all cite a stored snapshot. The 30 older cards predate the stamp. The generation path changed on 10-23 (status flag and supersession). `C` on the owner's signed-in retest. |
+| L95 | N | **W** | The replanner stores the replan's record as a new immutable snapshot (`artifacts/api-server/src/services/airport/LayoverReplanService.ts:505#await settleReplanSnapshot(db, userId, publication, decision);`). 2992/3896's immutability triggers are on production, and persistence is ON. `C` on the owner's signed-in retest (a traveller's edit). |
+| L124 | N | **W** | The map draws a crew member only from a live explicit share. The dashboard now passes them (`travel-buddy-standalone/app/layover/[id].tsx:946#crewLocations={crewLoc && crewLoc.ok && crewLoc.available && crewLoc.inCrew ? crewLoc.crewmates : null}`), and 3996 is applied with its flag ON. `C` on the owner's signed-in retest with a crew. |
+| L129 | N | **W** | "5 open to food": intent counts are disclosed only at five or more (`artifacts/api-server/src/services/layover/LayoverPresenceStore.ts:251#export const PRESENCE_INTENT_MIN_K = 5;`, lead ruling D-PRESENCE-K), over 3900's table. The flag went back OFF at 21:55:57Z because k is the owner's decision (§52.1). `C` on that decision, the flag back ON, and the owner's signed-in retest with five travellers present. |
+| L132 | N | **W** | Explicit (the owner's own POST), scoped (crew, purpose, precision) and auto-expiring (at most 4 h: `artifacts/api-server/src/migrations/3996_layover_crew_location_grants.sql:148#CHECK (expires_at > granted_at AND expires_at <= granted_at + interval '4 hours'),`). Applied, with the route mounted and the flag ON. `C` on the owner's signed-in retest. |
+| L158 | N | **W** | Exact shares are session-scoped and deleted when the member leaves, the crew disbands or the control goes off (`artifacts/api-server/src/test/layoverCrewLocationMigration.test.ts:178#await t.test("L158: leaving the crew deletes the share and forgets the control"`). Applied, flag ON. `C` on the owner's signed-in retest. |
+| L159 | N | **W** | Built in this section (§82.4). Check-ins were hidden at `expires_at` and never deleted. They now leave storage at that same instant. NEEDS-RELEASE: `C` once the build is deployed, verified read-only by `count(*) FROM layover_checkpoints WHERE expires_at < now() - interval '1 hour'` staying 0 once check-ins exist. |
+| L166 | N | **W** | Its own table, with no row meaning off (`artifacts/api-server/src/migrations/3996_layover_crew_location_grants.sql:111#CREATE TABLE IF NOT EXISTS public.layover_crew_location_controls (`), its own route (`artifacts/api-server/src/routes/layoverCrewLocation.ts:285#router.put("/airport/sessions/:id/crew/location/precise-control"`), mounted (401), and turning it off deletes the exact share. The live iOS bundle carries the control. `C` on the owner's signed-in retest. |
+| L173 | N | **W** | `recordCheckpoint` is POST /checkpoints (`artifacts/api-server/src/routes/airport.ts:4592#router.post("/airport/sessions/:id/checkpoints"`) through `artifacts/api-server/src/services/layover/LayoverCheckpointStore.ts:144#export async function recordTravellerCheckpoint(`. L30 is `C` on the same writer. This row is the operation, so it is the verifiers' bucket A. `C` on the owner's signed-in retest. |
+| L190 | N | **W** | The diff route (`artifacts/api-server/src/routes/airport.ts:5099#router.get("/airport/sessions/:id/decisions/diff"`) reads stored decisions, which production now holds, and it has a client caller (`travel-buddy-standalone/app/layover/[id].tsx:857#<LayoverAnswerChangesCard sessionId={session.id}`). Lead ruling GRADING's two conditions (storage, a caller) are met. `C` on the owner's signed-in retest. |
+| L209 | N | **W** | `layover_sessions_evaluated` is computed from stored decisions (`artifacts/api-server/src/services/airport/layoverObservability.ts:129#name: "layover_sessions_evaluated",`), and production holds 150. It is not exported: this is the rule that scores L208, L212 and L214 `W`. `C` on the export destination (OQ-8). |
+| L210 | N | **W** | As L209 (`artifacts/api-server/src/services/airport/layoverObservability.ts:135#name: "critical_unknown_rate",`). |
+| L211 | N | **W** | As L209 (`artifacts/api-server/src/services/airport/layoverObservability.ts:141#name: "landside_eligible_rate",`). |
+| L213 | N | **W** | As L209 (`artifacts/api-server/src/services/airport/layoverObservability.ts:153#name: "return_warning_rate",`). |
+| L217 | N | **W** | As L209 (`artifacts/api-server/src/services/airport/layoverObservability.ts:177#name: "decision_replay_mismatch",`). The replay reads production's stored rows now that persistence is ON. |
+| L222 | N | **W** | §58.2's own condition is met: *"They move when 2992 and 3640 are applied and the gate is flipped, in that order."* 2992 and 3640 are applied, and `layover_constraints_enabled` went ON on 2026-10-23. The decider runs on every certification (`artifacts/api-server/src/services/airport/LayoverFeasibility.ts:639#const gated = derivation.run("landsideGate"`). This is a §21.1 scenario, and the owner's rule asks for it on the production traveller path. `C` on the owner's signed-in retest (a declared self-transfer). |
+| L224 | N | **W** | As L222 (a declared airport change). |
+| L229 | N | **W** | As L222 (UNKNOWN baggage on a window where the bag decides; `artifacts/api-server/src/test/layoverConstraintGate.test.ts:298#describe("L49 / L229 / App B.2 — unknown baggage fails closed when, and only when, it decides"`). |
+| L279 | N | **W** | As L222 (reason code `BAGGAGE_STATUS_CRITICAL_UNKNOWN`). |
+| L283 | N | **W** | As L222 (reason code `AIRPORT_CHANGE_REQUIRED`). |
+| L284 | N | **W** | As L222 (reason code `SELF_TRANSFER_FRICTION`). |
+
+### 82.4 What was built
+
+1. **L159, the checkpoint expiry phase.** `artifacts/api-server/src/lib/layoverCheckpointExpirySweep.ts` deletes
+   `layover_checkpoints` rows at their own `expires_at` (the writer's departure + 6 h). It runs as the presence expiry
+   scheduler's second phase (one in-place edit and a tail import in `lib/layoverPresenceExpiryScheduler.ts`), so
+   `index.ts` and `lib/schedulerCoverage.ts` do not change. It has no flag, by the presence sweep's rule: retention is not
+   the write flag's to switch off. It is schema-gated, batched (200), four-way in its result and never rejects. The cutoff
+   is the exact complement of the reader's `expires_at > now`, so deleting changes no answer. Tests:
+   `artifacts/api-server/src/test/layoverCheckpointExpirySweep.test.ts` (13; the wiring case was red before the wiring)
+   and `artifacts/api-server/src/test/db/layoverCheckpointExpiry.db.test.ts` (2, PostgreSQL). The second test runs the
+   real POST /checkpoints, ages one row past its expiry and sweeps. The expired row is gone, the live one stays, and GET
+   /checkpoints is byte-identical before and after.
+2. **The client half of the served RecommendationStatus (L38, L50, L97).** Since `layover_recommendation_status_enabled`
+   went ON, GET /recommendations keeps cards the server certified as BLOCKED, STALE, EXPIRED or SUPERSEDED. It serves them
+   with `available: false` and a fixed sentence, and POST /stops/from-recommendation refuses them with 409
+   RECOMMENDATION_UNAVAILABLE. The app read none of those keys: the live bundle has no `statusExplanation`. So an
+   unavailable card looked addable, and the traveller learned otherwise only from the refusal. `LayoverRecsSection` now
+   withholds "Add to plan" when `available === false` and shows the server's sentence. A card already in the plan keeps its
+   mark, and a server with the flag off is unchanged. Tests:
+   `travel-buddy-standalone/src/components/layover/__tests__/LayoverRecsSection.servedStatus.component.test.tsx` (5; 3 red
+   before the change). With the four older suites, 32/32. **This is a production finding, not only a build:** until an app
+   build carrying this ships, travellers see BLOCKED and STALE cards with "Add to plan". L38, L50 and L97 do **not** move.
+   They are NEEDS-RELEASE (an app build) plus the owner's signed-in retest.
+
+### 82.5 Tests and mutation proofs, run on 2026-10-23
+
+- **PostgreSQL 17** (local, `scripts/local-db/up.sh` on port 54354). Run 1, twelve existing suites: pressed crew location,
+  snapshot, constraints store, constraints lifecycle, presence, presence scope, flight connections, canonical snapshot,
+  surface consistency, dashboard vocabulary, stable ids and write boundary. **121 / 121**, 0 skipped. The two new suites:
+  **6 / 6** and **2 / 2**.
+- **Mutants.** Each was applied, the named test was run, and the file was restored byte-identically (sha256 checked).
+  - Killed by its own assertion: M2, M3, M4, M5b, M6, M8, M9, M10, M11, C1–C6 and K1–K4. C1–C6 cover the boundary
+    `.lt`, no DELETE, an unbounded DELETE, unwired, flag-gated and the wrong table. K1–K4 cover the client: Add shown,
+    no reason, an invented reason, and an available card hidden.
+  - Refused by the migration's own postcondition, so the chain does not build: M1 and M7.
+  - Survived, and the test was then tightened: M5.
+
+### 82.6 What this pass did not do, stated
+
+- No row moves on a press alone. 84 rows wait only on the owner's signed-in retest, and each is named in the lane triage.
+  They include L1, L5, L6, L82, L84–L89, L100, L102–L113, L117, L122, L125, L127, L128, L175, L181, L189, L191, L206, L207,
+  L251, L252, L269 and L296.
+- The repository's recorded production state was not refreshed. `lib/capability/snapshots/current.ts` (2026-09-22) and
+  `production-applied-migrations.json` still predate both presses, and the L181/L197 pin in `layoverCensusPins.test.ts`
+  still reads them.
+- The 150 decisions stored on 2026-10-22 show a refresh loop writing one snapshot per overview read (the pre-canonical
+  door; #770 fixed the loop). Since 10-23 the canonical door reuses the active snapshot within a decision. That is L261's
+  growth question, and it is not graded here.
+
+### Headline
+
+| bucket | was (§81) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 86 | 91 |
+| BUILT-BUT-WRONG | 164 | 184 |
+| NOT-BUILT | 46 | 21 |
+| CANNOT-VERIFY | 0 | 0 |
+| total | 296 | 296 |
+
+**Twenty-eight moves.**
+- Three rows move W → C: L21, L26 and L35.
+- Two rows move N → C: L193 and L203.
+- Twenty-three rows move N → W: L22, L27, L64, L95, L124, L129, L132, L158, L159, L166, L173, L190, L209, L210, L211,
+  L213, L217, L222, L224, L229, L279, L283 and L284.
+
+One row is re-derived and held: L196 stays W (§82.2a).
+
+296 = 91 C / 184 W / 21 N / 0 X. CORRECT% is 91 / 296 = 30.7 %. CONSTRUCTED% is 275 / 296 = 92.9 %.
