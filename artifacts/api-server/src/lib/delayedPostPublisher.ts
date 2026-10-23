@@ -194,7 +194,7 @@ export async function runDelayedPostPublisher(opts?: { client?: any }): Promise<
 
   if (queryErr) {
     logger.error({ err: queryErr }, "delayedPostPublisher: query failed");
-    await persistJobHealth(db, now);
+    await persistJobHealth(db, now, false);
     return { published: 0, skipped: 0, errors: 1 };
   }
 
@@ -269,18 +269,24 @@ export async function runDelayedPostPublisher(opts?: { client?: any }): Promise<
   }
 
   logger.info({ published, skipped, errors }, "delayedPostPublisher: tick complete");
-  await persistJobHealth(db, now);
+  await persistJobHealth(db, now, true);
 
   return { published, skipped, errors };
 }
 
-async function persistJobHealth(db: any, runAt: string): Promise<void> {
+/**
+ * Record the tick. `last_run_at` is every tick; `last_success_at` only a tick
+ * whose selection query answered. A failed query used to write exactly the row
+ * a good tick wrote, so a publisher that could not read a single post looked
+ * healthy on /api/healthz/delayed-publish, and `last_success_at` was never
+ * written at all (production job_health, 2026-10-23: last_success_at null).
+ */
+async function persistJobHealth(db: any, runAt: string, succeeded: boolean): Promise<void> {
+  const row: Record<string, string> = { job: "delayed_post_publisher", last_run_at: runAt, updated_at: runAt };
+  if (succeeded) row.last_success_at = runAt;
   const { error } = await db
     .from("job_health")
-    .upsert(
-      { job: "delayed_post_publisher", last_run_at: runAt, updated_at: runAt },
-      { onConflict: "job" },
-    );
+    .upsert(row, { onConflict: "job" });
   if (error) {
     logger.warn({ err: error }, "delayedPostPublisher: could not persist job health");
   }
@@ -319,23 +325,26 @@ export function computePublisherStatus(lastRunAt: string | null): PublisherStatu
 export async function queryPublisherHealth(): Promise<{
   publisherStatus: PublisherStatusLevel;
   lastRunAt: string | null;
+  lastSuccessAt: string | null;
 }> {
   const db = resolveClient();
-  if (!db) return { publisherStatus: "critical", lastRunAt: null };
+  if (!db) return { publisherStatus: "critical", lastRunAt: null, lastSuccessAt: null };
 
   try {
     const { data, error } = await db
       .from("job_health")
-      .select("last_run_at")
+      .select("last_run_at, last_success_at")
       .eq("job", "delayed_post_publisher")
       .maybeSingle();
 
-    if (error || !data) return { publisherStatus: "critical", lastRunAt: null };
+    if (error || !data) return { publisherStatus: "critical", lastRunAt: null, lastSuccessAt: null };
 
-    const lastRunAt = (data as any).last_run_at as string;
-    return { publisherStatus: computePublisherStatus(lastRunAt), lastRunAt };
+    const lastRunAt = ((data as any).last_run_at as string | null) ?? null;
+    const lastSuccessAt = ((data as any).last_success_at as string | null) ?? null;
+    // Judged on the last SUCCESS: a tick whose query failed published nothing, however recently it ran.
+    return { publisherStatus: computePublisherStatus(lastSuccessAt), lastRunAt, lastSuccessAt };
   } catch {
-    return { publisherStatus: "critical", lastRunAt: null };
+    return { publisherStatus: "critical", lastRunAt: null, lastSuccessAt: null };
   }
 }
 
