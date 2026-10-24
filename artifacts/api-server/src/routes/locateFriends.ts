@@ -139,13 +139,13 @@ export const SCOPE_MEMBERSHIP_VERIFIERS: Partial<Record<GroupScopeKind, ScopeVer
     if ((trip as any)?.owner_id === userId) return true;
     const { data, error } = await sc
       .from("trip_members")
-      .select("role")
+      .select("role, status")
       .eq("trip_id", tripId)
       .eq("user_id", userId)
       .in("role", ["owner", "co_host", "member"])
       .maybeSingle();
     if (error) return false;
-    return Boolean(data);
+    return Boolean(data) && isAcceptedStatus(data);
   },
   /**
    * Event: RSVP'd going. Matches the rule lib/circleAccessGuard.ts already
@@ -421,7 +421,7 @@ export async function publishPosition(
   if (mUnreadable) return { ok: false, code: "db_error", detail: "Could not read membership." };
   if (!isMembershipLive(membership, nowMs)) {
     return { ok: false, code: "forbidden", detail: "You are not a member of that session." };
-  }
+  } if (!(await verifyScopeMembership(sc, session.group_scope_kind as GroupScopeKind, String(session.group_scope_id), userId))) return { ok: false, code: "forbidden", detail: "You are no longer in that group." }; // census-map M93 (verifier 2026-10-24): the group is re-checked on every publish; unreadable is a refusal
 
   // The device's own clock never decides its freshness. A timestamp far ahead
   // of the server is REFUSED — the future is the one direction skew can be
@@ -632,7 +632,7 @@ router.get(
       return;
     }
 
-    const result = await readSessionForViewer(sc, String(req.params.id), user.id, nowMs);
+    const result = await readSessionForViewer(sc, String(req.params.id), user.id, nowMs, LOCATE_READ_DEPS); // census-map M93: the group scope is re-checked for the viewer and every member
 
     // ONE opaque answer for not-found, not-a-member, expired and unreadable.
     // Distinguishing them would turn this endpoint into an existence oracle: a
@@ -705,3 +705,8 @@ router.delete(
 );
 
 export default router;
+import { DEFAULT_FUSED_READ_DEPS, type FusedReadDeps } from "../lib/locateFriendsSession.js";
+/** The read's dependencies: the default guard, plus the group-scope re-check (census-map M93, verifier 2026-10-24). */
+export const LOCATE_READ_DEPS: FusedReadDeps = Object.freeze({ ...DEFAULT_FUSED_READ_DEPS, scopeMember: (db: any, kind: string, scopeId: string, userId: string) => verifyScopeMembership(db, kind as GroupScopeKind, scopeId, userId) });
+
+import { isAcceptedStatus } from "../domain/trips/invariants/tripMembership.js";
