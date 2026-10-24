@@ -108,7 +108,7 @@ function assertOnlyTheKernelWrote(label: string): void {
 const xminOf = (table: string, where: string): string | null => scalar(`SELECT xmin::text FROM public.${table} WHERE ${where}`);
 const kernelDefMd5 = (): string | null => scalar(`SELECT md5(pg_get_functiondef('public.memory_kernel_execute(jsonb)'::regprocedure))`);
 /** Raw psql output: exec() drops blank lines, which would change the body. */
-const kernelDef = (): string => { const r = psql(`SELECT pg_get_functiondef('public.memory_kernel_execute(jsonb)'::regprocedure);`); assert.equal(r.status, 0, r.stderr); return r.stdout.replace(/\n$/, ""); };
+const kernelDef = (): string => { const r = psql(`SELECT pg_get_functiondef('public.memory_kernel_execute(jsonb)'::regprocedure);`); assert.equal(r.status, 0, r.stderr); const c = psql(`SELECT obj_description('public.memory_kernel_execute(jsonb)'::regprocedure, 'pg_proc');`); assert.equal(c.status, 0, c.stderr); return `${r.stdout.replace(/\n$/, "")};\nCOMMENT ON FUNCTION public.memory_kernel_execute(jsonb) IS $kc$${c.stdout.replace(/\n$/, "")}$kc$`; }; // the definition AND its comment, so a restore puts back the whole object
 const restoreKernel = (def: string): void => {
   const r = psql(`${def};\nREVOKE ALL ON FUNCTION public.memory_kernel_execute(jsonb) FROM PUBLIC, anon, authenticated;\nGRANT EXECUTE ON FUNCTION public.memory_kernel_execute(jsonb) TO service_role;`);
   assert.equal(r.status, 0, `the saved kernel did not re-apply:\n${r.stderr}`);

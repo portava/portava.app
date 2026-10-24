@@ -2,7 +2,7 @@
 --
 -- Re-creates 3911's memory_kernel_execute(jsonb) VERBATIM (the function body of
 -- artifacts/api-server/src/migrations/3911_memory_kernel_create_participants_and_canonical_fields.sql)
--- with its grants. After this, CHANGE_ITEM_VISIBILITY and MODERATION_RESTORE_MEMORY
+-- with its comment and its grants. After this, CHANGE_ITEM_VISIBILITY and MODERATION_RESTORE_MEMORY
 -- are answered MEMORY_COMMAND_UNKNOWN_TYPE and the routes run their pre-3912
 -- writes again (their compat arms), so nothing breaks. Then delete 3912's ledger row.
 
@@ -452,6 +452,10 @@ BEGIN
 END;
 $fn$;
 
+
+-- 3911's own comment, verbatim: 3912 replaced it, and a rollback restores the whole object.
+COMMENT ON FUNCTION public.memory_kernel_execute(jsonb) IS
+  'Memory Command Bus write path (Highlights/Memories spec §5/§17/§19/§23/§24). Applies ONE MemoryCommand: honours the idempotency receipt, locks and re-checks the Memory''s owner, enforces the §5 lifecycle machine, applies the state change — for a create, its participants (pending tags), its §4 type and its occurrence-time place text; for an edit, the type and occurrence text it names; for ADD_MEDIA, the source post — then writes memory_domain_events + memory_event_outbox + memory_command_receipts + memory_command_audit in the SAME transaction (2711, extended by 3911). Rejections are RETURNED with a §24 reason code and still write an audit row; failures RAISE and roll everything back. service_role only; application authorization runs before the call.';
 
 REVOKE ALL ON FUNCTION public.memory_kernel_execute(jsonb) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.memory_kernel_execute(jsonb) TO service_role;

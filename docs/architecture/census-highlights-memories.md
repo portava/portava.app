@@ -10129,7 +10129,7 @@ production, 0 of 11 `media_assets` rows have a capture time (§CA.4), and that h
 
 Each case asserts that the change and its event row are one transaction (equal `xmin`), and that nothing but the
 kernel RPC wrote the Memory aggregate. V5 and R6 install 3911's kernel from 3912's rollback file and show the compat
-arms, then put the tree's kernel back byte for byte. `memoryProjectionSchedulerOutbox.test.ts` adds the case that
+arms, then put the tree's kernel back byte for byte, definition and comment. 3912's rollback restores 3911's definition (md5 `5e42fd46…`) and its comment (md5 `1df4c03d…`), measured. `memoryProjectionSchedulerOutbox.test.ts` adds the case that
 pins the scheduler to the observable tick (`artifacts/api-server/src/test/memoryProjectionSchedulerOutbox.test.ts:307#a scheduled pass sets the status and upserts the memoryOutboxDrain job_health row`).
 
 | mutant | result |
@@ -10140,8 +10140,7 @@ pins the scheduler to the observable tick (`artifacts/api-server/src/test/memory
 | SQL: no admin check · no owner check · restores any state · records no DELETED → ACTIVE transition | R4 · R4 · R3 · R1 red |
 | the drain never persists · counts a failed pass as a success · throttles a failed pass · the scheduler runs the bare pass | H1, H2 · H2 · H2 · the scheduler case red |
 
-12 TypeScript and 8 SQL mutants, all killed. Run with this section: the batch-1 and batch-2 suites (21/21 and
-33/33, on the 3912 chain), `appeal*` (11 suites, 151/151), `memoryItemVisibility` 32/32, `memoryCommandBus` 60/60,
+12 TypeScript and 8 SQL mutants, all killed. Run with this section: the batch-1 and batch-2 suites (21/21 and 38/38, the latter with #784's K1–K3, on the 3912 chain), `appeal*` (11 suites, 151/151), `memoryItemVisibility` 32/32, `memoryCommandBus` 60/60,
 `schedulerCoverage` 10/10, `healthSchedulers` 14/14, `memoryProjectionSchedulerOutbox` 18/18.
 
 ### §CC.4 Rows read, reason restated, NOT moved
