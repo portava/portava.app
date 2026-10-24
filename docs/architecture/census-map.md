@@ -3483,3 +3483,175 @@ No moved row rests on UI hiding or client filtering.
 251 + 33 + 4 + 5 = 293. CONSTRUCTED 96.9 % (284 / 293, unchanged: every move is W → C) · CORRECT 85.7 % (251 / 293).
 Eleven rows moved `W` → `C`; nineteen proposed moves were ruled back to `W` by the independent verifier (2026-10-24).
 These are local records on an unmerged branch.
+
+## §55 — 2026-10-24, batch 2: one reader of the protected-zone policy; M65 and M67 BLOCKED with named dependencies; the place-identity override recorded
+
+*Lane MAP, branch `claude/census-map-b2-20261024`, cut from `claude/census-map-b1-20261024` (PR #793, §54), because it
+continues §54's records. Production was read with SELECT and catalog queries only on 2026-10-24. Nothing was written
+there, and no flag was changed. `head_commit` is not re-declared. Lead ruling 2026-10-24: M65's navigation-start capture
+is NOT built in this batch, and the place-identity override is recorded, not fixed.*
+
+### 55.1 The temporal route reads protected zones through `lib/protectedZoneStore.ts`
+
+**What changed.** `routes/mapProjectionTemporal.ts` had its own copy of the §24 loader and its own 30 s cache. Its loader
+now calls the store (`artifacts/api-server/src/routes/mapProjectionTemporal.ts:109#return loadActiveProtectedZones(sc);`).
+The edit is line-neutral, so no citation into the file moved.
+
+**Why the copy's reason no longer held.** The copy said it mirrored the projection route's loader "rather than importing
+it", because importing meant reaching into another route's module-private cache. The loader has since moved into a
+shared module that exists to be the one reader of `protected_zones`, and the projection route and Discovery already read
+through it.
+
+**Behaviour, before and after.**
+- **Unchanged:** the same select, the same mapping, a 30 s reuse of a successful read, null on a read error (answered with
+  the `protection_unreadable` refusal), `[]` for an empty policy, and a malformed ring kept so that `applyProtection`
+  suppresses it.
+- **Two differences, both in the safe direction or neutral:**
+  1. A read that THROWS, or a missing client, is now null and gets the refusal. The copy let a throw escape as a 500.
+  2. There is now one cache instead of two. The TTL is the same.
+
+**Tests.** `artifacts/api-server/src/test/protectedZoneSingleReader.test.ts` (registered in the api `test` script):
+- `artifacts/api-server/src/test/protectedZoneSingleReader.test.ts:64#it("Z1 no third copy of the loader` scans every
+  non-test source file for `.from("protected_zones")`. Outside the store it allows only the two named exceptions below,
+  each with its reason, so a third copy fails the suite.
+- `artifacts/api-server/src/test/protectedZoneSingleReader.test.ts:76#it("Z2 the temporal route reads through the store`
+  checks the route reads through the store and that its test seam clears the store's cache.
+- `artifacts/api-server/src/test/protectedZoneSingleReader.test.ts:91#it("Z3 the contract the temporal route inherits`
+  pins the store's contract: error → null, throw → null, empty → `[]`, malformed ring kept.
+- `artifacts/api-server/src/test/protectedZoneSingleReader.test.ts:102#it("Z4 behaviour unchanged` proves equivalence.
+  The removed copy is held in the test verbatim. For five answers (mixed rows, an empty table, an error, a null and a
+  non-array), the store returns a deep-equal list and issues the same table, columns and filter.
+- `mapProjectionTemporalRoute.test.ts` and the other temporal suites pass unchanged, 24 of 24, including the refusal arm
+  and the anti-vacuity pair.
+
+**Mutation proof.** Six mutants, each killed and restored byte-identical:
+- MZ1: a private reader back in the route. Z1 and Z2 red.
+- MZ2: a third reader added to `lib/mapProjectPlace.ts`. Z1 red.
+- MZ3: `policy_ref` dropped from the store's select. Z4 red.
+- MZ4: a malformed polygon dropped. Z3 and Z4 red.
+- MZ5: a read error answered `[]`. Z3 and Z4 red.
+- MZ6: the route's cache seam a no-op. Z2 red.
+
+**The two readers that stay, and why.**
+- **`lib/locateFriendsSession.ts` `loadProtectedZones`** (also used by `routes/layoverCrewLocation.ts`).
+  - Its in-file reason ("another route's module-private cache") stopped holding for the same reason as the temporal
+    route's.
+  - A different reason does hold, and it is why the copy stays. It reads the policy fresh on every live-location read,
+    while the store reuses a read for 30 s. Moving it would let a newly active zone wait up to 30 s before it suppresses
+    a friend's live position.
+  - Its in-file comment should be corrected to say so. That is not done here, to keep that file's citations still.
+- **`lib/discoveryTrendProducerPrivacy.ts`.** It is not a policy load. It is an existence probe (`select id`, `limit 1`).
+
+### 55.2 Rows restated
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| M65 | W | **W** | **BLOCKED (lead ruling 2026-10-24: not built).** D-81a allows a navigation-start hop only for a person who has opted in to coarse route-flow contributions, suppressed inside the person's protected zones. Three dependencies stand, and each one alone blocks it: (1) **privacy decision**: an OD-MAP-2 disclosure that names navigation starts. The only route-flow consent there is discloses ACCEPTED route plans and nothing else (`artifacts/api-server/src/migrations/2224_route_hop_signal.sql:177#'Server-authoritative consent for contributing ACCEPTED route plans`), so a navigation-start capture under it would extend consent past what was disclosed. A capture that accepts no consent version would be a dark path that could later be mistaken for consent, so none is built. (2) **missing code**: a consent grant path. Nothing in the server or the client can set `route_flow_contribution_consent.enabled` (service-role writes only, no route; 0 rows in production, read 2026-10-24), recorded against M67 below. (3) **owner decision**: OD-MAP-3's per-person protected-places store (§55.4). When all three are met, the build must follow §55.3. |
+| M67 | W | **W** | **BLOCKED, restated with the reason measured.** The gate is right, and §54 said the row waited on opted-in contributors. It cannot get any: no code path grants this consent (M65 (2)), so the table holds 0 rows and always will. Dependencies: (1) **missing code**: a consent grant path, as a server route and a client surface; (2) **privacy decision**: 2224's disclosure is marked in-file as provisional and needing privacy-policy review before it is offered to anyone (`artifacts/api-server/src/migrations/2224_route_hop_signal.sql:81#WORDING IS PROVISIONAL AND NEEDS PRIVACY-POLICY REVIEW`), which OD-MAP-2's "say what route data is contributed, who can use it, how long it is kept" requires; (3) **missing deployment (ops)**: M5's curated `geo_zones` (0 rows). |
+
+**Blocker classification (owner directive, rule 5).**
+- M65: privacy decision, missing code and owner decision. All three must be met.
+- M67: missing code, privacy decision and missing deployment.
+
+### 55.3 Binding note: how a family that shares a consent record counts
+
+This rule was adopted by the lead on 2026-10-24 and binds whoever builds M65. It is a note, not code: no code changes
+here.
+- **The rule.** Families that share a consent record count as ONE toward `MIN_SIGNAL_FAMILIES`. This is the register's
+  own bar: `accepted_plan` was admitted as a second family because its consent is a separate record from the intel
+  consent (`artifacts/api-server/src/lib/crowdFlowProducer.ts:436#route_flow_contribution_consent (migration 2224)`).
+  One consent decision governing two families would collapse them back into one source.
+- **Applied to M65.** D-81a gates `navigation_start` on the same route-flow opt-in as `accepted_plan`. So the two count as
+  one family, and `navigation_start` with `accepted_plan` can never clear the two-family floor by themselves.
+- **What it requires in code.** Before `navigation_start` is added to `WIRED_SIGNAL_SOURCES`, these three must count
+  distinct consent records, not distinct family names:
+  - the publication gate (`artifacts/api-server/src/lib/mapAggregation.ts:1397#const families = normalizeFamilies(t.signalFamilies);`);
+  - the observed-confidence ladder (`artifacts/api-server/src/lib/crowdFlowProducer.ts:602#function observedConfidence(familyCount: number): ConfidenceState {`);
+  - `canProduceFlow`.
+  The family's independence case must state the shared record in its `residualCorrelation`.
+
+### 55.4 OD-MAP-3's status in the register: BLOCKED, owner decision
+
+The register's whole text is: *"Let users designate places such as home, work, or school; don't infer sensitive places
+from movement history. Suppress precise location and route contributions inside those zones by default."*
+(`docs/ops/owner-decisions-20261004.md`, OD-MAP-3).
+- **Ruled:** that the store exists (users designate their places), that suppression is on by default, and that no
+  sensitive place is inferred.
+- **Not ruled:**
+  - who may read the store;
+  - its retention;
+  - its form: a point and radius stores the person's most sensitive locations precisely, a zone does not;
+  - its deletion behaviour.
+- No other ruling in `docs/ops/` adds to it. D-81a and D-84 only cite it.
+- **So the store is BLOCKED on an owner decision**, and it belongs on the owner page. When the open questions are ruled,
+  it should be built in a later Map batch as the single authority for its three consumers: M65 (D-81a), Telegraph T31
+  and Passport P61 (D-84). Its tests must prove that only the owner reads it, and that no response or aggregate lets
+  anyone else learn where it is. Nothing is built here.
+
+### 55.5 Finding: Discovery's place identity can be shadowed by a `discovery_places` row (latent; not fixed)
+
+**The mechanism.**
+- Map projects `public.places` (`artifacts/api-server/src/lib/mapProjectPlace.ts:306#.from("places")`).
+- Discovery serves canonical places as `db/<places.id>`, but materialises a `db/<uuid>` from `discovery_places` FIRST.
+  Every `discovery_places` row with that id is marked found before the eligibility checks run
+  (`artifacts/api-server/src/lib/discoveryCandidates/materialize.ts:207#found.add(String(row.id));`). Only the ids not
+  found are then read from `public.places`
+  (`artifacts/api-server/src/lib/discoveryCandidates/materialize.ts:218#const rest = uuids.filter((u) => !found.has(u));`).
+- **Consequence 1:** a same-uuid `discovery_places` row replaces the canonical place's name, coordinates and category, and
+  attaches a submitter.
+- **Consequence 2:** if that row is then refused (demo source, blocked or suspended submitter, wrong tab), the canonical
+  place is not served either.
+- Separately, the feed merge drops a canonical place whose normalised name matches a curated row's
+  (`artifacts/api-server/src/routes/discovery.ts:1303#places: [...curatedRows, ...canonicalRows.filter(`).
+- PR #790's 3920 copies the materialiser's precedence for the trend context.
+
+**Production, read 2026-10-24.**
+- `public.places`: 11,909 rows. `discovery_places`: 184 rows.
+- Rows sharing a uuid: **0**. `discovery_places.canonical_location_id` set: 0. Active same-name, same-city pairs: 0.
+- `discovery_places.id` defaults to `gen_random_uuid()`, and neither server writer (`routes/wishlist.ts`,
+  `routes/discovery.ts`) sets it.
+- Neither `anon` nor `authenticated` holds INSERT or UPDATE on any column.
+- **So it is latent.** There is no instance in production, and no writer in the tree can make one.
+
+**Rows it bears on.**
+- M140 stays `C`: Map's place identity is `public.places`.
+- Discovery's identity rows (census-discovery DV-28's family, through 3920) would be wrong for any place it shadows.
+
+**Canonical authority:** `public.places`. **Fix (not made, by ruling):** materialise from `public.places` first, or refuse
+a `discovery_places` row whose id is a `places` id.
+
+### 55.6 Duplicate authorities, restated
+
+| responsibility | authorities | canonical |
+|---|---|---|
+| loading the active protected-zone policy | `lib/protectedZoneStore.ts`, now read by the projection route, the temporal route and Discovery; an uncached copy in `lib/locateFriendsSession.ts`, kept for live-location reads (§55.1); an existence probe in `lib/discoveryTrendProducerPrivacy.ts` | `lib/protectedZoneStore.ts`. A third copy fails Z1. |
+| place identity | `public.places`; `discovery_places` rows that can shadow it in Discovery (§55.5) | `public.places` |
+| a person's designated protected places | none yet (§55.4) | to be built as one store for M65, T31 and P61 once OD-MAP-3's open questions are ruled |
+
+The trip-scoped location-share row of §54.4 is unchanged and awaits the lead's ruling.
+
+### 55.7 What would turn this red
+
+- Z1–Z4 red: a third reader of the policy, or a store whose answer differs from the contract the temporal route had.
+- A production pair of `discovery_places` and `places` rows sharing an id: the §55.5 finding is no longer latent and needs
+  the fix.
+
+### 55.8 Headline, restated from the rows
+
+| bucket | count |
+|---|---|
+| BUILT-AND-CORRECT | **251** |
+| BUILT-BUT-WRONG | **33** |
+| NOT-BUILT | **4** |
+| CANNOT-VERIFY | **5** |
+
+251 + 33 + 4 + 5 = 293. CONSTRUCTED 96.9 % (284 / 293) · CORRECT 85.7 % (251 / 293), unchanged from §54.6 as corrected by the verifier. No row
+changes bucket. Two are restated and stay `W` (M65, M67). These are local records on an unmerged branch, stacked on
+#793.
+
+**Cited here, graded elsewhere.**
+- NOT-GRADED: artifacts/api-server/src/lib/discoveryTrendProducerPrivacy.ts — Discovery's trend privacy gate, cited in §55.1 and §55.6 only as the existence probe Z1 allows; census-discovery grades it, and no Map row rests on it.
+- NOT-GRADED: artifacts/api-server/src/lib/discoveryCandidates/materialize.ts — Discovery's materialiser, cited in §55.5 as the mechanism of a latent finding; census-discovery grades it, and M140 rests on lib/mapProjectPlace.ts, not on it.
+- NOT-GRADED: artifacts/api-server/src/routes/discovery.ts — Discovery's route, cited in §55.5 for its name-deduplicated merge; census-discovery grades it, and no Map row rests on it.
+- NOT-GRADED: artifacts/api-server/src/routes/layoverCrewLocation.ts — the Layover crew-location route, cited in §55.1 only as the second user of Locate Friends' uncached loader; census-layover grades it.
+- NOT-GRADED: artifacts/api-server/src/routes/wishlist.ts — the wishlist route, cited in §55.5 only as a discovery_places writer that never sets an id; no Map row rests on it.
