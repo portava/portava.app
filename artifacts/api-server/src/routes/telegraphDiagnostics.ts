@@ -128,7 +128,7 @@ router.get("/telegraph/diagnostics", asyncHandler(async (req, res) => {
   }
 
   const emitter = telegraphEmitterStats();
-  const slos = telegraphSloSnapshot(emitter as unknown as Record<string, number>);
+  const canonicalAudit = await measureDuplicateCanonicalMessages(ctx.sc); /* census T347: SLO-02, exact, recorded BEFORE the snapshot so the snapshot carries it */ const slos = telegraphSloSnapshot(emitter as unknown as Record<string, number>);
 
   // The audit line. Never blocks the response and never carries content.
   log.info(
@@ -150,7 +150,7 @@ router.get("/telegraph/diagnostics", asyncHandler(async (req, res) => {
     processUptimeMs: Math.round(uptimeMs),
     counterScope:
       "in-process, per-instance, reset on restart — not a telemetry sink, and not aggregated across instances",
-    slos,
+    slos, canonicalAudit, // census T347: { status: measured, duplicateRows, keyedGroups } | { status: unavailable, reason }
     realtimeEmitter: emitter,
     projections: TELEGRAPH_PROJECTIONS.map((p) => ({
       id: p.id,
@@ -163,3 +163,4 @@ router.get("/telegraph/diagnostics", asyncHandler(async (req, res) => {
 }));
 
 export default router;
+import { measureDuplicateCanonicalMessages } from "../lib/telegraphCanonicalSlo.js"; // census T347 (batch 3), at the foot so no cited line moves

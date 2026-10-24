@@ -133,3 +133,66 @@ export async function decoratePlatformReads(
     }
   }
 }
+
+// ── census-telegraph T370 (lane TELEGRAPH batch 3) — appended so every cited line keeps its number ──
+/**
+ * REACTIONS on the thread read. ADD_REACTION / REMOVE_REACTION write `message_reactions` (2811, applied
+ * on production) through the command bus, and nothing READ them: no client could show a reaction.
+ * This serves, per message, the aggregate a bubble draws — `reactions: [{ emoji, count, mine }]`,
+ * most-used first — and never WHO reacted (a reaction roster is a per-recipient list §30A.12 bounds).
+ *
+ *   gate        2811's own: the command door refuses the reaction commands while
+ *               telegraph_message_kernel_enabled is off, so the read serves nothing then either;
+ *   blocks      a reaction by someone the viewer has blocked, or who blocked the viewer, is not counted —
+ *               the same rule every other read applies to that person's content;
+ *   unreadable  the reactions table OR the block list could not be read → `reactions: null` on each
+ *               message: "could not be read", never [] ("nobody reacted"), and never a count that might
+ *               include a blocked person;
+ *   retracted   a deleted or unsent message carries no reactions.
+ */
+export const REACTION_DISPLAY_LIMIT = 8;
+
+export async function decorateReactions(
+  sc: any,
+  rows: readonly RawThreadRow[],
+  messages: Array<Record<string, any>>,
+  viewerId: string,
+  log?: Log,
+): Promise<void> {
+  if (!(await messageKernelEnabled(sc))) return;
+  const ids = rows.filter((r) => !r.deleted_at && !(r as any).unsent_at).map((r) => r.id);
+  if (ids.length === 0) return;
+  const [reacted, blocks] = await Promise.all([
+    sc.from("message_reactions").select("message_id, user_id, emoji, created_at").in("message_id", ids),
+    readBlockExclusions(sc, viewerId),
+  ]);
+  if (reacted.error || !blocks.ok) {
+    log?.warn?.({ err: reacted.error ?? (blocks as any).reason }, "thread read: reactions unreadable — served as unavailable, never as none");
+    for (const m of messages) if (ids.includes(m.id)) m.reactions = null;
+    return;
+  }
+  const per = new Map<string, Map<string, { count: number; mine: boolean; first: string }>>();
+  for (const r of (reacted.data ?? []) as Array<{ message_id: string; user_id: string; emoji: string; created_at?: string }>) {
+    if (r.user_id !== viewerId && blocks.ids.has(r.user_id)) continue;
+    const byEmoji = per.get(r.message_id) ?? new Map();
+    const e = byEmoji.get(r.emoji) ?? { count: 0, mine: false, first: r.created_at ?? "" };
+    e.count += 1;
+    if (r.user_id === viewerId) e.mine = true;
+    if ((r.created_at ?? "") < e.first) e.first = r.created_at ?? "";
+    byEmoji.set(r.emoji, e);
+    per.set(r.message_id, byEmoji);
+  }
+  for (const m of messages) {
+    if (!ids.includes(m.id)) continue;
+    const byEmoji = per.get(m.id);
+    m.reactions = byEmoji
+      ? [...byEmoji.entries()]
+          .sort((a, b) => b[1].count - a[1].count || a[1].first.localeCompare(b[1].first) || a[0].localeCompare(b[0]))
+          .slice(0, REACTION_DISPLAY_LIMIT)
+          .map(([emoji, e]) => ({ emoji, count: e.count, mine: e.mine }))
+      : [];
+  }
+}
+
+import { messageKernelEnabled } from "../telegraphMessageKernel.js";
+import { readBlockExclusions } from "../../lib/exclusionSet.js";

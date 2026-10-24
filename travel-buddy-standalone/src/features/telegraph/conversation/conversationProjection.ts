@@ -119,3 +119,13 @@ export function offersAddPeople(state: ConversationProjectionState): boolean {
 export function offersForward(forwardingFlagOn: boolean, state: ConversationProjectionState): boolean {
   return forwardingFlagOn && state.status === 'ready' && state.isE2ee === false && !state.degraded;
 }
+
+// ── census-telegraph T370 (lane TELEGRAPH batch 3) — appended so every cited line keeps its number ──
+/**
+ * Reactions are offered where the server would let the viewer post (§14.1 canSendMessage), on a
+ * conversation affirmatively NOT end-to-end encrypted (a reaction is stored in the clear), and not on a
+ * degraded answer. The server re-checks every one through the shared write guard.
+ */
+export function offersReactions(state: ConversationProjectionState): boolean {
+  return state.status === 'ready' && state.canSendMessage && state.isE2ee === false && !state.degraded;
+}

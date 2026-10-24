@@ -387,7 +387,7 @@ async function unsendMessage(
   // §13.2 `message.unsent`, after the write. The outbox trigger has already
   // written the durable event inside the same transaction as the UPDATE; this
   // is the realtime nudge, and it carries no body because there is none.
-  void publishToThread(sc, conversationId, {
+  void publishMessageLifecycle(sc, conversationId, { // census T154 (batch 3): the outbox announces it when fan-out is on
     type: "message.unsent",
     payload: { messageId, unsentAt, senderId: userId },
   }, { excludeUserId: userId });
@@ -540,3 +540,4 @@ async function refuseGuardedWrite(
 }
 
 export default router;
+import { publishMessageLifecycle } from "../../lib/telegraphOutboxDrainScheduler.js"; // census T154 (batch 3), at the foot so no cited line moves
