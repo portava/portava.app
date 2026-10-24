@@ -17993,3 +17993,107 @@ decision. No production row could show the new behaviour yet.
 
 CONSTRUCTED 186 / 188 = **98.9 %**. CORRECT 117 / 188 = **62.2 %**. No row moved. Eight were restated and stay `W`
 (DV-28, DV-29, DV-33, DC-06, DC-21, DV-51, DV-52, DV-78). These are local records on an unmerged branch stacked on #783.
+
+## §134 — 2026-10-24, batch 4: ranker telemetry is no longer recorded as the viewer's behaviour; DC-23's fourth read answers "undecided"; no row moves
+
+*Lane DISCOVERY, branch `claude/census-disc-b4-20261024`, cut from `claude/census-disc-b3-20261023` (#790) at
+`3422bdaaf`, because this section continues §133's headline. Production was read with SELECT and catalog queries only,
+2026-10-24. Nothing was written to production or `portava-ci`. No migration is added: band 3924–3929 is unused.
+`head_commit` is not re-declared.*
+
+### 134.1 What was built
+
+**The ranker's own telemetry stops becoming behaviour edges.** Production, read 2026-10-24: 373 of the 383
+`behavior:*` edges in `compass_graph_edges` are `behavior:analytics`, over 7 viewers, with `last_seen` ≤ 2026-08-27,
+plus one `behavior|analytics` node.
+- **Where they come from.** They are the ranker's `ranking_item_scored`, `_eligible` and `_selected` rows (outcome
+  `analytics`). The graph's behaviour family read `outcome <> 'impression'`, so it filed each one as the viewer acting
+  on the item. §55.8 routed this finding.
+- **Whose code it is.** The producer is the behaviour family of `CompassGraphEngine.ts`, which this census grades for
+  DV-51 and watches in `CENSUS_SCOPE`. So it is fixed here.
+- **The build.** It now skips the telemetry sentinel
+  (`artifacts/api-server/src/compass/CompassGraphEngine.ts:844#if (isRankerTelemetryOutcome(r.outcome)) continue;`,
+  same line). `artifacts/api-server/src/compass/CompassGraphEngine.ts:3080#export function isRankerTelemetryOutcome(`
+  defines the sentinel. No new telemetry edge or node is written.
+- **The stored edges.** The reconcile derives support through the build. Left alone, it would find the 373 stored edges
+  unsupported and retire them on the first pass after release, which would delete production rows as a side effect of
+  a deploy. So a stored `behavior:analytics` edge now belongs to no edge family. The reconcile counts it `unclassified`
+  and neither judges, decays nor retires it.
+- **Tests:**
+  - B1 (`artifacts/api-server/src/test/compassGraphDecay.test.ts:472#it("B1 ranker telemetry writes no`): 39
+    telemetry rows across three event types write no edge and no node, and the viewer's own tap is still built.
+  - B2 (`artifacts/api-server/src/test/compassGraphDecay.test.ts:483#it("B2 a stored behavior:analytics`): with
+    decay ON, a stored telemetry edge with weight 86 survives a rebuild unretired and unreweighed, and is counted. A
+    stale February click beside it is still retired.
+- **Mutants**, each killed and restored byte-identical:
+  - M-g: the build reads telemetry as behaviour again. B1 and B2 went red.
+  - M-h: the stored edges judged again, so retired by the deploy. B2 went red.
+- **The suites around it pass unchanged:** decay, revocation (including "every edge the builder writes belongs to a
+  reconciled family") and the intelligence-graph suite, 107 of 107.
+
+**DC-23 — `11` §6's fourth read is served, and it answers what is true**
+(`artifacts/api-server/src/routes/creatorEconomy.ts:113#router.get("/creator-economy/me/payout-eligibility"`).
+- **What `07` §4 gives, and what it leaves open.** It gives a suggested progression and six inputs eligibility "can
+  consider", and no threshold, order or weighting. Those are the owner's decision, W10D-B5.
+- **What the read answers.** Undecided, `eligible: null`, nothing payable, and the pending decision named. It returns
+  the progression and the inputs as vocabulary
+  (`artifacts/api-server/src/services/creators/creatorPayoutEligibility.ts:37#export function payoutEligibilityAnswer(`).
+- **What it does not do.** It reads no input for the caller, so no trust or fraud signal reaches the person it
+  describes, and it invents no rule.
+- **The gate.** Like the other three reads, it is behind `creator_attribution_enabled`. With that flag OFF the answer
+  is `feature_disabled`, never "not eligible".
+- **Tests:** E1–E4 (`artifacts/api-server/src/test/creatorPayoutEligibility.test.ts:71#it("E3. ON ⇒ undecided`), over
+  the real router.
+- **Mutants**, each killed:
+  - M-i: the gate skipped. E1 and E3 went red.
+  - M-j: a verdict invented (`eligible: false`). E3 and E4 went red.
+  - M-k: an input read for the caller. E3 went red.
+
+### 134.2 Row moves
+
+None.
+
+### 134.3 Rows restated
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-51 | W | **W** | **Ranker telemetry is no longer behaviour (§134.1).** Together with §133's complete read, the behaviour family is now built only from what viewers did. **Waiting on release (server deploy):** rumazi.com runs `4fb0fe5f5`, which carries neither §133 nor §134. Then awaits: 3921 applied + one production rebuild that retires or decays a stale GENUINE intent edge. Production has 10 such edges (`behavior:tap` ×9, `behavior:save` ×1), all ONE viewer's, so that evidence will be single-viewer and must say so. The 373 held telemetry edges are not evidence either way (§134.4). |
+| DC-23 | W | **W** | **All four `11` §6 reads are now served**, the fourth answering `undecided` (§134.1). BLOCKED: owner decision W10D-B5 (the thresholds) + `creator_attribution_enabled`, FALSE under C-11. **Waiting on release (server deploy)** for the fourth read. |
+| DV-41 | W | **W** | **Not built in batch 4, and why.** The planned item was opt-in enforcement for the case the owner rules an opt-in is required. D-OWNER1004-3 keeps dwell OFF until a privacy notice is written and approved, and records that whether the consent model "also needs an opt-in built" is **unknown**. An opt-in store, its default, its withdrawal and its wording ARE that consent model, so building one would decide it. It would also add a dark path that moves nothing, the lead's ground for leaving DV-78's client half (2026-10-24). **Corrected:** §131.4 read `discovery_dwell_telemetry_enabled` TRUE in production. It has been FALSE since 2026-10-23 21:39:49Z (read 2026-10-24), as D-OWNER1004-3 requires, and no dwell row exists. BLOCKED: D-OWNER1004-3's approved privacy notice. |
+| DV-67 | W | **W** | **Not built in batch 4, and why.** Carrying the served `recommendation_id` from the buddy card into the booking needs a `rent_buddy_bookings` column, the Rent-a-Buddy booking route (watched by the layover, passport, trips, trust and wall censuses, not this one) and the client booking flow. A caller that passes a recommendation is also what W10D-B7 (`11` §7's ingestion) decides, inside a credit window W10D-B3 has not set, and the ledger is held under C-11. Recorded and skipped, under the rule the lead set for code another census owns. BLOCKED: C-11 + W10D-B7 + W10D-B3. |
+| DV-63 | W | **W** | **Not built in batch 4, and why.** What remains is the erasure half: the retention anchor (a fiscal year-end per jurisdiction) and the purge. Both are legal rules, and the code that would carry them is #592's retain-pseudonymised 3513, an open PR marked DO NOT MERGE that pseudonymises ledger data. That is held, so nothing is built on top of it. BLOCKED: C-11 legal confirmation (W10D-B0). |
+
+### 134.4 For the lead and the owner
+
+- **The 373 stored `behavior:analytics` edges.** The released code will leave them exactly as they are: no rewrite, no
+  retirement, no decay. No reader consumes `behavior:*` edges (§55.8), so they affect nothing served. Removing them is
+  a data migration for the owner to approve. It was NOT written as a migration file, so no applier can pick it up:
+
+  ```sql
+  -- proposal only; owner-approved data migration; production counts read 2026-10-24
+  DELETE FROM public.compass_graph_edges
+   WHERE src_type = 'person' AND dst_type = 'place' AND edge_type = 'behavior:analytics';   -- 373 rows, 7 viewers
+  DELETE FROM public.compass_graph_nodes WHERE node_type = 'behavior' AND node_key = 'analytics';   -- 1 row
+  ```
+
+  These rows are derived, and no source can rebuild them, because the build no longer reads telemetry. A backup copy
+  (`CREATE TABLE … AS SELECT`) before the delete is the only way back. After the cleanup the classification hold is
+  inert.
+- **No flag and no migration in this batch.** The seeded-flag pin is unchanged by batch 4.
+
+### 134.5 What would turn this red
+
+- A `behavior:analytics` edge written by a rebuild (B1), or one retired or reweighed without the owner's cleanup (B2).
+- A payout-eligibility answer that names a verdict, a number, or an input read for the caller (E3, E4).
+
+### 134.6 Headline, restated from the rows
+
+| bucket | count |
+|---|---|
+| BUILT-AND-CORRECT | **117** |
+| BUILT-BUT-WRONG | **69** |
+| NOT-BUILT | **2** |
+| CANNOT-VERIFY | **0** |
+
+CONSTRUCTED 186 / 188 = **98.9 %**. CORRECT 117 / 188 = **62.2 %**. No row moved. Five were restated and stay `W` (DV-51,
+DC-23, DV-41, DV-67, DV-63). These are local records on an unmerged branch stacked on #790.

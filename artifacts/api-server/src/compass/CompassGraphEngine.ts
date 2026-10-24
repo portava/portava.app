@@ -841,7 +841,7 @@ export async function buildGraphFromSources(
       .neq("outcome", "impression")
       .order("obs_key", { ascending: true }));
     for (const r of (data as any[]) ?? []) {
-      if (!r.user_id || !r.item_id || !r.outcome) continue;
+      if (!r.user_id || !r.item_id || !r.outcome) continue; if (isRankerTelemetryOutcome(r.outcome)) continue;   // census-discovery §134: the ranker's own telemetry is not the viewer's behaviour
       const at = r.first_at ? String(r.first_at) : null;   // the edge's first observation; its count, last and days are the row's (edgeObserved)
       batch.node("person", String(r.user_id));
       batch.node("behavior", String(r.outcome));
@@ -2276,7 +2276,7 @@ export function classifyGraphEdge(e: { src_type: string; dst_type: string; edge_
     if (d === "trip" && t === "took_trip") return "trip_owner";
     if (d === "city" && t === "returned_to") return "trip_return";
     if ((d === "event" || d === "place") && t.startsWith("outcome:")) return "outcome";
-    if (d === "place" && t.startsWith("behavior:")) return "behavior";
+    if (d === "place" && t.startsWith("behavior:")) return t === RANKER_TELEMETRY_BEHAVIOR_EDGE ? null : "behavior";   // §134: no builder writes it any more; a stored one is held for the owner-approved cleanup, never judged
     if (d === "circle" && t === "owns_circle") return "circle_owner";
     if (d === "experience" && t === "experienced") return "experience";
     return null;
@@ -3053,4 +3053,30 @@ export function graphBehaviorObservationsOf(rows: ReadonlyArray<{ id?: unknown; 
     });
   }
   return out.sort((a, b) => (String(a.obs_key) < String(b.obs_key) ? -1 : String(a.obs_key) > String(b.obs_key) ? 1 : 0));
+}
+
+// ── census-discovery §134: the ranker's own telemetry is not behaviour ────────
+//
+// `rank_events` rows with outcome `analytics` are written by the ranker
+// (services/ranking/rankingAnalytics: ranking_item_scored, _eligible,
+// _selected …) and by the dwell / Trail-open attention writers. None is a
+// viewer acting on an item: lib/discoverySequenceFeatures calls them
+// "outcomes that are not behaviour: written by the ranker, never by a user".
+// The behaviour family read `outcome <> 'impression'`, so every scored or
+// selected item became a `behavior:analytics` person → place edge: 373 of
+// production's 383 behaviour edges on 2026-10-24.
+//
+// The build now skips them, so no new one is written. The reconcile re-derives
+// support THROUGH the build, so it would find the stored ones unsupported and
+// retire them on the first pass after release. Deleting production rows is an
+// owner-approved data migration, not a side effect of a deploy, so a stored
+// `behavior:analytics` edge is classified as no family: the reconcile counts it
+// `unclassified` and neither judges, decays nor retires it. The cleanup is the
+// owner's (census §134.4 states the statement and its count).
+export const RANKER_TELEMETRY_OUTCOME = "analytics";
+export const RANKER_TELEMETRY_BEHAVIOR_EDGE = `behavior:${RANKER_TELEMETRY_OUTCOME}`;
+
+/** True for an outcome no viewer produced: the ranker's (or an attention writer's) telemetry sentinel. */
+export function isRankerTelemetryOutcome(outcome: unknown): boolean {
+  return outcome === RANKER_TELEMETRY_OUTCOME;
 }

@@ -452,3 +452,48 @@ describe("§133 V — DV-51: intent edges are built and judged from every row", 
     assert.ok(edge(store, (e) => e.edge_type === "destination"), "the other families were still built");
   });
 });
+
+// ── census-discovery §134: the ranker's own telemetry is not behaviour ───────
+//
+// Production, 2026-10-24: 373 of 383 `behavior:*` edges were `behavior:analytics`
+// — the ranker's scored/eligible/selected rows (outcome `analytics`) read as the
+// viewer acting on the item.
+//   B1  the build writes NO behaviour edge (and no `analytics` behaviour node)
+//       from ranker telemetry, however many rows, and still writes the tap
+//   B2  a STORED `behavior:analytics` edge is held for the owner's cleanup: with
+//       decay ON and every source read, a rebuild neither retires nor reweighs
+//       it, while a stale genuine intent edge beside it is still judged
+describe("§134 B — ranker telemetry is never recorded as the viewer's behaviour", () => {
+  const telemetry = (user: string, item: string, n: number) => Array.from({ length: n }, (_, i) => ({
+    id: `tel-${user}-${item}-${i}`, user_id: user, item_id: item, item_kind: null, outcome: "analytics",
+    event_type: ["ranking_item_scored", "ranking_item_eligible", "ranking_item_selected"][i % 3], served_at: "2026-09-27T10:00:00Z",
+  }));
+
+  it("B1 ranker telemetry writes no behaviour edge; the viewer's own tap still does", async () => {
+    at("2026-09-28T00:00:00Z");
+    const store: Store = { ...sources() };
+    store.rank_events = [...store.rank_events!, ...telemetry(A, "place-5", 30), ...telemetry(B, "place-6", 9),
+      { id: "tap-1", user_id: A, item_id: "place-6", item_kind: "place", outcome: "tap", served_at: "2026-09-27T11:00:00Z" }];
+    await rebuild(store);
+    assert.equal(edge(store, (e) => e.edge_type === engine.RANKER_TELEMETRY_BEHAVIOR_EDGE), undefined, "a scored/selected item became the viewer's behaviour");
+    assert.equal((store.compass_graph_nodes ?? []).find((n) => n.node_type === "behavior" && n.node_key === "analytics"), undefined, "no behaviour node for telemetry");
+    assert.ok(edge(store, (e) => e.edge_type === "behavior:tap" && e.src_key === A && e.dst_key === "place-6"), "the genuine tap is still built");
+  });
+
+  it("B2 a stored behavior:analytics edge is neither retired nor rewritten; a stale genuine edge is still judged", async () => {
+    at("2026-09-28T00:00:00Z");
+    const store: Store = { ...sources(), feature_flags: [FLAG] };
+    store.rank_events = [...store.rank_events!, ...telemetry(A, "place-5", 30)];
+    await rebuild(store);
+    const held = { id: "held-1", src_type: "person", src_key: A, dst_type: "place", dst_key: "place-5", edge_type: engine.RANKER_TELEMETRY_BEHAVIOR_EDGE,
+      weight: 86, observed_count: 86, attrs: { item_kind: null }, last_seen: "2026-08-27T00:00:00Z" };
+    store.compass_graph_edges = [...(store.compass_graph_edges ?? []), held];
+    const r = await rebuild(store);
+    const s = r.edgeSupport!;
+    const still = edge(store, (e) => e.id === "held-1");
+    assert.ok(still, `the stored telemetry edge was retired by a deploy, not by the owner's cleanup: ${JSON.stringify(s)}`);
+    assert.equal(Number(still!.weight), 86, "and it was not reweighed");
+    assert.ok((s.unclassified ?? 0) >= 1, "it is counted, as held, not silently skipped");
+    assert.equal(edge(store, (e) => e.edge_type === "behavior:click" && e.src_key === A), undefined, "the stale February click beside it was still decided (retired)");
+  });
+});
