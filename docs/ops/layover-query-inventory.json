@@ -39,6 +39,60 @@
       "name": "id"
     },
     {
+      "file": "src/lib/layoverCheckpointExpirySweep.ts",
+      "line": 123,
+      "via": null,
+      "kind": "table",
+      "method": "from",
+      "table": "layover_checkpoints",
+      "name": "layover_checkpoints"
+    },
+    {
+      "file": "src/lib/layoverCheckpointExpirySweep.ts",
+      "line": 123,
+      "via": null,
+      "kind": "select",
+      "method": "select",
+      "table": "layover_checkpoints",
+      "name": "id"
+    },
+    {
+      "file": "src/lib/layoverCheckpointExpirySweep.ts",
+      "line": 148,
+      "via": null,
+      "kind": "table",
+      "method": "from",
+      "table": "layover_checkpoints",
+      "name": "layover_checkpoints"
+    },
+    {
+      "file": "src/lib/layoverCheckpointExpirySweep.ts",
+      "line": 148,
+      "via": null,
+      "kind": "select",
+      "method": "select",
+      "table": "layover_checkpoints",
+      "name": "id"
+    },
+    {
+      "file": "src/lib/layoverCheckpointExpirySweep.ts",
+      "line": 168,
+      "via": null,
+      "kind": "table",
+      "method": "from",
+      "table": "layover_checkpoints",
+      "name": "layover_checkpoints"
+    },
+    {
+      "file": "src/lib/layoverCheckpointExpirySweep.ts",
+      "line": 168,
+      "via": null,
+      "kind": "select",
+      "method": "select",
+      "table": "layover_checkpoints",
+      "name": "id"
+    },
+    {
       "file": "src/lib/layoverCrewExpiryScheduler.ts",
       "line": 233,
       "via": null,
@@ -10074,6 +10128,33 @@
       "name": "job"
     },
     {
+      "file": "src/lib/layoverCheckpointExpirySweep.ts",
+      "line": 148,
+      "via": null,
+      "kind": "filter",
+      "method": "order",
+      "table": "layover_checkpoints",
+      "name": "expires_at"
+    },
+    {
+      "file": "src/lib/layoverCheckpointExpirySweep.ts",
+      "line": 168,
+      "via": null,
+      "kind": "filter",
+      "method": "lte",
+      "table": "layover_checkpoints",
+      "name": "expires_at"
+    },
+    {
+      "file": "src/lib/layoverCheckpointExpirySweep.ts",
+      "line": 168,
+      "via": null,
+      "kind": "filter",
+      "method": "in",
+      "table": "layover_checkpoints",
+      "name": "id"
+    },
+    {
       "file": "src/lib/layoverCrewExpiryScheduler.ts",
       "line": 270,
       "via": null,
@@ -19170,6 +19251,33 @@
       "line": 83,
       "via": null,
       "table": "layover_events",
+      "variants": [
+        "id"
+      ]
+    },
+    {
+      "file": "src/lib/layoverCheckpointExpirySweep.ts",
+      "line": 123,
+      "via": null,
+      "table": "layover_checkpoints",
+      "variants": [
+        "id"
+      ]
+    },
+    {
+      "file": "src/lib/layoverCheckpointExpirySweep.ts",
+      "line": 148,
+      "via": null,
+      "table": "layover_checkpoints",
+      "variants": [
+        "id"
+      ]
+    },
+    {
+      "file": "src/lib/layoverCheckpointExpirySweep.ts",
+      "line": 168,
+      "via": null,
+      "table": "layover_checkpoints",
       "variants": [
         "id"
       ]

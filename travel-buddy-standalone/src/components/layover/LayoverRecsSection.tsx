@@ -140,12 +140,12 @@ export function LayoverRecsSection({
                   {typical}
                 </Text>
               ) : null}
-              <LayoverActivityTimingNote routing={rec.routing} />{rec.routing?.band === 'BLOCKED' ? <Text style={styles.warning}>Unavailable — {rec.routing.reason ?? rec.warningReason ?? 'This route does not fit the return deadline.'}</Text> : rec.warningReason ? <Text style={styles.warning}>{rec.warningReason}</Text> : null}
+              <LayoverActivityTimingNote routing={rec.routing} />{rec.available === false ? <Text style={styles.warning} testID={`layover-rec-unavailable-${idx}`}>Unavailable — {rec.statusExplanation ?? 'This idea is not available right now.'}</Text> : rec.routing?.band === 'BLOCKED' ? <Text style={styles.warning}>Unavailable — {rec.routing.reason ?? rec.warningReason ?? 'This route does not fit the return deadline.'}</Text> : rec.warningReason ? <Text style={styles.warning}>{rec.warningReason}</Text> : null}
             </View>
             {canPlan && recId && rec.safetyRating !== 'not_recommended' && rec.routing?.band !== 'BLOCKED' && !pairing.expired && (
               added ? (
-                <View style={styles.addedBadge}><Check size={15} color={color.success} /></View>
-              ) : (
+                <View style={styles.addedBadge} testID={`layover-rec-added-${idx}`}><Check size={15} color={color.success} /></View>
+              ) : rec.available === false ? null /* census L38/L50/L97: the server served this card as unavailable (BLOCKED, STALE, EXPIRED, SUPERSEDED) and refuses its add; never offer it */ : (
                 <Pressable
                   style={styles.addBtn}
                   disabled={addingRecId === recId}
