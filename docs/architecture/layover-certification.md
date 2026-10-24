@@ -94,5 +94,5 @@ complete, cited, executed and monotone.
 | --- | --- | --- | --- | --- | --- |
 | E-1 | L239 | E2E tests for detection → evaluation → plan → execution → return → completion | `src/test/db/layoverFlightConnections.db.test.ts` "P6 L239 L33 — detection → evaluation → plan → execution → return → completion over the real router" (local_db)<br>`src/test/layoverApiLifecycle.test.ts` "every stage runs, and each one's output is what the next one reads" (node) | — | no dependency this data names |
 
-**Totals:** 31 entries; 26 proved in full and 5 in part by registered tests; 0 unproved. Every dependency the data names is met on the committed production records (production-applied-migrations.json (newest 3950_layover_checkpoint_expiry_flag) and the 2026-10-24T05:55:28Z schema snapshot's flags) for 23. That is not a grade: census-layover grades each row, and may hold one for a reason not modelled here.
+**Totals:** 31 entries; 26 proved in full and 5 in part by registered tests; 0 unproved. Every dependency the data names is met on the committed production records (production-applied-migrations.json (newest 3911_memory_kernel_create_participants_and_canonical_fields) and the 2026-10-24T10:40:31Z schema snapshot's flags) for 23. That is not a grade: census-layover grades each row, and may hold one for a reason not modelled here.
 <!-- layover-certification:end -->

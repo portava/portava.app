@@ -25,10 +25,10 @@
  *         constraint and names that member, under production's flag state.
  *   L181  `reconcile` reaches a traveller only through
  *   L197  `GET`/`POST /airport/sessions/:id/observations`, and both refuse
- *         unless `layover_crowd_reports_enabled` is ON (since 2026-10-21 it is: re-pinned 2026-10-24). 3513 seeds that flag
- *         and is not applied in production, so production serves neither:
- *         the C both rows were given at census §41 (when the only gate was
- *         `airport_mode_enabled`) does not hold at HEAD.
+ *         unless `layover_crowd_reports_enabled` is ON. 3513 seeds that flag,
+ *         and it was applied in production 2026-10-21 with the flag ON, so
+ *         production serves both (re-pinned 2026-10-24; until then this pinned
+ *         them closed). Re-deriving L181/L197/L82 is the lane's next pass.
  *
  * Loopback: binds 127.0.0.1 (run unsandboxed). No production or remote
  * database is touched; the snapshot and the ledger are files in this tree.

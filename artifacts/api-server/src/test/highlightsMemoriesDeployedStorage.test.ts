@@ -183,14 +183,14 @@ describe("what deployment did NOT change, asserted so §O cannot be read as more
     assert.deepEqual(tripish, [], `highlights now carries ${JSON.stringify(tripish)}; HIDE_TRIP may be wirable`);
   });
 
-  it("migration 2970 is still applied NOWHERE, so §K.4's presence filter reads undefined everywhere", () => {
-    // §N.5 states this as a live risk and it is unchanged. It is asserted in
-    // this file because this file is where "which migrations are applied" is
-    // now mechanically checked, and a reader who sees ten of them turn green
-    // must not infer the eleventh did.
+  it("migration 2970 IS applied in production (re-pinned 2026-10-24; the re-read this pin demanded is census §BD)", () => {
+    // This pinned 2970 applied NOWHERE and demanded a re-read of §K.4 / §L.4 / §N.4 the day that changed. Production has
+    // carried 2970's column since the 2026-09-22 capture, §BD (2026-10-11) did that re-read and grades H4/H239 on it, and
+    // the applied list caught up at the 2026-10-24 refresh (a 'manual' ledger row whose sha256 matches the file).
     assert.equal(
-      appliedNames.has("2970_stamp_definitions_evidences_presence"), false,
-      "2970 is now applied; §K.4 / §L.4 / §N.4 must be re-read",
+      appliedNames.has("2970_stamp_definitions_evidences_presence"), true,
+      "2970 is no longer recorded as applied; census-highlights-memories §BD grades H4/H239 on it and must be re-read",
     );
+    assert.ok(snapshot.tables["stamp_definitions"]?.includes("evidences_presence"), "the capture no longer has 2970's column");
   });
 });

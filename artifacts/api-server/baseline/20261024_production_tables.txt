@@ -1,6 +1,6 @@
 # Production public-schema table snapshot
 # project ref : ajrurzioarfkagpuxfnb (travel-buddy, PRODUCTION)
-# captured    : 2026-10-24 05:55 UTC, read-only, via the Supabase MCP execute_sql channel
+# captured    : 2026-10-24 05:55 UTC, read-only, via the Supabase MCP execute_sql channel (re-verified 10:40 UTC: same digest)
 # count       : 624 BASE TABLEs in schema public
 #
 # RE-CAPTURED with the schema-capability snapshot (snapshots/20261024-production-schema.json), as the 09-22
@@ -9,9 +9,9 @@
 # computed BY PRODUCTION and matched by the same digest over the names below.
 #
 # 140 base tables are new since the 09-22 capture (484 then) and none was removed. They are the 2026-10-21
-# production press (332 migrations through schema_migration_ledger) and the objects the 2026-10-23 backfill rows
-# record as present. Two of them, media_upload_sessions and media_upload_chunks, are declared by no migration in
-# this tree; they are production's and are listed because they are there.
+# production press (329 migrations through schema_migration_ledger, plus 3974's backfill row) and the objects
+# the 2026-10-23 backfill rows record as present. Two of them, media_upload_sessions and media_upload_chunks, are
+# declared by no migration in this tree; they are production's and are listed because they are there.
 #
 # The unapplied set on this date, read from the ledger itself: 2481, 3601, 3602 (held) and 3909, 3910.
 #
