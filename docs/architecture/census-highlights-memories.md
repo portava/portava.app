@@ -9885,16 +9885,34 @@ With `memory_kernel_enabled` ON in production (§CA.1), four canonical writes st
 | write | before | now |
 | --- | --- | --- |
 | Telegraph §10.2 save-to-Memory | a direct `memories` insert | CREATE_MEMORY through the kernel (`artifacts/api-server/src/routes/telegraphMemory.ts:145#const drafted = await createDraftThroughKernel(req, client, user.id, row`). The direct insert is now only the flag-off legacy arm |
-| the participants of POST /memories and POST /trips/:tripId/memory | `memory_tags` inserted after the kernel returned | sent to the kernel (`artifacts/api-server/src/routes/memories.ts:525#write: insertRow, tagged_user_ids: d.taggedUserIds,`, `artifacts/api-server/src/routes/memories.ts:2808#write: tripInsertRow, ...(crewIds.length <= KERNEL_TAG_LIMIT ? { tagged_user_ids: crewIds } : {}),`) and inserted PENDING in the creating transaction (`artifacts/api-server/src/migrations/3911_memory_kernel_create_participants_and_canonical_fields.sql:347#INSERT INTO public.memory_tags (memory_id, tagged_user_id, status)`). The route writes a tag only when the kernel reports it did not (`artifacts/api-server/src/routes/memories.ts:548#const kernelTagged = created.taggedUserIds ?? null;`) |
-| §4 `memory_type` and §9 `place_display_name_at_occurrence` | a direct UPDATE after the kernel (`reconcileCanonicalFields`) | written by CREATE's INSERT (`artifacts/api-server/src/migrations/3911_memory_kernel_create_participants_and_canonical_fields.sql:339#UPDATE public.memories SET memory_type = v_write->>'memory_type'`) and by every edit's UPDATE (`artifacts/api-server/src/migrations/3911_memory_kernel_create_participants_and_canonical_fields.sql:378#memory_type           = CASE WHEN v_patch ? 'memory_type'`). The reconcile remains as a read-back that now finds nothing to write |
-| the source post of POST /memories/:id/items/from-post | a follow-up `memory_items` UPDATE | the kernel's own INSERT, judged there by 3999's own-media guard (`artifacts/api-server/src/migrations/3911_memory_kernel_create_participants_and_canonical_fields.sql:421#(v_write->>'source_post_id')::uuid)`) |
+| the participants of POST /memories and POST /trips/:tripId/memory | `memory_tags` inserted after the kernel returned | sent to the kernel (`artifacts/api-server/src/routes/memories.ts:525#write: insertRow, tagged_user_ids: d.taggedUserIds,`, `artifacts/api-server/src/routes/memories.ts:2808#write: tripInsertRow, ...(crewIds.length <= KERNEL_TAG_LIMIT ? { tagged_user_ids: crewIds } : {}),`) and inserted PENDING in the creating transaction (`artifacts/api-server/src/migrations/3911_memory_kernel_create_participants_and_canonical_fields.sql:349#INSERT INTO public.memory_tags (memory_id, tagged_user_id, status)`). The route writes a tag only when the kernel reports it did not (`artifacts/api-server/src/routes/memories.ts:548#const kernelTagged = created.taggedUserIds ?? null;`) |
+| §4 `memory_type` and §9 `place_display_name_at_occurrence` | a direct UPDATE after the kernel (`reconcileCanonicalFields`) | written by CREATE's INSERT (`artifacts/api-server/src/migrations/3911_memory_kernel_create_participants_and_canonical_fields.sql:341#UPDATE public.memories SET memory_type = v_write->>'memory_type'`) and by every edit's UPDATE (`artifacts/api-server/src/migrations/3911_memory_kernel_create_participants_and_canonical_fields.sql:380#memory_type           = CASE WHEN v_patch ? 'memory_type'`). The reconcile remains as a read-back that now finds nothing to write |
+| the source post of POST /memories/:id/items/from-post | a follow-up `memory_items` UPDATE | the kernel's own INSERT, judged there by 3999's own-media guard (`artifacts/api-server/src/migrations/3911_memory_kernel_create_participants_and_canonical_fields.sql:423#(v_write->>'source_post_id')::uuid)`) |
 
 `memory.created` now names the people it tagged, as ids only. The key is added only to a create that named participants
-(`artifacts/api-server/src/migrations/3911_memory_kernel_create_participants_and_canonical_fields.sql:489#THEN jsonb_build_object('tagged_user_ids', to_jsonb(v_tags_written)) ELSE '{}'::jsonb END),`),
-so every other event keeps 2711's `refs` shape. **Either deploy order is safe.** With the code first, 2711 ignores the
+(`artifacts/api-server/src/migrations/3911_memory_kernel_create_participants_and_canonical_fields.sql:491#THEN jsonb_build_object('tagged_user_ids', to_jsonb(v_tags_written)) ELSE '{}'::jsonb END),`),
+so every other event keeps 2711's `refs` shape.
+
+Two consequences, stated exactly (independent verifier, #784):
+- POST /memories always names its participants, `[]` when there are none. So every `memory.created` from that route
+  now carries `refs.tagged_user_ids`, `[]` included. That key lists only the people actually written, never a requested
+  id with no profile.
+- Every non-duplicate kernel answer gains a top-level `tagged_user_ids` key. It is null except on a create that named
+  participants.
+
+**Either deploy order is safe.** With the code first, 2711 ignores the
 new keys and the routes write as before. With 3911 first, the old routes send no participants and tag as before. Their
-type, text and link writes find the kernel has already made them. Ordering, preconditions and rollback are recorded in
-`docs/migrations.md` (3911).
+type and occurrence text find the kernel has already written them. They do not send the source post (this branch adds
+that key), so with the old code, from-post's follow-up link runs once, as today. Ordering, preconditions and rollback
+are recorded in `docs/migrations.md` (3911). The rollback restores 2711's definition (md5 `542cc3a2…`) and its comment
+(md5 `3b8b34b4…`), measured.
+
+**Two edge notes (verifier).**
+- A CHANGE_PLACE that re-sends the same display text for a NEW provider place leaves the text NULL in-kernel. 3804's
+  trigger reads unchanged text as "keep nothing for a changed place". The retained read-back reconcile then writes it
+  once.
+- A 3999 own-media guard RAISE inside ADD_MEDIA surfaces as MEMORY_KERNEL_UNAVAILABLE, a 503. That can happen only in
+  a race, because from-post checks the post is the owner's before it dispatches.
 
 ### §CB.2 Production state, measured (read-only, 2026-10-23)
 
@@ -9939,9 +9957,10 @@ values. `memory_from_own_media_enabled` is turned on in memory only, for P7/P8.
 | P7, P8 | from-post links the source in the kernel's INSERT. Someone else's post is refused inside the kernel, with no item, event or receipt left |
 | P9, P10 | a malformed participant list is refused by name and audited. The actor, a duplicate, and an id with no profile are never tagged |
 | O1 | `runMemoryOutboxDrainPass` claims every pending event through 2994's `memory_outbox_claim` and acks it through `memory_outbox_ack`. It reads each event's privacy-filtered payload, and a second pass claims nothing |
+| K1–K3, **run on 2711 and on the tree's kernel** | the kernel called directly, for the verifier's three survivors. A stranger's REMOVE_PERSON is `MEMORY_AUTH_NOT_OWNER`, the tag stands and no event is written; ADD_PERSON from the same stranger is `MEMORY_AUTH_NOT_PARTICIPANT`, one check earlier. A create that names no type gets the column's MOMENT. `memory.created` names only the people written, never a requested id with no profile |
 | Q1–Q10, **run on 2711 and again on 3911** | through its own route: CONFIRM, CHANGE_VISIBILITY, CHANGE_PLACE, ADD_MEDIA, REMOVE_MEDIA, ADD_PERSON (the tagged person's consent, which the graph mirror turns into a PERSON edge), REMOVE_PERSON (the edge goes), ARCHIVE, MERGE (absorbed Memory deleted and redirected, `memory.merged` with its outbox row) and SPLIT (`memory.split` on both streams, the moved item, the `DERIVED_FROM` edge). The 2711 run refuses to start unless the installed definition's md5 is production's |
 
-**Run:** 33 of 33 pass (local chain, PostgreSQL 17.11, 2026-10-23). **Red first, by mutation** (file restored from a
+**Run:** 38 of 38 pass (local chain, PostgreSQL 17.11, 2026-10-23/24; K1–K3 added after the verifier's review). **Red first, by mutation** (file restored from a
 copy and its sha256 re-checked, or the SQL object restored and its md5 re-checked):
 
 | mutant | result |
@@ -9960,11 +9979,12 @@ copy and its sha256 re-checked, or the SQL object restored and its md5 re-checke
 | SQL (3911's body): CREATE tags nobody · ignores the type · drops the occurrence text · drops the source post · omits `tagged_user_ids` from its answer · lets the actor tag themself · skips the profile filter · skips the malformed-list check · UPDATE ignores the type · every event's `refs` carries `tagged_user_ids` | P1/P2/P3/P10 · P1/P3 · P1 · P7/P8 · P1/P3/P10 · P1/P2/P10 · P10 · P9 · P4 · P4 red, respectively |
 | SQL (the shared 2711/3911 text, mutated in both files): CONFIRM, ARCHIVE or CHANGE_VISIBILITY emits `memory.corrected` · ADD/REMOVE_PERSON writes no status | Q1, Q8, Q2 · Q6/Q7 red on 3911. The 2711 run refuses any definition whose md5 is not production's |
 | SQL: the graph mirror trigger on `memory_tags` · on `memories` disabled | Q6 on both kernels · P3 red |
+| SQL, the verifier's survivors: no NOT_OWNER check on ADD/REMOVE_PERSON (S5, in 2711 and 3911) · CREATE nulls an unnamed type (S6) · `refs.tagged_user_ids` names the requested ids (S4b) | K1 on both kernels · K2 on the tree's kernel · K3 red |
 
-18 TypeScript mutants and 16 SQL mutants, all killed. Other runs on this branch:
+18 TypeScript mutants and 19 SQL mutants, all killed. Other runs on this branch:
 `memoryOwnerControls.db.test.ts` 21/21 (§CA), `memoryCanonicalFields` 36/36 (the 2711-shaped fake still passes, because
 the reconcile still finds what it meant), `telegraphMemory` 35/35, `telegraphConversationMemoryBoundary` 84/84,
-`memoryOutbox` 21/21, `memoryCommandBus` 60/60, `memorySocialClientBoundary` 62/62, `memoryFromOwnMedia.pglite` 7/7,
+`memoryOutbox` 21/21, `memoryCommandBus` 60/60, `memorySocialClientBoundary` 62/62, `memoryFromOwnMedia.pglite` 18/18,
 `highlightsMemoriesDeployedStorage` 19/19.
 
 ### §CB.4 Row moves
@@ -10027,6 +10047,17 @@ production and this branch's API is deployed, on a re-run of §CB.3 against that
 | H194 | BUILT-BUT-WRONG | A merged-away id keeps resolving on read. Its stated gap stands: a write on a merged-away id is a 404 |
 | H106 | BUILT-BUT-WRONG | The edge types are stored and enforced (H45). The group reason for H104–H106 stands for this row: the Tagged bucket reads `public.tags`, not the PERSON edges |
 | H256 | BUILT-BUT-WRONG | MERGE and SPLIT exist and cross the graph kernel (H134, H135). The episode-candidate half has no production input (§CA.4's spine: no timed capture is ever produced) |
+
+**Found, not fixed here: the tag write has no block gate.** This predates 3911; 3911 carries it forward. A create
+tags each named person PENDING, and so did the route before it, without asking whether that person and the owner have
+blocked each other. So a person who blocked the owner is tagged, and `notifyTagged` sends them an in-app notification
+and a push. This bears on:
+- H84: blocking suppresses future social resurfacing;
+- H240: a blocked person is not newly resurfaced through shared Memories;
+- H130 / H138: the create's participants and ADD_PERSON.
+
+H84 and H240 are graded on the read surfaces, and this is a write and a notification they do not cover. The fix is
+batch 4's first item.
 
 **Found, not fixed here.** Two canonical writes remain outside the kernel after this branch:
 - A photo's own audience is set by a direct `memory_items` UPDATE

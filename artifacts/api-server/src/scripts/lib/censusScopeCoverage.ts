@@ -71,7 +71,7 @@ export const CITE_RE = /`([A-Za-z0-9_./()\[\]+@-]+\.(?:ts|tsx|sql|mjs|js|json|ym
 export const LEGACY_CITE_RE = /`([A-Za-z0-9_./-]+\.(?:ts|tsx|sql|mjs|js|json|yml))(?::[0-9,\-#A-Za-z_]*)?`/g;
 
 /** `- NOT-GRADED: path — reason` (an em dash). */
-export const NOT_GRADED_DECL_RE = /^- NOT-GRADED: (\S+) — (.+)$/;
+export const NOT_GRADED_DECL_RE = /^- NOT-GRADED: (\S+) — (.+)$/; /** `- WITHDRAWN NOT-GRADED: path — reason`: an APPEND-ONLY census withdraws an EARLIER declaration without editing it (census-telegraph P.7, 2026-10-24). */ export const NOT_GRADED_WITHDRAWAL_RE = /^- WITHDRAWN NOT-GRADED: (\S+) — (.+)$/;
 
 /** A reason must say something. Twenty-five characters is one short clause. */
 export const MIN_REASON = 25;
@@ -165,11 +165,11 @@ export function measureCensusCoverage(input: CoverageInput): CoverageResult {
   const rowCited = new Set<string>();
   let ambiguous = 0;
   let unresolved = 0;
-  const declLines: Array<{ path: string; reason: string; line: number }> = [];
+  const declLines: Array<{ path: string; reason: string; line: number }> = []; const withdrawals: Array<{ path: string; reason: string; line: number }> = [];
 
   lines.forEach((line, i) => {
     const decl = NOT_GRADED_DECL_RE.exec(line);
-    if (decl) { declLines.push({ path: decl[1]!, reason: decl[2]!.trim(), line: i + 1 }); return; }
+    if (decl) { declLines.push({ path: decl[1]!, reason: decl[2]!.trim(), line: i + 1 }); return; } const wd = NOT_GRADED_WITHDRAWAL_RE.exec(line); if (wd) { withdrawals.push({ path: wd[1]!, reason: wd[2]!.trim(), line: i + 1 }); return; }
     const row = isVerdictRowLine(line);
     for (const m of line.matchAll(CITE_RE)) {
       const r = input.resolve(m[1]!, m[2]);
@@ -182,7 +182,7 @@ export function measureCensusCoverage(input: CoverageInput): CoverageResult {
 
   const declared = new Map<string, string>();
   const declarationProblems: string[] = [];
-  for (const d of declLines) {
+  for (const d of declLines) { if (withdrawals.some((w) => w.path === d.path && w.line > d.line && w.reason.length >= MIN_REASON)) continue; // withdrawn later: neither a declaration nor a problem
     const at = `line ${d.line}: NOT-GRADED ${d.path}`;
     if (declared.has(d.path)) { declarationProblems.push(`${at} is declared twice.`); continue; }
     if (!input.isRepoFile(d.path)) { declarationProblems.push(`${at} is not an exact repo path to a file. Write the full path from the repo root.`); continue; }
@@ -192,7 +192,7 @@ export function measureCensusCoverage(input: CoverageInput): CoverageResult {
     if (input.covered(d.path)) { declarationProblems.push(`${at} is already watched by CENSUS_SCOPE; the declaration is redundant.`); continue; }
     if (rowCited.has(d.path)) { declarationProblems.push(`${at} is cited on a verdict row, so a verdict rests on it and it is graded. Watch it (add it to CENSUS_SCOPE); it cannot be declared not graded.`); continue; }
     declared.set(d.path, d.reason);
-  }
+  } for (const w of withdrawals) { const at = `line ${w.line}: WITHDRAWN NOT-GRADED ${w.path}`; if (!declLines.some((d) => d.path === w.path && d.line < w.line)) declarationProblems.push(`${at} withdraws no EARLIER declaration of that path; delete it.`); else if (w.reason.length < MIN_REASON) declarationProblems.push(`${at} gives no reason (${w.reason.length} characters; at least ${MIN_REASON}). Say why the declaration no longer holds.`); }
 
   const all = [...counts.keys()];
   const machinery = all.filter((p) => input.isMachinery(p));

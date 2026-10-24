@@ -248,7 +248,7 @@ export function startLayoverPresenceExpiryScheduler(): void {
   );
   const generation = ++_generation;
   _timer = setTimeout(function tick() {
-    void runLayoverPresenceExpiryTick().finally(() => {
+    void runLayoverPresenceExpiryTick().then(() => runLayoverCheckpointExpiryTick()).finally(() => { // census-layover L159: the checkpoint phase (lib/layoverCheckpointExpirySweep.ts) runs on this tick; both ticks never reject
       if (_timer !== null && generation === _generation) { _timer = setTimeout(tick, LAYOVER_PRESENCE_EXPIRY_INTERVAL_MS); _timer.unref?.(); } // a stop() during the run must not re-arm
     });
   }, STARTUP_DELAY_MS);
@@ -266,3 +266,5 @@ export function stopLayoverPresenceExpiryScheduler(): void {
 
 import { auditedLayoverClient, withLayoverSystemAudit } from './layoverServiceAudit.js';
 export function runLayoverPresenceExpirySweep(...args: Parameters<typeof runLayoverPresenceExpirySweepImpl>): ReturnType<typeof runLayoverPresenceExpirySweepImpl> { return withLayoverSystemAudit('layover:presence-expiry', () => runLayoverPresenceExpirySweepImpl(...args)); }
+// census-layover L159 (lane LAYOVER, 2026-10-23): expired check-ins (2992 layover_checkpoints) leave storage at their own expires_at on this scheduler's tick. Imported at the TAIL so no line above moves; ESM hoists it.
+import { runLayoverCheckpointExpiryTick } from "./layoverCheckpointExpirySweep.js";

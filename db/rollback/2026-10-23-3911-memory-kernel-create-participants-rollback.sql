@@ -2,7 +2,7 @@
 --
 -- Re-creates 2711's memory_kernel_execute(jsonb) VERBATIM (copied from
 -- artifacts/api-server/src/migrations/2711_memory_kernel_execute.sql) with its
--- grants. After this, CREATE no longer tags, and the type, the occurrence text
+-- comment and its grants. After this, CREATE no longer tags, and the type, the occurrence text
 -- and the source post are written by the routes' follow-up writes again — which
 -- the routes still carry, so nothing breaks. Then delete 3911's ledger row.
 
@@ -383,6 +383,10 @@ BEGIN
 END;
 $fn$;
 
+
+-- 2711's own comment, verbatim: 3911 replaced it, and a rollback restores the whole object.
+COMMENT ON FUNCTION public.memory_kernel_execute(jsonb) IS
+  'Memory Command Bus write path (Highlights/Memories spec §5/§17/§19/§23/§24). Applies ONE MemoryCommand: honours the idempotency receipt, locks and re-checks the Memory''s owner, enforces the §5 lifecycle machine, applies the state change, then writes memory_domain_events + memory_event_outbox + memory_command_receipts + memory_command_audit in the SAME transaction. Rejections are RETURNED with a §24 reason code and still write an audit row; failures RAISE and roll everything back. service_role only; application authorization runs before the call.';
 
 REVOKE ALL ON FUNCTION public.memory_kernel_execute(jsonb) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.memory_kernel_execute(jsonb) TO service_role;

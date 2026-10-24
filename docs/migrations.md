@@ -7156,8 +7156,9 @@ tree's 2711). No other file defines the function.
 
 **Order-independent with the API, both ways.** The API (same PR) sends the new keys and reads back what the kernel
 wrote. With the code first, 2711 ignores the keys, and the routes tag and type as before. With 3911 first, the old
-routes send no `tagged_user_ids` and tag as before. The `memory_type`, occurrence text and `source_post_id` they already
-send are now written by the kernel, and their follow-up writes find nothing to change.
+routes send no `tagged_user_ids` and tag as before. The `memory_type` and occurrence text they already send are now
+written by the kernel, so their read-back reconcile finds nothing to change. They do not send `source_post_id` (this PR
+adds that key), so with the old code from-post's follow-up UPDATE still links the post once, as it does today.
 
 **Proofs.** `src/test/db/memoryKernelParticipants.db.test.ts`, P1–P12. The real routers run over HTTP on the replayed
 chain, and the bridge logs every statement. For POST /memories, POST /trips/:tripId/memory, PATCH /memories/:id,

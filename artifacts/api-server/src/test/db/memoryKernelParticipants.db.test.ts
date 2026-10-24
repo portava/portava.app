@@ -582,4 +582,59 @@ describe("§17: a Memory's participants, type, occurrence text and source post a
       assertOnlyTheKernelWroteTheMemory("Q10", GRAPH_RPC);
     });
   });
+  // ── K: the kernel's own refusals and writes, called straight, on 2711 AND the tree's kernel ──
+  // The independent verifier's three survivors (#784): mutants the route-level cases
+  // above could not see, because the routes never send these commands this way.
+  for (const kernel of ["2711", "tree"] as const) describe(`K (${kernel}) — the kernel, called directly`, () => {
+    // Saved and put back EXACTLY (raw psql output), so this group leaves whatever kernel it found.
+    const rawDef = (): string => { const r = psql(`SELECT pg_get_functiondef('public.memory_kernel_execute(jsonb)'::regprocedure);`); assert.equal(r.status, 0, r.stderr); return r.stdout.replace(/\n$/, ""); };
+    let saved = ""; let savedMd5: string | null = null;
+    before(() => { savedMd5 = kernelDefMd5(); saved = rawDef(); if (kernel === "2711") { applyFile(ROLLBACK_3911); assert.equal(kernelDefMd5(), PRODUCTION_2711_MD5, "production's definition is installed"); } });
+    after(() => {
+      if (kernel === "2711") {
+        const r = psql(`${saved};\nREVOKE ALL ON FUNCTION public.memory_kernel_execute(jsonb) FROM PUBLIC, anon, authenticated;\nGRANT EXECUTE ON FUNCTION public.memory_kernel_execute(jsonb) TO service_role;`);
+        assert.equal(r.status, 0, r.stderr);
+        assert.equal(kernelDefMd5(), savedMd5, "the tree's kernel restored exactly");
+      }
+    });
+    const direct = (type: string, memoryId: string | null, actor: string, payload: Record<string, unknown>) => dispatchMemoryCommand<any>({
+      sc: memoryBridge({ flags: PROD_FLAGS }), commandType: type as any, memoryId, actorUserId: actor, idempotencyKey: randomUUID(), payload,
+      legacy: async () => { throw new Error("legacy must not run"); },
+    });
+
+    test(`K1[${kernel}] REMOVE_PERSON from someone who is neither the owner nor the tagged person is refused MEMORY_AUTH_NOT_OWNER, and the tag stands`, async () => {
+      const stranger = seedUser(`${TAG}k${kernel}`);
+      try {
+        const m = randomUUID();
+        exec(`INSERT INTO public.memories (id, owner_id, title, visibility, state) VALUES ('${m}', '${owner}', '${TAG} K1 ${kernel}', 'only_me', 'published');
+              INSERT INTO public.memory_tags (memory_id, tagged_user_id, status) VALUES ('${m}', '${viewer}', 'approved');`);
+        const out = await direct("REMOVE_PERSON", m, stranger, { tagged_user_id: viewer, status: "removed" });
+        assert.equal(out.ok, false);
+        if (!out.ok && "rejection" in out) assert.equal(out.rejection.reason, "MEMORY_AUTH_NOT_OWNER"); else assert.fail(JSON.stringify(out));
+        assert.equal(scalar(`SELECT status FROM public.memory_tags WHERE memory_id = '${m}' AND tagged_user_id = '${viewer}'`), "approved");
+        assert.equal(scalar(`SELECT count(*) FROM public.${EVENTS} WHERE memory_id = '${m}'`), "0");
+        // ADD_PERSON from the same stranger is refused one check earlier: only the tagged person consents.
+        const add = await direct("ADD_PERSON", m, stranger, { tagged_user_id: viewer, status: "approved" });
+        assert.equal(add.ok, false);
+        if (!add.ok && "rejection" in add) assert.equal(add.rejection.reason, "MEMORY_AUTH_NOT_PARTICIPANT"); else assert.fail(JSON.stringify(add));
+      } finally {
+        exec(`DELETE FROM public.memory_command_audit WHERE actor_user_id = '${stranger}'; DELETE FROM public.profiles WHERE id = '${stranger}'; DELETE FROM auth.users WHERE id = '${stranger}';`);
+      }
+    });
+
+    test(`K2[${kernel}] a CREATE that names no memory_type gets the column's DEFAULT, MOMENT`, async () => {
+      const out = await direct("CREATE_MEMORY", null, owner, { to_state: "CANDIDATE", visibility: "only_me", write: { title: `${TAG} K2 ${kernel}`, visibility: "only_me", state: "draft" }, select: "id" });
+      assert.equal(out.ok, true, JSON.stringify(out));
+      if (out.ok) assert.equal(scalar(`SELECT memory_type FROM public.memories WHERE id = '${String(out.body.id)}'`), "MOMENT");
+    });
+
+    if (kernel === "tree") test("K3[tree] memory.created's refs.tagged_user_ids names only the people actually tagged: never a requested id with no profile", async () => {
+      const ghost = randomUUID();
+      const out = await direct("CREATE_MEMORY", null, owner, { to_state: "CANDIDATE", visibility: "only_me", tagged_user_ids: [ghost, viewer, owner], write: { title: `${TAG} K3`, visibility: "only_me", state: "draft" }, select: "id" });
+      assert.equal(out.ok, true, JSON.stringify(out));
+      if (!out.ok) return;
+      const refs = JSON.parse(scalar(`SELECT payload_json->'refs'->'tagged_user_ids' FROM public.${EVENTS} WHERE memory_id = '${String(out.body.id)}'`) ?? "null");
+      assert.deepEqual(refs, [viewer], "the ghost was requested and not written, so the event does not name it");
+    });
+  });
 });

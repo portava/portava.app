@@ -41,9 +41,11 @@
 --   * code first, 3911 later: 2711 ignores the new keys, the routes find nothing
 --     written and write it themselves, exactly as before;
 --   * 3911 first, code later: the old routes send no `tagged_user_ids`, so the
---     kernel tags nobody and the old route tags as before; the old routes DO send
---     memory_type, the occurrence text and source_post_id in the write, which
---     3911 now writes, and their follow-up writes then find nothing to change.
+--     kernel tags nobody and the old route tags as before. The old routes DO send
+--     memory_type and the occurrence text in the write, which 3911 now writes, so
+--     their read-back reconcile finds nothing to change. They do NOT send
+--     source_post_id (the same PR adds that key), so with the old code from-post's
+--     follow-up UPDATE still links the post once, exactly as today.
 -- Requires 2711 (the function) and 3803 / 3804 (memories.memory_type and
 -- memories.place_display_name_at_occurrence), which sort before it. ADD_MEDIA also
 -- names memory_items.source_post_id, which 3999 adds and which sorts AFTER 3911.
