@@ -535,6 +535,41 @@ $reassert$;`,
       "EXECUTE checks of this block are still re-run.",
   },
   {
+    file: "3909_post_media_moderation_design_codified.sql",
+    blockLine: 311,
+    blockSha256: "077e76ecd98a828e",
+    kind: "superseded",
+    drops: [
+      {
+        lines: [383, 387],
+        failsWith: `${P} (3909): post_media's policies are [`,
+        supersededBy: "3925_unreleased_posts_hidden_from_non_authors.sql",
+      },
+    ],
+    reassert: `DO $reassert$
+DECLARE pols text; restrictive text;
+BEGIN
+  SELECT string_agg(polname, ',' ORDER BY polname) INTO pols
+    FROM pg_policy WHERE polrelid = 'public.post_media'::regclass;
+  IF pols IS DISTINCT FROM 'post_media_owner_delete,post_media_owner_insert,post_media_owner_update,post_media_public_select,post_media_select_post_readable_or_owner,post_media_service_role_all' THEN
+    RAISE EXCEPTION 'RE-ASSERTION FAILED (3909 as superseded by 3925): post_media''s policies are [%], not 2098''s five plus 3925''s restrictive read.', pols;
+  END IF;
+  SELECT string_agg(polname, ',' ORDER BY polname) INTO restrictive
+    FROM pg_policy WHERE polrelid = 'public.post_media'::regclass AND NOT polpermissive;
+  IF restrictive IS DISTINCT FROM 'post_media_select_post_readable_or_owner' THEN
+    RAISE EXCEPTION 'RE-ASSERTION FAILED (3909/3925): post_media''s RESTRICTIVE policies are [%]; only post_media_select_post_readable_or_owner may be, and every other policy is 2098''s permissive one.', restrictive;
+  END IF;
+END
+$reassert$;`,
+    why:
+      "3909 pinned post_media's policy set to EXACTLY production's 2098 five (\"anything else permissive would widen " +
+      "the split\"). 3925 (census-media §56.5) added post_media_select_post_readable_or_owner, a RESTRICTIVE SELECT " +
+      "policy that NARROWS reads (an unreleased post's media is its owner's alone), so the five-name pin fails by " +
+      "design once 3925 is applied. The re-assertion pins the exact six names and that the added one is the only " +
+      "RESTRICTIVE policy, so any other added policy still fails; 3925's own postcondition asserts its shape. The " +
+      "per-object 2098 fingerprint checks of this block are still re-run.",
+  },
+  {
     file: "3971_trip_routes_api_spend_gate.sql",
     blockLine: 131,
     blockSha256: "7f51ced27bb21687",
