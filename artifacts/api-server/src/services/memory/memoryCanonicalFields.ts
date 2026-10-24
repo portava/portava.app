@@ -32,13 +32,13 @@
  *               3804 trigger still records a catalog place's name).
  *
  * ── THE KERNEL ─────────────────────────────────────────────────────────────
- * 2711's memory_kernel_execute names a fixed column list and is owned by
- * another lane, so it is not changed. With the kernel on, its INSERT takes the
- * column DEFAULT (MOMENT) and its UPDATE leaves the type alone; the occurrence
- * name is kept true by 3804's trigger whoever writes. `reconcileCanonicalFields`
- * runs after every route write, reads the row back and writes the intended
- * value when the kernel path left a different one. On the legacy path the
- * direct write already carried it, so the read-back finds nothing to do.
+ * 3911's memory_kernel_execute writes both fields in the command's own
+ * transaction (CREATE's INSERT, every edit's UPDATE), so the read-back below
+ * finds nothing to do. Against 2711 (before 3911: a fixed column list) the
+ * INSERT took the DEFAULT (MOMENT) and the UPDATE left the type alone, and
+ * `reconcileCanonicalFields` reads the row back and writes the intended value —
+ * so either deploy order holds. 3804's trigger keeps the occurrence name true
+ * whoever writes; on the legacy path the direct write carried both already.
  *
  * ── WHO SEES THE OCCURRENCE NAME (lead rulings H-16 / H-17) ─────────────────
  * The OWNER sees the stored text: it is their history (H-16: "The owner's own
@@ -330,8 +330,8 @@ export function canonicalPayloadFor(
  *   intended.occurrenceName   a provider pick's text the route meant, or
  *                             undefined
  *
- * Read back by id; where the kernel path left a different type (its INSERT
- * takes the DEFAULT, its UPDATE ignores the key) or no name for the place it
+ * Read back by id; where a 2711 kernel left a different type (its INSERT
+ * took the DEFAULT, its UPDATE ignored the key) or no name for the place it
  * wrote, write the intended value. The name is only ever a FIRST capture — 3804's
  * trigger refuses to rewrite a recorded one — so this can never overwrite
  * history. Idempotent: a replay finds nothing to do. Any failed read or write
