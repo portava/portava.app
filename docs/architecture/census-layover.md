@@ -11072,7 +11072,7 @@ database result below is from the CI local-db suite's own harness shape or a PGl
   `entry_requirements` is uncurated, so that is every roomy layover.
 - The table's one writer sends the verdict unmapped
   (`artifacts/api-server/src/services/airport/layoverLedger.ts:513#verdict: record.verdict,`), spread into
-  `artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:455#.insert({ ...certifiedComputationRowFor(userId, sessionId, record), ...cas.column });`.
+  `artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:455#.insert({ ...certifiedComputationRowFor(userId, sessionId, record), ...cas.column`.
 - So with 2700 and 2992 applied and `layover_decision_persistence_enabled` ON, `persistDecision` fails with 23514 and
   returns `write_failed`
   (`artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:468#reason: "write_failed",`). No decision, time
@@ -12881,7 +12881,7 @@ scratchpad and are **not committed**; see §81.6.
 | L197 | W | **C** | **This row's own words were "C on the press of 3513", and 3513 is applied** (17:22:52Z; `layover_crowd_reports_enabled` TRUE). **Table:** `airport_fact_observations` (2860) represents TTL and provenance. It carries `observed_at` and `expires_at` (with an expiry index and an `expires_at > observed_at` CHECK), an observer kind, id, trust and source reference, a unique submission token and a CHECK over §10's five fact classes. **Writer:** POST /airport/sessions/:id/observations is now mounted (401). It refuses only when the crowd gate is closed (`artifacts/api-server/src/routes/airport.ts:2830#if (await crowdReportsClosed(sc, res)) return;`), and that gate is open. L197's table ruling (*"needs a product surface that populates the table"*) is met. **0 rows: no report has been submitted.** |
 | L30 | N | **C** | *"`layover_checkpoints`"*. The row names the table and no columns, so existence with a reachable writer is the bar (§26.2; L197's table ruling). **H24 is discharged:** 2992 is applied, and the table carries its type, source and confidence CHECKs and `UNIQUE (session_id, dedup_key)`. **Writer:** POST /airport/sessions/:id/checkpoints (`artifacts/api-server/src/routes/airport.ts:4592#router.post("/airport/sessions/:id/checkpoints"`) is mounted (401; it answered 404 on the old fork). It is gated by `airport_mode_enabled` (TRUE). Inside `recordTravellerCheckpoint` (`artifacts/api-server/src/services/layover/LayoverCheckpointStore.ts:144#export async function recordTravellerCheckpoint(`) the only gate is persistence (`artifacts/api-server/src/services/layover/LayoverCheckpointStore.ts:154#if (!(await isFlagEnabled(db, "layover_decision_persistence_enabled")))`), which is ON. Checkpoints are traveller-reported only, and nothing is fabricated. **0 rows: no checkpoint has been reported.** |
 | L23 | N | **W** | **H24 is discharged:** 2992 is applied, all eleven columns exist, and there is one row per snapshot. The writer is `timeBudgetRowFor` (`artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:291-332#export function timeBudgetRowFor(`), reached through `persistDecision` with persistence ON. **But the row enumerates eleven members, and 8 of them are NULL by construction on every production path.** Seven are literal nulls: deplane, immigration and baggage (`artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:303-305#deplane_min: null,`), and security, transfer, contingency and boarding (`artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:322-325#security_min: null,`). The eighth, `outbound_min`, is NULL whenever no landside probe was certified (`artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:314#outbound_min: record.estimates.outboundTravel?.valueMinutes ?? null,`). `evaluate()` certifies none (`artifacts/api-server/src/services/airport/LayoverFeasibilityService.ts:124-127#const record = (await consumerLayoverRecord(`), and no non-test caller supplies a `landsideProbe` at all. Only `exit_min` (the four-term lump), `return_min` and `usable_minutes` are produced. Members that are spelled and never produced make this `W` (§26.2's member rule; L116). Producing the missing terms is L46's work. |
-| L24 | N | **W** | **H24 is discharged:** 2992 is applied, and all six members exist with their CHECKs (`recommended <= hard`, `latest_activity <= recommended`, the risk and confidence vocabularies) and an immutability trigger. The writer `returnPlanRowFor` (`artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:345-365#export function returnPlanRowFor(`) is reachable with persistence ON. **But two of the six members are never produced as the spec means them.** `latest_activity_departure_at` is the literal null (`artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:359#latest_activity_departure_at: null,`). `recommended_return_by` is `hard_return_by` by construction (`artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:355#recommended_return_by: hard,`), so the spec's distinct recommended return is never produced. `W` under the same member rule. |
+| L24 | N | **W** | **H24 is discharged:** 2992 is applied, and all six members exist with their CHECKs (`recommended <= hard`, `latest_activity <= recommended`, the risk and confidence vocabularies) and an immutability trigger. The writer `returnPlanRowFor` (`artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:345-365#export function returnPlanRowFor(`) is reachable with persistence ON. **But two of the six members are never produced as the spec means them.** `latest_activity_departure_at` is the literal null (`artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:359#latest_activity_departure_at: null,`). `recommended_return_by` is `hard_return_by` by construction (`artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:355#recommended_return_by:`), so the spec's distinct recommended return is never produced. `W` under the same member rule. |
 | L32 | N | **W** | **H24 is discharged:** 2992 is applied, and all nine members exist with their CHECKs. The writer `recordLayoverOutcome` is reachable on DELETE /airport/sessions/:id with persistence ON (see L195). **But five of the nine members are never produced.** Four are the literal null on every write: `completed_experience`, `met_people_count`, `comfort_rating` and `plan_change_reason` (`artifacts/api-server/src/services/layover/LayoverOutcomeStore.ts:91-110#export function layoverOutcomeRow(`). `anonymization_state` has no writer anywhere in the tree. The row does not send it, so 2992's default (`artifacts/api-server/src/migrations/2992_layover_decision_record_and_operational_tables.sql:718#anonymization_state`) is the only value it can hold. Unlike L30, this row enumerates its members, so §26.2's member rule applies. §17.6's sentence *"the table is still absent, which is the only thing the row scores"* was about absence, and it does not exempt the members once the table exists. `W`. |
 
 ### 81.4 Rows that do not move, re-measured on production
@@ -13162,3 +13162,107 @@ reason given in the row.
 One row is re-derived and held: L196 stays W (§82.2a).
 
 296 = 91 C / 184 W / 21 N / 0 X. CORRECT% is 91 / 296 = 30.7 %. CONSTRUCTED% is 275 / 296 = 92.9 %.
+
+## §83 — 2026-10-23 (census drive, lane LAYOVER, batch 2): the retest rows proved under production's own flag state; L24 and L25 built; SEVEN N → W
+
+*Branch `claude/census-lay-b2-20261023`, stacked on §82's branch (`claude/census-lay-b1-20261023`, PR #781, merged into
+this branch rather than rebased). `head_commit` is not re-declared. Every row not named here is unchanged. This pass reads
+production read-only; it applies, flips and deploys nothing.*
+
+**Read this first.** The owner's rule from §82 stands: a row is `C` only on production-path evidence, and no traveller has
+used Layover since the 2026-10-23 flag press. This pass does the other half of that rule. For every row whose remaining
+dependency is the owner's signed-in retest, the server half is now proved on PostgreSQL, through the real router, under
+**production's own flag state** rather than a flag world a suite chose. What is left for each of those rows is the
+owner's check on production, and nothing else. No row moves to `C` on that proof.
+
+### 83.1 The proof standard for a retest row
+
+- **Production's flags as the base.** `artifacts/api-server/src/test/db/fixtures/productionFlags20261023.json` holds all
+  382 `public.feature_flags` rows as read read-only on 2026-10-23 after the lead's 21:55:57Z changes (presence intents and
+  crew abort notify OFF), with `layover_ranking_mode`'s metadata. With `PRESSED_BASE=production-20261023`, every pressed
+  suite starts from it (`artifacts/api-server/src/test/db/pressedLayoverApp.ts:171#export const PRESSED_BASE`), and
+  a session is declared the way the app declares it, because with `layover_constraints_enabled` ON an undeclared airport
+  change closes landside (designed fail-closed; L49 below).
+- **Every layover db suite, both bases.** All 57 (§82's 55, the retest-row suite and 3951's forward/rollback suite), on local PostgreSQL 17: default base **473 / 473**; production base **471 / 471**. Two cases are not defined under the production base because production's flags make them inapplicable: `layoverPressedSnapshot`'s legacy-ordering case and `layoverFlightConnections`' flag-absent arm. The first full run found one harness gap (3951 was missing from the replay's omission closure, so a replay without 2700 failed at 3951) and one setup error in the 3951 suite; both were fixed and the full run repeated.
+- **The 21 rows no suite drove before.** `artifacts/api-server/src/test/db/layoverRetestRows20261023.db.test.ts` runs a
+  traveller's own calls under the fixture's flags for L43, L49, L64, L95, L124, L132, L153, L158, L166, L173, L190, L222,
+  L224, L229, L230, L279, L283, L284 and L294 (14 / 14 with L24 and L25). L169 is driven by `layoverFlightConnections`
+  P3/P4, which runs in both bases. L94 rides L95's PATCH; its `W` is §60's whole-record re-derivation, a design limit
+  rather than the retest, so the triage moves it to a ruling and 83 retest rows remain. Mutants R1–R6 (exact without the
+  control, recheck not charged, airport change not closing, the undeclared-change unknown removed, re-entry not
+  suppressing, a schema failure answered as data) are each killed by their own case.
+
+### 83.2 Rows that move N → W
+
+Each stated `N` reason is false at this commit and on production. None reaches `C`: each needs the owner's signed-in
+check, or the dependency named in the row.
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L43 | N | **W** | Re-entry is a traveller check-in (`artifacts/api-server/src/routes/airport.ts:4592#router.post("/airport/sessions/:id/checkpoints"`). The overview then reports the lifecycle `AIRPORT_REENTERED` with `STOP_LANDSIDE_DISCOVERY` and `REFRESH_GATE_AND_SECURITY`, re-reads the onward flight and the security term (`artifacts/api-server/src/services/airport/LayoverDepartureFlight.ts:160#export async function reentryContextFor(`), and GET /recommendations withholds every landside card with `airport_reentered` (`artifacts/api-server/src/services/layover/LayoverCheckpointStore.ts:255#if (s.state === "suppressed") return { reason: "airport_reentered", reportedAt: s.reportedAt };`). Proved under production's flags, including a gate the traveller recorded being re-read at re-entry (`artifacts/api-server/src/test/db/layoverRetestRows20261023.db.test.ts:156#L173 L43`; `artifacts/api-server/src/test/db/layoverRetestRows20261023.db.test.ts:265#L153 L43`). The security term is `no_live_reading` until a feed exists (L81). |
+| L49 | N | **W** | A critical unknown makes the record `INSUFFICIENT` and closes landside: an undeclared airport change is one (`artifacts/api-server/src/services/airport/LayoverConstraints.ts:569#criticalUnknowns.push("airport_change_required");`). With `layover_constraints_enabled` ON, a session created as the app creates it (baggage only) has confidence `INSUFFICIENT`, landside `closed`, and no landside card offered (`artifacts/api-server/src/test/db/layoverRetestRows20261023.db.test.ts:61#L49`). Mutant R4 (the unknown removed) is killed. |
+| L72 | N | **W** | The return is priced at its own future instant, never the outbound's and never doubled (`artifacts/api-server/src/services/airport/LayoverRoutedFeasibility.ts:486#so the return is priced at its own future instant`; `artifacts/api-server/src/test/layoverRoutedFeasibility.test.ts:181#the return under its own future instant`). The stated reason (`travelTimeMin * 2`) is gone. W: the routed path is dark in production (`layover_routed_corridor_enabled` FALSE), and the unrouted engine rates the return at the return instant from a static time-of-day factor, not a traffic forecast. |
+| L153 | N | **W** | The offline bundle caches the onward flight's last RECORDED observation, with who recorded it and when, and badges it stale from the observation instant (`artifacts/api-server/src/services/airport/LayoverDepartureFlight.ts:119#export function readDepartureFlight(`; `artifacts/api-server/src/test/layoverDepartureFlightContext.test.ts:162#the stale bound runs from the OBSERVATION, never from now`), behind `layover_flight_connections_enabled` (ON). On PostgreSQL through the routers under production's flags, a linked flight nobody observed is `no_flight_observation`, and a gate the traveller records arrives with `source: traveller` and a stale bound 15 minutes from the observation (`artifacts/api-server/src/test/db/layoverRetestRows20261023.db.test.ts:265#L153 L43`). W: the owner's signed-in check, and the app has no control that records a gate (POST /trips/:tripId/flight-segments/:segmentId/status has no client function); the traveller's disruption report records status and times only. |
+| L169 | N | **W** | Connections are detected from the traveller's own Trips flights (`artifacts/api-server/src/services/airport/LayoverConnectionDetection.ts:287#export async function detectFromTrip(`), with `trip_flight_segments_enabled` and `layover_flight_connections_enabled` ON, and proved on PostgreSQL (`artifacts/api-server/src/test/db/layoverFlightConnections.db.test.ts:175#P3 L267`). W: the owner's signed-in check. |
+| L218 | N | **W** | `docs/architecture/layover-certification.md` exists and is generated from, and checked against, `artifacts/api-server/src/services/airport/layoverCertification.ts` by `check:layover-certification`: the five proof classes, the seven hard invariants and the fifteen §21.1 scenarios, each with a registered test. W: five entries are proved only in part, and each names the production dependency it waits on. |
+| L230 | N | **W** | An unconfirmed border fails closed in every flag state (owner decision 2026-10-18; `artifacts/api-server/src/services/airport/layoverEntryGate.ts:207#export const ENTRY_POLICY_FAIL_CLOSED = true as const;`). A traveller with no passport on file gets no landside card whatever else they declare; the same declaration with a confirmed corridor opens landside (`artifacts/api-server/src/test/db/layoverRetestRows20261023.db.test.ts:73#L230`). |
+
+### 83.3 L24 and L25: built, and held
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L24 | W | W | `recommended_return_by` is now spec §5's "recommended return threshold": the instant the certified return state turns RETURN_SOON, `hardReturnTime − RETURN_SOON_LEAD_MIN`, which is also the instant the one stored reminder fires (`artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:355#recommended_return_by: new Date(record.deadline.hardReturnTime.getTime() - RETURN_SOON_LEAD_MIN * 60_000).toISOString(),`). It used to be the hard return itself. It is a threshold on the one deadline, not a second deadline. Proved on the stored row through the router (`artifacts/api-server/src/test/db/layoverRetestRows20261023.db.test.ts:226#L24`). **Held W on a ruling:** `latest_activity_departure_at` stays NULL. Spec §5 orders the latest activity departure AFTER the recommended threshold (RETURN_SOON, then RETURN_NOW), while 2992's CHECK requires it before (`latest_activity_departure_at <= recommended_return_by`). Any producer would break one of the two, and no measured return leg exists on production to compute it from. |
+| L25 | N | N | `safe_envelope_ref` is built: migration 3951 adds the nullable column with a CHECK naming its vocabulary and seeds `layover_snapshot_envelope_ref_enabled` FALSE (`artifacts/api-server/src/migrations/3951_layover_snapshot_safe_envelope_ref.sql:59#ADD COLUMN IF NOT EXISTS safe_envelope_ref TEXT;`). Under the flag, persistDecision stores the content hash of the envelope GET /overview serves for that snapshot, or `env:withheld:<why>` (`artifacts/api-server/src/services/layover/LayoverSnapshotEnvelopeRef.ts:55#export function safeEnvelopeRefFor(`). The PostgreSQL case hashes the router's served envelope and finds it equal to the stored ref (`artifacts/api-server/src/test/db/layoverRetestRows20261023.db.test.ts:237#L25`). **Held N:** 3951 is unapplied (H24), and `candidate_set_version` is not built. In this tree the candidate set points at the snapshot (`layover_recommendations.snapshot_id`), and an immutable snapshot row is written before its candidate set exists, so what a version on it would number is a ruling, not a column. |
+
+### 83.4 The flag-versus-app audit (every flag ON since 2026-10-23)
+
+28 flags were checked against the app. 18 are consumed, 7 are consumed in part, 1 is not rendered
+(`layover_lifecycle_machine_enabled`), 1 is server-only by design (`layover_snapshot_consumers_enabled`), and
+`layover_ranking_mode` is split ("on" ordering reaches the app; "shadow" and "legacy" are server-only).
+
+- **Fixed here, because a row needs it.**
+  - `layover_recommendation_status_enabled` (L38, L50, L97): §82 fixed the recommendations list. The map and "Check an
+    experience from here" still ignored `available`. A stop whose card is now unavailable is kept off the map and listed
+    with the server's sentence (`travel-buddy-standalone/src/services/layover.ts:3114#export function candidateFeasibilityByRecId(`),
+    and an unavailable card is never offered as a check (`travel-buddy-standalone/src/components/layover/LayoverCurrentPositionCard.tsx:11#r.available!==false`).
+  - `layover_compass_assistant_enabled` (L100): a fallback answer (the certified answer alone, for a named reason) looked
+    the same as an assisted one, so the owner's retest of L100 could not tell whether the model ran. The card now says so
+    (`travel-buddy-standalone/src/services/layover.ts:3141#export function compassFallbackSentence(`).
+- **Partial, and no row's grade turns on it here:** the `lifecycle` member (not rendered; the re-entry card renders
+  L43's side effects), `liveDisclosure` (unread), `flightSegment` on the disruption answer (unread), the flight-status
+  POST (no client function: L153's gate), `membersDegraded` on the crew plan, `invalidationApplied` on a replan, and the
+  Discovery `layover` summary. Each needs an app release to reach a traveller in any case.
+
+### 83.5 Tests and mutation proofs, run on 2026-10-23
+
+- **PostgreSQL 17** (local, port 54354): the 57 layover suites, 473 / 473 (default base) and 471 / 471 (production base). The new suites: retest rows **14 / 14**; 3951 forward and
+  rollback **4 / 4** (the rollback refuses while the flag is ON and while a stored snapshot holds a ref, then removes the
+  flag, CHECK, column and ledger row, is idempotent, and 3951 re-applies).
+- **Unit:** `artifacts/api-server/src/test/layoverSnapshotMembers.test.ts` **15 / 15**.
+- **App:** the two new component suites and the compass suite, **24 / 24**.
+- **Mutants**, each restored byte-identically (sha256 checked), all killed by their own assertion: R1–R6 (above), R7 (the flight's stale bound renewed from now instead of the observation); S1
+  (ref written with the flag OFF), S2 (envelope cut from the wrong window), S3 (closed gate hashed), S4/S5 (recommended
+  return back to the hard return), S6 (flag ignored, unit); C1 (an unavailable card offered as a check), C2 (an
+  unavailable card's stop drawn on the map), C3 (fallback not said).
+
+### 83.6 What this pass did not do, stated
+
+- The presence and crew expiry sweeps still delete at their own `expires_at` with no flag (§82.4). Gating both behind
+  default-OFF flags, making the crew DELETE re-check expiry and return the confirmed count is its own later change.
+- The repository's recorded production state is still the 2026-09-22 capture; its refresh is a separate PR.
+- L153's gate capture (a client for POST /trips/:tripId/flight-segments/:segmentId/status) was not built.
+
+### Headline
+
+| bucket | was (§82) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 91 | 91 |
+| BUILT-BUT-WRONG | 184 | 191 |
+| NOT-BUILT | 21 | 14 |
+| CANNOT-VERIFY | 0 | 0 |
+| total | 296 | 296 |
+
+**Seven moves.** Seven rows move N → W: L43, L49, L72, L153, L169, L218 and L230. L24 (W) and L25 (N) are re-derived
+and held (§83.3).
+
+296 = 91 C / 191 W / 14 N / 0 X. CORRECT% is 91 / 296 = 30.7 %. CONSTRUCTED% is 282 / 296 = 95.3 %.

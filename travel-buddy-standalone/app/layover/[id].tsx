@@ -395,8 +395,8 @@ export default function LayoverDashboardScreen() {
   // than inside the card so the card stays a consumer: L115 forbids the map
   // recalculating feasibility, and a lookup table is not a calculation.
   const candidateFeasibility = useMemo(() => {
-    const out: Record<string, NonNullable<LayoverRecommendation['feasibility']>> = {};
-    for (const r of recs) if (r.id && r.feasibility) out[r.id] = r.feasibility;
+    const out: Record<string, NonNullable<LayoverRecommendation['feasibility']>> = candidateFeasibilityByRecId(recs);
+    // census-layover §83: a card the server serves with available === false is a BLOCKED pin with the server's own sentence (services/layover.ts candidateFeasibilityByRecId)
     return out;
   }, [recs]);
   const addedRecIds = useMemo(
@@ -1195,3 +1195,4 @@ import { LayoverTimingEvidenceCard } from '../../src/components/layover/LayoverT
 import { LayoverCurrentPositionCard } from '../../src/components/layover/LayoverCurrentPositionCard.tsx';
 import { LayoverAnswerChangesCard } from '../../src/components/layover/LayoverAnswerChangesCard.tsx';
 import { LayoverReentryCard } from '../../src/components/layover/LayoverReentryCard.tsx';
+import { candidateFeasibilityByRecId } from '../../src/services/layover.ts';

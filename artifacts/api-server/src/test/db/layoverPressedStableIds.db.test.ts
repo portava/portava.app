@@ -71,9 +71,9 @@ describe("B1-P stable recommendation ids (P4)", { skip: PRESSED_SKIP_REASON }, (
     });
 
     it("I2 L117 L125 — the place outside the certified action universe is not offered, and no banded pin implies a fit it was not certified for", () => {
-      const titles = (first.recommendations as any[]).map((r) => r.title);
-      assert.ok(titles.includes("Marina Bay Walk"), `control: the reachable place is offered (${titles.join(", ")})`);
-      assert.ok(!titles.includes("Far Away Fort"), "a place outside the envelope was offered as a card");
+      const titles = (first.recommendations as any[]).filter((r) => r.available !== false).map((r) => r.title); // §83: a BLOCKED card (status flag ON) is served visibly unavailable, never offered
+      assert.ok((first.recommendations as any[]).some((r) => r.title === "Marina Bay Walk"), `control: the reachable place is offered (${titles.join(", ")})`);
+      assert.ok(!titles.includes("Far Away Fort") && (first.recommendations as any[]).filter((r) => r.title === "Far Away Fort").every((r) => r.status === "BLOCKED" && typeof r.statusExplanation === "string"), "a place outside the envelope was offered as a card");
       const join = screenJoin(first.recommendations);
       assert.ok(Object.keys(join).length > 0, "no pin is banded at all — nothing on the map can be 'visibly blocked'");
       for (const f of Object.values(join)) {

@@ -158,9 +158,9 @@ describe("B1-P rollout switches (P10, P14, L254 test-only, P18)", { skip: PRESSE
       const sid = (await startSession(app, u, { iata: "SIN" }, { departsInH: 10 })).id;
       const r = await app.call("GET", `/api/airport/sessions/${sid}/recommendations`, u);
       assert.equal(r.status, 200, r.raw);
-      const titles = r.body.recommendations.map((c: any) => c.title);
-      assert.ok(titles.includes("Calm Garden"), `control: the place without a reading is served (${titles.join(", ")})`);
-      assert.ok(!titles.includes("Crowded Market"), "a card was served into a live unsafe-density reading");
+      const titles = r.body.recommendations.filter((c: any) => c.available !== false).map((c: any) => c.title); // §83: with layover_recommendation_status_enabled ON a refused card is served BLOCKED (available: false), never offered
+      assert.ok(r.body.recommendations.some((c: any) => c.title === "Calm Garden"), `control: the place without a reading is served (${titles.join(", ")})`);
+      assert.ok(!titles.includes("Crowded Market") && r.body.recommendations.filter((c: any) => c.title === "Crowded Market").every((c: any) => c.status === "BLOCKED" && typeof c.statusExplanation === "string"), "a card was served into a live unsafe-density reading");
     });
   });
 

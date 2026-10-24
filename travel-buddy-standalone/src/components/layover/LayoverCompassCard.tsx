@@ -119,7 +119,7 @@ function SessionCompassCard({ sessionId, timezone, onReplanned }: Props) {
         <View style={styles.panel}>
           {answer ? (
             <View style={styles.answerBox} testID="compass-answer">
-              <Text style={styles.answerText}>{answer.answer}</Text>
+              <Text style={styles.answerText}>{answer.answer}</Text>{compassFallbackSentence(answer.assistant) ? <Text style={styles.tools} testID="compass-assistant-fallback">{compassFallbackSentence(answer.assistant)}</Text> : null}{/* census-layover §83 L100 */}
               {answer.safetyNote ? (
                 <Text style={styles.answerSafety} testID="compass-safety-note">{answer.safetyNote}</Text>
               ) : null}
@@ -203,3 +203,4 @@ const styles = StyleSheet.create({
   askBtnDim:  { opacity: 0.4 },
   askBtnText: { ...t.bodyStrong, color: color.onInk },
 });
+import { compassFallbackSentence } from '../../services/layover.ts';
