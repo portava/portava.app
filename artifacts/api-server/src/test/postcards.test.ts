@@ -2174,3 +2174,100 @@ describe('census-media §37.10 — the owner delete moves the cover, an uncounta
     assert.equal(allPostcards[0].user_id, OWNER_ID, 'for the post\'s author');
   });
 });
+
+// ── 2098's delete pin on DELETE /postcards/:id/media/:mediaId (2026-10-24) ────
+// 3909's post_media_owner_delete refuses an owner's DELETE of a row carrying a
+// rejected/flagged verdict. This route runs on the SERVICE client, which the
+// RLS pin does not bind, so before this change it deleted such a row — and its
+// storage object, and recounted the postcard — exactly as it would a clean one.
+// MUTATION PROOF (2026-10-24): removing the `isModerationPinnedPostMedia` refusal
+// turns the four pinned-state tests red; removing the compare-and-set
+// `.eq('moderation_status', …)` turns the race test red.
+describe('DELETE /api/postcards/:id/media/:mediaId — 2098 moderation pin (409, nothing written)', () => {
+  const ADMIN_ID = '00000000-0000-0000-0000-000000000c0d';
+  const TOKEN_ADMIN = 'fake-pc-admin-pin';
+  let removed: string[] = [];
+
+  function pinClient(onMediaRead?: () => void) {
+    const client = buildFakeClient({ [TOKEN_OWNER]: OWNER_ID, [TOKEN_OTHER]: OTHER_ID, [TOKEN_ADMIN]: ADMIN_ID });
+    const from = client.from.bind(client);
+    (client as any).from = (table: string) => {
+      const b = from(table);
+      if (table === 'post_media' && onMediaRead) {
+        const maybeSingle = b.maybeSingle;
+        b.maybeSingle = async () => { const r = await maybeSingle(); onMediaRead(); return r; };
+      }
+      return b;
+    };
+    const storageFrom = client.storage.from.bind(client.storage);
+    (client as any).storage.from = (bucket: string) => {
+      const s: any = storageFrom(bucket);
+      return { ...s, remove: async (paths: string[]) => { removed.push(...paths); return s.remove(paths); },
+        list: async () => ({ data: [], error: null }) };
+    };
+    _setTestClient(client, true);
+  }
+
+  function seed(moderation: string) {
+    allPostMedia.push({
+      id: MEDIA_ID, post_id: POST_ID, user_id: OWNER_ID, media_type: 'image', storage_bucket: 'post-media',
+      storage_path: `${OWNER_ID}/${POST_ID}/${MEDIA_ID}.jpg`, public_url: `https://cdn.test/${MEDIA_ID}.jpg`,
+      mime_type: 'image/jpeg', file_size_bytes: 500_000, processing_status: 'ready', moderation_status: moderation, sort_order: 0,
+    });
+    posts[POST_ID].media_count = 1;
+    posts[POST_ID].has_video = false;
+  }
+
+  beforeEach(() => {
+    removed = [];
+    allProfiles.push({ id: ADMIN_ID, role: 'admin', username: 'sysadmin-pin' });
+    pinClient();
+  });
+
+  for (const state of ['rejected', 'flagged', 'limited']) {
+    it(`the OWNER deleting a '${state}' row ⇒ 409; the row, its object and the postcard count are untouched`, async () => {
+      seed(state);
+      const { status, body } = await apiReq('DELETE', `/postcards/${POST_ID}/media/${MEDIA_ID}`, undefined, TOKEN_OWNER);
+      assert.equal(status, 409, JSON.stringify(body));
+      assert.equal(allPostMedia.length, 1, 'the row carrying the verdict must survive');
+      assert.equal(allPostMedia[0].moderation_status, state);
+      assert.deepEqual(removed, [], 'no storage object may be removed');
+      assert.equal(posts[POST_ID].media_count, 1, 'no recount on a refused delete');
+    });
+  }
+
+  it("an ADMIN on this owner door is pinned too (moderators remove through /admin/media/:id/moderate)", async () => {
+    seed('flagged');
+    const { status } = await apiReq('DELETE', `/postcards/${POST_ID}/media/${MEDIA_ID}`, undefined, TOKEN_ADMIN);
+    assert.equal(status, 409);
+    assert.equal(allPostMedia.length, 1);
+    assert.deepEqual(removed, []);
+  });
+
+  it('a non-owner still gets 403 first — the pin says nothing to someone who may not delete anyway', async () => {
+    seed('rejected');
+    const { status } = await apiReq('DELETE', `/postcards/${POST_ID}/media/${MEDIA_ID}`, undefined, TOKEN_OTHER);
+    assert.equal(status, 403);
+    assert.equal(allPostMedia.length, 1);
+  });
+
+  for (const state of ['pending', 'approved']) {
+    it(`a '${state}' row is still the owner's to delete (200, row and object removed)`, async () => {
+      seed(state);
+      const { status, body } = await apiReq('DELETE', `/postcards/${POST_ID}/media/${MEDIA_ID}`, undefined, TOKEN_OWNER);
+      assert.equal(status, 200, JSON.stringify(body));
+      assert.equal(allPostMedia.length, 0);
+      assert.ok(removed.includes(`${OWNER_ID}/${POST_ID}/${MEDIA_ID}.jpg`), JSON.stringify(removed));
+    });
+  }
+
+  it('a verdict landing between the read and the delete is not deleted out from under it (409, nothing removed)', async () => {
+    seed('approved');
+    pinClient(() => { const row = allPostMedia.find((m) => m.id === MEDIA_ID); if (row) row.moderation_status = 'flagged'; });
+    const { status } = await apiReq('DELETE', `/postcards/${POST_ID}/media/${MEDIA_ID}`, undefined, TOKEN_OWNER);
+    assert.equal(status, 409);
+    assert.equal(allPostMedia.length, 1, 'the now-flagged row survives');
+    assert.deepEqual(removed, []);
+    assert.equal(posts[POST_ID].media_count, 1);
+  });
+});

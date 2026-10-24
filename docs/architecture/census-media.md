@@ -17588,3 +17588,35 @@ A row for §44.18.6's reader table, recorded here so no line above moves:
 | Reader | What it serves | Honoured the block before | Now |
 | --- | --- | --- | --- |
 | Direct PostgREST reads of `post_media` | every ready, public row the policy admits, including rows whose OWNER blocked the reader (the policy's `blocks` subquery ran under `blocks`' own RLS) | no | **fixed on branch by 3905, not merged, not deployed; the viewer's own block was always honoured** |
+
+### Correction (2026-10-24, media deletion lane) — account deletion left `posts.media_urls` uploads in the bucket; the postcard media DELETE ignored 2098's moderation pin
+
+*Branch `claude/fix-media-deletion-postcard-20261024`, cut from main `ffdf6428c`. **Built, waiting on release: NO ROW MOVES.**
+Server code counts only once deployed; nothing here is deployed. No migration, no database write.*
+
+**1. Account deletion and `posts.media_urls` (not graded by this census: §53.4 lists account media erasure among the
+rows with no requirement among the 450).** POST /posts wrote an upload's bare key into `posts.media_urls` and created no
+`post_media` row (the defect #795 fixes and 3924 backfills). `executeAccountDeletion` collected bytes from `post_media`
+only, so `tombstone_or_delete_posts` deleted the row, or blanked `media_urls` through `tombstone_post`, and left the upload
+behind. The same was true of its `.thumb.jpg` and `.feed.jpg` siblings and of a video's `.poster.jpg`. A new section-1
+step, `collect_post_media_url_paths`
+(`artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts#async function collectPostUploadReferences(`),
+reads `media_urls` and `media_thumbnail_url` before any post row is touched. Every value goes through the existing
+`collectOwnedReference` guard: an external URL is skipped, and a key naming another owner, or one carrying `..`, is
+refused. `uploadSiblings` derives the server-written siblings only for `<the erased account's id>/<ms>.<ext>`. After #795,
+that function also adds the siblings for `post_media` rows, which name only `storage_path` and, at most, the poster. The
+removal set is de-duplicated, so a key named by both a row and `media_urls` is removed once. Retention is not expanded:
+nothing that was deleted before is kept now. Tests: `artifacts/api-server/src/test/accountDeletionPostMediaUrls.test.ts`
+(9 cases; red before the fix).
+
+**2. Postcard media DELETE and the moderation pin (MD269 examined, stays W).** 3909's `post_media_owner_delete` refuses
+an owner's DELETE of a `rejected` or `flagged` row. On the chain, `authenticated` holds no DELETE on `post_media` at all, so
+the only door is the service client. `DELETE /postcards/:id/media/:mediaId`
+(`artifacts/api-server/src/routes/postcards.ts#export function isModerationPinnedPostMedia(`) used to delete such a row,
+its object and its count. It now answers 409 before any write, for an owner and an admin alike. Moderators still remove
+files through `POST /admin/media/:id/moderate`. The DELETE is a compare-and-set on the status it read, so a verdict that
+lands mid-request is not deleted. A non-owner still gets 403 first. Tests: `artifacts/api-server/src/test/postcards.test.ts`
+"2098 moderation pin" (8 cases; red before the fix), and
+`artifacts/api-server/src/test/db/postcardMediaDeletePin.db.test.ts`, which holds the route's predicate to the policy's
+answer for every status the chain's CHECK admits. MD269 does not move: its blocker is still the (a) owner rule and the
+missing classifier (§37.8.5).

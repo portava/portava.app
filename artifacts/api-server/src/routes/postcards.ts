@@ -1168,7 +1168,7 @@ router.delete('/postcards/:id/media/:mediaId', async (req, res) => {
   // Load media row
   const { data: mediaRow, error: loadErr } = await sc
     .from('post_media')
-    .select('id, user_id, post_id, storage_bucket, storage_path, processing_status, public_url') // census-media §37.10 item 1: the removed file's URL, to move a cover off it (was: .select('id, user_id, post_id, storage_bucket, storage_path, processing_status'))
+    .select('id, user_id, post_id, storage_bucket, storage_path, moderation_status, processing_status, public_url') // census-media §37.10 item 1: the removed file's URL, to move a cover off it (was: .select('id, user_id, post_id, storage_bucket, storage_path, processing_status')); 2026-10-24: + moderation_status, for 2098's delete pin
     .eq('id', mediaId)
     .eq('post_id', postId)
     .maybeSingle();
@@ -1194,18 +1194,18 @@ router.delete('/postcards/:id/media/:mediaId', async (req, res) => {
     }
   }
 
-  // Hard-delete from DB
-  const { error: deleteErr } = await sc
+  // Hard-delete from DB — after 2098's delete pin (isModerationPinnedPostMedia, at the tail): a pinned row is refused and NOTHING is written
+  if (isModerationPinnedPostMedia((mediaRow as any).moderation_status)) { sendError(res, 'conflict', POSTCARD_MEDIA_PINNED_MESSAGE()); return; }
+  const { data: deletedRows, error: deleteErr } = await sc
     .from('post_media')
     .delete()
-    .eq('id', mediaId);
-
+    .eq('id', mediaId).eq('moderation_status', String((mediaRow as any).moderation_status)).select('id'); // compare-and-set on the state just read: a verdict landing after the read is not deleted out from under it
   if (deleteErr) {
     req.log.error({ err: deleteErr }, 'postcards: failed to delete media row');
     sendError(res, "db_error", "We couldn't remove that media. Please try again.", { exposeDetail: true });
     return;
   }
-
+  if (!Array.isArray(deletedRows) || deletedRows.length === 0) { sendError(res, 'conflict', POSTCARD_MEDIA_PINNED_MESSAGE()); return; } // the row changed or went since the read: nothing was deleted, and its objects are left as they are
   // Remove from storage (best-effort — do not fail if storage removal fails).
   // The 0208 feed variant goes with it: it is a derivative of this exact object
   // and nothing else references it, so leaving it behind would be an ORPHAN
@@ -1857,3 +1857,24 @@ import {
   layoverMemoryPlace,
   type LayoverSessionForMemory,
 } from '../services/memory/layoverMemory.js';
+
+// ── 2098's delete pin, on the service-client door (2026-10-24) ──────────────
+// 3909's post_media_owner_delete refuses an owner's DELETE of a row whose
+// moderation_status is 'rejected' or 'flagged': deleting it was step 1 of
+// undoing the decision. DELETE /postcards/:id/media/:mediaId runs on the SERVICE
+// client, which that RLS pin does not bind, so the route was the way around it.
+// It now applies the pin itself — for the owner and for an admin alike, since a
+// moderator removes such a file through POST /admin/media/:id/moderate, which
+// keeps the audit trail — and refuses with 409 before any write: no row, no
+// storage object, no recount (decide first, then write — the order #795's PATCH
+// keeps). The §36 vocabulary spells the held state `limited`
+// (LEGACY_MODERATION_TO_CANONICAL: flagged → limited), so either spelling pins.
+// Declared as functions so they are hoisted above their use.
+export function isModerationPinnedPostMedia(status: unknown): boolean {
+  const canonical = toCanonicalModerationStatus(status);
+  return canonical === 'rejected' || canonical === 'limited';
+}
+export function POSTCARD_MEDIA_PINNED_MESSAGE(): string {
+  return "This photo or video is under review or was removed by moderation, so it can't be deleted here.";
+}
+import { toCanonicalModerationStatus } from '../lib/media/mediaAssetContract.js';

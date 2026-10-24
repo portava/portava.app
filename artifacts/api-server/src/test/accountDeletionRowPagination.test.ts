@@ -135,7 +135,11 @@ function makeClient(opts: {
       _limit: undefined as number | undefined,
       _range: undefined as [number, number] | undefined,
       _ordered: false,
-      select() { q._op = "select"; return q; },
+      // 2026-10-24: collect_post_media_url_paths also reads `posts` (its
+      // media_urls, in section 1). That read is its own paged step, so it is
+      // counted and logged under its own name — `posts.select` stays the
+      // tombstone_or_delete_posts id read every assertion below is about.
+      select(cols?: string) { q._op = String(cols ?? "").includes("media_urls") ? UPLOAD_READ : "select"; return q; },
       delete() { q._op = "delete"; return q; },
       update(v: any) { q._op = "update"; void v; return q; },
       upsert(v: any) { q._op = "upsert"; void v; return q; },
@@ -175,7 +179,7 @@ function makeClient(opts: {
           rows[table] = (rows[table] ?? []).filter((r) => !matches(r, q._filters));
           return Promise.resolve({ data: null, error: null });
         }
-        if (q._op !== "select") return Promise.resolve({ data: null, error: null });
+        if (q._op !== "select" && q._op !== UPLOAD_READ) return Promise.resolve({ data: null, error: null });
 
         if (ignoreRange.has(table)) {
           return Promise.resolve({ data: fullPage, error: null });
@@ -227,6 +231,7 @@ function makeClient(opts: {
   };
 }
 
+const UPLOAD_READ = "select:uploads";
 const stepOf = (out: any, name: string) => out.steps.find((s: any) => s.step === name);
 const selectOps = (c: any, table: string) =>
   c._ops.filter((o: Op) => o.table === table && o.op === "select");
