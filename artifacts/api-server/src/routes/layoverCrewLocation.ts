@@ -49,7 +49,7 @@ import {
   getSession,
   type LayoverSession,
 } from "../services/airport/LayoverSessionService.js";
-import { publishableUserIds } from "../services/airport/LayoverPrivacyGuard.js";
+import { publishableUserIds, publishableInGoodStanding } from "../services/airport/LayoverPrivacyGuard.js";
 import { activeCrewForUser, crewMembers, type CrewRow } from "../services/layover/LayoverCrewStore.js";
 import { landsideSuppressionFor } from "../services/layover/LayoverCheckpointStore.js";
 import {
@@ -144,7 +144,7 @@ async function crewLocationBody(sc: SupabaseClient, viewerId: string, session: L
   }
   const others = grants.value.map((g) => g.userId).filter((id) => id !== viewerId);
   const blocks = await readBlockExclusions(sc, viewerId, { among: others });
-  const publish = await publishableUserIds(sc, others);
+  const publish = await publishableInGoodStanding(sc, others); // census-layover §85 (A5): a location share locates a person
 
   const projected = projectCrewLocations({
     viewerId,

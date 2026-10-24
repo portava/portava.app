@@ -191,7 +191,7 @@ import {
 import { notifyLayoverOpportunity } from "../services/airport/LayoverOpportunityNotifier.js";
 import {
   evaluateSharingGate, discloseSharingGate,
-  publishableUserIds,
+  publishableUserIds, publishableInGoodStanding, withAccountStanding,
   disclosePresence,
 } from "../services/airport/LayoverPrivacyGuard.js"; import { readDisclosure, matchRead, readValue, readDegraded, type LayoverRead } from "../services/layover/layoverRead.js";
 // abortToAirport ships now that 2741 is APPLIED TO PRODUCTION (20260908133347),
@@ -2074,7 +2074,7 @@ export async function cityPresence(
     let travelers: Array<{ id: string; handle: string | null; name: string | null; avatarUrl: string | null }> = [];
     const profileDegraded: string[] = [];
     try {
-      const shown = visible.slice(0, 6);
+      const standing = await withAccountStanding(sc, visible.slice(0, 6), []); const shown = standing.kind === "read" ? standing.value.allowed : []; if (standing.kind === "degraded") profileDegraded.push("traveller_cards_unreadable"); // census-layover §85 (A5): a card names a person, so only an account in good standing gets one; the COUNT names nobody and is kept
       // Decoration, not a claim: `count` above is the answer this endpoint
       // makes, and it is already computed. An unreadable `profiles` costs the
       // avatars and names of up to six travellers, not the number of them, so
@@ -2085,7 +2085,7 @@ export async function cityPresence(
         .in("id", shown);
       if (profErr) {
         logger.warn({ err: profErr }, "layover city presence: profiles unreadable — count served without traveller cards");
-        profileDegraded.push("traveller_cards_unreadable");
+        if (!profileDegraded.includes("traveller_cards_unreadable")) profileDegraded.push("traveller_cards_unreadable");
       }
       const allowedNames = await nameVisibilitySet(sc, shown);
       travelers = ((profiles ?? []) as any[]).map((p) => ({
@@ -2096,7 +2096,7 @@ export async function cityPresence(
       }));
     } catch (err) {
       logger.warn({ err }, "layover city presence: traveller cards threw — count served without them");
-      profileDegraded.push("traveller_cards_unreadable");
+      if (!profileDegraded.includes("traveller_cards_unreadable")) profileDegraded.push("traveller_cards_unreadable");
     }
 
     const measured: CityPresence = { count: visible.length, visibleUserIds: visible, travelers };
@@ -3190,7 +3190,7 @@ async function crewMemberCards(
     // behind a card answers `[]`, so the solver never names that crewmate.
     const notBlocked = otherIds.filter((id) => !blocked.ids.has(id));
 
-    const publishable = await publishableUserIds(sc, notBlocked);
+    const publishable = await publishableInGoodStanding(sc, notBlocked); // census-layover §85 (A5): a crew card names a person, so the account must be in good standing
     if (publishable.kind === "degraded") reasons.push(...publishable.reasons);
     const visible = publishable.kind === "read" ? publishable.value.allowed : [];
     if (visible.length === 0) return settle({ cards: [], visibleIds: [], blockedRelation });
@@ -6001,7 +6001,7 @@ async function foreignTripRefusal(sc: any, tripId: string | null | undefined, us
   if (tripId === undefined || tripId === null) return null;
   try {
     return (await isAcceptedTripMember(sc, tripId, userId)) ? null : { code: "forbidden", message: "That trip is not one you are a member of, so this layover cannot be linked to it." };
-  } catch {
-    return { code: "degraded_unavailable", message: "Your trip could not be checked just now. Please try again." };
+  } catch (err) {
+    logger.warn({ err, tripId, userId }, "layover session trip link: trip membership unreadable — refusing, not linking"); return { code: "degraded_unavailable", message: "Your trip could not be checked just now. Please try again." };
   }
 }

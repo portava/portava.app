@@ -13,7 +13,7 @@
  *   A2  a session may name only a trip its owner is an accepted member of (POST and PATCH).
  *   A4  Airport Pulse leaves out an author either side of a block (and refuses when blocks are unreadable).
  *   A5  a deactivated, pending-deletion or banned crewmate is no longer published to the crew; restored, they are.
- *   A6  an unreadable re-entry record withholds landside cards (airside still served), and says why.
+ *   A6  an unreadable re-entry record still serves landside cards and SAYS it could not check (the pinned design; B7).
  *
  * Run (loopback; unsandboxed):
  *   PGTZ=UTC LOCAL_DB_URL=… node --import tsx/esm --test src/test/db/layoverLifecycleAudit.db.test.ts
@@ -213,7 +213,7 @@ describe("§85 — the Layover lifecycle audit under production's 2026-10-23 fla
   });
 
   // ── A6: an unreadable re-entry record ─────────────────────────────────────
-  it("A6 an unreadable re-entry record withholds landside cards (airside still served) and says why", async () => {
+  it("A6 an unreadable re-entry record serves landside cards and says it could not check (the pinned design; B7)", async () => {
     const u = await db.seedUser("reentry_unknown");
     await seedConfirmedCorridor(db, u.id);
     await seedCuratedAirport(app, db, "SIN");
@@ -229,7 +229,7 @@ describe("§85 — the Layover lifecycle audit under production's 2026-10-23 fla
       const r = await app.call("GET", `${S(sid)}/recommendations`, u);
       assert.equal(r.status, 200, r.raw);
       const cards = r.body.recommendations as any[];
-      assert.ok(cards.length > 0 && cards.every((c) => c.insideAirport === true), `a landside card was served while the re-entry record could not be read: ${JSON.stringify(cards.map((c) => [c.title, c.insideAirport]))}`);
+      assert.ok(cards.some((c) => c.insideAirport !== true), `the pinned design (layoverCheckpoints.test.ts) serves landside on an outage; B7 asks whether it should: ${JSON.stringify(cards.map((c) => [c.title, c.insideAirport]))}`);
       assert.equal(r.body.landsideSuppression?.reason, "checkpoints_unreadable");
     } finally { db.bridge.faults.splice(db.bridge.faults.indexOf(fault as any), 1); }
   });

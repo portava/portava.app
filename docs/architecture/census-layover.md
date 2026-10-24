@@ -13371,7 +13371,7 @@ authorised. So:
 
 No row moves in this section. 296 = 91 C / 191 W / 14 N / 0 X, as §83.
 
-## §85 — 2026-10-24 (census drive, lane LAYOVER, lifecycle audit): DISCOVER → … → ARCHIVE, transition by transition; five cross-user and fail-open defects fixed; NO ROW MOVES BUCKET
+## §85 — 2026-10-24 (census drive, lane LAYOVER, lifecycle audit): DISCOVER → … → ARCHIVE, transition by transition; four cross-user and fail-open defects fixed, seven BLOCKED; NO ROW MOVES BUCKET
 
 *Branch `claude/census-lay-audit-20261024`, cut from #789 (`claude/census-lay-b3-20261024`, which carries #785) because
 #785 is still in the queue. `head_commit` is not re-declared. This pass reads production read-only; it applies, flips
@@ -13401,13 +13401,13 @@ production's 2026-10-23 flag state (`artifacts/api-server/src/test/db/layoverLif
 
 | transition | who may make it (the one authority) | cross-user isolation (proof) | blocked / deleted / banned | unreadable state | stored, readable by, deleted when | rows (release state) |
 | --- | --- | --- | --- | --- | --- | --- |
-| DISCOVER | the owner of the session (I1). People shown: `publishableUserIds` (consent, then standing, §85.3 A5); crews offered: `crewMeetGateFor` + `openCrewsVisibleTo`; buddies: `layoverBuddyDecision`; counts: `presenceCountForViewer` (k-snapshot) | counts and consented cards only; I1 | blocks either way hide cards, crews, buddies and (fixed, A4) Airport Pulse authors; deactivated / pending deletion / banned no longer published (fixed, A5). Presence COUNTS ignore blocks and standing by design (k-anonymity, D-PRESENCE-K) | blocks, preferences or standing unreadable → nobody published; pulse refuses (A4) | nothing stored for the viewer | L117, L122, L124, L125, L127, L128, L130, L204, L269, L276 (W; signed-in check, and server deploy for A4/A5) |
+| DISCOVER | the owner of the session (I1). People shown: `publishableInGoodStanding` (consent, then standing, §85.3 A5); crews offered: `crewMeetGateFor` + `openCrewsVisibleTo`; buddies: `layoverBuddyDecision`; counts: `presenceCountForViewer` (k-snapshot) | counts and consented cards only; I1 | blocks either way hide cards, crews, buddies and (fixed, A4) Airport Pulse authors; deactivated / pending deletion / banned no longer published (fixed, A5). Presence COUNTS ignore blocks and standing by design (k-anonymity, D-PRESENCE-K) | blocks, preferences or standing unreadable → nobody published; pulse refuses (A4) | nothing stored for the viewer | L117, L122, L124, L125, L127, L128, L130, L204, L269, L276 (W; signed-in check, and server deploy for A4/A5) |
 | REQUEST / JOIN | session: the caller, as themself; trip link: an accepted member only (fixed, A2); crew join: `joinCrew` + `blockAdmission` | I1; A2 | a block refuses admission (`blockAdmission`); **a block AFTER joining does not evict** (§85.4 B1) | admission unknown → `read_failed` | `layover_sessions` (owner RLS; cascades on account deletion) | L11, L131 (N), L134, L169 (W) |
 | ELIGIBILITY | `gateLandside` inside the certified record, read through `landsideStatusOf`; entry: `resolveLayoverEntry` (the owner's own passport only) | owner-only routes (I1) | — | constraints, entry or timing unreadable → landside closed | `layover_certified_computations` (owner-read RLS), `layover_constraints` (service only) | L4, L48, L49, L77, L222, L224, L229, L230, L279, L283, L284 (W; signed-in check) |
 | ACCESS | route checks (service client) | I1, I2 | — | — | RLS: owner-only or service-only on every Layover table | L200, L201 (C), L203 (C), L205, L236, L295 (W) |
-| PRESENCE | the owner (`PATCH /share`, intents); counts: `cityCountsSnapshot` | owner-only writes (I1); readers see counts or consented people | standing (A5) for named people; counts by design not | ladder flag unreadable → count withheld | `layover_presence` (no coordinate; service only); deleted at `expires_at` (3952 TRUE) | L127, L128, L187, L196, L202 (W) |
+| PRESENCE | the owner (`PATCH /share`, intents); counts: `cityCountsSnapshot` | owner-only writes (I1); readers see counts or consented people | standing (A5) for named people (roster cards); counts by design not | ladder flag unreadable → count withheld | `layover_presence` (no coordinate; service only); deleted at `expires_at` (3952 TRUE) | L127, L128, L187, L196, L202 (W) |
 | CREW | membership: `activeCrewForUser`, read for THIS live session only (fixed, A1, the same rule the share, the plan and the abort notice already used) | A1; I2 (no client access to crews, members, grants) | cards withheld across a block; banned / deactivated crewmates withheld (A5); **blocked member still in the crew minimum and can withdraw the plan** (B1) | every crew read fails closed (503) | `layover_crews` / members (service only; deleted at `expires_at`, 3952 TRUE; cascade) | L131 (N), L132, L133 (C), L134, L135, L137, L203 (C) |
-| CHECKPOINT | the owner, live session only | I1 (a stranger's check-in is 404 and writes nothing) | — | **unreadable re-entry now withholds landside (fixed, A6)**, as the crew-location door did | `layover_checkpoints` (service only); **never deleted on production** (3950 FALSE; B4) | L43, L44, L95, L159 (W) |
+| CHECKPOINT | the owner, live session only | I1 (a stranger's check-in is 404 and writes nothing) | — | unreadable re-entry: recommendations still serve landside and say they could not check (the pinned design), while the crew-location door withholds: **two answers, BLOCKED (B7)** | `layover_checkpoints` (service only); **never deleted on production** (3950 FALSE; B4) | L43, L44, L95, L159 (W) |
 | COMMUNICATION | the owner; trip thread only for an accepted trip member; abort notices `tellCrewOfAbortAuthorized` | owner-only (I1) | abort notice: blocks always win; trip chat follows trip-thread rules | — | `layover_events` (pseudonymised after 30 days only where the flag is ON — it is OFF, held; B5) | L100, L102, L271 (C) (W; signed-in check) |
 | LOCATION / SAFETY | the sharer, from the crew's own live session; viewing: live members of the crew, through the session they joined from (A1) | A1, I2 | shares withheld across a block and for a banned / deactivated sharer (A5) | sharer prefs or re-entry unknown → withheld | `layover_crew_location_grants` (lat/lng; service only; purged on leave, disband, expiry) | L132, L137, L153, L272 (W) |
 | EXIT | the owner (`DELETE /:id`, live only) | I1 | — | — | ending does not leave the crew; since A1 an ended session reads no crew and no share | L275 (C), L44 (W) |
@@ -13433,16 +13433,28 @@ production's 2026-10-23 flag state (`artifacts/api-server/src/test/db/layoverLif
   Proved: `artifacts/api-server/src/test/db/layoverLifecycleAudit.db.test.ts:172#A4 Airport Pulse leaves out an author either side of a block`. Mutants A4-filter, A4-unreadable: red.
 - **A5, deactivated, pending-deletion, deleted and banned travellers stayed published.** Layover read no other user's
   account state, so a traveller in the 30-day deletion hold, or banned, kept appearing on crew cards, offered crews, the
-  mutual roster, crew location and abort recipients. `publishableUserIds`, the one gate all of them pass, now also
-  requires good standing: `profiles.account_status = 'active'` and no in-force `user_account_states` restriction,
-  unreadable standing withholding everyone (`artifacts/api-server/src/services/airport/LayoverPrivacyGuard.ts:417#consent is not enough; the account must also be in good standing`,
-  `artifacts/api-server/src/services/airport/LayoverPrivacyGuard.ts:571#async function withAccountStanding(`). Proved:
-  `artifacts/api-server/src/test/db/layoverLifecycleAudit.db.test.ts:193#A5 a deactivated, pending-deletion or banned crewmate`. Mutants A5 and A5-ban: red.
-- **A6, an unreadable re-entry served landside cards.** Recommendations treated an unread check-in record as "not
-  re-entered" while the crew-location door treated it as re-entered: two authorities, opposite answers. Unknown now
-  withholds landside on every reader of `applyLandsideSuppression` and says why
-  (`artifacts/api-server/src/services/layover/LayoverCheckpointStore.ts:250#unknown withholds landside, as the crew-location door does`).
-  Proved: `artifacts/api-server/src/test/db/layoverLifecycleAudit.db.test.ts:216#A6 an unreadable re-entry record withholds landside cards`. Mutant A6: red.
+  mutual roster, presence-roster cards and crew location. Every door that NAMES or LOCATES a person now requires good
+  standing (`profiles.account_status = 'active'` and no in-force `user_account_states` restriction), and unreadable
+  standing withholds those people, never the count:
+  - the gate: `artifacts/api-server/src/services/airport/LayoverPrivacyGuard.ts:573#export async function publishableInGoodStanding(`
+    and `artifacts/api-server/src/services/airport/LayoverPrivacyGuard.ts:579#export async function withAccountStanding(`;
+  - crew cards: `artifacts/api-server/src/routes/airport.ts:3193#a crew card names a person, so the account must be in good standing`;
+  - presence-roster cards: `artifacts/api-server/src/routes/airport.ts:2077#a card names a person, so only an account in good standing gets one`;
+  - crew location shares: `artifacts/api-server/src/routes/layoverCrewLocation.ts:147#a location share locates a person`;
+  - the mutual roster and incoming requests: `artifacts/api-server/src/services/layover/LayoverDiscoveryConsent.ts:229#publishableInGoodStanding(db, notBlocked)`
+    and `artifacts/api-server/src/services/layover/LayoverDiscoveryConsent.ts:306#publishableInGoodStanding(db, ids.filter`.
+
+  Doors that publish nobody keep the consent-only `publishableUserIds`, each enumerated with its reason by
+  `artifacts/api-server/src/test/layoverStandingDoors.test.ts:30#const EXPECTED`. They are the city COUNT, the roster's
+  count, abort-notice RECIPIENTS (told, not published; an account not in good standing cannot sign in to read it), and
+  the viewer's own publishability. **Corrected before this PR opened:** the first version put standing inside
+  `publishableUserIds` itself. That withheld counts and notice recipients too, and broke 28 pinned unit cases (L294:
+  unreadable cards cost the cards, not the count; an unreadable name still tells the crew). Proved:
+  - `artifacts/api-server/src/test/db/layoverLifecycleAudit.db.test.ts:193#A5 a deactivated, pending-deletion or banned crewmate` (crew card and location share, real chain);
+  - `artifacts/api-server/src/test/layoverStandingDoors.test.ts:86#presence-roster cards name only an account in good standing` (counted, no card; unreadable standing costs the cards, not the count; control).
+
+  Mutants A5-crewcard, A5-share, A5-roster, A5-status and A5-ban are red, and so is A5-discovery (the door
+  enumeration; no behavioural case reaches the discovery doors, which are OFF in production).
 
 ### 85.4 Found, and BLOCKED — OWNER DECISION (nothing built for them)
 
@@ -13465,6 +13477,14 @@ production's 2026-10-23 flag state (`artifacts/api-server/src/test/db/layoverLif
 - **B6, a hand-made landside stop while landside is closed.** `POST /:id/stops` and `POST /:id/plan` add a landside
   stop with no landside admission, while `from-recommendation` applies it. Whether a traveller may plan their own
   landside stop on a closed gate: **BLOCKED — OWNER DECISION**.
+- **B7, an unreadable re-entry record has two answers.** Recommendations treat it as "not re-entered": landside cards
+  are served and the response says `checkpoints_unreadable`. That is a pinned requirement
+  (`artifacts/api-server/src/test/layoverCheckpoints.test.ts:321#unreadable check-ins: landside is NOT hidden for everyone on an outage`).
+  The crew-location door treats the same unknown as re-entered and withholds. Measured on the real chain:
+  `artifacts/api-server/src/test/db/layoverLifecycleAudit.db.test.ts:216#A6 an unreadable re-entry record serves landside cards and says it could not check`.
+  Which answer an unknown re-entry gets: **BLOCKED — OWNER DECISION**. This audit's first version flipped
+  recommendations to withhold, which reversed that pinned requirement with no decision behind it. It was reverted
+  before this PR opened.
 - **Recorded, not defects:** presence counts ignore blocks and standing by the k-anonymity design (D-PRESENCE-K); the
   legacy `tellCrewOfAbort` and `cityPresence` have no production caller (stale, left in place so no cited line moves).
 
@@ -13473,8 +13493,8 @@ production's 2026-10-23 flag state (`artifacts/api-server/src/test/db/layoverLif
 | id | was | now | why |
 | --- | --- | --- | --- |
 | L137 | W | W | Crew location sharing now also ends for a member whose layover ENDED, or who reads through another session: the read, the crew card and the precise control apply the share's rule (§85.3 A1; `artifacts/api-server/src/test/db/layoverLifecycleAudit.db.test.ts:125#A1 a member whose layover ended gets no crewmate`). W: waiting on release (server deploy), then the signed-in check. |
-| L202 | W | W | Presence and every named-person surface now also require the person's good standing (§85.3 A5; `artifacts/api-server/src/test/db/layoverLifecycleAudit.db.test.ts:193#A5 a deactivated, pending-deletion or banned crewmate`). Counts stay k-anonymous and ignore blocks by design. W: waiting on release (server deploy), and the owner's decision on k (§52.1). |
-| L43 | W | W | Re-entry suppression now fails closed when the check-in record cannot be read (§85.3 A6; `artifacts/api-server/src/test/db/layoverLifecycleAudit.db.test.ts:216#A6 an unreadable re-entry record withholds landside cards`). W: waiting on release (server deploy), then the signed-in check. |
+| L202 | W | W | Every surface that names or locates a person (crew cards, presence-roster cards, crew location, the mutual roster) now also requires the person's good standing (§85.3 A5; `artifacts/api-server/src/test/db/layoverLifecycleAudit.db.test.ts:193#A5 a deactivated, pending-deletion or banned crewmate`). Counts stay k-anonymous and ignore blocks by design. W: waiting on release (server deploy), and the owner's decision on k (§52.1). |
+| L43 | W | W | Re-entry suppression is unchanged. What an UNREADABLE re-entry record should do is BLOCKED (§85.4 B7): recommendations serve landside and say they could not check, while the crew-location door withholds (`artifacts/api-server/src/test/db/layoverLifecycleAudit.db.test.ts:216#A6 an unreadable re-entry record serves landside cards and says it could not check`). W: waiting on the owner's decision B7, then the signed-in check. |
 
 ### 85.6 The signed-in retest, as ONE layover
 
@@ -13488,8 +13508,11 @@ airport is curated, B2).
 ### 85.7 Tests and mutation proofs, run on 2026-10-24
 
 - PostgreSQL 17 (local, port 54354): `artifacts/api-server/src/test/db/layoverLifecycleAudit.db.test.ts` 8 / 8, production's 2026-10-23 flags.
+- Unit: `artifacts/api-server/src/test/layoverStandingDoors.test.ts` 12 / 12.
+- The layover unit suites that went red against the first A5/A6 (presence intents, the privacy presence gate, presence
+  degraded, the abort notice and its route, checkpoints, the bare-catch guard, the query inventory) pass: 248 / 248.
 - Mutants, each restored by sha256 and each red: I1 (getSession without `user_id`), A1-location, A1-crew, A1-precise,
-  A2, A4-filter, A4-unreadable, A5, A5-ban, A6.
+  A2, A4-filter, A4-unreadable, A5-crewcard, A5-share, A5-roster, A5-status, A5-ban, A5-discovery.
 
 ### Headline
 

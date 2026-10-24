@@ -2955,6 +2955,60 @@
       "name": "sharing_paused"
     },
     {
+      "file": "src/services/airport/LayoverPrivacyGuard.ts",
+      "line": 581,
+      "via": null,
+      "kind": "table",
+      "method": "from",
+      "table": "profiles",
+      "name": "profiles"
+    },
+    {
+      "file": "src/services/airport/LayoverPrivacyGuard.ts",
+      "line": 581,
+      "via": null,
+      "kind": "select",
+      "method": "select",
+      "table": "profiles",
+      "name": "id"
+    },
+    {
+      "file": "src/services/airport/LayoverPrivacyGuard.ts",
+      "line": 581,
+      "via": null,
+      "kind": "select",
+      "method": "select",
+      "table": "profiles",
+      "name": "account_status"
+    },
+    {
+      "file": "src/services/airport/LayoverPrivacyGuard.ts",
+      "line": 581,
+      "via": null,
+      "kind": "embed",
+      "method": "select",
+      "table": "user_account_states",
+      "name": "state"
+    },
+    {
+      "file": "src/services/airport/LayoverPrivacyGuard.ts",
+      "line": 581,
+      "via": null,
+      "kind": "table",
+      "method": "select",
+      "table": "user_account_states",
+      "name": "user_account_states"
+    },
+    {
+      "file": "src/services/airport/LayoverPrivacyGuard.ts",
+      "line": 581,
+      "via": null,
+      "kind": "embed",
+      "method": "select",
+      "table": "user_account_states",
+      "name": "expires_at"
+    },
+    {
       "file": "src/services/airport/LayoverRecommendationService.ts",
       "line": 305,
       "via": null,
@@ -13467,6 +13521,15 @@
       "name": "user_id"
     },
     {
+      "file": "src/services/airport/LayoverPrivacyGuard.ts",
+      "line": 581,
+      "via": null,
+      "kind": "filter",
+      "method": "in",
+      "table": "profiles",
+      "name": "id"
+    },
+    {
       "file": "src/services/airport/LayoverRecommendationService.ts",
       "line": 305,
       "via": null,
@@ -20099,6 +20162,15 @@
       "table": "location_preferences",
       "variants": [
         "user_id, location_mode, sharing_paused"
+      ]
+    },
+    {
+      "file": "src/services/airport/LayoverPrivacyGuard.ts",
+      "line": 581,
+      "via": null,
+      "table": "profiles",
+      "variants": [
+        "id, account_status, user_account_states!user_account_states_user_id_fkey(state, expires_at)"
       ]
     },
     {

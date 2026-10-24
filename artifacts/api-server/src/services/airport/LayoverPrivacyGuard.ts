@@ -414,7 +414,7 @@ export async function publishableUserIds(
     });
     (ok ? allowed : denied).push(id);
   }
-  return withAccountStanding(db, allowed, denied); // census-layover §85 (audit A5): consent is not enough; the account must also be in good standing
+  return readValue({ allowed, denied });
 }
 
 export interface PresenceTraveler {
@@ -559,16 +559,24 @@ export function discloseSharingGate(read: LayoverRead<Omit<SharingGateResult, "d
 }
 
 /**
- * census-layover §85 (lifecycle audit, 2026-10-24, A5): a traveller is published only while their account is in good
- * standing. Every Layover surface that names or locates another person (crew cards, offered crews, the mutual roster,
- * crew location shares, abort-notice recipients) passes through `publishableUserIds`, so this is the ONE place.
+ * census-layover §85 (lifecycle audit, 2026-10-24, A5): a traveller is NAMED or LOCATED to another person only while
+ * their account is in good standing. The doors that publish a person (crew cards, offered crews, the mutual roster,
+ * presence-roster cards, crew location shares) call `publishableInGoodStanding`, or `withAccountStanding` on the cards
+ * they show. Counts and notice RECIPIENTS do not: a count names nobody, and a recipient is not published to anyone
+ * (an account that is not in good standing cannot sign in to read a notice; requireUser refuses it).
  * Standing is the platform's allow-list (lib/circleLocationsRead, lib/mapTravelers): `profiles.account_status ===
  * 'active'`, AND no in-force `user_account_states` ban or suspension (lib/accountStateGate, the canonical moderation
  * record; requireUser refuses such a CALLER, but nothing stopped others seeing them). Deactivated, pending deletion,
  * deleted, banned, suspended, or no profile row: withheld. An unreadable standing withholds the whole set (degraded),
  * exactly as an unreadable `location_preferences` does: a failed read is not good standing.
  */
-async function withAccountStanding(db: SupabaseClient, allowed: string[], denied: string[]): Promise<LayoverRead<{ allowed: string[]; denied: string[] }>> {
+export async function publishableInGoodStanding(db: SupabaseClient, userIds: string[]): Promise<LayoverRead<{ allowed: string[]; denied: string[] }>> {
+  const consent = await publishableUserIds(db, userIds);
+  if (consent.kind === "degraded") return consent;
+  return withAccountStanding(db, consent.value.allowed, consent.value.denied);
+}
+
+export async function withAccountStanding(db: SupabaseClient, allowed: string[], denied: string[]): Promise<LayoverRead<{ allowed: string[]; denied: string[] }>> {
   if (allowed.length === 0) return readValue({ allowed, denied });
   const { data, error } = await db.from("profiles").select(`id, ${ACCOUNT_STATE_GATE_SELECT}`).in("id", allowed);
   if (error || !Array.isArray(data)) {
