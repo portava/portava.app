@@ -557,3 +557,43 @@ export function discloseSharingGate(read: LayoverRead<Omit<SharingGateResult, "d
     degraded: (fallback) => ({ ...fallback, allowed: false, degraded: true }),
   });
 }
+
+/**
+ * census-layover §85 (lifecycle audit, 2026-10-24, A5): a traveller is NAMED or LOCATED to another person only while
+ * their account is in good standing. The doors that publish a person (crew cards, offered crews, the mutual roster,
+ * presence-roster cards, crew location shares) call `publishableInGoodStanding`, or `withAccountStanding` on the cards
+ * they show. Counts and notice RECIPIENTS do not: a count names nobody, and a recipient is not published to anyone
+ * (an account that is not in good standing cannot sign in to read a notice; requireUser refuses it).
+ * Standing is the platform's allow-list (lib/circleLocationsRead, lib/mapTravelers): `profiles.account_status ===
+ * 'active'`, AND no in-force `user_account_states` ban or suspension (lib/accountStateGate, the canonical moderation
+ * record; requireUser refuses such a CALLER, but nothing stopped others seeing them). Deactivated, pending deletion,
+ * deleted, banned, suspended, or no profile row: withheld. An unreadable standing withholds the whole set (degraded),
+ * exactly as an unreadable `location_preferences` does: a failed read is not good standing.
+ */
+export async function publishableInGoodStanding(db: SupabaseClient, userIds: string[]): Promise<LayoverRead<{ allowed: string[]; denied: string[] }>> {
+  const consent = await publishableUserIds(db, userIds);
+  if (consent.kind === "degraded") return consent;
+  return withAccountStanding(db, consent.value.allowed, consent.value.denied);
+}
+
+export async function withAccountStanding(db: SupabaseClient, allowed: string[], denied: string[]): Promise<LayoverRead<{ allowed: string[]; denied: string[] }>> {
+  if (allowed.length === 0) return readValue({ allowed, denied });
+  const { data, error } = await db.from("profiles").select(`id, ${ACCOUNT_STATE_GATE_SELECT}`).in("id", allowed);
+  if (error || !Array.isArray(data)) {
+    privacyLogger.error({ err: error, candidates: allowed.length }, "account standing unreadable — no traveller is published; a failed read is not good standing");
+    return readDegraded({ allowed: [], denied: [...denied, ...allowed] }, ["account_standing_unreadable"]);
+  }
+  const nowMs = Date.now();
+  const good = new Set<string>();
+  for (const row of data as any[]) {
+    // The embed is required where PostgREST answers (a missing one is a shape we cannot read, so not standing); a
+    // test double that does not model embeds answers "no moderation rows", exactly as lib/accountStateGate reads it.
+    const embedded = row?.user_account_states === undefined && !isPostgrestBackedClient(db) ? [] : row?.user_account_states;
+    if (!Array.isArray(embedded)) continue;
+    if ((row.account_status ?? "active") !== "active") continue;
+    if (pickRestriction(embedded, nowMs).kind !== "none") continue;
+    good.add(String(row.id));
+  }
+  return readValue({ allowed: allowed.filter((id) => good.has(id)), denied: [...denied, ...allowed.filter((id) => !good.has(id))] });
+}
+import { ACCOUNT_STATE_GATE_SELECT, pickRestriction } from "../../lib/accountStateGate.js"; import { isPostgrestBackedClient } from "../../lib/supabase.js"; // census-layover §85; at the foot so no cited line moves

@@ -191,7 +191,7 @@ import {
 import { notifyLayoverOpportunity } from "../services/airport/LayoverOpportunityNotifier.js";
 import {
   evaluateSharingGate, discloseSharingGate,
-  publishableUserIds,
+  publishableUserIds, publishableInGoodStanding, withAccountStanding,
   disclosePresence,
 } from "../services/airport/LayoverPrivacyGuard.js"; import { readDisclosure, matchRead, readValue, readDegraded, type LayoverRead } from "../services/layover/layoverRead.js";
 // abortToAirport ships now that 2741 is APPLIED TO PRODUCTION (20260908133347),
@@ -572,7 +572,7 @@ router.post("/airport/sessions", async (req, res) => {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
     return;
   }
-  const p = parsed.data;
+  const p = parsed.data; { const foreign = await foreignTripRefusal(sc, p.tripId, user.id); if (foreign) { sendError(res, foreign.code, foreign.message); return; } } // census-layover §85 (audit A2): a session names only a trip its owner is an accepted member of
 
   // ── Resolve the airport up front (picker IATA, explicit id, or manual) ──────
   let airport: Awaited<ReturnType<typeof resolveByIata>> = null;
@@ -808,7 +808,7 @@ router.patch("/airport/sessions/:id", async (req, res) => {
     sendError(res, "not_found", "Session not found or already closed");
     return;
   }
-  const p = parsed.data; { const refusal = sessionPatchConstraintRefusal(p, current); if (refusal) { sendError(res, "invalid_payload", refusal); return; } } // L172: constraints are edited on their own route, never accepted here and dropped
+  const p = parsed.data; { const refusal = sessionPatchConstraintRefusal(p, current); if (refusal) { sendError(res, "invalid_payload", refusal); return; } } { const foreign = await foreignTripRefusal(sc, (p as { tripId?: string | null }).tripId, user.id); if (foreign) { sendError(res, foreign.code, foreign.message); return; } } // L172: constraints are edited on their own route, never accepted here and dropped; census-layover §85 (audit A2): a session names only a trip its owner is an accepted member of
   const patch: Parameters<typeof updateSession>[3] = { ...p };
   delete (patch as any).arrivalLocal;
   delete (patch as any).departureLocal;
@@ -2074,7 +2074,7 @@ export async function cityPresence(
     let travelers: Array<{ id: string; handle: string | null; name: string | null; avatarUrl: string | null }> = [];
     const profileDegraded: string[] = [];
     try {
-      const shown = visible.slice(0, 6);
+      const standing = await withAccountStanding(sc, visible.slice(0, 6), []); const shown = standing.kind === "read" ? standing.value.allowed : []; if (standing.kind === "degraded") profileDegraded.push("traveller_cards_unreadable"); // census-layover §85 (A5): a card names a person, so only an account in good standing gets one; the COUNT names nobody and is kept
       // Decoration, not a claim: `count` above is the answer this endpoint
       // makes, and it is already computed. An unreadable `profiles` costs the
       // avatars and names of up to six travellers, not the number of them, so
@@ -2085,7 +2085,7 @@ export async function cityPresence(
         .in("id", shown);
       if (profErr) {
         logger.warn({ err: profErr }, "layover city presence: profiles unreadable — count served without traveller cards");
-        profileDegraded.push("traveller_cards_unreadable");
+        if (!profileDegraded.includes("traveller_cards_unreadable")) profileDegraded.push("traveller_cards_unreadable");
       }
       const allowedNames = await nameVisibilitySet(sc, shown);
       travelers = ((profiles ?? []) as any[]).map((p) => ({
@@ -2096,7 +2096,7 @@ export async function cityPresence(
       }));
     } catch (err) {
       logger.warn({ err }, "layover city presence: traveller cards threw — count served without them");
-      profileDegraded.push("traveller_cards_unreadable");
+      if (!profileDegraded.includes("traveller_cards_unreadable")) profileDegraded.push("traveller_cards_unreadable");
     }
 
     const measured: CityPresence = { count: visible.length, visibleUserIds: visible, travelers };
@@ -3190,7 +3190,7 @@ async function crewMemberCards(
     // behind a card answers `[]`, so the solver never names that crewmate.
     const notBlocked = otherIds.filter((id) => !blocked.ids.has(id));
 
-    const publishable = await publishableUserIds(sc, notBlocked);
+    const publishable = await publishableInGoodStanding(sc, notBlocked); // census-layover §85 (A5): a crew card names a person, so the account must be in good standing
     if (publishable.kind === "degraded") reasons.push(...publishable.reasons);
     const visible = publishable.kind === "read" ? publishable.value.allowed : [];
     if (visible.length === 0) return settle({ cards: [], visibleIds: [], blockedRelation });
@@ -3337,7 +3337,7 @@ router.get("/airport/sessions/:id/crew", async (req, res) => {
   // from people who are waiting for them.
   if (!mine.ok) { sendError(res, "degraded_unavailable", "Your crew could not be loaded. Please try again."); return; }
 
-  if (mine.value) {
+  if (!LAYOVER_LIVE_SESSION_STATUSES.includes(session.status as any) || (mine.value && mine.value.membership.sessionId !== session.id)) { res.json({ ok: true, inCrew: false, city: null, crews: [], reason: !LAYOVER_LIVE_SESSION_STATUSES.includes(session.status as any) ? "layover_ended" : "crew_joined_from_another_layover" }); return; } if (mine.value) { // census-layover §85 (audit A1): the crew is read only through the LIVE session it was joined from
     const members = await crewMembers(sc, mine.value.crew.id);
     if (!members.ok) { sendError(res, "degraded_unavailable", "Your crew could not be loaded. Please try again."); return; }
     const payload = await crewPayload(sc, user.id, mine.value.crew, members.value, nowMs, await crewViewerLandside(sc, user.id, session, nowMs));
@@ -3847,7 +3847,7 @@ router.get("/airport/pulse", async (req, res) => {
   const { data, error } = await query;
   if (error) { sendError(res, "db_error", error.message); return; }
 
-  const rows = ((data ?? []) as any[]).filter((r) => isPostPublished(r));
+  const blockedPulse = await readBlockExclusions(sc, user.id); if (!blockedPulse.ok) { sendError(res, "degraded_unavailable", "Airport pulse could not be loaded. Please try again."); return; } const rows = ((data ?? []) as any[]).filter((r) => isPostPublished(r) && !blockedPulse.ids.has(r.author_id as string)); // census-layover §85 (audit A4): a block either way removes the author, and an unreadable block list serves nobody
   const authorIds = [...new Set(rows.map((r: any) => r.author_id as string))];
   const allowedNames = await nameVisibilitySet(sc, authorIds);
 
@@ -5990,3 +5990,18 @@ router.use(layoverCurrentPositionRouter);
 // census-layover L153 / L43 — the onward flight (offline bundle) and the re-entry gate/security refresh. Imported at the TAIL so no cited line above moves; ESM hoists it.
 import { readDepartureFlight, reentryContextFor } from "../services/airport/LayoverDepartureFlight.js";
 import { canonicalOutcomeOf } from "../services/layover/LayoverActiveSnapshot.js";
+
+/**
+ * census-layover §85 (lifecycle audit, 2026-10-24, A2): a layover session may name only a trip its owner is an
+ * ACCEPTED member of. `tripId` was stored as sent on POST and PATCH, and the session's trip then reached the passport
+ * stamp, the ghost-mode lookup and the presence roster rule (a one-bit read of another trip's crew). Absent/null names
+ * no trip. An unreadable membership refuses (503), never a 403 for a member and never a pass.
+ */
+async function foreignTripRefusal(sc: any, tripId: string | null | undefined, userId: string): Promise<{ code: "forbidden" | "degraded_unavailable"; message: string } | null> {
+  if (tripId === undefined || tripId === null) return null;
+  try {
+    return (await isAcceptedTripMember(sc, tripId, userId)) ? null : { code: "forbidden", message: "That trip is not one you are a member of, so this layover cannot be linked to it." };
+  } catch (err) {
+    logger.warn({ err, tripId, userId }, "layover session trip link: trip membership unreadable — refusing, not linking"); return { code: "degraded_unavailable", message: "Your trip could not be checked just now. Please try again." };
+  }
+}

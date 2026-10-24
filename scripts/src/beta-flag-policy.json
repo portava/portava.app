@@ -1574,6 +1574,16 @@
       "evidence": []
     },
     {
+      "flag": "layover_crew_expiry_enabled",
+      "kind": "CAPABILITY",
+      "enabled": true,
+      "reason": "ON: mirrors production's behaviour (seeded TRUE by 3952_layover_presence_crew_expiry_flags.sql:60): expired rows are deleted at their own expires_at, as production did with no flag before 3952. Owner directive 2026-10-24: do not expand retention without authorization, so a beta must not keep this data longer than production does. OFF = retention extended, only by explicit owner action.",
+      "evidence": [
+        "migration:3952_layover_presence_crew_expiry_flags.sql",
+        "census-layover:§84"
+      ]
+    },
+    {
       "flag": "layover_crew_location_enabled",
       "kind": "CAPABILITY",
       "enabled": false,
@@ -1716,6 +1726,16 @@
       "evidence": [
         "migration:0127_layover_system.sql",
         "snapshot:20260922-production-schema.json"
+      ]
+    },
+    {
+      "flag": "layover_presence_expiry_enabled",
+      "kind": "CAPABILITY",
+      "enabled": true,
+      "reason": "ON: mirrors production's behaviour (seeded TRUE by 3952_layover_presence_crew_expiry_flags.sql:55): expired rows are deleted at their own expires_at, as production did with no flag before 3952. Owner directive 2026-10-24: do not expand retention without authorization, so a beta must not keep this data longer than production does. OFF = retention extended, only by explicit owner action.",
+      "evidence": [
+        "migration:3952_layover_presence_crew_expiry_flags.sql",
+        "census-layover:§84"
       ]
     },
     {
