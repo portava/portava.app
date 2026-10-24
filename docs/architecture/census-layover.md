@@ -13266,3 +13266,51 @@ check, or the dependency named in the row.
 and held (§83.3).
 
 296 = 91 C / 191 W / 14 N / 0 X. CORRECT% is 91 / 296 = 30.7 %. CONSTRUCTED% is 282 / 296 = 95.3 %.
+
+## §84 — 2026-10-24 (census drive, lane LAYOVER, batch 3): deleting expired presence and crews is the owner's press; the traveller can record a gate; the lead's release ruling applied
+
+*Branch `claude/census-lay-b3-20261024`, stacked on #785 (`claude/census-lay-b2-20261023`, in verification; not edited
+here). `head_commit` is not re-declared. Every row not named here is unchanged. This pass reads production read-only;
+it applies, flips and deploys nothing.*
+
+### 84.1 The presence and crew expiry sweeps are gated (3952, both flags seeded FALSE)
+
+§82.4 recorded that both sweeps deleted at their own `expires_at` with no flag, a horizon 2984 and 3900 call a read
+filter, not a retention promise. The lead ruled them the same as 3950 (2026-10-23), and this pass builds that:
+
+- **The press.** `artifacts/api-server/src/migrations/3952_layover_presence_crew_expiry_flags.sql:52#'layover_presence_expiry_enabled',`
+  and `artifacts/api-server/src/migrations/3952_layover_presence_crew_expiry_flags.sql:57#'layover_crew_expiry_enabled',` are seeded FALSE, with a postcondition and a rollback that refuses while either
+  is TRUE or has audit history. Each sweep reads its flag fail-closed BEFORE its probe, so OFF, absent or unreadable
+  issues no statement against the table (`artifacts/api-server/src/lib/layoverPresenceExpiryScheduler.ts:142#isFlagEnabled(db, "layover_presence_expiry_enabled")`;
+  `artifacts/api-server/src/lib/layoverCrewExpiryScheduler.ts:257#isFlagEnabled(db, "layover_crew_expiry_enabled")`).
+- **The crew DELETE.** It now re-checks the expiry and counts only what the database confirmed
+  (`artifacts/api-server/src/lib/layoverCrewExpiryScheduler.ts:300#.delete().in("id", ids).lt("expires_at", cutoff).select("id")`).
+  It used to delete by id alone and fall back to the attempted ids as its count.
+- **The precondition, proved first.** Stopping a sweep is safe only if every reader already hides an expired row. Every
+  read of `layover_crews` carries `.gt("expires_at", …)` (`artifacts/api-server/src/services/layover/LayoverCrewStore.ts:183#.gt("expires_at", nowIso)`,
+  `artifacts/api-server/src/services/layover/LayoverCrewStore.ts:279#.gt("expires_at", nowIso)`, `artifacts/api-server/src/services/layover/LayoverCrewStore.ts:461#.gt("expires_at", nowIso)`), and so does every read of `layover_presence`
+  (`artifacts/api-server/src/services/layover/LayoverPresenceStore.ts:170#.gt("expires_at", new Date(nowMs).toISOString())`, `artifacts/api-server/src/services/layover/LayoverPresenceStore.ts:203#.gt("expires_at", nowIso)`).
+  `layover_crew_members` has no expiry; each of its ten call sites takes its crew id from one of those filtered reads,
+  and 3872's plan guard and 3996's grant guard refuse an expired crew. All of it is pinned, so a new reader fails until
+  reviewed (`artifacts/api-server/src/test/layoverExpiryReadersHideExpired.test.ts:61#layover_presence: each read site carries`,
+  `artifacts/api-server/src/test/layoverExpiryReadersHideExpired.test.ts:68#layover_crews: each read site carries`, `artifacts/api-server/src/test/layoverExpiryReadersHideExpired.test.ts:75#layover_crew_members carries no expiry`), and driven: with the
+  sweeps OFF an expired crew and an expired presence row stay in storage and every reader answers as if they were gone
+  (`artifacts/api-server/src/test/layoverExpiryReadersHideExpired.test.ts:104#with the sweeps OFF`). On PostgreSQL, OFF
+  keeps both rows and GET /crew serves no expired crew, ON deletes both with the confirmed count, and the rollback
+  refuses, removes and re-applies (`artifacts/api-server/src/test/db/layoverPresenceCrewExpiryFlags.db.test.ts:61#X1 OFF`, `artifacts/api-server/src/test/db/layoverPresenceCrewExpiryFlags.db.test.ts:74#X2 ON`, `artifacts/api-server/src/test/db/layoverPresenceCrewExpiryFlags.db.test.ts:90#X3`).
+
+### 84.2 Rows
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L196 | W | W | Re-derived after §84.1. The tables and restrictive policies are on production, and both "expiration jobs" are built, but deleting is now the owner's press of 3952 (unapplied, both flags FALSE), on top of §82.2a's hold: `layover_presence_intents_enabled` went back OFF on 2026-10-23, so the presence table is never populated. W, waiting on the press of 3952 and the owner's decision on k. |
+| L153 | W | W | The gate now has a producer a traveller can reach: the Trips layover card's control records the departure gate through the existing route (`travel-buddy-standalone/src/features/trips/layover/tripLayoverConnections.ts:185#export function recordTripFlightGate(`; `travel-buddy-standalone/src/features/trips/layover/TripLayoverConnectionsCard.tsx:151#TripFlightGateControl`), and the value shown is the server's (`travel-buddy-standalone/src/features/trips/layover/__tests__/TripFlightGateControl.component.test.tsx:84#saving a gate re-reads the connections`). W, waiting on release (next device build), then the owner's signed-in check. |
+| L38 | W | W | Waiting on release (next device build): the list's handling of served status (#781) is on main, but not in the installed build (the lead's 2026-10-24 ruling: client code counts only in a build installed against production). |
+| L50 | W | W | As L38. |
+| L97 | W | W | As L38, plus the map half from #785, which is not yet merged. |
+| L100 | W | W | Waiting on release (next device build): #785's Compass fallback disclosure, then the owner's signed-in check. |
+| L24 | W | W | Waiting on release (server deploy): #785's recommended return threshold is not on production; the ruling on `latest_activity_departure_at` (§83.3) still holds it. |
+
+### Headline
+
+No row moves in this section. 296 = 91 C / 191 W / 14 N / 0 X, as §83.

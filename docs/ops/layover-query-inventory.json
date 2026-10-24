@@ -129,6 +129,24 @@
       "name": "id"
     },
     {
+      "file": "src/lib/layoverCrewExpiryScheduler.ts",
+      "line": 300,
+      "via": null,
+      "kind": "table",
+      "method": "from",
+      "table": "layover_crews",
+      "name": "layover_crews"
+    },
+    {
+      "file": "src/lib/layoverCrewExpiryScheduler.ts",
+      "line": 300,
+      "via": null,
+      "kind": "select",
+      "method": "select",
+      "table": "layover_crews",
+      "name": "id"
+    },
+    {
       "file": "src/lib/layoverEventPseudonymisation.ts",
       "line": 167,
       "via": null,
@@ -10167,10 +10185,10 @@
       "file": "src/lib/layoverCrewExpiryScheduler.ts",
       "line": 300,
       "via": null,
-      "kind": "table",
-      "method": "in",
+      "kind": "filter",
+      "method": "lt",
       "table": "layover_crews",
-      "name": "layover_crews"
+      "name": "expires_at"
     },
     {
       "file": "src/lib/layoverCrewExpiryScheduler.ts",
@@ -19303,6 +19321,15 @@
     {
       "file": "src/lib/layoverCrewExpiryScheduler.ts",
       "line": 270,
+      "via": null,
+      "table": "layover_crews",
+      "variants": [
+        "id"
+      ]
+    },
+    {
+      "file": "src/lib/layoverCrewExpiryScheduler.ts",
+      "line": 300,
       "via": null,
       "table": "layover_crews",
       "variants": [

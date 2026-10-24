@@ -27,13 +27,13 @@
  * can read. The cutoff is `expires_at <= now` — the exact complement of the
  * read filter, so the sweep removes precisely the rows the readers already hide.
  *
- * ── WHY NO FEATURE FLAG ─────────────────────────────────────────────────────
- * `layover_presence_intents_enabled` (3900, seeded FALSE) governs whether
- * presence is READ AND WRITTEN. It does not govern retention, and must not: a
- * flag turned off after travellers shared intents would otherwise leave their
- * expired rows in place indefinitely — a flag would only add a way to keep
- * expired personal data. With the flag off nothing writes the table, so a pass
- * finds nothing due and deletes nothing (`idle`). The gate is the schema.
+ * ── THE FLAG (3952, 2026-10-24) ─────────────────────────────────────────────
+ * Deleting is the owner's press: `layover_presence_expiry_enabled` (3952, seeded
+ * FALSE), read fail-closed BEFORE the probe, so OFF/absent/unreadable issues no
+ * statement against the table. This replaced "no flag; the gate is the schema":
+ * no ruling sets expires_at as a retention period (3950's reasoning, the lead's
+ * ruling). It is not `layover_presence_intents_enabled` (read/write); every
+ * reader hides a row past expires_at whatever this says (census-layover §84).
  *
  * ── WHY NOTHING IS WRITTEN PER DELETED ROW ──────────────────────────────────
  * No `layover_events` row is minted for a swept presence: a retention sweep
@@ -88,7 +88,7 @@ export type LayoverPresenceExpiryOutcome = "swept" | "idle" | "refused" | "faile
 
 export type LayoverPresenceExpiryReason =
   /** The process holds no service-role client. */
-  | "no_client"
+  | "no_client" | "disabled" // disabled: layover_presence_expiry_enabled (3952) is OFF, absent or unreadable; no statement was issued
   /** 3900 is not applied to this database — no statement beyond the probe was issued. */
   | "table_absent"
   /** The bounded due-row read was refused. Nothing was deleted. */
@@ -139,7 +139,7 @@ async function runLayoverPresenceExpirySweepImpl(
   const db = auditedLayoverClient("client" in opts && opts.client !== undefined ? opts.client : getServiceClient());
   if (!db) return refused("no_client");
 
-  if (!(await presenceTablePresent(db))) return refused("table_absent");
+  if (!(await isFlagEnabled(db, "layover_presence_expiry_enabled"))) return refused("disabled"); if (!(await presenceTablePresent(db))) return refused("table_absent"); // 3952: the owner's press, read fail-closed BEFORE the probe
 
   const limit = opts.batchSize ?? LAYOVER_PRESENCE_EXPIRY_BATCH_SIZE;
   const cutoff = opts.now.toISOString();
@@ -242,7 +242,7 @@ export function startLayoverPresenceExpiryScheduler(): void {
       startupDelayMs: STARTUP_DELAY_MS,
       intervalMs: LAYOVER_PRESENCE_EXPIRY_INTERVAL_MS,
       batchSize: LAYOVER_PRESENCE_EXPIRY_BATCH_SIZE,
-      gate: "layover_presence must exist in this database (migration 3900)",
+      gate: "layover_presence_expiry_enabled ON (3952, seeded FALSE; read each pass) and layover_presence present (3900)",
     },
     "LayoverPresenceExpiryScheduler scheduled (no-op wherever migration 3900 is not applied)",
   );
@@ -268,3 +268,4 @@ import { auditedLayoverClient, withLayoverSystemAudit } from './layoverServiceAu
 export function runLayoverPresenceExpirySweep(...args: Parameters<typeof runLayoverPresenceExpirySweepImpl>): ReturnType<typeof runLayoverPresenceExpirySweepImpl> { return withLayoverSystemAudit('layover:presence-expiry', () => runLayoverPresenceExpirySweepImpl(...args)); }
 // census-layover L159 (lane LAYOVER, 2026-10-23): expired check-ins (2992 layover_checkpoints) leave storage at their own expires_at on this scheduler's tick. Imported at the TAIL so no line above moves; ESM hoists it.
 import { runLayoverCheckpointExpiryTick } from "./layoverCheckpointExpirySweep.js";
+import { isFlagEnabled } from "./featureFlags.js"; // 3952 (census-layover §84); at the foot so no cited line moves

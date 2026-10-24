@@ -117,7 +117,7 @@ describe("B1-P presence and indexes (P5)", { skip: PRESSED_SKIP_REASON }, () => 
       const s4 = sin[4]!;
       await db.exec(`INSERT INTO public.layover_presence (session_id, user_id, intents, available_from, available_until, expires_at) VALUES ('${sid}', '${u.id}', '{food}', now() - interval '3 hours', now() - interval '1 hour', now() - interval '1 hour')`);
       await db.exec(`INSERT INTO public.layover_presence (session_id, user_id, intents, available_from, available_until, expires_at) VALUES ('${s4.sid}', '${s4.u.id}', '{food}', now(), now() + interval '2 hours', now() + interval '2 hours')`);
-      const r = await runLayoverPresenceExpirySweep({ client: db.client, now: new Date() });
+      await db.setFlag("layover_presence_expiry_enabled", true); const r = await runLayoverPresenceExpirySweep({ client: db.client, now: new Date() }); // 3952: the owner's press, ON for this case
       assert.equal(r.outcome, "swept", JSON.stringify(r));
       assert.ok(r.deleted >= 1);
       assert.equal((await db.query<any>(`SELECT 1 FROM public.layover_presence WHERE session_id = '${sid}'`)).length, 0, "the expired record survived the sweep");
@@ -174,7 +174,7 @@ describe("B1-P presence and indexes (P5)", { skip: PRESSED_SKIP_REASON }, () => 
     // Defined in the migration-absent arm only (a skip would be counted, and run-tests.sh refuses skips).
     if (PRESS_ARM === "absent") it("A4 the sweep on a chain WITHOUT 3900 refuses (table_absent) instead of reporting 0 deleted", async () => {
       assert.equal(await db.hasTable("layover_presence"), false);
-      const r = await runLayoverPresenceExpirySweep({ client: db.client, now: new Date() });
+      await db.setFlag("layover_presence_expiry_enabled", true); const r = await runLayoverPresenceExpirySweep({ client: db.client, now: new Date() }); // 3952: the owner's press, ON for this case
       assert.equal(r.outcome, "refused");
     });
 

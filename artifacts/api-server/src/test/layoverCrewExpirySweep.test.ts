@@ -66,7 +66,7 @@ function client(opts: {
   deleteError?: boolean;
   probeThrows?: boolean;
   /** Ids the DELETE reports it actually removed, when that is fewer than asked. */
-  deleteConfirms?: string[];
+  deleteConfirms?: string[]; /** 3952's press: TRUE unless a case says otherwise; null = no row; "unreadable" = the read errors. A DELETE that returns no data array: `deleteNoData`. */ flag?: boolean | null | "unreadable"; deleteNoData?: boolean;
 }) {
   const state = {
     probes: 0,
@@ -74,11 +74,12 @@ function client(opts: {
     deletes: [] as string[][],
     /** The `expires_at` cutoff the bounded read was given. */
     cutoffs: [] as string[],
-    limits: [] as number[],
+    limits: [] as number[], flagReads: 0, /** The `expires_at` cutoff each DELETE re-checked. */ deleteCutoffs: [] as string[],
   };
   return {
     state,
     from(table: string) {
+      if (table === "feature_flags") { const flag = opts.flag === undefined ? true : opts.flag; return { select: () => ({ eq: (_c: string, name: string) => ({ maybeSingle: async () => { state.flagReads++; assert.equal(name, "layover_crew_expiry_enabled"); return flag === "unreadable" ? { data: null, error: { message: "down" } } : { data: flag === null ? null : { enabled: flag }, error: null }; } }) }) } as any; }
       assert.equal(table, "layover_crews", "the sweep touched some table other than layover_crews");
       return {
         // ── presence probe: select(cols, { head: true }).limit(1) ──────────
@@ -115,13 +116,13 @@ function client(opts: {
         },
         delete() {
           return {
-            in: async (column: string, ids: string[]) => {
+            in: (column: string, ids: string[]) => ({ lt: (col: string, cutoff: string) => ({ select: async (cols: string) => { assert.equal(col, "expires_at"); assert.equal(cols, "id"); state.deleteCutoffs.push(cutoff);
               assert.equal(column, "id");
               state.deletes.push(ids);
               if (opts.deleteError) return { data: null, error: { message: "deadlock detected" } };
               const confirmed = opts.deleteConfirms ?? ids;
-              return { data: confirmed.map((id) => ({ id })), error: null };
-            },
+              return opts.deleteNoData ? { data: null, error: null } : { data: confirmed.map((id) => ({ id })), error: null };
+            } }) }),
           };
         },
       };
@@ -321,5 +322,42 @@ describe("L196 crew expiry scheduler — start/stop", () => {
     // Reaching here without a hang or a throw IS the assertion: a second start
     // that opened a second timer would leave the process alive.
     assert.ok(LAYOVER_CREW_EXPIRY_INTERVAL_MS > 0);
+  });
+});
+
+// ── 3952 (census-layover §84): deleting is the owner's press; the DELETE re-checks and counts ─────
+
+describe("L196 crew expiry — 3952: the owner's press, and a DELETE that re-checks the expiry and counts what it removed", () => {
+  for (const [label, flag] of [["OFF", false], ["absent", null], ["unreadable", "unreadable"]] as const) {
+    it(`flag ${label}: refused \`disabled\`, no probe, no read, no DELETE — and not a failure`, async () => {
+      _resetLayoverCrewExpiryFailureState();
+      const c = client({ present: true, expired: [{ id: "c1" }], flag });
+      const r = await runLayoverCrewExpirySweep({ client: c as any, now: NOW });
+      assert.deepEqual(r, { outcome: "refused", reason: "disabled", deleted: 0, complete: false });
+      assert.equal(c.state.flagReads, 1);
+      assert.equal(c.state.probes, 0, "no statement against layover_crews while the press is not ON");
+      assert.deepEqual(c.state.deletes, []);
+      await runLayoverCrewExpiryTick({ client: client({ present: true, flag }) as any, now: NOW });
+      assert.equal(layoverCrewExpiryFailureState().consecutiveFailures, 0);
+    });
+  }
+
+  it("the DELETE carries the same expiry predicate as the read: a crew whose expiry moved forward is not removed", async () => {
+    const c = client({ present: true, expired: [{ id: "c1" }, { id: "c2" }] });
+    await runLayoverCrewExpirySweep({ client: c as any, now: NOW });
+    assert.deepEqual(c.state.deleteCutoffs, c.state.cutoffs, "the DELETE re-checks expires_at < the read's cutoff");
+  });
+
+  it("a DELETE that confirms nothing counts 0, never the attempted ids", async () => {
+    const c = client({ present: true, expired: [{ id: "c1" }, { id: "c2" }], deleteNoData: true });
+    const r = await runLayoverCrewExpirySweep({ client: c as any, now: NOW });
+    assert.equal(r.deleted, 0);
+  });
+
+  it("3952 seeds layover_crew_expiry_enabled FALSE, and the gate is read BEFORE the probe", () => {
+    const sql = readFileSync(new URL("../migrations/3952_layover_presence_crew_expiry_flags.sql", import.meta.url), "utf8");
+    assert.match(sql, /'layover_crew_expiry_enabled',\s*false,/);
+    const src = readFileSync(new URL("../lib/layoverCrewExpiryScheduler.ts", import.meta.url), "utf8");
+    assert.match(src, /if \(!\(await isFlagEnabled\(db, "layover_crew_expiry_enabled"\)\)\) return refused\("disabled"\); if \(!\(await crewTablesPresent\(db\)\)\) return refused\("tables_absent"\);/);
   });
 });
