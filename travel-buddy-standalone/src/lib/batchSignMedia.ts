@@ -208,7 +208,7 @@ export async function batchSignUrls(
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          urls: batch,
+          urls: batch.map(signableMediaRef), // 2026-10-24: a relay URL is sent as the bare ref it names (the endpoint takes that form, not the relay's)
           ...(transform && (transform.width !== undefined || transform.quality !== undefined)
             ? { transform }
             : undefined),
@@ -232,7 +232,7 @@ export async function batchSignUrls(
       const expiresAt = now + cacheTtlMs;
       for (const url of batch) {
         const cacheKey = url + transformSuffix;
-        const signedUrl = body.signed?.[url] ?? null;
+        const signedUrl = body.signed?.[signableMediaRef(url)] ?? null;
         noteSignOutcome(url, signedUrl ? 'signed' : 'denied');
         if (signedUrl) {
           _cacheSet(cacheKey, { url: signedUrl, expiresAt });
@@ -280,3 +280,4 @@ export function lastSignOutcome(url: string): 'signed' | 'denied' | 'unreachable
   return _lastOutcome.get(url) ?? null;
 }
 import { isVideoRef } from './media/videoPosterRef.ts';
+import { signableMediaRef } from '../services/playbackUri.ts'; // 2026-10-24 video on every surface: the one ref rule (no imports there, so no cycle)

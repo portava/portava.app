@@ -114,7 +114,7 @@ export function AddGemForm({ onSuccess, onClose }: AddGemFormProps) {
 
   // Media composer (hiddenGem policy: 1 item, images+videos gated above)
   const composer = useMediaComposer('hiddenGem');
-  const { pickMedia } = useMediaPicker();
+  const { pickMedia } = useMediaPicker(); const previewVideoRef = composer.primaryItem?.type === 'video' ? composer.primaryItem.uri : null; const { resolved: previewHydrated } = useHydratedMedia([previewVideoRef]); const previewSource = playbackUriState(previewVideoRef, previewHydrated); const previewPlayUri = previewSource.state === 'ready' ? previewSource.uri : null; // 2026-10-24 every surface: the composer's video preview follows the one rule — a private ref is signed first, a device file plays as it is
 
   // ── Flow state ──────────────────────────────────────────────────────────────
   const [step, setStep] = useState<Step>('media');
@@ -392,9 +392,9 @@ export function AddGemForm({ onSuccess, onClose }: AddGemFormProps) {
           {/* Media preview / picker */}
           {primaryItem ? (
             <View style={styles.mediaPreviewWrap}>
-              {primaryItem.type === 'video' && !isLoadablePlaybackUri(primaryItem.uri) ? null : primaryItem.type === 'video' ? (
-                <Video
-                  source={{ uri: primaryItem.uri }}
+              {primaryItem.type === 'video' && !isLoadablePlaybackUri(previewPlayUri) ? null : primaryItem.type === 'video' ? (
+                <Video key={previewPlayUri as string}
+                  source={{ uri: previewPlayUri as string }}
                   style={styles.mediaPreview}
                   resizeMode={ResizeMode.COVER}
                   shouldPlay
@@ -1190,4 +1190,4 @@ const styles = StyleSheet.create({
     color: '#C43B23', // census-media §31.12: `signal` x 0.77
   },
 });
-import { isLoadablePlaybackUri } from '../../services/playbackUri.ts'; // 2026-10-24 video playback: the one playback rule
+import { isLoadablePlaybackUri, playbackUriState } from '../../services/playbackUri.ts'; import { useHydratedMedia } from '../../services/mediaUrl.ts'; // 2026-10-24 video playback: the one playback rule, and the one signing hook

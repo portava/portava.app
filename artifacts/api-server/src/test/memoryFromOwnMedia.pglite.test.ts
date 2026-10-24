@@ -128,7 +128,7 @@ const BASE_SCHEMA = `
   CREATE TABLE public.memory_items (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), memory_id uuid NOT NULL REFERENCES public.memories(id) ON DELETE CASCADE,
     media_url text NOT NULL, media_type text NOT NULL DEFAULT 'image/jpeg', caption text, position integer NOT NULL DEFAULT 0,
     created_at timestamptz NOT NULL DEFAULT now());
-  CREATE TABLE public.media_events (id bigserial PRIMARY KEY, event_type text NOT NULL, payload jsonb, occurred_at timestamptz);
+  CREATE TABLE public.media_events (id bigserial PRIMARY KEY, event_type text NOT NULL, payload jsonb, occurred_at timestamptz); ${postMediaTable()}
   -- No row: requireUser's account gate reads an absent profile as active.
   CREATE TABLE public.profiles (id uuid PRIMARY KEY, account_status text);
   GRANT USAGE ON SCHEMA public TO service_role, anon, authenticated;
@@ -525,3 +525,191 @@ describe("3999's guard under re-parenting, and 3676's real split / merge applied
     assert.equal((await item(theirs)).memory_id, OTHER_MEMORY);
   });
 });
+
+// ── 2026-10-24, video on every surface: "Save to a Memory" from an UPLOAD post (post_media only) — 3928 ─────────────
+// 2083 / 3924 / #795 keep uploads in post_media; 3999's guard and the reader knew only posts.media_urls, so an upload
+// post's own photo or video was refused (`no_such_media` in the route, D-26j in the database).
+//   PM1  an upload post (media_urls empty, one ready row): the route writes the item, named by the row, typed by its MIME
+//   PM2  rows first in sort_order, then the EXTERNAL media_urls entries; a storage key left in media_urls is not offered
+//        twice; a row with no public_url is named `<storage_bucket>/<storage_path>`, which the guard accepts too
+//   PM3  a rejected, flagged or still-processing row is never offered (route) and never accepted (database)
+//   PM4  the database widens ONLY to the post's own row: another post's row, another user's post, a non-owner's Memory refused
+//   PM5  without 3928 (3999 alone) the database refuses the row the reader now offers — 3928 is required, not decorative
+//   PM6  3928 re-runs cleanly, refuses to overwrite a guard body that is neither 3999's nor its own, and its rollback
+//        restores 3999's body byte for byte (and the refusal with it)
+//   PM7  an unreadable post_media read refuses 503 — never read as "no rows", never a write
+const migration3928 = readFileSync(new URL("../migrations/3928_memory_items_source_post_guard_post_media.sql", import.meta.url), "utf8");
+const rollback3928 = readFileSync(new URL("../../../../db/rollback/2026-10-24-3928-memory-items-source-post-guard-post-media-rollback.sql", import.meta.url), "utf8");
+
+describe("3928 — Save to a Memory from an upload post (post_media), reader and guard", { concurrency: 1 }, () => {
+  let db: Database;
+  let base = "";
+  let server: http.Server;
+  let failPostMedia = false;
+  const UPLOAD_POST = "20000000-0000-4000-8000-0000000000a1";
+  const MIXED_POST = "20000000-0000-4000-8000-0000000000a2";
+  const OTHER_UPLOAD = "20000000-0000-4000-8000-0000000000a3";
+  const MOV = `post-media/${ME}/1792727980484.mov`;
+  const JPG = `post-media/${ME}/1792727980485.jpg`;
+  const EXTERNAL = "https://images.example.org/view.jpg";
+  const rows = async (text: string, p: unknown[] = []) => (await db.query<any>(text, p)).rows;
+  const asService = async (text: string, p: unknown[] = []) => {
+    await db.exec("SET ROLE service_role");
+    try { return (await db.query<any>(text, p)).rows; } finally { await db.exec("RESET ROLE"); }
+  };
+  const setFlag = (flag: string, on: boolean) =>
+    db.query("INSERT INTO public.feature_flags (flag, enabled) VALUES ($1, $2) ON CONFLICT (flag) DO UPDATE SET enabled = EXCLUDED.enabled", [flag, on]);
+  async function post(path: string, actor: string, body: unknown) {
+    const res = await fetch(base + "/api" + path, {
+      method: "POST", headers: { Authorization: `Bearer ${actor}`, "Content-Type": "application/json", connection: "close" }, body: JSON.stringify(body),
+    });
+    const text = await res.text();
+    let parsed: any = null;
+    try { parsed = text ? JSON.parse(text) : null; } catch { parsed = text; }
+    return { status: res.status, body: parsed };
+  }
+  const guardSrc = async (d: Database) => (await d.query<any>("SELECT prosrc FROM pg_proc WHERE oid = 'public.memory_items_source_post_guard()'::regprocedure")).rows[0].prosrc as string;
+
+  before(async () => {
+    db = await newDb(true);
+    await db.exec(migration3928);
+    const app = express();
+    app.use(express.json());
+    app.use((req: any, _r: any, n: any) => { req.log = { error: () => {}, info: () => {}, warn: () => {} }; n(); });
+    app.use("/api", memoriesRouter);
+    await new Promise<void>((resolve, reject) => {
+      server = http.createServer(app);
+      server.listen(0, "127.0.0.1", () => { base = `http://127.0.0.1:${(server.address() as any).port}`; server.unref(); resolve(); });
+      server.on("error", reject);
+    });
+  });
+
+  beforeEach(async () => {
+    failPostMedia = false;
+    const real = pgClient(db);
+    _setTestClient({ ...real, from: (t: string) => (failPostMedia && t === "post_media"
+      ? { select: () => ({ eq: async () => ({ data: null, error: { message: "permission denied for table post_media" } }) }) }
+      : real.from(t)) } as any, true);
+    await db.exec(`TRUNCATE public.memory_items, public.media_events; DELETE FROM public.post_media; DELETE FROM public.posts; DELETE FROM public.memories;
+      UPDATE public.feature_flags SET enabled = false;`);
+    await setFlag("memory_from_own_media_enabled", true);
+    await db.query(`INSERT INTO public.memories (id, owner_id) VALUES ($1, $2), ($3, $4)`, [MY_MEMORY, ME, OTHER_MEMORY, OTHER]);
+    await db.query(`INSERT INTO public.posts (id, author_id, media_urls, media_type) VALUES
+      ($1, $2, '{}', 'video/quicktime'), ($3, $2, ARRAY[$5, $6], 'image/jpeg'), ($4, $7, '{}', 'video/quicktime')`,
+      [UPLOAD_POST, ME, MIXED_POST, OTHER_UPLOAD, EXTERNAL, JPG, OTHER]);
+    await db.query(`INSERT INTO public.post_media (post_id, user_id, media_type, storage_path, public_url, mime_type, processing_status, moderation_status, sort_order) VALUES
+      ($1, $2, 'video', $3, $4, 'video/quicktime', 'ready', 'pending', 0),
+      ($5, $2, 'image', $6, $7, 'image/jpeg', 'ready', 'approved', 1),
+      ($5, $2, 'image', $8, $9, 'image/jpeg', 'ready', 'rejected', 0),
+      ($5, $2, 'image', $10, $11, 'image/jpeg', 'ready', 'flagged', 2),
+      ($5, $2, 'video', $12, $13, 'video/mp4', 'pending', 'pending', 3),
+      ($14, $15, 'video', $16, $17, 'video/quicktime', 'ready', 'pending', 0)`,
+      [UPLOAD_POST, ME, MOV.slice("post-media/".length), MOV,
+       MIXED_POST, JPG.slice("post-media/".length), JPG, `${ME}/rejected.jpg`, `post-media/${ME}/rejected.jpg`,
+       `${ME}/flagged.jpg`, `post-media/${ME}/flagged.jpg`, `${ME}/processing.mp4`, `post-media/${ME}/processing.mp4`,
+       OTHER_UPLOAD, OTHER, `${OTHER}/theirs.mov`, `post-media/${OTHER}/theirs.mov`]);
+  });
+
+  after(async () => {
+    server?.closeAllConnections();
+    await new Promise<void>((r) => (server ? server.close(() => r()) : r()));
+    await db?.close();
+  });
+
+  it("PM1 an upload post: the item is written from its post_media row, linked, typed by the row's MIME", async () => {
+    const r = await post(`/memories/${MY_MEMORY}/items/from-post`, ME, { postId: UPLOAD_POST });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.deepEqual(await rows(`SELECT media_url, media_type, source_post_id FROM public.memory_items`),
+      [{ media_url: MOV, media_type: "video/quicktime", source_post_id: UPLOAD_POST }]);
+    assert.equal((await post(`/memories/${MY_MEMORY}/items/from-post`, ME, { postId: UPLOAD_POST, mediaIndex: 1 })).status, 400, "one row, one item");
+  });
+
+  it("PM2 rows first in sort_order, then the external media_urls entries; the storage key in media_urls is not offered twice", async () => {
+    // media_urls is [EXTERNAL, JPG] (the upload's key left behind). A second visible row, sort_order 0, is inserted
+    // LAST, so only a sort puts it first. The list is [first.jpg, the JPG row, EXTERNAL].
+    const FIRST = `post-media/${ME}/first.jpg`;
+    await db.query(`INSERT INTO public.post_media (post_id, user_id, media_type, storage_path, public_url, mime_type, processing_status, moderation_status, sort_order)
+      VALUES ($1, $2, 'image', $3, '', 'image/jpeg', 'ready', 'approved', 0)`, [MIXED_POST, ME, `${ME}/first.jpg`]);
+    const expected = [FIRST, JPG, EXTERNAL];
+    for (let i = 0; i < expected.length; i++) {
+      const r = await post(`/memories/${MY_MEMORY}/items/from-post`, ME, { postId: MIXED_POST, mediaIndex: i });
+      assert.equal(r.status, 201, `index ${i}: ${JSON.stringify(r.body)}`);
+      assert.equal(r.body.item.mediaUrl, expected[i], `index ${i}`);
+    }
+    assert.equal((await post(`/memories/${MY_MEMORY}/items/from-post`, ME, { postId: MIXED_POST, mediaIndex: 3 })).status, 400, "the JPG key in media_urls is not a fourth item");
+  });
+
+  it("PM3 a rejected, flagged or still-processing row is never offered, and the database refuses each", async () => {
+    for (const bad of ["rejected.jpg", "flagged.jpg", "processing.mp4"]) {
+      await assert.rejects(asService(`INSERT INTO public.memory_items (memory_id, media_url, source_post_id) VALUES ($1, $2, $3)`, [MY_MEMORY, `post-media/${ME}/${bad}`, MIXED_POST]), /D-26j/, bad);
+    }
+    assert.equal((await rows("SELECT count(*)::int AS n FROM public.memory_items"))[0].n, 0);
+  });
+
+  it("PM4 the guard widens only to the post's OWN row: another post's row, another user's post, another owner's Memory are refused", async () => {
+    await asService(`INSERT INTO public.memory_items (memory_id, media_url, source_post_id) VALUES ($1, $2, $3)`, [MY_MEMORY, MOV, UPLOAD_POST]);
+    await asService(`INSERT INTO public.memory_items (memory_id, media_url, source_post_id) VALUES ($1, $2, $3)`, [MY_MEMORY, `post-media/${ME}/1792727980485.jpg`, MIXED_POST]);
+    const refused: Array<[string, string, string, string]> = [
+      [MY_MEMORY, JPG, UPLOAD_POST, "my other post's row, linked to this post"],
+      [MY_MEMORY, `post-media/${OTHER}/theirs.mov`, OTHER_UPLOAD, "someone else's upload post"],
+      [MY_MEMORY, `post-media/${OTHER}/theirs.mov`, UPLOAD_POST, "someone else's row through my post"],
+      [OTHER_MEMORY, MOV, UPLOAD_POST, "my upload into someone else's Memory"],
+    ];
+    for (const [memory, url, postId, why] of refused) {
+      await assert.rejects(asService(`INSERT INTO public.memory_items (memory_id, media_url, source_post_id) VALUES ($1, $2, $3)`, [memory, url, postId]), /D-26j/, why);
+    }
+    assert.equal((await post(`/memories/${MY_MEMORY}/items/from-post`, ME, { postId: OTHER_UPLOAD })).status, 404);
+  });
+
+  it("PM5 3999 alone refuses the post_media row the reader now offers: 3928 is required", async () => {
+    const only3999 = await newDb(true);
+    try {
+      await only3999.query(`INSERT INTO public.memories (id, owner_id) VALUES ($1, $2)`, [MY_MEMORY, ME]);
+      await only3999.query(`INSERT INTO public.posts (id, author_id, media_urls) VALUES ($1, $2, '{}')`, [UPLOAD_POST, ME]);
+      await only3999.query(`INSERT INTO public.post_media (post_id, user_id, media_type, storage_path, public_url, mime_type, processing_status) VALUES ($1, $2, 'video', $3, $4, 'video/quicktime', 'ready')`,
+        [UPLOAD_POST, ME, MOV.slice("post-media/".length), MOV]);
+      await only3999.exec("SET ROLE service_role");
+      await assert.rejects(only3999.query(`INSERT INTO public.memory_items (memory_id, media_url, source_post_id) VALUES ($1, $2, $3)`, [MY_MEMORY, MOV, UPLOAD_POST]), /D-26j/);
+      await only3999.exec("RESET ROLE");
+      await only3999.exec(migration3928);
+      await only3999.exec("SET ROLE service_role");
+      await only3999.query(`INSERT INTO public.memory_items (memory_id, media_url, source_post_id) VALUES ($1, $2, $3)`, [MY_MEMORY, MOV, UPLOAD_POST]);
+      await only3999.exec("RESET ROLE");
+    } finally { await only3999.close(); }
+  });
+
+  it("PM6 3928 re-runs, refuses a foreign guard body, and its rollback restores 3999's body exactly", async () => {
+    const d = await newDb(true);
+    try {
+      const body3999 = await guardSrc(d);
+      await d.exec(migration3928);
+      await d.exec(migration3928);
+      assert.notEqual(await guardSrc(d), body3999);
+      await d.exec(rollback3928);
+      assert.equal(await guardSrc(d), body3999, "the rollback restores 3999's body byte for byte");
+      const p = (await d.query<any>(`SELECT has_function_privilege('authenticated', 'public.memory_items_source_post_guard()', 'EXECUTE') AS a,
+        has_function_privilege('anon', 'public.memory_items_source_post_guard()', 'EXECUTE') AS b`)).rows[0];
+      assert.deepEqual(p, { a: false, b: false });
+      await d.exec(`CREATE OR REPLACE FUNCTION public.memory_items_source_post_guard() RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER
+        SET search_path = pg_catalog, public AS $f$ BEGIN RETURN NEW; END $f$;`);
+      await assert.rejects(d.exec(migration3928), /PRECONDITION FAILED \(3928\)/);
+    } finally { await d.close(); }
+  });
+
+  it("PM7 an unreadable post_media read refuses 503 and writes nothing", async () => {
+    failPostMedia = true;
+    const r = await post(`/memories/${MY_MEMORY}/items/from-post`, ME, { postId: UPLOAD_POST });
+    assert.equal(r.status, 503, JSON.stringify(r.body));
+    assert.equal((await rows("SELECT count(*)::int AS n FROM public.memory_items"))[0].n, 0);
+  });
+});
+
+/** 0103's post_media, the columns the from-post reader and 3928's guard read (added 2026-10-24: the reader now reads it). A hoisted function at the tail, so no cited line above moves. */
+function postMediaTable(): string {
+  return `CREATE TABLE public.post_media (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), post_id uuid NOT NULL REFERENCES public.posts(id) ON DELETE CASCADE,
+    user_id uuid NOT NULL, media_type text NOT NULL CHECK (media_type IN ('image', 'video')), storage_bucket text NOT NULL DEFAULT 'post-media',
+    storage_path text NOT NULL DEFAULT '', public_url text NOT NULL DEFAULT '', mime_type text NOT NULL,
+    processing_status text NOT NULL DEFAULT 'pending' CHECK (processing_status IN ('pending', 'ready', 'failed')),
+    moderation_status text NOT NULL DEFAULT 'pending' CHECK (moderation_status IN ('pending', 'approved', 'flagged', 'rejected')),
+    sort_order integer NOT NULL DEFAULT 0);`;
+}
