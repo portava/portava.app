@@ -56,7 +56,8 @@ beforeEach(() => install({ creator_attribution_enabled: { enabled: true } }));
 
 describe("DC-23 — payout eligibility is answered as undecided while W10D-B5 is open", () => {
   it("E1. flag OFF or absent ⇒ 404 feature_disabled", async () => {
-    for (const flags of [{ creator_attribution_enabled: { enabled: false } }, {}]) {
+    const states: Array<Record<string, { enabled: boolean }>> = [{ creator_attribution_enabled: { enabled: false } }, {}];
+    for (const flags of states) {
       install(flags);
       const r = await get("alice-token");
       assert.equal(r.status, 404, JSON.stringify(flags));
