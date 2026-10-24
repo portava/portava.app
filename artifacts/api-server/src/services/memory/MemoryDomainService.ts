@@ -80,7 +80,7 @@ export interface CommandHttpError {
 }
 
 export type CommandOutcome<T> =
-  | { ok: true; body: T; duplicate: boolean; commandId: string; eventId: string | null; idempotencyKey: string }
+  | { ok: true; body: T; duplicate: boolean; commandId: string; eventId: string | null; idempotencyKey: string; /** 3911: who a CREATE_MEMORY tagged in the kernel's transaction; null = the kernel did not (2711, legacy, replay) */ taggedUserIds?: string[] | null }
   | { ok: false; rejection: CommandRejection }
   | { ok: false; http: CommandHttpError };
 
@@ -566,7 +566,7 @@ export async function dispatchMemoryCommand<T>(input: DispatchInput<T>): Promise
     duplicate: result.duplicate,
     commandId,
     eventId: result.eventId,
-    idempotencyKey: input.idempotencyKey,
+    idempotencyKey: input.idempotencyKey, taggedUserIds: result.taggedUserIds ?? null,
   };
 }
 
