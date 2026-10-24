@@ -12,9 +12,13 @@
  *   S4  a member removed from the trip is not served to those still in it
  *   S5  CONTROL: members still in the trip read each other and publish
  *   S6  the route wires the re-check (LOCATE_READ_DEPS carries routes/locateFriends.ts verifyScopeMembership)
+ *   S7  a verifier that throws is a refusal
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   MEMBERS_TABLE, POSITIONS_TABLE, POSITION_TTL_MS, SESSIONS_TABLE, readSessionForViewer,
   type PositionRow, type SessionRow,
@@ -254,11 +258,22 @@ describe("census-map M93 — the group is re-checked on every read and publish",
     assert.deepEqual(r.members.map((m: any) => m.memberId), [ALICE]);
   });
 
+  it("S7 a verifier that THROWS is a refusal, for the viewer and for every member", async () => {
+    const db = world();
+    const throwing = { ...LOCATE_READ_DEPS, scopeMember: async () => { throw new Error("socket closed"); } };
+    const r = await readSessionForViewer(db as any, SESSION, BOB, NOW, throwing);
+    assert.equal(r.status, "not_member");
+    assert.deepEqual(r.members, []);
+  });
+
   it("S6 the route wires the re-check", async () => {
     assert.equal(typeof LOCATE_READ_DEPS.scopeMember, "function");
     const db = world({ tripMembers: [] });
     assert.equal(await LOCATE_READ_DEPS.scopeMember!(db as any, "trip", TRIP, BOB), false);
     assert.equal(await LOCATE_READ_DEPS.scopeMember!(db as any, "trip", TRIP, ALICE), true);
     assert.equal(await LOCATE_READ_DEPS.scopeMember!(db as any, "unknown_kind", TRIP, ALICE), false, "a kind with no verifier refuses");
+    // The GET route hands these deps to the read (a route that called readSessionForViewer without them would skip the re-check).
+    const route = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../routes/locateFriends.ts"), "utf8");
+    assert.match(route, /readSessionForViewer\(sc, String\(req\.params\.id\), user\.id, nowMs, LOCATE_READ_DEPS\)/);
   });
 });
