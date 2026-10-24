@@ -341,12 +341,17 @@ export interface AcknowledgementRosterLike {
 
 export function boundAcknowledgementRoster<T extends AcknowledgementRosterLike>(
   projected: T,
-  opts: { viewerIsHost: boolean; sample: number },
+  opts: { viewerIsHost: boolean; sample: number; viewerId?: string },
 ): T & { acknowledgedCount: number; outstandingCount: number | null; rosterBounded: true } {
   const outstandingCount = projected.outstanding === null ? null : projected.outstanding.length;
+  // census-telegraph T417 (batch 2): the VIEWER'S OWN acknowledgement is always in the sample. It is their
+  // own fact, not a roster disclosure, and a client asking "have I confirmed?" must never be told no
+  // because the sample was cut before them (it then re-offered "Got it" to someone who had pressed it).
+  const own = opts.viewerId ? projected.acknowledgedBy.filter((a) => a.userId === opts.viewerId) : [];
+  const others = opts.viewerId ? projected.acknowledgedBy.filter((a) => a.userId !== opts.viewerId) : projected.acknowledgedBy;
   return {
     ...projected,
-    acknowledgedBy: projected.acknowledgedBy.slice(0, opts.sample),
+    acknowledgedBy: [...own, ...others].slice(0, opts.sample),
     acknowledgedCount: projected.acknowledgedBy.length,
     outstanding: projected.outstanding === null ? null : opts.viewerIsHost ? projected.outstanding.slice(0, opts.sample) : null,
     outstandingCount,
@@ -386,5 +391,5 @@ export async function boundAnnouncementsForViewer<T extends AcknowledgementRoste
   }
   if (!error && !ref) return announcements;
   const host = state === "on" && !error && ref ? (await isConversationHost(sc, ref, viewerId)) === true : false;
-  return announcements.map((a) => boundAcknowledgementRoster(a, { viewerIsHost: host, sample: LARGE_GROUP_SEEN_SAMPLE }));
+  return announcements.map((a) => boundAcknowledgementRoster(a, { viewerIsHost: host, sample: LARGE_GROUP_SEEN_SAMPLE, viewerId }));
 }

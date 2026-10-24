@@ -455,3 +455,159 @@ describe("§30A.12 bounded acknowledgement in a LARGE_GROUP", () => {
     assert.equal(a.rosterBounded, undefined);
   });
 });
+
+/**
+ * census T389 (§30A.4, migration 3934): a removal is RECORDED as a removal.
+ *
+ * MUTANTS (each applied alone, each red, each reverted — tgprod/mutants-b2.txt):
+ *   RA1 the removal writes left_at alone (no removed_at) ......................... red
+ *   RA2 removed_at a different instant from left_at .............................. red
+ *   RA3 the fallback never taken (a database without 3934 fails the removal) ..... red
+ *   RA4 the fallback taken on ANY error (a refusal retried as a removal) ......... red
+ *   RA5 removedAtAbsent ignores which column is named ............................ red
+ *   RA6 the answer claims removalRecorded on the fallback ........................ red
+ */
+describe("§30A.4 removed_at — a removal is recorded as one (census T389)", () => {
+  const memberRow = (c: FakeClient, t: string, u: string) => c._store.message_thread_members.find((m) => m.thread_id === t && m.user_id === u);
+  const memberUpdates = (c: FakeClient) => c._observed.updates.filter((u) => u.table === "message_thread_members").map((u) => u.patch);
+
+  /** The database refuses any membership UPDATE that names removed_at, with `err`; nothing is written. */
+  function refuseRemovedAt(c: FakeClient, err: { code: string; message: string }) {
+    const from = c.from.bind(c);
+    (c as any).from = (table: string) => {
+      const b = from(table);
+      if (table !== "message_thread_members") return b;
+      return new Proxy(b, {
+        get(target, prop, recv) {
+          if (prop !== "update") return Reflect.get(target, prop, recv);
+          return (patch: any) => {
+            if (!patch || !("removed_at" in patch)) return target.update(patch);
+            c._observed.updates.push({ table, patch });
+            const chain: any = { eq: () => chain, is: () => chain, in: () => chain, then: (ok: any, ko: any) => Promise.resolve({ data: null, error: err }).then(ok, ko) };
+            return chain;
+          };
+        },
+      });
+    };
+  }
+
+  it("the host's removal writes removed_at beside left_at, the same instant, and says it was recorded", async () => {
+    const c = use();
+    const r = await call(harness.base, "POST", `/threads/${G}/moderation/${B}/remove`, A);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.removalRecorded, true);
+    const row = memberRow(c, G, B);
+    assert.ok(row.left_at, "the member has left");
+    assert.equal(row.removed_at, row.left_at, "the removal and the departure are one event");
+    assert.equal(r.body.removedAt, row.removed_at);
+    assert.deepEqual(memberUpdates(c), [{ left_at: row.left_at, removed_at: row.left_at }], "ONE write, both columns");
+    assert.equal(memberRow(c, G, C).removed_at, undefined, "nobody else is touched");
+  });
+
+  it("a person who LEAVES is never recorded as removed", async () => {
+    const c = use();
+    const r = await call(harness.base, "POST", `/threads/${G}/leave`, C);
+    assert.ok(r.status < 300, JSON.stringify(r.body));
+    assert.ok(memberRow(c, G, C).left_at);
+    assert.ok(!memberUpdates(c).some((p) => "removed_at" in p), "the leave door names no removed_at");
+  });
+
+  for (const err of [
+    { code: "PGRST204", message: "Could not find the 'removed_at' column of 'message_thread_members' in the schema cache" },
+    { code: "42703", message: 'column "removed_at" of relation "message_thread_members" does not exist' },
+  ]) {
+    it(`a database without 3934 (${err.code}): the member is removed exactly as before, and the answer says the removal was NOT recorded`, async () => {
+      const c = use();
+      refuseRemovedAt(c, err);
+      const r = await call(harness.base, "POST", `/threads/${G}/moderation/${B}/remove`, A);
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      assert.equal(r.body.removalRecorded, false);
+      const row = memberRow(c, G, B);
+      assert.ok(row.left_at, "removed");
+      assert.equal(row.removed_at, undefined);
+      const ups = memberUpdates(c);
+      assert.equal(ups.length, 2, "one attempt with the column, one without");
+      assert.deepEqual(Object.keys(ups[1]), ["left_at"]);
+      assert.equal((await say(G, B, "x")).status, 403, "and is out");
+    });
+  }
+
+  for (const err of [
+    { code: "42501", message: "permission denied for table message_thread_members" },
+    { code: "PGRST204", message: "Could not find the 'left_at' column of 'message_thread_members' in the schema cache" },
+    { code: "08006", message: "connection failure while writing removed_at" },
+  ]) {
+    it(`any OTHER failure (${err.code}) refuses the removal and is never retried as one`, async () => {
+      const c = use();
+      refuseRemovedAt(c, err);
+      const r = await call(harness.base, "POST", `/threads/${G}/moderation/${B}/remove`, A);
+      assert.equal(r.status, 500, JSON.stringify(r.body));
+      assert.equal(r.body.error, "db_error");
+      assert.equal(memberUpdates(c).length, 1, "no second attempt");
+      assert.equal(memberRow(c, G, B).left_at, null, "still a member");
+    });
+  }
+
+  it("removedAtAbsent names exactly the absent removed_at column", () => {
+    assert.equal(removedAtAbsent({ code: "PGRST204", message: "Could not find the 'removed_at' column" }), true);
+    assert.equal(removedAtAbsent({ code: "42703", message: 'column "removed_at" does not exist' }), true);
+    assert.equal(removedAtAbsent({ code: "42703", message: 'column "left_at" does not exist' }), false);
+    assert.equal(removedAtAbsent({ code: "23514", message: "removed_at violates check constraint" }), false);
+    assert.equal(removedAtAbsent(null), false);
+    assert.equal(removedAtAbsent({}), false);
+  });
+});
+
+import { removedAtAbsent } from "../routes/telegraphGroups.js";
+
+/**
+ * census T417 (batch 2): §30A.12's bounded acknowledgement keeps the VIEWER'S OWN acknowledgement in
+ * the sample. Before this, the 30th person to confirm an announcement in a 60-member group was not
+ * among the 20 names served, so the client — which asks "am I in acknowledgedBy?" — told them they had
+ * not confirmed and offered "Got it" again.
+ *   MUTANT BA1 the viewer is not moved into the sample ........................... red
+ */
+describe("§30A.12 bounded acknowledgement — the viewer's own confirmation is always in the sample (T417)", () => {
+  const ANN = "11111111-0000-4000-8000-0000000000cc";
+  const acks = crowd.slice(0, 30).map((u, i) => ({
+    id: `33333333-0000-4000-8000-${String(i).padStart(12, "0")}`, thread_id: BIG, sender_id: u,
+    created_at: `2026-05-01T00:${String(10 + i).padStart(2, "0")}:00.000Z`, deleted_at: null, msg_type: "acknowledgement", subtype: null,
+    body: env("ACKNOWLEDGEMENT", { announcementMessageId: ANN, note: null }),
+  }));
+  const msgs = [{ id: ANN, thread_id: BIG, sender_id: A, created_at: "2026-05-01T00:00:00.000Z", deleted_at: null, msg_type: "announcement", subtype: null,
+    body: env("ANNOUNCEMENT", { title: "Bus at 8", body: "lobby", requiresAcknowledgement: true }) }, ...acks];
+
+  it("the 30th to confirm is in the 20 served to them; the count stays exact", async () => {
+    use({ over: { messages: msgs } });
+    const a = (await call(harness.base, "GET", `/threads/${BIG}/announcements`, crowd[29]!)).body.announcements[0];
+    assert.equal(a.rosterBounded, true);
+    assert.equal(a.acknowledgedBy.length, 20);
+    assert.equal(a.acknowledgedCount, 30);
+    assert.ok(a.acknowledgedBy.some((x: { userId: string }) => x.userId === crowd[29]), "the viewer's own confirmation is served to the viewer");
+  });
+  it("someone who has not confirmed is not put in it, and nobody else's sample changes shape", async () => {
+    use({ over: { messages: msgs } });
+    const a = (await call(harness.base, "GET", `/threads/${BIG}/announcements`, crowd[59]!)).body.announcements[0];
+    assert.equal(a.acknowledgedBy.length, 20);
+    assert.ok(!a.acknowledgedBy.some((x: { userId: string }) => x.userId === crowd[59]));
+    assert.deepEqual(a.acknowledgedBy.map((x: { userId: string }) => x.userId), crowd.slice(0, 20));
+  });
+});
+
+// ── #786 verifier probe V8, committed: "never a host" is pinned with TWO hosts ──
+describe("§30A.12 moderation never reaches a host — a host cannot mute or remove ANOTHER host (#786 verifier V8)", () => {
+  it("A (admin) targets C (admin): 409 for mute and remove, and nothing is written", async () => {
+    const c = use({ over: { message_thread_members: [member(G, A, { role: "admin" }), member(G, B), member(G, C, { role: "admin" })] } });
+    assert.equal((await call(harness.base, "POST", `/threads/${G}/moderation/${C}/mute`, A, { minutes: 60 })).status, 409);
+    assert.equal(c._store.telegraph_thread_member_mutes.length, 0);
+    assert.equal((await call(harness.base, "POST", `/threads/${G}/moderation/${C}/remove`, A)).status, 409);
+    assert.equal(c._store.message_thread_members.find((m: any) => m.thread_id === G && m.user_id === C).left_at, null);
+  });
+  it("a removed member can no longer read or post, and can no longer read the controls or moderate", async () => {
+    use();
+    assert.equal((await call(harness.base, "POST", `/threads/${G}/moderation/${B}/remove`, A)).status, 200);
+    assert.equal((await call(harness.base, "GET", `/threads/${G}/messages`, B)).status, 403);
+    assert.equal((await call(harness.base, "GET", `/threads/${G}/controls`, B)).status, 404);
+    assert.equal((await call(harness.base, "POST", `/threads/${G}/moderation/${C}/mute`, B, {})).status, 404);
+  });
+});

@@ -268,6 +268,7 @@ export const REVIEWED_CLAIM_SHAPED_COPY: readonly { readonly text: string; reado
   { text: "Off — your signals won't contribute, and capture stays disabled until you turn this on. On: ${offered.summary}", why: "Intelligence-prompt setting: the app's own collection stays off — not screen capture." },
   { text: "Live intel capture is currently turned off, so no prompts appear. These preferences are saved and take effect if it’s enabled.", why: "Intelligence capture switched off — the app's own collection." },
   { text: "Portava can take a coarse loudness and rhythm reading to tell whether a place is lively. It measures a level only — no audio is recorded, kept or sent — and it is off until you turn it on here, separately from the microphone used for calls and video.", why: "The microphone-permission explanation for ambient-loudness sensing: what the app itself records (nothing), not a promise about anyone copying a conversation." },
+  { text: "This starts a new group. Your conversation here stays private: nothing from it is copied, and the people you add cannot read it.", why: "census-telegraph T212 (batch 2): the Add people sheet on a DM, shown before anything is sent. It is about what the SERVER does when a group is formed from a DM (3660 copies no message into the new group, and the new members are never members of the DM), not about anyone copying what is on a screen." },
   ...reviewedRouteMessages()];
 
 /**

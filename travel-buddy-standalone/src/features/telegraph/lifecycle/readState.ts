@@ -80,7 +80,7 @@ export function ownMessageStatus(input: {
     return { kind: 'seen', seenBy: r.seenBy, recipientCount: r.recipientCount };
   }
   if (input.receiptsState === 'unavailable') return { kind: 'receipt_unavailable' };
-  const d = input.delivery;
+  const d = input.delivery; if (r && r.delivered === true) return { kind: 'delivered' }; // census T73: the server's stored cursor — DELIVERED survives the screen closing
   if (d && d.deliveredCount > 0) return { kind: 'delivered' };
   if (d && d.deliveredCount === 0 && !d.crossInstance && d.audienceCount === 1) {
     return { kind: 'recipient_offline' };
