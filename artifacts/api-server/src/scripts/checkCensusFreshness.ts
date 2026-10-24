@@ -2778,7 +2778,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   // decision about its own document; the six above carry no such refusal.
   "census-map.md": [
     // ── ADDED 2026-09-14 by the scope-coverage finding ──────────────────────
-    "artifacts/api-server/src/routes/discoverySearch.ts",
+    "artifacts/api-server/src/routes/discoverySearch.ts", "artifacts/api-server/src/lib/protectedZoneStore.ts", /* census-map §54.4: the canonical protected-zone loader, line-neutral */
     "artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts", // census-discovery §70: routes/discoverySearch.ts's searchers moved here
     // ADDED 2026-09-14 on the Map lane's request. `geoZoneSeed.test.ts` now
     // carries M256's evidence — the first assertions in this repository that a
