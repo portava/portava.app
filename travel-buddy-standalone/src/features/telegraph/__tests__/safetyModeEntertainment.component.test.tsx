@@ -9,8 +9,8 @@
  *   - the thread screen hands the menu the raised state, and holds the Ask Compass chip AND its
  *     tray away for the whole raised mode (source level: app/messages/[id].tsx cannot be mounted
  *     under jest-expo, §41.7 — safetyModeBar.component.test.tsx pins the same state variable);
- *   - reactions: the thread screen has no reaction affordance at all, so there is nothing to
- *     demote — pinned, so one cannot arrive un-demoted.
+ *   - reactions: since census T370 (batch 3) the thread screen draws chips and a picker, and both
+ *     are put away for the whole raised mode and shed by the data-saver ladder — pinned below.
  *
  * MODAL RULE 6 (src/components/__tests__/TESTING.md): Modal is a synchronous View here, and the
  * only Modal-rooted component in this file is ComposerPlusMenu. Every press is awaited (RNTL v14
@@ -86,8 +86,8 @@ describe('§15.2 — the thread screen puts Ask Compass away and tells the menu 
     expect(dm).toContain('onModeChange={(s) => setSafetyQuiet(s.deprioritizeEntertainment)}');
   });
 
-  it('reactions: the thread screen has no reaction affordance, so nothing is left un-demoted', () => {
-    expect(dm).not.toMatch(/ReactionPicker|addReaction|toggleReaction|onReact\b/);
+  it('reactions: the thread screen has no reaction affordance while the mode is raised (chips and picker put away, and shed by the data-saver ladder), so nothing is left un-demoted', () => {
+    expect(dm).toMatch(/onToggleReaction=\{offersReactions\(conversationProjection\) && !safetyQuiet && dataSaver\.mayLoad\('reactions'\) \?/); expect(dm).toMatch(/onReact=\{offersReactions\(conversationProjection\) && !safetyQuiet && dataSaver\.mayLoad\('reactions'\) \?/); expect(dm).toMatch(/\{onToggleReaction \? <ReactionChips /);
   });
 });
 

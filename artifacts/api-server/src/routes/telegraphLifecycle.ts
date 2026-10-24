@@ -310,7 +310,7 @@ router.post(
     // database, so on every deployment that exists there is no trigger to fire
     // and this publish is the ONLY notification. That is why it is here and not
     // deleted as a duplicate, and why the client keeps a polling fallback.
-    void publishToThread(client, threadId, {
+    void publishMessageLifecycle(client, threadId, { // census T154 (batch 3): the outbox announces it when fan-out is on
       type: "message.unsent",
       payload: { messageId, unsentAt, senderId: user.id },
     }, { excludeUserId: user.id });
@@ -574,3 +574,4 @@ router.post(
 export default router;
 
 import { messageKernelEnabled } from "../services/telegraphMessageKernel.js"; import { advanceSeenSequence, receiptCursorColumns } from "../lib/telegraphReceiptCursors.js"; // census-telegraph T72/T73 (appended so every cited line keeps its number)
+import { publishMessageLifecycle } from "../lib/telegraphOutboxDrainScheduler.js"; // census T154 (batch 3), at the foot so no cited line moves

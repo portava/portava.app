@@ -362,13 +362,13 @@ export async function unsendBeforeSeen(
   } catch {
     // A THROWN failure is the same fact as a returned one. Both mean the
     // verdict is unknown.
-    return null;
+    recordUnsendVerdict(null); return null;
   }
-  if (error) return null;
-  if (typeof data !== "object" || data === null) return null;
+  if (error) { recordUnsendVerdict(null); return null; }
+  if (typeof data !== "object" || data === null) { recordUnsendVerdict(null); return null; }
 
   const row = data as Record<string, unknown>;
-  if (!isUnsendOutcome(row["outcome"])) return null;
+  if (!isUnsendOutcome(row["outcome"])) { recordUnsendVerdict(null); return null; }
 
   const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
   const result: UnsendResult = {
@@ -377,7 +377,7 @@ export async function unsendBeforeSeen(
     recipientCount: num(row["recipientCount"]),
   };
   if (typeof row["unsentAt"] === "string") result.unsentAt = row["unsentAt"];
-  return result;
+  recordUnsendVerdict(result); return result; // census T348: SLO-03 counts every verdict
 }
 
 // ── census-telegraph T73 (lane TELEGRAPH batch 2) — appended so every cited line keeps its number ──
@@ -408,3 +408,21 @@ export function deliveredState(
   });
   return { delivered: all, reason: null };
 }
+
+// ── census-telegraph T348 (lane TELEGRAPH batch 3) — appended so every cited line keeps its number ──
+/**
+ * §28 SLO-03 "unsend-after-seen violations = 0", counted at the one place every unsend is decided —
+ * the locked function both doors call. The shape SLO-04 / SLO-05 use: a counter cannot prove a
+ * negative, so it counts whether the gate RAN WITH KNOWLEDGE.
+ *   `unsent`, or a `seen` / other refusal → ok (a refusal is zero violations);
+ *   no verdict (the function failed, threw, or answered something unreadable) → unknown: the door
+ *     refused without knowing, which is the rate at which this privacy gate runs blind;
+ *   `unsent` while the function itself reports a recipient who had seen it (seenBy > 0) → violation:
+ *     the verdict contradicts its own count, the one inconsistency observable from outside the lock.
+ * The zero itself is established by the lock (census T77: the receipt FOR UPDATE observed in pg_locks).
+ */
+function recordUnsendVerdict(v: UnsendResult | null): void {
+  if (v === null) { recordTelegraphMetric("unsend_after_seen_violations", "unknown"); return; }
+  recordTelegraphMetric("unsend_after_seen_violations", v.outcome === "unsent" && v.seenBy > 0 ? "violation" : "ok");
+}
+import { recordTelegraphMetric } from "../../domain/telegraph/services/telegraphObservability.js";

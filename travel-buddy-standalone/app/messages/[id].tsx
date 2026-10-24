@@ -37,7 +37,7 @@ import { CallHistoryMessage } from '../../src/components/calls/CallHistoryMessag
 import { canShowThreadCallButtons, threadCallContextType } from '../../src/components/calls/callEntryGating';
 import { getBooking } from '../../src/services/rentABuddy';
 import { useThreadMessages, useLanguageSettings, useOutgoingRequestStatus } from '../../src/hooks/useMessaging';
-import { useConversationProjection } from '../../src/features/telegraph/conversation/useConversationProjection.ts'; import { ThreadNotificationSheet } from '../../src/features/telegraph/settings/ThreadNotificationSheet.tsx'; import { offersPlanControl, treatAsE2eeForEdit, showsE2eeBadge, memberCountOf, offersAddPeople } from '../../src/features/telegraph/conversation/conversationProjection.ts'; import { AddPeopleSheet } from '../../src/features/telegraph/groups/AddPeopleSheet.tsx'; import { ForwardSheet } from '../../src/features/telegraph/forwarding/ForwardSheet.tsx'; import { FORWARDING_FLAG } from '../../src/features/telegraph/forwarding/forwardApi.ts'; import { offersForward } from '../../src/features/telegraph/conversation/conversationProjection.ts'; import { GroupControlsSheet } from '../../src/features/telegraph/groups/GroupControlsSheet.tsx'; import { GROUP_CONTROLS_FLAG, GROUP_CONTROLLED_THREAD_TYPES, MUTE_CHOICES_MINUTES, fetchGroupControls, muteLabel, muteMember, removeMember } from '../../src/features/telegraph/groups/groupControlsApi.ts'; // census-telegraph T417: §30A.12 host controls // census-telegraph T212/T213/T390/T201: a DM adds people by forming a NEW group // §24 / census T295: asked of the server, not read from raw tables
+import { useConversationProjection } from '../../src/features/telegraph/conversation/useConversationProjection.ts'; import { ThreadNotificationSheet } from '../../src/features/telegraph/settings/ThreadNotificationSheet.tsx'; import { offersPlanControl, treatAsE2eeForEdit, showsE2eeBadge, memberCountOf, offersAddPeople, offersReactions } from '../../src/features/telegraph/conversation/conversationProjection.ts'; import { ReactionChips, ReactionPicker } from '../../src/features/telegraph/reactions/ReactionChips.tsx'; import { toggleReaction, parseReactions } from '../../src/features/telegraph/reactions/reactionsApi.ts'; import { ForwardingRuleSheet, isContentCapability } from '../../src/features/telegraph/forwarding/ForwardingRuleSheet.tsx'; import { useContextKernelLine } from '../../src/features/telegraph/contextKernel/contextKernel.ts'; import { AddPeopleSheet } from '../../src/features/telegraph/groups/AddPeopleSheet.tsx'; import { ForwardSheet } from '../../src/features/telegraph/forwarding/ForwardSheet.tsx'; import { FORWARDING_FLAG } from '../../src/features/telegraph/forwarding/forwardApi.ts'; import { offersForward } from '../../src/features/telegraph/conversation/conversationProjection.ts'; import { GroupControlsSheet } from '../../src/features/telegraph/groups/GroupControlsSheet.tsx'; import { GROUP_CONTROLS_FLAG, GROUP_CONTROLLED_THREAD_TYPES, MUTE_CHOICES_MINUTES, fetchGroupControls, muteLabel, muteMember, removeMember } from '../../src/features/telegraph/groups/groupControlsApi.ts'; // census-telegraph T417: §30A.12 host controls // census-telegraph T212/T213/T390/T201: a DM adds people by forming a NEW group // §24 / census T295: asked of the server, not read from raw tables
 import { useTrip } from '../../src/hooks/useBackend';
 import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t, avatar, icon } from '../../src/theme/tokens';
@@ -173,7 +173,7 @@ function LongPressActionSheet({
   onDeleteForMe,
   onReply,
   onSave,
-  onUnsent, onEdit, onHistory, canEdit = false, blockLabel, onBlockSender, onForward, onModerate, canRemoveMember,
+  onUnsent, onEdit, onHistory, canEdit = false, blockLabel, onBlockSender, onForward, onModerate, canRemoveMember, onReact, onForwardingRule,
   receipt,
 }: {
   message: Message | null;
@@ -188,7 +188,7 @@ function LongPressActionSheet({
   onDeleteForMe: (id: string) => Promise<void>;
   onReply: (msg: Message) => void;
   onSave: (msg: Message) => void;
-  onUnsent: (id: string) => void; onEdit?: (msg: Message) => void; onHistory?: (msg: Message) => void; canEdit?: boolean; blockLabel?: string; onBlockSender?: () => void; onForward?: (msg: Message) => void; onModerate?: (msg: Message, action: 'mute' | 'remove') => void; canRemoveMember?: boolean; // T406, T417
+  onUnsent: (id: string) => void; onEdit?: (msg: Message) => void; onHistory?: (msg: Message) => void; canEdit?: boolean; blockLabel?: string; onBlockSender?: () => void; onForward?: (msg: Message) => void; onModerate?: (msg: Message, action: 'mute' | 'remove') => void; canRemoveMember?: boolean; onReact?: (msg: Message, emoji: string, mine: boolean) => void; onForwardingRule?: (msg: Message) => void; // T406, T417; T370, T407 (batch 3)
 }) { const { palette, styles: las } = useTelegraphTheme(makeSheetStyles);
   const plainInsetForSheets = usePlainBottomInset();
   const [showReport, setShowReport] = useState(false);
@@ -201,7 +201,7 @@ function LongPressActionSheet({
       <Modal visible animationType="slide" transparent onRequestClose={onClose}>
         <Pressable style={las.overlay} onPress={onClose} />
         <View style={[las.sheet, { paddingBottom: plainInsetForSheets }]}>
-          <View style={las.handle} />
+          <View style={las.handle} />{onReact && !message.deleted && parseReactions(message.reactions) ? <ReactionPicker reactions={parseReactions(message.reactions) ?? []} onPick={(e, mineR) => { onClose(); onReact(message, e, mineR); }} /> : null}
           {text.length > 0 && (
             <Text style={las.preview} numberOfLines={2}>{text}</Text>
           )}
@@ -210,7 +210,7 @@ function LongPressActionSheet({
             // settings; a menu item that only explained that was a dead end.
             ['reply',     'Reply',         Reply        ],
             ['copy',      'Copy text',     Copy         ],
-            ['save',      'Save message',  BookmarkPlus ], ...(canEdit ? [['edit', 'Edit', Pencil]] : []), ...(threadId && canViewEditHistory(message) ? [['history', 'Edit history', History]] : []), ...(onForward && !message.deleted ? [['forward', 'Forward', ArrowRight]] : []),
+            ['save',      'Save message',  BookmarkPlus ], ...(canEdit ? [['edit', 'Edit', Pencil]] : []), ...(threadId && canViewEditHistory(message) ? [['history', 'Edit history', History]] : []), ...(onForward && !message.deleted ? [['forward', 'Forward', ArrowRight]] : []), ...(onForwardingRule && mine && !message.deleted && !(message as any).forwarded && isContentCapability((message as any).contentCapability) ? [['forwarding-rule', 'Who can forward this', SlidersHorizontal]] : []),
             ...(!mine ? [['report', 'Report', Flag]] : []), ...(!mine && onModerate ? [['mute-member', 'Mute in this conversation', VolumeX]] : []), ...(!mine && onModerate && canRemoveMember ? [['remove-member', 'Remove from this group', X]] : []),
           ] as [string, string, React.ComponentType<{ size: number; color: string }>][]).map(([key, label, Icon]) => (
             <Pressable
@@ -230,7 +230,7 @@ function LongPressActionSheet({
                   onSave(message);
                 } else {
                   onClose();
-                  if (key === 'edit') onEdit?.(message); else if (key === 'history') onHistory?.(message); else if (key === 'forward') onForward?.(message); else if (key === 'mute-member') onModerate?.(message, 'mute'); else if (key === 'remove-member') onModerate?.(message, 'remove'); else Alert.alert(label, 'This feature is coming soon.');
+                  if (key === 'edit') onEdit?.(message); else if (key === 'history') onHistory?.(message); else if (key === 'forward') onForward?.(message); else if (key === 'forwarding-rule') onForwardingRule?.(message); else if (key === 'mute-member') onModerate?.(message, 'mute'); else if (key === 'remove-member') onModerate?.(message, 'remove'); else Alert.alert(label, 'This feature is coming soon.');
                 }
               }}
             >
@@ -750,7 +750,7 @@ function MessageBubble({
   readerAvatars,
   dismissedAiMsgIds,
   onDismissAiCard,
-  deliveryStatus, sendFailure, linkPreview = null,
+  deliveryStatus, sendFailure, linkPreview = null, onToggleReaction,
   onRetry,
   onRetryTranslation,
   currentUserId,
@@ -780,7 +780,7 @@ function MessageBubble({
   isCircleMember?: boolean | null;
   onCircleCardPress?: () => void;
   /** Telegraph §5.3: the thread a shared card is being rendered in. */
-  threadId?: string | null; /** census T404: the stored preview for this message, or null (flag off ⇒ always null). */ linkPreview?: LinkPreview | null;
+  threadId?: string | null; /** census T404: the stored preview for this message, or null (flag off ⇒ always null). */ linkPreview?: LinkPreview | null; /** census T370: add/take back the viewer's reaction; absent when reactions are not offered here. */ onToggleReaction?: (msg: Message, emoji: string, mine: boolean) => void;
 }) { const { palette, styles } = useTelegraphTheme(makeStyles);
   const [pickerPayload, setPickerPayload] = useState<AddToTripPayload | null>(null);
   const [showOriginal, setShowOriginal] = useState(defaultShowOriginal || !autoTranslate);
@@ -1027,7 +1027,7 @@ function MessageBubble({
           style={[styles.bubbleText, mine && styles.bubbleTextMine]}
           mentionColor={mine ? 'rgba(255,255,255,0.90)' : palette.operational}
           hashtagColor={mine ? 'rgba(255,255,255,0.80)' : palette.operational}
-        /><OriginalAlongside item={item} view={{ mine, autoTranslate, showingOriginal: showOriginal }} />{linkPreview ? <LinkPreviewCard preview={linkPreview} mine={mine} /> : null}
+        /><OriginalAlongside item={item} view={{ mine, autoTranslate, showingOriginal: showOriginal }} />{linkPreview ? <LinkPreviewCard preview={linkPreview} mine={mine} /> : null}{onToggleReaction ? <ReactionChips reactions={parseReactions(item.reactions)} onToggle={(e, mineR) => onToggleReaction(item, e, mineR)} /> : null}
 
         {(groupEnd || item.editedAt) ? (
           <Text style={[styles.bubbleTime, mine && styles.bubbleTimeMine]}>
@@ -1230,7 +1230,7 @@ export default function TelegraphThread() { const { palette, styles } = useTeleg
   const [blockingUser, setBlockingUser] = useState(false);
   const [showSafetySheet, setShowSafetySheet] = useState(false); const [layeredIds, setLayeredIds] = useState<ReadonlySet<string>>(() => new Set()); const [panelDrawnIds, setPanelDrawnIds] = useState<ReadonlySet<string>>(() => new Set()); // §2.3: ids drawn in the PLAN/NOW strip leave the stream; the panel says which decisions it draws
   const [hideAiSuggestions, setHideAiSuggestions] = useState(false); const [safetyQuiet, setSafetyQuiet] = useState(false); // §15.2: held for the whole of a raised safety mode
-  const [threadIsMuted, setThreadIsMuted] = useState(muted === '1'); const [showNotificationSheet, setShowNotificationSheet] = useState(false); const [showAddPeople, setShowAddPeople] = useState(false); /* T212: the Add people sheet */ const [forwardMsgId, setForwardMsgId] = useState<string | null>(null); /* T406: the message being forwarded */ const [showGroupControls, setShowGroupControls] = useState(false); const [groupHost, setGroupHost] = useState(false); /* T417: the host's moderation offers follow the server's isHost */ // §30A.6: long-press the mute icon for ALL / MENTIONS / IMPORTANT / temporary mute // the inbox passes the server's mutedAt; it used to start "unmuted" always
+  const [threadIsMuted, setThreadIsMuted] = useState(muted === '1'); const [showNotificationSheet, setShowNotificationSheet] = useState(false); const [showAddPeople, setShowAddPeople] = useState(false); /* T212: the Add people sheet */ const [forwardMsgId, setForwardMsgId] = useState<string | null>(null); /* T406: the message being forwarded */ const [showGroupControls, setShowGroupControls] = useState(false); const [groupHost, setGroupHost] = useState(false); /* T417: the host's moderation offers follow the server's isHost */ const [ruleMsg, setRuleMsg] = useState<Message | null>(null); /* T407: the author's forwarding rule */ const kernelLine = useContextKernelLine(id ?? null); /* T439: one line under the header, from the Context Kernel */ const onReact = useCallback(async (msg: Message, emoji: string, mineR: boolean) => { if (!id) return; const r = await toggleReaction(id, msg.id, emoji, mineR); if (r.ok) void reload(); else Alert.alert('Reaction not changed', r.message); }, [id, reload]); /* T370: the server's count is redrawn after every change */ // §30A.6: long-press the mute icon for ALL / MENTIONS / IMPORTANT / temporary mute // the inbox passes the server's mutedAt; it used to start "unmuted" always
   const [showCompassTray, setShowCompassTray] = useState(false);
   const [compassTelegraphEnabled, setCompassTelegraphEnabled] = useState<null | boolean>(null);
   const [dismissedAiMsgIds, setDismissedAiMsgIds] = useState<Set<string>>(new Set());
@@ -1884,7 +1884,7 @@ export default function TelegraphThread() { const { palette, styles } = useTeleg
             ) : (
               subtitle ? (
                 <Text style={styles.headerTag} numberOfLines={1} testID="telegraph-header-subtitle">
-                  {subtitle}
+                  {subtitle}{kernelLine ? `${subtitle ? ' · ' : ''}${kernelLine}` : ''}
                 </Text>
               ) : null
             )}
@@ -2194,7 +2194,7 @@ export default function TelegraphThread() { const { palette, styles } = useTeleg
                 onRetryTranslation={!mine && m.id ? () => { retryTranslation(m.id).catch(() => {}); } : undefined}
                 currentUserId={userId ?? undefined}
                 isCircleMember={isCircleMember}
-                onCircleCardPress={m.msgType === 'circle_status_card' ? onCircleCardPress : undefined} linkPreview={linkPreviews.previewFor(m.id)}
+                onCircleCardPress={m.msgType === 'circle_status_card' ? onCircleCardPress : undefined} linkPreview={linkPreviews.previewFor(m.id)} onToggleReaction={offersReactions(conversationProjection) && !safetyQuiet && dataSaver.mayLoad('reactions') ? (msg, e, mineR) => { void onReact(msg, e, mineR); } : undefined}
               />
               {/*
                 Telegraph §22: the traveller-facing half of the travel-scam
@@ -2383,7 +2383,7 @@ export default function TelegraphThread() { const { palette, styles } = useTeleg
         }}
       />
 
-      <ThreadActionSheets threadId={id ?? ''} editing={editingMsg} onCloseEdit={() => setEditingMsg(null)} onEdited={() => { void reload(); }} history={historyMsg} onCloseHistory={() => setHistoryMsg(null)} askVisible={showAsk} onCloseAsk={() => setShowAsk(false)} /><ForwardSheet visible={forwardMsgId !== null} sourceThreadId={id ?? null} sourceMessageId={forwardMsgId} onClose={() => setForwardMsgId(null)} /><GroupControlsSheet visible={showGroupControls} threadId={id ?? null} onClose={() => setShowGroupControls(false)} onLoaded={(st) => setGroupHost(st.isHost)} /><ContentDrawerSheet
+      <ThreadActionSheets threadId={id ?? ''} editing={editingMsg} onCloseEdit={() => setEditingMsg(null)} onEdited={() => { void reload(); }} history={historyMsg} onCloseHistory={() => setHistoryMsg(null)} askVisible={showAsk} onCloseAsk={() => setShowAsk(false)} /><ForwardSheet visible={forwardMsgId !== null} sourceThreadId={id ?? null} sourceMessageId={forwardMsgId} onClose={() => setForwardMsgId(null)} /><ForwardingRuleSheet visible={ruleMsg !== null} threadId={id ?? null} messageId={ruleMsg?.id ?? null} current={isContentCapability((ruleMsg as any)?.contentCapability) ? (ruleMsg as any).contentCapability : null} onClose={() => setRuleMsg(null)} onSaved={() => { void reload(); }} /><GroupControlsSheet visible={showGroupControls} threadId={id ?? null} onClose={() => setShowGroupControls(false)} onLoaded={(st) => setGroupHost(st.isHost)} /><ContentDrawerSheet
         visible={showContentDrawer}
         threadId={id ?? ''}
         onClose={() => setShowContentDrawer(false)} onAsk={() => { setShowContentDrawer(false); setShowAsk(true); }}
@@ -2572,7 +2572,7 @@ export default function TelegraphThread() { const { palette, styles } = useTeleg
             else Alert.alert('Error', r.message ?? 'Could not save message.');
           });
         }}
-        onUnsent={() => { void reload(); }} onForward={offersForward(flagEnabled(FORWARDING_FLAG), conversationProjection) ? (m) => { setActionMsg(null); setForwardMsgId(m.id); } : undefined} onModerate={groupHost && GROUP_CONTROLLED_THREAD_TYPES.includes(threadType ?? '') && flagEnabled(GROUP_CONTROLS_FLAG) ? (m, action) => { setActionMsg(null); if (!id) return; const who = m.senderName ?? 'this person'; if (action === 'remove') { Alert.alert('Remove from this group?', `${who} will leave this group. They keep nothing new from it.`, [{ text: 'Cancel', style: 'cancel' }, { text: 'Remove', style: 'destructive', onPress: () => { void removeMember(id, m.senderId).then((r) => Alert.alert(r.ok ? 'Removed' : 'Not removed', r.ok ? `${who} is no longer in this group.` : r.message)); } }]); return; } Alert.alert(`Mute ${who}?`, 'They can still reply to plans and polls.', [{ text: 'Cancel', style: 'cancel' }, ...MUTE_CHOICES_MINUTES.map((min) => ({ text: muteLabel(min), onPress: () => { void muteMember(id, m.senderId, min).then((r) => Alert.alert(r.ok ? 'Muted' : 'Not muted', r.ok ? `${who} is muted here.` : r.message)); } }))]); } : undefined} canRemoveMember={threadType === 'group'} onEdit={(m) => setEditingMsg(m)} onHistory={(m) => setHistoryMsg(m)} canEdit={canEditMessage(actionMsg, actionMsgMine, treatAsE2eeForEdit(conversationProjection))} blockLabel={isDirect && otherUserId ? 'Block this person' : undefined} onBlockSender={isDirect && otherUserId ? () => { void (async () => { setBlockingUser(true); const blocked = await blockUser(otherUserId); setBlockingUser(false); if (blocked.ok) router.replace('/messages'); else Alert.alert('Could not block', blockFailedCopy(blocked.error)); })(); } : undefined}
+        onUnsent={() => { void reload(); }} onForward={offersForward(flagEnabled(FORWARDING_FLAG), conversationProjection) ? (m) => { setActionMsg(null); setForwardMsgId(m.id); } : undefined} onReact={offersReactions(conversationProjection) && !safetyQuiet && dataSaver.mayLoad('reactions') ? (m, e, mineR) => { setActionMsg(null); void onReact(m, e, mineR); } : undefined} onForwardingRule={offersForward(flagEnabled(FORWARDING_FLAG), conversationProjection) ? (m) => { setActionMsg(null); setRuleMsg(m); } : undefined} onModerate={groupHost && GROUP_CONTROLLED_THREAD_TYPES.includes(threadType ?? '') && flagEnabled(GROUP_CONTROLS_FLAG) ? (m, action) => { setActionMsg(null); if (!id) return; const who = m.senderName ?? 'this person'; if (action === 'remove') { Alert.alert('Remove from this group?', `${who} will leave this group. They keep nothing new from it.`, [{ text: 'Cancel', style: 'cancel' }, { text: 'Remove', style: 'destructive', onPress: () => { void removeMember(id, m.senderId).then((r) => Alert.alert(r.ok ? 'Removed' : 'Not removed', r.ok ? `${who} is no longer in this group.` : r.message)); } }]); return; } Alert.alert(`Mute ${who}?`, 'They can still reply to plans and polls.', [{ text: 'Cancel', style: 'cancel' }, ...MUTE_CHOICES_MINUTES.map((min) => ({ text: muteLabel(min), onPress: () => { void muteMember(id, m.senderId, min).then((r) => Alert.alert(r.ok ? 'Muted' : 'Not muted', r.ok ? `${who} is muted here.` : r.message)); } }))]); } : undefined} canRemoveMember={threadType === 'group'} onEdit={(m) => setEditingMsg(m)} onHistory={(m) => setHistoryMsg(m)} canEdit={canEditMessage(actionMsg, actionMsgMine, treatAsE2eeForEdit(conversationProjection))} blockLabel={isDirect && otherUserId ? 'Block this person' : undefined} onBlockSender={isDirect && otherUserId ? () => { void (async () => { setBlockingUser(true); const blocked = await blockUser(otherUserId); setBlockingUser(false); if (blocked.ok) router.replace('/messages'); else Alert.alert('Could not block', blockFailedCopy(blocked.error)); })(); } : undefined}
         receipt={actionMsgReceipt}
       />
 
