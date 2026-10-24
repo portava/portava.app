@@ -9,6 +9,8 @@
  *   Z3  the store's contract, which the temporal route now inherits: a read error is
  *       null, a THROW is null (the old copy let it escape to a 500), an empty table is
  *       [], a malformed ring is kept
+ *   Z4  behaviour unchanged: for the same rows the store returns exactly what the
+ *       route's removed private copy returned, and issues the same query
  * The route's own behaviour (refusal on an unreadable policy, the protection pass) is
  * pinned by src/test/mapProjectionTemporalRoute.test.ts, which passes unchanged.
  */
@@ -24,7 +26,11 @@ const SRC = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 /** The reads that may stay outside the store, each with the reason it is not a copy of the policy loader. */
 const ALLOWED_OUTSIDE_STORE: Record<string, string> = {
-  "lib/locateFriendsSession.ts": "a deliberate separate loader with the same select and null contract, recorded in-file so Locate Friends' and the Map's failure modes are not coupled (census-map §54.4)",
+  // Its in-file reason ("another route's module-private cache") stopped holding when the loader moved to the
+  // store. The reason that does hold: it reads the policy FRESH on every live-location read (Locate Friends and
+  // routes/layoverCrewLocation.ts), where the store reuses a read for 30 s — moving it would let a newly active
+  // zone wait up to 30 s before it suppresses a live position (census-map §55.1).
+  "lib/locateFriendsSession.ts": "an uncached loader with the same select, mapping and null contract, kept because live-location reads must see a newly active zone at once",
   "lib/discoveryTrendProducerPrivacy.ts": "not a policy load: an existence probe (select id, limit 1) answering whether ANY active zone exists",
 };
 
@@ -91,5 +97,63 @@ describe("census-map §55 — one reader of the protected-zone policy", () => {
     clearProtectedZoneCache();
     const z = await loadActiveProtectedZones(fakeClient({ data: [{ id: "z2", category: "clinic", shape: "polygon", ring: "not-a-ring" }] }));
     assert.equal(z?.length, 1, "unparseable geometry stays in the list, so applyProtection suppresses it");
+  });
+
+  it("Z4 behaviour unchanged: the store answers what the temporal route's old private copy answered, row for row", async () => {
+    // The removed copy, verbatim from routes/mapProjectionTemporal.ts before §55 (census-map b1, 2dbb4e5ae),
+    // minus its cache: the reference the consolidation is measured against.
+    async function oldTemporalLoader(sc: any): Promise<unknown[] | null> {
+      const { data, error } = await sc
+        .from("protected_zones")
+        .select("id, category, action, privacy_floor, shape, center_lat, center_lng, radius_meters, ring, jurisdiction, policy_ref")
+        .eq("active", true);
+      if (error || !Array.isArray(data)) return null;
+      const zones: unknown[] = [];
+      for (const row of data as any[]) {
+        const base = {
+          id: String(row.id), category: String(row.category), action: row.action ?? undefined,
+          privacyFloor: row.privacy_floor ?? undefined, jurisdiction: row.jurisdiction ?? undefined, policyRef: row.policy_ref ?? undefined,
+        };
+        if (row.shape === "circle") {
+          zones.push({ ...base, shape: "circle", center: { lat: Number(row.center_lat), lng: Number(row.center_lng) }, radiusMeters: Number(row.radius_meters) });
+        } else {
+          zones.push({ ...base, shape: "polygon", ring: row.ring });
+        }
+      }
+      return zones;
+    }
+    function recordingClient(answer: { data?: unknown; error?: unknown }) {
+      const calls: string[] = [];
+      return {
+        calls,
+        from(t: string) {
+          calls.push(`from:${t}`);
+          const b: any = {
+            select: (cols: string) => { calls.push(`select:${cols}`); return b; },
+            eq: (c: string, v: unknown) => { calls.push(`eq:${c}=${String(v)}`); return Promise.resolve({ data: answer.data ?? null, error: answer.error ?? null }); },
+          };
+          return b;
+        },
+      };
+    }
+    const ROWS = [
+      { id: 1, category: "shelter", action: "suppress", privacy_floor: "k20", shape: "circle", center_lat: "10.5", center_lng: 106.7, radius_meters: "250", jurisdiction: "VN", policy_ref: "p-1" },
+      { id: "z-poly", category: "clinic", action: null, privacy_floor: null, shape: "polygon", ring: [[1, 2], [3, 4], [5, 6], [1, 2]], jurisdiction: null, policy_ref: null },
+      { id: "z-bad", category: "school", shape: "polygon", ring: "not-a-ring" },
+      { id: "z-odd", category: 7, shape: "hexagon", center_lat: 1, center_lng: 2, radius_meters: 3, ring: null, extra: "ignored" },
+      { id: "z-nan", category: "shelter", shape: "circle", center_lat: null, center_lng: "x", radius_meters: undefined },
+    ];
+    const answers: { data?: unknown; error?: unknown }[] = [
+      { data: ROWS }, { data: [] }, { error: { code: "42P01", message: "relation does not exist" } }, { data: null }, { data: { not: "an array" } },
+    ];
+    for (const answer of answers) {
+      clearProtectedZoneCache();
+      const a = recordingClient(answer);
+      const b = recordingClient(answer);
+      const store = await loadActiveProtectedZones(a);
+      const old = await oldTemporalLoader(b);
+      assert.deepEqual(store, old, `same answer for ${JSON.stringify(answer).slice(0, 60)}`);
+      assert.deepEqual(a.calls, b.calls, "same table, same columns, same filter");
+    }
   });
 });
