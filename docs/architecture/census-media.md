@@ -17620,3 +17620,6 @@ lands mid-request is not deleted. A non-owner still gets 403 first. Tests: `arti
 `artifacts/api-server/src/test/db/postcardMediaDeletePin.db.test.ts`, which holds the route's predicate to the policy's
 answer for every status the chain's CHECK admits. MD269 does not move: its blocker is still the (a) owner rule and the
 missing classifier (§37.8.5).
+
+- NOT-GRADED: artifacts/api-server/src/test/accountDeletionPostMediaUrls.test.ts — the account-deletion tests for this correction; account media erasure has no requirement among this census's 450 (§53.4), and no row rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/db/postcardMediaDeletePin.db.test.ts — the database parity test for this correction's postcard DELETE pin; it moves no row (MD269 stays W on its own blocker), and no verdict cites it.
