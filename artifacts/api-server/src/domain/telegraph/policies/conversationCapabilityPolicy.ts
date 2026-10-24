@@ -51,7 +51,7 @@ import {
   type ConversationCapabilityName,
   type ResolvedConversationCapabilities,
 } from "../contracts/conversationCapabilities.js";
-import type { TelegraphReason } from "../contracts/telegraphReasonCodes.js";
+import type { TelegraphReason } from "../contracts/telegraphReasonCodes.js"; import { threadAcceptsWrites } from "./messageDoorPolicy.js";
 
 const log = rootLogger.child({ mod: "telegraphCapabilities" });
 
@@ -127,7 +127,7 @@ export async function resolveConversationCapabilities(
   if (!thread) return refuse("TELEGRAPH_AUTH_NOT_MEMBER", "unknown");
   inputsRead.push("conversationType");
   const conversationType = String((thread as any).thread_type ?? "direct");
-  const threadActive = String((thread as any).status ?? "active") === "active";
+  const threadActive = threadAcceptsWrites(thread as { status?: unknown }); // the predicate every send door takes (messageDoorPolicy.ts), so the projection and the doors cannot disagree
 
   // ── INPUT 2: membership (and, with it, the §14.3 window) ─────────────────
   const boundOn = await historyBoundEnabled(sc);
