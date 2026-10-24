@@ -18,14 +18,14 @@
  *   not_recorded       the row was written with the flag off (or before 3484)
  *   reading_moved      a rebuild overwrote the row between the two reads
  *   columns_absent     3484 is not applied (42703 / PGRST204)
- *   read_failed        any other failure
+ *   read_failed        any other failure · source_unknown: the reading names no store (none answered, or a record from before CPV2-12) — census-discovery §131
  *
  * Provenance only: nothing here is read back into a score or an order.
  */
 import type { PdeGraphReading } from "../discoveryPde.js";
 
 export interface GraphReadingProvenance {
-  status: "recorded" | "platform_producer" | "not_recorded" | "reading_moved" | "columns_absent" | "read_failed";
+  status: "recorded" | "platform_producer" | "not_recorded" | "reading_moved" | "columns_absent" | "read_failed" | "source_unknown";
   modelVersion?: string;
   featureVersion?: string;
   sourceWindow?: unknown;
@@ -38,7 +38,7 @@ function isMissingColumn(e: unknown): boolean {
 }
 
 export async function loadGraphReadingProvenance(sc: any, reading: PdeGraphReading): Promise<GraphReadingProvenance> {
-  if (reading.source !== "compass_graph") return reading.source === "platform_coverage" ? await platformGraphReadingProvenance(sc, reading) : { status: "platform_producer" };  // census-discovery §94 (DC-17, W11A-B7): the platform reading's own four facts, behind 3490's FALSE flag (lib/discoveryPlatformGraphProvenance.ts); OFF ⇒ `platform_producer`, as before
+  if (reading.source !== "compass_graph") return reading.source === "platform_coverage" ? await platformGraphReadingProvenance(sc, reading) : { status: "source_unknown" };  // census-discovery §94 (DC-17, W11A-B7): the platform reading's own four facts, behind 3490's FALSE flag (lib/discoveryPlatformGraphProvenance.ts); OFF ⇒ `platform_producer`, as before. §131: a reading that names NO store (null confidence, or a pre-CPV2-12 record) is `source_unknown` — it was recorded as `platform_producer`, a claim that the platform answered
   if (!sc || !reading.city || !reading.computedAt) return { status: "not_recorded" };
   try {
     const { data, error } = await sc
