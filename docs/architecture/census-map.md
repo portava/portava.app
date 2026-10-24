@@ -3640,12 +3640,12 @@ The trip-scoped location-share row of §54.4 is unchanged and awaits the lead's 
 
 | bucket | count |
 |---|---|
-| BUILT-AND-CORRECT | **270** |
-| BUILT-BUT-WRONG | **14** |
+| BUILT-AND-CORRECT | **251** |
+| BUILT-BUT-WRONG | **33** |
 | NOT-BUILT | **4** |
 | CANNOT-VERIFY | **5** |
 
-270 + 14 + 4 + 5 = 293. CONSTRUCTED 96.9 % (284 / 293) · CORRECT 92.2 % (270 / 293), unchanged from §54.6. No row
+251 + 33 + 4 + 5 = 293. CONSTRUCTED 96.9 % (284 / 293) · CORRECT 85.7 % (251 / 293), unchanged from §54.6 as corrected by the verifier. No row
 changes bucket. Two are restated and stay `W` (M65, M67). These are local records on an unmerged branch, stacked on
 #793.
 
