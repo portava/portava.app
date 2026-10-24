@@ -91,7 +91,7 @@ class Q implements PromiseLike<Result> {
     return this;
   }
 
-  private rows(): Row[] { if (this.table === "user_stamps" || this.table === "plan_checkins") stageEarnedPresenceInPlace(this.store as any); return (this.store[this.table] ??= []); } // H4, wave 5 (stampPresenceView.ts): a presence stamp staged as earned gets its trip and check-in; HEAD read neither
+  private rows(): Row[] { if (this.table === engine.GRAPH_BEHAVIOR_VIEW) return engine.graphBehaviorObservationsOf(this.store.rank_events ?? []) as Row[]; /* census-discovery §133 (DV-51): 3921's view over this store's rank_events */ if (this.table === "user_stamps" || this.table === "plan_checkins") stageEarnedPresenceInPlace(this.store as any); return (this.store[this.table] ??= []); } // H4, wave 5 (stampPresenceView.ts): a presence stamp staged as earned gets its trip and check-in; HEAD read neither
 
   private run(): Result {
     const t = this.table;
@@ -362,7 +362,7 @@ describe("D5 — never from a source it did not read", () => {
     const w = before!.weight;
     mock.timers.reset();
     at("2026-09-28T00:00:00Z");
-    const r = await rebuild(store, { failSelect: new Set(["rank_events"]) });
+    const r = await rebuild(store, { failSelect: new Set([engine.GRAPH_BEHAVIOR_VIEW]) });   // §133 (DV-51): the behaviour family reads 3921's view of rank_events
     const after = edge(store, (e) => e.edge_type === "behavior:click" && e.src_key === A);
     assert.ok(after, "an edge was retired on a read that failed");
     assert.equal(after!.weight, w);
@@ -396,5 +396,59 @@ describe("D7 — monotone in time", () => {
       const k = `${e.src_type}|${e.src_key}|${e.dst_type}|${e.dst_key}|${e.edge_type}`;
       assert.ok(Number(e.weight) <= (w0.get(k) ?? Infinity) + 1e-9, `${k} grew: ${w0.get(k)} → ${e.weight}`);
     }
+  });
+});
+
+// ── census-discovery §133 (DV-51): the behaviour family is read COMPLETE ─────
+//
+// Production, 2026-10-23: 175,136 non-impression rank_events rows, a build that
+// read `.limit(5000)` of them unordered, and 383 behaviour edges whose support
+// (171,336 rows) never fit the reconcile's 10,000-row chunk cap — so the family
+// was undecided and no stale intent edge ever decayed or retired.
+//   V1  the build sees EVERY (viewer, item, outcome), however many raw rows: a
+//       pair inserted after 6,000 others is written, at its true count
+//   V2  the reconcile DECIDES a chunk whose raw support exceeds the old cap: the
+//       stale intent edge is retired by decay and nothing is undecided
+//   V3  a read that stops at the bound writes NO behaviour edge (never a sample),
+//       and the other families are still built
+describe("§133 V — DV-51: intent edges are built and judged from every row", () => {
+  const many = (n: number, user: string, item: string, outcome: string, day: string) =>
+    Array.from({ length: n }, (_, i) => ({ id: `bulk-${user}-${item}-${i}`, user_id: user, item_id: item, item_kind: "place", outcome, served_at: `${day}T${String(i % 24).padStart(2, "0")}:00:00Z` }));
+
+  it("V1 a pair beyond any 5,000-row sample is built, at its full count", async () => {
+    at("2026-09-28T00:00:00Z");
+    const store: Store = { ...sources() };
+    store.rank_events = [...many(6_000, A, "place-1", "click", "2026-09-20"), ...store.rank_events!,
+      { id: "late-1", user_id: A, item_id: "place-7", item_kind: "place", outcome: "save", served_at: "2026-09-27T09:00:00Z" }];
+    await rebuild(store);
+    const click = edge(store, (e) => e.edge_type === "behavior:click" && e.src_key === A && e.dst_key === "place-1");
+    assert.equal(Number(click?.observed_count), 6_001, "every one of A's clicks on place-1 is counted (the 6,000 added in September + sources()' own re-1, served 2026-02-01)");
+    const late = edge(store, (e) => e.edge_type === "behavior:save" && e.dst_key === "place-7");
+    assert.ok(late, "the pair after the first 5,000 rows reached the graph");
+    assert.equal(Number(late!.observed_count), 1);
+  });
+
+  it("V2 the reconcile decides a chunk whose raw support exceeds the old 10,000-row cap, and decay retires the stale intent edge", async () => {
+    at("2026-03-01T00:00:00Z");
+    const store: Store = { ...sources(), feature_flags: [FLAG] };
+    store.rank_events = [...many(12_000, A, "place-1", "click", "2026-02-01"), ...store.rank_events!];
+    await rebuild(store);
+    assert.ok(edge(store, (e) => e.edge_type === "behavior:click" && e.src_key === A), "fixture: in March the February clicks are fresh and stored");
+    mock.timers.reset();
+    at("2026-09-28T00:00:00Z");
+    const r = await rebuild(store);
+    const s = r.edgeSupport!;
+    assert.ok(!s.undecidedFamilies.includes("behavior"), `the behaviour family was left undecided: ${JSON.stringify(s)}`);
+    assert.ok((s.decayRetired ?? 0) > 0, JSON.stringify(s));
+    assert.equal(edge(store, (e) => e.edge_type === "behavior:click" && e.src_key === A), undefined, "A's February clicks, 12,001 of them and 239 days stale, survived");
+  });
+
+  it("V3 a behaviour read that hits its bound writes no behaviour edge, and the rest of the graph is built", async () => {
+    at("2026-09-28T00:00:00Z");
+    const store: Store = { ...sources() };
+    store.rank_events = Array.from({ length: 600 }, (_, i) => ({ id: `w-${i}`, user_id: A, item_id: `place-w${i}`, item_kind: "place", outcome: "click", served_at: "2026-09-27T00:00:00Z" }));
+    await rebuild(store, { ignoreRange: new Set([engine.GRAPH_BEHAVIOR_VIEW]) });   // every page is the whole result: the read never ends
+    assert.equal(edge(store, (e) => String(e.edge_type).startsWith("behavior:")), undefined, "a partial behaviour read was written");
+    assert.ok(edge(store, (e) => e.edge_type === "destination"), "the other families were still built");
   });
 });

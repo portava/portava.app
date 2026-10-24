@@ -31,7 +31,7 @@ import { getFlagRow, isFlagEnabled } from "./featureFlags.js";
 import { unfilteredTrendBlockReason, type TrendProducerPrivacyBlock } from "./discoveryTrendProducerPrivacy.js";
 // The API's freshness bound IS this constant (lib/discoveryTrendExplanation TREND_SNAPSHOT_MAX_AGE_MS = MOMENTUM_CACHE_TTL_MS);
 // imported from its source so the explanation module keeps its one importer (its route).
-import { MOMENTUM_CACHE_TTL_MS as TREND_SNAPSHOT_MAX_AGE_MS } from "./discoveryLocalMomentum.js";
+import { MOMENTUM_CACHE_TTL_MS as TREND_SNAPSHOT_MAX_AGE_MS } from "./discoveryLocalMomentum.js"; import { trendRebuildRpc } from "./discoveryTrendCanonicalContext.js";  // §133: which rebuild a tick calls
 
 const logger = rootLogger.child({ job: "DiscoveryTrendRebuildScheduler" });
 
@@ -93,7 +93,7 @@ export async function runTrendRebuildTick(nowMs: number = Date.now()): Promise<T
       logger.info({ pNow, reason: privacyBlock, pruned }, "DiscoveryTrendRebuildScheduler: rebuild withheld");
       return { status: "skipped", reason: privacyBlock, pruned };
     }
-    const { data, error } = await sc.rpc("rebuild_place_momentum", { p_now: pNow });
+    const { data, error } = await sc.rpc(await trendRebuildRpc(sc), { p_now: pNow });  // §133: 3920's producer over the served places (rebuild_place_momentum_canonical) only while discovery_trend_canonical_place_context_enabled reads TRUE, else rebuild_place_momentum — the one rule, lib/discoveryTrendCanonicalContext.ts trendRebuildRpc
     if (error) {
       logger.warn({ code: error?.code, message: error?.message, pNow }, "DiscoveryTrendRebuildScheduler: rebuild failed");
       return { status: "failed", reason: String(error?.code ?? error?.message ?? "rpc_error"), pNow };
