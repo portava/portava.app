@@ -22,7 +22,7 @@
  */
 import React, { useRef, useCallback, useState } from 'react';
 import {
-  View,
+  View, ActivityIndicator,
   Pressable,
   StyleSheet,
   Text,
@@ -34,7 +34,7 @@ import { Play, Volume2, VolumeX } from 'lucide-react-native';
 import { color, radius, avatar } from '../../theme/tokens.ts';
 import { useSmartVideoFit } from '../../hooks/useSmartVideoFit.ts';
 import { VideoBlurBackdrop } from './VideoBlurBackdrop.tsx';
-import { useHydratedMedia } from '../../services/mediaUrl.ts';
+import { useHydratedMedia } from '../../services/mediaUrl.ts'; import { playbackUriState } from '../../services/playbackUri.ts';
 import { DisplayMediaImage } from './DisplayMediaImage.tsx';
 import { MediaCaptionControls } from '../media/MediaCaptionControls.tsx';
 import { useFeatureFlags } from '../../context/FeatureFlagsContext.tsx';
@@ -73,23 +73,23 @@ export function SharedVideoPlayer({
   const currentSource = useRef(uri);
   currentSource.current = uri;
   const [isMuted, setIsMuted] = useState(mutedProp);
-  const [hasError, setHasError] = useState(false);
+  const [errorSource, setErrorSource] = useState<string | null>(null); // the SOURCE that failed: a new source (a late or refreshed signature) starts clean
   const [captionStatus, setCaptionStatus] = useState<{ source: string; status: AVPlaybackStatus } | null>(null);
   const captionsEnabled = useFeatureFlags().isEnabled('media_captions_enabled');
   const [containerSize, setContainerSize] = useState({ w: 0, h: 0 });
 
-  // Private-bucket references resolve to signed URLs here. Until the resolve
-  // lands, `hydrated[uri]` is undefined and the plain value is used, which is
-  // correct for the already-absolute URLs some rows still hold.
+  // Private-bucket references resolve to signed URLs here, and NO player is mounted until one is loadable
+  // (2026-10-24: a bare ref handed to <Video> failed at once and latched "Video unavailable", so the signed URL
+  // that arrived a moment later was never played). services/playbackUri.ts playbackUriState decides.
   const { resolved: hydrated } = useHydratedMedia([uri, poster ?? null]);
-  const hydratedUri = hydrated[uri];
-  const playbackUri = typeof hydratedUri === 'string' ? hydratedUri : uri;
+  const sourceState = playbackUriState(uri, hydrated);
+  const playbackUri = sourceState.state === 'ready' ? sourceState.uri : ''; const hasError = errorSource !== null && errorSource === playbackUri; const failedSource = useRef(''); failedSource.current = playbackUri;
   const playback = useAdaptivePlayback(captionSource ?? uri, playbackUri);
   const posterUri = poster
     ? (typeof hydrated[poster] === 'string' ? (hydrated[poster] as string) : poster)
     : undefined;
   // Server said no: unreadable, same user-visible outcome as a decode failure.
-  const unresolvable = hydratedUri === null;
+  const unresolvable = sourceState.state === 'unavailable';
   const dubbing = useMediaDubbingSession({ source: captionSource ?? uri, active: !hasError && !unresolvable,
     controller, controlSource: { shouldPlay: playIntent, isMuted, volume: 1, rate: 1 } });
   const { resizeMode, needsLetterbox, onReadyForDisplay } = useSmartVideoFit(
@@ -105,7 +105,7 @@ export function SharedVideoPlayer({
       if (!status.isLoaded) {
         if ((status as any).error) {
           if (playback.rejectAdaptive()) return;
-          setHasError(true);
+          setErrorSource(failedSource.current);
         }
         return;
       }
@@ -157,7 +157,7 @@ export function SharedVideoPlayer({
       }
     >
       {needsLetterbox ? <VideoBlurBackdrop uri={posterUri} /> : null}
-      <Video
+      {sourceState.state === 'ready' ? (<Video key={playbackUri}
         ref={captureVideo}
         source={playback.source}
         style={StyleSheet.absoluteFill}
@@ -169,7 +169,7 @@ export function SharedVideoPlayer({
         onPlaybackStatusUpdate={handlePlaybackStatus}
         onReadyForDisplay={onReadyForDisplay}
         progressUpdateIntervalMillis={captionsEnabled || dubbing.enabled ? 100 : 500}
-      />
+      />) : null}
 
       {/* Poster shown while paused and poster uri is provided. DisplayMediaImage
           rather than a bare <Image>: the poster is a post-media object too, and
@@ -191,8 +191,8 @@ export function SharedVideoPlayer({
       {/* Tap anywhere to play/pause */}
       <Pressable style={StyleSheet.absoluteFill} onPress={togglePlay} accessibilityRole="button" accessibilityLabel={isPlaying ? 'Pause video' : 'Play video'} />
 
-      {/* Play overlay when paused */}
-      {!isPlaying && (
+      {/* Play overlay when paused; while the source is still being signed, a loading state over the poster */}{sourceState.state === 'resolving' ? (<View style={s.playOverlay} pointerEvents="none"><ActivityIndicator testID="video-resolving" accessibilityLabel="Loading video" color="#fff" /></View>) : null}
+      {!isPlaying && sourceState.state === 'ready' && (
         <View style={s.playOverlay} pointerEvents="none">
           <View style={s.playBtn}>
             <Play size={28} color="#fff" fill="#fff" />

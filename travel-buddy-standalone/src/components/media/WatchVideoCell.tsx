@@ -150,7 +150,7 @@ export const WatchVideoCell = forwardRef<WatchVideoCellHandle, WatchVideoCellPro
 
     // ── Failure state ─────────────────────────────────────────────────────────
 
-    if (hasHardFailed) {
+    if (hasHardFailed || !isLoadablePlaybackUri(videoUrl)) { // 2026-10-24: a source no player can load is unavailable — never handed to <Video>
       return (
         <View style={s.cell}>
           {posterUrl ? (
@@ -238,3 +238,4 @@ const s = StyleSheet.create({
 const tailStyles = StyleSheet.create({
   spinnerBadge: { padding: 10, borderRadius: 999, backgroundColor: 'rgba(17,17,15,0.52)' },
 });
+import { isLoadablePlaybackUri } from '../../services/playbackUri.ts'; // 2026-10-24 video playback: the one playback rule

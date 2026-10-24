@@ -86,7 +86,7 @@ export interface PostRow {
   filterId: string;
   filterIntensity: number;
   mediaThumbnailUrl?: string | null;
-  mediaDurationSeconds?: number | null;
+  mediaDurationSeconds?: number | null; /** The post's own declared MIME (`posts.media_type`) and has_video — what the detail screen falls back to when `media` is empty. */ mediaType?: string | null; hasVideo?: boolean;
   /** Editorial category (food, beach, nightlife, etc.) — null if untagged. */
   category?: string | null;
   /** @mention span annotations from the server whitelist. */
@@ -143,7 +143,7 @@ function mapPost(r: any): PostRow {
     filterId: r.filter_id ?? 'original',
     filterIntensity: r.filter_intensity ?? 100,
     mediaThumbnailUrl: r.media_thumbnail_url ?? null,
-    mediaDurationSeconds: r.media_duration_seconds ?? null,
+    mediaDurationSeconds: r.media_duration_seconds ?? null, mediaType: r.media_type ?? null, hasVideo: r.has_video === true,
     category: r.category ?? null,
     tags: r.tags ?? [],
     hashtagUsages: r.hashtagUsages ?? [],

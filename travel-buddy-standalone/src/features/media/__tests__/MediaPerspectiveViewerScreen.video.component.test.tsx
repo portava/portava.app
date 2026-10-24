@@ -49,7 +49,7 @@ jest.mock('react-native-safe-area-context', () => ({
  * null.
  *
  */
-const mockSignFailures = new Set<string>();
+const mockSignFailures = new Set<string>(); const mockSignPending = new Set<string>(); // 2026-10-24: a signature still in flight
 // NOTE: intentionally exhaustive — this factory replaces the whole module
 // deliberately. `useHydratedMedia` is the only export the screen under test
 // uses, and spreading requireActual here would pull in the real
@@ -59,7 +59,7 @@ jest.mock('../../../services/mediaUrl.ts', () => ({
     const resolved: Record<string, string | null> = {};
     for (const u of urls) {
       if (!u) continue;
-      if (mockSignFailures.has(u)) resolved[u] = null;
+      if (mockSignPending.has(u)) continue; if (mockSignFailures.has(u)) resolved[u] = null;
       else if (u.includes('://')) resolved[u] = u;
       else resolved[u] = `https://signed.example.test/${u}?token=signed`;
     }
@@ -144,7 +144,7 @@ beforeEach(() => {
   mockGetItem.mockResolvedValue(null);
   mockSetItem.mockResolvedValue(undefined);
   mockGetStatusAsync.mockResolvedValue({ isLoaded: true, positionMillis: 20_000 });
-  mockSignFailures.clear();
+  mockSignFailures.clear(); mockSignPending.clear();
 });
 
 function renderMedia(media: MediaProjection) {
@@ -198,6 +198,14 @@ describe('MediaPerspectiveViewerScreen video source hydration', () => {
     renderMedia(media);
     await waitFor(() => expect(screen.getByLabelText('Retry video playback')).toBeTruthy());
     // No player is mounted for a reference the server refused to sign.
+    expect(latestVideoProps).toBeUndefined();
+  });
+
+  it('mounts NO player while a bare reference is still being signed (2026-10-24 race)', async () => {
+    const media = makeBareBucketVideo();
+    mockSignPending.add(media.url as string);
+    renderMedia(media);
+    await waitFor(() => expect(screen.queryByLabelText('Retry video playback')).toBeNull());
     expect(latestVideoProps).toBeUndefined();
   });
 });

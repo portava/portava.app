@@ -140,7 +140,7 @@ function PostDetailCard({ post, commentCount }: { post: PostRow; commentCount: n
   // Raw relay URL — used as-is for video so the relay issues a plain signed
   // URL rather than redirecting through Supabase's image transform endpoint
   // (which would break video playback).
-  const firstMedia = firstMediaItem?.url ?? post.mediaUrls[0] ?? null;
+  const firstMedia = firstMediaItem?.url ?? post.mediaUrls[0] ?? null; const showsVideo = firstMediaItem ? firstMediaItem.media_type === 'video' : refPlaysAsVideo(firstMedia, post); // 2026-10-24: a post with no media item still plays its video file (PulseFeedCard's #776 rule, plus the post's own declared type)
   const loc = post.locationName ?? post.locationCity ?? null;
   const authorName = primaryIdentityText(post.author ?? undefined);
   const authorAvatar = post.author?.avatarUrl ?? null;
@@ -178,10 +178,10 @@ function PostDetailCard({ post, commentCount }: { post: PostRow; commentCount: n
 
       {firstMedia ? (
         <View style={[card.media, { height: mediaHeight, overflow: 'hidden' as const }]}>
-          {firstMediaItem?.media_type === 'video' ? (
+          {showsVideo ? (
             <SharedVideoPlayer
               uri={firstMedia}
-              poster={withRelayWidth(firstMediaItem?.thumbnail_url ?? null, 1200) ?? undefined}
+              poster={withRelayWidth(firstMediaItem ? (firstMediaItem.thumbnail_url ?? null) : (post.mediaThumbnailUrl ?? derivedVideoPosterRef(firstMedia)), 1200) ?? undefined}
               autoplay={false}
               muted
               style={StyleSheet.absoluteFill}
@@ -527,3 +527,4 @@ const ov = StyleSheet.create({
   rowLabel: { ...t.body, color: color.ink, fontSize: 15 },
   divider: { height: StyleSheet.hairlineWidth, backgroundColor: color.haze },
 });
+import { refPlaysAsVideo, derivedVideoPosterRef } from '../../src/lib/media/videoPosterRef.ts'; // 2026-10-24 video playback: the one ref rule

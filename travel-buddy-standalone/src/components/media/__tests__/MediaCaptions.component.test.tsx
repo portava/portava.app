@@ -154,7 +154,7 @@ it('non-owner controls do not expose authoring', async () => {
 
 for (const player of ['shared', 'watch']) {
   it(`${player} player renders captions from actual playback callbacks including seek/unload`, async () => {
-    await render(player === 'shared' ? <SharedVideoPlayer uri="video" /> : <WatchVideoCell id="post" videoUrl="video" posterUrl={null} isActive isMuted onProgress={jest.fn()} />);
+    await render(player === 'shared' ? <SharedVideoPlayer uri="https://media.test/video.mp4" captionSource="video" /> : <WatchVideoCell id="post" videoUrl="https://media.test/video.mp4" captionSource="video" posterUrl={null} isActive isMuted onProgress={jest.fn()} />);
     await fireEvent.press(await screen.findByLabelText('Show timed captions'));
     await act(async () => mockPlayback({ isLoaded: true, positionMillis: 1200, durationMillis: 3000, isPlaying: false }));
     await screen.findByText('Second cue');
@@ -205,9 +205,9 @@ it('expired authorization clears cues before an unresolved refresh', async () =>
 });
 
 it('late playback callbacks from a replaced source cannot render captions on its successor', async () => {
-  const mounted = await render(<SharedVideoPlayer uri="first" />);
+  const mounted = await render(<SharedVideoPlayer uri="https://media.test/first.mp4" captionSource="first" />);
   const staleCallback = mockPlayback;
-  await mounted.rerender(<SharedVideoPlayer uri="second" />);
+  await mounted.rerender(<SharedVideoPlayer uri="https://media.test/second.mp4" captionSource="second" />);
   await fireEvent.press(await screen.findByLabelText('Show timed captions'));
   await act(async () => staleCallback({ isLoaded: true, positionMillis: 500, isPlaying: false }));
   expect(screen.queryByText('First cue')).toBeNull();

@@ -28,3 +28,22 @@ export function isVideoRef(ref: string | null | undefined): boolean {
 export function derivedVideoPosterRef(ref: string | null | undefined): string | null {
   return isVideoRef(ref) ? `${pathOf(ref as string)}${VIDEO_POSTER_SUFFIX}` : null;
 }
+const IMAGE_FILE = /\.(jpe?g|png|webp|heic|heif|gif|avif)$/i;
+
+/**
+ * Should this ref be PLAYED? A video file by extension, yes; an image file by
+ * extension, no; anything else (no recognisable extension) follows what the post
+ * itself declares — `posts.media_type` (a MIME such as `video/quicktime`) or
+ * `has_video`. Used where a post arrives with no `media` item (2026-10-24: posts
+ * whose upload sat only in `media_urls` reached the detail screen with
+ * `media: []`, and a `.mov` was handed to an <Image>).
+ */
+export function refPlaysAsVideo(
+  ref: string | null | undefined,
+  declared: { mediaType?: string | null; hasVideo?: boolean | null } = {},
+): boolean {
+  if (typeof ref !== 'string' || ref.length === 0) return false;
+  if (isVideoRef(ref)) return true;
+  if (IMAGE_FILE.test(pathOf(ref))) return false;
+  return (typeof declared.mediaType === 'string' && declared.mediaType.toLowerCase().startsWith('video')) || declared.hasVideo === true;
+}
