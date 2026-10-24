@@ -10089,6 +10089,8 @@ Account erasure (`AccountDeletionService`) is the third direct writer, and it is
 **16 moves, all W → C.** 266 = 109 C / 152 W / 3 N / 2 X. CONSTRUCTED% is unchanged at (109 + 152) / 266 = 98.1 %.
 CORRECT% is 109 / 266 = 41.0 %.
 
+- NOT-GRADED: artifacts/api-server/src/services/appeals/resolveAppeal.ts — §CB.5 names its moderation restore as a canonical write outside the kernel, a finding for a later batch; no row rests on it.
+
 ## §CC — 2026-10-24 (census drive, lane HIGHLIGHTS & MEMORIES, batch 3): the last two kernel bypasses closed (migration 3912, written and NOT applied), the outbox drain made observable, and the episode spine's producer held on a ruling
 
 *Measured on branch `claude/census-hm-b3-20261023`, cut from batch 2 (`aba0ffc48`, PR #784). `head_commit` is not
