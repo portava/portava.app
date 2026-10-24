@@ -17633,3 +17633,192 @@ reading, plus 11(b).
 CONSTRUCTED 186 / 188 = **98.9 %**. CORRECT 115 / 188 = **61.2 %**. Twelve rows moved `W` → `C` (DV-02, DV-06, DV-18,
 DV-32, DV-37, DV-40, DV-44, DV-47, DV-53, DV-76, DC-13, DC-18); A01 and DV-54 are restated and stay `W`. These are local
 records on an unmerged branch.
+
+## §132 — 2026-10-23, batch 2: served rows prove the six axes and the §85 stages; DV-70, C19 and DV-42 move W → C; two production defects found under "implementation-complete" rows
+
+*Lane DISCOVERY, branch `claude/census-disc-b2-20261023`, cut from `claude/census-disc-b1-20261023` (PR #779, §131), because
+this section continues §131's headline. Production and `portava-ci` were read with SELECT and catalog queries only, and
+`https://rumazi.com` with unauthenticated GETs only, between 21:10Z and 22:30Z. Nothing was written to either database,
+and no flag was changed. `head_commit` is not re-declared.*
+
+**Rule applied (owner directive, 2026-10-23).** A row is blocked only when what remains is genuinely an owner signed-in
+check, an external provider, a legal or consent decision, a held migration, an irreversible flag or similar. A row with
+any code gap is built here, behind a default-OFF switch where a decision is still open. If it cannot be built in this
+batch, it is named BUILDABLE with the gap.
+
+### 132.1 What was built
+
+**DV-54 — a served row now records what each of the six axes charged it.** Before this, no served row could show an
+axis acting (§131.3). `rankCandidates` now calls `diversifyRecordingAxes`
+(`artifacts/api-server/src/lib/portavaRank.ts:541#diversifyRecordingAxes(scored, objectiveDiversity(opts))`). It
+returns exactly `diversify`'s order. When the options ask, it records each pick's penalty per axis (creator, content
+type, place, geography, Trail, history), its rank in pure score order and its rank after the diversity re-rank
+(`artifacts/api-server/src/lib/portavaRank.ts:1155#export function diversityAxisPenalties(`). Only the 3454 path asks
+(`artifacts/api-server/src/lib/discoveryRankDiversity.ts:74#recordAxisEvidence: true`). The record reaches
+`rank_events.features.diversityAxes` through the PDE row's own keys
+(`artifacts/api-server/src/lib/discoveryRankProvenance.ts:552#export function diversityAxesFeature(`), classified
+`record_metadata`. With 3454 OFF, nothing is recorded and no byte changes. **`diversifiedRank` is not the served
+position.** Later stages can still reorder the page under production's configuration: `node/1` had `diversifiedRank`
+2 and was served at position 1. The served position is the row's own `rank_events.position` column, and no row here
+needs another. **The record cannot change a serve** (#783 verifier). It runs after `diversify` has returned, inside a
+try, and a throw deletes what it wrote and returns `diversify`'s order. Tests:
+`artifacts/api-server/src/test/discoveryRankDiversity.test.ts:159#it("D7 the record changes no order` (D7–D12) and,
+through the real `GET /discovery` on serve points 1 and 6,
+`artifacts/api-server/src/test/discoveryIntegrationHooks.test.ts:607#3454 ON — every served row stores diversityAxes with all six axes`
+(S1 ON and OFF). D9 holds the five window axes equal to `repetitionPenalty` summed over the same window, on a seeded
+40-candidate world that exercises all six axes.
+
+**DC-11 and DV-55 — a served page says which §85 stages ran.** Those rows graded stages that only shadow rows recorded,
+and production runs `pde` with no shadow. Each served impression now carries `pdeStages`, a summary of the served
+call's stages, every field picked by name
+(`artifacts/api-server/src/routes/discovery.ts:4675#export function servedPipelineStageFeatures(`). It is spread on
+both serve-point lines next to the graph reading (`artifacts/api-server/src/routes/discovery.ts:1925#...servedGraphReadingFeatures(pdeServedStages)`,
+`artifacts/api-server/src/routes/discovery.ts:2314#...servedGraphReadingFeatures(coldServedStages)`, both line-neutral).
+With every §85 flag OFF there is no key.
+- **What is stored, after the #783 verifier's data-minimisation finding.** Only what a census criterion needs:
+  - integrity: `status` (DC-11);
+  - outcome learning: `status` (DC-11);
+  - exploration inventory: `status` and the reserved slots it `placed` on this page (DC-11);
+  - cold start: this viewer's own `cold`, `applied`, `seeded` counts, `local` and `degraded` (DV-55).
+- **What is no longer stored.** The integrity detector's `discounted`/`withheld` counts and outcome learning's
+  `rowsRead`, `itemsWithEvidence`, `moved` and `modelVersion` are dropped. `rowsRead` counts every viewer's rows, and no
+  criterion needs any of them. Candidate generation (already graded PASS) is not stored.
+- **Exposure.** `rank_events.features` is readable by the row's own viewer through PostgREST (the grant plus
+  `users_read_own_rank_events`). What remains is that viewer's own state, or a status. No platform-wide count stays on
+  the row.
+- **Size and retention.** `rank_events` has no retention reaper. The two new keys add at most about 0.7 KB of `jsonb` per
+  PDE impression row (`pg_column_size` of a worst-case `diversityAxes` + `pdeStages` pair: 692 bytes; about 1 KB before
+  minimisation). Bounding that is a retention decision, and none is made here.
+- **When it runs, and why it is guarded.** On serve point 6 it runs before `sendDiscoveryPlacesEnvelope`, inside the
+  try whose catch answers the refusal. On serve point 1 it runs in the impression logging after the page is sent. An
+  earlier comment said "AFTER the page is sent" for both, which was false. The body is now inside a try, so a throw
+  stores no key and changes nothing.
+- **Tests:**
+  - `artifacts/api-server/src/test/discoveryIntegrationHooks.test.ts:626#the §85 stages ON — every served row stores pdeStages`:
+    serve points 1 and 6, every §85 stage ON. The stored value EQUALS the served call's stage report, field by field,
+    with only the named keys. The preconditions show the two moving values are not constants: outcome learning reads
+    `no_evidence`, and cold start's `applied` is false. No id travels in the summary.
+  - The OFF control.
+  - T1 and T2 (#783): the diversity recorder and the stage summary each forced to throw at both serve points. Each
+    gives the same served order and response as the non-throwing control, impressions are still logged, and no key is
+    stored.
+
+**Mutation proof.** Six mutants were each killed and restored byte-identical:
+1. Line 541 back to `diversify(`: 7 red.
+2. The serve-point-6 stage spread dropped: S2 at serve point 6 red.
+3. The serve-point-1 stage spread dropped: S2 at serve point 1 red.
+4. The Trail axis dropped from the decomposition: D8 and D9 red.
+5. `diversityOptionsFrom` no longer asking: D1, D11, D12 and both S1 ON red.
+6. The PDE record's early return dropping the key: D12 and both S1 ON red.
+
+**The #783 verifier's mutants**, each killed and restored byte-identical:
+- MU1: the diversity recorder unguarded. T1 red at both serve points.
+- MU2: the stage summary unguarded. T2 red at both serve points.
+- MU3: a full generation report copied into `pdeStages`. S2 red at both.
+- MU4: `outcomeLearning.status` hardcoded `applied`. S2 red at both.
+- MU5: `coldStart.applied` hardcoded true. S2 red at both.
+- MU6: the integrity counts back on the row. S2 red at both.
+
+The neighbour suites pass unchanged: the flag-off goldens, the serve-path isolation, the record screen, the stop gate,
+candidate sources and the pipeline stages, 210 of 210.
+
+### 132.2 Row moves
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| C19 | W | **C** | **Server half (§131.4):** production `GET /api/discovery/community?city=Miami` serves the canonical shape, `name` and `displayName` null with `handle` set, no name starting with `@`, `Cache-Control: private, no-store` and `Vary: Origin, Authorization`. **Release floor (restated on the #783 verifier's finding):** the `/manifest` bundle cited before reaches no installed client. The app has no `expo-updates` dependency, and App Store Expo Go (SDK 57) cannot load Portava (SDK 54). The floor is instead the code: the community surfaces render through the resolver (`travel-buddy-standalone/src/hooks/useCommunityDiscovery.ts`, `travel-buddy-standalone/src/components/DiscoveryWall.tsx` both import `communityBylineText`), which has been on main since `1fe72289b` (2026-09-15). Under the lead's release ruling (2026-10-24), client code counts once it is in a build installed against production. Today that is only the owner's device build, installed 2026-10-22 from that day's main, and `1fe72289b` is an ancestor of that day's main. Server code counts once it is deployed: rumazi.com runs main `4fb0fe5f5` (2026-10-24 06:05Z), and the server half above was answered by production. 3490 is applied, and `discovery_community_byline_canonical_enabled` is TRUE. |
+| DV-42 | W | **C** | The request-scoped half is reachable in production. One anonymous production `GET /api/discovery` with `intentMode=quiet` answered `meta.liveRank.mode = 'quiet'`; without a mode it answered `explore` (§131.3). The long-term half is `loadPdeViewer`'s profile, and the server reads the mode only per request. The client selector is on main: `app/(tabs)/discovery.tsx` renders `DiscoveryIntentModeSelector` since `e7719f34d` (2026-09-28). `e7719f34d` is an ancestor of 2026-10-22's main, so the selector is in the owner's device build installed that day, the only build installed against production (the lead's release ruling, 2026-10-24). C19's caveat applies: the `/manifest` bundle reaches no installed client (no `expo-updates`; Expo Go SDK 57 cannot load SDK 54), so it is not evidence of what shipped. 2850 is applied, and `discovery_live_rank_enabled` is TRUE. |
+
+**Whose requests these are, and how "the path ran, nothing to grade" is graded (the verifier's two notes on §131).**
+The DV-42 and C19 production responses are this lane's own unauthenticated probes, 2026-10-23 20:41–21:02Z. No
+viewer's traffic is claimed. DV-70 (now ruled back to `W`, §132.3) rested on catalogs, not traffic. The consistency rule: a row moves on a path that
+ran only when the row's criterion is that path's shape or reachability, and the production output is the
+measurement that shape asks for. It does not move when the criterion is an effect the empty input could not show.
+- **DC-13 moved (§131) under this rule.** Its criterion is structural: eleven families as separately scored terms on
+  the served row. `negativeFeedback = 0` on the served row is that term measured for a viewer who had dismissed
+  nothing.
+- **A01 did not move.** Its criterion is ranking *using* live state, and with no live state there was no ranking by it
+  to observe.
+- **The moves here fit the rule.** DV-42 asks that the request-scoped half be reachable, and the echo is that half.
+  C19 asks for a shape, and the shape is served. DV-70 asks for zero unexplained drift. The catalogs measure it, and they
+  show one catalogued divergence (post_media's client UPDATE grants), so it does not move.
+- **DV-51 stays `W` for the A01 reason.** Decay is observed only on the families whose support completed.
+
+### 132.3 Rows restated — built here, or carrying a code gap that "implementation-complete" hid
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-70 | W | **W** | **Ruled back to `W` (#783 verifier; lead ruling 2026-10-24). BLOCKED: owner decision on post_media client UPDATE grants.** Catalogued drift is not zero, under this row's own reading (`10` §8's documented divergence counts as drift, line 984). **The divergence**, read 2026-10-24: in production `authenticated` holds no UPDATE on any of `post_media`'s 12 descriptor columns (`duration_seconds` … `width`), while `portava-ci` and the tree hold 2158's 12. 3909's header records this as a separate owner decision. The Discovery evidence below stands, and it is not the blocker: Every one of its awaits is met, and the live read finds no unexplained drift. **Applied:** the 40 on `portava-ci` (DC-26), and P0–P2 in production, with checksums equal (§131.1). **The live read** is per object, production against `portava-ci`, 2026-10-23. Over the 30 tables the Discovery files touch (`area_momentum` … `trend_integrity_reviews`), the digests of columns, defaults and NOT NULL, constraints, indexes, policies, triggers, client grants and RLS flags are identical. So are those of six older Discovery or shared tables (`discovery_shadow_serves`, `discovery_places`, `discovery_cache`, `feature_flags`, `schema_migration_ledger`, `protected_zones`). Across 43 functions, the definitions, SECURITY DEFINER bits and ACLs are identical (`md5` 0434a545… on both). The 44th, `intel_evidence_rekey_reference`, is absent on both by design: 3361 drops 3360's helper. **portava-ci matches the repository:** live-DB run 40017008632 on main `18bf93ca7` passed apply, certify and `audit:schema — migrations vs live schema`. So the production catalog equals what the repository declares. **The one divergence, explained:** `check:production-drift` still lists 138 tables as UNAPPLIED, against its 2026-09-22 production snapshot. All 138 exist in production today (`to_regclass`). That is a stale baseline file, not drift, and is reported to the integrator (§132.5). Awaits: the owner's post_media grant decision applied to whichever side it rules against + a live read with zero unexplained divergence. |
+| DV-54 | W | **W** | **Built (§132.1).** Every served row under 3454 stores `features.diversityAxes`: what each of the six axes charged it, its score rank and its rank after the diversity re-rank (the served position is `rank_events.position`), pinned by D7–D12 and S1. Activation is otherwise complete (§131.3). IMPLEMENTATION-COMPLETE; **waiting on release (server deploy)**: #783's recorders are not on rumazi.com (main `4fb0fe5f5`). Then awaits: this branch released + one production signed-in serve under 3454 whose stored `diversityAxes` shows an axis acting (`total` > 0), which is the owner's traveller check. |
+| DC-11 | W | **W** | **Built (§132.1).** A served page now records its §85 stages as `features.pdeStages`, so the evidence no longer needs shadow rows. Stored fields are minimised (§132.1): statuses, this page's exploration placements, no platform-wide count. IMPLEMENTATION-COMPLETE; **waiting on release (server deploy)**: #783's recorders are not on rumazi.com (main `4fb0fe5f5`). Then awaits: this branch released + one production signed-in serve whose `pdeStages.integrity.status` is neither `detector_off` nor `detector_absent`, whose `pdeStages.outcomeLearning.status` is `applied` and whose `pdeStages.explorationInventory.status` is not `skipped` (traveller check) + D-W10-R2-A1 step 4's data-use confirmation. **Corrected (#783 verifier):** `discovery_engagement_integrity_enabled` is FALSE in production, and has been since 2026-10-23 21:39:49Z (audit 212; read 2026-10-24). An earlier draft said it was already TRUE. So a production row today reads `detector_off`, and the await needs the flag TRUE under that confirmation. No part of this evidence reads the flag's ON path: S2 runs with the flag absent and asserts only that the stored status equals the stage's own report. |
+| DV-55 | W | **W** | **Built (§132.1).** `pdeStages.coldStart` (`cold`, `applied`, `seeded` counts, `local`, `degraded`) is on every served row while 3482 is ON. IMPLEMENTATION-COMPLETE; **waiting on release (server deploy)**: #783's recorders are not on rumazi.com (main `4fb0fe5f5`). Then awaits: this branch released + one production serve to a viewer below the observation floor whose stored `pdeStages.coldStart.applied` is true. That viewer is a new account: the owner's traveller check. |
+| DV-51 | W | **W** | **Graded decay runs in production for confirmed edges, and the intent family is never judged — BUILDABLE.** The rebuild at about 21:40Z on 2026-10-23, with `compass_graph_decay_enabled` TRUE, wrote 899 edges. All 83 single-observation confirmed edges (`active_in`, `returned_to`) carry exactly 2^(−age/365 d), consistent with one rebuild clock (21:38:56–21:41:01Z, the spread being the 1e-6 rounding). Structural edges stay at 1. But all 383 `behavior:*` (intent) edges were neither rewritten nor retired: weights 1–86, the pre-decay counts, and `last_seen` ≤ 2026-08-27 although 3,800 newer non-impression rows exist. The likely cause is measured, not proven. The build's funnel reads `.limit(BUILD_LIMIT)` (5,000) of 175,136 non-impression rows, unordered. The reconcile's support read for those 383 pairs would need 171,336 rows, against a cap of 10,000 per 100-pair chunk (`SUPPORT_ANCHOR_PAGES`), so every chunk is incomplete and the family is undecided. That keeps the edges (fail-safe), and it also means a stale intent edge never decays or leaves the graph at this volume. **Code owed:** an aggregated or ordered behaviour read for the build, and a support read that can complete per pair. Then awaits: one production rebuild in which a stale intent edge is retired or decayed. |
+| A21 | W | **W** | **The client clause is met; only the production check remains.** The shipped bundle (§132.2 C19) carries `/api/telegraph/commands/discovery-card`. `telegraph_discovery_actions_enabled` is TRUE and 3467 is applied. Nothing is left to build. Awaits: one production Save through the command path, proposed, confirmed and executed, plus a refused case saving nothing. These are signed-in writes: the owner's traveller check. |
+| DV-28 | W | **W** | **Not implementation-complete: the v2 place context covers no place Discovery serves — BUILDABLE.** The newest production run (180 places) has `cell_key` and `city` null on every row. `discovery_trend_place_context()` (3476, patched by 3988) and `loadTrendContext` read `discovery_places` only (184 rows, 161 with a cell). Every served place is a `public.places` row (`db/<places.id>`, minted by `queryCanonicalPlaces`), and 0 of the 180 join, even with `db/` stripped. So the content class, creator, Trail and location contexts are absent for every served place, and every lifecycle reads `unknown`. **Code owed:** the context must also key canonical places (city, neighbourhood, coordinates, created time, category), with 3988's protected-position filter applied to them. That needs a migration in band 3920–3929, its TS mirror, and parity on the PostgreSQL harness. Then §84's awaits stand, plus Q11(b) (D-OWNER1004-1). |
+| DV-29 | W | **W** | As DV-28. Local Pulse writes no `area_momentum` row because no served place has a cell. BUILDABLE as DV-28; then §84's awaits, plus Q11(b). |
+| DV-33 | W | **W** | As DV-28. A neighbourhood can be named only from a cell, and no served place has one. BUILDABLE as DV-28; then §84's awaits, plus Q11(b). |
+| DC-06 | W | **W** | As DV-28. The creator, Trail and location peer normalisers and content age read the context, so production's `peer_factor` = 1.000 on every row is the absence of context, not a measurement. BUILDABLE as DV-28; then §84's awaits, plus Q11(b). |
+| DC-21 | W | **W** | As DV-28. Trending by location needs cells. BUILDABLE as DV-28; then §84's awaits, plus Q11(b). |
+
+### 132.4 The open rows, re-checked against the directive
+
+- **Still BUILDABLE after this batch (batch 3):**
+  - DV-28, DV-29, DV-33, DC-06 and DC-21: one fix, canonical places in the trend context.
+  - DV-51: the behaviour read and its support read.
+  - DV-52: `purge_old_ranking_debug_samples()` (0203, seven days) has no scheduled caller in the app. A scheduler
+    behind a default-OFF flag needs no new horizon. AR-W11A-3's window stays the owner's.
+  - DV-78: the Trail-open event (K2), as a dark vocabulary, producer and retry rule behind a default-OFF flag.
+    D-1 Q2 and the collection basis stay the owner's.
+  - DV-41: dwell opt-in enforcement behind a default-OFF flag, for the case the owner rules it required.
+    D-W10-O-9 stays the owner's.
+  - DC-23: a read-only payout-eligibility read that refuses while B5's thresholds are unset.
+  - DV-67: carrying the served `recommendation_id` from the card into the booking, so the Travel Partner producer can
+    bind it.
+  - DV-63: the fiscal-year-end anchor, jurisdiction mapping and purge, built and rehearsed behind a default-OFF
+    switch. 3513 and #592 are not applied, and the legal confirmation stays outstanding.
+- **Blocked only on the owner's production traveller check (nothing left to build):** A03, A05, A10, A11, A13, A18,
+  A21, A25, DV-03, DV-09's Trip Planning leg, DV-21, DV-22, DV-24, DV-49 (no public Memory has a `place_id`), DV-77,
+  DC-01, DC-04, DC-05, DC-20, DC-22. The Trail rows also need a Trail in production. DV-54, DC-11 and DV-55 join this
+  list once this branch is released.
+- **Blocked on a decision whose content IS the missing code** (building it would make the decision): DV-26, DV-56,
+  DV-57, DV-58, DV-60, DV-64, DV-65, DV-66, DV-68 (W10D-B1/B7/B9/B10 event and rate definitions) and DV-69 (W10D-B6
+  provider). DV-59 is fully built, and the remaining step is legally held: `creator_attribution_enabled` stays FALSE
+  under C-11.
+- **Blocked on an owner refusal that needs a scope ruling:** DV-34, DV-72, DC-12 (Q16).
+- **Blocked on an activation only the lead or owner can make:** DV-82 and DC-32 (arm the stop, D-W10-O-3), DC-14
+  (shadow mode), DC-27 (the order was skipped).
+- **Other:** DV-12 (data-use decision), DV-19 (traffic volume), C32 and DC-24 (observation window), A07 and A01
+  (Sensing publishes no Live state), A14 (routing flag, Maps key, curated dwell rows), B03 (provider), B04 (a
+  protected zone in production). DV-80 needs `report:discovery-ecosystem` run with production credentials, which this
+  lane may not hold.
+
+### 132.5 Findings for the integrator
+
+1. `check:production-drift` reads `baseline/20260922_production_tables.txt`. All 138 tables it ratchets as UNAPPLIED
+   exist in production on 2026-10-23. Refreshing the snapshot and striking the ratchet is a shared-file change across
+   every lane, so it was not made here.
+2. The DV-51 and DV-28 defects above are production behaviour today. Neither changes an order or a served byte; both
+   leave stores neutral or stale.
+
+### 132.6 What would turn this red
+
+- D7–D12, S1 or S2 red: the per-row record has stopped matching what the re-rank or the stages did.
+- A production digest of any of the 30 tables or 43 functions diverging from `portava-ci`'s: DV-70 gains a second
+  divergence.
+- A served community name starting with `@`, or an installed build without the resolver: C19 reopens.
+- T1 or T2 red: a recorder failure fails or changes a serve again. S2 red: a stored stage value no longer equals its
+  report, or a field beyond the named ones is stored.
+
+### 132.7 Headline, restated from the rows
+
+| bucket | count |
+|---|---|
+| BUILT-AND-CORRECT | **117** |
+| BUILT-BUT-WRONG | **69** |
+| NOT-BUILT | **2** |
+| CANNOT-VERIFY | **0** |
+
+CONSTRUCTED 186 / 188 = **98.9 %**. CORRECT 117 / 188 = **62.2 %**. Two rows moved `W` → `C` (C19, DV-42). DV-70's move
+was ruled back to `W` (BLOCKED on the owner's post_media grant decision). Eleven were restated and stay `W` (DV-70,
+DV-54, DC-11, DV-55, DV-51, A21, DV-28, DV-29, DV-33, DC-06, DC-21). These are local records on an unmerged branch
+(#783).
