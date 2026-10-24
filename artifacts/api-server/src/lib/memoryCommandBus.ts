@@ -595,7 +595,7 @@ export type MemoryKernelResult =
       eventId: string;
       eventType: MemoryEventType;
       /** the ORIGINAL result body on a replay — not a freshly computed one. */
-      result: any;
+      result: any; /** 3911: the participants a CREATE_MEMORY tagged in its own transaction; null when the kernel did not report it (2711, a replay, any other command). */ taggedUserIds?: string[] | null;
       contractVersion: number | null;
     }
   | {
@@ -754,7 +754,7 @@ export async function executeMemoryCommand(sc: any, cmd: MemoryCommand): Promise
       eventType: (MEMORY_EVENT_TYPES as readonly string[]).includes(eventType)
         ? (eventType as MemoryEventType)
         : COMMAND_EVENT[cmd.type],
-      result: data.result,
+      result: data.result, taggedUserIds: kernelTaggedUserIds(data.tagged_user_ids),
       contractVersion,
     };
   }
@@ -900,4 +900,15 @@ function describeState(stored: string | undefined): string {
   if (!stored) return "finished";
   const spec = lifecycleStateOf(stored);
   return spec ? spec.toLowerCase() : stored;
+}
+
+/**
+ * 3911. The ids a CREATE_MEMORY reports it tagged, or null when it reported none:
+ * 2711 never names the key, and a replay answers from the receipt without it.
+ * null is "the kernel did not tag" and the caller tags as it did before 3911; an
+ * array (possibly empty) is "the kernel decided", and the caller writes nothing.
+ */
+export function kernelTaggedUserIds(v: unknown): string[] | null {
+  if (!Array.isArray(v)) return null;
+  return v.filter((x): x is string => typeof x === "string" && x.length > 0);
 }
