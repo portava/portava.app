@@ -14,7 +14,8 @@ import React from 'react';
 import { render, screen, cleanup } from '@testing-library/react-native';
 import { LayoverMapCard } from '../LayoverMapCard.tsx';
 import { LayoverCurrentPositionCard } from '../LayoverCurrentPositionCard.tsx';
-import { candidateFeasibilityByRecId, type LayoverRecommendation } from '../../../services/layover.ts';
+import type { LayoverRecommendation } from '../../../services/layover.ts';
+import { candidateFeasibilityByRecId } from '../layoverServedContract.ts';
 
 jest.mock('react-native-safe-area-context', () => ({
   ...jest.requireActual('react-native-safe-area-context'),

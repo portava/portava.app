@@ -203,4 +203,4 @@ const styles = StyleSheet.create({
   askBtnDim:  { opacity: 0.4 },
   askBtnText: { ...t.bodyStrong, color: color.onInk },
 });
-import { compassFallbackSentence } from '../../services/layover.ts';
+import { compassFallbackSentence } from './layoverServedContract.ts';

@@ -1195,4 +1195,4 @@ import { LayoverTimingEvidenceCard } from '../../src/components/layover/LayoverT
 import { LayoverCurrentPositionCard } from '../../src/components/layover/LayoverCurrentPositionCard.tsx';
 import { LayoverAnswerChangesCard } from '../../src/components/layover/LayoverAnswerChangesCard.tsx';
 import { LayoverReentryCard } from '../../src/components/layover/LayoverReentryCard.tsx';
-import { candidateFeasibilityByRecId } from '../../src/services/layover.ts';
+import { candidateFeasibilityByRecId } from '../../src/components/layover/layoverServedContract.ts';

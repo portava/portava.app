@@ -13223,13 +13223,13 @@ check, or the dependency named in the row.
 - **Fixed here, because a row needs it.**
   - `layover_recommendation_status_enabled` (L38, L50, L97): §82 fixed the recommendations list. The map and "Check an
     experience from here" still ignored `available`. A stop whose card is now unavailable is kept off the map and listed
-    with the server's sentence (`travel-buddy-standalone/src/services/layover.ts:3114#export function candidateFeasibilityByRecId(`),
+    with the server's sentence (`travel-buddy-standalone/src/components/layover/layoverServedContract.ts:15#export function candidateFeasibilityByRecId(`),
     and an unavailable card is never offered as a check (`travel-buddy-standalone/src/components/layover/LayoverCurrentPositionCard.tsx:11#r.available!==false`).
   - `layover_compass_assistant_enabled` (L100): a fallback answer (the certified answer alone, for a named reason) looked
     the same as an assisted one, so the owner's retest of L100 could not tell whether the model ran. The card now says so
-    (`travel-buddy-standalone/src/services/layover.ts:3141#export function compassFallbackSentence(`).
-- **Partial, and no row's grade turns on it here:** the `lifecycle` member (not rendered; the re-entry card renders
-  L43's side effects), `liveDisclosure` (unread), `flightSegment` on the disruption answer (unread), the flight-status
+    (`travel-buddy-standalone/src/components/layover/layoverServedContract.ts:29#export function compassFallbackSentence(`).
+- **Still unread by the app, and no row's grade turns on it here:** the `lifecycle` member (the re-entry card renders
+  L43's side effects), `liveDisclosure`, `flightSegment` on the disruption answer, the flight-status
   POST (no client function: L153's gate), `membersDegraded` on the crew plan, `invalidationApplied` on a replan, and the
   Discovery `layover` summary. Each needs an app release to reach a traveller in any case.
 
