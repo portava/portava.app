@@ -106,7 +106,7 @@ export async function tripOperationalProjectionsGate(sc: any): Promise<TripOpera
     return { enabled: false, reason: "flag_unknown", schema: null };
   }
   if (flagState === "off") {
-    gate = { enabled: false, reason: "flag_off", schema: null };
+    return { enabled: false, reason: "flag_off", schema: null }; // NOT cached (fix to #803, re-verification): `flag_off` authorises DELETE's hard delete, so it is re-read every time (one PK lookup) — a cached OFF must not survive an OFF→ON toggle into a destroyed row
   } else {
     const schema = await probeSchemaReadiness(sc, TRIP_OPERATIONAL_PROJECTIONS);
     if (schema.state === "ready") gate = { enabled: true };

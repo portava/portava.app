@@ -306,6 +306,24 @@ describe("the Trips doors #797 opened, in production's flag state: authorization
     }
   });
 
+  it("F4 a cached flag OFF never authorises a hard delete: OFF read, flag flipped ON, DELETE inside the gate's TTL cancels", async () => {
+    // fix to #803 (re-verification): the gate cached `flag_off` for 30 s per client, and `flag_off` is what lets DELETE
+    // hard-delete. Mutant: cache `flag_off` again — the second DELETE below is a 204 and the row is gone.
+    const FLAG = "trip_operational_projections_enabled";
+    const scratch = await reserve(owner, tripA, "f4-scratch"); const keep = await reserve(owner, tripA, "f4-keep-me");
+    await db.setFlags({ [FLAG]: false }); await resetProbes();
+    try {
+      // The route reads the gate itself, on its own client: the flag-off hard delete is the legitimate OFF behaviour.
+      const off = await app.call("DELETE", `/api/trips/${tripA}/reservations/${scratch}`, owner);
+      assert.equal(off.status, 204, `control: with the flag OFF the legacy hard delete runs: ${off.raw.slice(0, 200)}`);
+    } finally { await db.exec(`UPDATE public.feature_flags SET enabled = true WHERE flag = '${FLAG}'`); }
+    // NO gate reset here: the flip happens inside the TTL a cached OFF would still be served from.
+    const on = await app.call("DELETE", `/api/trips/${tripA}/reservations/${keep}`, owner);
+    assert.notEqual(on.status, 204, "a flag OFF cached before the flip hard-deleted the reservation after it");
+    assert.equal(on.status, 200, on.raw.slice(0, 200));
+    const row = await resRow(keep); assert.ok(row, "the row was destroyed"); assert.equal(row!.status, "cancelled");
+  });
+
   it("V7 the gate REFUSES when a required table is truly absent (dropped on this isolated chain): /today is not served", async () => {
     await db.exec(`DROP TABLE public.trip_meeting_checkpoint_participants CASCADE`);
     await resetProbes();
