@@ -588,13 +588,15 @@ describe("§17: a Memory's participants, type, occurrence text and source post a
   for (const kernel of ["2711", "tree"] as const) describe(`K (${kernel}) — the kernel, called directly`, () => {
     // Saved and put back EXACTLY (raw psql output), so this group leaves whatever kernel it found.
     const rawDef = (): string => { const r = psql(`SELECT pg_get_functiondef('public.memory_kernel_execute(jsonb)'::regprocedure);`); assert.equal(r.status, 0, r.stderr); return r.stdout.replace(/\n$/, ""); };
-    let saved = ""; let savedMd5: string | null = null;
-    before(() => { savedMd5 = kernelDefMd5(); saved = rawDef(); if (kernel === "2711") { applyFile(ROLLBACK_3911); assert.equal(kernelDefMd5(), PRODUCTION_2711_MD5, "production's definition is installed"); } });
+    const commentMd5 = () => scalar(`SELECT md5(obj_description('public.memory_kernel_execute(jsonb)'::regprocedure, 'pg_proc'))`);
+    let saved = ""; let savedMd5: string | null = null; let savedComment = ""; let savedCommentMd5: string | null = null;
+    before(() => { savedMd5 = kernelDefMd5(); saved = rawDef(); savedCommentMd5 = commentMd5(); const c = psql(`SELECT obj_description('public.memory_kernel_execute(jsonb)'::regprocedure, 'pg_proc');`); savedComment = c.stdout.replace(/\n$/, ""); if (kernel === "2711") { applyFile(ROLLBACK_3911); assert.equal(kernelDefMd5(), PRODUCTION_2711_MD5, "production's definition is installed"); } });
     after(() => {
       if (kernel === "2711") {
-        const r = psql(`${saved};\nREVOKE ALL ON FUNCTION public.memory_kernel_execute(jsonb) FROM PUBLIC, anon, authenticated;\nGRANT EXECUTE ON FUNCTION public.memory_kernel_execute(jsonb) TO service_role;`);
+        const r = psql(`${saved};\nCOMMENT ON FUNCTION public.memory_kernel_execute(jsonb) IS $kc$${savedComment}$kc$;\nREVOKE ALL ON FUNCTION public.memory_kernel_execute(jsonb) FROM PUBLIC, anon, authenticated;\nGRANT EXECUTE ON FUNCTION public.memory_kernel_execute(jsonb) TO service_role;`);
         assert.equal(r.status, 0, r.stderr);
         assert.equal(kernelDefMd5(), savedMd5, "the tree's kernel restored exactly");
+        assert.equal(commentMd5(), savedCommentMd5, "and its comment");
       }
     });
     const direct = (type: string, memoryId: string | null, actor: string, payload: Record<string, unknown>) => dispatchMemoryCommand<any>({
