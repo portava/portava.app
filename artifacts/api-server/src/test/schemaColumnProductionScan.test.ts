@@ -49,7 +49,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   scanSchemaReferences, productionMismatches, productionSchema, provenance, mismatchKey,
-  bareColumn, logicTreeColumns, selectListColumns, declarationsIn, catalogObservations, splitName,
+  bareColumn, logicTreeColumns, selectListColumns, declarationsIn, catalogObservations, splitName, recordedAppliedMigrations,
   type SchemaRefScan, type Mismatch,
 } from "./helpers/schemaColumnScan.js";
 import { scanSelectEmbeds } from "./helpers/selectEmbedScan.js";
@@ -120,7 +120,7 @@ const UNAPPLIED_SCHEMA_READS: ReadonlyArray<{ file: string; names: Name[]; verdi
  * 78 after the 2026-10-17 catalog observation (the three story reads above); 76
  * once both 3601 reads answer a stated 503 (rentBuddyFeeScheduleNotDeployed.test.ts).
  */
-const UNGATED_CEILING = 76;
+const UNGATED_CEILING = 1; // 76 -> 1 at the 2026-10-24 capability refresh: 75 UNGATED names are now in production (shrink-only)
 
 /**
  * Sites the scan cannot resolve (a non-static table, column, list, body or
@@ -252,7 +252,7 @@ describe("dated catalog observations: names production HAS that the capture pred
 
   it("each observation carries its evidence, and every name it adds is declared by the migration it names", () => {
     const obs = catalogObservations();
-    assert.ok(obs.length > 0, "the 2026-10-17 observation is read");
+    assert.ok(Array.isArray(obs), "the observations fixture is read (empty since the 2026-10-24 capture holds the 2026-10-17 names)");
     for (const o of obs) {
       assert.match(o.observedOn, /^\d{4}-\d{2}-\d{2}$/);
       for (const field of [o.by, o.why, o.settle, o.ledgerRow.source]) assert.ok(field.length >= 40, `${o.migration}: say how it was observed`);
@@ -277,13 +277,12 @@ describe("dated catalog observations: names production HAS that the capture pred
     }
   });
 
-  it("the 2026-10-17 observation: 2998's three names are graded present, and the capture does not already hold them", () => {
+  it("the 2026-10-17 observation is retired: 2998's three names are graded present FROM THE CAPTURE, and no observation re-adds what the capture holds", () => {
     const prod = productionSchema();
     assert.ok(prod.tables.get("stories")?.has("deleted_at"), "stories.deleted_at");
     assert.ok(prod.tables.get("job_health")?.has("last_success_at"), "job_health.last_success_at");
     assert.ok(prod.tables.get("story_purge_queue")?.has("next_attempt_at"), "story_purge_queue, with 2998's columns");
-    assert.deepEqual([...prod.observedAfterCapture].sort(),
-      ["column job_health.last_success_at", "column stories.deleted_at", "table story_purge_queue"]);
+    assert.deepEqual([...prod.observedAfterCapture].sort(), [], "2026-10-24: the capture records these itself, so nothing is observed on top of it");
     assert.deepEqual(prod.observedButCaptured, [], "the capture current.ts names now records these: delete the observation (shrink-only)");
   });
 
@@ -454,7 +453,7 @@ describe("the scan finds each kind of plant", () => {
     const tables = new Map([...real.tables].map(([t, c]) => [t, new Set(c)]));
     tables.get("messages")!.delete("client_message_id");
     tables.delete("memory_entity_links");
-    const ms = productionMismatches(planted, { tables, functions: real.functions });
+    const ms = productionMismatches(planted, { tables, functions: real.functions }, new Set([...recordedAppliedMigrations()].filter((m) => !m.startsWith("2810_") && !m.startsWith("3674_")))); // 2026-10-24: 2810 and 3674 are now recorded as applied, so the fixture un-records them as well as removing their names
     found = new Map();
     for (const m of ms) for (const s of m.sites) {
       const k = `${m.class} ${s.file}`;
