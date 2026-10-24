@@ -593,3 +593,21 @@ describe("§30A.12 bounded acknowledgement — the viewer's own confirmation is 
     assert.deepEqual(a.acknowledgedBy.map((x: { userId: string }) => x.userId), crowd.slice(0, 20));
   });
 });
+
+// ── #786 verifier probe V8, committed: "never a host" is pinned with TWO hosts ──
+describe("§30A.12 moderation never reaches a host — a host cannot mute or remove ANOTHER host (#786 verifier V8)", () => {
+  it("A (admin) targets C (admin): 409 for mute and remove, and nothing is written", async () => {
+    const c = use({ over: { message_thread_members: [member(G, A, { role: "admin" }), member(G, B), member(G, C, { role: "admin" })] } });
+    assert.equal((await call(harness.base, "POST", `/threads/${G}/moderation/${C}/mute`, A, { minutes: 60 })).status, 409);
+    assert.equal(c._store.telegraph_thread_member_mutes.length, 0);
+    assert.equal((await call(harness.base, "POST", `/threads/${G}/moderation/${C}/remove`, A)).status, 409);
+    assert.equal(c._store.message_thread_members.find((m: any) => m.thread_id === G && m.user_id === C).left_at, null);
+  });
+  it("a removed member can no longer read or post, and can no longer read the controls or moderate", async () => {
+    use();
+    assert.equal((await call(harness.base, "POST", `/threads/${G}/moderation/${B}/remove`, A)).status, 200);
+    assert.equal((await call(harness.base, "GET", `/threads/${G}/messages`, B)).status, 403);
+    assert.equal((await call(harness.base, "GET", `/threads/${G}/controls`, B)).status, 404);
+    assert.equal((await call(harness.base, "POST", `/threads/${G}/moderation/${C}/mute`, B, {})).status, 404);
+  });
+});

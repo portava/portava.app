@@ -387,8 +387,8 @@ function seqOf(v: unknown): number | null {
 }
 
 /**
- * §7.3's DELIVERED, from the cursors: every eligible recipient either took the message on an open
- * connection (delivered_sequence ≥ its sequence) or has seen it. Pure.
+ * §7.3's DELIVERED, never more than OBSERVED: a cursor is a high-water mark, so it proves only the message AT it was taken on an open connection (or a seen
+ * one). Below the cursor and unseen, it may have arrived while they were offline: not individually observed → null with DELIVERED_NOT_OBSERVED (#786). Pure.
  */
 export function deliveredState(
   message: LifecycleMessage,
@@ -401,12 +401,12 @@ export function deliveredState(
   // The cursor column must have been READ for every eligible member; an absent key is "not selected".
   if (eligible.some((m) => !("delivered_sequence" in m))) return { delivered: null, reason: DELIVERED_UNAVAILABLE };
   const seen = new Set(seenUserIds);
-  const all = eligible.every((m) => {
+  const each = eligible.map((m): boolean | null => {
     if (seen.has(m.user_id)) return true;
     const d = seqOf(m.delivered_sequence);
-    return d !== null && d >= seq;
+    return d === null || d < seq ? false : d === seq ? true : null; // at the cursor: observed; below it and unseen: not observed
   });
-  return { delivered: all, reason: null };
+  return each.includes(false) ? { delivered: false, reason: null } : each.includes(null) ? { delivered: null, reason: DELIVERED_NOT_OBSERVED } : { delivered: true, reason: null };
 }
 
 // ── census-telegraph T348 (lane TELEGRAPH batch 3) — appended so every cited line keeps its number ──
@@ -426,3 +426,8 @@ function recordUnsendVerdict(v: UnsendResult | null): void {
   recordTelegraphMetric("unsend_after_seen_violations", v.outcome === "unsent" && v.seenBy > 0 ? "violation" : "ok");
 }
 import { recordTelegraphMetric } from "../../domain/telegraph/services/telegraphObservability.js";
+/** §7.3 (#786 verifier): a cursor that PASSED a message without the message itself being observed (census-telegraph T73). */
+export const DELIVERED_NOT_OBSERVED =
+  "Delivery of this message to at least one recipient was not individually observed: their delivery " +
+  "cursor passed it without this message being taken on an open connection (it may have arrived while " +
+  "they were offline), so DELIVERED is not claimed.";

@@ -299,3 +299,14 @@ test("T73: the drainer's sink persists the delivery as delivered_sequence, from 
     assert.ok(writes[0]!.filters.includes(`in:user_id=${RECIP_1}`));
   } finally { u1(); setDeliverySink(prev); _setCursorTestClient(null as any, false); }
 });
+
+// ── #786 verifier probe V16, committed: the sink hears ONLY whose connection took the message ──
+test("in a group publish, the delivery sink is told only who took it, never the offline members (#786 verifier V16)", () => {
+  const calls: Array<string[]> = [];
+  const prev = setDeliverySink((_e, to) => calls.push([...to].sort()));
+  const u1 = subscribe(RECIP_1, () => {});
+  try {
+    publishToUsers([RECIP_1, RECIP_2], created("m-group-1")); // RECIP_2 is offline
+    assert.deepEqual(calls, [[RECIP_1]]);
+  } finally { u1(); setDeliverySink(prev); }
+});
