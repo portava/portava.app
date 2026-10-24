@@ -211,3 +211,91 @@ test("emitter counters record receipts and undelivered messages", () => {
     assert.equal(s.messagesDeliveredNowhere, 1);
   } finally { u1(); u2(); }
 });
+
+// ── census-telegraph T72 / T73 (lane TELEGRAPH batch 2, 2026-10-23) ─────────────
+// Appended at the foot so every line the census cites above keeps its number.
+// The DELIVERED fact the bus observes reaches a sink, which persists it as the members'
+// delivered_sequence — forward only, one row per member per thread.
+import { setDeliverySink } from "../lib/telegraphEvents.js";
+import { advanceDeliveredSequence, advanceSeenSequence, receiptCursorColumns } from "../lib/telegraphReceiptCursors.js";
+import { registerDeliveredSequenceSink } from "../lib/telegraphOutboxDrainScheduler.js";
+import { _setTestClient as _setCursorTestClient } from "../lib/http.js";
+
+/** A client that records the one UPDATE a cursor write makes, filters included. */
+function cursorClient(opts: { error?: boolean; throws?: boolean } = {}) {
+  const writes: Array<{ table: string; patch: any; filters: string[] }> = [];
+  const client = {
+    from(table: string) {
+      const w = { table, patch: null as any, filters: [] as string[] };
+      const q: any = {
+        update(patch: any) { w.patch = patch; return q; },
+        eq(c: string, v: any) { w.filters.push(`eq:${c}=${v}`); return q; },
+        in(c: string, v: any[]) { w.filters.push(`in:${c}=${[...v].sort().join(",")}`); return q; },
+        is(c: string, v: any) { w.filters.push(`is:${c}=${v}`); return q; },
+        or(expr: string) { w.filters.push(`or:${expr}`); return q; },
+        then(resolve: (v: any) => void, reject?: (e: any) => void) {
+          if (opts.throws) return Promise.reject(new Error("socket hang up")).then(resolve, reject);
+          writes.push(w);
+          return Promise.resolve({ data: null, error: opts.error ? { message: "permission denied" } : null }).then(resolve, reject);
+        },
+      };
+      return q;
+    },
+  };
+  return { client, writes };
+}
+
+test("T72: a cursor write is ONE forward-only UPDATE of one row per member", async () => {
+  const { client, writes } = cursorClient();
+  assert.equal(await advanceDeliveredSequence(client, "th-1", [RECIP_2, RECIP_1, RECIP_1], 7), "written");
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0]!.table, "message_thread_members");
+  assert.deepEqual(writes[0]!.patch, { delivered_sequence: 7 });
+  assert.deepEqual(writes[0]!.filters, [
+    "eq:thread_id=th-1", `in:user_id=${[RECIP_1, RECIP_2].sort().join(",")}`, "is:left_at=null",
+    "or:delivered_sequence.is.null,delivered_sequence.lt.7",
+  ], "only forward: a cursor already at or past 7 is not touched, and a departed member is not");
+  assert.equal(await advanceSeenSequence(client, "th-1", RECIP_1, "9"), "written");
+  assert.deepEqual(writes[1]!.patch, { seen_sequence: 9 });
+  assert.ok(writes[1]!.filters.includes("or:seen_sequence.is.null,seen_sequence.lt.9"));
+});
+
+test("T72: no sequence, nobody, or no client writes nothing; a failed or thrown write is reported, never thrown", async () => {
+  const { client, writes } = cursorClient();
+  for (const s of [null, undefined, 0, -3, 1.5, "x", ""]) assert.equal(await advanceDeliveredSequence(client, "th-1", [RECIP_1], s), "skipped", String(s));
+  assert.equal(await advanceDeliveredSequence(client, "th-1", [], 5), "skipped");
+  assert.equal(await advanceDeliveredSequence(null, "th-1", [RECIP_1], 5), "skipped");
+  assert.equal(writes.length, 0);
+  assert.equal(await advanceDeliveredSequence(cursorClient({ error: true }).client, "th-1", [RECIP_1], 5), "failed");
+  assert.equal(await advanceDeliveredSequence(cursorClient({ throws: true }).client, "th-1", [RECIP_1], 5), "failed");
+  assert.equal(receiptCursorColumns(false), "");
+  assert.equal(receiptCursorColumns(true), ", delivered_sequence, seen_sequence");
+});
+
+test("T73: a POSITIVE delivery reaches the sink with who took it; a delivery nobody took does not", () => {
+  const calls: Array<{ type: string; to: string[] }> = [];
+  const prev = setDeliverySink((e, to) => calls.push({ type: e.type, to: [...to] }));
+  const u1 = subscribe(RECIP_1, () => {});
+  try {
+    publishToUsers([RECIP_1], created("m-sink-1"));
+    publishToUsers([RECIP_2], created("m-sink-2")); // RECIP_2 has no connection: delivered to nobody
+    assert.deepEqual(calls, [{ type: "message.created", to: [RECIP_1] }]);
+  } finally { u1(); setDeliverySink(prev); }
+});
+
+test("T73: the drainer's sink persists the delivery as delivered_sequence, from the event's own sequence", async () => {
+  const { client, writes } = cursorClient();
+  _setCursorTestClient(client as any, true);
+  const prev = setDeliverySink(null);
+  registerDeliveredSequenceSink();
+  const u1 = subscribe(RECIP_1, () => {});
+  try {
+    publishToUsers([RECIP_1], { type: "message.created", threadId: "th-9", payload: { messageId: "m-9", senderId: SENDER, sequence: 12 } } as any);
+    publishToUsers([RECIP_1], { type: "message.created", threadId: "th-9", payload: { messageId: "m-10", senderId: SENDER } } as any); // no sequence: nothing written
+    await new Promise((r) => setTimeout(r, 10));
+    assert.equal(writes.length, 1);
+    assert.deepEqual(writes[0]!.patch, { delivered_sequence: 12 });
+    assert.ok(writes[0]!.filters.includes("eq:thread_id=th-9"));
+    assert.ok(writes[0]!.filters.includes(`in:user_id=${RECIP_1}`));
+  } finally { u1(); setDeliverySink(prev); _setCursorTestClient(null as any, false); }
+});

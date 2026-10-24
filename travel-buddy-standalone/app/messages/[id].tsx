@@ -27,7 +27,7 @@ import {
   ArrowLeft, Zap, Send, Users, Globe, Check, CalendarClock, ArrowRight,
   CheckCircle, MoreVertical, Info, VolumeX, Languages, Paperclip, Compass,
   Bot, Reply, Copy, Trash2, Flag, CheckCheck, AlertCircle, Search, BookmarkPlus,
-  RefreshCw, Clock, ChevronDown, X, Phone, Video, Lock, Sparkles, Pencil, History,
+  RefreshCw, Clock, ChevronDown, X, Phone, Video, Lock, Sparkles, Pencil, History, UserPlus, SlidersHorizontal,
 } from 'lucide-react-native';
 import { resolveCircleCardNav } from '../../src/lib/circleCardNavigation.ts';
 import { useCallState, useCallActions } from '../../src/context/CallContext';
@@ -37,7 +37,7 @@ import { CallHistoryMessage } from '../../src/components/calls/CallHistoryMessag
 import { canShowThreadCallButtons, threadCallContextType } from '../../src/components/calls/callEntryGating';
 import { getBooking } from '../../src/services/rentABuddy';
 import { useThreadMessages, useLanguageSettings, useOutgoingRequestStatus } from '../../src/hooks/useMessaging';
-import { useConversationProjection } from '../../src/features/telegraph/conversation/useConversationProjection.ts'; import { ThreadNotificationSheet } from '../../src/features/telegraph/settings/ThreadNotificationSheet.tsx'; import { offersPlanControl, treatAsE2eeForEdit, showsE2eeBadge, memberCountOf } from '../../src/features/telegraph/conversation/conversationProjection.ts'; // §24 / census T295: asked of the server, not read from raw tables
+import { useConversationProjection } from '../../src/features/telegraph/conversation/useConversationProjection.ts'; import { ThreadNotificationSheet } from '../../src/features/telegraph/settings/ThreadNotificationSheet.tsx'; import { offersPlanControl, treatAsE2eeForEdit, showsE2eeBadge, memberCountOf, offersAddPeople } from '../../src/features/telegraph/conversation/conversationProjection.ts'; import { AddPeopleSheet } from '../../src/features/telegraph/groups/AddPeopleSheet.tsx'; import { ForwardSheet } from '../../src/features/telegraph/forwarding/ForwardSheet.tsx'; import { FORWARDING_FLAG } from '../../src/features/telegraph/forwarding/forwardApi.ts'; import { offersForward } from '../../src/features/telegraph/conversation/conversationProjection.ts'; import { GroupControlsSheet } from '../../src/features/telegraph/groups/GroupControlsSheet.tsx'; import { GROUP_CONTROLS_FLAG, GROUP_CONTROLLED_THREAD_TYPES, MUTE_CHOICES_MINUTES, fetchGroupControls, muteLabel, muteMember, removeMember } from '../../src/features/telegraph/groups/groupControlsApi.ts'; // census-telegraph T417: §30A.12 host controls // census-telegraph T212/T213/T390/T201: a DM adds people by forming a NEW group // §24 / census T295: asked of the server, not read from raw tables
 import { useTrip } from '../../src/hooks/useBackend';
 import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t, avatar, icon } from '../../src/theme/tokens';
@@ -173,7 +173,7 @@ function LongPressActionSheet({
   onDeleteForMe,
   onReply,
   onSave,
-  onUnsent, onEdit, onHistory, canEdit = false, blockLabel, onBlockSender,
+  onUnsent, onEdit, onHistory, canEdit = false, blockLabel, onBlockSender, onForward, onModerate, canRemoveMember,
   receipt,
 }: {
   message: Message | null;
@@ -188,7 +188,7 @@ function LongPressActionSheet({
   onDeleteForMe: (id: string) => Promise<void>;
   onReply: (msg: Message) => void;
   onSave: (msg: Message) => void;
-  onUnsent: (id: string) => void; onEdit?: (msg: Message) => void; onHistory?: (msg: Message) => void; canEdit?: boolean; blockLabel?: string; onBlockSender?: () => void;
+  onUnsent: (id: string) => void; onEdit?: (msg: Message) => void; onHistory?: (msg: Message) => void; canEdit?: boolean; blockLabel?: string; onBlockSender?: () => void; onForward?: (msg: Message) => void; onModerate?: (msg: Message, action: 'mute' | 'remove') => void; canRemoveMember?: boolean; // T406, T417
 }) { const { palette, styles: las } = useTelegraphTheme(makeSheetStyles);
   const plainInsetForSheets = usePlainBottomInset();
   const [showReport, setShowReport] = useState(false);
@@ -210,8 +210,8 @@ function LongPressActionSheet({
             // settings; a menu item that only explained that was a dead end.
             ['reply',     'Reply',         Reply        ],
             ['copy',      'Copy text',     Copy         ],
-            ['save',      'Save message',  BookmarkPlus ], ...(canEdit ? [['edit', 'Edit', Pencil]] : []), ...(threadId && canViewEditHistory(message) ? [['history', 'Edit history', History]] : []),
-            ...(!mine ? [['report', 'Report', Flag]] : []),
+            ['save',      'Save message',  BookmarkPlus ], ...(canEdit ? [['edit', 'Edit', Pencil]] : []), ...(threadId && canViewEditHistory(message) ? [['history', 'Edit history', History]] : []), ...(onForward && !message.deleted ? [['forward', 'Forward', ArrowRight]] : []),
+            ...(!mine ? [['report', 'Report', Flag]] : []), ...(!mine && onModerate ? [['mute-member', 'Mute in this conversation', VolumeX]] : []), ...(!mine && onModerate && canRemoveMember ? [['remove-member', 'Remove from this group', X]] : []),
           ] as [string, string, React.ComponentType<{ size: number; color: string }>][]).map(([key, label, Icon]) => (
             <Pressable
               key={key}
@@ -230,7 +230,7 @@ function LongPressActionSheet({
                   onSave(message);
                 } else {
                   onClose();
-                  if (key === 'edit') onEdit?.(message); else if (key === 'history') onHistory?.(message); else Alert.alert(label, 'This feature is coming soon.');
+                  if (key === 'edit') onEdit?.(message); else if (key === 'history') onHistory?.(message); else if (key === 'forward') onForward?.(message); else if (key === 'mute-member') onModerate?.(message, 'mute'); else if (key === 'remove-member') onModerate?.(message, 'remove'); else Alert.alert(label, 'This feature is coming soon.');
                 }
               }}
             >
@@ -1230,7 +1230,7 @@ export default function TelegraphThread() { const { palette, styles } = useTeleg
   const [blockingUser, setBlockingUser] = useState(false);
   const [showSafetySheet, setShowSafetySheet] = useState(false); const [layeredIds, setLayeredIds] = useState<ReadonlySet<string>>(() => new Set()); const [panelDrawnIds, setPanelDrawnIds] = useState<ReadonlySet<string>>(() => new Set()); // §2.3: ids drawn in the PLAN/NOW strip leave the stream; the panel says which decisions it draws
   const [hideAiSuggestions, setHideAiSuggestions] = useState(false); const [safetyQuiet, setSafetyQuiet] = useState(false); // §15.2: held for the whole of a raised safety mode
-  const [threadIsMuted, setThreadIsMuted] = useState(muted === '1'); const [showNotificationSheet, setShowNotificationSheet] = useState(false); // §30A.6: long-press the mute icon for ALL / MENTIONS / IMPORTANT / temporary mute // the inbox passes the server's mutedAt; it used to start "unmuted" always
+  const [threadIsMuted, setThreadIsMuted] = useState(muted === '1'); const [showNotificationSheet, setShowNotificationSheet] = useState(false); const [showAddPeople, setShowAddPeople] = useState(false); /* T212: the Add people sheet */ const [forwardMsgId, setForwardMsgId] = useState<string | null>(null); /* T406: the message being forwarded */ const [showGroupControls, setShowGroupControls] = useState(false); const [groupHost, setGroupHost] = useState(false); /* T417: the host's moderation offers follow the server's isHost */ // §30A.6: long-press the mute icon for ALL / MENTIONS / IMPORTANT / temporary mute // the inbox passes the server's mutedAt; it used to start "unmuted" always
   const [showCompassTray, setShowCompassTray] = useState(false);
   const [compassTelegraphEnabled, setCompassTelegraphEnabled] = useState<null | boolean>(null);
   const [dismissedAiMsgIds, setDismissedAiMsgIds] = useState<Set<string>>(new Set());
@@ -1257,7 +1257,7 @@ export default function TelegraphThread() { const { palette, styles } = useTeleg
   const mediaPicker = useMessageMediaPicker();
   // Telegraph §16.2 / §17.4 — the degradation ladder. Consulted here for
   // media; the AI tray consults it for `ai`.
-  const dataSaver = useDataSaver(); const { isEnabled: flagEnabled } = useFeatureFlags(); const linkPreviews = useLinkPreviews(id ?? null, messages, flagEnabled(LINK_PREVIEWS_FLAG) && !safetyQuiet && dataSaver.mayLoad('mediaPreview')); // census T404: off (the seed), a raised safety mode or data saver ⇒ no request and no preview (Q-LP6)
+  const dataSaver = useDataSaver(); const { isEnabled: flagEnabled } = useFeatureFlags(); useEffect(() => { if (!id || !GROUP_CONTROLLED_THREAD_TYPES.includes(threadType ?? '') || !flagEnabled(GROUP_CONTROLS_FLAG)) return; let live = true; void fetchGroupControls(id).then((r) => { if (live) setGroupHost(r.ok && r.data.isHost); }); return () => { live = false; }; }, [id, threadType, flagEnabled]); /* census-telegraph T417: a host's moderation offers follow the server's isHost; a failed read offers none */ const linkPreviews = useLinkPreviews(id ?? null, messages, flagEnabled(LINK_PREVIEWS_FLAG) && !safetyQuiet && dataSaver.mayLoad('mediaPreview')); // census T404: off (the seed), a raised safety mode or data saver ⇒ no request and no preview (Q-LP6)
   const [showMediaPickerSheet, setShowMediaPickerSheet] = useState(false);
 
   function handleBlockPress() {
@@ -1945,7 +1945,7 @@ export default function TelegraphThread() { const { palette, styles } = useTeleg
                 </Pressable>
               </>
             )}
-            <Pressable hitSlop={8} style={styles.headerIconBtn} onPress={() => setShowTranslationSheet(true)}>
+            {GROUP_CONTROLLED_THREAD_TYPES.includes(threadType ?? '') && flagEnabled(GROUP_CONTROLS_FLAG) ? (<Pressable hitSlop={8} style={styles.headerIconBtn} testID="thread-group-controls" accessibilityRole="button" accessibilityLabel="Conversation settings" onPress={() => setShowGroupControls(true)}><SlidersHorizontal size={18} color={palette.mute} /></Pressable>) : null}{isDirect && threadType === 'direct' && offersAddPeople(conversationProjection) ? (<Pressable hitSlop={8} style={styles.headerIconBtn} testID="thread-add-people" accessibilityRole="button" accessibilityLabel="Add people — starts a new group" onPress={() => setShowAddPeople(true)}><UserPlus size={18} color={palette.operational} /></Pressable>) : null}<Pressable hitSlop={8} style={styles.headerIconBtn} onPress={() => setShowTranslationSheet(true)}>
               <Languages size={18} color={autoTranslate ? palette.operational : palette.mute} />
             </Pressable>
             <Pressable
@@ -2383,7 +2383,7 @@ export default function TelegraphThread() { const { palette, styles } = useTeleg
         }}
       />
 
-      <ThreadActionSheets threadId={id ?? ''} editing={editingMsg} onCloseEdit={() => setEditingMsg(null)} onEdited={() => { void reload(); }} history={historyMsg} onCloseHistory={() => setHistoryMsg(null)} askVisible={showAsk} onCloseAsk={() => setShowAsk(false)} /><ContentDrawerSheet
+      <ThreadActionSheets threadId={id ?? ''} editing={editingMsg} onCloseEdit={() => setEditingMsg(null)} onEdited={() => { void reload(); }} history={historyMsg} onCloseHistory={() => setHistoryMsg(null)} askVisible={showAsk} onCloseAsk={() => setShowAsk(false)} /><ForwardSheet visible={forwardMsgId !== null} sourceThreadId={id ?? null} sourceMessageId={forwardMsgId} onClose={() => setForwardMsgId(null)} /><GroupControlsSheet visible={showGroupControls} threadId={id ?? null} onClose={() => setShowGroupControls(false)} onLoaded={(st) => setGroupHost(st.isHost)} /><ContentDrawerSheet
         visible={showContentDrawer}
         threadId={id ?? ''}
         onClose={() => setShowContentDrawer(false)} onAsk={() => { setShowContentDrawer(false); setShowAsk(true); }}
@@ -2517,7 +2517,7 @@ export default function TelegraphThread() { const { palette, styles } = useTeleg
         />
       )}
 
-      <ThreadNotificationSheet visible={showNotificationSheet} threadId={id ?? null} onClose={() => setShowNotificationSheet(false)} onChanged={(p) => setThreadIsMuted(p.level === 'MUTED')} />
+      <ThreadNotificationSheet visible={showNotificationSheet} threadId={id ?? null} onClose={() => setShowNotificationSheet(false)} onChanged={(p) => setThreadIsMuted(p.level === 'MUTED')} /><AddPeopleSheet visible={showAddPeople} threadId={id ?? null} partnerName={dmProfile?.name ?? null} onClose={() => setShowAddPeople(false)} onCreated={(groupId) => { setShowAddPeople(false); router.push({ pathname: '/messages/[id]' as any, params: { id: groupId, threadType: 'group', title: 'New group' } }); }} />
       {/* Thread safety / overflow controls */}
       <ThreadSafetySheet
         visible={showSafetySheet}
@@ -2572,7 +2572,7 @@ export default function TelegraphThread() { const { palette, styles } = useTeleg
             else Alert.alert('Error', r.message ?? 'Could not save message.');
           });
         }}
-        onUnsent={() => { void reload(); }} onEdit={(m) => setEditingMsg(m)} onHistory={(m) => setHistoryMsg(m)} canEdit={canEditMessage(actionMsg, actionMsgMine, treatAsE2eeForEdit(conversationProjection))} blockLabel={isDirect && otherUserId ? 'Block this person' : undefined} onBlockSender={isDirect && otherUserId ? () => { void (async () => { setBlockingUser(true); const blocked = await blockUser(otherUserId); setBlockingUser(false); if (blocked.ok) router.replace('/messages'); else Alert.alert('Could not block', blockFailedCopy(blocked.error)); })(); } : undefined}
+        onUnsent={() => { void reload(); }} onForward={offersForward(flagEnabled(FORWARDING_FLAG), conversationProjection) ? (m) => { setActionMsg(null); setForwardMsgId(m.id); } : undefined} onModerate={groupHost && GROUP_CONTROLLED_THREAD_TYPES.includes(threadType ?? '') && flagEnabled(GROUP_CONTROLS_FLAG) ? (m, action) => { setActionMsg(null); if (!id) return; const who = m.senderName ?? 'this person'; if (action === 'remove') { Alert.alert('Remove from this group?', `${who} will leave this group. They keep nothing new from it.`, [{ text: 'Cancel', style: 'cancel' }, { text: 'Remove', style: 'destructive', onPress: () => { void removeMember(id, m.senderId).then((r) => Alert.alert(r.ok ? 'Removed' : 'Not removed', r.ok ? `${who} is no longer in this group.` : r.message)); } }]); return; } Alert.alert(`Mute ${who}?`, 'They can still reply to plans and polls.', [{ text: 'Cancel', style: 'cancel' }, ...MUTE_CHOICES_MINUTES.map((min) => ({ text: muteLabel(min), onPress: () => { void muteMember(id, m.senderId, min).then((r) => Alert.alert(r.ok ? 'Muted' : 'Not muted', r.ok ? `${who} is muted here.` : r.message)); } }))]); } : undefined} canRemoveMember={threadType === 'group'} onEdit={(m) => setEditingMsg(m)} onHistory={(m) => setHistoryMsg(m)} canEdit={canEditMessage(actionMsg, actionMsgMine, treatAsE2eeForEdit(conversationProjection))} blockLabel={isDirect && otherUserId ? 'Block this person' : undefined} onBlockSender={isDirect && otherUserId ? () => { void (async () => { setBlockingUser(true); const blocked = await blockUser(otherUserId); setBlockingUser(false); if (blocked.ok) router.replace('/messages'); else Alert.alert('Could not block', blockFailedCopy(blocked.error)); })(); } : undefined}
         receipt={actionMsgReceipt}
       />
 

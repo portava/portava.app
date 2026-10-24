@@ -206,7 +206,7 @@ export interface AnnouncementAcknowledgementView {
   acknowledgedBy: Array<{ userId: string; at: string; note: string | null }>;
   /** Null when the roster could not be read — never an empty list in that case. */
   outstanding: string[] | null;
-  complete: boolean | null;
+  complete: boolean | null; /** census-telegraph T417: a LARGE_GROUP's roster is BOUNDED — `acknowledgedBy` is a sample (always holding the viewer's own), the exact count is here, and a non-host's `outstanding` is null by design, not unread. */ acknowledgedCount?: number; outstandingCount?: number | null; rosterBounded?: true;
 }
 
 export interface AnnouncementsResponse {

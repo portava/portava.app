@@ -68,7 +68,7 @@
 export interface ReceiptMember {
   user_id: string;
   last_read_at: string | null;
-  left_at?: string | null;
+  left_at?: string | null; /** 2810's §12 cursors, selected where the kernel is in force (census T72/T73). */ delivered_sequence?: number | string | null; seen_sequence?: number | string | null;
 }
 
 /** The message columns §7 reasons about. */
@@ -87,24 +87,24 @@ export interface LifecycleMessage {
    */
   unsent_at?: string | null;
   edited_at?: string | null;
-  body?: string | null;
+  body?: string | null; /** §17.1's per-conversation sequence, selected where the kernel is in force. */ sequence?: number | string | null;
 }
 
 /**
  * §7.3's receipt, derived rather than stored.
  *
- * `delivered` is deliberately `null` on every deployment: §7.1 has a DELIVERED
- * state and this tree has no delivery signal of any kind — no per-device ack,
- * no `lastDeliveredSequence`, nothing. Returning `null` with a reason is the
- * honest shape; returning `false` would assert a negative nobody measured, and
- * returning `true` would invent one.
+ * `delivered` (census T73): TRUE when every eligible recipient's open connection took the message — their
+ * `delivered_sequence` reached its sequence — or they have already seen it; FALSE when the cursors were
+ * read and one has not; NULL, with the reason, when the message carries no sequence or the cursors were
+ * not read (no kernel). NULL is never collapsed into false: that would assert a negative nobody measured,
+ * and it is never collapsed into true: that would invent one.
  */
 export interface MessageReceipt {
   messageId: string;
-  /** SENT or SEEN. There is no DELIVERED to report. */
+  /** SENT or SEEN; DELIVERED is the separate `delivered` field (it is not a stage between them for a group). */
   status: "SENT" | "SEEN";
-  delivered: null;
-  deliveredUnavailableReason: string;
+  delivered: boolean | null;
+  deliveredUnavailableReason: string | null;
   /** How many eligible recipients have seen it. §7.3's "Seen by N". */
   seenBy: number;
   /** The eligible recipients, for a direct chat or a policy that allows it. */
@@ -114,8 +114,8 @@ export interface MessageReceipt {
 }
 
 export const DELIVERED_UNAVAILABLE =
-  "No delivery signal exists on this deployment: there is no per-device " +
-  "acknowledgement and no lastDeliveredSequence column, so DELIVERED cannot be " +
+  "This message carries no conversation sequence, or the delivery cursors were " +
+  "not read (the message kernel is not in force), so DELIVERED cannot be " +
   "reported as true or false.";
 
 /**
@@ -158,12 +158,12 @@ export function seenByRecipients(
 
 /** §7.3's receipt for one message. */
 export function receiptFor(message: LifecycleMessage, members: ReceiptMember[]): MessageReceipt {
-  const seen = seenByRecipients(message, members);
+  const seen = seenByRecipients(message, members); const delivery = deliveredState(message, members, seen); // census T73
   return {
     messageId: message.id,
     status: seen.length > 0 ? "SEEN" : "SENT",
-    delivered: null,
-    deliveredUnavailableReason: DELIVERED_UNAVAILABLE,
+    delivered: delivery.delivered,
+    deliveredUnavailableReason: delivery.reason,
     seenBy: seen.length,
     seenByUserIds: seen,
     recipientCount: eligibleRecipients(members, message.sender_id).length,
@@ -378,4 +378,33 @@ export async function unsendBeforeSeen(
   };
   if (typeof row["unsentAt"] === "string") result.unsentAt = row["unsentAt"];
   return result;
+}
+
+// ── census-telegraph T73 (lane TELEGRAPH batch 2) — appended so every cited line keeps its number ──
+function seqOf(v: unknown): number | null {
+  const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+/**
+ * §7.3's DELIVERED, from the cursors: every eligible recipient either took the message on an open
+ * connection (delivered_sequence ≥ its sequence) or has seen it. Pure.
+ */
+export function deliveredState(
+  message: LifecycleMessage,
+  members: ReceiptMember[],
+  seenUserIds: readonly string[],
+): { delivered: boolean | null; reason: string | null } {
+  const seq = seqOf(message.sequence);
+  const eligible = eligibleRecipients(members, message.sender_id);
+  if (seq === null || eligible.length === 0) return { delivered: null, reason: DELIVERED_UNAVAILABLE };
+  // The cursor column must have been READ for every eligible member; an absent key is "not selected".
+  if (eligible.some((m) => !("delivered_sequence" in m))) return { delivered: null, reason: DELIVERED_UNAVAILABLE };
+  const seen = new Set(seenUserIds);
+  const all = eligible.every((m) => {
+    if (seen.has(m.user_id)) return true;
+    const d = seqOf(m.delivered_sequence);
+    return d !== null && d >= seq;
+  });
+  return { delivered: all, reason: null };
 }

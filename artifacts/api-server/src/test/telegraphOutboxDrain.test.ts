@@ -513,7 +513,7 @@ describe("V-TR F1: ONE publisher of message.created for every door", () => {
     const { dirname, join } = await import("node:path");
     const src = join(dirname(fileURLToPath(import.meta.url)), "..");
     const doors = ["routes/messaging.ts", "routes/telegraphShare.ts", "routes/telegraphVoice.ts", "routes/telegraphCoordination.ts",
-      "services/telegraph/threadEnvelopeWrites.ts", "lib/threadMessage.ts"];
+      "services/telegraph/threadEnvelopeWrites.ts", "lib/threadMessage.ts", "routes/telegraphForward.ts"]; // + the forward door (batch 2: it bypassed the one publisher)
     let sites = 0;
     for (const d of doors) {
       const text = readFileSync(join(src, d), "utf8");
@@ -526,7 +526,7 @@ describe("V-TR F1: ONE publisher of message.created for every door", () => {
         assert.doesNotMatch(before.slice(before.lastIndexOf("publishMessageCreated(")), /publishToThread\(/, `${d}: direct publishToThread`);
       }
     }
-    assert.equal(sites, 7, "every door's publish site is counted (messaging text + media, share, voice, coordination, envelope, plain thread message)");
+    assert.equal(sites, 8, "every door's publish site is counted (messaging text + media, share, voice, coordination, envelope, plain thread message, forward)");
   });
 });
 

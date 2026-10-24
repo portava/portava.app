@@ -327,7 +327,7 @@ export function requestTelegraphOutboxDrain(): void {
 }
 
 export function startTelegraphOutboxDrainScheduler(): void {
-  if (_timer !== null) return;
+  if (_timer !== null) return; registerDeliveredSequenceSink(); // census-telegraph T72/T73: the server process persists what the bus observes
   logger.info(
     { intervalMs: TELEGRAPH_OUTBOX_INTERVAL_MS, gate: `${OUTBOX_FANOUT_FLAG} + telegraph_message_kernel_enabled (3655 seeds the first FALSE)` },
     "TelegraphOutboxDrainScheduler scheduled (claims nothing until both flags are on)",
@@ -343,3 +343,22 @@ export function startTelegraphOutboxDrainScheduler(): void {
 export function stopTelegraphOutboxDrainScheduler(): void {
   _generation += 1; if (_timer !== null) { clearTimeout(_timer); _timer = null; }
 }
+
+// ── census-telegraph T72 / T73 (lane TELEGRAPH batch 2) — appended so every cited line keeps its number ──
+/**
+ * The DELIVERED fact, persisted: a positive delivery of a `message.created` that carries the message's
+ * per-conversation sequence advances the receiving members' `delivered_sequence` (forward only). The
+ * events this drainer fans out carry the sequence; a door publishing directly (fan-out off) does not,
+ * and then nothing is written — DELIVERED stays an in-session observation, as before. Registered by the
+ * server process when the drainer starts, never at import, so a test importing this module is untouched.
+ */
+export function registerDeliveredSequenceSink(): void {
+  setDeliverySink((event, deliveredTo) => {
+    if (event.type !== "message.created" || !event.threadId) return;
+    const sequence = (event.payload as Record<string, unknown> | undefined)?.sequence;
+    void advanceDeliveredSequence(getServiceClient(), event.threadId, [...deliveredTo], sequence);
+  });
+}
+
+import { setDeliverySink } from "./telegraphEvents.js";
+import { advanceDeliveredSequence } from "./telegraphReceiptCursors.js";

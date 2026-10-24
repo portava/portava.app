@@ -1364,3 +1364,62 @@ describe("wave 5 — the kernel gatherer reads the pair's block itself, and refu
     for (const t of ["meetups", "meetup_invites", "messages"]) assert.ok(!c.reads.includes(t), `${t} was read across a block`);
   });
 });
+
+// ── census-telegraph T201 (lane TELEGRAPH batch 2, 2026-10-23) ────────────────
+// Appended at the foot so every line the census cites above keeps its number.
+// canInvite used to be permanently false. Since 3660, inviting from a DM FORMS A NEW GROUP
+// (POST /threads/:id/add-people), so the capability says so — and only where the formation could run:
+// a direct thread, the flag ON, and a conversation the viewer may send in.
+function withFormationFlag(sc: any, flag: "on" | "off" | "error") {
+  const flagRead = () => {
+    const q: any = {
+      select() { return q; }, eq() { return q; },
+      maybeSingle() {
+        if (flag === "error") return Promise.resolve({ data: null, error: { message: "flags unreadable" } });
+        return Promise.resolve({ data: { enabled: flag === "on" }, error: null });
+      },
+    };
+    return q;
+  };
+  return { ...sc, from: (table: string) => (table === "feature_flags" ? flagRead() : sc.from(table)) };
+}
+
+describe("T201 — canInvite: a DM invites by forming a new group", () => {
+  it("flag ON, a healthy DM: canInvite is granted", async () => {
+    const r = await resolveConversationCapabilities(withFormationFlag(makeClient({}), "on"), { viewerId: ALICE, conversationId: DM });
+    assert.equal(r.capabilities.canInvite, true);
+    assert.equal(r.reasons.canInvite, null);
+  });
+
+  it("flag OFF (or absent): refused with the §14.3 reason, as before", async () => {
+    for (const sc of [withFormationFlag(makeClient({}), "off"), makeClient({})]) {
+      const r = await resolveConversationCapabilities(sc, { viewerId: ALICE, conversationId: DM });
+      assert.equal(r.capabilities.canInvite, false);
+      assert.equal(r.reasons.canInvite, "TELEGRAPH_POLICY_DM_INVITE_FORMS_NEW_GROUP");
+    }
+  });
+
+  it("an unreadable flag never grants, and the answer says it is degraded", async () => {
+    const r = await resolveConversationCapabilities(withFormationFlag(makeClient({}), "error"), { viewerId: ALICE, conversationId: DM });
+    assert.equal(r.capabilities.canInvite, false);
+    assert.equal(r.degraded, true);
+  });
+
+  it("flag ON across a block: every capability is refused, canInvite included", async () => {
+    const r = await resolveConversationCapabilities(withFormationFlag(makeClient({}), "on"), { viewerId: ALICE, conversationId: DM_BLOCKED });
+    assert.equal(r.capabilities.canInvite, false);
+  });
+
+  it("flag ON under a messaging restriction: canInvite follows canSendMessage's refusal and its reason", async () => {
+    const r = await resolveConversationCapabilities(withFormationFlag(makeClient({ restrictions: ["messaging"] }), "on"), { viewerId: ALICE, conversationId: DM });
+    assert.equal(r.capabilities.canSendMessage, false);
+    assert.equal(r.capabilities.canInvite, false);
+    assert.equal(r.reasons.canInvite, r.reasons.canSendMessage);
+  });
+
+  it("flag ON in a trip thread: still membership-derived, never an invite", async () => {
+    const r = await resolveConversationCapabilities(withFormationFlag(makeClient({}), "on"), { viewerId: ALICE, conversationId: TRIP_THREAD });
+    assert.equal(r.capabilities.canInvite, false);
+    assert.equal(r.reasons.canInvite, "TELEGRAPH_POLICY_MEMBERSHIP_DERIVED");
+  });
+});

@@ -34,6 +34,10 @@ export function PortavaObjectMessage({ body, mine, threadId, messageId }: Portav
     threadId,
     parsed ? { objectType: parsed.objectType, objectId: parsed.objectId, messageId } : null,
   );
+  // census-telegraph T265 — §20 Places "current intelligence": Discovery's own why-now, said only
+  // while it is current. A hook, so it is asked before any early return below.
+  const resolvedProjection = revocation.resolved?.available ? revocation.resolved.projection : null;
+  const liveLine = usePlaceLiveLine(parsed?.objectType === 'PLACE' ? resolvedProjection?.liveIntelligence ?? null : null);
 
   if (!parsed) {
     return (
@@ -90,6 +94,11 @@ export function PortavaObjectMessage({ body, mine, threadId, messageId }: Portav
           {subtitle}
         </Text>
       ) : null}
+      {liveLine ? (
+        <Text style={liveLine.stale ? styles.liveStale : styles.live} numberOfLines={2} testID={liveLine.stale ? 'telegraph-place-live-stale' : 'telegraph-place-live-now'}>
+          {liveLine.text}
+        </Text>
+      ) : null}
       {parsed.caption ? (
         <Text style={styles.caption} numberOfLines={3}>
           {parsed.caption}
@@ -133,6 +142,8 @@ function makeStyles(p: TelegraphPalette) {
     image: { width: '100%', height: 110, borderRadius: radius.sm, marginVertical: 4 },
     title: { ...t.body, color: p.recvText, fontWeight: '700' },
     subtitle: { ...t.small, color: p.mute },
+    live: { ...t.small, color: p.operational },
+    liveStale: { ...t.small, color: p.mute, fontStyle: 'italic' },
     caption: { ...t.small, color: p.recvText },
     captionMuted: { ...t.small, color: p.mute, fontStyle: 'italic' },
     notice: { ...t.small, color: p.mute },
@@ -142,3 +153,5 @@ function makeStyles(p: TelegraphPalette) {
 }
 
 export default PortavaObjectMessage;
+
+import { usePlaceLiveLine } from './placeLiveIntelligence.ts'; // census-telegraph T265 (appended so the cited line keeps its number)
