@@ -80,6 +80,28 @@ describe("3926 delayed location event isolation", { skip: !HAVE_DB }, () => {
     }
     assert.deepEqual(read("anon"), []); assert.equal(read("owner").length, 1);
   });
+  it("safe recovery and reversal refuse unknown successors without changing rows or grants", () => {
+    const migration = readFileSync(new URL("../../migrations/3926_delayed_post_location_events_service_role_policy.sql", import.meta.url), "utf8");
+    const rollback = readFileSync(new URL("../../../../../db/rollback/2026-10-24-3926-delayed-location-events-policy-rollback.sql", import.meta.url), "utf8");
+    const snapshot = () => exec(`SELECT row_to_json(p)::text FROM (SELECT policyname,permissive,roles,cmd,qual,with_check FROM pg_policies WHERE schemaname='public' AND tablename='delayed_post_location_events' ORDER BY policyname) p; SELECT relacl::text FROM pg_class WHERE oid='${table}'::regclass; SELECT row_to_json(e)::text FROM ${table} e WHERE id='${event}';`);
+    const cases = [
+      [`ALTER POLICY "service role manages delayed post events" ON ${table} TO authenticated;`, `ALTER POLICY "service role manages delayed post events" ON ${table} TO service_role;`],
+      [`CREATE POLICY successor3926 ON ${table} AS RESTRICTIVE FOR SELECT USING (true);`, `DROP POLICY successor3926 ON ${table};`],
+      [`ALTER POLICY "users read own delayed post events" ON ${table} TO authenticated;`, `ALTER POLICY "users read own delayed post events" ON ${table} TO public;`],
+    ];
+    for (const [change, restore] of cases) {
+      try {
+        exec(change!); const before = snapshot();
+        for (const sql of [migration, rollback]) {
+          const result = psql(sql); assert.notEqual(result.status, 0); assert.match(result.stderr, /PRECONDITION FAILED/);
+          assert.deepEqual(snapshot(), before, "unknown successor, grants and rows must remain intact");
+        }
+      } finally { exec(restore!); }
+    }
+    const before = snapshot(); exec(migration); exec(migration);
+    assert.deepEqual(snapshot(), before, "preferred safe recovery preserves private policy, grants and rows");
+    assert.deepEqual(read("anon"), []); assert.equal(read("owner").length, 1);
+  });
   it("apply/rollback idempotence and row preservation", () => {
     const migration = readFileSync(new URL("../../migrations/3926_delayed_post_location_events_service_role_policy.sql", import.meta.url), "utf8");
     const rollback = readFileSync(new URL("../../../../../db/rollback/2026-10-24-3926-delayed-location-events-policy-rollback.sql", import.meta.url), "utf8");
