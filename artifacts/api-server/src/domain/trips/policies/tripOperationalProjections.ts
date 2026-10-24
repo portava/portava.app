@@ -21,7 +21,7 @@
  * variables to the scanner), naming no schema of its own. A builder that
  * calls it first is a gate boundary, and its reads belong here.
  */
-import { readFlagState } from "../../../lib/featureFlags.js";
+import { isFlagEnabled, readFlagState } from "../../../lib/featureFlags.js";
 import { probeSchemaReadiness } from "../../../lib/capability/schemaCapability.js";
 import type { CapabilityDefinition, SchemaReadiness } from "../../../lib/capability/schemaRequirement.js";
 import { logger } from "../../../lib/logger.js";
@@ -98,9 +98,9 @@ export async function tripOperationalProjectionsGate(sc: any): Promise<TripOpera
   // "could not be read" are different answers. A caller that falls back to a
   // destructive legacy path when the flag is off (DELETE
   // /trips/:tripId/reservations/:id hard-deletes) must not take that path
-  // because the feature_flags read failed. An unreadable flag is `flag_unknown`
-  // — closed, retryable, and NOT cached, so the next request reads again.
-  const flagState = await readFlagState(sc, TRIP_OPERATIONAL_PROJECTIONS_FLAG);
+  // because the feature_flags read failed. An unreadable flag is `flag_unknown` — closed, retryable, NOT cached. "off" needs
+  // isFlagEnabled's false AND readFlagState's "off" (isFlagEnabled stays the read site check:flag-schema-prerequisites counts).
+  const flagState: "on" | "off" | "unknown" = (await isFlagEnabled(sc, TRIP_OPERATIONAL_PROJECTIONS_FLAG)) ? "on" : (await readFlagState(sc, TRIP_OPERATIONAL_PROJECTIONS_FLAG)) === "off" ? "off" : "unknown";
   if (flagState === "unknown") {
     log.error({ capability: TRIP_OPERATIONAL_PROJECTIONS_FLAG }, `capability ${TRIP_OPERATIONAL_PROJECTIONS_FLAG} could not be read — the operational projections are refused (retryably)`);
     return { enabled: false, reason: "flag_unknown", schema: null };
