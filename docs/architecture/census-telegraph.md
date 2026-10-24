@@ -16133,3 +16133,29 @@ Each file carries pre- and postconditions and a rollback, and revokes EXECUTE on
 ### R.6 The headline, restated from the rows
 
 No row moves in this batch. **451 = 302 C / 146 W / 1 N / 2 X**: CONSTRUCTED 448 of 451 = 99.3 %, CORRECT 302 of 451 = 67.0 %, unchanged from batch 2 (Q.7). Once batch 2's and this batch's releases are on production, the re-grade takes Q.2a (eleven rows) and R.1 (nine rows) on evidence. If every one holds, that is 322 C / 126 W.
+
+### R.7 Follow-up (2026-10-24): 3935 and 3939 are ONE RELEASE UNIT
+
+Batch 4 ran all of the Telegraph real-PostgreSQL suites together for the first time, and that run found a defect in 3935 (R.1). This branch's "kernel SQL executed on a throwaway database" job showed the same single failure. 3935's membership-window trigger function was SECURITY INVOKER and calls `telegraph_window_first_sequence`, whose EXECUTE 3935 revokes from client roles. A BEFORE trigger runs before row-level security's WITH CHECK. So a client-role INSERT into `message_thread_members` was refused with "permission denied for function telegraph_window_first_sequence" instead of by the table's policy (`mtm_insert`, WITH CHECK false on production). Nothing was ever admitted. But the refusal came from a helper's grant, not from the policy that decides, and a wrong refusal reason can hide a real gap. Batch 2's pinned refusal went red: `artifacts/api-server/src/test/db/telegraphMemberRemovedAt.db.test.ts:144#it("NO CLIENT WRITES IT`.
+
+**Migration 3939** makes the trigger function SECURITY DEFINER, with search_path pinned to `pg_catalog, pg_temp` (`artifacts/api-server/src/migrations/3939_telegraph_member_window_sequence_definer.sql:75#ALTER FUNCTION public.telegraph_member_window_sequence() SECURITY DEFINER;`). Its header states the rest:
+
+- the owner (the migration role, `postgres` on production);
+- that client EXECUTE stays revoked;
+- that there is no dynamic SQL (the precondition refuses a body that has any);
+- why a definer trigger is narrower than granting EXECUTE on the helper. The grant would publish an RPC that answers any thread's sequence to any caller. The trigger runs only inside a write that the table's policy then judges.
+
+3935 is unchanged. **3935 must not be applied without 3939: they are applied together.**
+
+The new real-PostgreSQL case pins the reason, not only the refusal. A client INSERT carrying a window reaches the policy. It is refused BY row-level security and not by a function-permission error. The function is a definer with that search_path and a non-client owner (`artifacts/api-server/src/test/db/telegraphMemberWindowSequence.db.test.ts:192#it("3939: a client INSERT reaches the table's policy`). No existing test was edited. All 92 cases of the Telegraph real-PostgreSQL suites pass with 3934–3937 and 3939 applied. Mutant WD1 restores 3935's posture (INVOKER, `pg_catalog, public`) and turns both that case and "NO CLIENT WRITES IT" red.
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| T210 | W | **W** | **Waiting on release: migrations 3934, 3935 and 3939 applied** (database only; 3935 and 3939 are one unit, R.7). |
+| T139 | W | **W** | **Waiting on release: migrations 3934, 3935 and 3939 applied, plus the server deploy for batch 2's cursor writers** (R.1 with R.7). |
+
+| file | sha256 |
+| --- | --- |
+| `artifacts/api-server/src/migrations/3939_telegraph_member_window_sequence_definer.sql` | `7502a5186979b7354ed0ba1ea2139cae3a5fdde16a32f4759d64eebb26848b2a` |
+
+The headline is unchanged: 451 = 302 C / 146 W / 1 N / 2 X.

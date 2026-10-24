@@ -14,7 +14,7 @@
  *     by MESSAGE IDENTITY — so a bound can never be left behind to admit
  *     pre-membership messages, and a delivered/seen cursor never moves to another message;
  *   · re-running the backfill changes nothing;
- *   · no client role can run the backfill or the trigger functions.
+ *   · no client role can run the backfill or the trigger functions. · 3939 (one release unit with 3935): a client INSERT is refused BY ROW-LEVEL SECURITY, never by a function-permission error, and the trigger runs as its owner with search_path pg_catalog, pg_temp.
  *
  * MUTANTS (applied to the local database one at a time, each red, each restored by
  * re-applying 3935 — tgprod/mutants-b3.txt):
@@ -22,7 +22,7 @@
  *   WS2 a rejoin keeps the old window's sequence .................................. red
  *   WS3 the backfill does not rebase the window bound ............................. red
  *   WS4 the backfill does not carry the cursors by identity ....................... red
- *   WS5 the backfill executable by `authenticated` ................................ red
+ *   WS5 the backfill executable by `authenticated` ................................ red · WD1 (3939) the trigger function back to SECURITY INVOKER ........ red
  *
  * Messages are sequenced by hand here (the kernel flag is OFF on the local database),
  * which is the "explicit sequence" path 2810's trigger respects.
@@ -187,5 +187,31 @@ describe("3935 — visible_from_sequence and a backfill that rebases what it ren
       `SELECT tgname FROM pg_trigger WHERE tgrelid = 'public.message_thread_members'::regclass AND NOT tgisinternal AND tgname LIKE 'telegraph_member_%' ORDER BY tgname`,
     ).map((r) => r.tgname);
     assert.ok(names.indexOf("telegraph_member_visibility_window") < names.indexOf("telegraph_member_window_sequence"), names.join(","));
+  });
+
+  it("3939: a client INSERT reaches the table's policy and is refused BY ROW-LEVEL SECURITY, not by a function-permission error", () => {
+    // The row carries a window (visible_from_at), so the BEFORE trigger takes the helper path — the
+    // path that, as INVOKER, failed on the helper's revoked EXECUTE before RLS was ever consulted.
+    const t = thread();
+    const r = psql(
+      [
+        `SELECT set_config('request.jwt.claim.sub', '${carol}', true);`,
+        `SELECT set_config('request.jwt.claim.role', 'authenticated', true);`,
+        `SET LOCAL ROLE authenticated;`,
+        `INSERT INTO public.message_thread_members (thread_id, user_id, role, visible_from_at) VALUES ('${t}', '${carol}', 'member', now());`,
+      ].join("\n"),
+      { single: true },
+    );
+    assert.notEqual(r.status, 0, "a client cannot add itself to a conversation");
+    assert.doesNotMatch(r.stderr, /permission denied for function/, "refused by a helper's grant, not by the table's policy");
+    assert.match(r.stderr, /new row violates row-level security policy/);
+    assert.equal(scalar(`SELECT count(*) FROM public.message_thread_members WHERE thread_id = '${t}' AND user_id = '${carol}'`), "0");
+    // The definer posture 3939 states: owner not a client role, search_path minimal, no client EXECUTE.
+    const fn = rows<{ prosecdef: boolean; owner: string; config: string }>(
+      `SELECT prosecdef, pg_get_userbyid(proowner) AS owner, array_to_string(proconfig, ';') AS config FROM pg_proc WHERE oid = 'public.telegraph_member_window_sequence()'::regprocedure`,
+    )[0]!;
+    assert.equal(fn.prosecdef, true);
+    assert.equal(fn.config, "search_path=pg_catalog, pg_temp");
+    assert.ok(!["anon", "authenticated", "authenticator"].includes(fn.owner), fn.owner);
   });
 });
