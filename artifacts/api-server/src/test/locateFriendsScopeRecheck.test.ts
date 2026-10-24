@@ -277,3 +277,41 @@ describe("census-map M93 — the group is re-checked on every read and publish",
     assert.match(route, /readSessionForViewer\(sc, String\(req\.params\.id\), user\.id, nowMs, LOCATE_READ_DEPS\)/);
   });
 });
+
+for (const status of ['declined', 'removed', 'left', 'invited']) {
+  it(`status recheck ${status}: scope must reject nonaccepted membership`, async () => {
+    const db = world({ tripMembers: [{ trip_id: TRIP, user_id: BOB, role: 'member', status }] });
+    assert.equal(await LOCATE_READ_DEPS.scopeMember!(db as any, 'trip', TRIP, BOB), false);
+  });
+  it(`status recheck ${status}: publish must refuse`, async () => {
+    const db = world({ tripMembers: [{ trip_id: TRIP, user_id: BOB, role: 'member', status }] });
+    assert.equal((await pub(db, BOB)).ok, false);
+    assert.deepEqual(db._writes, {}, 'refused publication writes nothing');
+  });
+  it(`status recheck ${status}: viewer must receive opaque refusal`, async () => {
+    const db = world({ tripMembers: [{ trip_id: TRIP, user_id: BOB, role: 'member', status }] });
+    const r = await readSessionForViewer(db as any, SESSION, BOB, NOW, LOCATE_READ_DEPS);
+    assert.equal(r.status, 'not_member');
+    assert.equal(r.session, null);
+  });
+}
+
+for (const role of ['member', 'co_host']) for (const status of ['accepted', null, undefined]) {
+  it(`status compatibility: ${role}/${status} keeps read and publish`, async () => {
+    const db = world({ tripMembers: [{ trip_id: TRIP, user_id: BOB, role, status }] });
+    assert.equal(await LOCATE_READ_DEPS.scopeMember!(db as any, 'trip', TRIP, BOB), true);
+    assert.equal((await pub(db, BOB)).ok, true);
+    assert.equal((await readSessionForViewer(db as any, SESSION, BOB, NOW, LOCATE_READ_DEPS)).status, 'ok');
+  });
+}
+for (const status of ['invited', 'declined', 'removed', 'left']) {
+  it(`status recheck ${status}: retained position is not served to another member`, async () => {
+    const db = world({ tripMembers: [
+      { trip_id: TRIP, user_id: BOB, role: 'member', status },
+      { trip_id: TRIP, user_id: CAROL, role: 'member', status: 'accepted' },
+    ] });
+    const r = await readSessionForViewer(db as any, SESSION, CAROL, NOW, LOCATE_READ_DEPS);
+    assert.equal(r.status, 'ok');
+    assert.ok(!r.members.some(m => m.memberId === BOB));
+  });
+}

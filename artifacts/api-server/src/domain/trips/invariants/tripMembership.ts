@@ -38,7 +38,7 @@
  * `null`/absent counts as accepted, for rows written before migration 0078 added
  * the column — the same back-compat requireTripMember applies.
  */
-function isAcceptedStatus(row: any): boolean {
+export function isAcceptedStatus(row: any): boolean {
   const status = (row as any)?.status;
   return status == null || String(status) === "accepted";
 }

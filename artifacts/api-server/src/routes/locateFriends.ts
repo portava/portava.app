@@ -139,13 +139,13 @@ export const SCOPE_MEMBERSHIP_VERIFIERS: Partial<Record<GroupScopeKind, ScopeVer
     if ((trip as any)?.owner_id === userId) return true;
     const { data, error } = await sc
       .from("trip_members")
-      .select("role")
+      .select("role, status")
       .eq("trip_id", tripId)
       .eq("user_id", userId)
       .in("role", ["owner", "co_host", "member"])
       .maybeSingle();
     if (error) return false;
-    return Boolean(data);
+    return Boolean(data) && isAcceptedStatus(data);
   },
   /**
    * Event: RSVP'd going. Matches the rule lib/circleAccessGuard.ts already
@@ -708,3 +708,5 @@ export default router;
 import { DEFAULT_FUSED_READ_DEPS, type FusedReadDeps } from "../lib/locateFriendsSession.js";
 /** The read's dependencies: the default guard, plus the group-scope re-check (census-map M93, verifier 2026-10-24). */
 export const LOCATE_READ_DEPS: FusedReadDeps = Object.freeze({ ...DEFAULT_FUSED_READ_DEPS, scopeMember: (db: any, kind: string, scopeId: string, userId: string) => verifyScopeMembership(db, kind as GroupScopeKind, scopeId, userId) });
+
+import { isAcceptedStatus } from "../domain/trips/invariants/tripMembership.js";
