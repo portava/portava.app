@@ -220,3 +220,51 @@ describe("planEnvelopeCommand — pure", () => {
     assert.ok(l.ok && l.locationShare);
   });
 });
+
+// ── census-telegraph T429 (lane TELEGRAPH batch 4): the bus stamps the §30A.16 schema ──────────────
+// MUTANTS (tgprod/mutants-b4.txt): SS1 the bus never stamps; SS2 a wrong named schema written;
+// SS3 the stamp applied with the flag OFF; SS4 the session command left unstamped.
+describe("T429 — the bus stamps its envelope writes with their §30A.16 schema, as the route doors do", () => {
+  const ON = [{ flag: "telegraph_structured_schemas_enabled", enabled: true }];
+  const bodyOf = (c: FakeClient, i: number) => JSON.parse(messagesIn(c, GROUP)[i].body);
+
+  it("flag ON: CREATE_DECISION carries coordination.decision.v1 — the same body the coordination route writes", async () => {
+    const c = use(store({ feature_flags: ON }));
+    await post(`/threads/${GROUP}/coordination`, A, { kind: "DECISION", payload: DECISION });
+    const viaBus = await post(`/telegraph/commands`, A, { type: "CREATE_DECISION", conversationId: GROUP, params: DECISION });
+    assert.equal(viaBus.status, 200, JSON.stringify(viaBus.body));
+    assert.equal(viaBus.body.data.schema, "coordination.decision.v1");
+    assert.equal(bodyOf(c, 1).schema, "coordination.decision.v1");
+    assert.deepEqual(bodyOf(c, 1), bodyOf(c, 0), "the bus and the route write the same stamped envelope");
+  });
+
+  it("flag ON: SET_COORDINATION_STATUS and SHARE_LOCATION carry their schemas", async () => {
+    const c = use(store({ feature_flags: ON }));
+    const s1 = await post(`/telegraph/commands`, A, { type: "SET_COORDINATION_STATUS", conversationId: GROUP, params: STATUS });
+    const s2 = await post(`/telegraph/commands`, A, { type: "SHARE_LOCATION", conversationId: GROUP, params: share() });
+    assert.deepEqual([s1.status, s2.status], [200, 200], JSON.stringify([s1.body, s2.body]));
+    assert.deepEqual([bodyOf(c, 0).schema, bodyOf(c, 1).schema], ["coordination.status.v1", "location.scope.v1"]);
+  });
+
+  it("flag ON: CREATE_COORDINATION_SESSION carries coordination.session.v1", async () => {
+    const c = use(store({ feature_flags: ON }));
+    const r = await post(`/telegraph/commands`, A, { type: "CREATE_COORDINATION_SESSION", conversationId: GROUP, params: { title: "Dinner", idempotencyKey: "k-session-1" } });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.data.schema, "coordination.session.v1");
+    assert.equal(bodyOf(c, 0).schema, "coordination.session.v1");
+  });
+
+  it("flag ON: a caller that names another kind's schema is refused before the guard, and nothing is written", async () => {
+    const c = use(store({ feature_flags: ON }));
+    const r = await post(`/telegraph/commands`, A, { type: "CREATE_DECISION", conversationId: GROUP, params: { ...DECISION, schema: "coordination.status.v1" } });
+    assert.equal(r.status, 400, JSON.stringify(r.body));
+    assert.match(String(r.body.message ?? r.body.error), /coordination\.decision\.v1/);
+    assert.equal(messagesIn(c, GROUP).length, 0);
+  });
+
+  it("flag OFF (the seed): no stamp — the body is byte-for-byte the old envelope", async () => {
+    const c = use(store());
+    await post(`/telegraph/commands`, A, { type: "CREATE_DECISION", conversationId: GROUP, params: DECISION });
+    assert.equal("schema" in bodyOf(c, 0), false);
+  });
+});

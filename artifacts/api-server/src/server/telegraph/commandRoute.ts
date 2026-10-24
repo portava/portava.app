@@ -181,7 +181,7 @@ router.post(
     // a malformed command is a 400 that spends no burst allowance.
     const nowMs = Date.now();
     const envelopePlan = isEnvelopeCommand(type) ? planEnvelopeCommand(type, params, nowMs) : null;
-    if (envelopePlan && !envelopePlan.ok) { sendError(res, "invalid_payload", envelopePlan.message); return; }
+    if (envelopePlan && !envelopePlan.ok) { sendError(res, "invalid_payload", envelopePlan.message); return; } const busStamp = await busSchemaStamp(sc, type, envelopePlan, params["schema"] ?? body["schema"]); if (!busStamp.ok) { sendError(res, "invalid_payload", busStamp.error); return; } // census T429 (batch 3): the bus stamps the §30A.16 schema as the route doors do, BEFORE the guard so a refused schema spends no burst allowance
     if (GUARDED_WRITE_COMMANDS.has(type) && (await refuseGuardedWrite(res, sc, type, conversationId, user.id, textOfPayload(body)))) return;
     /**
      * §13.1 `CREATE_COORDINATION_SESSION`, handled before the switch because
@@ -215,7 +215,7 @@ router.post(
         // conversation; narrowing it by a window the caller has not been handed
         // would make a retry mint a duplicate for a member whose history is
         // bounded. The coordination route, which HAS the window, passes it.
-        visibleFrom: null,
+        visibleFrom: null, schemaId: busStamp.schemaId,
       });
       if (!created.ok) {
         if (created.code === "db_error") {
@@ -241,7 +241,7 @@ router.post(
           sessionId: created.session.sessionId,
           state: created.session.state,
           version: created.session.version,
-          startedAt: created.session.startedAt,
+          startedAt: created.session.startedAt, ...(busStamp.schemaId ? { schema: busStamp.schemaId } : {}),
         }),
         duplicate: created.duplicate,
       });
@@ -259,7 +259,7 @@ router.post(
       const written = await writeThreadEnvelope(sc, {
         threadId: conversationId,
         senderId: user.id,
-        envelope: envelopePlan.envelope,
+        envelope: busStamp.schemaId ? { ...(envelopePlan.envelope as Record<string, unknown>), schema: busStamp.schemaId } : envelopePlan.envelope,
         msgType: envelopePlan.msgType,
         subtype: envelopePlan.subtype,
         nowMs,
@@ -275,7 +275,7 @@ router.post(
         kind: envelopePlan.kind,
         msgType: written.row.msg_type,
         subtype: written.row.subtype,
-        createdAt: written.row.created_at,
+        createdAt: written.row.created_at, ...(busStamp.schemaId ? { schema: busStamp.schemaId } : {}),
       }));
       notifyEnvelopeCommandWrite(sc, { threadId: conversationId, senderId: user.id, kind: envelopePlan.kind, payload: (envelopePlan.envelope as { payload?: unknown }).payload, row: written.row }, { log }); return; // wave 5 safety lane: the bus tells the people the route doors tell — NEED_HELP as SAFETY (P0), a quick state as COORDINATION (T395), SHARE_LOCATION as LOCATION — after the answer, never awaited
     }
@@ -541,3 +541,28 @@ async function refuseGuardedWrite(
 
 export default router;
 import { publishMessageLifecycle } from "../../lib/telegraphOutboxDrainScheduler.js"; // census T154 (batch 3), at the foot so no cited line moves
+
+// ── census-telegraph T429 (lane TELEGRAPH batch 4) — appended so every cited line keeps its number ──
+/**
+ * The §30A.16 schema the bus stamps on the envelope commands it writes — CREATE_COORDINATION_SESSION
+ * (COORDINATION_SESSION), CREATE_DECISION (DECISION), SET_COORDINATION_STATUS (COORDINATION) and
+ * SHARE_LOCATION (LOCATION) — exactly the coordination route's rule (routes/telegraphCoordination.ts
+ * coordinationSchemaStamp): with telegraph_structured_schemas_enabled ON every envelope carries its
+ * named schema, and a caller that names a schema must name the one this server writes for the kind
+ * (anything else is refused and nothing is written). OFF: no stamp, the body byte-for-byte as before.
+ * Any other command stamps nothing.
+ */
+async function busSchemaStamp(
+  sc: any,
+  type: string,
+  envelopePlan: ReturnType<typeof planEnvelopeCommand> | null,
+  requested: unknown,
+): Promise<{ ok: true; schemaId: string | null } | { ok: false; error: string }> {
+  const kind = type === "CREATE_COORDINATION_SESSION" ? "COORDINATION_SESSION" : envelopePlan && envelopePlan.ok ? envelopePlan.kind : null;
+  if (!kind) return { ok: true, schemaId: null };
+  if (!(await isFlagEnabled(getServiceClient() ?? sc, "telegraph_structured_schemas_enabled"))) return { ok: true, schemaId: null };
+  const r = schemaToStamp({ kind }, requested);
+  return r.ok ? { ok: true, schemaId: r.schemaId } : { ok: false, error: r.error };
+}
+import { isFlagEnabled } from "../../lib/featureFlags.js";
+import { schemaToStamp } from "../../services/telegraph/structuredSchemas.js";
