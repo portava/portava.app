@@ -919,3 +919,46 @@ describe("§13.2 — message.seen is in the event union", () => {
     assert.ok(src.includes('| "read.updated"'), "read.updated was replaced rather than joined");
   });
 });
+
+// ── census-telegraph T181 (lane TELEGRAPH, 2026-10-23) ───────────────────────
+// Appended at the foot so every line the census cites above keeps its number.
+//
+// §13.2 names `message.unsent` as its own event, deliberately distinct from
+// `message.deleted`: an unsend asserts the message never reached a mind, and a
+// client that hears "deleted" draws a tombstone where §7.4 promises nothing at
+// all. Measured on 2026-10-23: publishing this door's event as `message.deleted`
+// left every suite green — nothing asserted which event the door sends. This
+// pins the event, its audience and what it does not carry.
+describe("T181 — the unsend door publishes §13.2 message.unsent", () => {
+  it("the other member hears message.unsent (id, time, sender, no body); the sender hears nothing", async () => {
+    useState({});
+    const rec = recordEvents([ALICE, BOB]);
+    try {
+      const r = await call("POST", `/api/threads/${THREAD}/messages/${M_UNSEEN}/unsend`, ALICE);
+      assert.equal(r.status, 200);
+      await settleEvents();
+      const bob = rec.get(BOB)!.events.filter((e) => e.threadId === THREAD);
+      assert.deepEqual(bob.map((e) => e.type), ["message.unsent"], "an unsend is announced as message.unsent and as nothing else");
+      assert.equal(bob[0]!.payload?.messageId, M_UNSEEN);
+      assert.equal(bob[0]!.payload?.senderId, ALICE);
+      assert.equal(typeof bob[0]!.payload?.unsentAt, "string");
+      assert.ok(!("body" in (bob[0]!.payload ?? {})), "the event carries no body — there is none");
+      assert.deepEqual(rec.get(ALICE)!.events.filter((e) => e.threadId === THREAD), [], "the sender is excluded");
+    } finally {
+      for (const v of rec.values()) v.stop();
+    }
+  });
+
+  it("a refused unsend announces nothing", async () => {
+    useState({ bobReadAt: mins(-5) });
+    const rec = recordEvents([ALICE, BOB]);
+    try {
+      const r = await call("POST", `/api/threads/${THREAD}/messages/${M_UNSEEN}/unsend`, ALICE);
+      assert.equal(r.status, 409);
+      await settleEvents();
+      assert.deepEqual(rec.get(BOB)!.events.filter((e) => e.threadId === THREAD), []);
+    } finally {
+      for (const v of rec.values()) v.stop();
+    }
+  });
+});
