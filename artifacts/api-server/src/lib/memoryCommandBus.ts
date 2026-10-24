@@ -342,7 +342,7 @@ export const MEMORY_COMMAND_TYPES = [
                         //       produces them; POST /highlights and save-to-highlight need a name to cross
                         //       the boundary at all (the UPDATE_MEMORY precedent). public.highlight_create_execute
                         //       (3677). Census H155/H156.
-  "BACKFILL_LEGACY_MEMORY", "SET_RESURFACING_POLICY"] as const;
+  "BACKFILL_LEGACY_MEMORY", "SET_RESURFACING_POLICY", "CHANGE_ITEM_VISIBILITY", "MODERATION_RESTORE_MEMORY"] as const; // 3912 (census-highlights-memories §CC): EXT — a photo's own audience (§10), and an upheld appeal's restore of a moderation removal
 export type MemoryCommandType = (typeof MEMORY_COMMAND_TYPES)[number];
 
 /**
@@ -354,7 +354,7 @@ export type MemoryCommandType = (typeof MEMORY_COMMAND_TYPES)[number];
  * `executeMemoryCommand` dispatches on; nothing infers the subject from the
  * command NAME, because a name is a convention and this is a routing decision.
  */
-export const COMMAND_SUBJECT: Readonly<Record<MemoryCommandType, "memory" | "highlight" | "owner_policy">> = { BACKFILL_LEGACY_MEMORY: "memory",
+export const COMMAND_SUBJECT: Readonly<Record<MemoryCommandType, "memory" | "highlight" | "owner_policy">> = { BACKFILL_LEGACY_MEMORY: "memory", CHANGE_ITEM_VISIBILITY: "memory", MODERATION_RESTORE_MEMORY: "memory",
   SET_RESURFACING_POLICY: "owner_policy",
   CREATE_MEMORY: "memory",
   CONFIRM_MEMORY: "memory",
@@ -439,7 +439,7 @@ export const MEMORY_COMMAND_TYPES_NOT_DECLARED = {
 } as const;
 
 /** §17 command -> §17 domain event. Total over MEMORY_COMMAND_TYPES. */
-export const COMMAND_EVENT: Readonly<Record<MemoryCommandType, MemoryEventType>> = { BACKFILL_LEGACY_MEMORY: "memory.corrected",
+export const COMMAND_EVENT: Readonly<Record<MemoryCommandType, MemoryEventType>> = { BACKFILL_LEGACY_MEMORY: "memory.corrected", CHANGE_ITEM_VISIBILITY: "memory.visibility_changed", MODERATION_RESTORE_MEMORY: "memory.corrected", /* 3912: §17 names no restore event; DELETED -> ACTIVE rides memory.corrected with its command_type */
   SET_RESURFACING_POLICY: "resurfacing.policy_changed",
   CREATE_MEMORY: "memory.created",
   CONFIRM_MEMORY: "memory.confirmed",
@@ -491,7 +491,7 @@ export const COMMAND_ALSO_EMITS: Readonly<Partial<Record<MemoryCommandType, read
 });
 
 /** §23's capability vocabulary, per command. Re-checked by the SQL function. */
-export const COMMAND_CAPABILITY: Readonly<Record<MemoryCommandType, "none" | "owner" | "owner_or_participant">> = { BACKFILL_LEGACY_MEMORY: "owner",
+export const COMMAND_CAPABILITY: Readonly<Record<MemoryCommandType, "none" | "owner" | "owner_or_participant" | "moderator">> = { BACKFILL_LEGACY_MEMORY: "owner", CHANGE_ITEM_VISIBILITY: "owner", MODERATION_RESTORE_MEMORY: "moderator", /* 3912: the moderator who upheld the appeal; the SQL re-checks the admin role */
   SET_RESURFACING_POLICY: "owner",
   CREATE_MEMORY: "none",
   CONFIRM_MEMORY: "owner",
@@ -554,7 +554,7 @@ export type MemoryKernelReason =
   | "MEMORY_NOT_FOUND"
   | "MEMORY_ITEM_NOT_FOUND"
   | "MEMORY_TAG_NOT_FOUND"
-  | "MEMORY_AUTH_NOT_OWNER"
+  | "MEMORY_AUTH_NOT_OWNER" | "MEMORY_AUTH_NOT_MODERATOR" // 3912: MODERATION_RESTORE_MEMORY's actor holds no admin role
   | "MEMORY_AUTH_NOT_PARTICIPANT"
   // §24 reason codes for the Highlight aggregate. SEPARATE from the Memory
   // ones on purpose: the audit row and the metric must say which aggregate
@@ -816,7 +816,7 @@ export function sendMemoryCommandRejection(
         reason: r.reason,
       });
       return;
-    case "MEMORY_AUTH_NOT_OWNER":
+    case "MEMORY_AUTH_NOT_OWNER": case "MEMORY_AUTH_NOT_MODERATOR":
     case "MEMORY_AUTH_NOT_PARTICIPANT":
     case "MEMORY_AUTH_IDEMPOTENCY_KEY_FOREIGN":
       res.status(403).json({ error: "forbidden", message: "Not permitted on this memory", reason: r.reason });
