@@ -550,6 +550,11 @@ export function pdeItemPipelineFeatures(scored: object): Record<string, unknown>
 import { diversityAxisEvidence } from "./portavaRank.js";
 
 export function diversityAxesFeature(scored: object): Record<string, unknown> {
-  const e = diversityAxisEvidence(scored);
-  return e ? { diversityAxes: { ...e } } : {};
+  try {
+    const e = diversityAxisEvidence(scored);
+    return e ? { diversityAxes: { ...e } } : {};
+  } catch {
+    // resolves-not-throws-ok: the record is provenance; a failure stores no key and never fails the row.
+    return {};
+  }
 }

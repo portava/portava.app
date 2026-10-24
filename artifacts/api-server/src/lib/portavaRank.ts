@@ -1167,17 +1167,34 @@ export function diversityAxisPenalties(
   return { creator, contentType, place, geography, trail, history, total: creator + contentType + place + geography + trail + history };
 }
 
-/** `diversify`, unchanged, plus the per-pick record when `opts.recordAxisEvidence` is true. */
+/**
+ * `diversify`, unchanged, plus the per-pick record when `opts.recordAxisEvidence` is true.
+ *
+ * THE RECORD CAN NEVER CHANGE A SERVE. It is computed after `diversify` has
+ * returned, inside a try: a throw anywhere in it (verifier, #783) deletes every
+ * record this call wrote and returns `diversify`'s order untouched, so the row
+ * stores no `diversityAxes` and the page is the one `diversify` chose.
+ */
 function diversifyRecordingAxes<T extends RankCandidate>(scored: ScoredCandidate<T>[], opts: DiversityOptions): ScoredCandidate<T>[] {
   const out = diversify(scored, opts);
   if (opts.recordAxisEvidence !== true) return out;
-  const pen = resolveDiversityPenalties(opts);
-  const window = Math.max(1, opts.window ?? 3);
-  const byScore = [...scored].sort((a, b) => b.score - a.score);   // diversify's own pool order (stable)
-  const scoreRank = new Map<object, number>(byScore.map((s, i) => [s, i]));
-  for (let i = 0; i < out.length; i++) {
-    const recent = out.slice(Math.max(0, i - window), i).map((s) => s.candidate);
-    DIVERSITY_AXIS_EVIDENCE.set(out[i], { window, scoreRank: scoreRank.get(out[i]) ?? i, diversifiedRank: i, ...diversityAxisPenalties(out[i].candidate, recent, pen) });
+  try {
+    const pen = resolveDiversityPenalties(opts);
+    const window = Math.max(1, opts.window ?? 3);
+    const byScore = [...scored].sort((a, b) => b.score - a.score);   // diversify's own pool order (stable)
+    const scoreRank = new Map<object, number>(byScore.map((s, i) => [s, i]));
+    for (let i = 0; i < out.length; i++) {
+      if (_axisRecorderFault) _axisRecorderFault();
+      const recent = out.slice(Math.max(0, i - window), i).map((s) => s.candidate);
+      DIVERSITY_AXIS_EVIDENCE.set(out[i], { window, scoreRank: scoreRank.get(out[i]) ?? i, diversifiedRank: i, ...diversityAxisPenalties(out[i].candidate, recent, pen) });
+    }
+  } catch {
+    // resolves-not-throws-ok: a recorder failure records nothing and changes nothing.
+    for (const s of out) DIVERSITY_AXIS_EVIDENCE.delete(s);
   }
   return out;
 }
+
+let _axisRecorderFault: (() => void) | null = null;
+/** Test seam (#783 verifier): make the diversity recorder throw mid-record; pass null to restore. */
+export function _setDiversityRecorderFaultForTest(fault: (() => void) | null): void { _axisRecorderFault = fault; }

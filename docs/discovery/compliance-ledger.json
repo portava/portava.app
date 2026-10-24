@@ -5,14 +5,14 @@
   "blockerEvidence": "docs/verification/discovery-completion-20261015.md",
   "total": 188,
   "byVerdict": {
-    "C": 118,
-    "W": 68,
+    "C": 117,
+    "W": 69,
     "N": 2
   },
   "openByBlocker": {
     "PRODUCTION_ROLLOUT": 48,
     "OBSERVATION_WINDOW": 3,
-    "OWNER_APPROVAL": 17,
+    "OWNER_APPROVAL": 18,
     "RUNTIME_EVIDENCE": 2
   },
   "rows": [
@@ -103,7 +103,7 @@
     {
       "id": "A21",
       "verdict": "W",
-      "line": 17720,
+      "line": 17756,
       "blocker": "PRODUCTION_ROLLOUT"
     },
     {
@@ -409,7 +409,7 @@
     {
       "id": "C19",
       "verdict": "C",
-      "line": 17694,
+      "line": 17729,
       "blocker": "NONE"
     },
     {
@@ -583,13 +583,13 @@
     {
       "id": "DV-28",
       "verdict": "W",
-      "line": 17721,
+      "line": 17757,
       "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DV-29",
       "verdict": "W",
-      "line": 17722,
+      "line": 17758,
       "blocker": "PRODUCTION_ROLLOUT"
     },
     {
@@ -613,7 +613,7 @@
     {
       "id": "DV-33",
       "verdict": "W",
-      "line": 17723,
+      "line": 17759,
       "blocker": "PRODUCTION_ROLLOUT"
     },
     {
@@ -667,7 +667,7 @@
     {
       "id": "DV-42",
       "verdict": "C",
-      "line": 17695,
+      "line": 17730,
       "blocker": "NONE"
     },
     {
@@ -721,7 +721,7 @@
     {
       "id": "DV-51",
       "verdict": "W",
-      "line": 17719,
+      "line": 17755,
       "blocker": "PRODUCTION_ROLLOUT"
     },
     {
@@ -739,13 +739,13 @@
     {
       "id": "DV-54",
       "verdict": "W",
-      "line": 17716,
+      "line": 17752,
       "blocker": "PRODUCTION_ROLLOUT"
     },
     {
       "id": "DV-55",
       "verdict": "W",
-      "line": 17718,
+      "line": 17754,
       "blocker": "PRODUCTION_ROLLOUT"
     },
     {
@@ -834,9 +834,9 @@
     },
     {
       "id": "DV-70",
-      "verdict": "C",
-      "line": 17693,
-      "blocker": "NONE"
+      "verdict": "W",
+      "line": 17751,
+      "blocker": "OWNER_APPROVAL"
     },
     {
       "id": "DV-71",
@@ -949,7 +949,7 @@
     {
       "id": "DC-06",
       "verdict": "W",
-      "line": 17724,
+      "line": 17760,
       "blocker": "PRODUCTION_ROLLOUT"
     },
     {
@@ -979,7 +979,7 @@
     {
       "id": "DC-11",
       "verdict": "W",
-      "line": 17717,
+      "line": 17753,
       "blocker": "OWNER_APPROVAL"
     },
     {
@@ -1039,7 +1039,7 @@
     {
       "id": "DC-21",
       "verdict": "W",
-      "line": 17725,
+      "line": 17761,
       "blocker": "PRODUCTION_ROLLOUT"
     },
     {
