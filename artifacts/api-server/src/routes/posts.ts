@@ -634,7 +634,7 @@ router.post("/posts", async (req, res) => {
       author_id: user.id, // verified user only — never from client
       trip_id: tripId ?? null,
       content: content ?? "",
-      media_urls: uploadPlan.external, ...(uploadSummary(uploadPlan.uploads) ?? {}), // 2026-10-24: external references only (2083); uploads are rows, written below
+      media_urls: uploadPlan.external, media_count: uploadPlan.uploads.length, has_video: uploadPlan.uploads.some((u) => u.kind === "video"), primary_media_type: uploadSummary(uploadPlan.uploads)?.primary_media_type ?? null, // 2026-10-24: external references only (2083); uploads are rows, written below. Explicit keys (no spread) so check:write-path-columns resolves the payload; 0/false/null are the columns' own defaults
       media_type: mediaType ?? null,
       visibility,
       status: "active",
