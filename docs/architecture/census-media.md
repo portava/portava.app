@@ -17639,6 +17639,23 @@ under rows whose evidence is about other paths, and it is recorded here so that 
   - The media viewer chooses Video when any of three signals says video: the full post's flag, the item's type, or a
     video file about to be shown. It never draws a video file as its own poster.
 
+- **E — the second cause, client side (found by the lead after 3924, 2026-10-24).**
+  - The owner's video still did not play. At 10:11:50Z the server signed the `.mov`, and the phone never requested the
+    signed URL.
+  - Why: SharedVideoPlayer mounted `<Video>` with the bare `post-media/…` ref while the signature was in flight.
+    AVPlayer failed on it, the error latched "Video unavailable", and the signed URL that followed was never handed to a
+    player.
+  - The fix: one rule for what a player may be handed
+    (`travel-buddy-standalone/src/services/playbackUri.ts:61#export function playbackUriState(`, re-exported by
+    `services/mediaUrl.ts`, which now delegates its private-bucket rule to it).
+  - SharedVideoPlayer mounts no player until the source is loadable, and shows the poster and a loading state
+    meanwhile.
+  - The error is keyed to the source that failed, and the player is keyed by its source, so a late or refreshed
+    signature recovers. A refused signature keeps "Video unavailable".
+  - MediaPerspectiveViewerScreen and HighlightViewer had the same race and are fixed.
+  - Every other `<Video>` now decides through the rule: WatchVideoCell, GridTile, the media viewer, HighlightComposer,
+    VideoStoryTrimSheet, AddGemForm and MemoryVideoSegments. A guard test requires each one to call it.
+
 **Isolation.** An item exposes exactly the reference `media_urls` already exposed, from the same row, after the route's
 own visibility, block and Hidden-Gem gates. Nothing reads another post. Byte access is unchanged: `lib/mediaAccess`
 branch 3b authorizes a `media_urls` key, 3a authorizes a row, and a poster is authorized as its video.
@@ -17656,6 +17673,10 @@ a 404 for another user, and no key of it reaches that user. Each post's items na
   - server V1–V18, all killed;
   - SQL S1–S9, all killed;
   - client CM1–CM7, all killed.
+- E: `SharedVideoPlayer.sourceRace.component.test.tsx` R1–R5, `playbackUri.test.ts` P1–P4 (P4 is the guard), the
+  perspective viewer's pending-signature case, and the media viewer's W1–W4.
+- Race mutants RM2–RM9 are killed. RM1, the raw ref kept as the playback URI while no player is mounted, is equivalent:
+  no player exists to receive it.
 
 **Release.** The fix ships in four steps, and each one fixes something by itself:
 1. **Migration 3924 applied — done 2026-10-24 09:59Z.** It fixes the existing posts with no deploy: the deployed server
@@ -17664,5 +17685,6 @@ a 404 for another user, and no key of it reaches that user. Each post's items na
    ships, every new upload post repeats the defect. The
    installed build `96d20f10d` then plays them: the detail screen sees `media_type: 'video'` and mounts
    SharedVideoPlayer, which signs the key.
-3. **Next device build** adds D, the client defence.
+3. **Next device build** adds D and E. E is required: without it the installed build's player latches on the bare ref
+   before the signature arrives.
 4. **Signed-in check**: the owner plays `e4bbf335` on a device.

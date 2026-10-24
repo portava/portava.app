@@ -80,7 +80,7 @@ export function SharedVideoPlayer({
 
   // Private-bucket references resolve to signed URLs here, and NO player is mounted until one is loadable
   // (2026-10-24: a bare ref handed to <Video> failed at once and latched "Video unavailable", so the signed URL
-  // that arrived a moment later was never played). services/mediaUrl.ts playbackUriState decides.
+  // that arrived a moment later was never played). services/playbackUri.ts playbackUriState decides.
   const { resolved: hydrated } = useHydratedMedia([uri, poster ?? null]);
   const sourceState = playbackUriState(uri, hydrated);
   const playbackUri = sourceState.state === 'ready' ? sourceState.uri : ''; const hasError = errorSource !== null && errorSource === playbackUri; const failedSource = useRef(''); failedSource.current = playbackUri;
