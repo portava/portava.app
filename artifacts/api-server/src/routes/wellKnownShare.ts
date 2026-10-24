@@ -53,7 +53,7 @@ import { Router } from "express";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { resolveProfileVisibility } from "../lib/profileVisibility.js"; import { readStampPresenceView } from "../services/passport/stampPresenceView.js";
-import { nameVisibleFor } from "../lib/publicIdentity.js"; import { readMemoryPrecisionGate, precisionColumnSelectable, precisionClampApplies } from "../lib/memoryPrecisionGate.js"; import { memoryPlaceLabelsForNonOwner } from "../lib/memoryLocationPrecision.js"; // §10 on the Memory preview (lane R, 2026-10-07)
+import { nameVisibleFor } from "../lib/publicIdentity.js"; import { readMemoryPrecisionGate, precisionColumnSelectable, precisionClampApplies } from "../lib/memoryPrecisionGate.js"; import { memoryPlaceLabelsForNonOwner } from "../lib/memoryLocationPrecision.js"; import { loadAudienceCeilings, rowAtNonOwnerRung } from "../services/memory/memoryVisibilityPolicies.js"; // §10 on the Memory preview (lane R, 2026-10-07); census-highlights-memories §CD (H33): and the owner's ceiling for `public`
 
 const router = Router();
 
@@ -533,12 +533,12 @@ const ENTITY_SPECS: EntitySpec[] = [
       // read is the generic card, as an absent one is.
       const precisionGate = await readMemoryPrecisionGate(sc);
       const { data, error } = precisionColumnSelectable(precisionGate)
-        ? await sc.from("memories").select("id, title, caption, visibility, state, location_city, location_country, location_precision").eq("id", id).maybeSingle()
-        : await sc.from("memories").select("id, title, caption, visibility, state, location_city, location_country").eq("id", id).maybeSingle();
+        ? await sc.from("memories").select("id, owner_id, title, caption, visibility, state, location_city, location_country, location_precision").eq("id", id).maybeSingle()
+        : await sc.from("memories").select("id, owner_id, title, caption, visibility, state, location_city, location_country").eq("id", id).maybeSingle();
       if (error || !data) return null;
       if (data.state !== "published") return null;
       if (data.visibility !== "public") return null;
-      const place = memoryPlaceLabelsForNonOwner(data, precisionClampApplies(precisionGate));
+      const place = memoryPlaceLabelsForNonOwner(rowAtNonOwnerRung(data, precisionClampApplies(precisionGate), await loadAudienceCeilings(sc, [data])), true); // §CD (H33): never finer than the owner's `public` ceiling; an unreadable one is `hidden`
       const where = joinPlace(place.city, place.country);
       const name = clamp(data.title, 60) || clamp(data.caption, 60);
       return {

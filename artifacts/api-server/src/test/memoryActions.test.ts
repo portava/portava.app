@@ -725,3 +725,44 @@ describe("verifier wave 2 — the boundaries, the bridge, and the smaller ones",
     assert.ok(!ids.includes("20000000-0000-4000-8000-0000000000c1"));
   });
 });
+
+// ── census-highlights-memories §CD (H33): the owner's per-audience ceiling bounds the action menu ──
+// An action button on a venue IS a disclosure of the venue (mayDiscloseVenue). Before §CD it read
+// §10's per-Memory rung alone; memory_visibility_policies (3997) is applied in production and its
+// switch is ON, so an owner's `public` ceiling of `city` must withhold the venue from a reader.
+describe("§3.6 / §28.7 (H33) the action menu never discloses a venue finer than the owner's ceiling for the Memory's audience", () => {
+  const withPolicy = (rows: any[], on = true) => (s: Record<string, any[]>) => {
+    s.feature_flags.push({ flag: "memory_location_precision_enabled", enabled: true }, { flag: "memory_visibility_policies_enabled", enabled: on });
+    s.memories.find((m) => m.id === MEM_CATALOG).location_precision = "exact";
+    s.memory_visibility_policies = rows;
+  };
+  const ceiling = (audience: string, rung: string) => [{ owner_id: OWNER, audience, location_precision: rung }];
+
+  it("a `public` ceiling coarser than a venue withholds it from a reader (PLACE_WITHHELD_BY_OWNER), though the Memory's own rung is `exact`; the owner keeps it", async () => {
+    for (const rung of ["city", "country", "hidden"]) {
+      app = await startApp({ mutate: withPolicy(ceiling("public", rung)) });
+      const friend = await get(app, `/api/memories/${MEM_CATALOG}/actions`, FRIEND);
+      assert.equal(byAction(friend.body.menu).ADD_TO_TRIP.reason, "PLACE_WITHHELD_BY_OWNER", rung);
+      assert.equal(friend.body.menu.place, null, `${rung}: the venue is not published`);
+      const own = await get(app, `/api/memories/${MEM_CATALOG}/actions`, OWNER);
+      assert.equal(byAction(own.body.menu).ADD_TO_TRIP.available, true, `${rung}: the owner's own ceiling never withholds from the owner`);
+      await app.close(); app = null as any;
+    }
+  });
+
+  it("a policy table that cannot be read is a could-not-check (PRIVACY_UNREADABLE), never a disclosure", async () => {
+    app = await startApp({ failReads: ["memory_visibility_policies"], mutate: withPolicy([]) });
+    const friend = await get(app, `/api/memories/${MEM_CATALOG}/actions`, FRIEND);
+    assert.equal(byAction(friend.body.menu).ADD_TO_TRIP.reason, "PRIVACY_UNREADABLE");
+    assert.equal(friend.body.menu.place, null);
+  });
+
+  it("controls: a `venue` ceiling, a ceiling for another audience, and the switch off let the reader act on the venue", async () => {
+    for (const mutate of [withPolicy(ceiling("public", "venue")), withPolicy(ceiling("followers", "hidden")), withPolicy(ceiling("public", "hidden"), false)]) {
+      app = await startApp({ mutate });
+      const friend = await get(app, `/api/memories/${MEM_CATALOG}/actions`, FRIEND);
+      assert.equal(byAction(friend.body.menu).ADD_TO_TRIP.available, true, JSON.stringify(byAction(friend.body.menu).ADD_TO_TRIP));
+      await app.close(); app = null as any;
+    }
+  });
+});
