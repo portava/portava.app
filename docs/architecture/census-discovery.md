@@ -17862,7 +17862,8 @@ unchanged, because the per-row contribution is unchanged.
   - C5: the copies equal the installed originals.
   - C6: an active zone removes a canonical place and its rows.
   - C7: flag OFF or absent, the dispatcher's run equals `rebuild_place_momentum`'s.
-  - C8: no client role executes any of the five functions.
+  - C8: no client role executes any of the five functions. Each REVOKE names one function, so the static twin of 3813's
+    precondition (`memoriesClientBoundary` P-2) sees the copied post-group function, which reads `memories`, revoked.
   - C9: re-applying is a no-op, and the rollback refuses while the flag is TRUE.
   - K1–K5 (`src/test/discoveryTrendOps.test.ts`): the scheduler and loader, OFF/absent/unreadable/ON.
 - **Order-independence:** 3920–3923 replayed fresh in byte order (3920 before 3988) and applied on top of the full chain
@@ -17944,26 +17945,26 @@ decision. No production row could show the new behaviour yet.
 
 | ID | from | **to** | evidence |
 |---|---|---|---|
-| DV-28 | W | **W** | **Built (§133.1).** The served places are keyed in the v2 context, in SQL (3920) and in process, behind `discovery_trend_canonical_place_context_enabled` (FALSE). C1–C9 and K1–K5. IMPLEMENTATION-COMPLETE; awaits: 3920 applied to production + this branch released + the flag TRUE + one production run in which a served `db/<places.id>` row carries a non-null `cell_key` and a lifecycle other than `unknown`. BLOCKED: owner retention ruling Q11(b) (D-W10-R1-12, D-OWNER1004-1). |
+| DV-28 | W | **W** | **Waiting on release (server deploy):** rumazi.com runs main `4fb0fe5f5`, which carries none of this batch. **Built (§133.1).** The served places are keyed in the v2 context, in SQL (3920) and in process, behind `discovery_trend_canonical_place_context_enabled` (FALSE). C1–C9 and K1–K5. IMPLEMENTATION-COMPLETE; awaits: 3920 applied to production + this branch released + the flag TRUE + one production run in which a served `db/<places.id>` row carries a non-null `cell_key` and a lifecycle other than `unknown`. BLOCKED: owner retention ruling Q11(b) (D-W10-R1-12, D-OWNER1004-1). |
 | DV-29 | W | **W** | As DV-28. A canonical-only cell is stored as Local Pulse on the harness (C3). Awaits as DV-28 + one production `area_momentum` row. BLOCKED: Q11(b). |
 | DV-33 | W | **W** | As DV-28. Awaits as DV-28 + one production explanation carrying a driver code for a served place. BLOCKED: Q11(b). |
 | DC-06 | W | **W** | As DV-28. The location and Trail peers and content age now have inputs for served places. The creator peer cannot for canonical places, which record no submitter; that is stated, not inferred. Awaits as DV-28 + one production row whose `peer_factor` is computed from peers rather than defaulted. BLOCKED: Q11(b). |
 | DC-21 | W | **W** | As DV-28. Trending by location gets cells. Awaits as DV-28 + one production `GET …/trending/areas` answer above the k-floor. BLOCKED: Q11(b). |
-| DV-51 | W | **W** | **Built (§133.1):** 3921's complete, ordered behaviour read; V1–V3, G1–G4, M-a–M-c. IMPLEMENTATION-COMPLETE; awaits: 3921 applied to production + this branch released + one production rebuild in which a stale intent edge is retired or decayed. **Read before grading that rebuild:** 373 of production's 383 `behavior:*` edges are `behavior:analytics`, over 7 viewers. Those are the ranker's own telemetry rows (`ranking_item_scored` and the like) folded as behaviour, §55.8's routed finding. The 10 genuine `behavior:tap`/`save` edges belong to ONE viewer. A retirement observed on them is single-viewer evidence and must say so. |
-| DV-52 | W | **W** | **Built (§133.1):** the scheduled caller behind `ranking_debug_samples_purge_enabled` (3922, FALSE); R1–R5, M-d–M-f. BLOCKED: owner retention ruling for discovery debug samples (D-OWNER1004-1; AR-W11A-3). Then awaits: 3922 applied + the flag TRUE + one production pass reporting `purged`. |
-| DV-78 | W | **W** | **Server half built (§133.1)** behind `discovery_trail_open_telemetry_enabled` (3923, FALSE); O1–O9, W1–W3. The client emitter is the remaining code (BUILDABLE). D-1 Q2's concern does not arise for this shape. D-W10T-6 kept Trail serves out of Discovery's momentum; an `analytics` open is excluded by every momentum, trend and serve reader (W2). BLOCKED, not `C`: recording a Trail open against the viewer's account is new collection, a consent and data-use question in the class of D-W10-O-9, whose request names only the place detail sheet. **Question for the owner:** may Discovery record which Trails a signed-in viewer opens, and under which wording and retention? If yes, it is D-W10-O-9's request with "and which Trails you open" added. Still 5 of 8 in force. |
+| DV-51 | W | **W** | **Waiting on release (server deploy):** rumazi.com runs main `4fb0fe5f5`, which carries none of this batch. **Built (§133.1):** 3921's complete, ordered behaviour read; V1–V3, G1–G4, M-a–M-c. IMPLEMENTATION-COMPLETE; awaits: 3921 applied to production + this branch released + one production rebuild in which a stale intent edge is retired or decayed. **Read before grading that rebuild:** 373 of production's 383 `behavior:*` edges are `behavior:analytics`, over 7 viewers. Those are the ranker's own telemetry rows (`ranking_item_scored` and the like) folded as behaviour, §55.8's routed finding. The 10 genuine `behavior:tap`/`save` edges belong to ONE viewer. A retirement observed on them is single-viewer evidence and must say so. |
+| DV-52 | W | **W** | **Waiting on release (server deploy):** rumazi.com runs main `4fb0fe5f5`, which carries none of this batch. **Built (§133.1):** the scheduled caller behind `ranking_debug_samples_purge_enabled` (3922, FALSE); R1–R5, M-d–M-f. BLOCKED: owner retention ruling for discovery debug samples (D-OWNER1004-1; AR-W11A-3). Then awaits: 3922 applied + the flag TRUE + one production pass reporting `purged`. |
+| DV-78 | W | **W** | **Waiting on release (server deploy):** rumazi.com runs main `4fb0fe5f5`, which carries none of this batch. **Server half built (§133.1)** behind `discovery_trail_open_telemetry_enabled` (3923, FALSE); O1–O9, W1–W3. The client emitter is the remaining code (BUILDABLE). D-1 Q2's concern does not arise for this shape. D-W10T-6 kept Trail serves out of Discovery's momentum; an `analytics` open is excluded by every momentum, trend and serve reader (W2). BLOCKED, not `C`: recording a Trail open against the viewer's account is new collection, a consent and data-use question in the class of D-W10-O-9, whose request names only the place detail sheet. **Question for the owner:** may Discovery record which Trails a signed-in viewer opens, and under which wording and retention? If yes, it is D-W10-O-9's request with "and which Trails you open" added. Still 5 of 8 in force. |
 
 ### 133.4 For the lead
 
 - **Migrations** (band 3920–3929; none is applied anywhere). Each is order-independent and idempotent, with a rollback in
   `db/rollback/2026-10-23-392N-*`. sha256 values:
-  - `3920_discovery_trend_canonical_place_context.sql`: `e3e1d79697820766ebe06e529a3f7557270491619d4af062ee6940d47703dca9`
+  - `3920_discovery_trend_canonical_place_context.sql`: `13372f8f358e031a009802d349578571c4ac9f912d00a915df2bb902cdf59386`
   - `3921_graph_behavior_observations.sql`: `87fd348659bfe5de657f4d71474784bd9df12cad22f007d6fa0fd4e5cf3520f1`
   - `3922_ranking_debug_samples_purge_flag.sql`: `4c65b70e8a0bce92059ea7d4f6ad9f45c127d347bc0334044552358fe1ebe515`
   - `3923_discovery_trail_open_telemetry_flag.sql`: `6cbe131d9022dc41cc224551bd1db9be43da7e9329324b5887cbbc105902c1d7`
 - **Apply 3921 before this code ships.** Without the view, the graph build fails soft and writes no behaviour edge that
   pass (the schema-scan fixture records it as fail-soft).
-- **Seeded flags 232 → 235** (the beta bootstrap suite's pin). Layover's #781 also moves this pin.
+- **Seeded flags 233 → 236** (the beta bootstrap suite's pin). Layover's #781, now merged, took it 232 → 233.
 - **DV-80**, which the lead runs:
   `pnpm --filter @workspace/api-server run report:discovery-ecosystem -- --db-url "<production Postgres URL>" --days 7 --json`.
   It needs `psql` on PATH, and nothing has to be applied first. Every read runs in `BEGIN TRANSACTION READ ONLY` with

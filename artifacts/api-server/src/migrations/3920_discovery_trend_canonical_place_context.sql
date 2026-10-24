@@ -620,9 +620,9 @@ BEGIN
 END
 $function$;
 
-REVOKE ALL ON FUNCTION public.discovery_trend_place_context_canonical(), public.discovery_trend_windows_v2_canonical(timestamptz,text),
-  public.discovery_trend_post_groups_v2_canonical(timestamptz), public.rebuild_place_momentum_v2_canonical(timestamptz),
-  public.rebuild_place_momentum_canonical(timestamptz) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.discovery_trend_place_context_canonical() FROM PUBLIC, anon, authenticated; REVOKE ALL ON FUNCTION public.discovery_trend_windows_v2_canonical(timestamptz,text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.discovery_trend_post_groups_v2_canonical(timestamptz) FROM PUBLIC, anon, authenticated; REVOKE ALL ON FUNCTION public.rebuild_place_momentum_v2_canonical(timestamptz) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.rebuild_place_momentum_canonical(timestamptz) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.discovery_trend_place_context_canonical(), public.discovery_trend_windows_v2_canonical(timestamptz,text),
   public.discovery_trend_post_groups_v2_canonical(timestamptz), public.rebuild_place_momentum_v2_canonical(timestamptz),
   public.rebuild_place_momentum_canonical(timestamptz) TO service_role;
