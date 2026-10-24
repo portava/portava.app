@@ -526,7 +526,7 @@ describe("3999's guard under re-parenting, and 3676's real split / merge applied
   });
 });
 
-// ── 2026-10-24, video on every surface: "Save to a Memory" from an UPLOAD post (post_media only) — 3928 ─────────────
+// ── 2026-10-24, video on every surface: "Save to a Memory" from an UPLOAD post (post_media only) — 4000 ─────────────
 // 2083 / 3924 / #795 keep uploads in post_media; 3999's guard and the reader knew only posts.media_urls, so an upload
 // post's own photo or video was refused (`no_such_media` in the route, D-26j in the database).
 //   PM1  an upload post (media_urls empty, one ready row): the route writes the item, named by the row, typed by its MIME
@@ -534,14 +534,14 @@ describe("3999's guard under re-parenting, and 3676's real split / merge applied
 //        twice; a row with no public_url is named `<storage_bucket>/<storage_path>`, which the guard accepts too
 //   PM3  a rejected, flagged or still-processing row is never offered (route) and never accepted (database)
 //   PM4  the database widens ONLY to the post's own row: another post's row, another user's post, a non-owner's Memory refused
-//   PM5  without 3928 (3999 alone) the database refuses the row the reader now offers — 3928 is required, not decorative
-//   PM6  3928 re-runs cleanly, refuses to overwrite a guard body that is neither 3999's nor its own, and its rollback
+//   PM5  without 4000 (3999 alone) the database refuses the row the reader now offers — 4000 is required, not decorative
+//   PM6  4000 re-runs cleanly, refuses to overwrite a guard body that is neither 3999's nor its own, and its rollback
 //        restores 3999's body byte for byte (and the refusal with it)
 //   PM7  an unreadable post_media read refuses 503 — never read as "no rows", never a write
-const migration3928 = readFileSync(new URL("../migrations/3928_memory_items_source_post_guard_post_media.sql", import.meta.url), "utf8");
-const rollback3928 = readFileSync(new URL("../../../../db/rollback/2026-10-24-3928-memory-items-source-post-guard-post-media-rollback.sql", import.meta.url), "utf8");
+const migration4000 = readFileSync(new URL("../migrations/4000_memory_items_source_post_guard_post_media.sql", import.meta.url), "utf8");
+const rollback4000 = readFileSync(new URL("../../../../db/rollback/2026-10-24-4000-memory-items-source-post-guard-post-media-rollback.sql", import.meta.url), "utf8");
 
-describe("3928 — Save to a Memory from an upload post (post_media), reader and guard", { concurrency: 1 }, () => {
+describe("4000 — Save to a Memory from an upload post (post_media), reader and guard", { concurrency: 1 }, () => {
   let db: Database;
   let base = "";
   let server: http.Server;
@@ -572,7 +572,7 @@ describe("3928 — Save to a Memory from an upload post (post_media), reader and
 
   before(async () => {
     db = await newDb(true);
-    await db.exec(migration3928);
+    await db.exec(migration4000);
     const app = express();
     app.use(express.json());
     app.use((req: any, _r: any, n: any) => { req.log = { error: () => {}, info: () => {}, warn: () => {} }; n(); });
@@ -661,7 +661,7 @@ describe("3928 — Save to a Memory from an upload post (post_media), reader and
     assert.equal((await post(`/memories/${MY_MEMORY}/items/from-post`, ME, { postId: OTHER_UPLOAD })).status, 404);
   });
 
-  it("PM5 3999 alone refuses the post_media row the reader now offers: 3928 is required", async () => {
+  it("PM5 3999 alone refuses the post_media row the reader now offers: 4000 is required", async () => {
     const only3999 = await newDb(true);
     try {
       await only3999.query(`INSERT INTO public.memories (id, owner_id) VALUES ($1, $2)`, [MY_MEMORY, ME]);
@@ -671,28 +671,28 @@ describe("3928 — Save to a Memory from an upload post (post_media), reader and
       await only3999.exec("SET ROLE service_role");
       await assert.rejects(only3999.query(`INSERT INTO public.memory_items (memory_id, media_url, source_post_id) VALUES ($1, $2, $3)`, [MY_MEMORY, MOV, UPLOAD_POST]), /D-26j/);
       await only3999.exec("RESET ROLE");
-      await only3999.exec(migration3928);
+      await only3999.exec(migration4000);
       await only3999.exec("SET ROLE service_role");
       await only3999.query(`INSERT INTO public.memory_items (memory_id, media_url, source_post_id) VALUES ($1, $2, $3)`, [MY_MEMORY, MOV, UPLOAD_POST]);
       await only3999.exec("RESET ROLE");
     } finally { await only3999.close(); }
   });
 
-  it("PM6 3928 re-runs, refuses a foreign guard body, and its rollback restores 3999's body exactly", async () => {
+  it("PM6 4000 re-runs, refuses a foreign guard body, and its rollback restores 3999's body exactly", async () => {
     const d = await newDb(true);
     try {
       const body3999 = await guardSrc(d);
-      await d.exec(migration3928);
-      await d.exec(migration3928);
+      await d.exec(migration4000);
+      await d.exec(migration4000);
       assert.notEqual(await guardSrc(d), body3999);
-      await d.exec(rollback3928);
+      await d.exec(rollback4000);
       assert.equal(await guardSrc(d), body3999, "the rollback restores 3999's body byte for byte");
       const p = (await d.query<any>(`SELECT has_function_privilege('authenticated', 'public.memory_items_source_post_guard()', 'EXECUTE') AS a,
         has_function_privilege('anon', 'public.memory_items_source_post_guard()', 'EXECUTE') AS b`)).rows[0];
       assert.deepEqual(p, { a: false, b: false });
       await d.exec(`CREATE OR REPLACE FUNCTION public.memory_items_source_post_guard() RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER
         SET search_path = pg_catalog, public AS $f$ BEGIN RETURN NEW; END $f$;`);
-      await assert.rejects(d.exec(migration3928), /PRECONDITION FAILED \(3928\)/);
+      await assert.rejects(d.exec(migration4000), /PRECONDITION FAILED \(4000\)/);
     } finally { await d.close(); }
   });
 
@@ -704,7 +704,7 @@ describe("3928 — Save to a Memory from an upload post (post_media), reader and
   });
 });
 
-/** 0103's post_media, the columns the from-post reader and 3928's guard read (added 2026-10-24: the reader now reads it). A hoisted function at the tail, so no cited line above moves. */
+/** 0103's post_media, the columns the from-post reader and 4000's guard read (added 2026-10-24: the reader now reads it). A hoisted function at the tail, so no cited line above moves. */
 function postMediaTable(): string {
   return `CREATE TABLE public.post_media (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), post_id uuid NOT NULL REFERENCES public.posts(id) ON DELETE CASCADE,
     user_id uuid NOT NULL, media_type text NOT NULL CHECK (media_type IN ('image', 'video')), storage_bucket text NOT NULL DEFAULT 'post-media',

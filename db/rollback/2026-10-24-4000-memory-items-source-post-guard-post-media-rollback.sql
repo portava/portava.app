@@ -1,10 +1,10 @@
--- Rollback for 3928_memory_items_source_post_guard_post_media.sql
+-- Rollback for 4000_memory_items_source_post_guard_post_media.sql
 --
 -- Restores migration 3999's memory_items_source_post_guard() body EXACTLY (the
 -- CREATE OR REPLACE below is copied byte for byte from
 -- artifacts/api-server/src/migrations/3999_memory_items_source_post.sql). The
 -- trigger, its events, the column, the indexes and the flag are 3999's and are
--- not touched: 3928 changed none of them.
+-- not touched: 4000 changed none of them.
 --
 -- EFFECT. The guard again accepts a link only to media among the post's own
 -- `media_urls`. Memory items already made from a post_media row stay (the guard
@@ -18,13 +18,13 @@ BEGIN;
 DO $pre$
 BEGIN
   IF to_regprocedure('public.memory_items_source_post_guard()') IS NULL THEN
-    RAISE EXCEPTION 'PRECONDITION FAILED (rollback 3928): public.memory_items_source_post_guard() does not exist';
+    RAISE EXCEPTION 'PRECONDITION FAILED (rollback 4000): public.memory_items_source_post_guard() does not exist';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_proc
                   WHERE oid = 'public.memory_items_source_post_guard()'::regprocedure
-                    AND (position('3928:' IN prosrc) > 0
+                    AND (position('4000:' IN prosrc) > 0
                          OR position('public.post_media' IN prosrc) = 0)) THEN
-    RAISE EXCEPTION 'PRECONDITION FAILED (rollback 3928): memory_items_source_post_guard() is neither 3928''s body nor 3999''s — refusing to overwrite it';
+    RAISE EXCEPTION 'PRECONDITION FAILED (rollback 4000): memory_items_source_post_guard() is neither 4000''s body nor 3999''s — refusing to overwrite it';
   END IF;
 END
 $pre$;
@@ -65,11 +65,11 @@ BEGIN
                     AND position('public.post_media' IN prosrc) = 0
                     AND position('NEW.media_url = ANY (p.media_urls)' IN prosrc) > 0
                     AND NOT prosecdef AND proconfig @> ARRAY['search_path=pg_catalog, public']) THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (rollback 3928): memory_items_source_post_guard() is not 3999''s body';
+    RAISE EXCEPTION 'POSTCONDITION FAILED (rollback 4000): memory_items_source_post_guard() is not 3999''s body';
   END IF;
   IF has_function_privilege('anon', 'public.memory_items_source_post_guard()', 'EXECUTE')
      OR has_function_privilege('authenticated', 'public.memory_items_source_post_guard()', 'EXECUTE') THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (rollback 3928): a client role may execute memory_items_source_post_guard';
+    RAISE EXCEPTION 'POSTCONDITION FAILED (rollback 4000): a client role may execute memory_items_source_post_guard';
   END IF;
 END
 $post$;

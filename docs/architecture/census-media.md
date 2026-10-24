@@ -17693,7 +17693,7 @@ a 404 for another user, and no key of it reaches that user. Each post's items na
 
 *Branch `claude/fix-video-every-surface-20261024`, stacked on #795 (`claude/fix-video-playback-20261024`). **NO ROW
 MOVES:** every change here is client code (counted only in an installed build), server code (counted only once
-deployed) or an unapplied migration (3928). Each row these files touch stays where it was; the work is built and
+deployed) or an unapplied migration (4000). Each row these files touch stays where it was; the work is built and
 waiting on release.*
 
 **What was wrong.** #795 made every expo-av `<Video>` decide through `services/playbackUri.ts`, but only
@@ -17713,7 +17713,7 @@ got a 401, because the relay runs `requireUser` and a player sends no bearer tok
 - Memory from one's own post (MD385, D-26j): `services/memory/memoryFromOwnMedia.ts ownPostMediaList` reads the
   post's `post_media` rows (ready, not rejected or flagged, in sort order), then its external `media_urls` entries;
   a post with no row keeps the `media_urls` list (#795's fallback). The client sheet counts the same list. Migration
-  **3928** (written, NOT applied) widens 3999's guard to the post's OWN ready, non-rejected, non-flagged `post_media`
+  **4000** (written, NOT applied) widens 3999's guard to the post's OWN ready, non-rejected, non-flagged `post_media`
   row; the rollback restores 3999's body byte for byte.
 - Relays: no server change. GET `/api/media/file/…`, POST `/api/media/sign` and `/api/media/adaptive/…` already
   refuse a request with no bearer token (now pinned: `mediaAccess.test.ts` RG1), and the file relay applies the
@@ -17726,6 +17726,6 @@ got a 401, because the relay runs `requireUser` and a player sends no bearer tok
 `mediaAccess.test.ts` RG1–RG2.
 
 **Release.** (1) Next device build: the client half. (2) Server deploy: the from-post reader. (3) The owner applies
-3928, and only after (2), because until then nothing writes a `post_media`-backed Memory item. (4) A signed-in check on
+4000, and only after (2), because until then nothing writes a `post_media`-backed Memory item. (4) A signed-in check on
 a device: a private upload plays in Watch, in the grid, in the media viewer and in the composer, and a Memory is saved
 from an upload post.

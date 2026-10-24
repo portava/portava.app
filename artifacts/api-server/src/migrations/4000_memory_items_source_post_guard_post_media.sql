@@ -1,4 +1,4 @@
--- 3928_memory_items_source_post_guard_post_media.sql
+-- 4000_memory_items_source_post_guard_post_media.sql
 --
 -- "Save to a Memory" from one's own post (census-media MD385, lead ruling
 -- D-26j) for a post whose media lives in post_media. 2026-10-24, the "video on
@@ -41,7 +41,7 @@
 -- with the pinned search_path, no client role may EXECUTE it, and the trigger
 -- is still bound to it and enabled.
 --
--- Rollback: db/rollback/2026-10-24-3928-memory-items-source-post-guard-post-media-rollback.sql
+-- Rollback: db/rollback/2026-10-24-4000-memory-items-source-post-guard-post-media-rollback.sql
 -- restores 3999's exact function body.
 
 BEGIN;
@@ -49,28 +49,28 @@ BEGIN;
 DO $pre$
 BEGIN
   IF to_regprocedure('public.memory_items_source_post_guard()') IS NULL THEN
-    RAISE EXCEPTION 'PRECONDITION FAILED (3928): public.memory_items_source_post_guard() does not exist (3999 is not applied)';
+    RAISE EXCEPTION 'PRECONDITION FAILED (4000): public.memory_items_source_post_guard() does not exist (3999 is not applied)';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_trigger
                   WHERE tgrelid = 'public.memory_items'::regclass AND NOT tgisinternal
                     AND tgname = 'memory_items_source_post_guard') THEN
-    RAISE EXCEPTION 'PRECONDITION FAILED (3928): the memory_items_source_post_guard trigger is missing';
+    RAISE EXCEPTION 'PRECONDITION FAILED (4000): the memory_items_source_post_guard trigger is missing';
   END IF;
   IF to_regclass('public.post_media') IS NULL THEN
-    RAISE EXCEPTION 'PRECONDITION FAILED (3928): public.post_media does not exist';
+    RAISE EXCEPTION 'PRECONDITION FAILED (4000): public.post_media does not exist';
   END IF;
   IF (SELECT count(*) FROM information_schema.columns
        WHERE table_schema = 'public' AND table_name = 'post_media'
          AND column_name IN ('post_id', 'public_url', 'storage_bucket', 'storage_path', 'processing_status', 'moderation_status')) <> 6 THEN
-    RAISE EXCEPTION 'PRECONDITION FAILED (3928): public.post_media must carry post_id, public_url, storage_bucket, storage_path, processing_status and moderation_status';
+    RAISE EXCEPTION 'PRECONDITION FAILED (4000): public.post_media must carry post_id, public_url, storage_bucket, storage_path, processing_status and moderation_status';
   END IF;
   -- Only 3999's body (or this file's, on a re-run) is replaced: a later change to the guard is never overwritten.
   IF NOT EXISTS (SELECT 1 FROM pg_proc
                   WHERE oid = 'public.memory_items_source_post_guard()'::regprocedure
                     AND position('NEW.media_url = ANY (p.media_urls)' IN prosrc) > 0
                     AND (position('public.post_media' IN prosrc) = 0
-                         OR position('3928:' IN prosrc) > 0)) THEN
-    RAISE EXCEPTION 'PRECONDITION FAILED (3928): memory_items_source_post_guard() is neither 3999''s body nor 3928''s — refusing to overwrite it';
+                         OR position('4000:' IN prosrc) > 0)) THEN
+    RAISE EXCEPTION 'PRECONDITION FAILED (4000): memory_items_source_post_guard() is neither 3999''s body nor 4000''s — refusing to overwrite it';
   END IF;
 END
 $pre$;
@@ -96,7 +96,7 @@ BEGIN
                               AND NEW.media_url IS NOT DISTINCT FROM OLD.media_url)
             OR (p.status = 'active' AND p.deleted_at IS NULL
                 AND (NEW.media_url = ANY (p.media_urls)
-                     -- 3928: or the post's OWN ready, non-rejected, non-flagged post_media row (uploads since 2083 / 3924)
+                     -- 4000: or the post's OWN ready, non-rejected, non-flagged post_media row (uploads since 2083 / 3924)
                      OR EXISTS (SELECT 1
                                   FROM public.post_media pm
                                  WHERE pm.post_id = p.id
@@ -118,25 +118,25 @@ DO $post$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_proc
                   WHERE oid = 'public.memory_items_source_post_guard()'::regprocedure
-                    AND position('3928:' IN prosrc) > 0
+                    AND position('4000:' IN prosrc) > 0
                     AND position('NEW.media_url = ANY (p.media_urls)' IN prosrc) > 0
                     AND position('pm.post_id = p.id' IN prosrc) > 0) THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3928): memory_items_source_post_guard() does not carry 3928''s body';
+    RAISE EXCEPTION 'POSTCONDITION FAILED (4000): memory_items_source_post_guard() does not carry 4000''s body';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_proc
                   WHERE oid = 'public.memory_items_source_post_guard()'::regprocedure
                     AND NOT prosecdef AND proconfig @> ARRAY['search_path=pg_catalog, public']) THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3928): memory_items_source_post_guard must stay SECURITY INVOKER with a pinned search_path';
+    RAISE EXCEPTION 'POSTCONDITION FAILED (4000): memory_items_source_post_guard must stay SECURITY INVOKER with a pinned search_path';
   END IF;
   IF has_function_privilege('anon', 'public.memory_items_source_post_guard()', 'EXECUTE')
      OR has_function_privilege('authenticated', 'public.memory_items_source_post_guard()', 'EXECUTE') THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3928): a client role may execute memory_items_source_post_guard';
+    RAISE EXCEPTION 'POSTCONDITION FAILED (4000): a client role may execute memory_items_source_post_guard';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_trigger
                   WHERE tgrelid = 'public.memory_items'::regclass AND NOT tgisinternal AND tgenabled <> 'D'
                     AND tgname = 'memory_items_source_post_guard'
                     AND tgfoid = 'public.memory_items_source_post_guard()'::regprocedure) THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3928): the own-media guard trigger is missing or disabled on memory_items';
+    RAISE EXCEPTION 'POSTCONDITION FAILED (4000): the own-media guard trigger is missing or disabled on memory_items';
   END IF;
 END
 $post$;

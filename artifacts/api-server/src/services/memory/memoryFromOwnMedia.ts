@@ -107,7 +107,7 @@ export async function resolveOwnPostMedia(
 //      named by `public_url` (else `<storage_bucket>/<storage_path>`), then its EXTERNAL `media_urls` entries
 //      (a storage key left in `media_urls` names an object a row already carries, and is not offered twice);
 //   2. no row at all → `media_urls` exactly as before (#795's fallback: a post 3924 has not reached still works).
-// A row a moderator rejected or flagged, or one still processing, is never offered — and 3928's guard refuses it
+// A row a moderator rejected or flagged, or one still processing, is never offered — and 4000's guard refuses it
 // in the database too. An unreadable post_media read refuses `unavailable`; it is never read as "no rows" (§47).
 
 /** One media item of a post, as "Save to a Memory" indexes it. */
