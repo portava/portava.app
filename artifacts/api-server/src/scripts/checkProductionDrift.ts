@@ -75,7 +75,7 @@ const BASELINE_DIR = join(API_SERVER_ROOT, "baseline");
  * stale silently on the next refresh, which is how two cases in
  * productionDriftExtraction.test.ts came to assert the opposite of the truth.
  */
-export const PRODUCTION_SNAPSHOT = "20260922_production_tables.txt";
+export const PRODUCTION_SNAPSHOT = "20261024_production_tables.txt"; // 2026-10-24 capability refresh (the header of that file)
 
 /**
  * `unmerged-pr` HAS NO MEMBERS AS OF 2026-09-15, AND IS KEPT — ruling, with the
@@ -205,57 +205,57 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
   // caught them on the first run after the merge — which is the check working,
   // not the check being noisy.
 
-  layover_constraints: {
-    classification: "unapplied",
-    note:
-      "§20's decision record (2992). Applied to NO database — not production, " +
-      "not portava-ci. 2992 CANNOT be applied on its own: its own precondition " +
-      "refuses by name unless 2700_layover_certified_feasibility has run first, " +
-      "because it COMPLETES public.layover_certified_computations rather than " +
-      "forking it, and 2700 is itself absent from " +
-      "production-applied-migrations.json. So the production chain is 2700 then " +
-      "2992, and neither step has been taken. Until then persistDecision takes " +
-      "its refusal branch and GET /airport/sessions/:id/safety answers " +
-      "persisted: { state: 'not_stored' }, which is why census-layover L1 is not " +
-      "graded closed on the merged code. Strike this off in the same change that " +
-      "applies the chain and refreshes both production snapshots.",
-  },
-  layover_time_budgets:  { classification: "unapplied", note: "2992, same chain and same 2700 prerequisite as layover_constraints. See that entry for the full reason; it is not repeated here so that one statement stays the one to maintain." },
-  layover_return_plans:  { classification: "unapplied", note: "2992, same chain and same 2700 prerequisite as layover_constraints." },
-  layover_checkpoints:   { classification: "unapplied", note: "2992, same chain and same 2700 prerequisite as layover_constraints." },
-  layover_outcomes:      { classification: "unapplied", note: "2992, same chain and same 2700 prerequisite as layover_constraints." },
-  layover_presence:      { classification: "unapplied", note: "Migration 3900 (Layover §4 / §14 L1 opt-in presence intents) is in the tree but not yet applied to production, and its only reader and writer sit behind layover_presence_intents_enabled, which 3900 seeds FALSE." },  layover_event_pseudonymisation_dead_letters: { classification: "unapplied", note: "Migration 3622 (census-layover L163, lead ruling PR-R-L163a): dead letters for the post-session pseudonymisation of layover_events — session id, failure text and times, service_role only, erased with the session. It depends on 3621 (also unapplied), and its only writer, lib/layoverEventPseudonymisation.ts, runs behind layover_events_post_session_pseudonymisation_enabled, which 3622 seeds FALSE; the reader treats a missing table (42P01) as refused, not as an empty backlog." },// one line, in place of the blank one, so every line cited below holds
-  memory_relations: {
-    classification: "unapplied",
-    note:
-      "§3.4's Memory-to-Memory graph edges (2994). Applied to NO database. " +
-      "2994 was rehearsed against a throwaway PostgreSQL — the full chain " +
-      "replayed, applied twice for idempotency, and ten behavioural probes run " +
-      "and rolled back — and deliberately not applied anywhere real. Its " +
-      "prerequisites ARE met, unlike 2992's: 2710 and 2711 are both recorded in " +
-      "production-applied-migrations.json and all four tables 2710 creates are " +
-      "present in production. What is not met is a reason to apply it yet: " +
-      "memory_kernel_enabled reads FALSE on production, so the kernel never " +
-      "runs, no outbox row has ever been written, and the table would arrive " +
-      "with no applied writer (3674-3676 write it; also unapplied). H27 is W, not C, on " +
-      "exactly this ground. Strike this off in the same change that applies 2994 " +
-      "and refreshes the two production snapshots.",
-  }, memory_id_redirects: { classification: "unapplied", note: "Migration 3674 (docs/architecture/memories-graph-model-decision.md; census-highlights-memories §AZ, H194): a merged-away Memory id -> its survivor. Requires 2993 and 2994 (both unapplied on production). Its only writer is memory_graph_kernel_execute (3676, also unapplied) behind memory_merge_split_enabled, which 3674 seeds FALSE; its reader (GET /memories/:id) treats a missing table (42P01) as 'no merge ever happened', which is true." }, memory_graph_shadow_daily: { classification: "unapplied", note: "Migration 3674 (census-highlights-memories §AZ, H196): per-day COUNTS of the dual-read shadow comparison on GET /memories/graph; no user or Memory id. Written only behind memory_graph_shadow_read_enabled (seeded FALSE by 3674); the cutover gate reads it and treats an unreadable table as a CLOSED gate (the legacy answer is served)." }, // one line, so every line cited below holds
+  /* layover_constraints: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  /* layover_time_budgets: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */
+  /* layover_return_plans: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */
+  /* layover_checkpoints: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */
+  /* layover_outcomes: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */
+  /* layover_presence: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */  /* layover_event_pseudonymisation_dead_letters: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */// one line, in place of the blank one, so every line cited below holds
+  /* memory_relations: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ /* memory_id_redirects: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* memory_graph_shadow_daily: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ // one line, so every line cited below holds
 
   // ── Trips §23, the one Trips table that is genuinely NOT in production ─────
-  trip_commitment_recurrences: {
-    classification: "unapplied",
-    note:
-      "Trips §23 (2797) — recurring commitments as a RULE in local wall-clock " +
-      "time. REHEARSED on portava-ci 2026-09-17 (preconditions, the 15 refusal " +
-      "probes and the final count(*) = 2 all fired) and deliberately NOT applied " +
-      "to production. Its writer is 2798, whose five command branches are also " +
-      "CI-only, so the table would reach production writerless and readerless — " +
-      "the same argument the 2760-2763 block made, and 2797 is the last table " +
-      "still making it. Applying 2797/2798/2799 to production is an owner " +
-      "decision that has not been taken; when it is, strike this off in the same " +
-      "change that refreshes the two production snapshots.",
-  },
+  /* trip_commitment_recurrences: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */
+
+
+
+
+
+
+
+
+
+
+
+
 
   // ── The one that undermines every other migration claim ────────────────────
   // schema_migration_ledger: STRUCK OFF 2026-09-15 — it now EXISTS in production.
@@ -337,36 +337,36 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
   // the database computes for itself, and matched).
 
   // ── Telemetry: writers exist, storage does not ─────────────────────────────
-  wall_telemetry_events: {
-    classification: "unapplied",
-    note: "Wall telemetry writer targets a table production does not have.",
-  },
-  passport_telemetry_events: {
-    classification: "unapplied",
-    note: "Passport telemetry writer targets a table production does not have.",
-  },
+  /* wall_telemetry_events: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */
+
+
+
+  /* passport_telemetry_events: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */
+
+
+
 
   // ── The intel lane: five tables, four registered schedulers ────────────────
-  intel_attributions: {
-    classification: "unapplied",
-    note:
-      "Migration 2277. intelAttributionScheduler is REGISTERED and running in " +
-      "production (index.ts:167) against this missing table. It returns early only " +
-      "because the flag intel_attribution is absent from production feature_flags and " +
-      "an unseeded flag reads false. Seeding that flag points a live scheduler at a " +
-      "table that is not there.",
-  },
-  intel_historical_patterns: {
-    classification: "unapplied",
-    note: "Migration 2279. Same shape: intelPatternScheduler registered at index.ts:150, gated by an unseeded flag.",
-  },
-  intel_scoped_trust: {
-    classification: "unapplied",
-    note: "Migration 2278. Same shape: registerScopedTrustApplier at index.ts:166, gated by an unseeded flag.",
-  },
+  /* intel_attributions: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */
+
+
+
+
+
+
+
+
+  /* intel_historical_patterns: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */
+
+
+
+  /* intel_scoped_trust: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */
+
+
+
 
   // ── Everything else measured in the same comparison ────────────────────────
-  event_passport_shares: { classification: "unapplied", note: "In portava-ci, absent from production." },
+  /* event_passport_shares: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */
   // input_selection_history — STRUCK 2026-09-21. It is no longer "absent from
   // production": 2258_input_selection_history.sql was applied to production at
   // 10:52:03 UTC in the same change that strikes this line, rehearsed first on a
@@ -384,13 +384,13 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
   // The entry's own header says this classification "MUST reach zero. They are
   // not a steady state." This is one reaching zero by being applied, which is the
   // only way the header allows.
-  media_view_requests: { classification: "unapplied", note: "In portava-ci, absent from production." },
-  media_view_request_optins: { classification: "unapplied", note: "In portava-ci, absent from production." },
-  route_flow_contribution_consent: {
-    classification: "unapplied",
-    note: "On the check:writerless-reads ratchet as well. Absent from production entirely.",
-  },
-  sources: { classification: "unapplied", note: "In portava-ci, absent from production." },
+  /* media_view_requests: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */
+  /* media_view_request_optins: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */
+  /* route_flow_contribution_consent: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */
+
+
+
+  /* sources: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */
 
   // ── Applied to CI this session, deliberately not to production ─────────────
   // ── RECLASSIFIED 2026-09-15, unmerged-pr -> unapplied. The migration files
@@ -419,18 +419,18 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
   //    nothing writes satisfies nothing. Each migration's writer lives in the
   //    application code of its source branch, which was deliberately NOT brought
   //    across — the ledger row names a FILE, and only the file was owed.
-  intel_claim_reviews: {
-    classification: "unapplied",
-    note: "Migration 2311 (restored from claude/safety-review-s1b-20260906, sha256 18e8899bf13a…, the checksum its ledger row records). Creates one table; additive and idempotent, alters nothing, seeds no flag, writes no row. THE WRITER IS NOW IN THIS TREE: services/intel/SafetyReviewService.ts came across with this branch and inserts into the table at :228. It is still unreachable at runtime — no route, scheduler or service imports it, only its own suite does — so the table takes no row in production, but the reason is now 'nothing calls the writer', not 'no writer exists'. Applied to portava-ci 2026-09-07, absent from production.",
-  },
-  memory_episodes: {
-    classification: "unapplied",
-    note: "Migration 2320 (restored from claude/memory-canonical-object-20260906, sha256 1d13adeec896…, the checksum its ledger row records). Inert by construction: RLS on with no policy, service_role-only grants, and its own postcondition asserts memory_projection stays FALSE. NO WRITER in this tree: memory/memoryEpisodeContract.ts and memory/memoryEpisodeLifecycle.ts are pure contract modules, imported by each other and nothing else. Applied to portava-ci 2026-09-07, absent from production.",
-  },
-  memory_evidence: {
-    classification: "unapplied",
-    note: "Migration 2320. Same block as memory_episodes; append-only at BOTH the grant and the trigger. NO WRITER in this tree. Note the one non-additive act in 2320: it DROP/CREATEs erase_memory_for_user(uuid) to widen its return from three counts to five so account deletion reaches the spine — 2190's body is reproduced verbatim inside it, and 2320 is the LAST definer of that function in this tree, so the widening is not undone by a later file.",
-  },
+  /* intel_claim_reviews: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */
+
+
+
+  /* memory_episodes: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */
+
+
+
+  /* memory_evidence: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */
+
+
+
   // Trip Kernel foundation (Trips spec §4/§5.1), migration 2420. Applied to
   // portava-ci 2026-09-07. Inert in production until an owner applies 2420 AND
   // flips trip_kernel_enabled (seeded false); the only caller is behind that
@@ -528,14 +528,14 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
   //    direct-write path until an operator flips the flag.
 
   // Layover, migration 2700.
-  layover_certified_computations: {
-    classification: "unapplied",
-    note:
-      "Migration 2700. Append-only record of each certified layover feasibility " +
-      "computation so an answer can be REPLAYED rather than re-derived. Creates " +
-      "one table and alters nothing. Queued behind 2741, which landed in " +
-      "production 2026-09-08; not yet certified through its own gate.",
-  },
+  /* layover_certified_computations: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */
+
+
+
+
+
+
+
   // Layover, migration 2860 — layover_external_events — STRUCK OFF, APPLIED.
   //
   // Applied by the same file in the same pass. It remains WRITERLESS and
@@ -548,29 +548,29 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
   // Sensing, migration 2480.
 
   // Telegraph, migration 2810.
-  telegraph_outbox: {
-    classification: "unapplied",
-    note:
-      "Migration 2810 (Telegraph §13.3 conversation_outbox). Applied to NO database " +
-      "— not production and not portava-ci — and declared here the moment the file " +
-      "entered the tree rather than after somebody noticed it. Two reasons it waits, " +
-      "and neither is 'not got round to it': (1) NOTHING DRAINS IT. The table takes " +
-      "one row per message lifecycle transition and no consumer reads them, so " +
-      "applying it and turning its flag on would grow a table nobody empties — which " +
-      "is why the trigger that writes it is gated on telegraph_message_kernel_enabled " +
-      "and that flag is seeded FALSE. (2) The rest of 2810 adds columns to " +
-      "public.messages, the hottest table in the product, and the sequence it " +
-      "introduces is only meaningful after a per-conversation backfill an operator " +
-      "runs deliberately. DDL and behaviour were EXECUTED on a throwaway PostgreSQL " +
-      "16 carrying the baseline plus the chain from 2093 (209 applied, 6 " +
-      "known-unreplayable, 0 unexpected), and the rollback was executed on the same " +
-      "database and verified to leave migration 2400's visible_from_at intact. " +
-      "RLS is enabled with zero policies, so no non-service role can read it. " +
-      "UPDATE 2026-10-10 (lane T-REL): reason (1) now has an answer in the tree — " +
-      "migration 3655 adds the claim/ack/fail functions and lib/telegraphOutboxDrainScheduler.ts " +
-      "drains message.sent rows into the realtime fan-out behind telegraph_outbox_fanout_enabled " +
-      "(seeded FALSE). Still unapplied everywhere, so the classification is unchanged.",
-  },
+  /* telegraph_outbox: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
   // ── Telegraph §12's four side tables, migration 2811, as one block ─────────
   // They are one decision — stop putting structure in messages.body and in
@@ -589,44 +589,44 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
   //
   // DDL and re-application were EXECUTED on a throwaway PostgreSQL 16 carrying
   // the baseline plus the chain from 2093.
-  message_edits: {
-    classification: "unapplied",
-    note:
-      "Migration 2811 (Telegraph §12 message_edits). Applied to no database. §12 says " +
-      "'versioned text edits WHERE RETAINED' and previous_body is nullable for exactly " +
-      "that reason — retention is a policy choice this schema declines to make. No writer: " +
-      "the edit route still overwrites messages.body in place.",
-  },
-  message_reactions: {
-    classification: "unapplied",
-    note:
-      "Migration 2811 (Telegraph §12 message_reactions). Applied to no database. Its " +
-      "consumer PREDATES it: a telegraph.reaction notification template ('reacted to your " +
-      "message') has existed with no table, no route and no UI. The 16-character cap on " +
-      "emoji is a control rather than formatting — a reaction that could hold a sentence " +
-      "would be a message bypassing the send path's block guard, rate limit and §22 scam " +
-      "detection. Written by POST /api/telegraph/commands behind 2810's flag, which is " +
-      "seeded FALSE.",
-  },
-  message_attachments: {
-    classification: "unapplied",
-    note:
-      "Migration 2811 (Telegraph §12/§16.1 message_attachments). Applied to no database. " +
-      "Replaces the four nullable media columns on public.messages, which §12.1 names as " +
-      "the anti-pattern and which cap a message at one attachment of two kinds. References " +
-      "public.media_assets with ON DELETE RESTRICT so an asset deletion cannot silently " +
-      "erase the fact that a message carried one. No writer: messages.media_url is still " +
-      "the live path.",
-  },
-  conversation_action_refs: {
-    classification: "unapplied",
-    note:
-      "Migration 2811 (Telegraph §12 conversation_action_refs). Applied to no database. " +
-      "The explicit reference table §12.1 asks for, carrying payload_version and revoked_at " +
-      "— the property a string inside messages.body cannot have, and the one census T46 " +
-      "says is missing when a source object is deleted and the shared card lives on. No " +
-      "writer.",
-  },
+  /* message_edits: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */
+
+
+
+
+
+
+
+  /* message_reactions: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */
+
+
+
+
+
+
+
+
+
+
+  /* message_attachments: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */
+
+
+
+
+
+
+
+
+
+  /* conversation_action_refs: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */
+
+
+
+
+
+
+
+
 
   // ── Telegraph §22 restricted moderation storage (migration 2812) ───────────
   // The one table in this lane whose ABSENCE is a live harm rather than a
@@ -637,21 +637,21 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
   //
   // DDL and re-application were EXECUTED on a throwaway PostgreSQL 16 carrying
   // the baseline plus the chain from 2093.
-  telegraph_report_evidence: {
-    classification: "unapplied",
-    note:
-      "Migration 2812 (Telegraph §22 evidence). Applied to no database. RLS is ENABLED " +
-      "with FORCE and NO POLICY AT ALL, so only the service role can read it — a " +
-      "membership-keyed policy would hand the reported party their own evidence file — " +
-      "and a postcondition RAISES if any policy is ever added. Deliberately has no foreign " +
-      "key to public.messages, so a deletion cannot cascade the evidence away; its one FK " +
-      "is to public.reports ON DELETE CASCADE, because evidence is retained to serve a " +
-      "report. Written by POST /api/messages/:id/report and POST /api/threads/:id/report " +
-      "behind telegraph_report_evidence_enabled, which is seeded FALSE. retention_until is " +
-      "NULL and nothing purges: a deletion schedule for moderation evidence is an owner " +
-      "decision, and a job running on a number this migration invented would be worse than " +
-      "no job.",
-  },
+  /* telegraph_report_evidence: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
   // ── Added 2026-09-15 by the INTEGRATION OWNER. Twelve tables from this
   // branch's 289x-295x band, absent from production because the branch is not
   // merged and live-db.yml applies ONLY from main.
@@ -704,15 +704,15 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
   // nothing is exactly the state the 2760-2763 block was left in.
 
   // Creator economy, migrations 2920/2921 — gated by a flag 2922 seeds FALSE.
-  creator_attributions:    { classification: "unapplied", note: "Creator economy (2920). Written by services/creators/CreatorAttributionService.ts, every path gated on creator_attribution_enabled — which migration 2922 seeds FALSE. So it would be created empty and STAY empty after the merge: enabling it is a separate owner decision, and census-discovery 17.2 records that four of the six creator types have no value-event producer at all." },
-  creator_rule_versions:   { classification: "unapplied", note: "Creator economy (2920). NO WRITER, deliberately — the percentages live here as DATA, seeded by the migration itself, which is what 09 section 8's 'actual percentages must remain configurable' requires. Nothing in src/ writes it and nothing should." }, /* PR #762's 3980-3995 (25 tables), on this line so no cited line moves. Each note states its migration, what the table is, its feature gate seeded FALSE, and that it awaits the production press. */ media_derivative_jobs: { classification: "unapplied", note: "Migration 3980 (PR #762): the self-hosted derivative-worker queue, one row per asset source version and derivative kind, with its lease. Rows arise only through 3980's media_derivative_enqueue; enqueue, claim, finish, renew and ready all check the flag. Read by services/media/DerivedMediaLifecycleService.ts, the caption ASR/translation services and the adaptive, image-variant and dubbing reconcilers. Feature gate: media_derivative_jobs_enabled, seeded FALSE by 3980. Absent from portava-ci and from the production snapshot (PR #762 live-DB run 39024052320); it awaits the production press — strike it off in the change that applies 3980 to PRODUCTION." }, media_derivative_job_events: { classification: "unapplied", note: "Migration 3980 (PR #762): the derivative queue's state-transition audit, written only by the media_derivative_state_audit trigger on media_derivative_jobs, so it has rows only when that queue does. Feature gate: media_derivative_jobs_enabled, seeded FALSE by 3980. Absent from portava-ci and from the production snapshot (PR #762 live-DB run 39024052320); it awaits the production press — strike it off in the change that applies 3980 to PRODUCTION." }, media_image_understanding_consents: { classification: "unapplied", note: "Migration 3981 (PR #762): an owner's consent to image understanding of one post's media at one source version. Every client privilege is revoked; service_role reaches it through lib/media/vendors/imageUnderstandingStore.ts, and 3981's media_image_understanding_source_current refuses unless both flags are TRUE. Feature gate: media_vision_provider_enabled (seeded FALSE by 3355) AND media_derivative_jobs_enabled (seeded FALSE by 3980). Absent from portava-ci and from the production snapshot (PR #762 live-DB run 39024052320); it awaits the production press — strike it off in the change that applies 3981 to PRODUCTION." }, media_image_understanding_artifacts: { classification: "unapplied", note: "Migration 3981 (PR #762): the stored image-understanding results for a consent, written by 3981's enqueue/publish functions and read through lib/media/vendors/imageUnderstandingStore.ts and services/media/DerivedMediaLifecycleService.ts. Feature gate: media_vision_provider_enabled (seeded FALSE by 3355) AND media_derivative_jobs_enabled (seeded FALSE by 3980). Absent from portava-ci and from the production snapshot (PR #762 live-DB run 39024052320); it awaits the production press — strike it off in the change that applies 3981 to PRODUCTION." }, media_visual_index_consents: { classification: "unapplied", note: "Migration 3982 (PR #762): an owner's time-bounded consent to the visual-similarity index for one asset. 3982 is the first migration to need pgvector: portava-ci offers vector 0.8.2 but has not installed it and the CI replay image lacks it (scripts/local-db/KNOWN_UNREPLAYABLE.json), so 3982 has executed on no database in CI. routes/mediaVisualIndex.ts additionally requires MEDIA_VISUAL_INDEX_ENABLED=1. Feature gate: media_vision_provider_enabled (seeded FALSE by 3355) AND media_derivative_jobs_enabled (seeded FALSE by 3980). Absent from portava-ci and from the production snapshot (PR #762 live-DB run 39024052320); it awaits the production press — strike it off in the change that applies 3982 to PRODUCTION." }, media_visual_index_tombstones: { classification: "unapplied", note: "Migration 3982 (PR #762): erasure tombstones written by 3982's media_visual_index_erase so a withdrawn asset is not re-indexed; no direct reference in src/. Feature gate: media_vision_provider_enabled (seeded FALSE by 3355) AND media_derivative_jobs_enabled (seeded FALSE by 3980), the visual index's gates. Absent from portava-ci and from the production snapshot (PR #762 live-DB run 39024052320); it awaits the production press — strike it off in the change that applies 3982 to PRODUCTION." }, media_visual_embeddings: { classification: "unapplied", note: "Migration 3982 (PR #762): the 512-dimension pgvector embeddings of consented assets, written by 3982's media_visual_index_commit and read by routes/mediaVisualIndex.ts and services/media/DerivedMediaLifecycleService.ts. Feature gate: media_vision_provider_enabled (seeded FALSE by 3355) AND media_derivative_jobs_enabled (seeded FALSE by 3980). Absent from portava-ci and from the production snapshot (PR #762 live-DB run 39024052320); it awaits the production press — strike it off in the change that applies 3982 to PRODUCTION." }, media_caption_manifests: { classification: "unapplied", note: "Migration 3983 (PR #762): the authored-caption manifest per asset source version, written only through 3983's cas_media_caption_manifest from services/media/AuthoredCaptionsService.ts behind routes/mediaCaptions.ts, which refuses every caption write while the flag is off (DELETE and two owner read paths are exempt). Feature gate: media_captions_enabled, seeded FALSE by 3358. Absent from portava-ci and from the production snapshot (PR #762 live-DB run 39024052320); it awaits the production press — strike it off in the change that applies 3983 to PRODUCTION." }, media_caption_asr_config: { classification: "unapplied", note: "Migration 3983 (PR #762): the local-ASR runtime configuration singleton, read by services/media/CaptionAsrService.ts. Feature gate: media_captions_enabled (seeded FALSE by 3358), media_caption_asr_enabled (seeded FALSE by 3983) and media_derivative_jobs_enabled (seeded FALSE by 3980), all checked by 3983's media_caption_asr_enqueue. Absent from portava-ci and from the production snapshot (PR #762 live-DB run 39024052320); it awaits the production press — strike it off in the change that applies 3983 to PRODUCTION." }, media_caption_asr_epochs: { classification: "unapplied", note: "Migration 3983 (PR #762): per-asset ASR consent epochs that invalidate older consents; no direct reference in src/ outside the deletion dispositions. Feature gate: media_captions_enabled (seeded FALSE by 3358), media_caption_asr_enabled (seeded FALSE by 3983) and media_derivative_jobs_enabled (seeded FALSE by 3980). Absent from portava-ci and from the production snapshot (PR #762 live-DB run 39024052320); it awaits the production press — strike it off in the change that applies 3983 to PRODUCTION." }, media_caption_asr_consents: { classification: "unapplied", note: "Migration 3983 (PR #762): a creator's consent to local ASR for one asset, read by services/media/CaptionAsrService.ts and lib/media/captions/whisperCaptionHandler.ts. Feature gate: media_captions_enabled (seeded FALSE by 3358), media_caption_asr_enabled (seeded FALSE by 3983) and media_derivative_jobs_enabled (seeded FALSE by 3980). Absent from portava-ci and from the production snapshot (PR #762 live-DB run 39024052320); it awaits the production press — strike it off in the change that applies 3983 to PRODUCTION." }, media_dubbing_epochs: { classification: "unapplied", note: "Migration 3986 (PR #762): per-asset synthetic-dubbing consent epochs that invalidate older consents. Feature gate: media_dubbing_enabled, seeded FALSE by 3986 and checked by its consent functions. Absent from portava-ci and from the production snapshot (PR #762 live-DB run 39024052320); it awaits the production press — strike it off in the change that applies 3986 to PRODUCTION." }, media_dubbing_consents: { classification: "unapplied", note: "Migration 3986 (PR #762): a creator's opt-in to synthetic dubbing into one target language, read by lib/media/dubbing/store.ts. Feature gate: media_dubbing_enabled, seeded FALSE by 3986 and checked by its consent functions. Absent from portava-ci and from the production snapshot (PR #762 live-DB run 39024052320); it awaits the production press — strike it off in the change that applies 3986 to PRODUCTION." }, media_dubbing_artifacts: { classification: "unapplied", note: "Migration 3986 (PR #762): produced dubbing tracks, staged and settled by 3986's functions, read by lib/media/dubbing/store.ts, swept by services/media/RetainedDubbingReconciler.ts and erased by services/accountDeletion/accountMediaDeletion.ts. Feature gate: media_dubbing_enabled, seeded FALSE by 3986. Absent from portava-ci and from the production snapshot (PR #762 live-DB run 39024052320); it awaits the production press — strike it off in the change that applies 3986 to PRODUCTION." }, media_caption_translation_config: { classification: "unapplied", note: "Migration 3987 (PR #762): the self-hosted subtitle-translation configuration singleton (allowed language pairs, runtime verification), read by services/media/CaptionTranslationService.ts. Feature gate: media_captions_enabled (seeded FALSE by 3358), media_caption_translation_enabled (seeded FALSE by 3987) and media_derivative_jobs_enabled (seeded FALSE by 3980), all checked by 3987's media_caption_translation_enqueue. Absent from portava-ci and from the production snapshot (PR #762 live-DB run 39024052320); it awaits the production press — strike it off in the change that applies 3987 to PRODUCTION." }, media_caption_translation_consents: { classification: "unapplied", note: "Migration 3987 (PR #762): a creator's consent to subtitle-translation drafts for one asset, written by 3987's media_caption_translation_enqueue and read by services/media/CaptionTranslationService.ts and DerivedMediaLifecycleService.ts. Feature gate: media_captions_enabled (seeded FALSE by 3358), media_caption_translation_enabled (seeded FALSE by 3987) and media_derivative_jobs_enabled (seeded FALSE by 3980). Absent from portava-ci and from the production snapshot (PR #762 live-DB run 39024052320); it awaits the production press — strike it off in the change that applies 3987 to PRODUCTION." }, media_caption_translation_epochs: { classification: "unapplied", note: "Migration 3987 (PR #762): per-asset translation consent epochs that invalidate older consents, written by 3987's enqueue and revoke functions. Feature gate: media_captions_enabled (seeded FALSE by 3358), media_caption_translation_enabled (seeded FALSE by 3987) and media_derivative_jobs_enabled (seeded FALSE by 3980). Absent from portava-ci and from the production snapshot (PR #762 live-DB run 39024052320); it awaits the production press — strike it off in the change that applies 3987 to PRODUCTION." }, creator_attribution_scan_cursors: { classification: "unapplied", note: "Migration 3989 (PR #762): the travel_partner producer's resumable scan cursor for creator attribution, read and written only by services/creators/CreatorAttributionProducers.ts, which reads the flag first and writes nothing while it is off. Feature gate: creator_attribution_enabled, seeded FALSE by 2922. Absent from portava-ci and from the production snapshot (PR #762 live-DB run 39024052320); it awaits the production press — strike it off in the change that applies 3989 to PRODUCTION." }, memory_snapshots: { classification: "unapplied", note: "Migration 3990 (PR #762): owner-only versioned Memory fact/evidence snapshots. 3990 revokes every role, service_role included; only its SECURITY DEFINER functions write it, and the approved owner-read policy is pinned in src/security/authorization-contract.json. Feature gate: memory_snapshots_enabled (seeded FALSE by 3990), on top of memory_kernel_enabled. Absent from portava-ci and from the production snapshot (PR #762 live-DB run 39024052320); it awaits the production press — strike it off in the change that applies 3990 to PRODUCTION." }, memory_video_segments: { classification: "unapplied", note: "Migration 3991 (PR #762): owner-created logical video-segment references (no copied media); server-only (scripts/lib/serverOnlyTables.ts). Feature gate: memory_video_segments_enabled (seeded FALSE by 3991), on top of memory_kernel_enabled. Absent from portava-ci and from the production snapshot (PR #762 live-DB run 39024052320); it awaits the production press — strike it off in the change that applies 3991 to PRODUCTION." }, memory_video_segment_operations: { classification: "unapplied", note: "Migration 3991 (PR #762): idempotency and cancellation receipts for video-segment commands; server-only (scripts/lib/serverOnlyTables.ts). Feature gate: memory_video_segments_enabled (seeded FALSE by 3991), on top of memory_kernel_enabled. Absent from portava-ci and from the production snapshot (PR #762 live-DB run 39024052320); it awaits the production press — strike it off in the change that applies 3991 to PRODUCTION." }, memory_import_batches: { classification: "unapplied", note: "Migration 3992 (PR #762): owner-selected legacy Memory backfill batches; server-only (scripts/lib/serverOnlyTables.ts). Feature gate: memory_import_batches_enabled (seeded FALSE by 3992), on top of memory_kernel_enabled. Absent from portava-ci and from the production snapshot (PR #762 live-DB run 39024052320); it awaits the production press — strike it off in the change that applies 3992 to PRODUCTION." }, memory_import_batch_items: { classification: "unapplied", note: "Migration 3992 (PR #762): the source references and command identities of each legacy import batch; server-only (scripts/lib/serverOnlyTables.ts). Feature gate: memory_import_batches_enabled (seeded FALSE by 3992), on top of memory_kernel_enabled. Absent from portava-ci and from the production snapshot (PR #762 live-DB run 39024052320); it awaits the production press — strike it off in the change that applies 3992 to PRODUCTION." }, memory_resurfacing_policy_heads: { classification: "unapplied", note: "Migration 3993 (PR #762): the per-owner resurfacing-policy command sequence, erased by the auth.users cascade; 3993 revokes every role, service_role included. Feature gate: memory_resurfacing_policy_enabled (seeded FALSE by 3993), on top of memory_kernel_enabled. Absent from portava-ci and from the production snapshot (PR #762 live-DB run 39024052320); it awaits the production press — strike it off in the change that applies 3993 to PRODUCTION." }, media_caption_translation_artifacts: { classification: "unapplied", note: "Migration 3995 (PR #762): retained subtitle-translation drafts and publications, reached through lib/media/captions/translationArtifactStore.ts (3995's reserve/dispatch/settle functions) and services/media/CaptionTranslationService.ts, reconciled by services/media/RetainedCaptionTranslationReconciler.ts and erased by services/accountDeletion/accountMediaDeletion.ts. Feature gate: media_captions_enabled (seeded FALSE by 3358), media_caption_translation_enabled (seeded FALSE by 3987) and media_derivative_jobs_enabled (seeded FALSE by 3980), all checked by 3995's reserve function. Absent from portava-ci and from the production snapshot (PR #762 live-DB run 39024052320); it awaits the production press — strike it off in the change that applies 3995 to PRODUCTION." },
-  creator_earning_entries: { classification: "unapplied", note: "Creator economy (2921). Written by CreatorAttributionService's balanced-pair upsert, same flag, same FALSE seed. Its columns are pinned against this migration by src/test/creatorLedgerRowSchemaDrift.test.ts, which is the cover for the three write-path sites allowlisted as unresolvable." },
+  /* creator_attributions: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */
+  /* creator_rule_versions: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* PR #762's 3980-3995 (25 tables), on this line so no cited line moves. Each note states its migration, what the table is, its feature gate seeded FALSE, and that it awaits the production press. */ /* media_derivative_jobs: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* media_derivative_job_events: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* media_image_understanding_consents: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* media_image_understanding_artifacts: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* media_visual_index_consents: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* media_visual_index_tombstones: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* media_visual_embeddings: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* media_caption_manifests: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* media_caption_asr_config: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* media_caption_asr_epochs: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* media_caption_asr_consents: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* media_dubbing_epochs: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* media_dubbing_consents: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* media_dubbing_artifacts: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* media_caption_translation_config: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* media_caption_translation_consents: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* media_caption_translation_epochs: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* creator_attribution_scan_cursors: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* memory_snapshots: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* memory_video_segments: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* memory_video_segment_operations: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* memory_import_batches: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* memory_import_batch_items: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* memory_resurfacing_policy_heads: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* media_caption_translation_artifacts: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */
+  /* creator_earning_entries: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */
 
   // Rent-a-Buddy earnings, migration 2901.
-  rent_buddy_earnings_entries: { classification: "unapplied", note: "Rent-a-Buddy earnings (2901). Read through a module constant in services/ledger/CanonicalShareReader.ts and joined by the 2930 canonical-share view, so 2930 cannot be applied before it. Absent from production because the branch is unmerged." },
+  /* rent_buddy_earnings_entries: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */
 
   // Place momentum, migration 2892.
-  place_momentum: { classification: "unapplied", note: "Place momentum (2892). NO CONSUMER IN src/ AT ALL outside its own tests: grepping the tree for the name, excluding src/migrations, finds only test/placeMomentumSqlParity.test.ts and one table-name list. The classification function it ships is exercised by that parity test against the SQL, so it is not dead — but NOTHING READS THE TABLE, and by the Trips 5.1 rule above it satisfies nothing until something does. Stated here rather than discovered at deploy time." },
+  /* place_momentum: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */
 
   // Input-assistance telemetry, migration 2950.
   // input_assistance_telemetry_events — STRUCK 2026-09-21. It is no longer
@@ -750,168 +750,168 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
   // running app has NOT been observed, and the row stays `W`.
 
   // ── Story retention (2998): declared here, applied nowhere yet ────────────
-  story_purge_queue: {
-    classification: "unapplied",
-    note:
-      "Migration 2998_story_retention.sql, which this tree declares. Not " +
-      "'unmerged-pr': that classification is for a table whose migration is on " +
-      "some OTHER branch, and this check correctly refuses it for a file it can " +
-      "see. APPLIED to portava-ci on 2026-09-23 at 00:20:26 UTC by the main " +
-      "push run (ledger row applied_by='ci' with a real sha256). CORRECTED 2026-10-03: this note used to end that sentence 'and still ABSENT FROM PRODUCTION', and that is now false. 2998 was applied to production on 2026-09-25, after the sentence was written, and a read-only catalog query on 2026-10-03 answers to_regclass non-null, relrowsecurity true, 0 policies, 0 rows. The entry still counts " +
-      "against the must-reach-zero total, which is not a contradiction but a consequence: this check reads the committed snapshot 20260922_production_tables.txt, captured three days BEFORE that apply, and the one mechanism that would excuse it — appliedAfterSnapshot() reading production-applied-migrations.json — holds no row for 2998. " +
-      "Recording the apply, or refreshing the snapshot, is the rollout lane's and the owner's, not this lane's, so the count is left standing with its reason stated rather than quietly adjusted from here. Production applies do not happen in " +
-      "CI: the applier refuses the production ref outright. It is the durable " +
-      "retry record for the hourly retention job — a row outlives a partial " +
-      "purge so the storage object path is not lost when the database row goes " +
-      "first. " +
-      "WHAT HOLDS THE JOB OFF PRODUCTION, corrected: an earlier version of this " +
-      "note said the job must not be enabled while this entry stands, and other " +
-      "comments read that as enforcement. It is not. " +
-      "startStoryRetentionScheduler() is called unconditionally at boot " +
-      "(index.ts:201), so on a deployment without 2998 the job DOES run. What " +
-      "makes that safe is a property of the pass, verified by reading it rather " +
-      "than assumed: enqueueDueStories filters .not('deleted_at','is',null), " +
-      "PostgREST errors on the absent column, and `throw deletedErr` aborts the " +
-      "pass BEFORE purgeExpiredEngagement can delete anything. The tick records " +
-      "the failure and purges nothing. That is an ordering dependency, not a " +
-      "guard: reorder those two calls and the engagement purge runs with no " +
-      "ledger behind it. " +
-      "Rehearsed against production's real structure " +
-      "(baseline/20260819_baseline_structure.sql replayed to head on a " +
-      "throwaway PostgreSQL 16, sql/rehearsals/2998_*.sql, including a negative " +
-      "control that disables the deleted_at trigger and confirms the clock then " +
-      "stops being set, and one that drops the archive disjunct and confirms a " +
-      "capped row is missed). Strike this off in the same change that applies " +
-      "2998 to PRODUCTION and refreshes the two production snapshots.",
-  },
+  /* story_purge_queue: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
   // ── The anti-differencing gate's durable memory (3110): declared, unapplied ─
-  sensing_published_aggregates: {
-    classification: "unapplied",
-    note:
-      "Migration 3110_sensing_published_aggregates.sql, which this tree " +
-      "declares. Applied to NO database — not production, not portava-ci — " +
-      "because the owner runs all SQL and this lane applies nothing. Not " +
-      "'unmerged-pr': that classification is for a table whose migration is on " +
-      "some OTHER branch, and this check can see the file. " +
-      "WHAT IT IS: the durable last-published store lib/sensingDifferencingGate " +
-      "needs. That module's own header says 'the caller keeps the last " +
-      "published aggregate and hands it back in', and until 3110 there was " +
-      "nowhere to keep it — a previous value held in process memory resets on " +
-      "every deploy and replica, and a reset reads as no_previous, which " +
-      "PUBLISHES. intel_state_snapshots cannot serve: it is upserted in place, " +
-      "so the value the gate must compare against is already overwritten by the " +
-      "value it is being compared with. census-sensing S24 states both halves. " +
-      "WHAT ITS ABSENCE COSTS TODAY: nothing that any user can see. " +
-      "publishThroughDifferencingGate is the only caller of this table and it " +
-      "has no caller of its own — no route, no scheduler and no publisher " +
-      "reads a sensing aggregate, because `surface` and `share` are scopes " +
-      "SENSING_ANON_POLICY_V1 does not grant. Without the table its read fails " +
-      "and the gate answers previous_unreadable, which REFUSES rather than " +
-      "publishes; that is the fail-closed direction and it is asserted in " +
-      "src/test/sensingIngestDurableGate.test.ts. So this entry is a gap that " +
-      "must close BEFORE any publisher exists, not after. " +
-      "Strike it off in the same change that applies 3110 to PRODUCTION and " +
-      "refreshes the two production snapshots.",
-  },
+  /* sensing_published_aggregates: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
   // ── The contributor token's pepper (3002): declared, unapplied ─────────────
-  intel_contributor_pepper: {
-    classification: "unapplied",
-    note:
-      "Migration 3002_intel_contribution_identity.sql, which this tree " +
-      "declares. Applied to NO database — not production, not portava-ci — " +
-      "because the owner runs all SQL and this lane applies nothing. Not " +
-      "'unmerged-pr': the file is in this tree and this check can see it. " +
-      "WHAT IT IS: one row per weekly epoch holding the HMAC pepper that " +
-      "derives a contributor token from an account id. It carries ZERO grants " +
-      "to every application role on purpose — the one-way property of the " +
-      "token is exactly 'no role outside the SECURITY DEFINER functions can " +
-      "read this table'. census-sensing S19/S118 turn on it. " +
-      "WHAT ITS ABSENCE COSTS TODAY: nothing a user can see, and the reason is " +
-      "worth stating because it is not 'the feature is off'. Every consumer of " +
-      "the token is written for BOTH schemas and PROBES rather than assumes: " +
-      "lib/intelConsent.resolveContributorIdentityShape asks the database " +
-      "which shape it has and answers `account` when 3002's functions are " +
-      "absent, so intel_observations.actor_id is read as what it currently is " +
-      "— a profiles id. The paths that would otherwise silently mismatch " +
-      "(lib/intelProjectionAggregator's consent join, lib/intelRewardScheduler's " +
-      "payee resolution) go through that probe and WITHHOLD rather than " +
-      "publish or pay on an unreadable answer. " +
-      "THE ORDER THIS IMPOSES, because it is the part that bites: 3002 must be " +
-      "applied BEFORE the code that assumes a nullable subject ships. " +
-      "routes/mapObservations.ts has already deleted its nearest-place " +
-      "resolver, and production still has " +
-      "intel_observations.subject_id NOT NULL REFERENCES places(id), so a zone " +
-      "contribution on that code against an un-migrated database fails its NOT " +
-      "NULL instead of storing `unknown`. " +
-      "Strike it off in the same change that applies 3002 to PRODUCTION and " +
-      "refreshes the two production snapshots.",
-  },
+  /* intel_contributor_pepper: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
   // ── Added 2026-09-27 by census-discovery §48 (P3 telemetry) ─────────────────
-  recommendations: {
-    classification: "unapplied",
-    note:
-      "Migration 3376 (`10` §3 recommendations): one row per served Discovery " +
-      "request, signed-in or anonymous — the per-request exposure denominator " +
-      "(DV-06) and the only durable record of an anonymous serve (DV-40), which " +
-      "rank_events cannot hold because its user_id is NOT NULL. Rehearsed on the " +
-      "local PostgreSQL harness (apply, idempotent re-apply, production-shape " +
-      "rehearsal with 2893 unapplied, rollback refusing while populated); applied " +
-      "to no Supabase project. THE WRITER EXISTS AND LATCHES OFF WITHOUT IT: " +
-      "lib/discoveryServeLog.logDiscoveryServeRequest calls " +
-      "record_discovery_serve_request behind discovery_serve_log_enabled and, on " +
-      "PGRST202/PGRST205/42883/42P01, warns once and stops asking. Because that flag is TRUE in " +
-      "production, APPLYING 3376 STARTS WRITES on the next deploy — one row per " +
-      "Discovery request, anonymous ones included. Strike it off in the same " +
-      "change that applies 3376 to PRODUCTION and refreshes the two production " +
-      "snapshots.",
-  },
+  /* recommendations: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
   // ── Added 2026-09-27 by census-discovery §52 (P10 creator ledger) ──────────
-  creator_ledger_audit_events: {
-    classification: "unapplied",
-    note:
-      "Migration 3387 (`11` §8 creator fraud holds / ledger audit, `11` §10 admin " +
-      "actions audited): one append-only row per hold, release, recomputation or " +
-      "reversal of a creator-ledger record, written in the same transaction as the " +
-      "change by public.creator_ledger_append. Depends on 2920/2921/3386, none of " +
-      "which is in production (see creator_attributions above). Rehearsed on the " +
-      "local PostgreSQL harness only (apply, idempotent re-apply, rollback that " +
-      "refuses while populated). Its only writer, services/creators/CreatorLedgerOperations.ts, " +
-      "is gated on creator_attribution_enabled (2922, seeded FALSE), so it stays " +
-      "empty after the merge. Strike it off in the change that applies 2920-2922, " +
-      "2930 and 3385-3387 to PRODUCTION.",
-  },
+  /* creator_ledger_audit_events: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */
+
+
+
+
+
+
+
+
+
+
+
+
+
   // ── Added 2026-09-27 by census-discovery §62 (P15 verified-defect repairs) ──
-  rank_event_outcome_receipts: {
-    classification: "unapplied",
-    note:
-      "Migration 3420 (DV-37, `04` §3 idempotent where retried): one row per KEYED " +
-      "outcome that landed on a rank_events exposure, written by trigger in the same " +
-      "statement as the UPDATE; its primary key (user_id, client_event_id) refuses a " +
-      "second landing of one client event. Rehearsed on the local PostgreSQL harness " +
-      "only (apply with a behavioural probe, rollback, re-apply, fresh-chain replay). " +
-      "THE READER LATCHES OFF WITHOUT IT: routes/rankEvents.ts reads it only for an " +
-      "outcome that carries client_event_id, and on 42P01/PGRST205 (or 42703/PGRST204 " +
-      "naming the key column) warns once and records the outcome keyless. No shipped " +
-      "client sends a key yet (census-discovery §62.7 H1), so it stays empty after the " +
-      "merge. Strike it off in the change that applies 3420 to PRODUCTION.",
-  },
+  /* rank_event_outcome_receipts: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */
+
+
+
+
+
+
+
+
+
+
+
+
+
   // ── Added 2026-09-27 for census-discovery §61 (P14 Trails integrity; recorded at §64.14) ──
-  trail_relations: {
-    classification: "unapplied",
-    note:
-      "Migration 3416 (`10` §3 graph projections, DV-72): the derived, rebuildable " +
-      "Trail-relation projection over DECLARED relations only (trail_edges, " +
-      "trails.parent_trail_id, and common content in content_trails); common traveler " +
-      "flow is not built. Rehearsed on the local PostgreSQL harness only; applied to no " +
-      "Supabase project. NO APPLICATION CODE READS OR WRITES IT: nothing outside the " +
-      "migration and its tests calls rebuild_trail_relations or selects from the table, " +
-      "so it stays empty after the merge. Strike it off in the change that applies 3416 " +
-      "to PRODUCTION.",
-  }, /* §81 (W10-S2): on this line so every cited line below keeps its number */ layover_place_dwell: { classification: "unapplied", note: "Migration 3466 (census-discovery §81, A14, D-W10S2-3): the Layover domain's curated per-place dwell with provenance (source_class, confidence, evidence). Rehearsed on the local PostgreSQL harness only; applied to no Supabase project. Written only by PUT /api/admin/airport/place-dwell/:placeId; read only by services/airport/LayoverPlaceDwell.ts readCuratedDwell while layover_place_dwell_enabled (3465, seeded FALSE) is ON, so at the seed nothing reads it. Strike it off in the change that applies 3466 to PRODUCTION." }, /* census-discovery §86 (lane W10-T), on this line so no cited line below moves: */ discovery_admin_audit_events: { classification: "unapplied", note: "Migration 3486 (census-discovery §86, `11` §8/§10, DV-74): the append-only audit of Trail lifecycle moves, merges, curation, edge reviews and trend integrity reviews, written only inside the 3486 functions. Harness only. Its writers (services/trails/trailAdmin.ts) answer 503 without it, so nothing is changed unaudited. Strike it off when 3486 reaches PRODUCTION." }, trend_integrity_reviews: { classification: "unapplied", note: "Migration 3486 (census-discovery §86, `11` §8 trend integrity review): admin verdicts. The one reader (TrailService.readTrendReviewVerdict) treats the absent table as no review. Harness only. Strike it off when 3486 reaches PRODUCTION." }, trail_member_exposures: { classification: "unapplied", note: "Migration 3487 (census-discovery §86, DV-22): a Trail's own module serves per member per day, no viewer id. Read and written only behind discovery_trail_exploration_enabled (3485, FALSE). Harness only. Strike it off when 3487 reaches PRODUCTION." }, trail_content_suggestions: { classification: "unapplied", note: "Migration 3488 (census-discovery §86, DC-20): a third party's pending Trail suggestion, awaiting the content's owner. Without it a stranger's suggestion answers 503 (fail closed; never spends the owner's budget). Harness only. Strike it off when 3488 reaches PRODUCTION." }, area_momentum: { classification: "unapplied", note: "Migration 3476 (census-discovery §84, DV-29 Local Pulse): one v2 trend reading per Local Pulse cell per rebuild run, written only by rebuild_place_momentum_v2 (3477) and read only by lib/discoveryTrendExplanation. Rehearsed on the local PostgreSQL harness only; applied to no Supabase project. Nothing writes it until discovery_trend_normalised_enabled and the rebuild scheduler are ON (both seeded FALSE by 3475). Strike it off in the change that applies 3476 to PRODUCTION." }, /* census-discovery §95 (lane W11-X3), on this line so no cited line moves: */ place_cooccurrence: { classification: "unapplied", note: "Migration 3495 (census-discovery §95, DV-72, D-W11X3-1): the Trail-derived place co-occurrence projection — pairs of places held by a common non-archived Trail, from content_trails only, no personal data. Rebuilt only by rebuild_place_cooccurrence, called only by lib/discoveryPlaceCooccurrence.ts's hourly tick, and read only by readPlaceCooccurrence — both behind discovery_place_cooccurrence_enabled (3496, seeded FALSE), so nothing writes or reads it after the merge. Harness only; applied to no Supabase project. Strike it off in the change that applies 3495 to PRODUCTION." },/* Added 2026-10-03, background-jobs lane; on this line so no cited line below moves: */ scheduler_watermarks: { classification: "unapplied", note: "Migration 3505: one durable processed-through mark per background scheduler, so a job that selects work by a time window resumes where the last succeeding pass got to instead of forgetting whatever fell in the gap. Declared in the tree only; applied to NO Supabase project, not production and not portava-ci, and it currently sits on the unmerged PR #561 - classified unapplied rather than unmerged-pr deliberately, because unapplied stays true after the merge and so cannot quietly become false the way six entries above did. ITS ABSENCE IS SAFE AND CHANGES NOTHING TODAY, which is why it can wait: lib/schedulerWatermark.readWatermark distinguishes \"no row yet\" from \"the read failed\" and returns ok:false for an absent table, and every caller answers a refusal by keeping its own original lookback AND withholding the commit. So until this table exists the four watermarked jobs scan exactly the window they scanned before and move no mark. Shape: (job, processed_through, updated_at); RLS enabled with no policies, so anon and authenticated reach nothing; no user-linked column, so it states no deletion fate. Applying anything to production belongs to the rollout thread and the owner, not to this lane. Strike it off in the change that applies 3505 to PRODUCTION and refreshes the two production snapshots." }, /* FLAGS lane (3561), on this line so no cited line moves: */ compass_search_signal_log: { classification: "unapplied", note: "Migration 3561 (FLAGS lane): the Compass search-signal decay log, ported from the frozen root 20260812_compass_search_signal_log.sql. Per-user search categories, so collection is gated: upsert_compass_search_signal records nothing unless SEARCH_SIGNAL_DECAY_DAYS (2306, seeded FALSE) is ON, and the retention period is an open OWNER decision (purge_compass_search_signal_log exists, unscheduled). Rehearsed on the local PostgreSQL harness only; applied to no Supabase project. Strike it off in the change that applies 3561 to PRODUCTION." }, /* Lane D, Input Intelligence (3780-3783), on this line so no cited line moves: */ input_outcome_consent: { classification: "unapplied", note: "Migration 3780 (OD-INPUT-1): the separate, server-stamped opt-in for Input Intelligence outcome learning, which cannot be granted while input_outcome_learning_enabled (3780, seeded FALSE) is off; declared in the tree and applied to no production database, so strike it off in the change that applies 3780 to PRODUCTION." }, input_outcome_counters: { classification: "unapplied", note: "Migration 3780 (OD-INPUT-2): per-user 30-day outcome day-buckets written only by input_record_outcome, which records nothing unless input_outcome_learning_enabled (3780, seeded FALSE) is on and the user holds an enabled, unwithdrawn input_outcome_consent; declared in the tree and applied to no production database, so strike it off in the change that applies 3780 to PRODUCTION." }, memory_narrative_ai_consent: { classification: "unapplied", note: "Migration 3802 (census-highlights-memories H172, B58 MEM-NARR-1, band 3802-3819): the separate opt-in that lets the server send the owner's own facts about one Memory to the existing AI model for a draft summary, which cannot be granted while memory_narrative_ai_enabled (3802, seeded FALSE) is off. Service role only; written and read only by services/memory/memoryNarrativeService.ts behind that flag; absent, the reader treats 42P01 / PGRST205 as not consented. Declared in the tree and applied to no production database, so strike it off in the change that applies 3802 to PRODUCTION." }, input_memory_context_consent: { classification: "unapplied", note: "Migration 3782 (OD-INPUT-3): the separate opt-in that lets Input Intelligence read the person's own CompassMemoryProjection, which cannot be granted while input_memory_context_enabled (3782, seeded FALSE) is off; declared in the tree and applied to no production database, so strike it off in the change that applies 3782 to PRODUCTION." }, input_outcome_task_daily: { classification: "unapplied", note: "Migration 3783 (G370, OD-INPUT-2 irreversible aggregation): per-day downstream-task outcome counts with no user or session id, written only by input_record_task_outcome, which writes nothing while input_outcome_learning_enabled (3780, seeded FALSE) is off and is reached only after the caller's input_outcome_consent is checked; declared in the tree and applied to no production database, so strike it off in the change that applies 3783 to PRODUCTION." },/* census-trips TR256 (lane C, 2026-10-05), on this line so no cited line moves: */ trip_private_anchor_shares: { classification: "unapplied", note: "Migration 3970 (census-trips TR256; owner decision 2026-10-04: private anchors owner-only by default, shareable per anchor to selected trip members): one row per grant an anchor's owner made. Written only by routes/tripAnchorShares.ts as service_role behind trip_private_anchor_sharing_enabled (3970, seeded FALSE); read by the map projection only while that flag is ON. Absent, the reader treats 42P01 as zero grants, i.e. the owner-only default, so nothing is exposed and nothing fails. Applied to no database. Strike it off in the change that applies 3970 to PRODUCTION." }, trip_plan_item_audience: { classification: "unapplied", note: "Migration 3727 (census-trips §95, TR116; owner ruling OD-1012-PRIV-5: private access is limited to its author and explicitly selected people): one row per person a selected_participants plan's AUTHOR selected. Written only through public.trip_plan_item_audience_replace (service_role, author only, accepted crew only) by routes/trips.ts via server/trips/planItemAudience.ts; read by planItemAccessFor. RLS on, no policy, no client privilege. Absent, the reader treats 42P01 / PGRST205 as no selection (the plan stays its author's alone) and the write doors refuse selected_participants with 422, exactly as before 3727. Applied to no database. Strike it off in the change that applies 3727 to PRODUCTION." }, routes_api_daily_user_usage: { classification: "unapplied", note: "Migration 3973 (census-trips §82: no member can drain the shared Routes API quota): calls charged to one user per UTC day. Spent only through public.routes_api_try_spend_scoped (3973), called only by domain/trips/contracts/RoutesSpendGate.ts while trip_routes_api_enabled is ON and every limit is configured. Absent, the gate answers unavailable and every estimate is the straight-line bound. Applied to no database. Strike it off in the change that applies 3973 to PRODUCTION." }, routes_api_daily_trip_usage: { classification: "unapplied", note: "Migration 3973 (census-trips §82): calls charged to one trip per UTC day, beside routes_api_daily_user_usage and under the same function and flag. Applied to no database. Strike it off in the change that applies 3973 to PRODUCTION." }, routes_api_daily_usage: { classification: "unapplied", note: "Migration 3971 (census-trips TR128/TR267/TR341/TR412; owner decision 2026-10-04: Routes API behind daily quotas and a hard budget with graceful fallback): one row per UTC day of Routes API calls this system decided to make and the per-call cost it assumed. Spent only through public.routes_api_try_spend (3971), called only by domain/trips/contracts/RoutesSpendGate.ts while trip_routes_api_enabled (3971, seeded FALSE) is ON and the quota, budget, price and key are all configured. Absent, the gate answers unavailable and every estimate is the straight-line bound. Applied to no database. Strike it off in the change that applies 3971 to PRODUCTION." }, /* Layover 165 lane B1-R1 (3856), on this line so no cited line moves: */ routes_api_layover_session_usage: { classification: "unapplied", note: "Migration 3856 (LAYOVER 165 lane B1-R1; owner decision R5 2026-10-18): Google Routes calls one layover SESSION has taken over its life (cap 36). Spent only through public.routes_api_try_spend_layover (3856), called only by services/airport/layoverRoutesSpendGate.ts while layover_routed_corridor_enabled (3856, seeded FALSE) is ON and GOOGLE_MAPS_API_KEY + the ROUTES_API_DAILY_* configuration are set. Absent, the gate answers unavailable and no layover Routes call is made. Applied to no database. Strike it off in the change that applies 3856 to PRODUCTION." }, routes_api_layover_user_daily_usage: { classification: "unapplied", note: "Migration 3856 (owner decision R5): Google Routes calls one person's layover sessions have taken per UTC day (cap 60), beside routes_api_layover_session_usage and under the same function and flag. Applied to no database. Strike it off in the change that applies 3856 to PRODUCTION." }, /* payments PAY-T05/T06/T07 (09 §4-§7, §10), on this line so no cited line below moves: */ payment_parties: { classification: "unapplied", note: "Migration 3821: who a payment account belongs to, and the one nullable link from money to a profile. Harness only (a private throwaway PostgreSQL 16); applied to no shared database. The only reader and writer is services/payments/PaymentLedger.ts, which answers `ledger_unavailable` without it, behind routes/payments.ts and the flag payment_ledger_reads_enabled (seeded FALSE). Strike it off when 3821-3823 reach PRODUCTION." }, payment_accounts: { classification: "unapplied", note: "Migration 3821 (PAY-021, PAY-026): (owner_kind, owner_id, account_type, currency), the nine account types. Same deployment state and readers as payment_parties." }, payment_transactions: { classification: "unapplied", note: "Migration 3821 (PAY-037, PAY-047): the transaction envelope, UNIQUE (scope, idempotency_key), the frozen attribution tuple. Same deployment state and readers as payment_parties." }, payment_ledger_entries: { classification: "unapplied", note: "Migration 3821 (PAY-028, PAY-031, PAY-033, PAY-038): the append-only double-entry rows. Same deployment state and readers as payment_parties." }, payment_account_balances: { classification: "unapplied", note: "Migration 3822 (PAY-023): the balance projection written only by public.payment_post_transaction. Same deployment state and readers as payment_parties." }, payment_balance_rules: { classification: "unapplied", note: "Migration 3822 (PAY-034): which account types may cross their balance floor, as data read by public.payment_post_transaction. Same deployment state as payment_parties; no TypeScript reader." }, payment_retention_settings: { classification: "unapplied", note: "Migration 3823: the one configurable retention period for pseudonymised payment records, seeded undecided; read by public.payment_party_remove_identity. Same deployment state as payment_parties; no TypeScript reader." }, /* Rent-a-Buddy test-mode payment slice (3931, lane B), on this line so no cited line below moves: */ rent_buddy_booking_payments: { classification: "unapplied", note: "Migration 3931 (lane B): one row per Rent-a-Buddy payment attempt (amounts, commission, tax components, provider references, an allow-listed provider projection), every person a payment party (3821), never a profile. Written, applied to no Supabase project. Read and written only by services/payments/bookingPayments/supabaseStore.ts behind routes/rentABuddyPayments.ts, which answer 503 while payments are not operational (PAYMENT_PROVIDER unset/none), so nothing reaches the table today. Strike it off when 3931 reaches PRODUCTION." }, rent_buddy_payment_refunds: { classification: "unapplied", note: "Migration 3931 (lane B): refund requests per booking payment, the requester by role and party. Same deployment state, writer and readers as rent_buddy_booking_payments." }, rent_buddy_monthly_payouts: { classification: "unapplied", note: "Migration 3931 (lane B, OD-PAY-4): one payout per (party, provider, currency, month), held/released with actor and reason. Same deployment state, writer and readers as rent_buddy_booking_payments." }, rent_buddy_payment_recipients: { classification: "unapplied", note: "Migration 3931 (lane B, OD-PAY-10): the buddy's payment-provider account reference and onboarding state, keyed by party. Same deployment state, writer and readers as rent_buddy_booking_payments; the booking doors read it through recipientReadiness.ts and refuse (503 payment_verification_unavailable) when it cannot be read." }, payment_webhook_events: { classification: "unapplied", note: "Migration 3931 (lane B): the provider webhook de-duplication log (event id, type, endpoint, timestamps, outcome; no person, no payload). Same deployment state as rent_buddy_booking_payments; written only by the payment webhook route (services/payments/bookingPayments/webhookProcessor.ts), which answers 503 while payments are not operational." }, /* lane T, Telegraph (3651), on this line so no cited line below moves: */ nearby_proximity_observations: { classification: "unapplied", note: "Migration 3651 (census-telegraph §53, T26): the per-(viewer, person) Nearby observation budget — one row per pair holding the coarse bucket, travel band and freshness last SHOWN and when; no coordinate, no history, service role only, both user columns ON DELETE CASCADE. Written, applied to no Supabase project. Read and written only by services/telegraph/proximityObservationBudget.ts on GET /nearby/reachable, which answers 503 when the table cannot be read or written, and Nearby itself is dark behind nearby_reachable_enabled (absent = OFF), so nothing reaches the table today. Strike it off when 3651 reaches PRODUCTION." }, availability_audience_policies: { classification: "unapplied", note: "Migration 3652 (census-telegraph §60, T23, proposed ruling P-T10): an owner's named audience for their availability signals; service role only. Read and written only behind availability_signal_contract_enabled (3652, seeded FALSE) by services/telegraph/availabilitySignalContract.ts and routes/availabilitySignal.ts, which answer 404 / Nearby 503 without it. Strike it off when 3652 reaches PRODUCTION." }, nearby_consents: { classification: "unapplied", note: "Migration 3652 (census-telegraph §60, T22): the Nearby opt-in, separate from location sharing. Same flag, readers and deployment state as availability_audience_policies." }, eta_coordination_grants: { classification: "unapplied", note: "Migration 3652 (census-telegraph §60, T27): time-boxed (12 h) mutual ETA grants. Same flag, readers and deployment state as availability_audience_policies." }, /* Lane H, mission 4 (3670), on this line so no cited line moves: */ memory_deletion_dead_letters: { classification: "unapplied", note: "Migration 3670 (census-highlights-memories §AF, H193): the durable §21 dead letter — one row per Memory whose deletion lifecycle exhausted a step's retries, written only by services/memory/memoryDeletionLifecycle.ts and stamped resolved by a later run that completes. Ids, step names, failure text and times; no Memory content. RLS on with no policy, service_role only. Its absence is safe: the writer reads 42P01 and reports deadLetterDurable false with the reason, and the deletion is unaffected. 3670 also seeds memory_deletion_redrive_enabled FALSE (lib/memoryDeletionRedriveScheduler, hourly, one flag read a tick while off). Declared in the tree and applied to no database, so strike it off in the change that applies 3670 to PRODUCTION." }, memory_resurfacing_preferences: { classification: "unapplied", note: "Migration 3671 (census-highlights-memories §AJ, H36): the per-Memory §11 controls (a row is the control ON). Written by routes/memoryResurfacingControls.ts and read by services/memory/memoryResurfacingControls.ts, which treats an absent table as no control and an unreadable one as kept private. Declared in the tree and applied to no database, so strike it off in the change that applies 3671 to PRODUCTION." }, telegraph_thread_controls: { classification: "unapplied", note: "Migration 3661 (census-telegraph §68, T417, lane T-GRP): a host's group controls (slow mode, posting/media/link policy) per group conversation; no person column; RLS on, no policy, service_role only. Read only while telegraph_group_controls_enabled (3661, seeded FALSE) is ON, by domain/telegraph/policies/groupControlsPolicy.ts and routes/telegraphGroups.ts; with the flag off nothing reads it and every send is decided as before. Applied to no database. Strike it off in the change that applies 3661 to PRODUCTION." }, telegraph_thread_member_mutes: { classification: "unapplied", note: "Migration 3661 (census-telegraph §68, T417): a host's mute of one member in one group conversation; both person columns ON DELETE CASCADE from auth.users. Same flag, readers and deployment state as telegraph_thread_controls." }, memory_corrections: { classification: "unapplied", note: "Migration 3673 (census-highlights-memories §AO, §AP, H28): the owner's append-only place corrections (assert / reject). Written by PATCH /memories/:id and routes/memoryCorrections.ts, erased per Memory by the §21 lifecycle (lead ruling H-13; memory_corrections_guard() refuses any other DELETE), read by services/memory/memoryCorrections.ts (actions, place history, PlaceMemoryProjection, MapTrailDerivative), which treats an absent table as no correction and an unreadable one as an unreadable place. Declared in the tree and applied to no database, so strike it off in the change that applies 3673 to PRODUCTION." },  // ── Added 2026-09-28 for census-discovery §84 (lane W10-R1) ──
-  /* lane T-PLAT (3665), on this line so no cited line moves: */ message_content_capabilities: { classification: "unapplied", note: "Migration 3665 (census-telegraph T407, lane T-PLAT band 3665-3669): the forwarding capability an author stated on their own message; service role only. Read and written only behind telegraph_forwarding_enabled (3665, seeded FALSE) by routes/telegraphForward.ts and services/telegraph/platformReadDecorations.ts, which answer 503 / forwardContext unavailable without it. Applied to no database. Strike it off when 3665 reaches PRODUCTION." }, message_forwards: { classification: "unapplied", note: "Migration 3665 (census-telegraph T406/T353): forwarded-derivative provenance (the private lineage), written only by telegraph_record_forward and expired by telegraph_forward_expire_with_source; service role only. Same flag, readers and deployment state as message_content_capabilities." }, sensing_consent_grants: { classification: "unapplied", note: "Migration 3703 (OD-MAP-6, census-sensing §33, lane L band 3700-3719): one row per person per sensing consent scope (capture, contribution upload, showing aggregates), RLS on with no policies and every client privilege revoked; written and read only by the service-role routes and the session issuer behind sensing_consent_split_enabled, which 3703 seeds FALSE. Declared in the tree and applied to no database by the lane; strike it off in the change that applies 3703 to PRODUCTION." },
-  compass_live_search_usage: { classification: "unapplied", note: "Migration 3704 (CPH-08-ADAPT, census-compass §52, lane L band 3700-3719): per-person per-day count of Compass live provider searches (quota 5/day via compass_live_search_take, SECURITY INVOKER, service-role only), RLS on with no policies and every client privilege revoked; written only behind compass_live_search_enabled, which 3704 seeds FALSE. Declared in the tree and applied to no database by the lane; strike it off in the change that applies 3704 to PRODUCTION." }, /* 3705 (lane L), on this line so no cited line moves: */ moderation_report_captures: { classification: "unapplied", note: "Migration 3705 (lead rulings Q-L23 / D-38a and D-MODACTION-SHAPE): the reported content captured when a moderation report is filed, moderators only, ON DELETE CASCADE from its report; RLS on, no policies, every client privilege revoked. Written only by routes/moderation.ts behind moderation_report_capture_enabled (seeded FALSE) once the capability probe finds 3705; read only by GET /admin/moderation/reports through lib/moderationReportSnapshots.ts, which says not_deployed without it. The same file adds moderation_actions.report_id (written by lib/moderationAudit.ts only when 3705 is present). Declared in the tree, applied to no Supabase project. Strike it off when 3705 reaches PRODUCTION." }, /* B58 TM-1 (3825), on this line so no cited line moves: */ message_link_previews: { classification: "unapplied", note: "Migration 3825 (census-telegraph T404/T446, B58 telegraph+media band 3825-3839): one text-only link preview per plaintext message, fetched once by the server at the SENDER's request at send time; service role only (RLS on, no policy, every client privilege revoked); written only by telegraph_store_link_preview and read only by routes/telegraphLinkPreview.ts behind telegraph_link_previews_enabled (3825, seeded FALSE); deleted with its message's edit, unsend or delete (trigger) and by cascade. Rehearsed on a PGlite full-chain replica only; applied to no Supabase project. Strike it off in the change that applies 3825 to PRODUCTION." }, layover_crew_location_grants: { classification: "unapplied", note: "Migration 3996 (census-layover L132/L158/L166/L203): explicit, scoped, auto-expiring crew location grants; read and written only by the crew-location service behind layover_crew_location_enabled, seeded FALSE by 3996. PR #764; production apply tracked in prod-apply-packet-20261017/addendum-3996-3999 and docs/ops/layover-165-activation-packet.md." }, layover_crew_location_controls: { classification: "unapplied", note: "Migration 3996, same chain and FALSE gate as layover_crew_location_grants: the per-crew location sharing controls." }, memory_visibility_policies: { classification: "unapplied", note: "Migration 3997 (Highlights/Memories spec v1, waves 4-5): memory visibility policies and shared experiences, read and written only behind FALSE-seeded memory gates. PR #764; production apply tracked in prod-apply-packet-20261017/addendum-3996-3999 and docs/ops/layover-165-activation-packet.md." }, memory_shared_experiences: { classification: "unapplied", note: "Migration 3997, same chain and gates as memory_visibility_policies: a shared experience between members." }, memory_shared_experience_invitations: { classification: "unapplied", note: "Migration 3997, same chain and gates as memory_visibility_policies: invitations to a shared experience." }, conversation_snapshots: { classification: "unapplied", note: "Migration 3998 (Telegraph \u00a712 rebuild/replay checkpoints, waves 4-5): service-only conversation snapshots. PR #764; production apply tracked in prod-apply-packet-20261017/addendum-3996-3999 and docs/ops/layover-165-activation-packet.md." }, layover_recommendation_supersessions: { classification: "unapplied", note: "Migration 3871 (census-layover L44/L97): one immutable row per superseded recommendation card, its evidence and cause; service_role SELECT/INSERT/DELETE only, written behind layover_recommendation_status_enabled, seeded FALSE by 3871, erased with its session. Layover continuation (census-layover 165 program); production apply tracked in docs/ops/layover-165-activation-packet.md." }, layover_crew_plans: { classification: "unapplied", note: "Migration 3872 (census-layover L134/L135): explicit crew split plans, one proposed plan per crew, proposer a live member (guard trigger); service-role-only RLS policy, read behind layover_crew_split_plans_enabled, seeded FALSE by 3872. Layover continuation (census-layover 165 program); production apply tracked in docs/ops/layover-165-activation-packet.md." }, layover_crew_plan_branches: { classification: "unapplied", note: "Migration 3872, same chain and FALSE gate as layover_crew_plans: the plan's immutable branches (members, return_by, stops)." }, airport_curated_facts: { classification: "unapplied", note: "Migration 3874 (census-layover L14/L79/L80/L223): versioned curated airport facts with immutable provenance and a per-class TTL, published only through airport_curation_publish(); every client and direct service privilege revoked, served behind airport_mode_enabled. Layover continuation (census-layover 165 program); production apply tracked in docs/ops/layover-165-activation-packet.md." }, layover_discovery_consents: { classification: "unapplied", note: "Migration 3875 (census-layover L130): per-pair mutual-discovery consent keyed on both sessions; profiles visible only while accepted, unexpired, both live and unblocked; service-role-only, read behind layover_mutual_discovery_enabled, seeded FALSE by 3875. Layover continuation (census-layover 165 program); production apply tracked in docs/ops/layover-165-activation-packet.md." }, airport_time_band_calibrations: { classification: "unapplied", note: "Migration 3880 (census-layover L83/L247): per-airport, per-hour recalibrated time bands with no identifiers, written only by airport_calibration_apply() with a 90-day TTL; every client and direct service privilege revoked. Layover continuation (census-layover 165 program); production apply tracked in docs/ops/layover-165-activation-packet.md." }, layover_service_write_audit: { classification: "unapplied", note: "Migration 3890 (census-layover L205): 30-day-bounded audit of Layover service writes, installed only when layover_service_write_audit_enabled turns on (seeded FALSE by 3890); service_role SELECT only. Layover continuation (census-layover 165 program); production apply tracked in docs/ops/layover-165-activation-packet.md." }, layover_safe_return_links: { classification: "unapplied", note: "Migration 3893 (census-layover L58/L59): binds a certified Layover deadline to an existing Safe Return session via SECURITY DEFINER guards; service-role-only, behind layover_safe_return_product_enabled, seeded FALSE by 3893. Layover continuation (census-layover 165 program); production apply tracked in docs/ops/layover-165-activation-packet.md." }, layover_buddy_booking_links: { classification: "unapplied", note: "Migration 3894 (census-layover L273, B2-BUDDY): links a Rent-a-Buddy booking to a layover session within its window; written only by layover_buddy_create_booking / layover_buddy_accept_change behind layover_buddy_specialist_enabled (seeded FALSE by 3894) and rent_buddy_enabled. Layover continuation (census-layover 165 program); production apply tracked in docs/ops/layover-165-activation-packet.md." }, layover_route_subjects: { classification: "unapplied", note: "Migration 3895 (census-layover L259): last published route watches per recommendation, no coordinates, cascading with source, session and owner; service_role SELECT only, behind layover_route_subjects_enabled, seeded FALSE by 3895. Layover continuation (census-layover 165 program); production apply tracked in docs/ops/layover-165-activation-packet.md." }, layover_compass_actions: { classification: "unapplied", note: "Migration 3897 (census-layover L112): owner-bound explicit Compass replan approvals and their durable results, server-only and erased with session and user, behind layover_compass_replan_enabled, seeded FALSE by 3897. Layover continuation (census-layover 165 program); production apply tracked in docs/ops/layover-165-activation-packet.md." }, layover_experience_plans: { classification: "unapplied", note: "Migration 3898 (census-layover L237): immutable compiler-selected experience contracts and explicit starts; service-role-only, behind layover_experience_execution_enabled, seeded FALSE by 3898; owner and session erasure cascade. Layover continuation (census-layover 165 program); production apply tracked in docs/ops/layover-165-activation-packet.md." }, layover_objective_facts: { classification: "unapplied", note: "Migration 3899 (census-layover L236): public sourced place facts and complete airport-scoped quotes, never revenue or sponsorship; no client privilege, behind layover_objective_evidence_enabled, seeded FALSE by 3899. Layover continuation (census-layover 165 program); production apply tracked in docs/ops/layover-165-activation-packet.md." }, layover_objective_intents: { classification: "unapplied", note: "Migration 3899, same chain and FALSE gate as layover_objective_facts: the traveller's private explicit preferences, erased with session and profile, never shared with crews or presence." }, layover_route_dispatches: { classification: "unapplied", note: "Migration 3908 (census-layover L259): route fan-out dispatch keys, claimed and settled only by the layover_route_fanout_* SECURITY DEFINER functions; no client privilege, behind layover_route_fanout_enabled, which 3908 seeds FALSE and refuses to find pre-existing. Layover continuation (census-layover 165 program); production apply tracked in docs/ops/layover-165-activation-packet.md." }, layover_route_work: { classification: "unapplied", note: "Migration 3908, same chain and FALSE gate as layover_route_dispatches: the per-session route fan-out work queue." },
+  /* trail_relations: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */
+
+
+
+
+
+
+
+
+
+
+ /* §81 (W10-S2): on this line so every cited line below keeps its number */ /* layover_place_dwell: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* census-discovery §86 (lane W10-T), on this line so no cited line below moves: */ /* discovery_admin_audit_events: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* trend_integrity_reviews: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* trail_member_exposures: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* trail_content_suggestions: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* area_momentum: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* census-discovery §95 (lane W11-X3), on this line so no cited line moves: */ /* place_cooccurrence: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } *//* Added 2026-10-03, background-jobs lane; on this line so no cited line below moves: */ /* scheduler_watermarks: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* FLAGS lane (3561), on this line so no cited line moves: */ /* compass_search_signal_log: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* Lane D, Input Intelligence (3780-3783), on this line so no cited line moves: */ /* input_outcome_consent: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* input_outcome_counters: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* memory_narrative_ai_consent: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* input_memory_context_consent: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* input_outcome_task_daily: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } *//* census-trips TR256 (lane C, 2026-10-05), on this line so no cited line moves: */ /* trip_private_anchor_shares: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* trip_plan_item_audience: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* routes_api_daily_user_usage: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* routes_api_daily_trip_usage: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* routes_api_daily_usage: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* Layover 165 lane B1-R1 (3856), on this line so no cited line moves: */ /* routes_api_layover_session_usage: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* routes_api_layover_user_daily_usage: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* payments PAY-T05/T06/T07 (09 §4-§7, §10), on this line so no cited line below moves: */ /* payment_parties: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* payment_accounts: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* payment_transactions: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* payment_ledger_entries: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* payment_account_balances: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* payment_balance_rules: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* payment_retention_settings: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* Rent-a-Buddy test-mode payment slice (3931, lane B), on this line so no cited line below moves: */ /* rent_buddy_booking_payments: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* rent_buddy_payment_refunds: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* rent_buddy_monthly_payouts: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* rent_buddy_payment_recipients: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* payment_webhook_events: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* lane T, Telegraph (3651), on this line so no cited line below moves: */ /* nearby_proximity_observations: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* availability_audience_policies: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* nearby_consents: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* eta_coordination_grants: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* Lane H, mission 4 (3670), on this line so no cited line moves: */ /* memory_deletion_dead_letters: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* memory_resurfacing_preferences: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* telegraph_thread_controls: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* telegraph_thread_member_mutes: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* memory_corrections: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */  // ── Added 2026-09-28 for census-discovery §84 (lane W10-R1) ──
+  /* lane T-PLAT (3665), on this line so no cited line moves: */ /* message_content_capabilities: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* message_forwards: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* sensing_consent_grants: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */
+  /* compass_live_search_usage: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* 3705 (lane L), on this line so no cited line moves: */ /* moderation_report_captures: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* B58 TM-1 (3825), on this line so no cited line moves: */ /* message_link_previews: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* layover_crew_location_grants: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* layover_crew_location_controls: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* memory_visibility_policies: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* memory_shared_experiences: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* memory_shared_experience_invitations: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* conversation_snapshots: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* layover_recommendation_supersessions: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* layover_crew_plans: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* layover_crew_plan_branches: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* airport_curated_facts: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* layover_discovery_consents: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* airport_time_band_calibrations: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* layover_service_write_audit: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* layover_safe_return_links: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* layover_buddy_booking_links: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* layover_route_subjects: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* layover_compass_actions: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* layover_experience_plans: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* layover_objective_facts: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* layover_objective_intents: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* layover_route_dispatches: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */ /* layover_route_work: { struck off 2026-10-24, present in production (baseline/20261024_production_tables.txt) } */
 };
 
 /**

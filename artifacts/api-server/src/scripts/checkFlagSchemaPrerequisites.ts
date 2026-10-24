@@ -398,18 +398,18 @@ export const KNOWN: Record<string, Known> = {
   // Placed at the END of this map on purpose: inserting above shifts the line
   // numbers census-compass.md cites into this file, and check-doc-citations
   // catches that. Keep new entries here.
-  intel_capture_quick_signal: {
-    classification: "unguarded",
-    objects: ["intel_contributor_token()"],
-    note:
-      "IntelCaptureService.findReplayedObservation names public.intel_contributor_token(). " + "3002_intel_contribution_identity.sql is IN THE TREE, NOT APPLIED. It drops intel_observations.actor_id's foreign key to profiles and replaces the stored account id with a rotating contributor token (Sensing §3/§24, census S19/S118). The only code that has to know about the swap is writeObservation's idempotent-replay lookup, which reads a row back by contributor identity, and it is written for BOTH schemas: it filters on actor_id directly FIRST — the whole answer while 3002 is unapplied, because the stored actor_id IS the account id — and reaches intel_contributor_token() only when that finds nothing, which cannot happen before the apply. So the absent function is named on a branch production never executes; and were it ever reached, the call is wrapped so an unavailable RPC yields a retryable db_error, never a crash and never a dedup that was not verified. STRIKE THIS ENTRY when 3002 is applied and recorded in the migration ledger — the ratchet will report it STALE first.",
-  },
-  intel_trail_followup: {
-    classification: "unguarded",
-    objects: ["intel_contributor_token()"],
-    note:
-      "Same object, same call site: the trail surface shares writeObservation. " + "3002_intel_contribution_identity.sql is IN THE TREE, NOT APPLIED. It drops intel_observations.actor_id's foreign key to profiles and replaces the stored account id with a rotating contributor token (Sensing §3/§24, census S19/S118). The only code that has to know about the swap is writeObservation's idempotent-replay lookup, which reads a row back by contributor identity, and it is written for BOTH schemas: it filters on actor_id directly FIRST — the whole answer while 3002 is unapplied, because the stored actor_id IS the account id — and reaches intel_contributor_token() only when that finds nothing, which cannot happen before the apply. So the absent function is named on a branch production never executes; and were it ever reached, the call is wrapped so an unavailable RPC yields a retryable db_error, never a crash and never a dedup that was not verified. STRIKE THIS ENTRY when 3002 is applied and recorded in the migration ledger — the ratchet will report it STALE first.",
-  },
+  /* intel_capture_quick_signal: struck off 2026-10-24: no longer in this state against the 20261024 production capture */
+
+
+
+
+
+  /* intel_trail_followup: struck off 2026-10-24: no longer in this state against the 20261024 production capture */
+
+
+
+
+
   // census-discovery §91 (lane W10-I) listed COMPASS_V1_RULE_BASED_ENABLED here: the Compass-gated GET /discovery
   // handler reaches rankForViewer, whose §85 post-rank stages name 3484's three compass_city_confidence columns
   // and 2892's place_momentum, both unapplied in production. STRUCK by census-discovery §93 (lane W11-X1) because
@@ -434,12 +434,12 @@ export const KNOWN: Record<string, Known> = {
   // into the canonical chain; until now it existed only in the frozen root, so this
   // scan could not resolve the name and never charged it. discovery_serve_log_enabled
   // is ON in production and its closure reaches lib/rankLog.ts upsertCreatorFatigueAsync.
-  discovery_serve_log_enabled: {
-    classification: "unguarded",
-    objects: ["increment_creator_fatigue_batch()"],
-    note:
-      "No lib/capability probe stands before the call, hence `unguarded`; the protection is a flag gate the scan does not model. lib/rankLog.ts names public.increment_creator_fatigue_batch() only inside `if (fatigueEnabled)`, where fatigueEnabled is CREATOR_FATIGUE_ENABLED read from feature_flags (an unread flag keeps the last value, which starts false). CREATOR_FATIGUE_ENABLED is FALSE in the 2026-09-22 production snapshot, so production never issues the call; were it reached, the RPC is fire-and-forget and a rejection is reported at warn (reportFatigueWriteFailure) without touching the impression path. 3560_creator_fatigue_increment_rpc.sql is IN THE TREE, NOT APPLIED to production (hosted writes are blocked from this environment; the owner's apply is pending). STRIKE THIS ENTRY when 3560 is applied and recorded in the migration ledger, and only then turn CREATOR_FATIGUE_ENABLED on — the ratchet will report this entry STALE first.",
-  },
+  /* discovery_serve_log_enabled: struck off 2026-10-24: no longer in this state against the 20261024 production capture */
+
+
+
+
+
   // ── Added 2026-10-08: D-66 Trail review state on the media side, ahead of 3977 ──
   //
   // Lead ruling D-66 (review before visible) makes services/media/MediaActionResolver.ts
@@ -447,64 +447,64 @@ export const KNOWN: Record<string, Known> = {
   // COMPASS_ENABLED by the compile_plan_from_experience tool) and withTrailDoThisAction
   // (the media rail's "Do this trail", reached from resolveMediaActions, whose Compass
   // read is the gate the scan charges it to). 3977 is in the tree, not in production.
-  COMPASS_ENABLED: {
-    classification: "guarded",
-    objects: [
-      "trails.review_state",
-      // A1 (wave W hm-priv, census-highlights-memories §BE): the owner's per-Memory controls (3671/3672/3673), see the note.
-      "memory_corrections", "memory_corrections.field", "memory_corrections.memory_id", "memory_corrections.owner_id",
-      "memory_items.visibility",
-      "memory_resurfacing_preferences", "memory_resurfacing_preferences.control", "memory_resurfacing_preferences.memory_id", "memory_resurfacing_preferences.owner_id",
-    ],
-    note:
-      "Both doors ask lib/capability BEFORE naming the column: lib/media/trailReviewSchemaCapability.ts probeTrailReviewState (probeSchemaReadiness over TRAIL_REVIEW_STATE, which requires trails.review_state and names 3977_trail_review_before_visible.sql). Absent ⇒ the compiler refuses source_unavailable (404 'Trails are not available' on the plan route, reason in the tool) and the rail offers no Trail action; any other probe failure ⇒ source_unreadable / no action. No select naming review_state is issued on a database without 3977, and a Trail whose review state cannot be read is never treated as approved (fail closed). `guarded` here is the registration of COMPASS_ENABLED (COMPASS_CONVERSATION_PHASE1); TRAIL_REVIEW_STATE is NOT registered under it, deliberately — the registry is keyed by flag, and adding the column to the conversation capability would put every Compass conversation on its legacy shape on a database without 3977 (and a second definition keyed COMPASS_ENABLED would share its memo slot). Pinned per door by src/test/mediaTrailReviewCapability.test.ts (zero review_state selects when the probe refuses; the probe precedes every such select in its function). STRIKE THIS ENTRY when 3977 is applied to production and recorded — the ratchet will report it STALE first. A1 (2026-10-11, wave W hm-priv): the Compass memory tools (compass/MemoryCompassTools.ts) now read the owner's per-Memory controls through services/memory/memoryReaderGuard.ts (memory_resurfacing_preferences, 3671; memory_corrections, 3673) and services/memory/memoryItemVisibility.ts hiddenItemKeys (memory_items.visibility, 3672). No lib/capability probe stands before these reads: each read IS its own probe. An ABSENT table (42P01 / PGRST205, lib/tableAbsence.ts isTableAbsentError) or an absent visibility column (42703 / PGRST204 naming it) answers 'no control / no correction / no hidden photo', which is true on a database without the migration, so the tools serve exactly what they served before; any OTHER failure withholds the Memories (fail closed). Pinned by src/test/memoryReaderGuard.test.ts C3, C7, C10 (absent ⇒ as before; unreadable ⇒ refused). STRIKE these nine objects when 3671, 3672 and 3673 are applied to production and recorded.",
-  },
+  /* COMPASS_ENABLED: struck off 2026-10-24: no longer in this state against the 20261024 production capture */
+
+
+
+
+
+
+
+
+
+
+
   // ── Added 2026-10-11: 3753 (location share purpose) is in the tree, not in production ──
   //
   // Placed at the END of this map, as the note above asks, so no cited line moves.
-  trip_crew_live_share_enabled: {
-    classification: "unguarded",
-    objects: ["trip_crew_location_sessions.purpose"],
-    note:
-      "Writer and reader: TripCrewLiveShareService (insert + getActiveLiveShares) and lib/locationSharePurpose. " + "3753_location_share_purpose.sql is IN THE TREE, NOT APPLIED (census-telegraph §84, purpose binding). Classified `unguarded` because no lib/capability probe stands before the name; the protection is a classified-error fallback the scan does not model, and both sites are written for BOTH schemas. WRITER: TripCrewLiveShareService.startLiveShare inserts with purpose and, ONLY on a missing-column error naming `purpose` (42703/PGRST204, lib/locationSharePurpose.isPurposeColumnAbsent), re-inserts the exact pre-3753 row; any other error is returned, never retried. READER: lib/locationSharePurpose.admitSharesForPurpose selects (id, purpose) and, ONLY on that same missing-column error, treats every row as a legacy row (visible to the crew live-share readers, i.e. exactly today's production behaviour); any other failure throws and the callers answer 503/degraded. So with 3753 absent production keeps its current crew-map and live-share behaviour, at the cost of one rejected statement per call. STRIKE THIS ENTRY when 3753 is applied and recorded in the migration ledger — the ratchet will report it STALE first.",
-  },
-  trip_crew_map_enabled: {
-    classification: "unguarded",
-    objects: ["trip_crew_location_sessions.purpose"],
-    note:
-      "Reader only: getCrewMap / getViewerOwnPresence through lib/locationSharePurpose. " + "3753_location_share_purpose.sql is IN THE TREE, NOT APPLIED (census-telegraph §84, purpose binding). Classified `unguarded` because no lib/capability probe stands before the name; the protection is a classified-error fallback the scan does not model, and both sites are written for BOTH schemas. WRITER: TripCrewLiveShareService.startLiveShare inserts with purpose and, ONLY on a missing-column error naming `purpose` (42703/PGRST204, lib/locationSharePurpose.isPurposeColumnAbsent), re-inserts the exact pre-3753 row; any other error is returned, never retried. READER: lib/locationSharePurpose.admitSharesForPurpose selects (id, purpose) and, ONLY on that same missing-column error, treats every row as a legacy row (visible to the crew live-share readers, i.e. exactly today's production behaviour); any other failure throws and the callers answer 503/degraded. So with 3753 absent production keeps its current crew-map and live-share behaviour, at the cost of one rejected statement per call. STRIKE THIS ENTRY when 3753 is applied and recorded in the migration ledger — the ratchet will report it STALE first.",
-  },
+  /* trip_crew_live_share_enabled: struck off 2026-10-24: no longer in this state against the 20261024 production capture */
+
+
+
+
+
+  /* trip_crew_map_enabled: struck off 2026-10-24: no longer in this state against the 20261024 production capture */
+
+
+
+
+
   // ── Added 2026-10-12: 3771 (per-device iOS time-sensitive capability) is in the tree, not in production ──
-  push_notifications_enabled: {
-    classification: "unguarded",
-    objects: ["notification_devices.ios_time_sensitive_capable", "accept_waitlist_seat()", "claim_waitlist_seat()"],
-    note:
-      "Reader: lib/pushDeviceCapability.timeSensitiveCapableTokens; writer: lib/pushDeviceCapability.recordPushDeviceCapability (push-token registration). " + "3771_notification_devices_ios_time_sensitive_capable.sql is IN THE TREE, NOT APPLIED (census-layover §66, OD-1012-LAY-4a). Classified `unguarded` because no lib/capability probe stands before the name; the protection is an error fallback the scan does not model. READER: called only for an actionable layover return warning while the server setting PUSH_IOS_TIME_SENSITIVE_ENTITLED is exactly \"true\" (default off, not enabled anywhere); ANY error or throw answers \"no capable device\" and the push goes at the ordinary iOS level. WRITER: any error is logged and the registration still succeeds. So with 3771 absent production behaves exactly as today. STRIKE THIS ENTRY when 3771 is applied and recorded in the migration ledger — the ratchet will report it STALE first." + " Also (2026-10-18): accept_waitlist_seat() / claim_waitlist_seat(), migration 3906, in the tree, NOT applied. routes/events.ts reaches them through the waitlist promotion, which sends a push; it calls them only after a probe has seen them answer and otherwise runs today's statements (fail-soft; the unapplied-schema ledger records it). The 3906 pair reaches zero on the press of 3906; 3771's column reaches zero on the press of 3771.",
-  },
+  /* push_notifications_enabled: struck off 2026-10-24: no longer in this state against the 20261024 production capture */
+
+
+
+
+
   // ── Added 2026-10-18: 3826/3827 (Layover flight connections, L165 lane B1-F) are in the tree, not in production ──
-  airport_mode_enabled: {
-    classification: "unguarded",
-    objects: [
-      "layover_sessions.arrival_segment_id", "layover_sessions.connection_type", "layover_sessions.departure_segment_id",
-      "layover_sessions.detected_source", "layover_sessions.expires_at", "layover_sessions.state",
-      "trip_transport_segments.arrival_airport_iata", "trip_transport_segments.arrival_gate", "trip_transport_segments.arrival_terminal",
-      "trip_transport_segments.carrier_code", "trip_transport_segments.departure_airport_iata", "trip_transport_segments.departure_gate",
-      "trip_transport_segments.departure_terminal", "trip_transport_segments.estimated_arrival_at", "trip_transport_segments.estimated_departure_at",
-      "trip_transport_segments.flight_number", "trip_transport_segments.flight_status", "trip_transport_segments.flight_status_observed_at",
-      "trip_transport_segments.flight_status_source",
-      "layover_safe_return_links", "layover_safe_return_links.certified_deadline",
-      "layover_safe_return_links.layover_session_id", "layover_safe_return_links.safe_return_session_id", "layover_safe_return_links.user_id",
-      "identity_verifications.provider_mode", "payment_parties", "payment_parties.id", "payment_parties.profile_id", "rent_buddy_payment_recipients", "rent_buddy_payment_recipients.charges_enabled", "rent_buddy_payment_recipients.onboarding", "rent_buddy_payment_recipients.party_id", // L273: exact two-read eligibility adapter, protected by the master AND new FALSE specialist flag; see note below.
-    ],
-    note:
-      "routes/layoverConnections.ts: every handler is gated by connectionsOpen(), which reads airport_mode_enabled AND layover_flight_connections_enabled; this scan is not AND-sensitive, so the handlers' closures (detectFromTrip -> readTripFlightSegments / readLiveConnectionSessions, startConnectionSession, the status route's readFlightSegmentsByIds) are charged to airport_mode_enabled as well as to layover_flight_connections_enabled. layover_flight_connections_enabled has NO ROW in production: 3827_layover_sessions_flight_connection.sql seeds it FALSE, adds the six layover_sessions columns, and its $pre$ refuses unless 3826_trip_kernel_flight_segments.sql (the thirteen trip_transport_segments columns) is installed. So every handler answers feature_disabled before any named read, and the routes/airport.ts call sites (recordTravellerDisruption, storeLifecycleForOperation, storeProjectedLifecycle) read layover_flight_connections_enabled themselves and return before naming a column. The manual session path (POST /airport/sessions) names none of them: connectionInsertColumns(undefined) adds no column. Classified `unguarded` because no lib/capability probe stands before the names; the protection is the flag gate the scan does not model (the discovery_serve_log_enabled precedent). STRIKE THIS ENTRY when 3826 and 3827 are applied and recorded in the migration ledger — the ratchet will report it STALE first. L273 additionally reaches identity_verifications.provider_mode and only the narrow payment_parties(id,profile_id)/rent_buddy_payment_recipients(party_id,onboarding,charges_enabled) eligibility reads after rent_buddy_enabled AND layover_buddy_specialist_enabled. The master is recorded OFF and3894 seeds the specialist capability FALSE; airport_mode_enabled alone cannot open these reads. B5/B7 actual-schema tests prove missing identity/recipient schemas refuse and OFF performs zero identity/payment reads. No payment provider or writer is invoked. Remove these exact8 names after3930/3931 and3894 activation is recorded.",
-  },
-  layover_plans_enabled: {"classification": "unguarded", "objects": ["layover_experience_plan_write()", "layover_experience_plans", "layover_experience_plans.id", "layover_experience_plans.phase", "layover_experience_plans.session_id", "layover_experience_plans.user_id", "layover_experience_plans.version", "layover_sessions.active_snapshot_id", "layover_sessions.state"], "note": "L15 executable plans require the new layover_experience_execution_enabled capability, seeded FALSE by3898, checked first before session/plan object reads. The static file closure also charges prerequisite layover_plans_enabled (production ON). Both readExperiencePlan and mutateExperiencePlan return feature_disabled before naming new schema when primary capability is absent/FALSE; actual migrated HTTP tests assert no write. Enabling requires3898 plus3827/3828 canonical lifecycle schema and the canonical/persistence/status/lifecycle prerequisite flags. Remove after these migrations are applied and production schema snapshot refreshed."},
-  safe_return_enabled: {
-    classification: "unguarded",
-    objects: ["layover_safe_return_links", "layover_safe_return_links.certification", "layover_safe_return_links.certified_deadline", "layover_safe_return_links.layover_session_id", "layover_safe_return_links.safe_return_session_id", "layover_safe_return_links.user_id"],
-    note: "3893_layover_safe_return_links.sql is in the tree, not applied. The additional layover_safe_return_product_enabled flag is seeded FALSE by that migration; it is absent in the production snapshot. Every new link read/update goes through the typed layoverProductGate, which returns before the table on OFF and refuses on unreadable flags. Creation/linked state requires prepareLayoverSafeReturn, which checks that same additional flag before any link write/read. The static closure is not AND-sensitive, so these names are charged to the already-ON safe_return_enabled and airport_mode_enabled flags. Classified unguarded because this is an explicit flag boundary, not a lib/capability registry probe. Real-schema Safe Return tests cover disabled rollout, owner scope, deadline enforcement and failure behavior. Strike these objects from both entries after 3893 is applied and recorded; no production enablement is implied.",
-  },};
+  /* airport_mode_enabled: struck off 2026-10-24: no longer in this state against the 20261024 production capture */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  /* layover_plans_enabled: struck off 2026-10-24: no longer in this state against the 20261024 production capture */
+  /* safe_return_enabled: struck off 2026-10-24: no longer in this state against the 20261024 production capture */
+
+
+
+};
 
 // ── Declared-by-a-migration ──────────────────────────────────────────────────
 

@@ -2133,7 +2133,7 @@ selects `reference` from `intel_evidence`. The old rule never saw
 | Step | What | Applied / run |
 | --- | --- | --- |
 | 1 | `artifacts/api-server/src/migrations/3360_intel_evidence_sealed_reference.sql`: adds a CHECK, NOT VALID, requiring every photo or video `reference` to be NULL or sealed. Also adds `intel_evidence_rekey_reference(uuid, text, text)`, which re-seals ONE row from exactly the plaintext value read. That function lifts the append-only row guard for that one UPDATE, as 3002 §5 did for `actor_id`. EXECUTE is granted to `service_role` only. | no database |
-| 2 | `artifacts/api-server/src/scripts/rekeyIntelEvidenceReferences.ts`: a dry run by default that counts the rows and reads only. `--apply` seals each row with the server key and calls the function. It prints counts only, because every value it reads names an account. | not run |
+| 2 | `artifacts/api-server/src/scripts/rekeyIntelEvidenceReferences.ts`: a dry run by default that counts the rows and reads only. `--apply` seals each row with the server key and calls the function. It prints counts only, because every value it reads names an account. | not run (Retired 2026-10-24 together with 3361, which drops the function it called: the script and its caller were removed at the capability refresh.) |
 | 3 | `artifacts/api-server/src/migrations/3361_intel_evidence_sealed_reference_validate.sql`: refuses to apply while any plaintext row remains. Otherwise it VALIDATEs the CHECK and drops the function. | no database |
 
 - **Rollbacks** are in `db/rollback/`, one for each migration. Neither un-seals
@@ -2376,7 +2376,7 @@ This section does not restate the census headline, because no row moved.
 - NOT-GRADED: travel-buddy-standalone/src/lib/sensing/consentDisclosure.ts — cited in §45.5 for the words of consent v1; census-sensing grades the disclosure, and §45.5 moves no row.
 - NOT-GRADED: artifacts/api-server/src/migrations/3360_intel_evidence_sealed_reference.sql — the remediation migration, applied to no database, cited in §45.4 as prepared work; M154 rests on the application's seal, which it does not depend on.
 - NOT-GRADED: artifacts/api-server/src/migrations/3361_intel_evidence_sealed_reference_validate.sql — the remediation's closing migration, applied to no database, cited in §45.4 only.
-- NOT-GRADED: artifacts/api-server/src/scripts/rekeyIntelEvidenceReferences.ts — the remediation script, not run, cited in §45.4 only.
+- Formerly not graded (file deleted 2026-10-24): artifacts/api-server/src/scripts/rekeyIntelEvidenceReferences.ts — the remediation script, not run, cited in §45.4 only. Retired together with 3361, which drops the function it called.
 - NOT-GRADED: artifacts/api-server/src/lib/envValidation.ts — cited in §45.3 for the boot warning naming the new key; census-trust watches it, and no Map row grades boot configuration.
 - NOT-GRADED: artifacts/api-server/src/lib/dataRights.ts — cited in §45.3 for the updated rationale text of intel_evidence.reference; the classification itself is unchanged and no Map row grades it.
 

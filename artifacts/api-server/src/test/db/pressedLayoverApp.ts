@@ -94,7 +94,7 @@ export async function startSession(app: PressedApp, user: PressedUser, over: Rec
  * layover_discovery_mode, layover_safe_return_status and rent_buddy FALSE.
  */
 export async function productionBaseFlags(db: PressedDb): Promise<void> {
-  const { PRODUCTION_SNAPSHOT_URL } = await import("../../lib/capability/snapshots/current.js");
+  const PRODUCTION_SNAPSHOT_URL = new URL("../../lib/capability/snapshots/20260922-production-schema.json", import.meta.url); // PINNED to the 09-22 capture every pressed suite was written against (2026-10-24 capability refresh); production's current flags are the separate PRESSED_BASE=production-20261023 base (#785)
   const { readFileSync } = await import("node:fs");
   const snap = JSON.parse(readFileSync(PRODUCTION_SNAPSHOT_URL, "utf8")) as { flags: Record<string, boolean> };
   await db.setFlags(Object.fromEntries(Object.entries(snap.flags).map(([f, on]) => [f, on === true])));

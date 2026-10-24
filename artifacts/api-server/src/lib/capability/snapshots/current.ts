@@ -101,10 +101,31 @@
  * constant moves. That is the whole refresh.
  */
 /** The capture every reader should grade against. Change this on a refresh. */
-export const PRODUCTION_SNAPSHOT_FILENAME = "20260922-production-schema.json";
+export const PRODUCTION_SNAPSHOT_FILENAME = "20261024-production-schema.json"; // REFRESH OF 2026-10-24: see the note at the end of this file
 
 /** Resolved against this directory, which is where the captures live. */
 export const PRODUCTION_SNAPSHOT_URL = new URL(
   PRODUCTION_SNAPSHOT_FILENAME,
   import.meta.url,
 );
+
+/**
+ * REFRESH OF 2026-10-24 05:55 UTC, the current one (census drive 2026-10-23, the approved capability refresh; written at
+ * the END of this file so the lines above, which documents cite, do not move). Taken after the 2026-10-21 production
+ * press (332 migrations applied through schema_migration_ledger, each row's sha256 equal to this tree's file), the
+ * 2026-10-23 backfill rows (51 migrations recorded as present but not applied by the ledger discipline) and 3950
+ * (2026-10-24 05:42:51). 642 tables and views (624 base tables), 447 functions, 69 enums, 383 flags (304 enabled).
+ *
+ * Built as a proven DELTA on the 09-22 capture, the same argument as every capture before it: production digested its
+ * own catalogue per initial letter and per table, only the differing tables' column lists were taken (from a chain
+ * replay where they matched production's per-table digest, from production where they did not), and production then
+ * recomputed all three digests and returned exactly the three the new file records. The capture also records what no
+ * migration in this tree declares: media_upload_sessions, media_upload_chunks and commit_media_upload_chunk, and three
+ * columns each on media_assets and user_deletion_requests. They are production's, and the snapshot says so rather than
+ * leaving them out.
+ *
+ * The unapplied set, read from the ledger itself (830 rows = this tree's 835 files minus five, by digest over the
+ * filenames): 2481, 3601 and 3602 (held) and 3909 and 3910 (codifications of objects production already holds out of
+ * band). The 09-22 capture was NOT overwritten: a capture describes one instant, a new instant gets a new file, and the
+ * constant above moves. That is the whole refresh.
+ */

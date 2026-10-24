@@ -153,11 +153,11 @@ describe("every column these modules SELECT exists in the deployed table", () =>
 });
 
 describe("what deployment did NOT change, asserted so §O cannot be read as more than it says", () => {
-  it("every flag that gates a Memory read path is still OFF in production", () => {
-    // Applying a migration is not turning a feature on. Four of this census's
-    // rows are blocked on a FLAG and not on a table, and after 2026-09-15 that
-    // is the whole of their blocker. If one of these flips, the rows that name
-    // it have to be re-read — so the fact is asserted rather than described.
+  it("every flag that gates a Memory read path is ON in production (re-pinned 2026-10-24; the re-read is census §CA and §CB)", () => {
+    // Applying a migration is not turning a feature on. Four of this census's rows were blocked on a FLAG, not a table.
+    // All four were turned ON in production by the 2026-10-23 press, and the re-read this pin used to demand has been
+    // done: census-highlights-memories §CA (#780, merged) and §CB (#784) grade on production's kernel running with
+    // these flags ON. Re-pinned at the 2026-10-24 capability refresh (lead ruling); a flip back OFF reopens them.
     for (const flag of [
       "memory_kernel_enabled",
       "memory_location_precision_enabled",
@@ -165,8 +165,8 @@ describe("what deployment did NOT change, asserted so §O cannot be read as more
       "highlights_feed_bounded_enabled",
     ]) {
       assert.equal(
-        snapshot.flags[flag], false,
-        `${flag} is no longer false in production; the census rows blocked on it must be re-read`,
+        snapshot.flags[flag], true,
+        `${flag} is no longer ON in production; census-highlights-memories §CA/§CB grade on it ON and must be re-read`,
       );
     }
   });
