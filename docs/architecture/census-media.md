@@ -17620,12 +17620,12 @@ written to production or `portava-ci`, and no flag was changed. `head_commit` is
 
 ### 56.2 What was built
 
-- **The cold-start window is closed (client; next device build).** The tab mounts no Watch feed while the flags load
-  (`travel-buddy-standalone/app/(tabs)/media.tsx:109#selectedMode === 'watch' && !flagsLoading && <WatchFeed />`).
+- **The cold-start window is closed (client; next device build).** The tab mounts no Watch feed while the flags load, nor until the store has restored the saved mode (`restored`, set in the same batch as the restored mode, `travel-buddy-standalone/src/stores/mediaStore.ts:167#setRestored(true)`; verifier 2026-10-24: gating on the flags alone still mounted it, and fired its `loadFeed()`, for the length of the AsyncStorage read)
+  (`travel-buddy-standalone/app/(tabs)/media.tsx:109#selectedMode === 'watch' && !flagsLoading && restored && <WatchFeed />`).
   Once they land, World opens when both flags are on, or Watch opens as before.
-  - Tests: `travel-buddy-standalone/app/(tabs)/__tests__/media.coldStart.component.test.tsx:65#it('C1 flags loading: no Watch feed is mounted'`
-    (C1–C3, with a control for World off).
-  - Mutant: removing the `!flagsLoading` turns C1 and C2 red.
+  - Tests: `travel-buddy-standalone/app/(tabs)/__tests__/media.coldStart.component.test.tsx:86#it('C2 flags loaded with World on: the World surface, and never the Watch feed'`
+    (C1–C3, with a control for World off). The WatchFeed stub counts mounts and calls `loadFeed()` on mount; C2 asserts 0 mounts and no `loadFeed()`.
+  - Mutants: removing both gates turns C1 and C2 red; removing only `restored` (the flags-only gate of a0951915) turns C2 red (mounts: expected 0, received 1).
   - It bears on MD286, MD419 and MD427, which all asked that the tab not open into the paging feed.
 - **Ownership isolation, pinned where a gap was (server tests).**
   - `artifacts/api-server/src/test/mediaVideoTransport.test.ts:550#it("ISOLATION (census-media, 2026-10-24): a stranger c`
