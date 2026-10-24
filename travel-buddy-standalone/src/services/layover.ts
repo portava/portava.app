@@ -815,7 +815,7 @@ export interface CompassAnswer {
    * empty list, and must never infer "no tools were available" from its
    * absence — absent means UNREPORTED, not none.
    */
-  toolsConsulted?: LayoverToolName[];
+  toolsConsulted?: LayoverToolName[]; /** census-layover §83 (L100): whether the model's content reached this answer; absent from an older server (unreported, not "answered"). See `CompassAssistantState` at the end of this file. */ assistant?: CompassAssistantState;
 }
 
 /** §12's twelve, in the order `06_Layover.md` §12 lists them. */
@@ -3102,3 +3102,17 @@ export type LayoverReentrySecurity =
 export type LayoverReentryContext =
   | { state: 'reentered'; reportedAt: string; refreshedAt: string; flight: LayoverDepartureFlightRead; security: LayoverReentrySecurity }
   | { state: 'unknown'; reason: string };
+
+/**
+ * census-layover §83 (L100) — mirrors `services/airport/LayoverCompassAssistant.ts#CompassAssistantStatus`. With
+ * `layover_compass_assistant_enabled` ON (production since 2026-10-23), an answer is either the model's admitted content
+ * (`answered`) or the certified answer on its own (`fallback`, for `fallbackReason`); without this field the two looked
+ * identical to a traveller. `off` is the flag off.
+ */
+export interface CompassAssistantState {
+  enabled: boolean;
+  status: 'off' | 'answered' | 'fallback';
+  fallbackReason: 'rate_limited' | 'certification_mismatch' | 'model_error' | 'model_timeout' | 'model_empty' | 'boundary_violation' | 'nothing_admitted' | null;
+  model: string | null;
+}
+
