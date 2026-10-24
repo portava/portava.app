@@ -17588,3 +17588,161 @@ A row for §44.18.6's reader table, recorded here so no line above moves:
 | Reader | What it serves | Honoured the block before | Now |
 | --- | --- | --- | --- |
 | Direct PostgREST reads of `post_media` | every ready, public row the policy admits, including rows whose OWNER blocked the reader (the policy's `blocks` subquery ran under `blocks`' own RLS) | no | **fixed on branch by 3905, not merged, not deployed; the viewer's own block was always honoured** |
+
+## 56. Row moves — 2026-10-24 (lane MEDIA, batch 1): production re-read; the 35 open rows classified against it; the Media tab's cold-start window closed; a post/media sweep. NO ROW MOVES
+
+*Branch `claude/census-media-b1-20261024`, cut from main `9d5f6d481`. Production was read with SELECT and catalog
+queries only on 2026-10-24, and `https://rumazi.com` with one unauthenticated `GET /api/feature-flags`. Nothing was
+written to production or `portava-ci`, and no flag was changed. `head_commit` is not re-declared. The video-playback fix
+(#795, with its own correction section) is a separate PR. This section counts only what is on main.*
+
+### 56.1 Production as it is now (read 2026-10-24)
+
+- **Flags TRUE** (all set 2026-10-23 10:02Z):
+  - `MEDIA_WORLD_SHELL_ENABLED` and `MEDIA_TAB_WORLD_DEFAULT_ENABLED` (3340);
+  - `MEDIA_WATCH_CONTEXT_OVERLAY_ENABLED` (3341);
+  - `MEDIA_WATCH_TAP_TO_PLAY_ENABLED` (3342);
+  - `MEDIA_RANKING_ENABLED` (3343);
+  - `media_captions_enabled` (3358).
+- **Flags FALSE:**
+  - `MEDIA_TAB_ENABLED`. The installed tab bar does not read it, and the Roam tab renders unconditionally;
+  - `media_vision_provider_enabled` (3355), `media_transcoder_enabled` (3357), `media_derivative_jobs_enabled` (3980)
+    and `media_caption_asr_enabled` (3983);
+  - `memory_from_own_media_enabled` (3999, updated 2026-10-23 22:29Z).
+- **Ledger:**
+  - 3340–3343 and 3355–3358 are applied (2026-10-21).
+  - So are 3980, 3981, 3982, 3983, 3999 and 3905 (2026-10-21). Earlier rows still say "applied nowhere" for
+    3980–3983 and 3999. That is stale.
+  - pgvector 0.8.0 is installed, and the vendor tables of 3980–3983 are present.
+- **The installed device build** (`96d20f10d`, 2026-10-24) opens the Media tab on World. The default mode is the first
+  enabled one, with `openOnDefault`. But while the flags are still loading, the store's default was `'watch'`, so the
+  full-screen Watch feed mounted and could autoplay for the length of the flag fetch on every cold start (§56.2).
+
+### 56.2 What was built
+
+- **The cold-start window is closed (client; next device build).** The tab mounts no Watch feed while the flags load, nor until the store has restored the saved mode (`restored`, set in the same batch as the restored mode, `travel-buddy-standalone/src/stores/mediaStore.ts:167#setRestored(true)`; verifier 2026-10-24: gating on the flags alone still mounted it, and fired its `loadFeed()`, for the length of the AsyncStorage read)
+  (`travel-buddy-standalone/app/(tabs)/media.tsx:109#selectedMode === 'watch' && !flagsLoading && restored && <WatchFeed />`).
+  Once they land, World opens when both flags are on, or Watch opens as before.
+  - Tests: `travel-buddy-standalone/app/(tabs)/__tests__/media.coldStart.component.test.tsx:86#it('C2 flags loaded with World on: the World surface, and never the Watch feed'`
+    (C1–C3, with a control for World off). The WatchFeed stub counts mounts and calls `loadFeed()` on mount; C2 asserts 0 mounts and no `loadFeed()`.
+  - Mutants: removing both gates turns C1 and C2 red; removing only `restored` (the flags-only gate of a0951915) turns C2 red (mounts: expected 0, received 1).
+  - It bears on MD286, MD419 and MD427, which all asked that the tab not open into the paging feed.
+- **Ownership isolation, pinned where a gap was (server tests).**
+  - `artifacts/api-server/src/test/mediaVideoTransport.test.ts:550#it("ISOLATION (census-media, 2026-10-24): a stranger c`
+    covers a stranger trying to assemble, abandon or delete another user's upload. All three are refused 403, no
+    object of the owner's is touched, and the row remains.
+  - Two mutants are killed: the slot ownership check removed (3 cases red), and the media delete's owner check made
+    true (red).
+  - Already pinned elsewhere: upload-url, complete and poster refuse a stranger (`postcards.test.ts`,
+    `mediaVideoTransport.test.ts`), and `lib/mediaAccess` refuses another user's object on every branch
+    (`mediaAccess.test.ts` 3b/3c/3e).
+
+### 56.3 Rows restated — every open row against production as it is now
+
+Owner directive rule 5 class in **bold**. Each row waits on exactly what is named.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| MD286 | W | **W** | 3340 is TRUE (§56.1), and the installed build opens on World once the flags load. But the paging feed mounted during the flag fetch, so "the default is not 'watch'" was not true on a cold start. That is closed in §56.2. **Waits on: merged, next device build, then a signed-in check** (the device run that §44 named). |
+| MD419 | W | **W** | As MD286. **Waits on: merged, next device build, signed-in check.** |
+| MD427 | W | **W** | As MD286. Its criterion is the device cold start while the flag fetch is in flight, the window §56.2 closes. **Waits on: merged, next device build, signed-in check** (a device cold start). |
+| MD1 | W | **W** | 3340 and the shell flag are TRUE (§56.1); the tab opens on World. **Missing signed-in check:** a device run of the tab, as stated. |
+| MD2 | W | **W** | As MD1. **Missing signed-in check.** |
+| MD3 | W | **W** | As MD1. **Missing signed-in check.** |
+| MD29 | W | **W** | As MD1. **Missing signed-in check.** |
+| MD446 | W | **W** | As MD1, inside the World shell. **Missing signed-in check.** |
+| MD87 | W | **W** | 3341 is TRUE. **Missing signed-in check:** a device run. |
+| MD408 | W | **W** | 3341 is TRUE. **Missing signed-in check.** |
+| MD412 | W | **W** | 3341 is TRUE. **Missing signed-in check** (touch targets). |
+| MD424 | W | **W** | 3341 is TRUE. **Missing signed-in check.** |
+| MD425 | W | **W** | 3342 is TRUE. **Missing signed-in check** (pause/resume, AppState, gestures). |
+| MD11 | W | **W** | 3340 and 3343 are TRUE. **Missing signed-in check:** a production `rank_events` read after a session on the flipped surface. None has happened since the flip. |
+| MD215 | W | **W** | 3341 and 3343 are TRUE. **Missing signed-in check:** a device run and a production read. |
+| MD402 | W | **W** | 3342 and 3343 are TRUE. **Missing signed-in check:** a device run and a production read. |
+| MD435 | W | **W** | 3343 is TRUE. **Missing signed-in check:** production latency and a `rank_events` read. |
+| MD403 | W | **W** | Implementation is complete (§33). **Missing signed-in check:** the on-device contrast verification. |
+| MD162 | W | **W** | The shell flags are TRUE. **Missing deployment (ops):** no crowd flow is publishable while `geo_zones` holds 0 rows (census-map M5). |
+| MD53 | W | **W** | As MD65. |
+| MD58 | W | **W** | As MD65. |
+| MD65 | W | **W** | D-25a–e are ruled. **Privacy decision:** the photo-naming disclosure text is consent wording the owner keeps, and it is not written. Then **missing migration** (the evidence store) and **missing code** (the contribution route, and a flag seeded off). Nothing is built ahead of the wording: a contribution path with no consent text to bind to would be a dark path. |
+| MD66 | W | **W** | As MD65. |
+| MD370 | W | **W** | As MD65. |
+| MD445 | W | **W** | As MD65. |
+| MD63 | W | **W** | **Corrected: 3980 and 3981 are APPLIED** (2026-10-21), not "applied nowhere". `media_vision_provider_enabled` (3355) is FALSE. **Owner decision:** D-27a is NOT RULED. **External dependency:** the SigLIP weights are not installed. |
+| MD289 | W | **W** | **Owner decision:** D-27a, and the ≥0.6 busy/social rule is unratified. |
+| MD293 | W | **W** | **Corrected: 3982 is APPLIED and pgvector 0.8.0 is installed.** **Owner decision:** D-27c is NOT RULED. **External dependency:** the CLIP weights are not installed. 3355 is FALSE. |
+| MD277 | W | **W** | **Corrected: 3980 is APPLIED.** `media_transcoder_enabled` (3357) is FALSE. **Owner decision:** D-27b is NOT RULED. **External dependency:** no worker host or toolchain. Then a signed-in check (a rung switch on a device). |
+| MD280 | W | **W** | **Corrected: `media_captions_enabled` is TRUE and 3983 is APPLIED.** The ASR flag is FALSE. **Owner decision:** D-28's Media half is NOT RULED. **External dependency:** no ASR model. **Missing signed-in check:** a device and assistive-technology run. |
+| MD282 | W | **W** | **Missing code:** the Android module. **Missing device build:** the iOS encoder is behind a client constant that defaults to false, with no app build and no device run. |
+| MD284 | W | **W** | **Missing code:** the Android foreground-service module. **Missing signed-in check:** an iOS device run. |
+| MD269 | W | **W** | Part (a) is built (D-82). **Owner decision:** D-27d (a classifier vendor or staffed review) is NOT RULED. |
+| MD283 | W | **W** | **Owner decision:** D-27d. |
+| MD385 | W | **W** | **Corrected: 3999 is APPLIED.** `memory_from_own_media_enabled` is FALSE (2026-10-23 22:29Z). **Owner decision:** MD385-Q1 (does a soft delete or a moderation hold on the source withdraw the copy?), then the flag. |
+
+### 56.4 The post/media sweep: the class of the 2026-10-24 video defect
+
+The video defect had two halves. A WRITER put an upload's storage ref somewhere other than `post_media`, and READERS key
+on `post_media` rows only. Every post/media path was swept for both halves. #795 fixes `routes/posts.ts`, and 3924
+(applied) moved the four production posts. What remains:
+- **Admin door (open; same class).** `routes/adminPortavaPosts.ts` POST and PATCH write `mediaUrls` into `posts.media_urls`
+  for the @portava official account, and accept bare `post-media/…` keys.
+  - An official post with an upload therefore has no `post_media` row. It is absent from every row-keyed reader:
+    media feeds, the Wall, featured, the moderation queue, dedup and image understanding.
+  - Fixing it through `lib/media/storageBackedPostMedia.ts` (#795) needs one decision. The admin uploads under their own
+    uid, and the post is authored by @portava, so who may attach whose upload? That is a lead decision, recorded here.
+- **Moderation queue (safety).** `routes/adminMedia.ts` lists `post_media` rows only. A media_urls-only upload was never
+  reviewable: the four production posts, until 3924. It is still true for the admin door above.
+- **Account deletion (privacy/retention).** `services/accountDeletion/AccountDeletionService.ts` collects storage paths
+  from `post_media`, `media_assets` and other tables, but not from `posts.media_urls`.
+  - Production, 2026-10-24: 3 of the 4 recent uploads also had no `media_assets` row. Deleting those accounts before
+    3924 would have left their bytes in `post-media`. 3924's rows now cover them.
+  - A separate finding: `/api/media/upload` did not record a `media_assets` row for 3 of 4 recent uploads (MD36's
+    canonical contract). The recorder's gate needs a read.
+- **Delete vs 2098's pin.** `post_media_owner_delete` forbids an owner deleting a row that carries a rejected or flagged
+  verdict. `DELETE /postcards/:id/media/:mediaId` runs as the service role and does not apply that pin. The ledger keeps
+  the verdict (re-attachment stays refused), but the row is gone. That is a lead decision, recorded here.
+- **Not this class:**
+  - `routes/events.ts` `event_posts.media_urls`: a separate table with no row store by design;
+  - `passport_postcards.media_url`: the postcard's own column;
+  - `lib/postMediaResolve.ts` readers (pulse, profile tabs, hashtags, airport): they merge both stores.
+
+### 56.5 Isolation (owner directive rule 2)
+
+- **Client roles.** `post_media` and `post_media_moderation_ledger` hold RLS. The vendor tables (3980–3983) have RLS
+  and no `anon` or `authenticated` grant, so they are service-role only. `media_assets` is owner-SELECT only.
+- **Hidden but queryable (finding, latent).** Two policies admit an active public post without reading `post_status`:
+  `posts_select_policy` (`authenticated`) and `post_media_public_select`.
+  - So an UNRELEASED delayed-publish post can be read through PostgREST while its author is still at the place: its
+    content, media refs, media rows, author and created time. That covers `pending_location_exit` and `pending_delay`.
+  - The bytes stay refused, because `lib/mediaAccess` `postVisible` denies an unpublished post's media. No location
+    column is granted to client roles.
+  - Production holds 0 unreleased posts (2026-10-24). The fix is an RLS tightening, so it is proposed rather than built:
+    published, or the author's own, on both policies.
+- **Ownership** is pinned (§56.2). No test was weakened. One test was added.
+
+### 56.6 What would turn this red
+
+- C1 or C2 red: the Watch feed mounts before the flags say which surface opens.
+- The ISOLATION case red: a stranger can assemble, abandon or delete another user's upload.
+- Any of 3340–3343 turned off: the rows resting on it go back to "waiting on activation".
+
+### 56.7 Headline, restated from the rows
+
+`check:census-integrity` recounted after this section.
+
+| Measure | §55.4 | **§56.7** |
+| --- | ---: | ---: |
+| Denominator | 450 | **450** |
+| BUILT-AND-CORRECT | 415 | **415** |
+| BUILT-BUT-WRONG | 35 | **35** |
+| NOT-BUILT | 0 | **0** |
+| CANNOT-VERIFY | 0 | **0** |
+| CONSTRUCTED% | 100.0 % | **100.0 %** (450 / 450) |
+| CORRECT% raw | 92.2 % | **92.2 %** (415 / 450) |
+
+No row moves. All 35 open rows are restated, and five of them carry corrected production facts (MD63, MD277, MD280,
+MD293, MD385).
+
+**Cited in §56, graded elsewhere.**
+- NOT-GRADED: artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts — the account-deletion service, cited in §56.4 only for which storage columns it collects; the deletion census owns it, and no Media row rests on it.
+- NOT-GRADED: artifacts/api-server/src/lib/postMediaResolve.ts — the two-store URL merge, cited in §56.4 only to say its readers are not the defect's class; no Media row rests on it.
