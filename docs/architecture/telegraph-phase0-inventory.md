@@ -32,7 +32,7 @@ are files, tables, routes, event types and literals, each re-derived on every ru
 
 ### 2. Migrations that touch a messaging table
 
-42 of 840 migration files reference at least one messaging table.
+43 of 841 migration files reference at least one messaging table.
 
 MEASURED ON THE SQL WITH COMMENTS STRIPPED. A table named only in a `--` or
 `/* */` comment is not counted; before this, 13 of the 37 files listed here
@@ -88,6 +88,7 @@ touch no messaging table.
 - `src/migrations/3935_telegraph_member_window_sequence.sql`
 - `src/migrations/3936_telegraph_message_content_ref.sql`
 - `src/migrations/3937_telegraph_slo_duplicate_canonical.sql`
+- `src/migrations/3938_telegraph_conversation_action_refs_writer.sql`
 - `src/migrations/3939_telegraph_member_window_sequence_definer.sql`
 - `src/migrations/3998_telegraph_conversation_snapshots.sql`
 
