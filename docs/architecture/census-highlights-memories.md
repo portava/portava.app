@@ -9863,3 +9863,229 @@ CORRECT% is 93 / 266 = 35.0 %. (The first push of this section moved 21; the ind
 overstated, and both stay W — §CA.4.)
 
 - NOT-GRADED: artifacts/api-server/scripts/run-memory-native-tests.mjs — §CA.2 names the native-suite wrapper only for a local-harness limit (it drops LC_ALL); no row rests on it.
+
+## §CB — 2026-10-23 (census drive, lane HIGHLIGHTS & MEMORIES, batch 2): the §17 bypasses closed in code and migration 3911, and 16 command, event and graph rows move W → C on production's own kernel
+
+*Measured on branch `claude/census-hm-b2-20261023`, stacked on batch 1 (§CA, PR #780, merged in at `c5db42cde`).
+`head_commit` is not re-declared. This section changes product code and adds one migration, **written and NOT applied
+anywhere**. Every row not named here is unchanged.*
+
+**Read this first.** Two different things happen in this section, and they are graded differently.
+- **The bypasses §CA.4 found are closed in the tree, not on production.** Production still runs 2711's kernel, and this
+  branch's routes are not deployed. Every row whose remaining gap was a bypass therefore stays W, as NEEDS-RELEASE
+  (§CB.5). None of them moves on this section's code.
+- **The 16 moves rest on production's kernel as it is today.** Every case behind them runs twice: once on 2711, installed
+  from the rollback file and checked against production's md5, and once on 3911. Both runs must pass.
+
+### §CB.1 What was wrong, and what changed
+
+With `memory_kernel_enabled` ON in production (§CA.1), four canonical writes still happened outside
+`memory_kernel_execute`. Each landed with no event, receipt or outbox row:
+
+| write | before | now |
+| --- | --- | --- |
+| Telegraph §10.2 save-to-Memory | a direct `memories` insert | CREATE_MEMORY through the kernel (`artifacts/api-server/src/routes/telegraphMemory.ts:145#const drafted = await createDraftThroughKernel(req, client, user.id, row`). The direct insert is now only the flag-off legacy arm |
+| the participants of POST /memories and POST /trips/:tripId/memory | `memory_tags` inserted after the kernel returned | sent to the kernel (`artifacts/api-server/src/routes/memories.ts:525#write: insertRow, tagged_user_ids: d.taggedUserIds,`, `artifacts/api-server/src/routes/memories.ts:2808#write: tripInsertRow, ...(crewIds.length <= KERNEL_TAG_LIMIT ? { tagged_user_ids: crewIds } : {}),`) and inserted PENDING in the creating transaction (`artifacts/api-server/src/migrations/3911_memory_kernel_create_participants_and_canonical_fields.sql:349#INSERT INTO public.memory_tags (memory_id, tagged_user_id, status)`). The route writes a tag only when the kernel reports it did not (`artifacts/api-server/src/routes/memories.ts:548#const kernelTagged = created.taggedUserIds ?? null;`) |
+| §4 `memory_type` and §9 `place_display_name_at_occurrence` | a direct UPDATE after the kernel (`reconcileCanonicalFields`) | written by CREATE's INSERT (`artifacts/api-server/src/migrations/3911_memory_kernel_create_participants_and_canonical_fields.sql:341#UPDATE public.memories SET memory_type = v_write->>'memory_type'`) and by every edit's UPDATE (`artifacts/api-server/src/migrations/3911_memory_kernel_create_participants_and_canonical_fields.sql:380#memory_type           = CASE WHEN v_patch ? 'memory_type'`). The reconcile remains as a read-back that now finds nothing to write |
+| the source post of POST /memories/:id/items/from-post | a follow-up `memory_items` UPDATE | the kernel's own INSERT, judged there by 3999's own-media guard (`artifacts/api-server/src/migrations/3911_memory_kernel_create_participants_and_canonical_fields.sql:423#(v_write->>'source_post_id')::uuid)`) |
+
+`memory.created` now names the people it tagged, as ids only. The key is added only to a create that named participants
+(`artifacts/api-server/src/migrations/3911_memory_kernel_create_participants_and_canonical_fields.sql:491#THEN jsonb_build_object('tagged_user_ids', to_jsonb(v_tags_written)) ELSE '{}'::jsonb END),`),
+so every other event keeps 2711's `refs` shape.
+
+Two consequences, stated exactly (independent verifier, #784):
+- POST /memories always names its participants, `[]` when there are none. So every `memory.created` from that route
+  now carries `refs.tagged_user_ids`, `[]` included. That key lists only the people actually written, never a requested
+  id with no profile.
+- Every non-duplicate kernel answer gains a top-level `tagged_user_ids` key. It is null except on a create that named
+  participants.
+
+**Either deploy order is safe.** With the code first, 2711 ignores the
+new keys and the routes write as before. With 3911 first, the old routes send no participants and tag as before. Their
+type and occurrence text find the kernel has already written them. They do not send the source post (this branch adds
+that key), so with the old code, from-post's follow-up link runs once, as today. Ordering, preconditions and rollback
+are recorded in `docs/migrations.md` (3911). The rollback restores 2711's definition (md5 `542cc3a2…`) and its comment
+(md5 `3b8b34b4…`), measured.
+
+**Two edge notes (verifier).**
+- A CHANGE_PLACE that re-sends the same display text for a NEW provider place leaves the text NULL in-kernel. 3804's
+  trigger reads unchanged text as "keep nothing for a changed place". The retained read-back reconcile then writes it
+  once.
+- A 3999 own-media guard RAISE inside ADD_MEDIA surfaces as MEMORY_KERNEL_UNAVAILABLE, a 503. That can happen only in
+  a race, because from-post checks the post is the owner's before it dispatches.
+
+### §CB.2 Production state, measured (read-only, 2026-10-23)
+
+- **The kernel.** Production and portava-ci both run 2711's `memory_kernel_execute`, md5
+  `542cc3a256e7452a5629cc5d87e7a45f`. The 2711 body in this tree, and the 3911 rollback file, produce exactly that md5.
+  3911 is applied nowhere. 3803, 3804 and 3999's columns exist on both.
+- **Flags.** TRUE: `memory_kernel_enabled`, `memory_merge_split_enabled`, `memory_type_enabled`,
+  `memory_place_occurrence_name_enabled`, `memory_import_batches_enabled`, `memory_projection`,
+  `memory_graph_shadow_read_enabled` and `memory_graph_read_cutover_enabled`. FALSE: `memory_from_own_media_enabled` and
+  `memory_narrative_ai_enabled` (audit 216–217, §CA.1).
+- **The shipped code is this tree's for every file a move cites.** `git diff bfc8142c5 origin/main` (§CA.1's shipped
+  build) touches none of `routes/memories.ts`, `routes/memoryGraph.ts`, `routes/telegraphMemory.ts`,
+  `services/memory/`, `services/memoryProjections/`, `lib/memoryCommandBus.ts` and `lib/memoryOutbox.ts`.
+  Unauthenticated GETs answer **401** for `/api/memories` (the Memory router), `/api/memories/graph` (the router that
+  carries merge and split) and `/api/threads/:id/recap` (the Telegraph Memory router).
+- **The legacy graph.** `memory_relations` holds 26 rows: 20 MEMORY→TRIP and 6 MEMORY→EVENT, all `RELATED`,
+  `LEGACY_IMPORTED`, confidence 0.500. Those are exactly the 20 trip and 6 event references on production's 80 Memories.
+  No place edge exists, and no Memory has a place reference. No person edge exists, and no tag is approved. All 80
+  Memories read `source_mode = LEGACY_IMPORTED`. `memory_graph_shadow_daily` holds **0** rows.
+- **The outbox drain is unobservable.** It starts at boot with no flag
+  (`artifacts/api-server/src/index.ts:196#startMemoryOutboxScheduler();`), but `/api/healthz/schedulers` lists
+  `startMemoryOutboxScheduler` under `coverage.unobservable`, and there is no `job_health` row. The outbox has had 0 rows
+  (§CA.1), so nothing on production shows that it has ever drained.
+
+### §CB.3 The new evidence: the real routers over HTTP, on both kernels
+
+`artifacts/api-server/src/test/db/memoryKernelParticipants.db.test.ts` mounts the real routers (`routes/memories.ts`,
+`routes/telegraphMemory.ts`, `routes/memoryGraph.ts`) on an express app. Its client is
+`artifacts/api-server/src/test/db/memoryPostgrestBridge.ts`, which now also models `auth.getUser`, one level of
+FK-hinted embedding, set-returning RPCs and array-typed RPC parameters. That client runs every statement as
+`service_role` on the full chain, and it **logs every statement**.
+
+Each case asserts two things. First, the rows the command changed were last written by the same transaction as its
+`memory_domain_events` row (equal `xmin`). Second, the route issued no write of its own to `memories`, `memory_tags` or
+`memory_items`: the only statement touching them is the kernel RPC. Flags are answered in memory with production's
+values. `memory_from_own_media_enabled` is turned on in memory only, for P7/P8.
+
+| cases | what they execute |
+| --- | --- |
+| P1–P4, P11 | POST /memories (participants, type, provider-pick text), its replay, POST /trips/:tripId/memory (crew, TRIP, the trip edge), PATCH memoryType. P11 installs 2711 and shows the compat arms still tag and type, then restores 3911 byte for byte |
+| P5, P6, P12 | POST /me/memory-drafts with the kernel ON (CREATE_MEMORY, `memory.created` at CANDIDATE, receipt, outbox row) and OFF (the legacy insert, no event claimed). A kernel-path refusal keeps its 400 |
+| P7, P8 | from-post links the source in the kernel's INSERT. Someone else's post is refused inside the kernel, with no item, event or receipt left |
+| P9, P10 | a malformed participant list is refused by name and audited. The actor, a duplicate, and an id with no profile are never tagged |
+| O1 | `runMemoryOutboxDrainPass` claims every pending event through 2994's `memory_outbox_claim` and acks it through `memory_outbox_ack`. It reads each event's privacy-filtered payload, and a second pass claims nothing |
+| K1–K3, **run on 2711 and on the tree's kernel** | the kernel called directly, for the verifier's three survivors. A stranger's REMOVE_PERSON is `MEMORY_AUTH_NOT_OWNER`, the tag stands and no event is written; ADD_PERSON from the same stranger is `MEMORY_AUTH_NOT_PARTICIPANT`, one check earlier. A create that names no type gets the column's MOMENT. `memory.created` names only the people written, never a requested id with no profile |
+| Q1–Q10, **run on 2711 and again on 3911** | through its own route: CONFIRM, CHANGE_VISIBILITY, CHANGE_PLACE, ADD_MEDIA, REMOVE_MEDIA, ADD_PERSON (the tagged person's consent, which the graph mirror turns into a PERSON edge), REMOVE_PERSON (the edge goes), ARCHIVE, MERGE (absorbed Memory deleted and redirected, `memory.merged` with its outbox row) and SPLIT (`memory.split` on both streams, the moved item, the `DERIVED_FROM` edge). The 2711 run refuses to start unless the installed definition's md5 is production's |
+
+**Run:** 38 of 38 pass (local chain, PostgreSQL 17.11, 2026-10-23/24; K1–K3 added after the verifier's review). **Red first, by mutation** (file restored from a
+copy and its sha256 re-checked, or the SQL object restored and its md5 re-checked):
+
+| mutant | result |
+| --- | --- |
+| Telegraph's draft calls the insert directly | P5, P12 red |
+| POST /memories sends no participants · ignores the kernel's answer · stops notifying the kernel's tags | P1 red, each |
+| the trip memory sends no crew · counts the request instead of the tags | P3 red, each |
+| from-post sends no source link | P7 red |
+| the bus never reads `tagged_user_ids` · dispatch drops it | P1, P3, P10 red, each |
+| a kernel refusal on the draft answered as the legacy error | P12 red |
+| the compat arm removed (POST /memories never tags on its own) | P11 red |
+| CONFIRM or CHANGE_VISIBILITY mapped to UPDATE_MEMORY · merge issued as SPLIT | Q1, Q2, Q9 red on both kernels, respectively |
+| the tag route's client loses `rpc` | Q6–Q8 red on both kernels |
+| dispatch never uses the kernel | 27 of 33 red |
+| the outbox drain never acks · never reads the payload | O1 red, each |
+| SQL (3911's body): CREATE tags nobody · ignores the type · drops the occurrence text · drops the source post · omits `tagged_user_ids` from its answer · lets the actor tag themself · skips the profile filter · skips the malformed-list check · UPDATE ignores the type · every event's `refs` carries `tagged_user_ids` | P1/P2/P3/P10 · P1/P3 · P1 · P7/P8 · P1/P3/P10 · P1/P2/P10 · P10 · P9 · P4 · P4 red, respectively |
+| SQL (the shared 2711/3911 text, mutated in both files): CONFIRM, ARCHIVE or CHANGE_VISIBILITY emits `memory.corrected` · ADD/REMOVE_PERSON writes no status | Q1, Q8, Q2 · Q6/Q7 red on 3911. The 2711 run refuses any definition whose md5 is not production's |
+| SQL: the graph mirror trigger on `memory_tags` · on `memories` disabled | Q6 on both kernels · P3 red |
+| SQL, the verifier's survivors: no NOT_OWNER check on ADD/REMOVE_PERSON (S5, in 2711 and 3911) · CREATE nulls an unnamed type (S6) · `refs.tagged_user_ids` names the requested ids (S4b) | K1 on both kernels · K2 on the tree's kernel · K3 red |
+
+18 TypeScript mutants and 19 SQL mutants, all killed. Other runs on this branch:
+`memoryOwnerControls.db.test.ts` 21/21 (§CA), `memoryCanonicalFields` 36/36 (the 2711-shaped fake still passes, because
+the reconcile still finds what it meant), `telegraphMemory` 35/35, `telegraphConversationMemoryBoundary` 84/84,
+`memoryOutbox` 21/21, `memoryCommandBus` 60/60, `memorySocialClientBoundary` 62/62, `memoryFromOwnMedia.pglite` 18/18,
+`highlightsMemoriesDeployedStorage` 19/19.
+
+### §CB.4 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| H131 | W | **C** | `CONFIRM_MEMORY`. The PATCH route issues it for `state: "published"` (`artifacts/api-server/src/services/memory/MemoryDomainService.ts:276#if (patch.state === "published") return "CONFIRM_MEMORY";`). On production's own 2711, the state change and `memory.confirmed` are one transaction, and the route writes nothing else to the Memory (`artifacts/api-server/src/test/db/memoryKernelParticipants.db.test.ts:441#is CONFIRM_MEMORY: memory.confirmed`). Kernel ON, router mounted, code shipped (§CB.2) |
+| H132 | W | **C** | `ARCHIVE_MEMORY`. As H131 for `state: "archived"` (`artifacts/api-server/src/services/memory/MemoryDomainService.ts:275#if (patch.state === "archived") return "ARCHIVE_MEMORY";`, `artifacts/api-server/src/test/db/memoryKernelParticipants.db.test.ts:529#is ARCHIVE_MEMORY: memory.archived`) |
+| H136 | W | **C** | `ADD_MEDIA`. POST /memories/:id/items dispatches it (`artifacts/api-server/src/routes/memories.ts:2196#commandType: "ADD_MEDIA",`). On 2711 the item and `memory.corrected` are one transaction (`artifacts/api-server/src/test/db/memoryKernelParticipants.db.test.ts:484#is ADD_MEDIA: memory.corrected, written with the item`); the kept-candidate attach uses the same command. **Limit:** on 2711, from-post links its source by a follow-up UPDATE. That route is OFF on production (`memory_from_own_media_enabled` FALSE), and 3911 moves the link into the INSERT (P7) |
+| H137 | W | **C** | `REMOVE_MEDIA`. DELETE /memories/:id/items/:itemId dispatches it (`artifacts/api-server/src/routes/memories.ts:2288#commandType: "REMOVE_MEDIA",`). The item's removal and `memory.corrected` are one command on 2711 (`artifacts/api-server/src/test/db/memoryKernelParticipants.db.test.ts:495#is REMOVE_MEDIA: memory.corrected`). The storage object is deleted after the command, deliberately (the row's own reason) |
+| H139 | W | **C** | `REMOVE_PERSON`. The owner's removal through PATCH /memories/:id/tags/:userId: on 2711 the status change and `memory.corrected` are one transaction, and the graph mirror drops the PERSON edge (`artifacts/api-server/src/test/db/memoryKernelParticipants.db.test.ts:517#is REMOVE_PERSON: memory.corrected`) |
+| H141 | W | **C** | `CHANGE_VISIBILITY`. A visibility PATCH is CHANGE_VISIBILITY (`artifacts/api-server/src/services/memory/MemoryDomainService.ts:281#return "CHANGE_VISIBILITY";`), and on 2711 the audience change and `memory.visibility_changed` are one transaction (`artifacts/api-server/src/test/db/memoryKernelParticipants.db.test.ts:456#is CHANGE_VISIBILITY: memory.visibility_changed`) |
+| H134 | W | **C** | `MERGE_MEMORY`. **The stated blockers are gone:** 3676 is applied (§CA.1) and `memory_merge_split_enabled` is TRUE. POST /memories/merge (`artifacts/api-server/src/routes/memoryGraph.ts:143#router.post("/memories/merge"`) crosses `memory_graph_kernel_execute`: the absorbed Memory is marked deleted and redirected, and `memory.merged` and its outbox row are written in the same transaction as the redirect (`artifacts/api-server/src/test/db/memoryKernelParticipants.db.test.ts:541#is MERGE_MEMORY: memory.merged on the survivor`). The §21 lifecycle for the absorbed Memory runs after it, as for a delete |
+| H135 | W | **C** | `SPLIT_MEMORY`. As H134 (`artifacts/api-server/src/routes/memoryGraph.ts:191#router.post("/memories/:id/split"`): the moved item, `memory.split` on both streams and the `DERIVED_FROM` edge are one transaction (`artifacts/api-server/src/test/db/memoryKernelParticipants.db.test.ts:559#is SPLIT_MEMORY: memory.split on both streams`) |
+| H148 | W | **C** | `memory.confirmed`. Its reason was "Never emitted". It is emitted with its outbox row in the confirming transaction on production's kernel (H131's case) |
+| H150 | W | **C** | `memory.merged`. Its reason was "unapplied". 3676 is applied, and the event is emitted with its outbox row (`artifacts/api-server/src/migrations/3676_memory_graph_kernel.sql:314#v_event_type := 'memory.merged';`; H134's case) |
+| H151 | W | **C** | `memory.split`. As H150 (`artifacts/api-server/src/migrations/3676_memory_graph_kernel.sql:361#v_event_type := 'memory.split';`), on both Memories' streams in one transaction (H135's case) |
+| H152 | W | **C** | `memory.archived`. Its reason was "Never emitted". It is emitted in the archiving transaction on production's kernel (H132's case) |
+| H154 | W | **C** | `memory.visibility_changed`. Its reason was "Never emitted". It is emitted in the audience change's transaction on production's kernel (H141's case) |
+| H30 | W | **C** | `memory_event_outbox`. **Both stated blockers are gone:** `memory_kernel_enabled` is TRUE, and 2994's claim and ack functions (`artifacts/api-server/src/migrations/2994_memory_relations_and_outbox_consumer.sql:341#CREATE OR REPLACE FUNCTION public.memory_outbox_claim(`) are applied. The kernel writes the outbox row in the mutation's transaction (P1, P5, Q9), and the drain claims and acks it exactly once (`artifacts/api-server/src/test/db/memoryKernelParticipants.db.test.ts:268#O1 the outbox drain claims the kernel's events`). **The row is the table and its transactional writer.** That the drain runs on production cannot be shown (§CB.2), and that is H161's gap, below |
+| H45 | W | **C** | `MemoryRelationType`. Its reason was "`memory_relations` still does not exist". 2994 is applied, and production's `relation_type` CHECK admits exactly §4's nine plus §7's `POSSIBLE_DUPLICATE` (`artifacts/api-server/src/migrations/2994_memory_relations_and_outbox_consumer.sql:211#CHECK (relation_type IN ('SAME_EPISODE', 'RELATED', 'CONTAINS', 'LED_TO',`), matching the code's type (`artifacts/api-server/src/services/memoryProjections/memoryGraph.ts:58#MEMORY_RELATION_TYPES`). Production's 26 rows and every new edge (P3, Q6, Q10) carry it |
+| H195 | W | **C** | Legacy rows imported as `LEGACY_IMPORTED` with conservative confidence. **The stated blockers are gone:** 3674–3676 and 3992 are applied. **Observed on production, not only reachable:** all 80 Memories read `source_mode = LEGACY_IMPORTED`. The 26 legacy edges are `LEGACY_IMPORTED` at confidence 0.500 and are exactly the 20 trip and 6 event references those Memories carry. Nothing is fabricated: there are no place references, so there are no place edges, and there are no approved tags, so there are no person edges (§CB.2) |
+
+### §CB.5 Rows read, reason restated, NOT moved
+
+This table restates no verdict. The `standing` column is spelled out.
+
+**NEEDS-RELEASE: the remaining gap is a bypass this section closed in the tree.** Each moves when 3911 is applied to
+production and this branch's API is deployed, on a re-run of §CB.3 against that state:
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H130 | BUILT-BUT-WRONG | `CREATE_MEMORY` crosses the kernel on POST /memories, the trip memory and the kept candidate. On production, a create's participants are still written after it, and the Telegraph draft is a direct insert. Both are closed here (§CB.1; P1, P3, P5), but neither the code nor 3911 is deployed |
+| H138 | BUILT-BUT-WRONG | `ADD_PERSON` itself crosses the kernel on 2711 (`artifacts/api-server/src/test/db/memoryKernelParticipants.db.test.ts:505#is ADD_PERSON: memory.corrected`). The people named at creation are added outside any command until 3911 (P1, P3) |
+| H140 | BUILT-BUT-WRONG | `CHANGE_PLACE` moves the place in the kernel on 2711, but the provider pick's occurrence text is the route's own write after it (Q3 on 2711 asserts that write). On 3911 both are one UPDATE (Q3 on 3911) |
+| H147 | BUILT-BUT-WRONG | `memory.created` is emitted by every kernel create. A Telegraph draft is created without it on production until this branch deploys (P5, P6) |
+| H149 | BUILT-BUT-WRONG | `memory.corrected` is emitted (Q3–Q7 on 2711). On 2711, a type correction's event is not in the transaction that changes the type: the type is the reconcile's later UPDATE (P11). On 3911 it is (P4) |
+| H160 | BUILT-BUT-WRONG | The transactional outbox holds for every command in §CB.4. On production, the four writes in §CB.1 still land outside it |
+| H175 | BUILT-BUT-WRONG | Receipts are deployed and the kernel is ON. A replayed key is one effect (P2; §CA K4). On production, a replayed POST /me/memory-drafts still creates a second draft, because it takes no key, until this branch deploys (P5, P12) |
+| H40 | BUILT-BUT-WRONG | 3803 is applied and `memory_type_enabled` is TRUE (its stated blockers). On 2711 the type is written after the kernel, and on 3911 inside it (P1, P4). **Also still open:** owner question Q-H40 (the default for an untyped new row) |
+| H71 | BUILT-BUT-WRONG | 3804 is applied and its flag is TRUE (its stated blockers). A provider pick's occurrence text is written after the kernel on 2711, and inside it on 3911 (P1, Q3) |
+
+**The consumer half: built and proved on the chain, not shown running on production.**
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H161 | BUILT-BUT-WRONG | The stated blocker is gone: 2994 is applied. The drain claims and acks through 2994's real functions, and a second pass claims nothing (O1). W: production cannot show that the drain has ever run. Its scheduler is listed unobservable and writes no `job_health` row (§CB.2). BUILDABLE: have it report and persist its health the way `memoryDeletionRedrive` does (its scheduler-coverage entry names no report) |
+| H162 | BUILT-BUT-WRONG | The drain now calls the rebuild for each consumed event (O1). Same gap as H161 |
+| H203 | BUILT-BUT-WRONG | The drain reads each event's privacy-filtered payload before acting (O1, and the "never reads the payload" mutant reds it). Same gap as H161 |
+| H244 | BUILT-BUT-WRONG | The rebuild is replay-safe (§25), and a second drain consumes nothing (O1). Same gap as H161 |
+
+**Graph rows whose storage gap is gone and whose other gap is not:**
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H20 | BUILT-BUT-WRONG | 2994 and 3674–3676 are applied. The relation record is written on production (26 legacy rows) and by every new write: the trip edge (P3), consent (Q6), removal (Q7) and the split's lineage (Q10). W: no response is served from it. The graph route serves the legacy answer until `evaluateCutoverGate` is earned, and the gate is computed from shadow comparisons, of which production has none |
+| H26 | BUILT-BUT-WRONG | `memory_entity_links` is populated on production and by the mirror (as H20). Its one reader, the shadow comparison on GET /memories/graph, has recorded nothing (`memory_graph_shadow_daily` 0 rows). Same gap as H20 |
+| H196 | BUILT-BUT-WRONG | Shadow read and cutover are both switched ON (the owner's maximum-testing call). The comparison has produced no data in any real environment, so the cutover gate has never been earned, and the shadow covers one surface |
+| H27 | BUILT-BUT-WRONG | `DERIVED_FROM` is written on a split (Q10). Its stated gap stands: no detector writes §4's other Memory-to-Memory relation types |
+| H194 | BUILT-BUT-WRONG | A merged-away id keeps resolving on read. Its stated gap stands: a write on a merged-away id is a 404 |
+| H106 | BUILT-BUT-WRONG | The edge types are stored and enforced (H45). The group reason for H104–H106 stands for this row: the Tagged bucket reads `public.tags`, not the PERSON edges |
+| H256 | BUILT-BUT-WRONG | MERGE and SPLIT exist and cross the graph kernel (H134, H135). The episode-candidate half has no production input (§CA.4's spine: no timed capture is ever produced) |
+
+**Found, not fixed here: the tag write has no block gate.** This predates 3911; 3911 carries it forward. A create
+tags each named person PENDING, and so did the route before it, without asking whether that person and the owner have
+blocked each other. So a person who blocked the owner is tagged, and `notifyTagged` sends them an in-app notification
+and a push. This bears on:
+- H84: blocking suppresses future social resurfacing;
+- H240: a blocked person is not newly resurfaced through shared Memories;
+- H130 / H138: the create's participants and ADD_PERSON.
+
+H84 and H240 are graded on the read surfaces, and this is a write and a notification they do not cover. The fix is
+batch 4's first item.
+
+**Found, not fixed here.** Two canonical writes remain outside the kernel after this branch:
+- A photo's own audience is set by a direct `memory_items` UPDATE
+  (`artifacts/api-server/src/services/memory/memoryItemVisibility.ts:75#.update({ visibility: input.visibility })`), with
+  no event (H80's surface).
+- A moderation restore updates `memories` directly from the appeals service
+  (`artifacts/api-server/src/services/appeals/resolveAppeal.ts:245#.update({ state: "published", updated_at: new Date().toISOString() })`).
+
+Account erasure (`AccountDeletionService`) is the third direct writer, and it is outside the command set by design.
+
+### §CB.6 What this section does not claim
+
+- **3911 is not applied, and the API change is not deployed.** Nothing in §CB.5's NEEDS-RELEASE table may move until
+  both are true and §CB.3 is re-run against that state.
+- **No row is observed in production except H195.** The other 15 moves are "writer reachable on the shipped build"
+  (§CA's standard). The cases run on the chain, against the exact kernel definition production runs.
+- **The capture-time producer** that §CA.4's 18 episode-spine rows need is not built here. It is batch 3's.
+
+### §CB.7 Headline
+
+| bucket | was (§CA.7) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 93 | 109 |
+| BUILT-BUT-WRONG | 168 | 152 |
+| NOT-BUILT | 3 | 3 |
+| CANNOT-VERIFY | 2 | 2 |
+| total | 266 | 266 |
+
+**16 moves, all W → C.** 266 = 109 C / 152 W / 3 N / 2 X. CONSTRUCTED% is unchanged at (109 + 152) / 266 = 98.1 %.
+CORRECT% is 109 / 266 = 41.0 %.
+- NOT-GRADED: artifacts/api-server/src/services/appeals/resolveAppeal.ts — §CB.5 names its moderation restore as a canonical write outside the kernel, a finding for a later batch; no row rests on it.
