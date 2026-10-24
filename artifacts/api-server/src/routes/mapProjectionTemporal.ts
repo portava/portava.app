@@ -81,50 +81,50 @@ const router = Router();
 
 // ── §24 protected zones ───────────────────────────────────────────────────────
 //
-// Mirrors routes/mapProjection.ts's loader deliberately rather than importing
-// it, for the reason lib/locateFriendsSession already records: reaching into
-// another route's module-private cache to make a privacy decision would couple
-// two surfaces' failure modes. The CONTRACT is what matters and it is identical
-// — a read ERROR returns null ("policy unknown"), which the caller answers with
-// nothing; an empty list is an identity pass (no policy exists). `applyProtection`
-// is the single gate, and both routes call it.
-const ZONE_CACHE_TTL_MS = 30_000;
-let _zoneCache: { zones: ProtectedZone[]; at: number } | null = null;
-
-export function _clearTemporalProtectedZoneCache(): void { _zoneCache = null; }
+// ONE reader of the policy (census-map §55): lib/protectedZoneStore.ts.
+//
+// This route used to carry its own copy of the loader, "mirroring
+// routes/mapProjection.ts's loader deliberately rather than importing it",
+// because importing would have meant reaching into ANOTHER ROUTE's
+// module-private cache. That reason no longer holds: the loader moved out of
+// routes/mapProjection.ts into lib/protectedZoneStore.ts, a shared module that
+// exists to be "the ONE reader of protected_zones", and both the projection
+// route and Discovery read through it. Two readers of one privacy policy drift
+// apart, and the one that drifts loose is the one nobody notices.
+//
+// The CONTRACT is unchanged and is the store's: a read ERROR returns null
+// ("policy unknown"), which the caller answers with nothing (the
+// `protection_unreadable` refusal below); an empty list is an identity pass;
+// a malformed ring stays in the list so applyProtection suppresses it; a
+// successful read is reused for 30 s. One difference, in the safe direction:
+// the store also answers null when the read THROWS, where this copy let the
+// throw escape to a 500. The refusal envelope is what the client already
+// handles for an unreadable policy.
+//
+// Kept as a named wrapper, and the cache seam kept exported, so callers and
+// tests are unchanged; the cache is now the store's one cache.
+export function _clearTemporalProtectedZoneCache(): void { clearProtectedZoneCache(); }
 
 async function loadProtectedZones(sc: any): Promise<ProtectedZone[] | null> {
-  if (_zoneCache && Date.now() - _zoneCache.at < ZONE_CACHE_TTL_MS) return _zoneCache.zones;
-  const { data, error } = await sc
-    .from("protected_zones")
-    .select("id, category, action, privacy_floor, shape, center_lat, center_lng, radius_meters, ring, jurisdiction, policy_ref")
-    .eq("active", true);
-  if (error || !Array.isArray(data)) return null;
-
-  const zones: ProtectedZone[] = [];
-  for (const row of data as any[]) {
-    const base = {
-      id: String(row.id),
-      category: String(row.category),
-      action: row.action ?? undefined,
-      privacyFloor: row.privacy_floor ?? undefined,
-      jurisdiction: row.jurisdiction ?? undefined,
-      policyRef: row.policy_ref ?? undefined,
-    };
-    if (row.shape === "circle") {
-      zones.push({
-        ...base,
-        shape: "circle",
-        center: { lat: Number(row.center_lat), lng: Number(row.center_lng) },
-        radiusMeters: Number(row.radius_meters),
-      } as ProtectedZone);
-    } else {
-      zones.push({ ...base, shape: "polygon", ring: row.ring } as ProtectedZone);
-    }
-  }
-  _zoneCache = { zones, at: Date.now() };
-  return zones;
+  return loadActiveProtectedZones(sc);
 }
+// (The lines below are held blank so that the line-anchored citations further down this file do not move.)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 // ── §10 flow zones (geo_zones) — only the accepted_plan source needs them ─────
 //
@@ -699,3 +699,4 @@ router.get(
 );
 
 export default router;
+import { clearProtectedZoneCache, loadActiveProtectedZones } from "../lib/protectedZoneStore.js";  // census-map §55: the one protected-zone reader
