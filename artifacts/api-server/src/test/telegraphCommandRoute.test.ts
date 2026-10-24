@@ -884,3 +884,55 @@ describe("the route's own gate, which the function does not replace", () => {
     );
   });
 });
+
+// ── census-telegraph T181 / T163 (lane TELEGRAPH, 2026-10-23) ────────────────
+// Appended at the foot so every line the census cites above keeps its number;
+// the import is here for the same reason (ES imports are hoisted).
+//
+// Two survivors of the 2026-10-23 mutation pass over this door:
+//   - publishing UNSEND_MESSAGE's event as `message.deleted` left this suite
+//     green: nothing asserted which §13.2 event the command sends (T181);
+//   - raising the reaction cap from 16 to 1,600 characters left it green: the
+//     one long-"emoji" case is ASCII, which a different rule refuses first, so
+//     the length cap itself was never exercised (T163).
+describe("T181 — UNSEND_MESSAGE publishes §13.2 message.unsent, never message.deleted", () => {
+  it("the other member hears message.unsent with no body; the sender is excluded", async () => {
+    _setTestClient(makeClient({ bobLastRead: null }), true);
+    const heard: Record<string, CommandRouteEvent[]> = { [ALICE]: [], [BOB]: [] };
+    const stops = [ALICE, BOB].map((u) => subscribeCommandRouteEvents(u, (e) => heard[u]!.push(e)));
+    try {
+      const { status } = await post({ type: "UNSEND_MESSAGE", conversationId: THREAD, params: { messageId: M_MINE } });
+      assert.equal(status, 200);
+      await new Promise<void>((r) => setTimeout(r, 20));
+      const bob = heard[BOB]!.filter((e) => e.threadId === THREAD);
+      assert.deepEqual(bob.map((e) => e.type), ["message.unsent"]);
+      assert.equal(bob[0]!.payload?.messageId, M_MINE);
+      assert.ok(!("body" in (bob[0]!.payload ?? {})), "an unsent message's event carries no body");
+      assert.deepEqual(heard[ALICE]!.filter((e) => e.threadId === THREAD), [], "the sender is excluded");
+    } finally {
+      for (const stop of stops) stop();
+    }
+  });
+});
+
+describe("T163 — ADD_REACTION's sixteen-character cap is itself enforced", () => {
+  it("REFUSES a seventeen-character non-ASCII 'emoji' before any write", async () => {
+    const client = makeClient();
+    _setTestClient(client, true);
+    const long = "é".repeat(17); // non-ASCII, so only the length cap can refuse it
+    const { status, body } = await post({ type: "ADD_REACTION", conversationId: THREAD, params: { messageId: M_MINE, emoji: long } });
+    assert.equal(status, 409);
+    assert.equal(body.reason, "TELEGRAPH_MEDIA_KIND_NOT_ALLOWED");
+    assert.equal(client._db.message_reactions.length, 0, "nothing was written");
+  });
+
+  it("accepts sixteen", async () => {
+    const client = makeClient();
+    _setTestClient(client, true);
+    const { status } = await post({ type: "ADD_REACTION", conversationId: THREAD, params: { messageId: M_MINE, emoji: "é".repeat(16) } });
+    assert.equal(status, 200);
+    assert.equal(client._db.message_reactions.length, 1);
+  });
+});
+
+import { subscribe as subscribeCommandRouteEvents, type TelegraphEvent as CommandRouteEvent } from "../lib/telegraphEvents.js";
