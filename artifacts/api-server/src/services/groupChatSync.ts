@@ -145,7 +145,7 @@ export async function syncTripChatMembers(
   // id. Refusing is the only answer supported by a read that did not happen.
   const { data: tripMembers, error: tripMembersErr } = await sc
     .from('trip_members')
-    .select('user_id')
+    .select('user_id, role, status')
     .eq('trip_id', tripId)
     .in('role', ['owner', 'member']);
 
@@ -156,7 +156,7 @@ export async function syncTripChatMembers(
     );
   }
 
-  const acceptedIds = new Set(((tripMembers ?? []) as any[]).map((m) => m.user_id as string));
+  const acceptedRows = ((tripMembers ?? []) as any[]).filter(isAcceptedTripRow); const acceptedIds = new Set(acceptedRows.map((m) => m.user_id as string)); const threadRoleOf = new Map(acceptedRows.map((m) => [m.user_id as string, tripChatThreadRole(String(m.role))])); // follow-up hotfix 2026-10-24: accepted crew only; the owner is the thread's admin
 
   // A genuinely empty accepted set. Distinct from the refusal above: the read
   // succeeded and the trip really has nobody left to reconcile.
@@ -184,7 +184,7 @@ export async function syncTripChatMembers(
   const upsertRows = [...acceptedIds].map((userId) => ({
     thread_id: threadId,
     user_id: userId,
-    role: 'member',
+    role: threadRoleOf.get(userId) ?? 'member',
     joined_at: now,
     left_at: null,
   }));
@@ -415,3 +415,4 @@ export async function syncCircleChatMembers(
 
   return threadId;
 }
+import { isAcceptedTripRow, tripChatThreadRole } from '../lib/chatSync.js'; // follow-up hotfix 2026-10-24; at the foot so no cited line moves

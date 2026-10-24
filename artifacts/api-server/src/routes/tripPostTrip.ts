@@ -104,7 +104,7 @@ router.post("/trips/:tripId/closeout/answers", asyncHandler(async (req, res) => 
       outcome_type: parsed.data.answer, plan_id: String(plan.id), occurred_at: occurredAt,
       evidence_json: { source: "closeout_answer", question, answered_by: ctx.userId, plan_status_at_answer: plan.status ?? null },
     },
-    correlationId: `closeout:${ctx.tripId}`,
+    correlationId: tripCorrelationId(`closeout:${ctx.tripId}`), // census-trips hotfix 2026-10-24: a uuid, derived from the label
   });
   if (!result.ok) {
     log.warn({ tripId: ctx.tripId, reason: result.reason, detail: result.detail }, "closeout answer refused");
@@ -116,3 +116,4 @@ router.post("/trips/:tripId/closeout/answers", asyncHandler(async (req, res) => 
 }));
 
 export default router;
+import { tripCorrelationId } from "../domain/trips/commands/tripKernel.js"; // census-trips hotfix 2026-10-24; at the foot so no cited line moves

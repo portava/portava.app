@@ -77,7 +77,7 @@ describe("§13 buildTripOpportunityProjection — the eight inputs from the trip
     assert.equal(p.windows.length, 2);
     assert.deepEqual(p.windows[0].executable, []); assert.equal(p.windows[0].candidates, 0);
     assert.ok(p.event); assert.equal(p.event.trigger, "initial"); assert.equal(p.event.significance, "low");
-    assert.equal(p.notify.wouldNotify, false); assert.equal(p.recorded.skipped, "trip_kernel_enabled is false");
+    assert.equal(p.notify.wouldNotify, false); assert.equal(p.recorded.skipped, READ_PATH_NOT_ISSUED);
     assert.deepEqual(p.sources, { savedIdeas: 0, intelSnapshots: "none", goals: 0, participants: 2, origin: "window" });
     const d = readTripDecision(p.decisionId); assert.ok(d && d.type === "opportunity_projection");
   });
@@ -118,13 +118,13 @@ describe("§13 buildTripOpportunityProjection — the eight inputs from the trip
     assert.deepEqual(rain.projection.windows[0].executable.map((e) => e.candidateId), ["meetup"]);
     assert.equal(rain.projection.notify.kind, "plan_invalidated"); assert.equal(rain.projection.notify.wouldNotify, true); assert.equal(rain.projection.notify.level, "NOTIFY");
   });
-  it("with trip_kernel_enabled on, a significant change is RECORDED through the kernel with a diff-derived idempotency key; the same diff again is a duplicate; a refusal is reported, not hidden", async () => {
+  it("with trip_kernel_enabled on, the BUILD issues no kernel command at all (a read must not move trips.version); the change is reported, and recordOpportunityChange records it with a diff-derived key, a duplicate on the same diff, a refusal reported", async () => {
     const tables = base(); tables.trip_saved_places = [saved("park")];
     tables.feature_flags = [...tables.feature_flags, { flag: "trip_kernel_enabled", enabled: true }];
     const calls: Row[] = [];
-    // With the kernel flag on, the freedom projection issues its own derived
-    // events (OPEN_FREE_WINDOW) through the same rpc, so the fake is a real
-    // receipt table: a duplicate is a key it has seen, nothing else.
+    // Follow-up hotfix (2026-10-24): neither this projection nor the freedom
+    // projection under it issues anything from a build, so a fake that counts
+    // every rpc must see none. The issuer is then called directly.
     const seen = new Set<string>();
     const c = withRpc(makeClient(withStages(tables)), async (fn, args) => {
       if (fn !== "trip_kernel_execute") return { data: null, error: null };
@@ -136,18 +136,18 @@ describe("§13 buildTripOpportunityProjection — the eight inputs from the trip
     const opp = () => calls.filter((x) => x.cmd.type === "RECORD_OPPORTUNITY_CHANGE");
     const r1 = await buildTripOpportunityProjection(c as any, TRIP_ID, OWNER_ID, { now: NOW });
     assert.ok(r1.ok, JSON.stringify(r1));
-    assert.deepEqual(r1.projection.recorded, { issued: true, duplicate: false, skipped: null, failed: null });
-    assert.equal(opp().length, 1);
-    const cmd = opp()[0].cmd;
+    assert.deepEqual(r1.projection.recorded, { issued: false, duplicate: false, skipped: READ_PATH_NOT_ISSUED, failed: null });
+    assert.equal(calls.length, 0, `a read issued ${calls.map((x) => x.cmd.type).join(", ")}`);
+    const w1 = await recordOpportunityChange(c, TRIP_ID, r1.projection.event!, NOW.toISOString()); assert.deepEqual(w1, { issued: true, duplicate: false, skipped: null, failed: null }); const cmd = opp()[0].cmd;
     assert.match(cmd.idempotency_key, /^engine:opportunity:aaaaaaaa/); assert.equal(cmd.actor_role, "system"); assert.equal(cmd.actor_user_id, null);
     assert.equal(cmd.payload.significance, "medium"); assert.equal(cmd.payload.window_id, "fw:A:B"); assert.equal(cmd.payload.added.length, 1);
-    // second run: the portfolio is unchanged, so no event is issued at all
-    const r2 = await buildTripOpportunityProjection(c as any, TRIP_ID, OWNER_ID, { now: NOW });
-    assert.ok(r2.ok); assert.equal(r2.projection.recorded.skipped, "no change"); assert.equal(opp().length, 1);
+    // the same diff recorded again is a duplicate at the receipt, not a second event
+    const w2 = await recordOpportunityChange(c, TRIP_ID, r1.projection.event!, NOW.toISOString());
+    assert.deepEqual([w2.issued, w2.duplicate], [false, true]); assert.equal(opp().length, 2);
     _resetOpportunityPortfolios(); _resetTripDecisionLedger();
     const refusing = withRpc(makeClient(withStages(tables)), async () => ({ data: { ok: false, reason: "TRIP_COMMAND_UNKNOWN_TYPE", contract_version: 2 }, error: null }));
-    const r3 = await buildTripOpportunityProjection(refusing as any, TRIP_ID, OWNER_ID, { now: NOW });
-    assert.ok(r3.ok); assert.equal(r3.projection.recorded.failed, "TRIP_COMMAND_UNKNOWN_TYPE");
+    const w3 = await recordOpportunityChange(refusing, TRIP_ID, r1.projection.event!, NOW.toISOString());
+    assert.equal(w3.failed, "TRIP_COMMAND_UNKNOWN_TYPE");
   });
   it("§17.2: a major disruption suppresses the executable list, by name, and nothing would be notified", async () => {
     const tables = base(); tables.trip_saved_places = [saved("park")];
@@ -400,3 +400,6 @@ describe("2783 — opportunities read the viewer's goals: shared, and their own 
     assert.equal(member.projection.sources.goals, 2);
   });
 });
+// follow-up hotfix 2026-10-24 — appended so no cited line above moves; ESM hoists the imports.
+import { recordOpportunityChange } from "../domain/trips/projections/TripOpportunityProjection.js";
+import { READ_PATH_NOT_ISSUED } from "../domain/trips/events/tripDerivedEvents.js";
