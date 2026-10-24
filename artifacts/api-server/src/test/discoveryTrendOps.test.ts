@@ -311,3 +311,121 @@ describe("G — DV-80: the two monitors defined and measured; bounds only propos
     assert.deepEqual(scan.filter((f) => f !== "lib/discoveryEcosystemBounds.ts" && /discoveryEcosystemBounds\.js/.test(readFileSync(join(SRC, f), "utf8"))), []);
   });
 });
+
+// ── census-discovery §133 (DV-28 …): 3920's canonical producer and context ──
+//
+//   K1  the scheduler: 3920's flag absent, OFF or unreadable → rebuild_place_momentum,
+//       exactly as before; TRUE → rebuild_place_momentum_canonical, once
+//   K2  the in-process context: flag OFF, absent or unreadable → no `places` read
+//       at all and the discovery_places context alone (byte for byte)
+//   K3  flag ON: the candidates no discovery_places row shadows are read from
+//       `places` (active, unmerged), mapped as 3920's SQL maps them
+//   K4  a failed or throwing `places` read is an unread context (null), never a
+//       context without the served places
+//   K5  wired: the loader and the scheduler both import and call it
+describe("K — §133: the trend context keys the places Discovery serves (3920, behind its flag)", () => {
+  type Rows = Record<string, unknown>[];
+  function ctxDb(flag: boolean | "error" | "absent", data: { dp?: Rows; places?: Rows | "error" | "throw" } = {}) {
+    const log: string[] = [];
+    return {
+      log,
+      from(table: string) {
+        const f: string[] = [];
+        let flagName = "";
+        const b: any = {
+          select(s: string) { f.push(`select ${s}`); return b; },
+          eq(c: string, v: unknown) { if (c === "flag") flagName = String(v); f.push(`eq ${c}=${String(v)}`); return b; },
+          neq(c: string, v: unknown) { f.push(`neq ${c}=${String(v)}`); return b; },
+          in(c: string, v: unknown[]) { f.push(`in ${c}=${v.join("|")}`); return b; },
+          is(c: string, v: unknown) { f.push(`is ${c}=${String(v)}`); return b; },
+          maybeSingle() {
+            log.push(`${table}:${flagName}`);
+            if (flagName !== "discovery_trend_canonical_place_context_enabled") return Promise.resolve({ data: { enabled: false }, error: null });
+            if (flag === "error") return Promise.resolve({ data: null, error: { message: "boom" } });
+            return Promise.resolve({ data: flag === "absent" ? null : { enabled: flag }, error: null });
+          },
+          then(res: (v: unknown) => unknown, rej: (e: unknown) => unknown) {
+            log.push(`${table}:${f.join(";")}`);
+            if (table === "discovery_places") return Promise.resolve({ data: data.dp ?? [], error: null }).then(res, rej);
+            if (table === "places") {
+              if (data.places === "throw") return Promise.reject(new Error("socket")).then(res, rej);
+              if (data.places === "error") return Promise.resolve({ data: null, error: { code: "57014", message: "timeout" } }).then(res, rej);
+              return Promise.resolve({ data: data.places ?? [], error: null }).then(res, rej);
+            }
+            return Promise.resolve({ data: [], error: null }).then(res, rej);
+          },
+        };
+        return b;
+      },
+    };
+  }
+  const ID_DP = "00000000-0000-4000-8000-0000000000d1";
+  const ID_CANON = "00000000-0000-4000-8000-0000000000c1";
+  const ID_BOTH = "00000000-0000-4000-8000-0000000000b1";
+  const DP: Rows = [
+    { id: ID_DP, submitted_by: "11111111-1111-4111-8111-111111111111", city: "Da Nang", neighborhood: "An Thuong", lat: 16.05, lng: 108.24, created_at: "2026-01-01T00:00:00Z", category: "cafe", place_type: "venue" },
+    { id: ID_BOTH, submitted_by: null, city: "Da Nang", neighborhood: null, lat: 16.06, lng: 108.25, created_at: "2026-01-01T00:00:00Z", category: "bar", place_type: "venue" },
+  ];
+  const CANON: Rows = [{ id: ID_CANON, city: "Da Nang", neighborhood: "an thuong", latitude: 16.051, longitude: 108.241, created_at: "2026-02-01T00:00:00Z", primary_category: "temple" }];
+  const items = [`db/${ID_DP}`, `db/${ID_CANON}`, `db/${ID_BOTH}`];
+
+  it("K1. the scheduler calls the canonical rebuild only while 3920's flag reads TRUE", async () => {
+    for (const [f, want] of [[undefined, "rebuild_place_momentum"], [{ enabled: false }, "rebuild_place_momentum"], ["error", "rebuild_place_momentum"],
+      [{ enabled: true }, "rebuild_place_momentum_canonical"]] as const) {
+      const flags: Record<string, unknown> = { discovery_trend_rebuild_scheduler_enabled: { enabled: true } };
+      if (f !== undefined) flags["discovery_trend_canonical_place_context_enabled"] = f;
+      const db = schedDb(flags as never);
+      _setTestClient(db);
+      const r = await runTrendRebuildTick(NOW);
+      assert.equal(r.status, "ran", JSON.stringify(f));
+      assert.deepEqual(db.calls, [`rpc:${want}:2026-09-27T12:00:00.000Z`], JSON.stringify(f));
+    }
+  });
+
+  it("K2. flag OFF, absent or unreadable: no `places` read, and the discovery_places context alone", async () => {
+    const expected = buildPlaceTrendContext(DP as never, []);
+    for (const flag of [false, "absent", "error"] as const) {
+      const db = ctxDb(flag, { dp: DP, places: CANON });
+      const c = await loadTrendContext(db, items);
+      assert.deepEqual(c, expected, String(flag));
+      assert.ok(!db.log.some((l) => l.startsWith("places:select")), `${String(flag)}: ${db.log.join(" | ")}`);
+    }
+  });
+
+  it("K3. flag ON: the unshadowed candidates are read from `places` (active, unmerged) and mapped as 3920 maps them", async () => {
+    const db = ctxDb(true, { dp: DP, places: CANON });
+    const c = await loadTrendContext(db, items);
+    const read = db.log.filter((l) => l.startsWith("places:select"));
+    assert.equal(read.length, 1);
+    assert.equal(read[0], `places:select ${CANONICAL_CONTEXT_PLACES_SELECT};in id=${ID_CANON};eq status=active;is merged_into_place_id=null`,
+      "only the id no discovery_places row shadows; the materialiser's status and merge filters");
+    assert.deepEqual(c, buildPlaceTrendContext([...(DP as never[]), canonicalContextPlaceRow(CANON[0]!)], []));
+    const k = c![ID_CANON]!;
+    assert.equal(k.cellKey, "n:da nang:an thuong", "the served place has its neighbourhood cell");
+    assert.equal(k.cellLabel, "An Thuong", "shared with the discovery_places row in it");
+    assert.equal(k.creatorId, null, "no submitter column: no creator, never inferred");
+    assert.equal(k.contentClass, "enduring");
+    assert.equal(c![ID_BOTH]!.contentClass, "standard", "a shadowed id keeps its discovery_places row");
+    assert.deepEqual(canonicalContextPlaceRow({ id: "x", latitude: "16", longitude: null }), {
+      id: "x", submitted_by: null, city: null, neighborhood: null, lat: null, lng: null, created_at: null, category: null, place_type: null,
+    }, "a non-number coordinate is no coordinate");
+  });
+
+  it("K4. a failed or throwing `places` read is an unread context, never one without the served places", async () => {
+    for (const places of ["error", "throw"] as const) assert.equal(await loadTrendContext(ctxDb(true, { dp: DP, places }), items), null, places);
+  });
+
+  it("K5. wired: the loader and the scheduler both reach it", () => {
+    const loader = readFileSync(join(SRC, "lib/discoveryLocalMomentum.ts"), "utf8");
+    assert.match(loader, /const canonical = await loadCanonicalContextRows\(sc, ids, places\.data as ContextPlaceRow\[\]\); if \(canonical === null\) return null;/);
+    assert.match(loader, /return buildPlaceTrendContext\(\[\.\.\.\(places\.data as ContextPlaceRow\[\]\), \.\.\.canonical\], memberships\);/);
+    const sched = readFileSync(join(SRC, "lib/discoveryTrendRebuildScheduler.ts"), "utf8");
+    assert.match(sched, /\(await isFlagEnabled\(sc, "discovery_trend_canonical_place_context_enabled"\)\) \? await sc\.rpc\("rebuild_place_momentum_canonical"/);
+    const mig = readFileSync(join(SRC, "migrations/3920_discovery_trend_canonical_place_context.sql"), "utf8");
+    assert.match(mig, /\(\s*'discovery_trend_canonical_place_context_enabled',\s*false,/, "seeded FALSE");
+    assert.match(mig, /ON CONFLICT \(flag\) DO NOTHING;/);
+  });
+});
+import { loadTrendContext } from "../lib/discoveryLocalMomentum.js";
+import { buildPlaceTrendContext } from "../lib/discoveryTrendNormalised.js";
+import { canonicalContextPlaceRow, CANONICAL_CONTEXT_PLACES_SELECT } from "../lib/discoveryTrendCanonicalContext.js";

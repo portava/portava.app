@@ -114,6 +114,7 @@ export const STARTED_SCHEDULERS: readonly SchedulerRow[] = [
   { start: "startPlaceDayLifecycleWorker" },
   { start: "startPostPlaceBackfillWorker" },
   { start: "startPushRetryWorker" },
+  { start: "startRankingDebugSamplePurgeScheduler", reportedAs: ["rankingDebugSamplePurge"], persists: ["rankingDebugSamplePurge"] }, // census-discovery §133 (DV-52): reports and writes job_health, so the 45 holds and 68 are started
   { start: "startRankingFatigueSweeper" },
   { start: "startSafeReturnScheduler" }, { start: "startSafetySignalRedriveScheduler", reportedAs: ["safetySignalRedrive"], persists: ["safetySignalRedrive"] }, // Fable pass 3 §1.1: reports and writes job_health, so the 45 holds; line-neutral
   { start: "startSensingPublicationScheduler" },

@@ -617,7 +617,7 @@ class GraphBatch {
     } else {
       this.edges.set(k, { rec: obs, count: 1, first: at, last: at, days: new Set(at ? [at.slice(0, 10)] : []) });
     }
-  }
+  } edgeObserved(obs: EdgeObs, o: BehaviorObservation) { mergeObservedEdge(this.edges, obs, o); }   // census-discovery §133 (DV-51): one aggregated row stands for o.count raw observations; on this line so no cited line moves
 }
 
 /**
@@ -835,21 +835,21 @@ export async function buildGraphFromSources(
 
   // 5. Rank events funnel → person —behavior:{outcome}→ item
   try {
-    const { data } = await db
-      .from("rank_events")
-      .select("user_id, item_id, item_kind, outcome, served_at")
+    const { data } = await readBehaviorObservations(() => db   // census-discovery §133 (DV-51): 3921's view, EVERY (viewer, item, outcome), paged to the end — never a sample
+      .from("graph_behavior_observations")
+      .select("user_id, item_id, outcome, item_kind, observations, first_at, last_at, days, obs_key")
       .neq("outcome", "impression")
-      .limit(BUILD_LIMIT);
+      .order("obs_key", { ascending: true }));
     for (const r of (data as any[]) ?? []) {
       if (!r.user_id || !r.item_id || !r.outcome) continue;
-      const at = r.served_at ? String(r.served_at) : null;
+      const at = r.first_at ? String(r.first_at) : null;   // the edge's first observation; its count, last and days are the row's (edgeObserved)
       batch.node("person", String(r.user_id));
       batch.node("behavior", String(r.outcome));
-      batch.edge({
+      batch.edgeObserved({
         src_type: "person", src_key: String(r.user_id),
         dst_type: "place", dst_key: String(r.item_id),
         edge_type: `behavior:${r.outcome}`, at, attrs: { item_kind: r.item_kind ?? null },
-      });
+      }, behaviorObservationOf(r));
     }
   } catch { /* fail-soft */ }
 
@@ -2411,9 +2411,9 @@ const supportReads = {
   compass_outcome_events: (db: SupabaseClient) => db
     .from("compass_outcome_events")
     .select("user_id, item_id, item_type, stage, occurred_at"),
-  rank_events: (db: SupabaseClient) => db
-    .from("rank_events")
-    .select("user_id, item_id, item_kind, outcome, served_at")
+  graph_behavior_observations: (db: SupabaseClient) => db   // census-discovery §133 (DV-51): 3921's view — one complete row per (viewer, item, outcome), however many raw rows
+    .from("graph_behavior_observations")
+    .select("user_id, item_id, outcome, item_kind, observations, first_at, last_at, days, obs_key")
     .neq("outcome", "impression"),
   circles: (db: SupabaseClient) => circleSourceRows(db),
   // §47: the same two literal reads as the build, in the same order, chosen by the same gate.
@@ -2503,7 +2503,7 @@ async function replayBuild(rows: Partial<Record<GraphSourceTable, SupportRow[]>>
       select: () => q,
       eq: (k: string, v: unknown) => { data = data.filter((r) => r[k] === v); return q; },
       neq: (k: string, v: unknown) => { data = data.filter((r) => r[k] !== v); return q; },
-      limit: () => q,
+      limit: () => q, order: () => q, range: (a: number, b: number) => { data = data.slice(a, b + 1); return q; },   // §133 (DV-51): the build pages the behaviour view; served rows are already in obs_key order
       upsert: (p: SupportRow | SupportRow[]) => { written = Array.isArray(p) ? p : [p]; return q; },
       then: (ok?: (v: unknown) => unknown, bad?: (e: unknown) => unknown) => Promise.resolve(run()).then(ok, bad),
     };
@@ -2724,8 +2724,8 @@ export async function reconcileEdgeSupport(db: SupabaseClient, opts: { decay?: G
   }
   for (const chunk of chunked(edgesOf("behavior"), SUPPORT_ANCHOR_CHUNK)) {
     const users = [...new Set(chunk.map((e) => e.src_key))], items = [...new Set(chunk.map((e) => e.dst_key))];
-    const ranked = await readAllPages(() => supportReads.rank_events(db).in("user_id", users).in("item_id", items), SUPPORT_ANCHOR_PAGES);
-    judge(chunk, await replayIf({ rank_events: ranked }));
+    const ranked = await readAllPages(() => supportReads.graph_behavior_observations(db).in("user_id", users).in("item_id", items), SUPPORT_ANCHOR_PAGES, "obs_key");   // §133 (DV-51): aggregated, so a chunk is ≤ pairs × outcomes rows and completes
+    judge(chunk, await replayIf({ graph_behavior_observations: ranked }));
   }
 
   // ── Unanchored: city_rhythm, from a COMPLETE read of every source it has ───
@@ -2954,4 +2954,103 @@ async function rewriteDecayedWeights(db: SupabaseClient, weights: ReadonlyMap<st
     }
   }
   return { written, failed };
+}
+
+// ── census-discovery §133 (DV-51): the behaviour family, read complete ──────
+//
+// The build read `rank_events … .limit(5000)` — an unordered sample of 175,136
+// production rows (2026-10-23), so newer behaviour never reached the graph —
+// and the reconcile re-read the same raw rows per 100-pair chunk under a
+// 10,000-row cap, which the 383 production behaviour edges (171,336 rows)
+// always exceeded: the family was undecided, so a stale intent edge never
+// decayed or retired. Both now read 3921's view, one row per (viewer, item,
+// outcome) carrying the count, first/last observation and distinct UTC days,
+// paged to the end. An incomplete read writes NO behaviour edge (never a
+// partial sample); the reconcile's chunk is ≤ pairs × outcomes rows, so it
+// completes and is judged. Appended at the foot: anchored citations point into
+// this file by line.
+
+/** 3921's view. Also the supportReads key, so the replay serves it by this name. */
+export const GRAPH_BEHAVIOR_VIEW = "graph_behavior_observations";
+export const GRAPH_BEHAVIOR_COLUMNS = "user_id, item_id, outcome, item_kind, observations, first_at, last_at, days, obs_key";
+
+/** One aggregated (viewer, item, outcome): what `GraphBatch.edge` would have accumulated over its raw rows. */
+export interface BehaviorObservation { count: number; first: string | null; last: string | null; days: readonly string[] }
+
+export function behaviorObservationOf(r: any): BehaviorObservation {
+  const n = Number(r?.observations);
+  return {
+    count: Number.isFinite(n) && n > 0 ? Math.floor(n) : 0,
+    first: r?.first_at ? String(r.first_at) : null,
+    last: r?.last_at ? String(r.last_at) : null,
+    days: Array.isArray(r?.days) ? r.days.map((d: unknown) => String(d)) : [],
+  };
+}
+
+function mergeObservedEdge(
+  edges: Map<string, { rec: EdgeObs; count: number; first: string | null; last: string | null; days: Set<string> }>,
+  obs: EdgeObs, o: BehaviorObservation,
+): void {
+  if (o.count <= 0) return;
+  const k = `${obs.src_type}|${obs.src_key}|${obs.dst_type}|${obs.dst_key}|${obs.edge_type}`;
+  const cur = edges.get(k);
+  if (!cur) { edges.set(k, { rec: obs, count: o.count, first: o.first, last: o.last, days: new Set(o.days) }); return; }
+  cur.count += o.count;
+  for (const d of o.days) cur.days.add(d);
+  if (o.first && (!cur.first || o.first < cur.first)) cur.first = o.first;
+  if (o.last && (!cur.last || o.last > cur.last)) cur.last = o.last;
+}
+
+/** Every page of the behaviour view, or `data: null` when any page failed or the bound was reached — never a partial set. */
+export const BEHAVIOR_READ_PAGES = 200;   // 100,000 aggregated rows
+async function readBehaviorObservations(build: () => any): Promise<{ data: any[] | null }> {
+  const out: any[] = [];
+  for (let page = 0; page < BEHAVIOR_READ_PAGES; page++) {
+    const from = page * SUPPORT_PAGE;
+    const res = await build().range(from, from + SUPPORT_PAGE - 1);
+    if (res?.error || !Array.isArray(res?.data)) {
+      logger.warn({ err: res?.error }, "compass graph: behaviour observations unreadable — no behaviour edge written this pass");
+      return { data: null };
+    }
+    out.push(...res.data);
+    if (res.data.length < SUPPORT_PAGE) return { data: out };
+  }
+  logger.warn({ pages: BEHAVIOR_READ_PAGES }, "compass graph: behaviour observations exceed the read bound — no behaviour edge written this pass");
+  return { data: null };
+}
+
+/**
+ * The view, in TypeScript: what 3921 answers over these raw `rank_events` rows
+ * (pinned against PostgreSQL by db/graphBehaviorObservations.db.test.ts). Test
+ * fakes serve the view through it, so a fake can never hand the build a sample.
+ */
+export function graphBehaviorObservationsOf(rows: ReadonlyArray<{ id?: unknown; user_id?: unknown; item_id?: unknown; item_kind?: unknown; outcome?: unknown; served_at?: unknown }>): Array<Record<string, unknown>> {
+  const groups = new Map<string, Array<(typeof rows)[number]>>();
+  for (const r of rows) {
+    if (r.user_id == null || r.item_id == null || r.outcome == null) continue;
+    const key = `${String(r.user_id)}|${String(r.item_id)}|${String(r.outcome)}`;
+    const g = groups.get(key); if (g) g.push(r); else groups.set(key, [r]);
+  }
+  const ms = (v: unknown) => (v == null ? NaN : Date.parse(String(v)));
+  const out: Array<Record<string, unknown>> = [];
+  for (const [key, g] of groups) {
+    const timed = g.filter((r) => Number.isFinite(ms(r.served_at)));
+    const earliest = [...g].sort((a, b) => {
+      const ta = ms(a.served_at), tb = ms(b.served_at);
+      if (Number.isFinite(ta) !== Number.isFinite(tb)) return Number.isFinite(ta) ? -1 : 1;
+      if (Number.isFinite(ta) && ta !== tb) return ta - tb;
+      return String(a.id ?? "") < String(b.id ?? "") ? -1 : String(a.id ?? "") > String(b.id ?? "") ? 1 : 0;
+    })[0]!;
+    const sorted = timed.map((r) => ms(r.served_at)).sort((a, b) => a - b);
+    out.push({
+      user_id: String(g[0]!.user_id), item_id: String(g[0]!.item_id), outcome: String(g[0]!.outcome),
+      item_kind: earliest.item_kind ?? null,
+      observations: g.length,
+      first_at: sorted.length ? new Date(sorted[0]!).toISOString() : null,
+      last_at: sorted.length ? new Date(sorted[sorted.length - 1]!).toISOString() : null,
+      days: [...new Set(sorted.map((t) => new Date(t).toISOString().slice(0, 10)))].sort(),
+      obs_key: key,
+    });
+  }
+  return out.sort((a, b) => (String(a.obs_key) < String(b.obs_key) ? -1 : String(a.obs_key) > String(b.obs_key) ? 1 : 0));
 }

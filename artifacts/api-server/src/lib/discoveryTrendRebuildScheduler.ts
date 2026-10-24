@@ -93,7 +93,7 @@ export async function runTrendRebuildTick(nowMs: number = Date.now()): Promise<T
       logger.info({ pNow, reason: privacyBlock, pruned }, "DiscoveryTrendRebuildScheduler: rebuild withheld");
       return { status: "skipped", reason: privacyBlock, pruned };
     }
-    const { data, error } = await sc.rpc("rebuild_place_momentum", { p_now: pNow });
+    const { data, error } = (await isFlagEnabled(sc, "discovery_trend_canonical_place_context_enabled")) ? await sc.rpc("rebuild_place_momentum_canonical", { p_now: pNow }) : await sc.rpc("rebuild_place_momentum", { p_now: pNow });  // §133: 3920's producer over the served places, only while its flag reads TRUE
     if (error) {
       logger.warn({ code: error?.code, message: error?.message, pNow }, "DiscoveryTrendRebuildScheduler: rebuild failed");
       return { status: "failed", reason: String(error?.code ?? error?.message ?? "rpc_error"), pNow };
