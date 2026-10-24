@@ -325,22 +325,36 @@ describe("L196 crew expiry scheduler — start/stop", () => {
   });
 });
 
-// ── 3952 (census-layover §84): deleting is the owner's press; the DELETE re-checks and counts ─────
+// ── 3952 (census-layover §84, corrected 2026-10-24): only the owner's explicit OFF stops deletion ─────
+// Owner directive (2026-10-24): "Do NOT expand retention without authorization." Production deleted expired crews at
+// expires_at before 3952, so TRUE (the seed), absent and unreadable keep deleting; OFF = retention extended, only by
+// explicit owner action.
 
-describe("L196 crew expiry — 3952: the owner's press, and a DELETE that re-checks the expiry and counts what it removed", () => {
-  for (const [label, flag] of [["OFF", false], ["absent", null], ["unreadable", "unreadable"]] as const) {
-    it(`flag ${label}: refused \`disabled\`, no probe, no read, no DELETE — and not a failure`, async () => {
+describe("L196 crew expiry — 3952: OFF = retention extended, only by explicit owner action; every other state deletes at expiry", () => {
+  for (const [label, flag] of [["TRUE (the seed)", true], ["absent", null], ["unreadable", "unreadable"]] as const) {
+    it(`flag ${label}: expired crews are deleted, and only expired ones — an unknown flag never silently stops deletion`, async () => {
       _resetLayoverCrewExpiryFailureState();
-      const c = client({ present: true, expired: [{ id: "c1" }], flag });
+      const c = client({ present: true, expired: [{ id: "c1" }, { id: "c2" }], flag });
       const r = await runLayoverCrewExpirySweep({ client: c as any, now: NOW });
-      assert.deepEqual(r, { outcome: "refused", reason: "disabled", deleted: 0, complete: false });
+      assert.equal(r.outcome, "swept", JSON.stringify(r));
+      assert.equal(r.deleted, 2);
       assert.equal(c.state.flagReads, 1);
-      assert.equal(c.state.probes, 0, "no statement against layover_crews while the press is not ON");
-      assert.deepEqual(c.state.deletes, []);
-      await runLayoverCrewExpiryTick({ client: client({ present: true, flag }) as any, now: NOW });
-      assert.equal(layoverCrewExpiryFailureState().consecutiveFailures, 0);
+      assert.deepEqual(c.state.deletes, [["c1", "c2"]]);
+      assert.deepEqual(c.state.deleteCutoffs, c.state.cutoffs, "only rows past expires_at: the DELETE re-checks the read's cutoff");
     });
   }
+
+  it("flag explicitly FALSE: refused `disabled`, no probe, no read, no DELETE — and not a failure (OFF = retention extended, only by explicit owner action)", async () => {
+    _resetLayoverCrewExpiryFailureState();
+    const c = client({ present: true, expired: [{ id: "c1" }], flag: false });
+    const r = await runLayoverCrewExpirySweep({ client: c as any, now: NOW });
+    assert.deepEqual(r, { outcome: "refused", reason: "disabled", deleted: 0, complete: false });
+    assert.equal(c.state.flagReads, 1);
+    assert.equal(c.state.probes, 0, "no statement against layover_crews once the owner turned the sweep OFF");
+    assert.deepEqual(c.state.deletes, []);
+    await runLayoverCrewExpiryTick({ client: client({ present: true, flag: false }) as any, now: NOW });
+    assert.equal(layoverCrewExpiryFailureState().consecutiveFailures, 0);
+  });
 
   it("the DELETE carries the same expiry predicate as the read: a crew whose expiry moved forward is not removed", async () => {
     const c = client({ present: true, expired: [{ id: "c1" }, { id: "c2" }] });
@@ -354,10 +368,11 @@ describe("L196 crew expiry — 3952: the owner's press, and a DELETE that re-che
     assert.equal(r.deleted, 0);
   });
 
-  it("3952 seeds layover_crew_expiry_enabled FALSE, and the gate is read BEFORE the probe", () => {
+  it("3952 seeds layover_crew_expiry_enabled TRUE, and the gate stops ONLY on an explicit FALSE, read BEFORE the probe", () => {
     const sql = readFileSync(new URL("../migrations/3952_layover_presence_crew_expiry_flags.sql", import.meta.url), "utf8");
-    assert.match(sql, /'layover_crew_expiry_enabled',\s*false,/);
+    assert.match(sql, /'layover_crew_expiry_enabled',\s*true,/);
+    assert.match(sql, /OFF = retention extended, only by explicit owner action/);
     const src = readFileSync(new URL("../lib/layoverCrewExpiryScheduler.ts", import.meta.url), "utf8");
-    assert.match(src, /if \(!\(await isFlagEnabled\(db, "layover_crew_expiry_enabled"\)\)\) return refused\("disabled"\); if \(!\(await crewTablesPresent\(db\)\)\) return refused\("tables_absent"\);/);
+    assert.match(src, /if \(\(await readFlagState\(db, "layover_crew_expiry_enabled"\)\) === "off"\) return refused\("disabled"\); if \(!\(await crewTablesPresent\(db\)\)\) return refused\("tables_absent"\);/);
   });
 });

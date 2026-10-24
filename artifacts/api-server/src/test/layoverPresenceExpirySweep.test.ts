@@ -204,40 +204,44 @@ function on(t: Record<string, any[]>, enabled: boolean | null = true): Record<st
   return t;
 }
 
-describe("L196 presence — 3952: deleting expired presence is the owner's press (seeded FALSE)", () => {
+describe("L196 presence — 3952: OFF = retention extended, only by explicit owner action; every other state deletes at expiry", () => {
   beforeEach(() => _resetLayoverPresenceExpiryFailureState());
+  // Owner directive (2026-10-24): "Do NOT expand retention without authorization." Production deleted expired presence
+  // at expires_at before 3952, so TRUE (the seed), absent and unreadable keep deleting.
 
-  for (const [label, enabled] of [["OFF", false], ["absent", null]] as const) {
-    it(`flag ${label}: refused \`disabled\`, NOTHING is issued against layover_presence, the expired row stays, and it is not a failure`, async () => {
-      const t: Record<string, any[]> = on({ layover_presence: [presence("s-expired", -600)] }, enabled);
-      const { db, ops } = recorded(t);
+  for (const [label, enabled, failures] of [["TRUE (the seed)", true, undefined], ["absent", null, undefined], ["unreadable", true, { "feature_flags:select": { message: "down" } }]] as const) {
+    it(`flag ${label}: the expired row is deleted and the live one kept — an unknown flag never silently stops deletion`, async () => {
+      const t: Record<string, any[]> = on({ layover_presence: [presence("s-expired", -600), presence("s-live", 30)] }, enabled);
+      const { db, ops } = recorded(t, failures ? { failures } : {});
       const out = await runLayoverPresenceExpirySweep({ client: db, now: NOW });
-      assert.deepEqual(out, { outcome: "refused", reason: "disabled", deleted: 0, complete: false });
-      assert.deepEqual(ops, ["feature_flags:select"], "the flag read, and no statement on the table");
-      assert.equal(t.layover_presence.length, 1);
-      await runLayoverPresenceExpiryTick({ client: makeLayoverDb(t), now: NOW });
-      assert.deepEqual(layoverPresenceExpiryFailureState(), { consecutiveFailures: 0, lastError: null });
+      assert.equal(out.outcome, "swept", JSON.stringify(out));
+      assert.equal(out.deleted, 1);
+      assert.deepEqual(t.layover_presence.map((r) => r.session_id), ["s-live"], "only the expired row goes");
+      assert.equal(ops[0], "feature_flags:select", "the flag is read first");
     });
   }
 
-  it("flag unreadable: OFF (fail closed), and no statement on the table", async () => {
-    const t: Record<string, any[]> = on({ layover_presence: [presence("s-expired", -600)] });
-    const { db, ops } = recorded(t, { failures: { "feature_flags:select": { message: "down" } } });
+  it("flag explicitly FALSE: refused `disabled`, NOTHING is issued against layover_presence, the expired row stays, and it is not a failure (OFF = retention extended, only by explicit owner action)", async () => {
+    const t: Record<string, any[]> = on({ layover_presence: [presence("s-expired", -600)] }, false);
+    const { db, ops } = recorded(t);
     const out = await runLayoverPresenceExpirySweep({ client: db, now: NOW });
-    assert.equal(out.reason, "disabled");
-    assert.deepEqual(ops, ["feature_flags:select"]);
+    assert.deepEqual(out, { outcome: "refused", reason: "disabled", deleted: 0, complete: false });
+    assert.deepEqual(ops, ["feature_flags:select"], "the flag read, and no statement on the table");
     assert.equal(t.layover_presence.length, 1);
+    await runLayoverPresenceExpiryTick({ client: makeLayoverDb(t), now: NOW });
+    assert.deepEqual(layoverPresenceExpiryFailureState(), { consecutiveFailures: 0, lastError: null });
   });
 
-  it("3952 seeds the flag FALSE and asserts it ships OFF", () => {
+  it("3952 seeds the flag TRUE, overwrites no operator's row, and says what OFF means", () => {
     const sql = readFileSync(new URL("../migrations/3952_layover_presence_crew_expiry_flags.sql", import.meta.url), "utf8");
-    assert.match(sql, /'layover_presence_expiry_enabled',\s*false,/);
+    assert.match(sql, /'layover_presence_expiry_enabled',\s*true,/);
     assert.match(sql, /ON CONFLICT \(flag\) DO NOTHING/);
-    assert.match(sql, /POSTCONDITION FAILED \(3952\): a layover expiry flag is ON; both must ship OFF/);
+    assert.match(sql, /OFF = retention extended, only by explicit owner action/);
+    assert.doesNotMatch(sql, /both must ship OFF/);
   });
 
-  it("the gate is read BEFORE the probe, by name, in the sweep itself", () => {
+  it("the gate stops ONLY on an explicit FALSE, read BEFORE the probe, by name, in the sweep itself", () => {
     const src = readFileSync(new URL("../lib/layoverPresenceExpiryScheduler.ts", import.meta.url), "utf8");
-    assert.match(src, /if \(!\(await isFlagEnabled\(db, "layover_presence_expiry_enabled"\)\)\) return refused\("disabled"\); if \(!\(await presenceTablePresent\(db\)\)\) return refused\("table_absent"\);/);
+    assert.match(src, /if \(\(await readFlagState\(db, "layover_presence_expiry_enabled"\)\) === "off"\) return refused\("disabled"\); if \(!\(await presenceTablePresent\(db\)\)\) return refused\("table_absent"\);/);
   });
 });
