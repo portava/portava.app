@@ -16106,7 +16106,7 @@ The new expectations are null with the reason, and DL1 (below the cursor claimed
 
 **Notes on 3934 (unchanged):**
 - Its header line "nothing numbered above names message_thread_members" stops being true with 3935, 3939 and 3940. The four were re-checked together on one PostgreSQL 17 database, with 3934, 3935, 3939 and 3940 applied, before merge.
-- Its rollback discards removal history: dropping `removed_at` loses every recorded removal.
+- Its rollback would discard removal history, so the rollback file refuses while any row carries `removed_at` (`db/rollback/2026-10-24-3934-telegraph-member-removed-at-rollback.sql`); 3940's is `db/rollback/2026-10-24-3940-telegraph-member-cursor-column-privileges-rollback.sql`, and it names the disclosure it reopens. Both were rehearsed on a local replay (2026-10-24 evening).
 
 **References.** Production is `9d5f6d481` on the server and the owner's device build is `96d20f10d`. Q.8's client halves were re-checked at `96d20f10d`, and all are present.
 
