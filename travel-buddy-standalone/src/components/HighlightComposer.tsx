@@ -285,7 +285,7 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
               <Text style={s.fieldLabel}>Media <Text style={{ color: color.signal }}>*</Text></Text>
               {mediaUri ? (
                 <View style={s.mediaPreviewWrap}>
-                  {isVideo ? (
+                  {isVideo && !isLoadablePlaybackUri(mediaUri) ? null : isVideo ? (
                     <Video
                       source={{ uri: mediaUri }}
                       style={s.mediaPreview}
@@ -500,3 +500,4 @@ const s = StyleSheet.create({
   submitDisabled: { opacity: 0.4 },
   submitText: { ...t.bodyStrong, color: color.onInk },
 });
+import { isLoadablePlaybackUri } from '../services/playbackUri.ts'; // 2026-10-24 video playback: the one playback rule

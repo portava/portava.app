@@ -26,10 +26,10 @@ import { useState, useEffect, useMemo } from 'react';
 import { batchSignUrls, lastSignOutcome } from '../lib/batchSignMedia.ts';
 
 /** The two Supabase storage buckets that are private. */
-export const PRIVATE_BUCKETS: string[] = ['post-media', 'profile-media'];
+export const PRIVATE_BUCKETS: string[] = [...PRIVATE_MEDIA_BUCKETS]; // the list lives in ./playbackUri.ts (2026-10-24) so a player can ask without importing the sign client
 
-// Matches: .../storage/v1/object/public/<bucket>/…
-const STORAGE_PUBLIC_BUCKET_RE = /\/storage\/v1\/object\/public\/([^/?#]+)\//;
+// The bucket rule moved to ./playbackUri.ts storageBucketOf (2026-10-24): ONE copy, importable by players
+// without the sign client. extractBucket below delegates to it.
 
 /**
  * Extract the storage bucket from a URL or bare storage path.
@@ -42,15 +42,15 @@ const STORAGE_PUBLIC_BUCKET_RE = /\/storage\/v1\/object\/public\/([^/?#]+)\//;
  * Returns null for anything that doesn't match either format.
  */
 function extractBucket(url: string): string | null {
-  // Format 1: full Supabase public URL
-  const m = STORAGE_PUBLIC_BUCKET_RE.exec(url);
-  if (m) return m[1];
+  return storageBucketOf(url);
+  // Format 1: full Supabase public URL — `…/storage/v1/object/public/<bucket>/…`
   // Format 2: bare storage path "bucket/path" — no scheme, no double-slash
-  if (!url.startsWith('//') && !url.includes('://')) {
-    const slash = url.indexOf('/');
-    if (slash > 0) return url.slice(0, slash);
-  }
-  return null;
+  // (both are implemented once, in ./playbackUri.ts)
+  //
+  //
+  //
+  //
+  //
 }
 
 /**
@@ -136,8 +136,8 @@ async function applyOfflineCopies(refs: string[], result: Record<string, string 
 
 /** True for a reference into one of the PRIVATE buckets (it must be signed to load). */
 export function isPrivateMediaRef(url: string): boolean {
-  const bucket = extractBucket(url);
-  return bucket !== null && PRIVATE_BUCKETS.includes(bucket);
+  return isPrivateMediaRefOf(url); // ./playbackUri.ts — the one rule
+  //
 }
 
 /**
@@ -203,3 +203,4 @@ export function useHydratedMedia(
 
   return { resolved, loading };
 }
+import { PRIVATE_MEDIA_BUCKETS, storageBucketOf, isPrivateMediaRefOf } from './playbackUri.ts'; export { isLoadablePlaybackUri, playbackUriState, type PlaybackUriState } from './playbackUri.ts'; // 2026-10-24 video playback: the playback rule sits next to useHydratedMedia

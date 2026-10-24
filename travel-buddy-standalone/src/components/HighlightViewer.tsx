@@ -170,9 +170,9 @@ export function HighlightViewer({
   const hydratedVideoUri = videoSourceUrl ? hydratedVideo[videoSourceUrl] : undefined;
   // Until the resolve lands this is the raw value, which is correct for the
   // absolute URLs some older rows still hold.
-  const playbackUri = typeof hydratedVideoUri === 'string' ? hydratedVideoUri : (videoSourceUrl ?? '');
+  const videoSourceState = playbackUriState(videoSourceUrl, hydratedVideo); const playbackUri = videoSourceState.state === 'ready' ? videoSourceState.uri : ''; // 2026-10-24: no player until the source is loadable
   // Server said no: unreadable. Same user-visible outcome as a decode failure.
-  const videoUnresolvable = hydratedVideoUri === null;
+  const videoUnresolvable = isVideo && videoSourceState.state === 'unavailable'; void hydratedVideoUri;
 
   // Reset when visible/startIndex changes; mark all circle highlights read when viewer opens.
   useEffect(() => {
@@ -468,7 +468,7 @@ export function HighlightViewer({
     <Modal visible={visible} transparent animationType="fade" statusBarTranslucent onRequestClose={onClose}>
       <View style={s.container}>
         {/* Media — web <video> on web, expo-av Video on native, Image for photos */}
-        {isVideo && Platform.OS === 'web' ? (
+        {isVideo && !playbackUri && !videoUnresolvable ? (<View testID="highlight-video-resolving" style={StyleSheet.absoluteFill} />) : isVideo && Platform.OS === 'web' ? (
           // Web video fallback: HTML <video> element with progress/auto-advance wired
           // via onTimeUpdate / onEnded; paused and muted are synced via useEffect above.
           // src is the hydrated URL — signed URLs are self-authenticating, so no
@@ -914,3 +914,4 @@ const s = StyleSheet.create({
 // §12 Highlight actions (census H102). Imported at the TAIL so no cited line above moves; ESM hoists it.
 import { HighlightActionChips } from '../features/highlights/actions/HighlightActionChips.tsx';
 import { highlightExpiryLabel } from '../features/highlights/highlightExpiryLabel.ts';
+import { playbackUriState } from '../services/playbackUri.ts'; // 2026-10-24 video playback: the one playback rule

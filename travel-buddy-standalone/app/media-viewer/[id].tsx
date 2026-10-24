@@ -501,7 +501,7 @@ function ViewerPage({ item, isActive, isMuted, postData }: ViewerPageProps) {
           ) : null}
           <View style={tailStyles.spinnerBadge}><ActivityIndicator size="large" color={color.onInk} /></View>
         </View>
-      ) : isVideo ? (
+      ) : isVideo && !isLoadablePlaybackUri(mediaUrl) ? (<View style={pg.loadingWrap} testID="mv-video-unloadable">{posterUrl ? <CachedImage source={{ uri: posterUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" fallbackLabel="" /> : null}</View>) : isVideo ? (
         <>
           <Video
             ref={videoRef}
@@ -907,4 +907,4 @@ function pageDotWindow(i: number, active: number, count: number) {
   if ((i === start && start > 0) || (i === end - 1 && end < count)) return PAGE_DOT_EDGE;
   return null;
 }
-import { isVideoRef, derivedVideoPosterRef } from '../../src/lib/media/videoPosterRef.ts'; // 2026-10-24 video playback: the one ref rule
+import { isVideoRef, derivedVideoPosterRef } from '../../src/lib/media/videoPosterRef.ts'; import { isLoadablePlaybackUri } from '../../src/services/playbackUri.ts'; // 2026-10-24 video playback: the one ref rule

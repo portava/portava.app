@@ -6,10 +6,11 @@
  * item's mediaType. A post whose only media is a `.mov`, opened with mediaType 'image' (its type was
  * read from an empty `media`), handed the `.mov` to an image component.
  *
- *   W1  the full post cannot be read, the item says image, the file shown is a .mov ⇒ Video, with the .mov,
- *       and its poster layer draws the derived poster, never the .mov itself
+ *   W1  the full post cannot be read, the item says image, the file shown is a BARE .mov: it is a video, but no
+ *       player is handed a bare bucket ref (services/playbackUri.ts) — the poster layer draws the derived poster
  *   W2  CONTROL: the same with a .jpg ⇒ no Video
- *   W3  the full post's video flag still decides when it is there
+ *   W3  the full post's video flag decides when it is there, and a loadable (signed) URL mounts the Video
+ *   W4  a full post whose video URL is still a bare ref mounts no Video either
  *
  * Run with: pnpm test:component
  */
@@ -106,6 +107,7 @@ import MediaViewer from '../[id].tsx';
 import { setViewerContext, clearViewerContext } from '../../../src/lib/viewerContext.ts';
 
 const MOV = 'post-media/d47c09d6-0000-4000-8000-00000000a001/1792727980484.mov';
+const SIGNED = 'https://ajrurzioarfkagpuxfnb.supabase.co/storage/v1/object/sign/post-media/d47c09d6-0000-4000-8000-00000000a001/1792727980484.mov?token=a';
 const BASE = {
   videoUrl: null, posterUrl: null, caption: 'A caption.',
   creator: { id: 'creator-1', username: 'maya.okafor', displayName: 'Maya Okafor', avatarUrl: null },
@@ -123,10 +125,10 @@ async function renderViewer(post: Record<string, unknown> | null, thumbnailUrl: 
 afterEach(() => { clearViewerContext(); });
 
 describe('MediaViewer — a video file plays', () => {
-  it('W1 no full post, the item says image, the file is a .mov ⇒ Video with the .mov', async () => {
+  it('W1 no full post, the item says image, the file is a bare .mov ⇒ a video with no player, showing its poster', async () => {
     await renderViewer(null, MOV);
-    const v = screen.getByTestId('mv-video');
-    expect(v.props.accessibilityHint).toBe(MOV);
+    expect(screen.queryByTestId('mv-video')).toBeNull();
+    expect(screen.getByTestId('mv-video-unloadable')).toBeTruthy();
     for (const img of screen.queryAllByTestId('mv-image')) expect(img.props.accessibilityHint).not.toBe(MOV); // the poster layer never draws the video file
     expect(screen.getAllByTestId('mv-image').some((i) => i.props.accessibilityHint === `${MOV}.poster.jpg`)).toBe(true);
   });
@@ -137,8 +139,14 @@ describe('MediaViewer — a video file plays', () => {
     expect(screen.getAllByTestId('mv-image').length).toBeGreaterThan(0);
   });
 
-  it("W3 the full post's video flag decides when the full post is there", async () => {
+  it("W3 the full post's video flag decides when the full post is there, and its signed URL mounts the Video", async () => {
+    await renderViewer({ videoUrl: SIGNED }, 'post-media/u/photo.jpg');
+    expect(screen.getByTestId('mv-video').props.accessibilityHint).toBe(SIGNED);
+  });
+
+  it('W4 a full post whose video URL is still a bare ref mounts no Video', async () => {
     await renderViewer({ videoUrl: MOV }, 'post-media/u/photo.jpg');
-    expect(screen.getByTestId('mv-video').props.accessibilityHint).toBe(MOV);
+    expect(screen.queryByTestId('mv-video')).toBeNull();
+    expect(screen.getByTestId('mv-video-unloadable')).toBeTruthy();
   });
 });
