@@ -738,7 +738,7 @@ export interface LayoverRecommendation {
    * that has the candidate-feasibility contract; optional here only so an older
    * server degrades to "not measured" rather than to a crash.
    */
-  feasibility?: CandidateFeasibility; routing?: RoutedCardContract | null; /** census L75 — the §9 ExperiencePrimitive for the card's KIND (typical, never this place's); see `LayoverExperience` at the end of this file. Absent from an older server. */ experience?: LayoverExperience; /** census L296 (App C5) — the snapshot this card was returned with (`GET /:id/recommendations` → `snapshotId`); adding it to a plan names this, never a newer one. Absent from an older server. */ snapshotId?: string | null;
+  feasibility?: CandidateFeasibility; routing?: RoutedCardContract | null; /** census L75 — the §9 ExperiencePrimitive for the card's KIND (typical, never this place's); see `LayoverExperience` at the end of this file. Absent from an older server. */ experience?: LayoverExperience; /** census L296 (App C5) — the snapshot this card was returned with (`GET /:id/recommendations` → `snapshotId`); adding it to a plan names this, never a newer one. Absent from an older server. */ snapshotId?: string | null; /** census L38/L50/L97 — the server's §4.1 RecommendationStatus for this card (3871, `layover_recommendation_status_enabled`): `available === false` (BLOCKED, STALE, EXPIRED, SUPERSEDED) is never offered for adding, and `statusExplanation` is the server's fixed sentence. All four are absent from an older server or with the flag OFF, and absence keeps the card exactly as addable as before. */ status?: string; available?: boolean; statusReason?: string | null; statusExplanation?: string | null;
 }
 
 export interface LayoverSafetyResult { estimates?: unknown;

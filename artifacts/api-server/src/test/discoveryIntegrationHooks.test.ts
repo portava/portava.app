@@ -624,20 +624,37 @@ describe("§132 S — a served page's rows record what the re-rank and the §85 
   }
 
   for (const [name, path] of [["serve point 1 (Cache A, pde)", CACHE_A_PATH], ["serve point 6 (cold fetch)", COLD_PATH]] as const) it(`S2 ${name}: the §85 stages ON — every served row stores pdeStages with each stage's status, counts only`, async () => {
-    const s = await serve(path, [
-      flag("discovery_integrity_stage_enabled", true), flag("discovery_outcome_learning_enabled", true), flag("discovery_cold_start_enabled", true),
-    ]);
+    // #783 verifier: the stored values must EQUAL the stage report the summary was built from, field by
+    // field, and carry ONLY the named keys — so a copied report, a hardcoded status or a hardcoded
+    // `applied` fails here (the D-OWNER minimisation: no platform-wide count is stored).
+    const reports: any[] = [];
+    _setPipelineStageRecorderProbeForTest((st) => { reports.push(st); });
+    let s: Served;
+    try {
+      s = await serve(path, [
+        flag("discovery_integrity_stage_enabled", true), flag("discovery_outcome_learning_enabled", true), flag("discovery_cold_start_enabled", true),
+        flag("discovery_candidate_sources_enabled", true), flag("discovery_exploration_inventory_enabled", true),
+      ]);
+    } finally { _setPipelineStageRecorderProbeForTest(null); }
     assertServed(name, s);
+    assert.ok(reports.length >= 1, "the summary was built from the served call's stage report");
+    const report = reports[reports.length - 1];
+    assert.ok(report.candidateGeneration, "precondition: the report carries candidate generation, which is NOT stored (graded PASS already)");
+    const expected = expectedPdeStages(report);
+    assert.deepEqual(Object.keys(expected).sort(), ["coldStart", "explorationInventory", "integrity", "outcomeLearning"], "the four stages this serve ran, and only those");
+    assert.deepEqual(Object.keys(expected["outcomeLearning"]), ["status"], "no platform-wide count");
+    assert.deepEqual(Object.keys(expected["integrity"]), ["status"], "no platform-wide count");
     for (const r of s.rows) {
       const p = r.features["pdeStages"] as Record<string, any> | undefined;
       assert.ok(p, `${r.item_id}: ${JSON.stringify(r.features).slice(0, 400)}`);
-      assert.equal(typeof p.integrity?.status, "string", `${r.item_id}: integrity`);
+      assert.deepEqual(p, expected, `${r.item_id}: the stored summary IS the stage report, by name`);
       assert.ok(!["detector_absent"].includes(p.integrity.status), `${r.item_id}: the integrity stage has a registered detector (${p.integrity.status})`);
-      assert.equal(typeof p.outcomeLearning?.status, "string", `${r.item_id}: outcomeLearning`);
-      assert.equal(typeof p.coldStart?.applied, "boolean", `${r.item_id}: coldStart`);
       assert.ok(!/[0-9a-f]{8}-[0-9a-f]{4}-/i.test(JSON.stringify(p)) && !JSON.stringify(p).includes("node/"), `${r.item_id}: no id travels in the summary`);
       assert.ok(!((r.features["privacyRefused"] as string[] | undefined) ?? []).includes("pdeStages"), "the DV-39 screen keeps it");
     }
+    // Not vacuous for the two values DC-11 and DV-55 move on: neither is the constant a mutant would write.
+    assert.notEqual(expected["outcomeLearning"].status, "applied", `precondition: this world's learner has no evidence (${expected["outcomeLearning"].status})`);
+    assert.equal(expected["coldStart"].applied, false, "precondition: this viewer's cold start seeded nothing");
   });
   it("S2 serve point 6: every §85 flag OFF — no row stores pdeStages", async () => {
     const s = await serve(COLD_PATH, []);
@@ -645,3 +662,67 @@ describe("§132 S — a served page's rows record what the re-rank and the §85 
     for (const r of s.rows) assert.ok(!("pdeStages" in r.features), r.item_id);
   });
 });
+
+// ── #783 verifier: a recorder that throws records nothing and changes nothing ──
+//
+// T1  the diversity recorder throws (3454 ON) at serve points 1 and 6: the same
+//     served order and response as the non-throwing control, the impressions
+//     still logged, and no row stores diversityAxes
+// T2  the stage summary throws (the §85 stages ON) at both serve points: the
+//     same, and no row stores pdeStages
+/** The stored summary, by name, from a stage report (routes/discovery.ts servedPipelineStageFeatures' contract). */
+function expectedPdeStages(rep: any): Record<string, any> {
+  const out: Record<string, any> = {};
+  if (rep?.coldStart) out["coldStart"] = { cold: rep.coldStart.cold, applied: rep.coldStart.applied, seeded: { onboarding: rep.coldStart.seeded.onboarding, tripContext: rep.coldStart.seeded.tripContext }, local: rep.coldStart.local, degraded: [...rep.coldStart.degraded] };
+  if (rep?.outcomeLearning) out["outcomeLearning"] = { status: rep.outcomeLearning.status };
+  if (rep?.explorationInventory) out["explorationInventory"] = { status: rep.explorationInventory.status, placed: rep.explorationInventory.placed };
+  if (rep?.integrity) out["integrity"] = { status: rep.integrity.status };
+  return out;
+}
+const VOLATILE = /^(recommendationId|recommendation_id|servedAt|served_at|sessionId|session_id|requestId|generatedAt|computedAt|timestamp|timings|ageMs|durationMs|tookMs)$/;
+function stripVolatile(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(stripVolatile);
+  if (v && typeof v === "object") return Object.fromEntries(Object.entries(v as Record<string, unknown>).filter(([k]) => !VOLATILE.test(k)).map(([k, x]) => [k, stripVolatile(x)]));
+  return v;
+}
+function assertUnchangedBy(name: string, s: Served, control: Served, key: string): void {
+  assertServed(`${name} (control)`, control);
+  assert.ok(control.rows.every((r) => key in r.features), `${name}: control — the recorder did record ${key} (else this proves nothing)`);
+  assert.equal(s.status, control.status, `${name}: the same status`);
+  assert.deepEqual(s.ids, control.ids, `${name}: the same served order`);
+  const diff = diffPaths(stripVolatile(s.body), stripVolatile(control.body));
+  assert.deepEqual(diff, [], `${name}: the same response`);
+  assert.deepEqual(s.rows.map((r) => r.item_id), control.rows.map((r) => r.item_id), `${name}: the impressions are still logged, the same rows`);
+  for (const r of s.rows) assert.ok(!(key in r.features), `${name}: ${r.item_id} stores no ${key}`);
+}
+function diffPaths(a: unknown, b: unknown, at = ""): string[] {
+  if (a && b && typeof a === "object" && typeof b === "object") {
+    const keys = new Set([...Object.keys(a as object), ...Object.keys(b as object)]);
+    return [...keys].flatMap((k) => diffPaths((a as any)[k], (b as any)[k], `${at}.${k}`));
+  }
+  return JSON.stringify(a) === JSON.stringify(b) ? [] : [`${at}: ${JSON.stringify(a)?.slice(0, 80)} vs ${JSON.stringify(b)?.slice(0, 80)}`];
+}
+const forced = () => { throw new Error("forced recorder failure (#783)"); };
+
+describe("#783 — a recorder failure fails nothing and changes nothing", () => {
+  for (const [name, path] of [["serve point 1 (Cache A, pde)", CACHE_A_PATH], ["serve point 6 (cold fetch)", COLD_PATH]] as const) {
+    it(`T1 ${name}: the diversity recorder throws — same page, same response, impressions logged, no diversityAxes`, async () => {
+      const flags = () => [flag("discovery_diversity_axes_enabled", true, DIVERSITY_SEEDED)];
+      const control = await serve(path, flags());
+      _setDiversityRecorderFaultForTest(forced);
+      let s: Served;
+      try { s = await serve(path, flags()); } finally { _setDiversityRecorderFaultForTest(null); }
+      assertUnchangedBy(name, s, control, "diversityAxes");
+    });
+    it(`T2 ${name}: the stage summary throws — same page, same response, impressions logged, no pdeStages`, async () => {
+      const flags = () => [flag("discovery_integrity_stage_enabled", true), flag("discovery_outcome_learning_enabled", true), flag("discovery_cold_start_enabled", true)];
+      const control = await serve(path, flags());
+      _setPipelineStageRecorderProbeForTest(forced);
+      let s: Served;
+      try { s = await serve(path, flags()); } finally { _setPipelineStageRecorderProbeForTest(null); }
+      assertUnchangedBy(name, s, control, "pdeStages");
+    });
+  }
+});
+import { _setPipelineStageRecorderProbeForTest } from "../routes/discovery.js";
+import { _setDiversityRecorderFaultForTest } from "../lib/portavaRank.js";
