@@ -17822,3 +17822,62 @@ CONSTRUCTED 186 / 188 = **98.9 %**. CORRECT 117 / 188 = **62.2 %**. Two rows mov
 was ruled back to `W` (BLOCKED on the owner's post_media grant decision). Eleven were restated and stay `W` (DV-70,
 DV-54, DC-11, DV-55, DV-51, A21, DV-28, DV-29, DV-33, DC-06, DC-21). These are local records on an unmerged branch
 (#783).
+
+## §135 — 2026-10-24: re-grade after #783 reached production; DV-54, DC-11 and DV-55 stay `W`, and their release step is met
+
+*Lane DISCOVERY, branch `claude/census-disc-regrade-20261024`, cut from main `9d5f6d481`. §133 and §134 are on PRs #790
+and #792, not yet merged. Production was read with SELECT and catalog queries only, 2026-10-24 09:00–09:15Z. Nothing was
+written to any database, no flag was changed, and no request was sent to rumazi.com (why no probe was made: below).
+`head_commit` is not re-declared.*
+
+### 135.1 What production runs now
+
+- **Server deploy: met.** The coordinator confirmed that rumazi.com has served main `9d5f6d481` since about 08:25Z
+  (publish confirmed 08:58Z, `/api/healthz` 200). #783 is `96d20f10d`, an ancestor of `9d5f6d481`. So both recorders
+  from §132.1, `features.diversityAxes` and `features.pdeStages`, are in the deployed server.
+- **Flags, read 2026-10-24.** TRUE: `discovery_diversity_axes_enabled` (3454), `discovery_cold_start_enabled` (3482),
+  `discovery_candidate_sources_enabled` (3480), `discovery_exploration_inventory_enabled` (3481),
+  `discovery_integrity_stage_enabled`, `discovery_outcome_learning_enabled` and `discovery_output_kinds_enabled` (3483),
+  and `discovery_serve_log_enabled`. FALSE: `discovery_engagement_integrity_enabled` (since 2026-10-23 21:39:49Z) and
+  `discovery_circle_candidates_enabled`.
+- **Serves since the deploy.** `public.recommendations` holds 174 rows written between 08:19Z and 09:00Z, all
+  `viewer_class = 'anonymous'`, all `GET /discovery`. No signed-in serve has happened since the deploy. The newest
+  `rank_events` row of any kind was served 2026-10-23 10:59Z, so no stored row carries either key, and none can yet.
+
+**Why no anonymous probe was made.** §131 used one anonymous probe for DV-40 because DV-40's evidence was the
+anonymous request row. Here it would measure nothing. Both serve points run the ranker only for a signed-in caller
+(`artifacts/api-server/src/routes/discovery.ts:1857#if (pdeCohort?.included && callerUserId) {`,
+`artifacts/api-server/src/routes/discovery.ts:2276#if (callerUserId) { const places = forYouM.places;`). An anonymous
+serve therefore computes no stages and no axis record, and writes only a `recommendations` row that has neither key.
+The 174 rows above already show that path, so a 175th would add a 30-day row and no evidence.
+
+### 135.2 Rows restated
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-54 | W | **W** | **Release step met: server deploy (main `9d5f6d481`, §135.1).** Merged: #783 (`96d20f10d`). Migration 3454 applied, and `discovery_diversity_axes_enabled` is TRUE. Nothing is left to build, release or decide. **Still owed: signed-in check.** One production signed-in serve under 3454 whose stored `features.diversityAxes` shows an axis acting (`total` > 0) is the owner's traveller check. None exists yet: no signed-in serve has happened since the deploy. An anonymous serve cannot produce the record (§135.1). |
+| DC-11 | W | **W** | **Release step met: server deploy (main `9d5f6d481`, §135.1).** Merged: #783 (`96d20f10d`). Migrations 3480, 3481 and 3483 applied, and their stage flags are TRUE. **Still owed, in order:** (1) **owner decision**: D-W10-R2-A1 step 4's data-use confirmation; (2) `discovery_engagement_integrity_enabled` set TRUE under that confirmation (it is FALSE, so a production row reads `pdeStages.integrity.status = 'detector_off'` today); (3) **signed-in check**: one production signed-in serve whose `pdeStages.integrity.status` is neither `detector_off` nor `detector_absent`, whose `pdeStages.outcomeLearning.status` is `applied` and whose `pdeStages.explorationInventory.status` is not `skipped`. None exists yet (§135.1). |
+| DV-55 | W | **W** | **Release step met: server deploy (main `9d5f6d481`, §135.1).** Merged: #783 (`96d20f10d`). Migration 3482 applied, and `discovery_cold_start_enabled` is TRUE. Nothing is left to build, release or decide. **Still owed: signed-in check.** One production serve to a new account below the observation floor whose stored `pdeStages.coldStart.applied` is true is the owner's traveller check. None exists yet (§135.1). |
+
+**Blocker classification (owner directive, rule 5).** DV-54: missing signed-in check. DV-55: missing signed-in check.
+DC-11: owner decision (D-W10-R2-A1 step 4), then missing signed-in check. The "waiting on release (server deploy)" label
+§132.3 gave all three is retired: the release has happened.
+
+### 135.3 What would turn this red
+
+- A signed-in production serve under 3454 that stores no `diversityAxes` key, or under the §85 flags that stores no
+  `pdeStages` key: the recorders did not ship as built, and the three rows go back to "built, not released".
+- Any of 3454, 3482 or the 3483 stage flags turned off: the matching row's await cannot be met until it is back on.
+
+### 135.4 Headline, restated from the rows
+
+| bucket | count |
+|---|---|
+| BUILT-AND-CORRECT | **117** |
+| BUILT-BUT-WRONG | **69** |
+| NOT-BUILT | **2** |
+| CANNOT-VERIFY | **0** |
+
+CONSTRUCTED 186 / 188 = **98.9 %**. CORRECT 117 / 188 = **62.2 %**, unchanged from §132.7. No row changes bucket. Three
+rows are restated and stay `W` (DV-54, DC-11, DV-55). These are local records on an unmerged branch; §133 and §134 (PRs
+#790 and #792) are counted only once they merge.
