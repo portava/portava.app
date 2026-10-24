@@ -989,9 +989,9 @@ const kernelOn = (c: any) => { c._db.feature_flags.push({ flag: "telegraph_messa
 describe("T73 — deliveredState, pure", () => {
   const msg = { id: M_UNSEEN, thread_id: THREAD, sender_id: ALICE, created_at: mins(-10), sequence: 5 };
   const member = (user_id: string, over: Record<string, unknown> = {}) => ({ user_id, last_read_at: null, left_at: null, ...over });
-  it("delivered when every eligible recipient's cursor reached the sequence (or they saw it)", () => {
+  it("delivered when every eligible recipient's cursor is AT the sequence (an observed take) or they saw it", () => {
     assert.deepEqual(deliveredState(msg, [member(BOB, { delivered_sequence: 5 })], []), { delivered: true, reason: null });
-    assert.deepEqual(deliveredState(msg, [member(BOB, { delivered_sequence: 7 }), member(CAROL, { delivered_sequence: null })], [CAROL]), { delivered: true, reason: null });
+    assert.deepEqual(deliveredState(msg, [member(BOB, { delivered_sequence: 5 }), member(CAROL, { delivered_sequence: null })], [CAROL]), { delivered: true, reason: null });
   });
   it("NOT delivered when a read cursor is behind: a measured false", () => {
     assert.deepEqual(deliveredState(msg, [member(BOB, { delivered_sequence: 4 })], []), { delivered: false, reason: null });
@@ -1019,7 +1019,7 @@ describe("T73 — GET /threads/:id/receipts says DELIVERED from the cursors wher
     const unseen = r.body.receipts.find((x: any) => x.messageId === M_UNSEEN);
     const older = r.body.receipts.find((x: any) => x.messageId === M_SEEN);
     assert.equal(unseen.delivered, false, "Carol's cursor (3) is behind sequence 8");
-    assert.equal(older.delivered, true, "both cursors reached sequence 3");
+    assert.equal(older.delivered, null, "Bob's cursor (8) passed sequence 3 without observing it; Carol's is AT 3"); assert.equal(older.deliveredUnavailableReason, DELIVERED_NOT_OBSERVED);
     assert.equal(unseen.deliveredUnavailableReason, null);
     assert.equal(r.body.deliveredUnavailableReason, null);
     assert.ok(sel.some((s) => s.startsWith("message_thread_members:") && s.includes("delivered_sequence")), sel.join(" | "));
@@ -1056,5 +1056,26 @@ describe("T72 — POST /threads/:id/seen advances seen_sequence, forward only", 
     await settleEvents();
     const bob = c._db.message_thread_members.find((m: any) => m.user_id === BOB);
     assert.equal("seen_sequence" in bob, false);
+  });
+});
+
+// ── #786 verifier (census-telegraph T73): DELIVERED never claims more than it observed ──
+// The cursor is a high-water mark. Message 9 sent while Bob was offline, then message 10 taken live: the
+// cursor is 10, and 9 must NOT read delivered — that delivery was never observed.
+import { DELIVERED_NOT_OBSERVED } from "../services/telegraph/unsend.js";
+describe("T73 (#786 verifier) — offline-then-live: a message BELOW the cursor is not claimed delivered", () => {
+  const m = (sequence: number) => ({ id: `m-${sequence}`, thread_id: THREAD, sender_id: ALICE, created_at: mins(-10), sequence });
+  const bob = (over: Record<string, unknown> = {}) => ({ user_id: BOB, last_read_at: null, left_at: null, ...over });
+  it("9 (sent while offline) is unknown with the reason; 10 (taken live) is delivered; 11 (not yet) is not", () => {
+    assert.deepEqual(deliveredState(m(9), [bob({ delivered_sequence: 10 })], []), { delivered: null, reason: DELIVERED_NOT_OBSERVED });
+    assert.deepEqual(deliveredState(m(10), [bob({ delivered_sequence: 10 })], []), { delivered: true, reason: null });
+    assert.deepEqual(deliveredState(m(11), [bob({ delivered_sequence: 10 })], []), { delivered: false, reason: null });
+  });
+  it("once Bob has SEEN 9 it is delivered; a group is false if any recipient is behind, else unknown if any is unobserved", () => {
+    assert.deepEqual(deliveredState(m(9), [bob({ delivered_sequence: 10 })], [BOB]), { delivered: true, reason: null });
+    const carol = (d: number | null) => ({ user_id: CAROL, last_read_at: null, left_at: null, delivered_sequence: d });
+    assert.deepEqual(deliveredState(m(9), [bob({ delivered_sequence: 10 }), carol(8)], []), { delivered: false, reason: null });
+    assert.deepEqual(deliveredState(m(9), [bob({ delivered_sequence: 10 }), carol(9)], []), { delivered: null, reason: DELIVERED_NOT_OBSERVED });
+    assert.deepEqual(deliveredState(m(9), [bob({ delivered_sequence: 9 }), carol(9)], []), { delivered: true, reason: null });
   });
 });
