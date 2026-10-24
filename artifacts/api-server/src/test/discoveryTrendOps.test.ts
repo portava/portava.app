@@ -420,7 +420,11 @@ describe("K — §133: the trend context keys the places Discovery serves (3920,
     assert.match(loader, /const canonical = await loadCanonicalContextRows\(sc, ids, places\.data as ContextPlaceRow\[\]\); if \(canonical === null\) return null;/);
     assert.match(loader, /return buildPlaceTrendContext\(\[\.\.\.\(places\.data as ContextPlaceRow\[\]\), \.\.\.canonical\], memberships\);/);
     const sched = readFileSync(join(SRC, "lib/discoveryTrendRebuildScheduler.ts"), "utf8");
-    assert.match(sched, /\(await isFlagEnabled\(sc, "discovery_trend_canonical_place_context_enabled"\)\) \? await sc\.rpc\("rebuild_place_momentum_canonical"/);
+    // #790 verifier finding 3: the scheduler dispatches through trendRebuildRpc, the one place the rule lives (K1 drives it end to end).
+    assert.match(sched, /import \{ trendRebuildRpc \} from "\.\/discoveryTrendCanonicalContext\.js";/);
+    assert.match(sched, /const \{ data, error \} = await sc\.rpc\(await trendRebuildRpc\(sc\), \{ p_now: pNow \}\);/);
+    const ctx = readFileSync(join(SRC, "lib/discoveryTrendCanonicalContext.ts"), "utf8");
+    assert.match(ctx, /return \(await isFlagEnabled\(sc, "discovery_trend_canonical_place_context_enabled"\)\) \? TREND_REBUILD_RPC_CANONICAL : TREND_REBUILD_RPC;/);
     const mig = readFileSync(join(SRC, "migrations/3920_discovery_trend_canonical_place_context.sql"), "utf8");
     assert.match(mig, /\(\s*'discovery_trend_canonical_place_context_enabled',\s*false,/, "seeded FALSE");
     assert.match(mig, /ON CONFLICT \(flag\) DO NOTHING;/);
