@@ -1922,7 +1922,7 @@ router.get("/discovery", async (req, res) => {
         void logImpression(servedScored, callerUserId, "discovery", exposure.sessionId, {
           servePoint, route: "GET /discovery", rankedInRequest: true,
           destination: destination!, category, cacheLevel,
-          engineMode: engineMode.mode, modeReason: engineMode.reason, ...servedGraphReadingFeatures(pdeServedStages),  // §63 DV-52 (b) — the graph reading this order came from; no key at all with the modifiers off
+          engineMode: engineMode.mode, modeReason: engineMode.reason, ...servedGraphReadingFeatures(pdeServedStages), ...servedPipelineStageFeatures(pdeServedStages),  // §63 DV-52 (b) — the graph reading this order came from; no key at all with the modifiers off
         }, servedPageClock(exposure, slice));  // §48 DV-40/46 — the SAME exposure the response was stamped with, and the served positions
       } else {
         void logDiscoveryServe(getServiceClient(), {
@@ -2311,7 +2311,7 @@ router.get("/discovery", async (req, res) => {
         category,
         cacheLevel:      "miss",
         engineMode:      engineMode.mode,
-        modeReason:      engineMode.reason, ...servedGraphReadingFeatures(coldServedStages),  // §63 DV-52 (b) — as serve points 1/2/3
+        modeReason:      engineMode.reason, ...servedGraphReadingFeatures(coldServedStages), ...servedPipelineStageFeatures(coldServedStages),  // §63 DV-52 (b) — as serve points 1/2/3
       }, servedPageClock(exposure, slice));  // §48 DV-40/46 — the SAME exposure the response was stamped with
     } else { void logDiscoveryServe(getServiceClient(), { userId: callerUserId ?? "", servePoint: DiscoveryServePoint.COLD_FETCH_LEGACY_RANK, items: slice, ...serveClockOf(exposure), context: { destination: destination ?? "", category, cacheLevel: "miss", engineMode: engineMode.mode, modeReason: engineMode.reason, rankedInRequest: false } }); }  // §48 — anonymous ⇒ the per-request row only; signed-in with NO scores (a ranker that returned nothing) ⇒ item rows marked rankedInRequest:false, where before this line it wrote nothing and the ids on the response joined to no row
     const totalMs = Date.now() - t0;
@@ -4645,3 +4645,55 @@ function overpassAnswerFailed(data: unknown): boolean {
 
 // The one reading of an Overpass body. At the foot so no cited line moves; ESM hoists imports.
 import { overpassBodyUnfinished } from "../lib/overpassAnswer.js";
+
+// ── census-discovery §132 (DC-11, DV-55): a SERVED run says which §85 stages ran ──
+//
+// DC-11 and DV-55 grade stages that only shadow rows recorded
+// (`discovery_shadow_serves.pde_stages`). With `DISCOVERY_ENGINE_MODE` at
+// `pde`, no shadow row is written, so a served page could never show its
+// integrity, outcome-learning or cold-start stage. This copies a summary of
+// the served call's §85 stages onto each served impression, next to the graph
+// reading (`servedGraphReadingFeatures`).
+//
+// WHEN IT RUNS, AND WHY IT IS GUARDED. It runs while the impression rows are
+// built: on serve point 6 that is inside the serve's try block, BEFORE
+// `sendDiscoveryPlacesEnvelope`, whose catch would answer the refusal; on serve
+// point 1 it is in the impression logging after the page is sent. So a throw
+// here once refused a page or dropped its impressions (verifier, #783). The
+// whole body is now inside a try: a throw stores no key and changes nothing.
+//
+// ONLY WHAT A CENSUS CRITERION NEEDS (data minimisation, #783). The row is
+// readable by its own viewer (`users_read_own_rank_events`), so it carries no
+// platform-wide count: integrity and outcome learning store their STATUS only
+// (DC-11 asks whether the stage ran), exploration its status and how many
+// reserved slots it placed on THIS page (DC-11), cold start this viewer's own
+// state and seed counts (DV-55). Candidate generation is already graded PASS
+// and is not stored. Each field is picked by name, so a report that grows a
+// field cannot leak it. With every §85 flag off, `stages` has none of these
+// keys and this returns no key at all. Classified `record_metadata`
+// (lib/discoveryRecommendationRecord.ts).
+export function servedPipelineStageFeatures(
+  stages: PdeStages | null | undefined,
+): Record<string, string | number | boolean> {
+  try {
+    if (!stages) return {};
+    if (_pipelineStageRecorderProbe) _pipelineStageRecorderProbe(stages);
+    const s: Record<string, unknown> = {};
+    const c = stages.coldStart;
+    if (c) s.coldStart = { cold: c.cold, applied: c.applied, seeded: { onboarding: c.seeded.onboarding, tripContext: c.seeded.tripContext }, local: c.local, degraded: [...c.degraded] };
+    const l = stages.outcomeLearning;
+    if (l) s.outcomeLearning = { status: l.status };
+    const e = stages.explorationInventory;
+    if (e) s.explorationInventory = { status: e.status, placed: e.placed };
+    const i = stages.integrity;
+    if (i) s.integrity = { status: i.status };
+    return (Object.keys(s).length > 0 ? { pdeStages: s } : {}) as unknown as Record<string, string | number | boolean>;
+  } catch {
+    // resolves-not-throws-ok: the summary is provenance; a failure stores no key and never fails the serve.
+    return {};
+  }
+}
+
+let _pipelineStageRecorderProbe: ((stages: PdeStages) => void) | null = null;
+/** Test seam (#783 verifier): see each stage report the summary is built from, or make it throw; pass null to restore. */
+export function _setPipelineStageRecorderProbeForTest(probe: ((stages: PdeStages) => void) | null): void { _pipelineStageRecorderProbe = probe; }
