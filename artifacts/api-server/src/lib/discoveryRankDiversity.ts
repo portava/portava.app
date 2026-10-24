@@ -71,7 +71,7 @@ export function diversityOptionsFrom(m: DiversityMagnitudes): DiversityOptions {
     geoPenalty: m.geoPenalty,
     trailPenalty: m.trailPenalty,
     historyPenalty: m.historyPenalty,
-    historyMaxServes: m.historyMaxServes,
+    historyMaxServes: m.historyMaxServes, recordAxisEvidence: true,   // census-discovery §132 (DV-54): a 3454 serve records what each axis charged each row (lib/portavaRank.ts diversityAxisEvidence)
   };
 }
 

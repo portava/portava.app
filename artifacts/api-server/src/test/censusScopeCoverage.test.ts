@@ -196,3 +196,43 @@ describe("CONTROL — the real checker over the real tree", () => {
     assert.match(r.stdout, /13 censuses measured for scope coverage/, "the check is not passing by measuring nothing");
   });
 });
+
+// ── census-telegraph P.7 (2026-10-24): an APPEND-ONLY census withdraws a NOT-GRADED declaration ───────────
+// A census may not edit an earlier section, so a file that later comes to carry a verdict cannot have its
+// old NOT-GRADED line rewritten. A LATER `- WITHDRAWN NOT-GRADED: path — reason` line retires it instead.
+//   MUTANT SW1 withdrawals ignored (the old declaration is judged as before) ........ red
+describe("census-telegraph P.7 — an appended withdrawal retires an earlier NOT-GRADED declaration", () => {
+  const POSTS = "artifacts/api-server/src/routes/posts.ts";
+  const REASON = "cited as EVIDENCE for a section's claim, not a graded surface in this census";
+  const WHY = "a later section cites it on a verdict row, so a verdict now rests on it and it is watched";
+  const ROW = `| T999 | W | **C** | \`${POSTS}:87#async (req, res, next)\` |`;
+
+  it("the withdrawn declaration is neither a declaration nor a problem; the file is graded and counted", () => {
+    const text = [`- NOT-GRADED: ${POSTS} — ${REASON}`, "", ROW, "", `- WITHDRAWN NOT-GRADED: ${POSTS} — ${WHY}`].join("\n");
+    const r = measureCensusCoverage(input(text, [POSTS]));
+    assert.deepEqual(r.declarationProblems, []);
+    assert.equal(r.declared.size, 0);
+    assert.deepEqual(r.cited, [POSTS]);
+    assert.equal(r.ratio, 1);
+  });
+
+  it("without the withdrawal the same text is refused, as before", () => {
+    const r = measureCensusCoverage(input([`- NOT-GRADED: ${POSTS} — ${REASON}`, "", ROW].join("\n"), [POSTS]));
+    assert.match(r.declarationProblems.join("\n"), /already watched|cited on a verdict row/);
+  });
+
+  it("REFUSES a withdrawal of nothing, one placed BEFORE the declaration, and one with no reason", () => {
+    const none = measureCensusCoverage(input([ROW, `- WITHDRAWN NOT-GRADED: ${POSTS} — ${WHY}`].join("\n"), [POSTS]));
+    assert.match(none.declarationProblems.join("\n"), /withdraws no EARLIER declaration/);
+    const before = measureCensusCoverage(input([`- WITHDRAWN NOT-GRADED: ${POSTS} — ${WHY}`, `- NOT-GRADED: ${POSTS} — ${REASON}`, ROW].join("\n"), [POSTS]));
+    assert.match(before.declarationProblems.join("\n"), /withdraws no EARLIER declaration/);
+    assert.match(before.declarationProblems.join("\n"), /already watched|cited on a verdict row/, "the declaration still stands, so it is still judged");
+    const bare = measureCensusCoverage(input([`- NOT-GRADED: ${POSTS} — ${REASON}`, ROW, `- WITHDRAWN NOT-GRADED: ${POSTS} — stale`].join("\n"), [POSTS]));
+    assert.match(bare.declarationProblems.join("\n"), new RegExp(`at least ${MIN_REASON}`));
+  });
+
+  it("the withdrawal line itself is not a citation", () => {
+    const r = measureCensusCoverage(input([`- NOT-GRADED: ${POSTS} — ${REASON}`, `\`${POSTS}\``, `- WITHDRAWN NOT-GRADED: \`${POSTS}\` — ${WHY}`].join("\n"), [POSTS]));
+    assert.equal(r.counts.get(POSTS), 1);
+  });
+});

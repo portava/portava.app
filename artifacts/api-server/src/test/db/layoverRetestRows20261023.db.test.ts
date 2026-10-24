@@ -294,6 +294,29 @@ describe("§83 — retest rows under production's 2026-10-23 flag state", { skip
     assert.equal(re.body.reentry.flight.state, "observed", JSON.stringify(re.body.reentry.flight));
     assert.equal(re.body.reentry.flight.flight.gate, "B4", "REFRESH_GATE_AND_SECURITY re-reads the recorded gate");
   });
+
+  // census-layover §83 (verifier M10, 2026-10-24): L230's own case above cannot tell the two travellers apart under
+  // production's flags, because every unrouted landside card is BLOCKED journey_not_measured for everyone. THIS case
+  // separates them on the entry verdict itself: the traveller with no passport on file is closed BY THE BORDER
+  // (closedBy entry_unconfirmed, status closed, the policy's sentence), the confirmed traveller is not. Mutant M10
+  // (`|| ENTRY_POLICY_FAIL_CLOSED` removed in LayoverConstraintStore.ts) leaves the first one a mere caution: red here.
+  it("L230 (distinguishing) — the fail-closed entry verdict is the no-passport traveller's, and only theirs", async () => {
+    const shut = (await startSession(app, nopass, { iata: "SIN" }, { departsInH: 9 })).id;
+    const ok = (await startSession(app, ana, { iata: "SIN" }, { departsInH: 9 })).id;
+    const a = await declare(nopass, shut, DECLARED);
+    const b = await declare(ana, ok, DECLARED);
+    assert.equal(a.status, 200, a.raw); assert.equal(b.status, 200, b.raw);
+    const ga = a.body.landsideGate, gb = b.body.landsideGate;
+    assert.equal(ga.entryPermissionState, "UNKNOWN", JSON.stringify(ga));
+    assert.equal(ga.status, "closed", `an unconfirmed border must CLOSE landside, not caution it: ${JSON.stringify(ga)}`);
+    assert.ok(ga.closedBy.includes("entry_unconfirmed"), `the closure is the border's: ${JSON.stringify(ga.closedBy)}`);
+    assert.equal(gb.entryPermissionState, "CONFIRMED_ALLOWED", JSON.stringify(gb));
+    assert.ok(!gb.closedBy.includes("entry_unconfirmed"), `the confirmed traveller is not closed by the border: ${JSON.stringify(gb.closedBy)}`);
+    assert.notEqual(gb.status, "closed", JSON.stringify(gb));
+    const oa = await overview(nopass, shut), ob = await overview(ana, ok);
+    assert.ok(oa.body.landsideGate.closedBy.includes("entry_unconfirmed"), "the overview reads the same closure");
+    assert.ok(!ob.body.landsideGate.closedBy.includes("entry_unconfirmed"));
+  });
 });
 
 const HOUR = 3_600_000;

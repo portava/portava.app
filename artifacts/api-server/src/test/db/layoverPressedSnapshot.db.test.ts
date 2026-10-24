@@ -67,7 +67,7 @@ describe("B1-P snapshot family (P1)", { skip: PRESSED_SKIP_REASON }, () => {
     it("S1 L1 L5 L37 L36 L207 — the overview stores ONE canonical, versioned decision record for what it told the traveller", async () => {
       const o = await overview(ana);
       assert.equal(o.status, 200, o.raw);
-      assert.ok(["recorded", "active_snapshot"].includes(o.body.persisted.state), `persisted = ${JSON.stringify(o.body.persisted)}`); // §83: under production's canonical door the session's first stored decision may already be the active one
+      assert.equal(o.body.persisted.state, PRESSED_BASE === "production-20261023" ? "active_snapshot" : "recorded", `persisted = ${JSON.stringify(o.body.persisted)}`); // §83: only under production's canonical door (PRESSED_BASE=production-20261023) is the first stored decision already the active one; the default base keeps the strict value
       firstSnap = o.body.snapshotId;
       assert.match(firstSnap, /^snap:[0-9a-f]{32}$/);
       const rows = await computations(sid);
@@ -358,3 +358,4 @@ async function curatedSnapshotFixture(database: PressedDb, curator: PressedUser,
     const published = await publishValidatedFact(database.client, proposed.fact.id, curator.id); assert.ok(published.ok, JSON.stringify(published));
   }
 }
+import { PRESSED_BASE } from "./pressedLayoverApp.js"; // census-layover §83: the base decides which stored state is correct
