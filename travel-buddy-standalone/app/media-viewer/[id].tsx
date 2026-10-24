@@ -485,8 +485,8 @@ function ViewerPage({ item, isActive, isMuted, postData }: ViewerPageProps) {
   // Media URL: from full post data when available, thumbnail for images
   const mediaUrl = postData?.mediaUrl
     ?? (item.mediaType === 'image' ? (item.thumbnailUrl ?? item.posterUrl) : null);
-  const posterUrl = postData?.posterUrl ?? item.posterUrl ?? item.thumbnailUrl;
-  const isVideo = postData?.isVideo ?? item.mediaType === 'video';
+  const posterUrl = ((p: string | null | undefined) => (isVideoRef(p) ? derivedVideoPosterRef(p) : p ?? null))(postData?.posterUrl ?? item.posterUrl ?? item.thumbnailUrl); // 2026-10-24: a video file is never drawn as its own poster
+  const isVideo = postData?.isVideo === true || item.mediaType === 'video' || isVideoRef(mediaUrl); // 2026-10-24: any of the three says video — the full post's flag, the opening item's type, or a video FILE about to be shown (was: postData's flag alone whenever postData existed, so a .mov could reach <CachedImage>)
 
   return (
     <View
@@ -770,7 +770,7 @@ export default function MediaViewer() {
         saveCount={activeSaveCount}
         commentCount={activeCommentCount}
         isMuted={isMuted}
-        isVideo={activeItem?.mediaType === 'video' || activePost?.isVideo === true}
+        isVideo={activeItem?.mediaType === 'video' || activePost?.isVideo === true || isVideoRef(activePost?.mediaUrl ?? activeItem?.thumbnailUrl)}
         onClose={handleClose}
         onComment={handleComment}
         onSave={handleSave}
@@ -907,3 +907,4 @@ function pageDotWindow(i: number, active: number, count: number) {
   if ((i === start && start > 0) || (i === end - 1 && end < count)) return PAGE_DOT_EDGE;
   return null;
 }
+import { isVideoRef, derivedVideoPosterRef } from '../../src/lib/media/videoPosterRef.ts'; // 2026-10-24 video playback: the one ref rule

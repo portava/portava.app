@@ -76,6 +76,12 @@ export const KNOWN: ReadonlyArray<{ file: string; rule: SessionStateFinding["rul
     name: "_k2798_before",
     why: 'in-body $post$ block reads the ON COMMIT DROP before-counts (3974 copied this method and moved the read after the COMMIT, which is what broke the live apply); a stage-4 re-run raises \'relation "_k2798_before" does not exist\'.',
   },
+  {
+    file: "3924_post_media_backfill_create_path_uploads.sql",
+    rule: "temp-table",
+    name: "_m3924_entries",
+    why: 'postconditions A (line 179) and C (line 224) read the ON COMMIT DROP entry list; correct under the applier (same transaction, how 3924 was applied 2026-10-24, before this check ran); a stage-4 re-run raises \'relation "_m3924_entries" does not exist\'. Declared session-bound in lib/postconditionAmendments.ts.',
+  },
 ];
 
 interface ApplierSurface {
