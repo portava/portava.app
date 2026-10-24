@@ -33,7 +33,7 @@ import { isFlagEnabled } from "../lib/featureFlags.js"; import { readMemoryPreci
 import {
   runMemorySearch,
   runCrewMemorySearch,
-  searchCapabilities,
+  searchCapabilities, placeKnownToViewer, // census-highlights-memories §CD (H262): the one place rule, also on GET /memories/places/:placeId
 } from "../services/memory/memorySearchService.js";
 import { sendPushWithRetry } from "../lib/pushWithRetry.js";
 import { nameVisibilitySet, nameVisibleFor } from "../lib/publicIdentity.js";
@@ -216,7 +216,7 @@ import {
   acceptedCrewOfTrip,
   isBlocked,
   type MemoryReadSurface,
-} from "../services/memory/memoryReadPolicy.js"; import { readBlockDirections } from "../lib/exclusionSet.js"; // census-telegraph T220; on this line so no cited line moves
+} from "../services/memory/memoryReadPolicy.js"; import { readBlockDirections, readBlockExclusions } from "../lib/exclusionSet.js"; // census-telegraph T220; census-highlights-memories §CD (the tag block gate); on this line so no cited line moves
 
 export type { MemoryReadSurface };
 
@@ -351,7 +351,7 @@ function requireIdempotencyKey(req: any, res: any): string | null {
 // ── Notification helper ────────────────────────────────────────────────────────
 
 async function notifyTagged(sc: any, memory: any, taggedUserId: string): Promise<void> {
-  try {
+  try { const notifyGate = await tagsNotBlocked(sc, memory.owner_id, [taggedUserId]); if (!notifyGate.ok || notifyGate.ids.length === 0) return; // §CD: never a notification or a push to a person blocked either way; an unreadable blocks table notifies nobody (fail CLOSED)
     const { data: owner } = await sc
       .from("profiles")
       .select("name, handle, expo_push_token")
@@ -513,7 +513,7 @@ router.post("/memories", async (req, res) => {
     state: d.state,
   };
 
-  const created = await dispatchMemoryCommand<any>({
+  const tagGate = await tagsNotBlocked(sc, user.id, d.taggedUserIds); if (!tagGate.ok) { req.log.error({ ownerId: user.id, detail: tagGate.detail }, "memories: could not read blocks for the people to tag — refusing rather than tagging blind"); sendError(res, "degraded_unavailable", "We could not check who can be tagged. Please try again."); return; } d.taggedUserIds = tagGate.ids; const created = await dispatchMemoryCommand<any>({ // §CD: nobody blocked either way is tagged, by any kernel or by the arm below
     sc,
     commandType: "CREATE_MEMORY",
     memoryId: null, // assigned by the kernel / the database
@@ -1514,7 +1514,7 @@ router.get("/memories/places/:placeId", async (req, res) => {
   if (!isUuid(placeId)) { sendError(res, "invalid_payload", "Invalid place id"); return; }
 
   const sc = getServiceClient();
-  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; } const knownPlace = await placeKnownToViewer(sc, user.id, placeId); if (knownPlace.state === "unreadable") { req.log.error({ ownerId: user.id, placeId, detail: knownPlace.detail }, "memories: place history could not resolve the place — refusing rather than answering as unknown"); sendError(res, "degraded_unavailable", "We could not build your history at this place. Please try again."); return; } if (knownPlace.state === "unknown") { sendError(res, "not_found", "That place is not known. Nothing similar was looked up in its place."); return; } // census-highlights-memories §CD (H262): §28.3, an unknown place is "not known", never an empty history
 
   // A Memory may name its place either way round: `place_id` is the legacy
   // reference and `canonical_location_id` the resolved one (§9). The builder
@@ -2483,7 +2483,7 @@ router.patch("/memories/:id/tags/:userId", async (req, res) => {
 
   const command = parsed.data.action === "approve" ? "ADD_PERSON" : "REMOVE_PERSON";
   const authorized = authorizeParticipantCommand(command, user.id, loaded.row.owner_id, userId);
-  if (!authorized.ok) { sendCommandFailure(req, res, authorized); return; }
+  if (!authorized.ok) { sendCommandFailure(req, res, authorized); return; } if (command === "ADD_PERSON") { const consentGate = await tagsNotBlocked(sc, loaded.row.owner_id, [userId]); if (!consentGate.ok) { sendError(res, "degraded_unavailable", "We could not check this tag right now. Please try again."); return; } if (consentGate.ids.length === 0) { sendError(res, "not_found", "Tag not found"); return; } } // §CD: consent across a block is answered exactly as a missing tag — the block is never told
 
   // `error` is bound: an unreadable memory_tags answered "Tag not found", i.e.
   // told a person their tag does not exist because the table was down. §28.11.
@@ -2773,7 +2773,7 @@ router.post("/trips/:tripId/memory", async (req, res) => {
     return;
   }
 
-  const crewIds = ((members ?? []) as any[]).map((m) => m.user_id as string).filter((uid) => uid !== user.id);
+  const crewGate = await tagsNotBlocked(sc, user.id, ((members ?? []) as any[]).map((m) => m.user_id as string).filter((uid) => uid !== user.id)); if (!crewGate.ok) { req.log.error({ tripId, detail: crewGate.detail }, "create-from-trip: could not read blocks for the crew — refusing BEFORE the write"); sendError(res, "degraded_unavailable", "Could not read the trip crew. Please try again."); return; } const crewIds = crewGate.ids; // §CD: a crew member blocked either way is not tagged
   // One live trip Memory per trip — a retry or second tap answers it, never a second row (answerExistingTripMemory, at the foot).
   if (await answerExistingTripMemory(req, res, sc, tripId, user.id)) return; const tripCanonGates = await readCanonicalGates(sc); // §4 (3803): a Memory of a whole trip is a TRIP, written wherever the column exists
 
@@ -3966,3 +3966,24 @@ router.post("/memories/:id/items/from-post", async (req, res) => {
  * kernel, so the route's own insert tags it, exactly as before 3911.
  */
 const KERNEL_TAG_LIMIT = 1000;
+
+/**
+ * census-highlights-memories §CD: who of `ids` may be tagged on `ownerId`'s
+ * Memory. Anyone the owner has blocked, or who has blocked the owner, is left out
+ * — silently, because "you cannot tag them" would tell the owner about another
+ * person's block (the platform's rule: TRIP_AUTH_BLOCKED and TELEGRAPH_AUTH_BLOCKED
+ * never reach a client). The canonical bidirectional read, lib/exclusionSet's
+ * readBlockExclusions, scoped to these ids. An unreadable blocks table is ok:false
+ * and the caller REFUSES: tagging blind is the failure this gate exists to stop.
+ */
+async function tagsNotBlocked(
+  sc: any,
+  ownerId: string,
+  ids: readonly string[],
+): Promise<{ ok: true; ids: string[] } | { ok: false; detail: string }> {
+  const wanted = [...new Set(ids.filter((id) => typeof id === "string" && id.length > 0))];
+  if (wanted.length === 0) return { ok: true, ids: [] };
+  const blocked = await readBlockExclusions(sc, ownerId, { among: wanted });
+  if (!blocked.ok) return { ok: false, detail: "blocks unreadable" };
+  return { ok: true, ids: ids.filter((id) => !blocked.ids.has(id)) };
+}

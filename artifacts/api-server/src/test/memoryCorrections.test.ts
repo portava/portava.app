@@ -1300,3 +1300,53 @@ describe("VERIFY-H8 H8-3 — H-17c follows a candidate's merges to EXACTLY the s
     assert.deepEqual(await pairOf(app), ["osm:node/123", CANON_LOC]);
   });
 });
+
+// ── census-highlights-memories §CD (H262): §28.3 on GET /memories/places/:placeId ──
+// Before §CD an unknown place id was answered as an EMPTY history: indistinguishable
+// from "you have never been here", which is the substitute §28.3 forbids.
+describe("§28.3 (H262) GET /memories/places/:placeId — a place that is not known is answered as NOT KNOWN, never as an empty history", () => {
+  const NEVER = "9e9e9e9e-0000-4000-8000-00000000abcd";
+  const ASSERTED = "9e9e9e9e-0000-4000-8000-00000000a55e";
+  let h: App | null = null;
+  afterEach(async () => { await h?.close(); h = null; });
+
+  it("a place id that is no catalog place, on none of the owner's Memories and in none of their corrections, is 404 'not known'", async () => {
+    h = await start();
+    const r = await call(h, "GET", `/memories/places/${NEVER}`);
+    assert.equal(r.status, 404, JSON.stringify(r.body));
+    assert.equal(r.body.error, "not_found");
+    assert.match(r.body.message, /not known/);
+    assert.equal(r.body.history, undefined, "no history, empty or otherwise");
+  });
+
+  it("control: a catalog place the owner has no Memory of is a 200 with an empty history; a canonical location their Memory carries is a 200 with it", async () => {
+    h = await start();
+    const open = await call(h, "GET", `/memories/places/${PLACE_OPEN}`);
+    assert.equal(open.status, 200, JSON.stringify(open.body));
+    assert.deepEqual(open.body.history.rows, []);
+    const canon = await call(h, "GET", `/memories/places/${CANON_LOC}`);
+    assert.equal(canon.status, 200, JSON.stringify(canon.body));
+    assert.equal(canon.body.history.rows.length, 1);
+  });
+
+  it("a place only ANOTHER person's Memory or correction names is not known to this owner", async () => {
+    h = await start({ mutate: (s) => {
+      s.memories!.push(memory("10000000-0000-4000-8000-0000000000f1", { owner_id: FRIEND, place_id: null, canonical_location_id: NEVER }));
+      s[TABLE]!.push({ ...correction("assert", { canonical_location_id: NEVER }), owner_id: FRIEND });
+    } });
+    assert.equal((await call(h, "GET", `/memories/places/${NEVER}`)).status, 404);
+  });
+
+  it("a place the owner ASSERTED through a correction is theirs (§9, H-16): known", async () => {
+    h = await start({ mutate: (s) => { s[TABLE]!.push(correction("assert", { canonical_location_id: ASSERTED })); } });
+    const r = await call(h, "GET", `/memories/places/${ASSERTED}`);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+  });
+
+  it("a catalog that cannot be read is a retryable 503, never 'not known'", async () => {
+    h = await start({ failReads: new Set(["places"]) });
+    const r = await call(h, "GET", `/memories/places/${NEVER}`);
+    assert.equal(r.status, 503, JSON.stringify(r.body));
+    assert.equal(r.body.error, "degraded_unavailable");
+  });
+});

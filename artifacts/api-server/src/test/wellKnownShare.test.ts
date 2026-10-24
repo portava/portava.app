@@ -805,3 +805,42 @@ describe("E: the Memory preview's place words take the §10 precision gate", () 
     assert.doesNotMatch(r.text, /Lisbon/);
   });
 });
+
+// census-highlights-memories §CD (H33): the anonymous preview is a publication to `public`, so it
+// also takes the owner's `public` ceiling (memory_visibility_policies, 3997 — applied in
+// production, switch ON). Before §CD the preview read §10's per-Memory rung alone.
+describe("E: the Memory preview's place words are never finer than the owner's `public` ceiling (H33)", () => {
+  const MID = "11111111-2222-4333-8444-555555555556";
+  const OWNER_ID = "99999999-2222-4333-8444-555555555555";
+  const mem = () => ({ id: MID, owner_id: OWNER_ID, title: "First night out", caption: null, visibility: "public", state: "published", location_city: "Lisbon", location_country: "PT", location_precision: "exact" });
+  const flags = (policies: boolean) => [{ flag: "memory_location_precision_enabled", enabled: true }, { flag: "memory_visibility_policies_enabled", enabled: policies }];
+  const ceiling = (audience: string, rung: string) => [{ owner_id: OWNER_ID, audience, location_precision: rung }];
+  const preview = async (tables: Record<string, any[]>, throwOn?: string) => {
+    _setTestServiceClient(makeEntitySc({ memories: [mem()], ...tables }, throwOn) as any);
+    return (await getReq(`/memory/${MID}`)).text;
+  };
+
+  it("a `public` ceiling of `country`: the country only, though the Memory's own rung is `exact`", async () => {
+    const t = await preview({ feature_flags: flags(true), memory_visibility_policies: ceiling("public", "country") });
+    assert.match(t, /og:description" content="A memory from PT\."/);
+    assert.doesNotMatch(t, /Lisbon/);
+  });
+
+  it("a `public` ceiling of `hidden`, or a policy table that cannot be read: no place at all", async () => {
+    for (const t of [
+      await preview({ feature_flags: flags(true), memory_visibility_policies: ceiling("public", "hidden") }),
+      await preview({ feature_flags: flags(true) }, "memory_visibility_policies"),
+    ]) {
+      assert.match(t, /og:title" content="First night out · Portava"/);
+      assert.doesNotMatch(t, /Lisbon|PT\./);
+    }
+  });
+
+  it("controls: no ceiling, a ceiling for another audience, and the switch off keep both words", async () => {
+    for (const t of [
+      await preview({ feature_flags: flags(true), memory_visibility_policies: [] }),
+      await preview({ feature_flags: flags(true), memory_visibility_policies: ceiling("followers", "hidden") }),
+      await preview({ feature_flags: flags(false), memory_visibility_policies: ceiling("public", "hidden") }),
+    ]) assert.match(t, /og:description" content="A memory from Lisbon, PT\."/);
+  });
+});

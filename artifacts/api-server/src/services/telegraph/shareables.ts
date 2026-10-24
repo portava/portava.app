@@ -42,7 +42,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { mayDiscloseGemIdentity } from "../hiddenGems/HiddenGemPrivacyGuard.js";
-import { canReadMemory } from "../memory/memoryReadPolicy.js"; import { readMemoryPrecisionGate, precisionColumnSelectable, precisionClampApplies } from "../../lib/memoryPrecisionGate.js"; import { memoryPlaceLabelsForNonOwner } from "../../lib/memoryLocationPrecision.js"; // §10 on the Memory card (lane R, 2026-10-07); on this line so no cited line moves
+import { canReadMemory } from "../memory/memoryReadPolicy.js"; import { readMemoryPrecisionGate, precisionColumnSelectable, precisionClampApplies } from "../../lib/memoryPrecisionGate.js"; import { memoryPlaceLabelsForNonOwner } from "../../lib/memoryLocationPrecision.js"; import { loadAudienceCeilings, rowAtNonOwnerRung } from "../memory/memoryVisibilityPolicies.js"; // §10 on the Memory card (lane R, 2026-10-07); census-highlights-memories §CD (H33): and the owner's per-audience ceiling; on this line so no cited line moves
 import { applyHistoryWindow, historyBoundEnabled, visibleFromOf } from "../groupChatHistoryBound.js";
 import { decideHighlightViewAccess } from "../../routes/highlights.js";
 import { checkEventEligibility } from "../../routes/events.js"; import { readEventViewAccess } from "../../lib/eventViewAccess.js";
@@ -691,7 +691,7 @@ const loadMemory: Loader = async (client, id, viewerId) => {
   // gate or the row's label cannot be read (lib/memoryLocationPrecision.ts).
   const city = mine
     ? ((r.location_city as string) ?? null)
-    : memoryPlaceLabelsForNonOwner(r, precisionClampApplies(precisionGate)).city;
+    : memoryPlaceLabelsForNonOwner(rowAtNonOwnerRung(r, precisionClampApplies(precisionGate), await loadAudienceCeilings(client, [r])), true).city; // §CD (H33): never finer than the owner's ceiling for the Memory's audience
   return {
     state: AVAILABLE(String(r.state)),
     projection: proj(

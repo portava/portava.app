@@ -452,7 +452,7 @@ export const KNOWN: Record<string, Known> = {
     objects: [
       "trails.review_state",
       // A1 (wave W hm-priv, census-highlights-memories §BE): the owner's per-Memory controls (3671/3672/3673), see the note.
-      "memory_corrections", "memory_corrections.field", "memory_corrections.memory_id", "memory_corrections.owner_id",
+      "memory_corrections", "memory_corrections.field", "memory_corrections.memory_id", "memory_corrections.owner_id", "memory_corrections.id", "memory_corrections.kind", "memory_corrections.place_id", // the last three: census-highlights-memories §CD (H262), placeKnownToViewer via the Compass place history; an absent table is "unknown" (memorySearchService.ts:959). 3673 is applied in production (2026-10-21); the snapshot predates it
       "memory_items.visibility",
       "memory_resurfacing_preferences", "memory_resurfacing_preferences.control", "memory_resurfacing_preferences.memory_id", "memory_resurfacing_preferences.owner_id",
     ],
